@@ -45,16 +45,19 @@ def robot(tmp_path, monkeypatch):
     )
 
 
-def states(gripper=0.1):
-    return {
-        name: SimpleNamespace(pos=gripper if name == "gripper" else 0, status_code=0) for name in MOTOR_NAMES
-    }
+def raw_positions(gripper=0.1):
+    return np.array([0, 0, 0, 0, 0, 0, gripper], dtype=float)
+
+
+def mock_bus(positions=None):
+    bus = MagicMock(spec=robot_module._YamBus)
+    bus.enabled = False
+    bus.read_positions.return_value = raw_positions() if positions is None else positions
+    return bus
 
 
 def mock_hardware(robot, monkeypatch):
-    monkeypatch.setattr(robot, "_open_hardware", MagicMock())
-    monkeypatch.setattr(robot, "_read_feedback", MagicMock(return_value=states()))
-    monkeypatch.setattr(robot, "_close_hardware", MagicMock())
+    robot.bus = mock_bus()
     monkeypatch.setattr(robot, "_configure_control", MagicMock())
     monkeypatch.setattr(robot, "_enable_motors", MagicMock())
     monkeypatch.setattr(robot, "_start_servo", MagicMock())
@@ -92,23 +95,25 @@ def test_position_validation_and_clipping_are_pure():
         robot_module.validate_positions(values, joint_tolerance_rad=0.0)
 
 
-def test_motorbridge_mapping_and_mit_radians(robot, monkeypatch):
+def test_motorbridge_mapping_and_mit_radians(monkeypatch):
     controller = MagicMock()
     controller.add_damiao_motor.side_effect = lambda *args: MagicMock()
     factory = MagicMock(return_value=controller)
     monkeypatch.setattr(robot_module, "Controller", factory, raising=False)
     monkeypatch.setattr(robot_module, "can", SimpleNamespace(Bus=MagicMock()), raising=False)
-    robot._open_hardware()
+    bus = robot_module._YamBus("can0", feedback_timeout_s=0.2)
+    bus.open()
     factory.assert_called_once_with(channel="can0")
     assert [call.args for call in controller.add_damiao_motor.call_args_list] == [
         (i + 1, i + 17, "4340" if i < 3 else "4310") for i in range(7)
     ]
-    robot.config.read_only = False
-    robot.position = np.array([0.2, 0.5, 0.3, 0, 0, 0, 1.0])
-    robot._enable_motors()
-    robot.motors["joint_0"].send_mit.assert_called_once_with(0.2, 0, 0, 0, 0)
-    robot.motors["gripper"].send_mit.assert_called_once_with(6.1, 0, 0, 0, 0)
-    robot._close_hardware()
+    motors = dict(bus.motors)
+    bus.enable(np.array([0.2, 0.5, 0.3, 0, 0, 0, 6.1]))
+    motors["joint_0"].send_mit.assert_called_once_with(0.2, 0, 0, 0, 0)
+    motors["gripper"].send_mit.assert_called_once_with(6.1, 0, 0, 0, 0)
+    controller.enable_all.assert_called_once()
+    bus.close()
+    controller.disable_all.assert_called_once()
     controller.close.assert_called_once()
 
 
@@ -124,36 +129,39 @@ def frame(i, age=0, status=1):
     )
 
 
-def monitor(robot, frames):
-    robot.bus = MagicMock()
+def feedback_bus(frames):
+    """An opened bus whose python-can monitor replays ``frames``."""
+    bus = robot_module._YamBus("can0", feedback_timeout_s=0.2)
+    bus.controller = MagicMock()
     queued = deque(frames)
-    robot.monitor = SimpleNamespace(recv=lambda timeout: queued.popleft() if queued else None)
-    robot.motors = {name: MagicMock() for name in MOTOR_NAMES}
-    for motor in robot.motors.values():
+    bus.monitor = SimpleNamespace(recv=lambda timeout: queued.popleft() if queued else None)
+    bus.motors = {name: MagicMock() for name in MOTOR_NAMES}
+    for motor in bus.motors.values():
         motor.get_state.return_value = SimpleNamespace(pos=0.1, status_code=1)
+    return bus
 
 
-def test_cached_motorbridge_states_do_not_hide_missing_motor(robot):
-    monitor(robot, [frame(i) for i in range(1, 7)])
+def test_cached_motorbridge_states_do_not_hide_missing_motor():
+    bus = feedback_bus([frame(i) for i in range(1, 7)])
     with pytest.raises(ConnectionError, match="stale"):
-        robot._read_feedback()
+        bus.read_positions(wait=False)
 
 
-def test_queued_old_packets_do_not_count_as_fresh(robot):
-    monitor(robot, [frame(i, age=1) for i in range(1, 8)])
+def test_queued_old_packets_do_not_count_as_fresh():
+    bus = feedback_bus([frame(i, age=1) for i in range(1, 8)])
     with pytest.raises(ConnectionError, match="stale"):
-        robot._read_feedback()
+        bus.read_positions(wait=False)
 
 
-def test_fault_in_any_feedback_packet_fails(robot):
-    monitor(robot, [frame(i, status=13 if i == 3 else 1) for i in range(1, 8)])
+def test_fault_in_any_feedback_packet_fails():
+    bus = feedback_bus([frame(i, status=13 if i == 3 else 1) for i in range(1, 8)])
     with pytest.raises(ConnectionError, match="fault 0xd"):
-        robot._read_feedback()
+        bus.read_positions(wait=False)
 
 
-def test_fresh_feedback_accepts_stationary_motors(robot):
-    monitor(robot, [frame(i) for i in range(1, 8)])
-    assert len(robot._read_feedback()) == 7
+def test_fresh_feedback_accepts_stationary_motors():
+    bus = feedback_bus([frame(i) for i in range(1, 8)])
+    np.testing.assert_allclose(bus.read_positions(wait=False), np.full(7, 0.1))
 
 
 def test_slew_gripper_torque_and_gravity_feedforward(robot):
@@ -253,7 +261,7 @@ def test_gravity_model_loads_before_hardware(robot, monkeypatch):
             robot.gravity_model = object()
 
     robot._load_control_model = load_model
-    robot._open_hardware.side_effect = lambda: events.append("connect")
+    robot.bus.open.side_effect = lambda: events.append("connect")
     robot.connect()
     robot.disconnect()
     assert events[:2] == ["model", "connect"]
@@ -264,7 +272,7 @@ def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
     robot.connect(calibrate=False)
 
     def prompt(text):
-        robot._read_feedback.return_value["gripper"].pos = 6.1 if "open" in text else 0.1
+        robot.bus.read_positions.return_value = raw_positions(6.1 if "open" in text else 0.1)
 
     monkeypatch.setattr("builtins.input", prompt)
     monkeypatch.setattr(robot_module.time, "sleep", lambda _: None)
@@ -278,17 +286,16 @@ def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
 
 
 def test_servo_error_disables_single_arm(robot):
-    robot.enabled = True
-    robot.bus = MagicMock()
-    robot._read_feedback = MagicMock(side_effect=ConnectionError("lost"))
+    robot.bus = mock_bus()
+    robot.bus.read_positions.side_effect = ConnectionError("lost")
     robot._run()
     assert isinstance(robot._failure, ConnectionError)
     assert robot._stop.is_set()
-    robot.bus.disable_all.assert_called_once()
+    robot.bus.disable.assert_called_once()
 
 
 def test_servo_waits_for_asynchronous_feedback(robot):
-    monitor(robot, [])
+    robot.bus = feedback_bus([])
     replies = deque([None, *[frame(i) for i in range(1, 8)], None])
 
     def receive(timeout):
@@ -297,7 +304,7 @@ def test_servo_waits_for_asynchronous_feedback(robot):
             robot._stop.set()
         return value
 
-    robot.monitor.recv = receive
+    robot.bus.monitor.recv = receive
     robot._run()
     assert robot._failure is None
     assert robot.updated_at > 0
@@ -323,7 +330,8 @@ def test_gc_freeze_is_shared_and_preserves_callers_state(monkeypatch, enabled, p
 
 
 def test_connect_failure_releases_gc_freeze(robot, monkeypatch):
-    robot._open_hardware = MagicMock(side_effect=ConnectionError("no adapter"))
+    robot.bus = mock_bus()
+    robot.bus.open.side_effect = ConnectionError("no adapter")
     guard = MagicMock()
     monkeypatch.setattr(robot_module, "_ControlGC", guard)
     with pytest.raises(ConnectionError, match="no adapter"):

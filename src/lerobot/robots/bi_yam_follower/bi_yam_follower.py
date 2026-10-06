@@ -118,7 +118,7 @@ class BiYamFollower(BimanualMixin, Robot):
         except BaseException:
             self._stop.set()
             for arm in self.arms.values():
-                arm._disable_motors()
+                arm.bus.disable()
             raise
 
     @check_if_not_connected

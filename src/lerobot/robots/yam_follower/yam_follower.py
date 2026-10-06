@@ -54,6 +54,8 @@ _MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
 _MODEL_GRIPPER_STROKE_M = 0.0475
 _GRAVITY_MODEL_PATH = Path(__file__).parent / "assets/yam_linear.xml"
 _MAX_GRAVITY_TORQUE_NM = 10.0
+# Measured joints may sit slightly past a limit (quantization, resting on a hard stop).
+_LIMIT_TOLERANCE_RAD = 0.03
 
 # One MIT command per motor: (position_rad, velocity_rad_s, kp, kd, feedforward_torque_nm).
 MitCommand = tuple[float, float, float, float, float]
@@ -138,6 +140,157 @@ def control_step(
     }
 
 
+class _YamBus:
+    """CAN interface of one YAM arm.
+
+    MotorBridge sends commands and decodes motor states. A receive-only python-can socket on
+    the same interface checks that every motor answered recently and reports motor faults,
+    because MotorBridge's cached states carry no receive time.
+    """
+
+    def __init__(
+        self, port: str, feedback_timeout_s: float, expected_adapter_serial: str | None = None
+    ) -> None:
+        self.port = port
+        self.feedback_timeout_s = feedback_timeout_s
+        self.expected_adapter_serial = expected_adapter_serial
+        self.controller: Controller | None = None
+        self.monitor: can.BusABC | None = None
+        self.motors: dict[str, Any] = {}
+        self.enabled = False
+        self._last_feedback: dict[int, float] = {}  # receive time per feedback CAN ID
+
+    def open(self) -> None:
+        self._verify_adapter()
+        self.monitor = can.Bus(
+            channel=self.port,
+            interface="socketcan",
+            can_filters=[{"can_id": i + 17, "can_mask": 0x7FF, "extended": False} for i in range(7)],
+        )
+        self.controller = Controller(channel=self.port)
+        self.motors = {
+            name: self.controller.add_damiao_motor(i + 1, i + 17, "4340" if i < 3 else "4310")
+            for i, name in enumerate(MOTOR_NAMES)
+        }
+        self._last_feedback.clear()
+
+    def read_positions(self, wait: bool = True) -> np.ndarray:
+        """Return the seven raw motor positions in radians, once every motor has fresh feedback."""
+        states = self._read_states(wait)
+        return np.asarray([states[name].pos for name in MOTOR_NAMES])
+
+    def set_mit_mode(self) -> None:
+        assert self.controller is not None
+        self.controller.disable_all()
+        for motor in self.motors.values():
+            motor.ensure_mode(Mode.MIT)
+
+    def enable(self, hold: np.ndarray) -> None:
+        """Enable torque after sending zero-gain setpoints at the ``hold`` raw positions."""
+        assert self.controller is not None
+        for name, value in zip(MOTOR_NAMES, hold, strict=True):
+            self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
+        self.enabled = True
+        self.controller.enable_all()
+
+    def send_mit(self, motor: str, command: MitCommand) -> None:
+        self.motors[motor].send_mit(*command)
+
+    def disable(self) -> None:
+        """Disable torque if enabled; logs instead of raising so shutdown can continue."""
+        if not self.enabled or self.controller is None:
+            return
+        try:
+            self.controller.disable_all()
+            self.enabled = False
+        except Exception:
+            logger.exception("Could not disable YAM torque; use the hardware e-stop")
+
+    def close(self) -> None:
+        self.disable()
+        for name, motor in self.motors.items():
+            try:
+                motor.close()
+            except Exception:
+                logger.exception("Failed to close YAM motor %s", name)
+        self.motors.clear()
+        if self.controller is not None:
+            try:
+                self.controller.close()
+            except Exception:
+                logger.exception("Failed to close YAM MotorBridge controller")
+            finally:
+                self.controller = None
+        if self.monitor is not None:
+            try:
+                self.monitor.shutdown()
+            except Exception:
+                logger.exception("Failed to close YAM feedback monitor")
+            finally:
+                self.monitor = None
+
+    def _verify_adapter(self) -> None:
+        """Check the USB adapter serial so can0/can1 enumeration swaps cannot swap arms."""
+        if self.expected_adapter_serial is None:
+            return
+        device = (Path("/sys/class/net") / self.port / "device").resolve()
+        for parent in (device, *device.parents):
+            serial = parent / "serial"
+            if serial.is_file():
+                actual = serial.read_text().strip()
+                if actual != self.expected_adapter_serial:
+                    raise ValueError(
+                        f"{self.port} adapter serial {actual!r} does not match the configured arm"
+                    )
+                return
+        raise ValueError(f"Cannot verify USB serial for {self.port}; check the adapter connection")
+
+    def _read_states(self, wait: bool) -> dict[str, Any]:
+        assert self.controller is not None and self.monitor is not None
+        for motor in self.motors.values():
+            motor.request_feedback()
+        deadline = time.monotonic() + self.feedback_timeout_s if wait else time.monotonic()
+        while True:
+            for _ in range(256):
+                msg = self.monitor.recv(timeout=0)
+                if msg is None:
+                    break
+                if (
+                    msg.is_error_frame
+                    or msg.is_remote_frame
+                    or msg.is_extended_id
+                    or msg.dlc != 8
+                    or msg.arbitration_id not in range(17, 24)
+                ):
+                    continue
+                if msg.data[0] & 0x0F != msg.arbitration_id - 16:
+                    continue
+                status = msg.data[0] >> 4
+                if status not in (0, 1):
+                    raise ConnectionError(f"{self.port}: motor {msg.arbitration_id - 16} fault {status:#x}")
+                self._last_feedback[msg.arbitration_id] = msg.timestamp
+            self.controller.poll_feedback_once()
+            states = {name: motor.get_state() for name, motor in self.motors.items()}
+            now = time.time()
+            fresh = all(
+                0 <= now - self._last_feedback.get(i + 17, 0) <= self.feedback_timeout_s for i in range(7)
+            )
+            if fresh and all(state is not None for state in states.values()):
+                for name, state in states.items():
+                    if state.status_code not in (0, 1) or not math.isfinite(state.pos):
+                        raise ConnectionError(f"{self.port}: invalid {name} feedback")
+                return states
+            if time.monotonic() >= deadline:
+                ages = ", ".join(
+                    f"{i}: {(now - self._last_feedback[i + 16]) * 1000:.1f} ms"
+                    if i + 16 in self._last_feedback
+                    else f"{i}: missing"
+                    for i in range(1, 8)
+                )
+                raise ConnectionError(f"{self.port}: missing or stale motor feedback ({ages})")
+            time.sleep(0.001)
+
+
 class _ControlGC:
     """Keep preloaded models out of cyclic scans while YAM servo threads run."""
 
@@ -175,9 +328,7 @@ class YamFollower(Robot):
         super().__init__(config)
         self.config = config
         self.cameras = make_cameras_from_configs(config.cameras)
-        self.bus: Controller | None = None
-        self.monitor: can.BusABC | None = None
-        self.motors: dict[str, Any] = {}
+        self.bus = _YamBus(config.port, config.feedback_timeout_s, config.expected_adapter_serial)
         self.position = np.zeros(7)
         self.target = np.zeros(7)
         self.command = np.zeros(7)
@@ -185,8 +336,6 @@ class YamFollower(Robot):
         self.commanded_at = 0.0
         self.command_timed_out = False
         self.gravity_model: GravityCompensation | None = None
-        self.enabled = False
-        self.last_feedback: dict[int, float] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -239,7 +388,7 @@ class YamFollower(Robot):
             input(f"Place the gripper fully {endpoint}, release it, then press Enter: ")
             samples = []
             for _ in range(10):
-                samples.append(self._read_feedback(wait=True)["gripper"].pos)
+                samples.append(self.bus.read_positions()[6])
                 time.sleep(0.02)
             if not np.isfinite(samples).all() or np.ptp(samples) > 0.03:
                 raise ValueError("Gripper moved or returned invalid feedback; calibration was not saved")
@@ -305,7 +454,7 @@ class YamFollower(Robot):
                 "YAM requires all seven absolute joint/gripper targets; Cartesian actions need IK"
             )
         target = np.asarray([action[f"{name}.pos"] for name in MOTOR_NAMES], dtype=float)
-        validate_positions(target, joint_tolerance_rad=0.03)
+        validate_positions(target, joint_tolerance_rad=_LIMIT_TOLERANCE_RAD)
         return clip_to_limits(target)
 
     def _gravity_torque(self, positions: np.ndarray) -> np.ndarray:
@@ -321,81 +470,10 @@ class YamFollower(Robot):
             _GRAVITY_MODEL_PATH, _MODEL_ARM_JOINTS, base_frame="base", mjcf=True
         )
 
-    def _verify_adapter(self) -> None:
-        if self.config.expected_adapter_serial is None:
-            return
-        device = (Path("/sys/class/net") / self.config.port / "device").resolve()
-        for parent in (device, *device.parents):
-            serial = parent / "serial"
-            if serial.is_file():
-                actual = serial.read_text().strip()
-                if actual != self.config.expected_adapter_serial:
-                    raise ValueError(
-                        f"{self.config.port} adapter serial {actual!r} does not match the configured arm"
-                    )
-                return
-        raise ValueError(f"Cannot verify USB serial for {self.config.port}; check the adapter connection")
-
-    def _open_hardware(self) -> None:
-        self.monitor = can.Bus(
-            channel=self.config.port,
-            interface="socketcan",
-            can_filters=[{"can_id": i + 17, "can_mask": 0x7FF, "extended": False} for i in range(7)],
-        )
-        self.bus = Controller(channel=self.config.port)
-        self.motors = {
-            name: self.bus.add_damiao_motor(i + 1, i + 17, "4340" if i < 3 else "4310")
-            for i, name in enumerate(MOTOR_NAMES)
-        }
-        self.last_feedback.clear()
-
-    def _read_feedback(self, *, wait: bool = False) -> dict[str, Any]:
-        assert self.bus is not None and self.monitor is not None
-        for motor in self.motors.values():
-            motor.request_feedback()
-        deadline = time.monotonic() + self.config.feedback_timeout_s if wait else time.monotonic()
-        while True:
-            for _ in range(256):
-                msg = self.monitor.recv(timeout=0)
-                if msg is None:
-                    break
-                if (
-                    msg.is_error_frame
-                    or msg.is_remote_frame
-                    or msg.is_extended_id
-                    or msg.dlc != 8
-                    or msg.arbitration_id not in range(17, 24)
-                ):
-                    continue
-                if msg.data[0] & 0x0F != msg.arbitration_id - 16:
-                    continue
-                status = msg.data[0] >> 4
-                if status not in (0, 1):
-                    raise ConnectionError(
-                        f"{self.config.port}: motor {msg.arbitration_id - 16} fault {status:#x}"
-                    )
-                self.last_feedback[msg.arbitration_id] = msg.timestamp
-            self.bus.poll_feedback_once()
-            states = {name: motor.get_state() for name, motor in self.motors.items()}
-            now = time.time()
-            fresh = all(
-                0 <= now - self.last_feedback.get(i + 17, 0) <= self.config.feedback_timeout_s
-                for i in range(7)
-            )
-            if fresh and all(state is not None for state in states.values()):
-                for name, state in states.items():
-                    if state.status_code not in (0, 1) or not math.isfinite(state.pos):
-                        raise ConnectionError(f"{self.config.port}: invalid {name} feedback")
-                return states
-            if time.monotonic() >= deadline:
-                ages = ", ".join(
-                    f"{i}: {(now - self.last_feedback[i + 16]) * 1000:.1f} ms"
-                    if i + 16 in self.last_feedback
-                    else f"{i}: missing"
-                    for i in range(1, 8)
-                )
-                raise ConnectionError(f"{self.config.port}: missing or stale motor feedback ({ages})")
-            time.sleep(0.001)
+    def _read_position(self) -> np.ndarray:
+        position = motor_to_joint(self.bus.read_positions(), self.config)
+        validate_positions(position, joint_tolerance_rad=_LIMIT_TOLERANCE_RAD)
+        return position
 
     def _seed_control_state(self, position: np.ndarray) -> None:
         self.position = position
@@ -414,16 +492,13 @@ class YamFollower(Robot):
             self._load_control_model()
             _ControlGC.acquire()
             self._gc_acquired = True
-        self._verify_adapter()
-        if calibrate:
-            for camera in self.cameras.values():
-                camera.connect()
-        self._open_hardware()
-        states = self._read_feedback(wait=True)
+        self.bus.open()
         if not calibrate:
+            self.bus.read_positions()  # every motor must answer before measuring the gripper
             return
-        position = motor_to_joint(np.asarray([states[name].pos for name in MOTOR_NAMES]), self.config)
-        validate_positions(position, joint_tolerance_rad=0.03)
+        for camera in self.cameras.values():
+            camera.connect()
+        position = self._read_position()
         if not self.config.read_only:
             if self.config.initial_position_rad is not None and np.any(
                 np.abs(position[:6] - self.config.initial_position_rad) > self.config.initial_tolerance_rad
@@ -440,23 +515,13 @@ class YamFollower(Robot):
     def _configure_control(self) -> None:
         if self.config.read_only or self._calibration_session:
             return
-        assert self.bus is not None
-        self.bus.disable_all()
-        for motor in self.motors.values():
-            motor.ensure_mode(Mode.MIT)
-        states = self._read_feedback(wait=True)
-        position = motor_to_joint(np.asarray([states[name].pos for name in MOTOR_NAMES]), self.config)
-        validate_positions(position, joint_tolerance_rad=0.03)
-        self._seed_control_state(position)
+        self.bus.set_mit_mode()
+        self._seed_control_state(self._read_position())
 
     def _enable_motors(self) -> None:
         if self.config.read_only or self._calibration_session:
             return
-        assert self.bus is not None
-        for name, value in zip(MOTOR_NAMES, joint_to_motor(self.position, self.config), strict=True):
-            self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
-        self.enabled = True
-        self.bus.enable_all()
+        self.bus.enable(joint_to_motor(self.position, self.config))
 
     def _start_servo(self) -> None:
         self._thread = threading.Thread(target=self._run, name=f"{self.id}-servo", daemon=True)
@@ -469,9 +534,7 @@ class YamFollower(Robot):
             while not self._stop.is_set():
                 started = time.monotonic()
                 max_cycle_gap = max(max_cycle_gap, started - previous)
-                states = self._read_feedback(wait=True)
-                position = motor_to_joint(np.asarray([states[name].pos for name in MOTOR_NAMES]), self.config)
-                validate_positions(position, joint_tolerance_rad=0.03)
+                position = self._read_position()
                 with self._lock:
                     self.position = position
                     self.updated_at = time.monotonic()
@@ -483,7 +546,7 @@ class YamFollower(Robot):
                         self.command = position.copy()
                         self.command_timed_out = True
                     packet: dict[str, MitCommand] = {}
-                    if self.enabled:
+                    if self.bus.enabled:
                         self.command, packet = control_step(
                             self.config,
                             position,
@@ -495,7 +558,7 @@ class YamFollower(Robot):
                 for name, command in packet.items():
                     if self._stop.is_set():
                         break
-                    self.motors[name].send_mit(*command)
+                    self.bus.send_mit(name, command)
                 previous = started
                 self._stop.wait(max(0, 1 / self.config.control_frequency - (time.monotonic() - started)))
         except Exception as exc:
@@ -506,7 +569,7 @@ class YamFollower(Robot):
             self._failure = exc
             self._stop.set()
         finally:
-            self._disable_motors()
+            self.bus.disable()
             if self._failure is not None:
                 logger.error(
                     "YAM servo stopped: %s; %s",
@@ -514,44 +577,12 @@ class YamFollower(Robot):
                     "; ".join(getattr(self._failure, "__notes__", [])),
                 )
 
-    def _disable_motors(self) -> None:
-        if not self.enabled or self.bus is None:
-            return
-        try:
-            self.bus.disable_all()
-            self.enabled = False
-        except Exception:
-            logger.exception("Could not disable YAM torque; use the hardware e-stop")
-
     def _check_feedback(self) -> None:
         if self._failure is not None or self._stop.is_set():
             raise ConnectionError("YAM servo stopped after a motor/feedback error") from self._failure
         if time.monotonic() - self.updated_at > self.config.feedback_timeout_s:
             self._stop.set()
             raise ConnectionError("YAM servo feedback is stale; reconnect before commanding motion")
-
-    def _close_hardware(self) -> None:
-        self._disable_motors()
-        for name, motor in self.motors.items():
-            try:
-                motor.close()
-            except Exception:
-                logger.exception("Failed to close YAM motor %s", name)
-        self.motors.clear()
-        if self.bus is not None:
-            try:
-                self.bus.close()
-            except Exception:
-                logger.exception("Failed to close YAM MotorBridge controller")
-            finally:
-                self.bus = None
-        if self.monitor is not None:
-            try:
-                self.monitor.shutdown()
-            except Exception:
-                logger.exception("Failed to close YAM feedback monitor")
-            finally:
-                self.monitor = None
 
     def _close(self) -> None:
         self._stop.set()
@@ -561,7 +592,7 @@ class YamFollower(Robot):
                 raise RuntimeError("YAM servo did not stop; use the hardware e-stop")
             self._thread = None
         try:
-            self._close_hardware()
+            self.bus.close()
         except Exception:
             logger.exception("Failed to close YAM arm")
         try:

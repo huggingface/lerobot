@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import time
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -23,7 +22,6 @@ import pytest
 
 from lerobot.robots.bi_yam_follower import BiYamFollower, BiYamFollowerConfig
 from lerobot.robots.yam_follower import YamArmConfig, YamFollower, yam_follower as yam_module
-from lerobot.robots.yam_follower.config_yam_follower import MOTOR_NAMES
 
 
 def arm_config(port="can0", **kwargs):
@@ -45,15 +43,16 @@ def robot(tmp_path, monkeypatch):
     )
 
 
-def feedback():
-    return {name: SimpleNamespace(pos=0.1 if name == "gripper" else 0, status_code=0) for name in MOTOR_NAMES}
+def mock_bus():
+    bus = MagicMock(spec=yam_module._YamBus)
+    bus.enabled = False
+    bus.read_positions.return_value = np.array([0, 0, 0, 0, 0, 0, 0.1])  # raw radians, gripper closed
+    return bus
 
 
 def mock_hardware(robot, monkeypatch):
     for arm in robot.arms.values():
-        monkeypatch.setattr(arm, "_open_hardware", MagicMock())
-        monkeypatch.setattr(arm, "_read_feedback", MagicMock(return_value=feedback()))
-        monkeypatch.setattr(arm, "_close_hardware", MagicMock())
+        arm.bus = mock_bus()
         monkeypatch.setattr(arm, "_configure_control", MagicMock())
         monkeypatch.setattr(arm, "_enable_motors", MagicMock())
         monkeypatch.setattr(arm, "_start_servo", MagicMock())
@@ -135,7 +134,7 @@ def test_models_load_before_either_can_interface(robot, monkeypatch):
                 arm.gravity_model = object()
 
         arm._load_control_model = load_model
-        arm._open_hardware.side_effect = lambda side=side: events.append(f"{side}:connect")
+        arm.bus.open.side_effect = lambda side=side: events.append(f"{side}:connect")
     robot.connect()
     robot.disconnect()
     assert events[:4] == ["left:model", "right:model", "left:connect", "right:connect"]
@@ -144,12 +143,12 @@ def test_models_load_before_either_can_interface(robot, monkeypatch):
 def test_bad_second_arm_pose_never_enables_first(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     make_writable(robot)
-    robot.right_arm._read_feedback.return_value["joint_1"].pos = 1
+    robot.right_arm.bus.read_positions.return_value[1] = 1
     with pytest.raises(ValueError, match="initial pose"):
         robot.connect()
     for arm in robot.arms.values():
         arm._enable_motors.assert_not_called()
-        arm._close_hardware.assert_called_once()
+        arm.bus.close.assert_called_once()
 
 
 def test_both_arms_configure_before_either_is_enabled(robot, monkeypatch):
@@ -165,15 +164,14 @@ def test_both_arms_configure_before_either_is_enabled(robot, monkeypatch):
 
 def test_servo_error_stops_and_disables_both_arms(robot):
     for arm in robot.arms.values():
-        arm.enabled = True
-        arm.bus = MagicMock()
-    robot.left_arm._read_feedback = MagicMock(side_effect=ConnectionError("lost"))
+        arm.bus = mock_bus()
+    robot.left_arm.bus.read_positions.side_effect = ConnectionError("lost")
     robot.left_arm._run()
     robot.right_arm._run()
     assert isinstance(robot.left_arm._failure, ConnectionError)
     assert robot._stop.is_set()
     for arm in robot.arms.values():
-        arm.bus.disable_all.assert_called_once()
+        arm.bus.disable.assert_called_once()
 
 
 def test_disconnect_attempts_both_arms_after_one_fails(robot):
