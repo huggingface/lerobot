@@ -20,7 +20,13 @@ import math
 import torch
 import torch.nn as nn
 
-from ..common.flow_matching import FlowConvention, euler_integrate, sample_beta, sample_noise
+from ..common.flow_matching import (
+    FlowConvention,
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_beta,
+    sample_noise,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -366,8 +372,12 @@ class FlowmatchingActionHead(nn.Module):
             noise_seq = noise.view(batch_size, self.horizon, self.per_action_dim)
         else:
             noise_seq = noise if noise.dim() == 3 else noise.unsqueeze(1)
-        t_broadcast = t.view(batch_size, 1, 1)
-        action_intermediate_seq = (1 - t_broadcast) * noise_seq + t_broadcast * actions_gt_seq
+        # Only the interpolation is shared. `Evo1Policy.forward` builds the target itself in fp32;
+        # the helper's target would be in the action head's parameter dtype, which rounds
+        # differently once the head runs in bf16.
+        action_intermediate_seq, _, _ = make_flow_matching_inputs(
+            actions_gt_seq, noise_seq, t, convention=FlowConvention.NOISE_AT_ZERO
+        )
 
         action_tokens = self._project_actions(action_intermediate_seq, embodiment_id)
         target_dtype = self.dtype

@@ -29,7 +29,13 @@ from torch import nn
 
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from ..common.flow_matching import FlowConvention, euler_integrate, sample_beta, sample_noise
+from ..common.flow_matching import (
+    FlowConvention,
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_beta,
+    sample_noise,
+)
 from .action_head.cross_attention_dit import AlternateVLDiT, DiT, SelfAttentionTransformer
 from .configuration_groot import N1_7_DEFAULT_IMAGE_CROP_SIZE, N1_7_DEFAULT_IMAGE_TARGET_SIZE
 
@@ -582,10 +588,10 @@ class GR00TN17ActionHead(nn.Module):
         actions = action_input.action
         noise = sample_noise(actions.shape, actions.device, dtype=actions.dtype)
         t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype)
-        t = t[:, None, None]
-        noisy_trajectory = (1 - t) * noise + t * actions
-        velocity = actions - noise
-        t_discretized = (t[:, 0, 0] * self.num_timestep_buckets).long()
+        noisy_trajectory, velocity, model_time = make_flow_matching_inputs(
+            actions, noise, t, convention=FlowConvention.NOISE_AT_ZERO
+        )
+        t_discretized = (model_time * self.num_timestep_buckets).long()
         action_features = self.action_encoder(noisy_trajectory, t_discretized, embodiment_id)
 
         if self.config.add_pos_embed:
