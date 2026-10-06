@@ -63,14 +63,13 @@ def attach_bus(robot, bus):
 
 def mock_hardware(robot, monkeypatch):
     attach_bus(robot, mock_bus())
-    monkeypatch.setattr(robot, "_configure_control", MagicMock())
-    monkeypatch.setattr(robot, "_enable_motors", MagicMock())
     monkeypatch.setattr(robot.servo, "start", MagicMock())
 
 
 def ready(robot):
     robot._connected = True
     robot.config.read_only = False
+    robot.servo.active = True
     robot.servo.updated_at = time.monotonic()
     return dict.fromkeys(robot.action_features, 0.0)
 
@@ -249,9 +248,27 @@ def test_calibration_connection_never_enables_motor(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     robot.config.read_only = False
     robot.connect(calibrate=False)
-    robot._configure_control.assert_not_called()
-    robot._enable_motors.assert_not_called()
+    robot.bus.set_mit_mode.assert_not_called()
+    robot.bus.enable.assert_not_called()
+    robot.servo.start.assert_not_called()
     robot.disconnect()
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch, read_only):
+    mock_hardware(robot, monkeypatch)
+    robot.config.read_only = read_only
+    robot.connect()
+    calls = [name for name, *_ in robot.bus.mock_calls if name in ("open", "set_mit_mode", "enable")]
+    assert calls == (["open"] if read_only else ["open", "set_mit_mode", "enable"])
+    robot.servo.start.assert_called_once()
+    robot.disconnect()
+
+
+def test_configure_refuses_while_servo_holds_the_arm(robot):
+    robot.servo.active = True
+    with pytest.raises(RuntimeError, match="before the servo starts"):
+        robot.configure()
 
 
 def test_gravity_model_loads_before_hardware(robot, monkeypatch):
@@ -286,7 +303,7 @@ def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
     assert robot.calibration["gripper"].drive_mode == 0
     assert robot.config.gripper_open_rad == pytest.approx(6.1, abs=0.0002)
     assert robot.calibration_fpath.is_file()
-    robot._enable_motors.assert_not_called()
+    robot.bus.enable.assert_not_called()
     robot.disconnect()
 
 

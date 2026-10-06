@@ -58,8 +58,6 @@ def attach_bus(arm, bus):
 def mock_hardware(robot, monkeypatch):
     for arm in robot.arms.values():
         attach_bus(arm, mock_bus())
-        monkeypatch.setattr(arm, "_configure_control", MagicMock())
-        monkeypatch.setattr(arm, "_enable_motors", MagicMock())
         monkeypatch.setattr(arm.servo, "start", MagicMock())
 
 
@@ -73,6 +71,7 @@ def ready(robot):
     make_writable(robot)
     for arm in robot.arms.values():
         arm._connected = True
+        arm.servo.active = True
         arm.servo.updated_at = time.monotonic()
     return dict.fromkeys(robot.action_features, 0.0)
 
@@ -121,8 +120,8 @@ def test_calibration_connect_never_enables_motors(robot, monkeypatch):
     make_writable(robot)
     robot.connect(calibrate=False)
     for arm in robot.arms.values():
-        arm._configure_control.assert_not_called()
-        arm._enable_motors.assert_not_called()
+        arm.bus.set_mit_mode.assert_not_called()
+        arm.bus.enable.assert_not_called()
     robot.disconnect()
 
 
@@ -152,7 +151,7 @@ def test_bad_second_arm_pose_never_enables_first(robot, monkeypatch):
     with pytest.raises(ValueError, match="initial pose"):
         robot.connect()
     for arm in robot.arms.values():
-        arm._enable_motors.assert_not_called()
+        arm.bus.enable.assert_not_called()
         arm.bus.close.assert_called_once()
 
 
@@ -161,9 +160,10 @@ def test_both_arms_configure_before_either_is_enabled(robot, monkeypatch):
     make_writable(robot)
     events = []
     for side, arm in robot.arms.items():
-        arm._configure_control.side_effect = lambda side=side: events.append(f"{side}:configure")
-        arm._enable_motors.side_effect = lambda side=side: events.append(f"{side}:enable")
-    robot.configure()
+        arm.bus.set_mit_mode.side_effect = lambda side=side: events.append(f"{side}:configure")
+        arm.bus.enable.side_effect = lambda hold, side=side: events.append(f"{side}:enable")
+    robot.connect()
+    robot.disconnect()
     assert events == ["left:configure", "right:configure", "left:enable", "right:enable"]
 
 

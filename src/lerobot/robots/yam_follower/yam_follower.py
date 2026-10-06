@@ -353,6 +353,8 @@ class _Servo:
         self.commanded_at = 0.0
         self.command_timed_out = False
         self.failure: Exception | None = None
+        # True from start() until stop() succeeds, even if the loop already exited on a fault.
+        self.active = False
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._gc_acquired = False
@@ -371,6 +373,7 @@ class _Servo:
         self._gc_acquired = True
         self._thread = threading.Thread(target=self._run, name=f"{self.name}-servo", daemon=True)
         self._thread.start()
+        self.active = True
 
     def stop(self, timeout_s: float = 2.0) -> None:
         self.stop_event.set()
@@ -379,6 +382,7 @@ class _Servo:
             if self._thread.is_alive():
                 raise RuntimeError("YAM servo did not stop; use the hardware e-stop")
             self._thread = None
+        self.active = False
         if self._gc_acquired:
             _ControlGC.release()
             self._gc_acquired = False
@@ -476,7 +480,6 @@ class YamFollower(Robot):
             str(self.id), self.bus, config, self._gravity_torque, stop_event or threading.Event()
         )
         self._connected = False
-        self._calibration_session = False
         self._apply_gripper_calibration()
 
     @property
@@ -501,11 +504,12 @@ class YamFollower(Robot):
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         try:
-            self._prepare_connect(calibrate)
-            if calibrate:
-                self._configure_control()
-                self._enable_motors()
-                self.servo.start()
+            if not calibrate:
+                self._open_for_calibration()
+            else:
+                self._open()
+                self.configure()
+                self._start()
             self._connected = True
         except BaseException:
             self._close()
@@ -514,7 +518,7 @@ class YamFollower(Robot):
     @check_if_not_connected
     def calibrate(self) -> None:
         """Measure the gripper stops without enabling torque or resetting joint zeros."""
-        if not self._calibration_session:
+        if self.servo.active:
             raise RuntimeError("Reconnect with calibrate=False before measuring gripper endpoints")
         measurements: dict[str, float] = {}
         logger.info("Support the arm. Move only the gripper gently by hand; stop if it resists.")
@@ -550,12 +554,18 @@ class YamFollower(Robot):
         logger.info("Saved gripper endpoints to %s. Joint zeros were not changed.", self.calibration_fpath)
 
     def configure(self) -> None:
-        self._configure_control()
-        self._enable_motors()
+        """Switch the motors to MIT mode and re-read the pose the servo will start from."""
+        if self.servo.active:
+            # Changing modes disables torque, which would drop an arm the servo is holding.
+            raise RuntimeError("Configure YAM motors before the servo starts, not while it runs")
+        if self.config.read_only:
+            return
+        self.bus.set_mit_mode()
+        self.servo.seed(read_joint_positions(self.bus, self.config))
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        if self._calibration_session:
+        if not self.servo.active:
             raise RuntimeError("Reconnect after calibration before reading policy observations")
         position = self.servo.latest()
         result: dict[str, Any] = {f"{name}.pos": float(position[i]) for i, name in enumerate(MOTOR_NAMES)}
@@ -565,7 +575,7 @@ class YamFollower(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        if self.config.read_only or self._calibration_session:
+        if self.config.read_only or not self.servo.active:
             raise RuntimeError("YAM read-only/calibration connection forbids motor commands")
         target = self._action_target(action)
         self.servo.set_target(target)
@@ -597,43 +607,42 @@ class YamFollower(Robot):
             _GRAVITY_MODEL_PATH, _MODEL_ARM_JOINTS, base_frame="base", mjcf=True
         )
 
-    def _prepare_connect(self, calibrate: bool) -> None:
-        self._calibration_session = not calibrate
-        self.servo.stop_event.clear()
-        if calibrate and not self.is_calibrated:
-            raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
-        if calibrate:
-            self._load_control_model()
+    def _open_for_calibration(self) -> None:
+        """Open the CAN interface without cameras, servo or torque."""
         self.bus.open()
-        if not calibrate:
-            self.bus.read_positions()  # every motor must answer before measuring the gripper
-            return
+        self.bus.read_positions()  # every motor must answer before measuring the gripper
+
+    def _open(self) -> None:
+        """Open the arm without torque, check its start pose and seed the servo from it."""
+        if not self.is_calibrated:
+            raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
+        self.servo.stop_event.clear()
+        self._load_control_model()  # before touching hardware, so a missing dependency fails first
+        self.bus.open()
         for camera in self.cameras.values():
             camera.connect()
         position = read_joint_positions(self.bus, self.config)
         if not self.config.read_only:
-            if self.config.initial_position_rad is not None and np.any(
-                np.abs(position[:6] - self.config.initial_position_rad) > self.config.initial_tolerance_rad
-            ):
-                raise ValueError("YAM arm is outside the configured initial pose tolerance")
-            if (
-                self.config.initial_gripper_position is not None
-                and abs(position[6] - self.config.initial_gripper_position)
-                > self.config.initial_gripper_tolerance
-            ):
-                raise ValueError("YAM gripper is outside the initial pose tolerance")
+            self._check_start_pose(position)
         self.servo.seed(position)
 
-    def _configure_control(self) -> None:
-        if self.config.read_only or self._calibration_session:
-            return
-        self.bus.set_mit_mode()
-        self.servo.seed(read_joint_positions(self.bus, self.config))
+    def _check_start_pose(self, position: np.ndarray) -> None:
+        cfg = self.config
+        if cfg.initial_position_rad is not None and np.any(
+            np.abs(position[:6] - cfg.initial_position_rad) > cfg.initial_tolerance_rad
+        ):
+            raise ValueError("YAM arm is outside the configured initial pose tolerance")
+        if (
+            cfg.initial_gripper_position is not None
+            and abs(position[6] - cfg.initial_gripper_position) > cfg.initial_gripper_tolerance
+        ):
+            raise ValueError("YAM gripper is outside the initial pose tolerance")
 
-    def _enable_motors(self) -> None:
-        if self.config.read_only or self._calibration_session:
-            return
-        self.bus.enable(joint_to_motor(self.servo.position, self.config))
+    def _start(self) -> None:
+        """Enable torque at the seeded pose (unless read-only), then start the servo."""
+        if not self.config.read_only:
+            self.bus.enable(joint_to_motor(self.servo.position, self.config))
+        self.servo.start()
 
     def _close(self) -> None:
         self.servo.stop()
@@ -647,7 +656,6 @@ class YamFollower(Robot):
                     camera.disconnect()
         finally:
             self._connected = False
-            self._calibration_session = False
 
     def _apply_gripper_calibration(self, *, overwrite: bool = False) -> None:
         calibration = self.calibration.get("gripper")

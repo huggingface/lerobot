@@ -91,15 +91,18 @@ class BiYamFollower(BimanualMixin, Robot):
             raise ValueError("Run lerobot-calibrate with this robot.id to measure both gripper endpoints")
         self._stop.clear()
         try:
-            if calibrate:
+            if not calibrate:
+                for arm in self.arms.values():
+                    arm._open_for_calibration()
+            else:
+                # Load both models and check both arms before either gets torque.
                 for arm in self.arms.values():
                     arm._load_control_model()
-            for arm in self.arms.values():
-                arm._prepare_connect(calibrate)
-            if calibrate:
+                for arm in self.arms.values():
+                    arm._open()
                 self.configure()
                 for arm in self.arms.values():
-                    arm.servo.start()
+                    arm._start()
             for arm in self.arms.values():
                 arm._connected = True
         except BaseException:
@@ -109,18 +112,6 @@ class BiYamFollower(BimanualMixin, Robot):
                     arm._close()
                 except Exception:
                     logger.exception("Failed to close YAM arm after bimanual connection failure")
-            raise
-
-    def configure(self) -> None:
-        try:
-            for arm in self.arms.values():
-                arm._configure_control()
-            for arm in self.arms.values():
-                arm._enable_motors()
-        except BaseException:
-            self._stop.set()
-            for arm in self.arms.values():
-                arm.bus.disable()
             raise
 
     @check_if_not_connected
@@ -134,7 +125,7 @@ class BiYamFollower(BimanualMixin, Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        if self.config.read_only or self.left_arm._calibration_session:
+        if self.config.read_only or not self.left_arm.servo.active:
             raise RuntimeError("YAM read-only/calibration connection forbids motor commands")
         if set(action) != set(self.action_features):
             raise ValueError("YAM requires all 14 absolute joint/gripper targets; Cartesian actions need IK")
