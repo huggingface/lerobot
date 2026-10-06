@@ -147,7 +147,7 @@ class DummyTextProcessor:
 def make_eo1_config():
     return EO1Config(
         device="cpu",
-        dtype="float32",
+        dtype=torch.float32,
         vlm_base="dummy-qwen",
         vlm_config={},
         chunk_size=CHUNK_SIZE,

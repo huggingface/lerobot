@@ -15,7 +15,10 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, field
+
+import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -63,7 +66,11 @@ class Evo1Config(PreTrainedConfig):
 
     vlm_model_name: str = "OpenGVLab/InternVL3-1B-hf"
     vlm_num_layers: int | None = 14
-    vlm_dtype: str = "bfloat16"
+    dtype: torch.dtype | None = torch.bfloat16
+
+    # Deprecated and ignored: superseded by `dtype`. Declared only so configs written before the
+    # rename still parse — draccus rejects config.json keys the dataclass no longer declares.
+    vlm_dtype: str | None = None
     # Max token length for tokenizing the (image placeholders + instruction) prompt. Prompts longer
     # than this are right-truncated, so raise it for tasks with long language instructions or many views.
     max_text_length: int = 1024
@@ -108,6 +115,14 @@ class Evo1Config(PreTrainedConfig):
     scheduler_warmup_steps: int = 300
 
     def __post_init__(self):
+        if self.vlm_dtype is not None:
+            warnings.warn(
+                "`vlm_dtype` is deprecated; use `--policy.dtype` instead.",
+                FutureWarning,
+                stacklevel=3,
+            )
+            self.vlm_dtype = None
+
         super().__post_init__()
         if self.training_stage not in {"stage1", "stage2"}:
             raise ValueError(
