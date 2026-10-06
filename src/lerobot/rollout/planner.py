@@ -23,7 +23,7 @@ import json
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -38,7 +38,7 @@ from lerobot.datasets.utils import DEFAULT_TASKS_PATH
 from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT
 
-from .inference import EXTERNAL_HISTORY_DEFAULT, PolicyQuery, QueryKind
+from .inference import EXTERNAL_HISTORY_DEFAULT, PlannerReply, PolicyQuery, QueryKind
 
 logger = logging.getLogger(__name__)
 
@@ -122,21 +122,22 @@ class VlmPlanner:
         self.client = client or make_vlm_client(config)
         self._assessments: deque[dict] = deque(maxlen=config.history)
 
-    def __call__(self, obs_processed: dict, query: PolicyQuery, task: str) -> str:
+    def __call__(self, obs_processed: dict, query: PolicyQuery, task: str) -> PlannerReply:
         started = time.perf_counter()
         messages = self.build_messages(obs_processed, query, task)
+        reply = None
         try:
             reply = self.client.generate_json([messages])[0]
-            text = self.parse_reply(reply, query, task)
+            parsed = self.parse_reply(reply, query, task)
         except Exception as e:
-            self._log_exchange(query, task, started, reply=None, returned=None, error=e)
+            self._log_exchange(query, task, started, reply=reply, returned=None, error=e)
             raise
         if query.kind is QueryKind.NEXT_SUBTASK and isinstance(reply, dict):
-            self._assessments.append(
-                {"scene": reply.get("scene", ""), "verdict": reply.get("previous_command", "")}
-            )
-        self._log_exchange(query, task, started, reply=reply, returned=text, error=None)
-        return text
+            assessment = {"scene": reply.get("scene", ""), "verdict": reply.get("previous_command", "")}
+            self._assessments.append(assessment)
+            parsed = replace(parsed, detail=format_assessment(assessment))
+        self._log_exchange(query, task, started, reply=reply, returned=parsed.text, error=None)
+        return parsed
 
     def _log_exchange(
         self,
@@ -211,9 +212,20 @@ class VlmPlanner:
         return content
 
     def request_text(self, query: PolicyQuery, task: str) -> str:
-        lines = [f"Robot: {self.robot_type}", f"Current instruction: {task}", f"Request: {query.text}"]
+        current = task
+        if (
+            query.kind is QueryKind.NEXT_SUBTASK
+            and not query.history
+            and normalize_instruction(task) == normalize_instruction(query.text)
+        ):
+            current = "No planner subtask has been issued yet."
+        lines = [f"Robot: {self.robot_type}", f"Current instruction: {current}", f"Request: {query.text}"]
         if query.kind is QueryKind.NEXT_SUBTASK:
             lines.append(SUBTASK_RULES)
+            lines.append(
+                "For a multi-step goal, choose one concrete subtask, not the entire goal. "
+                "Assess previous_command against the last issued subtask, not overall goal completion."
+            )
             if self.config.instructions:
                 lines.append(
                     f"Choose exactly one of these allowed instructions: {self.config.instructions!r}"
@@ -232,16 +244,16 @@ class VlmPlanner:
                 blocks.append({"type": "image", "image": Image.fromarray(value)})
         return blocks
 
-    def parse_reply(self, reply: object, query: PolicyQuery, task: str) -> str:
-        """The reply field as text; a next-subtask reply of ``done`` holds the current instruction."""
+    def parse_reply(self, reply: object, query: PolicyQuery, task: str) -> PlannerReply:
+        """The reply field as text; a next-subtask reply of ``done`` marks the goal completed."""
         reply_field = REPLY_FIELD[query.kind]
         logger.info("Planner reply (%s): %r", query.kind.value, reply)
         text = reply.get(reply_field) if isinstance(reply, dict) else None
         if not isinstance(text, str) or not text.strip():
             raise ValueError(f"Planner returned no non-empty {reply_field}: {reply!r}")
         text = text.strip()
-        if query.kind is QueryKind.NEXT_SUBTASK and text == "done":
-            return task
+        if query.kind is QueryKind.NEXT_SUBTASK and normalize_instruction(text) == "done":
+            return PlannerReply(text="done", completed=True)
         # While the current command is still running, send nothing to the policy: whatever
         # the instruction field says, the current instruction stays as it is.
         if (
@@ -249,7 +261,7 @@ class VlmPlanner:
             and isinstance(reply, dict)
             and reply.get("previous_command") == "in progress"
         ):
-            return task
+            return PlannerReply(text=task)
         if query.kind is QueryKind.NEXT_SUBTASK and self.config.instructions:
             allowed = {
                 normalize_instruction(instruction): instruction for instruction in self.config.instructions
@@ -257,8 +269,8 @@ class VlmPlanner:
             matched = allowed.get(normalize_instruction(text))
             if matched is None:
                 raise ValueError(f"Planner instruction is outside the allowed list: {text!r}")
-            return matched
-        return text
+            return PlannerReply(text=matched)
+        return PlannerReply(text=text)
 
 
 def training_vocabulary(pretrained_path: str) -> list[str]:

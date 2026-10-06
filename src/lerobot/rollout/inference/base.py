@@ -62,6 +62,17 @@ class PolicyQuery:
 
 
 @dataclass(frozen=True)
+class PlannerReply:
+    """What an external planner returns: the answer text plus what the operator should see."""
+
+    text: str
+    detail: str = ""
+    """The model's own assessment, such as its scene description."""
+    completed: bool = False
+    """The autosteer goal is complete: ``text`` is a status, not an instruction."""
+
+
+@dataclass(frozen=True)
 class QueryAnswer:
     """Result of a policy text query.
 
@@ -75,6 +86,11 @@ class QueryAnswer:
     kind: QueryKind = QueryKind.VQA
     held: bool = False
     """A NEXT_SUBTASK answer that repeated the current instruction: nothing was sent."""
+    completed: bool = False
+    """The planner reports the autosteer goal complete: ``answer`` is a status, not an instruction."""
+    detail: str = ""
+    """What an external planner reported beside its answer, such as its scene assessment."""
+    latency_s: float | None = None
 
     @property
     def ok(self) -> bool:
@@ -140,7 +156,7 @@ class InferenceEngine(abc.ABC):
         # Answers awaiting delivery; a queue so an undelivered one is never overwritten.
         self._ready_answers: deque[QueryAnswer] = deque()
         self._answer_observer: Callable[[QueryAnswer], None] | None = None
-        self.external_text: Callable[..., str] | None = None
+        self.external_text: Callable[..., str | PlannerReply] | None = None
         # this engine fills the pairs, planner.history only sets how many it keeps
         self.external_history: deque[tuple[dict, str]] = deque(maxlen=EXTERNAL_HISTORY_DEFAULT)
 
@@ -384,21 +400,36 @@ class InferenceEngine(abc.ABC):
     def _resolve_query(
         self, query: PolicyQuery, obs_processed: dict, generate: Callable, *, epoch: int | None = None
     ) -> None:
+        started = time.perf_counter()
         try:
-            text = generate(obs_processed, query)
-            if not isinstance(text, str) or not text.strip():
-                raise TypeError(f"generate_text() must return a non-empty str, got {text!r}")
-            answer = QueryAnswer(question=query.text, answer=text.strip(), kind=query.kind)
+            result = generate(obs_processed, query)
+            reply = result if isinstance(result, PlannerReply) else PlannerReply(text=result)
+            if not isinstance(reply.text, str) or not reply.text.strip():
+                raise TypeError(f"generate_text() must return a non-empty str, got {reply.text!r}")
+            answer = QueryAnswer(
+                question=query.text,
+                answer=reply.text.strip(),
+                kind=query.kind,
+                completed=reply.completed,
+                detail=reply.detail,
+            )
         except Exception as e:
             logger.exception("Policy text query failed (%s) for %r", query.kind.value, query.text)
             answer = QueryAnswer(question=query.text, error=f"{type(e).__name__}: {e}", kind=query.kind)
+        answer = replace(answer, latency_s=round(time.perf_counter() - started, 3))
         # Cancellation and application are atomic. A stopped or replaced request cannot
         # overwrite a newer instruction, including a restart with the identical goal.
         with self._query_lock:
             if epoch is not None and epoch != self._query_epoch:
                 self._query_in_flight = False
                 return
-            if query.kind is QueryKind.NEXT_SUBTASK:
+            if query.kind is QueryKind.NEXT_SUBTASK and answer.completed:
+                if self._autosteer_goal != query.text:
+                    self._query_in_flight = False
+                    return
+                self._autosteer_goal = None
+                logger.info("Autosteer stopped (goal was '%s') — the planner reports it complete", query.text)
+            elif query.kind is QueryKind.NEXT_SUBTASK:
                 subtask = answer.answer
                 if subtask is not None:
                     changed = self._apply_subtask(query, subtask)

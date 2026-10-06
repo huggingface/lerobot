@@ -78,6 +78,14 @@ def _format_task(task: str) -> str:
     return repr(task) if task else "(none — set one with /subtask <text>)"
 
 
+def _format_latency(answer: QueryAnswer) -> str:
+    return f" ({answer.latency_s:.1f}s)" if answer.latency_s is not None else ""
+
+
+def _format_detail(answer: QueryAnswer) -> str:
+    return f"\n  {answer.detail}" if answer.detail else ""
+
+
 def _strip_quotes(text: str) -> str:
     """Drop one layer of matching surrounding quotes from a command argument."""
     if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
@@ -182,7 +190,7 @@ class InteractiveSession:
             )
         elif event is RolloutEvent.SEGMENT_ENDED:
             self._print(
-                "Rollout run ended on its own (duration reached). Robot is holding position — "
+                "Rollout run ended. Robot is holding position — "
                 "/start to run again, /reset to return to initial position, /stop to shut down."
             )
         elif event is RolloutEvent.RESET_STARTED:
@@ -205,18 +213,28 @@ class InteractiveSession:
     def _report_answer(self, answer: QueryAnswer) -> None:
         """Render a resolved text query (an operator question or an autosteer turn)."""
         if answer.kind is QueryKind.NEXT_SUBTASK:
-            if answer.ok and answer.held:
-                self._print(f"Autosteer holds {answer.answer!r} — nothing sent to the policy")
+            if answer.completed:
+                self._print(
+                    f"Planner reports {answer.question!r} complete{_format_latency(answer)} — run ended, "
+                    "robot holding. /reset to return to initial position."
+                )
+            elif answer.ok and answer.held:
+                self._print(
+                    f"Autosteer holds {answer.answer!r}{_format_latency(answer)} — nothing sent to the policy"
+                    f"{_format_detail(answer)}"
+                )
             elif answer.ok:
                 # The engine has already applied it via set_task; just announce.
-                self._print(f"Autosteer subtask: {answer.answer!r}")
+                self._print(
+                    f"Autosteer subtask: {answer.answer!r}{_format_latency(answer)}{_format_detail(answer)}"
+                )
             else:
                 self._print(
                     f"Autosteer stopped — could not plan the next subtask for {answer.question!r}: "
                     f"{answer.error}"
                 )
         elif answer.ok:
-            self._print(f"Q: {answer.question}\nA: {answer.answer}")
+            self._print(f"Q: {answer.question}\nA: {answer.answer}{_format_latency(answer)}")
         else:
             self._print(f"Could not answer {answer.question!r} — {answer.error}")
 
