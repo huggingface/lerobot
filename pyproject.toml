@@ -256,7 +256,8 @@ fineart_vla = ["lerobot[pi]"]
 fineart_vla_kernels = [
     "lerobot[fineart_vla]",
     "liger-kernel>=0.8.0,<0.9.0; sys_platform == 'linux'",
-    "kernels>=0.17.0,<0.18.0",
+    # kernels>=0.15 breaks `import transformers.activations` with the pinned transformers.
+    "kernels>=0.14.1,<0.15.0",
 ]
 hilserl = ["lerobot[transformers-dep]", "lerobot[dataset]", "gym-hil>=0.1.14,<0.2.0", "lerobot[grpcio-dep]", "lerobot[placo-dep]"]
 vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen-vl-utils-dep]"]
