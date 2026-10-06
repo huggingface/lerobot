@@ -57,7 +57,3 @@ class FeetechMotorsBus(SerialMotorsBus):
             stacklevel=2,
         )
         super().__init__(port, motors, calibration)
-
-    @classmethod
-    def scan_port(cls, port: str, model: str = "sts3215") -> dict[int, list[int]]:
-        return super().scan_port(port, model)
