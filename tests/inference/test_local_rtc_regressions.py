@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from threading import Event, Semaphore
 from types import SimpleNamespace
@@ -21,7 +22,7 @@ import torch
 pytest.importorskip("datasets", reason="rollout requires the dataset extra")
 
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.inference import ObservationSnapshot, RTCInferenceEngine, rtc
+from lerobot.inference import ObservationSnapshot, RTCInferenceConfig, RTCInferenceEngine, rtc
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -119,6 +120,39 @@ def observe(engine, value=0.0):
 def stop(engine):
     engine._policy.release.release(20)
     engine.stop()
+
+
+@pytest.mark.parametrize("temporal_contract", [False, True])
+def test_unsupported_local_policy_explains_sync_fallback_before_hardware(monkeypatch, temporal_contract):
+    policy = ControlledPolicy()
+    if temporal_contract:
+        spec = replace(policy.chunk_inference_spec(), current_observation_only=False)
+        monkeypatch.setattr(policy, "chunk_inference_spec", lambda: spec)
+        reason = "temporal observation sampling"
+    else:
+        policy.config.n_obs_steps = 2
+        reason = "n_obs_steps=1"
+    cfg = RolloutConfig(
+        robot=MockRobotConfig(),
+        policy=ACTConfig(device="cpu", pretrained_path=Path("unused")),
+        inference=RTCInferenceConfig(rtc=RTCConfig(enabled=False)),
+        device="cpu",
+    )
+    monkeypatch.setattr(context, "_load_pretrained_policy", lambda _: policy)
+
+    def unexpected_hardware(*args, **kwargs):
+        pytest.fail("Policy compatibility must be checked before constructing hardware")
+
+    monkeypatch.setattr(context, "make_robot_from_config", unexpected_hardware)
+    for construct in (
+        lambda: context.build_rollout_context(cfg, Event()),
+        lambda: make_engine(policy=policy),
+    ):
+        with pytest.raises(ValueError, match="--inference.type=sync") as raised:
+            construct()
+        assert reason in str(raised.value)
+        assert isinstance(raised.value.__cause__, ValueError)
+        assert reason in str(raised.value.__cause__)
 
 
 def test_local_rtc_without_hold_runs_actions_but_rejects_language(caplog):

@@ -42,6 +42,7 @@ from lerobot.inference import (
     RTCInferenceConfig,
     create_inference_engine,
     supports_rtc_inference,
+    validate_local_chunk_policy,
 )
 from lerobot.policies import PreTrainedPolicy, get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.configuration_rtc import validate_trained_rtc_horizon
@@ -463,7 +464,7 @@ def build_rollout_context(
     policy = _load_pretrained_policy(policy_config)
 
     if is_rtc:
-        policy.chunk_inference_spec()
+        validate_local_chunk_policy(policy)
 
     if is_rtc and cfg.inference.rtc.enabled:
         if not supports_rtc_inference(policy):

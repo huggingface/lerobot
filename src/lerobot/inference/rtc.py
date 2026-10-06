@@ -37,7 +37,7 @@ from lerobot.processor import (
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from .base import InferenceEngine, InferenceRobot, PolicyQuery, QueryKind
-from .contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
+from .contracts import ActionChunk, ActionProvenance, ChunkPolicySpec, ExecutionMode, ObservationSnapshot
 from .execution import ChunkRuntime
 from .prediction import chunk_inference_context, predict_chunk
 
@@ -62,6 +62,20 @@ class _TrainedRTCDelayExceededError(_FatalRTCInferenceError):
 # ---------------------------------------------------------------------------
 # RTC helpers
 # ---------------------------------------------------------------------------
+
+
+def validate_local_chunk_policy(policy: PreTrainedPolicy) -> ChunkPolicySpec:
+    """Check local asynchronous compatibility before connecting hardware or starting a worker."""
+    try:
+        spec = policy.chunk_inference_spec()
+        if not spec.current_observation_only:
+            raise ValueError("Local asynchronous inference does not implement temporal observation sampling")
+    except (ValueError, NotImplementedError) as exc:
+        raise ValueError(
+            f"{type(policy).__name__} cannot run with local asynchronous inference: {exc} "
+            "Use '--inference.type=sync' for the policy's synchronous execution path."
+        ) from exc
+    return spec
 
 
 def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
@@ -116,9 +130,7 @@ class RTCInferenceEngine(InferenceEngine):
         """Own local asynchronous policy work and configure supported waiting."""
         super().__init__(task=task)
         self._policy = policy
-        self._policy_spec = policy.chunk_inference_spec()
-        if not self._policy_spec.current_observation_only:
-            raise ValueError("Local asynchronous inference does not implement temporal observation sampling")
+        self._policy_spec = validate_local_chunk_policy(policy)
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._model_action_dim: int | None = None

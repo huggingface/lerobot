@@ -504,8 +504,11 @@ def send_next_action(
     queue pull — inference runs off-thread, so its latency surfaces as starved
     ticks rather than as loop-body time.
 
-    Returns the action dict that was sent, or ``None`` if no action was
-    ready (e.g. empty async queue, interpolator not yet primed).
+    Returns the canonical action dict for a dispatched policy action, or ``None``
+    during startup, a planned pause, or bounded asynchronous waiting. An empty
+    active buffer starts the engine's starvation handling; grace expiry (or no
+    supported hold) faults the engine and ends the rollout. ``None`` does not mean
+    that no command was sent: a supported hold may have been applied instead.
     """
     engine = ctx.policy.inference
     engine.begin_control_tick()

@@ -33,7 +33,12 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 # Front-end and engine internals, imported from their defining modules.
-from lerobot.inference import PolicyQuery  # noqa: E402
+from lerobot.inference import (  # noqa: E402
+    PolicyQuery,
+    RemoteInferenceConfig,
+    RTCInferenceConfig,
+    SyncInferenceConfig,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.rollout import (  # noqa: E402
     AskResult,
@@ -192,6 +197,7 @@ def _loop_ctx(engine, robot=None, stop_event=None, **cfg_overrides):
         "interpolation_multiplier": 1,
         "display_data": False,
         "autosteer_interval_s": 0.0,
+        "inference": SyncInferenceConfig(),
     }
     cfg.update(cfg_overrides)
     return SimpleNamespace(
@@ -642,6 +648,26 @@ def test_session_mutes_logs_below_error_and_restores_on_exit():
         lib_logger.removeHandler(lib_handler)
         # An assertion failure mid-test must not leak the process-wide gate.
         logging.disable(logging.NOTSET)
+
+
+@pytest.mark.parametrize(
+    ("inference", "hint"),
+    [
+        (SyncInferenceConfig(), "policy supports text generation"),
+        (RTCInferenceConfig(), "position-hold capability"),
+        (RemoteInferenceConfig(deployment="test", semantics="joints-v1"), "server language.enabled"),
+    ],
+)
+def test_session_unsupported_text_hints_match_backend(capsys, inference, hint):
+    session, _strategy, engine, _parent, _run_started = _make_session(io.StringIO())
+    session._runtime.cfg.inference = inference
+    engine.supports_text_queries = False
+    for command in ("/vqa what do you see?", "/autosteer tidy the table"):
+        session._handle_line(command)
+        output = capsys.readouterr().out
+        assert hint in output
+        if isinstance(inference, SyncInferenceConfig):
+            assert "hold" not in output
 
 
 def test_session_drives_real_base_strategy_and_answers_vqa(capsys):

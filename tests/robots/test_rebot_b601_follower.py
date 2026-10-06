@@ -421,6 +421,48 @@ def test_rs_observation_can_be_sent_back_to_hold_position():
         assert math.degrees(motor_position) == pytest.approx(10.0)
 
 
+@pytest.mark.parametrize(
+    ("family", "config_kwargs"),
+    [
+        (MotorFamily.DM, {}),
+        (MotorFamily.DM, {"control_mode": "pos_vel", "gripper_control_mode": "mit"}),
+        (MotorFamily.RS, {}),
+    ],
+)
+def test_position_hold_reuses_clipped_public_targets(family, config_kwargs):
+    pytest.importorskip("datasets")
+    from lerobot.rollout.robot_wrapper import ThreadSafeRobot
+
+    with _connected(
+        family, positions_deg=[0.0] * len(JOINT_NAMES), max_relative_target=2.0, **config_kwargs
+    ) as robot:
+        wrapped = ThreadSafeRobot(robot)
+        wrapped.configure_position_hold()
+        measured = wrapped.get_observation()
+        wrapped.hold()
+        assert measured == dict.fromkeys(robot.action_features, 0.0)
+
+        applied = wrapped.send_action(dict.fromkeys(robot.action_features, -10.0))
+        assert applied == dict.fromkeys(robot.action_features, -2.0)
+        wrapped.hold()
+        wrapped.hold()
+        for name, motor in robot.motors.items():
+            target = math.radians(-2.0 * robot.profile.joint_directions[name])
+            if name == "gripper" and family is MotorFamily.RS:
+                # The controller regenerates bounded torque around the same absolute position reference.
+                assert robot._gripper_prev_target_pos == pytest.approx(target)
+                assert 0.0 < motor.send_mit.call_args.args[4] <= robot.config.gripper_hold_torque_limit
+            else:
+                if name == "gripper" and family is MotorFamily.DM and not config_kwargs:
+                    send = motor.send_force_pos
+                elif name != "gripper" and robot.config.control_mode is ArmControlMode.POS_VEL:
+                    send = motor.send_pos_vel
+                else:
+                    send = motor.send_mit
+                assert [call.args[0] for call in send.call_args_list[-3:]] == pytest.approx([target] * 3)
+        assert wrapped.hardware_failure is None
+
+
 @pytest.mark.parametrize("family", MotorFamily)
 def test_partial_action_does_not_command_unspecified_joints(family):
     with _connected(

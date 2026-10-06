@@ -108,8 +108,8 @@ lerobot-rollout \
 
 | Flag                                   | Description                                    |
 | -------------------------------------- | ---------------------------------------------- |
-| `--strategy.ring_buffer_seconds`       | Duration of buffered telemetry (default: 30)   |
-| `--strategy.ring_buffer_max_memory_mb` | Memory cap for the ring buffer (default: 2048) |
+| `--strategy.ring_buffer_seconds`       | Duration of buffered telemetry (default: 10)   |
+| `--strategy.ring_buffer_max_memory_mb` | Memory cap for the ring buffer (default: 1024) |
 | `--strategy.save_key`                  | Key to toggle recording (default: `s`)         |
 | `--strategy.push_key`                  | Key to push to Hub (default: `h`)              |
 
@@ -319,10 +319,15 @@ shared by asynchronous backends.
 
 **Waiting requires a supported robot.** Ordinary local RTC remains available without
 that capability, but planned text/instruction-change pauses and recoverable starvation
-need it. With support, an empty buffer can retain the last applied target for
+need it. Position-controlled SO, OMX, Koch, HopeJr and Rebot followers support it;
+OpenArm, Reachy2 and bimanual wrappers have configuration constraints listed in the
+[robot support table](./integrate_hardware#waiting-between-predictions).
+With support, an empty buffer can retain the last applied target for
 `action_starvation_grace_s` (default 1 second), including the time needed to drain old
-inference and predict from a fresh capture. Zero grace or an unsupported robot faults
-immediately on exhaustion. Grace never extends expired request or freshness limits.
+inference and predict from a fresh capture. After motion has started, zero grace or
+an unsupported robot faults immediately on exhaustion; startup has its own deadline.
+Unlike the former local RTC path, exhaustion is no longer an indefinitely skipped
+tick. Grace never extends expired request or freshness limits.
 
 Local RTC exposes these additional budgets through `--inference.`:
 
@@ -338,11 +343,12 @@ These are starting values, not measured hardware guarantees. RTC must retain eno
 `queue_threshold` cannot help if inference routinely consumes the usable prediction
 horizon; reduce latency or validate a longer horizon/different action frequency.
 
-A terminal fault never automatically resumes policy motion. With usable actuator
-feedback/control, shutdown honors `--return_to_initial_position` (default true) and
-disconnects. Supported camera-only failures can still return using actuator-only
-feedback. Synchronous policy execution and its existing pause behavior are unchanged;
-the camera-only shutdown handling also applies to synchronous rollouts.
+A terminal fault never automatically resumes policy motion. With usable observation
+acquisition and actuator control, shutdown honors `--return_to_initial_position`
+(default true) and disconnects. Returning reads a full observation, so a persistent
+camera failure can prevent it. Failed command application suppresses further shutdown
+movement for all backends, including sync. This does not change synchronous prediction
+or introduce camera-specific recovery.
 
 <details>
 <summary>Compilation and instruction changes</summary>
@@ -530,7 +536,7 @@ In [interactive sessions](#interactive-sessions) each `/start` segment owns its 
 
 ## Programmatic Usage
 
-For extensions, `lerobot.inference` is the public package for backend configurations, engines and shared scheduling contracts. `lerobot.remote_inference` owns the remote protocol, deployment and session implementation; `lerobot.rollout` owns the robot loop, strategies, interpolation and recording. Import public inference symbols from the package rather than its implementation files. The optional remote dependencies are needed only when the remote backend or server is used.
+For extensions, `lerobot.inference` is the public package for backend configurations, local engines and shared scheduling contracts. `lerobot.remote_inference` owns the remote engine, protocol, deployment and session implementation; `lerobot.rollout` owns the robot loop, strategies, interpolation and recording. Import public symbols from their package rather than implementation files. The optional remote dependencies are needed only when the remote backend or server is used.
 
 For custom deployments (e.g. with kinematics processors), use the rollout module API directly:
 

@@ -61,6 +61,7 @@ LEFT_HAND_INVERSIONS = [
 class HopeJrHand(Robot):
     config_class = HopeJrHandConfig
     name = "hope_jr_hand"
+    supports_position_hold = True
 
     def __init__(self, config: HopeJrHandConfig):
         super().__init__(config)

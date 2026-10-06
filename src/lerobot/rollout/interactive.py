@@ -31,7 +31,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
-from lerobot.inference import QueryAnswer, QueryKind
+from lerobot.inference import QueryAnswer, QueryKind, RemoteInferenceConfig, RTCInferenceConfig
 from lerobot.utils.stdin_input import StdinCommandListener
 from lerobot.utils.utils import log_say
 
@@ -281,6 +281,14 @@ class InteractiveSession:
             # set_task also refuses while stopping; "unchanged" would imply it was applied.
             self._print("Can't change the task — the session is stopping.")
 
+    def _text_support_hint(self) -> str:
+        inference = self._runtime.cfg.inference
+        if isinstance(inference, RemoteInferenceConfig):
+            return "Check the deployment's text support and server language.enabled setting."
+        if isinstance(inference, RTCInferenceConfig):
+            return "Check policy text support and the robot's position-hold capability."
+        return "Check whether this policy supports text generation."
+
     def _cmd_vqa(self, cmd: InteractiveCommand) -> None:
         # Strip quotes first, so /vqa "" prints the usage hint instead of queueing an empty question.
         question = _strip_quotes(cmd.args)
@@ -291,10 +299,7 @@ class InteractiveSession:
         if result is AskResult.QUEUED:
             self._print(f"Asked: {question!r} — answering from the next observation...")
         elif result is AskResult.UNSUPPORTED:
-            self._print(
-                "Text queries are unavailable for this policy/robot setup — "
-                "check policy text support and the robot's local hold capability."
-            )
+            self._print(f"Text queries are unavailable for this setup. {self._text_support_hint()}")
         elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to answer from.")
         elif result is AskResult.BUSY:
@@ -324,10 +329,7 @@ class InteractiveSession:
             return
         result = self.controller.autosteer(goal)
         if result is AskResult.UNSUPPORTED:
-            self._print(
-                "Autosteering is unavailable for this policy/robot setup — "
-                "check policy text support and the robot's local hold capability."
-            )
+            self._print(f"Autosteering is unavailable for this setup. {self._text_support_hint()}")
         elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to plan from.")
         elif result is AskResult.INVALID:

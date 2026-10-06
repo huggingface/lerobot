@@ -1,10 +1,10 @@
 # Asynchronous inference: implementation and design reference
 
-**Implementation baseline:** `191a70177` plus the uncommitted C8–C16 cleanup recorded in [implementation_progress.md](../../../implementation_progress.md), 2026-10-06. This document describes the implemented system. It replaces [async_proposal.md](../../../async_proposal.md) as the active engineering reference; the proposal remains historical rationale. [FUTURE_WORK.md](FUTURE_WORK.md) owns pending work, not current behavior.
+**Implementation baseline:** `9fb80f0a0` plus the uncommitted C17–C18 integration fixes recorded in [implementation_progress.md](../../../implementation_progress.md), 2026-10-06. This document describes the implemented system. It replaces [async_proposal.md](../../../async_proposal.md) as the active engineering reference; the proposal remains historical rationale. [FUTURE_WORK.md](FUTURE_WORK.md) owns pending work, not current behavior.
 
 For installation, commands and tuning, start with the [user guide](../../../docs/source/remote_inference.mdx). This reference explains why the system behaves that way and where those decisions live in code. Software coverage, real-model execution and physical acceptance are distinct; see [validation](#13-validation-and-current-limits).
 
-**Post-hardware update — 2026-10-06:** C8–C16 are implemented/audited: generic observation-error cleanup, explicit package exports, no runtime Git diagnostics, shared context setup, clarified snapshot ownership, consolidated operator docs, richer lifecycle logs, automatic driver-capability checks and aligned plain chunks without default blending. H1–H3 have physical evidence on the prior tested build; H4 is withdrawn. H5 recording and remaining acceptance are tracked separately in the roadmap.
+**Post-hardware update — 2026-10-06:** C8–C16 are implemented/audited: generic observation-error cleanup, explicit package exports, no runtime Git diagnostics, shared context setup, clarified snapshot ownership, consolidated operator docs, richer lifecycle logs, automatic driver-capability checks and aligned plain chunks without default blending. H1–H3 have physical evidence on the prior tested build; H4 is withdrawn. C17 extends compatible driver declarations with configuration-specific exclusions; C18 corrects integration guidance and local compatibility hints. H5 recording and remaining acceptance are tracked separately in the roadmap.
 
 ## 1. Product contract
 
@@ -226,6 +226,8 @@ This diagram describes observable states, not a single enum in the implementatio
 `ThreadSafeRobot` retains the complete finite position target **returned by the driver after a send**, including interpolation/clipping and gripper values. Waiting refreshes that target without camera reads or policy inference. Before any applied command, it falls back to the latest cached, validated measured pose. It never substitutes the unverified requested command for an invalid driver return.
 
 Target retention may still allow the robot to settle toward that target; it does not prove instantaneous stillness. Torque behavior depends on the driver. Capability declaration is explicit, not a universal “torque on means hold” assumption. Remote admission requires supported position-only hold. Local RTC remains available on other robots but cannot use recoverable starvation waiting there.
+
+SO/OMX, Koch, HopeJr and Rebot support this contract. OpenArm and Reachy2 declarations depend on configuration; bimanual wrappers require both children. Mobile-base velocity and G1 controller/latent commands remain excluded. See the [driver inventory](../../../docs/source/integrate_hardware.mdx#waiting-between-predictions) for exact constraints. These declarations describe command semantics, not hardware validation of every robot. Custom processors must preserve complete driver-applied targets; validation is not relaxed for transformed or teleoperated commands.
 
 ### Starvation recovery
 

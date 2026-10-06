@@ -286,7 +286,7 @@ python src/lerobot/scripts/lerobot_train.py \
 
 ### Inference with RTC
 
-Once trained, we recommend deploying policies using inference-time RTC:
+A compatible trained policy can use local inference-time RTC:
 
 ```bash
 lerobot-rollout \
@@ -302,6 +302,13 @@ lerobot-rollout \
   --fps=30 \
   --inference.type=rtc
 ```
+
+G1 does not declare the position-target hold contract used by rollout's recoverable
+waiting. After motion begins, exhausting the action buffer therefore causes a terminal
+fault rather than a grace-period wait. Request deadlines and observation-age limits
+also apply. Validate that the policy's usable chunk covers inference latency before
+using this recipe; see [local RTC waiting and budgets](./inference#inference-backends).
+This local recipe does not establish remote support for G1 or SONIC latent-token policies.
 
 ---
 
