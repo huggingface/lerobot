@@ -181,7 +181,7 @@ def sample_time_beta(
 
 
 def euler_integrate(
-    denoise_fn: Callable[[Tensor, Tensor], Tensor] | Callable[[Tensor, Tensor, int], Tensor],
+    denoise_fn: Callable[..., Tensor],
     noise: Tensor,
     num_steps: int | None = None,
     *,
@@ -282,17 +282,15 @@ def euler_integrate(
     x_t = noise
     for step in range(num_steps):
         if time_grid is None:
-            time = uniform_time(step)
             dt = uniform_dt
             time_tensor = (
                 times[step].expand(bsize)
                 if times is not None
-                else torch.full((bsize,), time, dtype=torch.float32, device=device)
+                else torch.full((bsize,), uniform_time(step), dtype=torch.float32, device=device)
             )
         else:
             # Slice the grid rather than reading it back: `float(time_grid[step])` would
             # synchronise with the accelerator once per step.
-            time = None
             dt = time_grid[step + 1] - time_grid[step]
             time_tensor = time_grid[step].to(dtype=torch.float32, device=device).expand(bsize)
 
@@ -317,7 +315,7 @@ def euler_integrate(
         if needs_rtc_time:
             # RTCProcessor takes a plain float in the NOISE_AT_ONE convention. On the explicit-grid
             # path this is the one place the schedule has to come back to the host.
-            host_time = time if time is not None else float(time_grid[step])
+            host_time = uniform_time(step) if time_grid is None else float(time_grid[step])
             rtc_time = host_time if noise_at_one else 1.0 - host_time
 
         if guidance is not None:
