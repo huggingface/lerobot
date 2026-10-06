@@ -88,6 +88,23 @@ def is_package_available(
         return package_exists
 
 
+def _is_importable(module_name: str) -> bool:
+    """Return True only if the module can actually be imported.
+
+    A package can be present (``importlib.util.find_spec`` passes) but still fail
+    to import — e.g. ``transformers`` runs its own dependency version check at
+    import time and raises ``ImportError`` when its pins are violated. Probing the
+    real import keeps the optional-dependency guards honest for such packages.
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        importlib.import_module(module_name)
+    except Exception as e:  # any import-time failure means "unusable"
+        logger.warning(f"'{module_name}' is installed but failed to import; treating it as unavailable: {e}")
+        return False
+    return True
+
+
 def get_safe_default_video_backend():
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
@@ -130,7 +147,10 @@ def require_package(pkg_name: str, extra: str, import_name: str | None = None) -
 
 # ML / training
 _lancedb_available = is_package_available("lancedb")
-_transformers_available = is_package_available("transformers")
+# Probes the real import: transformers may be present but unimportable (its own
+# dependency version check raises ImportError when its pins are violated), which
+# previously crashed `lerobot.processor` for users who never requested it (#4332).
+_transformers_available = is_package_available("transformers") and _is_importable("transformers")
 _peft_available = is_package_available("peft")
 _scipy_available = is_package_available("scipy")
 _diffusers_available = is_package_available("diffusers")
