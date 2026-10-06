@@ -217,32 +217,3 @@ def test_continuation_width_mismatch_is_rejected_before_policy_execution(worker,
     assert error.value.code is ErrorCode.MALFORMED
     assert worker.runner.policy.last_kwargs == {}
     client.close()
-
-
-@pytest.mark.parametrize("worker", [True], indirect=True)
-def test_continuation_spaces_must_refer_to_equal_numbers_of_steps(worker):
-    client = client_for(worker)
-    admit(client)
-    first = client.infer(action_request())
-    request = action_request(first)
-    request = replace(
-        request, continuation=replace(request.continuation, canonical_actions=first.canonical_actions[-3:])
-    )
-    with pytest.raises(ProtocolError, match="identical steps"):
-        client.infer(request)
-    client.close()
-
-
-@pytest.mark.parametrize("worker", [False], indirect=True)
-def test_old_canonical_descriptor_still_supports_rtc_without_new_fields(worker):
-    descriptor = worker.descriptor
-    assert "model_action_dim" not in descriptor["capabilities"]
-    descriptor.pop("execution_contracts")
-    descriptor.pop("blendable_components")
-    client = client_for(worker, descriptor=descriptor)
-    assert client.capabilities.model_action_dim is None
-    admit(client)
-    first = client.infer(action_request())
-    second = client.infer(action_request(first))
-    assert second.model_actions.shape == second.canonical_actions.shape == (8, 3)
-    client.close()

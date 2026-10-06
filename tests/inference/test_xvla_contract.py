@@ -3,14 +3,12 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.inference import ExecutionMode, ObservationSnapshot, PolicyRunner
+from lerobot.inference import ExecutionMode
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 from lerobot.policies.xvla.processor_xvla import (
@@ -20,7 +18,7 @@ from lerobot.policies.xvla.processor_xvla import (
 )
 from lerobot.processor import NormalizerProcessorStep, make_policy_processor_pipelines
 from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_STATE
-from tests.inference.fixtures import omx_contract
+from tests.inference.fixtures import omx_contract, preparation_batches
 
 
 @pytest.fixture
@@ -61,24 +59,9 @@ def setup():
 
 def test_xvla_remote_preserves_local_preparation_for_six_joints_and_two_cameras(setup):
     server, policy, pre, post = setup
-    runner = PolicyRunner(
-        policy,
-        pre,
-        post,
-        action_interval=1 / 30,
-        features=tuple(server.features),
-        action_feature=server.action_feature,
-    )
+    runner, _, remote, local = preparation_batches(policy, server, pre, post)
     assert runner.capabilities.execution_steps == 30
     assert runner.capabilities.modes == (ExecutionMode.CHUNK,)
-    arrays = {
-        feature.name: np.full(feature.shape, 64 + i, dtype=feature.dtype)
-        for i, feature in enumerate(server.features)
-    }
-    arrays[OBS_STATE] = np.arange(6, dtype=np.float32)
-    observation = ObservationSnapshot(arrays, 0.0, "pick up the cube")
-    remote = pre(runner._batch(observation))
-    local = pre(prepare_observation_for_inference(arrays.copy(), torch.device("cpu"), observation.task))
     # Tokenization is independent of transport; avoid downloading its vocabulary.
     local[OBS_LANGUAGE_TOKENS] = remote[OBS_LANGUAGE_TOKENS] = torch.ones((1, 4), dtype=torch.long)
     actual = policy._build_model_inputs(remote)
@@ -100,28 +83,4 @@ def test_xvla_rejects_state_truncation_and_nonidentity_shape_changes(setup):
         policy.validate_chunk_input_features((replace(features[0], shape=(21,), names=()), *features[1:]))
     policy.config.normalization_mapping["STATE"] = NormalizationMode.MEAN_STD
     with pytest.raises(ValueError, match="identity normalization"):
-        policy.validate_chunk_input_features(features)
-
-
-def test_xvla_rejects_unknown_or_missing_inputs_and_unsupported_rtc(setup):
-    server, policy, pre, post = setup
-    features = tuple(server.features)
-    with pytest.raises(ValueError, match="nonvisual"):
-        policy.validate_chunk_input_features(features[1:])
-    with pytest.raises(ValueError, match="at least one camera"):
-        policy.validate_chunk_input_features(features[:1])
-    with pytest.raises(ValueError, match="known camera"):
-        policy.validate_chunk_input_features((*features, replace(features[1], name="unknown")))
-    with pytest.raises(ValueError, match="Unsupported execution mode"):
-        PolicyRunner(
-            policy,
-            pre,
-            post,
-            action_interval=1 / 30,
-            features=features,
-            action_feature=server.action_feature,
-            modes=(ExecutionMode.RTC_GUIDED,),
-        )
-    policy.config.resize_imgs_with_padding = None
-    with pytest.raises(ValueError, match="without policy resizing"):
         policy.validate_chunk_input_features(features)

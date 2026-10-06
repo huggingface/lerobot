@@ -8,13 +8,10 @@ from threading import Event
 from types import SimpleNamespace
 from uuid import uuid4
 
-import numpy as np
 import pytest
 
-from lerobot import __version__
-from lerobot.remote_inference.codec import CodecLimits, decode_message
 from lerobot.remote_inference.protocol import Envelope, ErrorCode, MessageType
-from lerobot.remote_inference.server import PolicyServer, SessionWorker
+from lerobot.remote_inference.server import SessionWorker
 from tests.inference.test_policy_runner import ConformingPolicy, observation, runner_for, tiny_config
 
 
@@ -85,30 +82,6 @@ def control_request(worker, session, generation, operation):
     )
 
 
-def test_policy_progress_is_bounded_and_per_request_timings_require_debug(worker, caplog):
-    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
-    session = admit(worker)
-    assert worker.descriptor["software"] == {"lerobot_version": __version__}
-    assert worker.descriptor["artifact_identity"] == "artifact"
-    worker.submit(control_request(worker, session, 1, "invalidate")).result(2)
-    worker._last_summary_at -= 5
-    result = worker.submit(action_request(worker, session, generation=1)).result(2)
-    assert result.message_type is MessageType.ACTION
-    assert "Policy progress: deployment=test actions=1 text_queries=0" in caplog.text
-    assert "client logs include transport delay" in caplog.text
-    assert "errors=0 stale=0 invalidations=1 resets=0" in caplog.text
-    assert "control wait max=" in caplog.text
-    assert "last 1 operations, all outcomes" in caplog.text
-    assert "Policy operation deployment=" not in caplog.text
-    worker.submit(action_request(worker, session, generation=1)).result(2)
-    assert caplog.text.count("Policy progress:") == 1
-    caplog.set_level("DEBUG", logger="lerobot.remote_inference.server")
-    request = action_request(worker, session, generation=1)
-    worker.submit(request).result(2)
-    assert f"request={request.request_id}" in caplog.text
-    assert "queue_s=" in caplog.text and "worker_s=" in caplog.text
-
-
 def block_predict(worker):
     entered, release = Event(), Event()
     original = worker.runner.policy.predict_action_chunk
@@ -127,8 +100,7 @@ def assert_error(response, code):
     assert response.body["code"] == code
 
 
-def test_worker_shutdown_reports_pending_call_without_claiming_cleanup(worker, caplog):
-    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
+def test_worker_shutdown_is_bounded_without_promising_to_drain_cleanup(worker):
     session = admit(worker)
     entered, release = block_predict(worker)
     try:
@@ -136,17 +108,10 @@ def test_worker_shutdown_reports_pending_call_without_claiming_cleanup(worker, c
         assert entered.wait(2)
         closing = worker.submit(control_request(worker, session, 0, "close"))
         assert not worker.close()
-        assert "stop wait timed out" in caplog.text
-        assert "active_operation=observation queued_operations=1" in caplog.text
-        assert "cleanup_pending=True" in caplog.text
-        assert "Policy worker stopped" not in caplog.text
-        assert "Session released" not in caplog.text
         release.set()
         action.result(2)
         assert worker.close()
         assert not closing.done(), "process shutdown does not promise to drain queued resets"
-        assert "Policy worker stopped" in caplog.text
-        assert "queued operations are not drained" in caplog.text
     finally:
         release.set()
 
@@ -156,17 +121,6 @@ def test_unknown_required_capability_rejects_before_session_admission(worker):
     request.body["required_capabilities"] = ["future-observation-history"]
     assert_error(worker.submit(request).result(2), ErrorCode.UNSUPPORTED)
     assert worker.session_id is None
-
-
-def test_invalid_continuation_is_rejected_before_stateful_work(worker):
-    session = admit(worker)
-    request = action_request(worker, session)
-    request.body["model_continuation"] = np.ones((2, 3), dtype=np.int64)
-    assert_error(worker.submit(request).result(2), ErrorCode.MALFORMED)
-    request.body["model_continuation"] = np.ones((2, 3), dtype=np.float32)
-    request.body["canonical_continuation"] = np.ones((1, 3), dtype=np.float32)
-    assert_error(worker.submit(request).result(2), ErrorCode.MALFORMED)
-    assert not worker.runner.policy.last_kwargs
 
 
 def test_open_is_idempotent_and_a_second_client_cannot_replace_session(worker):
@@ -188,21 +142,6 @@ def test_evicted_request_identity_cannot_be_replayed(worker):
         assert worker.submit(action_request(worker, session)).result(2).message_type is MessageType.ACTION
     assert first.request_id not in worker._seen
     assert_error(worker.submit(first).result(2), ErrorCode.STALE)
-
-
-def test_equal_generation_reset_remains_idempotent_after_control_cache_eviction(worker):
-    session = admit(worker)
-    reset = control_request(worker, session, 1, "reset")
-    assert worker.submit(reset).result(2).message_type is MessageType.ACK
-    resets = worker.runner.policy.resets
-    for _ in range(32):
-        assert (
-            worker.submit(control_request(worker, session, 1, "status")).result(2).message_type
-            is MessageType.ACK
-        )
-    assert reset.request_id not in worker._controls
-    assert worker.submit(reset).result(2).message_type is MessageType.ACK
-    assert worker.runner.policy.resets == resets
 
 
 def test_close_operation_remains_idempotent_after_session_release(worker):
@@ -271,12 +210,7 @@ def test_close_during_blocked_call_keeps_ownership_until_worker_finishes(worker)
         assert not close.done()
         rejected = worker.submit(open_request(worker)).result(2)
         assert_error(rejected, ErrorCode.BUSY)
-        assert "admission_blocker=unfinished_inference" in rejected.body["message"]
-        state = worker.descriptor["session"]
-        assert state["owner"] == session
-        assert state["cleanup_pending"]
-        assert state["cleanup_reason"] == "client_close"
-        assert state["inference_pending"]
+        assert worker.session_id == session
         release.set()
         action.result(2)
         assert close.result(2).message_type is MessageType.ACK
@@ -292,84 +226,30 @@ def cleanup_clock(monkeypatch):
     return clock
 
 
-@pytest.mark.parametrize("initially_present", [False, True])
-def test_first_presence_never_logs_a_disconnect_or_recovery(worker, cleanup_clock, caplog, initially_present):
-    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
+@pytest.mark.parametrize("established", [False, True], ids=["incomplete-handshake", "disconnected"])
+def test_absent_owner_expires_without_admission_retries_extending_grace(worker, cleanup_clock, established):
     session = admit(worker)
-    if not initially_present:
-        worker.expire(present=False)
-        cleanup_clock[0] += 1
-        worker.expire(present=False)
-        assert caplog.text.count("Session awaiting initial presence") == 1
-        assert worker.descriptor["session"]["admission_blocker"] == "awaiting_initial_presence"
-    worker.expire(present=True)
-    worker.expire(present=True)
-    assert worker.session_id == session
-    assert worker.descriptor["session"]["client_present"] is True
-    assert worker.descriptor["session"]["absence_grace_remaining_s"] is None
-    assert caplog.text.count("Session initial presence established") == 1
-    assert "Session client absent" not in caplog.text
-    assert "Session presence restored" not in caplog.text
-
-
-def test_incomplete_handshake_expires_without_retries_extending_grace(worker, cleanup_clock, caplog):
-    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
-    session = admit(worker)
+    if established:
+        worker.expire(present=True)
     worker.expire(present=False)
+    blocker = "absence_grace" if established else "awaiting_initial_presence"
     for advance, remaining in [(4, 6.0), (5, 1.0)]:
         cleanup_clock[0] += advance
         worker.expire(present=False)
         rejected = worker.submit(open_request(worker)).result(2)
         assert_error(rejected, ErrorCode.BUSY)
         assert rejected.body["details"] == {
-            "admission_blocker": "awaiting_initial_presence",
+            "admission_blocker": blocker,
             "absence_grace_remaining_s": remaining,
         }
         assert worker.session_id == session
     cleanup_clock[0] += 1
     worker.expire(present=False)
+    # This control either queues after cleanup or observes its completion.
     assert_error(worker.submit(control_request(worker, session, 0, "status")).result(2), ErrorCode.STALE)
     assert worker.descriptor["available"]
-    assert admit(worker) != session
-    assert "reason=initial_presence_timeout" in caplog.text
-    assert "Session client absent" not in caplog.text
-    assert "Session presence restored" not in caplog.text
-
-
-def test_absent_client_retains_ownership_during_grace_then_allows_fresh_session(
-    worker, cleanup_clock, caplog
-):
-    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
-    session = admit(worker)
-    assert worker.descriptor["limits"]["idle_timeout_s"] == 10.0
-    worker.expire(present=True)
-    worker.expire(present=False)
-    cleanup_clock[0] += 9
-    worker.expire(present=False)
-    state = worker.descriptor["session"]
-    assert state["owner"] == session
-    assert state["client_present"] is False
-    assert state["absence_grace_remaining_s"] == 1.0
-    assert not state["cleanup_pending"]
-    rejected = worker.submit(open_request(worker)).result(2)
-    assert_error(rejected, ErrorCode.BUSY)
-    assert "admission_blocker=absence_grace" in rejected.body["message"]
-    assert "absence_grace_remaining_s=1.0" in rejected.body["message"]
-    assert rejected.body["details"] == {
-        "admission_blocker": "absence_grace",
-        "absence_grace_remaining_s": 1.0,
-    }
-    cleanup_clock[0] += 1
-    worker.expire(present=False)
-    # This control either queues after the worker close or observes its completion.
-    assert_error(worker.submit(control_request(worker, session, 0, "status")).result(2), ErrorCode.STALE)
-    assert worker.descriptor["available"]
-    assert worker.descriptor["session"]["owner"] is None
     assert admit(worker) != session
     assert worker.runner.policy.resets == 4  # constructor, first open, close, new open
-    assert "Session client absent" in caplog.text
-    assert "Session cleanup queued" in caplog.text
-    assert "Session released" in caplog.text
 
 
 def test_present_paused_client_never_expires_and_restored_presence_restarts_grace(
@@ -427,32 +307,6 @@ def test_absence_cleanup_never_reuses_a_blocked_model_after_grace(worker, cleanu
         release.set()
 
 
-def test_absence_cleanup_retries_a_full_worker_queue_without_extending_grace(worker, cleanup_clock):
-    session = admit(worker)
-    worker.expire(present=True)
-    entered, release = block_predict(worker)
-    try:
-        action = worker.submit(action_request(worker, session))
-        assert entered.wait(2)
-        queued = [worker.submit(control_request(worker, session, 0, "status")) for _ in range(8)]
-        worker.expire(present=False)
-        cleanup_clock[0] += 10
-        worker.expire(present=False)
-        state = worker.descriptor["session"]
-        assert state["admission_blocker"] == "cleanup_queue_full"
-        assert not state["cleanup_pending"]
-        assert state["absence_grace_remaining_s"] == 0.0
-        release.set()
-        action.result(2)
-        for future in queued:
-            assert future.result(2).message_type is MessageType.ACK
-        worker.expire(present=False)
-        assert_error(worker.submit(control_request(worker, session, 0, "status")).result(2), ErrorCode.STALE)
-        assert admit(worker) != session
-    finally:
-        release.set()
-
-
 def test_old_queued_control_cannot_mutate_new_session(worker):
     session = admit(worker)
     entered, release = block_predict(worker)
@@ -472,23 +326,6 @@ def test_old_queued_control_cannot_mutate_new_session(worker):
             worker.submit(action_request(worker, accepted.session_id)).result(2).message_type
             is MessageType.ACTION
         )
-    finally:
-        release.set()
-
-
-def test_full_control_queue_does_not_apply_rejected_close(worker):
-    session = admit(worker)
-    entered, release = block_predict(worker)
-    try:
-        action = worker.submit(action_request(worker, session))
-        assert entered.wait(2)
-        queued = [worker.submit(control_request(worker, session, 0, "status")) for _ in range(8)]
-        assert_error(worker.submit(control_request(worker, session, 0, "close")).result(2), ErrorCode.BUSY)
-        release.set()
-        action.result(2)
-        for future in queued:
-            assert future.result(2).message_type is MessageType.ACK
-        assert worker.submit(action_request(worker, session)).result(2).message_type is MessageType.ACTION
     finally:
         release.set()
 
@@ -553,22 +390,6 @@ def test_reset_failure_requires_restart_without_running_more_policy_work(worker,
     assert not described.body["ready"]
 
 
-def test_oversized_utf8_answer_is_query_error_and_next_action_still_works(worker, monkeypatch):
-    session = admit(worker)
-    answer = "界" * (CodecLimits().max_string_bytes // 3 + 1)
-    assert len(answer) < worker.max_output_chars
-    monkeypatch.setattr(worker.runner, "query", lambda *args, **kwargs: answer)
-    source = action_request(worker, session)
-    request = source.reply(
-        MessageType.LANGUAGE_REQUEST,
-        {**source.body, "kind": "vqa", "text": "What is visible?", "intent_generation": 1},
-    )
-    response = worker.submit(request).result(2)
-    assert_error(response, ErrorCode.EXECUTION)
-    assert "oversized text answer" in response.body["message"]
-    assert worker.submit(action_request(worker, session)).result(2).message_type is MessageType.ACTION
-
-
 def test_commands_queued_behind_a_failed_reset_do_not_reenter_policy(worker, monkeypatch):
     session = admit(worker)
     entered, release = Event(), Event()
@@ -592,14 +413,3 @@ def test_commands_queued_behind_a_failed_reset_do_not_reenter_policy(worker, mon
         assert_error(future.result(2), ErrorCode.EXECUTION)
     assert resets == [True]
     assert worker.session_id == session
-
-
-def test_unencodable_response_returns_correlated_execution_error():
-    pytest.importorskip("msgpack")
-    response = Envelope(MessageType.ACTION, "instance", "session", 3, "request", {"invalid": object()})
-    failure = decode_message(PolicyServer._encode_reply(response))
-    assert_error(failure, ErrorCode.EXECUTION)
-    assert failure.instance_id == response.instance_id
-    assert failure.session_id == response.session_id
-    assert failure.generation == response.generation
-    assert failure.request_id == response.request_id

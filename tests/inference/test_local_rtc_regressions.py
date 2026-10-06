@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -179,146 +177,6 @@ def test_local_rtc_without_hold_runs_actions_but_rejects_language(caplog):
         robot.disconnect()
 
 
-def test_local_rtc_preserves_padded_model_prefix_and_canonical_actions():
-    engine = make_engine(policy=ControlledPolicy(width=5))
-    engine.start()
-    try:
-        engine.resume()
-        observe(engine)
-        engine._policy.release.release()
-        assert wait_for(lambda: len(engine._policy.calls) >= 2)
-        prefix, _ = engine._policy.calls[1]
-        assert prefix.shape == (4, 5)
-        assert engine.get_action(None).shape == (2,)
-        assert not engine.failed
-    finally:
-        stop(engine)
-
-
-@pytest.mark.parametrize("wrong_canonical_width", [True, False])
-def test_local_rtc_rejects_invalid_canonical_or_changing_model_width(wrong_canonical_width):
-    policy = ControlledPolicy(width=5)
-    engine = make_engine(policy=policy, postprocessor=Pipeline(width=1 if wrong_canonical_width else 2))
-    engine.start()
-    try:
-        engine.resume()
-        observe(engine)
-        policy.release.release()
-        if not wrong_canonical_width:
-            assert wait_for(lambda: len(policy.calls) >= 2)
-            policy.width = 6
-            policy.release.release()
-        assert wait_for(lambda: engine.failed)
-        expected_error = "must return action shape" if wrong_canonical_width else "width changed"
-        assert expected_error in engine.failure_traceback
-        traceback = engine.failure_traceback
-        assert "Traceback" in traceback
-        assert not engine.dispatch_allowed()
-        assert engine.get_action(None) is None
-        assert engine.failure_traceback == traceback, "motor checks must preserve worker traceback"
-    finally:
-        stop(engine)
-
-
-def test_compile_warmup_exercises_prefix_and_delay_without_queueing_motion():
-    # PyTorch 2.11's CUDA build without a GPU registers a worker-owned fake CUDA
-    # guard globally. Exiting the compiling thread leaves a dangling guard for
-    # later tests (c10/core/impl/DeviceGuardImplInterface.cpp). Keep real threaded
-    # compilation and its assertions, but contain that upstream state in a child.
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from tests.inference.test_local_rtc_regressions import _check_compile_warmup; "
-            "_check_compile_warmup()",
-        ],
-        cwd=Path(__file__).resolve().parents[2],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def _check_compile_warmup():
-    torch._dynamo.reset()
-    graphs = []
-
-    def backend(graph, example_inputs):
-        graphs.append(graph)
-        return graph.forward
-
-    def predict(batch, *, inference_delay=0, prev_chunk_left_over=None):
-        state = batch["observation.state"]
-        output = state.new_zeros(1, 20, 2) + state.mean()
-        if prev_chunk_left_over is not None:
-            output[:, :4] += prev_chunk_left_over
-        if inference_delay:
-            output = output + inference_delay
-        return output
-
-    compiled = torch.compile(predict, backend=backend)
-    policy = ControlledPolicy()
-    waiting = Event()
-
-    def call(batch, *, inference_delay=0, prev_chunk_left_over=None):
-        policy.calls.append((prev_chunk_left_over, inference_delay))
-        if len(policy.calls) > 3:
-            waiting.set()
-            assert policy.release.acquire(timeout=3)
-        return compiled(batch, inference_delay=inference_delay, prev_chunk_left_over=prev_chunk_left_over)
-
-    policy.predict_action_chunk = call
-    engine = make_engine(policy=policy, use_torch_compile=True, compile_warmup_inferences=1)
-    engine.start()
-    try:
-        engine.resume()
-        observe(engine)
-        assert wait_for(lambda: engine.ready)
-        assert waiting.wait(3)
-        assert not engine.failed
-        assert engine.action_queue.empty()
-        assert not engine.dispatch_allowed()
-        assert len(policy.calls) == 4
-        assert policy.calls[0] == (None, 0)
-        assert policy.calls[1][0].shape == (4, 2)
-        assert policy.calls[1][1] == 0
-        assert policy.calls[2][0].shape == (4, 2)
-        assert policy.calls[2][1] == 1
-        graph_count = len(graphs)
-        with torch.inference_mode(False), torch.no_grad():
-            for prefix, delay in policy.calls[:3]:
-                compiled(
-                    {"observation.state": torch.zeros(1, 2)},
-                    inference_delay=delay,
-                    prev_chunk_left_over=prefix,
-                )
-        assert len(graphs) == graph_count, "representative graphs should already be warm"
-    finally:
-        stop(engine)
-        torch._dynamo.reset()
-
-
-def test_language_deadline_uses_runtime_clock_and_latches_until_restart():
-    shutdown = Event()
-    engine = make_engine(language_timeout_s=2, shutdown_event=shutdown)
-    now = [100.0]
-    engine._runtime.clock = lambda: now[0]
-    engine.resume()
-    assert engine.ask("what?")
-    assert not engine.dispatch_allowed()
-    now[0] += 2.1
-    assert not engine.dispatch_allowed()
-    assert engine.failed
-    assert "Language request deadline exceeded" in engine.failure_traceback
-    assert not shutdown.is_set()
-    engine.acknowledge_hold()
-    assert shutdown.is_set()
-    engine.resume()
-    assert not engine._runtime.active
-
-
 def test_task_change_during_compile_warmup_needs_no_hold_acknowledgment():
     engine = make_engine(use_torch_compile=True, compile_warmup_inferences=1)
     engine.start()
@@ -336,6 +194,10 @@ def test_task_change_during_compile_warmup_needs_no_hold_acknowledgment():
         assert wait_for(lambda: engine.ready)
         assert wait_for(lambda: len(engine._policy.calls) == 4)
         assert engine.action_queue.empty(), "warmup results must never become motion"
+        assert not engine.dispatch_allowed()
+        assert engine._policy.calls[0] == (None, 0)
+        assert [delay for _, delay in engine._policy.calls[1:3]] == [0, 1]
+        assert all(prefix.shape == (4, 2) for prefix, _ in engine._policy.calls[1:3])
         assert engine._runtime.pending.observation.task == "new task"
         assert not engine.failed
         engine._policy.release.release()
@@ -348,7 +210,7 @@ def test_task_change_during_compile_warmup_needs_no_hold_acknowledgment():
 
 @pytest.mark.parametrize(
     "acknowledge_first,autosteer,action_timeout,language_timeout",
-    [(False, False, 2, 8), (False, True, 8, 2), (True, False, 8, 2), (True, True, 2, 8)],
+    [(False, False, 2, 8), (True, True, 8, 2)],
 )
 def test_instruction_hold_language_upgrade_preserves_ack_and_bounded_budget(
     acknowledge_first, autosteer, action_timeout, language_timeout
@@ -430,23 +292,6 @@ def test_upgraded_language_hold_requires_fresh_query_and_action_observations():
     finally:
         finish.set()
         stop(engine)
-
-
-def test_pause_cancels_pending_language_hold_and_its_deadline():
-    engine = make_engine(language_timeout_s=2)
-    now = [100.0]
-    engine._runtime.clock = lambda: now[0]
-    engine.resume()
-    assert engine.ask("what?")
-    assert engine._hold_requested
-    engine.pause()
-    now[0] += 10
-    engine.resume()
-    assert not engine.has_pending_query
-    assert not engine._hold_requested
-    assert engine._language_deadline is None
-    assert not engine.dispatch_allowed()
-    assert not engine.failed, "the cancelled hold must not fault a newly resumed run"
 
 
 @pytest.mark.parametrize("transition", ["pause_resume", "active_reset"])

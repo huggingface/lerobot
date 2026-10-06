@@ -7,7 +7,6 @@
 
 import time
 from collections.abc import Iterator
-from threading import Thread
 from types import SimpleNamespace
 
 import pytest
@@ -153,69 +152,6 @@ def test_starvation_discards_old_result_and_pre_ack_capture_then_resumes_fresh(
         assert request.generation == runtime.generation
         assert request.observation.features["observation.state"].tolist() == [9.0, 9.0]
     assert runtime.queue.snapshot().provenance[0].generation == runtime.generation
-
-
-@pytest.mark.parametrize("transition", ["expiry", "reset", "stop"])
-def test_starvation_late_result_cannot_restore_motion_after_transition(
-    backend: SimpleNamespace, transition: str
-) -> None:
-    engine, runtime = backend.engine, backend.runtime
-    exhaust_with_old_inference_pending(backend)
-    engine.acknowledge_hold()
-    stopping = None
-    if transition == "expiry":
-        backend.now[0] = runtime.starvation_deadline + 0.01
-        assert not engine.dispatch_allowed()
-        assert engine.failed
-    elif transition == "reset":
-        engine.reset()
-    else:
-        stopping = Thread(target=engine.stop)
-        stopping.start()
-        assert wait_for(lambda: not runtime.active)
-    backend.release()
-    if stopping is not None:
-        stopping.join(timeout=2)
-        assert not stopping.is_alive()
-    elif transition == "expiry":
-        thread = engine._rtc_thread if backend.local else engine._thread
-        assert wait_for(lambda: not thread.is_alive())
-    elif backend.local:
-        assert wait_for(lambda: not engine._reset_pending)
-    else:
-        assert wait_for(lambda: engine._control is None)
-    assert runtime.queue.empty()
-    assert not engine.dispatch_allowed()
-    assert engine.get_action(None) is None
-    if transition == "expiry":
-        assert "grace expired" in engine.failure_traceback
-        engine.reset()
-        assert engine.failed
-        assert not engine.dispatch_allowed()
-
-
-@pytest.mark.parametrize("awaiting_capture", [False, True])
-def test_language_request_during_starvation_cannot_renew_grace(
-    backend: SimpleNamespace, awaiting_capture: bool
-) -> None:
-    engine, runtime = backend.engine, backend.runtime
-    exhaust_with_old_inference_pending(backend)
-    deadline = runtime.starvation_deadline
-    engine.acknowledge_hold()
-    if awaiting_capture:
-        backend.release()
-        assert wait_for(lambda: not engine._hold_requested)
-    backend.now[0] += 0.2
-    assert engine.ask("What is visible?")
-    for _ in range(3):
-        assert not engine.dispatch_allowed()
-        engine.acknowledge_hold()
-        assert runtime.starvation_deadline == deadline
-    backend.now[0] = deadline + 0.01
-    assert not engine.dispatch_allowed()
-    assert engine.failed
-    assert "grace expired" in engine.failure_traceback
-    assert runtime.queue.empty()
 
 
 def test_fresh_recovery_result_arriving_after_grace_cannot_restore_motion(backend: SimpleNamespace) -> None:

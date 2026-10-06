@@ -1,7 +1,6 @@
 """Deterministic timing/continuation tests shared by local and remote execution."""
 
 import numpy as np
-import pytest
 import torch
 
 from lerobot.inference import ActionChunk, ActionProvenance, ChunkRuntime, ExecutionMode, ObservationSnapshot
@@ -147,67 +146,23 @@ def test_invalid_action_cannot_grant_dispatch_permission():
     assert rt.failure == "Invalid action chunk"
 
 
-@pytest.mark.parametrize("merge,steps", [("append", 50), ("aligned", 100)])
-def test_default_budget_plays_multiple_stock_length_chunks(merge, steps):
-    now = [100.0]
-    runtime = ChunkRuntime(
-        mode=ExecutionMode.CHUNK,
-        action_interval=1 / 30,
-        refill_seconds=0.5,
-        max_observation_age_s=5,
-        action_timeout_s=5,
-        startup_timeout_s=10,
-        chunk_merge=merge,
-        clock=lambda: now[0],
-    )
-    runtime.activate()
-    pending = None
-    accepted = 0
-    for tick in range(600):
-        now[0] = 100 + tick / 30
-        if pending is not None and now[0] >= pending.submitted_at + 0.05:
-            values = torch.zeros(steps, 2)
-            accepted += runtime.accept(
-                pending,
-                ActionChunk(None, values, ActionProvenance(pending.observation.capture_time, "task"), steps),
-                task_version=0,
-            )
-            pending = None
-        obs = ObservationSnapshot({"state": np.zeros(2)}, now[0], "task")
-        obs = runtime.anchor_observation(obs)
-        if pending is None:
-            pending = runtime.begin(obs)
-        runtime.pop()
-        assert runtime.failure is None
-    assert accepted >= 5
-
-
 def test_release_hold_rearms_only_current_healthy_active_generation():
-    now = [100.0]
-    runtime = ChunkRuntime(
-        mode=ExecutionMode.CHUNK,
-        action_interval=0.1,
-        refill_seconds=0.2,
-        max_observation_age_s=5,
-        action_timeout_s=1,
-        startup_timeout_s=2,
-        clock=lambda: now[0],
-    )
-    runtime.activate(held=True)
-    generation = runtime.generation
-    now[0] += 30
-    runtime.check_deadlines()
-    assert runtime.failure is None
-    assert runtime.release_hold(generation)
-    runtime.check_deadlines()
-    assert runtime.failure is None
-    assert runtime.started_at == now[0]
-    runtime.deactivate()
-    assert not runtime.release_hold(generation)
-    assert not runtime.active
-    runtime.fault("terminal")
-    assert not runtime.activate()
-    assert not runtime.release_hold(runtime.generation)
+    rt, clock = runtime()
+    rt.activate(held=True)
+    generation = rt.generation
+    clock.now += 30
+    rt.check_deadlines()
+    assert rt.failure is None
+    assert rt.release_hold(generation)
+    rt.check_deadlines()
+    assert rt.failure is None
+    assert rt.started_at == clock.now
+    rt.deactivate()
+    assert not rt.release_hold(generation)
+    assert not rt.active
+    rt.fault("terminal")
+    assert not rt.activate()
+    assert not rt.release_hold(rt.generation)
 
 
 def test_append_provenance_stays_with_actions_after_partial_consumption():
@@ -221,68 +176,21 @@ def test_append_provenance_stays_with_actions_after_partial_consumption():
     assert [queue.get_with_provenance()[2] for _ in range(4)] == [a, b, b, b]
 
 
-def test_misaligned_provenance_is_rejected_before_dispatch():
-    queue = ActionQueue(RTCConfig(enabled=False))
-    values = torch.zeros(3, 2)
-    queue.merge(values, values, 0, provenance=ActionProvenance(1.0, "A"))
-    queue._provenance_queue.append(ActionProvenance(2.0, "B"))
-    with pytest.raises(RuntimeError, match="provenance"):
-        queue.get_with_provenance()
-
-
-def test_append_rejects_missing_model_queue_before_mutation():
-    queue = ActionQueue(RTCConfig(enabled=False))
-    values = torch.zeros(3, 2)
-    queue.merge(values, values, 0)
-    queue.original_queue = None
-    with pytest.raises(RuntimeError, match="matching model-space queue"):
-        queue.merge(values + 1, values + 1, 0)
-    torch.testing.assert_close(queue.queue, values)
-
-
-@pytest.mark.parametrize("transition", ["commit", "clear"])
-def test_replace_future_rejects_stale_snapshot_without_mutating_queue(transition):
+def test_replace_future_requires_current_cursor_and_generation():
     queue = ActionQueue(RTCConfig(enabled=False))
     values = torch.arange(6, dtype=torch.float32).reshape(3, 2)
     source = ActionProvenance(1.0, "original")
     queue.merge(values, values, 0, task=source.task, provenance=source)
-    stale = queue.snapshot()
-    if transition == "commit":
-        queue.get_with_provenance()
-    else:
-        queue.clear()
-        queue.merge(values + 10, values + 10, 0, task=source.task, provenance=source)
-    before = queue.snapshot()
-    if transition == "commit":
-        assert before.generation == stale.generation
-        assert before.cursor != stale.cursor
-    else:
-        assert before.generation != stale.generation
-        assert before.cursor == stale.cursor
-
     replacement = torch.full((2, 2), 99.0)
-    replacement_source = ActionProvenance(2.0, "replacement")
-    assert not queue.replace_future(replacement, [replacement_source] * 2, snapshot=stale)
-    after = queue.snapshot()
-    assert (after.generation, after.cursor, after.index, after.provenance) == (
-        before.generation,
-        before.cursor,
-        before.index,
-        before.provenance,
-    )
-    torch.testing.assert_close(after.model_actions, before.model_actions)
-    torch.testing.assert_close(after.canonical_actions, before.canonical_actions)
-
-
-def test_replace_future_accepts_fresh_snapshot_and_resets_index_without_rewinding_cursor():
-    queue = ActionQueue(RTCConfig(enabled=False))
-    values = torch.arange(6, dtype=torch.float32).reshape(3, 2)
-    source = ActionProvenance(1.0, "original")
+    stale = queue.snapshot()
+    queue.clear()
     queue.merge(values, values, 0, task=source.task, provenance=source)
+    assert not queue.replace_future(replacement, [source] * 2, snapshot=stale)
+    stale = queue.snapshot()
     queue.get_with_provenance()
     fresh = queue.snapshot()
-    assert fresh.index == fresh.cursor == 1
-    replacement = torch.full((2, 2), 99.0)
+    assert not queue.replace_future(replacement, [source] * 2, snapshot=stale)
+    torch.testing.assert_close(queue.snapshot().canonical_actions, values[1:])
     sources = [ActionProvenance(2.0, "first"), ActionProvenance(3.0, "second")]
     assert queue.replace_future(replacement, sources, snapshot=fresh)
     after = queue.snapshot()

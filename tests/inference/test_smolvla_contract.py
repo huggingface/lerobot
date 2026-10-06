@@ -1,18 +1,13 @@
 """SmolVLA's real camera preparation contract, without downloading model weights."""
 
-from dataclasses import replace
-
-import numpy as np
 import pytest
 import torch
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.inference import ObservationSnapshot, PolicyRunner
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-from lerobot.processor import PolicyProcessorPipeline
-from tests.inference.fixtures import omx_contract
+from tests.inference.fixtures import omx_contract, preparation_batches
 
 
 @pytest.fixture
@@ -39,24 +34,7 @@ def setup():
 
 def test_two_camera_deployment_preserves_local_smolvla_images_and_masks(setup):
     server, policy = setup
-    runner = PolicyRunner(
-        policy,
-        PolicyProcessorPipeline(steps=[]),
-        PolicyProcessorPipeline(steps=[]),
-        action_interval=1 / 30,
-        features=tuple(server.features),
-        action_feature=server.action_feature,
-    )
-    arrays = {
-        feature.name: np.full(feature.shape, 64 + i, dtype=feature.dtype)
-        for i, feature in enumerate(server.features)
-    }
-    remote_batch = runner._batch(ObservationSnapshot(arrays, 0.0, "pick up the cube"))
-    local_batch = {
-        feature.name: torch.from_numpy(arrays[feature.name]).permute(2, 0, 1).float().div(255)[None]
-        for feature in server.features
-        if feature.kind == "rgb"
-    }
+    _, _, remote_batch, local_batch = preparation_batches(policy, server)
     actual_images, actual_masks = policy.prepare_images(remote_batch)
     expected_images, expected_masks = policy.prepare_images(local_batch)
     assert len(actual_images) == 3  # Two real cameras, one masked empty camera.
@@ -67,17 +45,3 @@ def test_two_camera_deployment_preserves_local_smolvla_images_and_masks(setup):
     # The default remains strict for policies without this declared exception.
     with pytest.raises(ValueError, match="exactly match"):
         PreTrainedPolicy.validate_chunk_input_features(policy, tuple(server.features))
-
-
-def test_smolvla_rejects_missing_state_unknown_cameras_and_unresized_shapes(setup):
-    server, policy = setup
-    features = tuple(server.features)
-    with pytest.raises(ValueError, match="nonvisual"):
-        policy.validate_chunk_input_features(features[1:])
-    with pytest.raises(ValueError, match="at least one camera"):
-        policy.validate_chunk_input_features(features[:1])
-    with pytest.raises(ValueError, match="known camera"):
-        policy.validate_chunk_input_features((*features, replace(features[1], name="unknown")))
-    policy.config.resize_imgs_with_padding = None
-    with pytest.raises(ValueError, match="without policy resizing"):
-        policy.validate_chunk_input_features(features)

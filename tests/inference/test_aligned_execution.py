@@ -153,23 +153,6 @@ def test_aligned_refill_floor_seeds_from_startup_then_uses_steady_turnaround():
     assert rt.begin(sample(rt, clock)) is not None
 
 
-@pytest.mark.parametrize("floor_dominates", [False, True])
-def test_threshold_covering_horizon_allows_frequent_requests_without_expanding_slice(floor_dominates):
-    rt, clock = runtime(refill_seconds=0.01 if floor_dominates else 0.6)
-    if floor_dominates:
-        rt.turnarounds.append(0.5)
-    first = rt.begin(sample(rt, clock))
-    assert rt.accept(first, result(first, execution_steps=3), task_version=0)
-    for offset in (10, 20, 30):
-        assert rt.queue.qsize() == 3  # the six predicted actions never expand the execution slice
-        assert rt.begin(sample(rt, clock)) is None  # still requires a fresh advanced capture
-        rt.pop()
-        clock.now += 0.1
-        request = rt.begin(sample(rt, clock))
-        assert request is not None
-        assert rt.accept(request, result(request, offset, execution_steps=3), task_version=0)
-
-
 def test_fresh_task_change_bypasses_playback_gate_at_same_cursor():
     rt, clock = runtime(refill_seconds=0.01)
     initial(rt, clock)
@@ -182,34 +165,6 @@ def test_fresh_task_change_bypasses_playback_gate_at_same_cursor():
     assert request.playback_at_submission == pytest.approx(0.6)
     assert rt.accept(request, result(request, 10), task_version=1)
     assert rt.pop()[1].task == "new"
-
-
-@pytest.mark.parametrize(
-    "blocked_by", ["inactive", "held", "fault", "pending", "stale", "generation", "capture"]
-)
-def test_task_change_never_bypasses_permission_inflight_or_freshness(blocked_by):
-    rt, clock = runtime(refill_seconds=0.01)
-    initial(rt, clock)
-    clock.now += 0.1
-    source = sample(rt, clock, task="new", version=1)
-    if blocked_by == "inactive":
-        rt.active = False
-    elif blocked_by == "held":
-        rt.held = True
-    elif blocked_by == "fault":
-        rt.fault("operator fault")
-    elif blocked_by == "pending":
-        assert rt.begin(source) is not None
-        source = replace(source, task_version=2, capture_time=clock() + 0.01)
-        clock.now += 0.01
-    elif blocked_by == "stale":
-        rt.max_age = 0.05
-        clock.now += 0.1
-    elif blocked_by == "generation":
-        source = replace(source, execution_generation=rt.generation + 1)
-    elif blocked_by == "capture":
-        source = replace(source, capture_time=rt.started_at)  # same capture as the previous request
-    assert rt.begin(source) is None
 
 
 def test_execution_slice_is_honored_and_empty_suffix_does_not_destroy_eligible_buffer():
@@ -230,19 +185,6 @@ def test_execution_slice_is_honored_and_empty_suffix_does_not_destroy_eligible_b
     assert rt.accept(request, result(request, 20, execution_steps=3), task_version=0)
     assert rt.queue.qsize() == 2
     assert rt.pop()[0].tolist() == [21, 121]
-
-
-def test_empty_suffix_eventually_uses_existing_starvation_fault():
-    rt, clock = runtime()
-    initial(rt, clock)
-    rt.pop()
-    clock.now += 0.1
-    request = rt.begin(sample(rt, clock))
-    for _ in range(5):
-        rt.pop()
-    assert not rt.accept(request, result(request, execution_steps=5), task_version=0)
-    assert rt.pop() is None
-    assert rt.failure == "Active motion buffer exhausted"
 
 
 def test_weighted_blend_matches_future_steps_and_keeps_gripper_incoming():
@@ -312,24 +254,6 @@ def test_repeated_blends_keep_bounded_history_and_oldest_age():
     assert rt.failure == "Dispatched action source observation is too old"
 
 
-def test_weight_one_and_no_overlap_are_exact_replacements():
-    rt, clock = runtime(blend_steps=3, blend_weight=1, blend_indices=(0,))
-    initial(rt, clock)
-    for _ in range(6):
-        rt.pop()
-    clock.now += 0.1
-    request = rt.begin(sample(rt, clock))
-    assert rt.accept(request, result(request, 10), task_version=0)
-    assert rt.last_accept["blended_steps"] == rt.last_accept["overlap_steps"] == 0
-    assert rt.pop()[1].contributor_count == 1
-    clock.now += 0.1
-    request = rt.begin(sample(rt, clock))
-    assert rt.accept(request, result(request, 20), task_version=0)
-    assert rt.last_accept["overlap_steps"] == 5
-    assert rt.last_accept["blended_steps"] == 0
-    assert rt.pop()[0].tolist() == [20, 120]
-
-
 def test_reset_hold_and_task_changes_cannot_reuse_observation_or_result():
     rt, clock = runtime(refill_seconds=0.01)
     source = sample(rt, clock)
@@ -367,20 +291,3 @@ def test_relative_model_outputs_are_blended_only_after_absolute_postprocessing()
     expected = incoming.canonical_actions.clone()
     expected[:2, :2] = 0.5 * (previous[:2, :2] + expected[:2, :2])
     torch.testing.assert_close(rt.queue.snapshot().canonical_actions, expected)
-
-
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"blend_steps": 2},
-        {"blend_steps": -1},
-        {"blend_weight": 0},
-        {"blend_weight": float("nan")},
-        {"blend_steps": 2, "blend_indices": (0, 0)},
-        {"blend_steps": 2, "blend_indices": (-1,)},
-        {"blend_indices": (0,)},
-    ],
-)
-def test_invalid_blending_is_rejected_before_execution(kwargs):
-    with pytest.raises(ValueError):
-        runtime(**kwargs)

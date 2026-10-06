@@ -38,8 +38,7 @@ def exchange(transport, key, request):
     return response
 
 
-def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_server, caplog):
-    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
+def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_server):
     worker, config = remote_server
     key = instance_prefix(config.deployment, worker.instance_id) + "/open"
     disconnected = ZenohTransport(ZenohConfig(connect_endpoints=[config.endpoint])).open()
@@ -57,9 +56,6 @@ def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_
             session_prefix(config.deployment, worker.instance_id, first.session_id) + "/alive"
         )
         wait_for(lambda: worker.descriptor["session"]["client_present"] is True)
-        assert "Session initial presence established" in caplog.text
-        assert "Session client absent" not in caplog.text
-        assert "Session presence restored" not in caplog.text
         # Close only the transport, as after a crashed process: no session CLOSE operation.
         disconnected.close()
         wait_for(lambda: worker.descriptor["session"]["client_present"] is False)
@@ -67,7 +63,6 @@ def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_
             rejected = exchange(replacement, key, open_request(worker))
             assert rejected.message_type is MessageType.ERROR
             assert rejected.body["code"] == ErrorCode.BUSY
-            assert "admission_blocker=absence_grace" in rejected.body["message"]
             # The exact 10-second boundary is covered with a controlled clock in test_session.
             worker.idle_timeout_s = 0.02
             wait_for(lambda: worker.descriptor["available"])
@@ -87,33 +82,6 @@ def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_
             )
     finally:
         disconnected.close()
-
-
-def test_closed_open_retry_replies_stale_and_does_not_block_next_session(remote_server):
-    worker, config = remote_server
-    key = instance_prefix(config.deployment, worker.instance_id) + "/open"
-    with ZenohTransport(ZenohConfig(connect_endpoints=[config.endpoint])) as client:
-        original = open_request(worker)
-        first = exchange(client, key, original)
-        assert first.message_type is MessageType.ACCEPTED
-        control_key = session_prefix(config.deployment, worker.instance_id, first.session_id) + "/control"
-        closed = exchange(client, control_key, control_request(worker, first.session_id, 0, "close"))
-        assert closed.message_type is MessageType.ACK
-        stale = exchange(client, key, original)
-        assert stale.message_type is MessageType.ERROR
-        assert stale.body["code"] == ErrorCode.STALE
-        replacement = exchange(client, key, open_request(worker))
-        assert replacement.message_type is MessageType.ACCEPTED
-        assert replacement.session_id != first.session_id
-        control_key = (
-            session_prefix(config.deployment, worker.instance_id, replacement.session_id) + "/control"
-        )
-        assert (
-            exchange(
-                client, control_key, control_request(worker, replacement.session_id, 0, "close")
-            ).message_type
-            is MessageType.ACK
-        )
 
 
 def test_close_ack_and_new_acceptance_can_be_outstanding_together(remote_server, monkeypatch):

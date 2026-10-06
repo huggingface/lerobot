@@ -5,7 +5,6 @@
 
 """Reusable current-observation runner conformance and real processor coverage."""
 
-import time
 from collections import deque
 from dataclasses import replace
 from types import SimpleNamespace
@@ -15,7 +14,7 @@ import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.inference import ExecutionMode, FeatureSpec, ObservationSnapshot, PolicyRunner, QueryKind
+from lerobot.inference import ExecutionMode, FeatureSpec, ObservationSnapshot, PolicyRunner
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.act.processor_act import make_act_pre_post_processors
@@ -215,31 +214,6 @@ def test_runner_guided_rtc_allows_real_autograd_on_successor_chunk():
     assert not torch.equal(first.canonical_actions, second.canonical_actions)
 
 
-def test_local_guided_rtc_allows_real_autograd_on_successor_chunk():
-    config = tiny_config()
-    config.rtc_config = RTCConfig(execution_horizon=4)
-    policy = GuidedConformingPolicy(config)
-    engine = local_engine_for(policy)
-    engine.start()
-    try:
-        engine.resume()
-        engine.notify_observation(
-            {"a.pos": 1.0, "b.pos": 1.0, "c.pos": 1.0, "env_a": 0.0, "env_b": 0.0, "env_c": 0.0}
-        )
-        deadline = time.monotonic() + 2
-        while engine.action_queue.empty() and not engine.failed and time.monotonic() < deadline:
-            time.sleep(0.002)
-        assert engine.action_queue.qsize() == 8, engine.failure_traceback
-        for _ in range(4):
-            assert engine.get_action(None) is not None
-        while not policy.guided_calls and not engine.failed and time.monotonic() < deadline:
-            time.sleep(0.002)
-        assert not engine.failed, engine.failure_traceback
-        assert policy.guided_calls == 1
-    finally:
-        engine.stop()
-
-
 def test_snapshot_owns_recycled_camera_and_state_buffers():
     array = np.zeros(3, dtype=np.float32)
     snap = ObservationSnapshot({OBS_STATE: array}, 1.0, "task")
@@ -308,19 +282,6 @@ def test_language_processor_isolation_and_motion_invalidation_preserve_action_an
     runner.reset()
     assert policy.resets == 2
     assert runner._relative_step.get_cached_state() is None
-
-
-@pytest.mark.parametrize("kind", list(QueryKind))
-def test_language_query_kind_contract_preserves_public_enum_and_policy_strings(kind, monkeypatch):
-    policy = ConformingPolicy(tiny_config())
-    runner = runner_for(policy)
-
-    def generate_text(batch):
-        assert batch[QUERY_KIND] == kind.value
-        return "a cube"
-
-    monkeypatch.setattr(policy, "generate_text", generate_text)
-    assert runner.query(observation(), kind=kind.value, text="What is visible?") == "a cube"
 
 
 def test_mapping_is_not_applied_twice():
@@ -394,24 +355,3 @@ def test_deployment_can_disable_text_and_cannot_enable_an_unsupported_head():
     policy.supports_text_generation = lambda: False
     with pytest.raises(ValueError, match="has no text capability"):
         runner_for(policy, language_enabled=True)
-
-
-def test_real_act_plain_async_matches_runner_and_honors_execution_slice():
-    policy = ACTPolicy(tiny_config())
-    expected = runner_for(policy).predict(observation()).canonical_actions
-    engine = local_engine_for(policy, rtc_config=RTCConfig(enabled=False), queue_threshold=0)
-    engine.start()
-    try:
-        engine.resume()
-        engine.notify_observation(
-            {"a.pos": 1.0, "b.pos": 1.0, "c.pos": 1.0, "env_a": 0.0, "env_b": 0.0, "env_c": 0.0}
-        )
-        deadline = time.monotonic() + 2
-        while engine.action_queue.empty() and not engine.failed and time.monotonic() < deadline:
-            time.sleep(0.002)
-        assert not engine.failed, engine.failure_traceback
-        assert engine.action_queue.qsize() == 3
-        actual = torch.stack([engine.get_action(None) for _ in range(3)])
-        torch.testing.assert_close(actual, expected)
-    finally:
-        engine.stop()

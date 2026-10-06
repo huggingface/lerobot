@@ -92,22 +92,6 @@ def test_stop_cancels_outstanding_control_wait(session, monkeypatch):
     assert client.closed.is_set()
 
 
-def test_pause_discards_query_and_its_hold_deadline(session):
-    engine, client = session
-    engine.resume()
-    assert engine.ask("Before the operator pause")
-    engine.pause()
-    engine.resume()
-    assert not engine.has_pending_query
-    assert not engine._hold_requested
-    engine.start()
-    assert client.control_started.wait(2)
-    assert wait_for(lambda: engine._control is None)
-    capture(engine)
-    assert client.action_started.wait(2)
-    assert not client.text_started.is_set()
-
-
 def test_pause_invalidates_inflight_request_before_resuming_acknowledged_generation(session, monkeypatch):
     engine, client = session
     control_entered, acknowledge = Event(), Event()

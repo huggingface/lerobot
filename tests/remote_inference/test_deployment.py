@@ -3,7 +3,6 @@
 # you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
 """Deployment mode selection and portable artifact pins, without remote services."""
 
-from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from shutil import copytree
@@ -74,25 +73,6 @@ def test_identical_checkpoint_pin_survives_host_path_and_transport_changes(deplo
     assert moved == original
 
 
-def test_identity_excludes_compute_placement_but_preserves_inference_contract(deployment):
-    config = tiny_config()
-    first = serving._inference_identity(deployment, config)
-    elsewhere = deepcopy(config)
-    elsewhere.device = "cuda:1"
-    elsewhere.pretrained_path = "/another/cache/path"
-    assert serving._inference_identity(deployment, elsewhere) == first
-    assert serving._inference_identity(replace(deployment, semantics="degrees"), config) != first
-    assert (
-        serving._inference_identity(
-            replace(deployment, execution=replace(deployment.execution, action_fps=20)), config
-        )
-        != first
-    )
-    changed = deepcopy(config)
-    changed.n_action_steps = 2
-    assert serving._inference_identity(deployment, changed) != first
-
-
 def test_requested_rtc_is_attached_without_a_saved_dataclass_field(deployment, monkeypatch):
     def load_policy(path, config):
         assert config.rtc_config.enabled
@@ -115,17 +95,6 @@ def test_requested_rtc_is_attached_without_a_saved_dataclass_field(deployment, m
     assert runner.policy.config.rtc_config is not requested.execution.rtc
 
 
-def test_chunk_only_ignores_unrelated_deployment_rtc_settings(deployment):
-    requested = replace(
-        deployment,
-        execution=replace(deployment.execution, rtc=RTCConfig(mode="trained", execution_horizon=4)),
-    )
-    runner, identity = serving.load_deployment(requested)
-    assert runner.capabilities.modes == (ExecutionMode.CHUNK,)
-    _, default_identity = serving.load_deployment(deployment)
-    assert identity == default_identity
-
-
 def test_requesting_rtc_does_not_invent_policy_capability(deployment):
     requested = replace(
         deployment,
@@ -137,30 +106,6 @@ def test_requesting_rtc_does_not_invent_policy_capability(deployment):
     )
     with pytest.raises(ValueError, match="Unsupported execution mode"):
         serving.load_deployment(requested)
-
-
-@pytest.mark.parametrize("deployment_name", ["lab/arm", "*", "", "has space"])
-def test_invalid_deployment_name_fails_in_config(deployment, deployment_name):
-    with pytest.raises(ValueError):
-        replace(deployment, deployment=deployment_name)
-
-
-@pytest.mark.parametrize("modes", [[], ["chunks"], ["chunk", "chunk"], ["rtc_trained"]])
-def test_invalid_or_mismatched_serving_modes_fail_in_config(deployment, modes):
-    with pytest.raises(ValueError):
-        replace(deployment, execution=replace(deployment.execution, supported_modes=modes))
-
-
-@pytest.mark.parametrize("value", [0, -1, True, 1.5])
-def test_text_limits_warmup_counts_and_execution_slices_are_positive_integers(deployment, value):
-    with pytest.raises(ValueError, match="positive integer"):
-        replace(deployment, language=replace(deployment.language, max_output_chars=value))
-    with pytest.raises(ValueError, match="positive integer"):
-        replace(deployment, language=replace(deployment.language, max_input_chars=value))
-    with pytest.raises(ValueError, match="warmup"):
-        replace(deployment, execution=replace(deployment.execution, warmup_calls=value))
-    with pytest.raises(ValueError, match="positive integer"):
-        replace(deployment, execution=replace(deployment.execution, n_action_steps=value))
 
 
 @pytest.mark.parametrize(

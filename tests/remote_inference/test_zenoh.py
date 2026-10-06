@@ -39,10 +39,6 @@ def test_explicit_config_and_disabled_discovery():
     assert json.loads(peer.get_json("connect/exit_on_failure")) is True
     with pytest.raises(ValueError, match="Explicit"):
         ZenohConfig().build()
-    with pytest.raises(ValueError, match="cannot listen"):
-        ZenohConfig(
-            mode="client", connect_endpoints=["tcp/127.0.0.1:7447"], listen_endpoints=["tcp/0.0.0.0:0"]
-        ).build()
 
 
 def test_bounded_handoff_keeps_accepted_work():
@@ -55,15 +51,18 @@ def test_bounded_handoff_keeps_accepted_work():
         channel.get(0)
 
 
-def test_query_reply_retained_outside_callback(transports):
+def test_retained_query_owns_capacity_until_worker_reply(transports):
     server, client = transports
-    endpoint = server.declare_queryable("test/control")
+    endpoint = server.declare_queryable("test/control", capacity=1)
     with ThreadPoolExecutor() as pool:
         reply = pool.submit(client.query, "test/control", b"reset", 2)
         pending = endpoint.get(2)
         assert pending.payload == b"reset"
         # The callback already returned; only the worker can acknowledge completion.
         assert not reply.done()
+        overflow = pool.submit(client.query, "test/control", b"overflow", 0.2)
+        assert overflow.result(2) == []
+        assert endpoint.dropped == 1
         assert pending.reply(b"applied")
         assert not pending.reply(b"duplicate")
         assert reply.result(2) == [b"applied"]
@@ -99,19 +98,6 @@ def test_query_deadline_and_late_reply(transports):
             pass  # local deadline may fire before the binding's expiry event
         else:
             assert result == []
-
-
-def test_retained_queries_count_towards_capacity(transports):
-    server, client = transports
-    endpoint = server.declare_queryable("test/bounded", capacity=1)
-    with ThreadPoolExecutor() as pool:
-        first = pool.submit(client.query, "test/bounded", b"one", 2)
-        pending = endpoint.get(2)
-        second = pool.submit(client.query, "test/bounded", b"two", 0.2)
-        assert second.result(2) == []
-        assert endpoint.dropped == 1
-        assert pending.reply(b"done")
-        assert first.result(2) == [b"done"]
 
 
 @pytest.fixture

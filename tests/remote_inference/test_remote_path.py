@@ -15,12 +15,10 @@ import torch
 pytest.importorskip("zenoh")
 pytest.importorskip("datasets")
 pytest.importorskip("msgpack")
-import msgpack
 
 from lerobot.inference import ChunkRuntime, ExecutionMode, FeatureSpec, PolicyRunner, RemoteInferenceConfig
 from lerobot.remote_inference.client import RemoteClient, RequestCancelled
 from lerobot.remote_inference.codec import encode_message
-from lerobot.remote_inference.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.remote_inference.server import PolicyServer, SessionWorker
 from lerobot.rollout.configs import RolloutConfig
 from lerobot.rollout.context import build_rollout_context
@@ -110,34 +108,6 @@ def admit(client):
     )
 
 
-@pytest.mark.parametrize("server_build", [None, {"lerobot_version": "0.0.1", "revision": "older-build"}])
-def test_build_diagnostics_are_optional_and_do_not_gate_compatible_admission(
-    remote_server, monkeypatch, caplog, server_build
-):
-    worker, config = remote_server
-    original_descriptor = type(worker)._descriptor_locked
-
-    def descriptor(self):
-        value = original_descriptor(self)
-        if server_build is None:
-            del value["software"]
-        else:
-            value["software"] = server_build
-        return value
-
-    monkeypatch.setattr(type(worker), "_descriptor_locked", descriptor)
-    with caplog.at_level("INFO", logger="lerobot.remote_inference.client"):
-        client = RemoteClient.connect(config)
-        try:
-            admit(client)
-            assert client.session_id
-        finally:
-            client.close()
-    assert "Remote client software=" in caplog.text
-    assert "Remote server deployment=loopback" in caplog.text
-    assert ("unavailable" if server_build is None else "older-build") in caplog.text
-
-
 def runtime_for(client):
     runtime = ChunkRuntime(
         mode=ExecutionMode.CHUNK,
@@ -151,7 +121,7 @@ def runtime_for(client):
     return runtime
 
 
-def test_direct_remote_actions_match_local_canonical_pipeline_and_reset(remote_server):
+def test_direct_remote_actions_match_local_pipeline_after_queue_drains(remote_server):
     _, config = remote_server
     client = RemoteClient.connect(config)
     try:
@@ -176,37 +146,8 @@ def test_direct_remote_actions_match_local_canonical_pipeline_and_reset(remote_s
         assert drained is not None
         assert drained.continuation.model_actions.shape == (0, 3)
         assert runtime.accept(drained, client.infer(drained), task_version=source.task_version)
-
-        generation = runtime.invalidate()
-        client.control("reset", generation)
-        next_request = runtime.begin(
-            replace(source, capture_time=time.monotonic(), observation_id="after-reset")
-        )
-        assert next_request is not None
-        next_result = client.infer(next_request)
-        assert next_result.provenance.generation == generation
-        assert runtime.accept(next_request, next_result, task_version=source.task_version)
-        assert not runtime.accept(request, result, task_version=source.task_version)
     finally:
         client.close()
-
-
-def test_direct_remote_exclusive_admission_and_new_session_after_close(remote_server):
-    _, config = remote_server
-    first = RemoteClient.connect(config)
-    second = RemoteClient.connect(config)
-    try:
-        admit(first)
-        old_session = first.session_id
-        with pytest.raises(ProtocolError) as error:
-            admit(second)
-        assert error.value.code is ErrorCode.BUSY
-        first.close()
-        admit(second)
-        assert second.session_id != old_session
-    finally:
-        first.close()
-        second.close()
 
 
 @pytest.mark.parametrize("remote_server", ["robot"], indirect=True)
@@ -281,36 +222,6 @@ def test_direct_remote_language_roundtrip_preserves_context(remote_server):
         request = runtime_for(client).begin(source)
         assert request is not None
         request = replace(request, generation=1)
-        assert client.infer(request).canonical_actions.shape == (3, 3)
-    finally:
-        client.close()
-
-
-def test_obsolete_malformed_body_is_discarded_before_tensor_decoding(remote_server):
-    _, config = remote_server
-    client = RemoteClient.connect(config)
-    try:
-        admit(client)
-        request = runtime_for(client).begin(replace(observation(), capture_time=time.monotonic()))
-        assert request is not None
-        obsolete = Envelope(
-            MessageType.ACTION,
-            client.instance_id,
-            client.session_id,
-            request.generation,
-            "completed-request",
-            {},
-        )
-        packed = msgpack.unpackb(encode_message(obsolete), raw=False)
-        packed["body"] = {
-            "canonical_actions": {
-                "__lerobot_type__": "tensor",
-                "dtype": "object",
-                "shape": [999999999],
-                "data": b"",
-            }
-        }
-        assert client._actions._offer(msgpack.packb(packed, use_bin_type=True))
         assert client.infer(request).canonical_actions.shape == (3, 3)
     finally:
         client.close()

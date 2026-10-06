@@ -336,7 +336,7 @@ Control-thread reporting uses bounded queues drained by the worker; diagnostic I
 
 ## 13. Validation and current limits
 
-Automated tests protect contracts and transitions at distinct levels: deterministic runtime/queue invariants, worker ordering/cancellation, saved-processor/policy conformance, real transport/session exchange, and rollout hardware-boundary/CLI behavior. These levels are not substitutes for one another. Keep tests focused on distinct regressions in observable behavior, contracts and public APIs.
+Automated tests concentrate each guarantee at its owning layer: runtime/queue tests cover timing, alignment and provenance; policy/processor tests cover preparation and coordinate semantics; worker tests cover cancellation and session ownership; rollout tests cover dispatch, recording and shutdown. Representative real transport and separate-process tests check how these boundaries compose. Keep regressions that protect observable behavior, contracts and public APIs; avoid repeating full rejection matrices through every backend, policy and robot. This focused coverage does not exhaust every configuration, diagnostic message or transition combination.
 
 A driver capability declaration establishes the command contract, not physical load support. A policy declaration or successful warmup establishes neither useful task execution nor language quality. A transport test establishes neither adequate playback margin nor robot behavior through that topology. Validate the checkpoint, processors, robot configuration and network together before treating a deployment as suitable for its task.
 

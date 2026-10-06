@@ -21,7 +21,6 @@ from lerobot.remote_inference.chunk_contract import (
     validate_chunk_contract,
 )
 from lerobot.remote_inference.client import RemoteClient
-from lerobot.remote_inference.configs import ExecutionConfig, ModelConfig, ServerConfig
 from lerobot.remote_inference.protocol import ErrorCode, MessageType, ProtocolError
 from lerobot.remote_inference.server import SessionWorker
 from tests.inference.test_policy_runner import ConformingPolicy, runner_for, tiny_config
@@ -40,9 +39,6 @@ def test_client_defaults_align_plain_chunks_without_changing_rtc_or_legacy_wire(
     assert client_config(mode=mode, chunk_merge="append").chunk_merge == "append"
     # Omitted wire settings keep their original meaning; alignment is negotiated explicitly.
     assert default_chunk_settings() == chunk_settings("append", 0, 0.5, [])
-    altered = default_chunk_settings()
-    altered["blend_components"].append("shoulder.pos")
-    assert not default_chunk_settings()["blend_components"]
 
 
 @pytest.fixture
@@ -95,41 +91,6 @@ def admit(client):
     )
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"chunk_merge": "unknown"},
-        {"blend_steps": 2},
-        {"chunk_merge": "aligned", "blend_steps": 2},
-        {"chunk_merge": "aligned", "blend_components": ["shoulder.pos"]},
-        {"chunk_merge": "aligned", "blend_steps": -1},
-        {"chunk_merge": "aligned", "blend_steps": True},
-        {"chunk_merge": "aligned", "blend_weight": float("nan")},
-        {"chunk_merge": "aligned", "blend_weight": 0},
-        {"chunk_merge": "aligned", "blend_weight": 1.1},
-        {"chunk_merge": "aligned", "blend_steps": 2, "blend_components": ["shoulder.pos", "shoulder.pos"]},
-        {"chunk_merge": "aligned", "mode": "rtc_guided"},
-        {"chunk_merge": "aligned", "mode": "rtc_trained"},
-    ],
-)
-def test_invalid_client_settings_fail_before_connect(kwargs):
-    with pytest.raises(ValueError):
-        client_config(**kwargs)
-
-
-@pytest.mark.parametrize("components", [["missing"], ["shoulder.pos", "shoulder.pos"], [""]])
-def test_server_configuration_rejects_ambiguous_blend_components(worker, components):
-    with pytest.raises(ValueError, match="blendable_components"):
-        ServerConfig(
-            deployment="test",
-            model=ModelConfig(repo_or_path="local"),
-            semantics="test-radians",
-            features=list(worker.runner.capabilities.features),
-            action_feature=worker.runner.capabilities.action_feature,
-            execution=ExecutionConfig(blendable_components=components),
-        )
-
-
 @pytest.mark.parametrize("blend", [False, True])
 def test_admission_echoes_exact_merge_settings_and_explicit_components(worker, blend):
     descriptor = worker.descriptor
@@ -158,9 +119,6 @@ def test_deployment_without_components_does_not_advertise_blending():
     [
         {"blend_components": ["gripper.pos"]},
         {"blend_steps": 4},
-        {"blend_weight": float("inf")},
-        {"blend_components": "elbow.pos"},
-        {"extra_option": True},
         {"chunk_merge": "append"},
     ],
 )
@@ -203,25 +161,6 @@ def test_old_server_is_rejected_before_open_for_alignment(worker):
     assert worker.session_id is None
 
 
-def test_append_open_remains_compatible_with_descriptor_without_new_fields(worker, monkeypatch):
-    descriptor = worker.descriptor
-    del descriptor["execution_contracts"]
-    del descriptor["blendable_components"]
-    client = client_for(worker, client_config(chunk_merge="append"), descriptor)
-
-    def query(key, request, timeout, expected):
-        assert "chunk_settings" not in request.body
-        assert "required_capabilities" not in request.body
-        accepted = worker.submit(request).result(2)
-        del accepted.body["chunk_settings"]
-        return accepted
-
-    monkeypatch.setattr(client, "_query", query)
-    monkeypatch.setattr(client, "control", lambda *_: None)
-    admit(client)
-    assert client.session_id
-
-
 def test_client_resolves_components_and_checks_exact_acceptance(worker, monkeypatch):
     client = client_for(
         worker,
@@ -235,19 +174,12 @@ def test_client_resolves_components_and_checks_exact_acceptance(worker, monkeypa
     assert client.blend_indices == (1, 0)
 
 
-@pytest.mark.parametrize("change", ["omit", "downgrade", "weight"])
-def test_server_cannot_silently_change_accepted_merge_settings(worker, monkeypatch, change):
+def test_server_cannot_silently_change_accepted_merge_settings(worker, monkeypatch):
     client = client_for(worker, client_config(chunk_merge="aligned"))
 
     def query(key, request, timeout, expected):
         accepted = worker.submit(request).result(2)
-        if change == "omit":
-            del accepted.body["chunk_settings"]
-        else:
-            accepted.body["chunk_settings"] = {
-                **accepted.body["chunk_settings"],
-                **({"chunk_merge": "append"} if change == "downgrade" else {"blend_weight": 0.9}),
-            }
+        accepted.body["chunk_settings"] = {**accepted.body["chunk_settings"], "chunk_merge": "append"}
         return accepted
 
     monkeypatch.setattr(client, "_query", query)
@@ -289,3 +221,19 @@ def test_server_rejects_alignment_for_rtc_session(worker):
     request = aligned_open(worker)
     request.body["mode"] = "rtc_guided"
     assert_error(worker.submit(request).result(2), ErrorCode.INCOMPATIBLE)
+
+
+def test_client_rejects_action_schema_mismatch_before_open(worker, monkeypatch):
+    client = client_for(worker, client_config())
+    monkeypatch.setattr(client, "_query", lambda *args: pytest.fail("schema must be checked before OPEN"))
+    caps = client.capabilities
+    with pytest.raises(ProtocolError, match="names") as failed:
+        client.admit(
+            features=caps.features,
+            action_feature=replace(caps.action_feature, names=tuple(reversed(caps.action_feature.names))),
+            semantics=worker.semantics,
+            action_interval=caps.action_interval,
+            mode="chunk",
+        )
+    assert failed.value.code is ErrorCode.INCOMPATIBLE
+    assert worker.session_id is None

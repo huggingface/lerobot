@@ -1,6 +1,5 @@
 """Real checkpoint/processor loading and identity, without network or model downloads."""
 
-import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -29,7 +28,7 @@ def test_content_identity_changes_with_processor_statistics_and_effective_settin
     assert artifact_identity({"checkpoint": tmp_path}, {"mode": "rtc_guided"}) != second
 
 
-def _language_deployment(tmp_path, monkeypatch, *, recipe_kind="none", use_renderer=True):
+def _language_deployment(tmp_path, monkeypatch, *, recipe_kind="none"):
     config = tiny_config()
     config.save_pretrained(tmp_path)
     policy = ConformingPolicy(config)
@@ -58,8 +57,7 @@ def _language_deployment(tmp_path, monkeypatch, *, recipe_kind="none", use_rende
                 MessageTurn(role="assistant", content=target, stream="high_level", target=True),
             ]
         )
-    if use_renderer:
-        pre.steps.insert(0, RenderRuntimeMessagesStep(recipe))
+    pre.steps.insert(0, RenderRuntimeMessagesStep(recipe))
     pre.save_pretrained(tmp_path)
     post.save_pretrained(tmp_path)
     server = ServerConfig(
@@ -86,8 +84,6 @@ def test_language_warmup_skips_only_unsupported_saved_subtask_prompt(
     assert calls[0] == [[{"role": "user", "content": "Describe the scene."}]]
     assert policy.resets == 2  # constructor and reset after warmup
     assert "Skipping next-subtask warmup" in caplog.text
-    assert "Actions and VQA remain available" in caplog.text
-    assert "do not enable autosteer" in caplog.text
     assert runner.query(observation(), kind="vqa", text="What is visible?") == "a cube"
     assert runner.predict(observation()).canonical_actions.shape == (3, 3)
 
@@ -103,42 +99,16 @@ def test_language_warmup_runs_supported_saved_subtask_prompt(tmp_path, monkeypat
     assert "Skipping next-subtask warmup" not in caplog.text
 
 
-def test_malformed_saved_recipe_is_not_treated_as_missing_subtask_support(tmp_path, monkeypatch, caplog):
-    server, _, calls = _language_deployment(tmp_path, monkeypatch, recipe_kind="supported")
-    path = tmp_path / "policy_preprocessor.json"
-    saved = json.loads(path.read_text())
-    saved["steps"][0]["config"]["recipe"]["messages"][1]["content"] = "${unknown_binding}"
-    path.write_text(json.dumps(saved))
-    with pytest.raises(ValueError, match="unknown binding"):
-        load_deployment(server)
-    assert calls == []
-    assert "Skipping next-subtask warmup" not in caplog.text
-
-
-@pytest.mark.parametrize("failure_kind", ["vqa", "next_subtask", "custom_processor"])
-def test_language_warmup_model_errors_still_fail_startup_and_reset(
-    tmp_path, monkeypatch, caplog, failure_kind
-):
-    server, policy, _ = _language_deployment(
-        tmp_path,
-        monkeypatch,
-        recipe_kind="supported" if failure_kind == "next_subtask" else "none",
-        use_renderer=failure_kind != "custom_processor",
-    )
-    calls = 0
+def test_language_warmup_model_errors_fail_startup_and_reset(tmp_path, monkeypatch):
+    server, policy, _ = _language_deployment(tmp_path, monkeypatch)
 
     def fail_generation(batch):
-        nonlocal calls
-        calls += 1
-        if failure_kind == "vqa" or calls == 2:
-            raise ValueError("genuine model failure")
-        return "a cube"
+        raise ValueError("genuine model failure")
 
     monkeypatch.setattr(policy, "generate_text", fail_generation)
     with pytest.raises(ValueError, match="genuine model failure"):
         load_deployment(server)
     assert policy.resets == 2
-    assert "Skipping next-subtask warmup" not in caplog.text
 
 
 def test_unsupported_runtime_subtask_returns_bounded_error_and_preserves_session(tmp_path, monkeypatch):

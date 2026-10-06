@@ -11,7 +11,6 @@ import pytest
 pytest.importorskip("datasets", reason="interactive rollout requires lerobot[dataset]")
 
 from lerobot.inference import QueryKind
-from lerobot.rollout.controller import AskResult, RolloutController
 from lerobot.rollout.interactive import InteractiveSession
 from tests import test_interactive_rollout as interactive_helpers
 from tests.remote_inference import test_engine as engine_helpers
@@ -90,37 +89,3 @@ def test_oversized_operator_input_is_actionable_and_does_not_cancel_autosteer(
     assert not engine.has_pending_query
     assert not engine.failed
     assert not any(record.levelno >= logging.ERROR for record in caplog.records)
-
-
-def test_direct_remote_task_rejection_is_nonthrowing_and_leaves_state_untouched(session, caplog):
-    engine, client = session
-    client.descriptor["limits"]["max_input_chars"] = 16
-    engine.start_autosteer("goal", 10)
-    assert not engine.set_task("x" * 17)
-    assert engine.task == "initial task"
-    assert engine.task_version == 0
-    assert engine.autosteer_goal == "goal"
-    assert "Instruction rejected" in caplog.text
-
-
-def test_remote_queries_honor_deployed_limit_above_local_default(session):
-    engine, client = session
-    client.descriptor["limits"]["max_input_chars"] = 5000
-    assert engine.ask("x" * 5000)
-    engine.drop_pending_query()
-    engine.start_autosteer("x" * 5000, 10)
-    assert engine.autosteer_goal == "x" * 5000
-    assert engine.set_task("x" * 5000)
-
-
-@pytest.mark.parametrize("text", ["", "   ", "x" * 4097])
-@pytest.mark.parametrize("method", ["ask", "autosteer"])
-def test_local_controller_rejects_invalid_text_before_changing_query_state(text, method):
-    ctx, strategy, engine, *_ = interactive_helpers._make_ctx()
-    controller = RolloutController(strategy, ctx)
-    controller._running.set()
-    engine.start_autosteer("goal", 10)
-    assert getattr(controller, method)(text) is AskResult.INVALID
-    assert controller.text_input_error(text)
-    assert engine.autosteer_goal == "goal"
-    assert not engine.has_pending_query

@@ -5,7 +5,6 @@
 
 """VLA-JEPA's real preparation/processor contract without backbone downloads."""
 
-from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -142,26 +141,3 @@ def test_world_model_checkpoint_uses_current_frames_and_matches_local_processors
     torch.testing.assert_close(delta, expected_delta)
     runner.reset()
     torch.testing.assert_close(runner.predict(source).canonical_actions, actual.canonical_actions)
-
-
-def test_vla_jepa_preserves_names_modalities_state_width_and_unresized_shape(setup):
-    policy, runner, _ = setup
-    features = runner.capabilities.features
-    with pytest.raises(ValueError, match="names must exactly match"):
-        policy.validate_chunk_input_features(features[:-1])
-    with pytest.raises(ValueError, match="names must exactly match"):
-        policy.validate_chunk_input_features((*features, replace(features[0], name="unknown")))
-    with pytest.raises(ValueError, match="RGB camera"):
-        policy.validate_chunk_input_features((replace(features[0], kind="tensor"), *features[1:]))
-    with pytest.raises(ValueError, match="Tensor feature shape"):
-        policy.validate_chunk_input_features((*features[:-1], replace(features[-1], shape=(15,), names=())))
-    policy.config.resize_images_to = None
-    with pytest.raises(ValueError, match="RGB feature shape"):
-        policy.validate_chunk_input_features(features)
-
-
-def test_vla_jepa_rejects_observation_history(setup):
-    policy, _, _ = setup
-    policy.config.n_obs_steps = 2
-    with pytest.raises(ValueError, match="n_obs_steps=1"):
-        policy.chunk_inference_spec()

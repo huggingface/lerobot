@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import multiprocessing
-import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -32,12 +30,13 @@ from lerobot.remote_inference.client import RemoteClient, RequestCancelled
 from lerobot.remote_inference.protocol import MessageType, instance_prefix, session_prefix
 from lerobot.transport.zenoh import QueryCancelled
 from tests.inference.test_policy_runner import observation
-from tests.remote_inference.test_aligned_process import ACTION_NAMES, serve_in_child
+from tests.remote_inference.test_aligned_process import ACTION_NAMES, process_server as _process_server
 from tests.remote_inference.test_remote_path import admit, remote_server as _remote_server
 from tests.remote_inference.test_zenoh import transports as _transports
 
 remote_server = _remote_server
 transports = _transports
+process_server = _process_server
 
 
 def wait_for(predicate, timeout=3):
@@ -175,36 +174,10 @@ def test_language_wait_fails_on_observed_presence_loss_without_waiting_for_langu
             cancelled.set()
 
 
-@pytest.fixture
-def crashable_server():
-    with socket.socket() as port:
-        port.bind(("127.0.0.1", 0))
-        endpoint = f"tcp/127.0.0.1:{port.getsockname()[1]}"
-    context = multiprocessing.get_context("spawn")
-    ready, stopped, entered, release = (context.Event() for _ in range(4))
-    process = context.Process(target=serve_in_child, args=(endpoint, ready, stopped, entered, release))
-    process.start()
-    try:
-        assert ready.wait(60), f"server did not start; exitcode={process.exitcode}"
-        yield process, endpoint, entered, release
-    finally:
-        # A killed process may have died while owning an Event's condition lock.
-        # Do not touch those shared primitives after abrupt process death.
-        if process.is_alive():
-            release.set()
-            stopped.set()
-        process.join(10)
-        if process.is_alive():
-            process.kill()
-            process.join(3)
-        assert not process.is_alive()
-        process.close()
-
-
 def test_server_process_death_latches_presence_exhausts_motion_and_skips_close_ack(
-    crashable_server, monkeypatch
+    process_server, monkeypatch
 ):
-    process, endpoint, entered, _release = crashable_server
+    process, endpoint, entered, _release = process_server
     config = RemoteInferenceConfig(
         endpoint=endpoint,
         deployment="aligned-process",

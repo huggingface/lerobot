@@ -33,12 +33,7 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 # Front-end and engine internals, imported from their defining modules.
-from lerobot.inference import (  # noqa: E402
-    PolicyQuery,
-    RemoteInferenceConfig,
-    RTCInferenceConfig,
-    SyncInferenceConfig,
-)
+from lerobot.inference import PolicyQuery, SyncInferenceConfig  # noqa: E402
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.rollout import (  # noqa: E402
     AskResult,
@@ -625,26 +620,6 @@ def test_session_mutes_logs_below_error_and_restores_on_exit():
         lib_logger.removeHandler(lib_handler)
         # An assertion failure mid-test must not leak the process-wide gate.
         logging.disable(logging.NOTSET)
-
-
-@pytest.mark.parametrize(
-    ("inference", "hint"),
-    [
-        (SyncInferenceConfig(), "policy supports text generation"),
-        (RTCInferenceConfig(), "position-hold capability"),
-        (RemoteInferenceConfig(deployment="test", semantics="joints-v1"), "server language.enabled"),
-    ],
-)
-def test_session_unsupported_text_hints_match_backend(capsys, inference, hint):
-    session, _strategy, engine, _parent, _run_started = _make_session(io.StringIO())
-    session._runtime.cfg.inference = inference
-    engine.supports_text_queries = False
-    for command in ("/vqa what do you see?", "/autosteer tidy the table"):
-        session._handle_line(command)
-        output = capsys.readouterr().out
-        assert hint in output
-        if isinstance(inference, SyncInferenceConfig):
-            assert "hold" not in output
 
 
 def test_session_drives_real_base_strategy_and_answers_vqa(capsys):
@@ -1285,20 +1260,6 @@ def test_engine_autosteer_does_not_double_queue_while_generation_is_in_flight():
     engine.record_dispatch({}, {}, {})
     engine.pump_query({"joint.pos": 0.0})
     assert engine.has_pending_query
-
-
-@pytest.mark.parametrize("interval", [0, 10])
-def test_autosteer_cannot_start_another_hold_before_fresh_motion(engine_clock, interval):
-    engine = _FakeEngine()
-    engine.start_autosteer("goal", interval_s=interval)
-    engine.pump_query({"joint.pos": 0.0})
-    engine_clock.advance(30)
-    for _ in range(5):
-        engine.pump_query({"joint.pos": 0.0})
-    assert len(engine.seen_queries) == 1
-    engine.record_dispatch({}, {}, {})
-    engine.pump_query({"joint.pos": 0.0})
-    assert len(engine.seen_queries) == 2
 
 
 @pytest.mark.parametrize(

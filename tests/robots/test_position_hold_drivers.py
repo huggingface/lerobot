@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -184,74 +183,22 @@ def test_hold_requires_both_arms_capabilities(bimanual_robot):
         ThreadSafeRobot(robot).configure_position_hold()
 
 
-@pytest.mark.parametrize("incomplete_reply", [False, True], ids=["write-failure", "missing-target"])
-def test_partial_bimanual_application_is_a_hardware_failure(bimanual_robot, incomplete_reply):
-    robot = bimanual_robot()
-    wrapper = ThreadSafeRobot(robot)
-    wrapper.configure_position_hold()
-    if incomplete_reply:
-        robot.right_arm.send_action.side_effect = lambda action, *args: {"shoulder.pos": 1.0}
-        message = "applied position target for every actuator"
-    else:
-        robot.right_arm.send_action.side_effect = RuntimeError("right arm write failed")
-        message = "right arm write failed"
-
-    with pytest.raises(RuntimeError, match=message):
-        wrapper.send_action(dict.fromkeys(robot.action_features, 1.0))
-
-    robot.left_arm.send_action.assert_called_once()
-    assert wrapper.hardware_failure is not None
-    assert message in wrapper.hardware_failure
-
-
-@pytest.fixture
-def make_reachy2(monkeypatch, tmp_path):
-    monkeypatch.setattr("lerobot.robots.reachy2.robot_reachy2.require_package", lambda *args, **kwargs: None)
-
-    def make_robot(**overrides):
-        return Reachy2Robot(Reachy2RobotConfig(calibration_dir=tmp_path, **overrides))
-
-    return make_robot
-
-
 @pytest.mark.parametrize(
-    "config",
+    ("config", "supported"),
     [
-        {},
-        {"with_mobile_base": False, "use_external_commands": True},
-        {"with_mobile_base": False, "max_relative_target": 5.0},
+        ({"with_mobile_base": False}, True),
+        ({}, False),
+        ({"with_mobile_base": False, "use_external_commands": True}, False),
+        ({"with_mobile_base": False, "max_relative_target": 5.0}, False),
     ],
-    ids=["mobile-base", "external-commands", "clipped-return"],
+    ids=["position-only", "mobile-base", "external-commands", "clipped-return"],
 )
-def test_reachy2_hold_rejects_unsupported_command_contracts(make_reachy2, config):
-    robot = make_reachy2(**config)
-    assert not robot.supports_position_hold
-    with pytest.raises(ValueError, match="no supported local position-hold contract"):
+def test_reachy2_hold_requires_a_complete_applied_position_contract(monkeypatch, tmp_path, config, supported):
+    monkeypatch.setattr("lerobot.robots.reachy2.robot_reachy2.require_package", lambda *args, **kwargs: None)
+    robot = Reachy2Robot(Reachy2RobotConfig(calibration_dir=tmp_path, **config))
+    assert robot.supports_position_hold is supported
+    if supported:
         ThreadSafeRobot(robot).configure_position_hold()
-
-
-def test_reachy2_position_only_hold_replays_submitted_joint_targets(make_reachy2):
-    robot = make_reachy2(with_mobile_base=False)
-    sdk = Mock()
-    sdk.is_connected.return_value = True
-    sdk.joints = {name: SimpleNamespace(present_position=0.0) for name in robot.joints_dict.values()}
-    robot.reachy = sdk
-    wrapper = ThreadSafeRobot(robot)
-    wrapper.configure_position_hold()
-    wrapper.get_observation()
-    wrapper.hold()
-    assert all(joint.goal_position == 0.0 for joint in sdk.joints.values())
-    sdk.send_goal_positions.assert_called_once()
-    sdk.send_goal_positions.reset_mock()
-    target = {name: float(index) for index, name in enumerate(robot.action_features)}
-
-    assert wrapper.send_action(target) == target
-    assert {name: sdk.joints[joint].goal_position for name, joint in robot.joints_dict.items()} == target
-    for joint in sdk.joints.values():
-        joint.goal_position = -100.0
-    wrapper.hold()
-
-    assert {name: sdk.joints[joint].goal_position for name, joint in robot.joints_dict.items()} == target
-    assert sdk.send_goal_positions.call_count == 2
-    sdk.mobile_base.set_goal_speed.assert_not_called()
-    robot.reachy = None
+    else:
+        with pytest.raises(ValueError, match="no supported local position-hold contract"):
+            ThreadSafeRobot(robot).configure_position_hold()

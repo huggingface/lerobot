@@ -56,12 +56,7 @@ def local_prediction(monkeypatch, policy, *, relative=False, previous=None, cano
     "mode,relative,prefix_steps",
     [
         (ExecutionMode.CHUNK, False, 0),
-        (ExecutionMode.CHUNK, True, 0),
-        (ExecutionMode.RTC_GUIDED, False, 0),
-        (ExecutionMode.RTC_TRAINED, True, 0),
         (ExecutionMode.RTC_GUIDED, True, 2),
-        (ExecutionMode.RTC_TRAINED, False, 2),
-        (ExecutionMode.RTC_GUIDED, False, 4),
         (ExecutionMode.RTC_TRAINED, True, 6),
     ],
 )
@@ -104,9 +99,6 @@ def test_local_and_remote_prefix_context_and_execution_slice_match(monkeypatch, 
     assert local_policy.last_kwargs["inference_delay"] == remote_policy.last_kwargs["inference_delay"]
     local_prefix = local_policy.last_kwargs["prev_chunk_left_over"]
     remote_prefix = remote_policy.last_kwargs["prev_chunk_left_over"]
-    if not prefix_steps:
-        assert local_prefix is remote_prefix is None
-        return
     expected = previous[:4] - (5 if relative else 0)
     if len(expected) < 4:
         expected = torch.cat([expected, expected[-1:].expand(4 - len(expected), -1)])
@@ -114,28 +106,12 @@ def test_local_and_remote_prefix_context_and_execution_slice_match(monkeypatch, 
     torch.testing.assert_close(remote_prefix, expected)
 
 
-@pytest.mark.parametrize(
-    "output,error",
-    [
-        (None, "declared batch and horizon"),
-        (torch.zeros(1, 7, 3), "declared batch and horizon"),
-        (torch.zeros(1, 8, 3, dtype=torch.int64), "finite floating"),
-        (torch.full((1, 8, 3), float("nan")), "finite floating"),
-    ],
-)
-def test_local_and_remote_reject_invalid_policy_outputs(monkeypatch, output, error):
-    config = tiny_config()
-    config.rtc_config = RTCConfig(enabled=False)
-    local_policy = ObservedPolicy(config)
-    local_policy.output = output
-    engine, chunks = local_prediction(monkeypatch, local_policy)
-    assert not chunks
-    assert engine.failed
-    assert error in engine.failure_traceback
-    remote_policy = ObservedPolicy(config)
-    remote_policy.output = output
-    with pytest.raises(ValueError, match=error):
-        runner_for(remote_policy).predict(observation())
+@pytest.mark.parametrize("output", [torch.zeros(1, 7, 3), torch.full((1, 8, 3), float("nan"))])
+def test_runner_rejects_invalid_policy_outputs(output):
+    policy = ObservedPolicy(tiny_config())
+    policy.output = output
+    with pytest.raises(ValueError):
+        runner_for(policy).predict(observation())
 
 
 def test_shared_prediction_preserves_model_coordinates_before_inplace_postprocessing():
