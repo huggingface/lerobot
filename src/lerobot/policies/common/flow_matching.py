@@ -185,19 +185,6 @@ def sample_time_beta(
     return time.to(dtype=torch.float32, device=device)
 
 
-class FlowMatchingInputs(NamedTuple):
-    """The three tensors a flow-matching action expert needs at training time."""
-
-    x_t: Tensor
-    """Noised action chunk, the network input."""
-
-    velocity_target: Tensor
-    """Regression target for the predicted velocity field."""
-
-    model_time: Tensor
-    """Timestep fed to the network: ``(batch,)``, or ``(batch, horizon)`` with a prefix."""
-
-
 def make_flow_matching_inputs(
     actions: Tensor,
     noise: Tensor,
