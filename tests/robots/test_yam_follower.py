@@ -56,17 +56,22 @@ def mock_bus(positions=None):
     return bus
 
 
+def attach_bus(robot, bus):
+    robot.bus = robot.servo.bus = bus
+    return bus
+
+
 def mock_hardware(robot, monkeypatch):
-    robot.bus = mock_bus()
+    attach_bus(robot, mock_bus())
     monkeypatch.setattr(robot, "_configure_control", MagicMock())
     monkeypatch.setattr(robot, "_enable_motors", MagicMock())
-    monkeypatch.setattr(robot, "_start_servo", MagicMock())
+    monkeypatch.setattr(robot.servo, "start", MagicMock())
 
 
 def ready(robot):
     robot._connected = True
     robot.config.read_only = False
-    robot.updated_at = time.monotonic()
+    robot.servo.updated_at = time.monotonic()
     return dict.fromkeys(robot.action_features, 0.0)
 
 
@@ -231,7 +236,7 @@ def test_single_arm_action_updates_target(robot):
     action["joint_0.pos"] = 0.2
     action["gripper.pos"] = 0.5
     assert robot.send_action(action) == action
-    np.testing.assert_allclose(robot.target, [0.2, 0, 0, 0, 0, 0, 0.5])
+    np.testing.assert_allclose(robot.servo.target, [0.2, 0, 0, 0, 0, 0, 0.5])
 
 
 def test_single_arm_rejects_partial_action(robot):
@@ -286,28 +291,28 @@ def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
 
 
 def test_servo_error_disables_single_arm(robot):
-    robot.bus = mock_bus()
-    robot.bus.read_positions.side_effect = ConnectionError("lost")
-    robot._run()
-    assert isinstance(robot._failure, ConnectionError)
-    assert robot._stop.is_set()
-    robot.bus.disable.assert_called_once()
+    bus = attach_bus(robot, mock_bus())
+    bus.read_positions.side_effect = ConnectionError("lost")
+    robot.servo._run()
+    assert isinstance(robot.servo.failure, ConnectionError)
+    assert robot.servo.stop_event.is_set()
+    bus.disable.assert_called_once()
 
 
 def test_servo_waits_for_asynchronous_feedback(robot):
-    robot.bus = feedback_bus([])
+    attach_bus(robot, feedback_bus([]))
     replies = deque([None, *[frame(i) for i in range(1, 8)], None])
 
     def receive(timeout):
         value = replies.popleft() if replies else None
         if not replies:
-            robot._stop.set()
+            robot.servo.stop_event.set()
         return value
 
     robot.bus.monitor.recv = receive
-    robot._run()
-    assert robot._failure is None
-    assert robot.updated_at > 0
+    robot.servo._run()
+    assert robot.servo.failure is None
+    assert robot.servo.updated_at > 0
 
 
 @pytest.mark.parametrize("enabled,preexisting", [(True, False), (True, True), (False, False)])
@@ -329,13 +334,23 @@ def test_gc_freeze_is_shared_and_preserves_callers_state(monkeypatch, enabled, p
     assert guard._users == 0
 
 
-def test_connect_failure_releases_gc_freeze(robot, monkeypatch):
-    robot.bus = mock_bus()
-    robot.bus.open.side_effect = ConnectionError("no adapter")
+def test_gc_freeze_lasts_exactly_as_long_as_the_servo(robot, monkeypatch):
     guard = MagicMock()
     monkeypatch.setattr(robot_module, "_ControlGC", guard)
+    attach_bus(robot, mock_bus())
+    robot.servo.seed(np.zeros(7))
+    robot.servo.start()
+    guard.acquire.assert_called_once()
+    guard.release.assert_not_called()
+    robot.servo.stop()
+    guard.release.assert_called_once()
+
+
+def test_connect_failure_before_servo_never_freezes_gc(robot, monkeypatch):
+    guard = MagicMock()
+    monkeypatch.setattr(robot_module, "_ControlGC", guard)
+    attach_bus(robot, mock_bus()).open.side_effect = ConnectionError("no adapter")
     with pytest.raises(ConnectionError, match="no adapter"):
         robot.connect()
-    guard.acquire.assert_called_once()
-    guard.release.assert_called_once()
-    assert not robot._gc_acquired
+    guard.acquire.assert_not_called()
+    guard.release.assert_not_called()

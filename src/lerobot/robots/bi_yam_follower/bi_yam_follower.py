@@ -18,7 +18,6 @@
 
 import logging
 import threading
-import time
 from copy import deepcopy
 from dataclasses import fields
 
@@ -44,12 +43,15 @@ class BiYamFollower(BimanualMixin, Robot):
         super().__init__(config)
         self.config = config
         self._top_level_cam_keys = set(config.cameras)
-        self.left_arm = YamFollower(self._arm_robot_config("left", config.left_arm, config.cameras))
-        self.right_arm = YamFollower(self._arm_robot_config("right", config.right_arm, {}))
-        self.arms = {"left": self.left_arm, "right": self.right_arm}
+        # One stop event for both servos, so a fault on either arm stops both.
         self._stop = threading.Event()
-        self.left_arm._stop = self._stop
-        self.right_arm._stop = self._stop
+        self.left_arm = YamFollower(
+            self._arm_robot_config("left", config.left_arm, config.cameras), stop_event=self._stop
+        )
+        self.right_arm = YamFollower(
+            self._arm_robot_config("right", config.right_arm, {}), stop_event=self._stop
+        )
+        self.arms = {"left": self.left_arm, "right": self.right_arm}
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
 
     def _arm_robot_config(
@@ -97,7 +99,7 @@ class BiYamFollower(BimanualMixin, Robot):
             if calibrate:
                 self.configure()
                 for arm in self.arms.values():
-                    arm._start_servo()
+                    arm.servo.start()
             for arm in self.arms.values():
                 arm._connected = True
         except BaseException:
@@ -141,14 +143,11 @@ class BiYamFollower(BimanualMixin, Robot):
             for side, arm in self.arms.items()
         }
         targets = {side: arm._action_target(arm_actions[side]) for side, arm in self.arms.items()}
-        with self.left_arm._lock, self.right_arm._lock:
-            for arm in self.arms.values():
-                arm._check_feedback()
-            commanded_at = time.monotonic()
-            for side, arm in self.arms.items():
-                arm.target = targets[side]
-                arm.commanded_at = commanded_at
-                arm.command_timed_out = False
+        # Check both arms before moving either; a later fault on one stops both servos anyway.
+        for arm in self.arms.values():
+            arm.servo.check_healthy()
+        for side, arm in self.arms.items():
+            arm.servo.set_target(targets[side])
         return {
             f"{side}_{name}": float(targets[side][i])
             for side, arm in self.arms.items()
