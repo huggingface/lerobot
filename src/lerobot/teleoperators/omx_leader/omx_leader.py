@@ -17,12 +17,7 @@
 import logging
 import time
 
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.dynamixel import (
-    DriveMode,
-    DynamixelMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors import DriveMode, Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
@@ -43,7 +38,7 @@ class OmxLeader(Teleoperator):
     def __init__(self, config: OmxLeaderConfig):
         super().__init__(config)
         self.config = config
-        self.bus = DynamixelMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pan": Motor(1, "xl330-m288", MotorNormMode.RANGE_M100_100),
@@ -89,7 +84,7 @@ class OmxLeader(Teleoperator):
         logger.info(f"\nUsing factory default calibration values for {self}")
         logger.info(f"\nWriting default configuration of {self} to the motors")
         for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+            self.bus.set_operating_mode("extended_position", motor)
 
         for motor in self.bus.motors:
             if motor == "gripper":
@@ -121,7 +116,7 @@ class OmxLeader(Teleoperator):
                 # can't rotate more than 360 degrees (from 0 to 4095) And some mistake can happen while
                 # assembling the arm, you could end up with a servo with a position 0 or 4095 at a crucial
                 # point
-                self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+                self.bus.set_operating_mode("extended_position", motor)
 
             if motor == "gripper":
                 self.bus.write("Drive_Mode", motor, DriveMode.INVERTED.value)
@@ -133,7 +128,7 @@ class OmxLeader(Teleoperator):
         # its goal position is a complete grasp (both gripper fingers are ordered to join and reach a touch).
         # For the leader gripper, it means we can use it as a physical trigger, since we can force with our finger
         # to make it move, and it will move back to its original target position when we release the force.
-        self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
+        self.bus.set_operating_mode("current_based_position", "gripper")
         self.bus.write("Current_Limit", "gripper", 100)
         self.bus.write("Goal_Current", "gripper", 100)
         self.bus.write("Homing_Offset", "gripper", 100)

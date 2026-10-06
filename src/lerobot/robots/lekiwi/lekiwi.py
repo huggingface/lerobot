@@ -24,11 +24,7 @@ import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -53,7 +49,7 @@ class LeKiwi(Robot):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 # arm
@@ -150,7 +146,7 @@ class LeKiwi(Robot):
 
         self.bus.disable_torque(self.arm_motors)
         for name in self.arm_motors:
-            self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
+            self.bus.set_operating_mode("position", name)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings(self.arm_motors)
@@ -192,7 +188,7 @@ class LeKiwi(Robot):
         self.bus.disable_torque()
         self.bus.configure_motors()
         for name in self.arm_motors:
-            self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
+            self.bus.set_operating_mode("position", name)
             # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
             self.bus.write("P_Coefficient", name, 16)
             # Set I_Coefficient and D_Coefficient to default value 0 and 32
@@ -200,7 +196,7 @@ class LeKiwi(Robot):
             self.bus.write("D_Coefficient", name, 32)
 
         for name in self.base_motors:
-            self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
+            self.bus.set_operating_mode("velocity", name)
 
         self.bus.enable_torque()
 
