@@ -192,7 +192,7 @@ def make_flow_matching_inputs(
     convention: FlowConvention = FlowConvention.NOISE_AT_ONE,
     *,
     prefix_mask: Tensor | None = None,
-) -> FlowMatchingInputs:
+) -> tuple[Tensor, Tensor, Tensor]:
     """Build the noised actions, velocity target and model timesteps for a training step.
 
     The interpolation is linear between the two endpoints of the probability path, and
