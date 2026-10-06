@@ -14,23 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dynamixel-specific behaviour.
+"""Dynamixel behaviour of `SerialMotorsBus`, from the rustypot definitions.
 
 Register access itself is family-agnostic and covered once in test_motors_bus.py;
 what is tested here is what Dynamixel does differently -- two definitions sharing
-a bus, homing offsets of the opposite sign, and a drive mode that is a motor
-register rather than a calibration-only field.
+a bus, homing offsets of the opposite sign, operating mode values, and a drive mode
+that is a motor register rather than a calibration-only field.
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("rustypot", reason="rustypot is required (install lerobot[dynamixel])")
+pytest.importorskip("rustypot", reason="rustypot is required (install lerobot[serial-motors])")
 
 import rustypot
 
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.motors.dynamixel import DynamixelMotorsBus
 from tests.mocks.mock_motors_bus import MockBus
 
@@ -62,8 +62,8 @@ def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
     }
 
 
-def make_bus(motors, calibration=None) -> DynamixelMotorsBus:
-    bus = DynamixelMotorsBus(port="/dev/dummy-port", motors=motors, calibration=calibration)
+def make_bus(motors, calibration=None) -> SerialMotorsBus:
+    bus = SerialMotorsBus(port="/dev/dummy-port", motors=motors, calibration=calibration)
     bus._bus = MockBus(motors=bus._definitions)
     return bus
 
@@ -79,7 +79,7 @@ def written(bus, data_name: str, motor_id: int) -> int:
 def test_each_motor_keeps_its_own_definition(dummy_motors):
     """XL430 (whose definition covers the XM540) and XL330 share the bus, each read and
     written through its own definition."""
-    bus = DynamixelMotorsBus("", dummy_motors)
+    bus = SerialMotorsBus("", dummy_motors)
 
     assert bus._definitions == {
         1: rustypot.Xl430PyController.definition(),
@@ -88,9 +88,37 @@ def test_each_motor_keeps_its_own_definition(dummy_motors):
     }
 
 
-def test_abc_implementation(dummy_motors):
-    """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
-    DynamixelMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+def test_dynamixel_motors_bus_is_a_deprecated_alias(dummy_motors):
+    with pytest.warns(DeprecationWarning, match="SerialMotorsBus"):
+        bus = DynamixelMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+
+    assert isinstance(bus, SerialMotorsBus)
+
+
+def test_operating_modes_take_the_dynamixel_values(dummy_motors):
+    bus = make_bus(dummy_motors)
+
+    bus.set_operating_mode("position", "dummy_1")
+    bus.set_operating_mode("current_based_position", "dummy_3")
+
+    assert (written(bus, "Operating_Mode", 1), written(bus, "Operating_Mode", 3)) == (3, 5)
+
+
+def test_configure_motors_only_shortens_the_return_delay(dummy_motors):
+    """Dynamixel servos have no Feetech acceleration registers."""
+    bus = make_bus(dummy_motors)
+
+    bus.configure_motors()
+
+    assert {register for _, register, _ in bus._bus.writes} == {"return_delay_time"}
+
+
+def test_the_drive_mode_is_left_to_the_motor(dummy_motors, dummy_calibration):
+    """dummy_2 is set to drive mode 1, which its Drive_Mode register applies: normalising
+    must not invert it a second time."""
+    bus = make_bus(dummy_motors, dummy_calibration)
+
+    assert bus._normalize({2: 27}) == {2: -100.0}
 
 
 def test_is_calibrated(dummy_motors, dummy_calibration):
