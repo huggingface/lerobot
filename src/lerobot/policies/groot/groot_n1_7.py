@@ -29,7 +29,7 @@ from torch import nn
 
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from ..common.flow_matching import sample_beta, sample_noise
+from ..common.flow_matching import FlowConvention, euler_integrate, sample_beta, sample_noise
 from .action_head.cross_attention_dit import AlternateVLDiT, DiT, SelfAttentionTransformer
 from .configuration_groot import N1_7_DEFAULT_IMAGE_CROP_SIZE, N1_7_DEFAULT_IMAGE_TARGET_SIZE
 
@@ -654,7 +654,6 @@ class GR00TN17ActionHead(nn.Module):
         actions = sample_noise(
             (batch_size, self.config.action_horizon, self.action_dim), device, dtype=vl_embeds.dtype
         )
-        dt = 1.0 / self.num_inference_timesteps
         vel_strength = torch.ones_like(actions)
 
         if "action" in action_input:
@@ -675,7 +674,9 @@ class GR00TN17ActionHead(nn.Module):
                 None, :, None
             ].to(device)
 
-        for t_step in range(self.num_inference_timesteps):
+        def denoise_step(actions: torch.Tensor, time_tensor: torch.Tensor, t_step: int) -> torch.Tensor:
+            # Bucket off the solver's step counter, not its float32 time: the buckets keep being
+            # derived from the exact `t_step / num_inference_timesteps`, without a device sync.
             t_cont = t_step / float(self.num_inference_timesteps)
             t_discretized = int(t_cont * self.num_timestep_buckets)
             timesteps_tensor = torch.full(size=(batch_size,), fill_value=t_discretized, device=device)
@@ -700,7 +701,16 @@ class GR00TN17ActionHead(nn.Module):
                     timestep=timesteps_tensor,
                 )
             pred = self.action_decoder(model_output, embodiment_id)
-            actions = actions + dt * pred[:, -self.action_horizon :] * vel_strength
+            return pred[:, -self.action_horizon :]
+
+        actions = euler_integrate(
+            denoise_step,
+            actions,
+            self.num_inference_timesteps,
+            convention=FlowConvention.NOISE_AT_ZERO,
+            step_aware=True,
+            velocity_scale=vel_strength,
+        )
 
         return BatchFeature(
             data={
