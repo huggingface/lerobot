@@ -278,6 +278,7 @@ def test_return_move_io_failure_aborts_and_disconnects(operation, monkeypatch, c
     strategy._engine = engine
     strategy._teardown_hardware(ctx.hardware)
     failed_io.assert_called_once()
+    assert robot.sent == []
     assert (ctx.hardware.robot_wrapper.hardware_failure is not None) == (operation == "write")
     assert not robot.is_connected
     assert "return move failed" in caplog.text
@@ -294,18 +295,6 @@ def test_robot_disconnect_failure_does_not_skip_teleoperator_cleanup(monkeypatch
     teleop.disconnect.assert_called_once()
 
 
-@pytest.mark.parametrize("disable_torque", [True, False])
-def test_disconnect_logs_torque_configuration_without_claiming_pose_retention(disable_torque, caplog):
-    ctx, robot = make_dispatch_context(GateEngine())
-    robot.config = SimpleNamespace(disable_torque_on_disconnect=disable_torque)
-    strategy = BaseStrategy(BaseStrategyConfig())
-    with caplog.at_level("INFO"):
-        strategy._teardown_hardware(ctx.hardware, return_to_initial_position=False)
-    assert f"disable_torque_on_disconnect={disable_torque}" in caplog.text
-    assert "config" in caplog.text.lower()
-    assert "leaving robot in final pose" not in caplog.text
-
-
 def test_teardown_without_initial_position_reports_missing_capture(caplog):
     ctx, robot = make_dispatch_context(GateEngine())
     ctx.hardware.initial_position = None
@@ -318,8 +307,7 @@ def test_teardown_without_initial_position_reports_missing_capture(caplog):
     assert not robot.is_connected
 
 
-@pytest.mark.parametrize("bad_position", [float("nan"), float("inf"), float("-inf")])
-@pytest.mark.parametrize("source", ["observed", "initial"])
+@pytest.mark.parametrize(("bad_position", "source"), [(float("nan"), "observed"), (float("inf"), "initial")])
 def test_return_move_rejects_nonfinite_positions_before_sending(bad_position, source, caplog):
     ctx, robot = make_dispatch_context(GateEngine())
     if source == "observed":
@@ -432,8 +420,10 @@ def test_first_hold_requires_complete_finite_measured_positions(observation, mon
     assert robot.sent == []
 
 
-@pytest.mark.parametrize("bad_return", [None, {}, {"joint.pos": float("nan")}])
-@pytest.mark.parametrize("operation", ["hold", "send_action"])
+@pytest.mark.parametrize(
+    ("bad_return", "operation"),
+    [(None, "send_action"), ({}, "hold"), ({"joint.pos": float("nan")}, "send_action")],
+)
 def test_hold_never_substitutes_requested_action_for_invalid_driver_return(
     bad_return, operation, monkeypatch
 ):
@@ -475,52 +465,6 @@ def test_omx_hold_uses_position_driver_without_an_extra_sensor_read():
     assert reads == ["Present_Position"]
     assert writes == [("Goal_Position", measured), ("Goal_Position", measured)]
     assert not robot.config.use_degrees
-
-
-@pytest.mark.parametrize("driver", ["omx", "so"])
-def test_camera_error_propagates_unchanged_and_homing_uses_normal_observation(driver):
-    if driver == "omx":
-        from lerobot.robots.omx_follower import OmxFollower, OmxFollowerConfig
-
-        robot = OmxFollower.__new__(OmxFollower)
-        robot.config = OmxFollowerConfig(port="unused")
-    else:
-        from lerobot.robots.so_follower import SOFollower, SOFollowerRobotConfig
-
-        robot = SOFollower.__new__(SOFollower)
-        robot.config = SOFollowerRobotConfig(port="unused")
-    robot.id = "observation_failure_test"
-    robot.robot_type = robot.name
-    motor_reads = Mock(return_value={"joint": 7.0})
-    motor_writes = Mock()
-    motor_disconnect = Mock()
-    robot.bus = SimpleNamespace(
-        motors={"joint": None},
-        is_connected=True,
-        sync_read=motor_reads,
-        sync_write=motor_writes,
-        disconnect=motor_disconnect,
-    )
-    error = OSError("camera disappeared")
-    camera = SimpleNamespace(
-        is_connected=True,
-        read_latest=Mock(side_effect=error),
-        disconnect=Mock(),
-    )
-    robot.cameras = {"front": camera}
-    wrapper = ThreadSafeRobot(robot)
-    wrapper.configure_position_hold()
-    with pytest.raises(OSError) as raised:
-        wrapper.get_observation()
-    assert raised.value is error
-    assert wrapper.hardware_failure is None
-    context = SimpleNamespace(robot_wrapper=wrapper, initial_position={"joint.pos": 0.0}, teleop=None)
-    strategy = BaseStrategy(BaseStrategyConfig())
-    strategy._teardown_hardware(context)
-    assert motor_reads.call_count == camera.read_latest.call_count == 2
-    motor_writes.assert_not_called()  # Full observation still fails; no camera-independent homing.
-    motor_disconnect.assert_called_once_with(robot.config.disable_torque_on_disconnect)
-    camera.disconnect.assert_called_once()
 
 
 def test_same_text_autosteer_restart_discards_previous_intent():

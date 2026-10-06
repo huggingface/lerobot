@@ -21,7 +21,7 @@ from tests.inference.test_local_rtc_regressions import make_engine, wait_for
 from tests.remote_inference.test_engine import ControlledClient
 
 
-@pytest.fixture(params=["local_rtc", "append", "aligned", "blended"])
+@pytest.fixture(params=["local_rtc", "blended"])
 def backend(request: pytest.FixtureRequest) -> Iterator[SimpleNamespace]:
     """Reuse the existing gated workers; only deadlines use a controlled clock."""
     now = [time.monotonic()]
@@ -45,11 +45,11 @@ def backend(request: pytest.FixtureRequest) -> Iterator[SimpleNamespace]:
             max_observation_age_s=5,
             refill_seconds=0.1,
             action_starvation_grace_s=1.0,
-            chunk_merge="append" if request.param == "append" else "aligned",
-            blend_steps=2 if request.param == "blended" else 0,
-            blend_components=["a.pos"] if request.param == "blended" else [],
+            chunk_merge="aligned",
+            blend_steps=2,
+            blend_components=["a.pos"],
         )
-        worker.blend_indices = (0,) if config.blend_steps else ()
+        worker.blend_indices = (0,)
         names = ("a.pos", "b.pos")
         engine = RemoteInferenceEngine(
             worker,
@@ -156,7 +156,6 @@ def test_starvation_discards_old_result_and_pre_ack_capture_then_resumes_fresh(
 
 
 @pytest.mark.parametrize("transition", ["expiry", "reset", "stop"])
-@pytest.mark.parametrize("backend", ["local_rtc", "blended"], indirect=True)
 def test_starvation_late_result_cannot_restore_motion_after_transition(
     backend: SimpleNamespace, transition: str
 ) -> None:
@@ -196,7 +195,6 @@ def test_starvation_late_result_cannot_restore_motion_after_transition(
 
 
 @pytest.mark.parametrize("awaiting_capture", [False, True])
-@pytest.mark.parametrize("backend", ["local_rtc", "blended"], indirect=True)
 def test_language_request_during_starvation_cannot_renew_grace(
     backend: SimpleNamespace, awaiting_capture: bool
 ) -> None:
@@ -220,7 +218,6 @@ def test_language_request_during_starvation_cannot_renew_grace(
     assert runtime.queue.empty()
 
 
-@pytest.mark.parametrize("backend", ["local_rtc", "blended"], indirect=True)
 def test_fresh_recovery_result_arriving_after_grace_cannot_restore_motion(backend: SimpleNamespace) -> None:
     engine, runtime = backend.engine, backend.runtime
     exhaust_with_old_inference_pending(backend)

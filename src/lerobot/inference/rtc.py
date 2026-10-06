@@ -51,11 +51,7 @@ _RTC_MAX_CONSECUTIVE_DISCARDS: int = 5
 _RTC_JOIN_TIMEOUT_S: float = 3.0
 
 
-class _FatalRTCInferenceError(RuntimeError):
-    """Base class for RTC errors that cannot become valid after a retry."""
-
-
-class _TrainedRTCDelayExceededError(_FatalRTCInferenceError):
+class _TrainedRTCDelayExceededError(RuntimeError):
     """Raised when measured latency persistently exceeds a trained RTC checkpoint's support."""
 
 
@@ -264,10 +260,7 @@ class RTCInferenceEngine(InferenceEngine):
             raise RuntimeError("RTC inference engines cannot be restarted; create a new session")
         self._started = True
         self._runtime.invalidate()
-        self._obs_holder = {
-            "obs": None,
-            "robot_type": self._robot.robot_type,
-        }
+        self._obs_holder = {"obs": None}
         self._shutdown_event.clear()
         self._rtc_thread = Thread(
             target=self._rtc_loop,

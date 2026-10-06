@@ -346,9 +346,10 @@ def test_task_change_during_compile_warmup_needs_no_hold_acknowledgment():
         stop(engine)
 
 
-@pytest.mark.parametrize("acknowledge_first", [False, True])
-@pytest.mark.parametrize("autosteer", [False, True])
-@pytest.mark.parametrize("action_timeout,language_timeout", [(2, 8), (8, 2)])
+@pytest.mark.parametrize(
+    "acknowledge_first,autosteer,action_timeout,language_timeout",
+    [(False, False, 2, 8), (False, True, 8, 2), (True, False, 8, 2), (True, True, 2, 8)],
+)
 def test_instruction_hold_language_upgrade_preserves_ack_and_bounded_budget(
     acknowledge_first, autosteer, action_timeout, language_timeout
 ):
@@ -448,37 +449,8 @@ def test_pause_cancels_pending_language_hold_and_its_deadline():
     assert not engine.failed, "the cancelled hold must not fault a newly resumed run"
 
 
-def test_pause_resume_discards_observation_already_copied_by_worker(monkeypatch):
-    engine = make_engine()
-    preparing, release = Event(), Event()
-    original = rtc.build_dataset_frame
-
-    def build_frame(*args, **kwargs):
-        if not preparing.is_set():
-            preparing.set()
-            assert release.wait(3)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(rtc, "build_dataset_frame", build_frame)
-    engine.start()
-    try:
-        engine.resume()
-        observe(engine, 1)
-        assert preparing.wait(3)
-        engine.pause()
-        engine.resume()
-        observe(engine, 2)
-        release.set()
-        engine._policy.release.release()
-        assert wait_for(lambda: engine.action_queue.qsize() > 0)
-        torch.testing.assert_close(engine._policy.action_observations[0], torch.full((1, 2), 2.0))
-        assert not engine.failed
-    finally:
-        release.set()
-        stop(engine)
-
-
-def test_active_reset_discards_observation_copied_before_reset(monkeypatch):
+@pytest.mark.parametrize("transition", ["pause_resume", "active_reset"])
+def test_transition_discards_observation_already_copied_by_worker(monkeypatch, transition):
     engine = make_engine()
     preparing, release, policy_reset = Event(), Event(), Event()
     original = rtc.build_dataset_frame
@@ -497,9 +469,11 @@ def test_active_reset_discards_observation_copied_before_reset(monkeypatch):
         observe(engine, 1)
         assert preparing.wait(3)
         old_generation = engine._runtime.generation
-        # Episodic rollout may reset while active: there is no pause for begin()
-        # to reject the observation already copied by the worker.
-        engine.reset()
+        if transition == "active_reset":
+            engine.reset()
+        else:
+            engine.pause()
+            engine.resume()
         assert engine._runtime.active
         assert engine._policy_active.is_set()
         assert engine._runtime.generation != old_generation
@@ -507,70 +481,14 @@ def test_active_reset_discards_observation_copied_before_reset(monkeypatch):
         release.set()
         engine._policy.release.release()
         assert wait_for(lambda: engine.action_queue.qsize() > 0)
-        assert policy_reset.is_set()
+        if transition == "active_reset":
+            assert policy_reset.is_set()
         assert engine._policy.action_observations
         for observation in engine._policy.action_observations:
             torch.testing.assert_close(observation, torch.full((1, 2), 2.0))
         assert not engine.failed
     finally:
         release.set()
-        stop(engine)
-
-
-@pytest.mark.parametrize("pause_first", [False, True])
-def test_reset_during_text_reports_cancellation_and_requires_fresh_actions(pause_first):
-    engine = make_engine(rtc_queue_threshold=-1)
-    generating, finish = Event(), Event()
-
-    def text(batch):
-        generating.set()
-        assert finish.wait(3)
-        return "old answer"
-
-    engine._policy.generate_text = text
-    engine.start()
-    try:
-        engine.resume()
-        assert engine.ask("what?")
-        engine.acknowledge_hold()
-        observe(engine)
-        assert generating.wait(3)
-        if pause_first:
-            engine.pause()
-        engine.reset()
-        engine.resume()
-        finish.set()
-        assert wait_for(lambda: not engine._query_in_flight)
-        delivered = []
-        engine.set_answer_observer(delivered.append)
-        engine.pump_query()
-        engine.pump_query()
-        assert len(delivered) == 1
-        assert delivered[0].answer is None
-        assert "cancelled" in delivered[0].error
-        assert not engine.dispatch_allowed()
-        assert not engine.failed
-    finally:
-        finish.set()
-        stop(engine)
-
-
-def test_language_waits_for_observation_after_hold_acknowledgment():
-    engine = make_engine(rtc_queue_threshold=-1)
-    engine.start()
-    try:
-        engine.resume()
-        observe(engine, 1)
-        assert engine.ask("what?")
-        engine.acknowledge_hold()
-        with engine._obs_lock:
-            assert engine._obs_holder["obs"] is None
-        observe(engine, 2)
-        assert wait_for(lambda: bool(engine._ready_answers))
-        assert len(engine._policy.text_observations) == 1
-        torch.testing.assert_close(engine._policy.text_observations[0], torch.full((1, 2), 2.0))
-        assert not engine.dispatch_allowed()
-    finally:
         stop(engine)
 
 

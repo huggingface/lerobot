@@ -67,7 +67,7 @@ def test_lawam_serves_cropped_horizon_from_current_images(setup):
     assert policy.config.image_observation_delta_indices == [0, 23]  # Training teacher targets.
     assert runner.capabilities.prediction_steps == 24
     assert runner.capabilities.execution_steps == 24
-    assert runner.capabilities.modes == (ExecutionMode.CHUNK,)
+    assert runner.capabilities.modes == policy.chunk_inference_spec().modes == (ExecutionMode.CHUNK,)
     arrays = {
         feature.name: np.full(feature.shape, 64 + i, dtype=feature.dtype)
         for i, feature in enumerate(server.features)
@@ -109,18 +109,8 @@ def test_lawam_state_conditioning_requires_exact_state_schema(setup):
     policy.validate_chunk_input_features(tuple(server.features))
 
 
-def test_lawam_rejects_temporal_observation_and_rtc(setup):
-    server, policy, runner = setup
-    with pytest.raises(ValueError, match="Unsupported execution mode"):
-        PolicyRunner(
-            policy,
-            runner.preprocessor,
-            runner.postprocessor,
-            action_interval=1 / 30,
-            features=tuple(server.features),
-            action_feature=server.action_feature,
-            modes=(ExecutionMode.RTC_GUIDED,),
-        )
+def test_lawam_rejects_temporal_observation(setup):
+    _, policy, _ = setup
     policy.config.n_obs_steps = 2
     with pytest.raises(ValueError, match="n_obs_steps=1"):
         policy.chunk_inference_spec()

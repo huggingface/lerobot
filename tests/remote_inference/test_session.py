@@ -179,17 +179,11 @@ def test_open_is_idempotent_and_a_second_client_cannot_replace_session(worker):
     assert worker.runner.policy.resets == 2  # constructor, admitted reset
 
 
-def test_duplicate_data_request_never_reexecutes_stateful_policy(worker):
-    session = admit(worker)
-    request = action_request(worker, session)
-    assert worker.submit(request).result(2).message_type is MessageType.ACTION
-    assert_error(worker.submit(request).result(2), ErrorCode.STALE)
-
-
 def test_evicted_request_identity_cannot_be_replayed(worker):
     session = admit(worker)
     first = action_request(worker, session)
     assert worker.submit(first).result(2).message_type is MessageType.ACTION
+    assert_error(worker.submit(first).result(2), ErrorCode.STALE)
     for _ in range(128):
         assert worker.submit(action_request(worker, session)).result(2).message_type is MessageType.ACTION
     assert first.request_id not in worker._seen

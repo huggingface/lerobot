@@ -423,33 +423,19 @@ def test_interactive_cli_strategy_failure_exits_nonzero_after_teardown(monkeypat
     strategy.teardown.assert_called_once_with(ctx)
 
 
-def test_controller_segment_end_hold_failure_is_terminal():
-    controller, events, strategy, engine, _parent, _run_started = _make_controller(lambda ctx: None)
-    strategy.hold_control_state.side_effect = OSError("final hold failed")
-    thread = _serve_thread(controller)
-    assert controller.start()
-    _join_session(thread)
+@pytest.mark.parametrize("run_fails", [False, True])
+def test_segment_end_hold_failure_is_terminal_and_preserves_original_error(run_fails, caplog):
+    from lerobot.rollout.strategies import BaseStrategy
 
-    engine.pause.assert_called_once()
-    strategy.hold_control_state.assert_called_once()
-    assert RolloutEvent.STRATEGY_FAILED in events
-    assert RolloutEvent.SEGMENT_ENDED not in events
-    assert events[-1] is RolloutEvent.STOPPED
-    assert controller.failed
-    assert controller.stopped
-    assert not controller.running
-    assert "final hold failed" in controller.failure_traceback
-    assert controller.start() is False
+    def run(ctx):
+        if run_fails:
+            raise OSError("original observation failure")
 
-
-def test_controller_logs_segment_hold_failure_once_at_boundary(caplog):
-    from lerobot.rollout.strategies.base import BaseStrategy
-
-    controller, _events, strategy, engine, _parent, _run_started = _make_controller(lambda ctx: None)
+    controller, events, strategy, engine, _parent, _run_started = _make_controller(run)
     robot = controller._ctx.hardware.robot_wrapper
     robot.supports_hold = True
     robot.hardware_failure = None
-    robot.hold.side_effect = OSError("one physical hold failure")
+    robot.hold.side_effect = OSError("final hold failed")
     real_strategy = BaseStrategy(BaseStrategyConfig())
     real_strategy._engine = engine
     strategy.hold_control_state.side_effect = real_strategy.hold_control_state
@@ -457,29 +443,20 @@ def test_controller_logs_segment_hold_failure_once_at_boundary(caplog):
     assert controller.start()
     _join_session(thread)
 
-    records = [record for record in caplog.records if record.exc_info]
-    assert len(records) == 1
-    assert "Could not apply segment-end hold; skipping further shutdown movement" in records[0].getMessage()
-    assert "one physical hold failure" in controller.failure_traceback
-
-
-def test_controller_hold_failure_preserves_original_strategy_failure(caplog):
-    def failing_run(ctx):
-        raise OSError("original observation failure")
-
-    controller, events, strategy, _engine, _parent, _run_started = _make_controller(failing_run)
-    strategy.hold_control_state.side_effect = OSError("subsequent hold failure")
-    thread = _serve_thread(controller)
-    assert controller.start()
-    _join_session(thread)
-
+    engine.pause.assert_called_once()
+    robot.hold.assert_called_once()
     assert RolloutEvent.STRATEGY_FAILED in events
     assert RolloutEvent.SEGMENT_ENDED not in events
     assert events[-1] is RolloutEvent.STOPPED
-    assert controller.failed
-    assert "original observation failure" in controller.failure_traceback
-    assert "subsequent hold failure" not in controller.failure_traceback
-    assert "subsequent hold failure" in caplog.text
+    assert controller.failed and controller.stopped and not controller.running
+    assert controller.start() is False
+    expected = "original observation failure" if run_fails else "final hold failed"
+    assert expected in controller.failure_traceback
+    if run_fails:
+        assert "final hold failed" not in controller.failure_traceback
+    else:
+        assert len([record for record in caplog.records if record.exc_info]) == 1
+    assert "final hold failed" in caplog.text
 
 
 def test_controller_failed_return_move_emits_reset_failed():

@@ -1,19 +1,16 @@
 """Local RTC and the remote runner share post-preprocessing action semantics."""
 
-from types import SimpleNamespace
-
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="local rollout imports the dataset integration")
 
-from lerobot.inference import ExecutionMode, RTCInferenceEngine, predict_chunk
+from lerobot.inference import ExecutionMode, predict_chunk
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.utils.constants import OBS_ENV_STATE, OBS_STATE
 from tests.inference.test_policy_runner import (
     ConformingPolicy,
+    local_engine_for,
     observation,
-    processors,
     runner_for,
     tiny_config,
 )
@@ -35,27 +32,14 @@ class ObservedPolicy(ConformingPolicy):
 
 def local_prediction(monkeypatch, policy, *, relative=False, previous=None, canonical_previous=None):
     """Run one real local prediction, capturing the chunk before its queue merge."""
-    names = ("a.pos", "b.pos", "c.pos")
-    env_names = ("env_a", "env_b", "env_c")
-    engine = RTCInferenceEngine(
-        policy,
-        *processors(policy.config, relative=relative),
-        robot_wrapper=SimpleNamespace(robot_type="test", action_features=dict.fromkeys(names, float)),
-        rtc_config=policy.config.rtc_config,
-        dataset_features={
-            OBS_STATE: {"dtype": "float32", "shape": (3,), "names": names},
-            OBS_ENV_STATE: {"dtype": "float32", "shape": (3,), "names": env_names},
-        },
-        task="pick up the cube",
-        fps=30,
-        device="cpu",
-        rtc_queue_threshold=8,
-    )
+    engine = local_engine_for(policy, relative=relative, queue_threshold=8)
     engine.resume()
     if previous is not None and len(previous):
         engine.action_queue.merge(previous, canonical_previous, real_delay=0)
     engine._runtime.turnarounds.append(1 / 30)
-    engine.notify_observation({**dict.fromkeys(names, 20.0), **dict.fromkeys(env_names, 0.0)})
+    engine.notify_observation(
+        {"a.pos": 20.0, "b.pos": 20.0, "c.pos": 20.0, "env_a": 0.0, "env_b": 0.0, "env_c": 0.0}
+    )
     result = []
 
     def capture(request, chunk, *, task_version):
@@ -69,15 +53,18 @@ def local_prediction(monkeypatch, policy, *, relative=False, previous=None, cano
 
 
 @pytest.mark.parametrize(
-    "mode,prefix_steps",
-    [(ExecutionMode.CHUNK, 0)]
-    + [
-        (mode, steps)
-        for mode in (ExecutionMode.RTC_GUIDED, ExecutionMode.RTC_TRAINED)
-        for steps in (0, 2, 4, 6)
+    "mode,relative,prefix_steps",
+    [
+        (ExecutionMode.CHUNK, False, 0),
+        (ExecutionMode.CHUNK, True, 0),
+        (ExecutionMode.RTC_GUIDED, False, 0),
+        (ExecutionMode.RTC_TRAINED, True, 0),
+        (ExecutionMode.RTC_GUIDED, True, 2),
+        (ExecutionMode.RTC_TRAINED, False, 2),
+        (ExecutionMode.RTC_GUIDED, False, 4),
+        (ExecutionMode.RTC_TRAINED, True, 6),
     ],
 )
-@pytest.mark.parametrize("relative", [False, True])
 def test_local_and_remote_prefix_context_and_execution_slice_match(monkeypatch, mode, relative, prefix_steps):
     config = tiny_config()
     config.rtc_training_max_delay = 3

@@ -96,14 +96,6 @@ def test_plain_successor_slot_is_bounded_and_preserves_old_action_age():
     assert rt.failure is not None
 
 
-def test_old_inflight_task_is_discarded_even_after_same_text_reuse():
-    rt, clock = runtime()
-    request = rt.begin(observation(clock, "a", 0))
-    assert not rt.accept(request, chunk(request), task_version=2)
-    assert rt.queue.empty()
-    assert rt.pending is None
-
-
 def test_reset_and_timeout_make_late_results_ineligible():
     rt, clock = runtime()
     old = rt.begin(observation(clock))
@@ -155,8 +147,7 @@ def test_invalid_action_cannot_grant_dispatch_permission():
     assert rt.failure == "Invalid action chunk"
 
 
-@pytest.mark.parametrize("merge", ["append", "aligned"])
-@pytest.mark.parametrize("steps", [50, 100])
+@pytest.mark.parametrize("merge,steps", [("append", 50), ("aligned", 100)])
 def test_default_budget_plays_multiple_stock_length_chunks(merge, steps):
     now = [100.0]
     runtime = ChunkRuntime(

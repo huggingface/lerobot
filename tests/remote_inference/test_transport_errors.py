@@ -3,7 +3,6 @@
 # you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
 """Bounded replies, connection diagnostics and admission errors."""
 
-import json
 import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -27,7 +26,6 @@ from lerobot.transport.zenoh import (
     BoundedQueryable,
     PendingQuery,
     TransportError,
-    ZenohConfig,
     ZenohTransport,
 )
 from tests.inference.test_policy_runner import observation
@@ -60,11 +58,6 @@ def test_failed_reply_immediately_releases_query_capacity(failure):
     channel._receive(next_query)
     assert channel.get().reply(b"ok"), "the failed reply must not hold the sole capacity slot"
     assert channel.dropped == 0
-
-
-def test_explicit_peer_connection_must_be_established_at_open():
-    config = ZenohConfig(connect_endpoints=["tcp/127.0.0.1:7447"]).build()
-    assert json.loads(config.get_json("connect/exit_on_failure")) is True
 
 
 def test_unreachable_endpoint_names_connection_and_deployment():

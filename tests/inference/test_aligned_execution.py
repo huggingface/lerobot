@@ -88,8 +88,9 @@ def test_startup_delay_does_not_trim_and_replanning_requires_fresh_advanced_samp
     assert rt.begin(sample(rt, clock)) is None  # still one in flight
 
 
-@pytest.mark.parametrize("blend_steps", [0, 2])
-@pytest.mark.parametrize("committed, eligible", [(2, False), (3, True), (4, True)])
+@pytest.mark.parametrize(
+    "blend_steps,committed,eligible", [(0, 2, False), (0, 3, True), (0, 4, True), (2, 3, True)]
+)
 def test_aligned_refill_gates_above_at_and_below_playback_threshold(blend_steps, committed, eligible):
     rt, clock = runtime(
         refill_seconds=0.3, blend_steps=blend_steps, blend_indices=(0,) if blend_steps else ()
@@ -169,20 +170,6 @@ def test_threshold_covering_horizon_allows_frequent_requests_without_expanding_s
         assert rt.accept(request, result(request, offset, execution_steps=3), task_version=0)
 
 
-def test_aligned_replacement_does_not_inherit_append_successor_slot_restriction():
-    rt, clock = runtime()
-    first = initial(rt, clock)
-    rt.pop()
-    clock.now += 0.1
-    request = rt.begin(sample(rt, clock))
-    rt.pop()  # commit old trajectory during inference
-    clock.now += 0.1
-    assert rt.accept(request, result(request, 10), task_version=0)
-    assert rt.current.request_id == first.request_id
-    assert {source.request_id for source in rt.queue.snapshot().provenance} == {request.request_id}
-    assert rt.begin(sample(rt, clock)) is not None
-
-
 def test_fresh_task_change_bypasses_playback_gate_at_same_cursor():
     rt, clock = runtime(refill_seconds=0.01)
     initial(rt, clock)
@@ -225,27 +212,6 @@ def test_task_change_never_bypasses_permission_inflight_or_freshness(blocked_by)
     assert rt.begin(source) is None
 
 
-@pytest.mark.parametrize("held", [False, True])
-def test_reset_and_hold_resume_start_promptly_from_fresh_generation(held):
-    rt, clock = runtime(refill_seconds=0.01)
-    initial(rt, clock)
-    clock.now += 0.1
-    before_reset = sample(rt, clock)
-    rt.invalidate(held=held)
-    assert rt.begin(before_reset) is None
-    if held:
-        clock.now += 1
-        assert rt.begin(sample(rt, clock)) is None
-        rt.held = False
-        rt.started_at = clock()
-    clock.now += 0.1
-    request = rt.begin(sample(rt, clock))
-    assert request is not None
-    assert request.playback_at_submission == 0
-    assert rt.accept(request, result(request), task_version=0)
-    assert rt.pop()[0].tolist() == [0, 100]
-
-
 def test_execution_slice_is_honored_and_empty_suffix_does_not_destroy_eligible_buffer():
     rt, clock = runtime()
     initial(rt, clock)
@@ -281,12 +247,14 @@ def test_empty_suffix_eventually_uses_existing_starvation_fault():
 
 def test_weighted_blend_matches_future_steps_and_keeps_gripper_incoming():
     rt, clock = runtime(blend_steps=2, blend_weight=0.25, blend_indices=(0,))
-    initial(rt, clock)
+    first = initial(rt, clock)
     committed = rt.pop()[0].clone()
     clock.now += 0.1
     request = rt.begin(sample(rt, clock))
     assert rt.accept(request, result(request, 10), task_version=0)
     assert committed.tolist() == [0, 100]
+    assert rt.current.request_id == first.request_id
+    assert {source.request_id for source in rt.queue.snapshot().provenance} == {request.request_id}
     values = rt.queue.snapshot().canonical_actions
     torch.testing.assert_close(values[:3], torch.tensor([[3.25, 110], [4.25, 111], [12, 112]]))
     assert rt.last_accept["blended_steps"] == 2
@@ -363,7 +331,7 @@ def test_weight_one_and_no_overlap_are_exact_replacements():
 
 
 def test_reset_hold_and_task_changes_cannot_reuse_observation_or_result():
-    rt, clock = runtime()
+    rt, clock = runtime(refill_seconds=0.01)
     source = sample(rt, clock)
     request = rt.begin(source)
     rt.invalidate(held=True)

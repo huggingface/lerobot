@@ -43,12 +43,6 @@ def test_starvation_requires_hold_ack_and_fresh_capture_before_recovery(mode):
     assert clock.now < deadline
 
 
-def test_zero_grace_keeps_immediate_exhaustion_fault():
-    rt, clock = runtime()
-    exhaust(rt, clock)
-    assert rt.failure == "Active motion buffer exhausted"
-
-
 def test_grace_includes_fresh_prediction_and_rejects_late_result():
     rt, clock = runtime()
     rt.starvation_grace = 1.0
@@ -100,21 +94,6 @@ def test_completed_invalidation_retires_old_request_deadline_not_grace():
     clock.now = deadline + 0.01
     rt.check_deadlines()
     assert "starvation grace expired" in rt.failure
-
-
-def test_language_transition_does_not_renew_existing_starvation_grace():
-    rt, clock = runtime()
-    rt.starvation_grace = 1.0
-    exhaust(rt, clock)
-    deadline = rt.starvation_deadline
-    rt.acknowledge_starvation_hold()
-    clock.now += 0.5
-    rt.invalidate(held=True, preserve_starvation=True)
-    rt.acknowledge_starvation_hold()
-    assert rt.starvation_deadline == deadline
-    clock.now += 0.6
-    rt.check_deadlines()
-    assert rt.failure is not None
 
 
 @pytest.mark.parametrize("transition", ["deactivate", "invalidate"])

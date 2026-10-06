@@ -5,10 +5,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-import torch
 
 from lerobot.inference import FeatureSpec
-from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.remote_inference.configs import ExecutionConfig, LanguageConfig, ModelConfig, ServerConfig
 from lerobot.remote_inference.protocol import ErrorCode, MessageType
@@ -19,36 +17,6 @@ from lerobot.transport.zenoh import ZenohConfig
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND
 from tests.inference.test_policy_runner import ConformingPolicy, observation, processors, tiny_config
 from tests.remote_inference.test_session import action_request, admit
-
-
-def test_server_loads_saved_act_and_processors_warms_and_resets(tmp_path):
-    config = tiny_config()
-    policy = ACTPolicy(config)
-    policy.save_pretrained(tmp_path)
-    pre, post = processors(config)
-    pre.save_pretrained(tmp_path)
-    post.save_pretrained(tmp_path)
-    server = ServerConfig(
-        deployment="test",
-        model=ModelConfig(str(tmp_path)),
-        execution=ExecutionConfig(action_fps=30, warmup_calls=1),
-        zenoh=ZenohConfig(listen_endpoints=["tcp/127.0.0.1:7447"]),
-        semantics="radians-v1",
-        features=[FeatureSpec(key, (3,), "float32", semantics="radians-v1") for key in config.input_features],
-        action_feature=FeatureSpec("action", (3,), "float32", semantics="radians-v1"),
-    )
-    runner, identity = load_deployment(server)
-    assert identity.startswith("sha256:") and len(identity) == 71
-    assert not runner.capabilities.language
-    assert not runner.policy._action_queue
-    with torch.inference_mode():
-        expected = post(policy.predict_action_chunk(pre(runner._batch(observation()))))[0, :3]
-    torch.testing.assert_close(runner.predict(observation()).canonical_actions, expected)
-    changed, changed_identity = load_deployment(replace(server, semantics="degrees-v1"))
-    assert changed_identity != identity
-    assert changed.capabilities.execution_steps == 3
-    _, debug_identity = load_deployment(replace(server, log_level="DEBUG"))
-    assert debug_identity == identity, "console verbosity must not invalidate a pinned artifact"
 
 
 def test_content_identity_changes_with_processor_statistics_and_effective_settings(tmp_path):

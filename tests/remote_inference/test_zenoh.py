@@ -35,6 +35,8 @@ def test_explicit_config_and_disabled_discovery():
     assert json.loads(config.get_json("scouting/multicast/enabled")) is False
     assert json.loads(config.get_json("scouting/gossip/enabled")) is False
     assert json.loads(config.get_json("transport/shared_memory/enabled")) is False
+    peer = ZenohConfig(connect_endpoints=["tcp/127.0.0.1:7447"]).build()
+    assert json.loads(peer.get_json("connect/exit_on_failure")) is True
     with pytest.raises(ValueError, match="Explicit"):
         ZenohConfig().build()
     with pytest.raises(ValueError, match="cannot listen"):

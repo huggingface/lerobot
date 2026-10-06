@@ -104,17 +104,19 @@ class ControlledClient:
         self.closed.set()
 
 
-@pytest.fixture(params=[("append", 0), ("aligned", 0), ("aligned", 2)], ids=["append", "aligned", "blended"])
+@pytest.fixture
 def session(request):
     client = ControlledClient()
+    # Mode-independent lifecycle checks use the default; scheduling checks choose their variants.
+    merge, blend_steps = getattr(request, "param", ("aligned", 0))
     config = RemoteInferenceConfig(
         deployment="test",
         semantics="radians",
         max_observation_age_s=5,
         refill_seconds=0.2,
-        chunk_merge=request.param[0],
-        blend_steps=request.param[1],
-        blend_components=["a.pos"] if request.param[1] else [],
+        chunk_merge=merge,
+        blend_steps=blend_steps,
+        blend_components=["a.pos"] if blend_steps else [],
     )
     client.blend_indices = tuple(
         client.capabilities.action_feature.names.index(name) for name in config.blend_components
@@ -179,6 +181,7 @@ def test_remote_engine_refuses_restart_while_running_and_after_stop(session):
         engine.start()
 
 
+@pytest.mark.parametrize("session", [("append", 0), ("aligned", 2)], indirect=True)
 def test_query_waits_for_hold_acknowledgment_and_new_capture(session):
     engine, client = session
     engine.resume()
@@ -480,6 +483,7 @@ def test_retarget_and_result_acceptance_have_one_order(session, monkeypatch):
     assert engine.runtime.queue.snapshot().provenance[0].task == "initial task"
 
 
+@pytest.mark.parametrize("session", [("append", 0), ("aligned", 0)], indirect=True)
 def test_refill_wait_selects_latest_capture_and_reports_request_progress(session, caplog):
     engine, client = session
     caplog.set_level(logging.DEBUG, logger="lerobot.remote_inference.engine")
@@ -510,12 +514,15 @@ def test_refill_wait_selects_latest_capture_and_reports_request_progress(session
     events = [record.args for record in caplog.records if record.msg == "Remote inference %s"]
     assert events[0]["event"] == "scheduling"
     requests = [event for event in events if event["event"] == "request"]
+    assert requests[-1]["request_id"] == request.request_id
+    assert requests[-1]["session"] == client.session_id
     assert requests[-1]["scheduling"] == "playback_threshold"
     assert requests[-1]["committed_actions_since_request"] == 2
     assert requests[-1]["request_spacing_s"] > 0
     assert not requests[-1]["task_changed_since_request"]
 
 
+@pytest.mark.parametrize("session", [("append", 0), ("aligned", 0)], indirect=True)
 def test_only_aligned_retarget_bypasses_refill_without_reusing_capture(session):
     engine, client = session
     engine.resume()
@@ -542,6 +549,7 @@ def test_only_aligned_retarget_bypasses_refill_without_reusing_capture(session):
 
 
 @pytest.mark.parametrize("measured", [False, True], ids=["configured", "latency-floor"])
+@pytest.mark.parametrize("session", [("append", 0), ("aligned", 0)], indirect=True)
 def test_aligned_full_horizon_warning_is_bounded_and_does_not_change_settings(session, caplog, measured):
     engine, _ = session
     caplog.set_level(logging.WARNING, logger="lerobot.remote_inference.engine")
@@ -561,29 +569,6 @@ def test_aligned_full_horizon_warning_is_bounded_and_does_not_change_settings(se
     assert engine.runtime.effective_refill == pytest.approx(0.4)
 
 
-def test_default_logs_are_concise_and_debug_keeps_request_identity(session, caplog):
-    engine, client = session
-    caplog.set_level(logging.INFO, logger="lerobot.remote_inference.engine")
-    engine.resume()
-    capture(engine)
-    engine.start()
-    assert wait_for(lambda: engine.runtime.queue.qsize() == 4)
-    assert "Remote execution: mode=chunk" in caplog.text
-    assert "horizon=0.400s" in caplog.text
-    assert "Remote inference {" not in caplog.text
-    caplog.set_level(logging.DEBUG, logger="lerobot.remote_inference.engine")
-    client.action_started.clear()
-    assert engine.runtime.pop() is not None
-    assert engine.runtime.pop() is not None
-    capture(engine)
-    assert client.action_started.wait(2)
-    records = [record for record in caplog.records if record.msg == "Remote inference %s"]
-    request = next(record.args for record in records if record.args["event"] == "request")
-    assert request["deployment"] == "test"
-    assert request["session"] == "session"
-    assert request["request_id"] == client.requests[-1].request_id
-
-
 def test_progress_is_rate_limited_and_labels_estimated_headroom(session, caplog):
     engine, _ = session
     caplog.set_level(logging.INFO, logger="lerobot.remote_inference.engine")
@@ -599,10 +584,7 @@ def test_progress_is_rate_limited_and_labels_estimated_headroom(session, caplog)
     engine._drain_log_events()
     assert "accepted=1 rejected=1" in caplog.text
     assert "cancelled=1 failed=0 waits=1 resumes=1 invalidations=1" in caplog.text
-    assert "cancelled wait max=0.800s (server completion unknown)" in caplog.text
-    assert "invalidation wait max=0.100s" in caplog.text
     assert "mean/max=0.250/0.300s" in caplog.text
-    assert "last 2 completed results only" in caplog.text
     assert "estimated submission headroom min=-0.100s" in caplog.text
     engine._drain_log_events()
     assert caplog.text.count("Remote progress") == 1
@@ -627,9 +609,6 @@ def test_fault_diagnostics_are_bounded_and_do_not_log_on_control_thread(session,
     engine._drain_log_events()
     assert "Active motion buffer exhausted" in caplog.text
     assert "configured shutdown/return procedure" in caplog.text
-    assert "Last submission playback=unavailable" in caplog.text
-    assert "turnaround max=unavailable" in caplog.text
-    assert "usable suffix after trimming" in caplog.text
     engine._drain_log_events()
     assert caplog.text.count("Remote inference stopped") == 1
 

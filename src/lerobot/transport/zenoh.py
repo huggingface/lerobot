@@ -45,22 +45,11 @@ class QueryCancelled(TransportError):  # noqa: N818
 
 @dataclass
 class ZenohConfig:
-    """Explicit topology and payload bounds for one transport session.
+    """Explicit peer/router topology and resource bounds.
 
-    Args:
-        mode (`Literal["peer", "client"]`, *optional*, defaults to `"peer"`):
-            Direct peer mode or router client mode.
-        connect_endpoints (`list[str]`, *optional*):
-            Explicit peers or routers to connect to.
-        listen_endpoints (`list[str]`, *optional*):
-            Local listening endpoints. Router clients cannot listen.
-        config_file (`str | None`, *optional*):
-            Base JSON5 configuration whose security settings are preserved.
-        max_payload_bytes (`int`, *optional*, defaults to `33554432`):
-            Maximum message size and combined query-reply payload size.
-        open_timeout_s (`float`, *optional*, defaults to `10.0`):
-            Positive connection establishment deadline in seconds.
-    """
+    ``config_file`` supplies security settings; explicit endpoints override its topology.
+    ``max_payload_bytes`` bounds each message and the aggregate replies to one query.
+    ``open_timeout_s`` bounds connection establishment; router clients cannot listen."""
 
     mode: Literal["peer", "client"] = "peer"
     connect_endpoints: list[str] = field(default_factory=list)
@@ -82,17 +71,10 @@ class ZenohConfig:
         _timeout(self.open_timeout_s)
 
     def build(self) -> "zenoh.Config":
-        """Build a Zenoh configuration without opening a network session.
+        """Build explicit routing, disabling discovery and shared memory.
 
-        Explicit topology overrides the base file. Discovery and shared memory are
-        disabled so routing follows the supplied endpoints.
-
-        Returns:
-            `zenoh.Config`: Validated configuration for ``zenoh.open``.
-
-        Raises:
-            ValueError: If topology, payload bounds or timeout are invalid.
-        """
+        Validate topology and bounds before loading Zenoh. Preserve security settings
+        from the base JSON5 file; this method does not open a session."""
         self.validate()
         require_package("eclipse-zenoh", "remote", import_name="zenoh")
         config = zenoh.Config.from_file(self.config_file) if self.config_file else zenoh.Config()
@@ -122,17 +104,10 @@ def _payload(value: bytes, maximum: int) -> None:
 
 
 class BoundedSubscriber[T]:
-    """Hand callback payloads to a consumer through a bounded FIFO.
+    """Bounded callback-to-consumer FIFO; full queues drop incoming values.
 
-    Full queues drop the incoming value instead of blocking the callback. The
-    consumer must inspect ``dropped`` and ``oversized`` to detect lost input.
-    The transport owns declared channels and closes them at session teardown;
-    consumers may close a channel earlier on their owning thread.
-
-    Args:
-        capacity (`int`):
-            Positive number of queued items allowed.
-    """
+    Consumers must inspect ``dropped`` and ``oversized``. The transport owns declared
+    channels, but consumers may close them earlier on their owning thread."""
 
     def __init__(self, capacity: int):
         if type(capacity) is not int or capacity <= 0:
@@ -155,18 +130,9 @@ class BoundedSubscriber[T]:
             return False
 
     def get(self, timeout: float | None = 0) -> T:
-        """Remove the next item, optionally waiting on the caller's thread.
+        """Return the oldest item or raise ``queue.Empty`` after ``timeout`` seconds.
 
-        Args:
-            timeout (`float | None`, *optional*, defaults to `0`):
-                Seconds to wait; zero polls immediately and ``None`` waits indefinitely.
-
-        Returns:
-            `T`: Oldest queued item.
-
-        Raises:
-            queue.Empty: If no item arrives within the requested wait.
-        """
+        Zero polls immediately; ``None`` waits indefinitely on the caller's thread."""
         return self._queue.get(timeout=timeout)
 
     def close(self) -> None:
@@ -191,31 +157,17 @@ class BoundedSubscriber[T]:
 
 @dataclass(frozen=True)
 class PresenceEvent:
-    """A liveliness declaration or removal delivered by a presence subscription.
-
-    Args:
-        key (`str`):
-            Key expression of the token whose state changed.
-        alive (`bool`):
-            Whether the token is currently declared according to this event.
-    """
+    """Liveliness token key and whether that token was declared or removed."""
 
     key: str
     alive: bool
 
 
 class PresenceToken:
-    """A token whose explicit removal also releases its transport's ownership.
+    """Transport-owned liveliness token, normally created by ``declare_token``.
 
-    Instances are normally created by ``ZenohTransport.declare_token``. Remove them
-    on the owning setup or IO thread, coordinated with transport teardown.
-
-    Args:
-        handle (`Any`):
-            Live Zenoh liveliness-token handle.
-        on_close (`Callable[[PresenceToken], None]`):
-            Ownership-release callback invoked once after successful removal.
-    """
+    Undeclare on the owning setup/IO thread, coordinated with transport teardown.
+    Successful removal calls ``on_close`` exactly once to release ownership."""
 
     def __init__(self, handle: Any, on_close: Callable[["PresenceToken"], None]):
         self._handle = handle
@@ -230,19 +182,9 @@ class PresenceToken:
 
 
 class PendingQuery:
-    """Retain a Zenoh query beyond its callback; reply/drop releases it exactly once.
+    """Retain a query beyond its callback until reply, drop or server-local expiry.
 
-    Expiry uses only server-local time. The owner's bounded capacity includes queries
-    that have left the handoff queue but whose worker has not yet replied.
-
-    Args:
-        query (`zenoh.Query`):
-            Incoming query retained beyond its callback lifetime.
-        payload (`bytes`):
-            Bounded request bytes copied by the queryable callback.
-        owner (`BoundedQueryable`):
-            Queryable whose retained-query capacity this handle occupies.
-    """
+    The owner's capacity includes dequeued queries until released."""
 
     def __init__(self, query: "zenoh.Query", payload: bytes, owner: "BoundedQueryable"):
         self.payload = payload
@@ -253,21 +195,10 @@ class PendingQuery:
         self._lock = threading.Lock()
 
     def reply(self, payload: bytes) -> bool:
-        """Attempt one reply and release the retained query, including on failure.
+        """Claim one bounded reply and release the query even on failure.
 
-        Reply and drop claim the query under a lock, so only one caller uses it.
-
-        Args:
-            payload (`bytes`):
-                Encoded reply within the owning queryable's payload bound.
-
-        Returns:
-            `bool`: Whether the reply was submitted before expiry. This does not
-            acknowledge remote receipt; DROP congestion may discard traffic.
-
-        Raises:
-            TransportError: If the payload is invalid or exceeds the size bound.
-        """
+        Return whether it was submitted before expiry, not acknowledged by the peer;
+        DROP congestion may discard it. Invalid payloads raise ``TransportError``."""
         with self._lock:
             query, self._query = self._query, None
         if query is None:
@@ -302,20 +233,11 @@ class PendingQuery:
 
 
 class BoundedQueryable(BoundedSubscriber[PendingQuery]):
-    """Bound queued and in-flight queries until each is replied to, dropped or expired.
+    """Bound queued and in-flight queries until reply, drop or server-local expiry.
 
-    Direct Zenoh callbacks only enqueue work. The application pumps ``get`` on its
-    serving thread and owns each returned ``PendingQuery`` until reply or drop.
-    Dequeuing does not free capacity. Closing releases all remaining queries.
-
-    Args:
-        capacity (`int`):
-            Positive bound across queued and in-flight queries.
-        maximum (`int`):
-            Maximum request and reply payload size in bytes.
-        reply_timeout (`float`):
-            Positive server-local lifetime of each retained query in seconds.
-    """
+    Callbacks only enqueue. The serving thread pumps ``get`` and must reply to or
+    drop each result. Dequeuing does not free capacity; closing releases all queries.
+    ``maximum`` bounds request/reply bytes; ``reply_timeout`` bounds handle lifetime."""
 
     def __init__(self, capacity: int, maximum: int, reply_timeout: float):
         super().__init__(capacity)
@@ -346,18 +268,10 @@ class BoundedQueryable(BoundedSubscriber[PendingQuery]):
             self._slots.release()
 
     def get(self, timeout: float | None = 0) -> PendingQuery:
-        """Reclaim expired handles and return the next live query.
+        """Reclaim expired handles and return the next live query to reply to or drop.
 
-        Args:
-            timeout (`float | None`, *optional*, defaults to `0`):
-                Seconds to wait; zero polls immediately and ``None`` waits indefinitely.
-
-        Returns:
-            `PendingQuery`: Query the consumer must eventually reply to or drop.
-
-        Raises:
-            queue.Empty: If no live query arrives before the wait expires.
-        """
+        Uses the same timeout semantics as ``BoundedSubscriber.get`` and raises
+        ``queue.Empty`` if no live query arrives within that wait."""
         # The server worker polls even while idle, reclaiming expired reply handles.
         for pending in tuple(self._pending):
             if time.monotonic() > pending.deadline:
@@ -378,17 +292,11 @@ class BoundedQueryable(BoundedSubscriber[PendingQuery]):
 
 
 class ZenohTransport:
-    """Own one Zenoh session and its channel and liveliness-token handles.
+    """Own a Zenoh session, channels and liveliness tokens.
 
-    Open, declare and close resources from the application's setup or IO worker,
-    with teardown coordinated against active operations. Callbacks only hand off
-    bounded payloads; policy execution belongs to the application. Blocking setup
-    and query methods must not run on the robot control thread.
-
-    Args:
-        config (`ZenohConfig`):
-            Explicit endpoint configuration and resource bounds.
-    """
+    Open, declare and close on setup/IO threads, coordinated with active operations.
+    Callbacks hand off bounded payloads. Blocking setup and query methods must never
+    run on the robot control thread."""
 
     def __init__(self, config: ZenohConfig):
         self.config = config
@@ -397,11 +305,7 @@ class ZenohTransport:
         self._tokens: set[PresenceToken] = set()
 
     def open(self) -> "ZenohTransport":
-        """Open the session if needed, waiting for configured connection setup.
-
-        Returns:
-            `ZenohTransport`: This transport with an open session.
-        """
+        """Open the session within the connection deadline if needed and return this transport."""
         if self._session is None:
             config = self.config.build()
             self._session = zenoh.open(config)
@@ -409,48 +313,23 @@ class ZenohTransport:
 
     @property
     def session(self) -> "zenoh.Session":
-        """Return the open session without transferring resource ownership.
-
-        Returns:
-            `zenoh.Session`: Session owned by this transport.
-
-        Raises:
-            TransportError: If the transport has not been opened or was closed.
-        """
+        """Return the owned session, or raise ``TransportError`` if it is not open."""
         if self._session is None:
             raise TransportError("Zenoh session is not open")
         return self._session
 
     def publish(self, key: str, payload: bytes) -> None:
-        """Publish bytes with DROP congestion, without acknowledging delivery.
+        """Publish bounded bytes with DROP congestion and no delivery acknowledgment.
 
-        Args:
-            key (`str`):
-                Publication key expression.
-            payload (`bytes`):
-                Encoded message within the configured payload bound.
-
-        Raises:
-            TransportError: If payload validation fails or the session is not open.
-        """
+        Invalid payloads or a closed session raise ``TransportError``."""
         _payload(payload, self.config.max_payload_bytes)
         self.session.put(key, payload, congestion_control=zenoh.CongestionControl.DROP)
 
     def wait_for_subscriber(self, key: str, timeout: float) -> None:
-        """Wait during setup for routing declarations; never call on a control thread.
+        """Wait at most ``timeout`` seconds for a subscriber, or raise ``TimeoutError``.
 
-        Matching confirms a subscriber declaration, not application readiness or
-        delivery of subsequent publications.
-
-        Args:
-            key (`str`):
-                Publication key expression that needs a matching subscriber.
-            timeout (`float`):
-                Positive caller-local wait bound in seconds.
-
-        Raises:
-            TimeoutError: If no matching subscription appears before the deadline.
-        """
+        Setup/worker only. Matching proves routing declarations, not application
+        readiness or delivery of subsequent publications."""
         _timeout(timeout)
         deadline = time.monotonic() + timeout
         with self.session.declare_publisher(
@@ -464,18 +343,10 @@ class ZenohTransport:
                 time.sleep(min(remaining, 0.005))
 
     def subscribe(self, key: str, capacity: int = 2) -> BoundedSubscriber[bytes]:
-        """Declare a subscription with bounded callback-to-consumer handoff.
+        """Return a transport-owned channel with bounded callback handoff.
 
-        Args:
-            key (`str`):
-                Subscription key expression.
-            capacity (`int`, *optional*, defaults to `2`):
-                Maximum queued payloads before new arrivals are dropped.
-
-        Returns:
-            `BoundedSubscriber[bytes]`: Channel owned by this transport. The consumer
-            must inspect overflow counters and may close it before session teardown.
-        """
+        New arrivals are dropped above ``capacity``; consumers must inspect overflow
+        counters and may close the channel before transport teardown."""
         channel: BoundedSubscriber[bytes] = BoundedSubscriber(capacity)
 
         def receive(sample: zenoh.Sample) -> None:
@@ -493,20 +364,10 @@ class ZenohTransport:
         return channel
 
     def declare_queryable(self, key: str, capacity: int = 8, reply_timeout: float = 30.0) -> BoundedQueryable:
-        """Declare a query endpoint whose worker handoff and retained replies are bounded.
+        """Declare a transport-owned endpoint bounded across queued and in-flight queries.
 
-        Args:
-            key (`str`):
-                Queryable key expression.
-            capacity (`int`, *optional*, defaults to `8`):
-                Combined bound on queued and in-flight queries.
-            reply_timeout (`float`, *optional*, defaults to `30.0`):
-                Server-local lifetime of each query handle in seconds.
-
-        Returns:
-            `BoundedQueryable`: Endpoint owned by this transport; its consumer must
-            eventually reply to or drop each query returned by ``get``.
-        """
+        Each handle expires after ``reply_timeout`` seconds of server-local time.
+        The consumer must reply to or drop each query returned by ``get``."""
         channel = BoundedQueryable(capacity, self.config.max_payload_bytes, reply_timeout)
         channel._handle = self.session.declare_queryable(
             key, zenoh.handlers.Callback(channel._receive, indirect=False), complete=True
@@ -524,34 +385,16 @@ class ZenohTransport:
         *,
         cancelled: Callable[[], bool] | None = None,
     ) -> list[bytes]:
-        """Collect replies to one publication within a caller-local deadline.
+        """Collect bounded replies to one publication within a caller-local deadline.
 
-        This blocks the caller while waiting for routing and replies. It does not
-        retry the operation. Cancellation stops the local wait and cannot undo work
-        already admitted by a remote queryable.
+        Blocks through routing and reply completion without retrying. All matching
+        queryables may reply, up to ``max_replies`` and the aggregate payload bound;
+        an empty result is possible. ``cancelled`` is polled on the caller thread.
+        Cancellation stops local waiting, not already-admitted remote work.
 
-        Args:
-            key (`str`):
-                Query key expression. All matching queryables may reply.
-            payload (`bytes`):
-                Encoded request within the configured payload bound.
-            timeout (`float`):
-                Positive total routing-and-reply wait bound in seconds.
-            max_replies (`int`, *optional*, defaults to `16`):
-                Maximum retained replies, between one and 128 inclusive.
-            cancelled (`Callable[[], bool] | None`, *optional*):
-                Predicate polled on the caller's thread to cancel local waiting.
-
-        Returns:
-            `list[bytes]`: Replies received before the query completes, within the
-            configured aggregate payload bound. An empty result is possible.
-
-        Raises:
-            QueryCancelled: If the cancellation predicate returns true.
-            TimeoutError: If routing or query completion exceeds the deadline.
-            TransportError: If a reply reports an error or resource bounds are exceeded.
-            ValueError: If timeout or reply-count bounds are invalid.
-        """
+        Raises ``QueryCancelled`` on cancellation, ``TimeoutError`` on expiry,
+        ``TransportError`` for peer errors or excess replies, and ``ValueError``
+        for invalid timeout or reply-count bounds."""
         _payload(payload, self.config.max_payload_bytes)
         _timeout(timeout)
         if type(max_replies) is not int or not 1 <= max_replies <= 128:
@@ -624,32 +467,16 @@ class ZenohTransport:
         return replies
 
     def declare_token(self, key: str) -> PresenceToken:
-        """Declare a liveliness token owned by this transport until removal or close.
-
-        Args:
-            key (`str`):
-                Token key expression.
-
-        Returns:
-            `PresenceToken`: Handle that may be explicitly undeclared before teardown.
-        """
+        """Declare an owned liveliness token that can be undeclared before transport teardown."""
         token = PresenceToken(self.session.liveliness().declare_token(key), self._tokens.discard)
         self._tokens.add(token)
         return token
 
     def subscribe_liveliness(self, key: str, capacity: int = 8) -> BoundedSubscriber[PresenceEvent]:
-        """Subscribe to existing and future liveliness declarations and removals.
+        """Return a bounded channel of existing and future liveliness changes.
 
-        Args:
-            key (`str`):
-                Liveliness key expression to observe, including existing tokens.
-            capacity (`int`, *optional*, defaults to `8`):
-                Maximum queued presence events before new events are dropped.
-
-        Returns:
-            `BoundedSubscriber[PresenceEvent]`: Transport-owned channel. The consumer
-            must treat overflow as lost presence information, not confirmed liveness.
-        """
+        New arrivals are dropped above ``capacity``. Overflow means lost presence
+        information, not confirmed liveness. The transport owns the channel."""
         channel: BoundedSubscriber[PresenceEvent] = BoundedSubscriber(capacity)
 
         def receive(sample: zenoh.Sample) -> None:

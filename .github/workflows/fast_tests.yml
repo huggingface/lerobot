@@ -109,7 +109,6 @@ jobs:
         run: uv run pytest tests -vv --maxfail=10
 
       # ── Tier 2: Dataset ──────────────────────────────────
-      # Transport/codec integration runs in Full Tests with the all extra.
       - name: "Tier 2 — Install: dataset"
         run: uv sync --locked --extra test --extra dataset
 

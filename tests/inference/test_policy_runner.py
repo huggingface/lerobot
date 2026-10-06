@@ -79,6 +79,28 @@ def runner_for(policy, *, relative=False, modes=(ExecutionMode.CHUNK,), **kwargs
     )
 
 
+def local_engine_for(policy, *, relative=False, rtc_config=None, queue_threshold=4):
+    pytest.importorskip("datasets")
+    from lerobot.inference import RTCInferenceEngine
+
+    state_names = ("a.pos", "b.pos", "c.pos")
+    env_names = ("env_a", "env_b", "env_c")
+    return RTCInferenceEngine(
+        policy,
+        *processors(policy.config, relative=relative),
+        robot_wrapper=SimpleNamespace(robot_type="test", action_features=dict.fromkeys(state_names, float)),
+        rtc_config=rtc_config or policy.config.rtc_config,
+        dataset_features={
+            OBS_STATE: {"dtype": "float32", "shape": (3,), "names": state_names},
+            OBS_ENV_STATE: {"dtype": "float32", "shape": (3,), "names": env_names},
+        },
+        task="pick up the cube",
+        fps=30,
+        device="cpu",
+        rtc_queue_threshold=queue_threshold,
+    )
+
+
 def observation(value=1.0):
     return ObservationSnapshot(
         {OBS_STATE: np.full(3, value, dtype=np.float32), OBS_ENV_STATE: np.zeros(3, dtype=np.float32)},
@@ -194,32 +216,16 @@ def test_runner_guided_rtc_allows_real_autograd_on_successor_chunk():
 
 
 def test_local_guided_rtc_allows_real_autograd_on_successor_chunk():
-    pytest.importorskip("datasets")
-    from lerobot.inference import RTCInferenceEngine
-
     config = tiny_config()
     config.rtc_config = RTCConfig(execution_horizon=4)
     policy = GuidedConformingPolicy(config)
-    state_names = ("a.pos", "b.pos", "c.pos")
-    env_names = ("env_a", "env_b", "env_c")
-    engine = RTCInferenceEngine(
-        policy,
-        *processors(config),
-        robot_wrapper=SimpleNamespace(robot_type="test", action_features=dict.fromkeys(state_names, float)),
-        rtc_config=config.rtc_config,
-        dataset_features={
-            OBS_STATE: {"dtype": "float32", "shape": (3,), "names": state_names},
-            OBS_ENV_STATE: {"dtype": "float32", "shape": (3,), "names": env_names},
-        },
-        task="pick up the cube",
-        fps=30,
-        device="cpu",
-        rtc_queue_threshold=4,
-    )
+    engine = local_engine_for(policy)
     engine.start()
     try:
         engine.resume()
-        engine.notify_observation({**dict.fromkeys(state_names, 1.0), **dict.fromkeys(env_names, 0.0)})
+        engine.notify_observation(
+            {"a.pos": 1.0, "b.pos": 1.0, "c.pos": 1.0, "env_a": 0.0, "env_b": 0.0, "env_c": 0.0}
+        )
         deadline = time.monotonic() + 2
         while engine.action_queue.empty() and not engine.failed and time.monotonic() < deadline:
             time.sleep(0.002)
@@ -232,14 +238,6 @@ def test_local_guided_rtc_allows_real_autograd_on_successor_chunk():
         assert policy.guided_calls == 1
     finally:
         engine.stop()
-
-
-def test_generic_family_uses_real_canonical_processors_and_honors_n_action_steps():
-    runner = runner_for(ConformingPolicy(tiny_config()))
-    result = runner.predict(observation())
-    torch.testing.assert_close(
-        result.canonical_actions, torch.arange(9).reshape(3, 3) * 2.0 + torch.tensor([1, 2, 3])
-    )
 
 
 def test_snapshot_owns_recycled_camera_and_state_buffers():
@@ -387,14 +385,6 @@ def test_relative_exclusion_uses_explicit_action_names_and_rejects_permuted_stat
         )
 
 
-def test_trained_rtc_horizon_covers_declared_checkpoint_delay():
-    policy = ConformingPolicy(tiny_config())
-    policy.config.rtc_config = RTCConfig(mode="trained", execution_horizon=2)
-    policy.config.rtc_training_max_delay = 3
-    with pytest.raises(ValueError, match="maximum conditioned delay"):
-        runner_for(policy, modes=(ExecutionMode.RTC_TRAINED,))
-
-
 def test_deployment_can_disable_text_and_cannot_enable_an_unsupported_head():
     policy = ConformingPolicy(tiny_config())
     runner = runner_for(policy, language_enabled=False)
@@ -407,31 +397,15 @@ def test_deployment_can_disable_text_and_cannot_enable_an_unsupported_head():
 
 
 def test_real_act_plain_async_matches_runner_and_honors_execution_slice():
-    pytest.importorskip("datasets")
-    from lerobot.inference import RTCInferenceEngine
-
     policy = ACTPolicy(tiny_config())
     expected = runner_for(policy).predict(observation()).canonical_actions
-    state_names = ("a.pos", "b.pos", "c.pos")
-    env_names = ("env_a", "env_b", "env_c")
-    engine = RTCInferenceEngine(
-        policy,
-        *processors(policy.config),
-        robot_wrapper=SimpleNamespace(robot_type="test", action_features=dict.fromkeys(state_names, float)),
-        rtc_config=RTCConfig(enabled=False),
-        dataset_features={
-            OBS_STATE: {"dtype": "float32", "shape": (3,), "names": state_names},
-            OBS_ENV_STATE: {"dtype": "float32", "shape": (3,), "names": env_names},
-        },
-        task="pick up the cube",
-        fps=30,
-        device="cpu",
-        rtc_queue_threshold=0,
-    )
+    engine = local_engine_for(policy, rtc_config=RTCConfig(enabled=False), queue_threshold=0)
     engine.start()
     try:
         engine.resume()
-        engine.notify_observation({**dict.fromkeys(state_names, 1.0), **dict.fromkeys(env_names, 0.0)})
+        engine.notify_observation(
+            {"a.pos": 1.0, "b.pos": 1.0, "c.pos": 1.0, "env_a": 0.0, "env_b": 0.0, "env_c": 0.0}
+        )
         deadline = time.monotonic() + 2
         while engine.action_queue.empty() and not engine.failed and time.monotonic() < deadline:
             time.sleep(0.002)

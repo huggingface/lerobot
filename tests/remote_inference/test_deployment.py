@@ -10,6 +10,7 @@ from shutil import copytree
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from lerobot.inference import ExecutionMode, FeatureSpec
 from lerobot.policies.act.modeling_act import ACTPolicy
@@ -37,6 +38,23 @@ def deployment(tmp_path_factory):
         features=[FeatureSpec(key, (3,), "float32", semantics="radians") for key in config.input_features],
         action_feature=FeatureSpec("action", (3,), "float32", semantics="radians"),
     )
+
+
+def test_server_loads_saved_act_and_processors_warms_and_resets(deployment):
+    policy = ACTPolicy.from_pretrained(deployment.model.repo_or_path)
+    pre, post = processors(policy.config)
+    runner, identity = serving.load_deployment(deployment)
+    assert identity.startswith("sha256:") and len(identity) == 71
+    assert not runner.capabilities.language
+    assert not runner.policy._action_queue
+    with torch.inference_mode():
+        expected = post(policy.predict_action_chunk(pre(runner._batch(observation()))))[0, :3]
+    torch.testing.assert_close(runner.predict(observation()).canonical_actions, expected)
+    changed, changed_identity = serving.load_deployment(replace(deployment, semantics="degrees-v1"))
+    assert changed_identity != identity
+    assert changed.capabilities.execution_steps == 3
+    _, debug_identity = serving.load_deployment(replace(deployment, log_level="DEBUG"))
+    assert debug_identity == identity, "console verbosity must not invalidate a pinned artifact"
 
 
 def test_identical_checkpoint_pin_survives_host_path_and_transport_changes(deployment, tmp_path):
@@ -134,13 +152,15 @@ def test_invalid_or_mismatched_serving_modes_fail_in_config(deployment, modes):
 
 
 @pytest.mark.parametrize("value", [0, -1, True, 1.5])
-def test_text_limits_and_warmup_counts_are_positive_integers(deployment, value):
+def test_text_limits_warmup_counts_and_execution_slices_are_positive_integers(deployment, value):
     with pytest.raises(ValueError, match="positive integer"):
         replace(deployment, language=replace(deployment.language, max_output_chars=value))
     with pytest.raises(ValueError, match="positive integer"):
         replace(deployment, language=replace(deployment.language, max_input_chars=value))
     with pytest.raises(ValueError, match="warmup"):
         replace(deployment, execution=replace(deployment.execution, warmup_calls=value))
+    with pytest.raises(ValueError, match="positive integer"):
+        replace(deployment, execution=replace(deployment.execution, n_action_steps=value))
 
 
 @pytest.mark.parametrize(
@@ -168,12 +188,6 @@ def test_server_owned_execution_slice_does_not_modify_checkpoint(deployment):
     assert shorter.predict(observation()).canonical_actions.shape == (2, 3)
     assert shorter_identity != default_identity
     assert checkpoint_config.read_bytes() == original
-
-
-@pytest.mark.parametrize("steps", [0, -1, True, 2.5])
-def test_invalid_execution_slice_is_rejected_in_config(deployment, steps):
-    with pytest.raises(ValueError, match="positive integer"):
-        replace(deployment, execution=replace(deployment.execution, n_action_steps=steps))
 
 
 def test_slice_override_is_restricted_to_plain_chunks(deployment):

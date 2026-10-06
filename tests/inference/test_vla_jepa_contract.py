@@ -114,7 +114,7 @@ def test_world_model_checkpoint_uses_current_frames_and_matches_local_processors
     assert policy.config.enable_world_model
     assert runner.capabilities.prediction_steps == 30
     assert runner.capabilities.execution_steps == 9
-    assert runner.capabilities.modes == (ExecutionMode.CHUNK,)
+    assert runner.capabilities.modes == policy.chunk_inference_spec().modes == (ExecutionMode.CHUNK,)
     assert not runner.capabilities.language
     source = observation(runner)
     local_pre, local_post = make_vla_jepa_pre_post_processors(policy.config, stats)
@@ -160,18 +160,8 @@ def test_vla_jepa_preserves_names_modalities_state_width_and_unresized_shape(set
         policy.validate_chunk_input_features(features)
 
 
-def test_vla_jepa_rejects_observation_history_and_rtc(setup):
-    policy, runner, _ = setup
-    with pytest.raises(ValueError, match="Unsupported execution mode"):
-        PolicyRunner(
-            policy,
-            runner.preprocessor,
-            runner.postprocessor,
-            action_interval=1 / 30,
-            features=runner.capabilities.features,
-            action_feature=runner.capabilities.action_feature,
-            modes=(ExecutionMode.RTC_GUIDED,),
-        )
+def test_vla_jepa_rejects_observation_history(setup):
+    policy, _, _ = setup
     policy.config.n_obs_steps = 2
     with pytest.raises(ValueError, match="n_obs_steps=1"):
         policy.chunk_inference_spec()

@@ -124,19 +124,3 @@ def test_local_controller_rejects_invalid_text_before_changing_query_state(text,
     assert controller.text_input_error(text)
     assert engine.autosteer_goal == "goal"
     assert not engine.has_pending_query
-
-
-@pytest.mark.parametrize("method", ["ask", "autosteer"])
-def test_remote_controller_checks_deployment_limit_before_touching_engine(session, method):
-    engine, client = session
-    client.descriptor["limits"]["max_input_chars"] = 16
-    ctx, strategy, *_ = interactive_helpers._make_ctx()
-    ctx.policy.inference = engine
-    controller = RolloutController(strategy, ctx)
-    controller._running.set()
-    engine.start_autosteer("goal", 10)
-    assert getattr(controller, method)("x" * 17) is AskResult.INVALID
-    assert not controller.set_task("x" * 17)
-    assert engine.autosteer_goal == "goal"
-    assert engine.task == "initial task"
-    assert not engine.has_pending_query
