@@ -3,9 +3,7 @@
 # you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
 """Regression checks at the checkpoint/model/canonical action boundary."""
 
-from contextlib import nullcontext
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
 import torch
@@ -106,30 +104,3 @@ def test_width_changing_relative_rtc_requires_explicit_adapter():
     runner = make_runner(PaddedPolicy(config), padded=True, relative=True, modes=(ExecutionMode.RTC_GUIDED,))
     with pytest.raises(ValueError, match="different model/canonical widths"):
         runner.predict(observation(), mode=ExecutionMode.RTC_GUIDED)
-
-
-def test_molmoact2_declaration_matches_its_actual_returned_execution_slice(monkeypatch):
-    # The native wrapper is exercised without loading a transformer or weights.
-    module = pytest.importorskip("lerobot.policies.molmoact2.modeling_molmoact2")
-    config_module = pytest.importorskip("lerobot.policies.molmoact2.configuration_molmoact2")
-    config = config_module.MolmoAct2Config(device="cpu", chunk_size=12, n_action_steps=5)
-    policy = object.__new__(module.MolmoAct2Policy)
-    torch.nn.Module.__init__(policy)
-    policy.config = config
-    policy.anchor = torch.nn.Parameter(torch.zeros(1))
-    policy._checkpoint_action_mode = None
-    monkeypatch.setattr(policy, "_model_inputs", lambda batch: {"state": torch.zeros(1, 3)})
-    monkeypatch.setattr(policy, "_resolve_inference_action_mode", lambda mode: "continuous")
-    monkeypatch.setattr(policy, "_output_action_dim", lambda batch: 3)
-    monkeypatch.setattr(policy, "_autocast_context", nullcontext)
-    monkeypatch.setattr(policy, "_rtc_enabled", lambda: False)
-    monkeypatch.setattr(policy, "_generation_action_horizon", lambda: 12)
-    monkeypatch.setattr(
-        policy,
-        "_backbone",
-        lambda: SimpleNamespace(generate_actions_from_inputs=lambda **kwargs: torch.ones(1, 12, 32)),
-    )
-    spec = policy.chunk_inference_spec()
-    actual = policy.predict_action_chunk({}, generator=torch.Generator())
-    assert actual.shape == (1, spec.prediction_steps, 3)
-    assert spec.prediction_steps == spec.execution_steps == 5

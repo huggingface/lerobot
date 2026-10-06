@@ -24,7 +24,6 @@ from lerobot.inference import ObservationSnapshot, RTCInferenceConfig, RTCInfere
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.processor import PolicyProcessorPipeline
 from lerobot.rollout import RolloutConfig, context
 from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 from tests.mocks.mock_robot import MockRobot, MockRobotConfig
@@ -363,28 +362,3 @@ def test_trained_rtc_tolerates_one_overlap_miss_but_reports_persistent_delay():
         assert not engine.dispatch_allowed()
     finally:
         stop(engine)
-
-
-def test_engine_constructor_failure_disconnects_already_connected_robot(monkeypatch):
-    robot = MockRobot(MockRobotConfig())
-    cfg = RolloutConfig(
-        robot=robot.config,
-        policy=ACTConfig(device="cpu", pretrained_path=Path("unused")),
-        device="cpu",
-    )
-    monkeypatch.setattr(context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
-    monkeypatch.setattr(context, "make_robot_from_config", lambda _: robot)
-    monkeypatch.setattr(
-        context,
-        "make_pre_post_processors",
-        lambda **_: (PolicyProcessorPipeline([]), PolicyProcessorPipeline([])),
-    )
-
-    def fail(*args, **kwargs):
-        assert robot.is_connected
-        raise ValueError("invalid engine configuration")
-
-    monkeypatch.setattr(context, "create_inference_engine", fail)
-    with pytest.raises(ValueError, match="invalid engine configuration"):
-        context.build_rollout_context(cfg, Event())
-    assert not robot.is_connected

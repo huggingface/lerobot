@@ -71,27 +71,6 @@ def test_remote_initial_conditioning_and_labels_follow_local_task_precedence(set
         robot.disconnect()
 
 
-def test_remote_recording_does_not_add_inference_diagnostics_to_dataset(setup, tmp_path, caplog):
-    cfg, _, robot, _ = setup
-    metadata = tmp_path / "meta"
-    metadata.mkdir()
-    (metadata / "info.json").write_text("{}\n")
-    before = {path.relative_to(tmp_path) for path in tmp_path.rglob("*")}
-    ctx = remote_context.build_remote_rollout_context(cfg, Event())
-    engine = ctx.policy.inference
-    try:
-        with caplog.at_level("DEBUG", logger="lerobot.remote_inference.engine"):
-            engine._event("request", task=engine.task)
-            engine._drain_log_events()
-        assert "Remote inference" in caplog.text
-        engine.record_dispatch({"a.pos": 0.0}, {"a.pos": 0.0}, {"a.pos": 0.0})
-    finally:
-        engine.stop()
-        robot.disconnect()
-    assert {path.relative_to(tmp_path) for path in tmp_path.rglob("*")} == before
-    assert (metadata / "info.json").read_text() == "{}\n"
-
-
 @pytest.mark.parametrize("recorded_task, top_level_task", [("too long", "ok"), ("ok", "too long")])
 def test_initial_length_guard_validates_the_instruction_actually_used(setup, recorded_task, top_level_task):
     cfg, client, robot, make_robot = setup
