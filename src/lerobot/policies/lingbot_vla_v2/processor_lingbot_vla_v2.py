@@ -454,9 +454,9 @@ class LingbotVLAV2SlotMappingProcessorStep(ProcessorStep):
         vector = torch.cat(pieces, dim=-1).to(torch.float32)
         return F.pad(vector, (0, dim - vector.shape[-1]))
 
-    def _joint_mask(self, spans, dim: int) -> torch.Tensor:
+    def _joint_mask(self, spans, dim: int, device: torch.device | None = None) -> torch.Tensor:
         real = sum(end - start for _, start, end in spans) if spans else 0
-        mask = torch.zeros(dim, dtype=torch.bool)
+        mask = torch.zeros(dim, dtype=torch.bool, device=device)
         mask[:real] = True
         return mask
 
@@ -475,20 +475,24 @@ class LingbotVLAV2SlotMappingProcessorStep(ProcessorStep):
         if self.use_future_image and state.ndim == 3:
             state = state[:, 0]
         state_source = {OBS_STATE: state}
+        # Create zero-filled slots on the input device — lerobot-train hands the batch
+        # to the preprocessor already on the GPU, so building them on CPU breaks the
+        # downstream cat with a device mismatch.
+        device = state.device
 
         state_vecs, state_masks = [], []
         for joint, dim, spans in self._state_plan:
             if spans is None:
-                state_vecs.append(torch.zeros(*state.shape[:-1], dim))
-                state_masks.append(torch.zeros(dim, dtype=torch.bool))
+                state_vecs.append(torch.zeros(*state.shape[:-1], dim, device=device))
+                state_masks.append(torch.zeros(dim, dtype=torch.bool, device=device))
                 continue
             vector = self._map_vector(state_source, joint, dim, spans)
             if vector is None:
-                state_vecs.append(torch.zeros(*state.shape[:-1], dim))
-                state_masks.append(torch.zeros(dim, dtype=torch.bool))
+                state_vecs.append(torch.zeros(*state.shape[:-1], dim, device=device))
+                state_masks.append(torch.zeros(dim, dtype=torch.bool, device=device))
                 continue
             state_vecs.append(vector)
-            state_masks.append(self._joint_mask(spans, dim))
+            state_masks.append(self._joint_mask(spans, dim, device=device))
         canonical_width = self._canonical_width()
         canonical_state = F.pad(torch.cat(state_vecs, dim=-1), (0, self.max_state_dim - canonical_width))
         state_joint_mask = F.pad(torch.cat(state_masks, dim=-1), (0, self.max_state_dim - canonical_width))
@@ -500,7 +504,9 @@ class LingbotVLAV2SlotMappingProcessorStep(ProcessorStep):
 
         action = transition.get(TransitionKey.ACTION)
         action_joint_mask = F.pad(
-            torch.cat([self._joint_mask(spans, dim) for _, dim, spans in self._action_plan], dim=-1),
+            torch.cat(
+                [self._joint_mask(spans, dim, device=device) for _, dim, spans in self._action_plan], dim=-1
+            ),
             (0, self.max_action_dim - canonical_width),
         )
         if action is not None:
@@ -508,11 +514,11 @@ class LingbotVLAV2SlotMappingProcessorStep(ProcessorStep):
             action_vecs = []
             for joint, dim, spans in self._action_plan:
                 if spans is None:
-                    action_vecs.append(torch.zeros(*action.shape[:-1], dim))
+                    action_vecs.append(torch.zeros(*action.shape[:-1], dim, device=action.device))
                     continue
                 vector = self._map_vector(action_source, joint, dim, spans)
                 if vector is None:
-                    vector = torch.zeros(*action.shape[:-1], dim)
+                    vector = torch.zeros(*action.shape[:-1], dim, device=action.device)
                 action_vecs.append(vector)
             canonical_action = F.pad(
                 torch.cat(action_vecs, dim=-1), (0, self.max_action_dim - canonical_width)
@@ -1091,6 +1097,16 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
             and "preprocess_device" not in preprocessor_overrides.get(IMAGE_STEP, {})
         ):
             preprocessor_overrides.setdefault(IMAGE_STEP, {})["preprocess_device"] = target_dev
+
+    # The inverse slot mapping must mirror the preprocessor's slot mapping: when
+    # fine-tuning overrides the slot mapping on the preprocessor, the postprocessor's
+    # inverse step needs the same mapping or it keeps the checkpoint's saved one and
+    # emits canonical-width actions (which then fail the unnormalizer against the
+    # robot's raw-dim stats).
+    if robot_config is not None:
+        postprocessor_overrides.setdefault(INVERSE_SLOT_MAPPING_STEP, {}).update(
+            {"robot_config": robot_config, "canonical_joints": config.canonical_joints}
+        )
 
     preprocessor = PolicyProcessorPipeline.from_pretrained(
         pretrained_model_name_or_path=pretrained_path,

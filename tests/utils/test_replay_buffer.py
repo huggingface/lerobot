@@ -23,17 +23,6 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 import torch  # noqa: E402
 
-
-def _check_libsvtav1_available() -> bool:
-    """Check if libsvtav1 codec is available in the bundled FFmpeg build."""
-    try:
-        from lerobot.datasets.pyav_utils import get_codec
-
-        return get_codec("libsvtav1") is not None
-    except Exception:
-        return False
-
-
 from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 from lerobot.rl.buffer import BatchTransition, ReplayBuffer, random_crop_vectorized  # noqa: E402
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_STATE, OBS_STR, REWARD  # noqa: E402
@@ -373,10 +362,6 @@ def test_to_lerobot_dataset_with_empty_buffer(replay_buffer):
         replay_buffer.to_lerobot_dataset("dummy_repo")
 
 
-@pytest.mark.skipif(
-    not _check_libsvtav1_available(),
-    reason="libsvtav1 codec not available in bundled FFmpeg build",
-)
 def test_to_lerobot_dataset(tmp_path):
     ds, buffer = create_dataset_from_replay_buffer(tmp_path)
 
@@ -410,10 +395,6 @@ def test_to_lerobot_dataset(tmp_path):
                 assert torch.equal(value, buffer.states[OBS_STATE][i])
 
 
-@pytest.mark.skipif(
-    not _check_libsvtav1_available(),
-    reason="libsvtav1 codec not available in bundled FFmpeg build",
-)
 def test_from_lerobot_dataset(tmp_path):
     dummy_state_1 = create_dummy_state()
     dummy_action_1 = create_dummy_action()
