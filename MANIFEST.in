@@ -2,4 +2,4 @@ include src/lerobot/templates/lerobot_modelcard_template.md
 include src/lerobot/templates/lerobot_rewardmodel_modelcard_template.md
 include src/lerobot/datasets/card_template.md
 include src/lerobot/envs/metaworld_config.json
-recursive-include src/lerobot/robots/bi_yam_follower/assets *.xml
+recursive-include src/lerobot/robots/yam_follower/assets *.xml
