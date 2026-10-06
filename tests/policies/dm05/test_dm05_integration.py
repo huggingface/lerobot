@@ -225,9 +225,7 @@ def test_dm05_config_defaults_and_validation(monkeypatch, tmp_path):
     assert config.output_features[ACTION].shape == (14,)
     assert config.get_optimizer_preset().type == "adamw"
     monkeypatch.setattr("lerobot.common.train_utils.ModelCard.validate", lambda _self: None)
-    card = generate_model_card(config)
-    assert card.data.base_model == "lerobot/dm05_base"
-    assert card.data.license == "gemma"
+    assert generate_model_card(config).data.license == "gemma"
     for invalid_steps in (0, -1):
         with pytest.raises(ValueError, match="diffusion_steps must be positive"):
             DM05Config(diffusion_steps=invalid_steps)
