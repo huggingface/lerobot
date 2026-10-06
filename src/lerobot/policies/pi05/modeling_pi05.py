@@ -17,6 +17,8 @@
 import builtins
 import logging
 from collections import deque
+from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Unpack, cast
 
@@ -171,23 +173,90 @@ def _reduce_training_rtc_loss(
     return (losses * postfix_mask).sum() / postfix_mask.sum().clamp(min=1)
 
 
+def _no_grad_if(enabled: bool):
+    return torch.no_grad() if enabled else nullcontext()
+
+
+def _joint_attention(
+    self_attn, query_states, key_states, value_states, attention_mask, scaling, fp32_attention
+):
+    """Joint-layer attention: eager by default, FP32 SDPA on the math backend when requested."""
+    if fp32_attention:
+        # Large Q/K activations at low flow timesteps destabilize BF16 eager scores
+        # and can amplify reduced-precision SDPA backward as well. Run attention in
+        # FP32 with the math backend, then restore the model dtype. Opt-in so that
+        # stock PI0.5 keeps its original eager numerics.
+        attention_dtype = query_states.dtype
+        with sdpa_kernel(SDPBackend.MATH):
+            att_output, _ = sdpa_attention_forward(
+                self_attn,
+                query_states.float(),
+                key_states.float(),
+                value_states.float(),
+                attention_mask.float() if attention_mask is not None else None,
+                scaling,
+            )
+        return att_output.to(attention_dtype)
+    att_output, _ = modeling_gemma.eager_attention_forward(
+        self_attn,
+        query_states,
+        key_states,
+        value_states,
+        attention_mask,
+        scaling,
+    )
+    return att_output
+
+
+# (self_attn, query, key, value, mask, scaling, part) -> attention output; part is "all", "vlm" or "action".
+JointAttentionFn = Callable[..., Tensor]
+
+
 # Define the complete layer computation function for gradient checkpointing
 def compute_layer_complete(
-    inputs_embeds, attention_mask, position_ids, adarms_cond, layers, rotary_emb, fp32_attention=False
+    inputs_embeds,
+    attention_mask,
+    position_ids,
+    adarms_cond,
+    layers,
+    rotary_emb,
+    fp32_attention=False,
+    *,
+    knowledge_insulation: bool = False,
+    suppress_prefix_grads: bool = False,
+    attention_fn: JointAttentionFn | None = None,
+    norm_backend=None,
 ):
+    """Run one joint PaliGemma + action-expert layer.
+
+    Args:
+        knowledge_insulation: Action queries attend to detached VLM keys and values, so action
+            losses cannot update the VLM through attention. The forward values are unchanged.
+        suppress_prefix_grads: Compute the VLM stream without autograd.
+        attention_fn: Optional attention override, called with ``part`` set to ``"all"``, or to
+            ``"vlm"`` / ``"action"`` for the two query groups under knowledge insulation.
+        norm_backend: Optional fused-norm kernels exposing ``input_norm(norm, x, cond)`` and
+            ``residual_norm(norm, residual, out, gate, cond)``.
+    """
     query_states = []
     key_states = []
     value_states = []
     gates = []
     for i, hidden_states in enumerate(inputs_embeds):
         layer = layers[i]
-        hidden_states, gate = layernorm_forward(layer.input_layernorm, hidden_states, adarms_cond[i])
-        gates.append(gate)
-        input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
-        query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        with _no_grad_if(i == 0 and suppress_prefix_grads):
+            if norm_backend is None:
+                hidden_states, gate = layernorm_forward(layer.input_layernorm, hidden_states, adarms_cond[i])
+            else:
+                hidden_states, gate = norm_backend.input_norm(
+                    layer.input_layernorm, hidden_states, adarms_cond[i]
+                )
+            gates.append(gate)
+            input_shape = hidden_states.shape[:-1]
+            hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
+            query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
         query_states.append(query_state)
         key_states.append(key_state)
         value_states.append(value_state)
@@ -209,31 +278,31 @@ def compute_layer_complete(
     batch_size = query_states.shape[0]
     paligemma_layer = layers[0]
     scaling = paligemma_layer.self_attn.scaling
-    if fp32_attention:
-        # Large Q/K activations at low flow timesteps destabilize BF16 eager scores
-        # and can amplify reduced-precision SDPA backward as well. Run attention in
-        # FP32 with the math backend, then restore the model dtype. Opt-in so that
-        # stock PI0.5 keeps its original eager numerics.
-        attention_dtype = query_states.dtype
-        with sdpa_kernel(SDPBackend.MATH):
-            att_output, _ = sdpa_attention_forward(
-                paligemma_layer.self_attn,
-                query_states.float(),
-                key_states.float(),
-                value_states.float(),
-                attention_mask.float() if attention_mask is not None else None,
-                scaling,
-            )
-        att_output = att_output.to(attention_dtype)
-    else:
-        att_output, _ = modeling_gemma.eager_attention_forward(
-            paligemma_layer.self_attn,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            scaling,
+
+    def attend(query, key, value, mask, part):
+        if attention_fn is not None:
+            return attention_fn(paligemma_layer.self_attn, query, key, value, mask, scaling, part)
+        return _joint_attention(paligemma_layer.self_attn, query, key, value, mask, scaling, fp32_attention)
+
+    if knowledge_insulation:
+        # Detach VLM K/V only on the path the action queries use (pi0.5 knowledge insulation).
+        prefix_len = inputs_embeds[0].shape[1]
+        key_for_action = torch.cat(
+            [key_states[:, :, :prefix_len].detach(), key_states[:, :, prefix_len:]], dim=2
         )
+        value_for_action = torch.cat(
+            [value_states[:, :, :prefix_len].detach(), value_states[:, :, prefix_len:]], dim=2
+        )
+        vlm_mask = attention_mask[:, :, :prefix_len] if attention_mask is not None else None
+        action_mask = attention_mask[:, :, prefix_len:] if attention_mask is not None else None
+        with _no_grad_if(suppress_prefix_grads):
+            att_vlm = attend(query_states[:, :, :prefix_len], key_states, value_states, vlm_mask, "vlm")
+        att_action = attend(
+            query_states[:, :, prefix_len:], key_for_action, value_for_action, action_mask, "action"
+        )
+        att_output = torch.cat([att_vlm, att_action], dim=1)
+    else:
+        att_output = attend(query_states, key_states, value_states, attention_mask, "all")
     # Get head_dim from the current layer, not from the model
     head_dim = paligemma_layer.self_attn.head_dim
     att_output = att_output.reshape(batch_size, -1, 1 * 8 * head_dim)
@@ -245,17 +314,23 @@ def compute_layer_complete(
         end_pos = start_pos + hidden_states.shape[1]
         if att_output.dtype != layer.self_attn.o_proj.weight.dtype:
             att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
-        out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
-        # first residual
-        out_emb = _gated_residual(hidden_states, out_emb, gates[i])
-        after_first_residual = out_emb.clone()
-        out_emb, gate = layernorm_forward(layer.post_attention_layernorm, out_emb, adarms_cond[i])
-        # Convert to bfloat16 if the next layer (mlp) uses bfloat16
-        if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
-            out_emb = out_emb.to(dtype=torch.bfloat16)
-        out_emb = layer.mlp(out_emb)
-        # second residual
-        out_emb = _gated_residual(after_first_residual, out_emb, gate)
+        with _no_grad_if(i == 0 and suppress_prefix_grads):
+            out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
+            if norm_backend is None:
+                # first residual
+                out_emb = cast(Tensor, _gated_residual(hidden_states, out_emb, gates[i]))
+                after_first_residual = out_emb.clone()
+                out_emb, gate = layernorm_forward(layer.post_attention_layernorm, out_emb, adarms_cond[i])
+            else:
+                after_first_residual, out_emb, gate = norm_backend.residual_norm(
+                    layer.post_attention_layernorm, hidden_states, out_emb, gates[i], adarms_cond[i]
+                )
+            # Convert to bfloat16 if the next layer (mlp) uses bfloat16
+            if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
+                out_emb = out_emb.to(dtype=torch.bfloat16)
+            out_emb = layer.mlp(out_emb)
+            # second residual
+            out_emb = _gated_residual(after_first_residual, out_emb, gate)
         outputs_embeds.append(out_emb)
         start_pos = end_pos
     return outputs_embeds
@@ -304,6 +379,8 @@ class PaliGemmaWithExpertModel(
 
     # Run the joint-layer attention in FP32 (math backend). Off for stock PI0.5.
     fp32_joint_attention = False
+    # Detach VLM K/V for action queries in the joint layers. Off for stock PI0.5.
+    knowledge_insulation = False
 
     def __init__(
         self,
@@ -452,7 +529,16 @@ class PaliGemmaWithExpertModel(
         inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
         adarms_cond: list[torch.Tensor | None] | None = None,
+        *,
+        suppress_prefix_grads: bool = False,
+        attention_fn: JointAttentionFn | None = None,
+        norm_backend=None,
     ):
+        """Run the prefix, the suffix, or both streams through the joint layers.
+
+        ``suppress_prefix_grads``, ``attention_fn`` and ``norm_backend`` only apply when both
+        streams are given; see :func:`compute_layer_complete`.
+        """
         if adarms_cond is None:
             adarms_cond = [None, None]
         if inputs_embeds is None:
@@ -507,6 +593,10 @@ class PaliGemmaWithExpertModel(
                         layers=layers,
                         rotary_emb=rotary_emb,
                         fp32_attention=self.fp32_joint_attention,
+                        knowledge_insulation=self.knowledge_insulation,
+                        suppress_prefix_grads=suppress_prefix_grads,
+                        attention_fn=attention_fn,
+                        norm_backend=norm_backend,
                     )
                 else:
                     inputs_embeds = compute_layer_complete(
@@ -517,6 +607,10 @@ class PaliGemmaWithExpertModel(
                         layers=layers,
                         rotary_emb=rotary_emb,
                         fp32_attention=self.fp32_joint_attention,
+                        knowledge_insulation=self.knowledge_insulation,
+                        suppress_prefix_grads=suppress_prefix_grads,
+                        attention_fn=attention_fn,
+                        norm_backend=norm_backend,
                     )
 
             # final norm
@@ -528,7 +622,8 @@ class PaliGemmaWithExpertModel(
             def compute_final_norms(inputs_embeds, adarms_cond):
                 outputs_embeds = []
                 for i, hidden_states in enumerate(inputs_embeds):
-                    out_emb, _ = layernorm_forward(final_norms[i], hidden_states, adarms_cond[i])
+                    with _no_grad_if(i == 0 and suppress_prefix_grads):
+                        out_emb, _ = layernorm_forward(final_norms[i], hidden_states, adarms_cond[i])
                     outputs_embeds.append(out_emb)
                 return outputs_embeds
 

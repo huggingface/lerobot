@@ -56,9 +56,16 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+from lerobot.utils.import_utils import _transformers_available
 
 from ..pi05.processor_pi05 import make_pi05_pre_post_processors
 from .configuration_fineart_vla import FineARTVLAConfig
+from .fit_fast_tokenizer import resolve_fast_tokenizer
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoTokenizer
+else:
+    AutoTokenizer = None
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +115,6 @@ def _flatten_say_tool_calls(message: dict[str, Any]) -> dict[str, Any]:
         args = fn.get("arguments")
         if isinstance(args, str):
             try:
-                import json  # noqa: PLC0415
-
                 args = json.loads(args)
             except (ValueError, TypeError):
                 args = {}
@@ -290,8 +295,6 @@ class FineARTVLATextTokenizerStep(ProcessorStep):
     def _ensure_tokenizer(self) -> Any:
         if self._tokenizer is not None:
             return self._tokenizer
-        from transformers import AutoTokenizer  # noqa: PLC0415
-
         self._tokenizer = register_paligemma_loc_tokens(AutoTokenizer.from_pretrained(self.tokenizer_name))
         return self._tokenizer
 
@@ -487,8 +490,6 @@ def make_fineart_vla_pre_post_processors(
 
     # Add FAST action-token supervision only when explicitly enabled.
     if getattr(config, "enable_fast_action_loss", False):
-        from .fit_fast_tokenizer import resolve_fast_tokenizer  # noqa: PLC0415
-
         input_steps.append(
             ActionTokenizerProcessorStep(
                 action_tokenizer_name=resolve_fast_tokenizer(

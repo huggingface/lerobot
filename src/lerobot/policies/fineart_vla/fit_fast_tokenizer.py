@@ -26,9 +26,20 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from huggingface_hub import snapshot_download
+
+from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoProcessor
+    from transformers.dynamic_module_utils import get_class_from_dynamic_module
+# pyarrow ships with the dataset extra; tokenizer fitting reads training parquet shards.
+if TYPE_CHECKING or _datasets_available:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
 
@@ -193,8 +204,6 @@ def _validate_fast_reconstruction(
 
 def _load_fast_fitter(base_tokenizer_name: str) -> Any:
     """Load FAST's fitting implementation without requiring its universal BPE weights."""
-    from transformers import AutoProcessor  # noqa: PLC0415
-
     try:
         return AutoProcessor.from_pretrained(base_tokenizer_name, trust_remote_code=True)
     except ValueError as error:
@@ -204,8 +213,6 @@ def _load_fast_fitter(base_tokenizer_name: str) -> Any:
             "Could not load the universal FAST tokenizer backend; loading its fitting class directly: %s",
             error,
         )
-        from transformers.dynamic_module_utils import get_class_from_dynamic_module  # noqa: PLC0415
-
         return get_class_from_dynamic_module(
             "processing_action_tokenizer.UniversalActionProcessor",
             base_tokenizer_name,
@@ -321,14 +328,11 @@ def fit_fast_tokenizer(
     actions_buf: list[np.ndarray] = []
 
     # Read v3 parquet shards directly to avoid split lookup failures and repeated metadata parsing.
-    import pyarrow as _pa  # noqa: PLC0415
-    import pyarrow.parquet as _pq  # noqa: PLC0415
+    require_package("pyarrow", extra="dataset")
 
     if dataset_root is not None:
         snap = Path(dataset_root)
     else:
-        from huggingface_hub import snapshot_download  # noqa: PLC0415
-
         snap = Path(
             snapshot_download(repo_id=dataset_repo_id, repo_type="dataset", revision=dataset_revision)
         )
@@ -339,8 +343,8 @@ def fit_fast_tokenizer(
     columns = ["episode_index", "action"]
     if use_relative_actions:
         columns.append("observation.state")
-    tables = [_pq.read_table(f, columns=columns) for f in data_files]
-    table = _pa.concat_tables(tables)
+    tables = [pq.read_table(f, columns=columns) for f in data_files]
+    table = pa.concat_tables(tables)
     eps = table["episode_index"].to_numpy()
     acts_col = table["action"]
     # Normalize Arrow action representations into an (N, D) array.

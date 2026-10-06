@@ -21,21 +21,29 @@ Original architecture and implementation: https://github.com/Physical-Intelligen
 from __future__ import annotations
 
 import logging
-import types
 from contextlib import nullcontext
-from typing import Any, Unpack
+from typing import TYPE_CHECKING, Any, Unpack
 
 import torch
 from torch import Tensor
 from torch.nn import functional
+from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
 from lerobot.utils.constants import (
     ACTION,
+    ACTION_CODE_TOKEN_MASK,
+    ACTION_TOKEN_MASK,
+    ACTION_TOKENS,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_CAUSAL_MARKS,
     OBS_LANGUAGE_TOKENS,
 )
-from lerobot.utils.import_utils import _liger_kernel_available, require_package
+from lerobot.utils.import_utils import (
+    _kernels_available,
+    _liger_kernel_available,
+    _transformers_available,
+    require_package,
+)
 
 from ..common.vla_utils import make_att_2d_masks
 from ..pi05.modeling_pi05 import (
@@ -44,7 +52,25 @@ from ..pi05.modeling_pi05 import (
 )
 from ..pretrained import RTCActionSelectKwargs
 from .configuration_fineart_vla import FineARTVLAConfig
-from .processor_fineart_vla import make_fineart_vla_pre_post_processors  # noqa: F401
+from .processor_fineart_vla import (  # noqa: F401
+    make_fineart_vla_pre_post_processors,
+    register_paligemma_loc_tokens,
+)
+
+if TYPE_CHECKING or _transformers_available:
+    from transformers import AutoTokenizer
+
+    from ..pi_gemma import sdpa_attention_forward
+else:
+    AutoTokenizer = None
+    sdpa_attention_forward = None
+
+# Optional fused training kernels (lerobot[fineart_vla_kernels]); checked again where used.
+if TYPE_CHECKING or _liger_kernel_available:
+    from liger_kernel.transformers import apply_liger_kernel_to_paligemma
+    from liger_kernel.transformers.fused_linear_cross_entropy import LigerFusedLinearCrossEntropyLoss
+if TYPE_CHECKING or _kernels_available:
+    from kernels import get_kernel
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +159,7 @@ class FineARTVLAPytorch(PI05Pytorch):  # see openpi `PI0Pytorch`
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks, dtype=prefix_embs.dtype)
 
         # Transformer and vision layers own their checkpoint boundaries.
-        ki_kwargs = {"suppress_prefix_grads": True} if suppress_prefix else {}
+        ki_kwargs: dict[str, Any] = {"suppress_prefix_grads": True} if suppress_prefix else {}
         (_, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_2d_masks_4d,
             position_ids=position_ids,
@@ -248,8 +274,6 @@ def _enable_hf_kernels() -> None:
             "kernels. Install with ``pip install 'lerobot[fineart_vla_kernels]'``."
         )
         return
-    from liger_kernel.transformers import apply_liger_kernel_to_paligemma  # noqa: PLC0415
-
     apply_liger_kernel_to_paligemma(
         rope=True,
         geglu=True,
@@ -359,9 +383,6 @@ def _lin_ce_flat(
 
     # Keep Liger optional for inference-only installations.
     require_package("liger-kernel", extra="fineart_vla_kernels", import_name="liger_kernel")
-    from liger_kernel.transformers.fused_linear_cross_entropy import (  # noqa: PLC0415
-        LigerFusedLinearCrossEntropyLoss,
-    )
 
     loss_fn = LigerFusedLinearCrossEntropyLoss(
         ignore_index=-100,
@@ -515,11 +536,6 @@ def _get_flex_fns(device: torch.device):
         return None
     if _flex_fns is None:
         try:
-            from torch.nn.attention.flex_attention import (  # noqa: PLC0415
-                create_block_mask,
-                flex_attention,
-            )
-
             _flex_fns = (
                 torch.compile(flex_attention, dynamic=False),
                 torch.compile(create_block_mask, dynamic=False),
@@ -580,8 +596,6 @@ def _get_adarms_backend():
     if _flashrt_adarms_cache is None:
         try:
             require_package("kernels", extra="fineart_vla_kernels")
-            from kernels import get_kernel  # noqa: PLC0415
-
             _flashrt_adarms_cache = get_kernel("flashrt/flashrt-adarms-train", revision="v1")
         except Exception as exc:
             logger.warning(
@@ -592,14 +606,23 @@ def _get_adarms_backend():
     return _flashrt_adarms_cache or None
 
 
-def _adarms_norm(backend, norm, x, cond):
-    """PiGemmaRMSNorm through the fused kernel when a backend is present."""
-    if backend is not None:
+class _FlashRTNorms:
+    """FlashRT AdaRMS kernels behind PI0.5's ``norm_backend`` hooks for the joint layers."""
+
+    def __init__(self, kernels: Any) -> None:
+        self._kernels = kernels
+
+    def input_norm(self, norm, x, cond):
         if cond is not None and norm.dense is not None:
-            return backend.adarms(x, norm.dense(cond), norm.eps, True)
+            return self._kernels.adarms(x, norm.dense(cond), norm.eps, True)
         if norm.dense is None:
-            return backend.adarms(x, norm.weight, norm.eps, False)
-    return norm(x, cond=cond)
+            return self._kernels.adarms(x, norm.weight, norm.eps, False)
+        return norm(x, cond=cond)
+
+    def residual_norm(self, norm, residual, out, gate, cond):
+        if cond is not None and norm.dense is not None:
+            return self._kernels.resgate_adarms(residual, out, gate, norm.dense(cond), norm.eps, True)
+        return self._kernels.resgate_adarms(residual, out, gate, norm.weight, norm.eps, False)
 
 
 def _manual_attention_part(qs, ks, vs, m, scale):
@@ -635,8 +658,6 @@ def _get_manual_attention():
         part = _manual_attention_part
         try:
             require_package("kernels", extra="fineart_vla_kernels")
-            from kernels import get_kernel  # noqa: PLC0415
-
             _hub = getattr(
                 get_kernel("flashrt/flashrt-flex-attention-train", revision="v1"),
                 "manual_attention_part",
@@ -657,268 +678,37 @@ def _get_manual_attention():
     return _manual_attention
 
 
-def _compute_layer_ki(
-    layer_idx,
-    inputs_embeds,
-    attention_mask,
-    position_embeddings,
-    adarms_cond,
-    paligemma,
-    gemma_expert,
-    suppress_prefix_grads=False,
-    flex_masks=None,
-    adarms_backend=None,
-    manual_attention=False,
-):
-    from transformers.models.gemma import modeling_gemma  # noqa: PLC0415
+def _flex_attention_fn(flex_masks):
+    """Knowledge-insulation attention through FlexAttention block masks (one per query group)."""
+    vlm_block_mask, action_block_mask = flex_masks
 
-    # ``_gated_residual`` is LeRobot's adaRMSNorm helper, not a Transformers symbol.
-    from ..pi_gemma import _gated_residual  # noqa: PLC0415
-
-    def _vlm_ctx(i):
-        return torch.no_grad() if (i == 0 and suppress_prefix_grads) else nullcontext()
-
-    models = [paligemma.model.language_model, gemma_expert.model]
-    query_states, key_states, value_states, gates = [], [], [], []
-
-    vlm_len = inputs_embeds[0].shape[1]
-
-    for i, hidden_states in enumerate(inputs_embeds):
-        layer = models[i].layers[layer_idx]
-        with _vlm_ctx(i):
-            hidden_states, gate = _adarms_norm(
-                adarms_backend, layer.input_layernorm, hidden_states, adarms_cond[i]
-            )
-            gates.append(gate)
-            input_shape = hidden_states.shape[:-1]
-            hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
-            q = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-            k = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-            v = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        query_states.append(q)
-        key_states.append(k)
-        value_states.append(v)
-
-    query_states = torch.cat(query_states, dim=2)
-    key_states = torch.cat(key_states, dim=2)
-    value_states = torch.cat(value_states, dim=2)
-
-    cos, sin = position_embeddings
-    query_states, key_states = modeling_gemma.apply_rotary_pos_emb(
-        query_states, key_states, cos, sin, unsqueeze_dim=1
-    )
-
-    batch_size = query_states.shape[0]
-    scaling = paligemma.model.language_model.layers[layer_idx].self_attn.scaling
-
-    # Split queries / K / V at the VLM-vs-action boundary.
-    q_vlm = query_states[:, :, :vlm_len, :]
-    q_action = query_states[:, :, vlm_len:, :]
-    k_vlm = key_states[:, :, :vlm_len, :]
-    k_action = key_states[:, :, vlm_len:, :]
-    v_vlm = value_states[:, :, :vlm_len, :]
-    v_action = value_states[:, :, vlm_len:, :]
-
-    # Detach VLM K/V *only* on the path the action queries use.
-    k_for_vlm = key_states
-    v_for_vlm = value_states
-    k_for_action = torch.cat([k_vlm.detach(), k_action], dim=2)
-    v_for_action = torch.cat([v_vlm.detach(), v_action], dim=2)
-
-    if flex_masks is not None:
-        flex_attn, _ = _get_flex_fns(query_states.device)
-        bm_vlm, bm_action = flex_masks
-        n_rep = paligemma.model.language_model.layers[layer_idx].self_attn.num_key_value_groups
-        with _vlm_ctx(0):
-            att_vlm = flex_attn(
-                q_vlm,
-                k_for_vlm,
-                v_for_vlm,
-                block_mask=bm_vlm,
-                scale=scaling,
-                enable_gqa=n_rep > 1,
-                kernel_options=_get_flex_kernel_options(query_states.device),
-            ).transpose(1, 2)
-        att_action = flex_attn(
-            q_action,
-            k_for_action,
-            v_for_action,
-            block_mask=bm_action,
+    def attend(self_attn, query, key, value, mask, scaling, part):
+        flex_attn, _ = _get_flex_fns(query.device)
+        return flex_attn(
+            query,
+            key,
+            value,
+            block_mask=vlm_block_mask if part == "vlm" else action_block_mask,
             scale=scaling,
-            enable_gqa=n_rep > 1,
-            kernel_options=_get_flex_kernel_options(query_states.device),
+            enable_gqa=self_attn.num_key_value_groups > 1,
+            kernel_options=_get_flex_kernel_options(query.device),
         ).transpose(1, 2)
-    else:
-        mask_for_vlm = attention_mask[:, :, :vlm_len, :]
-        mask_for_action = attention_mask[:, :, vlm_len:, :]
-        # SDPA requires the additive bias to match each query dtype.
-        if mask_for_vlm.dtype != q_vlm.dtype:
-            mask_for_vlm = mask_for_vlm.to(dtype=q_vlm.dtype)
-        if mask_for_action.dtype != q_action.dtype:
-            mask_for_action = mask_for_action.to(dtype=q_action.dtype)
 
-        if manual_attention:
-            manual_fn = _get_manual_attention()
-            if manual_attention == "action":
-                from ..pi_gemma import sdpa_attention_forward  # noqa: PLC0415
-
-                with _vlm_ctx(0):
-                    att_vlm, _ = sdpa_attention_forward(
-                        paligemma.model.language_model.layers[layer_idx].self_attn,
-                        q_vlm,
-                        k_for_vlm,
-                        v_for_vlm,
-                        mask_for_vlm,
-                        scaling,
-                    )
-            else:
-                with _vlm_ctx(0):
-                    att_vlm = manual_fn(q_vlm, k_for_vlm, v_for_vlm, mask_for_vlm, scaling)
-            att_action = manual_fn(q_action, k_for_action, v_for_action, mask_for_action, scaling)
-        else:
-            from ..pi_gemma import sdpa_attention_forward  # noqa: PLC0415
-
-            with _vlm_ctx(0):
-                att_vlm, _ = sdpa_attention_forward(
-                    paligemma.model.language_model.layers[layer_idx].self_attn,
-                    q_vlm,
-                    k_for_vlm,
-                    v_for_vlm,
-                    mask_for_vlm,
-                    scaling,
-                )
-            att_action, _ = sdpa_attention_forward(
-                paligemma.model.language_model.layers[layer_idx].self_attn,
-                q_action,
-                k_for_action,
-                v_for_action,
-                mask_for_action,
-                scaling,
-            )
-    att = torch.cat([att_vlm, att_action], dim=1)
-
-    head_dim = paligemma.model.language_model.layers[layer_idx].self_attn.head_dim
-    att = att.reshape(batch_size, -1, 1 * 8 * head_dim)
-
-    outputs_embeds = []
-    start = 0
-    for i, hidden_states in enumerate(inputs_embeds):
-        layer = models[i].layers[layer_idx]
-        end = start + hidden_states.shape[1]
-        if att.dtype != layer.self_attn.o_proj.weight.dtype:
-            att = att.to(layer.self_attn.o_proj.weight.dtype)
-        with _vlm_ctx(i):
-            out_emb = layer.self_attn.o_proj(att[:, start:end])
-            pa_norm = layer.post_attention_layernorm
-            if adarms_backend is not None:
-                if adarms_cond[i] is not None and pa_norm.dense is not None:
-                    after_first, out_emb, gate = adarms_backend.resgate_adarms(
-                        hidden_states,
-                        out_emb,
-                        gates[i],
-                        pa_norm.dense(adarms_cond[i]),
-                        pa_norm.eps,
-                        True,
-                    )
-                else:
-                    after_first, out_emb, gate = adarms_backend.resgate_adarms(
-                        hidden_states, out_emb, gates[i], pa_norm.weight, pa_norm.eps, False
-                    )
-            else:
-                out_emb = _gated_residual(hidden_states, out_emb, gates[i])
-                after_first = out_emb
-                out_emb, gate = pa_norm(out_emb, cond=adarms_cond[i])
-            if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
-                out_emb = out_emb.to(dtype=torch.bfloat16)
-            out_emb = layer.mlp(out_emb)
-            out_emb = _gated_residual(after_first, out_emb, gate)
-        outputs_embeds.append(out_emb)
-        start = end
-    return outputs_embeds
+    return attend
 
 
-def _paligemma_forward_ki(
-    self,
-    attention_mask=None,
-    position_ids=None,
-    past_key_values=None,
-    inputs_embeds=None,
-    use_cache=None,
-    adarms_cond=None,
-    suppress_prefix_grads=False,
-    flex_masks=None,
-    adarms_backend=None,
-    manual_attention=False,
-):
-    """Run dual-expert layers through KI and defer single-expert calls."""
-    from ..pi_gemma import layernorm_forward  # noqa: PLC0415
+def _manual_attention_fn(scope: str):
+    """Knowledge-insulation attention with materialized FP32-softmax logits (``all`` or ``action`` rows)."""
+    manual_fn = _get_manual_attention()
 
-    if adarms_cond is None:
-        adarms_cond = [None, None]
+    def attend(self_attn, query, key, value, mask, scaling, part):
+        # SDPA and the manual kernel need the additive bias in the query dtype.
+        mask = mask.to(dtype=query.dtype)
+        if part == "vlm" and scope == "action":
+            return sdpa_attention_forward(self_attn, query, key, value, mask, scaling)[0]
+        return manual_fn(query, key, value, mask, scaling)
 
-    # Single-expert paths: defer to the original forward saved in
-    # FineARTVLAPolicy.__init__.
-    if inputs_embeds[0] is None or inputs_embeds[1] is None:
-        return self._fineart_vla_orig_forward(
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
-            use_cache=use_cache,
-            adarms_cond=adarms_cond,
-        )
-
-    models = [self.paligemma.model.language_model, self.gemma_expert.model]
-    num_layers = self.paligemma.config.text_config.num_hidden_layers
-
-    # RoPE values are shared by every layer.
-    position_embeddings = self.paligemma.model.language_model.rotary_emb(inputs_embeds[0], position_ids)
-
-    use_gc = (
-        hasattr(self.gemma_expert.model, "gradient_checkpointing")
-        and self.gemma_expert.model.gradient_checkpointing
-        and self.training
-    ) or (hasattr(self, "gradient_checkpointing") and self.gradient_checkpointing and self.training)
-
-    for layer_idx in range(num_layers):
-        if use_gc:
-            inputs_embeds = torch.utils.checkpoint.checkpoint(
-                _compute_layer_ki,
-                layer_idx,
-                inputs_embeds,
-                attention_mask,
-                position_embeddings,
-                adarms_cond,
-                use_reentrant=False,
-                preserve_rng_state=False,
-                paligemma=self.paligemma,
-                gemma_expert=self.gemma_expert,
-                suppress_prefix_grads=suppress_prefix_grads,
-                flex_masks=flex_masks,
-                adarms_backend=adarms_backend,
-                manual_attention=manual_attention,
-            )
-        else:
-            inputs_embeds = _compute_layer_ki(
-                layer_idx,
-                inputs_embeds,
-                attention_mask,
-                position_embeddings,
-                adarms_cond,
-                paligemma=self.paligemma,
-                gemma_expert=self.gemma_expert,
-                suppress_prefix_grads=suppress_prefix_grads,
-                flex_masks=flex_masks,
-                adarms_backend=adarms_backend,
-                manual_attention=manual_attention,
-            )
-
-    outputs_embeds = []
-    for i, hidden_states in enumerate(inputs_embeds):
-        with torch.no_grad() if (i == 0 and suppress_prefix_grads) else nullcontext():
-            out_emb, _ = layernorm_forward(models[i].norm, hidden_states, adarms_cond[i])
-        outputs_embeds.append(out_emb)
-    return [outputs_embeds[0], outputs_embeds[1]], None
+    return attend
 
 
 class FineARTVLAPolicy(PI05Policy):
@@ -945,17 +735,16 @@ class FineARTVLAPolicy(PI05Policy):
         if config.text_loss_weight > 0 and config.unfreeze_lm_head:
             self._unfreeze_lm_head()
 
-        # Bind knowledge insulation per instance so stock PI0.5 policies remain unchanged.
-        if getattr(config, "knowledge_insulation", False):
-            backbone = self.model.paligemma_with_expert
-            backbone._fineart_vla_orig_forward = backbone.forward
-            backbone.forward = types.MethodType(_paligemma_forward_ki, backbone)  # type: ignore[method-assign]
+        # Knowledge insulation runs inside PI0.5's joint layer; stock PI0.5 keeps it off.
+        self.model.paligemma_with_expert.knowledge_insulation = config.knowledge_insulation
+        if config.knowledge_insulation:
             logger.info(
                 "FineART-VLA: knowledge insulation enabled — action→VLM K/V gradients are blocked in attention."
             )
             if config.use_flashrt_adarms:
-                self._flashrt_adarms = _get_adarms_backend()
-                if self._flashrt_adarms is not None:
+                kernels = _get_adarms_backend()
+                if kernels is not None:
+                    self._flashrt_adarms = _FlashRTNorms(kernels)
                     logger.info("FineART-VLA: FlashRT adaRMS training kernels enabled.")
 
         if config.use_compiled_vision:
@@ -1043,12 +832,6 @@ class FineARTVLAPolicy(PI05Policy):
         )
         action_tokens = action_mask = action_code_mask = None
         if run_fast:
-            from lerobot.utils.constants import (  # noqa: PLC0415
-                ACTION_CODE_TOKEN_MASK,
-                ACTION_TOKEN_MASK,
-                ACTION_TOKENS,
-            )
-
             action_tokens = batch.get(ACTION_TOKENS)
             action_mask = batch.get(ACTION_TOKEN_MASK)
             action_code_mask = batch.get(ACTION_CODE_TOKEN_MASK)
@@ -1309,16 +1092,17 @@ class FineARTVLAPolicy(PI05Policy):
         return prefix_out, flow_loss
 
     def _ki_forward_kwargs(self, suppress_prefix_grads: bool = False, flex_masks=None) -> dict[str, Any]:
+        """Joint-layer hooks for PaliGemmaWithExpertModel.forward (see ``compute_layer_complete``)."""
         kwargs: dict[str, Any] = {}
         if suppress_prefix_grads:
             kwargs["suppress_prefix_grads"] = True
         if flex_masks is not None:
-            kwargs["flex_masks"] = flex_masks
-        adarms_backend = getattr(self, "_flashrt_adarms", None)
-        if adarms_backend is not None:
-            kwargs["adarms_backend"] = adarms_backend
-        if self.config.use_manual_attention:
-            kwargs["manual_attention"] = self.config.manual_attention_scope
+            kwargs["attention_fn"] = _flex_attention_fn(flex_masks)
+        elif self.config.use_manual_attention:
+            kwargs["attention_fn"] = _manual_attention_fn(self.config.manual_attention_scope)
+        norm_backend = getattr(self, "_flashrt_adarms", None)
+        if norm_backend is not None:
+            kwargs["norm_backend"] = norm_backend
         return kwargs
 
     def _amortized_prefix_and_flow(
@@ -1577,10 +1361,6 @@ class FineARTVLAPolicy(PI05Policy):
         self.eval()
 
         if tokenizer is None:
-            from transformers import AutoTokenizer  # noqa: PLC0415
-
-            from .processor_fineart_vla import register_paligemma_loc_tokens  # noqa: PLC0415
-
             tok_name = getattr(self.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
             tokenizer = _get_loc_tokenizer(tok_name, AutoTokenizer, register_paligemma_loc_tokens)
         if eos_token_id is None:
