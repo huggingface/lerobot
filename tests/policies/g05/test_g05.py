@@ -1439,7 +1439,7 @@ def test_from_pretrained_constructs_on_meta_and_assigns_directly(tmp_path: Path,
 
 
 def test_action_cache_keeps_the_flow_loss_out_of_the_vlm():
-    # The author's flow loss detaches the VLM KV by default (fm.joint_training: false), so the
+    # The VLM KV is always detached (upstream's default, fm.joint_training: false), so the
     # action expert's flow loss does not train the VLM keys and values it attends to.
     config = Qwen3_5TextConfig(
         hidden_size=32,
