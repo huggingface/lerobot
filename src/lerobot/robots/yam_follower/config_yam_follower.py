@@ -119,7 +119,40 @@ class YamArmConfig:
 @RobotConfig.register_subclass("yam_follower")
 @dataclass
 class YamFollowerConfig(RobotConfig, YamArmConfig):
-    """Registered configuration for a single YAM follower arm."""
+    """Configuration of a single YAM v1 follower arm on Linux SocketCAN.
+
+    Run `lerobot-calibrate` once per arm to measure its gripper stops; connecting for control
+    requires that calibration.
+
+    Args:
+        port (`str`): SocketCAN interface of the arm, e.g. `can0`.
+        expected_adapter_serial (`str | None`, *optional*): USB serial of the CAN adapter. When set, connecting fails if `port` belongs to another adapter, so a `can0`/`can1` enumeration swap cannot swap arms.
+        gripper_closed_rad (`float | None`, *optional*): Raw motor radians at the closed gripper stop. Normally loaded from the calibration file; set it only to override.
+        gripper_open_rad (`float | None`, *optional*): Raw motor radians at the open gripper stop. Normally loaded from the calibration file; set it only to override.
+        joint_signs (`list`, *optional*): Sign (+1 or -1) mapping each of the six motor directions to the joint frame.
+        joint_offsets_rad (`list`, *optional*): Offset in radians added to each of the six joints after the sign.
+        initial_position_rad (`list[float] | None`, *optional*): Joint pose, in radians, the arm must be in before torque is enabled. It is a check, not a motion command; the default zeros are the folded reference pose, and `None` accepts any valid pose.
+        initial_tolerance_rad (`float`, *optional*, defaults to 0.2): Allowed per-joint deviation from `initial_position_rad`.
+        initial_gripper_position (`float | None`, *optional*): Gripper opening (0 closed, 1 open) required before torque is enabled; `None` skips the check.
+        initial_gripper_tolerance (`float`, *optional*, defaults to 0.1): Allowed deviation from `initial_gripper_position`.
+        kp (`list`, *optional*): MIT position gains of the six joints.
+        kd (`list`, *optional*): MIT damping gains of the six joints.
+        gripper_kp (`float`, *optional*, defaults to 5.0): MIT position gain of the gripper.
+        gripper_kd (`float`, *optional*, defaults to 0.005): MIT damping gain of the gripper.
+        gripper_torque_limit (`float`, *optional*, defaults to 0.5): Maximum gripper torque in Nm (at most 1), enforced by bounding the gripper position error.
+        max_joint_speed_rad_s (`float`, *optional*, defaults to 0.3): Fastest the commanded joint positions move toward a new target.
+        max_gripper_speed_s (`float`, *optional*, defaults to 12.0): Fastest the commanded gripper opening moves, in full strokes per second.
+        max_tracking_error_rad (`float`, *optional*, defaults to 0.15): Furthest a commanded joint may lead its measured position, which limits force when the arm is blocked or pushed.
+        gravity_compensation (`bool`, *optional*, defaults to `True`): Add gravity feed-forward torques from the bundled model of the standard arm with a linear gripper. Payloads or added cameras need revalidation.
+        gravity_factors (`list`, *optional*): Per-joint scale applied to the model gravity torques.
+        cameras (`dict`, *optional*): Cameras read with each observation, keyed by name.
+        read_only (`bool`, *optional*, defaults to `True`): Read feedback without ever enabling torque; `send_action` raises. Disable only after checking the CAN port, encoder frame and gripper calibration.
+        control_frequency (`float`, *optional*, defaults to 100.0): Rate of the background servo loop in Hz, between 20 and 250.
+        feedback_timeout_s (`float`, *optional*, defaults to 0.2): Longest motor feedback may be missing before the servo stops and disables torque.
+        command_timeout_s (`float`, *optional*, defaults to 1.0): When no action arrives for this long, the arm holds its current pose.
+        id (`str | None`, *optional*): Name of this arm; it selects the calibration file.
+        calibration_dir (`pathlib.Path | None`, *optional*): Directory of calibration files. Calibration (`lerobot-calibrate`) measures only the gripper's closed and open stops and never changes the joint zeros.
+    """
 
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     read_only: bool = True

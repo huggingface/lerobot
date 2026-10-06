@@ -118,12 +118,12 @@ def control_step(
     """Advance the commanded pose one servo cycle and build the MIT command for each motor.
 
     Args:
-        config: Arm configuration (gains, speed limits, calibration).
-        position: Measured pose (six joint radians and a normalized gripper).
-        target: Pose requested by the latest action.
-        command: Pose commanded on the previous cycle.
-        gravity: Model gravity torques for ``position``, in Nm.
-        dt: Time since the previous cycle, in seconds.
+        config (`YamArmConfig`): Arm configuration (gains, speed limits, calibration).
+        position (`ndarray`): Measured pose (six joint radians and a normalized gripper).
+        target (`ndarray`): Pose requested by the latest action.
+        command (`ndarray`): Pose commanded on the previous cycle.
+        gravity (`ndarray`): Model gravity torques for `position`, in Nm.
+        dt (`float`): Time since the previous cycle, in seconds.
 
     Returns:
         The new commanded pose and the MIT command for each motor.
