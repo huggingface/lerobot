@@ -1101,7 +1101,9 @@ def test_make_inputs_noise_at_one_matches_historical_pi_family():
     actions, noise = torch.randn(3, 6, 4), torch.randn(3, 6, 4)
     time = torch.rand(3)
 
-    x_t, u_t, model_time = make_flow_matching_inputs(actions, noise, time)
+    x_t, u_t, model_time = make_flow_matching_inputs(
+        actions, noise, time, convention=FlowConvention.NOISE_AT_ONE
+    )
     ref_x_t, ref_u_t = _historical_noise_at_one_inputs(actions, noise, time)
 
     assert torch.equal(x_t, ref_x_t)
@@ -1116,7 +1118,9 @@ def test_make_inputs_noise_at_zero_matches_historical_groot():
     time = torch.rand(3)
     buckets = 1000
 
-    x_t, velocity, model_time = make_flow_matching_inputs(actions, noise, time, FlowConvention.NOISE_AT_ZERO)
+    x_t, velocity, model_time = make_flow_matching_inputs(
+        actions, noise, time, convention=FlowConvention.NOISE_AT_ZERO
+    )
     ref_x_t, ref_velocity, ref_buckets = _historical_groot_inputs(actions, noise, time, buckets)
 
     assert torch.equal(x_t, ref_x_t)
@@ -1132,7 +1136,7 @@ def test_make_inputs_noise_at_zero_matches_historical_wall_x():
     time = torch.rand(2)
 
     x_t, flow, _ = make_flow_matching_inputs(
-        action_chunk.to(torch.float32), noise, time, FlowConvention.NOISE_AT_ZERO
+        action_chunk.to(torch.float32), noise, time, convention=FlowConvention.NOISE_AT_ZERO
     )
     ref_x_t, ref_flow = _historical_wall_x_inputs(action_chunk, noise, time)
 
@@ -1148,32 +1152,23 @@ def test_make_inputs_noise_at_zero_matches_historical_evo1():
     noise_seq = torch.rand_like(actions_gt_seq) * 2 - 1
     time = torch.distributions.Beta(2, 2).sample((batch_size,)).clamp(0.02, 0.98)
 
-    x_t, _, _ = make_flow_matching_inputs(actions_gt_seq, noise_seq, time, FlowConvention.NOISE_AT_ZERO)
+    x_t, _, _ = make_flow_matching_inputs(
+        actions_gt_seq, noise_seq, time, convention=FlowConvention.NOISE_AT_ZERO
+    )
     ref = _historical_evo1_inputs(actions_gt_seq, noise_seq, time, batch_size)
 
     assert torch.equal(x_t, ref)
 
 
-def test_evo1_keeps_building_its_own_target_because_precision_differs():
-    # Pins why evo1 adopts the interpolation but not the target: it regresses in fp32 outside
-    # its autocast block, and subtracting in bf16 first is a different number.
-    torch.manual_seed(26)
-    actions = torch.randn(4, 3, 5, dtype=torch.bfloat16)
-    noise = (torch.rand_like(actions) * 2 - 1).to(torch.bfloat16)
-    time = torch.rand(4, dtype=torch.bfloat16)
-
-    _, shared_target, _ = make_flow_matching_inputs(actions, noise, time, FlowConvention.NOISE_AT_ZERO)
-    evo1_target = actions.float() - noise.float()
-
-    assert shared_target.dtype == torch.bfloat16
-    assert not torch.equal(shared_target.float(), evo1_target)
-
-
 def test_make_inputs_target_sign_flips_with_the_convention():
     actions, noise = torch.randn(2, 4, 3), torch.randn(2, 4, 3)
     time = torch.rand(2)
-    _, backward_target, _ = make_flow_matching_inputs(actions, noise, time)
-    _, forward_target, _ = make_flow_matching_inputs(actions, noise, time, FlowConvention.NOISE_AT_ZERO)
+    _, backward_target, _ = make_flow_matching_inputs(
+        actions, noise, time, convention=FlowConvention.NOISE_AT_ONE
+    )
+    _, forward_target, _ = make_flow_matching_inputs(
+        actions, noise, time, convention=FlowConvention.NOISE_AT_ZERO
+    )
     assert torch.equal(backward_target, -forward_target)
 
 
@@ -1182,9 +1177,11 @@ def test_make_inputs_endpoints_are_the_noise_and_the_actions(convention):
     actions, noise = torch.randn(2, 4, 3), torch.randn(2, 4, 3)
     noise_end = 1.0 if convention is FlowConvention.NOISE_AT_ONE else 0.0
 
-    at_noise, _, _ = make_flow_matching_inputs(actions, noise, torch.full((2,), noise_end), convention)
+    at_noise, _, _ = make_flow_matching_inputs(
+        actions, noise, torch.full((2,), noise_end), convention=convention
+    )
     at_actions, _, _ = make_flow_matching_inputs(
-        actions, noise, torch.full((2,), 1.0 - noise_end), convention
+        actions, noise, torch.full((2,), 1.0 - noise_end), convention=convention
     )
     torch.testing.assert_close(at_noise, noise, rtol=0, atol=1e-6)
     torch.testing.assert_close(at_actions, actions, rtol=0, atol=1e-6)
@@ -1194,7 +1191,7 @@ def test_make_inputs_endpoints_are_the_noise_and_the_actions(convention):
 def test_make_inputs_target_integrates_back_to_the_actions(convention):
     """The training target and the inference solver must agree about the direction of time."""
     actions, noise = torch.randn(3, 5, 2), torch.randn(3, 5, 2)
-    _, velocity_target, _ = make_flow_matching_inputs(actions, noise, torch.rand(3), convention)
+    _, velocity_target, _ = make_flow_matching_inputs(actions, noise, torch.rand(3), convention=convention)
     # The path is straight, so the exact velocity integrates from the noise endpoint to the
     # actions in a single step, whichever direction the convention runs.
     recovered = euler_integrate(lambda x_t, time: velocity_target, noise, num_steps=1, convention=convention)
@@ -1208,7 +1205,9 @@ def test_make_inputs_prefix_matches_historical_pi05():
     delays = torch.tensor([0, 2, 6, 3])
     prefix_mask = torch.arange(6).unsqueeze(0) < delays.unsqueeze(1)
 
-    x_t, u_t, model_time = make_flow_matching_inputs(actions, noise, time, prefix_mask=prefix_mask)
+    x_t, u_t, model_time = make_flow_matching_inputs(
+        actions, noise, time, convention=FlowConvention.NOISE_AT_ONE, prefix_mask=prefix_mask
+    )
     ref_x_t, ref_u_t, ref_model_time = _historical_pi05_inputs(actions, noise, time, prefix_mask)
 
     assert torch.equal(x_t, ref_x_t)
@@ -1227,7 +1226,9 @@ def test_make_inputs_prefix_is_clean_and_gets_the_clean_end_time(convention, cle
     time = torch.rand(2) * 0.8 + 0.1
     prefix_mask = torch.tensor([[True, True, False, False, False], [True, False, False, False, False]])
 
-    x_t, _, model_time = make_flow_matching_inputs(actions, noise, time, convention, prefix_mask=prefix_mask)
+    x_t, _, model_time = make_flow_matching_inputs(
+        actions, noise, time, convention=convention, prefix_mask=prefix_mask
+    )
 
     # Prefix positions carry the clean action, untouched by the noise.
     torch.testing.assert_close(x_t[prefix_mask], actions[prefix_mask], rtol=0, atol=1e-6)
@@ -1241,5 +1242,33 @@ def test_make_inputs_prefix_is_clean_and_gets_the_clean_end_time(convention, cle
 def test_make_inputs_preserves_dtype(dtype):
     actions = torch.randn(2, 4, 3, dtype=dtype)
     noise = torch.randn(2, 4, 3, dtype=dtype)
-    x_t, target, _ = make_flow_matching_inputs(actions, noise, torch.rand(2, dtype=dtype))
+    x_t, target, _ = make_flow_matching_inputs(
+        actions, noise, torch.rand(2, dtype=dtype), convention=FlowConvention.NOISE_AT_ONE
+    )
     assert x_t.dtype == dtype and target.dtype == dtype
+
+
+@pytest.mark.parametrize("convention", ["noise_at_one", "noise_at_zero", "noise_at_on", None])
+def test_make_inputs_rejects_a_convention_that_is_not_the_enum(convention):
+    # FlowConvention is a str enum, so "noise_at_one" == NOISE_AT_ONE, yet the `is` check
+    # would send it down the NOISE_AT_ZERO branch.
+    actions = torch.randn(2, 4, 3)
+    with pytest.raises(TypeError, match="convention must be a FlowConvention"):
+        make_flow_matching_inputs(actions, torch.randn_like(actions), torch.rand(2), convention=convention)
+
+
+def test_make_inputs_rejects_shapes_that_would_broadcast_silently():
+    actions = torch.randn(2, 4, 3)
+    noise = torch.randn_like(actions)
+    # lawam keeps its time pre-expanded as (B, 1, 1); passed in, x_t would broadcast to (B, 1, B, H, D).
+    with pytest.raises(ValueError, match="time must have shape"):
+        make_flow_matching_inputs(actions, noise, torch.rand(2, 1, 1), convention=FlowConvention.NOISE_AT_ONE)
+    # A (B, H, D) mask is the shape of euler_integrate's hard_prefix_mask, not this one.
+    with pytest.raises(ValueError, match="prefix_mask must have shape"):
+        make_flow_matching_inputs(
+            actions,
+            noise,
+            torch.rand(2),
+            convention=FlowConvention.NOISE_AT_ONE,
+            prefix_mask=torch.zeros(2, 4, 3, dtype=torch.bool),
+        )

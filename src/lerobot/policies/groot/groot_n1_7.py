@@ -589,7 +589,7 @@ class GR00TN17ActionHead(nn.Module):
         noise = sample_noise(actions.shape, actions.device, dtype=actions.dtype)
         t = self.sample_time(actions.shape[0], device=actions.device, dtype=actions.dtype)
         noisy_trajectory, velocity, model_time = make_flow_matching_inputs(
-            actions, noise, t, FlowConvention.NOISE_AT_ZERO
+            actions, noise, t, convention=FlowConvention.NOISE_AT_ZERO
         )
         t_discretized = (model_time * self.num_timestep_buckets).long()
         action_features = self.action_encoder(noisy_trajectory, t_discretized, embodiment_id)

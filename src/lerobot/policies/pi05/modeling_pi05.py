@@ -58,6 +58,7 @@ from lerobot.utils.constants import (
 )
 
 from ..common.flow_matching import (
+    FlowConvention,
     euler_integrate,
     make_flow_matching_inputs,
     sample_noise,
@@ -882,7 +883,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         state_masks=None,
     ) -> Tensor:
         """Do a full training forward pass and compute the loss."""
-        x_t, u_t, model_time = make_flow_matching_inputs(actions, noise, time, prefix_mask=prefix_mask)
+        x_t, u_t, model_time = make_flow_matching_inputs(
+            actions, noise, time, convention=FlowConvention.NOISE_AT_ONE, prefix_mask=prefix_mask
+        )
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, tokens, masks, states, state_masks

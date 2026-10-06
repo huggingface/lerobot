@@ -33,6 +33,7 @@ from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
 
 from ..common.flow_matching import (
+    FlowConvention,
     euler_integrate,
     make_flow_matching_inputs,
     sample_noise,
@@ -476,7 +477,9 @@ class EO1VisionFlowMatchingModel(nn.Module):
             active_action = action[action_rows]
             time = self.sample_time(active_action.shape[0], inputs_embeds.device)
             noise = self.sample_noise(active_action.shape, inputs_embeds.device)
-            x_t, u_t, _ = make_flow_matching_inputs(active_action, noise, time)
+            x_t, u_t, _ = make_flow_matching_inputs(
+                active_action, noise, time, convention=FlowConvention.NOISE_AT_ONE
+            )
             action_time_embs = self.embed_suffix(time, x_t)
             expected_tokens = int(action_token_mask.sum().item())
             if expected_tokens != action_time_embs.shape[0] * action_time_embs.shape[1]:

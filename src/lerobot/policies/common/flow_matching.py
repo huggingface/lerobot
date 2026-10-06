@@ -189,8 +189,8 @@ def make_flow_matching_inputs(
     actions: Tensor,
     noise: Tensor,
     time: Tensor,
-    convention: FlowConvention = FlowConvention.NOISE_AT_ONE,
     *,
+    convention: FlowConvention,
     prefix_mask: Tensor | None = None,
 ) -> tuple[Tensor, Tensor, Tensor]:
     """Build the noised actions, velocity target and model timesteps for a training step.
@@ -223,8 +223,14 @@ def make_flow_matching_inputs(
     Returns:
         ``(x_t, velocity_target, model_time)``: the noised actions fed to the network, the
         regression target for the predicted velocity, and the timesteps fed to the network.
-        Shape: ``(batch,)`` without a prefix and ``(batch, horizon)`` with one
+        ``model_time`` is ``(batch,)`` without a prefix and ``(batch, horizon)`` with one.
     """
+    if not isinstance(convention, FlowConvention):
+        raise TypeError(f"convention must be a FlowConvention, got {convention!r}")
+    if time.shape != actions.shape[:1]:
+        raise ValueError(f"time must have shape (batch,), got {tuple(time.shape)}")
+    if prefix_mask is not None and prefix_mask.shape != actions.shape[:2]:
+        raise ValueError(f"prefix_mask must have shape (batch, horizon), got {tuple(prefix_mask.shape)}")
     noise_at_one = convention is FlowConvention.NOISE_AT_ONE
 
     if prefix_mask is None:

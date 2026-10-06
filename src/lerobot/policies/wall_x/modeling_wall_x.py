@@ -195,7 +195,7 @@ class ActionHead(nn.Module):
         noise = sample_noise(action_chunk.shape, action_chunk.device)
         action_chunk_f32 = action_chunk.to(torch.float32)
         noisy_action, flow, _ = make_flow_matching_inputs(
-            action_chunk_f32, noise, time, FlowConvention.NOISE_AT_ZERO
+            action_chunk_f32, noise, time, convention=FlowConvention.NOISE_AT_ZERO
         )
 
         # Project noisy actions

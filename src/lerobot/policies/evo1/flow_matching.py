@@ -372,11 +372,11 @@ class FlowmatchingActionHead(nn.Module):
             noise_seq = noise.view(batch_size, self.horizon, self.per_action_dim)
         else:
             noise_seq = noise if noise.dim() == 3 else noise.unsqueeze(1)
-        # Only the interpolation is shared. EVO1 regresses against `actions.float() -
-        # noise.float()`, built in `Evo1Policy.forward` outside the autocast block, so the
-        # bf16 target the helper returns here would be a different number.
+        # Only the interpolation is shared. `Evo1Policy.forward` builds the target itself in fp32;
+        # the helper's target would be in the action head's parameter dtype, which rounds
+        # differently once the head runs in bf16.
         action_intermediate_seq, _, _ = make_flow_matching_inputs(
-            actions_gt_seq, noise_seq, t, FlowConvention.NOISE_AT_ZERO
+            actions_gt_seq, noise_seq, t, convention=FlowConvention.NOISE_AT_ZERO
         )
 
         action_tokens = self._project_actions(action_intermediate_seq, embodiment_id)

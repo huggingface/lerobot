@@ -64,6 +64,7 @@ from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LAN
 from lerobot.utils.import_utils import require_package
 
 from ..common.flow_matching import (
+    FlowConvention,
     euler_integrate,
     make_flow_matching_inputs,
     sample_noise,
@@ -703,7 +704,7 @@ class VLAFlowMatching(nn.Module):
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
 
-        x_t, u_t, _ = make_flow_matching_inputs(actions, noise, time)
+        x_t, u_t, _ = make_flow_matching_inputs(actions, noise, time, convention=FlowConvention.NOISE_AT_ONE)
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, state=state
         )
