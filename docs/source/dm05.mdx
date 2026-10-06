@@ -43,6 +43,7 @@ The LIBERO recipe follows OpenDM:
 ```bash
 lerobot-train \
   --dataset.repo_id=lerobot/libero \
+  --rename_map='{"observation.images.image": "observation.images.front", "observation.images.image2": "observation.images.wrist"}' \
   --dataset.video_backend=pyav \
   --policy.path=lerobot/dm05_base \
   --policy.add_state=false \
@@ -57,15 +58,16 @@ lerobot-train \
 
 ### Key training parameters
 
-| Parameter                     | LIBERO value                 | Meaning                                                              |
-| ----------------------------- | ---------------------------- | -------------------------------------------------------------------- |
-| `dataset.repo_id`             | `lerobot/libero`             | Standard LeRobot training dataset                                    |
-| `policy.path`                 | `lerobot/dm05_base`          | Self-contained base checkpoint                                       |
-| `policy.add_state`            | `false`                      | Matches OpenDM's LIBERO prompt without state tokens                  |
-| `policy.use_relative_actions` | `false` (checkpoint default) | Learns stored actions unchanged; relative mode is an explicit opt-in |
-| `policy.chunk_size`           | `10`                         | Number of actions predicted per chunk                                |
-| `policy.n_action_steps`       | `10`                         | Number executed before the next model call; at most `chunk_size`     |
-| `policy.repo_id`              | `your_repo_id`               | Hub destination; use `policy.push_to_hub=false` for local-only runs  |
+| Parameter                     | LIBERO value                        | Meaning                                                              |
+| ----------------------------- | ----------------------------------- | -------------------------------------------------------------------- |
+| `dataset.repo_id`             | `lerobot/libero`                    | Standard LeRobot training dataset                                    |
+| `policy.path`                 | `lerobot/dm05_base`                 | Self-contained base checkpoint                                       |
+| `rename_map`                  | `image`/`image2` to `front`/`wrist` | Camera names used by the eval command and `lerobot/dm05_libero`      |
+| `policy.add_state`            | `false`                             | Matches OpenDM's LIBERO prompt without state tokens                  |
+| `policy.use_relative_actions` | `false` (checkpoint default)        | Learns stored actions unchanged; relative mode is an explicit opt-in |
+| `policy.chunk_size`           | `10`                                | Number of actions predicted per chunk                                |
+| `policy.n_action_steps`       | `10`                                | Number executed before the next model call; at most `chunk_size`     |
+| `policy.repo_id`              | `your_repo_id`                      | Hub destination; use `policy.push_to_hub=false` for local-only runs  |
 
 Environment control mode is configured separately from the policy action representation. Relative mode requires
 matching state/action dimensions.
