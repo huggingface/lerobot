@@ -17,36 +17,46 @@ from functools import cached_property
 from lerobot.motors.motors_bus import SerialMotorsBus
 
 
-class DummyServo:
-    """Stands in for a rustypot controller class: the models it covers, the registers it
-    has, its resolution and baud rates. It also stands in for its own definition, which
-    is what a `MockBus` is given, so the tests need no rustypot.
+class DummyDefinition:
+    """Stands in for a rustypot `ServoDefinition`: the models it covers, the registers it
+    has and the facts the bus reads from it, so the tests need no rustypot.
     """
 
-    def __init__(self, models: dict[str, int], registers: tuple[str, ...]):
-        self._models = models
-        self._registers = {name.lower() for name in registers}
-
-    def definition(self) -> "DummyServo":
-        return self
-
-    def models(self) -> dict[str, int]:
-        return dict(self._models)
+    def __init__(
+        self,
+        name: str,
+        models: dict[str, int],
+        registers: tuple[str, ...],
+        *,
+        operating_modes: dict[str, int] | None = None,
+        homing_offset_sign: int | None = None,
+        supports_broadcast_ping: bool = False,
+        eeprom_lock: bool = False,
+    ):
+        self.name = name
+        self.models = models
+        self._registers = {register.lower() for register in registers}
+        self.resolution = 4096
+        # rustypot hands these out slowest first.
+        self.baudrates = {250_000: 2, 500_000: 1, 1_000_000: 0}
+        self.factory_baudrate = 500_000
+        self.operating_modes = operating_modes or {}
+        self.homing_offset_sign = homing_offset_sign
+        self.supports_broadcast_ping = supports_broadcast_ping
+        self.eeprom_lock = eeprom_lock
 
     def register(self, name: str) -> str | None:
         return name if name in self._registers else None
 
-    def resolution(self) -> int:
-        return 4096
-
-    def baudrates(self) -> dict[int, int]:
-        return {1_000_000: 0, 500_000: 1, 250_000: 2}
+    def __repr__(self) -> str:
+        return f"DummyDefinition('{self.name}')"
 
 
-DUMMY_SERVO_1 = DummyServo(
-    {"model_1": 1234}, ("Model_Number", "Firmware_Version", "Present_Position", "Goal_Position")
+DUMMY_1 = DummyDefinition(
+    "DUMMY1", {"model_1": 1234}, ("Model_Number", "Firmware_Version", "Present_Position", "Goal_Position")
 )
-DUMMY_SERVO_2 = DummyServo(
+DUMMY_2 = DummyDefinition(
+    "DUMMY2",
     {"model_2": 5678, "model_3": 5799},
     (
         "Model_Number",
@@ -55,8 +65,13 @@ DUMMY_SERVO_2 = DummyServo(
         "Present_Velocity",
         "Goal_Position",
         "Goal_Velocity",
+        "Operating_Mode",
         "Lock",
     ),
+    operating_modes={"position": 3, "velocity": 1},
+    homing_offset_sign=1,
+    supports_broadcast_ping=True,
+    eeprom_lock=True,
 )
 
 
@@ -91,7 +106,10 @@ class MockBus:
         self.writes: list[tuple[int, str, int]] = []
         self.sync_reads: list[tuple[list[int], str]] = []
         self.sync_writes: list[tuple[list[int], str, list[int]]] = []
-        self.scans: list = []  # the definition each scan read model numbers with
+        self.scans: list = []  # the definition each sweep read model numbers with
+        self.broadcast_scans: list = []  # the definition each broadcast scan read them with
+        self.torques: list[tuple[list[int], bool, int]] = []  # (ids, enabled, retries)
+        self.setups: list[tuple] = []  # change_id / change_baudrate calls, in order
 
     # -- test-side helpers -------------------------------------------------
 
@@ -140,23 +158,58 @@ class MockBus:
         for motor_id, value in zip(motor_ids, values, strict=True):
             self.seed(motor_id, register, value)
 
-    def scan(self, definition) -> dict[int, int]:
-        """Every id holding a model number, as a sweep of the whole protocol range finds them."""
-        self.scans.append(definition)
+    def _found(self) -> dict[int, int]:
+        """Every id holding a model number, as a scan of the whole protocol range finds them."""
         return {
             motor_id: value
             for (motor_id, register), value in self.registers.items()
             if register == "model_number" and motor_id not in self.absent
         }
 
+    def scan(self, definition, ids=None) -> dict[int, int]:
+        self.scans.append(definition)
+        return self._found()
+
+    def broadcast_scan(self, definition, ids=None) -> dict[int, int]:
+        self.broadcast_scans.append(definition)
+        return self._found()
+
+    def set_torque(self, motor_ids: list[int], enabled: bool, retries: int = 0) -> dict[int, str]:
+        """Like rustypot: every motor tried, the ones that failed returned with why."""
+        self.torques.append((list(motor_ids), enabled, retries))
+        failed = {}
+        for motor_id in motor_ids:
+            if motor_id not in self.motors:
+                failed[motor_id] = f"no motor with id {motor_id} on this bus"
+            elif motor_id in self.absent:
+                failed[motor_id] = "Timeout error"
+            else:
+                self.seed(motor_id, "torque_enable", int(enabled))
+        return failed
+
+    def change_id(self, definition, motor_id: int, new_id: int) -> None:
+        if motor_id in self.absent:
+            raise RuntimeError("Timeout error")
+        self.setups.append(("change_id", definition, motor_id, new_id))
+
+    def change_baudrate(self, definition, motor_id: int, baudrate: int) -> None:
+        if motor_id in self.absent:
+            raise RuntimeError("Timeout error")
+        self.setups.append(("change_baudrate", definition, motor_id, baudrate))
+
+
+def find_dummy_model(model: str) -> tuple[int, DummyDefinition]:
+    for definition in (DUMMY_1, DUMMY_2):
+        if model in definition.models:
+            return definition.models[model], definition
+    raise ValueError(f"Unknown motor model '{model}'.")
+
 
 class MockMotorsBus(SerialMotorsBus):
     """Bus over dummy servo definitions. It opens a `MockBus` where the real one opens a
     `rustypot.Bus`, and keeps every one it opened in `opened`, oldest first."""
 
-    @staticmethod
-    def _servos() -> tuple[DummyServo, ...]:
-        return (DUMMY_SERVO_1, DUMMY_SERVO_2)
+    _find_model = staticmethod(find_dummy_model)
 
     @cached_property
     def opened(self) -> list[MockBus]:
@@ -168,14 +221,3 @@ class MockMotorsBus(SerialMotorsBus):
             return self.opened[-1]
 
         return open_bus
-
-    def configure_motors(self): ...
-    def is_calibrated(self): ...
-    def read_calibration(self): ...
-    def write_calibration(self, calibration_dict): ...
-    def disable_torque(self, motors, num_retry): ...
-    def _disable_torque(self, motor, num_retry=0):
-        self._write("Torque_Enable", motor, 0, num_retry=num_retry)
-
-    def enable_torque(self, motors, num_retry): ...
-    def _get_half_turn_homings(self, positions): ...

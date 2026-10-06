@@ -15,9 +15,11 @@
 # limitations under the License.
 
 from .motors_bus import (
+    DriveMode,
     Motor,
     MotorCalibration,
     MotorNormMode,
+    SerialMotorsBus,
 )
 
-__all__ = ["Motor", "MotorCalibration", "MotorNormMode"]
+__all__ = ["DriveMode", "Motor", "MotorCalibration", "MotorNormMode", "SerialMotorsBus"]

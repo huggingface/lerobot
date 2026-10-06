@@ -14,22 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Feetech-specific behaviour.
+"""Feetech behaviour of `SerialMotorsBus`, from the rustypot definitions.
 
 Register access itself is family-agnostic and covered once in test_motors_bus.py;
 what is tested here is what Feetech does differently -- STS and SCS definitions
-sharing a bus, what the SCS lacks, and the Phase register quirk of the sts3215.
+sharing a bus, what the SCS lacks, the acceleration registers, the firmware check,
+a drive mode applied in software, and the Phase register quirk of the sts3215.
 """
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("rustypot", reason="rustypot is required (install lerobot[feetech])")
+pytest.importorskip("rustypot", reason="rustypot is required (install lerobot[serial-motors])")
 
 import rustypot
 
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.motors.feetech import FeetechMotorsBus
 from tests.mocks.mock_motors_bus import MockBus
 
@@ -60,8 +61,8 @@ def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
     }
 
 
-def make_bus(motors, calibration=None) -> FeetechMotorsBus:
-    bus = FeetechMotorsBus(port="/dev/dummy-port", motors=motors, calibration=calibration)
+def make_bus(motors, calibration=None) -> SerialMotorsBus:
+    bus = SerialMotorsBus(port="/dev/dummy-port", motors=motors, calibration=calibration)
     bus._bus = MockBus(motors=bus._definitions)
     return bus
 
@@ -76,7 +77,7 @@ def written(bus, data_name: str, motor_id: int) -> int:
 
 def test_sts_and_scs_share_a_bus():
     """Opposite byte orders on one port: each motor keeps its own definition."""
-    bus = FeetechMotorsBus(
+    bus = SerialMotorsBus(
         "",
         {
             "sts": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100),
@@ -90,9 +91,81 @@ def test_sts_and_scs_share_a_bus():
     }
 
 
-def test_abc_implementation(dummy_motors):
-    """Instantiation should raise an error if the class doesn't implement abstract methods/properties."""
-    FeetechMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+def test_feetech_motors_bus_is_a_deprecated_alias(dummy_motors):
+    with pytest.warns(DeprecationWarning, match="SerialMotorsBus"):
+        bus = FeetechMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+
+    assert isinstance(bus, SerialMotorsBus)
+
+
+def test_protocol_version_is_still_accepted(dummy_motors):
+    """Code written for the SDK-based bus passes it; each motor's model now says it."""
+    with pytest.warns(DeprecationWarning, match="protocol_version"):
+        FeetechMotorsBus(port="/dev/dummy-port", motors=dummy_motors, protocol_version=0)
+
+
+def test_motors_on_different_firmware_fail_the_handshake(dummy_motors):
+    bus = make_bus(dummy_motors)
+    for motor in dummy_motors.values():
+        seed(bus, "Model_Number", motor.id, 777)
+        seed(bus, "Firmware_Major_Version", motor.id, 3)
+        seed(bus, "Firmware_Minor_Version", motor.id, 10)
+    seed(bus, "Firmware_Minor_Version", 2, 9)
+
+    with pytest.raises(RuntimeError, match="different firmware versions"):
+        bus._handshake()
+
+
+def test_operating_modes_take_the_feetech_values(dummy_motors):
+    bus = make_bus(dummy_motors)
+
+    bus.set_operating_mode("position", "dummy_1")
+    bus.set_operating_mode("velocity", "dummy_2")
+
+    assert (written(bus, "Operating_Mode", 1), written(bus, "Operating_Mode", 2)) == (0, 1)
+
+
+def test_configure_motors_writes_the_accelerations_each_servo_has():
+    """The STS has both acceleration registers, the SCS only `Acceleration`."""
+    bus = make_bus(
+        {
+            "sts": Motor(1, "sts3250", MotorNormMode.RANGE_M100_100),
+            "scs": Motor(2, "scs0009", MotorNormMode.RANGE_M100_100),
+        }
+    )
+
+    bus.configure_motors(maximum_acceleration=30, acceleration=40)
+
+    assert bus._bus.writes == [
+        (1, "return_delay_time", 0),
+        (1, "maximum_acceleration", 30),
+        (1, "acceleration", 40),
+        (2, "return_delay_time", 0),
+        (2, "acceleration", 40),
+    ]
+
+
+def test_the_drive_mode_is_applied_in_software(dummy_motors, dummy_calibration):
+    """A Feetech has no Drive_Mode register: the calibration's drive mode inverts the
+    normalised value."""
+    calibration = {**dummy_calibration}
+    calibration["dummy_2"] = MotorCalibration(
+        id=2, drive_mode=1, homing_offset=0, range_min=27, range_max=3608
+    )
+    bus = make_bus(dummy_motors, calibration)
+
+    assert bus._normalize({2: 27}) == {2: 100.0}
+
+
+def test_a_sm8512bl_set_as_sts3215_fails_the_handshake(dummy_motors):
+    """Same control table, but not the motor the robot was built with."""
+    bus = make_bus(dummy_motors)
+    for motor in dummy_motors.values():
+        seed(bus, "Model_Number", motor.id, 777)
+    seed(bus, "Model_Number", 2, 11272)
+
+    with pytest.raises(RuntimeError, match="expected 777, found 11272"):
+        bus._handshake()
 
 
 def test_is_calibrated(dummy_motors, dummy_calibration):
@@ -208,4 +281,5 @@ def test_scs_has_no_homing_offset():
 
     assert calibration["dummy"].homing_offset == 0
     bus.write_calibration(calibration)
+    bus.reset_calibration()
     assert all(register != "homing_offset" for _, register, _ in bus._bus.writes)

@@ -18,8 +18,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lerobot.motors.motors_bus import Motor, MotorNormMode
-from tests.mocks.mock_motors_bus import DUMMY_SERVO_1, DUMMY_SERVO_2, MockBus, MockMotorsBus
+from lerobot.motors.motors_bus import Motor, MotorNormMode, SerialMotorsBus
+from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.import_utils import _require_package_cache
+from tests.mocks.mock_motors_bus import DUMMY_1, DUMMY_2, MockBus, MockMotorsBus
 
 
 @pytest.fixture
@@ -49,8 +51,21 @@ def test_register_names_resolve_without_case():
 
 
 def test_unknown_model_is_refused():
-    with pytest.raises(ValueError, match="Unknown motor model 'model_99'"):
-        MockMotorsBus("/dev/dummy-port", {"dummy": Motor(1, "model_99", MotorNormMode.RANGE_M100_100)})
+    pytest.importorskip("rustypot")
+    with pytest.raises(ValueError, match="Unknown motor model 'sts9999'"):
+        SerialMotorsBus("/dev/dummy-port", {"dummy": Motor(1, "sts9999", MotorNormMode.RANGE_M100_100)})
+
+
+def test_a_missing_rustypot_points_to_the_serial_motors_extra():
+    with patch("lerobot.utils.import_utils.is_package_available", return_value=False):
+        _require_package_cache.clear()
+        try:
+            with pytest.raises(ImportError, match=r"lerobot\[serial-motors\]"):
+                SerialMotorsBus(
+                    "/dev/dummy-port", {"dummy": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100)}
+                )
+        finally:
+            _require_package_cache.clear()
 
 
 def test_connect_opens_a_bus_with_each_motor_definition(mixed_motors):
@@ -63,7 +78,7 @@ def test_connect_opens_a_bus_with_each_motor_definition(mixed_motors):
         bus.default_baudrate,
         bus.default_timeout / 1000,
     )
-    assert bus._bus.motors == {1: DUMMY_SERVO_1, 2: DUMMY_SERVO_2}
+    assert bus._bus.motors == {1: DUMMY_1, 2: DUMMY_2}
 
 
 @pytest.mark.parametrize(
@@ -120,7 +135,6 @@ def test_write(data_name, id_, value, dummy_motors):
         id_,
         value,
         num_retry=0,
-        err_msg=f"Failed to write '{data_name}' on {id_=} with '{value}' after 1 tries.",
     )
     if data_name in bus.normalized_data:
         mock__unnormalize.assert_called_once_with({id_: value})
@@ -385,35 +399,89 @@ def test_ping(bus):
 
 
 def test_scan_port():
-    """Every baud rate a motor of the family can be set to is swept, and the port released."""
-    with patch.object(MockBus, "scan", autospec=True, return_value={2: 5678}) as scan:
-        assert MockMotorsBus.scan_port("/dev/dummy-port") == {1_000_000: [2], 500_000: [2], 250_000: [2]}
+    """Every baud rate a motor of the model can be set to is swept, and the port released."""
+    with patch.object(MockBus, "broadcast_scan", autospec=True, return_value={2: 5678}) as scan:
+        assert MockMotorsBus.scan_port("/dev/dummy-port", "model_2") == {
+            250_000: [2],
+            500_000: [2],
+            1_000_000: [2],
+        }
 
     rustypot_bus = scan.call_args.args[0]
     assert rustypot_bus.closed
-    # The family's first definition says where the model number is.
-    assert [call.args[1] for call in scan.call_args_list] == [DUMMY_SERVO_1] * 3
+    assert [call.args[1] for call in scan.call_args_list] == [DUMMY_2] * 3
 
 
-def test_a_motor_is_found_through_its_own_definition(bus):
+def test_scan_port_releases_the_port_when_a_scan_fails():
+    with (
+        patch.object(MockBus, "broadcast_scan", autospec=True, side_effect=RuntimeError("port gone")) as scan,
+        pytest.raises(RuntimeError, match="port gone"),
+    ):
+        MockMotorsBus.scan_port("/dev/dummy-port", "model_2")
+
+    assert scan.call_args.args[0].closed
+
+
+def test_a_motor_is_found_with_a_broadcast_ping_where_its_servo_answers_one(bus):
     bus._bus.seed(9, "model_number", 5678)
 
     assert bus._find_single_motor("dummy_3") == (1_000_000, 9)
-    assert bus._bus.scans == [DUMMY_SERVO_2]
+    assert (bus._bus.broadcast_scans, bus._bus.scans) == ([DUMMY_2], [])
 
 
-def test_setup_motor_addresses_the_motor_where_it_answers(dummy_motors):
-    """A new motor answers at an id the bus does not have (9 here). The setup reaches it
-    there through its own definition, then gives it its id and the default baud rate."""
+def test_a_motor_whose_servo_answers_no_broadcast_ping_is_found_with_a_sweep():
+    bus = MockMotorsBus("/dev/dummy-port", {"dummy": Motor(1, "model_1", MotorNormMode.RANGE_M100_100)})
+    bus.connect(handshake=False)
+    bus._bus.seed(9, "model_number", 1234)
+
+    assert bus._find_single_motor("dummy") == (1_000_000, 9)
+    assert (bus._bus.broadcast_scans, bus._bus.scans) == ([], [DUMMY_1])
+
+
+def test_setup_refuses_a_motor_of_another_model(bus):
+    bus._bus.seed(9, "model_number", 5799)
+
+    with pytest.raises(RuntimeError, match="different than the one expected: 5678"):
+        bus._find_single_motor("dummy_3")
+
+
+def test_the_motor_search_tries_the_default_baudrate_then_the_factory_one(bus):
+    """A motor already set up answers on the first try, a new one on the second; then the
+    rest, in a fixed order."""
+    with (
+        patch.object(MockBus, "set_baudrate", autospec=True) as set_baudrate,
+        pytest.raises(RuntimeError, match="was not found"),
+    ):
+        bus._find_single_motor("dummy_3")
+
+    assert [call.args[1] for call in set_baudrate.call_args_list] == [1_000_000, 500_000, 250_000]
+
+
+def test_setup_motor_gives_the_motor_its_id_and_the_default_baudrate(dummy_motors):
+    """A new motor answers at an id the bus does not have (9 here); rustypot reaches it
+    there through its definition."""
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
 
     bus.setup_motor("dummy_3", initial_baudrate=500_000, initial_id=9)
 
-    connect, setup, reconnect = bus.opened
-    assert setup.motors == {**connect.motors, 9: DUMMY_SERVO_2}
-    assert setup.writes == [(9, "torque_enable", 0), (9, "id", 3), (3, "baud_rate", 0)]
-    assert connect.closed and setup.closed
-    assert bus._bus is reconnect and reconnect.motors == connect.motors
+    assert bus._bus.setups == [
+        ("change_id", DUMMY_2, 9, 3),
+        ("change_baudrate", DUMMY_2, 3, 1_000_000),
+    ]
+    assert len(bus.opened) == 1
+    assert bus._bus.baudrate == bus.default_baudrate
+
+
+def test_a_failed_setup_puts_the_port_back_at_the_default_baudrate(dummy_motors):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+    bus._bus.absent.add(9)
+
+    with pytest.raises(ConnectionError, match="'dummy_3'"):
+        bus.setup_motor("dummy_3", initial_baudrate=500_000, initial_id=9)
+
+    assert bus.is_connected
+    assert bus._bus.baudrate == bus.default_baudrate
 
 
 def test_constructing_does_not_open_the_port(dummy_motors):
@@ -445,6 +513,69 @@ def test_a_failed_handshake_closes_the_port(dummy_motors):
     ):
         bus.connect()
 
+    assert not bus.is_connected
+    assert bus.opened[-1].closed
+
+
+def test_a_motor_of_another_model_fails_the_handshake(bus):
+    """model_2 and model_3 share a control table, yet the motor set as model_3 must be one."""
+    for id_ in bus.ids:
+        bus._bus.seed(id_, "model_number", 5678)
+
+    with pytest.raises(RuntimeError, match=r"2 \(dummy_2\): expected 5799, found 5678"):
+        bus._handshake()
+
+
+def test_a_lost_reply_costs_a_tick_not_a_second(bus):
+    """One reply lost in a 30 Hz loop must not stall it."""
+    assert bus._bus.timeout <= 0.05
+
+
+def test_torque_off_asks_for_every_motor_and_names_the_ones_that_failed(bus):
+    """rustypot tries every motor, so one that does not answer leaves no other under torque."""
+    bus._bus.absent.update({1, 3})
+
+    with pytest.raises(ConnectionError, match=r"'dummy_1' \(id 1\).*'dummy_3' \(id 3\)"):
+        bus.disable_torque(num_retry=2)
+
+    assert bus._bus.torques == [([1, 2, 3], False, 2)]
+    assert bus._bus.stored(2, "torque_enable") == 0
+
+
+def test_torque_on_goes_to_the_motors_asked(bus):
+    bus.enable_torque(["dummy_1", "dummy_3"])
+
+    assert bus._bus.torques == [([1, 3], True, 0)]
+
+
+def test_torque_needs_a_connected_bus(dummy_motors):
+    bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+
+    with pytest.raises(DeviceNotConnectedError):
+        bus.disable_torque()
+
+
+def test_an_operating_mode_is_written_as_the_value_of_its_name(bus):
+    bus.set_operating_mode("velocity", ["dummy_1", "dummy_2"])
+
+    assert bus._bus.writes == [(1, "operating_mode", 1), (2, "operating_mode", 1)]
+
+
+def test_a_mode_the_servo_does_not_have_is_refused(bus):
+    with pytest.raises(ValueError, match="no 'step' operating mode"):
+        bus.set_operating_mode("step")
+
+    assert bus._bus.writes == []
+
+
+def test_disconnect_closes_the_port_when_torque_off_fails(bus):
+    rustypot_bus = bus._bus
+    rustypot_bus.absent.add(1)
+
+    with pytest.raises(ConnectionError):
+        bus.disconnect()
+
+    assert rustypot_bus.closed
     assert not bus.is_connected
 
 
