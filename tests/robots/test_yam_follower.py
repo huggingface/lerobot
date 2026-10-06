@@ -156,14 +156,12 @@ def test_fresh_feedback_accepts_stationary_motors(robot):
     assert len(robot._read_feedback()) == 7
 
 
-def test_slew_gripper_torque_and_gravity_feedforward(robot, monkeypatch):
+def test_slew_gripper_torque_and_gravity_feedforward(robot):
     robot.config.max_gripper_speed_s = 2
-    robot.position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
-    robot.command = robot.position.copy()
-    robot.target = robot.position + 0.1
-    robot.gravity_model = object()
-    monkeypatch.setattr(robot, "_gravity_torque", lambda position: np.ones(6))
-    packet = robot._command_packet(robot.position, 0.01)
+    position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
+    _, packet = robot_module.control_step(
+        robot.config, position, position + 0.1, position, gravity=np.ones(6), dt=0.01
+    )
     assert packet["joint_0"] == pytest.approx((0.003, 0, 80, 5, 1))
     assert packet["joint_1"][-1] == pytest.approx(1.1)
     assert packet["gripper"] == pytest.approx((3.2, 0, 5, 0.005, 0))
@@ -173,27 +171,30 @@ def test_slew_gripper_torque_and_gravity_feedforward(robot, monkeypatch):
 @pytest.mark.parametrize("polarity", [-1, 1])
 def test_default_gripper_slew_preserves_torque_bound(robot, direction, polarity):
     robot.config.gripper_open_rad = robot.config.gripper_closed_rad + polarity * 6.0
-    robot.position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
-    robot.command = robot.position.copy()
-    robot.target = robot.position.copy()
-    robot.target[6] = 1 if direction > 0 else 0
-    packet = robot._command_packet(robot.position, 0.01)["gripper"]
-    assert robot.command[6] == pytest.approx(0.5 + direction * 0.12)
+    position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
+    target = position.copy()
+    target[6] = 1 if direction > 0 else 0
+    command, packets = robot_module.control_step(
+        robot.config, position, target, position, gravity=np.zeros(6), dt=0.01
+    )
+    packet = packets["gripper"]
+    assert command[6] == pytest.approx(0.5 + direction * 0.12)
     raw_measured = 0.1 + polarity * 3.0
     assert packet == pytest.approx((raw_measured + direction * polarity * 0.1, 0, 5, 0.005, 0))
     assert (packet[0] - raw_measured) * packet[2] == pytest.approx(direction * polarity * 0.5)
 
 
-def test_command_packet_clamps_tracking_limits_and_gravity(robot, monkeypatch):
+def test_control_step_clamps_tracking_limits_and_gravity(robot):
     # Characterizes the full control step so refactors must reproduce it exactly.
     robot.config.joint_signs[1] = -1
-    robot.position = np.array([0.5, 0.0, 1.0, 0, 0, 0, 0.5])
-    robot.command = np.array([0.9, 0.0, 1.0, 0, 0, 0, 0.5])
-    robot.target = np.array([0.9, -0.2, 1.5, 0, 0, 0, 1.0])
-    monkeypatch.setattr(robot, "_gravity_torque", lambda position: np.array([20.0, 2, 1, 1, 1, 1]))
-    packet = robot._command_packet(robot.position, 0.05)
+    position = np.array([0.5, 0.0, 1.0, 0, 0, 0, 0.5])
+    previous = np.array([0.9, 0.0, 1.0, 0, 0, 0, 0.5])
+    target = np.array([0.9, -0.2, 1.5, 0, 0, 0, 1.0])
+    gravity = np.array([20.0, 2, 1, 1, 1, 1])
+    command, packet = robot_module.control_step(robot.config, position, target, previous, gravity, dt=0.05)
     # joint_0 tracking band, joint_1 lower limit, joint_2 slew; the gripper slews freely.
-    np.testing.assert_allclose(robot.command, [0.65, 0.0, 1.015, 0, 0, 0, 1.0])
+    np.testing.assert_allclose(command, [0.65, 0.0, 1.015, 0, 0, 0, 1.0])
+    np.testing.assert_allclose(previous, [0.9, 0.0, 1.0, 0, 0, 0, 0.5])  # inputs are not mutated
     assert packet["joint_0"] == pytest.approx((0.65, 0, 80, 5, 10.0))  # gravity clipped to 10 Nm
     assert packet["joint_1"] == pytest.approx((0.0, 0, 80, 5, -2.2))  # factor 1.1, sign -1
     assert packet["joint_2"] == pytest.approx((1.015, 0, 80, 5, 1.1))

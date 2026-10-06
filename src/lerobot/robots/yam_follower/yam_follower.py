@@ -53,6 +53,10 @@ _MODEL_ARM_JOINTS = tuple(f"joint{i}" for i in range(1, 7))
 _MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
 _MODEL_GRIPPER_STROKE_M = 0.0475
 _GRAVITY_MODEL_PATH = Path(__file__).parent / "assets/yam_linear.xml"
+_MAX_GRAVITY_TORQUE_NM = 10.0
+
+# One MIT command per motor: (position_rad, velocity_rad_s, kp, kd, feedforward_torque_nm).
+MitCommand = tuple[float, float, float, float, float]
 
 
 def motor_to_joint(raw: np.ndarray, config: YamArmConfig) -> np.ndarray:
@@ -89,6 +93,49 @@ def clip_to_limits(values: np.ndarray) -> np.ndarray:
     clipped = values.copy()
     clipped[:6] = np.clip(clipped[:6], *np.asarray(JOINT_LIMITS).T)
     return clipped
+
+
+def control_step(
+    config: YamArmConfig,
+    position: np.ndarray,
+    target: np.ndarray,
+    command: np.ndarray,
+    gravity: np.ndarray,
+    dt: float,
+) -> tuple[np.ndarray, dict[str, MitCommand]]:
+    """Advance the commanded pose one servo cycle and build the MIT command for each motor.
+
+    Args:
+        config: Arm configuration (gains, speed limits, calibration).
+        position: Measured pose (six joint radians and a normalized gripper).
+        target: Pose requested by the latest action.
+        command: Pose commanded on the previous cycle.
+        gravity: Model gravity torques for ``position``, in Nm.
+        dt: Time since the previous cycle, in seconds.
+
+    Returns:
+        The new commanded pose and the MIT command for each motor.
+    """
+    # Move toward the target no faster than the configured speeds.
+    speeds = np.r_[np.full(6, config.max_joint_speed_rad_s), config.max_gripper_speed_s]
+    command = command + np.clip(target - command, -speeds * dt, speeds * dt)
+    # Keep joints near the measured pose, so a blocked or pushed arm limits its force.
+    band = config.max_tracking_error_rad
+    command[:6] = np.clip(command[:6], position[:6] - band, position[:6] + band)
+    command = clip_to_limits(command)
+
+    goal = joint_to_motor(command, config)
+    # Bound the gripper error so its torque stays within gripper_torque_limit.
+    measured_gripper = joint_to_motor(position, config)[6]
+    gripper_band = config.gripper_torque_limit / config.gripper_kp
+    goal[6] = np.clip(goal[6], measured_gripper - gripper_band, measured_gripper + gripper_band)
+
+    torque = gravity * np.asarray(config.gravity_factors) * np.asarray(config.joint_signs)
+    torque = np.r_[np.clip(torque, -_MAX_GRAVITY_TORQUE_NM, _MAX_GRAVITY_TORQUE_NM), 0.0]
+    kp, kd = [*config.kp, config.gripper_kp], [*config.kd, config.gripper_kd]
+    return command, {
+        name: (float(goal[i]), 0.0, kp[i], kd[i], float(torque[i])) for i, name in enumerate(MOTOR_NAMES)
+    }
 
 
 class _ControlGC:
@@ -415,31 +462,6 @@ class YamFollower(Robot):
         self._thread = threading.Thread(target=self._run, name=f"{self.id}-servo", daemon=True)
         self._thread.start()
 
-    def _command_packet(self, position: np.ndarray, dt: float) -> dict[str, tuple[float, ...]]:
-        cfg = self.config
-        speeds = np.r_[np.full(6, cfg.max_joint_speed_rad_s), cfg.max_gripper_speed_s]
-        self.command += np.clip(self.target - self.command, -speeds * dt, speeds * dt)
-        self.command[:6] = np.clip(
-            self.command[:6],
-            position[:6] - cfg.max_tracking_error_rad,
-            position[:6] + cfg.max_tracking_error_rad,
-        )
-        self.command[:6] = np.clip(self.command[:6], *np.asarray(JOINT_LIMITS).T)
-        raw_goal = joint_to_motor(self.command, cfg)
-        raw_position = joint_to_motor(position, cfg)
-        gripper_error_rad = cfg.gripper_torque_limit / cfg.gripper_kp
-        raw_goal[6] = np.clip(
-            raw_goal[6], raw_position[6] - gripper_error_rad, raw_position[6] + gripper_error_rad
-        )
-        gravity = self._gravity_torque(position)
-        gravity *= np.asarray(cfg.gravity_factors) * np.asarray(cfg.joint_signs)
-        gravity = np.clip(gravity, -10.0, 10.0)
-        kp, kd = [*cfg.kp, cfg.gripper_kp], [*cfg.kd, cfg.gripper_kd]
-        return {
-            name: (float(raw_goal[i]), 0.0, kp[i], kd[i], float(gravity[i]) if i < 6 else 0.0)
-            for i, name in enumerate(MOTOR_NAMES)
-        }
-
     def _run(self) -> None:
         previous = time.monotonic()
         max_cycle_gap = 0.0
@@ -460,9 +482,16 @@ class YamFollower(Robot):
                         self.target = position.copy()
                         self.command = position.copy()
                         self.command_timed_out = True
-                    packet = (
-                        self._command_packet(position, min(started - previous, 0.05)) if self.enabled else {}
-                    )
+                    packet: dict[str, MitCommand] = {}
+                    if self.enabled:
+                        self.command, packet = control_step(
+                            self.config,
+                            position,
+                            self.target,
+                            self.command,
+                            self._gravity_torque(position),
+                            min(started - previous, 0.05),
+                        )
                 for name, command in packet.items():
                     if self._stop.is_set():
                         break
