@@ -98,6 +98,15 @@ def clip_to_limits(values: np.ndarray) -> np.ndarray:
     return clipped
 
 
+def action_to_target(action: RobotAction) -> np.ndarray:
+    """Validate a single-arm action and return its joint/gripper target, clipped to the joint limits."""
+    if set(action) != set(YAM_FEATURE_NAMES):
+        raise ValueError("YAM requires all seven absolute joint/gripper targets; Cartesian actions need IK")
+    target = np.asarray([action[f"{name}.pos"] for name in MOTOR_NAMES], dtype=float)
+    validate_positions(target, joint_tolerance_rad=_LIMIT_TOLERANCE_RAD)
+    return clip_to_limits(target)
+
+
 def control_step(
     config: YamArmConfig,
     position: np.ndarray,
@@ -503,17 +512,47 @@ class YamFollower(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        if not calibrate:
+            self._open_for_calibration()
+            return
+        self.open()
         try:
-            if not calibrate:
-                self._open_for_calibration()
-            else:
-                self._open()
-                self.configure()
-                self._start()
+            self.configure()
+            self.start()
+        except BaseException:
+            self.disconnect()
+            raise
+
+    @check_if_already_connected
+    def open(self) -> None:
+        """Connect cameras and CAN without torque, check the start pose and seed the servo from it.
+
+        ``connect`` runs ``open``, ``configure`` and ``start``. A bimanual robot opens both arms
+        before starting either, so a bad pose on one arm never enables the other.
+        """
+        if not self.is_calibrated:
+            raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
+        try:
+            self.servo.stop_event.clear()
+            self._load_control_model()  # before touching hardware, so a missing dependency fails first
+            self.bus.open()
+            for camera in self.cameras.values():
+                camera.connect()
+            position = read_joint_positions(self.bus, self.config)
+            if not self.config.read_only:
+                self._check_start_pose(position)
+            self.servo.seed(position)
             self._connected = True
         except BaseException:
             self._close()
             raise
+
+    @check_if_not_connected
+    def start(self) -> None:
+        """Enable torque at the seeded pose (unless read-only), then start the servo."""
+        if not self.config.read_only:
+            self.bus.enable(joint_to_motor(self.servo.position, self.config))
+        self.servo.start()
 
     @check_if_not_connected
     def calibrate(self) -> None:
@@ -577,22 +616,13 @@ class YamFollower(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         if self.config.read_only or not self.servo.active:
             raise RuntimeError("YAM read-only/calibration connection forbids motor commands")
-        target = self._action_target(action)
+        target = action_to_target(action)
         self.servo.set_target(target)
         return {f"{name}.pos": float(target[i]) for i, name in enumerate(MOTOR_NAMES)}
 
     @check_if_not_connected
     def disconnect(self) -> None:
         self._close()
-
-    def _action_target(self, action: RobotAction) -> np.ndarray:
-        if set(action) != set(YAM_FEATURE_NAMES):
-            raise ValueError(
-                "YAM requires all seven absolute joint/gripper targets; Cartesian actions need IK"
-            )
-        target = np.asarray([action[f"{name}.pos"] for name in MOTOR_NAMES], dtype=float)
-        validate_positions(target, joint_tolerance_rad=_LIMIT_TOLERANCE_RAD)
-        return clip_to_limits(target)
 
     def _gravity_torque(self, positions: np.ndarray) -> np.ndarray:
         if self.gravity_model is None:
@@ -609,22 +639,13 @@ class YamFollower(Robot):
 
     def _open_for_calibration(self) -> None:
         """Open the CAN interface without cameras, servo or torque."""
-        self.bus.open()
-        self.bus.read_positions()  # every motor must answer before measuring the gripper
-
-    def _open(self) -> None:
-        """Open the arm without torque, check its start pose and seed the servo from it."""
-        if not self.is_calibrated:
-            raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
-        self.servo.stop_event.clear()
-        self._load_control_model()  # before touching hardware, so a missing dependency fails first
-        self.bus.open()
-        for camera in self.cameras.values():
-            camera.connect()
-        position = read_joint_positions(self.bus, self.config)
-        if not self.config.read_only:
-            self._check_start_pose(position)
-        self.servo.seed(position)
+        try:
+            self.bus.open()
+            self.bus.read_positions()  # every motor must answer before measuring the gripper
+            self._connected = True
+        except BaseException:
+            self._close()
+            raise
 
     def _check_start_pose(self, position: np.ndarray) -> None:
         cfg = self.config
@@ -637,12 +658,6 @@ class YamFollower(Robot):
             and abs(position[6] - cfg.initial_gripper_position) > cfg.initial_gripper_tolerance
         ):
             raise ValueError("YAM gripper is outside the initial pose tolerance")
-
-    def _start(self) -> None:
-        """Enable torque at the seeded pose (unless read-only), then start the servo."""
-        if not self.config.read_only:
-            self.bus.enable(joint_to_motor(self.servo.position, self.config))
-        self.servo.start()
 
     def _close(self) -> None:
         self.servo.stop()
