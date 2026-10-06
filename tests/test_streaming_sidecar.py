@@ -353,6 +353,26 @@ def test_sidecar_payload_does_not_reuse_stale_path_generation(
     assert sidecar_utils.sidecar_payload(path)["sidecar"]["revision"] == "new"
 
 
+def test_rewrite_with_repeated_stat_identity_is_not_served_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Coarse timestamps and inode reuse can give a quick same-size rewrite the old stat identity."""
+    path = tmp_path / "index.npz"
+    _write_valid(path, _spec("old"))
+    old_identity = os.stat(path)
+    sidecar_utils.mapped_sidecar(path)
+    _write_valid(path, _spec("new"))
+    original_fstat = os.fstat
+
+    def repeated_fstat(fd: int) -> os.stat_result:
+        stat = original_fstat(fd)
+        return old_identity if stat.st_ino == os.stat(path).st_ino else stat
+
+    monkeypatch.setattr(sidecar_utils.os, "fstat", repeated_fstat)
+    assert sidecar_utils.sidecar_payload(path)["sidecar"]["revision"] == "new"
+    assert sidecar_utils.mapped_sidecar(path)[1]["sidecar"]["revision"] == "new"
+
+
 def test_source_change_during_conversion_is_not_published(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

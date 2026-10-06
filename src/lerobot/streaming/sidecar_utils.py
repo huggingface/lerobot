@@ -19,8 +19,8 @@ from collections.abc import Generator
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
-from typing import Any
-from zipfile import ZipFile
+from typing import Any, BinaryIO
+from zipfile import BadZipFile, ZipFile
 
 import numpy as np
 from filelock import FileLock
@@ -40,16 +40,32 @@ ARRAY_NAMES = (
 _MAGIC = b"LRIDX001"
 
 
-def _signature(stat: os.stat_result) -> tuple[int, ...]:
-    """Identify a local sidecar generation without reading its contents."""
-    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+def _content_digest(source: BinaryIO) -> str:
+    """Digest the ZIP directory's member names, sizes and CRC-32s, leaving the position unchanged.
+
+    Coarse filesystem timestamps and inode reuse can give a sidecar that is rewritten quickly the
+    same stat identity; its member checksums change with the content. Only the central directory
+    is read, never the compressed arrays.
+    """
+    position = source.tell()
+    try:
+        with ZipFile(source) as archive:
+            members = sorted((info.filename, info.file_size, info.CRC) for info in archive.infolist())
+    finally:
+        source.seek(position)
+    return hashlib.sha256(repr(members).encode()).hexdigest()
 
 
-def _cache_path(path: Path, signature: tuple[int, ...] | None = None) -> Path:
+def _signature(stat: os.stat_result, content: str) -> tuple[int | str, ...]:
+    """Identify a local sidecar generation from its file identity and its content digest."""
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, content
+
+
+def _cache_path(path: Path, signature: tuple[int | str, ...] | None = None) -> Path:
     """Choose a generation-specific path for the derived read-only index."""
     if signature is None:
         with path.open("rb") as source:
-            signature = _signature(os.fstat(source.fileno()))
+            signature = _signature(os.fstat(source.fileno()), _content_digest(source))
     digest = hashlib.sha256(repr(signature).encode()).hexdigest()[:24]
     cache_root = Path(os.environ.get("HF_LEROBOT_HOME", str(Path(HF_HOME) / "lerobot"))).expanduser()
     return cache_root / "streaming-indexes" / f"mp4-{digest}.bin"
@@ -98,7 +114,7 @@ def sidecar_payload(path: Path) -> dict[str, Any]:
     """Read identity without decompressing arrays or preparing a derived cache."""
     try:
         return _read_metadata(_cache_path(path))
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, BadZipFile):
         pass
     with np.load(path, allow_pickle=False) as data:
         payload = json.loads(bytes(data["manifest_json"]).decode("utf-8"))
@@ -193,7 +209,8 @@ def mapped_sidecar(path: Path, *, workers: int = 4) -> tuple[Path, dict[str, Any
     # Shared filesystems can retain stale pathname attributes until the file is
     # opened. Identify and read the same descriptor, including across the lock wait.
     with path.open("rb") as source:
-        signature = _signature(os.fstat(source.fileno()))
+        content = _content_digest(source)
+        signature = _signature(os.fstat(source.fileno()), content)
         destination = _cache_path(path, signature)
 
         def cached() -> dict[str, Any] | None:
@@ -214,7 +231,8 @@ def mapped_sidecar(path: Path, *, workers: int = 4) -> tuple[Path, dict[str, Any
             temporary: Path | None = None
             try:
                 with np.load(source, allow_pickle=False) as data:
-                    if _signature(os.fstat(source.fileno())) != signature:
+                    # Workers share this descriptor, so re-check only its stat identity here.
+                    if _signature(os.fstat(source.fileno()), content) != signature:
                         raise OSError("MP4 sidecar changed before index conversion")
                     payload = json.loads(bytes(data["manifest_json"]).decode("utf-8"))
                     if payload.get("version") != 3 or not isinstance(payload.get("sidecar"), dict):
@@ -234,7 +252,7 @@ def mapped_sidecar(path: Path, *, workers: int = 4) -> tuple[Path, dict[str, Any
                                     out.write(array.tobytes())
                                 # zip/enumerate retain a tuple with the previous arrays.
                                 del arrays, array
-                        if _signature(os.fstat(source.fileno())) != signature:
+                        if _signature(os.fstat(source.fileno()), content) != signature:
                             raise OSError("MP4 sidecar changed during index conversion")
                         metadata = json.dumps(payload, separators=(",", ":")).encode()
                         out.write(metadata)
@@ -257,14 +275,15 @@ def install_sidecar(source: Path, destination: Path) -> None:
     """
     prepared, _ = mapped_sidecar(source)
     with source.open("rb") as handle:
+        content = _content_digest(handle)
         before = os.fstat(handle.fileno())
-        if _cache_path(source, _signature(before)) != prepared:
+        if _cache_path(source, _signature(before, content)) != prepared:
             raise OSError("MP4 sidecar changed before installation")
         os.replace(source, destination)
         after = os.fstat(handle.fileno())
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise OSError("MP4 sidecar changed during installation")
-        installed = _cache_path(destination, _signature(after))
+        installed = _cache_path(destination, _signature(after, content))
         if installed != prepared:
             with FileLock(str(installed) + ".lock", timeout=30 * 60):
                 os.replace(prepared, installed)
