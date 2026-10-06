@@ -25,9 +25,7 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from pprint import pformat
-from typing import TYPE_CHECKING, Any, cast
-
-from tqdm import tqdm
+from typing import TYPE_CHECKING, Any
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _rustypot_available, require_package
@@ -354,12 +352,9 @@ class SerialMotorsBus(MotorsBusBase):
     def _assert_same_firmware(self) -> None:
         """Feetech servos of one bus must run the same firmware: they report it in two
         registers that Dynamixel servos do not have."""
-        firmware_versions = {}
-        for motor in self.motors:
-            if self._has_register(motor, "Firmware_Major_Version"):
-                major = self.read("Firmware_Major_Version", motor, normalize=False)
-                minor = self.read("Firmware_Minor_Version", motor, normalize=False)
-                firmware_versions[motor] = f"{major}.{minor}"
+        majors = self._sync_read_where("Firmware_Major_Version")
+        minors = self._sync_read_where("Firmware_Minor_Version")
+        firmware_versions = {motor: f"{majors[motor]}.{minors[motor]}" for motor in majors}
 
         if len(set(firmware_versions.values())) > 1:
             raise RuntimeError(
@@ -453,36 +448,6 @@ class SerialMotorsBus(MotorsBusBase):
         if definition.supports_broadcast_ping:
             return self._bus.broadcast_scan(definition)
         return self._bus.scan(definition)
-
-    @classmethod
-    def scan_port(cls, port: str, model: str) -> dict[int, list[int]]:
-        """Probe *port* at every baud rate a *model* motor can be set to and list responding IDs.
-
-        Args:
-            port (str): Serial/USB port to scan (e.g. ``"/dev/ttyUSB0"``).
-            model (str): Model of the motors looked for (e.g. ``"sts3215"``); its protocol and
-                baud rates set what is tried.
-
-        Returns:
-            dict[int, list[int]]: Mapping *baud-rate → list of motor IDs*
-            for every baud-rate that produced at least one response.
-        """
-        _, definition = cls._find_model(model)
-        bus = cls(port, {})
-        bus._connect(handshake=False)
-        # Another model may order the bytes of its model number the other way, so only the
-        # IDs are reported.
-        baudrate_ids = {}
-        try:
-            for baudrate in tqdm(definition.baudrates, desc="Scanning port"):
-                bus.set_baudrate(baudrate)
-                ids = list(bus._scan(definition))
-                if ids:
-                    tqdm.write(f"Motors found for {baudrate=}: {ids}")
-                    baudrate_ids[baudrate] = ids
-        finally:
-            bus.disconnect(disable_torque=False)
-        return baudrate_ids
 
     def setup_motor(
         self, motor: str, initial_baudrate: int | None = None, initial_id: int | None = None
@@ -916,24 +881,23 @@ class SerialMotorsBus(MotorsBusBase):
 
         return unnormalized_values
 
-    def ping(self, motor: NameOrID, num_retry: int = 0, raise_on_error: bool = False) -> int | None:
+    def ping(self, motor: NameOrID, num_retry: int = 0) -> int | None:
         """Ping a single motor of the bus and return its model number.
 
         Reads Model_Number rather than sending a ping: presence and identity then
-        cost one round trip instead of two. :pymeth:`scan_port` finds motors at
-        ids the bus does not have.
+        cost one round trip instead of two.
 
         Args:
             motor (NameOrID): Target motor (name or ID), one of :pyattr:`motors`.
             num_retry (int, optional): Extra attempts before giving up. Defaults to `0`.
-            raise_on_error (bool, optional): If `True` communication errors raise exceptions instead of
-                returning `None`. Defaults to `False`.
 
         Returns:
-            int | None: Motor model number or `None` on failure.
+            int | None: Motor model number, or `None` when the motor does not answer or reports an error.
         """
-        id_ = self._get_motor_id(motor)
-        return self._read("Model_Number", id_, num_retry=num_retry, raise_on_error=raise_on_error)
+        try:
+            return self._read("Model_Number", self._get_motor_id(motor), num_retry)
+        except (ConnectionError, RuntimeError):
+            return None
 
     @check_if_not_connected
     def read(
@@ -958,38 +922,23 @@ class SerialMotorsBus(MotorsBusBase):
         """
 
         id_ = self.motors[motor].id
-        err_msg = f"Failed to read '{data_name}' on {id_=} after {num_retry + 1} tries."
-        # raise_on_error=True, so a failure raises rather than returning None.
-        value = cast(
-            int, self._read(data_name, id_, num_retry=num_retry, raise_on_error=True, err_msg=err_msg)
-        )
+        value = self._read(data_name, id_, num_retry)
 
         if normalize and data_name in self.normalized_data:
             return self._normalize({id_: value})[id_]
 
         return value
 
-    def _read(
-        self,
-        data_name: str,
-        motor_id: int,
-        *,
-        num_retry: int = 0,
-        raise_on_error: bool = True,
-        err_msg: str = "",
-    ) -> int | None:
-        """Read one register, or `None` if it failed and *raise_on_error* is `False`."""
+    def _read(self, data_name: str, motor_id: int, num_retry: int) -> int:
+        """Read one register of a motor by id: `read` takes a name, `ping` any id."""
+        err_msg = f"Failed to read '{data_name}' on id_={motor_id} after {num_retry + 1} tries."
         try:
             value, status = self._bus.read_register_with_error(motor_id, data_name.lower(), retries=num_retry)
         except _TRANSPORT_ERRORS as e:
-            if raise_on_error:
-                raise ConnectionError(f"{err_msg} {e}") from e
-            return None
+            raise ConnectionError(f"{err_msg} {e}") from e
 
         if status:
-            if raise_on_error:
-                raise RuntimeError(f"{err_msg} Motor {motor_id} returned error status 0x{status:02x}.")
-            return None
+            raise RuntimeError(f"{err_msg} Motor {motor_id} returned error status 0x{status:02x}.")
 
         return value
 
@@ -1018,21 +967,14 @@ class SerialMotorsBus(MotorsBusBase):
         if normalize and data_name in self.normalized_data:
             int_value = self._unnormalize({id_: value})[id_]
 
-        self._write(data_name, id_, int_value, num_retry=num_retry)
-
-    def _write(self, data_name: str, motor_id: int, value: int, *, num_retry: int = 0) -> None:
-        err_msg = (
-            f"Failed to write '{data_name}' on id_={motor_id} with '{value}' after {num_retry + 1} tries."
-        )
+        err_msg = f"Failed to write '{data_name}' on {id_=} with '{int_value}' after {num_retry + 1} tries."
         try:
-            status = self._bus.write_register_with_error(
-                motor_id, data_name.lower(), value, retries=num_retry
-            )
+            status = self._bus.write_register_with_error(id_, data_name.lower(), int_value, retries=num_retry)
         except _TRANSPORT_ERRORS as e:
             raise ConnectionError(f"{err_msg} {e}") from e
 
         if status:
-            raise RuntimeError(f"{err_msg} Motor {motor_id} returned error status 0x{status:02x}.")
+            raise RuntimeError(f"{err_msg} Motor {id_} returned error status 0x{status:02x}.")
 
     @check_if_not_connected
     def sync_read(
@@ -1058,28 +1000,18 @@ class SerialMotorsBus(MotorsBusBase):
         names = self._get_motors_list(motors)
         ids = [self.motors[motor].id for motor in names]
 
-        err_msg = f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries."
-        ids_values = self._sync_read(data_name, ids, num_retry=num_retry, err_msg=err_msg)
+        try:
+            values = self._bus.sync_read_register(ids, data_name.lower(), retries=num_retry)
+        except _TRANSPORT_ERRORS as e:
+            raise ConnectionError(
+                f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries. {e}"
+            ) from e
+        ids_values = dict(zip(ids, values, strict=True))
 
         if normalize and data_name in self.normalized_data:
             return {self._id_to_name(id_): value for id_, value in self._normalize(ids_values).items()}
 
         return {self._id_to_name(id_): value for id_, value in ids_values.items()}
-
-    def _sync_read(
-        self,
-        data_name: str,
-        motor_ids: list[int],
-        *,
-        num_retry: int = 0,
-        err_msg: str = "",
-    ) -> dict[int, int]:
-        try:
-            values = self._bus.sync_read_register(motor_ids, data_name.lower(), retries=num_retry)
-        except _TRANSPORT_ERRORS as e:
-            raise ConnectionError(f"{err_msg} {e}") from e
-
-        return dict(zip(motor_ids, values, strict=True))
 
     @check_if_not_connected
     def sync_write(
@@ -1109,19 +1041,11 @@ class SerialMotorsBus(MotorsBusBase):
         if normalize and data_name in self.normalized_data:
             int_ids_values = self._unnormalize(raw_ids_values)
 
-        err_msg = f"Failed to sync write '{data_name}' with ids_values={int_ids_values} after {num_retry + 1} tries."
-        self._sync_write(data_name, int_ids_values, num_retry=num_retry, err_msg=err_msg)
-
-    def _sync_write(
-        self,
-        data_name: str,
-        ids_values: dict[int, int],
-        num_retry: int = 0,
-        err_msg: str = "",
-    ) -> None:
         try:
             self._bus.sync_write_register(
-                list(ids_values), data_name.lower(), list(ids_values.values()), retries=num_retry
+                list(int_ids_values), data_name.lower(), list(int_ids_values.values()), retries=num_retry
             )
         except _TRANSPORT_ERRORS as e:
-            raise ConnectionError(f"{err_msg} {e}") from e
+            raise ConnectionError(
+                f"Failed to sync write '{data_name}' with ids_values={int_ids_values} after {num_retry + 1} tries. {e}"
+            ) from e
