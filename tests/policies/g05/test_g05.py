@@ -50,6 +50,8 @@ from lerobot.policies.g05.processor_g05 import (
     G05InverseActionProjectionStep,
     G05RelativeJointActionsStep,
     G05TokenizerStep,
+    format_g05_bbox_target,
+    prepare_g05_policy_batch,
 )
 from lerobot.policies.g05.tokenizer_g05 import (
     G05_INPUT_IDS,
@@ -77,11 +79,26 @@ from lerobot.utils.constants import (
 
 
 class TinyG05Backend(nn.Module):
+    """Stands in for `G05NativeBackend`, with the methods the policy calls on it."""
+
     def __init__(self):
         super().__init__()
         self.proj = nn.Linear(20, 20)
+        self.action_tokenizer = None
         self.last_samples = None
         self.last_runtime_predict_cot = None
+
+    def materialize_runtime_buffers(self, device):
+        pass
+
+    def apply_fp32_params(self):
+        pass
+
+    def load_action_codec(self):
+        pass
+
+    def get_optim_param_groups(self, lr, weight_decay, **kwargs):
+        return [{"params": [p for p in self.parameters() if p.requires_grad]}]
 
     def predict_action(self, batch):
         self.last_samples = batch["samples"]
@@ -279,7 +296,8 @@ def _prepared_policy_batch(
     task: str | None = None,
     predict_cot: bool = False,
 ) -> dict:
-    prepared = policy._prepare_author_batch(
+    prepared = prepare_g05_policy_batch(
+        policy.config,
         _policy_batch() if batch is None else batch,
         task=task,
         predict_cot=predict_cot,
@@ -1133,7 +1151,7 @@ def test_native_training_applies_ar_loss_config_and_reaches_language_head():
 def test_author_action_payload_fills_required_tokenizer_metadata():
     policy = G05Policy(_config(), backend=TinyG05Backend())
 
-    prepared = policy._prepare_author_batch(_policy_batch())
+    prepared = prepare_g05_policy_batch(policy.config, _policy_batch())
 
     assert set(prepared["samples"][0]["action"]) == {
         "value",
@@ -1148,7 +1166,7 @@ def test_system2_training_target_is_forwarded_without_replacing_operator_task():
     batch = _policy_batch("  operator task\n")
     batch["atomic_task"] = ["grasp the cup"]
 
-    prepared = policy._prepare_author_batch(batch)
+    prepared = prepare_g05_policy_batch(policy.config, batch)
 
     assert prepared["samples"][0]["command"] == "  operator task\n"
     assert prepared["samples"][0]["atomic_task"] == "Subtask: grasp the cup"
@@ -1165,7 +1183,7 @@ def test_system2_recipe_subtask_target_selects_author_template():
     ]
     batch["target_message_indices"] = [[1]]
 
-    sample = policy._prepare_author_batch(batch)["samples"][0]
+    sample = prepare_g05_policy_batch(policy.config, batch)["samples"][0]
 
     assert sample["command"] == "operator task"
     assert sample["prompt"] == "predict subtask"
@@ -1191,7 +1209,7 @@ def test_system2_recipe_bbox_and_subtask_use_checkpoint_field_order():
     ]
     batch["target_message_indices"] = [[1, 2]]
 
-    sample = policy._prepare_author_batch(batch)["samples"][0]
+    sample = prepare_g05_policy_batch(policy.config, batch)["samples"][0]
 
     assert sample["prompt"] == "predict bbox, subtask and action"
     assert sample["bbox"] == "BBox: cup <loc0102><loc0102><loc0512><loc0512>"
@@ -1209,7 +1227,7 @@ def test_system2_inference_prompt_follows_runtime_cot_fields(fields, prompt):
     batch = _policy_batch("operator task")
     del batch[ACTION]
 
-    sample = policy._prepare_author_batch(batch)["samples"][0]
+    sample = prepare_g05_policy_batch(policy.config, batch)["samples"][0]
 
     assert sample["prompt"] == prompt
     assert sample["command"] == "operator task"
@@ -1226,7 +1244,7 @@ def test_system2_recipe_no_cot_branch_uses_action_only_training_template():
     batch[MESSAGES_RENDERED] = [[{"role": "user", "content": "operator task"}]]
     batch["target_message_indices"] = [[]]
 
-    sample = policy._prepare_author_batch(batch)["samples"][0]
+    sample = prepare_g05_policy_batch(policy.config, batch)["samples"][0]
 
     assert "prompt" not in sample
     assert "atomic_task" not in sample
@@ -1279,7 +1297,7 @@ def test_recipe_preprocessor_resolves_lerobot_subtask_and_bbox_annotations():
         if (candidate := preprocessor({**raw, "index": torch.tensor(sample_index)}))["target_message_indices"]
         == [[1, 2]]
     )
-    sample = policy._prepare_author_batch(processed)["samples"][0]
+    sample = prepare_g05_policy_batch(policy.config, processed)["samples"][0]
 
     assert "language_persistent" not in processed
     assert "language_events" not in processed
@@ -1293,7 +1311,7 @@ def test_author_inference_payload_synthesizes_required_dummy_action():
     batch = _policy_batch()
     del batch[ACTION]
 
-    prepared = policy._prepare_author_batch(batch)
+    prepared = prepare_g05_policy_batch(policy.config, batch)
 
     assert prepared["samples"][0]["action"]["value"].shape == (4, 20)
 
@@ -1911,7 +1929,7 @@ def test_subtask_as_task_sample_trains_the_action_only_template():
     batch[MESSAGES_RENDERED] = [[{"role": "user", "content": "grasp the cup"}]]
     batch["target_message_indices"] = [[]]
 
-    sample = policy._prepare_author_batch(batch)["samples"][0]
+    sample = prepare_g05_policy_batch(policy.config, batch)["samples"][0]
 
     assert sample["command"] == "grasp the cup"
     assert "atomic_task" not in sample
@@ -2084,7 +2102,7 @@ def test_recipe_path_is_read_once_so_a_saved_config_keeps_its_recipe(tmp_path: P
 
     config = G05Config(device="cpu", predict_cot=True, recipe_path=str(recipe_file))
     assert config.recipe_path is None
-    assert config.language_recipe_enabled
+    assert config.use_language_recipe
     assert config.recipe["blend"]["cot"]["weight"] == 7.0
 
     config.save_pretrained(tmp_path / "checkpoint")
@@ -2133,7 +2151,7 @@ def test_mrope_positions_are_built_on_the_host_and_returned_on_the_token_device(
     ],
 )
 def test_bbox_targets_read_unit_coordinates_in_either_box_format(detection, expected):
-    assert G05Policy._format_bbox_target(json.dumps({"detections": [detection]})) == expected
+    assert format_g05_bbox_target(json.dumps({"detections": [detection]})) == expected
 
 
 def test_bbox_targets_reject_pixel_coordinates():
@@ -2141,7 +2159,7 @@ def test_bbox_targets_reject_pixel_coordinates():
         {"detections": [{"label": "cube", "bbox_format": "xyxy", "bbox": [448, 187.2, 556.8, 292.8]}]}
     )
     with pytest.raises(ValueError, match=r"\[0, 1\] image-fraction"):
-        G05Policy._format_bbox_target(pixels)
+        format_g05_bbox_target(pixels)
 
 
 def test_image_counts_follow_the_history_length_not_the_saved_values():
@@ -2161,9 +2179,9 @@ def test_recipe_training_uses_the_rendered_task_rephrasing():
     ]
     batch["target_message_indices"] = [[1]]
 
-    rephrased = policy._prepare_author_batch(batch)["samples"][0]
+    rephrased = prepare_g05_policy_batch(policy.config, batch)["samples"][0]
     del batch[MESSAGES_RENDERED], batch["target_message_indices"]
-    canonical = policy._prepare_author_batch(batch)["samples"][0]
+    canonical = prepare_g05_policy_batch(policy.config, batch)["samples"][0]
 
     assert rephrased["command"] == "gather every cube in the blue square"
     assert canonical["command"] == "operator task"
