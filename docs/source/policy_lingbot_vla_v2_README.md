@@ -199,6 +199,23 @@ lerobot-train <same args> --peft.use_peft=true --peft.r=32
 
 Merge adapter checkpoints back into the base weights with `scripts/export_merged.py` before deployment.
 
+**Worked example (verified).** Fine-tuning from the base checkpoint on a 6-DoF single-arm dataset (5 arm joints + 1 gripper, cameras `top` + `wrist`):
+
+```bash
+lerobot-train \
+  --dataset.repo_id=maximellerbach/omx_multicubes \
+  --policy.path=miracle-techlink/lingbot-vla-v2-6b-lerobot \
+  --policy.tokenizer_path=Qwen/Qwen3-VL-4B-Instruct \
+  --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 5}}]}, "observation.state.effector.position": {"origin_keys": [{"observation.state": {"start": 5, "end": 6}}]}}' \
+  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 5}}], "subtract_state": false}, "action.effector.position": {"origin_keys": [{"action": {"start": 5, "end": 6}}], "subtract_state": false}}' \
+  --rename_map='{"observation.images.top": "observation.images.camera_top", "observation.images.wrist": "observation.images.camera_wrist_left"}' \
+  --policy.dtype=bfloat16 \
+  --policy.push_to_hub=false \
+  --batch_size=1 --steps=30000 --save_freq=5000
+```
+
+This runs end-to-end: the preprocessor maps the 6-D raw state/action onto the canonical 55-D slots, training produces checkpoints with the slot mapping + dataset stats embedded, and `lerobot-rollout` / `lerobot-eval` on the saved checkpoint map back to the robot's 6-D action space.
+
 **Distillation teachers (optional, A100-class).** Convert with `--include-depth-heads` (loads the official depth/DINO heads and embeds the teacher `align_params`), then enable the frozen MoGe/MoRGBD/DINO-video teachers at train time — verified with FSDP2 on 8×A100:
 
 ```bash
