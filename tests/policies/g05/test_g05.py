@@ -1815,6 +1815,24 @@ def test_new_robot_takes_its_layout_from_the_dataset(tmp_path: Path):
     assert (reloaded.state_slots, reloaded.camera_order) == (config.state_slots, config.camera_order)
 
 
+def test_joint_signs_are_checked_against_the_new_robot_joints():
+    # The base checkpoint records 14 raw dims; the signs cover the 6-joint robot being fine-tuned.
+    config = _new_robot_config(
+        raw_state_dim=14, raw_action_dim=14, joint_signs=(1.0,) * 6, joint_offsets=(0.0,) * 6
+    )
+    joints = {"dtype": "float32", "shape": (6,), "names": _OMX_JOINTS}
+    config.set_dataset_feature_metadata({OBS_STATE: joints, ACTION: joints})
+    assert (config.raw_state_dim, config.raw_action_dim) == (6, 6)
+
+    with pytest.raises(ValueError, match="joint_signs must cover"):
+        _new_robot_config(
+            state_slots=(10, 11, 12, 13, 14, 19),
+            action_slots=(10, 11, 12, 13, 14, 19),
+            joint_signs=(1.0,) * 5,
+            joint_offsets=(0.0,) * 5,
+        )
+
+
 def test_new_robot_without_joint_names_asks_for_slots():
     config = _new_robot_config()
     with pytest.raises(ValueError, match="no joint names"):
