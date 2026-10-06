@@ -121,27 +121,31 @@ G05_COT_PROMPTS: dict[tuple[str, ...], str] = {
 }
 
 
-def make_g05_prompt_template(num_images: int, *, predict_cot: bool, flow_only: bool) -> str:
-    """Reproduce the selected author SamplesBuilder template exactly."""
-
+def _g05_user_turn(num_images: int) -> str:
+    """The chat-wrapped user turn shared by the System 1 and CoT templates."""
     images = "".join(f"<image{index}_image_!>" for index in range(num_images))
-    prefix = (
+    return (
         f"<chat_user_prefix>{images}<bos>"
         "Embodiment: <embodiment_text_!>; Task: <command_text_!_200> "
         "State: <proprio_proprio_!>;"
         "<chat_user_suffix><chat_assistant_prefix>"
     )
+
+
+def make_g05_prompt_template(num_images: int, *, predict_cot: bool, flow_only: bool) -> str:
+    """Reproduce the selected author SamplesBuilder template exactly."""
+
     if predict_cot:
-        action = "Action: <EOV><eos>" if flow_only else "Action: <EOV><action_action>|<eos>"
-        return f"{prefix}<prompt_text_!>\n<EOC><atomic_task_text>|{action}"
+        return make_g05_cot_prompt_template(num_images, fields=("subtask",), flow_only=flow_only)
     if flow_only:
         # BaseActionSamplesBuilderFMOnly intentionally has no chat wrapper.
+        images = "".join(f"<image{index}_image_!>" for index in range(num_images))
         return (
             f"{images}<bos>Embodiment: <embodiment_text_!>; "
             "Task: <command_text_!_200> State: <proprio_proprio_!>;\n"
             "Action: <EOV><EOC><eos>"
         )
-    return f"{prefix}Action: <EOV><EOC><action_action>|<eos>"
+    return f"{_g05_user_turn(num_images)}Action: <EOV><EOC><action_action>|<eos>"
 
 
 def make_g05_cot_prompt_template(
@@ -165,16 +169,12 @@ def make_g05_cot_prompt_template(
         "bbox": "<bbox_text>|",
         "subtask": "<atomic_task_text>|",
     }
-    images = "".join(f"<image{index}_image_!>" for index in range(num_images))
-    prefix = (
-        f"<chat_user_prefix>{images}<bos>"
-        "Embodiment: <embodiment_text_!>; Task: <command_text_!_200> "
-        "State: <proprio_proprio_!>;"
-        "<chat_user_suffix><chat_assistant_prefix>"
-        "<prompt_text_!>\n<EOC>"
-    )
     action = "Action: <EOV><eos>" if flow_only else "Action: <EOV><action_action>|<eos>"
-    return prefix + "".join(placeholders[field] for field in ordered_fields) + action
+    return (
+        f"{_g05_user_turn(num_images)}<prompt_text_!>\n<EOC>"
+        + "".join(placeholders[field] for field in ordered_fields)
+        + action
+    )
 
 
 # Raw dimensions are inserted in these exact policy slots. The G0.5 shared layout is:
@@ -424,7 +424,9 @@ class G05Config(PreTrainedConfig):
             raise ValueError("runtime_system must be 'system1' or 'system2'.")
         if self.runtime_system == "system2" and not self.predict_cot:
             raise ValueError("G0.5 System 2 requires predict_cot=True in the packaged checkpoint.")
-        if self.language_recipe_enabled and not self.predict_cot:
+        if self.use_language_recipe and self.recipe is None:
+            raise ValueError("G0.5 language training requires a recipe in policy config.")
+        if self.use_language_recipe and not self.predict_cot:
             raise ValueError("G0.5 recipe-driven CoT training requires predict_cot=True.")
         if not 0.0 <= self.proprio_dropout_p <= 1.0:
             raise ValueError(f"proprio_dropout_p must be in [0, 1], got {self.proprio_dropout_p}.")
@@ -556,16 +558,6 @@ class G05Config(PreTrainedConfig):
     def get_scheduler_preset(self) -> LRSchedulerConfig | None:
         """Return the constant-with-warmup schedule preset."""
         return ConstantWithWarmupSchedulerConfig(num_warmup_steps=self.scheduler_warmup_steps)
-
-    @property
-    def language_recipe_enabled(self) -> bool:
-        """Whether training uses a language recipe (built-in, or read from ``recipe_path``).
-
-        Recipe steps and projected dataset stats only exist on freshly built
-        pipelines, so this also decides whether a pretrained checkpoint's saved
-        pipelines are rebuilt instead of loaded.
-        """
-        return self.use_language_recipe
 
     @property
     def observation_delta_indices(self) -> list[int]:
