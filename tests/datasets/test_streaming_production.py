@@ -246,6 +246,14 @@ def test_streaming_applies_rgb_transforms_on_decode_threads(tmp_path: Path, lero
     assert all(name.startswith("lerobot-decode") for name in thread_names), thread_names
 
 
+def test_streaming_argument_is_deprecated(tmp_path: Path, lerobot_dataset_factory) -> None:
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(root=root, repo_id=DUMMY_REPO_ID, total_episodes=1, total_frames=4)
+    with pytest.warns(FutureWarning, match="streaming"):
+        dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, root=root, streaming=False)
+    assert dataset.streaming
+
+
 def test_streaming_honors_episode_subset(tmp_path: Path, lerobot_dataset_factory) -> None:
     root = tmp_path / "dataset"
     map_dataset = lerobot_dataset_factory(

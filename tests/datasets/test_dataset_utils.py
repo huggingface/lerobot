@@ -216,3 +216,28 @@ def test_get_safe_version_error_reports_repo_id(monkeypatch):
         get_safe_version(repo_id, "v3.0")
 
     assert repo_id in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("anchor", "start", "end", "indices", "padding"),
+    [
+        # Absolute dataset indices (map-style): episode rows 10..14.
+        (10, 10, 15, [10, 10, 11], [True, False, False]),
+        (14, 10, 15, [13, 14, 14], [False, False, True]),
+        # Episode-local indices (streaming): rows 0..4.
+        (2, 0, 5, [1, 2, 3], [False, False, False]),
+    ],
+)
+def test_delta_window_clamps_and_marks_padding(anchor, start, end, indices, padding):
+    window, is_pad = dataset_utils.delta_window(anchor, [-1, 0, 1], start, end)
+    assert window == indices
+    assert is_pad.tolist() == padding
+    assert is_pad.dtype == torch.bool
+
+
+def test_shift_timestamps_and_task_name():
+    import pandas as pd
+
+    assert dataset_utils.shift_timestamps([0.0, 0.5], 10.0) == [10.0, 10.5]
+    tasks = pd.DataFrame({"task_index": [0, 1]}, index=["pick", "place"])
+    assert dataset_utils.task_name(tasks, torch.tensor(1)) == "place"

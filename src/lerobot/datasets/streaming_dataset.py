@@ -29,7 +29,7 @@ import datasets
 import numpy as np
 import torch
 
-from lerobot.configs import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DepthEncoderConfig
+from lerobot.configs import DEFAULT_DEPTH_UNIT
 from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.episode_parquet import EpisodeParquetReader
 from lerobot.streaming.episode_pool import ExactCoveragePool, StreamingSamplingStrategy
@@ -39,7 +39,6 @@ from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
-from .depth_utils import MM_PER_METRE, dequantize_depth
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
 from .io_utils import hf_transform_to_torch
 from .language import LANGUAGE_COLUMNS
@@ -48,8 +47,22 @@ from .streaming_sidecar import (
     ensure_dataset_mp4_sidecar,
     streaming_data_root,
 )
-from .utils import check_version_compatibility, resolve_episode_indices
-from .video_utils import decode_video_frames_pyav
+from .utils import (
+    check_version_compatibility,
+    delta_window,
+    resolve_episode_indices,
+    shift_timestamps,
+    task_name,
+)
+from .video_utils import (
+    apply_rgb_transforms,
+    convert_image_depth_units,
+    decode_video_frames_pyav,
+    depth_encoder_configs,
+    dequantize_depth_frames,
+    image_depth_units,
+    normalize_rgb_frames,
+)
 
 
 @dataclass(frozen=True)
@@ -138,7 +151,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         tolerance_s: float = 1e-4,
         revision: str | None = None,
         force_cache_sync: bool = False,
-        streaming: bool = True,
+        streaming: bool | None = None,
         buffer_size: int = 1000,
         max_num_shards: int = 16,
         seed: int = 42,
@@ -182,8 +195,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 Hub revision to resolve to an immutable dataset commit.
             force_cache_sync (`bool`, *optional*, defaults to `False`):
                 Refresh locally cached dataset metadata.
-            streaming (`bool`, *optional*, defaults to `True`):
-                Compatibility flag retained by the public API.
+            streaming (`bool | None`, *optional*):
+                Deprecated and ignored: this class always streams. Use ``dataset.streaming`` in the
+                training config to choose between streaming and map-style loading.
             buffer_size (`int`, *optional*, defaults to `1000`):
                 Legacy setting used to derive the pool size when episode_pool_size is omitted.
             max_num_shards (`int`, *optional*, defaults to `16`):
@@ -255,7 +269,14 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             )
         self.shuffle = shuffle
 
-        self.streaming = streaming
+        if streaming is not None:
+            warnings.warn(
+                "StreamingLeRobotDataset(streaming=...) is deprecated and has no effect; "
+                "choose streaming with the dataset.streaming training option instead.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        self.streaming = True
         self.buffer_size = buffer_size
         self.max_num_shards = max_num_shards
         self._return_uint8 = return_uint8
@@ -305,17 +326,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             else max(1, self.episode_pool_size * len(self.meta.video_keys))
         )
 
-        self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
-            vid_key: DepthEncoderConfig.from_video_info(self.meta.features[vid_key].get("info"))
-            for vid_key in self.meta.depth_keys
-        }
-
-        # Input unit of each depth feature stored as raw images (dequantized separately from videos).
-        self._image_depth_units: dict[str, str | None] = {
-            key: (self.meta.features[key].get("info") or {}).get("depth_unit")
-            for key in self.meta.depth_keys
-            if key in self.meta.image_keys
-        }
+        self._depth_encoder_configs = depth_encoder_configs(self.meta)
+        self._image_depth_units = image_depth_units(self.meta)
 
         resolved_episodes = resolve_episode_indices(episodes, self.meta.total_episodes)
         # Each episode is owned once: duplicates would double-count frames in the coverage plan.
@@ -703,41 +715,32 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         video_cache: EpisodeByteCache | None,
     ) -> dict[str, Any]:
         """Assemble an anchor's temporal windows, padding masks and decoded camera frames."""
-        episode_dataset = episode_data.dataset
+        episode_length = len(episode_data.dataset)
         item = episode_data.get_item(frame_index)
         episode_start = episode_data.dataset_from_index
 
+        # Episode-local windows: the whole episode is resident, so rows are 0..length-1.
+        windows: dict[str, list[int]] = {}
         if self.delta_indices is not None:
             for key, delta_indices in self.delta_indices.items():
-                target_indices = [
-                    max(0, min(len(episode_dataset) - 1, frame_index + delta)) for delta in delta_indices
-                ]
-                item[f"{key}_is_pad"] = torch.BoolTensor(
-                    [
-                        frame_index + delta < 0 or frame_index + delta >= len(episode_dataset)
-                        for delta in delta_indices
-                    ]
+                windows[key], item[f"{key}_is_pad"] = delta_window(
+                    frame_index, delta_indices, 0, episode_length
                 )
                 if key not in self.meta.video_keys:
-                    item[key] = episode_data.get_column(key, target_indices)
+                    item[key] = episode_data.get_column(key, windows[key])
 
         if self.meta.video_keys:
             if video_cache is None:
                 raise RuntimeError("Video dataset streaming requires an episode byte cache")
             for video_key in self.meta.video_keys:
-                if self.delta_indices is not None and video_key in self.delta_indices:
-                    target_indices = [
-                        max(0, min(len(episode_dataset) - 1, frame_index + delta))
-                        for delta in self.delta_indices[video_key]
-                    ]
-                else:
-                    target_indices = [frame_index]
+                target_indices = windows.get(video_key, [frame_index])
                 local_timestamps = [
                     float(timestamp.item())
                     for timestamp in episode_data.get_column("timestamp", target_indices)
                 ]
-                from_timestamp = episode_data.video_from_timestamps[video_key]
-                query_timestamps = [from_timestamp + timestamp for timestamp in local_timestamps]
+                query_timestamps = shift_timestamps(
+                    local_timestamps, episode_data.video_from_timestamps[video_key]
+                )
                 if video_key in self.meta.depth_keys:
                     source_start = video_cache.manifest.lookup(episode_index, video_key).source_start_pts
                     frames = decode_video_frames_pyav(
@@ -747,32 +750,19 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                         return_uint8=False,
                         is_depth=True,
                     )
-                    depth_encoder = self._depth_encoder_configs[video_key]
-                    frames = dequantize_depth(
-                        frames,
-                        depth_min=depth_encoder.depth_min,
-                        depth_max=depth_encoder.depth_max,
-                        shift=depth_encoder.shift,
-                        use_log=depth_encoder.use_log,
-                        output_unit=self._depth_output_unit,
+                    frames = dequantize_depth_frames(
+                        frames, self._depth_encoder_configs[video_key], self._depth_output_unit
                     )
                 else:
-                    frames = video_cache.get_frames(episode_index, video_key, query_timestamps)
-                    if not self._return_uint8:
-                        frames = frames.to(torch.float32) / 255.0
+                    frames = normalize_rgb_frames(
+                        video_cache.get_frames(episode_index, video_key, query_timestamps), self._return_uint8
+                    )
                 item[video_key] = frames.squeeze(0)
 
         # Runs on the decode thread, so augmentation parallelizes with decoding.
         self._apply_image_transforms(item)
-
-        for key, stored_unit in self._image_depth_units.items():
-            if key in item and stored_unit is not None and stored_unit != self._depth_output_unit:
-                item[key] = (
-                    item[key] * MM_PER_METRE if stored_unit == DEPTH_METER_UNIT else item[key] / MM_PER_METRE
-                )
-
-        task_index = int(item["task_index"].item())
-        item["task"] = self.meta.tasks.iloc[task_index].name
+        convert_image_depth_units(item, self._image_depth_units, self._depth_output_unit)
+        item["task"] = task_name(self.meta.tasks, item["task_index"])
         if int(item["episode_index"].item()) != episode_index:
             raise RuntimeError(f"Episode reader returned episode {item['episode_index']} for {episode_index}")
         if int(item["index"].item()) != episode_start + frame_index:
@@ -783,12 +773,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
 
     def _apply_image_transforms(self, item: dict[str, Any]) -> None:
         """Transform RGB images in place, leaving physical depth values unchanged."""
-        if self.image_transforms is None:
-            return
-        for camera_key in self.meta.camera_keys:
-            if camera_key in self.meta.depth_keys:
-                continue
-            item[camera_key] = self.image_transforms(item[camera_key])
+        apply_rgb_transforms(item, self.image_transforms, self.meta.camera_keys, self.meta.depth_keys)
 
     def state_dict(self) -> dict[str, int]:
         """Return the iterator's current rank-local position.

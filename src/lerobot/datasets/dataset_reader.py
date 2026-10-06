@@ -23,14 +23,9 @@ from pathlib import Path
 import datasets
 import torch
 
-from lerobot.configs import (
-    DEFAULT_DEPTH_UNIT,
-    DEPTH_METER_UNIT,
-    DepthEncoderConfig,
-)
+from lerobot.configs import DEFAULT_DEPTH_UNIT
 
 from .dataset_metadata import LeRobotDatasetMetadata
-from .depth_utils import MM_PER_METRE, dequantize_depth
 from .feature_utils import (
     check_delta_timestamps,
     get_delta_indices,
@@ -40,8 +35,15 @@ from .io_utils import (
     hf_transform_to_torch,
     load_nested_dataset,
 )
-from .utils import resolve_episode_indices
-from .video_utils import decode_video_frames
+from .utils import delta_window, resolve_episode_indices, shift_timestamps, task_name
+from .video_utils import (
+    apply_rgb_transforms,
+    convert_image_depth_units,
+    decode_video_frames,
+    depth_encoder_configs,
+    dequantize_depth_frames,
+    image_depth_units,
+)
 
 
 class BaseDatasetReader(ABC):
@@ -166,17 +168,8 @@ class DatasetReader(BaseDatasetReader):
             check_delta_timestamps(delta_timestamps, meta.fps, tolerance_s)
             self.delta_indices = get_delta_indices(delta_timestamps, meta.fps)
 
-        self._depth_encoder_configs: dict[str, DepthEncoderConfig] = {
-            vid_key: DepthEncoderConfig.from_video_info(self._meta.features[vid_key].get("info"))
-            for vid_key in self._meta.depth_keys
-        }
-
-        # Get the input unit of each depth feature stored as raw images.
-        self._image_depth_units: dict[str, str | None] = {
-            key: (self._meta.features[key].get("info") or {}).get("depth_unit")
-            for key in self._meta.depth_keys
-            if key in self._meta.image_keys
-        }
+        self._depth_encoder_configs = depth_encoder_configs(meta)
+        self._image_depth_units = image_depth_units(meta)
 
     def try_load(self) -> bool:
         """Attempt to load from local cache. Returns True if data is sufficient."""
@@ -311,16 +304,10 @@ class DatasetReader(BaseDatasetReader):
         ep = self._meta.episodes[ep_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
-        query_indices = {
-            key: [max(ep_start, min(ep_end - 1, abs_idx + delta)) for delta in delta_idx]
-            for key, delta_idx in self.delta_indices.items()
-        }
-        padding = {
-            f"{key}_is_pad": torch.BoolTensor(
-                [(abs_idx + delta < ep_start) | (abs_idx + delta >= ep_end) for delta in delta_idx]
-            )
-            for key, delta_idx in self.delta_indices.items()
-        }
+        query_indices: dict[str, list[int]] = {}
+        padding: dict[str, torch.Tensor] = {}
+        for key, delta_idx in self.delta_indices.items():
+            query_indices[key], padding[f"{key}_is_pad"] = delta_window(abs_idx, delta_idx, ep_start, ep_end)
         return query_indices, padding
 
     def _to_relative(self, indices: list[int]) -> list[int]:
@@ -447,8 +434,7 @@ class DatasetReader(BaseDatasetReader):
         ep = self._meta.episodes[ep_idx]
 
         def _decode_single(vid_key: str, query_ts: list[float]) -> tuple[str, torch.Tensor]:
-            from_timestamp = ep[f"videos/{vid_key}/from_timestamp"]
-            shifted_query_ts = [from_timestamp + ts for ts in query_ts]
+            shifted_query_ts = shift_timestamps(query_ts, ep[f"videos/{vid_key}/from_timestamp"])
             video_path = self.root / self._meta.get_video_file_path(ep_idx, vid_key)
             frames = decode_video_frames(
                 video_path,
@@ -459,14 +445,8 @@ class DatasetReader(BaseDatasetReader):
                 is_depth=vid_key in self._meta.depth_keys,
             )
             if vid_key in self._meta.depth_keys:
-                depth_encoder = self._depth_encoder_configs[vid_key]
-                frames = dequantize_depth(
-                    frames,
-                    depth_min=depth_encoder.depth_min,
-                    depth_max=depth_encoder.depth_max,
-                    shift=depth_encoder.shift,
-                    use_log=depth_encoder.use_log,
-                    output_unit=self._depth_output_unit,
+                frames = dequantize_depth_frames(
+                    frames, self._depth_encoder_configs[vid_key], self._depth_output_unit
                 )
             return vid_key, frames.squeeze(0)
 
@@ -535,7 +515,7 @@ class DatasetReader(BaseDatasetReader):
             for i, tabular in enumerate(self._query_hf_dataset(query_indices_per_item)):
                 items[i].update(tabular)
 
-        # Video frames: decoded one item at a time. We do not group decoding by physical 
+        # Video frames: decoded one item at a time. We do not group decoding by physical
         # MP4 across the batch as it competes with the multiple workers of the DataLoader.
         if len(self._meta.video_keys) > 0:
             current_ts = [float(items[i]["timestamp"]) for i in range(n)]
@@ -543,24 +523,9 @@ class DatasetReader(BaseDatasetReader):
             for item, query_ts, ep_idx in zip(items, query_timestamps, ep_idxs, strict=True):
                 item.update(self._query_videos(query_ts, ep_idx))
 
-        for i in range(n):
-            item = items[i]
-            # Apply image transforms to RGB cameras.
-            if self._image_transforms is not None:
-                for cam in self._meta.camera_keys:
-                    if cam in self._meta.depth_keys:
-                        continue
-                    item[cam] = self._image_transforms(item[cam])
-
-            # Convert depth features to the output unit.
-            for key, stored_unit in self._image_depth_units.items():
-                if key in item and stored_unit is not None and stored_unit != self._depth_output_unit:
-                    item[key] = (
-                        item[key] * MM_PER_METRE
-                        if stored_unit == DEPTH_METER_UNIT
-                        else item[key] / MM_PER_METRE
-                    )
-
-            item["task"] = self._meta.tasks.iloc[int(item["task_index"])].name
+        for item in items:
+            apply_rgb_transforms(item, self._image_transforms, self._meta.camera_keys, self._meta.depth_keys)
+            convert_image_depth_units(item, self._image_depth_units, self._depth_output_unit)
+            item["task"] = task_name(self._meta.tasks, item["task_index"])
 
         return items

@@ -21,6 +21,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import packaging.version
@@ -28,6 +29,9 @@ import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 
 from lerobot.utils.utils import flatten_dict, unflatten_dict
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 V30_MESSAGE = """
 The dataset you requested ({repo_id}) is in {version} format.
@@ -137,6 +141,28 @@ def resolve_episode_indices(
         )
     excluded = {episode for episode in excluded if 0 <= episode < total_episodes}
     return [episode for episode in candidates if episode not in excluded]
+
+
+def delta_window(anchor: int, deltas: Sequence[int], start: int, end: int) -> tuple[list[int], torch.Tensor]:
+    """Clamp an anchor's temporal window to the episode rows ``[start, end)``.
+
+    Returns the clamped row indices and a boolean mask marking the positions that fell outside
+    the episode and were padded with its first or last row. Works with absolute dataset indices
+    (map-style) and episode-local indices (streaming) alike.
+    """
+    indices = [max(start, min(end - 1, anchor + delta)) for delta in deltas]
+    padding = torch.BoolTensor([anchor + delta < start or anchor + delta >= end for delta in deltas])
+    return indices, padding
+
+
+def shift_timestamps(timestamps: Sequence[float], offset: float) -> list[float]:
+    """Move episode-relative timestamps onto a source video's timeline (``from_timestamp`` offset)."""
+    return [offset + timestamp for timestamp in timestamps]
+
+
+def task_name(tasks: "pd.DataFrame", task_index: int | torch.Tensor) -> str:
+    """Look up a task string from the metadata tasks table by its integer ``task_index``."""
+    return tasks.iloc[int(task_index)].name
 
 
 DEPTH_FILE_PATTERN = "frame-{frame_index:06d}.tiff"
