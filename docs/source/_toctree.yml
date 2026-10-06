@@ -63,6 +63,8 @@
     title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: fineart_vla
+    title: FineART-VLA
   - local: molmoact2
     title: MolmoAct2
   - local: vla_jepa
@@ -87,6 +89,8 @@
     title: Multitask DiT Policy
   - local: walloss
     title: WALL-OSS
+  - local: dm05
+    title: DM05
   title: "Policies"
 - sections:
   - local: sarm

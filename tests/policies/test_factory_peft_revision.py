@@ -137,3 +137,41 @@ def test_make_policy_reads_action_names(monkeypatch, action_key, raw_names, expe
     assert cfg.action_feature_names == expected_names
     assert dataset_meta.features[action_key]["names"] == raw_names
     assert cfg.output_features[ACTION].type is FeatureType.ACTION
+
+
+def test_make_policy_loads_resume_weights_and_keeps_the_parent(monkeypatch):
+    """A resume loads the checkpoint, while `pretrained_path` keeps naming the fine-tuned-from model."""
+    cfg = SimpleNamespace(
+        type="mock",
+        device="cpu",
+        pretrained_path="user/base-policy",
+        pretrained_revision=None,
+        use_peft=False,
+        input_features={},
+        output_features={},
+    )
+    seen_while_building = []
+
+    def from_pretrained(**kwargs):
+        seen_while_building.append(cfg.pretrained_path)
+        policy = torch.nn.Linear(1, 1)
+        policy.config = cfg
+        # Like FLUX3, which records its load source on the config.
+        cfg.pretrained_path = str(kwargs["pretrained_name_or_path"])
+        return policy
+
+    monkeypatch.setattr(
+        policy_factory, "get_policy_class", lambda _: SimpleNamespace(from_pretrained=from_pretrained)
+    )
+    monkeypatch.setattr(policy_factory, "dataset_to_policy_features", lambda _: {})
+    monkeypatch.setattr(policy_factory, "validate_visual_features_consistency", lambda *args: None)
+
+    policy = policy_factory.make_policy(
+        cfg,
+        ds_meta=SimpleNamespace(features={}, stats={}),
+        pretrained_path="run/checkpoints/000002/pretrained_model",
+    )
+
+    assert [str(path) for path in seen_while_building] == ["run/checkpoints/000002/pretrained_model"]
+    assert cfg.pretrained_path == "user/base-policy"
+    assert policy.config.pretrained_path == "user/base-policy"
