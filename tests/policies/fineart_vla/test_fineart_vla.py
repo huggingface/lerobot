@@ -198,21 +198,6 @@ def _parity_features():
 def test_forward_matches_pi05_when_language_losses_are_off():
     """With text CE, FAST and knowledge insulation off, FineART-VLA must reduce to PI0.5."""
     common = {"device": "cuda", "dtype": torch.float32, "chunk_size": 10, "n_action_steps": 10}
-    pi05 = PI05Policy(PI05Config(**common, **_parity_features())).cuda()
-    fineart = FineARTVLAPolicy(
-        FineARTVLAConfig(
-            **common,
-            **_parity_features(),
-            text_loss_weight=0.0,
-            enable_fast_action_loss=False,
-            knowledge_insulation=False,
-            use_liger_kernels=False,
-        )
-    ).cuda()
-    fineart.load_state_dict(pi05.state_dict(), strict=True)
-    pi05.eval()
-    fineart.eval()
-
     generator = torch.Generator().manual_seed(0)
     batch_size, seq_len = 2, 16
     batch = {
@@ -224,18 +209,46 @@ def test_forward_matches_pi05_when_language_losses_are_off():
     }
     batch = {key: value.cuda() for key, value in batch.items()}
 
-    with torch.no_grad():
-        torch.manual_seed(1)
-        pi05_loss, _ = pi05.forward(batch)
-        torch.manual_seed(1)
-        fineart_loss, _ = fineart.forward(batch)
-        torch.testing.assert_close(fineart_loss, pi05_loss, rtol=1e-4, atol=1e-5)
+    # Two fp32 3B policies do not fit a 24 GB GPU together: run PI0.5 first, keep its weights
+    # on the CPU, and free the GPU before building FineART-VLA from the same weights.
+    pi05 = fineart = None
+    try:
+        pi05 = PI05Policy(PI05Config(**common, **_parity_features())).cuda().eval()
+        with torch.no_grad():
+            torch.manual_seed(1)
+            pi05_loss, _ = pi05.forward(batch)
+            torch.manual_seed(2)
+            pi05_actions = pi05.predict_action_chunk(batch)
+        weights = {key: value.cpu() for key, value in pi05.state_dict().items()}
+        del pi05
+        pi05 = None
+        torch.cuda.empty_cache()
 
-        torch.manual_seed(2)
-        pi05_actions = pi05.predict_action_chunk(batch)
-        torch.manual_seed(2)
-        fineart_actions = fineart.predict_action_chunk(batch)
+        fineart = FineARTVLAPolicy(
+            FineARTVLAConfig(
+                **common,
+                **_parity_features(),
+                text_loss_weight=0.0,
+                enable_fast_action_loss=False,
+                knowledge_insulation=False,
+                use_liger_kernels=False,
+            )
+        )
+        fineart.load_state_dict(weights, strict=True)
+        del weights
+        fineart = fineart.cuda().eval()
+        with torch.no_grad():
+            torch.manual_seed(1)
+            fineart_loss, _ = fineart.forward(batch)
+            torch.manual_seed(2)
+            fineart_actions = fineart.predict_action_chunk(batch)
+
+        torch.testing.assert_close(fineart_loss, pi05_loss, rtol=1e-4, atol=1e-5)
         torch.testing.assert_close(fineart_actions, pi05_actions, rtol=1e-4, atol=1e-4)
+    finally:
+        # A failure must not leave 13 GB of weights on the GPU for the tests that run after it.
+        del pi05, fineart
+        torch.cuda.empty_cache()
 
 
 class _TinyPolicy(torch.nn.Module):
