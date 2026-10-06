@@ -11,8 +11,10 @@ Use your phone (iOS or Android) to control your robot.
 To use phone to control your robot, install the relevant dependencies with:
 
 ```bash
-pip install lerobot[phone]
+pip install 'lerobot[phone,kinematics,feetech,core_scripts]'
 ```
+
+`kinematics` provides the inverse kinematics the examples use, `feetech` the SO-100/SO-101 motors, and `core_scripts` the recording and visualization tools.
 
 ## Get started
 
@@ -40,7 +42,7 @@ Links:
 
 ### Step 1: Choose the platform
 
-Modify the examples to use `PhoneOS.IOS` or `PhoneOS.ANDROID` in `PhoneConfig`. The API is identical across platforms, only the input source differs. All examples are under `examples/` and have `phone_so100_*.py` variants.
+Modify the examples to use `PhoneOS.IOS` or `PhoneOS.ANDROID` in `PhoneConfig`. The API is identical across platforms, only the input source differs. All examples are in `examples/phone_to_so100/`: `teleoperate.py`, `record.py`, `replay.py`, `evaluate.py` and `rollout.py`.
 
 Teleoperation example:
 
@@ -63,7 +65,7 @@ Why calibrate? We capture the current pose so subsequent poses are expressed in 
 
 ### Step 3: Run an example
 
-Run on of the examples scripts to teleoperate, record a dataset, replay a dataset or evaluate a policy.
+Run one of the example scripts to teleoperate, record a dataset, replay a dataset or evaluate a policy.
 
 All scripts assume you configured your robot (e.g., SO-100 follower) and set the correct serial port.
 
