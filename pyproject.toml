@@ -209,6 +209,7 @@ yam = [
     "lerobot[motorbridge-dep]",
     "lerobot[can-dep]",
     "lerobot[placo-dep]",
+    # Placo 0.9.15 adds the MJCF flag needed by YAM's gravity model.
     "placo>=0.9.15,<0.9.16",
 ]
 kinematics = ["lerobot[placo-dep]"]

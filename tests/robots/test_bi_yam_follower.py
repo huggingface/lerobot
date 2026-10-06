@@ -192,6 +192,26 @@ def test_disconnect_attempts_both_arms_after_one_fails(robot):
         arm._connected = False
 
 
+def test_partial_disconnect_can_be_retried(robot):
+    for arm in robot.arms.values():
+        arm._connected = True
+    robot.left_arm.disconnect = MagicMock(side_effect=RuntimeError("servo did not stop"))
+    robot.right_arm.disconnect = MagicMock(side_effect=lambda: setattr(robot.right_arm, "_connected", False))
+    with pytest.raises(RuntimeError, match="servo did not stop"):
+        robot.disconnect()
+    assert not robot.is_connected
+    robot.left_arm.disconnect.side_effect = lambda: setattr(robot.left_arm, "_connected", False)
+    robot.disconnect()
+    assert robot.left_arm.disconnect.call_count == 2
+    robot.right_arm.disconnect.assert_called_once()
+
+
+def test_partial_connection_must_be_disconnected_before_reconnecting(robot):
+    robot.left_arm._connected = True
+    with pytest.raises(RuntimeError, match="Disconnect both"):
+        robot.connect()
+
+
 def test_calibration_delegates_to_both_single_arms(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     robot.connect(calibrate=False)

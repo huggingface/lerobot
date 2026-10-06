@@ -37,6 +37,7 @@ class BiYamFollowerConfig(RobotConfig):
     control_frequency: float = 100.0
     feedback_timeout_s: float = 0.2
     command_timeout_s: float = 1.0
+    freeze_gc: bool = True
 
     def __post_init__(self) -> None:
         super().__post_init__()

@@ -40,7 +40,15 @@ from lerobot.utils.import_utils import (
 )
 
 from ..robot import Robot
-from .config_yam_follower import JOINT_LIMITS, MOTOR_NAMES, YAM_FEATURE_NAMES, YamArmConfig, YamFollowerConfig
+from .config_yam_follower import (
+    DM_MIT_POSITION_LIMIT_RAD,
+    DM_MIT_POSITION_MAX_COUNT,
+    JOINT_LIMITS,
+    MOTOR_NAMES,
+    YAM_FEATURE_NAMES,
+    YamArmConfig,
+    YamFollowerConfig,
+)
 
 if TYPE_CHECKING or _motorbridge_available:
     from motorbridge import Controller, Mode
@@ -55,8 +63,10 @@ _MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
 _MODEL_GRIPPER_STROKE_M = 0.0475
 _GRAVITY_MODEL_PATH = Path(__file__).parent / "assets/yam_linear.xml"
 _MAX_GRAVITY_TORQUE_NM = 10.0
-# Measured joints may sit slightly past a limit (quantization, resting on a hard stop).
+# Targets and measured poses need different margins: model limits are not mechanical stops.
 _LIMIT_TOLERANCE_RAD = 0.03
+_FEEDBACK_LIMIT_TOLERANCE_RAD = 0.15
+_GRIPPER_FEEDBACK_MARGIN = 0.10
 
 # One MIT command per motor: (position_rad, velocity_rad_s, kp, kd, feedforward_torque_nm).
 MitCommand = tuple[float, float, float, float, float]
@@ -70,7 +80,7 @@ def motor_to_joint(raw: np.ndarray, config: YamArmConfig) -> np.ndarray:
         raise ConnectionError("Non-finite YAM feedback")
     joints = raw[:6] * np.asarray(config.joint_signs) + np.asarray(config.joint_offsets_rad)
     gripper = (raw[6] - closed) / (opened - closed)
-    if not -0.05 <= gripper <= 1.05:
+    if not -_GRIPPER_FEEDBACK_MARGIN <= gripper <= 1 + _GRIPPER_FEEDBACK_MARGIN:
         raise ValueError("Gripper feedback is outside the calibrated stroke; check endpoints")
     return np.r_[joints, np.clip(gripper, 0, 1)]
 
@@ -168,9 +178,17 @@ class _YamBus:
         self.monitor: can.BusABC | None = None
         self.motors: dict[str, Any] = {}
         self.enabled = False
+        self._disable_failed = False
+        self._enabled_at = 0.0
         self._last_feedback: dict[int, float] = {}  # receive time per feedback CAN ID
+        self._last_status: dict[int, int] = {}
 
     def open(self) -> None:
+        if self._disable_failed:
+            raise RuntimeError(
+                "Previous YAM torque-disable command failed; use the hardware e-stop before reconnecting"
+            )
+        self.enabled = False
         self._verify_adapter()
         self.monitor = can.Bus(
             channel=self.port,
@@ -183,6 +201,7 @@ class _YamBus:
             for i, name in enumerate(MOTOR_NAMES)
         }
         self._last_feedback.clear()
+        self._last_status.clear()
 
     def read_positions(self, wait: bool = True) -> np.ndarray:
         """Return the seven raw motor positions in radians, once every motor has fresh feedback."""
@@ -202,6 +221,7 @@ class _YamBus:
             self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
         self.enabled = True
         self.controller.enable_all()
+        self._enabled_at = time.monotonic()
 
     def send_mit(self, motor: str, command: MitCommand) -> None:
         self.motors[motor].send_mit(*command)
@@ -213,7 +233,9 @@ class _YamBus:
         try:
             self.controller.disable_all()
             self.enabled = False
+            self._disable_failed = False
         except Exception:
+            self._disable_failed = True
             logger.exception("Could not disable YAM torque; use the hardware e-stop")
 
     def close(self) -> None:
@@ -279,13 +301,19 @@ class _YamBus:
                 if status not in (0, 1):
                     raise ConnectionError(f"{self.port}: motor {msg.arbitration_id - 16} fault {status:#x}")
                 self._last_feedback[msg.arbitration_id] = msg.timestamp
+                self._last_status[msg.arbitration_id] = status
             self.controller.poll_feedback_once()
             states = {name: motor.get_state() for name, motor in self.motors.items()}
+            # SocketCAN frame timestamps use wall time; monotonic time above bounds the wait.
             now = time.time()
             fresh = all(
                 0 <= now - self._last_feedback.get(i + 17, 0) <= self.feedback_timeout_s for i in range(7)
             )
             if fresh and all(state is not None for state in states.values()):
+                if self.enabled and time.monotonic() - self._enabled_at > self.feedback_timeout_s:
+                    disabled = [i for i in range(1, 8) if self._last_status[i + 16] == 0]
+                    if disabled:
+                        raise ConnectionError(f"{self.port}: motor {disabled[0]} unexpectedly disabled")
                 for name, state in states.items():
                     if state.status_code not in (0, 1) or not math.isfinite(state.pos):
                         raise ConnectionError(f"{self.port}: invalid {name} feedback")
@@ -329,7 +357,7 @@ class _ControlGC:
 def read_joint_positions(bus: _YamBus, config: YamArmConfig) -> np.ndarray:
     """Read fresh feedback and return validated joint radians and a normalized gripper position."""
     position = motor_to_joint(bus.read_positions(), config)
-    validate_positions(position, joint_tolerance_rad=_LIMIT_TOLERANCE_RAD)
+    validate_positions(position, joint_tolerance_rad=_FEEDBACK_LIMIT_TOLERANCE_RAD)
     return position
 
 
@@ -377,11 +405,21 @@ class _Servo:
         self.command_timed_out = False
 
     def start(self) -> None:
+        if self.active or self._thread is not None:
+            raise RuntimeError("YAM servo is already running")
         self.failure = None
-        _ControlGC.acquire()
-        self._gc_acquired = True
+        if self.config.freeze_gc:
+            _ControlGC.acquire()
+            self._gc_acquired = True
         self._thread = threading.Thread(target=self._run, name=f"{self.name}-servo", daemon=True)
-        self._thread.start()
+        try:
+            self._thread.start()
+        except BaseException:
+            self._thread = None
+            if self._gc_acquired:
+                _ControlGC.release()
+                self._gc_acquired = False
+            raise
         self.active = True
 
     def stop(self, timeout_s: float = 2.0) -> None:
@@ -416,7 +454,9 @@ class _Servo:
     def _check_healthy(self) -> None:
         if self.failure is not None or self.stop_event.is_set():
             raise ConnectionError("YAM servo stopped after a motor/feedback error") from self.failure
-        if time.monotonic() - self.updated_at > self.config.feedback_timeout_s:
+        # The servo's own read can use the full feedback timeout after the last update.
+        progress_timeout_s = 2 * self.config.feedback_timeout_s + 1 / self.config.control_frequency
+        if time.monotonic() - self.updated_at > progress_timeout_s:
             self.stop_event.set()
             raise ConnectionError("YAM servo feedback is stale; reconnect before commanding motion")
 
@@ -512,6 +552,7 @@ class YamFollower(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Start control, or open a torque-free gripper calibration session when ``calibrate=False``."""
         if not calibrate:
             self._open_for_calibration()
             return
@@ -550,6 +591,8 @@ class YamFollower(Robot):
     @check_if_not_connected
     def start(self) -> None:
         """Enable torque at the seeded pose (unless read-only), then start the servo."""
+        if self.servo.active or self.servo._thread is not None:
+            raise RuntimeError("YAM servo is already running")
         if not self.config.read_only:
             self.bus.enable(joint_to_motor(self.servo.position, self.config))
         self.servo.start()
@@ -571,10 +614,21 @@ class YamFollower(Robot):
                 raise ValueError("Gripper moved or returned invalid feedback; calibration was not saved")
             measurements[endpoint] = float(np.median(samples))
         closed, opened = measurements["closed"], measurements["open"]
-        if not (abs(closed) <= 12.5 and abs(opened) <= 12.5 and 0.5 < abs(opened - closed) < 10):
+        if not (
+            abs(closed) <= DM_MIT_POSITION_LIMIT_RAD
+            and abs(opened) <= DM_MIT_POSITION_LIMIT_RAD
+            and 0.5 < abs(opened - closed) < 10
+        ):
             raise ValueError("Implausible gripper stroke; calibration was not saved")
-        counts = [round((value + 12.5) * 65535 / 25.0) for value in (closed, opened)]
-        previous = self.calibration
+        counts = [
+            round(
+                (value + DM_MIT_POSITION_LIMIT_RAD)
+                * DM_MIT_POSITION_MAX_COUNT
+                / (2 * DM_MIT_POSITION_LIMIT_RAD)
+            )
+            for value in (closed, opened)
+        ]
+        previous: dict[str, MotorCalibration] = self.calibration
         self.calibration = {
             "gripper": MotorCalibration(
                 id=7,
@@ -660,7 +714,16 @@ class YamFollower(Robot):
             raise ValueError("YAM gripper is outside the initial pose tolerance")
 
     def _close(self) -> None:
-        self.servo.stop()
+        stop_error: RuntimeError | None = None
+        try:
+            self.servo.stop()
+        except RuntimeError as exc:
+            stop_error = exc
+            # Leave CAN open while the thread might still be using it, but attempt torque-off.
+            self.bus.disable()
+            logger.exception("YAM servo did not stop; CAN remains open for a disconnect retry")
+        if stop_error is not None:
+            raise stop_error
         try:
             self.bus.close()
         except Exception:
@@ -680,10 +743,14 @@ class YamFollower(Robot):
             calibration.id == 7
             and calibration.drive_mode in (0, 1)
             and calibration.homing_offset == 0
-            and 0 <= calibration.range_min < calibration.range_max <= 65535
+            and 0 <= calibration.range_min < calibration.range_max <= DM_MIT_POSITION_MAX_COUNT
         ):
             raise ValueError("Invalid saved gripper calibration")
-        endpoints = np.asarray([calibration.range_min, calibration.range_max]) * (25.0 / 65535) - 12.5
+        endpoints = (
+            np.asarray([calibration.range_min, calibration.range_max])
+            * (2 * DM_MIT_POSITION_LIMIT_RAD / DM_MIT_POSITION_MAX_COUNT)
+            - DM_MIT_POSITION_LIMIT_RAD
+        )
         if calibration.drive_mode:
             endpoints = endpoints[::-1]
         if overwrite or self.config.gripper_closed_rad is None:
