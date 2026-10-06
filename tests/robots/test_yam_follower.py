@@ -27,7 +27,7 @@ from lerobot.robots.yam_follower import (
     YamFollowerConfig,
     yam_follower as robot_module,
 )
-from lerobot.robots.yam_follower.config_yam_follower import MOTOR_NAMES, YAM_FEATURE_NAMES
+from lerobot.robots.yam_follower.config_yam_follower import JOINT_LIMITS, MOTOR_NAMES, YAM_FEATURE_NAMES
 
 
 @pytest.fixture
@@ -74,9 +74,22 @@ def test_units_order_and_gripper_polarity(robot, opened):
     robot.config.joint_signs[0] = -1
     robot.config.joint_offsets_rad[0] = 0.2
     feedback = {name: SimpleNamespace(pos=value) for name, value in zip(MOTOR_NAMES, raw, strict=True)}
-    decoded = robot._decode_positions(feedback)
+    decoded = robot_module.motor_to_joint(
+        np.asarray([feedback[name].pos for name in MOTOR_NAMES]), robot.config
+    )
     np.testing.assert_allclose(decoded, [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, 0.5])
-    np.testing.assert_allclose(robot._encode_positions(decoded), raw)
+    np.testing.assert_allclose(robot_module.joint_to_motor(decoded, robot.config), raw)
+
+
+def test_position_validation_and_clipping_are_pure():
+    values = np.array([JOINT_LIMITS[0][0] - 0.02, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5])
+    robot_module.validate_positions(values, joint_tolerance_rad=0.03)
+    clipped = robot_module.clip_to_limits(values)
+    assert values[0] == JOINT_LIMITS[0][0] - 0.02
+    assert clipped[0] == JOINT_LIMITS[0][0]
+    assert clipped[6] == values[6]
+    with pytest.raises(ValueError):
+        robot_module.validate_positions(values, joint_tolerance_rad=0.0)
 
 
 def test_motorbridge_mapping_and_mit_radians(robot, monkeypatch):

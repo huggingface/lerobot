@@ -41,7 +41,7 @@ from lerobot.utils.import_utils import (
 )
 
 from ..robot import Robot
-from .config_yam_follower import JOINT_LIMITS, MOTOR_NAMES, YAM_FEATURE_NAMES, YamFollowerConfig
+from .config_yam_follower import JOINT_LIMITS, MOTOR_NAMES, YAM_FEATURE_NAMES, YamArmConfig, YamFollowerConfig
 
 if TYPE_CHECKING or _motorbridge_available:
     from motorbridge import Controller, Mode
@@ -58,6 +58,42 @@ _MODEL_ARM_JOINTS = tuple(f"joint{i}" for i in range(1, 7))
 _MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
 _MODEL_GRIPPER_STROKE_M = 0.0475
 _GRAVITY_MODEL_PATH = Path(__file__).parent / "assets/yam_linear.xml"
+
+
+def motor_to_joint(raw: np.ndarray, config: YamArmConfig) -> np.ndarray:
+    closed, opened = config.gripper_closed_rad, config.gripper_open_rad
+    if closed is None or opened is None:
+        raise ValueError("Measure and configure gripper_closed_rad and gripper_open_rad before connecting")
+    if not np.isfinite(raw).all():
+        raise ConnectionError("Non-finite YAM feedback")
+    joints = raw[:6] * np.asarray(config.joint_signs) + np.asarray(config.joint_offsets_rad)
+    gripper = (raw[6] - closed) / (opened - closed)
+    if not -0.05 <= gripper <= 1.05:
+        raise ValueError("Gripper feedback is outside the calibrated stroke; check endpoints")
+    return np.r_[joints, np.clip(gripper, 0, 1)]
+
+
+def joint_to_motor(positions: np.ndarray, config: YamArmConfig) -> np.ndarray:
+    closed, opened = config.gripper_closed_rad, config.gripper_open_rad
+    if closed is None or opened is None:
+        raise ValueError("Missing gripper calibration")
+    raw = (positions[:6] - np.asarray(config.joint_offsets_rad)) / np.asarray(config.joint_signs)
+    return np.r_[raw, closed + float(positions[6]) * (opened - closed)]
+
+
+def validate_positions(values: np.ndarray, *, joint_tolerance_rad: float) -> None:
+    if values.shape != (7,) or not np.isfinite(values).all():
+        raise ValueError("YAM requires six finite joint radians and one normalized gripper position")
+    for i, (value, (lower, upper)) in enumerate(zip(values, (*JOINT_LIMITS, (0, 1)), strict=True)):
+        tolerance = joint_tolerance_rad if i < 6 else 0.0
+        if not lower - tolerance <= value <= upper + tolerance:
+            raise ValueError(f"YAM joint/gripper {i} target {value} outside [{lower}, {upper}]")
+
+
+def clip_to_limits(values: np.ndarray) -> np.ndarray:
+    clipped = values.copy()
+    clipped[:6] = np.clip(clipped[:6], *np.asarray(JOINT_LIMITS).T)
+    return clipped
 
 
 class _ControlGC:
@@ -137,38 +173,98 @@ class YamFollower(Robot):
     def is_calibrated(self) -> bool:
         return self.config.gripper_closed_rad is not None and self.config.gripper_open_rad is not None
 
-    def _decode_positions(self, states: dict[str, Any]) -> np.ndarray:
-        cfg = self.config
-        closed, opened = cfg.gripper_closed_rad, cfg.gripper_open_rad
-        if closed is None or opened is None:
-            raise ValueError(
-                "Measure and configure gripper_closed_rad and gripper_open_rad before connecting"
+    @check_if_already_connected
+    def connect(self, calibrate: bool = True) -> None:
+        try:
+            self._prepare_connect(calibrate)
+            if calibrate:
+                self._configure_control()
+                self._enable_motors()
+                self._start_servo()
+            self._connected = True
+        except BaseException:
+            self._close()
+            raise
+
+    @check_if_not_connected
+    def calibrate(self) -> None:
+        """Measure the gripper stops without enabling torque or resetting joint zeros."""
+        if not self._calibration_session:
+            raise RuntimeError("Reconnect with calibrate=False before measuring gripper endpoints")
+        measurements: dict[str, float] = {}
+        logger.info("Support the arm. Move only the gripper gently by hand; stop if it resists.")
+        for endpoint in ("closed", "open"):
+            input(f"Place the gripper fully {endpoint}, release it, then press Enter: ")
+            samples = []
+            for _ in range(10):
+                samples.append(self._read_feedback(wait=True)["gripper"].pos)
+                time.sleep(0.02)
+            if not np.isfinite(samples).all() or np.ptp(samples) > 0.03:
+                raise ValueError("Gripper moved or returned invalid feedback; calibration was not saved")
+            measurements[endpoint] = float(np.median(samples))
+        closed, opened = measurements["closed"], measurements["open"]
+        if not (abs(closed) <= 12.5 and abs(opened) <= 12.5 and 0.5 < abs(opened - closed) < 10):
+            raise ValueError("Implausible gripper stroke; calibration was not saved")
+        counts = [round((value + 12.5) * 65535 / 25.0) for value in (closed, opened)]
+        previous = self.calibration
+        self.calibration = {
+            "gripper": MotorCalibration(
+                id=7,
+                drive_mode=int(opened < closed),
+                homing_offset=0,
+                range_min=min(counts),
+                range_max=max(counts),
             )
-        raw = np.asarray([states[name].pos for name in MOTOR_NAMES])
-        if not np.isfinite(raw).all():
-            raise ConnectionError("Non-finite YAM feedback")
-        joints = raw[:6] * np.asarray(cfg.joint_signs) + np.asarray(cfg.joint_offsets_rad)
-        gripper = (raw[6] - closed) / (opened - closed)
-        if not -0.05 <= gripper <= 1.05:
-            raise ValueError("Gripper feedback is outside the calibrated stroke; check endpoints")
-        return np.r_[joints, np.clip(gripper, 0, 1)]
+        }
+        try:
+            self._save_calibration()
+        except Exception:
+            self.calibration = previous
+            raise
+        self._apply_gripper_calibration(overwrite=True)
+        logger.info("Saved gripper endpoints to %s. Joint zeros were not changed.", self.calibration_fpath)
 
-    def _encode_positions(self, positions: np.ndarray) -> np.ndarray:
-        cfg = self.config
-        closed, opened = cfg.gripper_closed_rad, cfg.gripper_open_rad
-        if closed is None or opened is None:
-            raise ValueError("Missing gripper calibration")
-        raw = (positions[:6] - np.asarray(cfg.joint_offsets_rad)) / np.asarray(cfg.joint_signs)
-        return np.r_[raw, closed + float(positions[6]) * (opened - closed)]
+    def configure(self) -> None:
+        self._configure_control()
+        self._enable_motors()
 
-    @staticmethod
-    def _validate_target(values: np.ndarray, *, feedback: bool = False) -> None:
-        if values.shape != (7,) or not np.isfinite(values).all():
-            raise ValueError("YAM requires six finite joint radians and one normalized gripper position")
-        for i, (value, (lower, upper)) in enumerate(zip(values, (*JOINT_LIMITS, (0, 1)), strict=True)):
-            tolerance = 0.03 if feedback and i < 6 else 0.0
-            if not lower - tolerance <= value <= upper + tolerance:
-                raise ValueError(f"YAM joint/gripper {i} target {value} outside [{lower}, {upper}]")
+    @check_if_not_connected
+    def get_observation(self) -> RobotObservation:
+        if self._calibration_session:
+            raise RuntimeError("Reconnect after calibration before reading policy observations")
+        with self._lock:
+            self._check_feedback()
+            result: dict[str, Any] = {
+                f"{name}.pos": float(self.position[i]) for i, name in enumerate(MOTOR_NAMES)
+            }
+        for name, camera in self.cameras.items():
+            result[name] = camera.read_latest(max_age_ms=200)
+        return result
+
+    @check_if_not_connected
+    def send_action(self, action: RobotAction) -> RobotAction:
+        if self.config.read_only or self._calibration_session:
+            raise RuntimeError("YAM read-only/calibration connection forbids motor commands")
+        target = self._action_target(action)
+        with self._lock:
+            self._check_feedback()
+            self.target = target
+            self.commanded_at = time.monotonic()
+            self.command_timed_out = False
+        return {f"{name}.pos": float(target[i]) for i, name in enumerate(MOTOR_NAMES)}
+
+    @check_if_not_connected
+    def disconnect(self) -> None:
+        self._close()
+
+    def _action_target(self, action: RobotAction) -> np.ndarray:
+        if set(action) != set(YAM_FEATURE_NAMES):
+            raise ValueError(
+                "YAM requires all seven absolute joint/gripper targets; Cartesian actions need IK"
+            )
+        target = np.asarray([action[f"{name}.pos"] for name in MOTOR_NAMES], dtype=float)
+        validate_positions(target, joint_tolerance_rad=0.03)
+        return clip_to_limits(target)
 
     def _gravity_torque(self, positions: np.ndarray) -> np.ndarray:
         model = self.gravity_model
@@ -290,8 +386,8 @@ class YamFollower(Robot):
         states = self._read_feedback(wait=True)
         if not calibrate:
             return
-        position = self._decode_positions(states)
-        self._validate_target(position, feedback=True)
+        position = motor_to_joint(np.asarray([states[name].pos for name in MOTOR_NAMES]), self.config)
+        validate_positions(position, joint_tolerance_rad=0.03)
         if not self.config.read_only:
             if self.config.initial_position_rad is not None and np.any(
                 np.abs(position[:6] - self.config.initial_position_rad) > self.config.initial_tolerance_rad
@@ -312,15 +408,16 @@ class YamFollower(Robot):
         self.bus.disable_all()
         for motor in self.motors.values():
             motor.ensure_mode(Mode.MIT)
-        position = self._decode_positions(self._read_feedback(wait=True))
-        self._validate_target(position, feedback=True)
+        states = self._read_feedback(wait=True)
+        position = motor_to_joint(np.asarray([states[name].pos for name in MOTOR_NAMES]), self.config)
+        validate_positions(position, joint_tolerance_rad=0.03)
         self._seed_control_state(position)
 
     def _enable_motors(self) -> None:
         if self.config.read_only or self._calibration_session:
             return
         assert self.bus is not None
-        for name, value in zip(MOTOR_NAMES, self._encode_positions(self.position), strict=True):
+        for name, value in zip(MOTOR_NAMES, joint_to_motor(self.position, self.config), strict=True):
             self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
         self.enabled = True
         self.bus.enable_all()
@@ -328,23 +425,6 @@ class YamFollower(Robot):
     def _start_servo(self) -> None:
         self._thread = threading.Thread(target=self._run, name=f"{self.id}-servo", daemon=True)
         self._thread.start()
-
-    @check_if_already_connected
-    def connect(self, calibrate: bool = True) -> None:
-        try:
-            self._prepare_connect(calibrate)
-            if calibrate:
-                self._configure_control()
-                self._enable_motors()
-                self._start_servo()
-            self._connected = True
-        except BaseException:
-            self._close()
-            raise
-
-    def configure(self) -> None:
-        self._configure_control()
-        self._enable_motors()
 
     def _command_packet(self, position: np.ndarray, dt: float) -> dict[str, tuple[float, ...]]:
         cfg = self.config
@@ -356,8 +436,8 @@ class YamFollower(Robot):
             position[:6] + cfg.max_tracking_error_rad,
         )
         self.command[:6] = np.clip(self.command[:6], *np.asarray(JOINT_LIMITS).T)
-        raw_goal = self._encode_positions(self.command)
-        raw_position = self._encode_positions(position)
+        raw_goal = joint_to_motor(self.command, cfg)
+        raw_position = joint_to_motor(position, cfg)
         gripper_error_rad = cfg.gripper_torque_limit / cfg.gripper_kp
         raw_goal[6] = np.clip(
             raw_goal[6], raw_position[6] - gripper_error_rad, raw_position[6] + gripper_error_rad
@@ -378,8 +458,9 @@ class YamFollower(Robot):
             while not self._stop.is_set():
                 started = time.monotonic()
                 max_cycle_gap = max(max_cycle_gap, started - previous)
-                position = self._decode_positions(self._read_feedback(wait=True))
-                self._validate_target(position, feedback=True)
+                states = self._read_feedback(wait=True)
+                position = motor_to_joint(np.asarray([states[name].pos for name in MOTOR_NAMES]), self.config)
+                validate_positions(position, joint_tolerance_rad=0.03)
                 with self._lock:
                     self.position = position
                     self.updated_at = time.monotonic()
@@ -431,41 +512,6 @@ class YamFollower(Robot):
             self._stop.set()
             raise ConnectionError("YAM servo feedback is stale; reconnect before commanding motion")
 
-    @check_if_not_connected
-    def get_observation(self) -> RobotObservation:
-        if self._calibration_session:
-            raise RuntimeError("Reconnect after calibration before reading policy observations")
-        with self._lock:
-            self._check_feedback()
-            result: dict[str, Any] = {
-                f"{name}.pos": float(self.position[i]) for i, name in enumerate(MOTOR_NAMES)
-            }
-        for name, camera in self.cameras.items():
-            result[name] = camera.read_latest(max_age_ms=200)
-        return result
-
-    def _action_target(self, action: RobotAction) -> np.ndarray:
-        if set(action) != set(YAM_FEATURE_NAMES):
-            raise ValueError(
-                "YAM requires all seven absolute joint/gripper targets; Cartesian actions need IK"
-            )
-        target = np.asarray([action[f"{name}.pos"] for name in MOTOR_NAMES], dtype=float)
-        self._validate_target(target, feedback=True)
-        target[:6] = np.clip(target[:6], *np.asarray(JOINT_LIMITS).T)
-        return target
-
-    @check_if_not_connected
-    def send_action(self, action: RobotAction) -> RobotAction:
-        if self.config.read_only or self._calibration_session:
-            raise RuntimeError("YAM read-only/calibration connection forbids motor commands")
-        target = self._action_target(action)
-        with self._lock:
-            self._check_feedback()
-            self.target = target
-            self.commanded_at = time.monotonic()
-            self.command_timed_out = False
-        return {f"{name}.pos": float(target[i]) for i, name in enumerate(MOTOR_NAMES)}
-
     def _close_hardware(self) -> None:
         self._disable_motors()
         for name, motor in self.motors.items():
@@ -511,10 +557,6 @@ class YamFollower(Robot):
                 _ControlGC.release()
                 self._gc_acquired = False
 
-    @check_if_not_connected
-    def disconnect(self) -> None:
-        self._close()
-
     def _apply_gripper_calibration(self, *, overwrite: bool = False) -> None:
         calibration = self.calibration.get("gripper")
         if calibration is None:
@@ -542,41 +584,3 @@ class YamFollower(Robot):
             temporary_path.replace(path)
         finally:
             temporary_path.unlink(missing_ok=True)
-
-    @check_if_not_connected
-    def calibrate(self) -> None:
-        """Measure the gripper stops without enabling torque or resetting joint zeros."""
-        if not self._calibration_session:
-            raise RuntimeError("Reconnect with calibrate=False before measuring gripper endpoints")
-        measurements: dict[str, float] = {}
-        logger.info("Support the arm. Move only the gripper gently by hand; stop if it resists.")
-        for endpoint in ("closed", "open"):
-            input(f"Place the gripper fully {endpoint}, release it, then press Enter: ")
-            samples = []
-            for _ in range(10):
-                samples.append(self._read_feedback(wait=True)["gripper"].pos)
-                time.sleep(0.02)
-            if not np.isfinite(samples).all() or np.ptp(samples) > 0.03:
-                raise ValueError("Gripper moved or returned invalid feedback; calibration was not saved")
-            measurements[endpoint] = float(np.median(samples))
-        closed, opened = measurements["closed"], measurements["open"]
-        if not (abs(closed) <= 12.5 and abs(opened) <= 12.5 and 0.5 < abs(opened - closed) < 10):
-            raise ValueError("Implausible gripper stroke; calibration was not saved")
-        counts = [round((value + 12.5) * 65535 / 25.0) for value in (closed, opened)]
-        previous = self.calibration
-        self.calibration = {
-            "gripper": MotorCalibration(
-                id=7,
-                drive_mode=int(opened < closed),
-                homing_offset=0,
-                range_min=min(counts),
-                range_max=max(counts),
-            )
-        }
-        try:
-            self._save_calibration()
-        except Exception:
-            self.calibration = previous
-            raise
-        self._apply_gripper_calibration(overwrite=True)
-        logger.info("Saved gripper endpoints to %s. Joint zeros were not changed.", self.calibration_fpath)
