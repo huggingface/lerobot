@@ -21,6 +21,7 @@ import logging
 import math
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any
@@ -316,33 +317,166 @@ class _ControlGC:
                 cls._owns_freeze = False
 
 
-class YamFollower(Robot):
-    """A YAM arm exposing joint radians and a normalized gripper position."""
+def read_joint_positions(bus: _YamBus, config: YamArmConfig) -> np.ndarray:
+    """Read fresh feedback and return validated joint radians and a normalized gripper position."""
+    position = motor_to_joint(bus.read_positions(), config)
+    validate_positions(position, joint_tolerance_rad=_LIMIT_TOLERANCE_RAD)
+    return position
 
-    config_class = YamFollowerConfig
-    name = "yam_follower"
 
-    def __init__(self, config: YamFollowerConfig) -> None:
-        require_package("motorbridge", extra="yam")
-        require_package("python-can", extra="yam", import_name="can")
-        super().__init__(config)
+class _Servo:
+    """Background servo loop of one arm.
+
+    Each cycle reads feedback, holds the measured pose once actions stop arriving, advances the
+    command with ``control_step`` and sends it. Any error stops the loop and disables torque;
+    the next ``latest`` or ``set_target`` call then raises.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        bus: _YamBus,
+        config: YamFollowerConfig,
+        gravity: Callable[[np.ndarray], np.ndarray],
+        stop_event: threading.Event,
+    ) -> None:
+        self.name = name
+        self.bus = bus
         self.config = config
-        self.cameras = make_cameras_from_configs(config.cameras)
-        self.bus = _YamBus(config.port, config.feedback_timeout_s, config.expected_adapter_serial)
+        self.gravity = gravity
+        # Shared between both arms of a bimanual robot so a fault on one stops both.
+        self.stop_event = stop_event
         self.position = np.zeros(7)
         self.target = np.zeros(7)
         self.command = np.zeros(7)
         self.updated_at = 0.0
         self.commanded_at = 0.0
         self.command_timed_out = False
-        self.gravity_model: GravityCompensation | None = None
+        self.failure: Exception | None = None
         self._lock = threading.Lock()
-        self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._failure: Exception | None = None
+        self._gc_acquired = False
+
+    def seed(self, position: np.ndarray) -> None:
+        """Start from a measured pose: hold it until the first target arrives."""
+        self.position = position
+        self.target = position.copy()
+        self.command = position.copy()
+        self.updated_at = self.commanded_at = time.monotonic()
+        self.command_timed_out = False
+
+    def start(self) -> None:
+        self.failure = None
+        _ControlGC.acquire()
+        self._gc_acquired = True
+        self._thread = threading.Thread(target=self._run, name=f"{self.name}-servo", daemon=True)
+        self._thread.start()
+
+    def stop(self, timeout_s: float = 2.0) -> None:
+        self.stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=timeout_s)
+            if self._thread.is_alive():
+                raise RuntimeError("YAM servo did not stop; use the hardware e-stop")
+            self._thread = None
+        if self._gc_acquired:
+            _ControlGC.release()
+            self._gc_acquired = False
+
+    def latest(self) -> np.ndarray:
+        """Return the last measured pose, raising if the servo stopped or its feedback is stale."""
+        with self._lock:
+            self._check_healthy()
+            return self.position.copy()
+
+    def set_target(self, target: np.ndarray) -> None:
+        with self._lock:
+            self._check_healthy()
+            self.target = target
+            self.commanded_at = time.monotonic()
+            self.command_timed_out = False
+
+    def check_healthy(self) -> None:
+        with self._lock:
+            self._check_healthy()
+
+    def _check_healthy(self) -> None:
+        if self.failure is not None or self.stop_event.is_set():
+            raise ConnectionError("YAM servo stopped after a motor/feedback error") from self.failure
+        if time.monotonic() - self.updated_at > self.config.feedback_timeout_s:
+            self.stop_event.set()
+            raise ConnectionError("YAM servo feedback is stale; reconnect before commanding motion")
+
+    def _run(self) -> None:
+        previous = time.monotonic()
+        max_cycle_gap = 0.0
+        try:
+            while not self.stop_event.is_set():
+                started = time.monotonic()
+                max_cycle_gap = max(max_cycle_gap, started - previous)
+                position = read_joint_positions(self.bus, self.config)
+                with self._lock:
+                    self.position = position
+                    self.updated_at = time.monotonic()
+                    if (
+                        started - self.commanded_at > self.config.command_timeout_s
+                        and not self.command_timed_out
+                    ):
+                        self.target = position.copy()
+                        self.command = position.copy()
+                        self.command_timed_out = True
+                    packet: dict[str, MitCommand] = {}
+                    if self.bus.enabled:
+                        self.command, packet = control_step(
+                            self.config,
+                            position,
+                            self.target,
+                            self.command,
+                            self.gravity(position),
+                            min(started - previous, 0.05),
+                        )
+                for name, command in packet.items():
+                    if self.stop_event.is_set():
+                        break
+                    self.bus.send_mit(name, command)
+                previous = started
+                self.stop_event.wait(max(0, 1 / self.config.control_frequency - (time.monotonic() - started)))
+        except Exception as exc:
+            exc.add_note(
+                f"YAM maximum servo cycle gap: {max_cycle_gap * 1000:.1f} ms; "
+                f"current cycle elapsed: {(time.monotonic() - started) * 1000:.1f} ms"
+            )
+            self.failure = exc
+            self.stop_event.set()
+        finally:
+            self.bus.disable()
+            if self.failure is not None:
+                logger.error(
+                    "YAM servo stopped: %s; %s",
+                    self.failure,
+                    "; ".join(getattr(self.failure, "__notes__", [])),
+                )
+
+
+class YamFollower(Robot):
+    """A YAM arm exposing joint radians and a normalized gripper position."""
+
+    config_class = YamFollowerConfig
+    name = "yam_follower"
+
+    def __init__(self, config: YamFollowerConfig, stop_event: threading.Event | None = None) -> None:
+        require_package("motorbridge", extra="yam")
+        require_package("python-can", extra="yam", import_name="can")
+        super().__init__(config)
+        self.config = config
+        self.cameras = make_cameras_from_configs(config.cameras)
+        self.bus = _YamBus(config.port, config.feedback_timeout_s, config.expected_adapter_serial)
+        self.gravity_model: GravityCompensation | None = None
+        self.servo = _Servo(
+            str(self.id), self.bus, config, self._gravity_torque, stop_event or threading.Event()
+        )
         self._connected = False
         self._calibration_session = False
-        self._gc_acquired = False
         self._apply_gripper_calibration()
 
     @property
@@ -371,7 +505,7 @@ class YamFollower(Robot):
             if calibrate:
                 self._configure_control()
                 self._enable_motors()
-                self._start_servo()
+                self.servo.start()
             self._connected = True
         except BaseException:
             self._close()
@@ -423,11 +557,8 @@ class YamFollower(Robot):
     def get_observation(self) -> RobotObservation:
         if self._calibration_session:
             raise RuntimeError("Reconnect after calibration before reading policy observations")
-        with self._lock:
-            self._check_feedback()
-            result: dict[str, Any] = {
-                f"{name}.pos": float(self.position[i]) for i, name in enumerate(MOTOR_NAMES)
-            }
+        position = self.servo.latest()
+        result: dict[str, Any] = {f"{name}.pos": float(position[i]) for i, name in enumerate(MOTOR_NAMES)}
         for name, camera in self.cameras.items():
             result[name] = camera.read_latest(max_age_ms=200)
         return result
@@ -437,11 +568,7 @@ class YamFollower(Robot):
         if self.config.read_only or self._calibration_session:
             raise RuntimeError("YAM read-only/calibration connection forbids motor commands")
         target = self._action_target(action)
-        with self._lock:
-            self._check_feedback()
-            self.target = target
-            self.commanded_at = time.monotonic()
-            self.command_timed_out = False
+        self.servo.set_target(target)
         return {f"{name}.pos": float(target[i]) for i, name in enumerate(MOTOR_NAMES)}
 
     @check_if_not_connected
@@ -470,35 +597,20 @@ class YamFollower(Robot):
             _GRAVITY_MODEL_PATH, _MODEL_ARM_JOINTS, base_frame="base", mjcf=True
         )
 
-    def _read_position(self) -> np.ndarray:
-        position = motor_to_joint(self.bus.read_positions(), self.config)
-        validate_positions(position, joint_tolerance_rad=_LIMIT_TOLERANCE_RAD)
-        return position
-
-    def _seed_control_state(self, position: np.ndarray) -> None:
-        self.position = position
-        self.target = position.copy()
-        self.command = position.copy()
-        self.updated_at = self.commanded_at = time.monotonic()
-        self.command_timed_out = False
-
     def _prepare_connect(self, calibrate: bool) -> None:
         self._calibration_session = not calibrate
-        self._failure = None
-        self._stop.clear()
+        self.servo.stop_event.clear()
         if calibrate and not self.is_calibrated:
             raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
         if calibrate:
             self._load_control_model()
-            _ControlGC.acquire()
-            self._gc_acquired = True
         self.bus.open()
         if not calibrate:
             self.bus.read_positions()  # every motor must answer before measuring the gripper
             return
         for camera in self.cameras.values():
             camera.connect()
-        position = self._read_position()
+        position = read_joint_positions(self.bus, self.config)
         if not self.config.read_only:
             if self.config.initial_position_rad is not None and np.any(
                 np.abs(position[:6] - self.config.initial_position_rad) > self.config.initial_tolerance_rad
@@ -510,87 +622,21 @@ class YamFollower(Robot):
                 > self.config.initial_gripper_tolerance
             ):
                 raise ValueError("YAM gripper is outside the initial pose tolerance")
-        self._seed_control_state(position)
+        self.servo.seed(position)
 
     def _configure_control(self) -> None:
         if self.config.read_only or self._calibration_session:
             return
         self.bus.set_mit_mode()
-        self._seed_control_state(self._read_position())
+        self.servo.seed(read_joint_positions(self.bus, self.config))
 
     def _enable_motors(self) -> None:
         if self.config.read_only or self._calibration_session:
             return
-        self.bus.enable(joint_to_motor(self.position, self.config))
-
-    def _start_servo(self) -> None:
-        self._thread = threading.Thread(target=self._run, name=f"{self.id}-servo", daemon=True)
-        self._thread.start()
-
-    def _run(self) -> None:
-        previous = time.monotonic()
-        max_cycle_gap = 0.0
-        try:
-            while not self._stop.is_set():
-                started = time.monotonic()
-                max_cycle_gap = max(max_cycle_gap, started - previous)
-                position = self._read_position()
-                with self._lock:
-                    self.position = position
-                    self.updated_at = time.monotonic()
-                    if (
-                        started - self.commanded_at > self.config.command_timeout_s
-                        and not self.command_timed_out
-                    ):
-                        self.target = position.copy()
-                        self.command = position.copy()
-                        self.command_timed_out = True
-                    packet: dict[str, MitCommand] = {}
-                    if self.bus.enabled:
-                        self.command, packet = control_step(
-                            self.config,
-                            position,
-                            self.target,
-                            self.command,
-                            self._gravity_torque(position),
-                            min(started - previous, 0.05),
-                        )
-                for name, command in packet.items():
-                    if self._stop.is_set():
-                        break
-                    self.bus.send_mit(name, command)
-                previous = started
-                self._stop.wait(max(0, 1 / self.config.control_frequency - (time.monotonic() - started)))
-        except Exception as exc:
-            exc.add_note(
-                f"YAM maximum servo cycle gap: {max_cycle_gap * 1000:.1f} ms; "
-                f"current cycle elapsed: {(time.monotonic() - started) * 1000:.1f} ms"
-            )
-            self._failure = exc
-            self._stop.set()
-        finally:
-            self.bus.disable()
-            if self._failure is not None:
-                logger.error(
-                    "YAM servo stopped: %s; %s",
-                    self._failure,
-                    "; ".join(getattr(self._failure, "__notes__", [])),
-                )
-
-    def _check_feedback(self) -> None:
-        if self._failure is not None or self._stop.is_set():
-            raise ConnectionError("YAM servo stopped after a motor/feedback error") from self._failure
-        if time.monotonic() - self.updated_at > self.config.feedback_timeout_s:
-            self._stop.set()
-            raise ConnectionError("YAM servo feedback is stale; reconnect before commanding motion")
+        self.bus.enable(joint_to_motor(self.servo.position, self.config))
 
     def _close(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=2)
-            if self._thread.is_alive():
-                raise RuntimeError("YAM servo did not stop; use the hardware e-stop")
-            self._thread = None
+        self.servo.stop()
         try:
             self.bus.close()
         except Exception:
@@ -602,9 +648,6 @@ class YamFollower(Robot):
         finally:
             self._connected = False
             self._calibration_session = False
-            if self._gc_acquired:
-                _ControlGC.release()
-                self._gc_acquired = False
 
     def _apply_gripper_calibration(self, *, overwrite: bool = False) -> None:
         calibration = self.calibration.get("gripper")

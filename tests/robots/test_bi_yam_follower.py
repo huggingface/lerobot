@@ -50,12 +50,17 @@ def mock_bus():
     return bus
 
 
+def attach_bus(arm, bus):
+    arm.bus = arm.servo.bus = bus
+    return bus
+
+
 def mock_hardware(robot, monkeypatch):
     for arm in robot.arms.values():
-        arm.bus = mock_bus()
+        attach_bus(arm, mock_bus())
         monkeypatch.setattr(arm, "_configure_control", MagicMock())
         monkeypatch.setattr(arm, "_enable_motors", MagicMock())
-        monkeypatch.setattr(arm, "_start_servo", MagicMock())
+        monkeypatch.setattr(arm.servo, "start", MagicMock())
 
 
 def make_writable(robot):
@@ -68,14 +73,14 @@ def ready(robot):
     make_writable(robot)
     for arm in robot.arms.values():
         arm._connected = True
-        arm.updated_at = time.monotonic()
+        arm.servo.updated_at = time.monotonic()
     return dict.fromkeys(robot.action_features, 0.0)
 
 
 def test_bimanual_composes_single_arm_followers(robot):
     assert isinstance(robot.left_arm, YamFollower)
     assert isinstance(robot.right_arm, YamFollower)
-    assert robot.left_arm._stop is robot.right_arm._stop
+    assert robot.left_arm.servo.stop_event is robot.right_arm.servo.stop_event is robot._stop
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), 5.0])
@@ -84,7 +89,7 @@ def test_action_rejected_atomically(robot, bad):
     action["right_joint_0.pos"] = bad
     with pytest.raises(ValueError):
         robot.send_action(action)
-    assert all(np.all(arm.target == 0) for arm in robot.arms.values())
+    assert all(np.all(arm.servo.target == 0) for arm in robot.arms.values())
 
 
 def test_quantized_home_clamped_to_joint_limit(robot):
@@ -92,16 +97,16 @@ def test_quantized_home_clamped_to_joint_limit(robot):
     action["left_joint_1.pos"] = -0.00019074
     sent = robot.send_action(action)
     assert sent["left_joint_1.pos"] == 0
-    assert robot.left_arm.target[1] == 0
+    assert robot.left_arm.servo.target[1] == 0
 
 
 def test_stale_feedback_refuses_both_targets(robot):
     action = ready(robot)
-    robot.right_arm.updated_at -= 1
+    robot.right_arm.servo.updated_at -= 1
     with pytest.raises(ConnectionError, match="stale"):
         robot.send_action(action)
     assert robot._stop.is_set()
-    assert all(np.all(arm.target == 0) for arm in robot.arms.values())
+    assert all(np.all(arm.servo.target == 0) for arm in robot.arms.values())
 
 
 def test_readonly_rejects_actions(robot):
@@ -164,11 +169,11 @@ def test_both_arms_configure_before_either_is_enabled(robot, monkeypatch):
 
 def test_servo_error_stops_and_disables_both_arms(robot):
     for arm in robot.arms.values():
-        arm.bus = mock_bus()
+        attach_bus(arm, mock_bus())
     robot.left_arm.bus.read_positions.side_effect = ConnectionError("lost")
-    robot.left_arm._run()
-    robot.right_arm._run()
-    assert isinstance(robot.left_arm._failure, ConnectionError)
+    robot.left_arm.servo._run()
+    robot.right_arm.servo._run()
+    assert isinstance(robot.left_arm.servo.failure, ConnectionError)
     assert robot._stop.is_set()
     for arm in robot.arms.values():
         arm.bus.disable.assert_called_once()
