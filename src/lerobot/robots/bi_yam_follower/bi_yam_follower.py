@@ -25,6 +25,7 @@ from lerobot.cameras import CameraConfig
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.bimanual import BimanualMixin
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..robot import Robot
 from ..yam_follower import YamArmConfig, YamFollower, YamFollowerConfig
@@ -67,6 +68,7 @@ class BiYamFollower(BimanualMixin, Robot):
             control_frequency=self.config.control_frequency,
             feedback_timeout_s=self.config.feedback_timeout_s,
             command_timeout_s=self.config.command_timeout_s,
+            freeze_gc=self.config.freeze_gc,
             **values,
         )
 
@@ -88,6 +90,8 @@ class BiYamFollower(BimanualMixin, Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        if any(arm.is_connected for arm in self.arms.values()):
+            raise RuntimeError("Disconnect both YAM arms before reconnecting")
         if calibrate and not self.is_calibrated:
             raise ValueError("Run lerobot-calibrate with this robot.id to measure both gripper endpoints")
         self._stop.clear()
@@ -141,11 +145,14 @@ class BiYamFollower(BimanualMixin, Robot):
         sent = {side: arm.send_action(arm_actions[side]) for side, arm in self.arms.items()}
         return {f"{side}_{name}": value for side, values in sent.items() for name, value in values.items()}
 
-    @check_if_not_connected
     def disconnect(self) -> None:
+        if not any(arm.is_connected for arm in self.arms.values()):
+            raise DeviceNotConnectedError("BiYamFollower is not connected. Run `.connect()` first.")
         self._stop.set()
         first_error: BaseException | None = None
         for side, arm in self.arms.items():
+            if not arm.is_connected:
+                continue
             try:
                 arm.disconnect()
             except BaseException as exc:

@@ -36,6 +36,8 @@ JOINT_LIMITS = (
     (-1.5708, 1.5708),
     (-2.0944, 2.0944),
 )
+DM_MIT_POSITION_LIMIT_RAD = 12.5
+DM_MIT_POSITION_MAX_COUNT = 65535
 
 
 @dataclass
@@ -108,7 +110,7 @@ class YamArmConfig:
                     raise ValueError("initial_position_rad is outside YAM joint limits")
         ends = (self.gripper_closed_rad, self.gripper_open_rad)
         if any(x is not None for x in ends):
-            if any(x is None or not math.isfinite(x) or abs(x) > 12.5 for x in ends):
+            if any(x is None or not math.isfinite(x) or abs(x) > DM_MIT_POSITION_LIMIT_RAD for x in ends):
                 raise ValueError("Provide both finite raw gripper endpoints within motor limits")
             closed, opened = ends
             assert closed is not None and opened is not None
@@ -139,7 +141,7 @@ class YamFollowerConfig(RobotConfig, YamArmConfig):
         kd (`list`, *optional*): MIT damping gains of the six joints.
         gripper_kp (`float`, *optional*, defaults to 5.0): MIT position gain of the gripper.
         gripper_kd (`float`, *optional*, defaults to 0.005): MIT damping gain of the gripper.
-        gripper_torque_limit (`float`, *optional*, defaults to 0.5): Maximum gripper torque in Nm (at most 1), enforced by bounding the gripper position error.
+        gripper_torque_limit (`float`, *optional*, defaults to 0.5): Cap on the gripper's proportional MIT torque in Nm (at most 1); damping may add torque.
         max_joint_speed_rad_s (`float`, *optional*, defaults to 0.3): Fastest the commanded joint positions move toward a new target.
         max_gripper_speed_s (`float`, *optional*, defaults to 12.0): Fastest the commanded gripper opening moves, in full strokes per second.
         max_tracking_error_rad (`float`, *optional*, defaults to 0.15): Furthest a commanded joint may lead its measured position, which limits force when the arm is blocked or pushed.
@@ -148,10 +150,11 @@ class YamFollowerConfig(RobotConfig, YamArmConfig):
         cameras (`dict`, *optional*): Cameras read with each observation, keyed by name.
         read_only (`bool`, *optional*, defaults to `True`): Read feedback without ever enabling torque; `send_action` raises. Disable only after checking the CAN port, encoder frame and gripper calibration.
         control_frequency (`float`, *optional*, defaults to 100.0): Rate of the background servo loop in Hz, between 20 and 250.
-        feedback_timeout_s (`float`, *optional*, defaults to 0.2): Longest motor feedback may be missing before the servo stops and disables torque.
+        feedback_timeout_s (`float`, *optional*, defaults to 0.2): Maximum age of each motor reply. The foreground check allows two such intervals plus one servo period; long Python scheduling stalls can still stop the servo.
+        freeze_gc (`bool`, *optional*, defaults to `True`): Freeze existing cyclic-GC objects while the servo runs. This affects the whole Python process; disable it if the host application manages GC itself.
         command_timeout_s (`float`, *optional*, defaults to 1.0): When no action arrives for this long, the arm holds its current pose.
         id (`str | None`, *optional*): Name of this arm; it selects the calibration file.
-        calibration_dir (`pathlib.Path | None`, *optional*): Directory of calibration files. Calibration (`lerobot-calibrate`) measures only the gripper's closed and open stops and never changes the joint zeros.
+        calibration_dir (`pathlib.Path | None`, *optional*): Directory of calibration files. Gripper endpoints are stored as DM MIT position counts encoding raw radians; calibration never changes joint zeros.
     """
 
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
@@ -159,6 +162,7 @@ class YamFollowerConfig(RobotConfig, YamArmConfig):
     control_frequency: float = 100.0
     feedback_timeout_s: float = 0.2
     command_timeout_s: float = 1.0
+    freeze_gc: bool = True
 
     def __post_init__(self) -> None:
         RobotConfig.__post_init__(self)

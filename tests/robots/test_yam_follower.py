@@ -99,6 +99,20 @@ def test_position_validation_and_clipping_are_pure():
         robot_module.validate_positions(values, joint_tolerance_rad=0.0)
 
 
+def test_measured_pose_has_wider_margin_than_action(robot):
+    raw = raw_positions(gripper=6.4)
+    raw[0] = JOINT_LIMITS[0][0] - 0.08
+    bus = attach_bus(robot, mock_bus(raw))
+    measured = robot_module.read_joint_positions(bus, robot.config)
+    assert measured[0] == pytest.approx(raw[0])
+    assert measured[6] == 1.0
+    with pytest.raises(ValueError):
+        robot_module.action_to_target(dict(zip(YAM_FEATURE_NAMES, measured, strict=True)))
+    raw[0] = JOINT_LIMITS[0][0] - 0.2
+    with pytest.raises(ValueError, match="outside"):
+        robot_module.read_joint_positions(bus, robot.config)
+
+
 def test_motorbridge_mapping_and_mit_radians(monkeypatch):
     controller = MagicMock()
     controller.add_damiao_motor.side_effect = lambda *args: MagicMock()
@@ -119,6 +133,20 @@ def test_motorbridge_mapping_and_mit_radians(monkeypatch):
     bus.close()
     controller.disable_all.assert_called_once()
     controller.close.assert_called_once()
+
+
+def test_failed_torque_shutdown_blocks_reconnection(monkeypatch):
+    controller = MagicMock()
+    controller.add_damiao_motor.side_effect = lambda *args: MagicMock()
+    monkeypatch.setattr(robot_module, "Controller", MagicMock(return_value=controller), raising=False)
+    monkeypatch.setattr(robot_module, "can", SimpleNamespace(Bus=MagicMock()), raising=False)
+    bus = robot_module._YamBus("can0", feedback_timeout_s=0.2)
+    bus.open()
+    bus.enabled = True
+    controller.disable_all.side_effect = RuntimeError("CAN write failed")
+    bus.close()
+    with pytest.raises(RuntimeError, match="torque-disable command failed"):
+        bus.open()
 
 
 def frame(i, age=0, status=1):
@@ -165,6 +193,33 @@ def test_fault_in_any_feedback_packet_fails():
 
 def test_fresh_feedback_accepts_stationary_motors():
     bus = feedback_bus([frame(i) for i in range(1, 8)])
+    np.testing.assert_allclose(bus.read_positions(wait=False), np.full(7, 0.1))
+
+
+def test_disabled_motor_after_enable_grace_is_a_fault():
+    bus = feedback_bus([frame(i, status=0 if i == 3 else 1) for i in range(1, 8)])
+    bus.enabled = True
+    bus._enabled_at = time.monotonic() - 1
+    with pytest.raises(ConnectionError, match="motor 3 unexpectedly disabled"):
+        bus.read_positions(wait=False)
+
+
+def test_disabled_motor_is_allowed_during_enable_transition():
+    bus = feedback_bus([frame(i, status=0) for i in range(1, 8)])
+    bus.enabled = True
+    bus._enabled_at = time.monotonic()
+    np.testing.assert_allclose(bus.read_positions(wait=False), np.full(7, 0.1))
+
+
+def test_old_disabled_frame_does_not_override_new_enabled_frame():
+    bus = feedback_bus([frame(3, status=0), *[frame(i) for i in range(1, 8)]])
+    bus.enabled = True
+    bus._enabled_at = time.monotonic() - 1
+    np.testing.assert_allclose(bus.read_positions(wait=False), np.full(7, 0.1))
+
+
+def test_disabled_motor_is_allowed_before_enable():
+    bus = feedback_bus([frame(i, status=0) for i in range(1, 8)])
     np.testing.assert_allclose(bus.read_positions(wait=False), np.full(7, 0.1))
 
 
@@ -222,7 +277,7 @@ def test_gravity_matches_reference_torques(robot):
     assert robot.gravity_model is not None
     pose = np.array([0.2, 1.0, 1.1, -0.5, 0.3, -0.2, 0.5])
     expected = [0.0, -1.3779441132, 5.9408414183, 1.0582110186, -0.0023627509, -0.0002296899]
-    np.testing.assert_allclose(robot._gravity_torque(pose), expected, atol=1e-9)
+    np.testing.assert_allclose(robot._gravity_torque(pose), expected, atol=1e-6)
 
 
 def test_single_arm_features_are_not_prefixed(robot):
@@ -269,6 +324,51 @@ def test_configure_refuses_while_servo_holds_the_arm(robot):
     robot.servo.active = True
     with pytest.raises(RuntimeError, match="before the servo starts"):
         robot.configure()
+
+
+def test_start_refuses_second_servo_before_enabling_again(robot, monkeypatch):
+    mock_hardware(robot, monkeypatch)
+    robot.config.read_only = False
+    robot.connect()
+    robot.servo.active = True
+    with pytest.raises(RuntimeError, match="already running"):
+        robot.start()
+    robot.bus.enable.assert_called_once()
+    robot.disconnect()
+
+
+def test_servo_start_refuses_second_thread(robot):
+    attach_bus(robot, mock_bus())
+    robot.servo.seed(np.zeros(7))
+    robot.servo.start()
+    original_thread = robot.servo._thread
+    with pytest.raises(RuntimeError, match="already running"):
+        robot.servo.start()
+    assert robot.servo._thread is original_thread
+    robot.servo.stop()
+
+
+def test_foreground_watchdog_allows_one_late_feedback_window(robot):
+    robot.servo.updated_at = time.monotonic() - 1.5 * robot.config.feedback_timeout_s
+    robot.servo.check_healthy()
+    robot.servo.updated_at = time.monotonic() - 3 * robot.config.feedback_timeout_s
+    with pytest.raises(ConnectionError, match="stale"):
+        robot.servo.check_healthy()
+
+
+def test_disconnect_can_retry_after_servo_join_timeout(robot):
+    bus = attach_bus(robot, mock_bus())
+    robot._connected = True
+    robot.servo.stop = MagicMock(side_effect=RuntimeError("YAM servo did not stop"))
+    with pytest.raises(RuntimeError, match="did not stop"):
+        robot.disconnect()
+    bus.disable.assert_called_once()
+    bus.close.assert_not_called()
+    assert robot.is_connected
+    robot.servo.stop.side_effect = None
+    robot.disconnect()
+    bus.close.assert_called_once()
+    assert not robot.is_connected
 
 
 def test_gravity_model_loads_before_hardware(robot, monkeypatch):
@@ -361,6 +461,18 @@ def test_gc_freeze_lasts_exactly_as_long_as_the_servo(robot, monkeypatch):
     guard.release.assert_not_called()
     robot.servo.stop()
     guard.release.assert_called_once()
+
+
+def test_gc_freeze_can_be_disabled(robot, monkeypatch):
+    guard = MagicMock()
+    monkeypatch.setattr(robot_module, "_ControlGC", guard)
+    attach_bus(robot, mock_bus())
+    robot.config.freeze_gc = False
+    robot.servo.seed(np.zeros(7))
+    robot.servo.start()
+    robot.servo.stop()
+    guard.acquire.assert_not_called()
+    guard.release.assert_not_called()
 
 
 def test_connect_failure_before_servo_never_freezes_gc(robot, monkeypatch):

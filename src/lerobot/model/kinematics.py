@@ -177,6 +177,8 @@ class GravityCompensation:
         """
         require_package("placo", extra="placo-dep")
         _raise_if_placo_unusable()
+        if mjcf and not hasattr(getattr(placo, "Flags", None), "mjcf"):
+            raise ImportError("MJCF gravity models require placo>=0.9.15; install lerobot[yam]")
 
         self.robot = placo.RobotWrapper(str(model_path), placo.Flags.mjcf if mjcf else 0)
         self.joint_names = list(joint_names)
