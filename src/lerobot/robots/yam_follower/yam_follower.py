@@ -16,8 +16,6 @@
 
 """Single-arm YAM v1 with a gravity-compensated impedance loop."""
 
-from __future__ import annotations
-
 import gc
 import logging
 import math
@@ -31,12 +29,12 @@ import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.model.kinematics import GravityCompensation
 from lerobot.motors import MotorCalibration
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import (
     _can_available,
     _motorbridge_available,
-    _placo_available,
     require_package,
 )
 
@@ -48,9 +46,6 @@ if TYPE_CHECKING or _motorbridge_available:
 
 if TYPE_CHECKING or _can_available:
     import can
-
-if TYPE_CHECKING or _placo_available:
-    import placo
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +137,7 @@ class YamFollower(Robot):
         self.updated_at = 0.0
         self.commanded_at = 0.0
         self.command_timed_out = False
-        self.gravity_model: placo.RobotWrapper | None = None
+        self.gravity_model: GravityCompensation | None = None
         self.enabled = False
         self.last_feedback: dict[int, float] = {}
         self._lock = threading.Lock()
@@ -267,23 +262,17 @@ class YamFollower(Robot):
         return clip_to_limits(target)
 
     def _gravity_torque(self, positions: np.ndarray) -> np.ndarray:
-        model = self.gravity_model
-        if model is None:
+        if self.gravity_model is None:
             return np.zeros(6)
-        for name, position in zip(_MODEL_ARM_JOINTS, positions[:6], strict=True):
-            model.set_joint(name, float(position))
         opening = float(positions[6]) * _MODEL_GRIPPER_STROKE_M
-        for name in _MODEL_GRIPPER_JOINTS:
-            model.set_joint(name, opening)
-        model.update_kinematics()
-        torques = model.static_gravity_compensation_torques_dict("base")
-        return np.asarray([torques[name] for name in _MODEL_ARM_JOINTS])
+        return self.gravity_model.torques(positions[:6], dict.fromkeys(_MODEL_GRIPPER_JOINTS, opening))
 
     def _load_control_model(self) -> None:
         if self.config.read_only or not self.config.gravity_compensation or self.gravity_model is not None:
             return
-        require_package("placo", extra="yam")
-        self.gravity_model = placo.RobotWrapper(str(_GRAVITY_MODEL_PATH), placo.Flags.mjcf)
+        self.gravity_model = GravityCompensation(
+            _GRAVITY_MODEL_PATH, _MODEL_ARM_JOINTS, base_frame="base", mjcf=True
+        )
 
     def _verify_adapter(self) -> None:
         if self.config.expected_adapter_serial is None:
