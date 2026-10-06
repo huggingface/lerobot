@@ -391,10 +391,6 @@ class G05Config(PreTrainedConfig):
         self.joint_offsets = tuple(float(value) for value in self.joint_offsets)
         if len(self.joint_signs) != len(self.joint_offsets):
             raise ValueError("joint_signs and joint_offsets must have the same length.")
-        if self.joint_signs and len(self.joint_signs) != self.raw_state_dim:
-            raise ValueError("joint_signs must cover exactly the raw state dimensions.")
-        if self.joint_signs and len(self.joint_signs) != self.raw_action_dim:
-            raise ValueError("joint_signs must cover exactly the raw action dimensions.")
         if set(self.camera_sizes) != set(self.camera_keys):
             # New cameras on a packaged checkpoint keep its per-slot sizes (config-file/CLI
             # dict values merge instead of replacing, so the saved entries are still there).
@@ -518,8 +514,10 @@ class G05Config(PreTrainedConfig):
                 or not 0 <= min(mapping[key]) <= max(mapping[key]) < width
             ):
                 raise ValueError(f"G0.5 {key} slots must be distinct indices below policy_{key}_dim={width}.")
-        if self.joint_signs and len(self.joint_signs) != self.raw_state_dim:
-            raise ValueError("joint_signs must cover exactly the raw state dimensions.")
+        # Checked once the slots have sized the raw state/action, so signs given for a new robot
+        # are not compared against the checkpoint's own joint count.
+        if self.joint_signs and not len(self.joint_signs) == self.raw_state_dim == self.raw_action_dim:
+            raise ValueError("joint_signs must cover exactly the raw state and action dimensions.")
 
     def set_dataset_feature_metadata(self, features: dict[str, Any]) -> None:
         """Derive the slots of a robot without a named embodiment from the dataset's joint names."""
