@@ -20,6 +20,8 @@ from torch import Tensor
 
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from .action_codec_g05 import g05_codec_parts
+
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoTokenizer
 else:
@@ -92,15 +94,7 @@ class G05Tokenizer:
         architecture = at_config["model_arch"]
 
         self.action_tokens = [f"<action{index:04d}>" for index in range(int(architecture["codebook_size"]))]
-        parts = list(at_config["parts_meta"])
-        rule_patterns = tuple(at_config.get("rule_based_key_patterns") or ())
-        self.rule_parts = [name for name in parts if any(pattern in name for pattern in rule_patterns)]
-        self.neural_parts = [name for name in parts if name not in self.rule_parts]
-        self.group_tokens = [
-            f"<{part}_{residual}>"
-            for residual in range(int(architecture["n_codebooks"]))
-            for part in self.neural_parts
-        ] + [f"<{part}>" for part in self.rule_parts]
+        self.neural_parts, self.rule_parts, self.group_tokens = g05_codec_parts(at_config)
         self.tokenizer.add_tokens(self.action_tokens + self.group_tokens + ["<EOV>", "<state>"])
 
         self.pad_token_id = int(model_config["pad_token_id"])
