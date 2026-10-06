@@ -1,9 +1,10 @@
 # Motors
 
-`SerialMotorsBus` is the low-level interface to a chain of servos on a serial bus. Robots use it to read positions
-and write goal positions; you rarely touch it directly unless you are adding hardware. `FeetechMotorsBus` and
-`DynamixelMotorsBus` implement it. Control tables come from [rustypot](https://github.com/pollen-robotics/rustypot),
-which also owns the serial port.
+`SerialMotorsBus` is the low-level interface to a chain of Feetech or Dynamixel servos on a serial bus. Robots use it
+to read positions and write goal positions; you rarely touch it directly unless you are adding hardware. Each motor's
+model is looked up in [rustypot](https://github.com/pollen-robotics/rustypot), which holds the control tables and the
+facts that differ between families, and also owns the serial port. `FeetechMotorsBus` and `DynamixelMotorsBus` are
+deprecated aliases of it, kept for one release.
 
 See [Bring Your Own Hardware](../integrate_hardware) for adding a new bus, and
 [Updating Feetech Firmware](../feetech) and [Damiao Motors and CAN Bus](../damiao) for device-specific notes.
@@ -11,14 +12,6 @@ See [Bring Your Own Hardware](../integrate_hardware) for adding a new bus, and
 ## SerialMotorsBus
 
 [[autodoc]] lerobot.motors.motors_bus.SerialMotorsBus
-
-## FeetechMotorsBus
-
-[[autodoc]] lerobot.motors.feetech.FeetechMotorsBus
-
-## DynamixelMotorsBus
-
-[[autodoc]] lerobot.motors.dynamixel.DynamixelMotorsBus
 
 ## Motor
 
@@ -31,3 +24,7 @@ See [Bring Your Own Hardware](../integrate_hardware) for adding a new bus, and
 ## MotorNormMode
 
 [[autodoc]] lerobot.motors.MotorNormMode
+
+## DriveMode
+
+[[autodoc]] lerobot.motors.DriveMode

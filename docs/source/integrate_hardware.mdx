@@ -12,12 +12,7 @@ To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blo
 
 ## Choose your motors
 
-If you're using Feetech or Dynamixel motors, LeRobot provides built-in bus interfaces:
-
-- [`FeetechMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/feetech/feetech.py) – for controlling Feetech servos
-- [`DynamixelMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/dynamixel/dynamixel.py) – for controlling Dynamixel servos
-
-Please refer to the [`SerialMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py) abstract class to learn about its API.
+If you're using Feetech or Dynamixel motors, LeRobot provides a built-in bus interface, [`SerialMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py), which drives either family: each motor's model tells it which. Refer to it to learn about its API.
 For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/so_follower/so_follower.py)
 
 Use these if compatible. Otherwise, you'll need to find or write a Python interface (not covered in this tutorial):
@@ -33,11 +28,11 @@ For Feetech and Dynamixel, we currently support these servos:
 - Feetech SCS series: `scs0009`
 - Dynamixel X series (protocol 2.0): `xl330-m077`, `xl330-m288`, `xc330-t181`, `xc330-t288`, `xl430-w250`, `xl430-w250-2`, `xc430-w150`, `xm430-w350`, `xm540-w270`, `xh540-w150`
 
-A bus carries motors of one family, and models of that family can share it: STS/SMS and SCS servos on a Feetech bus, XL430 and XL330 on a Dynamixel one. Each motor is read and written through its own model's definition, byte order and sign encoding included.
+Models can share a bus, STS/SMS and SCS servos or XL430 and XL330: each motor is read and written through its own model's definition, byte order and sign encoding included. The differences between families come from the same definitions: which operating mode value means position control (`bus.set_operating_mode("position")`), whether the homing offset adds to the position or subtracts from it, which registers exist.
 
 If you are using Feetech or Dynamixel servos that are not in this list, add them to [rustypot](https://github.com/pollen-robotics/rustypot), which holds the control tables the buses read: a model sharing an existing control table only needs its model number registered, a new one needs a servo definition (see rustypot's `src/servo/README.md`).
 
-In the next sections, we'll use a `FeetechMotorsBus` as the motors interface for the examples. Replace it and adapt to your motors if necessary.
+In the next sections, the examples use Feetech motors. Change the models and adapt to your motors if necessary.
 
 ## Step 1: Subclass the `Robot` Interface
 
@@ -80,8 +75,7 @@ Here we'll create a simple 5-DoF robot with one camera. It could be a simple arm
 <!-- prettier-ignore-start -->
 ```python
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.motors import Motor, MotorNormMode
-from lerobot.motors.feetech import FeetechMotorsBus
+from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
 from lerobot.robots import Robot
 
 class MyCoolRobot(Robot):
@@ -90,7 +84,7 @@ class MyCoolRobot(Robot):
 
     def __init__(self, config: MyCoolRobotConfig):
         super().__init__(config)
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "joint_1": Motor(1, "sts3250", MotorNormMode.RANGE_M100_100),
@@ -249,7 +243,7 @@ It should implement the logic for calibration (if relevant) and update the `self
 def calibrate(self) -> None:
     self.bus.disable_torque()
     for motor in self.bus.motors:
-        self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        self.bus.set_operating_mode("position", motor)
 
     input(f"Move {self} to the middle of its range of motion and press ENTER....")
     homing_offsets = self.bus.set_half_turn_homings()
@@ -286,7 +280,7 @@ def configure(self) -> None:
     with self.bus.torque_disabled():
         self.bus.configure_motors()
         for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+            self.bus.set_operating_mode("position", motor)
             self.bus.write("P_Coefficient", motor, 16)
             self.bus.write("I_Coefficient", motor, 0)
             self.bus.write("D_Coefficient", motor, 32)
