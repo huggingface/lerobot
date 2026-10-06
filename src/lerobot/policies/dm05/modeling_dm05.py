@@ -51,8 +51,6 @@ def setup_compiled_suffix(config: Any, model: Any) -> bool:
     """Enable the compiled DM05 suffix path when the runtime supports it."""
     if not config.compile_model:
         return False
-    if not hasattr(model, "setup_compiled_suffix_layers"):
-        raise RuntimeError("DM05 core model does not support compiled suffix inference.")
     if not torch.cuda.is_available() or not str(config.device).startswith("cuda"):
         raise RuntimeError("DM05 compiled suffix inference requires CUDA.")
     torch.set_float32_matmul_precision("high")
@@ -178,20 +176,10 @@ def _resolve_processor_source(
     return str(Path(snapshot) / "dm05_processor")
 
 
-def _core_config_payload(model: Any) -> dict | None:
+def _core_config_payload(model: Any) -> dict:
     """Serialize the core HF config needed to reconstruct DM05."""
-    prepare_config_for_save = getattr(model, "prepare_config_for_save", None)
-    if callable(prepare_config_for_save):
-        prepare_config_for_save()
-    core_config = getattr(model, "config", None)
-    if core_config is None:
-        return None
-    to_dict = getattr(core_config, "to_dict", None)
-    payload = (
-        to_dict()
-        if callable(to_dict)
-        else {key: value for key, value in vars(core_config).items() if not key.startswith("_")}
-    )
+    model.prepare_config_for_save()
+    payload = model.config.to_dict()
     payload["_name_or_path"] = "."
     return payload
 
@@ -261,34 +249,17 @@ class DM05Policy(PreTrainedPolicy):
                 action_attn_implementation=config.action_attn_implementation,
             )
         config._validate_core_action_dim(getattr(self.model.config, "action_dim", None))
-        if config.use_liger_kernel and hasattr(self.model, "_apply_liger_kernel"):
+        if config.use_liger_kernel:
             # Disabled by default so environments without liger-kernel still load.
             self.model._apply_liger_kernel()
 
-        if hasattr(self.model, "enable_gradient_checkpointing"):
-            self.model.enable_gradient_checkpointing(
-                vlm_gradient_checkpointing=bool(config.vlm_gradient_checkpointing),
-                ae_gradient_checkpointing=bool(config.ae_gradient_checkpointing),
-                ae_layers=config.ae_gradient_checkpointing_layers,
-            )
-        elif (config.vlm_gradient_checkpointing or config.ae_gradient_checkpointing) and hasattr(
-            self.model, "gradient_checkpointing_enable"
-        ):
-            self.model.gradient_checkpointing_enable()
+        self.model.enable_gradient_checkpointing(
+            vlm_gradient_checkpointing=bool(config.vlm_gradient_checkpointing),
+            ae_gradient_checkpointing=bool(config.ae_gradient_checkpointing),
+            ae_layers=config.ae_gradient_checkpointing_layers,
+        )
         if config.freeze_vlm_embedding:
-            for path in (
-                ("model", "vlm", "model", "language_model", "embed_tokens"),
-                ("model", "language_model", "embed_tokens"),
-            ):
-                module = self.model
-                for attr in path:
-                    module = getattr(module, attr, None)
-                    if module is None:
-                        break
-                if module is not None and hasattr(module, "parameters"):
-                    for parameter in module.parameters():
-                        parameter.requires_grad = False
-                    break
+            self.model.freeze_vlm_embedding()
         config.core_config = _core_config_payload(self.model)
         self.model.to(config.device)
         self._compile_suffix_active = setup_compiled_suffix(self.config, self.model)
