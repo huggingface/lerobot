@@ -221,8 +221,9 @@ def make_flow_matching_inputs(
             ``euler_integrate``'s ``hard_prefix`` / ``hard_prefix_mask``.
 
     Returns:
-        A :class:`FlowMatchingInputs` triple. ``model_time`` is ``(batch,)`` without a prefix
-        and ``(batch, horizon)`` with one, since a prefix makes the timestep position-dependent.
+        ``(x_t, velocity_target, model_time)``: the noised actions fed to the network, the
+        regression target for the predicted velocity, and the timesteps fed to the network.
+        Shape: ``(batch,)`` without a prefix and ``(batch, horizon)`` with one
     """
     noise_at_one = convention is FlowConvention.NOISE_AT_ONE
 
