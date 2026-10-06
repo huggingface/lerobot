@@ -24,11 +24,7 @@ import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -53,7 +49,7 @@ class LeKiwi(Robot):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 # arm
@@ -150,7 +146,7 @@ class LeKiwi(Robot):
 
         self.bus.disable_torque(self.arm_motors)
         for name in self.arm_motors:
-            self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
+            self.bus.set_operating_mode("position", name)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings(self.arm_motors)
@@ -192,7 +188,7 @@ class LeKiwi(Robot):
         self.bus.disable_torque()
         self.bus.configure_motors()
         for name in self.arm_motors:
-            self.bus.write("Operating_Mode", name, OperatingMode.POSITION.value)
+            self.bus.set_operating_mode("position", name)
             # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
             self.bus.write("P_Coefficient", name, 16)
             # Set I_Coefficient and D_Coefficient to default value 0 and 32
@@ -200,7 +196,7 @@ class LeKiwi(Robot):
             self.bus.write("D_Coefficient", name, 32)
 
         for name in self.base_motors:
-            self.bus.write("Operating_Mode", name, OperatingMode.VELOCITY.value)
+            self.bus.set_operating_mode("velocity", name)
 
         self.bus.enable_torque()
 
@@ -215,12 +211,8 @@ class LeKiwi(Robot):
         steps_per_deg = 4096.0 / 360.0
         speed_in_steps = degps * steps_per_deg
         speed_int = int(round(speed_in_steps))
-        # Cap the value to fit within signed 16-bit range (-32768 to 32767)
-        if speed_int > 0x7FFF:
-            speed_int = 0x7FFF  # 32767 -> maximum positive value
-        elif speed_int < -0x8000:
-            speed_int = -0x8000  # -32768 -> minimum negative value
-        return speed_int
+        # Goal_Velocity is sign-magnitude with the sign on bit 15: at most 32767 either way.
+        return max(-0x7FFF, min(0x7FFF, speed_int))
 
     @staticmethod
     def _raw_to_degps(raw_speed: int) -> float:
