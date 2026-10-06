@@ -29,13 +29,13 @@ from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType, PreTrainedConfig
-from lerobot.inference import ChunkPolicySpec, ExecutionMode, FeatureSpec
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.import_utils import _peft_available, require_package
 
+from .chunk import ChunkPolicySpec, ExecutionMode, FeatureSpec
 from .utils import log_model_loading_keys
 
 if TYPE_CHECKING or _peft_available:

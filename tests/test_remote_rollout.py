@@ -14,7 +14,6 @@ import torch
 pytest.importorskip("datasets")
 
 from lerobot.inference import InferenceEngine, RemoteInferenceConfig
-from lerobot.robots import CameraObservationError, Robot
 from lerobot.rollout.configs import BaseStrategyConfig, RolloutConfig
 from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 from lerobot.rollout.strategies.base import BaseStrategy
@@ -36,9 +35,6 @@ class PositionRobot:
     def get_observation(self):
         self.reads += 1
         return {"joint.pos": self.position}
-
-    def get_position_observation(self):
-        raise NotImplementedError
 
     def send_action(self, action):
         self.sent.append(action.copy())
@@ -191,16 +187,15 @@ def test_terminal_fault_teardown_honors_configured_return(return_home, monkeypat
     assert not robot.is_connected
 
 
-@pytest.mark.parametrize("operation", ["get_observation", "send_action", "hold"])
+@pytest.mark.parametrize("operation", ["send_action", "hold"])
 def test_hardware_io_failure_prevents_teardown_motion(operation, monkeypatch, caplog):
     engine = GateEngine()
     engine.failed = True
     engine.stop = Mock()
     ctx, robot = make_dispatch_context(engine)
     wrapper = ctx.hardware.robot_wrapper
-    failing_method = "get_observation" if operation == "get_observation" else "send_action"
     method = Mock(side_effect=OSError("device unavailable"))
-    monkeypatch.setattr(robot, failing_method, method)
+    monkeypatch.setattr(robot, "send_action", method)
     with pytest.raises(OSError, match="device unavailable"):
         if operation == "send_action":
             wrapper.send_action({"joint.pos": 4.0})
@@ -219,19 +214,19 @@ def test_hardware_io_failure_prevents_teardown_motion(operation, monkeypatch, ca
     assert "robot I/O failed" in caplog.text
 
 
-def test_hardware_failure_is_latched_and_does_not_treat_interrupt_as_io_failure(monkeypatch):
+def test_command_failure_is_latched_and_does_not_treat_interrupt_as_io_failure(monkeypatch):
     wrapper = ThreadSafeRobot(PositionRobot())
-    original_read = wrapper.inner.get_observation
-    monkeypatch.setattr(wrapper.inner, "get_observation", Mock(side_effect=KeyboardInterrupt))
+    original_send = wrapper.inner.send_action
+    monkeypatch.setattr(wrapper.inner, "send_action", Mock(side_effect=KeyboardInterrupt))
     with pytest.raises(KeyboardInterrupt):
-        wrapper.get_observation()
+        wrapper.send_action({"joint.pos": 1.0})
     assert wrapper.hardware_failure is None
-    monkeypatch.setattr(wrapper.inner, "get_observation", Mock(side_effect=OSError("first read failed")))
+    monkeypatch.setattr(wrapper.inner, "send_action", Mock(side_effect=OSError("first write failed")))
     with pytest.raises(OSError):
-        wrapper.get_observation()
+        wrapper.send_action({"joint.pos": 1.0})
     failure = wrapper.hardware_failure
-    monkeypatch.setattr(wrapper.inner, "get_observation", original_read)
-    wrapper.get_observation()
+    monkeypatch.setattr(wrapper.inner, "send_action", original_send)
+    wrapper.send_action({"joint.pos": 1.0})
     assert wrapper.hardware_failure == failure
     monkeypatch.setattr(wrapper.inner, "send_action", Mock(side_effect=OSError("later write failed")))
     with pytest.raises(OSError):
@@ -283,7 +278,7 @@ def test_return_move_io_failure_aborts_and_disconnects(operation, monkeypatch, c
     strategy._engine = engine
     strategy._teardown_hardware(ctx.hardware)
     failed_io.assert_called_once()
-    assert ctx.hardware.robot_wrapper.hardware_failure is not None
+    assert (ctx.hardware.robot_wrapper.hardware_failure is not None) == (operation == "write")
     assert not robot.is_connected
     assert "return move failed" in caplog.text
 
@@ -483,8 +478,7 @@ def test_omx_hold_uses_position_driver_without_an_extra_sensor_read():
 
 
 @pytest.mark.parametrize("driver", ["omx", "so"])
-@pytest.mark.parametrize("camera_connected", [True, False])
-def test_camera_failure_allows_motor_only_homing_and_disconnect(driver, camera_connected, monkeypatch):
+def test_camera_error_propagates_unchanged_and_homing_uses_normal_observation(driver):
     if driver == "omx":
         from lerobot.robots.omx_follower import OmxFollower, OmxFollowerConfig
 
@@ -495,7 +489,7 @@ def test_camera_failure_allows_motor_only_homing_and_disconnect(driver, camera_c
 
         robot = SOFollower.__new__(SOFollower)
         robot.config = SOFollowerRobotConfig(port="unused")
-    robot.id = "camera_failure_test"
+    robot.id = "observation_failure_test"
     robot.robot_type = robot.name
     motor_reads = Mock(return_value={"joint": 7.0})
     motor_writes = Mock()
@@ -507,47 +501,26 @@ def test_camera_failure_allows_motor_only_homing_and_disconnect(driver, camera_c
         sync_write=motor_writes,
         disconnect=motor_disconnect,
     )
+    error = OSError("camera disappeared")
     camera = SimpleNamespace(
-        is_connected=camera_connected,
-        read_latest=Mock(side_effect=OSError("camera disappeared")),
+        is_connected=True,
+        read_latest=Mock(side_effect=error),
         disconnect=Mock(),
     )
     robot.cameras = {"front": camera}
     wrapper = ThreadSafeRobot(robot)
     wrapper.configure_position_hold()
-    with pytest.raises(CameraObservationError, match="camera disappeared"):
+    with pytest.raises(OSError) as raised:
         wrapper.get_observation()
+    assert raised.value is error
     assert wrapper.hardware_failure is None
-    assert wrapper.camera_failure is not None
     context = SimpleNamespace(robot_wrapper=wrapper, initial_position={"joint.pos": 0.0}, teleop=None)
-    monkeypatch.setattr("lerobot.rollout.strategies.core.precise_sleep", lambda _: None)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._teardown_hardware(context)
-    assert motor_reads.call_count == 2  # Capture, then a fresh camera-independent return read.
-    camera.read_latest.assert_called_once()
-    assert motor_writes.call_args.args == ("Goal_Position", {"joint": 0.0})
+    assert motor_reads.call_count == camera.read_latest.call_count == 2
+    motor_writes.assert_not_called()  # Full observation still fails; no camera-independent homing.
     motor_disconnect.assert_called_once_with(robot.config.disable_torque_on_disconnect)
-    assert camera.disconnect.call_count == int(camera_connected)
-
-
-@pytest.mark.parametrize("failure", [NotImplementedError("no motor-only read"), OSError("motor read failed")])
-def test_camera_failure_does_not_allow_homing_without_successful_motor_feedback(failure, monkeypatch):
-    ctx, robot = make_dispatch_context(GateEngine())
-    wrapper = ctx.hardware.robot_wrapper
-    failed_camera = Mock(side_effect=CameraObservationError("camera read failed"))
-    monkeypatch.setattr(robot, "get_observation", failed_camera)
-    monkeypatch.setattr(robot, "get_position_observation", Mock(side_effect=failure))
-    with pytest.raises(CameraObservationError):
-        wrapper.get_observation()
-    assert not BaseStrategy.return_to_initial_position(ctx.hardware)
-    assert robot.sent == []
-    failed_camera.assert_called_once()  # Never fall back to reading the failed camera.
-    assert (wrapper.hardware_failure is not None) == isinstance(failure, OSError)
-
-
-def test_default_motor_only_read_is_conservative():
-    with pytest.raises(NotImplementedError, match="camera-independent"):
-        Robot.get_position_observation(PositionRobot())
+    camera.disconnect.assert_called_once()
 
 
 def test_same_text_autosteer_restart_discards_previous_intent():
@@ -581,7 +554,7 @@ def test_vqa_after_stopping_autosteer_captures_current_intent():
 
 def test_remote_rollout_config_requires_no_local_policy(monkeypatch):
     monkeypatch.setattr("lerobot.rollout.configs.parser.get_path_arg", lambda _: None)
-    remote = RemoteInferenceConfig(deployment="test", semantics="so101-degrees-v1", hold_mode="position")
+    remote = RemoteInferenceConfig(deployment="test", semantics="so101-degrees-v1")
     cfg = RolloutConfig(robot=SimpleNamespace(), inference=remote)
     assert cfg.policy is None
     assert cfg.device is None
@@ -592,6 +565,4 @@ def test_remote_rollout_config_requires_no_local_policy(monkeypatch):
 @pytest.mark.parametrize("field", ["refill_seconds", "action_timeout_s", "max_observation_age_s"])
 def test_remote_budgets_reject_nonfinite_values(field):
     with pytest.raises(ValueError, match="finite and positive"):
-        RemoteInferenceConfig(
-            deployment="test", semantics="profile", hold_mode="position", **{field: float("nan")}
-        )
+        RemoteInferenceConfig(deployment="test", semantics="profile", **{field: float("nan")})

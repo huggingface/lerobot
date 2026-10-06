@@ -21,8 +21,8 @@ from lerobot.inference import (
     FeatureSpec,
     PolicyCapabilities,
     RemoteInferenceConfig,
-    RemoteInferenceEngine,
 )
+from lerobot.remote_inference import RemoteInferenceEngine
 from lerobot.remote_inference.client import RequestCancelled
 from lerobot.remote_inference.protocol import ErrorCode, ProtocolError
 
@@ -110,7 +110,6 @@ def session(request):
     config = RemoteInferenceConfig(
         deployment="test",
         semantics="radians",
-        hold_mode="position",
         max_observation_age_s=5,
         refill_seconds=0.2,
         chunk_merge=request.param[0],
@@ -483,7 +482,7 @@ def test_retarget_and_result_acceptance_have_one_order(session, monkeypatch):
 
 def test_refill_wait_selects_latest_capture_and_reports_request_progress(session, caplog):
     engine, client = session
-    caplog.set_level(logging.DEBUG, logger="lerobot.inference.remote")
+    caplog.set_level(logging.DEBUG, logger="lerobot.remote_inference.engine")
     engine.resume()
     capture(engine)
     engine.start()
@@ -545,7 +544,7 @@ def test_only_aligned_retarget_bypasses_refill_without_reusing_capture(session):
 @pytest.mark.parametrize("measured", [False, True], ids=["configured", "latency-floor"])
 def test_aligned_full_horizon_warning_is_bounded_and_does_not_change_settings(session, caplog, measured):
     engine, _ = session
-    caplog.set_level(logging.WARNING, logger="lerobot.inference.remote")
+    caplog.set_level(logging.WARNING, logger="lerobot.remote_inference.engine")
     if measured:
         engine.start()
         assert not caplog.records
@@ -564,7 +563,7 @@ def test_aligned_full_horizon_warning_is_bounded_and_does_not_change_settings(se
 
 def test_default_logs_are_concise_and_debug_keeps_request_identity(session, caplog):
     engine, client = session
-    caplog.set_level(logging.INFO, logger="lerobot.inference.remote")
+    caplog.set_level(logging.INFO, logger="lerobot.remote_inference.engine")
     engine.resume()
     capture(engine)
     engine.start()
@@ -572,7 +571,7 @@ def test_default_logs_are_concise_and_debug_keeps_request_identity(session, capl
     assert "Remote execution: mode=chunk" in caplog.text
     assert "horizon=0.400s" in caplog.text
     assert "Remote inference {" not in caplog.text
-    caplog.set_level(logging.DEBUG, logger="lerobot.inference.remote")
+    caplog.set_level(logging.DEBUG, logger="lerobot.remote_inference.engine")
     client.action_started.clear()
     assert engine.runtime.pop() is not None
     assert engine.runtime.pop() is not None
@@ -587,23 +586,37 @@ def test_default_logs_are_concise_and_debug_keeps_request_identity(session, capl
 
 def test_progress_is_rate_limited_and_labels_estimated_headroom(session, caplog):
     engine, _ = session
-    caplog.set_level(logging.INFO, logger="lerobot.inference.remote")
+    caplog.set_level(logging.INFO, logger="lerobot.remote_inference.engine")
     engine._event("result", turnaround_s=0.3, timing_margin_s=None, accepted=True)
     engine._event("result", turnaround_s=0.2, timing_margin_s=-0.1, accepted=False)
+    engine._event("request_cancelled", wait_s=0.8)
+    engine._event("invalidated", wait_s=0.1)
+    engine._event("waiting", grace_s=1.0)
+    engine._event("resumed", wait_s=0.5)
     engine._drain_log_events()
     assert "Remote progress" not in caplog.text
     engine._last_summary_at -= 5
     engine._drain_log_events()
     assert "accepted=1 rejected=1" in caplog.text
+    assert "cancelled=1 failed=0 waits=1 resumes=1 invalidations=1" in caplog.text
+    assert "cancelled wait max=0.800s (server completion unknown)" in caplog.text
+    assert "invalidation wait max=0.100s" in caplog.text
     assert "mean/max=0.250/0.300s" in caplog.text
+    assert "last 2 completed results only" in caplog.text
     assert "estimated submission headroom min=-0.100s" in caplog.text
     engine._drain_log_events()
     assert caplog.text.count("Remote progress") == 1
+    engine._recent_results.clear()
+    engine._event("request_cancelled", wait_s=1.0)
+    engine._last_summary_at -= 5
+    engine._drain_log_events()
+    assert "accepted=0 rejected=0 cancelled=1 failed=0 waits=0 resumes=0 invalidations=0" in caplog.text
+    assert "turnaround mean/max=unavailable" in caplog.text
 
 
 def test_fault_diagnostics_are_bounded_and_do_not_log_on_control_thread(session, caplog):
     engine, _ = session
-    caplog.set_level(logging.INFO, logger="lerobot.inference.remote")
+    caplog.set_level(logging.INFO, logger="lerobot.remote_inference.engine")
     # A full diagnostics handoff must not hide a fault or block its producer.
     for _ in range(130):
         engine._event("first_dispatch")
@@ -629,7 +642,7 @@ def test_slow_console_does_not_block_local_motion_permission(session, monkeypatc
         entered.set()
         assert release.wait(2)
 
-    monkeypatch.setattr("lerobot.inference.remote.logger.info", slow_console)
+    monkeypatch.setattr("lerobot.remote_inference.engine.logger.info", slow_console)
     engine.resume()
     capture(engine)
     engine.start()

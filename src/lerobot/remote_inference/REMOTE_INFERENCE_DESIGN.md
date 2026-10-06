@@ -1,8 +1,10 @@
 # Asynchronous inference: implementation and design reference
 
-**Implementation baseline:** `0b20ce176` plus the pre-hardware consolidation recorded in [implementation_progress.md](implementation_progress.md), 2026-10-04. This document describes the implemented system. It replaces [async_proposal.md](async_proposal.md) as the active engineering reference; the proposal remains historical rationale. [FUTURE_WORK.md](FUTURE_WORK.md) owns pending work, not current behavior.
+**Implementation baseline:** `191a70177` plus the uncommitted C8–C16 cleanup recorded in [implementation_progress.md](../../../implementation_progress.md), 2026-10-06. This document describes the implemented system. It replaces [async_proposal.md](../../../async_proposal.md) as the active engineering reference; the proposal remains historical rationale. [FUTURE_WORK.md](FUTURE_WORK.md) owns pending work, not current behavior.
 
-For installation, commands and tuning, start with the [user guide](docs/source/remote_inference.mdx). This reference explains why the system behaves that way and where those decisions live in code. Software coverage, real-model execution and physical acceptance are distinct; see [validation](#validation-and-current-limits).
+For installation, commands and tuning, start with the [user guide](../../../docs/source/remote_inference.mdx). This reference explains why the system behaves that way and where those decisions live in code. Software coverage, real-model execution and physical acceptance are distinct; see [validation](#13-validation-and-current-limits).
+
+**Post-hardware update — 2026-10-06:** C8–C16 are implemented/audited: generic observation-error cleanup, explicit package exports, no runtime Git diagnostics, shared context setup, clarified snapshot ownership, consolidated operator docs, richer lifecycle logs, automatic driver-capability checks and aligned plain chunks without default blending. H1–H3 have physical evidence on the prior tested build; H4 is withdrawn. H5 recording and remaining acceptance are tracked separately in the roadmap.
 
 ## 1. Product contract
 
@@ -44,15 +46,17 @@ flowchart LR
   end
 ```
 
-| Package/component                                              | Responsibility                                                                                                          | Must not own                                               |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [`inference`](src/lerobot/inference/__init__.py)               | Engine interface, configuration/factory, local/remote engines, immutable contracts, chunk runtime and shared prediction | Transport routing policy or rollout strategy orchestration |
-| [`remote_inference`](src/lerobot/remote_inference/__init__.py) | Wire protocol/codec, compatibility/admission, client exchanges, server sessions and model ownership                     | Motor dispatch or robot-specific action interpretation     |
-| [`rollout`](src/lerobot/rollout/__init__.py)                   | Setup, strategies/controller, capture and dispatch, intervention, recording and teardown                                | Remote model loading on the robot client                   |
-| [`transport.zenoh`](src/lerobot/transport/zenoh.py)            | Explicit connectivity, bounded pub/sub, queries and liveliness                                                          | Policy state, robot safety decisions or action eligibility |
-| Policies/processors                                            | Trained input preparation, prediction and canonical output semantics                                                    | Network/session scheduling                                 |
+| Package/component                                     | Responsibility                                                                                                          | Must not own                                               |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [`inference`](../inference/__init__.py)               | Engine interface, configuration/local factory, local engines, immutable runtime contracts, chunk runtime and prediction | Transport routing policy or rollout strategy orchestration |
+| [`remote_inference`](../remote_inference/__init__.py) | Remote engine, wire protocol/codec, compatibility/admission, client exchanges, server sessions and model ownership      | Motor dispatch or robot-specific action interpretation     |
+| [`rollout`](../rollout/__init__.py)                   | Setup, strategies/controller, capture and dispatch, intervention, recording and teardown                                | Remote model loading on the robot client                   |
+| [`transport.zenoh`](../transport/zenoh.py)            | Explicit connectivity, bounded pub/sub, queries and liveliness                                                          | Policy state, robot safety decisions or action eligibility |
+| Policies/processors                                   | Trained input preparation, prediction and canonical output semantics                                                    | Network/session scheduling                                 |
 
-Public cross-package symbols are exported through package APIs. Policy-dependent inference exports load lazily to avoid import cycles and eager optional dependencies. `InferenceRobot` is a structural interface owned by inference; it avoids importing rollout/dataset machinery into inference. The existing transport submodule import convention remains supported.
+Public cross-package symbols are explicitly exported through package APIs. Policy declarations belong to `policies`; shared execution belongs to `inference`; the remote engine and serving belong to `remote_inference`. This dependency direction avoids import cycles without dynamic initializer exports. Optional dependencies are guarded in implementation modules and checked when used. The existing transport submodule import convention remains supported.
+
+`InferenceRobot` is a structural typing protocol: it describes the action metadata, observation capture time and hold capabilities engines consume, without importing the rollout's concrete `ThreadSafeRobot`. It is neither another hardware implementation nor a class users must inherit. Context construction has one public entry point, with separate local-model and remote-descriptor preparation; common helpers resolve robot processors, connect hardware, aggregate recording features and clean up failed setup.
 
 ### Threads and locks
 
@@ -64,15 +68,15 @@ Cancellation ends local interest in work. It does **not** interrupt a GPU call o
 
 ## 3. Deployment startup and admission
 
-The server entry point is [`lerobot_policy_server.py`](src/lerobot/scripts/lerobot_policy_server.py). The operator supplies the checkpoint/revision/device, canonical observation/action schemas, units/semantics, supported modes and timing limits. Connecting clients cannot choose a model to download or alter trained policy parameters.
+The server entry point is [`lerobot_policy_server.py`](../scripts/lerobot_policy_server.py). The operator supplies the checkpoint/revision/device, canonical observation/action schemas, units/semantics, supported modes and timing limits. Connecting clients cannot choose a model to download or alter trained policy parameters.
 
-Startup loads the policy and saved processors, validates declarations and runs warmup before advertising readiness. Warmup establishes actual prediction compatibility, including model action width. Artifact identity describes the effective serving artifact/configuration; deployment name is an address, not artifact identity. Process-start software metadata describes the loaded build, rather than consulting changing source files on each request.
+Startup loads the policy and saved processors, validates declarations and runs warmup before advertising readiness. Warmup establishes actual prediction compatibility, including model action width. Artifact identity describes the effective serving artifact/configuration; deployment name is an address, not artifact identity. Software diagnostics contain the package version, without runtime Git inspection.
 
-The client obtains a descriptor, selects exactly one ready instance (or an explicit `instance`), and checks protocol/capability/schema compatibility. It validates feature names, order, shapes, modality, semantics, action interval, requested mode, model/canonical layout, blending selection and optional expected artifact. Remote robot configuration must explicitly request position hold on a robot that supports it.
+The client obtains a descriptor, selects exactly one ready instance (or an explicit `instance`), and checks protocol/capability/schema compatibility. It validates feature names, order, shapes, modality, semantics, action interval, requested mode, model/canonical layout, blending selection and optional expected artifact. Remote rollout automatically configures position hold on a supported robot. The generic driver capability defaults to false; unsupported robots fail before motion. There is no separate `hold_mode` configuration option.
 
-Admission grants a session scoped to that server boot. An acknowledged generation-control exchange also establishes session endpoint readiness before data publication. Rollout setup requires compatibility and ownership before policy motion. Compatibility is not an equality test on the package version: the protocol, execution contract and schema are authoritative; software versions/revisions are diagnostics. No transparent mode downgrade occurs.
+Admission grants a session scoped to that server boot. An acknowledged generation-control exchange also establishes session endpoint readiness before data publication. Rollout setup requires compatibility and ownership before policy motion. Compatibility is not an equality test on the package version: the protocol, execution contract and schema are authoritative; package versions are diagnostics. No transparent mode downgrade occurs.
 
-See [`RemoteClient.connect/admit`](src/lerobot/remote_inference/client.py), [`SessionWorker`](src/lerobot/remote_inference/server.py) and [`build_remote_rollout_context`](src/lerobot/rollout/remote_context.py).
+See [`RemoteClient.connect/admit`](../remote_inference/client.py), [`SessionWorker`](../remote_inference/server.py) and [`build_remote_rollout_context`](../rollout/remote_context.py).
 
 ## 4. One observation-to-action cycle
 
@@ -105,19 +109,21 @@ sequenceDiagram
 
 No new reply may revive a terminal fault or a superseded session/generation. Retained valid playback and accepted future replacement are separate from a packet arriving.
 
+Observation copying establishes ownership across threads, not distinct copies for encoding and transmission. Local RTC also deep-copies its observation before background inference, despite having no transport. `dataclasses.replace` currently reconstructs remote snapshots when anchoring or rebinding task metadata, which copies their arrays again. This is a possible optimization after measuring cost, not an additional correctness requirement. Keep original capture/task/generation provenance and immutable ownership; do not remove a copy merely because the producer currently returns fresh buffers.
+
 ## 5. Data, policy and processor contracts
 
 ### Canonical wire values
 
-`FeatureSpec` declares ordered names, shape, dtype, modality and semantic convention. Images are explicitly RGB `uint8` HWC; arbitrary tensors are never inferred to be images. Non-image tensors retain their declared dimensions and types. Action names/order/units describe canonical postprocessor output before robot-side processing and interpolation.
+`FeatureSpec` describes data, not a captured value: name, shape, dtype, modality, ordered components and semantic convention. A six-joint state needs agreed order/units in addition to shape `(6,)`; a front RGB frame might have shape `(480, 640, 3)` and dtype `uint8`. Images are explicitly RGB HWC; arbitrary tensors are never inferred to be images. Action names/order/units describe canonical postprocessor output before robot-side processing and interpolation.
 
 The default policy contract requires current-observation inference and a truthful `predict_action_chunk` path. It bypasses the private per-step queues that `select_action` may maintain. Checkpoint history, temporal ensembling or executed-action feedback cannot be emulated by merely taking the latest frame. Policy-specific declarations may expose existing preparation, masking/resizing or horizon behavior; they cannot remove trained semantics to satisfy admission.
 
-A policy's prediction length and intended ordinary execution slice are distinct. `ChunkPolicySpec` declares both. A server-owned plain-chunk slice may shorten execution but must fit the prediction and is unavailable for RTC deployments. Actual returned horizons must match declarations.
+A policy's prediction length and intended ordinary execution slice are distinct. `ChunkPolicySpec` declares both, supported modes, whether the current observation suffices and whether session state is retained. `PolicyCapabilities` combines that declaration with the deployment's feature schema, action interval and language/RTC settings for admission. A server-owned plain-chunk slice may shorten execution but must fit the prediction and is unavailable for RTC deployments. Actual returned horizons must match declarations.
 
 ### Model versus canonical coordinates
 
-[`predict_chunk`](src/lerobot/inference/prediction.py) shares post-preprocessing prediction between local RTC and the server runner:
+[`predict_chunk`](../inference/prediction.py) shares post-preprocessing prediction between local RTC and the server runner:
 
 - Validate finite floating `[1, prediction_steps, model_width]` output. Retain the first validated model width across subsequent calls.
 - Clone model coordinates **before** postprocessing can mutate them.
@@ -132,7 +138,7 @@ Guided RTC runs under `no_grad` with ordinary tensors, allowing the policy's loc
 
 Saved normalization, relative/absolute action pairing and camera preparation remain authoritative. Action processors belong to the serialized owner. Language gets an isolated processor pair, copied together so the absolute-action step points to its own relative-state anchor. Both pairs still share one serialized policy owner. Full reset clears policy and processor state; motion invalidation drops queued action continuation while preserving intended planner context.
 
-See [`PolicyRunner`](src/lerobot/inference/policy_runner.py), [`PreTrainedPolicy`](src/lerobot/policies/pretrained.py) and the policy-specific contract tests. Conformance is checkpoint/configuration-specific; a family name, successful download or warmup is not task validation.
+See [`PolicyRunner`](../inference/policy_runner.py), [`PreTrainedPolicy`](../policies/pretrained.py) and the policy-specific contract tests. Conformance is checkpoint/configuration-specific; a family name, successful download or warmup is not task validation.
 
 ## 6. Playback, alignment, blending and RTC
 
@@ -153,10 +159,10 @@ Alignment establishes which temporal positions remain usable. It does not prove 
 Optional blending applies only to aligned plain chunks and explicitly selected continuous canonical components approved by the server. For matching future positions in the overlap window:
 
 ```text
-blended = (1 - blend_weight) * queued_target + blend_weight * incoming_target
+blended = q_t + b_w * (i_t - q_t)
 ```
 
-`blend_weight` weights the **incoming** prediction. One means replacement. `blend_steps=0` disables blending. Other coordinates take the incoming values; gripper channels must not be selected merely because they are numeric. Relative-to-absolute processing occurs before blending.
+`q_t` is the queued target and `i_t` the incoming target for the same future slot. `b_w` (`blend_weight`) weights the **incoming** prediction. One means replacement. `blend_steps=0` disables blending. Other coordinates take the incoming values; gripper channels must not be selected merely because they are numeric. Relative-to-absolute processing occurs before blending.
 
 A future endpoint may be blended again before it is committed. Provenance retains a bounded summary, including the oldest contributor's capture time, count and digest. Repeated blending cannot make old data fresh. Contributors from incompatible context or beyond source-age bounds are excluded.
 
@@ -238,13 +244,13 @@ Starvation grace cannot override stale sources, malformed replies, known hardwar
 
 Operator pause requires operator resumption. Recording save waits resume after healthy completion. Planned language work pauses immediately and uses its language/transition bounds. A query arriving during starvation cannot renew the existing starvation grace. Shared motor behavior does not remove the need to track reason, context and resumption authority.
 
-### Terminal shutdown and camera failures
+### Terminal shutdown and observation failures
 
 Once failure is terminal, revoke policy dispatch and run local teardown. Honor `return_to_initial_position` when trustworthy actuator feedback/control remain available, then disconnect with the driver's configured torque semantics. A brief hold before teardown does not promise indefinite powered retention. Server restart cannot resume a terminated or faulted client.
 
-SO/OMX distinguish camera acquisition failures from motor/unknown I/O failures and expose motor-only position reads. A classified camera-only failure can therefore permit configured homing without retrying the failed camera. Motor, send/hold or unknown observation failures latch a hardware failure and suppress blind shutdown movement. This is a specific boundary, not a generalized hardware recovery framework.
+Ordinary observation errors propagate through the existing rollout failure/cleanup path without camera-versus-motor classification. Homing checks connection state and reads the full observation; a persistent camera failure can prevent it. Failed command/hold application latches a hardware failure and suppresses additional shutdown movement. Camera-independent homing belongs to a separate hardware/rollout change, outside this feature.
 
-See [`robot_wrapper.py`](src/lerobot/rollout/robot_wrapper.py) and [`strategies/core.py`](src/lerobot/rollout/strategies/core.py). Interactive strategy failures must also produce an unsuccessful CLI outcome after cleanup, even if inference itself remained healthy.
+See [`robot_wrapper.py`](../rollout/robot_wrapper.py) and [`strategies/core.py`](../rollout/strategies/core.py). Interactive strategy failures must also produce an unsuccessful CLI outcome after cleanup, even if inference itself remained healthy.
 
 ## 9. Instructions, language, intervention and recording
 
@@ -285,7 +291,7 @@ S = I/sessions/<session>
 | `S/language/request` → `S/language/result` | Published text requests and correlated replies                   |
 | `I/alive`, `S/alive`                       | Server/client liveliness tokens                                  |
 
-Exact spelling is defined in [`protocol.py`](src/lerobot/remote_inference/protocol.py), [`client.py`](src/lerobot/remote_inference/client.py) and [`server.py`](src/lerobot/remote_inference/server.py). Explicit direct peer or router-client endpoints are used, with automatic discovery paths disabled by transport configuration. Installing a router changes connectivity; it does not add model scheduling or application failover.
+Exact spelling is defined in [`protocol.py`](../remote_inference/protocol.py), [`client.py`](../remote_inference/client.py) and [`server.py`](../remote_inference/server.py). Explicit direct peer or router-client endpoints are used, with automatic discovery paths disabled by transport configuration. Installing a router changes connectivity; it does not add model scheduling or application failover.
 
 Pub/sub uses bounded handoffs and DROP congestion control so application threads do not wait indefinitely on publication. This is not an exactly-once delivery promise. Applications correlate replies, inspect overflow and enforce deadlines. Query collection, cancellation and cleanup are also bounded. Network-library liveness is separate from model readiness.
 
@@ -293,7 +299,7 @@ Raw arrays and explicit RGB records use a bounded MessagePack codec, without pic
 
 ### Compatibility and deployment security
 
-The envelope requires the exact integer protocol version 1; there is no minor-version negotiation. Execution contracts/capabilities negotiate supported layouts and merge behavior separately. Package versions and Git revisions improve diagnosis but do not substitute for compatibility checks. The protocol must evolve if future changes break these contracts.
+The envelope requires the exact integer protocol version 1; there is no minor-version negotiation. Execution contracts/capabilities negotiate supported layouts and merge behavior separately. Package versions aid diagnosis but do not substitute for compatibility checks. Runtime does not invoke Git. The protocol must evolve if future changes break these contracts.
 
 Direct LAN mode is for an appropriately trusted/restricted network. Deployment names and session IDs isolate addressing; they are not authentication. Secured routed deployments use explicit authentication/encryption and deployment-scoped ACLs. Keep client/server routes through the configured router rather than accidentally permitting peer bypass. The examples are starting configurations, not evidence of every network/platform's security or reachability.
 
@@ -303,33 +309,35 @@ Zenoh Python support is `>=1.9.0,<1.11.0`, with lockfile baseline 1.10.1. Bindin
 
 The server YAML owns model selection and canonical schemas. Nested CLI fields override corresponding configuration values. One maintained generic YAML is provided; machine-specific experiments remain research material. Client configuration owns request/refill/freshness/wait limits and robot connection details, while deployment capability and mode validation constrain what it may request.
 
-Key remote defaults, defined in [`factory.py`](src/lerobot/inference/factory.py), are append chunk mode, refill 0.5s, source age 5s, handshake/startup 10s, action timeout 5s, language timeout 60s, starvation grace 1s, raw RGB and JPEG quality 90 when selected. Blending defaults to zero steps, incoming weight 0.5 and no selected components. Explicit deployment, semantics and position-hold consent are required. These are starting configuration values, not latency guarantees.
+Key remote defaults, defined in [`factory.py`](../inference/factory.py), are aligned plain chunks, refill 0.5s, source age 5s, handshake/startup 10s, action timeout 5s, language timeout 60s, starvation grace 1s, raw RGB and JPEG quality 90 when selected. Blending defaults to zero steps, incoming weight 0.5 and no selected components. `chunk_merge=auto` resolves to aligned for plain chunks and append for RTC; the latter retains RTC's own continuation handling. Explicit append remains available. New clients send resolved settings; a peer omitting optional chunk settings retains the historical append wire meaning. Explicit deployment and semantics are required, and driver hold support is checked automatically. These are starting configuration values, not latency guarantees.
 
-The server has its own operation bounds, warmup settings and absence cleanup limit in [`configs.py`](src/lerobot/remote_inference/configs.py). Control acknowledgments use a separate bound covering handshake plus the larger advertised operation deadline (close is capped more tightly); they do not consume fresh motion startup time. Redesigning that control budget is deferred.
+The server has its own operation bounds, warmup settings and absence cleanup limit in [`configs.py`](../remote_inference/configs.py). Control acknowledgments use a separate bound covering handshake plus the larger advertised operation deadline (close is capped more tightly); they do not consume fresh motion startup time. Redesigning that control budget is deferred.
 
-INFO logs summarize readiness, admission, effective settings, bounded operating summaries, actionable faults and shutdown outcome. DEBUG adds request/capability details. Request spacing, committed endpoints, usable playback, source age and full turnaround help distinguish early stale append playback from excessively frequent aligned replacement or insufficient throughput. Diagnostic deltas compare endpoints, not measured physical motion.
+INFO logs summarize readiness, admission, effective settings, bounded operating summaries, actionable faults and shutdown outcome. Five-second summaries distinguish interval counters from rolling timing windows. The client reports cancelled/failed requests, waits/resumptions and invalidation ACK delay separately from completed-result turnaround; cancelled wait time does not reveal when the server finishes. The server includes errors/stale results and control waits. DEBUG adds request/capability details. Request spacing, committed endpoints, usable playback, source age and full turnaround help distinguish early stale append playback from excessively frequent aligned replacement or insufficient throughput. Diagnostic deltas compare endpoints, not measured physical motion.
+
+Server shutdown logs identify the stop reason and active/queued work, transport closure, and worker completion or its bounded one-second stop timeout. Process shutdown does not drain queued operations or promise completed session cleanup; a still-running model call is reported as such.
 
 Control-thread reporting uses bounded queues drained by the worker; diagnostic I/O is kept out of motor dispatch/runtime locks. Dropped diagnostics do not grant motion or alter eligibility. Logs retain correlation IDs; ordinary recording stays free of automatic inference-event sidecars.
 
 ## 12. Engineering decisions to preserve
 
-| Decision                                        | Reason and accepted tradeoff                                                                            |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Local dispatch and final eligibility gate       | Network/model progress cannot directly command hardware; synchronous local I/O still limits tick timing |
-| One pending operation and exclusive model owner | Bounds memory/state races and supports mutable policies; limits concurrency/throughput                  |
-| Sequence alignment plus local time bounds       | No cross-host clock dependency, while stale/late data remains rejectable                                |
-| Fresh prediction after a wait                   | Old trajectory cannot resume a changed state; recovery must budget another full inference               |
-| Applied-target retention                        | Preserves clipped/gripping targets; requires truthful driver results and explicit robot capability      |
-| Absolute deadlines and terminal latches         | Prevent indefinite renewal or resurrection by late data; transient server loss requires a new client    |
-| Explicit policy/processor contract              | Preserves trained semantics; some synchronously usable checkpoints need targeted adaptation             |
-| Immediate planned language wait                 | Keeps serialized state and resumption simple; buffered-motion VQA remains a later extension             |
-| Shared predictor, separate owners               | Reuses coordinate/gradient validation without moving rollout or transport concerns into policies        |
-| Small public APIs and lazy exports              | Makes package boundaries usable without requiring unrelated optional dependencies                       |
+| Decision                                        | Reason and accepted tradeoff                                                                               |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Local dispatch and final eligibility gate       | Network/model progress cannot directly command hardware; synchronous local I/O still limits tick timing    |
+| One pending operation and exclusive model owner | Bounds memory/state races and supports mutable policies; limits concurrency/throughput                     |
+| Sequence alignment plus local time bounds       | No cross-host clock dependency, while stale/late data remains rejectable                                   |
+| Fresh prediction after a wait                   | Old trajectory cannot resume a changed state; recovery must budget another full inference                  |
+| Applied-target retention                        | Preserves clipped/gripping targets; requires truthful driver results and explicit robot capability         |
+| Absolute deadlines and terminal latches         | Prevent indefinite renewal or resurrection by late data; transient server loss requires a new client       |
+| Explicit policy/processor contract              | Preserves trained semantics; some synchronously usable checkpoints need targeted adaptation                |
+| Immediate planned language wait                 | Keeps serialized state and resumption simple; buffered-motion VQA remains a later extension                |
+| Shared predictor, separate owners               | Reuses coordinate/gradient validation without moving rollout or transport concerns into policies           |
+| Explicit public APIs and directed dependencies  | Exposes package boundaries without lazy initializer machinery or requiring unrelated optional dependencies |
 
 ## 13. Validation and current limits
 
 Automated tests protect contracts and transitions at distinct levels: deterministic runtime/queue invariants, worker ordering/cancellation, saved-processor/policy conformance, real transport/session exchange, and rollout hardware-boundary/CLI behavior. These levels are not substitutes for one another. Test consolidation should remove redundant combinations, not unique failure paths.
 
-Historical hardware evidence covers the named ACT, SmolVLA, XVLA and LaWAM configurations, corrected aligned/blended motion, stationary client crash/re-admission and configured return after server loss. The new applied-target/grace/camera-only behavior still requires the focused H1–H4 round. Real language, additional supplied checkpoint warmups and representative routed/hosted robot deployments remain separate pending acceptance.
+Historical hardware evidence covers the named ACT, SmolVLA, XVLA and LaWAM configurations, corrected aligned/blended motion, stationary client crash/re-admission and configured return after server loss. The 2026-10-06 OMX/XVLA round passed remote H1–H3 (target retention/resumption, temporary starvation recovery and controlled grace expiry/shutdown); the local RTC counterpart remains separate. H4 was withdrawn and camera-specific behavior removed under C8. Unplanned shortages observed before H3's injection remain a diagnostic follow-up. H5 recording, real language, additional checkpoint acceptance and representative routed/hosted robot deployments remain separate pending evidence; consult the roadmap for individual model outcomes.
 
 `FUTURE_WORK.md` contains the definitive pending checklist. Do not infer universal robot support, physical stillness, autonomous recovery, history-aware execution or cloud availability from passing software tests. Update this reference when implemented behavior changes; keep experimental results and historical decisions in their respective records.

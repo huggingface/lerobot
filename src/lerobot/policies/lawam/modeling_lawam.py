@@ -23,7 +23,6 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType
-from lerobot.inference import ChunkPolicySpec, FeatureSpec
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -33,6 +32,7 @@ from lerobot.utils.import_utils import (
     require_package,
 )
 
+from ..chunk import ChunkPolicySpec, FeatureSpec
 from .configuration_lawam import LaWAMConfig
 
 _lawam_deps_available = _transformers_available and _diffusers_available

@@ -172,6 +172,10 @@ class SessionWorker:
         self._recent_operations: deque[tuple[float, float]] = deque(maxlen=100)
         self._last_summary_at = time.monotonic()
         self._actions_since_summary = self._language_since_summary = 0
+        self._errors_since_summary = self._stale_since_summary = 0
+        self._invalidations_since_summary = self._resets_since_summary = 0
+        self._control_wait_max = 0.0
+        self._active_operation: str | None = None
         self._stopping = Event()
         self._thread = Thread(target=self._run, name="PolicyWorker", daemon=True)
         self._thread.start()
@@ -529,6 +533,9 @@ class SessionWorker:
             session.ready = True
             self._recent_operations.clear()
             self._actions_since_summary = self._language_since_summary = 0
+            self._errors_since_summary = self._stale_since_summary = 0
+            self._invalidations_since_summary = self._resets_since_summary = 0
+            self._control_wait_max = 0.0
             self._last_summary_at = time.monotonic()
             logger.info("Session admitted instance=%s session=%s", self.instance_id, session.identity)
             return Envelope(
@@ -635,6 +642,13 @@ class SessionWorker:
             except Empty:
                 continue
             started = time.monotonic()
+            operation = (
+                message.body["operation"]
+                if message.message_type is MessageType.CONTROL
+                else str(message.message_type)
+            )
+            with self._lock:
+                self._active_operation = operation
             inference_operation = message.message_type in {
                 MessageType.OBSERVATION,
                 MessageType.LANGUAGE_REQUEST,
@@ -665,6 +679,12 @@ class SessionWorker:
                 ) and self._session is not None:
                     self._session.faulted = True
             finished = time.monotonic()
+            if response.message_type is MessageType.ACK and operation in {"invalidate", "reset"}:
+                if operation == "invalidate":
+                    self._invalidations_since_summary += 1
+                else:
+                    self._resets_since_summary += 1
+                self._control_wait_max = max(self._control_wait_max, finished - queued_at)
             if inference_operation:
                 if finished - queued_at > deadline:
                     response = message.error(ErrorCode.TIMEOUT, "Policy operation deadline exceeded")
@@ -677,13 +697,14 @@ class SessionWorker:
                         "worker": finished - started,
                     }
                 logger.debug(
-                    "Policy operation deployment=%s instance=%s session=%s generation=%s request=%s type=%s queue_s=%.6f worker_s=%.6f",
+                    "Policy operation deployment=%s instance=%s session=%s generation=%s request=%s type=%s outcome=%s queue_s=%.6f worker_s=%.6f",
                     self.deployment,
                     self.instance_id,
                     message.session_id,
                     message.generation,
                     message.request_id,
                     message.message_type,
+                    response.body.get("code", str(response.message_type)),
                     started - queued_at,
                     finished - started,
                 )
@@ -692,15 +713,27 @@ class SessionWorker:
                     self._actions_since_summary += 1
                 else:
                     self._language_since_summary += 1
+                if response.message_type is MessageType.ERROR:
+                    if response.body.get("code") == ErrorCode.STALE:
+                        self._stale_since_summary += 1
+                    else:
+                        self._errors_since_summary += 1
                 if finished - self._last_summary_at >= 5:
                     count = len(self._recent_operations)
                     logger.info(
-                        "Policy progress: deployment=%s actions=%d text_queries=%d; "
-                        "queue mean/max=%.3f/%.3fs worker mean/max=%.3f/%.3fs (last %d calls); "
+                        "Policy progress: deployment=%s actions=%d text_queries=%d errors=%d stale=%d "
+                        "invalidations=%d resets=%d control wait max=%.3fs over %.1fs; "
+                        "queue mean/max=%.3f/%.3fs worker mean/max=%.3f/%.3fs (last %d operations, all outcomes); "
                         "client logs include transport delay and playback headroom",
                         self.deployment,
                         self._actions_since_summary,
                         self._language_since_summary,
+                        self._errors_since_summary,
+                        self._stale_since_summary,
+                        self._invalidations_since_summary,
+                        self._resets_since_summary,
+                        self._control_wait_max,
+                        finished - self._last_summary_at,
                         sum(sample[0] for sample in self._recent_operations) / count,
                         max(sample[0] for sample in self._recent_operations),
                         sum(sample[1] for sample in self._recent_operations) / count,
@@ -709,6 +742,9 @@ class SessionWorker:
                     )
                     self._last_summary_at = finished
                     self._actions_since_summary = self._language_since_summary = 0
+                    self._errors_since_summary = self._stale_since_summary = 0
+                    self._invalidations_since_summary = self._resets_since_summary = 0
+                    self._control_wait_max = 0.0
                 if (
                     response.message_type is MessageType.ERROR
                     and response.body.get("code") != ErrorCode.STALE
@@ -722,6 +758,7 @@ class SessionWorker:
                         message.request_id,
                     )
             with self._lock:
+                self._active_operation = None
                 if self._session is not None and message.message_type in {
                     MessageType.OBSERVATION,
                     MessageType.LANGUAGE_REQUEST,
@@ -793,10 +830,24 @@ class SessionWorker:
             )
             self._commands.put_nowait((close, Future(), now))
 
-    def close(self) -> None:
+    def close(self) -> bool:
         """Stop after bounded waiting, retaining a hung worker instead of replacing it."""
         self._stopping.set()
         self._thread.join(timeout=1)
+        with self._lock:
+            stopped = not self._thread.is_alive()
+            logger.log(
+                logging.INFO if stopped else logging.WARNING,
+                "Policy worker %s: deployment=%s active_operation=%s queued_operations=%d "
+                "session=%s cleanup_pending=%s; queued operations are not drained at process shutdown",
+                "stopped" if stopped else "stop wait timed out after 1.0s (worker still running)",
+                self.deployment,
+                self._active_operation,
+                self._commands.qsize(),
+                None if self._session is None else self._session.identity,
+                self._session is not None and self._session.closing,
+            )
+        return stopped
 
 
 class PolicyServer:
@@ -807,6 +858,7 @@ class PolicyServer:
         self.worker = worker
         self.transport = transport
         self._stop = Event()
+        self._stop_reason = "serving loop exited"
 
     @staticmethod
     def _encode_reply(response: Envelope) -> bytes:
@@ -964,13 +1016,30 @@ class PolicyServer:
                 outbound = self._flush_replies(outbound, channels)
                 self._stop.wait(0.002)
         finally:
-            if channels is not None:
-                channels.close()
-            describe.close()
-            opening.close()
-            transport.close()
-            worker.close()
+            with worker._lock:
+                logger.info(
+                    "Policy server stopping: deployment=%s reason=%s session=%s "
+                    "active_operation=%s queued_operations=%d pending_replies=%d cleanup_pending=%s",
+                    worker.deployment,
+                    self._stop_reason,
+                    None if worker._session is None else worker._session.identity,
+                    worker._active_operation,
+                    worker._commands.qsize(),
+                    len(outbound),
+                    worker._session is not None and worker._session.closing,
+                )
+            try:
+                if channels is not None:
+                    channels.close()
+                describe.close()
+                opening.close()
+                transport.close()
+                logger.info("Policy server transport closed: deployment=%s", worker.deployment)
+            finally:
+                worker.close()
 
-    def stop(self) -> None:
+    def stop(self, reason: str = "stop requested") -> None:
         """Request bounded endpoint teardown from the serving thread."""
+        if not self._stop.is_set():
+            self._stop_reason = reason
         self._stop.set()

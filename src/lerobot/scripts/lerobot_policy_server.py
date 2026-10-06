@@ -252,8 +252,8 @@ def serve(cfg: ServerConfig) -> None:
         blendable_components=tuple(cfg.execution.blendable_components),
     )
     server = PolicyServer(worker, ZenohTransport(cfg.zenoh))
-    signal.signal(signal.SIGTERM, lambda *_: server.stop())
-    signal.signal(signal.SIGINT, lambda *_: server.stop())
+    signal.signal(signal.SIGTERM, lambda signum, _: server.stop(reason=signal.Signals(signum).name))
+    signal.signal(signal.SIGINT, lambda signum, _: server.stop(reason=signal.Signals(signum).name))
     logger.info(
         "Deployment warmed: name=%s instance=%s modes=%s action_rate=%.1f Hz horizon=%.3fs "
         "language=%s; waiting for transport readiness",

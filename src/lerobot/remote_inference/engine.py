@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 import traceback
-from collections import deque
+from collections import Counter, deque
 from dataclasses import replace
 from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread
@@ -28,15 +28,23 @@ from uuid import uuid4
 
 import torch
 
-from lerobot.remote_inference import ErrorCode, ProtocolError, RemoteClient, RequestCancelled
+from lerobot.inference import (
+    ChunkRuntime,
+    ExecutionMode,
+    InferenceEngine,
+    InferenceRobot,
+    ObservationSnapshot,
+    PolicyQuery,
+    QueryAnswer,
+    QueryKind,
+)
 from lerobot.utils.feature_utils import build_dataset_frame
 
-from .base import InferenceEngine, InferenceRobot, PolicyQuery, QueryAnswer, QueryKind
-from .contracts import ExecutionMode, ObservationSnapshot
-from .execution import ChunkRuntime
+from .client import RemoteClient, RequestCancelled
+from .protocol import ErrorCode, ProtocolError
 
 if TYPE_CHECKING:
-    from .factory import RemoteInferenceConfig
+    from lerobot.inference import RemoteInferenceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +125,8 @@ class RemoteInferenceEngine(InferenceEngine):
         self._fault_logged = False
         self._last_summary_at = time.monotonic()
         self._recent_results: deque[tuple[float, float | None]] = deque(maxlen=100)
-        self._accepted_since_summary = 0
-        self._rejected_since_summary = 0
+        self._summary_counts: Counter[str] = Counter()
+        self._cancelled_wait_max = self._invalidation_wait_max = 0.0
         self._request_diagnostics: dict = {}
 
     def _event(self, name: str, **values) -> None:
@@ -168,10 +176,12 @@ class RemoteInferenceEngine(InferenceEngine):
             elif name == "planned_hold":
                 logger.info("Remote %s: requesting a local hold before fresh resumption", event["reason"])
             elif name == "waiting":
+                self._summary_counts["waits"] += 1
                 logger.warning(
                     "Remote actions exhausted; retaining last target for up to %.3fs", event["grace_s"]
                 )
             elif name == "resumed":
+                self._summary_counts["resumes"] += 1
                 logger.info("Remote fresh actions ready after %.3fs waiting", event["wait_s"])
             elif name == "language_result":
                 logger.info(
@@ -187,27 +197,41 @@ class RemoteInferenceEngine(InferenceEngine):
                 self._request_diagnostics = event
             elif name == "result":
                 self._recent_results.append((event["turnaround_s"], event["timing_margin_s"]))
-                if event["accepted"]:
-                    self._accepted_since_summary += 1
-                else:
-                    self._rejected_since_summary += 1
+                self._summary_counts["accepted" if event["accepted"] else "rejected"] += 1
+            elif name == "request_cancelled":
+                self._summary_counts["cancelled"] += 1
+                self._cancelled_wait_max = max(self._cancelled_wait_max, event["wait_s"])
+            elif name == "request_failed":
+                self._summary_counts["failed"] += 1
+            elif name == "invalidated":
+                self._summary_counts["invalidations"] += 1
+                self._invalidation_wait_max = max(self._invalidation_wait_max, event["wait_s"])
         if self.runtime.failure is not None and not self._fault_logged:
             self._fault_logged = True
             self._log_fault(self.runtime.failure)
         now = time.monotonic()
-        if now - self._last_summary_at >= 5 and (
-            self._accepted_since_summary or self._rejected_since_summary
-        ):
+        if now - self._last_summary_at >= 5 and self._summary_counts:
             turnarounds = [sample[0] for sample in self._recent_results]
             margins = [sample[1] for sample in self._recent_results if sample[1] is not None]
             logger.info(
-                "Remote progress: accepted=%d rejected=%d; turnaround mean/max=%.3f/%.3fs "
-                "(last %d results), estimated submission headroom min=%s; "
+                "Remote progress: accepted=%d rejected=%d cancelled=%d failed=%d waits=%d resumes=%d "
+                "invalidations=%d over %.1fs; cancelled wait max=%.3fs (server completion unknown) "
+                "invalidation wait max=%.3fs; turnaround mean/max=%s "
+                "(last %d completed results only), estimated submission headroom min=%s; "
                 "queued playback=%.3fs effective_refill=%.3fs; diagnostic_events_dropped=%d",
-                self._accepted_since_summary,
-                self._rejected_since_summary,
-                sum(turnarounds) / len(turnarounds),
-                max(turnarounds),
+                self._summary_counts["accepted"],
+                self._summary_counts["rejected"],
+                self._summary_counts["cancelled"],
+                self._summary_counts["failed"],
+                self._summary_counts["waits"],
+                self._summary_counts["resumes"],
+                self._summary_counts["invalidations"],
+                now - self._last_summary_at,
+                self._cancelled_wait_max,
+                self._invalidation_wait_max,
+                f"{sum(turnarounds) / len(turnarounds):.3f}/{max(turnarounds):.3f}s"
+                if turnarounds
+                else "unavailable",
                 len(turnarounds),
                 f"{min(margins):.3f}s" if margins else "unavailable (no buffered submission)",
                 self.runtime.queue.qsize() * self.runtime.interval,
@@ -215,7 +239,8 @@ class RemoteInferenceEngine(InferenceEngine):
                 self._dropped_log_events,
             )
             self._last_summary_at = now
-            self._accepted_since_summary = self._rejected_since_summary = 0
+            self._summary_counts.clear()
+            self._cancelled_wait_max = self._invalidation_wait_max = 0.0
 
     def _log_fault(self, reason: str) -> None:
         """Explain a terminal failure without implying that requested motion completed."""
@@ -675,6 +700,7 @@ class RemoteInferenceEngine(InferenceEngine):
                         self._stop_event.wait(0.002)
                         continue
                     operation, generation = control
+                    control_started = time.monotonic()
                     try:
                         self.client.control(
                             operation,
@@ -683,6 +709,8 @@ class RemoteInferenceEngine(InferenceEngine):
                         )
                     except RequestCancelled:
                         continue
+                    if operation == "invalidate":
+                        self._event("invalidated", wait_s=time.monotonic() - control_started)
                     with self._lock:
                         if self._control == control:
                             self._control = None
@@ -802,7 +830,21 @@ class RemoteInferenceEngine(InferenceEngine):
                         cancelled=request_cancelled,
                     )
                 except RequestCancelled:
+                    self._event(
+                        "request_cancelled",
+                        request_id=request.request_id,
+                        request_generation=request.generation,
+                        wait_s=time.monotonic() - request.submitted_at,
+                        playback_at_submission_s=request.playback_at_submission,
+                    )
                     continue
+                except Exception:
+                    self._event(
+                        "request_failed",
+                        request_id=request.request_id,
+                        wait_s=time.monotonic() - request.submitted_at,
+                    )
+                    raise
                 # Acceptance and an operator retarget must have one order: an
                 # old in-flight result cannot pass using a previously read version.
                 with self._task_lock:

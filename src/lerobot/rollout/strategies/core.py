@@ -259,8 +259,8 @@ class RolloutStrategy(abc.ABC):
         """End policy execution, perform configured local shutdown movement, and disconnect.
 
         A terminal inference fault does not imply failed local hardware. Honor
-        the return setting in that case; never home through an actuator/unknown
-        I/O failure. A classified camera failure permits a motor-only return read.
+        the return setting in that case; never home after a failed command.
+        Homing uses ordinary observation acquisition and can fail with it.
         Disconnect torque behavior belongs to the robot driver, not the hold.
         """
         wrapper = hw.robot_wrapper
@@ -279,7 +279,7 @@ class RolloutStrategy(abc.ABC):
         finally:
             robot = wrapper.inner
             try:
-                if robot.is_connected or wrapper.camera_failure is not None:
+                if robot.is_connected:
                     try:
                         if wrapper.hardware_failure is not None:
                             logger.warning(
@@ -328,7 +328,7 @@ class RolloutStrategy(abc.ABC):
             logger.warning("Could not return to initial position: none was captured at connect time")
             return False
         try:
-            current_obs = robot.get_position_observation()
+            current_obs = robot.get_observation()
             current_pos = {k: float(current_obs[k]) for k in target}
             if not all(math.isfinite(current_pos[k]) and math.isfinite(target[k]) for k in target):
                 raise ValueError("Return movement requires finite current and initial positions")

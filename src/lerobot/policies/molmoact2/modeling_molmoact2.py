@@ -45,7 +45,6 @@ from safetensors.torch import load_file as load_safetensors_file
 from torch import Tensor
 from torch.distributions import Beta
 
-from lerobot.inference import ChunkPolicySpec
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import (
@@ -55,6 +54,7 @@ from lerobot.utils.import_utils import (
     require_package,
 )
 
+from ..chunk import ChunkPolicySpec
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config
 from .utils_molmoact2 import (

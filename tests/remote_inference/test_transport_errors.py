@@ -75,7 +75,6 @@ def test_unreachable_endpoint_names_connection_and_deployment():
         endpoint=endpoint,
         deployment="missing-server",
         semantics="joints",
-        hold_mode="position",
         handshake_timeout_s=0.1,
     )
     with pytest.raises(ConnectionError) as failed:
@@ -109,7 +108,7 @@ def contract_client():
     transport = SimpleNamespace(subscribe_liveliness=lambda _: None, query=Mock())
     client = RemoteClient(
         transport,
-        RemoteInferenceConfig(deployment="test", semantics="joints", hold_mode="position"),
+        RemoteInferenceConfig(deployment="test", semantics="joints"),
         {
             "capabilities": asdict(caps),
             "instance_id": "server",

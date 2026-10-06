@@ -11,6 +11,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
+from lerobot import __version__
 from lerobot.remote_inference.codec import CodecLimits, decode_message
 from lerobot.remote_inference.protocol import Envelope, ErrorCode, MessageType
 from lerobot.remote_inference.server import PolicyServer, SessionWorker
@@ -87,16 +88,22 @@ def control_request(worker, session, generation, operation):
 def test_policy_progress_is_bounded_and_per_request_timings_require_debug(worker, caplog):
     caplog.set_level("INFO", logger="lerobot.remote_inference.server")
     session = admit(worker)
+    assert worker.descriptor["software"] == {"lerobot_version": __version__}
+    assert worker.descriptor["artifact_identity"] == "artifact"
+    worker.submit(control_request(worker, session, 1, "invalidate")).result(2)
     worker._last_summary_at -= 5
-    result = worker.submit(action_request(worker, session)).result(2)
+    result = worker.submit(action_request(worker, session, generation=1)).result(2)
     assert result.message_type is MessageType.ACTION
     assert "Policy progress: deployment=test actions=1 text_queries=0" in caplog.text
     assert "client logs include transport delay" in caplog.text
+    assert "errors=0 stale=0 invalidations=1 resets=0" in caplog.text
+    assert "control wait max=" in caplog.text
+    assert "last 1 operations, all outcomes" in caplog.text
     assert "Policy operation deployment=" not in caplog.text
-    worker.submit(action_request(worker, session)).result(2)
+    worker.submit(action_request(worker, session, generation=1)).result(2)
     assert caplog.text.count("Policy progress:") == 1
     caplog.set_level("DEBUG", logger="lerobot.remote_inference.server")
-    request = action_request(worker, session)
+    request = action_request(worker, session, generation=1)
     worker.submit(request).result(2)
     assert f"request={request.request_id}" in caplog.text
     assert "queue_s=" in caplog.text and "worker_s=" in caplog.text
@@ -118,6 +125,30 @@ def block_predict(worker):
 def assert_error(response, code):
     assert response.message_type is MessageType.ERROR
     assert response.body["code"] == code
+
+
+def test_worker_shutdown_reports_pending_call_without_claiming_cleanup(worker, caplog):
+    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
+    session = admit(worker)
+    entered, release = block_predict(worker)
+    try:
+        action = worker.submit(action_request(worker, session))
+        assert entered.wait(2)
+        closing = worker.submit(control_request(worker, session, 0, "close"))
+        assert not worker.close()
+        assert "stop wait timed out" in caplog.text
+        assert "active_operation=observation queued_operations=1" in caplog.text
+        assert "cleanup_pending=True" in caplog.text
+        assert "Policy worker stopped" not in caplog.text
+        assert "Session released" not in caplog.text
+        release.set()
+        action.result(2)
+        assert worker.close()
+        assert not closing.done(), "process shutdown does not promise to drain queued resets"
+        assert "Policy worker stopped" in caplog.text
+        assert "queued operations are not drained" in caplog.text
+    finally:
+        release.set()
 
 
 def test_unknown_required_capability_rejects_before_session_admission(worker):

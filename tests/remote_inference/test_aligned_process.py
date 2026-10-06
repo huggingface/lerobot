@@ -123,8 +123,6 @@ def test_aligned_relative_chunks_between_processes(process_server, blend_steps):
         endpoint=endpoint,
         deployment="aligned-process",
         semantics="radians-v1",
-        hold_mode="position",
-        chunk_merge="aligned",
         blend_steps=blend_steps,
         blend_weight=0.25,
         blend_components=list(BLEND_COMPONENTS) if blend_steps else [],

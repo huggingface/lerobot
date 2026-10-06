@@ -30,10 +30,10 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
-from lerobot.inference import FeatureSpec
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..chunk import FeatureSpec
 from ..common.vla_utils import pad_vector, resize_with_pad
 from ..pretrained import PreTrainedPolicy, T
 from ..utils import populate_queues

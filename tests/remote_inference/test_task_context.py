@@ -21,6 +21,7 @@ def setup(monkeypatch, tmp_path):
     client.admit = Mock()
     client.descriptor.update(capabilities=asdict(client.capabilities), instance_id=client.instance_id)
     robot = SimpleNamespace(
+        name="test_position_robot",
         supports_position_hold=True,
         action_features={"a.pos": float, "b.pos": float},
         observation_features={"a.pos": float, "b.pos": float},
@@ -31,15 +32,15 @@ def setup(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(remote_context.RemoteClient, "connect", lambda _: client)
     make_robot = Mock(return_value=robot)
-    monkeypatch.setattr(remote_context, "make_robot_from_config", make_robot)
+    monkeypatch.setattr("lerobot.rollout.context.make_robot_from_config", make_robot)
     monkeypatch.setattr(
         remote_context,
         "_build_rollout_dataset",
         lambda cfg, *_: SimpleNamespace(root=tmp_path) if cfg.dataset else None,
     )
     cfg = SimpleNamespace(
-        inference=RemoteInferenceConfig(deployment="test", semantics="radians", hold_mode="position"),
-        robot=SimpleNamespace(),
+        inference=RemoteInferenceConfig(deployment="test", semantics="radians"),
+        robot=SimpleNamespace(type="test_position_robot"),
         teleop=None,
         policy=None,
         device=None,
@@ -79,7 +80,7 @@ def test_remote_recording_does_not_add_inference_diagnostics_to_dataset(setup, t
     ctx = remote_context.build_remote_rollout_context(cfg, Event())
     engine = ctx.policy.inference
     try:
-        with caplog.at_level("DEBUG", logger="lerobot.inference.remote"):
+        with caplog.at_level("DEBUG", logger="lerobot.remote_inference.engine"):
             engine._event("request", task=engine.task)
             engine._drain_log_events()
         assert "Remote inference" in caplog.text

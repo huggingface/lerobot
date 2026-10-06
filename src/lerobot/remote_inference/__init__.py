@@ -12,45 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Exclusive asynchronous policy serving over Zenoh.
+"""Exclusive asynchronous policy serving over Zenoh."""
 
-Protocol definitions are always available. Client, server and deployment exports
-load on demand so importing local inference does not load transport backends.
-"""
-
-from importlib import import_module
-from typing import TYPE_CHECKING, Any
-
+from .build_info import SOFTWARE_BUILD
 from .chunk_contract import chunk_settings
+from .client import RemoteClient, RequestCancelled
+from .configs import ExecutionConfig, LanguageConfig, ModelConfig, ServerConfig
+from .engine import RemoteInferenceEngine
 from .protocol import PROTOCOL_VERSION, AdmissionDeniedError, ErrorCode, ProtocolError
-
-if TYPE_CHECKING:
-    from .build_info import SOFTWARE_BUILD
-    from .client import RemoteClient, RequestCancelled
-    from .configs import ExecutionConfig, LanguageConfig, ModelConfig, ServerConfig
-    from .server import PolicyServer, SessionWorker
-
-_LAZY_EXPORTS = {
-    "SOFTWARE_BUILD": "build_info",
-    "RemoteClient": "client",
-    "RequestCancelled": "client",
-    "ExecutionConfig": "configs",
-    "LanguageConfig": "configs",
-    "ModelConfig": "configs",
-    "ServerConfig": "configs",
-    "PolicyServer": "server",
-    "SessionWorker": "server",
-}
-
-
-def __getattr__(name: str) -> Any:
-    module_name = _LAZY_EXPORTS.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(f".{module_name}", __name__), name)
-    globals()[name] = value
-    return value
-
+from .server import PolicyServer, SessionWorker
 
 __all__ = [
     "PROTOCOL_VERSION",
@@ -63,6 +33,7 @@ __all__ = [
     "PolicyServer",
     "ProtocolError",
     "RemoteClient",
+    "RemoteInferenceEngine",
     "RequestCancelled",
     "ServerConfig",
     "SessionWorker",

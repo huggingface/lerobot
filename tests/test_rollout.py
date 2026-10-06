@@ -310,6 +310,32 @@ def test_build_rollout_context_uses_resolved_device(
             robot.disconnect()
 
 
+@pytest.mark.parametrize("failure_stage", ["observation", "processors"])
+def test_local_setup_failure_disconnects_hardware(monkeypatch, failure_stage):
+    import lerobot.rollout.context as rollout_context
+    from lerobot.policies import ACTConfig
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+
+    cfg = RolloutConfig(
+        robot=MockRobotConfig(random_values=False, static_values=[0.0, 0.0, 0.0]),
+        policy=ACTConfig(device="cpu", pretrained_path=Path("unused-checkpoint")),
+        device="cpu",
+    )
+    robot = MockRobot(cfg.robot)
+    failure = RuntimeError("setup failed")
+    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
+    monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
+    if failure_stage == "observation":
+        monkeypatch.setattr(robot, "get_observation", MagicMock(side_effect=failure))
+    else:
+        monkeypatch.setattr(rollout_context, "make_pre_post_processors", MagicMock(side_effect=failure))
+    with pytest.raises(RuntimeError) as raised:
+        rollout_context.build_rollout_context(cfg, threading.Event())
+    assert raised.value is failure
+    assert not robot.is_connected
+
+
 def test_load_pretrained_policy_passes_revision(monkeypatch):
     import lerobot.rollout.context as rollout_context
 
@@ -615,7 +641,7 @@ def test_create_inference_engine_remote_explains_session_construction():
     from lerobot.inference import RemoteInferenceConfig
     from lerobot.rollout import create_inference_engine
 
-    config = RemoteInferenceConfig(deployment="test", semantics="radians-v1", hold_mode="position")
+    config = RemoteInferenceConfig(deployment="test", semantics="radians-v1")
     with pytest.raises(ValueError, match="connected RemoteClient; use build_rollout_context"):
         create_inference_engine(
             config,

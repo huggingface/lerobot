@@ -11,11 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from lerobot.remote_inference import RemoteInferenceEngine
+
 pytest.importorskip("zenoh")
 pytest.importorskip("datasets")
 pytest.importorskip("msgpack")
 
-from lerobot.inference import RemoteInferenceEngine
 from lerobot.remote_inference import RemoteClient
 from tests.manual import delayed_policy_server
 from tests.remote_inference.test_remote_path import admit, remote_server as _remote_server

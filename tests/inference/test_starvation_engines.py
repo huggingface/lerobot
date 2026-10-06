@@ -15,7 +15,8 @@ import torch
 
 pytest.importorskip("datasets")
 
-from lerobot.inference import RemoteInferenceConfig, RemoteInferenceEngine
+from lerobot.inference import RemoteInferenceConfig
+from lerobot.remote_inference import RemoteInferenceEngine
 from tests.inference.test_local_rtc_regressions import make_engine, wait_for
 from tests.remote_inference.test_engine import ControlledClient
 
@@ -41,7 +42,6 @@ def backend(request: pytest.FixtureRequest) -> Iterator[SimpleNamespace]:
         config = RemoteInferenceConfig(
             deployment="test",
             semantics="radians",
-            hold_mode="position",
             max_observation_age_s=5,
             refill_seconds=0.1,
             action_starvation_grace_s=1.0,

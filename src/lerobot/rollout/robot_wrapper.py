@@ -21,7 +21,7 @@ import time
 from threading import Lock
 from typing import Any
 
-from lerobot.robots import CameraObservationError, Robot
+from lerobot.robots import Robot
 
 
 class ThreadSafeRobot:
@@ -43,27 +43,18 @@ class ThreadSafeRobot:
         self._last_applied_action: dict[str, float] | None = None
         self._observation_time: float | None = None
         self._hardware_failure: str | None = None
-        self._camera_failure: str | None = None
 
     # -- Lock-protected I/O --------------------------------------------------
 
     def get_observation(self) -> dict[str, Any]:
         with self._lock:
             sampled_at = time.monotonic()
-            try:
-                observation = self._robot.get_observation()
-                self._observed_positions = {
-                    key: float(observation[key])
-                    for key in self.action_features
-                    if key.endswith(".pos") and key in observation
-                }
-            except CameraObservationError as exc:
-                if self._camera_failure is None:
-                    self._camera_failure = f"{type(exc).__name__}: {exc}"
-                raise
-            except Exception as exc:
-                self._record_hardware_failure("get_observation", exc)
-                raise
+            observation = self._robot.get_observation()
+            self._observed_positions = {
+                key: float(observation[key])
+                for key in self.action_features
+                if key.endswith(".pos") and key in observation
+            }
             self._observation_time = sampled_at
             return observation
 
@@ -85,42 +76,15 @@ class ThreadSafeRobot:
                 raise
 
     def _record_hardware_failure(self, operation: str, error: Exception) -> None:
-        # Caller owns the I/O lock. Unknown observation failures may include
-        # actuator failures and therefore prohibit any shutdown movement.
+        # Caller owns the I/O lock. Failed commands prohibit further shutdown movement.
         if self._hardware_failure is None:
             self._hardware_failure = f"{operation}: {type(error).__name__}: {error}"
 
     @property
     def hardware_failure(self) -> str | None:
-        """First actuator or unclassified I/O failure; never cleared by inference reset."""
+        """First command/hold failure; never cleared by inference reset."""
         with self._lock:
             return self._hardware_failure
-
-    @property
-    def camera_failure(self) -> str | None:
-        """A driver-classified camera error; motor health must still be checked for homing."""
-        with self._lock:
-            return self._camera_failure
-
-    def get_position_observation(self) -> dict[str, Any]:
-        """Read current positions for homing, without retrying a failed camera."""
-        with self._lock:
-            try:
-                try:
-                    return self._robot.get_position_observation()
-                except NotImplementedError:
-                    if self._camera_failure is not None:
-                        raise
-                    return self._robot.get_observation()
-            except CameraObservationError as exc:
-                if self._camera_failure is None:
-                    self._camera_failure = f"{type(exc).__name__}: {exc}"
-                raise
-            except NotImplementedError:
-                raise
-            except Exception as exc:
-                self._record_hardware_failure("get_position_observation", exc)
-                raise
 
     def _validated_positions(self, action: Any) -> dict[str, float]:
         if not isinstance(action, dict) or set(action) != set(self.action_features):

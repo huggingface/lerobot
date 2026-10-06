@@ -26,8 +26,8 @@ from lerobot.inference import (
     FeatureSpec,
     PolicyCapabilities,
     RemoteInferenceConfig,
-    RemoteInferenceEngine,
 )
+from lerobot.remote_inference import RemoteInferenceEngine
 from lerobot.remote_inference.client import RemoteClient, RequestCancelled
 from lerobot.remote_inference.protocol import MessageType, instance_prefix, session_prefix
 from lerobot.transport.zenoh import QueryCancelled
@@ -112,9 +112,7 @@ def test_cancelled_control_wait_returns_while_server_operation_still_runs(remote
 
 def test_language_wait_fails_on_observed_presence_loss_without_waiting_for_language_timeout(transports):
     server, transport = transports
-    config = RemoteInferenceConfig(
-        deployment="language-loss", semantics="radians", hold_mode="position", language_timeout_s=60
-    )
+    config = RemoteInferenceConfig(deployment="language-loss", semantics="radians", language_timeout_s=60)
     feature = FeatureSpec("observation.state", (3,), "float32", semantics="radians")
     capabilities = PolicyCapabilities(
         (ExecutionMode.CHUNK,),
@@ -211,7 +209,7 @@ def test_server_process_death_latches_presence_exhausts_motion_and_skips_close_a
         endpoint=endpoint,
         deployment="aligned-process",
         semantics="radians-v1",
-        hold_mode="position",
+        chunk_merge="append",  # This probe queues a successor without advancing a robot cursor.
         refill_seconds=0.2,
         max_observation_age_s=10,
         handshake_timeout_s=3,

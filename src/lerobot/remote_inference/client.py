@@ -193,7 +193,7 @@ class RemoteClient:
                 "Remote server deployment=%s instance=%s software=%r protocol=%s",
                 config.deployment,
                 descriptor["instance_id"],
-                descriptor.get("software", "unavailable (peer does not report its loaded build)"),
+                descriptor.get("software", "unavailable (peer does not report its package version)"),
                 PROTOCOL_VERSION,
             )
             if config.expected_artifact and config.expected_artifact != descriptor.get("artifact_identity"):

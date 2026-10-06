@@ -37,10 +37,10 @@ from huggingface_hub.errors import HfHubHTTPError
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
-from lerobot.inference import ChunkPolicySpec
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..chunk import ChunkPolicySpec
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..utils import get_device_from_parameters
 from .configuration_groot import (

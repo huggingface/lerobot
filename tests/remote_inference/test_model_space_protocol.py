@@ -89,9 +89,9 @@ def worker(request):
         instance.close()
 
 
-def client_for(worker, *, descriptor=None, mode="rtc_guided"):
+def client_for(worker, *, descriptor=None, mode="rtc_guided", chunk_merge="auto"):
     transport = EncodedWorkerTransport(worker)
-    config = RemoteInferenceConfig(deployment="test", semantics="radians", hold_mode="position", mode=mode)
+    config = RemoteInferenceConfig(deployment="test", semantics="radians", mode=mode, chunk_merge=chunk_merge)
     return RemoteClient(transport, config, worker.descriptor if descriptor is None else descriptor)
 
 
@@ -174,7 +174,7 @@ def test_admission_cannot_change_the_advertised_model_width(worker):
 
 
 def test_plain_chunks_do_not_require_rtc_model_space_or_return_model_values(worker):
-    client = client_for(worker, mode="chunk")
+    client = client_for(worker, mode="chunk", chunk_merge="append")
     admit(client)
     opening = next(
         request for request in client.transport.queries if request.message_type is MessageType.OPEN

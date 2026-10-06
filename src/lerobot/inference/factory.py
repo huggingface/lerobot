@@ -34,9 +34,9 @@ import draccus
 from lerobot.policies import PreTrainedPolicy
 from lerobot.policies.rtc import RTCConfig
 from lerobot.processor import PolicyProcessorPipeline
-from lerobot.remote_inference import chunk_settings
 
 from .base import InferenceEngine, InferenceRobot
+from .chunk_settings import chunk_settings
 from .contracts import ExecutionMode
 from .rtc import RTCInferenceEngine
 from .sync import SyncInferenceEngine
@@ -92,7 +92,7 @@ class RTCInferenceConfig(InferenceEngineConfig):
 @InferenceEngineConfig.register_subclass("remote")
 @dataclass
 class RemoteInferenceConfig(InferenceEngineConfig):
-    """Exclusive remote deployment, with explicit robot semantics and local hold consent.
+    """Exclusive remote deployment with explicit robot semantics.
 
     Timing defaults are conservative starting values for lab validation; operators must
     measure their deployment's turnaround and choose a usable playback/age budget.
@@ -104,12 +104,12 @@ class RemoteInferenceConfig(InferenceEngineConfig):
     expected_artifact: str | None = None
     mode: str = "chunk"
     semantics: str = ""
-    hold_mode: str = ""
     # Request when remaining playback reaches this threshold (append, aligned and RTC).
     # Effective floor: recent maximum turnaround + one policy action interval.
     # Smaller values allow more aligned follow-through; aligned task changes bypass this gate.
     refill_seconds: float = 0.5
-    chunk_merge: Literal["append", "aligned"] = "append"
+    # Auto selects aligned plain chunks, leaving RTC continuation unchanged.
+    chunk_merge: Literal["auto", "append", "aligned"] = "auto"
     blend_steps: int = 0
     blend_weight: float = 0.5
     blend_components: list[str] = field(default_factory=list)
@@ -127,7 +127,7 @@ class RemoteInferenceConfig(InferenceEngineConfig):
     log_level: Literal["INFO", "DEBUG"] = "INFO"
 
     def __post_init__(self) -> None:
-        """Validate transport, scheduling and explicit robot consent settings."""
+        """Validate transport and scheduling settings."""
         if self.log_level not in {"INFO", "DEBUG"}:
             raise ValueError("Remote log_level must be INFO or DEBUG")
         if not math.isfinite(self.action_starvation_grace_s) or self.action_starvation_grace_s < 0:
@@ -139,12 +139,12 @@ class RemoteInferenceConfig(InferenceEngineConfig):
                 "Remote inference requires --inference.deployment and explicit robot/action "
                 "semantics via --inference.semantics"
             )
-        if self.hold_mode != "position":
-            raise ValueError("Remote inference requires --inference.hold_mode=position on a supported robot")
         try:
             ExecutionMode(self.mode)
         except ValueError as exc:
             raise ValueError(f"Unsupported remote execution mode: {self.mode!r}") from exc
+        if self.chunk_merge == "auto":
+            self.chunk_merge = "aligned" if self.mode == "chunk" else "append"
         chunk_settings(self.chunk_merge, self.blend_steps, self.blend_weight, self.blend_components)
         if self.mode != "chunk" and self.chunk_merge != "append":
             raise ValueError("chunk_merge=aligned is available only with mode=chunk")

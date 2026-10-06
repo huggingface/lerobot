@@ -26,10 +26,9 @@ from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
     OperatingMode,
 )
-from lerobot.utils.decorators import check_if_already_connected
-from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
-from ..robot import CameraObservationError, Robot
+from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .config_omx_follower import OmxFollowerConfig
 
@@ -172,10 +171,8 @@ class OmxFollower(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
-    def get_position_observation(self) -> dict[str, float]:
-        """Read fresh actuator positions even if a camera has failed."""
-        if not self.bus.is_connected:
-            raise DeviceNotConnectedError(f"{self} motors are not connected")
+    @check_if_not_connected
+    def get_observation(self) -> RobotObservation:
         # Read arm position
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position")
@@ -183,30 +180,23 @@ class OmxFollower(Robot):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
-        return obs_dict
-
-    def get_observation(self) -> RobotObservation:
-        obs_dict: RobotObservation = self.get_position_observation()
-
-        # Classify only camera acquisition failures; motor failures propagate as-is.
+        # Capture images from cameras
         for cam_key, cam in self.cameras.items():
-            try:
-                if getattr(cam, "use_rgb", True):
-                    start = time.perf_counter()
-                    obs_dict[cam_key] = cam.read_latest()
-                    dt_ms = (time.perf_counter() - start) * 1e3
-                    logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
+            if getattr(cam, "use_rgb", True):
+                start = time.perf_counter()
+                obs_dict[cam_key] = cam.read_latest()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
-                if isinstance(cam, DepthCamera) and cam.use_depth:
-                    start = time.perf_counter()
-                    obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
-                    dt_ms = (time.perf_counter() - start) * 1e3
-                    logger.debug(f"{self} read {cam_key} depth: {dt_ms:.1f}ms")
-            except Exception as exc:
-                raise CameraObservationError(f"Camera {cam_key!r} failed: {exc}") from exc
+            if isinstance(cam, DepthCamera) and cam.use_depth:
+                start = time.perf_counter()
+                obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
+                dt_ms = (time.perf_counter() - start) * 1e3
+                logger.debug(f"{self} read {cam_key} depth: {dt_ms:.1f}ms")
 
         return obs_dict
 
+    @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
         """Command arm to move to a target joint configuration.
 
@@ -221,10 +211,6 @@ class OmxFollower(Robot):
             RobotAction: The action sent to the motors, potentially clipped.
         """
 
-        # Position commands remain available for shutdown after a camera failure.
-        if not self.bus.is_connected:
-            raise DeviceNotConnectedError(f"{self} motors are not connected")
-
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
         # Cap goal position when too far away from present position.
@@ -238,13 +224,10 @@ class OmxFollower(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
-    def disconnect(self) -> None:
-        # A disconnected camera must not prevent actuator cleanup.
-        if not self.bus.is_connected:
-            raise DeviceNotConnectedError(f"{self} motors are not connected")
+    @check_if_not_connected
+    def disconnect(self):
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():
-            if cam.is_connected:
-                cam.disconnect()
+            cam.disconnect()
 
         logger.info(f"{self} disconnected.")

@@ -331,15 +331,13 @@ def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
 ```
 <!-- prettier-ignore-end -->
 
-### Waiting and camera-independent return
+### Waiting between predictions
 
 Ordinary local RTC remains usable without a new robot capability. Remote rollout, planned asynchronous language pauses and recoverable action starvation require a position-target waiting contract. Opt in with `supports_position_hold = True` only when all action fields are actual position targets and refreshing them through `send_action()` is suitable for the controller. Torque enable or a `.pos` suffix alone does not establish this: a velocity/effort controller or a decoder consuming latent motion tokens needs different semantics.
 
 The shared rollout implementation refreshes the last complete finite action returned by `send_action()`, including the gripper and any driver clipping. Return the target actually applied, not the original request, when your driver modifies it. Subsequent observation updates do not replace that target. Before any command has been applied, a validated measured position snapshot initializes it. The robot may settle toward its retained target; this contract stops trajectory advancement rather than guaranteeing an instantaneous physical stop. Validate load support, grip and command-refresh behavior on hardware before opting in.
 
-To permit a configured return to the initial position after a camera-only failure, implement the optional `get_position_observation() -> dict[str, float]` method using actuator feedback without camera acquisition. Its keys must cover the position actions in the same units as `send_action()`. Drivers without this method keep the ordinary observation path when healthy; they cannot claim camera-independent return.
-
-After successful motor acquisition, wrap only camera acquisition failures in `CameraObservationError`, available from `lerobot.robots`. Rollout still terminates inference on that error, but may use valid actuator-only feedback for the configured return. Do not use this exception for motor feedback, control or unknown failures: those prevent additional shutdown movement. Failed returns are not retried automatically.
+Remote rollout checks this driver capability automatically; no additional hold-mode CLI flag is needed. Generic observation failures use the normal rollout cleanup path. Returning to the initial position still needs a complete observation, and may fail if a camera remains unavailable.
 
 ## Adding a Teleoperator
 

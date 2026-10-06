@@ -27,14 +27,23 @@ def test_public_inference_imports_without_rollout_or_optional_transports(first_p
             ChunkPolicySpec, InferenceEngine, PolicyRunner, RTCInferenceConfig,
             RTCInferenceEngine, RemoteInferenceConfig, SyncInferenceEngine,
         )
-        from lerobot.remote_inference import ProtocolError
+        if {first_package!r} != "remote_inference":
+            assert "lerobot.remote_inference" not in sys.modules
+        import lerobot.inference as inference
+        import lerobot.remote_inference as remote
+        from lerobot.remote_inference import ProtocolError, RemoteClient, RemoteInferenceEngine, PolicyServer
+
+        assert issubclass(RemoteInferenceEngine, InferenceEngine)
+        for package in (inference, remote):
+            assert "__getattr__" not in vars(package)
+            assert "_LAZY_EXPORTS" not in vars(package)
+            assert all(name in vars(package) for name in package.__all__)
 
         assert issubclass(RTCInferenceEngine, InferenceEngine)
         assert issubclass(SyncInferenceEngine, InferenceEngine)
         assert "lerobot.rollout" not in sys.modules
-        assert "lerobot.remote_inference.client" not in sys.modules
-        assert "lerobot.transport.zenoh" not in sys.modules
         assert "lerobot.transport.services_pb2_grpc" not in sys.modules
+        assert all(sys.modules.get(name) is None for name in ("datasets", "grpc", "zenoh", "msgpack"))
     """
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(code)],

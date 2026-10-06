@@ -29,16 +29,17 @@ from tests.remote_inference.test_session import action_request, assert_error, op
 
 
 def client_config(**kwargs):
-    return RemoteInferenceConfig(deployment="test", semantics="test-radians", hold_mode="position", **kwargs)
+    return RemoteInferenceConfig(deployment="test", semantics="test-radians", **kwargs)
 
 
-def test_client_defaults_match_implicit_legacy_chunk_contract():
-    config = client_config()
-    assert (config.chunk_merge, config.blend_steps, config.blend_components) == ("append", 0, [])
-    assert (
-        chunk_settings(config.chunk_merge, config.blend_steps, config.blend_weight, config.blend_components)
-        == default_chunk_settings()
-    )
+@pytest.mark.parametrize("mode", ["chunk", "rtc_guided", "rtc_trained"])
+def test_client_defaults_align_plain_chunks_without_changing_rtc_or_legacy_wire(mode):
+    config = client_config(mode=mode)
+    expected = "aligned" if mode == "chunk" else "append"
+    assert (config.chunk_merge, config.blend_steps, config.blend_components) == (expected, 0, [])
+    assert client_config(mode=mode, chunk_merge="append").chunk_merge == "append"
+    # Omitted wire settings keep their original meaning; alignment is negotiated explicitly.
+    assert default_chunk_settings() == chunk_settings("append", 0, 0.5, [])
     altered = default_chunk_settings()
     altered["blend_components"].append("shoulder.pos")
     assert not default_chunk_settings()["blend_components"]
@@ -206,7 +207,7 @@ def test_append_open_remains_compatible_with_descriptor_without_new_fields(worke
     descriptor = worker.descriptor
     del descriptor["execution_contracts"]
     del descriptor["blendable_components"]
-    client = client_for(worker, client_config(), descriptor)
+    client = client_for(worker, client_config(chunk_merge="append"), descriptor)
 
     def query(key, request, timeout, expected):
         assert "chunk_settings" not in request.body

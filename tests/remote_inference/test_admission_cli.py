@@ -41,7 +41,7 @@ def test_busy_open_is_distinct_from_busy_during_an_admitted_session():
         action_feature=FeatureSpec("action", (1,), "float32", semantics="joints"),
     )
     transport = SimpleNamespace(subscribe_liveliness=lambda _: None, query=query)
-    config = RemoteInferenceConfig(deployment="test", semantics="joints", hold_mode="position")
+    config = RemoteInferenceConfig(deployment="test", semantics="joints", chunk_merge="append")
     client = RemoteClient(
         transport,
         config,

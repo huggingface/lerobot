@@ -85,7 +85,7 @@ def remote_server(request):
             endpoint=endpoint,
             deployment="loopback",
             semantics="radians-v1",
-            hold_mode="position",
+            chunk_merge="aligned" if getattr(request, "param", None) == "robot" else "append",
             handshake_timeout_s=2,
             action_timeout_s=2,
         )
@@ -297,6 +297,7 @@ def test_busy_cli_releases_connected_hardware_before_exiting(remote_server, monk
     rejected = RemoteClient.connect(config)
     features = {f"joint_{index}.pos": float for index in range(3)}
     robot = SimpleNamespace(
+        name="test_position_robot",
         supports_position_hold=True,
         action_features=features,
         observation_features=features,
@@ -313,11 +314,14 @@ def test_busy_cli_releases_connected_hardware_before_exiting(remote_server, monk
         disconnect=lambda: setattr(teleop, "is_connected", False),
     )
     monkeypatch.setattr("lerobot.rollout.remote_context.RemoteClient.connect", lambda _: rejected)
-    monkeypatch.setattr("lerobot.rollout.remote_context.make_robot_from_config", lambda _: robot)
-    monkeypatch.setattr("lerobot.rollout.remote_context.make_teleoperator_from_config", lambda _: teleop)
+    monkeypatch.setattr("lerobot.rollout.context.make_robot_from_config", lambda _: robot)
+    monkeypatch.setattr("lerobot.rollout.context.make_teleoperator_from_config", lambda _: teleop)
     monkeypatch.setattr("lerobot.rollout.configs.parser.get_path_arg", lambda _: None)
     cfg = RolloutConfig(
-        robot=SimpleNamespace(), teleop=SimpleNamespace(), inference=config, task="pick up the cube"
+        robot=SimpleNamespace(type="test_position_robot"),
+        teleop=SimpleNamespace(type="test_teleop"),
+        inference=config,
+        task="pick up the cube",
     )
     monkeypatch.setattr(lerobot_rollout, "register_third_party_plugins", lambda: None)
     monkeypatch.setattr(lerobot_rollout, "rollout", lambda: build_rollout_context(cfg, Event()))
@@ -446,7 +450,7 @@ def test_remote_context_without_weights_dispatches_and_holds_fake_robot(remote_s
             return command
 
     robot = FakeRobot()
-    monkeypatch.setattr("lerobot.rollout.remote_context.make_robot_from_config", lambda _: robot)
+    monkeypatch.setattr("lerobot.rollout.context.make_robot_from_config", lambda _: robot)
     monkeypatch.setattr("lerobot.rollout.configs.parser.get_path_arg", lambda _: None)
     monkeypatch.setattr(
         "lerobot.rollout.context._load_pretrained_policy", lambda _: pytest.fail("client loaded weights")
@@ -454,7 +458,9 @@ def test_remote_context_without_weights_dispatches_and_holds_fake_robot(remote_s
     monkeypatch.setattr(
         "lerobot.rollout.context.get_policy_class", lambda _: pytest.fail("client instantiated a policy")
     )
-    cfg = RolloutConfig(robot=SimpleNamespace(), inference=remote_config, task="pick up the cube")
+    cfg = RolloutConfig(
+        robot=SimpleNamespace(type="test_position_robot"), inference=remote_config, task="pick up the cube"
+    )
     ctx = build_rollout_context(cfg, Event())
     assert ctx.policy.policy is ctx.policy.preprocessor is ctx.policy.postprocessor is None
     engine = ctx.policy.inference

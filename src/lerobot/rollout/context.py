@@ -43,8 +43,7 @@ from lerobot.inference import (
     create_inference_engine,
     supports_rtc_inference,
 )
-from lerobot.policies import get_policy_class, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies import PreTrainedPolicy, get_policy_class, make_pre_post_processors
 from lerobot.policies.rtc.configuration_rtc import validate_trained_rtc_horizon
 from lerobot.processor import (
     PolicyProcessorPipeline,
@@ -292,9 +291,80 @@ def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy
     )
 
 
+def _resolve_robot_processors(
+    teleop_action: RobotProcessorPipeline | None,
+    robot_action: RobotProcessorPipeline | None,
+    robot_observation: RobotProcessorPipeline | None,
+) -> ProcessorContext:
+    if teleop_action is None or robot_action is None or robot_observation is None:
+        default_teleop, default_action, default_observation = make_default_processors()
+        teleop_action = teleop_action or default_teleop
+        robot_action = robot_action or default_action
+        robot_observation = robot_observation or default_observation
+    return ProcessorContext(teleop_action, robot_action, robot_observation)
+
+
+def _disconnect_setup_hardware(robot: Robot, teleop: Teleoperator | None) -> None:
+    """Release each connected device without masking the original setup failure."""
+    for name, resource in (("teleoperator", teleop), ("robot", robot)):
+        try:
+            if resource is not None and resource.is_connected:
+                resource.disconnect()
+        except Exception:
+            logger.exception("Could not close %s after rollout setup failed", name)
+
+
+def _connect_rollout_hardware(cfg: RolloutConfig, *, require_hold: bool = False) -> HardwareContext:
+    """Connect devices and capture the initial pose after policy/descriptor validation."""
+    if cfg.robot is None:
+        raise ValueError("--robot.type is required for rollout")
+    robot = make_robot_from_config(cfg.robot)
+    wrapper = ThreadSafeRobot(robot)
+    teleop = None
+    try:
+        if require_hold:
+            wrapper.configure_position_hold()
+        logger.info("Connecting robot (%s)...", cfg.robot.type)
+        robot.connect()
+        logger.info("Robot connected: %s", robot.name)
+        initial_obs = wrapper.get_observation()
+        initial_position = {key: value for key, value in initial_obs.items() if key.endswith(".pos")}
+        logger.info("Captured initial robot position (%d keys)", len(initial_position))
+        if cfg.teleop is not None:
+            logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
+            teleop = make_teleoperator_from_config(cfg.teleop)
+            teleop.connect()
+            logger.info("Teleoperator connected")
+        return HardwareContext(wrapper, teleop, initial_position)
+    except BaseException:
+        _disconnect_setup_hardware(robot, teleop)
+        raise
+
+
+def _aggregate_rollout_features(
+    processors: ProcessorContext,
+    action: dict[str, type | tuple],
+    observation: dict[str, type | tuple],
+    *,
+    use_videos: bool,
+) -> dict:
+    """Apply the same robot-side feature transformations for local and remote recording."""
+    return combine_feature_dicts(
+        aggregate_pipeline_dataset_features(
+            pipeline=processors.teleop_action_processor,
+            initial_features=create_initial_features(action=action),
+            use_videos=use_videos,
+        ),
+        aggregate_pipeline_dataset_features(
+            pipeline=processors.robot_observation_processor,
+            initial_features=create_initial_features(observation=observation),
+            use_videos=use_videos,
+        ),
+    )
+
+
 def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: dict) -> LeRobotDataset | None:
     """Create the local recording destination independently of policy placement."""
-    # --- 5. Dataset -------------
     dataset = None
     if cfg.dataset is not None:
         logger.info("Setting up dataset (repo_id=%s)...", cfg.dataset.repo_id)
@@ -424,159 +494,91 @@ def build_rollout_context(
         cfg = copy(cfg)
         cfg.use_torch_compile = False
 
-    # --- 2. Robot-side processors (user-supplied or defaults) --------
-    if (
-        teleop_action_processor is None
-        or robot_action_processor is None
-        or robot_observation_processor is None
-    ):
-        _t, _r, _o = make_default_processors()
-        teleop_action_processor = teleop_action_processor or _t
-        robot_action_processor = robot_action_processor or _r
-        robot_observation_processor = robot_observation_processor or _o
-
-    # --- 3. Hardware (heaviest side-effect, deferred) -----------------
-    robot_config = cfg.robot
-    if robot_config is None:
-        raise ValueError("--robot.type is required for rollout")
-    logger.info("Connecting robot (%s)...", robot_config.type)
-    robot = make_robot_from_config(robot_config)
-    robot.connect()
-    logger.info("Robot connected: %s", robot.name)
-
-    # Store the initial joint positions so we can return to a safe pose on shutdown.
-    robot_wrapper = ThreadSafeRobot(robot)
-    initial_obs = robot_wrapper.get_observation()
-    initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
-    logger.info("Captured initial robot position (%d keys)", len(initial_position))
-
-    teleop = None
-    if cfg.teleop is not None:
-        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
-        teleop = make_teleoperator_from_config(cfg.teleop)
-        teleop.connect()
-        logger.info("Teleoperator connected")
-
-    # TODO(Steven): once Teleoperator motor-control methods are standardised
-    # (``enable_torque`` / ``disable_torque`` / ``write_goal_positions``), gate
-    # the DAgger strategy on their presence here and fail fast with a helpful
-    # message instead of relying on the operator to pre-align the leader by
-    # hand.  See :func:`DAggerStrategy._apply_transition` for the matching
-    # disabled call sites.
-    # if isinstance(cfg.strategy, DAggerStrategyConfig) and teleop is not None:
-    #     required_teleop_methods = ("enable_torque", "disable_torque", "write_goal_positions")
-    #     missing = [m for m in required_teleop_methods if not callable(getattr(teleop, m, None))]
-    #     if missing:
-    #         teleop.disconnect()
-    #         raise ValueError(
-    #             f"DAgger strategy requires a teleoperator with motor control methods "
-    #             f"{required_teleop_methods}. '{type(teleop).__name__}' is missing: {missing}"
-    #         )
-
-    # --- 4. Features + action-key reconciliation ---------------------
-    # TODO(Steven):Only ``.pos`` joint features are routed to the policy as state and as the
-    # action target; velocity and torque channels (when present) are kept in
-    # the raw observation but excluded from the policy-facing tensors.
-    all_obs_features = robot.observation_features
-    # ``observation_features`` values are either a tuple (camera shape) or the
-    # ``float`` type itself used as a sentinel for scalar motor features —
-    # see ``dict[str, type | tuple]`` annotation on ``Robot.observation_features``.
-    # Keep cameras (tuple) plus both joint-position (.pos) and base-velocity (.vel)
-    # scalar state features. LeKiwi's observation.state is 9-dim (6 arm .pos +
-    # x/y/theta.vel) and the policy was trained/normalized on all 9; the old .pos-only
-    # filter fed a 6-dim state into a 9-dim normalizer → RuntimeError (size 6 vs 9).
-    # Pure-arm robots have no .vel state keys, so this is a no-op for them.
-    observation_features_hw: dict[str, type | tuple] = {
-        k: v
-        for k, v in all_obs_features.items()
-        if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
-    }
-    policy_action_names = getattr(policy_config, "action_feature_names", None)
-    checkpoint_order = list(policy_action_names) if policy_action_names else None
-    observation_features_hw = _align_to_checkpoint_order(
-        observation_features_hw, checkpoint_order, what="state"
+    processors = _resolve_robot_processors(
+        teleop_action_processor, robot_action_processor, robot_observation_processor
     )
-    # Keep both joint-position (.pos) and base-velocity (.vel) action features so
-    # mobile manipulators command the base too (e.g. LeKiwi: 6 arm .pos +
-    # x/y/theta.vel = 9-dim action). Pure-arm robots have no .vel keys, so this is
-    # a no-op for them. Without the .vel keys the base velocities are silently
-    # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
-    action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
-    action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
+    hardware = _connect_rollout_hardware(cfg)
+    robot_wrapper = hardware.robot_wrapper
+    robot = robot_wrapper.inner
 
-    # The action side is always needed: sync inference reads action names from
-    # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.
-    action_dataset_features = aggregate_pipeline_dataset_features(
-        pipeline=teleop_action_processor,
-        initial_features=create_initial_features(action=action_features_hw),
-        use_videos=cfg.dataset.video if cfg.dataset else True,
-    )
-    # Observation-side aggregation is needed because of build_dataset_frame
-    observation_dataset_features = aggregate_pipeline_dataset_features(
-        pipeline=robot_observation_processor,
-        initial_features=create_initial_features(observation=observation_features_hw),
-        use_videos=cfg.dataset.video if cfg.dataset else True,
-    )
-    dataset_features = combine_feature_dicts(action_dataset_features, observation_dataset_features)
-    hw_features = hw_to_dataset_features(observation_features_hw, "observation")
-    # ``action_features_hw`` is already in checkpoint order, so it *is* the dispatch order.
-    ordered_action_keys = list(action_features_hw)
-    _assert_state_matches_action_order(dataset_features, ordered_action_keys)
-
-    # Validate visual features if no rename_map is active
-    rename_map = cfg.rename_map
-    if not rename_map:
-        expected_visuals = {
-            k for k, v in (policy_config.input_features or {}).items() if v.type == FeatureType.VISUAL
+    try:
+        # Retain position and base-velocity channels for mobile manipulators, plus cameras.
+        all_obs_features = robot.observation_features
+        observation_features_hw: dict[str, type | tuple] = {
+            k: v
+            for k, v in all_obs_features.items()
+            if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
         }
-        provided_visuals = {
-            f"observation.images.{k}" for k, v in robot.observation_features.items() if isinstance(v, tuple)
-        }
-        policy_subset = expected_visuals.issubset(provided_visuals)
-        hw_subset = provided_visuals.issubset(expected_visuals)
-        if not (policy_subset or hw_subset):
-            raise ValueError(
-                f"Visual feature mismatch between policy and robot hardware.\n"
-                f"Policy expects: {expected_visuals}\n"
-                f"Robot provides: {provided_visuals}\n"
-                f"Use --rename_map to map camera names, e.g. "
-                f"""--rename_map='{{"observation.images.top": "observation.images.cam0"}}'"""
+        policy_action_names = getattr(policy_config, "action_feature_names", None)
+        checkpoint_order = list(policy_action_names) if policy_action_names else None
+        observation_features_hw = _align_to_checkpoint_order(
+            observation_features_hw, checkpoint_order, what="state"
+        )
+        action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
+        action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
+
+        dataset_features = _aggregate_rollout_features(
+            processors,
+            action_features_hw,
+            observation_features_hw,
+            use_videos=cfg.dataset.video if cfg.dataset else True,
+        )
+        hw_features = hw_to_dataset_features(observation_features_hw, "observation")
+        # ``action_features_hw`` is already in checkpoint order, so it *is* the dispatch order.
+        ordered_action_keys = list(action_features_hw)
+        _assert_state_matches_action_order(dataset_features, ordered_action_keys)
+
+        # Validate visual features if no rename_map is active
+        rename_map = cfg.rename_map
+        if not rename_map:
+            expected_visuals = {
+                k for k, v in (policy_config.input_features or {}).items() if v.type == FeatureType.VISUAL
+            }
+            provided_visuals = {
+                f"observation.images.{k}"
+                for k, v in robot.observation_features.items()
+                if isinstance(v, tuple)
+            }
+            policy_subset = expected_visuals.issubset(provided_visuals)
+            hw_subset = provided_visuals.issubset(expected_visuals)
+            if not (policy_subset or hw_subset):
+                raise ValueError(
+                    f"Visual feature mismatch between policy and robot hardware.\n"
+                    f"Policy expects: {expected_visuals}\n"
+                    f"Robot provides: {provided_visuals}\n"
+                    f"Use --rename_map to map camera names, e.g. "
+                    f"""--rename_map='{{"observation.images.top": "observation.images.cam0"}}'"""
+                )
+
+        dataset = _build_rollout_dataset(cfg, robot, dataset_features)
+
+        # Policy processors use recording statistics when available.
+        dataset_stats = None
+        if dataset is not None:
+            dataset_stats = rename_stats(
+                dataset.meta.stats,
+                cfg.rename_map,
             )
 
-    dataset = _build_rollout_dataset(cfg, robot, dataset_features)
-
-    # --- 6. Policy pre/post processors (needs dataset stats if any) ---
-    dataset_stats = None
-    if dataset is not None:
-        dataset_stats = rename_stats(
-            dataset.meta.stats,
-            cfg.rename_map,
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy_config,
+            pretrained_path=policy_config.pretrained_path,
+            pretrained_revision=policy_config.pretrained_revision,
+            dataset_stats=dataset_stats,
+            preprocessor_overrides={
+                "device_processor": {"device": cfg.device},
+                "rename_observations_processor": {"rename_map": cfg.rename_map},
+            },
         )
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy_config,
-        pretrained_path=policy_config.pretrained_path,
-        pretrained_revision=policy_config.pretrained_revision,
-        dataset_stats=dataset_stats,
-        preprocessor_overrides={
-            "device_processor": {"device": cfg.device},
-            "rename_observations_processor": {"rename_map": cfg.rename_map},
-        },
-    )
+        # Keep relative-action anchors fixed while the local policy's queued chunk drains.
+        bind_relative_anchor(policy, preprocessor)
 
-    # A relative-action chunk is anchored to the state it was predicted from, and the engines
-    # below rerun the preprocessor once per tick. Hand the step the policy's queue depth so it
-    # holds that anchor until the chunk drains, instead of following the moving arm. Harmless
-    # for the chunk-at-once engines (RTC), whose policy queue is always empty.
-    bind_relative_anchor(policy, preprocessor)
-
-    # --- 7. Inference strategy (needs policy + pre/post + hardware) --
-    logger.info(
-        "Creating inference engine (type=%s)...",
-        cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
-    )
-    task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
-    try:
+        logger.info(
+            "Creating inference engine (type=%s)...",
+            cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
+        )
+        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         inference_strategy = create_inference_engine(
             cfg.inference,
             policy=policy,
@@ -592,40 +594,25 @@ def build_rollout_context(
             compile_warmup_inferences=cfg.compile_warmup_inferences,
             shutdown_event=shutdown_event,
         )
-    except BaseException:
-        # Context construction precedes the CLI's strategy teardown guard. A
-        # rejected engine must release the devices it already connected without
-        # masking the original contract/configuration error.
-        for device in (teleop, robot):
-            if device is not None and device.is_connected:
-                try:
-                    device.disconnect()
-                except Exception:
-                    logger.exception("Device cleanup failed after inference engine construction failed")
-        raise
 
-    # --- 8. Assemble ---------------------------------------------------
-    logger.info("Rollout context assembled successfully")
-    return RolloutContext(
-        runtime=RuntimeContext(cfg=cfg, shutdown_event=shutdown_event),
-        hardware=HardwareContext(
-            robot_wrapper=robot_wrapper, teleop=teleop, initial_position=initial_position
-        ),
-        policy=PolicyContext(
-            policy=policy,
-            preprocessor=preprocessor,
-            postprocessor=postprocessor,
-            inference=inference_strategy,
-        ),
-        processors=ProcessorContext(
-            teleop_action_processor=teleop_action_processor,
-            robot_action_processor=robot_action_processor,
-            robot_observation_processor=robot_observation_processor,
-        ),
-        data=DatasetContext(
-            dataset=dataset,
-            dataset_features=dataset_features,
-            hw_features=hw_features,
-            ordered_action_keys=ordered_action_keys,
-        ),
-    )
+        logger.info("Rollout context assembled successfully")
+        return RolloutContext(
+            runtime=RuntimeContext(cfg=cfg, shutdown_event=shutdown_event),
+            hardware=hardware,
+            policy=PolicyContext(
+                policy=policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                inference=inference_strategy,
+            ),
+            processors=processors,
+            data=DatasetContext(
+                dataset=dataset,
+                dataset_features=dataset_features,
+                hw_features=hw_features,
+                ordered_action_keys=ordered_action_keys,
+            ),
+        )
+    except BaseException:
+        _disconnect_setup_hardware(robot, hardware.teleop)
+        raise
