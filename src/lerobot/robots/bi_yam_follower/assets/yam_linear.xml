@@ -1,0 +1,55 @@
+<!--
+Derived from I2RT yam/v1/yam.xml and linear_4310/linear_4310.xml
+https://github.com/i2rt-robotics/i2rt/tree/120c3c81400171174604e503943f8d1ebc891058/i2rt/robot_models
+Retains transforms, joints, and inertials; excludes visual/contact geometry and added payloads.
+
+MIT License
+
+Copyright (c) I2RT Robotics
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+-->
+<mujoco model="yam">
+  <compiler angle="radian" />
+  <worldbody>
+    <body name="base" pos="0 0 0" quat="1 0 0 0">
+      <inertial pos="-3.8391e-05 2.4007e-05 0.024768" quat="0.49938139958418276 0.50073986942030346 -0.50008702432797014 -0.49979072522514489" mass="0.873654" diaginertia="0.00067830593494507463 0.0015705906697095877 0.0016940403953453369" />
+      <body name="link1" pos="0 0 0.068" quat="0 0.70711 0 -0.70711">
+        <inertial pos="-0.0233636 -0.00172503 -0.00727828" quat="0.64524361769733818 0.21204348917963084 -0.19681281961670499 -0.70708057995669871" mass="0.101218" diaginertia="4.7181498384517786e-05 0.00010625072855078136 0.0001349130730647009" />
+        <joint name="joint1" pos="0 0 0" axis="-1 0 0" type="hinge" range="-2.61799 3.14159" actuatorfrcrange="-10 10" />
+        <body name="link2" pos="-0.0455 -0.0339 -0.02" quat="0 0 0 1">
+          <inertial pos="0.000134495 -0.0331253 0.129165" quat="2.3368140745090919e-05 -0.70711781940433771 0.00013679930974081874 -0.70709572917726871" mass="1.46908" diaginertia="0.00080008827848097137 0.014599000706208605 0.014668600015310418" />
+          <joint name="joint2" pos="0 0 0" axis="0 1 0" type="hinge" range="0 3.66519" actuatorfrcrange="-10 10" />
+          <body name="link3" pos="0 -0.0688 0.264" quat="0 0 0 1">
+            <inertial pos="-0.0556042 -0.0340514 -0.135083" quat="0.6673095083601458 -0.084819836562637807 0.734174327973797 0.092150265989044466" mass="0.982553" diaginertia="0.00087644191886574482 0.0076296046064632606 0.0076519794746709975" />
+            <joint name="joint3" pos="0 0 0" axis="0 1 0" type="hinge" range="0 3.14159" actuatorfrcrange="-10 10" />
+            <body name="link4" pos="-0.0600003 -0.0688 -0.244999" quat="1 0 0 0">
+              <inertial pos="-0.0550959 0.032726 -0.0575534" quat="0.10060722133102602 0.94108569945662945 -0.079755596579730484 0.31284970530350165" mass="0.462165" diaginertia="0.00028778996544839548 0.00076643008992378317 0.00078788794462782174" />
+              <joint name="joint4" pos="0 0 0" axis="0 1 0" type="hinge" range="-1.69297 1.5708" actuatorfrcrange="-10 10" />
+              <body name="link5" pos="-0.0405003 0.0338995 -0.0739989" quat="1 0 0 0">
+                <inertial pos="0.0375847 -3.55003e-05 -0.000825911" quat="0.64668614070190811 0.64239183561513957 0.28865586152813083 -0.29292927229031912" mass="0.403307" diaginertia="0.00016964735642963316 0.00019568620481229821 0.00021979443875806869" />
+                <joint name="joint5" pos="0 0 0" axis="1 0 0" type="hinge" range="-1.5708 1.5708" actuatorfrcrange="-10 10" />
+                <body name="gripper" pos="0.0404996 0 -0.0356" quat="0 0.70711 0.70711 0">
+                  <joint name="joint6" pos="0 0 0" axis="0 0 1" type="hinge" range="-2.0944 2.0944" actuatorfrcrange="-10 10" />
+                  <inertial pos="-3.57066e-05 0.000249371 -0.0293133" quat="0.667981 0.744113 -0.00433092 0.00882801" mass="0.553219" diaginertia="0.000409686 0.000369758 0.000324415" />
+                  <body name="tip_left" pos="-0.0238981 0.0450619 -0.0545599" quat="0.499998 -0.5 -0.5 -0.500002">
+                    <inertial pos="-0.0224716 0.0143408 -0.0426253" quat="0.498899 0.455348 -0.0576406 0.735143" mass="0.0710042" diaginertia="6.24193e-05 6.01079e-05 2.83591e-05" />
+                    <joint name="joint7" pos="0 0 0" type="slide" axis="0 0 -1" range="0 0.0475" />
+                  </body>
+                  <body name="tip_right" pos="0.0238981 -0.0450619 -0.0545599" quat="0.707105 0.707108 0 0">
+                    <inertial pos="-0.0143408 -0.0224716 -0.0426253" quat="0.281222 0.8726 0.16705 -0.362738" mass="0.0710042" diaginertia="6.24193e-05 6.01079e-05 2.83591e-05" />
+                    <joint name="joint8" pos="0 0 0" type="slide" axis="0 0 -1" range="0 0.0475" />
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

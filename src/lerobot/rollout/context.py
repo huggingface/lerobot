@@ -385,28 +385,13 @@ def build_rollout_context(
         robot_action_processor = robot_action_processor or _r
         robot_observation_processor = robot_observation_processor or _o
 
-    # --- 3. Hardware (heaviest side-effect, deferred) -----------------
+    # --- 3. Hardware descriptions (no connections yet) ----------------
     robot_config = cfg.robot
     if robot_config is None:
         raise ValueError("--robot.type is required for rollout")
-    logger.info("Connecting robot (%s)...", robot_config.type)
     robot = make_robot_from_config(robot_config)
-    robot.connect()
-    logger.info("Robot connected: %s", robot.name)
-
-    # Store the initial joint positions so we can return to a safe pose on shutdown.
-    initial_obs = robot.get_observation()
-    initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
-    logger.info("Captured initial robot position (%d keys)", len(initial_position))
-
     robot_wrapper = ThreadSafeRobot(robot)
-
-    teleop = None
-    if cfg.teleop is not None:
-        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
-        teleop = make_teleoperator_from_config(cfg.teleop)
-        teleop.connect()
-        logger.info("Teleoperator connected")
+    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
     # TODO(Steven): once Teleoperator motor-control methods are standardised
     # (``enable_torque`` / ``disable_torque`` / ``write_goal_positions``), gate
@@ -593,7 +578,30 @@ def build_rollout_context(
         shutdown_event=shutdown_event,
     )
 
-    # --- 8. Assemble ---------------------------------------------------
+    # --- 8. Connect hardware only after policy/processor/engine setup --
+    # Loading tokenizers/processors can hold the GIL long enough to starve a
+    # torque-enabled robot's Python servo loop and trip its feedback watchdog.
+    logger.info("Connecting robot (%s)...", robot_config.type)
+    try:
+        robot.connect()
+        logger.info("Robot connected: %s", robot.name)
+        initial_obs = robot.get_observation()
+        initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
+        logger.info("Captured initial robot position (%d keys)", len(initial_position))
+        if teleop is not None:
+            teleop.connect()
+            logger.info("Teleoperator connected")
+    except BaseException:
+        # No context is returned on failure, so strategy teardown cannot run.
+        try:
+            if teleop is not None and teleop.is_connected:
+                teleop.disconnect()
+        finally:
+            if robot.is_connected:
+                robot.disconnect()
+        raise
+
+    # --- 9. Assemble ---------------------------------------------------
     logger.info("Rollout context assembled successfully")
     return RolloutContext(
         runtime=RuntimeContext(cfg=cfg, shutdown_event=shutdown_event),
