@@ -183,7 +183,7 @@ When `--strategy.type=base` is used the script doesn't record the episodes. Skip
 
 {% if base_model %}### Train your own policy
 
-This policy type is usually fine-tuned from the pretrained base model [{{ base_model }}](https://huggingface.co/{{ base_model }}):
+Fine-tune your own from the same base model, [{{ base_model }}](https://huggingface.co/{{ base_model }}):
 
 ```bash
 lerobot-train \

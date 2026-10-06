@@ -20,7 +20,7 @@ from collections import deque
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Unpack, cast
+from typing import TYPE_CHECKING, Any, Unpack, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -387,7 +387,7 @@ class PaliGemmaWithExpertModel(
         vlm_config,
         action_expert_config,
         use_adarms=None,
-        precision: Literal["bfloat16", "float32"] = "bfloat16",
+        precision: torch.dtype = torch.bfloat16,
         image_size: int = DEFAULT_IMAGE_SIZE,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
@@ -440,10 +440,10 @@ class PaliGemmaWithExpertModel(
         self.to_bfloat16_for_selected_params(precision)
         self._set_requires_grad()
 
-    def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
-        if precision == "bfloat16":
+    def to_bfloat16_for_selected_params(self, precision: torch.dtype = torch.bfloat16):
+        if precision == torch.bfloat16:
             self.to(dtype=torch.bfloat16)
-        elif precision == "float32":
+        elif precision == torch.float32:
             self.to(dtype=torch.float32)
             return
         else:
@@ -516,7 +516,7 @@ class PaliGemmaWithExpertModel(
 
     def _vision_autocast(self, image: torch.Tensor) -> bool:
         """Whether to run the vision tower in bfloat16 for this call."""
-        return not self.training and self.precision == "bfloat16" and image.device.type == "cuda"
+        return not self.training and self.precision == torch.bfloat16 and image.device.type == "cuda"
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.model.language_model.get_input_embeddings()(tokens)
@@ -673,7 +673,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             paligemma_config,
             action_expert_config,
             use_adarms=[False, True],
-            precision=cast(Literal["bfloat16", "float32"], config.dtype),
+            precision=cast(torch.dtype, config.dtype),
             image_size=config.image_resolution[0],
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
