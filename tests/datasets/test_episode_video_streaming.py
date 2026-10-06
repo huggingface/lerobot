@@ -9,7 +9,6 @@
 #     http://www.apache.org/licenses/LICENSE-2.0
 
 import dataclasses
-import json
 import struct
 import threading
 import time
@@ -43,7 +42,7 @@ from lerobot.streaming.mp4 import (
     synthesize_mp4,
     synthesized_mp4_size,
 )
-from lerobot.streaming.range_fetch import ThreadLocalRangeFetcher, _log_http_failure
+from lerobot.streaming.range_fetch import ThreadLocalRangeFetcher
 
 
 def _minimal_mp4(sample_offsets: list[int], *, use_co64: bool = False) -> bytes:
@@ -181,6 +180,21 @@ def test_header_probe_reads_a_trailing_moov_from_the_tail_without_the_payload():
     assert calls == [(0, 4096), (payload_end, len(source) - payload_end)]
 
 
+def _fetch_episode(cache: EpisodeByteCache, episode_index: int) -> None:
+    """Fetch every camera payload of an episode into the cache."""
+    for camera_key in cache.manifest.video_keys:
+        cache.get_bytes(episode_index, camera_key)
+
+
+def _open_decoder(cache: EpisodeByteCache, episode_index: int, camera_key: str):
+    """Open (or reuse) a cached decoder through the cache's own LRU path."""
+    cache.retain_episode(episode_index)
+    try:
+        return cache._get_decoder_entry(episode_index, camera_key).decoder
+    finally:
+        cache.release_episode(episode_index)
+
+
 def _fake_cache(
     monkeypatch,
     tmp_path,
@@ -196,14 +210,13 @@ def _fake_cache(
         tmp_path,
         byte_budget=byte_budget,
         workers=1,
-        open_decoders=False,
         max_open_decoders=max_open_decoders,
         video_backend=video_backend,
     )
     monkeypatch.setattr(
         cache,
         "_fetch_and_synthesize",
-        lambda episode_index, _camera_key: {"bytes": bytes([episode_index]) * 5, "_timings": None},
+        lambda episode_index, _camera_key: {"bytes": bytes([episode_index]) * 5},
     )
     return cache
 
@@ -211,9 +224,9 @@ def _fake_cache(
 def test_byte_cache_does_not_evict_retained_episode(monkeypatch, tmp_path):
     with _fake_cache(monkeypatch, tmp_path, byte_budget=10) as cache:
         cache.retain_episode(0)
-        cache.ensure_ready(0)
-        cache.ensure_ready(1)
-        cache.ensure_ready(2)
+        _fetch_episode(cache, 0)
+        _fetch_episode(cache, 1)
+        _fetch_episode(cache, 2)
 
         assert (0, "camera") in cache._cache
         assert (1, "camera") not in cache._cache
@@ -241,8 +254,8 @@ def test_decoder_count_has_independent_limit(monkeypatch, tmp_path):
 
     monkeypatch.setattr("lerobot.streaming.episode_cache.open_video_decoder", open_decoder)
     with _fake_cache(monkeypatch, tmp_path, byte_budget=20, max_open_decoders=1) as cache:
-        first = cache.get_decoder(0, "camera")
-        second = cache.get_decoder(1, "camera")
+        first = _open_decoder(cache, 0, "camera")
+        second = _open_decoder(cache, 1, "camera")
 
         assert first is not second
         assert cache.open_decoder_count == 1
@@ -265,8 +278,8 @@ def test_decoder_eviction_and_cache_shutdown_close_backend_resources(monkeypatch
 
     monkeypatch.setattr("lerobot.streaming.episode_cache.open_video_decoder", open_decoder)
     with _fake_cache(monkeypatch, tmp_path, byte_budget=20, max_open_decoders=1) as cache:
-        cache.get_decoder(0, "camera")
-        cache.get_decoder(1, "camera")
+        _open_decoder(cache, 0, "camera")
+        _open_decoder(cache, 1, "camera")
 
         assert opened[0].closed
         assert not opened[1].closed
@@ -288,7 +301,7 @@ def test_decoder_falls_back_to_pyav_when_torchcodec_rejects_mini_mp4(monkeypatch
 
     monkeypatch.setattr("lerobot.streaming.episode_cache.open_video_decoder", open_decoder)
     with _fake_cache(monkeypatch, tmp_path, video_backend="torchcodec") as cache:
-        decoder = cache.get_decoder(0, "camera")
+        decoder = _open_decoder(cache, 0, "camera")
 
         assert isinstance(decoder, FakeDecoder)
         assert opened_backends == ["torchcodec", "pyav"]
@@ -415,9 +428,9 @@ def test_frame_reads_serialize_access_to_each_decoder(monkeypatch, tmp_path):
 def test_releasing_episode_allows_immediate_eviction(monkeypatch, tmp_path):
     with _fake_cache(monkeypatch, tmp_path, byte_budget=5) as cache:
         cache.retain_episode(0)
-        cache.ensure_ready(0)
+        _fetch_episode(cache, 0)
         cache.release_episode(0)
-        cache.ensure_ready(1)
+        _fetch_episode(cache, 1)
 
         assert (0, "camera") not in cache._cache
         assert (1, "camera") in cache._cache
@@ -442,27 +455,3 @@ def test_range_fetcher_closes_handles_from_all_worker_threads(tmp_path):
 
     assert not fetcher._all_handles
     assert all(handle.closed for handle in handles)
-
-
-def test_http_failure_log_does_not_write_credentials(tmp_path, monkeypatch):
-    log_path = tmp_path / "http-failures.jsonl"
-    monkeypatch.setenv("LEROBOT_HTTP_FAILURE_LOG", str(log_path))
-
-    _log_http_failure(
-        backend="native-http",
-        method="GET",
-        url="https://cdn.example/private/video.mp4?token=url-secret",
-        headers={
-            "Authorization": "Bearer header-secret",
-            "Range": "bytes=0-10",
-            "X-Request-Id": "safe-request-id",
-        },
-        elapsed_s=0.1,
-        status_code=403,
-    )
-
-    record = json.loads(log_path.read_text())
-    assert record["host"] == "cdn.example"
-    assert record["path"] == "/private/video.mp4"
-    assert record["request_id"] == "safe-request-id"
-    assert "secret" not in log_path.read_text()

@@ -139,22 +139,17 @@ def test_head_status_retry_budget(
     assert sum(request.method == "GET" for request in requests) == (
         int(operation == "refresh") + int(not exhaust and operation != "metadata")
     )
-    counters = fetcher.timing_summary()
-    assert counters["head_retry_attempts"] == 2
-    assert counters["head_retry_sleep_s"] == 1.5
-    assert counters["head_failed_requests"] == int(exhaust)
-    assert counters["range_retry_attempts"] == 0
 
 
 @pytest.mark.parametrize("error_type", [httpx.ConnectTimeout, httpx.ReadError])
 @pytest.mark.parametrize("exhaust", [False, True])
-def test_head_transport_retry_counters(
+def test_head_transport_retries_are_bounded(
     fetcher: NativeHTTPRangeFetcher,
     monkeypatch: pytest.MonkeyPatch,
     error_type: type[httpx.TransportError],
     exhaust: bool,
 ) -> None:
-    """Transport retries remain bounded and are separate from GET range counters."""
+    """Transport retries remain bounded and back off before each new attempt."""
     fetcher.max_retries = 2
     heads: list[httpx.Request] = []
     sleeps: list[float] = []
@@ -176,11 +171,6 @@ def test_head_transport_retry_counters(
         assert fetcher.read_range("video.mp4", 3, 3) == b"345"
     assert len(heads) == 3
     assert sleeps == [0.5, 1.0]
-    counters = fetcher.timing_summary()
-    assert counters["head_retry_attempts"] == 2
-    assert counters["head_retry_sleep_s"] == 1.5
-    assert counters["head_failed_requests"] == int(exhaust)
-    assert counters["range_retry_attempts"] == 0
 
 
 @pytest.mark.parametrize("expired_status", [401, 403])
@@ -204,10 +194,6 @@ def test_expired_signed_url_refreshes_without_losing_range_or_leaking_token(fetc
     assert fetcher.read_range("video.mp4", 3, 3) == b"345"
     assert fetcher.read_range("video.mp4", 3, 3) == b"345"
     assert [r.method for r in requests] == ["HEAD", "GET", "HEAD", "GET", "GET"]
-    summary = fetcher.timing_summary()
-    assert summary["range_jobs"] == 2
-    assert summary["range_bytes"] == 6
-    assert summary["range_url_refreshes"] == 1
 
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -224,7 +210,6 @@ def test_permanent_signed_url_denial_has_one_refresh(fetcher, status):
     with pytest.raises(PermissionError, match=f"{status} after URL refresh"):
         fetcher.read_range("video.mp4", 0, 1)
     assert methods == ["HEAD", "GET", "HEAD", "GET"]
-    assert fetcher.timing_summary()["range_failed_requests"] == 1
 
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -250,8 +235,6 @@ def test_hub_authorization_denial_is_not_retried_as_signed_url_expiry(
     assert len(requests) == 1
     assert responses[0].is_closed
     assert sleeps == []
-    assert fetcher.timing_summary()["head_failed_requests"] == 1
-    assert fetcher.timing_summary()["head_retry_attempts"] == 0
 
 
 def test_concurrent_expired_ranges_preserve_each_payload(fetcher):

@@ -11,15 +11,12 @@
 from __future__ import annotations
 
 import contextlib
-import json
-import os
 import posixpath
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import quote, urljoin, urlparse
@@ -32,82 +29,10 @@ from huggingface_hub.utils import hf_raise_for_status
 
 from lerobot.streaming.location import LocationKind, StorageLocation
 
-_HTTP_FAILURE_LOG_LOCK = threading.Lock()
 
-
-def _get_header(headers: Mapping[str, str], name: str) -> str | None:
-    """Read a header from the mapping exposed by the HTTP backend."""
-    if hasattr(headers, "get"):
-        return headers.get(name)
-    lower_name = name.lower()
-    for key, value in headers.items():
-        if key.lower() == lower_name:
-            return value
-    return None
-
-
-def _ensure_request_id(headers: dict[str, str]) -> str:
-    """Reuse or add a request identifier for retry diagnostics."""
-    request_id = _get_header(headers, "X-Amzn-Trace-Id") or _get_header(headers, "X-Request-Id")
-    if request_id is None:
-        request_id = str(uuid4())
-        headers["X-Amzn-Trace-Id"] = request_id
-    return request_id
-
-
-def _log_http_failure(
-    *,
-    backend: str,
-    method: str,
-    url: str,
-    headers: dict[str, str],
-    elapsed_s: float,
-    status_code: int | None = None,
-    exception: Exception | None = None,
-    attempt: int | None = None,
-    response_headers: Mapping[str, str] | None = None,
-) -> None:
-    """Append optional HTTP failure diagnostics when logging is configured."""
-    log_path = os.environ.get("LEROBOT_HTTP_FAILURE_LOG")
-    if not log_path:
-        return
-    parsed = urlparse(url)
-    record = {
-        "ts": datetime.now(UTC).isoformat(),
-        "backend": backend,
-        "method": method,
-        "host": parsed.netloc,
-        "path": parsed.path,
-        "range": _get_header(headers, "Range") or _get_header(headers, "range"),
-        "request_id": _get_header(headers, "X-Amzn-Trace-Id") or _get_header(headers, "X-Request-Id"),
-        "elapsed_s": round(elapsed_s, 6),
-    }
-    if attempt is not None:
-        record["attempt"] = attempt
-    if status_code is not None:
-        record["status_code"] = status_code
-    if exception is not None:
-        record["exception_type"] = type(exception).__name__
-        record["exception"] = str(exception)
-    if response_headers is not None:
-        record["response_request_id"] = (
-            _get_header(response_headers, "x-request-id")
-            or _get_header(response_headers, "x-amz-cf-id")
-            or _get_header(response_headers, "x-amz-request-id")
-        )
-        record["cache_status"] = (
-            _get_header(response_headers, "x-cache")
-            or _get_header(response_headers, "cf-cache-status")
-            or _get_header(response_headers, "x-hf-cache")
-        )
-        record["content_range"] = _get_header(response_headers, "content-range")
-        record["content_length"] = _get_header(response_headers, "content-length")
-
-    path = Path(log_path).expanduser()
-    with _HTTP_FAILURE_LOG_LOCK:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a") as out:
-            out.write(json.dumps(record, sort_keys=True) + "\n")
+def _retry_delay_s(attempt: int) -> float:
+    """Exponential backoff shared by HEAD and range retries."""
+    return min(0.5 * 2**attempt, 5.0)
 
 
 class ThreadLocalRangeFetcher:
@@ -137,14 +62,6 @@ class ThreadLocalRangeFetcher:
         self._local = threading.local()
         self._handles_lock = threading.Lock()
         self._all_handles: dict[int, BinaryIO] = {}
-        self._timing_lock = threading.Lock()
-        self._timing_totals = {
-            "range_jobs": 0.0,
-            "range_bytes": 0.0,
-            "range_open_s": 0.0,
-            "range_seek_s": 0.0,
-            "range_read_s": 0.0,
-        }
 
     def _url(self, relative_path: str) -> str:
         """Resolve a dataset-relative path for the configured filesystem."""
@@ -181,35 +98,10 @@ class ThreadLocalRangeFetcher:
         return int(self.fs.info(self._url(relative_path))["size"])
 
     def read_range(self, relative_path: str, offset: int, length: int) -> bytes:
-        """Read an exact byte range and accumulate timing counters."""
-        open_start = time.perf_counter()
+        """Read an exact byte range through this thread's handle."""
         handle = self._handle(relative_path)
-        open_s = time.perf_counter() - open_start
-        seek_start = time.perf_counter()
         handle.seek(offset)
-        seek_s = time.perf_counter() - seek_start
-        read_start = time.perf_counter()
-        data = handle.read(length)
-        read_s = time.perf_counter() - read_start
-        self._record_timing(
-            range_jobs=1.0,
-            range_bytes=float(len(data)),
-            range_open_s=open_s,
-            range_seek_s=seek_s,
-            range_read_s=read_s,
-        )
-        return data
-
-    def _record_timing(self, **kwargs: float) -> None:
-        """Accumulate fetch counters under the timing lock."""
-        with self._timing_lock:
-            for key, value in kwargs.items():
-                self._timing_totals[key] = self._timing_totals.get(key, 0.0) + value
-
-    def timing_summary(self) -> dict[str, float]:
-        """Return accumulated range and HTTP retry timings."""
-        with self._timing_lock:
-            return dict(self._timing_totals)
+        return handle.read(length)
 
     def close(self) -> None:
         """Close every thread-local source handle."""
@@ -283,21 +175,6 @@ class NativeHTTPRangeFetcher:
         self._source_urls: dict[str, str] = {}
         self._sizes: dict[str, int] = {}
         self._lock = threading.Lock()
-        self._timing_lock = threading.Lock()
-        self._timing_totals = {
-            "range_jobs": 0.0,
-            "range_bytes": 0.0,
-            "range_resolve_s": 0.0,
-            "range_header_s": 0.0,
-            "range_first_byte_s": 0.0,
-            "range_body_s": 0.0,
-            "range_retry_attempts": 0.0,
-            "range_retry_sleep_s": 0.0,
-            "range_failed_requests": 0.0,
-            "head_retry_attempts": 0.0,
-            "head_retry_sleep_s": 0.0,
-            "head_failed_requests": 0.0,
-        }
 
     def _request(
         self, method: str, url: str, *, headers: Mapping[str, str], follow_redirects: bool
@@ -305,32 +182,22 @@ class NativeHTTPRangeFetcher:
         """Retry HEAD resolution failures, leaving the final response to its caller.
 
         Retryable statuses share the range request policy. Close intermediate
-        responses before backoff; permanent errors return immediately. HEAD
-        counters are separate from payload-range counters.
+        responses before backoff; permanent errors return immediately.
         """
-        last_exc: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
                 response = self.client.request(
                     method, url, headers=headers, follow_redirects=follow_redirects
                 )
-            except self._RETRYABLE_EXCEPTIONS as exc:
-                last_exc = exc
+            except self._RETRYABLE_EXCEPTIONS:
                 if attempt >= self.max_retries:
-                    self._record_timing(head_failed_requests=1.0)
-                    break
+                    raise
             else:
                 if response.status_code not in self._RETRYABLE_STATUS_CODES or attempt >= self.max_retries:
-                    if response.is_error:
-                        self._record_timing(head_failed_requests=1.0)
                     return response
                 response.close()
-            sleep_s = min(0.5 * 2**attempt, 5.0)
-            self._record_timing(head_retry_attempts=1.0, head_retry_sleep_s=sleep_s)
-            time.sleep(sleep_s)
-        if last_exc is None:
-            raise RuntimeError("HTTP request failed without an exception")
-        raise last_exc
+            time.sleep(_retry_delay_s(attempt))
+        raise RuntimeError("unreachable")
 
     def _path(self, relative_path: str) -> str:
         """Join the HF data root and a dataset-relative source path."""
@@ -439,179 +306,43 @@ class NativeHTTPRangeFetcher:
 
     def _read_range_single(self, relative_path: str, offset: int, length: int) -> bytes:
         """Read one range, refreshing an expired URL once before failing."""
-        resolve_start = time.perf_counter()
-        resolved = self._resolve_url(relative_path)
         source = self._source_url(relative_path)
-        resolve_s = time.perf_counter() - resolve_start
-        headers = self._headers_for(resolved, source)
-        headers["Range"] = f"bytes={offset}-{offset + length - 1}"
-        payload, status_code, timings = self._read_range_response(resolved, headers)
+        resolved = self._resolve_url(relative_path)
+        payload, status_code = self._read_range_response(resolved, source, offset, length)
         if status_code in (401, 403):
-            self._record_timing(range_url_refreshes=1.0)
-            refresh_start = time.perf_counter()
             resolved = self._resolve_url(relative_path, refresh=True)
-            resolve_s += time.perf_counter() - refresh_start
-            headers = self._headers_for(resolved, source)
-            headers["Range"] = f"bytes={offset}-{offset + length - 1}"
-            payload, status_code, retry_timings = self._read_range_response(resolved, headers)
-            for key, value in retry_timings.items():
-                timings[key] = timings.get(key, 0.0) + value
+            payload, status_code = self._read_range_response(resolved, source, offset, length)
         if status_code in (401, 403):
-            self._record_timing(range_failed_requests=1.0)
             raise PermissionError(
                 f"HTTP range request returned {status_code} after URL refresh: {relative_path}"
             )
         if status_code != 206:
             raise RuntimeError(f"HTTP range request returned {status_code} after retries: {relative_path}")
-        self._record_timing(
-            range_jobs=1.0,
-            range_bytes=float(len(payload)),
-            range_resolve_s=resolve_s,
-            **{f"range_status_{status_code}": 1.0},
-            **timings,
-        )
         return payload
 
-    def _read_range_response(self, url: str, headers: dict[str, str]) -> tuple[bytes, int, dict[str, float]]:
-        """Retry transient range failures and return payload, status and timings."""
-        last_exc: Exception | None = None
-        retry_attempts = 0.0
-        retry_sleep_s = 0.0
-        failed_attempt_s = 0.0
-        exception_attempts = 0.0
-        exception_counts: dict[str, float] = {}
-        _ensure_request_id(headers)
+    def _read_range_response(self, url: str, source: str, offset: int, length: int) -> tuple[bytes, int]:
+        """Retry transient range failures and return the payload and final status."""
+        headers = self._headers_for(url, source)
+        headers["Range"] = f"bytes={offset}-{offset + length - 1}"
         for attempt in range(self.max_retries + 1):
-            attempt_start = time.perf_counter()
             try:
-                payload, status_code, timings = self._read_range_response_once(url, headers)
-                if status_code in self._RETRYABLE_STATUS_CODES:
-                    attempt_s = time.perf_counter() - attempt_start
-                    failed_attempt_s += attempt_s
-                    exception_attempts += 1.0
-                    status_key = f"range_failed_status_{status_code}"
-                    exception_counts[status_key] = exception_counts.get(status_key, 0.0) + 1.0
-                    _log_http_failure(
-                        backend="native-http",
-                        method="GET",
-                        url=url,
-                        headers=headers,
-                        elapsed_s=attempt_s,
-                        status_code=status_code,
-                        attempt=attempt,
-                    )
-                    if attempt >= self.max_retries:
-                        timings["range_retry_attempts"] = retry_attempts
-                        timings["range_retry_sleep_s"] = retry_sleep_s
-                        timings["range_failed_attempt_s"] = failed_attempt_s
-                        timings["range_exception_attempts"] = exception_attempts
-                        timings.update(exception_counts)
-                        return payload, status_code, timings
-                    retry_attempts += 1.0
-                    sleep_s = min(0.5 * 2**attempt, 5.0)
-                    retry_sleep_s += sleep_s
-                    time.sleep(sleep_s)
-                    continue
-                timings["range_retry_attempts"] = retry_attempts
-                timings["range_retry_sleep_s"] = retry_sleep_s
-                timings["range_failed_attempt_s"] = failed_attempt_s
-                timings["range_exception_attempts"] = exception_attempts
-                timings.update(exception_counts)
-                return payload, status_code, timings
-            except self._RETRYABLE_EXCEPTIONS as exc:
-                last_exc = exc
-                attempt_s = time.perf_counter() - attempt_start
-                failed_attempt_s += attempt_s
-                exception_attempts += 1.0
-                exception_key = f"range_exception_{type(exc).__name__}"
-                exception_counts[exception_key] = exception_counts.get(exception_key, 0.0) + 1.0
-                _log_http_failure(
-                    backend="native-http",
-                    method="GET",
-                    url=url,
-                    headers=headers,
-                    elapsed_s=attempt_s,
-                    exception=exc,
-                    attempt=attempt,
-                )
+                payload, status_code = self._read_range_response_once(url, headers)
+            except self._RETRYABLE_EXCEPTIONS:
                 if attempt >= self.max_retries:
-                    break
-                retry_attempts += 1.0
-                sleep_s = min(0.5 * 2**attempt, 5.0)
-                retry_sleep_s += sleep_s
-                time.sleep(sleep_s)
-        self._record_timing(
-            range_failed_requests=1.0,
-            range_retry_attempts=retry_attempts,
-            range_retry_sleep_s=retry_sleep_s,
-            range_failed_attempt_s=failed_attempt_s,
-            range_exception_attempts=exception_attempts,
-            **exception_counts,
-        )
-        if last_exc is None:
-            raise RuntimeError("HTTP range request failed without an exception")
-        raise last_exc
+                    raise
+            else:
+                if status_code not in self._RETRYABLE_STATUS_CODES or attempt >= self.max_retries:
+                    return payload, status_code
+            time.sleep(_retry_delay_s(attempt))
+        raise RuntimeError("unreachable")
 
-    def _read_range_response_once(
-        self, url: str, headers: dict[str, str]
-    ) -> tuple[bytes, int, dict[str, float]]:
-        """Read one HTTP response while measuring header, body and join time."""
-        header_start = time.perf_counter()
+    def _read_range_response_once(self, url: str, headers: dict[str, str]) -> tuple[bytes, int]:
+        """Read one HTTP response; denied and retryable statuses return an empty payload."""
         with self.client.stream("GET", url, headers=headers) as response:
-            header_s = time.perf_counter() - header_start
             if response.status_code in (401, 403) or response.status_code in self._RETRYABLE_STATUS_CODES:
-                return (
-                    b"",
-                    response.status_code,
-                    {
-                        "range_header_s": header_s,
-                        "range_first_byte_s": 0.0,
-                        "range_body_s": 0.0,
-                    },
-                )
+                return b"", response.status_code
             hf_raise_for_status(response)
-            chunks = []
-            first_byte_s = 0.0
-            first_chunk = True
-            chunk_gap_s = 0.0
-            chunk_count = 0.0
-            previous_chunk_at = body_start = time.perf_counter()
-            for chunk in response.iter_bytes():
-                now = time.perf_counter()
-                if first_chunk:
-                    first_byte_s = now - body_start
-                    first_chunk = False
-                chunk_gap_s += now - previous_chunk_at
-                previous_chunk_at = now
-                chunk_count += 1.0
-                chunks.append(chunk)
-            body_s = time.perf_counter() - body_start
-            join_start = time.perf_counter()
-            payload = b"".join(chunks)
-            join_s = time.perf_counter() - join_start
-            return (
-                payload,
-                response.status_code,
-                {
-                    "range_header_s": header_s,
-                    "range_first_byte_s": first_byte_s,
-                    "range_body_s": body_s,
-                    "range_join_s": join_s,
-                    "range_chunks": chunk_count,
-                    "range_chunk_gap_s": chunk_gap_s,
-                },
-            )
-
-    def _record_timing(self, **kwargs: float) -> None:
-        """Accumulate request counters under the timing lock."""
-        with self._timing_lock:
-            for key, value in kwargs.items():
-                self._timing_totals[key] = self._timing_totals.get(key, 0.0) + value
-
-    def timing_summary(self) -> dict[str, float]:
-        """Return accumulated request and range timings."""
-        with self._timing_lock:
-            return dict(self._timing_totals)
+            return response.read(), response.status_code
 
     def close(self) -> None:
         """Close the HTTP client and subrange executor."""

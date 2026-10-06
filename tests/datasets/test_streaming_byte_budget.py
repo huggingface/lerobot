@@ -17,14 +17,14 @@ from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.episode_pool import ExactCoveragePool
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import parse_mp4_index, synthesized_mp4_size
-from tests.datasets.test_episode_video_streaming import _minimal_mp4
+from tests.datasets.test_episode_video_streaming import _fetch_episode, _minimal_mp4
 
 
 @pytest.fixture
 def bounded_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[EpisodeByteCache]:
     manifest = EpisodeVideoManifest(video_keys=["left", "right"], files=[], spans={})
     monkeypatch.setattr(manifest, "episode_byte_size", lambda _episode: 10)
-    with EpisodeByteCache(manifest, tmp_path, byte_budget=10, workers=2, open_decoders=False) as cache:
+    with EpisodeByteCache(manifest, tmp_path, byte_budget=10, workers=2) as cache:
         monkeypatch.setattr(cache, "_fetch_and_synthesize", lambda ep, cam: {"bytes": bytes([ep]) * 5})
         yield cache
 
@@ -49,13 +49,13 @@ def test_inflight_prefetch_reserves_all_cameras(
         assert not bounded_cache.submit_prefetch(1)
     finally:
         finish.set()
-    bounded_cache.ensure_ready(0)
+    _fetch_episode(bounded_cache, 0)
     assert bounded_cache.resident_bytes == bounded_cache.reserved_bytes == 10
 
 
 def test_waiting_admission_wakes_on_decode_release(bounded_cache: EpisodeByteCache) -> None:
     bounded_cache.retain_episode(0)
-    bounded_cache.ensure_ready(0)
+    _fetch_episode(bounded_cache, 0)
     with ThreadPoolExecutor(max_workers=1) as executor:
         pending = executor.submit(bounded_cache.retain_episode, 1, wait=True)
         try:
@@ -63,7 +63,7 @@ def test_waiting_admission_wakes_on_decode_release(bounded_cache: EpisodeByteCac
         finally:
             bounded_cache.release_episode(0)
         pending.result(timeout=5)
-    bounded_cache.ensure_ready(1)
+    _fetch_episode(bounded_cache, 1)
     assert bounded_cache.resident_bytes == bounded_cache.reserved_bytes == 10
     assert set(bounded_cache._cache) == {(1, "left"), (1, "right")}
     bounded_cache.release_episode(1)
@@ -90,10 +90,10 @@ def test_prefetch_error_propagates_and_reservation_can_be_reused(
     monkeypatch.setattr(bounded_cache, "_fetch_and_synthesize", fetch)
     bounded_cache.retain_episode(0)
     with pytest.raises(OSError, match="injected"):
-        bounded_cache.ensure_ready(0)
+        _fetch_episode(bounded_cache, 0)
     bounded_cache.release_episode(0)
     bounded_cache.retain_episode(1, wait=True)
-    bounded_cache.ensure_ready(1)
+    _fetch_episode(bounded_cache, 1)
     assert bounded_cache.resident_bytes == bounded_cache.reserved_bytes == 10
     bounded_cache.release_episode(1)
 
@@ -158,7 +158,7 @@ def test_rotation_keeps_bytes_until_last_decode(
 ) -> None:
     manifest = EpisodeVideoManifest(video_keys=["camera"], files=[], spans={})
     monkeypatch.setattr(manifest, "episode_byte_size", lambda episode: 60)
-    cache = EpisodeByteCache(manifest, tmp_path, byte_budget=60, workers=1, open_decoders=False)
+    cache = EpisodeByteCache(manifest, tmp_path, byte_budget=60, workers=1)
     monkeypatch.setattr(cache, "_fetch_and_synthesize", lambda ep, cam: {"bytes": bytes([ep]) * 60})
     ds = StreamingLeRobotDataset.__new__(StreamingLeRobotDataset)
     ds.repeat = False

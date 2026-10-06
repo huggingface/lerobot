@@ -34,21 +34,6 @@ if TYPE_CHECKING:
 
 DEFAULT_STORAGE_FORMAT = "lerobot"
 
-__all__ = [
-    "DEFAULT_STORAGE_FORMAT",
-    "LocationKind",
-    "StorageLocation",
-    "dataset_location",
-    "hf_bucket_uri",
-    "hf_dataset_uri",
-    "is_bucket_root",
-    "is_remote_uri",
-    "load_dataset_metadata",
-    "localize_remote_root",
-    "make_dataset_reader",
-    "register_dataset_reader",
-]
-
 # Supported non-default storage formats and the module implementing each.
 # Modules are imported lazily so their optional dependencies stay optional;
 # each must expose a ``DATASET_READER`` class implementing

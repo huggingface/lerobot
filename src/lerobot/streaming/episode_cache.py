@@ -13,14 +13,13 @@ from __future__ import annotations
 import io
 import logging
 import threading
-import time
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, BinaryIO, NotRequired, TypedDict
+from typing import TYPE_CHECKING, BinaryIO, TypedDict
 
 import torch
 
@@ -35,10 +34,9 @@ logger = logging.getLogger(__name__)
 
 
 class _VideoPayload(TypedDict):
-    """Synthesized video bytes with optional build timings consumed on insertion."""
+    """Synthesized standalone MP4 bytes for one episode camera."""
 
     bytes: bytes
-    _timings: NotRequired[dict[str, float]]
 
 
 @dataclass
@@ -68,7 +66,6 @@ class EpisodeByteCache:
         native_http_timeout: float = 60.0,
         native_http_retries: int = 4,
         native_http_subranges: int = 1,
-        open_decoders: bool = True,
         max_open_decoders: int = 64,
         video_backend: str = "torchcodec",
         tolerance_s: float = 1e-4,
@@ -91,7 +88,6 @@ class EpisodeByteCache:
             token=token,
         )
         self.byte_budget = byte_budget
-        self.open_decoders = open_decoders
         self.max_open_decoders = max_open_decoders
         self.video_backend = video_backend
         self.tolerance_s = tolerance_s
@@ -108,13 +104,6 @@ class EpisodeByteCache:
         self._lock = threading.RLock()
         self._space_available = threading.Condition(self._lock)
         self._closed = False
-        self._timing_totals = {
-            "lookup_s": 0.0,
-            "fetch_s": 0.0,
-            "synthesize_s": 0.0,
-            "store_s": 0.0,
-            "jobs": 0.0,
-        }
 
     def close(self) -> None:
         """Close fetchers, executors, decoders, and cached state."""
@@ -206,44 +195,9 @@ class EpisodeByteCache:
         with self._lock:
             return self._decoder_fallback_count
 
-    def ensure_ready(self, episode_index: int) -> None:
-        """Synchronously fetch an episode and optionally open its decoders."""
-        for camera_key in self.manifest.video_keys:
-            self.get_bytes(episode_index, camera_key)
-            if self.open_decoders:
-                self.get_decoder(episode_index, camera_key)
-
-    def is_ready(self, episode_index: int) -> bool:
-        """Non-blocking: True when every camera of the episode is fetched (cached or future done).
-
-        Lets a consumer swap in replacements only when they are already resident, instead of
-        blocking the training hot path on a remote fetch (head-of-line stall).
-        """
-        for camera_key in self.manifest.video_keys:
-            key = (episode_index, camera_key)
-            with self._lock:
-                if key in self._cache:
-                    continue
-                future = self._futures.get(key)
-            if future is None or not future.done() or future.cancelled() or future.exception() is not None:
-                return False
-        return True
-
     def get_bytes(self, episode_index: int, camera_key: str) -> bytes:
         """Return the synthesized MP4 bytes for one episode camera."""
         return self._get_entry(episode_index, camera_key)["bytes"]
-
-    def get_decoder(self, episode_index: int, camera_key: str) -> VideoDecoder | _PyAVVideoDecoder:
-        """Return or open the cached decoder for one episode camera.
-
-        The returned handle is borrowed and may be evicted later. Use get_frames for
-        lease-protected, serialized decoding rather than retaining this handle across requests.
-        """
-        self.retain_episode(episode_index)
-        try:
-            return self._get_decoder_entry(episode_index, camera_key).decoder
-        finally:
-            self.release_episode(episode_index)
 
     def _get_decoder_entry(self, episode_index: int, camera_key: str) -> _DecoderEntry:
         """Reuse or open a decoder, resolving concurrent opens before LRU eviction."""
@@ -384,16 +338,6 @@ class EpisodeByteCache:
                 continue
             return entry, decoder.release
 
-    def timing_summary(self) -> dict[str, float]:
-        """Return accumulated cache and range-fetch timings."""
-        with self._lock:
-            summary = dict(self._timing_totals)
-            summary["decoder_fallbacks"] = float(self._decoder_fallback_count)
-        fetcher_summary = getattr(self.fetcher, "timing_summary", None)
-        if fetcher_summary is not None:
-            summary.update(fetcher_summary())
-        return summary
-
     def _submit_locked(self, episode_index: int, camera_key: str) -> Future[None]:
         """Schedule one camera fetch at most once while the cache lock is held."""
         key = (episode_index, camera_key)
@@ -455,9 +399,8 @@ class EpisodeByteCache:
 
     def _fetch_and_store(self, episode_index: int, camera_key: str) -> None:
         # Futures carry no payload: the accounted cache is the sole owner of completed bytes.
-        """Store a synthesized payload under its reservation and accumulate timings."""
+        """Store a synthesized payload under its episode reservation."""
         entry = self._fetch_and_synthesize(episode_index, camera_key)
-        store_start = time.perf_counter()
         with self._lock:
             size = len(entry["bytes"])
             episode_bytes = sum(
@@ -467,13 +410,6 @@ class EpisodeByteCache:
                 raise ValueError(f"Synthesized episode {episode_index} exceeds its indexed byte reservation")
             self._cache[episode_index, camera_key] = entry
             self._bytes += size
-            timings = entry.pop("_timings", None)
-            if timings is not None:
-                self._timing_totals["lookup_s"] += timings["lookup_s"]
-                self._timing_totals["fetch_s"] += timings["fetch_s"]
-                self._timing_totals["synthesize_s"] += timings["synthesize_s"]
-                self._timing_totals["store_s"] += time.perf_counter() - store_start
-                self._timing_totals["jobs"] += 1
 
     def _evict_episode_locked(self, episode_index: int) -> None:
         """Remove an unleased episode's bytes, futures and decoders under the cache lock."""
@@ -489,8 +425,7 @@ class EpisodeByteCache:
                 _close_decoder(decoder)
 
     def _fetch_and_synthesize(self, episode_index: int, camera_key: str) -> _VideoPayload:
-        """Fetch a camera span and wrap it in a standalone MP4 with timing metadata."""
-        lookup_start = time.perf_counter()
+        """Fetch a camera span and wrap it in a standalone MP4."""
         span = self.manifest.lookup(episode_index, camera_key)
         file_record = self.manifest.file_lookup(span.file_id)
         sample_slice = Mp4SampleSlice(
@@ -500,26 +435,12 @@ class EpisodeByteCache:
             byte_length=span.mdat_length,
             source_start_pts=span.source_start_pts,
         )
-        lookup_s = time.perf_counter() - lookup_start
-        fetch_start = time.perf_counter()
         payload = self.fetcher.read_range(file_record.file_path, span.mdat_offset, span.mdat_length)
-        fetch_s = time.perf_counter() - fetch_start
         if len(payload) != span.mdat_length:
             raise OSError(
                 f"Short read for {file_record.file_path}: expected {span.mdat_length}, got {len(payload)}"
             )
-        synthesize_start = time.perf_counter()
-        mp4_bytes = synthesize_mp4(file_record.mp4, sample_slice, payload)
-        synthesize_s = time.perf_counter() - synthesize_start
-        entry: _VideoPayload = {
-            "bytes": mp4_bytes,
-            "_timings": {
-                "lookup_s": lookup_s,
-                "fetch_s": fetch_s,
-                "synthesize_s": synthesize_s,
-            },
-        }
-        return entry
+        return {"bytes": synthesize_mp4(file_record.mp4, sample_slice, payload)}
 
 
 class _PyAVVideoDecoder:

@@ -19,6 +19,7 @@ pytest.importorskip("datasets")
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.streaming import episode_cache
 from lerobot.streaming.range_fetch import ThreadLocalRangeFetcher
+from tests.datasets.test_episode_video_streaming import _open_decoder
 
 
 def bare_dataset() -> StreamingLeRobotDataset:
@@ -154,7 +155,7 @@ def test_decoder_eviction_does_not_split_lock(monkeypatch: pytest.MonkeyPatch) -
             assert a_has_decoder.wait(5)
             second = b.submit(cache._get_frames, 0, "camera", [0.0])
             assert b_inside.wait(5)
-            cache.get_decoder(1, "camera")
+            _open_decoder(cache, 1, "camera")
             continue_a.set()
             a_inside.wait(0.1)
         finally:

@@ -29,6 +29,7 @@ from huggingface_hub import snapshot_download, sync_bucket
 from huggingface_hub.utils import WeakFileLock
 
 from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig, is_depth_map
+from lerobot.streaming.location import hf_bucket_uri
 from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.feature_utils import _validate_feature_names
 from lerobot.utils.utils import flatten_dict
@@ -47,7 +48,7 @@ from .io_utils import (
     write_tasks,
 )
 from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
-from .storage import DEFAULT_STORAGE_FORMAT, dataset_location, hf_bucket_uri
+from .storage import DEFAULT_STORAGE_FORMAT, dataset_location
 from .utils import (
     DEFAULT_EPISODES_PATH,
     check_version_compatibility,

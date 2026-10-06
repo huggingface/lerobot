@@ -39,13 +39,14 @@ from typing import TYPE_CHECKING, Protocol
 import av
 import huggingface_hub
 
+from lerobot.streaming.location import StorageLocation, hf_dataset_uri
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import _lancedb_available, require_package
 
 if TYPE_CHECKING or _lancedb_available:
     import lancedb
 
-from .storage import StorageLocation, hf_dataset_uri, is_remote_uri
+from .storage import is_remote_uri
 
 # Byte-index columns on the videos table: map a frame window to its byte ranges so a
 # batch's video fetch can be batched. Assume constant frame rate; mp4-only.

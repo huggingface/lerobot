@@ -147,16 +147,13 @@ class EpisodeParquetReader:
         expected_rows: int,
         relative_path: str | Path,
     ) -> None:
-        """Reject missing, foreign or out-of-order episode rows."""
+        """Reject missing or out-of-order episode rows; foreign rows were already filtered out."""
         actual_rows = len(table)
         if actual_rows != expected_rows:
             raise ValueError(
                 f"Parquet episode {episode_index} in {relative_path}: "
                 f"expected {expected_rows} rows, found {actual_rows}"
             )
-        episodes = table.column("episode_index").to_pylist()
-        if any(int(value) != episode_index for value in episodes):
-            raise ValueError(f"Parquet file {relative_path} returned rows outside episode {episode_index}")
         if "frame_index" in table.column_names:
             frame_indices = [int(value) for value in table.column("frame_index").to_pylist()]
             if frame_indices != list(range(expected_rows)):
