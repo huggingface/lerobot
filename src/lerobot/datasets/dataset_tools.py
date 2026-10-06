@@ -24,6 +24,7 @@ This module provides utilities for:
 """
 
 import logging
+import math
 import shutil
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -618,58 +619,98 @@ def _try_keep_episodes_from_video_by_stream_copy(
     ffmpeg's concat demuxer in stream-copy mode, so every episode in a packed file starts on a
     keyframe. Dropping episodes is then pure packet selection and the pixels never need decoding.
 
-    Alignment is verified rather than assumed: if any boundary falls inside a GOP, nothing is
+    Alignment is verified rather than assumed: if any boundary is not a clean cut point, nothing is
     written and the caller re-encodes instead.
+
+    The input is demuxed twice (once to validate boundaries, once to copy), so memory stays bounded
+    by packet metadata rather than by the size of the video file.
 
     Args:
         input_path: Source video file path.
         output_path: Destination video file path.
-        episodes_to_keep: Half-open (start_frame, end_frame) ranges to keep.
+        episodes_to_keep: Sorted, non-overlapping half-open (start_frame, end_frame) ranges to keep.
         fps: Frame rate of the video.
 
     Returns:
-        True if the output was written, False if the file is not GOP-aligned.
+        True if the output was written, False if the file cannot be cut without re-encoding.
     """
     import av
+
+    if episodes_to_keep != sorted(episodes_to_keep) or any(
+        prev_end > start
+        for (_, prev_end), (start, _) in zip(episodes_to_keep, episodes_to_keep[1:], strict=False)
+    ):
+        return False
 
     with av.open(str(input_path)) as in_container:
         if not in_container.streams.video:
             return False
-
         v_in = in_container.streams.video[0]
-        packets = [packet for packet in in_container.demux(v_in) if packet.size > 0]
-
-        # Demuxing yields packets in decode order. A closed GOP occupies the same contiguous span
-        # in decode and presentation order, so counting packets up to a keyframe gives that
-        # keyframe's presentation index even though B-frames reorder within the GOP.
-        gop_boundaries = {i for i, packet in enumerate(packets) if packet.is_keyframe}
-        gop_boundaries.add(len(packets))
-
-        if any(start not in gop_boundaries or end not in gop_boundaries for start, end in episodes_to_keep):
-            return False
-
         if v_in.time_base is None:
             return False
         ticks_per_frame = round((1 / fps) / v_in.time_base)
         if ticks_per_frame <= 0:
             return False
 
-        with av.open(str(output_path), mode="w") as out_container:
-            v_out = out_container.add_stream_from_template(v_in)
+        pts: list[int] = []
+        is_keyframe: list[bool] = []
+        for packet in in_container.demux(v_in):
+            if packet.size == 0:
+                continue
+            if packet.pts is None:
+                return False
+            pts.append(packet.pts)
+            is_keyframe.append(packet.is_keyframe)
 
-            out_start = 0
-            for start, end in episodes_to_keep:
-                segment = packets[start:end]
+    num_packets = len(pts)
+    prefix_max = [-math.inf] * (num_packets + 1)
+    for i in range(num_packets):
+        prefix_max[i + 1] = max(prefix_max[i], pts[i])
+    suffix_min = [math.inf] * (num_packets + 1)
+    for i in reversed(range(num_packets)):
+        suffix_min[i] = min(suffix_min[i + 1], pts[i])
+
+    # Demuxing yields packets in decode order, so a packet index is only a frame index at a cut
+    # where decode and presentation order agree: a keyframe that is presented before every later
+    # packet and after every earlier one. A keyframe followed by leading pictures (open GOP) fails
+    # this, because those pictures are presented before it and reference the previous GOP.
+    def is_clean_cut(i: int) -> bool:
+        if i == num_packets:
+            return True
+        return 0 <= i < num_packets and is_keyframe[i] and prefix_max[i] < pts[i] == suffix_min[i]
+
+    if any(not (is_clean_cut(start) and is_clean_cut(end)) for start, end in episodes_to_keep):
+        return False
+
+    pts_offsets = []
+    out_start = 0
+    for start, end in episodes_to_keep:
+        pts_offsets.append(out_start - pts[start])
+        out_start += (end - start) * ticks_per_frame
+
+    with av.open(str(input_path)) as in_container, av.open(str(output_path), mode="w") as out_container:
+        v_in = in_container.streams.video[0]
+        # `opaque` copies codec parameters without looking up an encoder named after the input's
+        # decoder, which does not exist for e.g. AV1 decoded by libdav1d.
+        v_out = out_container.add_stream_from_template(v_in, opaque=True)
+
+        segment_idx = 0
+        packet_idx = 0
+        for packet in in_container.demux(v_in):
+            if packet.size == 0:
+                continue
+            while segment_idx < len(episodes_to_keep) and packet_idx >= episodes_to_keep[segment_idx][1]:
+                segment_idx += 1
+            if segment_idx == len(episodes_to_keep):
+                break
+            if packet_idx >= episodes_to_keep[segment_idx][0]:
                 # Rebase onto the output timeline; dts is left for the muxer to derive so that
                 # B-frame reorder delay is handled per container rather than by hand.
-                pts_offset = out_start - min(packet.pts for packet in segment)
-                for packet in segment:
-                    packet.pts += pts_offset
-                    packet.dts = None
-                    packet.stream = v_out
-                    out_container.mux(packet)
-
-                out_start += (end - start) * ticks_per_frame
+                packet.pts += pts_offsets[segment_idx]
+                packet.dts = None
+                packet.stream = v_out
+                out_container.mux(packet)
+            packet_idx += 1
 
     return True
 
