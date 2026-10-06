@@ -28,6 +28,7 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 
 from ..robot import Robot
 from ..yam_follower import YamArmConfig, YamFollower, YamFollowerConfig
+from ..yam_follower.yam_follower import action_to_target
 from .config_bi_yam_follower import BiYamFollowerConfig
 
 logger = logging.getLogger(__name__)
@@ -93,23 +94,21 @@ class BiYamFollower(BimanualMixin, Robot):
         try:
             if not calibrate:
                 for arm in self.arms.values():
-                    arm._open_for_calibration()
+                    arm.connect(calibrate=False)
             else:
-                # Load both models and check both arms before either gets torque.
+                # Open and pose-check both arms, and switch both to MIT mode, before either gets torque.
                 for arm in self.arms.values():
-                    arm._load_control_model()
-                for arm in self.arms.values():
-                    arm._open()
+                    arm.open()
                 self.configure()
                 for arm in self.arms.values():
-                    arm._start()
-            for arm in self.arms.values():
-                arm._connected = True
+                    arm.start()
         except BaseException:
             self._stop.set()
             for arm in reversed(tuple(self.arms.values())):
+                if not arm.is_connected:
+                    continue
                 try:
-                    arm._close()
+                    arm.disconnect()
                 except Exception:
                     logger.exception("Failed to close YAM arm after bimanual connection failure")
             raise
@@ -133,17 +132,14 @@ class BiYamFollower(BimanualMixin, Robot):
             side: {name: action[f"{side}_{name}"] for name in arm.action_features}
             for side, arm in self.arms.items()
         }
-        targets = {side: arm._action_target(arm_actions[side]) for side, arm in self.arms.items()}
-        # Check both arms before moving either; a later fault on one stops both servos anyway.
+        # Validate and health-check both arms before moving either; a later fault on one
+        # stops both servos through the shared stop event.
+        for arm_action in arm_actions.values():
+            action_to_target(arm_action)
         for arm in self.arms.values():
             arm.servo.check_healthy()
-        for side, arm in self.arms.items():
-            arm.servo.set_target(targets[side])
-        return {
-            f"{side}_{name}": float(targets[side][i])
-            for side, arm in self.arms.items()
-            for i, name in enumerate(arm.action_features)
-        }
+        sent = {side: arm.send_action(arm_actions[side]) for side, arm in self.arms.items()}
+        return {f"{side}_{name}": value for side, values in sent.items() for name, value in values.items()}
 
     @check_if_not_connected
     def disconnect(self) -> None:

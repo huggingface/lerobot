@@ -125,7 +125,7 @@ def test_calibration_connect_never_enables_motors(robot, monkeypatch):
     robot.disconnect()
 
 
-def test_models_load_before_either_can_interface(robot, monkeypatch):
+def test_each_arm_loads_its_model_before_its_can_interface(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     make_writable(robot)
     events = []
@@ -141,7 +141,7 @@ def test_models_load_before_either_can_interface(robot, monkeypatch):
         arm.bus.open.side_effect = lambda side=side: events.append(f"{side}:connect")
     robot.connect()
     robot.disconnect()
-    assert events[:4] == ["left:model", "right:model", "left:connect", "right:connect"]
+    assert events[:4] == ["left:model", "left:connect", "right:model", "right:connect"]
 
 
 def test_bad_second_arm_pose_never_enables_first(robot, monkeypatch):
