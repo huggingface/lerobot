@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Galaxea
 # Modified for LeRobot in 2026.
 
-"""G0.5 tokenization, serialization, preprocessing, and inverse projection."""
+"""G0.5 pre/post-processing steps and the pipeline factory (the tokenizer lives in `tokenizer_g05.py`)."""
 
 from __future__ import annotations
 
