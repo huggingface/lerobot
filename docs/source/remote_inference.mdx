@@ -368,3 +368,5 @@ Use `/vqa`, `/subtask` and `/autosteer` through [interactive rollout](./inferenc
 Recording uses the normal local dataset format. Task labels follow the dispatched action. Diagnostics remain application logs, not dataset records or extra uploaded files. With a dataset, use `--dataset.single_task` for the initial instruction; otherwise use `--task`. Prefer one to avoid conflicting configuration.
 
 The retired `lerobot[async]` extra and `lerobot.async_inference` commands are replaced by `lerobot[remote]`, `lerobot-policy-server` and `lerobot-rollout --inference.type=remote`. Old thresholds/aggregation weights are not interchangeable with refill/alignment/blending. **Unitree G1/SONIC has no supported remote replacement yet**; do not substitute the new CLI into that recipe.
+
+For architecture, execution contracts and planned extensions, see the [engineering design reference](https://github.com/huggingface/lerobot/blob/main/src/lerobot/remote_inference/REMOTE_INFERENCE_DESIGN.md).

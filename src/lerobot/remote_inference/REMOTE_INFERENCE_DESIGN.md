@@ -1,10 +1,8 @@
 # Asynchronous inference: implementation and design reference
 
-**Implementation baseline:** `9fb80f0a0` plus the uncommitted C17–C18 integration fixes recorded in [implementation_progress.md](../../../implementation_progress.md), 2026-10-06. This document describes the implemented system. It replaces [async_proposal.md](../../../async_proposal.md) as the active engineering reference; the proposal remains historical rationale. [FUTURE_WORK.md](FUTURE_WORK.md) owns pending work, not current behavior.
+This is the engineering reference for asynchronous inference in LeRobot: its behavior, ownership boundaries, data contracts and design tradeoffs. The [future work](#14-future-work) section is the maintained checklist for remaining validation and potential extensions; it does not describe implemented behavior.
 
-For installation, commands and tuning, start with the [user guide](../../../docs/source/remote_inference.mdx). This reference explains why the system behaves that way and where those decisions live in code. Software coverage, real-model execution and physical acceptance are distinct; see [validation](#13-validation-and-current-limits).
-
-**Post-hardware update — 2026-10-06:** C8–C16 are implemented/audited: generic observation-error cleanup, explicit package exports, no runtime Git diagnostics, shared context setup, clarified snapshot ownership, consolidated operator docs, richer lifecycle logs, automatic driver-capability checks and aligned plain chunks without default blending. H1–H3 have physical evidence on the prior tested build; H4 is withdrawn. C17 extends compatible driver declarations with configuration-specific exclusions; C18 corrects integration guidance and local compatibility hints. H5 recording and remaining acceptance are tracked separately in the roadmap.
+For installation, commands and tuning, start with the [user guide](../../../docs/source/remote_inference.mdx). For implementation details, follow the source links in each section. Software coverage, real-model execution and physical acceptance are distinct; see [validation](#13-validation-and-current-limits).
 
 ## 1. Product contract
 
@@ -305,15 +303,15 @@ The envelope requires the exact integer protocol version 1; there is no minor-ve
 
 Direct LAN mode is for an appropriately trusted/restricted network. Deployment names and session IDs isolate addressing; they are not authentication. Secured routed deployments use explicit authentication/encryption and deployment-scoped ACLs. Keep client/server routes through the configured router rather than accidentally permitting peer bypass. The examples are starting configurations, not evidence of every network/platform's security or reachability.
 
-Zenoh Python support is `>=1.9.0,<1.11.0`, with lockfile baseline 1.10.1. Binding and router versions must be recorded independently. Current router validation evidence belongs in progress, not inferred from this dependency range.
+Zenoh Python support is `>=1.9.0,<1.11.0`, with lockfile baseline 1.10.1. Binding and router versions must be checked independently; the dependency range alone does not establish compatibility of a particular routed deployment.
 
 ## 11. Configuration and observability
 
-The server YAML owns model selection and canonical schemas. Nested CLI fields override corresponding configuration values. One maintained generic YAML is provided; machine-specific experiments remain research material. Client configuration owns request/refill/freshness/wait limits and robot connection details, while deployment capability and mode validation constrain what it may request.
+The server YAML owns model selection and canonical schemas. Nested CLI fields override corresponding configuration values. One maintained generic YAML is provided as a starting configuration; robot, checkpoint and network settings belong to the deployment. Client configuration owns request/refill/freshness/wait limits and robot connection details, while deployment capability and mode validation constrain what it may request.
 
-Key remote defaults, defined in [`factory.py`](../inference/factory.py), are aligned plain chunks, refill 0.5s, source age 5s, handshake/startup 10s, action timeout 5s, language timeout 60s, starvation grace 1s, raw RGB and JPEG quality 90 when selected. Blending defaults to zero steps, incoming weight 0.5 and no selected components. `chunk_merge=auto` resolves to aligned for plain chunks and append for RTC; the latter retains RTC's own continuation handling. Explicit append remains available. New clients send resolved settings; a peer omitting optional chunk settings retains the historical append wire meaning. Explicit deployment and semantics are required, and driver hold support is checked automatically. These are starting configuration values, not latency guarantees.
+Key remote defaults, defined in [`factory.py`](../inference/factory.py), are aligned plain chunks, refill 0.5s, source age 5s, handshake/startup 10s, action timeout 5s, language timeout 60s, starvation grace 1s, raw RGB and JPEG quality 90 when selected. Blending defaults to zero steps, incoming weight 0.5 and no selected components. `chunk_merge=auto` resolves to aligned for plain chunks and append for RTC; the latter retains RTC's own continuation handling. Explicit append remains available. Clients send resolved settings; omitted optional chunk settings mean append on the wire. Explicit deployment and semantics are required, and driver hold support is checked automatically. These are starting configuration values, not latency guarantees.
 
-The server has its own operation bounds, warmup settings and absence cleanup limit in [`configs.py`](../remote_inference/configs.py). Control acknowledgments use a separate bound covering handshake plus the larger advertised operation deadline (close is capped more tightly); they do not consume fresh motion startup time. Redesigning that control budget is deferred.
+The server has its own operation bounds, warmup settings and absence cleanup limit in [`configs.py`](../remote_inference/configs.py). Control acknowledgments use a separate bound covering handshake plus the larger advertised operation deadline (close is capped more tightly); they do not consume fresh motion startup time.
 
 INFO logs summarize readiness, admission, effective settings, bounded operating summaries, actionable faults and shutdown outcome. Five-second summaries distinguish interval counters from rolling timing windows. The client reports cancelled/failed requests, waits/resumptions and invalidation ACK delay separately from completed-result turnaround; cancelled wait time does not reveal when the server finishes. The server includes errors/stale results and control waits. DEBUG adds request/capability details. Request spacing, committed endpoints, usable playback, source age and full turnaround help distinguish early stale append playback from excessively frequent aligned replacement or insufficient throughput. Diagnostic deltas compare endpoints, not measured physical motion.
 
@@ -338,8 +336,85 @@ Control-thread reporting uses bounded queues drained by the worker; diagnostic I
 
 ## 13. Validation and current limits
 
-Automated tests protect contracts and transitions at distinct levels: deterministic runtime/queue invariants, worker ordering/cancellation, saved-processor/policy conformance, real transport/session exchange, and rollout hardware-boundary/CLI behavior. These levels are not substitutes for one another. Test consolidation should remove redundant combinations, not unique failure paths.
+Automated tests protect contracts and transitions at distinct levels: deterministic runtime/queue invariants, worker ordering/cancellation, saved-processor/policy conformance, real transport/session exchange, and rollout hardware-boundary/CLI behavior. These levels are not substitutes for one another. Keep tests focused on distinct regressions in observable behavior, contracts and public APIs.
 
-Historical hardware evidence covers the named ACT, SmolVLA, XVLA and LaWAM configurations, corrected aligned/blended motion, stationary client crash/re-admission and configured return after server loss. The 2026-10-06 OMX/XVLA round passed remote H1–H3 (target retention/resumption, temporary starvation recovery and controlled grace expiry/shutdown); the local RTC counterpart remains separate. H4 was withdrawn and camera-specific behavior removed under C8. Unplanned shortages observed before H3's injection remain historical observations with an undetermined cause; the operator withdrew further investigation on 2026-10-06. H5 recording, real language, additional checkpoint acceptance and representative routed/hosted robot deployments remain separate pending evidence; consult the roadmap for individual model outcomes.
+A driver capability declaration establishes the command contract, not physical load support. A policy declaration or successful warmup establishes neither useful task execution nor language quality. A transport test establishes neither adequate playback margin nor robot behavior through that topology. Validate the checkpoint, processors, robot configuration and network together before treating a deployment as suitable for its task.
 
-`FUTURE_WORK.md` contains the definitive pending checklist. Do not infer universal robot support, physical stillness, autonomous recovery, history-aware execution or cloud availability from passing software tests. Update this reference when implemented behavior changes; keep experimental results and historical decisions in their respective records.
+Acceptance should distinguish useful action execution, target retention and fresh resumption, bounded failure/shutdown, dataset correctness, and language behavior. Local RTC and remote execution share runtime contracts but have different workers, so same-host remote execution does not validate the local RTC path. Meaningful language/subtask acceptance and representative routed/hosted robot operation remain open follow-ups. Passing software tests is not a universal support or deployment-readiness claim.
+
+Keep this reference focused on current contracts and open work. Record logs, commands, model revisions and physical observations with the relevant test or issue; do not turn the design into an experiment journal. Close an item only for the behavior actually exercised, and update the corresponding design section when implementation changes.
+
+## 14. Future work
+
+### Remaining integration validation
+
+These are the remaining steps for release readiness. Keep the implementation stable while completing them; expand a check only when it exposes a specific defect. Use one suitable checkpoint and robot configuration rather than a model/parameter matrix.
+
+#### Recording and episode boundaries
+
+- [ ] Run one familiar remote task while recording a small local dataset with a supported strategy. Check that recording does not unexpectedly starve playback or disrupt useful motion.
+- [ ] Exercise a real blocking save/episode boundary, then resume. Observe retained arm/gripper targets and fresh, sensible continuation without replay of the pre-pause trajectory. Choose a strategy with that boundary; a nonblocking save does not exercise this behavior.
+- [ ] Change the instruction once if the strategy supports it. Inspect the saved camera/state/action shapes and component order, task labels corresponding to dispatched actions, and readable video/frame alignment.
+- [ ] Stop cleanly and load the finalized dataset. Verify that no inference-event sidecars or automatic diagnostic uploads were added. Uploading the dataset is not required.
+
+One short run is sufficient if it answers these questions. Record the strategy, checkpoint, configuration, dataset path and relevant logs alongside the acceptance result. Successful motion alone does not establish dataset correctness.
+
+#### Local RTC waiting
+
+- [ ] Use a compatible checkpoint with `inference.type=rtc`, a supported position-hold robot and its working local configuration. This check uses no server or transport.
+- [ ] Introduce one bounded prediction delay that exhausts playback while allowing old work to drain and fresh inference to finish within starvation grace and existing deadlines. Confirm a local wait followed by useful motion from a post-hold observation.
+- [ ] Exercise expiry with a longer delay. Confirm one terminal fault, configured return/disconnect, and no resumption from a late result. A timeout or killed process demonstrates failure handling, not recoverable waiting.
+
+Use a test-only delay mechanism without changing production deadlines or adding a runtime tuning flag. Delay duration depends on usable playback and inference latency; no fixed delay guarantees the intended condition. Do not mark recovery accepted unless the wait and fresh resumption actually occur. No additional robot-family matrix is required to close this check.
+
+#### Documentation and contribution readiness
+
+- [ ] Refresh companion learning material against this reference, including package paths, defaults, driver capability constraints, starvation recovery, terminal shutdown and recording behavior. Keep learning exports separate from the implementation contribution.
+- [ ] Review the final file inventory. Keep runtime code, focused tests, public docs, this reference, the generic server YAML and router fixtures. Preserve internal review records and research artifacts separately before removing them from the contribution. No maintained document or test should depend on those artifacts.
+- [ ] Update the PR description and migration guidance with the actual validation status, new public import locations, local RTC exhaustion behavior and robot support limits. Remove completed temporary checklist items here once their outcome is recorded with the PR; retain enduring design limits and deferred work.
+
+#### Final automated checks
+
+- [ ] Run the affected inference, transport, rollout/recording and robot-contract regressions after the last relevant implementation change.
+- [ ] Run repository type checking and applicable formatting/lint checks; verify maintained documentation links.
+- [ ] Confirm Fast Tests, Full CPU/GPU Tests, Quality and Docs on the exact submitted revision. Keep remote integration dependencies in Full Tests, not the Fast Tests tiers.
+- [ ] Assess any skipped or unavailable check explicitly. A local pass, mock, dependency-isolation probe or earlier CI result does not replace a missing physical, real-model or final-revision check.
+
+Repeat a physical check only when a change affects its behavior or leaves a concrete question unresolved. The remaining work does not include broad camera-versus-motor failure handling, a general hardware-cleanup redesign or exhaustive tuning sweeps.
+
+### Follow-ups after landing
+
+These are deployment and acceptance extensions, not additional prerequisites for the integration checklist above. Their behavior remains unvalidated until exercised with the corresponding real model and topology.
+
+| Follow-up                                           | Scope and acceptance                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Useful language and generated subtasks**          | Select a checkpoint with useful action and text behavior and its correct saved processors. Establish a synchronous baseline, then validate a VQA answer, fresh motion resumption, a generated subtask applied to actions, and cancellation/manual retarget while text is pending. Slow or failed language must obey existing bounds. Assess VQA and subtask quality separately; warmup or fake text does not establish acceptance.                                                               |
+| **Routed robot operation**                          | Reuse a suitable checkpoint through a Zenoh router; validate useful task execution and bounded shutdown on router interruption. Check authentication/ACLs and binding/router compatibility, then inspect full turnaround, observation age and playback margin. Add a bounded congestion probe to assess DROP behavior; change publication policy only for a demonstrated gap without making cancellation block. Compare raw/JPEG encoding only where bandwidth warrants it.                      |
+| **Additional checkpoints and integrations**         | Evaluate one policy/checkpoint or third-party robot integration at a time. Check saved processor compatibility, canonical names/order/units, actual prediction/execution horizons, repeated calls and reset before physical operation. Preserve trained conditioning; do not drop saved fields or infer compatibility from a family name. Keep action, RTC, language and robot-hold acceptance separate. Address concrete adapter/export gaps without introducing a universal adapter framework. |
+| **Private remote GPUs and Hugging Face GPU Spaces** | After routed operation, verify a secured remote route and then a dedicated GPU Space serving one client. Prove actual outbound Zenoh request/reply and persistent presence before connecting hardware; HTTP reachability alone is insufficient. Account for readiness, warmup, secrets, restart/sleep and cost. Proceed to one task and interruption check only when the topology meets existing motion budgets.                                                                                 |
+
+A candidate hosted topology is:
+
+```text
+Robot client -- authenticated/encrypted outbound Zenoh --> reachable router
+GPU server   -- authenticated/encrypted outbound Zenoh --> same router
+```
+
+A router changes reachability, not model scheduling, automatic failover or the one-client capacity contract. Space networking and persistent-process feasibility must be checked on the actual platform before treating this topology as supported.
+
+### Potential design extensions
+
+Each extension needs a concrete workload and a separate design decision before implementation. None is implied by the current waiting, router or alignment support.
+
+| Extension                                                          | Intended benefit and constraints                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Buffered motion during informational VQA**                       | Continue eligible buffered actions while serialized VQA runs, holding only when necessary. Define action eligibility, query scheduling, fresh resumption and independent deadlines first; distinguish informational answers from autosteering. Preserve stop/reset and obsolete-result rejection. Validate VQA fitting/exceeding playback and recovery/expiry; existing starvation grace alone does not enable this behavior. |
+| **Measured preparation and copy optimizations**                    | Profile image preparation, device transfers and snapshot reconstruction before changing ownership or placement. Preserve saved-processor parity and capture/task/generation provenance; demonstrate an end-to-end gain rather than fewer copies alone.                                                                                                                                                                        |
+| **Control budgets and operational reporting**                      | Revisit long serialized reset/invalidate waits or supervisor behavior after an unhealthy reset only when a concrete workload exposes a limitation. Preserve cleanup ordering, bounded cancellation, truthful readiness and unsuccessful CLI outcomes for terminal faults.                                                                                                                                                     |
+| **Per-kind language capabilities**                                 | Consider separate VQA/subtask negotiation if actual model/processor behavior requires it. Do not infer one capability from useful output in the other.                                                                                                                                                                                                                                                                        |
+| **Multiple clients sharing one loaded model**                      | Isolate policy/processor/planner state, bound per-session work, and define scheduling and latency-based admission before allowing two clients. Sharing weights does not make resets, language work or continuation state shareable.                                                                                                                                                                                           |
+| **History- or feedback-aware policies**                            | Specify observation sampling, actual executed-action feedback, variable horizons and reset/cache semantics for one required policy. Latest-frame snapshots cannot reproduce synchronous history; alignment/blending makes predicted versus executed feedback especially important.                                                                                                                                            |
+| **Task-based model selection**                                     | Select one compatible deployment/instance explicitly, invalidate incompatible continuation and establish the new policy state. Do not broadcast observations and race competing action outputs.                                                                                                                                                                                                                               |
+| **Batching, concurrent text/action calls or recoverable sessions** | Introduce one capability at a time with explicit scheduling, protocol and state guarantees. These are broader changes than routed single-client operation; public multi-tenant serving requires further isolation and authorization design.                                                                                                                                                                                   |
+
+The current design retains explicit deployment names, application logs and ordinary datasets. These follow-ups do not require an additional namespace, dataset telemetry artifacts, legacy async compatibility shims, indefinite waiting or an automatic tuning/control framework.
