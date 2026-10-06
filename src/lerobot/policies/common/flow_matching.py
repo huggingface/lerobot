@@ -244,7 +244,7 @@ def make_flow_matching_inputs(
         x_t = (1 - expanded_time) * noise + expanded_time * actions
         velocity_target = actions - noise
 
-    return FlowMatchingInputs(x_t, velocity_target, model_time)
+    return x_t, velocity_target, model_time
 
 
 def euler_integrate(
