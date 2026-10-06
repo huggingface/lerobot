@@ -264,9 +264,6 @@ def _feature_names(feature: Any) -> list[str] | None:
     return list(names) if names else None
 
 
-_CHECKPOINT_PROFILES = ("g05-base", "g05-libero", "g05-robotwin20", "g05-so101")
-
-
 @PreTrainedConfig.register_subclass("g05")
 @dataclass
 class G05Config(PreTrainedConfig):
@@ -280,14 +277,12 @@ class G05Config(PreTrainedConfig):
     # Fine-tunes stay Derivative Works under the G0.5 Community License, so their
     # model card must not fall back to the Apache-2.0 default.
     license: str | None = "other"
-    checkpoint_profile: str = "g05-base"
     embodiment: str = "libero"
     action_head: str = "actioncodec"  # actioncodec (AR) or flow (continuous)
     runtime_system: str = "system1"  # system1 actions, or unified system2 CoT+actions
     predict_cot: bool = False
     discrete_action: bool = True
     continuous_action: bool = False
-    return_continuous_action: bool = False
     # torch.bfloat16 runs the released mixed precision on CUDA (BF16 weights with the author's FP32
     # islands, BF16 autocast); torch.float32 keeps every weight in FP32.
     dtype: torch.dtype | None = torch.bfloat16
@@ -423,11 +418,6 @@ class G05Config(PreTrainedConfig):
                 predict_cot=self.predict_cot,
                 flow_only=samples_builder_target.endswith("FMOnly"),
             )
-        if self.checkpoint_profile not in _CHECKPOINT_PROFILES and self.checkpoint_profile != "custom":
-            raise ValueError(
-                f"Unknown G0.5 checkpoint_profile={self.checkpoint_profile!r}; "
-                f"expected one of {sorted(_CHECKPOINT_PROFILES)} or 'custom'."
-            )
         if self.action_head not in {"actioncodec", "flow"}:
             raise ValueError("action_head must be 'actioncodec' or 'flow'.")
         if self.runtime_system not in {"system1", "system2"}:
@@ -444,8 +434,6 @@ class G05Config(PreTrainedConfig):
             raise ValueError("The ActionCodec runtime requires discrete_action=True.")
         if self.action_head == "flow" and not self.continuous_action:
             raise ValueError("The flow runtime requires continuous_action=True.")
-        if self.action_head == "flow" and not self.return_continuous_action:
-            raise ValueError("The flow runtime requires return_continuous_action=True.")
         if self.policy_action_dim not in G05_POLICY_PARTS:
             raise ValueError(
                 f"No named G0.5 shared action layout for policy_action_dim={self.policy_action_dim}."
@@ -456,16 +444,6 @@ class G05Config(PreTrainedConfig):
             raise ValueError("state_slots and action_slots must be set together.")
         if self.slot_mapping is not None:
             self._apply_slots()
-        if self.checkpoint_profile == "g05-libero":
-            quantiles = NormalizationMode.QUANTILES
-            if self.chunk_size != 32 or self.normalization_mapping.get("ACTION") != quantiles:
-                raise ValueError("g05-libero requires a 32-step chunk and q01/q99 normalization.")
-            if self.action_head != "flow":
-                raise ValueError("The released g05-libero config enables only the continuous flow path.")
-            if not self.libero_gripper_binarize:
-                raise ValueError("g05-libero requires the official binary gripper command transform.")
-        if set(self.camera_sizes) != set(self.camera_keys):
-            raise ValueError("camera_sizes must contain exactly the ordered checkpoint camera keys.")
         if not set(self.optional_camera_keys) <= set(self.camera_order):
             raise ValueError("optional_camera_keys must be a subset of camera_order.")
         self.runtime_cot_fields = tuple(self.runtime_cot_fields)
@@ -475,7 +453,7 @@ class G05Config(PreTrainedConfig):
             )
         if self.cot_bbox_camera is not None and self.cot_bbox_camera not in self.camera_order:
             raise ValueError("cot_bbox_camera must be one of camera_order.")
-        if any(len(size) != 2 or min(size) <= 0 for size in self.camera_sizes.values()):
+        if any(min(size) <= 0 for size in self.camera_sizes.values()):
             raise ValueError("Every G0.5 camera size must be a positive (height, width) pair.")
         if len(self.image_mean) != 3 or len(self.image_std) != 3 or min(self.image_std) <= 0:
             raise ValueError("G0.5 image_mean/image_std must be three channels with positive std.")

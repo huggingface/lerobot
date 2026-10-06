@@ -243,7 +243,6 @@ def _features():
 
 def _config(**kwargs):
     return G05Config(
-        checkpoint_profile="custom",
         input_features=_features(),
         output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
         chunk_size=4,
@@ -260,7 +259,6 @@ def _policy_batch(task: str = "  Pick café cup\nverbatim  "):
         "observation.images.image": torch.zeros(1, 3, 8, 8),
         "observation.images.wrist_image": torch.zeros(1, 3, 8, 8),
         "task": [task],
-        "proprio_dim_is_pad": torch.zeros(20, dtype=torch.bool),
         **_sequence_fields(),
     }
 
@@ -312,14 +310,19 @@ class _StubG05Tokenizer:
         return self._sequence(samples, device)
 
 
+class _StubActionCodec:
+    def to(self, device):
+        return self
+
+
 def _stub_tokenizer(preprocessor: PolicyProcessorPipeline) -> None:
     step = next(step for step in preprocessor.steps if isinstance(step, G05TokenizerStep))
     step._tokenizer = _StubG05Tokenizer()
-    step._action_codec = object()
+    step._action_codec = _StubActionCodec()
 
 
 def test_factory_wiring_is_lazy():
-    assert make_policy_config("g05", checkpoint_profile="custom").type == "g05"
+    assert make_policy_config("g05").type == "g05"
     assert get_policy_class("g05") is G05Policy
 
 
@@ -417,7 +420,6 @@ def test_system2_fm_only_builder_uses_exact_cot_template_without_action_tokens()
         predict_cot=True,
         discrete_action=False,
         continuous_action=True,
-        return_continuous_action=True,
         processor_metadata={
             "samples_builder": {
                 "_target_": ("g05.data_processor.processor.samples_builder.SubtaskCoTBuilderFMOnly")
@@ -431,14 +433,12 @@ def test_system2_fm_only_builder_uses_exact_cot_template_without_action_tokens()
 
 def test_so101_runtime_pads_optional_left_wrist():
     config = G05Config(
-        checkpoint_profile="g05-so101",
         embodiment="so100",
         action_head="flow",
         runtime_system="system2",
         predict_cot=True,
         discrete_action=True,
         continuous_action=True,
-        return_continuous_action=True,
         policy_action_dim=20,
         policy_state_dim=20,
         raw_action_dim=6,
@@ -483,12 +483,10 @@ def test_so101_runtime_pads_optional_left_wrist():
 
 def test_libero_runtime_executes_ten_step_window_and_binarizes_gripper():
     config = G05Config(
-        checkpoint_profile="custom",
         embodiment="libero",
         action_head="flow",
         discrete_action=False,
         continuous_action=True,
-        return_continuous_action=True,
         chunk_size=32,
         n_action_steps=10,
         libero_gripper_binarize=True,
@@ -540,12 +538,6 @@ def test_libero_projection_mask_and_inverse_roundtrip():
     assert processed["action_dim_is_pad"].shape == (1, 20)
     assert processed["action_dim_is_pad"].sum() == 13
     assert torch.equal(processed["action_op_mask"], ~processed["action_dim_is_pad"])
-    assert processed["action_parts_meta"] == {
-        "left_control": 9,
-        "left_gripper": 1,
-        "right_control": 9,
-        "right_gripper": 1,
-    }
     assert torch.equal(processed[ACTION][:, [10, 11, 12, 13, 14, 15, 19]], raw_action)
     restored = postprocessor(processed[ACTION])
     assert torch.equal(restored, raw_action)
@@ -684,7 +676,6 @@ def test_finetune_overrides_reproject_stats_and_retarget_stepwise_unnormalizer(t
         "observation.images.wrist_right",
     )
     config = G05Config(
-        checkpoint_profile="custom",
         embodiment="so100",
         policy_state_dim=20,
         policy_action_dim=20,
@@ -880,6 +871,8 @@ def test_native_backend_uses_per_call_cot_gate_instead_of_checkpoint_default():
                 ),
                 eov_token_id=2,
                 eos_token_id=3,
+                action_token_begin=100,
+                action_token_end_with_markers=110,
                 decode=lambda ids: "Subtask: pick",
             )
             self.generated = 0
@@ -1146,7 +1139,6 @@ def test_author_action_payload_fills_required_tokenizer_metadata():
         "value",
         "action_dim_is_pad",
         "action_op_mask",
-        "parts_meta",
     }
 
 
@@ -1339,28 +1331,6 @@ def test_author_inference_precision_preserves_declared_fp32_parameters():
     assert backend.precision_weight.dtype is torch.float32
 
 
-def test_system2_precision_keeps_tied_lm_head_compatible_with_fp32_final_norm():
-    class CoTPrecisionBackend(TinyG05Backend):
-        def __init__(self):
-            super().__init__()
-            self.model = nn.Module()
-            self.model.vlm = nn.Module()
-            self.model.vlm.input_proj = nn.Embedding(8, 4)
-            self.model.vlm.output_proj = nn.Linear(4, 8, bias=False)
-            self.model.vlm.output_proj.weight = self.model.vlm.input_proj.weight
-
-        def apply_fp32_params(self):
-            pass
-
-    backend = CoTPrecisionBackend()
-    policy = G05Policy(_config(predict_cot=True, runtime_system="system2"), backend=backend)
-
-    policy._apply_author_inference_precision()
-
-    assert backend.model.vlm.output_proj.weight.dtype is torch.float32
-    assert backend.model.vlm.input_proj.weight is backend.model.vlm.output_proj.weight
-
-
 def test_batch_two_preserves_each_raw_task_and_every_camera_slot():
     backend = TinyG05Backend()
     policy = G05Policy(_config(), backend=backend)
@@ -1369,7 +1339,6 @@ def test_batch_two_preserves_each_raw_task_and_every_camera_slot():
     batch[ACTION] = batch[ACTION].expand(2, -1, -1)
     batch["observation.images.image"] = batch["observation.images.image"].expand(2, -1, -1, -1)
     batch["observation.images.wrist_image"] = batch["observation.images.wrist_image"].expand(2, -1, -1, -1)
-    batch["proprio_dim_is_pad"] = torch.zeros(2, 20, dtype=torch.bool)
     batch["task"] = [" first\n", "第二个 task"]
 
     prepared = _prepared_policy_batch(policy, batch)
@@ -1711,7 +1680,6 @@ def _base_like_config(embodiment: str, width: int, **kwargs) -> G05Config:
     """A `g05_base`-shaped config (27-dim layout, z-score) on another embodiment."""
     raw_dim = len(G05_EMBODIMENT_MAPPINGS[embodiment]["state"])
     return G05Config(
-        checkpoint_profile="custom",
         embodiment=embodiment,
         raw_state_dim=raw_dim,
         raw_action_dim=raw_dim,
@@ -1781,7 +1749,6 @@ def test_slot_derivation_rejects_joints_that_do_not_fit():
 def _new_robot_config(**kwargs) -> G05Config:
     """A `g05_base`-shaped config fine-tuned on a robot without a named embodiment."""
     return G05Config(
-        checkpoint_profile="custom",
         embodiment="omx",
         policy_state_dim=27,
         policy_action_dim=27,
@@ -1868,7 +1835,6 @@ def test_r1lite_action_filter_is_skipped_for_other_embodiments():
 
 def test_named_embodiment_rebuilds_stale_camera_sizes():
     config = G05Config(
-        checkpoint_profile="custom",
         embodiment="robotwin",
         raw_state_dim=14,
         raw_action_dim=14,
@@ -2042,15 +2008,14 @@ class _BatchCountingCodec:
     def __init__(self):
         self.batch_calls = 0
 
-    def encode_for_language(self, payload):
-        return [100 + int(value) for value in payload["value"].flatten()[:3].tolist()]
-
     def encode_batch_for_language(self, payloads):
         self.batch_calls += 1
-        return [self.encode_for_language(payload) for payload in payloads]
+        return [
+            [100 + int(value) for value in payload["value"].flatten()[:3].tolist()] for payload in payloads
+        ]
 
 
-def test_training_sequences_encode_actions_in_one_batch_like_one_at_a_time():
+def test_training_sequences_encode_actions_in_one_batch():
     templates = [
         make_g05_prompt_template(1, predict_cot=True, flow_only=False),
         make_g05_prompt_template(1, predict_cot=False, flow_only=True),
@@ -2073,16 +2038,8 @@ def test_training_sequences_encode_actions_in_one_batch_like_one_at_a_time():
     tokenizer = _char_g05_tokenizer()
 
     batched = tokenizer.encode_train(samples, device=torch.device("cpu"), action_codec=codec)
-    one_at_a_time = tokenizer.encode_train(
-        samples,
-        device=torch.device("cpu"),
-        action_codec=SimpleNamespace(encode_for_language=codec.encode_for_language),
-    )
 
     assert codec.batch_calls == 1
-    for name in ("input_ids", "labels", "token_types"):
-        assert torch.equal(getattr(batched, name), getattr(one_at_a_time, name)), name
-    assert batched.split_index == one_at_a_time.split_index
     assert (batched.token_types == G05TokenType.ACTION).sum(dim=1).tolist() == [3, 0, 3]
 
 

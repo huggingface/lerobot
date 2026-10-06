@@ -56,7 +56,6 @@ from lerobot.utils.language import last_semantic_message_text, require_single_se
 from .action_codec_g05 import G05NativeActionCodec
 from .configuration_g05 import (
     G05_EMBODIMENT_MAPPINGS,
-    G05_POLICY_PARTS,
     G05Config,
 )
 from .modeling_g05 import prepare_g05_policy_batch
@@ -392,15 +391,7 @@ class G05EmbodimentProjectionStep(ProcessorStep):
             observation[OBS_STATE] = self._project(raw_state, self.mapping["state"], self.policy_state_dim)
             # Masks describe feature dimensions, not observation-history timesteps.
             batch_shape = raw_state.shape[:-2] if raw_state.ndim >= 3 else raw_state.shape[:-1]
-            state_mask = torch.ones(
-                *batch_shape,
-                self.policy_state_dim,
-                dtype=torch.bool,
-                device=observation[OBS_STATE].device,
-            )
-            state_mask[..., list(self.mapping["state"])] = False
             complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
-            complementary["proprio_dim_is_pad"] = state_mask
             action_mask = torch.ones(
                 *batch_shape,
                 self.policy_action_dim,
@@ -416,7 +407,6 @@ class G05EmbodimentProjectionStep(ProcessorStep):
                 ).bool()
             else:
                 complementary["action_op_mask"] = ~action_mask
-            complementary["action_parts_meta"] = G05_POLICY_PARTS[self.policy_action_dim].copy()
             complementary["g05_camera_order"] = self.camera_order
             transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         action = transition.get(TransitionKey.ACTION)
@@ -1089,7 +1079,6 @@ class G05TokenizerStep(ProcessorStep):
     policy_config: dict[str, Any] = field(default_factory=dict)
     _tokenizer: G05Tokenizer | None = field(default=None, init=False, repr=False)
     _action_codec: Any = field(default=None, init=False, repr=False)
-    _model_config: dict[str, Any] | None = field(default=None, init=False, repr=False)
 
     def get_config(self) -> dict[str, Any]:
         """Return this step's serializable configuration."""
@@ -1133,7 +1122,6 @@ class G05TokenizerStep(ProcessorStep):
                 "predict_cot": self.policy_config["predict_cot"],
             }
         )
-        self._model_config = model_config
         self._tokenizer = G05Tokenizer(processor_path, model_config)
         return self._tokenizer
 
@@ -1141,9 +1129,7 @@ class G05TokenizerStep(ProcessorStep):
         """Build the native action codec on first use, or None when the checkpoint has none."""
         if self._action_codec is None:
             tokenizer = self._get_tokenizer()
-            if self._model_config is None:
-                raise RuntimeError("G0.5 tokenizer model config was not initialized.")
-            action_config = self._model_config.get("AT_CONFIG")
+            action_config = tokenizer.model_config.get("AT_CONFIG")
             if action_config is None or not Path(self.action_tokenizer_path).is_file():
                 return None
             self._action_codec = G05NativeActionCodec.load(
@@ -1151,10 +1137,7 @@ class G05TokenizerStep(ProcessorStep):
                 action_token_begin=tokenizer.action_token_begin,
                 ckpt_path=self.action_tokenizer_path,
             )
-        move = getattr(self._action_codec, "to", None)
-        if callable(move):
-            self._action_codec = move(device)
-        return self._action_codec
+        return self._action_codec.to(device)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Turn the transition into the checkpoint-native token sequence."""
