@@ -58,17 +58,19 @@ else:
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim.optimizers import OptimizerParams
+from lerobot.policies.common.flow_matching import (
+    FlowConvention,
+    make_flow_matching_inputs,
+    sample_beta,
+    sample_noise,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, MESSAGES_RENDERED, OBS_STATE
+from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
-from lerobot.utils.language import semantic_message_content_text
 
-from .action_codec_g05 import G05NativeActionCodec
+from .action_codec_g05 import G05NativeActionCodec, g05_codec_parts
 from .configuration_g05 import (
-    G05_COT_PROMPTS,
     G05Config,
-    make_g05_cot_prompt_template,
-    make_g05_prompt_template,
 )
 from .tokenizer_g05 import (
     G05_INPUT_IDS,
@@ -544,6 +546,18 @@ class G05NativeBackend(nn.Module):
         """Store the model configuration and build the native model."""
         super().__init__()
         self.model_config = dict(model_config)
+        fm = self.model_config["fm"]
+        # Every released checkpoint uses the pi time convention, keeps padded action dims at zero
+        # through sampling, and does not clip; the flow path implements only that combination.
+        if (
+            fm["time_convention"] != "pi_convention"
+            or bool(fm["zero_pad_action_target"])
+            or fm.get("final_action_clip_value") is not None
+        ):
+            raise NotImplementedError(
+                "G0.5 supports flow settings time_convention=pi_convention, "
+                "zero_pad_action_target=false and final_action_clip_value=null."
+            )
         self.action_tokenizer_path = Path(action_tokenizer_path)
         self.model = G05NativeModel(self.model_config, vocab_size=vocab_size)
         attention_implementation = str(self.model_config.get("attn_implementation", "eager"))
@@ -555,19 +569,23 @@ class G05NativeBackend(nn.Module):
             raise ValueError(
                 f"G0.5 tokenizer has {len(self.processor)} rows, but model expects {vocab_size}."
             )
-        self.action_tokenizer = None
-        action_config = self.model_config.get("AT_CONFIG")
-        if (
-            isinstance(action_config, Mapping)
-            and self.action_tokenizer_path.is_file()
-            and not next(self.model.parameters()).is_meta
-        ):
+        self.action_tokenizer: G05NativeActionCodec | None = None
+        if not next(self.model.parameters()).is_meta:
+            self.load_action_codec()
+        self._last_vision_grids: list[tuple[int, int, int]] = []
+
+    def load_action_codec(self) -> None:
+        """Load the ActionCodec sidecar next to the weights, when the checkpoint ships one.
+
+        It cannot load while the weights are on the meta device, so `G05Policy.from_pretrained`
+        calls this again once they are loaded.
+        """
+        if self.action_tokenizer is None and self.action_tokenizer_path.is_file():
             self.action_tokenizer = G05NativeActionCodec.load(
-                action_config,
+                self.model_config["AT_CONFIG"],
                 action_token_begin=self.processor.action_token_begin,
                 ckpt_path=self.action_tokenizer_path,
-            )
-        self._last_vision_grids: list[tuple[int, int, int]] = []
+            ).to(next(self.model.parameters()).device)
 
     def materialize_runtime_buffers(self, device: torch.device | str) -> None:
         """Rebuild non-persistent Transformers buffers after meta construction."""
@@ -711,14 +729,9 @@ class G05NativeBackend(nn.Module):
         base_vocab_size = max((int(token_id) for token_id in added), default=-1) + 1
         at_config = model_config["AT_CONFIG"]
         codebook_size = int(at_config["model_arch"]["codebook_size"])
-        parts = at_config["parts_meta"]
-        rule_patterns = tuple(at_config.get("rule_based_key_patterns") or ())
-        rule_parts = [name for name in parts if any(pattern in name for pattern in rule_patterns)]
-        neural_parts = [name for name in parts if name not in rule_parts]
-        residuals = int(at_config["model_arch"]["n_codebooks"])
-        marker_count = len(neural_parts) * residuals + len(rule_parts)
+        _, _, markers = g05_codec_parts(at_config)
         # Action-code tokens, group markers, <EOV>, and the MLP <state> token.
-        vocab_size = base_vocab_size + codebook_size + marker_count + 2
+        vocab_size = base_vocab_size + codebook_size + len(markers) + 2
         return cls(
             model_config,
             vocab_size=vocab_size,
@@ -1409,25 +1422,15 @@ class G05NativeBackend(nn.Module):
         batch_size = token_types.shape[0]
         horizon = int(fm["horizon_steps"])
         action_dim = int(fm["action_dim"])
-        action = torch.randn(
-            batch_size,
-            horizon,
-            action_dim,
-            device=token_types.device,
-            dtype=dtype,
-        )
-        dim_mask = (
-            action_dim_is_pad.bool().unsqueeze(1)
-            if action_dim_is_pad is not None and not bool(fm["zero_pad_action_target"])
-            else None
-        )
+        action = sample_noise((batch_size, horizon, action_dim), token_types.device, dtype=dtype)
+        dim_mask = action_dim_is_pad.bool().unsqueeze(1) if action_dim_is_pad is not None else None
         if dim_mask is not None:
             action.masked_fill_(dim_mask, 0)
         steps = int(fm["num_inference_steps"])
         delta = 1.0 / steps
-        pi_convention = fm["time_convention"] == "pi_convention"
-        time_value = 1.0 if pi_convention else 0.0
-        timesteps = torch.full((batch_size,), time_value, dtype=dtype, device=token_types.device)
+        # Upstream's Euler loop, not the shared `euler_integrate`: the time is kept in the model
+        # dtype and decremented each step, which a float32 schedule would not reproduce in BF16.
+        timesteps = torch.ones(batch_size, dtype=dtype, device=token_types.device)
         for _ in range(steps):
             velocity = self._velocity(
                 action,
@@ -1436,12 +1439,11 @@ class G05NativeBackend(nn.Module):
                 token_types=token_types,
                 positions=positions,
             )
-            action = action - delta * velocity if pi_convention else action + delta * velocity
-            timesteps = timesteps - delta if pi_convention else timesteps + delta
+            action = action - delta * velocity
+            timesteps = timesteps - delta
             if dim_mask is not None:
                 action.masked_fill_(dim_mask, 0)
-        clip = fm.get("final_action_clip_value")
-        return action.clamp(-float(clip), float(clip)) if clip is not None else action
+        return action
 
     def _flow_loss(
         self,
@@ -1457,33 +1459,18 @@ class G05NativeBackend(nn.Module):
         fm = self.model_config["fm"]
         samples = int(fm.get("num_flow_samples", 1))
         batch_size = actions.shape[0]
-        beta = torch.distributions.Beta(1.5, 1.0)
-        z = beta.sample((samples, batch_size)).to(actions.device, actions.dtype)
-        if fm["time_convention"] == "pi_convention":
-            timesteps = 1 - (1 - float(fm["flow_sig_min"])) * (1 - z)
-        else:
-            timesteps = (1 - float(fm["flow_sig_min"])) * (1 - z)
-        timesteps = timesteps.reshape(-1)
-        noise = torch.randn(
-            samples,
-            *actions.shape,
-            device=actions.device,
-            dtype=actions.dtype,
-        ).flatten(0, 1)
-        target_actions = actions.repeat(samples, 1, 1)
-        t = timesteps[:, None, None]
-        if fm["time_convention"] == "pi_convention":
-            interpolated = (1 - t) * target_actions + t * noise
-            target_velocity = noise - target_actions
-        else:
-            interpolated = t * target_actions + (1 - t) * noise
-            target_velocity = target_actions - noise
+        # One draw per flow sample, sample-major like the repeated targets below.
+        z = sample_beta(1.5, 1.0, samples * batch_size, actions.device, dtype=actions.dtype)
+        timesteps = 1 - (1 - float(fm["flow_sig_min"])) * (1 - z)
+        noise = sample_noise((samples * batch_size, *actions.shape[1:]), actions.device, dtype=actions.dtype)
+        interpolated, target_velocity, _ = make_flow_matching_inputs(
+            actions.repeat(samples, 1, 1), noise, timesteps, convention=FlowConvention.NOISE_AT_ONE
+        )
 
         repeated_dim_mask = None
         if action_dim_is_pad is not None:
             repeated_dim_mask = action_dim_is_pad.repeat(samples, 1)
-            if not bool(fm["zero_pad_action_target"]):
-                interpolated = interpolated.masked_fill(repeated_dim_mask[:, None], 0)
+            interpolated = interpolated.masked_fill(repeated_dim_mask[:, None], 0)
 
         repeated_types = token_types.repeat(samples, 1)
         repeated_positions = positions.repeat(1, samples, 1)
@@ -1504,7 +1491,7 @@ class G05NativeBackend(nn.Module):
         )
         weights = torch.ones_like(predicted)
         weights[action_is_pad.repeat(samples, 1)] = float(fm["padding_action_weight"])
-        if repeated_dim_mask is not None and not bool(fm["zero_pad_action_target"]):
+        if repeated_dim_mask is not None:
             weights.masked_fill_(
                 repeated_dim_mask[:, None],
                 float(fm["padding_action_weight"]),
@@ -1545,7 +1532,6 @@ class G05NativeBackend(nn.Module):
                     self.processor.action_token_end_with_markers,
                 ),
             )
-            sequence.token_types = token_types
             result["cot_text"] = [
                 _clean_cot_text(
                     self.processor.decode(
@@ -1631,10 +1617,6 @@ class G05NativeBackend(nn.Module):
         ar_config = self.model_config.get("ar") or {}
         ce_weight = float(ar_config.get("ce_weight", 1.0))
         z_loss_scale = float(ar_config.get("ce_z_loss_scale", 0.0))
-        if ce_weight < 0:
-            raise ValueError("G0.5 ar.ce_weight must be non-negative.")
-        if z_loss_scale < 0:
-            raise ValueError("G0.5 ar.ce_z_loss_scale must be non-negative.")
         skip_ce = (
             bool(self.model_config.get("continuous_action", False))
             and not bool(self.model_config.get("discrete_action", False))
@@ -1745,7 +1727,7 @@ class G05Policy(PreTrainedPolicy):
     def __init__(
         self,
         config: G05Config,
-        backend: nn.Module | None = None,
+        backend: G05NativeBackend | None = None,
         *,
         checkpoint_dir: str | Path | None = None,
         **kwargs,
@@ -1755,8 +1737,6 @@ class G05Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.backend = backend if backend is not None else _native_backend(config, checkpoint_dir)
-        if not isinstance(self.backend, nn.Module):
-            raise TypeError(f"G0.5 backend must be an nn.Module, got {type(self.backend)}.")
         self._action_queue: deque[Tensor] = deque()
 
     def supports_text_generation(self) -> bool:
@@ -1788,9 +1768,7 @@ class G05Policy(PreTrainedPolicy):
         device = resolve_safetensors_device(map_location)
         state_dict = load_file(model_file, device=device, backend="pread")
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False, assign=True)
-        materialize = getattr(model.backend, "materialize_runtime_buffers", None)
-        if callable(materialize):
-            materialize(device)
+        model.backend.materialize_runtime_buffers(device)
         remaining_meta = [name for name, parameter in model.named_parameters() if parameter.is_meta]
         if remaining_meta:
             raise RuntimeError(f"G0.5 checkpoint did not materialize model parameters: {remaining_meta}")
@@ -1839,31 +1817,18 @@ class G05Policy(PreTrainedPolicy):
                 checkpoint_dir=resolved_path,
                 **kwargs,
             )
-        if isinstance(policy.backend, G05NativeBackend) and policy.backend.action_tokenizer is None:
-            action_config = policy.backend.model_config.get("AT_CONFIG")
-            if isinstance(action_config, Mapping) and policy.backend.action_tokenizer_path.is_file():
-                # The backend is built on meta, where the codec cannot load, so bind it here.
-                policy.backend.action_tokenizer = G05NativeActionCodec.load(
-                    action_config,
-                    action_token_begin=policy.backend.processor.action_token_begin,
-                    ckpt_path=policy.backend.action_tokenizer_path,
-                ).to(next(policy.backend.parameters()).device)
+        policy.backend.load_action_codec()
         return policy
 
     def reset(self) -> None:
-        """Clear the queued actions and any backend state."""
+        """Clear the queued actions."""
         self._action_queue.clear()
-        reset = getattr(self.backend, "reset", None)
-        if callable(reset):
-            reset()
 
     def _apply_author_inference_precision(self) -> None:
         """Match the released serving path's BF16 weights with declared FP32 islands."""
 
         self.backend.to(dtype=torch.bfloat16)
-        apply_fp32_params = getattr(self.backend, "apply_fp32_params", None)
-        if callable(apply_fp32_params):
-            apply_fp32_params()
+        self.backend.apply_fp32_params()
 
     def to(self, *args, **kwargs) -> G05Policy:
         """Apply the released inference precision and move the ActionCodec sidecar."""
@@ -1876,348 +1841,19 @@ class G05Policy(PreTrainedPolicy):
             and next(self.backend.parameters()).device.type == "cuda"
         ):
             self._apply_author_inference_precision()
-        action_tokenizer = getattr(self.backend, "action_tokenizer", None)
-        move_tokenizer = getattr(action_tokenizer, "to", None)
-        if callable(move_tokenizer):
-            device = next(self.backend.parameters()).device
-            move_tokenizer(device)
+        if self.backend.action_tokenizer is not None:
+            self.backend.action_tokenizer.to(next(self.backend.parameters()).device)
         return result
 
     def get_optim_params(self) -> OptimizerParams:
         """Return the optimizer parameter groups."""
-        get_param_groups = getattr(self.backend, "get_optim_param_groups", None)
-        if callable(get_param_groups):
-            return get_param_groups(
-                lr=self.config.optimizer_lr,
-                weight_decay=self.config.optimizer_weight_decay,
-                apply_decay_on_norm_and_bias=self.config.optimizer_apply_decay_on_norm_and_bias,
-                backbone_lr_multiplier=self.config.optimizer_backbone_lr_multiplier,
-                vision_lr_multiplier=self.config.optimizer_vision_lr_multiplier,
-            )
-        get_params = getattr(self.backend, "get_optim_params", None)
-        if callable(get_params):
-            params = get_params()
-            return [params] if isinstance(params, dict) and "params" in params else params
-        return [parameter for parameter in self.parameters() if parameter.requires_grad]
-
-    @staticmethod
-    def _task_values(batch: Mapping[str, Any], task: str | None, batch_size: int) -> list[str]:
-        """Broadcast the task string across the batch."""
-        if task is not None:
-            return [task] * batch_size
-        value = batch.get("task")
-        if isinstance(value, str):
-            return [value] * batch_size
-        if isinstance(value, list | tuple) and len(value) == batch_size:
-            return [str(item) for item in value]
-        raise ValueError(
-            "G0.5 requires the already-selected LeRobot task string; no task augmentation "
-            "or model-local sampling is performed."
+        return self.backend.get_optim_param_groups(
+            lr=self.config.optimizer_lr,
+            weight_decay=self.config.optimizer_weight_decay,
+            apply_decay_on_norm_and_bias=self.config.optimizer_apply_decay_on_norm_and_bias,
+            backbone_lr_multiplier=self.config.optimizer_backbone_lr_multiplier,
+            vision_lr_multiplier=self.config.optimizer_vision_lr_multiplier,
         )
-
-    @staticmethod
-    def _batch_item(value: Any, index: int, batch_size: int) -> Any:
-        """Take one sample's value out of a batched field."""
-        if isinstance(value, Tensor) and value.ndim > 0 and value.shape[0] == batch_size:
-            return value[index]
-        if isinstance(value, list | tuple) and len(value) == batch_size:
-            return value[index]
-        return value
-
-    @staticmethod
-    def _sample_messages(batch: Mapping[str, Any], index: int, batch_size: int) -> Any:
-        """One sample's recipe-rendered conversation, or None when no recipe ran."""
-        messages = batch.get(MESSAGES_RENDERED)
-        if (
-            isinstance(messages, list | tuple)
-            and len(messages) == batch_size
-            and (not messages or isinstance(messages[0], list | tuple))
-        ):
-            messages = messages[index]
-        return [messages] if isinstance(messages, Mapping) else messages
-
-    @classmethod
-    def _rendered_task(cls, batch: Mapping[str, Any], index: int, batch_size: int) -> str | None:
-        """The task text of one sample's rendered user turn.
-
-        The recipe's ``${task}`` rotates through the episode's ``task_aug`` rephrasings, so
-        using it as the command gives the task-prompt diversity the annotations provide.
-        """
-        messages = cls._sample_messages(batch, index, batch_size)
-        if not isinstance(messages, list | tuple):
-            return None
-        for message in reversed(messages):
-            if isinstance(message, Mapping) and message.get("role") == "user":
-                text = semantic_message_content_text(message.get("content"))
-                if text:
-                    return text
-        return None
-
-    def _recipe_cot_targets(
-        self,
-        batch: Mapping[str, Any],
-        index: int,
-        batch_size: int,
-    ) -> tuple[str | None, str | None]:
-        """Read the selected recipe's supervised Subtask/BBox messages."""
-
-        target_indices = batch.get("target_message_indices")
-        sample_messages = self._sample_messages(batch, index, batch_size)
-        if sample_messages is None or target_indices is None:
-            return None, None
-
-        sample_target_indices = target_indices
-        has_batched_target_indices = (isinstance(target_indices, Tensor) and target_indices.ndim > 1) or (
-            isinstance(target_indices, list | tuple)
-            and len(target_indices) == batch_size
-            and (not target_indices or isinstance(target_indices[0], list | tuple | Tensor))
-        )
-        if has_batched_target_indices:
-            sample_target_indices = target_indices[index]
-        if isinstance(sample_target_indices, Tensor):
-            sample_target_indices = sample_target_indices.detach().cpu().tolist()
-        if not isinstance(sample_messages, list | tuple) or not isinstance(
-            sample_target_indices, list | tuple
-        ):
-            return None, None
-
-        subtask: str | None = None
-        bbox_json: str | None = None
-        for target_index in sample_target_indices:
-            message = sample_messages[int(target_index)]
-            content = message.get("content") if isinstance(message, Mapping) else None
-            if not isinstance(content, str):
-                continue
-            if content.startswith("Subtask:"):
-                value = content.removeprefix("Subtask:").strip()
-                if value:
-                    subtask = value
-            elif content.startswith("BBoxJSON:"):
-                value = content.removeprefix("BBoxJSON:").strip()
-                if value:
-                    bbox_json = value
-        return subtask, bbox_json
-
-    @staticmethod
-    def _format_bbox_target(bbox_json: str | None) -> str | None:
-        """Convert LeRobot grounded-VQA JSON into G0.5's location-token format.
-
-        Coordinates are [0, 1] fractions of the image, the LeRobot annotation convention and
-        the frame the checkpoint was trained in; each becomes one of 1024 location tokens, in
-        (y1, x1, y2, x2) order.
-        """
-
-        if not bbox_json:
-            return None
-        try:
-            payload = json.loads(bbox_json)
-            if isinstance(payload, str):
-                payload = json.loads(payload)
-        except (json.JSONDecodeError, TypeError):
-            return None
-        if not isinstance(payload, Mapping):
-            return None
-        if isinstance(payload.get("answer"), Mapping):
-            payload = payload["answer"]
-
-        boxes: list[tuple[str, list[float]]] = []
-        detections = payload.get("detections")
-        if isinstance(detections, list):
-            for detection in detections:
-                if not isinstance(detection, Mapping):
-                    continue
-                coords = detection.get("bbox")
-                bbox_format = detection.get("bbox_format", "xyxy")
-                if (
-                    not isinstance(coords, list | tuple)
-                    or len(coords) != 4
-                    or bbox_format not in {"xyxy", "xywh"}
-                ):
-                    continue
-                x1, y1, a, b = (float(value) for value in coords)
-                corners = [x1, y1, x1 + a, y1 + b] if bbox_format == "xywh" else [x1, y1, a, b]
-                boxes.append((str(detection.get("label") or "object"), corners))
-        else:
-            for label, coords in payload.items():
-                if isinstance(coords, list | tuple) and len(coords) == 4:
-                    boxes.append((str(label), [float(value) for value in coords]))
-        if not boxes:
-            return None
-        if any(not 0.0 <= value <= 1.0 for _, coords in boxes for value in coords):
-            raise ValueError(
-                "G0.5 bbox targets need [0, 1] image-fraction coordinates (the lerobot-annotate "
-                f"convention), got {bbox_json!r}. Convert pixel boxes by dividing by the frame size."
-            )
-
-        def location_token(value: float) -> str:
-            """Render a coordinate as a location token."""
-            location = max(0, min(1023, round(value * 1024)))
-            return f"<loc{location:04d}>"
-
-        formatted = []
-        for label, (x1, y1, x2, y2) in boxes:
-            locations = "".join(location_token(value) for value in (y1, x1, y2, x2))
-            formatted.append(f"{label} {locations}")
-        return "BBox: " + "; ".join(formatted)
-
-    def _apply_recipe_cot(
-        self,
-        sample: dict[str, Any],
-        batch: Mapping[str, Any],
-        index: int,
-        batch_size: int,
-    ) -> bool:
-        """Populate one author sample from recipe-rendered CoT targets."""
-
-        subtask, bbox_json = self._recipe_cot_targets(batch, index, batch_size)
-        bbox = self._format_bbox_target(bbox_json)
-
-        fields = tuple(field for field, value in (("bbox", bbox), ("subtask", subtask)) if value)
-        if not fields:
-            return False
-        flow_only = "<action_action" not in self.config.prompt_template
-        sample["template"] = make_g05_cot_prompt_template(
-            self.config.num_prompt_images,
-            fields=fields,
-            flow_only=flow_only,
-        )
-        if bbox is not None:
-            sample["bbox"] = bbox
-        if subtask is not None:
-            sample["atomic_task"] = f"Subtask: {subtask}"
-        sample["prompt"] = G05_COT_PROMPTS[fields]
-        return True
-
-    def _prepare_author_batch(
-        self,
-        batch: Mapping[str, Any],
-        task: str | None = None,
-        *,
-        predict_cot: bool | None = None,
-    ) -> dict[str, Any]:
-        """Build the author-format sample batch."""
-        run_predict_cot = self.config.predict_cot if predict_cot is None else predict_cot
-        prepare = getattr(self.backend, "prepare_lerobot_batch", None)
-        if callable(prepare):
-            prepared = prepare(batch, task=task, config=self.config)
-            prepared[G05_RUNTIME_PREDICT_COT] = run_predict_cot
-            return prepared
-
-        state = batch.get(OBS_STATE)
-        if not isinstance(state, Tensor):
-            raise ValueError(f"G0.5 requires tensor {OBS_STATE!r}.")
-        if state.ndim == 1:
-            state = state.unsqueeze(0)
-        batch_size = state.shape[0]
-        tasks = self._task_values(batch, task, batch_size)
-
-        pixel_values: dict[str, Tensor] = {}
-        for key in self.config.camera_order:
-            image = batch.get(key)
-            if not isinstance(image, Tensor):
-                raise ValueError(f"G0.5 requires camera {key!r}; camera order is checkpoint state.")
-            if image.ndim == 4:
-                image = image.unsqueeze(1)
-            pixel_values[key] = image
-        image_count = sum(image.shape[1] for image in pixel_values.values())
-        if image_count != self.config.num_input_images:
-            raise ValueError(
-                f"G0.5 received {image_count} camera/history frames, but the checkpoint "
-                f"template requires {self.config.num_input_images}."
-            )
-
-        samples = []
-        flow_only = "<action_action" not in self.config.prompt_template
-        inference_template = (
-            self.config.prompt_template
-            if run_predict_cot
-            else make_g05_prompt_template(
-                self.config.num_prompt_images,
-                predict_cot=False,
-                flow_only=flow_only,
-            )
-        )
-        for index, raw_task in enumerate(tasks):
-            if task is None:
-                raw_task = self._rendered_task(batch, index, batch_size) or raw_task
-            proprio = state[index]
-            if proprio.ndim == 1:
-                proprio = proprio.unsqueeze(0)
-            sample = {
-                "template": inference_template,
-                # This is the author InputPreprocessor command slot. Keep it byte-for-byte
-                # unchanged; checkpoint-specific chat formatting occurs downstream.
-                "command": raw_task,
-                "embodiment": self.config.embodiment,
-                "proprio": {"value": proprio},
-            }
-            frequency = self.config.processor_metadata.get("frequency")
-            if frequency is not None:
-                sample["frequency"] = frequency
-            if run_predict_cot:
-                rendered_recipe = MESSAGES_RENDERED in batch
-                applied_recipe_cot = rendered_recipe and self._apply_recipe_cot(
-                    sample, batch, index, batch_size
-                )
-                if not applied_recipe_cot:
-                    # During mixed-recipe training an applicable no-CoT branch is a
-                    # genuine target format. At inference, where actions are absent,
-                    # retain the checkpoint's configured System 2 prompt.
-                    if rendered_recipe and isinstance(batch.get(ACTION), Tensor):
-                        sample["template"] = make_g05_prompt_template(
-                            self.config.num_prompt_images,
-                            predict_cot=False,
-                            flow_only="<action_action" not in self.config.prompt_template,
-                        )
-                    else:
-                        sample["prompt"] = G05_COT_PROMPTS[
-                            tuple(getattr(self.config, "runtime_cot_fields", ("subtask",)))
-                        ]
-                        atomic_task = batch.get("atomic_task")
-                        if atomic_task is not None:
-                            atomic_task = str(self._batch_item(atomic_task, index, batch_size))
-                            sample["atomic_task"] = (
-                                atomic_task
-                                if atomic_task.startswith("Subtask:")
-                                else f"Subtask: {atomic_task}"
-                            )
-            for image_index in range(self.config.num_prompt_images):
-                camera = self.config.camera_order[image_index % len(self.config.camera_order)]
-                sample[f"image{image_index}"] = self.config.camera_sizes[camera]
-            action = batch.get(ACTION)
-            if "<action_action" in self.config.prompt_template:
-                if not isinstance(action, Tensor):
-                    action = state.new_zeros(
-                        batch_size, self.config.chunk_size, self.config.policy_action_dim
-                    )
-                action_dim_is_pad = batch.get("action_dim_is_pad")
-                if action_dim_is_pad is None:
-                    action_dim_is_pad = torch.zeros(
-                        batch_size,
-                        self.config.policy_action_dim,
-                        dtype=torch.bool,
-                        device=action.device,
-                    )
-                elif action_dim_is_pad.ndim == 1:
-                    action_dim_is_pad = action_dim_is_pad.unsqueeze(0).expand(batch_size, -1)
-                action_payload = {
-                    "value": action[index],
-                    "action_dim_is_pad": action_dim_is_pad[index],
-                }
-                action_op_mask = batch.get("action_op_mask")
-                if isinstance(action_op_mask, Tensor):
-                    action_payload["action_op_mask"] = (
-                        action_op_mask[index] if action_op_mask.ndim > 1 else action_op_mask
-                    )
-                else:
-                    action_payload["action_op_mask"] = ~action_dim_is_pad[index]
-                sample["action"] = action_payload
-            samples.append(sample)
-        prepared = dict(batch)
-        prepared["samples"] = samples
-        prepared["pixel_values"] = pixel_values
-        prepared[G05_RUNTIME_PREDICT_COT] = run_predict_cot
-        return prepared
 
     def _run_inference(
         self,
@@ -2238,25 +1874,14 @@ class G05Policy(PreTrainedPolicy):
             raise ValueError(
                 "G0.5 system mode does not match the token sequence emitted by its input processor."
             )
-        predict = getattr(self.backend, "predict_action", None)
         device = next(self.backend.parameters()).device
         with torch.autocast(
             device_type=device.type,
             dtype=torch.bfloat16,
             enabled=self.config.dtype == torch.bfloat16 and device.type == "cuda",
         ):
-            result = predict(prepared) if callable(predict) else self.backend(prepared)
-        if isinstance(result, Tensor):
-            result = {ACTION: result}
-        if not isinstance(result, Mapping):
-            raise TypeError("G0.5 backend inference must return a tensor or mapping.")
-
-        if self.config.action_head == "actioncodec":
-            action = result.get("ar_action", result.get(ACTION))
-        else:
-            action = result.get(ACTION)
-        if not isinstance(action, Tensor):
-            raise ValueError(f"G0.5 {self.config.action_head} output is missing its action tensor.")
+            result = self.backend.predict_action(prepared)
+        action = result["ar_action"] if self.config.action_head == "actioncodec" else result[ACTION]
         metadata = (
             {"cot_text": result["cot_text"]} if system_mode == "system2" and "cot_text" in result else {}
         )
@@ -2301,34 +1926,9 @@ class G05Policy(PreTrainedPolicy):
             dtype=torch.bfloat16,
             enabled=self.config.dtype == torch.bfloat16 and device.type == "cuda",
         ):
-            result = self.backend(prepared)
-        if isinstance(result, tuple) and len(result) == 2:
-            loss, loss_dict = result
-        elif isinstance(result, Mapping) and "loss" in result:
-            loss = result["loss"]
-            loss_dict = {key: value for key, value in result.items() if key != "loss"}
-        else:
-            raise TypeError("G0.5 training backend must return (loss, loss_dict) or {'loss': ...}.")
-        if not isinstance(loss, Tensor):
-            raise TypeError("G0.5 training loss must be a torch.Tensor.")
+            loss, loss_dict = self.backend(prepared)
         logging_values = {
             key: value.detach().item() if isinstance(value, Tensor) and value.numel() == 1 else value
-            for key, value in (loss_dict or {}).items()
+            for key, value in loss_dict.items()
         }
         return loss, logging_values
-
-
-def prepare_g05_policy_batch(
-    config: Any,
-    batch: Mapping[str, Any],
-    *,
-    task: str | None = None,
-    predict_cot: bool | None = None,
-) -> dict[str, Any]:
-    """Run G0.5's deterministic sample builder without constructing policy weights."""
-
-    proxy = object.__new__(G05Policy)
-    nn.Module.__init__(proxy)
-    proxy.config = config
-    proxy.backend = None
-    return G05Policy._prepare_author_batch(proxy, batch, task=task, predict_cot=predict_cot)
