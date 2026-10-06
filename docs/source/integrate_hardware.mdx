@@ -142,10 +142,11 @@ In this case, observations consist of a simple dict storing each motor's positio
 
 This property describes the commands your robot expects via `send_action()`. Again, keys must match the expected input format, and values define the shape/type of each command.
 
-Here, we simply use the same joints proprioceptive features (`self._motors_ft`) as with `observation_features`: the action sent will simply the goal position for each motor.
+Here, we simply use the same joints proprioceptive features (`self._motors_ft`) as with `observation_features`: the action sent will simply be the goal position for each motor.
 
 <!-- prettier-ignore-start -->
 ```python
+@property
 def action_features(self) -> dict:
     return self._motors_ft
 ```
@@ -339,7 +340,7 @@ The main differences are in the I/O functions: a teleoperator allows you to prod
 
 ## Using Your Own `LeRobot` Devices 🔌
 
-You can easily extend `lerobot` with your own custom hardware—be it a camera, robot, or teleoperation device—by creating a separate, installable Python package. If you follow a few simple conventions, the `lerobot` command-line tools (like `lerobot-teleop` and `lerobot-record`) will **automatically discover and integrate your creations** without requiring any changes to the `lerobot` source code.
+You can easily extend `lerobot` with your own custom hardware—be it a camera, robot, or teleoperation device—by creating a separate, installable Python package. If you follow a few simple conventions, the `lerobot` command-line tools (like `lerobot-teleoperate` and `lerobot-record`) will **automatically discover and integrate your creations** without requiring any changes to the `lerobot` source code.
 
 This guide outlines the conventions your plugin must follow.
 
@@ -453,8 +454,8 @@ lerobot_teleoperator_my_awesome_teleop/
 2.  **Use it directly from the command line.** Now, you can use your custom device by referencing its type.
 
     ```bash
-    lerobot-teleoperate --teleop.type=my_awesome_teleop \
-    # other arguments
+    # Add the other arguments you need (robot type, ports, ids, ...)
+    lerobot-teleoperate --teleop.type=my_awesome_teleop ...
     ```
 
 And that's it\! Your custom device is now fully integrated.
