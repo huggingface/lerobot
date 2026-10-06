@@ -40,9 +40,9 @@ pip install -e ".[fineart_vla]"
 The `fineart_vla` extra includes the PaliGemma/FAST dependencies. For the optional
 fused training kernels on Linux with a CUDA GPU, install `".[fineart_vla_kernels]"`
 instead. It adds `liger-kernel` and the Hugging Face `kernels` package used by the
-FlashRT backends. When Liger is installed, FineART-VLA patches transformers'
-PaliGemma RoPE/GeGLU for the whole process; set `--policy.use_liger_kernels=false`
-if you run other PaliGemma-based policies in the same process.
+FlashRT backends. Liger is opt-in with `--policy.use_liger_kernels=true`: it patches
+transformers' PaliGemma RoPE/GeGLU for the whole process, so other PaliGemma-based
+policies loaded in the same process also run with the fused kernels.
 
 ## Prepare language-annotated data
 
@@ -104,13 +104,14 @@ recipe resolver.
 
 This example initializes FineART-VLA from `lerobot/fineart_vla_base`, the
 checkpoint mid-trained on FineART to predict its own next subtask, and trains the
-embedded 70/30 subtask recipe.
+embedded 70/30 subtask recipe. `--policy.path` loads the base checkpoint's own
+config, so fine-tuning keeps the FAST token layout (`fast_skip_tokens`) and the
+recipe the base was trained with; the other `--policy.*` flags override it.
 
 ```bash
 lerobot-train \
     --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
-    --policy.type=fineart_vla \
-    --policy.pretrained_path=lerobot/fineart_vla_base \
+    --policy.path=lerobot/fineart_vla_base \
     --policy.tokenizer_max_length=256 \
     --policy.dtype=bfloat16 \
     --policy.device=cuda \
@@ -125,6 +126,12 @@ lerobot-train \
 
 Start with a small run and confirm that W&B examples show
 the expected prompt, text target, and action endpoints before scaling up.
+
+To start from the plain PI0.5 checkpoint instead, keep FineART-VLA's default
+config and point `--policy.pretrained_path` at it:
+`--policy.type=fineart_vla --policy.pretrained_path=lerobot/pi05_base`. The
+OpenPI-format weights are converted on load, and the text and FAST losses start
+from PaliGemma's language head rather than from FineART mid-training.
 
 ### Main training controls
 

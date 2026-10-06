@@ -62,7 +62,7 @@ class FineARTVLAConfig(PI05Config):
 
     # Recipe / language stack ---------------------------------------------
     recipe_path: str | None = None
-    """Optional file override for the embedded default recipe."""
+    """Optional file override for the embedded default recipe; resolved into ``recipe`` once, then cleared."""
 
     recipe: dict | None = field(default_factory=_fineart_vla_default_recipe)
     """Serialized training/runtime contract; ``None`` selects the plain PI0.5 prompt."""
@@ -79,7 +79,8 @@ class FineARTVLAConfig(PI05Config):
 
     # Backbone training ---------------------------------------------------
     unfreeze_lm_head: bool = True
-    """Train PaliGemma's language head."""
+    """Deprecated and ignored: text and FAST supervision always train the VLM, language head included.
+    Kept so existing checkpoint configs still load."""
 
     # FAST adds discrete-action CE to the text and flow objectives from paper §III.B-C.
     enable_fast_action_loss: bool = True
@@ -120,8 +121,8 @@ class FineARTVLAConfig(PI05Config):
     """Detach VLM keys and values from action-loss gradients."""
 
     # Optional training backends. Defaults preserve the eager/SDPA path.
-    use_liger_kernels: bool = True
-    """Fuse PaliGemma RoPE/GeGLU with Liger when installed. Patches transformers process-wide."""
+    use_liger_kernels: bool = False
+    """Fuse PaliGemma RoPE/GeGLU with Liger. Opt-in: it patches transformers for the whole process."""
 
     use_flashrt_adarms: bool = False
     """Use FlashRT adaptive RMSNorm kernels."""
@@ -178,10 +179,19 @@ class FineARTVLAConfig(PI05Config):
             if resolved_recipe is None:
                 raise ValueError("recipe_path must resolve to a training recipe")
             self.recipe = asdict(resolved_recipe)
+            # The resolved recipe is now part of the config: later loads must not re-read a file
+            # that may have changed since, so the saved checkpoint keeps the recipe it trained with.
+            self.recipe_path = None
         if self.enable_fast_action_loss and self.recipe is None:
             raise ValueError("FineART-VLA FAST action loss requires recipe_path to build action supervision.")
-        if self.text_loss_weight > 0 and self.unfreeze_lm_head:
-            self.train_expert_only = False
+        # Text and FAST cross-entropy supervise the VLM itself (knowledge insulation only keeps the
+        # flow loss out of it), so they need a trainable backbone.
+        if self.train_expert_only and (self.text_loss_weight > 0 or self.enable_fast_action_loss):
+            raise ValueError(
+                "train_expert_only=true freezes the VLM that the text and FAST losses train. "
+                "Set train_expert_only=false, or disable both (text_loss_weight=0, "
+                "enable_fast_action_loss=false) to train only the action expert."
+            )
         if self.flow_num_repeats < 1:
             raise ValueError(f"flow_num_repeats must be >= 1, got {self.flow_num_repeats}")
         if self.fast_tokenizer_validation_samples < 1:

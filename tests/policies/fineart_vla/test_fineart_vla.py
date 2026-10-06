@@ -28,6 +28,8 @@ import torch
 
 pytest.importorskip("transformers")
 
+from safetensors.torch import save_file  # noqa: E402
+
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig  # noqa: E402
 from lerobot.policies import (  # noqa: E402
     FineARTVLAConfig,
@@ -35,6 +37,9 @@ from lerobot.policies import (  # noqa: E402
     make_policy_config,
     make_pre_post_processors,
 )
+from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPolicy  # noqa: E402
+from lerobot.policies.pi05.configuration_pi05 import PI05Config  # noqa: E402
+from lerobot.policies.pi05.modeling_pi05 import PI05Policy  # noqa: E402
 from lerobot.utils.constants import (  # noqa: E402
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -70,6 +75,37 @@ def test_config_save_load_roundtrip(tmp_path):
     assert restored.recipe == config.recipe
     assert restored.flow_num_repeats == 3
     assert restored.text_loss_weight == 0.5
+
+
+def test_recipe_path_is_resolved_once_into_the_config(tmp_path):
+    pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
+    config = FineARTVLAConfig(device="cpu", recipe_path="recipes/subtask.yaml")
+    assert config.recipe_path is None
+    assert config.recipe is not None
+
+    config.save_pretrained(tmp_path)
+    saved = json.loads((tmp_path / "config.json").read_text())
+    # The checkpoint keeps the recipe it trained with instead of re-reading the file on load.
+    assert saved["recipe_path"] is None
+    assert PreTrainedConfig.from_pretrained(tmp_path).recipe == config.recipe
+
+
+@pytest.mark.parametrize(("text_loss_weight", "enable_fast_action_loss"), [(1.0, False), (0.0, True)])
+def test_train_expert_only_rejects_vlm_supervision(text_loss_weight, enable_fast_action_loss):
+    with pytest.raises(ValueError, match="train_expert_only"):
+        FineARTVLAConfig(
+            device="cpu",
+            train_expert_only=True,
+            text_loss_weight=text_loss_weight,
+            enable_fast_action_loss=enable_fast_action_loss,
+        )
+
+
+def test_train_expert_only_without_vlm_supervision():
+    config = FineARTVLAConfig(
+        device="cpu", train_expert_only=True, text_loss_weight=0.0, enable_fast_action_loss=False
+    )
+    assert config.train_expert_only
 
 
 class _ActionTokenizer:
@@ -161,10 +197,6 @@ def _parity_features():
 @require_cuda
 def test_forward_matches_pi05_when_language_losses_are_off():
     """With text CE, FAST and knowledge insulation off, FineART-VLA must reduce to PI0.5."""
-    from lerobot.policies.fineart_vla.modeling_fineart_vla import FineARTVLAPolicy
-    from lerobot.policies.pi05.configuration_pi05 import PI05Config
-    from lerobot.policies.pi05.modeling_pi05 import PI05Policy
-
     common = {"device": "cuda", "dtype": "float32", "chunk_size": 10, "n_action_steps": 10}
     pi05 = PI05Policy(PI05Config(**common, **_parity_features())).cuda()
     fineart = FineARTVLAPolicy(
@@ -204,3 +236,30 @@ def test_forward_matches_pi05_when_language_losses_are_off():
         torch.manual_seed(2)
         fineart_actions = fineart.predict_action_chunk(batch)
         torch.testing.assert_close(fineart_actions, pi05_actions, rtol=1e-4, atol=1e-4)
+
+
+class _TinyPolicy(torch.nn.Module):
+    """Stand-in exposing the hooks FineART-VLA's loader calls, without the 3B backbone."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = torch.nn.Linear(2, 2)
+        self.converted = False
+
+    def _convert_openpi_state_dict(self, state_dict):
+        self.converted = True
+        return {f"model.{key}": value for key, value in state_dict.items()}
+
+
+@pytest.mark.parametrize("native", [True, False])
+def test_loader_converts_only_pi05_format_checkpoints(tmp_path, native):
+    source = torch.nn.Linear(2, 2)
+    prefix = "model." if native else ""
+    checkpoint = tmp_path / "model.safetensors"
+    save_file({f"{prefix}{key}": value for key, value in source.state_dict().items()}, str(checkpoint))
+
+    policy = FineARTVLAPolicy._load_as_safetensor(_TinyPolicy(), str(checkpoint), "cpu", strict=True)
+
+    assert policy.converted is not native
+    torch.testing.assert_close(policy.model.weight, source.weight)
+    torch.testing.assert_close(policy.model.bias, source.bias)

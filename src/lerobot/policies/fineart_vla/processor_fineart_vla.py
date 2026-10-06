@@ -401,17 +401,12 @@ class FineARTVLATextTokenizerStep(ProcessorStep):
         offsets = encoded["offset_mapping"][0]
 
         labels = torch.full_like(input_ids, fill_value=-100)
-        for idx in target_indices:
-            if idx >= len(spans):
-                continue
-            char_start, char_end = spans[idx]
-            for token_pos in range(input_ids.shape[0]):
-                if not attention_mask[token_pos]:
-                    continue
-                tok_start, tok_end = int(offsets[token_pos, 0]), int(offsets[token_pos, 1])
-                if tok_end <= char_start or tok_start >= char_end:
-                    continue
-                labels[token_pos] = input_ids[token_pos]
+        target_spans = [spans[idx] for idx in target_indices if idx < len(spans)]
+        if target_spans:
+            # Supervise every attended token whose character range overlaps a target span.
+            bounds = torch.tensor(target_spans, dtype=offsets.dtype)
+            overlaps = (offsets[None, :, 1] > bounds[:, None, 0]) & (offsets[None, :, 0] < bounds[:, None, 1])
+            labels = torch.where(attention_mask & overlaps.any(dim=0), input_ids, labels)
 
         predict_actions = torch.tensor(
             bool(any(s == "low_level" for s in message_streams)),
@@ -483,7 +478,7 @@ def make_fineart_vla_pre_post_processors(
         RenderRuntimeMessagesStep(recipe=recipe),
         RenderTrainingMessagesStep(recipe=recipe),
         FineARTVLATextTokenizerStep(
-            tokenizer_name="google/paligemma-3b-pt-224",
+            tokenizer_name=config.text_tokenizer_name,
             max_length=config.tokenizer_max_length,
         ),
     ]
@@ -503,7 +498,7 @@ def make_fineart_vla_pre_post_processors(
                 ),
                 max_action_tokens=config.max_action_tokens,
                 fast_skip_tokens=config.fast_skip_tokens,
-                paligemma_tokenizer_name="google/paligemma-3b-pt-224",
+                paligemma_tokenizer_name=config.text_tokenizer_name,
                 allow_truncation=True,
             )
         )

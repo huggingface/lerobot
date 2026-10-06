@@ -1077,8 +1077,7 @@ class PI05Policy(PreTrainedPolicy):
     config_class = PI05Config
     name = "pi05"
     model_class = PI05Pytorch
-    eval_after_pretrained_load = False
-    show_openpi_disclaimer = True
+    # Subclasses whose checkpoints are native LeRobot state dicts use the base loader.
     use_native_pretrained_loader = False
 
     def supports_rtc(self) -> bool:
@@ -1142,12 +1141,11 @@ class PI05Policy(PreTrainedPolicy):
                 **kwargs,
             )
 
-        if cls.show_openpi_disclaimer:
-            print(
-                "The PI05 model is a direct port of the OpenPI implementation. \n"
-                "This implementation follows the original OpenPI structure for compatibility. \n"
-                "Original implementation: https://github.com/Physical-Intelligence/openpi"
-            )
+        print(
+            "The PI05 model is a direct port of the OpenPI implementation. \n"
+            "This implementation follows the original OpenPI structure for compatibility. \n"
+            "Original implementation: https://github.com/Physical-Intelligence/openpi"
+        )
         if pretrained_name_or_path is None:
             raise ValueError("pretrained_name_or_path is required")
 
@@ -1195,25 +1193,7 @@ class PI05Policy(PreTrainedPolicy):
                 print("Returning model without loading pretrained weights")
                 return model
 
-            # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
-            fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
-
-            # Then add "model." prefix for all keys that don't already have it
-            remapped_state_dict = {}
-            remap_count = 0
-
-            for key, value in fixed_state_dict.items():
-                if not key.startswith("model."):
-                    new_key = f"model.{key}"
-                    remapped_state_dict[new_key] = value
-                    remap_count += 1
-                else:
-                    remapped_state_dict[key] = value
-
-            if remap_count > 0:
-                print(f"Remapped {remap_count} state dict keys")
-
-            remapped_state_dict = model._prepare_pretrained_state_dict(remapped_state_dict)
+            remapped_state_dict = model._convert_openpi_state_dict(original_state_dict)
 
             # Load the remapped state dict into the model
             missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
@@ -1244,9 +1224,29 @@ class PI05Policy(PreTrainedPolicy):
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")
 
-        if model.eval_after_pretrained_load:
-            model.eval()
         return model
+
+    def _convert_openpi_state_dict(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        """Map an OpenPI-format checkpoint (e.g. ``lerobot/pi05_base``) onto this policy's keys."""
+        # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
+        fixed_state_dict = self._fix_pytorch_state_dict_keys(state_dict, self.config)
+
+        # Then add "model." prefix for all keys that don't already have it
+        remapped_state_dict = {}
+        remap_count = 0
+
+        for key, value in fixed_state_dict.items():
+            if not key.startswith("model."):
+                new_key = f"model.{key}"
+                remapped_state_dict[new_key] = value
+                remap_count += 1
+            else:
+                remapped_state_dict[key] = value
+
+        if remap_count > 0:
+            print(f"Remapped {remap_count} state dict keys")
+
+        return self._prepare_pretrained_state_dict(remapped_state_dict)
 
     def _prepare_pretrained_state_dict(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
         # MEM's continuous proprioceptive projection is new relative to

@@ -25,6 +25,8 @@ from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Unpack
 
 import torch
+from safetensors import safe_open
+from safetensors.torch import load_file
 from torch import Tensor
 from torch.nn import functional
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
@@ -38,6 +40,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_CAUSAL_MARKS,
     OBS_LANGUAGE_TOKENS,
 )
+from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.import_utils import (
     _kernels_available,
     _liger_kernel_available,
@@ -51,6 +54,7 @@ from ..pi05.modeling_pi05 import (
     PI05Pytorch,
 )
 from ..pretrained import RTCActionSelectKwargs
+from ..utils import log_model_loading_keys
 from .configuration_fineart_vla import FineARTVLAConfig
 from .processor_fineart_vla import (  # noqa: F401
     make_fineart_vla_pre_post_processors,
@@ -721,8 +725,6 @@ class FineARTVLAPolicy(PI05Policy):
     config_class = FineARTVLAConfig
     name = "fineart_vla"
     model_class = FineARTVLAPytorch
-    eval_after_pretrained_load = True
-    show_openpi_disclaimer = False
     use_native_pretrained_loader = True
 
     def __init__(self, config: FineARTVLAConfig, **kwargs: Any) -> None:
@@ -730,10 +732,6 @@ class FineARTVLAPolicy(PI05Policy):
         if config.use_liger_kernels:
             _enable_hf_kernels()
         super().__init__(config, **kwargs)
-
-        # Re-enable layers PI0.5 freezes when text supervision is requested.
-        if config.text_loss_weight > 0 and config.unfreeze_lm_head:
-            self._unfreeze_lm_head()
 
         # Knowledge insulation runs inside PI0.5's joint layer; stock PI0.5 keeps it off.
         self.model.paligemma_with_expert.knowledge_insulation = config.knowledge_insulation
@@ -774,28 +772,6 @@ class FineARTVLAPolicy(PI05Policy):
                 ),
                 persistent=False,
             )
-
-    def _unfreeze_lm_head(self) -> None:
-        """Walk the PaliGemma submodules and re-enable gradients on
-        ``lm_head`` + the immediately preceding norm / last text-model
-        layer that ``PI05Policy`` typically freezes."""
-        backbone = self.model.paligemma_with_expert.paligemma
-        if hasattr(backbone, "lm_head"):
-            for p in backbone.lm_head.parameters():
-                p.requires_grad_(True)
-        # Discover terminal text layers dynamically across Transformers versions.
-        text_model = getattr(backbone, "model", None)
-        text_model = getattr(text_model, "language_model", text_model)
-        if text_model is None:
-            return
-        norm = getattr(text_model, "norm", None)
-        if norm is not None:
-            for p in norm.parameters():
-                p.requires_grad_(True)
-        layers = getattr(text_model, "layers", None)
-        if isinstance(layers, list | torch.nn.ModuleList) and len(layers) > 0:
-            for p in layers[-1].parameters():
-                p.requires_grad_(True)
 
     def forward(
         self,
@@ -1361,8 +1337,9 @@ class FineARTVLAPolicy(PI05Policy):
         self.eval()
 
         if tokenizer is None:
-            tok_name = getattr(self.config, "tokenizer_name", None) or "google/paligemma-3b-pt-224"
-            tokenizer = _get_loc_tokenizer(tok_name, AutoTokenizer, register_paligemma_loc_tokens)
+            tokenizer = _get_loc_tokenizer(
+                self.config.text_tokenizer_name, AutoTokenizer, register_paligemma_loc_tokens
+            )
         if eos_token_id is None:
             eos_token_id = tokenizer.eos_token_id
 
@@ -1489,13 +1466,28 @@ class FineARTVLAPolicy(PI05Policy):
             return sorted_ix.gather(-1, choice).squeeze(-1)
         return torch.multinomial(probs, num_samples=1).squeeze(-1)
 
+    @classmethod
+    def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):
+        """Load native FineART-VLA weights, converting PI0.5/OpenPI ones such as ``lerobot/pi05_base``."""
+        with safe_open(model_file, framework="pt") as checkpoint:
+            # safe_open handles expose .keys() but are not iterable themselves.
+            native = all(key.startswith("model.") for key in checkpoint.keys())  # noqa: SIM118
+        if native:
+            return super()._load_as_safetensor(model, model_file, map_location, strict)
+        logger.info("FineART-VLA: converting PI0.5-format checkpoint %s", model_file)
+        state_dict = load_file(model_file, device=resolve_safetensors_device(map_location))
+        state_dict = model._convert_openpi_state_dict(state_dict)
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=strict)
+        log_model_loading_keys(missing_keys, unexpected_keys)
+        return model
+
     def _prepare_pretrained_state_dict(self, remapped_state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        remapped_state_dict = super()._prepare_pretrained_state_dict(remapped_state_dict)
+        # The text loss trains the language head; start it from the embeddings when absent.
         lm_head_key = "model.paligemma_with_expert.paligemma.lm_head.weight"
         embed_tokens_key = "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
         if lm_head_key not in remapped_state_dict and embed_tokens_key in remapped_state_dict:
-            remapped_state_dict[lm_head_key] = remapped_state_dict[embed_tokens_key].clone().float()
-        elif lm_head_key in remapped_state_dict:
-            remapped_state_dict[lm_head_key] = remapped_state_dict[lm_head_key].float()
+            remapped_state_dict[lm_head_key] = remapped_state_dict[embed_tokens_key].clone()
         return remapped_state_dict
 
     def get_optim_params(self):
