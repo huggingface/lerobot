@@ -20,11 +20,7 @@ from functools import cached_property
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -69,7 +65,7 @@ class SOFollower(Robot):
         self.config = config
         # choose normalization mode depending on config if available
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pan": Motor(1, "sts3215", norm_mode_body),
@@ -148,7 +144,7 @@ class SOFollower(Robot):
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
         for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+            self.bus.set_operating_mode("position", motor)
 
         print(_HOMING_POSITION_DIAGRAM)
         print("Video walkthrough: https://huggingface.co/docs/lerobot/main/en/so101#calibration-video")
@@ -184,7 +180,7 @@ class SOFollower(Robot):
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             for motor in self.bus.motors:
-                self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+                self.bus.set_operating_mode("position", motor)
                 self.bus.write("P_Coefficient", motor, self.config.position_p_coefficient)
                 self.bus.write("I_Coefficient", motor, self.config.position_i_coefficient)
                 self.bus.write("D_Coefficient", motor, self.config.position_d_coefficient)

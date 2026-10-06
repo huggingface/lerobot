@@ -20,11 +20,8 @@ from functools import cached_property
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorNormMode
+from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
 from lerobot.motors.calibration_gui import RangeFinderGUI
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-)
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -65,7 +62,7 @@ class HopeJrHand(Robot):
     def __init__(self, config: HopeJrHandConfig):
         super().__init__(config)
         self.config = config
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 # Thumb
