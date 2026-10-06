@@ -3,8 +3,8 @@
 # the FAST and flow action losses on the same annotated subtask in one forward.
 # The supervised span is attended causally; the action losses see task + subtask.
 #
-# Pair with `--policy.joint_subtask_conditioning=true` at inference so the flow
-# prefix reproduces this layout (task turn with state + causal generated subtask).
+# Training-only for now: the runtime does not yet rebuild this joint prefix at
+# inference, so checkpoints trained with it cannot be deployed through it.
 # Samples without a `subtask` annotation fall back to a plain task-prompt
 # low-level sample via `if_present`.
 
