@@ -206,7 +206,14 @@ class DM05TokenizerProcessorStep(ObservationProcessorStep):
                     f"DM05 expects images [B,C,H,W] with B={state.shape[0]} at {key!r}, "
                     f"got {tuple(images.shape)}."
                 )
-            image_batches.append(images.float().div(255) if not images.is_floating_point() else images)
+            images = images.float().div(255) if not images.is_floating_point() else images
+            # Letterbox to a centred square, as OpenDM does before resizing, so the Gemma3 processor's
+            # square resize does not stretch non-square cameras.
+            height, width = images.shape[-2:]
+            side = max(height, width)
+            top, left = (side - height) // 2, (side - width) // 2
+            pad = (left, side - width - left, top, side - height - top)
+            image_batches.append(torch.nn.functional.pad(images, pad))
 
         batch_size = int(state.shape[0])
         complementary_data = self.transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}

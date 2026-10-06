@@ -21,7 +21,7 @@ pip install -e ".[libero,dm05]"     # LIBERO evaluation on Linux
 
 ```bash
 lerobot-train \
-  --dataset.repo_id=HuggingFaceVLA/libero \
+  --dataset.repo_id=lerobot/libero \
   --dataset.video_backend=pyav \
   --policy.path=lerobot/dm05_base \
   --policy.add_state=false \

@@ -54,6 +54,7 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     UnnormalizerProcessorStep,
     bind_relative_anchor,
+    create_transition,
     load_pretrained_policy_processors,
 )
 from lerobot.utils.constants import (
@@ -225,7 +226,7 @@ def test_dm05_config_defaults_and_validation(monkeypatch, tmp_path):
     assert config.get_optimizer_preset().type == "adamw"
     monkeypatch.setattr("lerobot.common.train_utils.ModelCard.validate", lambda _self: None)
     card = generate_model_card(config)
-    assert card.data.base_model == "Dexmal/DM05"
+    assert card.data.base_model == "lerobot/dm05_base"
     assert card.data.license == "gemma"
     for invalid_steps in (0, -1):
         with pytest.raises(ValueError, match="diffusion_steps must be positive"):
@@ -1049,6 +1050,26 @@ def test_dm05_pretrained_processors_follow_the_active_config(tmp_path):
     pinned, _ = make_pre_post_processors(active, pretrained_path=checkpoint)
     assert _tokenizer_step(pinned).image_keys == ["observation.images.front", "observation.images.wrist"]
     assert f"{MODEL_INPUT_PREFIX}input_ids" in pinned(dict(observation))
+
+
+def test_dm05_tokenizer_letterboxes_non_square_cameras():
+    class _RecordingTokenization:
+        def tokenize_robot_batch(self, samples):
+            self.images = samples[0]["images"]
+            return {"input_ids": torch.ones(1, 1, dtype=torch.long)}
+
+    step = DM05TokenizerProcessorStep(
+        processor_name_or_path="unused", add_state=False, image_keys=["observation.images.front"]
+    )
+    step._tokenization = recorder = _RecordingTokenization()
+    # A 2x4 white frame, as OpenDM sees it: centred on a black 4x4 square before the resize.
+    observation = {OBS_STATE: torch.zeros(1, 3), "observation.images.front": torch.ones(1, 3, 2, 4)}
+    step(create_transition(observation=observation, complementary_data={"task": ["pick"]}))
+
+    (image,) = recorder.images
+    assert image.shape == (3, 4, 4)
+    assert torch.equal(image[:, 1:3], torch.ones(3, 2, 4))
+    assert not image[:, 0].any() and not image[:, 3].any()
 
 
 def test_dm05_dataset_features_keep_pretrained_camera_keys():

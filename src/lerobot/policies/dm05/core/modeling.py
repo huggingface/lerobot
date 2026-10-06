@@ -49,27 +49,11 @@ from transformers.models.gemma3.modeling_gemma3 import (
     eager_attention_forward,
     repeat_kv,
 )
+from transformers.utils import is_torch_flex_attn_available
 
 from .utils import IGNORE_INDEX, build_action_prefix_mask, validate_action_prefill_pair
 
-try:
-    from transformers.utils import is_torch_flex_attn_available
-except ImportError:
-
-    def is_torch_flex_attn_available() -> bool:
-        return importlib.util.find_spec("torch.nn.attention.flex_attention") is not None
-
-
 logger = logging.getLogger(__name__)
-
-
-def gemma3_rotary_emb(rotary_emb, x, position_ids, layer_type):
-    try:
-        return rotary_emb(x, position_ids, layer_type=layer_type)
-    except TypeError as exc:
-        if "layer_type" not in str(exc):
-            raise
-        return rotary_emb(x, position_ids)
 
 
 class SafeCacheDecoderLayer(GradientCheckpointingLayer):
@@ -1061,12 +1045,7 @@ class DM05ActionExpert(Gemma3TextModel):
         query_states = ae_layer.self_attn.q_norm(query_states)
         key_states = ae_layer.self_attn.k_norm(key_states)
 
-        try:
-            cos, sin = gemma3_rotary_emb(self.rotary_emb, query_states, position_ids, layer_type)
-        except TypeError as exc:
-            if "layer_type" not in str(exc):
-                raise
-            cos, sin = self.rotary_emb(query_states, position_ids)
+        cos, sin = self.rotary_emb(query_states, position_ids, layer_type=layer_type)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         key_states = torch.cat([cache_keys, key_states], dim=2)
@@ -1927,7 +1906,3 @@ class DM05ForCausalLM(DM05CorePreTrainedModel):
             prefix_cache_values=prefix_cache_values,
             adarms_cond=adarms_cond,
         )
-
-
-# Compatibility alias for checkpoints/configs that refer to the historical class name.
-DM05Config = DM05CoreModelConfig
