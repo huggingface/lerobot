@@ -197,7 +197,7 @@ def _parity_features():
 @require_cuda
 def test_forward_matches_pi05_when_language_losses_are_off():
     """With text CE, FAST and knowledge insulation off, FineART-VLA must reduce to PI0.5."""
-    common = {"device": "cuda", "dtype": "float32", "chunk_size": 10, "n_action_steps": 10}
+    common = {"device": "cuda", "dtype": torch.float32, "chunk_size": 10, "n_action_steps": 10}
     pi05 = PI05Policy(PI05Config(**common, **_parity_features())).cuda()
     fineart = FineARTVLAPolicy(
         FineARTVLAConfig(

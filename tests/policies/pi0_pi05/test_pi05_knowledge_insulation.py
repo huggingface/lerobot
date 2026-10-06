@@ -34,7 +34,7 @@ PREFIX, SUFFIX, WIDTH = 10, 6, 64
 def backbone() -> PaliGemmaWithExpertModel:
     torch.manual_seed(0)
     tiny = GemmaConfig(width=WIDTH, depth=2, mlp_dim=128, num_heads=8, num_kv_heads=1, head_dim=16)
-    model = PaliGemmaWithExpertModel(tiny, tiny, use_adarms=[False, True], precision="float32")
+    model = PaliGemmaWithExpertModel(tiny, tiny, use_adarms=[False, True], precision=torch.float32)
     model.paligemma.model.vision_tower = None  # the joint layers never use it
     model.train()
     return model
