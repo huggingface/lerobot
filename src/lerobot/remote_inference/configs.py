@@ -121,3 +121,5 @@ class ServerConfig:
                 raise ValueError("Serving rates and deadlines must be finite and positive")
         if type(self.execution.warmup_calls) is not int or self.execution.warmup_calls < 1:
             raise ValueError("At least one warmup call is required before advertising readiness")
+        # Checked here so a bad endpoint fails at parse time, before any checkpoint download.
+        self.zenoh.validate()

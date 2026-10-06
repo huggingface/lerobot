@@ -14,8 +14,8 @@ import torch
 from lerobot.inference import ExecutionMode, FeatureSpec
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.remote_inference import deployment as serving
 from lerobot.remote_inference.configs import ExecutionConfig, ModelConfig, ServerConfig
-from lerobot.scripts import lerobot_policy_server as serving
 from lerobot.transport.zenoh import ZenohConfig
 from tests.inference.test_policy_runner import ConformingPolicy, observation, processors, tiny_config
 

@@ -56,6 +56,14 @@ class InferenceEngineConfig(draccus.ChoiceRegistry, abc.ABC):
     Use ``--inference.type=<name>`` on the CLI to select a backend.
     """
 
+    # INFO summarizes operation; DEBUG includes request-level diagnostics.
+    log_level: Literal["INFO", "DEBUG"] = "INFO"
+
+    def __post_init__(self) -> None:
+        """Validate the console verbosity shared by every backend."""
+        if self.log_level not in {"INFO", "DEBUG"}:
+            raise ValueError("Inference log_level must be INFO or DEBUG")
+
     @property
     def type(self) -> str:
         """Return the CLI registry name for this backend."""
@@ -85,6 +93,7 @@ class RTCInferenceConfig(InferenceEngineConfig):
 
     def __post_init__(self) -> None:
         """Validate the bounded local waiting budget."""
+        super().__post_init__()
         if not math.isfinite(self.action_starvation_grace_s) or self.action_starvation_grace_s < 0:
             raise ValueError("Action starvation grace must be finite and nonnegative")
 
@@ -123,13 +132,10 @@ class RemoteInferenceConfig(InferenceEngineConfig):
     jpeg_quality: int = 90
     zenoh_config_path: str | None = None
     zenoh_mode: Literal["peer", "client"] = "peer"
-    # INFO summarizes operation; DEBUG includes request-level diagnostics.
-    log_level: Literal["INFO", "DEBUG"] = "INFO"
 
     def __post_init__(self) -> None:
         """Validate transport and scheduling settings."""
-        if self.log_level not in {"INFO", "DEBUG"}:
-            raise ValueError("Remote log_level must be INFO or DEBUG")
+        super().__post_init__()
         if not math.isfinite(self.action_starvation_grace_s) or self.action_starvation_grace_s < 0:
             raise ValueError("Action starvation grace must be finite and nonnegative")
         if self.zenoh_mode not in {"peer", "client"}:

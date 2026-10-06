@@ -18,6 +18,7 @@ from .build_info import SOFTWARE_BUILD
 from .chunk_contract import chunk_settings
 from .client import RemoteClient, RequestCancelled
 from .configs import ExecutionConfig, LanguageConfig, ModelConfig, ServerConfig
+from .deployment import artifact_identity, load_deployment
 from .engine import RemoteInferenceEngine
 from .protocol import PROTOCOL_VERSION, AdmissionDeniedError, ErrorCode, ProtocolError
 from .server import PolicyServer, SessionWorker
@@ -37,5 +38,7 @@ __all__ = [
     "RequestCancelled",
     "ServerConfig",
     "SessionWorker",
+    "artifact_identity",
     "chunk_settings",
+    "load_deployment",
 ]

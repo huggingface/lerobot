@@ -7,11 +7,11 @@ import pytest
 
 from lerobot.inference import FeatureSpec
 from lerobot.processor import RenderRuntimeMessagesStep
+from lerobot.remote_inference import deployment as serving
 from lerobot.remote_inference.configs import ExecutionConfig, LanguageConfig, ModelConfig, ServerConfig
+from lerobot.remote_inference.deployment import artifact_identity, load_deployment
 from lerobot.remote_inference.protocol import ErrorCode, MessageType
 from lerobot.remote_inference.server import SessionWorker
-from lerobot.scripts import lerobot_policy_server
-from lerobot.scripts.lerobot_policy_server import artifact_identity, load_deployment
 from lerobot.transport.zenoh import ZenohConfig
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND
 from tests.inference.test_policy_runner import ConformingPolicy, observation, processors, tiny_config
@@ -40,7 +40,7 @@ def _language_deployment(tmp_path, monkeypatch, *, recipe_kind="none"):
 
     monkeypatch.setattr(policy, "generate_text", generate_text)
     monkeypatch.setattr(
-        lerobot_policy_server,
+        serving,
         "get_policy_class",
         lambda _: SimpleNamespace(from_pretrained=lambda *args, **kwargs: policy),
     )

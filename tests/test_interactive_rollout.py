@@ -398,7 +398,7 @@ def test_interactive_cli_strategy_failure_exits_nonzero_after_teardown(monkeypat
     ctx, strategy, engine, parent, _ = _make_ctx(failing_run)
     cfg = ctx.runtime.cfg
     cfg.interactive = True
-    cfg.inference = SimpleNamespace()
+    cfg.inference = SimpleNamespace(log_level="INFO")
     cfg.robot = SimpleNamespace(type="test_robot")
     cfg.strategy = strategy.config
     monkeypatch.setattr(lerobot_rollout, "init_logging", lambda **_: None)

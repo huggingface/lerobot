@@ -19,6 +19,7 @@ pytest.importorskip("msgpack")
 from lerobot.inference import ChunkRuntime, ExecutionMode, FeatureSpec, PolicyRunner, RemoteInferenceConfig
 from lerobot.remote_inference.client import RemoteClient, RequestCancelled
 from lerobot.remote_inference.codec import encode_message
+from lerobot.remote_inference.protocol import AdmissionDeniedError
 from lerobot.remote_inference.server import PolicyServer, SessionWorker
 from lerobot.rollout.configs import RolloutConfig
 from lerobot.rollout.context import build_rollout_context
@@ -151,9 +152,7 @@ def test_direct_remote_actions_match_local_pipeline_after_queue_drains(remote_se
 
 
 @pytest.mark.parametrize("remote_server", ["robot"], indirect=True)
-def test_busy_cli_releases_connected_hardware_before_exiting(remote_server, monkeypatch, caplog):
-    from lerobot.scripts import lerobot_rollout
-
+def test_busy_admission_releases_connected_hardware_before_propagating(remote_server, monkeypatch):
     worker, config = remote_server
     first = RemoteClient.connect(config)
     rejected = RemoteClient.connect(config)
@@ -185,19 +184,14 @@ def test_busy_cli_releases_connected_hardware_before_exiting(remote_server, monk
         inference=config,
         task="pick up the cube",
     )
-    monkeypatch.setattr(lerobot_rollout, "register_third_party_plugins", lambda: None)
-    monkeypatch.setattr(lerobot_rollout, "rollout", lambda: build_rollout_context(cfg, Event()))
     try:
         admit(first)
-        with pytest.raises(SystemExit) as stopped:
-            lerobot_rollout.main()
-        assert stopped.value.code == 1
+        with pytest.raises(AdmissionDeniedError, match="Remote admission denied for deployment 'loopback'"):
+            build_rollout_context(cfg, Event())
         assert not robot.is_connected
         assert not teleop.is_connected
         assert rejected._closed
         assert worker.session_id == first.session_id
-        assert "Remote admission denied for deployment 'loopback'" in caplog.text
-        assert not any(record.exc_info for record in caplog.records)
     finally:
         first.close()
         rejected.close()

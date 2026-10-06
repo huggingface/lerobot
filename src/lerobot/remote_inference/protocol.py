@@ -14,6 +14,7 @@
 
 """Versioned remote-inference envelope and addressing (no Python-object serialization)."""
 
+import math
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -65,12 +66,50 @@ class ProtocolError(ValueError):
 
 
 class AdmissionDeniedError(ProtocolError):
-    """An expected BUSY reply specifically to an attempt to open a session."""
+    """An expected BUSY reply specifically to an attempt to open a session.
 
-    def __init__(self, deployment: str, message: str, *, details: dict[str, Any] | None = None) -> None:
+    The exception text explains the contention to the operator without promising worker
+    completion, so an uncaught failure reads correctly; ``diagnostic`` keeps the server's message.
+    """
+
+    def __init__(self, deployment: str, diagnostic: str, *, details: dict[str, Any] | None = None) -> None:
         """Retain the rejected deployment and the server's structured diagnostic."""
-        super().__init__(ErrorCode.BUSY, message, details=details)
+        super().__init__(ErrorCode.BUSY, _explain_admission_denial(deployment, details), details=details)
         self.deployment = deployment
+        self.diagnostic = diagnostic
+
+
+def _explain_admission_denial(deployment: str, details: dict[str, Any] | None) -> str:
+    """Blocker names are the ones ``SessionWorker`` reports in the BUSY reply details."""
+    details = details or {}
+    blocker = details.get("admission_blocker")
+    if not isinstance(blocker, str):
+        blocker = None
+    remaining = details.get("absence_grace_remaining_s")
+    if blocker in {"absence_grace", "awaiting_initial_presence"}:
+        reason = (
+            "the previous client is absent"
+            if blocker == "absence_grace"
+            else "the previous client is still establishing its presence"
+        )
+        if (
+            isinstance(remaining, (float, int))
+            and not isinstance(remaining, bool)
+            and math.isfinite(remaining)
+            and remaining >= 0
+        ):
+            reason += f"; about {remaining:.1f} s of cleanup grace remain (worker cleanup may take longer)"
+        else:
+            reason += "; waiting for its cleanup grace and worker cleanup"
+    elif blocker == "active_session":
+        reason = "another client owns the deployment; stop that client before retrying"
+    elif blocker == "unfinished_inference":
+        reason = "waiting for an unfinished model call and session cleanup; completion time is unknown"
+    elif blocker in {"worker_cleanup_pending", "cleanup_queue_full"}:
+        reason = "waiting for worker session cleanup; completion time is unknown"
+    else:
+        reason = "the deployment is busy; see server logs for the session owner or pending cleanup"
+    return f"Remote admission denied for deployment {deployment!r}: {reason}."
 
 
 def validate_segment(value: str, label: str = "identifier") -> str:

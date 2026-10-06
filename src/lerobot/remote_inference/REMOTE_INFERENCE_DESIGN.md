@@ -66,13 +66,13 @@ Cancellation ends local interest in work. It does **not** interrupt a GPU call o
 
 ## 3. Deployment startup and admission
 
-The server entry point is [`lerobot_policy_server.py`](../scripts/lerobot_policy_server.py). The operator supplies the checkpoint/revision/device, canonical observation/action schemas, units/semantics, supported modes and timing limits. Connecting clients cannot choose a model to download or alter trained policy parameters.
+The server entry point is [`lerobot_policy_server.py`](../scripts/lerobot_policy_server.py). The operator supplies the checkpoint/revision/device, canonical observation/action schemas, units/semantics, supported modes and timing limits. Connecting clients cannot choose a model to download or alter trained policy parameters. Loading, content identity and warmup live in [`deployment.py`](../remote_inference/deployment.py); the script only parses the operator config, wires the session worker to the transport and installs signal handlers.
 
 Startup loads the policy and saved processors, validates declarations and runs warmup before advertising readiness. Warmup establishes actual prediction compatibility, including model action width. Artifact identity describes the effective serving artifact/configuration; deployment name is an address, not artifact identity. Software diagnostics contain the package version, without runtime Git inspection.
 
 The client obtains a descriptor, selects exactly one ready instance (or an explicit `instance`), and checks protocol/capability/schema compatibility. It validates feature names, order, shapes, modality, semantics, action interval, requested mode, model/canonical layout, blending selection and optional expected artifact. Remote rollout automatically configures position hold on a supported robot. The generic driver capability defaults to false; unsupported robots fail before motion. There is no separate `hold_mode` configuration option.
 
-Admission grants a session scoped to that server boot. An acknowledged generation-control exchange also establishes session endpoint readiness before data publication. Rollout setup requires compatibility and ownership before policy motion. Compatibility is not an equality test on the package version: the protocol, execution contract and schema are authoritative; package versions are diagnostics. No transparent mode downgrade occurs.
+Admission grants a session scoped to that server boot. An acknowledged generation-control exchange also establishes session endpoint readiness before data publication. Rollout setup requires compatibility and ownership before policy motion. Expected ownership contention surfaces as `AdmissionDeniedError`, whose text explains the contention to the operator; `lerobot-rollout` does not special-case it. Compatibility is not an equality test on the package version: the protocol, execution contract and schema are authoritative; package versions are diagnostics. No transparent mode downgrade occurs.
 
 See [`RemoteClient.connect/admit`](../remote_inference/client.py), [`SessionWorker`](../remote_inference/server.py) and [`build_remote_rollout_context`](../rollout/remote_context.py).
 
