@@ -21,6 +21,21 @@ from safetensors.torch import load_file
 from torch import Tensor, nn
 
 
+def g05_codec_parts(at_config: Mapping[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    """The neural parts, rule-based parts and group-marker tokens of an ActionCodec config.
+
+    The markers are in vocabulary order: every residual level of the neural parts, then the
+    rule-based parts. The tokenizer, the model's vocabulary size and the codec all read them here.
+    """
+    parts = [key for key, width in at_config["parts_meta"].items() if width is not None]
+    patterns = tuple(at_config.get("rule_based_key_patterns") or ())
+    rule_parts = [key for key in parts if any(pattern in key for pattern in patterns)]
+    neural_parts = [key for key in parts if key not in rule_parts]
+    levels = int(at_config["model_arch"]["n_codebooks"])
+    markers = [f"<{part}_{level}>" for level in range(levels) for part in neural_parts]
+    return neural_parts, rule_parts, markers + [f"<{part}>" for part in rule_parts]
+
+
 class _BlockDCT(nn.Module):
     """Blockwise DCT and its inverse over an action horizon."""
 
@@ -618,16 +633,11 @@ class G05NativeActionCodec:
         self.parts = {
             key: int(value) for key, value in self.config["parts_meta"].items() if value is not None
         }
-        patterns = tuple(self.config.get("rule_based_key_patterns") or ())
-        self.rule_parts = [key for key in self.parts if any(pattern in key for pattern in patterns)]
-        self.neural_parts = [key for key in self.parts if key not in self.rule_parts]
+        self.neural_parts, self.rule_parts, marker_names = g05_codec_parts(self.config)
         self.codebook_size = int(architecture["codebook_size"])
         self.max_residuals = int(architecture["n_codebooks"])
         self.num_residuals = int(self.config.get("num_residuals") or self.max_residuals)
         self.code_length = self.model.code_h * self.model.code_a
-        marker_names = [
-            f"<{part}_{level}>" for level in range(self.max_residuals) for part in self.neural_parts
-        ] + [f"<{part}>" for part in self.rule_parts]
         self.marker_indices = {name: self.codebook_size + index for index, name in enumerate(marker_names)}
         self.rule_codec = _BinarySequenceCodec(
             int(architecture["horizon"]),
