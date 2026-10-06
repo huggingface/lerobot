@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Galaxea
 # Modified for LeRobot in 2026.
 
-"""Native G0.5 policy, model, and ActionCodec implementation."""
+"""Native G0.5 policy and model: the Qwen3.5 VLM, action expert, flow head, and unified CoT/action decode."""
 
 from __future__ import annotations
 
@@ -1324,8 +1324,9 @@ class G05NativeBackend(nn.Module):
     def _action_cache(self, vlm_cache, prefix_length: int, *, repeats: int = 1):
         """Build the action expert's attention cache.
 
-        The prefix keys and values are detached, as the author's flow loss does by default
-        (``fm.joint_training: false``): the flow loss does not train the VLM (knowledge insulation).
+        The prefix keys and values are always detached, so the flow loss does not train the VLM
+        (knowledge insulation). This is upstream's default (``fm.joint_training: false``); the port
+        ignores that flag.
         """
         cache = DynamicCache(config=self.model.action_expert.config)
         layer_types = self.model.vlm.config.layer_types

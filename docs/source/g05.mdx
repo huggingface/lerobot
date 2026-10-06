@@ -35,17 +35,15 @@ Python package, Hydra, or OmegaConf.
 
 ### Input and Output Contracts
 
-| Profile          | Released action path                       | Raw → policy layout                          | Cameras                               | Predicted | Executed | Normalization    |
+| Checkpoint       | Released action path                       | Raw → policy layout                          | Cameras                               | Predicted | Executed | Normalization    |
 | ---------------- | ------------------------------------------ | -------------------------------------------- | ------------------------------------- | --------: | -------: | ---------------- |
-| `g05-base`       | Explicitly selected AR ActionCodec or flow | R1 Lite/Pro joints → 27D whole-body layout   | head + both wrists, 6-step history    |        32 |       16 | stepwise z-score |
-| `g05-libero`     | Continuous flow                            | right EEF 6 + gripper 1 → 20D grouped layout | exterior, right wrist                 |        32 |       10 | stepwise q01/q99 |
-| `g05-robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist         |        32 |        8 | stepwise q01/q99 |
-| `g05-so101`      | Flow or AR ActionCodec + native CoT        | right arm joints 6 → 20D grouped layout      | exterior, optional left + right wrist |        32 |       16 | stepwise q01/q99 |
+| `g05_base`       | Explicitly selected AR ActionCodec or flow | R1 Lite/Pro joints → 27D whole-body layout   | head + both wrists, 6-step history    |        32 |       16 | stepwise z-score |
+| `g05_libero`     | Continuous flow                            | right EEF 6 + gripper 1 → 20D grouped layout | exterior, right wrist                 |        32 |       10 | stepwise q01/q99 |
+| `g05_robotwin20` | Continuous flow                            | two arms 6+gripper → 20D grouped layout      | high, left wrist, right wrist         |        32 |        8 | stepwise q01/q99 |
+| `g05_so101`      | Flow or AR ActionCodec + native CoT        | right arm joints 6 → 20D grouped layout      | exterior, optional left + right wrist |        32 |       16 | stepwise q01/q99 |
 
-Each packaged checkpoint stores the resolved model and processor configuration,
-ActionCodec metadata, statistics, exact prompt template, and license. Loading
-rejects a different head, horizon, processor mode, or
-normalization contract.
+Each converted checkpoint stores the resolved model and processor configuration,
+ActionCodec metadata, statistics, exact prompt template, and license.
 
 ### Converted Checkpoints
 
@@ -100,8 +98,7 @@ head, camera order, dimensions, normalization, and execution horizon.
 G0.5 emits reasoning and actions from one inference stream:
 `predict_action_chunk(batch, with_text=True)` returns the chunk together with
 the chain-of-thought generated in the same pass, and the action is conditioned
-on that reasoning. `predict_action_chunk_with_runtime` returns the full
-telemetry when you also need the generated token ids.
+on that reasoning.
 
 `policy.runtime_system` on the checkpoint selects the path. System 1 executes
 the selected ActionCodec or flow chunk directly and generates no CoT:
@@ -274,8 +271,9 @@ boxes annotated on the BBox camera: `--policy.cot_bbox_camera`, which defaults t
 the first non-empty camera slot. Box coordinates must be `[0, 1]` fractions of
 the image width and height, which is what `lerobot-annotate` stores; pixel boxes
 are rejected. Pass an explicit external YAML through
-`--policy.recipe_path=/path/to/recipe.yaml` to train a different recipe; the
-selected recipe is serialized into the saved policy config.
+`--policy.recipe_path=/path/to/recipe.yaml` to train a different recipe: it is
+read once into `policy.recipe` when the config is built, so the saved checkpoint
+keeps the recipe it was trained with even if the file changes later.
 
 ### Fine-tuning the base checkpoint on another robot
 
@@ -357,7 +355,7 @@ lerobot-train \
 | `policy.chunk_size`                         | Number of actions predicted in each chunk                         |
 | `policy.n_action_steps`                     | Number of actions executed before replanning                      |
 | `policy.use_language_recipe`                | Enable G0.5's built-in language-supervision recipe                |
-| `policy.recipe_path`                        | Explicit external recipe override used during fine-tuning         |
+| `policy.recipe_path`                        | Recipe YAML read once into `policy.recipe` (not saved)            |
 | `policy.optimizer_backbone_lr_multiplier`   | Learning-rate multiplier for the language backbone                |
 | `policy.optimizer_vision_lr_multiplier`     | Learning-rate multiplier for the vision tower                     |
 

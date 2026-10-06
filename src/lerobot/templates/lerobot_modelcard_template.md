@@ -101,7 +101,8 @@ This policy has been trained and pushed to the Hub using [LeRobot](https://githu
   "lingbot_va": "lingbot_va",
   "lawam": "lawam",
   "dm05": "dm05",
-  "fineart_vla": "fineart_vla"
+  "fineart_vla": "fineart_vla",
+  "g05": "g05"
 } %}
 {% if policy_docs.get(model_name) %}Learn how to train and run it in the [LeRobot {{ model_name }} guide](https://huggingface.co/docs/lerobot/main/en/{{ policy_docs[model_name] }}), or browse the [full documentation](https://huggingface.co/docs/lerobot/index).
 {% else %}See the [full LeRobot documentation](https://huggingface.co/docs/lerobot/index).
