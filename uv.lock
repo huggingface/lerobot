@@ -3579,6 +3579,10 @@ scipy-dep = [
 sentencepiece-dep = [
     { name = "sentencepiece" },
 ]
+serial-motors = [
+    { name = "pyserial" },
+    { name = "rustypot" },
+]
 smolvla = [
     { name = "accelerate" },
     { name = "num2words" },
@@ -3765,9 +3769,8 @@ requires-dist = [
     { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'hopejr'" },
     { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["pynput-dep"], marker = "extra == 'hardware'" },
-    { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'dynamixel'" },
-    { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'feetech'" },
     { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'hardware'" },
+    { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'serial-motors'" },
     { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["pyzmq-dep"], marker = "extra == 'lekiwi'" },
     { name = "lerobot", extras = ["pyzmq-dep"], marker = "extra == 'unitree-g1'" },
@@ -3781,8 +3784,7 @@ requires-dist = [
     { name = "lerobot", extras = ["remote"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["robometer"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["robstride"], marker = "extra == 'all'" },
-    { name = "lerobot", extras = ["rustypot-dep"], marker = "extra == 'dynamixel'" },
-    { name = "lerobot", extras = ["rustypot-dep"], marker = "extra == 'feetech'" },
+    { name = "lerobot", extras = ["rustypot-dep"], marker = "extra == 'serial-motors'" },
     { name = "lerobot", extras = ["sarm"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'aloha'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'libero'" },
@@ -3792,6 +3794,8 @@ requires-dist = [
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'pi'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["sentencepiece-dep"], marker = "extra == 'pi'" },
+    { name = "lerobot", extras = ["serial-motors"], marker = "extra == 'dynamixel'" },
+    { name = "lerobot", extras = ["serial-motors"], marker = "extra == 'feetech'" },
     { name = "lerobot", extras = ["smolvla"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["test"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["timm-dep"], marker = "extra == 'groot'" },
@@ -3868,7 +3872,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.0,<3.0.0" },
     { name = "rerun-sdk", marker = "extra == 'viz'", specifier = ">=0.24.0,<0.34.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.1" },
-    { name = "rustypot", marker = "extra == 'rustypot-dep'", specifier = ">=1.10.0,<2.0.0" },
+    { name = "rustypot", marker = "extra == 'rustypot-dep'", specifier = ">=1.11.0,<2.0.0" },
     { name = "safetensors", specifier = ">=0.4.3,<1.0.0" },
     { name = "scikit-image", marker = "extra == 'video-benchmark'", specifier = ">=0.23.2,<0.26.0" },
     { name = "scipy", marker = "extra == 'all'", specifier = ">=1.14.0,<2.0.0" },
@@ -3890,7 +3894,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
     { name = "wandb", marker = "extra == 'training'", specifier = ">=0.24.0,<0.28.0" },
 ]
-provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "sentencepiece-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "rustypot-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "dm05", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "flux3", "evo1", "fineart-vla", "fineart-vla-kernels", "hilserl", "vla-jepa", "lingbot-va", "lawam", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "sentencepiece-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "rustypot-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "serial-motors", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "dm05", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "flux3", "evo1", "fineart-vla", "fineart-vla-kernels", "hilserl", "vla-jepa", "lingbot-va", "lawam", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "lerobot-lancedb"
