@@ -29,15 +29,9 @@ torch = pytest.importorskip("torch")
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature  # noqa: E402
 from lerobot.lerobot_types import TransitionKey  # noqa: E402
-from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import (  # noqa: E402
-    _raw_stats_from_slot_stats,
-    _resolve_norm_map,
-)
+from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import _resolve_norm_map  # noqa: E402
 from lerobot.processor import NormalizerProcessorStep, UnnormalizerProcessorStep  # noqa: E402
 from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
-
-ARM = f"{OBS_STATE}.arm.position"
-ACT_ARM = f"{ACTION}.arm.position"
 
 
 def _normalizer(stats, mode=NormalizationMode.MEAN_STD):
@@ -103,41 +97,6 @@ def test_normalize_unnormalize_roundtrip_recovers_input():
     normalized = normalizer(_transition(action=x))[TransitionKey.ACTION]
     back = unnormalizer(_transition(action=normalized))[TransitionKey.ACTION]
     torch.testing.assert_close(back, x, atol=1e-4, rtol=1e-4)
-
-
-def test_raw_space_normalization_matches_per_slot_slicing():
-    """Normalizing the raw vector then slicing equals slicing the stats per slot —
-    the equivalence that lets the standard step replace the per-slot normalizer."""
-    raw_mean = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0])
-    raw_std = np.array([0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1])
-    # Slot layout: arm = raw[0:6], effector = raw[6:7].
-    robot_config = {
-        "states": [
-            {ARM: {"origin_keys": [{OBS_STATE: {"start": 0, "end": 6}}]}},
-            {f"{OBS_STATE}.effector.position": {"origin_keys": [{OBS_STATE: {"start": 6, "end": 7}}]}},
-        ],
-        "actions": [
-            {ACT_ARM: {"origin_keys": [{ACTION: {"start": 0, "end": 6}}]}},
-            {f"{ACTION}.effector.position": {"origin_keys": [{ACTION: {"start": 6, "end": 7}}]}},
-        ],
-    }
-    slot_stats = {
-        "norm_stats": {
-            ARM: {"mean": raw_mean[0:6].tolist(), "std": raw_std[0:6].tolist()},
-            f"{OBS_STATE}.effector.position": {"mean": raw_mean[6:7].tolist(), "std": raw_std[6:7].tolist()},
-            ACT_ARM: {"mean": raw_mean[0:6].tolist(), "std": raw_std[0:6].tolist()},
-            f"{ACTION}.effector.position": {"mean": raw_mean[6:7].tolist(), "std": raw_std[6:7].tolist()},
-        }
-    }
-    raw_stats = _raw_stats_from_slot_stats(robot_config, slot_stats)
-    step = _normalizer(raw_stats[OBS_STATE])
-    x = torch.tensor([[2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]])
-    out = step(_transition(state=x))[TransitionKey.OBSERVATION][OBS_STATE]
-    # Per-slot reference: each slot normalized with its own sliced stats.
-    arm = (x[:, 0:6] - torch.tensor(raw_mean[0:6])).float() / (torch.tensor(raw_std[0:6]) + 1e-8).float()
-    effector = (x[:, 6:7] - torch.tensor(raw_mean[6:7])).float() / (torch.tensor(raw_std[6:7]) + 1e-8).float()
-    torch.testing.assert_close(out[:, 0:6], arm, atol=1e-5, rtol=1e-5)
-    torch.testing.assert_close(out[:, 6:7], effector, atol=1e-5, rtol=1e-5)
 
 
 def test_horizon_indexed_action_stats_broadcast_per_timestep():

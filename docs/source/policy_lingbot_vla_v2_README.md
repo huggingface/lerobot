@@ -58,50 +58,30 @@ To map your robot into the canonical LingBot slots you need two small assets (a 
 
 ## Train
 
-Two training profiles are supported, chosen at checkpoint-conversion time. They differ in loss type, normalization, and hardware budget:
+Two training profiles are supported. They differ in loss type, normalization, and hardware budget:
 
 | Profile    | Loss    | Normalization                                    | Intended for                                                | Hardware               |
 | ---------- | ------- | ------------------------------------------------ | ----------------------------------------------------------- | ---------------------- |
 | `robotwin` | `L1_fm` | `bounds_99_woclip` (q01/q99 bounds, no clipping) | RoboTwin / sim benchmarks — maximize success rate           | datacenter GPUs        |
 | `real`     | `fm`    | `meanstd`                                        | Real-robot fine-tuning — fast iteration on limited hardware | single 24GB card works |
 
-The two paths below share the converter and the `lerobot-train` CLI but differ in data prep, profile, and hardware requirements — follow the one that matches your target.
+The two paths below share the `lerobot-train` CLI but differ in data prep, profile, and hardware requirements — follow the one that matches your target.
 
-### Path A — RoboTwin Training & Evaluation (`--profile robotwin`): high fidelity, heavy compute
+### Path A — RoboTwin Training & Evaluation: high fidelity, heavy compute
 
 Target: the RoboTwin simulation benchmark. Success rate is the metric; compute is assumed cheap (datacenter GPUs, larger batches, no memory-saving flags).
 
-```
-RoboTwin HDF5 ──robotwin_to_lerobot.py──▶ lerobot dataset ──lerobot-train──▶ lerobot ckpt
-RoboTwin sim  ◀──official eval client──websocket── lingbot_vla_v2_policy_lerobot.py ◀┘
-```
-
 Everything runs inside the lerobot stack — no upstream LingBot training code.
 
-**1. Convert data** (14-dim dual-arm, 3 cameras, teacher-shifted actions):
-
-```bash
-python -m lerobot.policies.lingbot_vla_v2.scripts.robotwin_to_lerobot \
-  --input-dir /path/to/robotwin_task_episodes \
-  --repo-id my_robotwin_task \
-  --fps 15 --mode video
-```
-
-**2. Convert + train** (bakes `L1_fm` loss + `bounds_99_woclip` normalization; norm stats are derived from the dataset automatically):
-
-```bash
-python -m lerobot.policies.lingbot_vla_v2.scripts.convert_upstream_checkpoint \
-  --input robbyant/lingbot-vla-v2-6b \
-  --output ./lingbot-robotwin-6b \
-  --profile robotwin
-```
+**1. Train** from the converted base checkpoint [`lerobot/lingbot_vla_v2_base`](https://huggingface.co/lerobot/lingbot_vla_v2_base) with `L1_fm` loss and `QUANTILES` (q01/q99, the `bounds_99_woclip` equivalent) normalization; norm stats are derived from the dataset automatically:
 
 ```bash
 lerobot-train \
   --dataset.repo_id=my_robotwin_task --dataset.root=/path/to/lerobot_dataset \
   --dataset.streaming=false --dataset.video_backend=pyav \
-  --policy.path=./lingbot-robotwin-6b --policy.device=cuda --policy.dtype=bfloat16 \
+  --policy.path=lerobot/lingbot_vla_v2_base --policy.device=cuda --policy.dtype=bfloat16 \
   --policy.loss_type=L1_fm --policy.freeze_vision_encoder=false --policy.vlm_causal=true \
+  --policy.normalization_mapping='{"VISUAL": "IDENTITY", "STATE": "QUANTILES", "ACTION": "QUANTILES"}' \
   --policy.optimizer_lr=1e-4 --policy.scheduler_decay_lr=5e-5 \
   --policy.scheduler_warmup_steps=0 --policy.scheduler_decay_steps=50000 \
   --policy.gradient_checkpointing=true --policy.moe_backend=sparse_static \
@@ -111,7 +91,7 @@ lerobot-train \
   --output_dir=outputs/train/lingbot_vla_v2_robotwin
 ```
 
-> The converted checkpoint embeds optimizer/scheduler values that override the code defaults — pass the training-hyperparameter flags explicitly; do not omit them.
+> The checkpoint embeds optimizer/scheduler values that override the code defaults — pass the training-hyperparameter flags explicitly; do not omit them.
 
 **Multi-GPU** (verified on 8×A100-80GB) — data-parallel via torchrun:
 
@@ -129,11 +109,11 @@ torchrun --nproc_per_node=8 -m lerobot.scripts.lerobot_train <same args> \
 
 Smoke-test with 2 processes × 20 steps before scaling up.
 
-**4. Evaluate** through LeRobot's native RoboTwin env:
+**2. Evaluate\*\***4. Evaluate\*\* through LeRobot's native RoboTwin env:
 
 ```bash
 lerobot-eval \
-  --policy.path=./lingbot-robotwin-6b \
+  --policy.path=lerobot/lingbot_vla_v2_robotwin \
   --env.type=robotwin \
   --env.task=beat_block_hammer \
   --eval.batch_size=1 \
@@ -143,24 +123,16 @@ lerobot-eval \
 
 > The `--rename_map` maps the env's camera keys (`head_camera`/`left_camera`/`right_camera`) onto the checkpoint's expected keys (`cam_high`/`cam_left_wrist`/`cam_right_wrist`).
 
-### Path B — Real-Robot Fine-Tuning (`--profile real`): fast, light
+### Path B — Real-Robot Fine-Tuning: fast, light
 
 Target: a physical robot. Iteration speed matters more than the last point of accuracy; a single 24GB consumer card is enough.
 
-**1. Convert** (format-only: `fm` loss + identity processor; the embodiment is provided at training time):
-
-```bash
-python -m lerobot.policies.lingbot_vla_v2.scripts.convert_upstream_checkpoint \
-  --input robbyant/lingbot-vla-v2-6b \
-  --output ./lingbot-vla-v2-6b-real \
-  --profile real
-```
-
-**2. Train (single 24GB card)** — `--policy.train_expert_only=true` and `--policy.gradient_checkpointing=true` are mandatory at this memory budget; `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is recommended. Measured: 22.0GB peak, batch size 1, ~0.7s/step. The slot mappings describe how your robot's raw joints map onto the canonical 55-D space; normalization stats are derived from the dataset automatically:
+**1. Train (single 24GB card)\*\***2. Train (single 24GB card)\*\* — `--policy.train_expert_only=true` and `--policy.gradient_checkpointing=true` are mandatory at this memory budget; `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is recommended. Measured: 22.0GB peak, batch size 1, ~0.7s/step. The slot mappings describe how your robot's raw joints map onto the canonical 55-D space; normalization stats are derived from the dataset automatically:
 
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True lerobot-train \
-  --policy.path=./lingbot-vla-v2-6b-real \
+  --policy.path=lerobot/lingbot_vla_v2_base \
+  --policy.loss_type=fm \
   --dataset.repo_id=${HF_USER}/my-dataset \
   --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 6}}]}}' \
   --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}], "subtract_state": false}}' \
@@ -183,14 +155,12 @@ torchrun --nproc_per_node=8 -m lerobot.scripts.lerobot_train <same args, --batch
 lerobot-train <same args> --peft.use_peft=true --peft.r=32
 ```
 
-Merge adapter checkpoints back into the base weights with `scripts/export_merged.py` before deployment.
-
 **Worked example (verified).** Fine-tuning from the base checkpoint on a 6-DoF single-arm dataset (5 arm joints + 1 gripper, cameras `top` + `wrist`):
 
 ```bash
 lerobot-train \
   --dataset.repo_id=maximellerbach/omx_multicubes \
-  --policy.path=miracle-techlink/lingbot-vla-v2-6b-lerobot \
+  --policy.path=lerobot/lingbot_vla_v2_base \
   --policy.tokenizer_path=Qwen/Qwen3-VL-4B-Instruct \
   --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 5}}]}, "observation.state.effector.position": {"origin_keys": [{"observation.state": {"start": 5, "end": 6}}]}}' \
   --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 5}}], "subtract_state": false}, "action.effector.position": {"origin_keys": [{"action": {"start": 5, "end": 6}}], "subtract_state": false}}' \
@@ -202,7 +172,7 @@ lerobot-train \
 
 The slot mappings are typed dict fields passed as JSON on the CLI (same convention as `--policy.normalization_mapping` on pi05). This runs end-to-end: the preprocessor maps the 6-D raw state/action onto the canonical 55-D slots, training produces checkpoints with the slot mapping + dataset stats embedded, and `lerobot-rollout` / `lerobot-eval` on the saved checkpoint map back to the robot's 6-D action space.
 
-**3. Deploy** — see [Inference & Deployment](#inference--deployment) below (`lerobot-rollout` on the robot).
+**2. Deploy** — see [Inference & Deployment](#inference--deployment) below (`lerobot-rollout` on the robot).
 
 A validated 2×24GB FSDP2 path also exists (Accelerate `fully_shard` with a CPU-offloaded optimizer, gradient checkpointing, validated robot config, and embedded norm stats).
 
@@ -254,7 +224,7 @@ Inference speed is baked into the checkpoint's `config.json` — sparse MoE rout
 
 Fine-tuning on a robot the checkpoint was not converted for requires only the slot mappings — passed as `--policy.state_slots` / `--policy.action_slots` (typed dict fields). The norm stats are derived from the dataset automatically (LeRobot's `dataset_stats` mechanism), and checkpoints saved during fine-tuning embed the slot mappings so they remain self-contained.
 
-The canonical slot vocabulary (the 55-D layout, per-slot normalization modes), and how the norm stats are derived are covered in the full walkthrough: [`lingbot_vla_v2.mdx`](./lingbot_vla_v2.mdx).
+The canonical slot vocabulary (the 55-D layout, per-slot normalization modes) and how the norm stats are derived are covered in the full walkthrough: [`lingbot_vla_v2.mdx`](./lingbot_vla_v2.mdx).
 
 ## Citation
 

@@ -30,7 +30,6 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature 
 from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import (  # noqa: E402
     LingbotVLAV2InverseSlotMappingProcessorStep,
-    _raw_stats_from_slot_stats,
 )
 from lerobot.processor import UnnormalizerProcessorStep  # noqa: E402
 from lerobot.utils.constants import ACTION  # noqa: E402
@@ -103,43 +102,3 @@ def test_inverse_slot_mapping_without_action_spans_raises():
     )
     with pytest.raises(ValueError, match="no action slot mapping"):
         inverse({TransitionKey.ACTION: torch.zeros(1, 10)})
-
-
-def test_raw_stats_from_slot_stats_scatters_spans():
-    """Checkpoint-embedded per-slot stats are rewritten into raw-feature space."""
-    robot_config = {
-        "states": [
-            {
-                "observation.state.arm.position": {
-                    "origin_keys": [{"observation.state": {"start": 2, "end": 5}}]
-                }
-            },
-        ],
-        "actions": [
-            {"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 3}}]}},
-        ],
-    }
-    slot_stats = {
-        "norm_stats": {
-            "observation.state.arm.position": {"mean": [10.0, 11.0, 12.0], "std": [1.0, 2.0, 3.0]},
-            "action.arm.position": {"mean": [0.0, 0.0, 0.0], "std": [1.0, 1.0, 1.0]},
-        }
-    }
-    raw = _raw_stats_from_slot_stats(robot_config, slot_stats)
-    assert raw is not None
-    # The state spans sit at raw dims [2:5]; the uncovered dims get identity stats.
-    torch.testing.assert_close(
-        torch.tensor(raw["observation.state"]["mean"]),
-        torch.tensor([0.0, 0.0, 10.0, 11.0, 12.0]),
-    )
-    torch.testing.assert_close(
-        torch.tensor(raw["observation.state"]["std"]),
-        torch.tensor([1.0, 1.0, 1.0, 2.0, 3.0]),
-    )
-    torch.testing.assert_close(torch.tensor(raw["action"]["mean"]), torch.zeros(3))
-
-
-def test_raw_stats_absent_returns_none():
-    """No embedded stats → None → the normalizer steps are inert (identity path)."""
-    assert _raw_stats_from_slot_stats(_so101_robot_config(), None) is None
-    assert _raw_stats_from_slot_stats(_so101_robot_config(), {"norm_stats": {}}) is None
