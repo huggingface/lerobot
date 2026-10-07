@@ -14,8 +14,8 @@ import math
 import pygame
 
 from lerobot.robots.xlerobot import XLerobotConfig, XLerobot
-from lerobot.utils.robot_utils import busy_wait
-from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
+from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 from lerobot.model.SO101Robot import SO101Kinematics
 
 # Keymaps (semantic action: controller mapping) - Intuitive human control
@@ -413,7 +413,7 @@ def main():
         print(robot)
         return
 
-    _init_rerun(session_name="xlerobot_teleop_xbox")
+    init_rerun(session_name="xlerobot_teleop_xbox")
 
     # Init XBOX controller
     pygame.init()

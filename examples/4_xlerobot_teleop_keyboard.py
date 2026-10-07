@@ -15,7 +15,7 @@ import draccus
 
 from lerobot.robots.xlerobot import XLerobotClient, XLerobotClientConfig, XLerobotConfig, XLerobot
 from lerobot.robots import RobotConfig
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 from lerobot.model.SO101Robot import SO101Kinematics
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
@@ -307,7 +307,7 @@ class SimpleTeleopArm:
                 break
                 
             # Maintain control frequency
-            # busy_wait(dt)
+            # precise_sleep(dt)
         
         print(f"[{self.prefix}] Trajectory execution finished.")
 
@@ -477,7 +477,7 @@ def main():
             obs = robot.get_observation()
             # print(f"[MAIN] Observation: {obs}")
             log_rerun_data(obs, action)
-            # busy_wait(1.0 / FPS)
+            # precise_sleep(1.0 / FPS)
     finally:
         robot.disconnect()
         keyboard.disconnect()

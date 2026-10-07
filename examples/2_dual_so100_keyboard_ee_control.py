@@ -455,7 +455,7 @@ def main():
     
     try:
         # Import necessary modules
-        from lerobot.robots.so100_follower import SO100Follower, SO100FollowerConfig
+        from lerobot.robots.so_follower import SO100Follower, SO100FollowerConfig
         from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
         
         # Configure dual-arm robots
