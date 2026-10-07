@@ -100,7 +100,7 @@ class OmxLeader(Teleoperator):
                 drive_mode=drive_modes[motor],
                 homing_offset=0 if motor != "gripper" else 100,
                 range_min=0,
-                range_max=4095,
+                range_max=self.bus.resolution(m.model) - 1,
             )
 
         self.bus.write_calibration(self.calibration)
@@ -138,10 +138,7 @@ class OmxLeader(Teleoperator):
             self.bus.write("Goal_Position", "gripper", self.config.gripper_open_pos)
 
     def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors()
 
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:

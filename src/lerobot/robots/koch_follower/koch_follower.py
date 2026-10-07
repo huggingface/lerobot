@@ -20,7 +20,7 @@ from functools import cached_property
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
+from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -110,47 +110,15 @@ class KochFollower(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        self.bus.disable_torque()
-        if self.calibration:
-            # Calibration file exists, ask user whether to use it or run new calibration
-            user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
-                self.bus.write_calibration(self.calibration)
-                return
-        logger.info(f"\nRunning calibration of {self}")
-        for motor in self.bus.motors:
-            self.bus.set_operating_mode("extended_position", motor)
+        if self._keep_calibration_file(self.bus):
+            return
 
-        input(f"Move {self} to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings()
-
-        full_turn_motors = ["shoulder_pan", "wrist_roll"]
-        unknown_range_motors = [motor for motor in self.bus.motors if motor not in full_turn_motors]
-        print(
-            f"Move all joints except {full_turn_motors} sequentially through their entire "
-            "ranges of motion.\nRecording positions. Press ENTER to stop..."
+        self.calibration = self.bus.record_calibration(
+            "extended_position", full_turn_motors=["shoulder_pan", "wrist_roll"]
         )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        for motor in full_turn_motors:
-            range_mins[motor] = 0
-            range_maxes[motor] = 4095
-
-        self.calibration = {}
-        for motor, m in self.bus.motors.items():
-            self.calibration[motor] = MotorCalibration(
-                id=m.id,
-                drive_mode=0,
-                homing_offset=int(homing_offsets[motor]),
-                range_min=int(range_mins[motor]),
-                range_max=int(range_maxes[motor]),
-            )
-
         self.bus.write_calibration(self.calibration)
         self._save_calibration()
-        logger.info(f"Calibration saved to {self.calibration_fpath}")
+        print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
         with self.bus.torque_disabled():
@@ -177,10 +145,7 @@ class KochFollower(Robot):
             self.bus.write("Position_D_Gain", "elbow_flex", 600)
 
     def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors()
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:

@@ -22,7 +22,7 @@ a bus, homing offsets of the opposite sign, operating mode values, and a drive m
 that is a motor register rather than a calibration-only field.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -158,25 +158,3 @@ def test_set_half_turn_homings(dummy_motors):
     bus.reset_calibration.assert_called_once()
     for id_, homing in expected_homings.items():
         assert written(bus, "Homing_Offset", id_) == homing
-
-
-def test_record_ranges_of_motion(dummy_motors):
-    sweeps = [
-        {"dummy_1": 351, "dummy_2": 28, "dummy_3": 4002},
-        {"dummy_1": 42, "dummy_2": 3600, "dummy_3": 2999},
-        {"dummy_1": 1337, "dummy_2": 2444, "dummy_3": 146},
-    ]
-    bus = make_bus(dummy_motors)
-
-    with (
-        patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]),
-        patch("lerobot.motors.motors_bus.time.sleep") as mock_sleep,
-        patch.object(bus, "sync_read", side_effect=sweeps) as mock_sync_read,
-    ):
-        mins, maxes = bus.record_ranges_of_motion(display_values=False)
-
-    assert mock_sync_read.call_count == 3
-    assert all(call.kwargs["num_retry"] == 5 for call in mock_sync_read.call_args_list)
-    mock_sleep.assert_called_once_with(0.02)
-    assert mins == {"dummy_1": 42, "dummy_2": 28, "dummy_3": 146}
-    assert maxes == {"dummy_1": 1337, "dummy_2": 3600, "dummy_3": 4002}

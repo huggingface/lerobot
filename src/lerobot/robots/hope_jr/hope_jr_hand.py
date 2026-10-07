@@ -152,11 +152,7 @@ class HopeJrHand(Robot):
             self.bus.configure_motors()
 
     def setup_motors(self) -> None:
-        # TODO: add docstring
-        for motor in self.bus.motors:
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors(list(self.bus.motors))
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
