@@ -68,7 +68,7 @@ from .utils_molmoact2 import (
 )
 
 if TYPE_CHECKING:
-    from lerobot.processor.normalize_processor import _NormalizationMixin as _MaskedNormalizationBase
+    from lerobot.processor import _NormalizationMixin as _MaskedNormalizationBase
 else:
     _MaskedNormalizationBase = object
 

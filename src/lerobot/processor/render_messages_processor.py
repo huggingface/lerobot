@@ -35,7 +35,7 @@ from lerobot.utils.utils import unwrap_scalar
 from .pipeline import ComplementaryDataProcessorStep, ProcessorStep, ProcessorStepRegistry
 
 if TYPE_CHECKING:
-    from lerobot.datasets.recipe import TrainingRecipe
+    from lerobot.datasets import TrainingRecipe
 
 
 @dataclass
@@ -55,7 +55,7 @@ class RenderTrainingMessagesStep(ProcessorStep):
     def __post_init__(self) -> None:
         if isinstance(self.recipe, dict):
             # Import only for recipes: the datasets package requires optional extras.
-            from lerobot.datasets.recipe import TrainingRecipe
+            from lerobot.datasets import TrainingRecipe
 
             self.recipe = TrainingRecipe.from_dict(self.recipe)
 
@@ -223,7 +223,7 @@ class RenderRuntimeMessagesStep(ComplementaryDataProcessorStep):
     def __post_init__(self) -> None:
         if isinstance(self.recipe, dict):
             # Import only for recipes: the datasets package requires optional extras.
-            from lerobot.datasets.recipe import TrainingRecipe
+            from lerobot.datasets import TrainingRecipe
 
             self.recipe = TrainingRecipe.from_dict(self.recipe)
 
@@ -248,7 +248,7 @@ class RenderRuntimeMessagesStep(ComplementaryDataProcessorStep):
                     "Subtask generation requires a checkpoint recipe with an assistant target "
                     "that supervises `${subtask}`."
                 )
-            from lerobot.datasets.recipe import render_message_turns
+            from lerobot.datasets import render_message_turns
 
             bindings = dict.fromkeys(self.recipe.referenced_binding_names())
             bindings.update(complementary_data)
@@ -274,7 +274,7 @@ def _is_batched_language(value: Any) -> bool:
 
 def _render_sample(**kwargs) -> dict[str, Any] | None:
     """Import dataset rendering only when recipe training uses it."""
-    from lerobot.datasets.language_render import render_sample
+    from lerobot.datasets import render_sample
 
     return render_sample(**kwargs)
 

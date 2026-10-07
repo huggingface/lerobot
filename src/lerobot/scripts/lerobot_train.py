@@ -82,8 +82,7 @@ from lerobot.optim import make_optimizer_and_scheduler
 from lerobot.optim.ema import EMA
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
-from lerobot.processor import ImageAugmentationProcessorStep
-from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
+from lerobot.processor import ImageAugmentationProcessorStep, rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR

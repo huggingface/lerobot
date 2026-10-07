@@ -21,7 +21,11 @@ import numpy as np
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvAction, PolicyAction, RobotAction
+from lerobot.lerobot_types import (
+    EnvAction,
+    PolicyAction,
+    RobotAction,
+)
 from lerobot.utils.constants import ACTION
 
 from .pipeline import ActionProcessorStep, ProcessorStepRegistry

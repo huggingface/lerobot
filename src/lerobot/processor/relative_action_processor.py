@@ -27,7 +27,7 @@ from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorTo
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry
 
 if TYPE_CHECKING:  # a runtime import would be circular: ``pretrained`` imports from this package
-    from lerobot.policies.pretrained import PreTrainedPolicy
+    from lerobot.policies import PreTrainedPolicy
 
 # Re-export for backward compatibility
 __all__ = [

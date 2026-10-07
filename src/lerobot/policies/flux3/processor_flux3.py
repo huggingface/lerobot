@@ -33,23 +33,20 @@ import torch.nn.functional as F  # noqa: N812
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.flux3.configuration_flux3 import Flux3Config
-from lerobot.processor.converters import (
-    batch_to_transition,
-    policy_action_to_transition,
-    transition_to_batch,
-    transition_to_policy_action,
-)
-from lerobot.processor.factory import make_default_policy_processor_steps, make_policy_processor_pipelines
-from lerobot.processor.pipeline import (
+from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     ActionProcessorStep,
     ObservationProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-)
-from lerobot.processor.relative_action_processor import (
-    AbsoluteActionsProcessorStep,
     RelativeActionsProcessorStep,
+    batch_to_transition,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
+    policy_action_to_transition,
+    transition_to_batch,
+    transition_to_policy_action,
 )
 from lerobot.utils.constants import (
     OBS_STATE,

@@ -39,16 +39,16 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    ProcessorStep,
+    ProcessorStepRegistry,
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
+    RenderRuntimeMessagesStep,
+    RenderTrainingMessagesStep,
     UnnormalizerProcessorStep,
     policy_action_to_transition,
     transition_to_policy_action,
 )
-from lerobot.processor.pipeline import ProcessorStep, ProcessorStepRegistry
-
-# Import directly to keep optional language dependencies out of ``lerobot.processor``.
-from lerobot.processor.render_messages_processor import RenderRuntimeMessagesStep, RenderTrainingMessagesStep
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
