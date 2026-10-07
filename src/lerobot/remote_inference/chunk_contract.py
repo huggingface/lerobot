@@ -12,60 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Validation shared by serving configuration and plain-chunk admission."""
+"""Alignment admission and client-owned blending validation."""
 
 from typing import Any
 
-from lerobot.inference import ExecutionMode, FeatureSpec, PolicyCapabilities, chunk_settings as chunk_settings
+from lerobot.inference import ExecutionMode, PolicyCapabilities, chunk_settings as chunk_settings
 
-CHUNK_ALIGNMENT = "chunk_alignment_v1"
-CHUNK_BLENDING = "chunk_blending_v1"
+CHUNK_ALIGNMENT = "chunk_alignment_v2"
 RTC_MODEL_SPACE = "rtc_model_space_v1"
 
 
 def default_chunk_settings() -> dict[str, Any]:
     """Return fresh settings for peers that omit the optional chunk contract."""
-    return chunk_settings("append", 0, 0.5, [])
-
-
-def validate_blendable_components(action: FeatureSpec, components: list[str] | tuple[str, ...]) -> None:
-    """Require an operator-selected subset of named canonical float coordinates."""
-    if not isinstance(components, (list, tuple)) or any(
-        not isinstance(name, str) or not name for name in components
-    ):
-        raise ValueError("blendable_components must contain nonempty component names")
-    if len(set(components)) != len(components):
-        raise ValueError("blendable_components must be unique")
-    if components and (
-        action.kind != "tensor"
-        or action.dtype != "float32"
-        or len(action.shape) != 1
-        or not action.names
-        or not set(components).issubset(action.names)
-    ):
-        raise ValueError("blendable_components requires named float32 canonical action coordinates")
+    return {"chunk_merge": "append"}
 
 
 def required_chunk_capabilities(settings: dict[str, Any]) -> list[str]:
     """Return the exact additional protocol semantics requested by these options."""
-    required = [CHUNK_ALIGNMENT] if settings["chunk_merge"] == "aligned" else []
-    if settings["blend_steps"]:
-        required.append(CHUNK_BLENDING)
-    return required
+    return [CHUNK_ALIGNMENT] if settings["chunk_merge"] == "aligned" else []
 
 
-def validate_chunk_contract(
-    settings: dict[str, Any], caps: PolicyCapabilities, blendable_components: list[str] | tuple[str, ...]
-) -> tuple[int, ...]:
-    """Validate negotiated settings and resolve selected names to canonical indices."""
-    if not isinstance(settings, dict) or set(settings) != {
-        "chunk_merge",
-        "blend_steps",
-        "blend_weight",
-        "blend_components",
-    }:
+def validate_chunk_contract(settings: dict[str, Any], caps: PolicyCapabilities) -> None:
+    """Negotiate cursor alignment independently of local playback options."""
+    if not isinstance(settings, dict) or set(settings) != {"chunk_merge"}:
         raise ValueError("Invalid chunk_settings fields")
-    chunk_settings(**settings)
+    if not isinstance(settings["chunk_merge"], str) or settings["chunk_merge"] not in {"append", "aligned"}:
+        raise ValueError("chunk_merge must be append or aligned")
     if settings["chunk_merge"] == "aligned" and (
         ExecutionMode.CHUNK not in caps.modes
         or caps.action_representation != "canonical"
@@ -74,9 +46,14 @@ def validate_chunk_contract(
         or len(caps.action_feature.shape) != 1
     ):
         raise ValueError("Aligned chunks require canonical float32 vector actions")
-    validate_blendable_components(caps.action_feature, blendable_components)
+
+
+def validate_blend_settings(settings: dict[str, Any], caps: PolicyCapabilities) -> tuple[int, ...]:
+    """Resolve user-selected canonical coordinates for client-side blending."""
+    chunk_settings(**settings)
+    validate_chunk_contract({"chunk_merge": settings["chunk_merge"]}, caps)
     if settings["blend_steps"] > caps.execution_steps:
         raise ValueError("blend_steps must not exceed the configured execution slice")
-    if not set(settings["blend_components"]).issubset(blendable_components):
-        raise ValueError("Requested blend_components are not enabled by the deployment")
+    if not set(settings["blend_components"]).issubset(caps.action_feature.names):
+        raise ValueError("blend_components must name canonical action coordinates")
     return tuple(caps.action_feature.names.index(name) for name in settings["blend_components"])

@@ -65,7 +65,6 @@ def serve_in_child(endpoint, ready, stopped, entered, release):
         semantics="radians-v1",
         action_deadline_s=5,
         language_deadline_s=5,
-        blendable_components=BLEND_COMPONENTS,
     )
     transport = ZenohTransport(ZenohConfig(listen_endpoints=[endpoint]))
     server = PolicyServer(worker, transport)

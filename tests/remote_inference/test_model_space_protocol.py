@@ -132,6 +132,7 @@ def test_warmup_descriptor_and_admission_preserve_distinct_widths(worker):
         request for request in client.transport.queries if request.message_type is MessageType.OPEN
     )
     assert opening.body.get("required_capabilities", []) == ([RTC_MODEL_SPACE] if padded else [])
+    assert "chunk_settings" not in opening.body
     first = client.infer(action_request())
     assert first.model_actions.shape == (8, model_width)
     assert first.canonical_actions.shape == (8, 3)

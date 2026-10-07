@@ -50,6 +50,7 @@ from .chunk_contract import (
     RTC_MODEL_SPACE,
     chunk_settings,
     required_chunk_capabilities,
+    validate_blend_settings,
     validate_chunk_contract,
 )
 from .codec import RGBImage, decode_message, encode_message, peek_envelope
@@ -299,22 +300,22 @@ class RemoteClient:
                 f"Execution mode {mode!r} is not supported; "
                 f"server modes={tuple(str(mode) for mode in caps.modes)!r}",
             )
-        required = required_chunk_capabilities(self.chunk_settings)
-        if required:
+        try:
+            self.blend_indices = validate_blend_settings(self.chunk_settings, caps)
+        except ValueError as exc:
+            raise ProtocolError(ErrorCode.INCOMPATIBLE, str(exc)) from exc
+        settings = {"chunk_merge": self.chunk_settings["chunk_merge"]}
+        required = required_chunk_capabilities(settings)
+        aligned = settings["chunk_merge"] == "aligned"
+        if aligned:
             if mode != ExecutionMode.CHUNK:
                 raise ProtocolError(ErrorCode.INCOMPATIBLE, "Aligned merge requires chunk execution")
             advertised = self.descriptor.get("execution_contracts", [])
             if not isinstance(advertised, list) or any(name not in advertised for name in required):
                 raise ProtocolError(
                     ErrorCode.UNSUPPORTED,
-                    "Server does not support the requested chunk alignment/blending contract; update the server",
+                    "Server does not support the requested chunk alignment contract; update the server",
                 )
-            try:
-                self.blend_indices = validate_chunk_contract(
-                    self.chunk_settings, caps, self.descriptor.get("blendable_components", [])
-                )
-            except ValueError as exc:
-                raise ProtocolError(ErrorCode.INCOMPATIBLE, str(exc)) from exc
         if mode != ExecutionMode.CHUNK and caps.model_action_dim not in (None, caps.action_feature.shape[0]):
             if RTC_MODEL_SPACE not in self.descriptor.get("execution_contracts", []):
                 raise ProtocolError(
@@ -333,11 +334,8 @@ class RemoteClient:
                 "action_interval": action_interval,
                 "mode": mode,
                 "encoding": self.config.encoding,
-                **(
-                    {"chunk_settings": self.chunk_settings, "required_capabilities": required}
-                    if required
-                    else {}
-                ),
+                **({"chunk_settings": settings} if aligned else {}),
+                **({"required_capabilities": required} if required else {}),
             },
         )
         try:
@@ -348,14 +346,12 @@ class RemoteClient:
             if exc.code is not ErrorCode.BUSY:
                 raise
             raise AdmissionDeniedError(self.config.deployment, str(exc), details=exc.details) from exc
-        if required:
+        if aligned:
             try:
                 accepted_settings = accepted.body.get("chunk_settings")
                 if not isinstance(accepted_settings, dict):
                     raise ValueError("Missing accepted chunk settings")
-                validate_chunk_contract(
-                    accepted_settings, caps, accepted.body.get("blendable_components", [])
-                )
+                validate_chunk_contract(accepted_settings, caps)
             except ValueError as exc:
                 raise ProtocolError(
                     ErrorCode.INCOMPATIBLE, "Admission changed the advertised contract"
@@ -364,7 +360,7 @@ class RemoteClient:
             accepted.body.get("artifact_identity") != self.artifact_identity
             or parse_capabilities(accepted.body["capabilities"]) != caps
             or accepted.body.get("mode") != mode
-            or (required and accepted.body.get("chunk_settings") != self.chunk_settings)
+            or (aligned and accepted.body.get("chunk_settings") != settings)
         ):
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Admission changed the advertised contract")
         self.session_id = accepted.session_id

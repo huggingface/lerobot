@@ -60,9 +60,6 @@ def remote_server(request):
         deployment="loopback",
         artifact_identity="processor-test",
         semantics="radians-v1",
-        blendable_components=("joint_0.pos", "joint_1.pos")
-        if getattr(request, "param", None) == "robot"
-        else (),
     )
     transport = ZenohTransport(ZenohConfig(listen_endpoints=[endpoint]))
     server = PolicyServer(worker, transport)
@@ -174,7 +171,7 @@ def test_busy_admission_releases_connected_hardware_before_propagating(remote_se
         connect=lambda: setattr(teleop, "is_connected", True),
         disconnect=lambda: setattr(teleop, "is_connected", False),
     )
-    monkeypatch.setattr("lerobot.rollout.remote_context.RemoteClient.connect", lambda _: rejected)
+    monkeypatch.setattr("lerobot.rollout.context.RemoteClient.connect", lambda _: rejected)
     monkeypatch.setattr("lerobot.rollout.context.make_robot_from_config", lambda _: robot)
     monkeypatch.setattr("lerobot.rollout.context.make_teleoperator_from_config", lambda _: teleop)
     monkeypatch.setattr("lerobot.rollout.configs.parser.get_path_arg", lambda _: None)

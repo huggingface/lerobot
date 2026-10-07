@@ -54,7 +54,7 @@ flowchart LR
 
 Public cross-package symbols are explicitly exported through package APIs. Policy declarations belong to `policies`; shared execution belongs to `inference`; the remote engine and serving belong to `remote_inference`. This dependency direction avoids import cycles without dynamic initializer exports. Optional dependencies are guarded in implementation modules and checked when used. The existing transport submodule import convention remains supported.
 
-`InferenceRobot` is a structural typing protocol: it describes the action metadata, observation capture time and hold capabilities engines consume, without importing the rollout's concrete `ThreadSafeRobot`. It is neither another hardware implementation nor a class users must inherit. Context construction has one public entry point, with separate local-model and remote-descriptor preparation; common helpers resolve robot processors, connect hardware, aggregate recording features and clean up failed setup.
+`InferenceRobot` is a structural typing protocol: it describes the action metadata, observation capture time and hold capabilities engines consume, without importing the rollout's concrete `ThreadSafeRobot`. It is neither another hardware implementation nor a class users must inherit. The hardware `Robot` interface alone lacks this wrapper state; keeping the small protocol preserves type checking without an inference-to-rollout dependency. Context construction has one public entry point and colocated local-model/remote-descriptor builders in `rollout.context`; common helpers resolve robot processors, connect hardware, aggregate recording features and clean up failed setup.
 
 ### Threads and locks
 
@@ -74,7 +74,7 @@ The client obtains a descriptor, selects exactly one ready instance (or an expli
 
 Admission grants a session scoped to that server boot. An acknowledged generation-control exchange also establishes session endpoint readiness before data publication. Rollout setup requires compatibility and ownership before policy motion. Expected ownership contention surfaces as `AdmissionDeniedError`, whose text explains the contention to the operator; `lerobot-rollout` does not special-case it. Compatibility is not an equality test on the package version: the protocol, execution contract and schema are authoritative; package versions are diagnostics. No transparent mode downgrade occurs.
 
-See [`RemoteClient.connect/admit`](../remote_inference/client.py), [`SessionWorker`](../remote_inference/server.py) and [`build_remote_rollout_context`](../rollout/remote_context.py).
+See [`RemoteClient.connect/admit`](../remote_inference/client.py), [`SessionWorker`](../remote_inference/server.py) and [`build_rollout_context`](../rollout/context.py).
 
 ## 4. One observation-to-action cycle
 
@@ -138,6 +138,34 @@ Saved normalization, relative/absolute action pairing and camera preparation rem
 
 See [`PolicyRunner`](../inference/policy_runner.py), [`PreTrainedPolicy`](../policies/pretrained.py) and the policy-specific contract tests. Conformance is checkpoint/configuration-specific; a family name, successful download or warmup is not task validation.
 
+### Policy support
+
+This table distinguishes source-level compatibility from actual model execution and hardware evidence. **Candidate** means no structural blocker was found for the stated configuration; it still needs checkpoint loading, saved-processor conformance and task validation. The server cannot select an arbitrary custom runner through YAML. Exact input schemas apply unless the policy declares its existing resizing/masking behavior.
+
+| Policy                            | Current contract and remaining restrictions                                                                                                         | Execution evidence                                                                                                       |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| ACT                               | Current observation, temporal ensembling disabled.                                                                                                  | Remote HW: `maximellerbach/omx_multicubes_act`, `maximellerbach/omx_pickandplace_act`.                                   |
+| SmolVLA                           | Declares existing camera masking/resizing; guided RTC supported.                                                                                    | Remote HW and local guided RTC: `imstevenpmwork/super_chatton_smolvla`.                                                  |
+| XVLA                              | Declares camera preparation and bounded state padding; chunk only.                                                                                  | Remote HW: `imstevenpmwork/xvla_super_chatton_2`.                                                                        |
+| LaWAM                             | Declares `action_horizon`; future training frames do not imply inference history.                                                                   | Remote HW: `maximellerbach/omx_multicubes_lawam`.                                                                        |
+| EVO1                              | Current observation; model padding is cropped by the saved postprocessor.                                                                           | Remote HW: `imstevenpmwork/super_chatton_evo1_stage1_pro`.                                                               |
+| FineART VLA                       | Inherits the current-observation π0.5 contract; memory configurations remain excluded. Saved prompt recipes must match action/subtask conditioning. | Real remote action/text integration: `pepijn223/fineart_vla_super_poulain`; useful language/task continuity unvalidated. |
+| DM05                              | Current-observation candidate with saved multimodal processors.                                                                                     | Tiny real saved-checkpoint/processor runner parity; no remote HW evidence.                                               |
+| GR00T                             | Native cropped prediction horizon is declared; preserve embodiment mappings and relative-action processors.                                         | Focused contract coverage; full supplied checkpoint/HW acceptance pending.                                               |
+| VLA-JEPA                          | Declares current-frame inference and configured resizing, including world-model training configurations.                                            | Focused contract coverage; `maximellerbach/folding_vla_jepa` still needs full checkpoint/HW acceptance.                  |
+| MolmoAct2                         | Declares its already-cropped `n_action_steps` horizon; RTC only for continuous actions.                                                             | Candidate; full checkpoint/processor acceptance pending.                                                                 |
+| π0, π0.5                          | Current-observation candidates; π0.5 visual/proprioceptive memory must be disabled as trained.                                                      | No remote HW acceptance established here.                                                                                |
+| π0-FAST                           | Candidate when `n_action_steps == chunk_size`; shorter decoded horizons need an accurate declaration.                                               | No remote HW acceptance established here.                                                                                |
+| EO1, WALL-X                       | Current-observation candidates with text heads. WALL-X FAST needs a complete saved generation-prompt/tokenizer pipeline.                            | Full checkpoint/action/text acceptance pending.                                                                          |
+| FastWAM                           | Needs a targeted declaration for `action_horizon` and training-only future frames, plus processor/schema validation.                                | Blocked by the inherited declaration; no real runner acceptance.                                                         |
+| FLUX.3                            | Frame conditioning needs declaration/processor work; history and previous-command conditioning need execution feedback support.                     | No compatible frame-conditioned checkpoint established.                                                                  |
+| LingBot-VA                        | Requires sampled keyframes, executed-action feedback, cache semantics and variable prediction horizons.                                             | Substantial execution extension; not a configuration-only adaptation.                                                    |
+| Diffusion, Multi-task DiT, VQ-BeT | Default history and/or per-step queue preparation do not satisfy the direct current-observation contract.                                           | Need sampling/preparation and horizon adaptation; single-observation exports require their own assessment.               |
+| TD-MPC                            | Queue preparation, time-major outputs and planning/action-repeat semantics need adaptation.                                                         | Unsupported by the current runner.                                                                                       |
+| Gaussian actor                    | No implemented `predict_action_chunk`; single-step and discrete outputs need a separate adapter/latency assessment.                                 | Unsupported by the current runner.                                                                                       |
+
+RTC and language are separate capabilities. Source declarations allow RTC for SmolVLA, π0, π0.5, FineART, EVO1, GR00T and continuous MolmoAct2, subject to each checkpoint's settings and continuation contract. Trained RTC additionally needs a trained delay/horizon declaration. FineART, EO1 and WALL-X expose text generation; this does not establish useful VQA or subtask planning. A checkpoint declaring an unregistered type such as `pi052` needs a faithful migration/export, not merely a renamed type or dropped configuration fields.
+
 ## 6. Playback, alignment, blending and RTC
 
 ### Append
@@ -154,7 +182,7 @@ Alignment establishes which temporal positions remain usable. It does not prove 
 
 ### Blending
 
-Optional blending applies only to aligned plain chunks and explicitly selected continuous canonical components approved by the server. For matching future positions in the overlap window:
+Optional blending belongs entirely to the client's `ChunkRuntime` and applies only to aligned plain chunks. The client validates explicitly selected continuous canonical components against the action metadata and bounds the window by the execution slice. The server has no blending allowlist or configuration; enabling or tuning blending needs no server restart. For matching future positions in the overlap window:
 
 ```text
 blended = q_t + b_w * (i_t - q_t)
@@ -301,7 +329,7 @@ Raw arrays and explicit RGB records use a bounded MessagePack codec, without pic
 
 ### Compatibility and deployment security
 
-The envelope requires the exact integer protocol version 1; there is no minor-version negotiation. Execution contracts/capabilities negotiate supported layouts and merge behavior separately. Package versions aid diagnosis but do not substitute for compatibility checks. Runtime does not invoke Git. The protocol must evolve if future changes break these contracts.
+The envelope requires the exact integer protocol version 1; there is no minor-version negotiation. Execution contracts/capabilities negotiate supported layouts and merge behavior separately. `chunk_alignment_v2` negotiates merge mode and cursor correlation only; blending settings remain local. Peers with older alignment contracts are rejected before motion rather than interpreting a different admission schema. Package versions aid diagnosis but do not substitute for compatibility checks. Runtime does not invoke Git. The protocol must evolve if future changes break these contracts.
 
 Direct LAN mode is for an appropriately trusted/restricted network. Deployment names and session IDs isolate addressing; they are not authentication. Secured routed deployments use explicit authentication/encryption and deployment-scoped ACLs. Keep client/server routes through the configured router rather than accidentally permitting peer bypass. The examples are starting configurations, not evidence of every network/platform's security or reachability.
 
@@ -317,7 +345,9 @@ The server has its own operation bounds, warmup settings and absence cleanup lim
 
 INFO logs summarize readiness, admission, effective settings, bounded operating summaries, actionable faults and shutdown outcome. Five-second summaries distinguish interval counters from rolling timing windows. The client reports cancelled/failed requests, waits/resumptions and invalidation ACK delay separately from completed-result turnaround; cancelled wait time does not reveal when the server finishes. The server includes errors/stale results and control waits. DEBUG adds request/capability details. Request spacing, committed endpoints, usable playback, source age and full turnaround help distinguish early stale append playback from excessively frequent aligned replacement or insufficient throughput. Diagnostic deltas compare endpoints, not measured physical motion.
 
-Server shutdown logs identify the stop reason and active/queued work, transport closure, and worker completion or its bounded one-second stop timeout. Process shutdown does not drain queued operations or promise completed session cleanup; a still-running model call is reported as such.
+Language INFO logs identify request kind, acceptance and completion/failure with elapsed time. Server shutdown logs identify the stop request/reason and active/queued work, transport closure, and worker completion or its bounded one-second stop timeout. Process shutdown does not drain queued operations or promise completed session cleanup; a still-running model call is reported as such.
+
+Capture interactive shutdown with `tee -i`: ordinary `tee` may exit on the same Ctrl+C signal before teardown logs are written.
 
 Control-thread reporting uses bounded queues drained by the worker; diagnostic I/O is kept out of motor dispatch/runtime locks. Dropped diagnostics do not grant motion or alter eligibility. Logs retain correlation IDs; ordinary recording stays free of automatic inference-event sidecars.
 
@@ -356,7 +386,7 @@ Keep this reference focused on current contracts and open work. Record logs, com
 
 ### Remaining integration validation
 
-The recording, local RTC and functional language hardware batch is complete within the limits above. No further HW run is planned; remaining release work is documentation, contribution review and final automated checks.
+The recording, local RTC and functional language hardware batch is complete within the limits above. No further HW run is planned; remaining work is the focused follow-ups below, documentation, contribution review and final automated checks.
 
 #### Documentation and contribution readiness
 

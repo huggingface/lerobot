@@ -11,7 +11,7 @@ pytest.importorskip("datasets")
 pytest.importorskip("msgpack")
 
 from lerobot.inference import RemoteInferenceConfig
-from lerobot.rollout import remote_context
+from lerobot.rollout import context
 from tests.remote_inference.test_engine import ControlledClient
 
 
@@ -30,11 +30,11 @@ def setup(monkeypatch, tmp_path):
         is_connected=True,
         get_observation=lambda: {"a.pos": 0.0, "b.pos": 0.0},
     )
-    monkeypatch.setattr(remote_context.RemoteClient, "connect", lambda _: client)
+    monkeypatch.setattr(context.RemoteClient, "connect", lambda _: client)
     make_robot = Mock(return_value=robot)
     monkeypatch.setattr("lerobot.rollout.context.make_robot_from_config", make_robot)
     monkeypatch.setattr(
-        remote_context,
+        context,
         "_build_rollout_dataset",
         lambda cfg, *_: SimpleNamespace(root=tmp_path) if cfg.dataset else None,
     )
@@ -59,7 +59,7 @@ def test_remote_initial_conditioning_and_labels_follow_local_task_precedence(set
     if not recording:
         cfg.dataset = None
     expected = cfg.dataset.single_task if recording else cfg.task
-    ctx = remote_context.build_remote_rollout_context(cfg, Event())
+    ctx = context.build_remote_rollout_context(cfg, Event())
     try:
         engine = ctx.policy.inference
         assert engine.task == engine.dispatched_task == expected
@@ -79,11 +79,11 @@ def test_initial_length_guard_validates_the_instruction_actually_used(setup, rec
     cfg.task = top_level_task
     if len(recorded_task) > 3:
         with pytest.raises(ValueError, match="Initial instruction"):
-            remote_context.build_remote_rollout_context(cfg, Event())
+            context.build_remote_rollout_context(cfg, Event())
         make_robot.assert_not_called()
         assert client.closed.is_set()
     else:
-        ctx = remote_context.build_remote_rollout_context(cfg, Event())
+        ctx = context.build_remote_rollout_context(cfg, Event())
         try:
             assert ctx.policy.inference.task == recorded_task
         finally:

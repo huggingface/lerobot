@@ -61,11 +61,8 @@ def serve(cfg: ServerConfig) -> None:
         idle_timeout_s=cfg.execution.idle_timeout_s,
         max_input_chars=cfg.language.max_input_chars,
         max_output_chars=cfg.language.max_output_chars,
-        blendable_components=tuple(cfg.execution.blendable_components),
     )
     server = PolicyServer(worker, ZenohTransport(cfg.zenoh))
-    signal.signal(signal.SIGTERM, lambda signum, _: server.stop(reason=signal.Signals(signum).name))
-    signal.signal(signal.SIGINT, lambda signum, _: server.stop(reason=signal.Signals(signum).name))
     logger.info(
         "Deployment warmed: name=%s instance=%s modes=%s action_rate=%.1f Hz horizon=%.3fs "
         "language=%s; waiting for transport readiness",
@@ -77,7 +74,15 @@ def serve(cfg: ServerConfig) -> None:
         runner.capabilities.language,
     )
     logger.debug("Deployment artifact=%s capabilities=%s", identity, runner.capabilities)
-    server.serve()
+    previous_handlers = {
+        sig: signal.signal(sig, lambda signum, _: server.stop(reason=signal.Signals(signum).name))
+        for sig in (signal.SIGTERM, signal.SIGINT)
+    }
+    try:
+        server.serve()
+    finally:
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
 
 
 def main() -> None:
