@@ -33,7 +33,7 @@ Refill controls when to request. It is not the time between requests.
 
 **Local RTC** (`--inference.type=rtc`) uses a background thread in the rollout process, without transport. **Same-host remote inference** still uses two processes and `--inference.type=remote`. It offers the same alignment/blending options as LAN, including for policies without RTC.
 
-Specific ACT, SmolVLA, XVLA, EVO1 and LaWAM checkpoints have physical action/task evidence, not blanket checkpoint support. OMX/XVLA also has focused pause/resume and starvation recovery/expiry evidence. Useful language behavior, recording, local RTC waiting, routed robot operation and JPEG require separate validation.
+Specific ACT, SmolVLA, XVLA, EVO1 and LaWAM checkpoints have physical action/task evidence, not blanket checkpoint support. OMX/XVLA also has focused pause/resume, starvation recovery/expiry and recording acceptance with Sentry, Highlight, Episodic and corrections-only DAgger. OMX/SmolVLA has local guided RTC waiting/recovery and grace-expiry acceptance. Useful language behavior, routed robot operation and JPEG require separate validation.
 
 ## Start from a working rollout
 

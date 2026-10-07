@@ -342,30 +342,17 @@ A driver capability declaration establishes the command contract, not physical l
 
 Acceptance should distinguish useful action execution, target retention and fresh resumption, bounded failure/shutdown, dataset correctness, and language behavior. Local RTC and remote execution share runtime contracts but have different workers, so same-host remote execution does not validate the local RTC path. Meaningful language/subtask acceptance and representative routed/hosted robot operation remain open follow-ups. Passing software tests is not a universal support or deployment-readiness claim.
 
+OMX/XVLA remote recording has physical acceptance with Sentry, Highlight, Episodic and corrections-only DAgger. Coverage includes blocking recording transitions, episode reset, human correction and autonomous resumption, finalization and Hub upload. Uploaded tables and decoded videos confirm frame counts, episode offsets, component ordering, fixed task labels and DAgger intervention labels. This acceptance is specific to the exercised configuration; continuous DAgger recording and instruction changes during recording were not exercised.
+
+Local guided RTC has physical waiting/recovery and grace-expiry acceptance with OMX/SmolVLA. Delayed predictions exercised target retention, rejection of pre-hold results, fresh resumption without old continuation, and terminal expiry followed by configured homing/disconnection without late-result resumption. This establishes the exercised transport-free guided RTC path, not trained RTC or every supported robot/checkpoint.
+
 Keep this reference focused on current contracts and open work. Record logs, commands, model revisions and physical observations with the relevant test or issue; do not turn the design into an experiment journal. Close an item only for the behavior actually exercised, and update the corresponding design section when implementation changes.
 
 ## 14. Future work
 
 ### Remaining integration validation
 
-These are the remaining steps for release readiness. Keep the implementation stable while completing them; expand a check only when it exposes a specific defect. Use one suitable checkpoint and robot configuration rather than a model/parameter matrix.
-
-#### Recording and episode boundaries
-
-- [ ] Run one familiar remote task while recording a small local dataset with a supported strategy. Check that recording does not unexpectedly starve playback or disrupt useful motion.
-- [ ] Exercise a real blocking save/episode boundary, then resume. Observe retained arm/gripper targets and fresh, sensible continuation without replay of the pre-pause trajectory. Choose a strategy with that boundary; a nonblocking save does not exercise this behavior.
-- [ ] Change the instruction once if the strategy supports it. Inspect the saved camera/state/action shapes and component order, task labels corresponding to dispatched actions, and readable video/frame alignment.
-- [ ] Stop cleanly and load the finalized dataset. Verify that no inference-event sidecars or automatic diagnostic uploads were added. Uploading the dataset is not required.
-
-One short run is sufficient if it answers these questions. Record the strategy, checkpoint, configuration, dataset path and relevant logs alongside the acceptance result. Successful motion alone does not establish dataset correctness.
-
-#### Local RTC waiting
-
-- [ ] Use a compatible checkpoint with `inference.type=rtc`, a supported position-hold robot and its working local configuration. This check uses no server or transport.
-- [ ] Introduce one bounded prediction delay that exhausts playback while allowing old work to drain and fresh inference to finish within starvation grace and existing deadlines. Confirm a local wait followed by useful motion from a post-hold observation.
-- [ ] Exercise expiry with a longer delay. Confirm one terminal fault, configured return/disconnect, and no resumption from a late result. A timeout or killed process demonstrates failure handling, not recoverable waiting.
-
-Use a test-only delay mechanism without changing production deadlines or adding a runtime tuning flag. Delay duration depends on usable playback and inference latency; no fixed delay guarantees the intended condition. Do not mark recovery accepted unless the wait and fresh resumption actually occur. No additional robot-family matrix is required to close this check.
+The planned recording and local RTC hardware acceptance checks are complete. Remaining release-readiness work is documentation, contribution review and final automated checks. Keep the implementation stable while completing them; expand validation only when a change or specific defect warrants it.
 
 #### Documentation and contribution readiness
 
@@ -383,6 +370,8 @@ Use a test-only delay mechanism without changing production deadlines or adding 
 Repeat a physical check only when a change affects its behavior or leaves a concrete question unresolved. The remaining work does not include broad camera-versus-motor failure handling, a general hardware-cleanup redesign or exhaustive tuning sweeps.
 
 ### Follow-ups after landing
+
+Recording cleanup can follow separately: exclude temporary streaming encoder files from Hub uploads, make periodic Sentry uploads honor `dataset.push_to_hub`, and distinguish cadence-reporting segments from saved episode counts in logs. Clarify that DAgger's duration includes pauses, corrections and saves, and can end a run before its correction-count target. These do not require repeating the completed recording acceptance batch.
 
 These are deployment and acceptance extensions, not additional prerequisites for the integration checklist above. Their behavior remains unvalidated until exercised with the corresponding real model and topology.
 
