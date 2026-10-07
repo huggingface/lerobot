@@ -645,3 +645,21 @@ def test_bucket_root_caches_metadata_without_switching_to_local_streaming(tmp_pa
 def test_invalid_repo_type_fails_before_io():
     with pytest.raises(ValueError, match="repo_type must be 'dataset' or 'bucket'"):
         StreamingLeRobotDataset(DUMMY_REPO_ID, repo_type="space")
+
+
+@pytest.mark.parametrize(
+    "history, lookahead",
+    [
+        (0, 0),
+        (1, 0),
+        (0, 1),
+        (1, 1),
+    ],
+)
+def test_backtrackable_zero_history_and_lookahead(history, lookahead):
+    """Regression test: Backtrackable should accept history=0 and lookahead=0 without raising."""
+    from lerobot.datasets.streaming_dataset import Backtrackable
+
+    bt = Backtrackable(iter([1, 2, 3]), history=history, lookahead=lookahead)
+    items = list(bt)
+    assert items == [1, 2, 3]
