@@ -391,7 +391,7 @@ def build_rollout_context(
         robot_action_processor = robot_action_processor or _r
         robot_observation_processor = robot_observation_processor or _o
 
-    # --- 3. Hardware descriptions (no connections yet) ----------------
+    # --- 3. Hardware descriptions (heaviest side-effect deferred) -----
     robot_config = cfg.robot
     if robot_config is None:
         raise ValueError("--robot.type is required for rollout")
@@ -597,10 +597,14 @@ def build_rollout_context(
         cleanup.callback(_disconnect_if_connected, robot)
         robot.connect()
         logger.info("Robot connected: %s", robot.name)
+
+        # Store the initial joint positions so we can return to a safe pose on shutdown.
         initial_obs = robot.get_observation()
         initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
         logger.info("Captured initial robot position (%d keys)", len(initial_position))
+
         if teleop is not None:
+            logger.info("Connecting teleoperator (%s)...", cfg.teleop.type if cfg.teleop else "?")
             cleanup.callback(_disconnect_if_connected, teleop)
             teleop.connect()
             logger.info("Teleoperator connected")
