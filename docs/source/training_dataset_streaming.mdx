@@ -17,9 +17,9 @@ during training. Recording and rollout encoders are not used by this training pa
 
 ## How an epoch is read
 
-Each distributed rank owns a deterministic, frame-balanced set of complete episodes. One logical
-exact-coverage pool per rank mixes those episodes while visiting every selected frame once per
-rank-local coverage epoch. Parquet columns and compressed MP4 byte ranges are prefetched from the
+Each distributed rank owns a deterministic, frame-balanced set of complete episodes. One
+exact-coverage pool per DataLoader worker mixes the worker's part of those episodes while visiting
+every selected frame once per coverage epoch. Parquet columns and compressed MP4 byte ranges are prefetched from the
 same byte-aware admission frontier. Temporal history and future windows are resolved inside the
 complete episode, including the same boundary padding masks as map-style loading.
 
@@ -27,32 +27,34 @@ The default map-style `LeRobotDataset` behavior is unchanged when `--dataset.str
 
 ## Workers, shards and concurrency
 
-Streaming does not use "classical" DataLoader workers. With a map-style dataset, each DataLoader
-worker process samples and decodes its own items. With streaming, the DataLoader runs at most
-**one worker process per rank**; all concurrency happens inside that process, behind the
-DataLoader, in thread pools owned by the dataset:
+Each rank owns a frame-balanced shard of complete episodes. Inside a rank, `--num_workers` sets the
+number of DataLoader worker processes, as for map-style datasets. Each worker owns a disjoint,
+frame-balanced part of the rank's episodes, with its own exact-coverage pool, its own share of the
+byte budget and its own thread pools:
 
 | Stage                      | Concurrency                                    | Setting                                    |
 | -------------------------- | ---------------------------------------------- | ------------------------------------------ |
 | Rank sharding              | One disjoint whole-episode shard per rank      | Distributed world size                     |
+| DataLoader workers         | One disjoint part of the rank shard per worker | `--num_workers`                            |
 | Episode fetch              | Parquet rows and MP4 byte ranges, in parallel  | `max_num_shards`, set from `--num_workers` |
 | Sample assembly and decode | Temporal windows and video frames, in parallel | `--dataset.streaming_decode_threads`       |
 | Ordered sample buffer      | Decoded samples kept ahead, in planner order   | `--dataset.streaming_decoded_queue_size`   |
-| DataLoader worker (0 or 1) | Collates batches off the training process      | `--prefetch_factor`                        |
 
-**Shards and workers.** Each rank owns a frame-balanced shard of complete episodes, so the number
-of episodes bounds the useful world size: a rank with no episode fails at startup. Inside a
-rank, `--num_workers` no longer means "N processes". In `lerobot-train` it sets
-`max_num_shards`, the number of episodes fetched concurrently (also capped by
-`streaming_episode_pool_size + streaming_prefetch_episodes`). Raising it speeds up episode
-admission. It does not split episodes further, add samplers, or multiply the byte budget.
-`--num_workers=0` keeps the dataset in the training process, and any positive value moves it
-into a single DataLoader worker.
+**Why several workers.** Sample assembly and the batch hand-off run Python code, and one process
+runs Python code on one thread at a time (the GIL). With one worker, the decode threads of a rank
+wait for each other, so the rank uses only about 2 CPU cores. Each worker is a separate process, so
+N workers assemble and decode samples in parallel.
 
-One worker per rank keeps a single episode pool, byte budget and decoder cache per rank, so
-memory stays bounded, episode mixing uses the whole pool, and the exactly-once order is
-deterministic and resumable from a single sample offset. Video decoding mostly releases the GIL, so
-decode threads scale within that process.
+**Pool size and batch diversity.** `streaming_episode_pool_size` sets the pool of each worker. If
+you do not set it, the rank mixes 32 episodes and each of the N workers gets 32/N of them, so the
+memory of the rank stays the same as with one worker. The DataLoader takes each batch from one
+worker, so a batch mixes episodes from one worker's pool. A larger pool mixes more episodes in each
+batch, but uses more memory and fetches more data before the first sample.
+
+**Limits.** The byte budget (`streaming_byte_budget_gb`) and an explicit `video_decoder_cache_size`
+stay per rank: each worker gets 1/N of them. A worker needs at least one episode, so `lerobot-train`
+uses at most as many workers as the rank has episodes. `--num_workers=0` keeps the dataset in the
+training process.
 
 ## MP4 sidecars and the first run
 
@@ -120,16 +122,16 @@ The production defaults are:
 
 | Option                              |        Default | Meaning                                             |
 | ----------------------------------- | -------------: | --------------------------------------------------- |
-| `streaming_episode_pool_size`       |             32 | Maximum complete episodes mixed by each rank        |
+| `streaming_episode_pool_size`       |    32 / N each | Maximum complete episodes mixed by each worker      |
 | `streaming_sampling_strategy`       |    `remaining` | Remaining-frame weighting or shuffled `round_robin` |
 | `streaming_prefetch_episodes`       |              8 | Episodes fetched ahead of the active pool           |
 | `streaming_byte_budget_gb`          |              8 | Maximum synthesized MP4 bytes per rank              |
 | `streaming_decode_threads`          |              2 | Parallel sample assembly and video decode workers   |
 | `streaming_decoded_queue_size`      |              8 | Decoded samples buffered ahead, in planner order    |
-| `video_decoder_cache_size`          | pool × cameras | Open video decoder LRU cap per rank                 |
+| `video_decoder_cache_size`          | pool × cameras | Open video decoder LRU cap per worker               |
 | `streaming_native_http_connections` |          unset | Native HTTP connection cap per rank                 |
 | `streaming_native_http_subranges`   |              1 | Concurrent subranges per native HTTP range read     |
-| `max_num_shards` (`--num_workers`)  |             16 | Episodes fetched concurrently per rank              |
+| `max_num_shards` (`--num_workers`)  |             16 | Episodes fetched concurrently per worker            |
 
 All options except `max_num_shards` are `--dataset.*` flags. `max_num_shards` is a
 `StreamingLeRobotDataset` argument; `lerobot-train` sets it from `--num_workers` (at least 1).
@@ -188,9 +190,10 @@ streaming payload-location flag is needed.
 
 The earlier streaming reader used a bounded row shuffle buffer. The episode reader instead has
 deterministic exact-coverage ordering derived from the seed and epoch. Checkpoint resume restores the
-per-rank sample offset using the checkpoint batch size. Changing distributed world size or
-batch size changes ownership or batch boundaries. For sample-exact comparisons, resume with the
-same world size and batch size. Keep the same internal fetch concurrency when comparing performance.
+per-rank sample offset using the checkpoint batch size. With several workers, each worker derives
+its own offset from it, because the DataLoader takes batches from its workers in turn. Changing the
+distributed world size, the batch size or `--num_workers` changes ownership or batch boundaries.
+For sample-exact comparisons, resume with the same world size, batch size and number of workers. Keep the same internal fetch concurrency when comparing performance.
 
 The checkpoint metadata does not identify the earlier multi-worker sampler. Its checkpoints
 cannot be distinguished reliably by the world-size and batch-size checks and must not be used

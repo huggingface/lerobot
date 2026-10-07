@@ -418,32 +418,6 @@ def test_rank_shards_are_greedily_balanced_by_frame_count() -> None:
     assert max(totals) - min(totals) <= 15
 
 
-def test_streaming_rejects_multiple_sampling_workers(tmp_path: Path, lerobot_dataset_factory) -> None:
-    root = tmp_path / "dataset"
-    lerobot_dataset_factory(
-        root=root,
-        repo_id=DUMMY_REPO_ID,
-        total_episodes=8,
-        total_frames=80,
-        use_videos=False,
-    )
-    streaming = StreamingLeRobotDataset(
-        DUMMY_REPO_ID,
-        root=root,
-        shuffle=False,
-        buffer_size=2,
-    )
-    loader = torch.utils.data.DataLoader(streaming, batch_size=None, num_workers=2)
-
-    iterator = iter(loader)
-    try:
-        with pytest.raises(RuntimeError, match="one DataLoader worker per rank"):
-            list(iterator)
-    finally:
-        iterator._shutdown_workers()
-        assert not any(worker.is_alive() for worker in iterator._workers)
-
-
 def test_streaming_persistent_workers_advance_epochs(tmp_path: Path, lerobot_dataset_factory) -> None:
     root = tmp_path / "dataset"
     map_dataset = lerobot_dataset_factory(

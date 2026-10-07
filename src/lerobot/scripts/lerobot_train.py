@@ -387,14 +387,15 @@ def make_dataloaders(
     else:
         shuffle = True
         sampler = None
-        # One DataLoader process owns the rank-level planner/cache; the dataset's bounded
-        # executors provide fetch and decode concurrency without duplicating episode caches.
-        train_num_workers = min(cfg.num_workers, 1)
-        if cfg.num_workers > 1 and is_main_process():
+        # Each DataLoader worker owns a frame-balanced part of the rank's episodes, with its own
+        # pool and GIL. A worker needs at least one episode, so the rank's episode count caps them.
+        rank_episodes = dataset.num_episodes_for_rank(parallel_dims.dp_rank, parallel_dims.dp_world_size)
+        train_num_workers = min(cfg.num_workers, max(1, rank_episodes))
+        if train_num_workers < cfg.num_workers and is_main_process():
             logging.info(
-                "Using one streaming DataLoader worker per rank; %d configured workers remain "
-                "available as the dataset's internal fetch concurrency.",
-                cfg.num_workers,
+                "Using %d streaming DataLoader workers per rank: a rank owns %d episodes.",
+                train_num_workers,
+                rank_episodes,
             )
         if (
             dataset.num_frames_for_rank(parallel_dims.dp_rank, parallel_dims.dp_world_size, train_num_workers)
