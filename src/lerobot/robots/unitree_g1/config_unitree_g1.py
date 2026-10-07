@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from math import isfinite
 
 from lerobot.cameras import CameraConfig
-from lerobot.envs.configs import G1EndEffector, UnitreeG1MujocoEnv
+from lerobot.envs import G1EndEffector, UnitreeG1MujocoEnv
 
 from ..config import RobotConfig
 from .g1_embodiments import get_g1_embodiment

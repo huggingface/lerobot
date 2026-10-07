@@ -76,13 +76,13 @@ from lerobot.configs import FeatureType, PolicyFeature, parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs import (
+    NEW_ROLLOUT_OPTION,
     check_env_attributes_and_types,
     close_envs,
     make_env,
     make_env_pre_post_processors,
     preprocess_observation,
 )
-from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import (
