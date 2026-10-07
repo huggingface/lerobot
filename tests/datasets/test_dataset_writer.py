@@ -15,6 +15,8 @@
 # limitations under the License.
 """Contract tests for DatasetWriter."""
 
+import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,8 +28,14 @@ from PIL import Image
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.configs import VideoEncoderConfig
-from lerobot.datasets.dataset_writer import _encode_video_worker
+from lerobot.datasets.dataset_writer import BaseDatasetWriter, DatasetWriter, _encode_video_worker
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.storage import (
+    _DATASET_WRITER_MODULES,
+    DEFAULT_STORAGE_FORMAT,
+    make_dataset_writer,
+    register_dataset_writer,
+)
 from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
 
@@ -304,3 +312,142 @@ def test_finalize_then_read_roundtrip(tmp_path):
     for i in range(5):
         item = dataset[i]
         assert torch.allclose(item["state"], known_states[i], atol=1e-5)
+
+
+# ── Writer registry ──────────────────────────────────────────────────
+
+
+class DummyWriter(BaseDatasetWriter):
+    """Minimal in-memory writer that records the lifecycle calls LeRobotDataset drives.
+
+    Implements the abstract core and overrides ``start_image_writer`` to record it;
+    the remaining optional hooks (``stop_image_writer``, ``flush``/``cancel_pending_videos``)
+    inherit the base no-op defaults, verifying they are genuinely optional.
+    """
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.episode_buffer = None
+        self.added_frames = []
+        self.saved_episodes = 0
+        self.image_writer_args = None
+        self.finalized = False
+
+    def add_frame(self, frame):
+        self.added_frames.append(frame)
+
+    def save_episode(self, episode_data=None, parallel_encoding=True):
+        self.saved_episodes += 1
+
+    def clear_episode_buffer(self, delete_images=True):
+        pass
+
+    def cleanup_interrupted_episode(self, episode_index):
+        pass
+
+    def start_image_writer(self, num_processes=0, num_threads=4):
+        self.image_writer_args = (num_processes, num_threads)
+
+    def finalize(self):
+        self.finalized = True
+
+
+def test_make_dataset_writer_default_returns_default_writer(tmp_path):
+    """The default storage format resolves to the concrete DatasetWriter."""
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=SIMPLE_FEATURES, root=tmp_path / "ds"
+    )
+    writer = make_dataset_writer(
+        DEFAULT_STORAGE_FORMAT,
+        meta=dataset.meta,
+        root=dataset.root,
+        rgb_encoder=None,
+        depth_encoder=None,
+        encoder_threads=None,
+        batch_encoding_size=1,
+    )
+    assert isinstance(writer, DatasetWriter)
+    assert isinstance(writer, BaseDatasetWriter)
+
+
+@pytest.mark.parametrize("storage_format", ["lance", "does-not-exist"])
+def test_make_dataset_writer_unsupported_raises(storage_format):
+    """Requesting a writer for a non-writable format fails with a clear error."""
+    with pytest.raises(ValueError, match=storage_format):
+        make_dataset_writer(storage_format)
+
+
+def test_register_dataset_writer_selects_custom_writer(monkeypatch):
+    """A custom writer can be registered and selected without touching LeRobotDataset."""
+    module = types.ModuleType("dummyfmt_writer")
+    module.DATASET_WRITER = DummyWriter
+    monkeypatch.setitem(sys.modules, "dummyfmt_writer", module)
+    register_dataset_writer("dummyfmt", "dummyfmt_writer")
+    try:
+        writer = make_dataset_writer("dummyfmt", meta="meta", root="root")
+        assert isinstance(writer, DummyWriter)
+        assert writer.kwargs == {"meta": "meta", "root": "root"}
+
+        with pytest.raises(ValueError, match="already registered"):
+            register_dataset_writer("dummyfmt", "some.other.module")
+        with pytest.raises(ValueError, match="already registered"):
+            register_dataset_writer(DEFAULT_STORAGE_FORMAT, "dummyfmt_writer")
+    finally:
+        _DATASET_WRITER_MODULES.pop("dummyfmt", None)
+
+
+def test_create_and_resume_with_custom_storage_format(tmp_path, monkeypatch):
+    """End-to-end: create()/resume() forward constructor args, persist storage_format,
+    start optional hooks, delegate the recording lifecycle, and reselect the custom
+    writer from persisted metadata."""
+    module = types.ModuleType("dummyfmt_writer")
+    module.DATASET_WRITER = DummyWriter
+    monkeypatch.setitem(sys.modules, "dummyfmt_writer", module)
+    register_dataset_writer("dummyfmt", "dummyfmt_writer")
+    root = tmp_path / "ds"
+    try:
+        dataset = LeRobotDataset.create(
+            repo_id=DUMMY_REPO_ID,
+            fps=DEFAULT_FPS,
+            features=SIMPLE_FEATURES,
+            root=root,
+            storage_format="dummyfmt",
+            image_writer_threads=2,
+        )
+
+        # Only the format-agnostic core is forwarded; lerobot encoder kwargs are
+        # reserved for the default writer, mirroring make_dataset_reader.
+        writer = dataset.writer
+        assert isinstance(writer, DummyWriter)
+        assert writer.kwargs == {"meta": dataset.meta, "root": dataset.root, "initial_frames": 0}
+        # Optional hook started through the integration path
+        assert writer.image_writer_args == (0, 2)
+        # storage_format persisted so the backend is resolvable on reload
+        assert dataset.meta.storage_format == "dummyfmt"
+        # lerobot-specific path templates are not stamped onto other formats
+        assert dataset.meta.data_path is None
+        assert dataset.meta.video_path is None
+
+        # Recording lifecycle is delegated to the custom writer
+        for _ in range(3):
+            dataset.add_frame(_make_frame(SIMPLE_FEATURES))
+        dataset.save_episode()
+        dataset.finalize()
+        assert len(writer.added_frames) == 3
+        assert writer.saved_episodes == 1
+        assert writer.finalized
+
+        # resume() reselects the custom writer from persisted metadata
+        resumed = LeRobotDataset.resume(repo_id=DUMMY_REPO_ID, root=root)
+        assert isinstance(resumed.writer, DummyWriter)
+        assert resumed.meta.storage_format == "dummyfmt"
+        # info.json round-trip keeps the templates absent (not defaulted back in)
+        assert resumed.meta.data_path is None
+        assert resumed.meta.video_path is None
+        assert resumed.writer.kwargs == {
+            "meta": resumed.meta,
+            "root": resumed.root,
+            "initial_frames": resumed.meta.total_frames,
+        }
+    finally:
+        _DATASET_WRITER_MODULES.pop("dummyfmt", None)

@@ -764,9 +764,9 @@ def control_loop(
             # Maintain fps timing
             precise_sleep(max(dt - (time.perf_counter() - step_start_time), 0.0))
     finally:
-        if dataset is not None and dataset.writer is not None and dataset.writer.image_writer is not None:
+        if dataset is not None and dataset.writer is not None:
             logging.info("Waiting for image writer to finish...")
-            dataset.writer.image_writer.stop()
+            dataset.writer.stop_image_writer()
 
     if dataset is not None and cfg.dataset.push_to_hub:
         logging.info("Finalizing dataset before pushing to hub")
