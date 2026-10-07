@@ -14,19 +14,14 @@
 
 """
 Public API for lerobot configuration types and base config classes.
-
-NOTE: TrainPipelineConfig, EvalPipelineConfig, and TrainRLServerPipelineConfig
-are intentionally NOT re-exported here to avoid circular dependencies
-(they import lerobot.envs and lerobot.policies at module level).
-Import them directly: ``from lerobot.configs.train import TrainPipelineConfig``
 """
-
-from lerobot.optim.ema import EMAConfig
 
 from . import parser  # registers the draccus codec of torch.dtype
 from .dataset import DatasetRecordConfig
 from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
+from .parallelism import ParallelismConfig, world_size_from_env
 from .policies import PreTrainedConfig
+from .rewards import RewardModelConfig
 from .types import (
     FeatureType,
     NormalizationMode,
@@ -35,9 +30,16 @@ from .types import (
     RTCAttentionSchedule,
 )
 from .video import (
+    DEFAULT_DEPTH_MAX,
+    DEFAULT_DEPTH_MIN,
+    DEFAULT_DEPTH_PIX_FMT,
+    DEFAULT_DEPTH_SHIFT,
     DEFAULT_DEPTH_UNIT,
+    DEFAULT_DEPTH_USE_LOG,
+    DEPTH_ENCODER_INFO_FIELD_NAMES,
     DEPTH_METER_UNIT,
     DEPTH_MILLIMETER_UNIT,
+    DEPTH_QMAX,
     VALID_VIDEO_CODECS,
     VIDEO_ENCODER_INFO_KEYS,
     DepthEncoderConfig,
@@ -50,6 +52,11 @@ from .video import (
     rgb_encoder_defaults,
 )
 
+# NOTE: TrainPipelineConfig, CheckpointFormat and TRAIN_CONFIG_NAME (configs.train) and EvalPipelineConfig
+# (configs.eval) are intentionally NOT re-exported here to avoid a cycle (those modules import lerobot.envs
+# and lerobot.policies).
+# Import from submodules: ``from lerobot.configs.train import TrainPipelineConfig``
+
 __all__ = [
     # Types
     "FeatureType",
@@ -60,11 +67,12 @@ __all__ = [
     # Config classes
     "DatasetRecordConfig",
     "DatasetConfig",
-    "EMAConfig",
     "EvalConfig",
     "JobConfig",
+    "ParallelismConfig",
     "PeftConfig",
     "PreTrainedConfig",
+    "RewardModelConfig",
     "TrackioConfig",
     "VideoEncoderConfig",
     "RGBEncoderConfig",
@@ -76,10 +84,20 @@ __all__ = [
     "encoder_config_from_video_info",
     "infer_depth_unit",
     "is_depth_map",
+    "world_size_from_env",
     # Constants
+    "DEFAULT_DEPTH_MAX",
+    "DEFAULT_DEPTH_MIN",
+    "DEFAULT_DEPTH_PIX_FMT",
+    "DEFAULT_DEPTH_SHIFT",
     "DEFAULT_DEPTH_UNIT",
+    "DEFAULT_DEPTH_USE_LOG",
+    "DEPTH_ENCODER_INFO_FIELD_NAMES",
     "DEPTH_METER_UNIT",
     "DEPTH_MILLIMETER_UNIT",
+    "DEPTH_QMAX",
     "VALID_VIDEO_CODECS",
     "VIDEO_ENCODER_INFO_KEYS",
+    # Modules
+    "parser",
 ]

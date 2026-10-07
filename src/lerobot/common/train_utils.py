@@ -46,10 +46,8 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from lerobot.__version__ import __version__
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs import PolicyFeature, PreTrainedConfig, RewardModelConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
-from lerobot.configs.types import PolicyFeature
 from lerobot.distributed.checkpoint import (
     is_sharded_module,
     load_sharded_ema,

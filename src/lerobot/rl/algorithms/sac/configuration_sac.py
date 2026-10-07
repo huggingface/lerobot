@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs import PreTrainedConfig
 from lerobot.policies.gaussian_actor.configuration_gaussian_actor import (
     CriticNetworkConfig,
     GaussianActorConfig,

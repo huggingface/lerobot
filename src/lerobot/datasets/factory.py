@@ -20,8 +20,7 @@ from typing import Literal, cast
 
 import torch
 
-from lerobot.configs import PreTrainedConfig
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs import PreTrainedConfig, RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.transforms import ImageTransforms
 from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFIX, OBS_STATE, REWARD

@@ -24,8 +24,7 @@ from typing import ClassVar
 
 import draccus
 
-from lerobot.configs import PreTrainedConfig, parser
-from lerobot.configs.dataset import DatasetRecordConfig
+from lerobot.configs import DatasetRecordConfig, PreTrainedConfig, parser
 from lerobot.inference import InferenceEngineConfig, RemoteInferenceConfig, SyncInferenceConfig
 from lerobot.robots.config import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig

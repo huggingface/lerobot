@@ -59,8 +59,7 @@ from lerobot.common.train_utils import (
     should_save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.configs import EvalConfig, JobConfig, parser
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs import EvalConfig, JobConfig, RewardModelConfig, parser
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.datasets import (
     EpisodeAwareSampler,

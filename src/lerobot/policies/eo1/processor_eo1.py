@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
-from lerobot.configs.types import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import (
     ComplementaryDataProcessorStep,

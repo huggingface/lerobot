@@ -100,8 +100,7 @@ from lerobot.cameras.reachy2_camera import Reachy2CameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.common.control_utils import sanity_check_dataset_robot_compatibility
-from lerobot.configs import parser
-from lerobot.configs.dataset import DatasetRecordConfig
+from lerobot.configs import DatasetRecordConfig, parser
 from lerobot.datasets import (
     LeRobotDataset,
     VideoEncodingManager,

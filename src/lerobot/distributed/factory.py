@@ -24,7 +24,7 @@ env vars in that mode); the yaml flow is superseded.
 import os
 from typing import TYPE_CHECKING
 
-from lerobot.configs.parallelism import world_size_from_env
+from lerobot.configs import world_size_from_env
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 
 from .utils import unwrap_peft_model

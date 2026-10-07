@@ -24,7 +24,7 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 
-from lerobot.configs.video import (
+from lerobot.configs import (
     DEFAULT_DEPTH_MAX,
     DEFAULT_DEPTH_MIN,
     DEFAULT_DEPTH_PIX_FMT,

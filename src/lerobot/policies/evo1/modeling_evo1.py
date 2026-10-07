@@ -23,7 +23,7 @@ from typing import Any, Unpack
 import torch
 from torch import Tensor
 
-from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 

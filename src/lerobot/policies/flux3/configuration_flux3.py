@@ -27,8 +27,7 @@ from typing import Any
 
 import torch
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamWConfig, FrozenWarmupConstantSchedulerConfig
 from lerobot.policies.flux3.f3 import packing
 from lerobot.utils.constants import ACTION, OBS_STATE

@@ -28,16 +28,24 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
-from lerobot.configs.accelerator import AcceleratorConfig, ActivationCheckpointingMode
-from lerobot.configs.parallelism import ParallelismConfig
-from lerobot.optim import LRSchedulerConfig, OptimizerConfig
-from lerobot.optim.ema import EMAConfig
+from lerobot.optim import EMAConfig, LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, TrackioConfig
+from .accelerator import (
+    AcceleratorConfig,
+    ActivationCheckpointingMode,
+)
+from .default import (
+    DatasetConfig,
+    EvalConfig,
+    JobConfig,
+    PeftConfig,
+    TrackioConfig,
+)
+from .parallelism import ParallelismConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 

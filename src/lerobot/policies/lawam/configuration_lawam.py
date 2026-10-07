@@ -24,8 +24,7 @@ from huggingface_hub.utils import validate_repo_id
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamWConfig, LRSchedulerConfig
 
 

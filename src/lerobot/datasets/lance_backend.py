@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, TypedDict
 import numpy as np
 import torch
 
-from lerobot.configs.video import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
+from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
 from lerobot.streaming.location import hf_dataset_uri
 from lerobot.utils.import_utils import _lancedb_available, require_package
 

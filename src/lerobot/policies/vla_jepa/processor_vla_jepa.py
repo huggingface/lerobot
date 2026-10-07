@@ -20,8 +20,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F  # noqa: N812
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.configs.types import NormalizationMode
+from lerobot.configs import NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.policies.vla_jepa.configuration_vla_jepa import VLAJEPAConfig
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
