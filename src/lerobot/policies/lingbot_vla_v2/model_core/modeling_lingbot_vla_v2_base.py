@@ -20,14 +20,6 @@ from transformers.models.qwen2.modeling_qwen2 import (  # noqa: E402
     Qwen2RMSNorm,
 )
 
-try:
-    from dinov3.hub.backbones import (
-        dinov3_vitb16,
-        dinov3_vits16,
-        dinov3_vits16plus,
-    )
-except ImportError:
-    dinov3_vits16 = dinov3_vits16plus = dinov3_vitb16 = None
 from .utils import (  # noqa: E402
     create_sinusoidal_pos_embedding,
     make_att_2d_masks,
@@ -35,7 +27,6 @@ from .utils import (  # noqa: E402
 )
 
 LingBotVLAWeightLoader = None  # noqa: N816  # lerobot PreTrainedPolicy handles weight loading
-from .depth_heads import TaskTokenDepthHead  # noqa: E402  # native-depth / DINO-video distillation heads
 from .qwen2_action_expert import (  # noqa: E402
     FixQwen2RMSNorm,
     Qwen2ForCausalLM,
@@ -131,251 +122,6 @@ class FlowMatching(nn.Module):
         super().__init__()
         raise TypeError("FlowMatching is a helper base for FlowMatchingV2 and is not instantiated directly.")
 
-    def init_depth_heads(self, config):
-        if TaskTokenDepthHead is None:
-            raise NotImplementedError(
-                "TaskTokenDepthHead is not ported in this LeRobot integration; "
-                "align_params depth heads are unavailable."
-            )
-        self.llm_image_token_size = config["llm"]["image_token_size"]
-        self.llm_image_input_size = config["llm"]["image_input_size"]
-        self.depth_token_size = config["depth"]["token_size"]
-        self.depth_input_size = config["depth"]["input_size"]
-        self.align_type = config.get("mode", None)
-        self.model_type = config["depth"]["model_type"]
-        if self.align_type != "query":
-            raise ValueError(f"Only query depth alignment is supported, got {self.align_type!r}.")
-        if self.model_type != "MoRGBD":
-            raise ValueError(f"Only MoRGBD depth distillation is supported, got {self.model_type!r}.")
-        self.use_future_depth = (config.get("depth") or {}).get("use_future_depth", False)
-        self.block_future_depth_to_action = (config.get("depth") or {}).get(
-            "block_future_depth_to_action", False
-        )
-        self.detach_future_depth_image_feats = bool(
-            (config.get("depth") or {}).get("detach_future_image_feats", False)
-        )
-        self.use_future_video = bool(config.get("use_future_video", False))
-        self.use_future_video_patch = False
-        self.use_current_video_patch = False
-        self.use_current_shared_task_proj = False
-        self.use_future_video_cls = False
-        self.use_shared_future_task_proj = False
-        self.future_video_share_future_depth_query = False
-        self.num_task_tokens = config["num_task_tokens"]
-        assert config["depth"]["num_backbone_tokens"] % self.num_task_tokens == 0
-        self.depth_align_embs = nn.Parameter(
-            torch.randn(config["depth"]["num_backbone_tokens"], config["llm"]["dim_out"])
-        )
-        self.depth_align_embs.requires_grad = True
-
-        self.depth_align_head = TaskTokenDepthHead(
-            config["depth"], llm_hidden_size=config["llm"]["dim_out"]
-        ).to(dtype=torch.bfloat16)
-
-        for p in self.depth_align_head.parameters():
-            p.requires_grad = True
-
-        if self.use_future_depth:
-            self.future_depth_align_embs = nn.Parameter(
-                torch.randn(config["depth"]["num_backbone_tokens"], config["llm"]["dim_out"])
-            )
-            self.future_depth_align_embs.requires_grad = True
-
-            self.future_depth_align_head = TaskTokenDepthHead(
-                config["depth"], llm_hidden_size=config["llm"]["dim_out"]
-            ).to(dtype=torch.bfloat16)
-
-            for p in self.future_depth_align_head.parameters():
-                p.requires_grad = True
-
-    def init_video_heads(self, config):
-        if TaskTokenDepthHead is None:
-            raise NotImplementedError(
-                "TaskTokenDepthHead is not ported in this LeRobot integration; "
-                "align_params video heads are unavailable."
-            )
-        if self.align_type != "query":
-            raise ValueError("future-video alignment is only supported for query align mode.")
-
-        video_config = dict(config.get("depth", {}))
-        video_config.update(config.get("video", {}))
-        required_keys = ("num_backbone_tokens", "dim_out", "num_layers", "num_heads", "dim_head", "ff_mult")
-        missing = [key for key in required_keys if key not in video_config]
-        if missing:
-            raise ValueError(f"video align config missing required keys: {missing}")
-        self.use_future_video_patch = bool(video_config.get("use_patch_loss", True))
-        self.use_current_video_patch = bool(video_config.get("use_current_patch_loss", False))
-        if self.use_current_video_patch and not self.use_future_video_patch:
-            raise ValueError(
-                "align_params.video.use_current_patch_loss=True requires "
-                "align_params.video.use_patch_loss=True."
-            )
-        self.use_current_shared_task_proj = bool(
-            video_config.get("use_current_shared_task_proj", self.use_current_video_patch)
-        )
-        if self.use_current_shared_task_proj and not self.use_current_video_patch:
-            raise ValueError(
-                "align_params.video.use_current_shared_task_proj=True requires "
-                "align_params.video.use_current_patch_loss=True."
-            )
-        self.use_future_video_cls = bool(video_config.get("use_cls_loss", False))
-        self.future_video_share_future_depth_query = bool(video_config.get("share_future_depth_query", False))
-        self.use_shared_future_task_proj = bool(video_config.get("use_shared_future_task_proj", False))
-        if self.use_shared_future_task_proj and not self.use_future_video_patch:
-            raise ValueError(
-                "align_params.video.use_shared_future_task_proj=True requires "
-                "align_params.video.use_patch_loss=True."
-            )
-        if self.use_shared_future_task_proj and not self.future_video_share_future_depth_query:
-            raise ValueError(
-                "align_params.video.use_shared_future_task_proj=True requires "
-                "align_params.video.share_future_depth_query=True."
-            )
-        if self.future_video_share_future_depth_query:
-            if not self.use_future_depth:
-                raise ValueError(
-                    "align_params.video.share_future_depth_query=True requires "
-                    "align_params.depth.use_future_depth=True."
-                )
-            if int(video_config["num_backbone_tokens"]) != int(config["depth"]["num_backbone_tokens"]):
-                raise ValueError(
-                    "future-video shared query requires video.num_backbone_tokens "
-                    "to match depth.num_backbone_tokens."
-                )
-
-        self.block_suffix_to_future_video = bool(video_config.get("block_suffix_to_future_video", False))
-        self.future_video_context_mode = str(video_config.get("context_mode", "img_query")).lower()
-        if self.future_video_context_mode not in ("img_query", "query_only"):
-            raise ValueError(
-                "future-video context_mode must be 'img_query' or 'query_only', "
-                f"got {self.future_video_context_mode!r}."
-            )
-        if self.use_future_video_patch:
-            if self.use_current_video_patch:
-                self.current_video_align_embs = nn.Parameter(
-                    torch.randn(video_config["num_backbone_tokens"], config["llm"]["dim_out"])
-                )
-                self.current_video_align_embs.requires_grad = True
-                if self.use_current_shared_task_proj:
-                    self.current_shared_task_proj = nn.Linear(
-                        config["llm"]["dim_out"] * 2,
-                        config["llm"]["dim_out"],
-                    )
-                    for p in self.current_shared_task_proj.parameters():
-                        p.requires_grad = True
-                self.current_video_align_head = TaskTokenDepthHead(
-                    video_config, llm_hidden_size=config["llm"]["dim_out"]
-                ).to(dtype=torch.bfloat16)
-                for p in self.current_video_align_head.parameters():
-                    p.requires_grad = True
-
-            if not self.future_video_share_future_depth_query or self.use_shared_future_task_proj:
-                self.future_video_align_embs = nn.Parameter(
-                    torch.randn(video_config["num_backbone_tokens"], config["llm"]["dim_out"])
-                )
-                self.future_video_align_embs.requires_grad = True
-            if self.use_shared_future_task_proj:
-                self.future_shared_task_proj = nn.Linear(
-                    config["llm"]["dim_out"] * 2,
-                    config["llm"]["dim_out"],
-                )
-                for p in self.future_shared_task_proj.parameters():
-                    p.requires_grad = True
-            self.future_video_align_head = TaskTokenDepthHead(
-                video_config, llm_hidden_size=config["llm"]["dim_out"]
-            ).to(dtype=torch.bfloat16)
-            for p in self.future_video_align_head.parameters():
-                p.requires_grad = True
-
-        if self.use_future_video_cls:
-            self.future_video_cls_align_emb = nn.Embedding(1, config["llm"]["dim_out"])
-            self.future_video_cls_head = nn.Sequential(
-                nn.LayerNorm(config["llm"]["dim_out"]),
-                nn.Linear(config["llm"]["dim_out"], video_config["dim_out"]),
-            ).to(dtype=torch.bfloat16)
-            for p in self.future_video_cls_head.parameters():
-                p.requires_grad = True
-
-    def _future_depth_token_count(self):
-        return self.num_task_tokens if getattr(self, "use_future_depth", False) else 0
-
-    def _future_video_own_token_count(self):
-        if not getattr(self, "use_future_video", False):
-            return 0
-        count = 1 if getattr(self, "use_future_video_cls", False) else 0
-        if getattr(self, "use_future_video_patch", True) and not getattr(
-            self, "future_video_share_future_depth_query", False
-        ):
-            count += self.num_task_tokens
-        return count
-
-    def _future_video_own_span(self, hidden_states):
-        own_count = self._future_video_own_token_count()
-        future_depth_count = self._future_depth_token_count()
-        end = hidden_states.shape[1] - future_depth_count
-        start = end - own_count
-        return start, end
-
-    def _future_depth_task_tokens(self, hidden_states):
-        if not getattr(self, "use_future_depth", False):
-            raise ValueError("future-depth query tokens are not enabled.")
-        return hidden_states[:, -self.num_task_tokens :, :]
-
-    def _future_video_cls_task_tokens(self, hidden_states):
-        if not getattr(self, "use_future_video_cls", False):
-            return None
-        start, _ = self._future_video_own_span(hidden_states)
-        return hidden_states[:, start : start + 1, :]
-
-    def _future_video_patch_task_tokens(self, hidden_states):
-        if getattr(self, "future_video_share_future_depth_query", False):
-            return self._future_depth_task_tokens(hidden_states)
-        start, end = self._future_video_own_span(hidden_states)
-        if getattr(self, "use_future_video_cls", False):
-            start += 1
-        return hidden_states[:, start:end, :]
-
-    def _current_depth_task_tokens(self, hidden_states, num_images=3):
-        chunk_size = self.llm_image_token_size * self.llm_image_token_size
-        image_token_len = chunk_size + (
-            2 if getattr(self.config, "qwen3vl_use_vision_boundaries", False) else 0
-        )
-        if getattr(self, "use_future_depth", False):
-            start = num_images * image_token_len
-            return hidden_states[:, start : start + self.num_task_tokens, :]
-        end = hidden_states.shape[1] - self._future_video_own_token_count()
-        start = end - self.num_task_tokens
-        return hidden_states[:, start:end, :]
-
-    def _future_video_query_span(self, prefix_len):
-        if not getattr(self, "use_future_video", False):
-            return prefix_len, prefix_len
-        future_depth_count = self._future_depth_token_count()
-        own_count = self._future_video_own_token_count()
-        end = prefix_len - future_depth_count
-        return end - own_count, end
-
-    def _block_suffix_to_future_video_(self, att_2d_masks, suffix_row_start, prefix_len):
-        start, end = self._future_video_query_span(prefix_len)
-        if end <= start:
-            return att_2d_masks
-        att_2d_masks[:, suffix_row_start:, start:end] = False
-        return att_2d_masks
-
-    def _block_suffix_to_future_video_if_enabled_(
-        self,
-        att_2d_masks,
-        suffix_row_start,
-        prefix_len,
-    ):
-        if not getattr(self, "block_suffix_to_future_video", False):
-            return att_2d_masks
-        return self._block_suffix_to_future_video_(
-            att_2d_masks,
-            suffix_row_start=suffix_row_start,
-            prefix_len=prefix_len,
-        )
-
     def _init_weights(self, module):
         std = self.config.initializer_range
         if isinstance(module, (nn.Linear, nn.Conv3d)):
@@ -433,61 +179,25 @@ class FlowMatching(nn.Module):
         num_img_embs = img_emb.shape[1]
         if img_masks.ndim == 1:  # For inference bs=1
             img_masks = img_masks.unsqueeze(0)
-        if self.use_depth_align and self.align_type == "query":
-            align_masks = einops.repeat(img_masks, "b n -> b (n l)", l=self.num_task_tokens)
         img_masks = einops.repeat(img_masks, "b n -> b (n l)", l=num_patch)
 
         # embed language
         lang_emb = self.qwenvl_with_expert.embed_language_tokens(lang_tokens)
         num_lang_embs = lang_emb.shape[1]
 
-        if self.use_depth_align and self.align_type == "query":
-
-            def _get_align_tokens(tokens):
-                tk_weights = tokens.view(
-                    self.num_task_tokens, tokens.shape[0] // self.num_task_tokens, tokens.shape[1]
-                )
-                tk_weights = tk_weights.mean(dim=1)
-                return tk_weights
-
-            align_embs = (
-                _get_align_tokens(self.depth_align_embs)
-                .repeat(img_emb.size(0), 1, 1)
-                .to(img_emb.device, img_emb.dtype)
-            )
-            # align_masks = einops.rearrange(img_masks, "b (n l) -> b n l", n=3)
-            # align_masks = align_masks[:, :, 0]
-            # align_masks = einops.repeat(align_masks, "b n -> b (n l)", l=self.num_task_tokens)
-            embs = torch.cat([img_emb, align_embs, align_embs, align_embs, lang_emb], dim=1)
-            pad_masks = torch.cat([img_masks, align_masks, lang_masks], dim=1)
-        else:
-            # assemble embeddings
-            embs = torch.cat([img_emb, lang_emb], dim=1)
-            pad_masks = torch.cat([img_masks, lang_masks], dim=1)
+        # assemble embeddings
+        embs = torch.cat([img_emb, lang_emb], dim=1)
+        pad_masks = torch.cat([img_masks, lang_masks], dim=1)
 
         # (see `make_att_2d_masks` to understand why zeros means bidirection)
         if not vlm_causal:
-            if self.use_depth_align and self.align_type == "query":
-                att_masks = torch.zeros(
-                    (img_emb.size(0), num_img_embs + 3 * self.num_task_tokens + num_lang_embs),
-                    device=device,
-                    dtype=torch.bool,
-                )  # 1, bs_img*(768+48)
-            else:
-                att_masks = torch.zeros(
-                    (img_emb.size(0), num_img_embs + num_lang_embs), device=device, dtype=torch.bool
-                )  # 1, bs_img*(768+48)
+            att_masks = torch.zeros(
+                (img_emb.size(0), num_img_embs + num_lang_embs), device=device, dtype=torch.bool
+            )  # 1, bs_img*(768+48)
         else:
-            if self.use_depth_align and self.align_type == "query":
-                att_masks = torch.ones(
-                    (img_emb.size(0), num_img_embs + 3 * self.num_task_tokens + num_lang_embs),
-                    device=device,
-                    dtype=torch.bool,
-                )  # 1, bs_img*(768+48)
-            else:
-                att_masks = torch.ones(
-                    (img_emb.size(0), num_img_embs + num_lang_embs), device=device, dtype=torch.bool
-                )  # 1, bs_img*(768+48)
+            att_masks = torch.ones(
+                (img_emb.size(0), num_img_embs + num_lang_embs), device=device, dtype=torch.bool
+            )  # 1, bs_img*(768+48)
         return embs, pad_masks, att_masks
 
     def embed_suffix(
@@ -559,9 +269,7 @@ class FlowMatching(nn.Module):
         time=None,
         vlm_causal=False,
         loss_type="fm",
-        depth_targets=None,
         precompute_grid_thw=False,
-        future_depth_targets=None,
     ) -> Tensor:
         dtype = state.dtype
         device = state.device
@@ -595,7 +303,7 @@ class FlowMatching(nn.Module):
 
         # prefix_embs = prefix_embs.reshape(state.size(0), -1, prefix_embs.size(-1))
         # suffix_embs = suffix_embs.reshape(state.size(0), -1, suffix_embs.size(-1))
-        (outputs_embeds, suffix_out), _, router_logits_list = self.qwenvl_with_expert.forward(
+        (_, suffix_out), _, router_logits_list = self.qwenvl_with_expert.forward(
             attention_mask=att_2d_masks,
             position_ids=position_ids,
             vlm_position_ids=vlm_position_ids,
@@ -605,13 +313,6 @@ class FlowMatching(nn.Module):
             fill_kv_cache=True,
             ada_cond=time_embs if getattr(self.config, "adanorm_time", False) else None,
         )
-        if self.config.align_params != {}:
-            loss_depth, depth_preds = self.depth_emb_forward(outputs_embeds, depth_targets, img_masks)
-            loss_depth = loss_depth * self.config.align_params["depth_loss_weight"]
-            self.steps += 1
-        else:
-            loss_depth = 0
-            depth_preds = None
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
         if getattr(self.config, "action_fp32", False):
             v_t = self._fp32_linear(self.action_out_proj, suffix_out)
@@ -721,7 +422,7 @@ class FlowMatching(nn.Module):
                 if token_expert_counts:
                     moe_metrics["_token_moe_expert_counts"] = token_expert_counts
 
-        return losses, loss_depth, depth_preds, seq_wise_loss, moe_metrics
+        return losses, seq_wise_loss, moe_metrics
 
     def sample_actions(
         self, images, img_masks, lang_tokens, lang_masks, state, vlm_causal=False, noise=None
@@ -807,199 +508,6 @@ class FlowMatching(nn.Module):
         else:
             v_t = self.action_out_proj(suffix_out)
         return v_t
-
-    def depth_emb_forward(self, hidden_states, depth_targets=None, img_masks=None, future_depth_targets=None):
-        chunk_size = self.llm_image_token_size * self.llm_image_token_size
-        num_images = img_masks.shape[1] if img_masks is not None and img_masks.ndim == 2 else 3
-        image_embs = hidden_states[:, chunk_size * 0 + 1 : chunk_size * 1 + 1, :]
-        align_embs = self._current_depth_task_tokens(hidden_states, num_images=num_images)
-        align_embs = torch.cat([image_embs, align_embs], dim=1)
-        depth_preds = self.depth_align_embs.repeat(align_embs.shape[0], 1, 1).to(
-            dtype=align_embs.dtype, device=align_embs.device
-        )
-        depth_preds = self.depth_align_head(align_embs, depth_preds).contiguous().float()
-        current_loss = self._emb_loss(depth_preds, depth_targets)
-
-        if self.use_future_depth:
-            future_align_embs = self._future_depth_task_tokens(hidden_states)
-            future_image_embs = (
-                image_embs.detach() if getattr(self, "detach_future_depth_image_feats", False) else image_embs
-            )
-            future_align_embs = torch.cat([future_image_embs, future_align_embs], dim=1)
-            future_depth_preds = self.future_depth_align_embs.repeat(future_align_embs.shape[0], 1, 1).to(
-                dtype=future_align_embs.dtype, device=future_align_embs.device
-            )
-            future_depth_preds = (
-                self.future_depth_align_head(future_align_embs, future_depth_preds).contiguous().float()
-            )
-            future_loss = self._emb_loss(future_depth_preds, future_depth_targets)
-            return current_loss, future_loss, depth_preds, future_depth_preds
-
-        return current_loss, 0, depth_preds, None
-
-    def video_emb_forward(
-        self,
-        hidden_states,
-        future_video_targets=None,
-        future_video_cls_targets=None,
-        future_video_current_patch=None,
-    ):
-        if self.align_type != "query":
-            raise ValueError("future-video alignment is only supported for query align mode.")
-
-        use_patch = getattr(self, "use_future_video_patch", True)
-        use_cls = getattr(self, "use_future_video_cls", False)
-        if not use_patch and not use_cls:
-            raise ValueError("future-video alignment requires use_patch_loss or use_cls_loss to be enabled.")
-        if use_patch and future_video_targets is None:
-            raise ValueError("future_video_targets is required when use_patch_loss=True.")
-
-        align_params = getattr(getattr(self, "config", None), "align_params", {}) or {}
-        video_cfg = align_params.get("video", {}) if hasattr(align_params, "get") else {}
-        chunk_size = self.llm_image_token_size * self.llm_image_token_size
-        image_embs = hidden_states[:, chunk_size * 0 + 1 : chunk_size * 1 + 1, :]
-        image_embs_for_video = (
-            image_embs.detach() if bool(video_cfg.get("detach_image_feats", False)) else image_embs
-        )
-
-        cls_preds = None
-        if use_cls:
-            if future_video_cls_targets is None:
-                raise ValueError("future_video_cls_targets is required when use_cls_loss=True.")
-            cls_task_embs = self._future_video_cls_task_tokens(hidden_states)
-            cls_delta = self.future_video_cls_head(cls_task_embs.squeeze(1))
-            cls_preds = cls_delta.contiguous().float()
-
-        loss = None
-        metrics = {}
-        video_preds = None
-        if use_patch:
-            video_task_embs = self._future_video_patch_task_tokens(hidden_states)
-            context_mode = str(
-                video_cfg.get(
-                    "context_mode",
-                    getattr(self, "future_video_context_mode", "img_query"),
-                )
-            ).lower()
-            if context_mode == "query_only":
-                video_align_embs = video_task_embs
-            else:
-                video_align_embs = torch.cat([image_embs_for_video, video_task_embs], dim=1)
-            if getattr(self, "future_video_share_future_depth_query", False) and not getattr(
-                self, "use_shared_future_task_proj", False
-            ):
-                query_embs = self.future_depth_align_embs
-            else:
-                query_embs = self.future_video_align_embs
-            video_preds = query_embs.repeat(video_align_embs.shape[0], 1, 1).to(
-                dtype=video_align_embs.dtype, device=video_align_embs.device
-            )
-            video_preds = self.future_video_align_head(video_align_embs, video_preds).contiguous().float()
-            loss, metrics = self._video_emb_loss(video_preds, future_video_targets)
-        if use_cls:
-            cls_loss, cls_metrics = self._video_cls_loss(cls_preds, future_video_cls_targets)
-            loss = cls_loss if loss is None else loss + cls_loss
-            metrics.update(cls_metrics)
-        return loss, video_preds, metrics
-
-    def current_video_emb_forward(
-        self,
-        hidden_states,
-        current_video_targets=None,
-    ):
-        if self.align_type != "query":
-            raise ValueError("current-video alignment is only supported for query align mode.")
-        if not getattr(self, "use_current_video_patch", False):
-            raise ValueError("current-video alignment requires use_current_patch_loss=True.")
-        if current_video_targets is None:
-            raise ValueError("current_video_targets is required for current-video alignment.")
-
-        chunk_size = self.llm_image_token_size * self.llm_image_token_size
-        image_embs = hidden_states[:, chunk_size * 0 + 1 : chunk_size * 1 + 1, :]
-        current_task_embs = self._current_depth_task_tokens(hidden_states)
-        align_embs = torch.cat([image_embs, current_task_embs], dim=1)
-        queries = self.current_video_align_embs.repeat(align_embs.shape[0], 1, 1).to(
-            dtype=align_embs.dtype,
-            device=align_embs.device,
-        )
-        preds = self.current_video_align_head(align_embs, queries).contiguous().float()
-        loss, metrics = self._video_emb_loss(
-            preds,
-            current_video_targets,
-            metric_prefix="current_video",
-        )
-        return loss, preds, metrics
-
-    def _video_emb_loss(self, video_preds, future_video_targets, metric_prefix="future_video"):
-        align_params = getattr(getattr(self, "config", None), "align_params", {}) or {}
-        video_cfg = align_params.get("video", {}) if hasattr(align_params, "get") else {}
-        use_smooth_l1 = bool(video_cfg.get("use_smooth_l1_loss", True))
-        use_mse = bool(video_cfg.get("use_mse_loss", False))
-        use_cosine = bool(video_cfg.get("use_cosine_loss", False))
-        if not use_smooth_l1 and not use_mse and not use_cosine:
-            raise ValueError(f"{metric_prefix} loss requires smooth-L1, MSE, and/or cosine loss.")
-
-        metrics = {}
-        loss = None
-        if use_smooth_l1:
-            smooth_l1_loss = self._emb_loss(video_preds, future_video_targets)
-            metrics[f"align/{metric_prefix}_smooth_l1_loss"] = smooth_l1_loss.detach()
-            loss = smooth_l1_loss
-        if use_mse:
-            target = future_video_targets.to(dtype=video_preds.dtype, device=video_preds.device)
-            mse_loss = F.mse_loss(video_preds.float(), target.float().detach())
-            mse_weight = float(video_cfg.get("mse_loss_weight", 1.0))
-            metrics[f"align/{metric_prefix}_mse_loss"] = mse_loss.detach()
-            metrics[f"align/{metric_prefix}_mse_loss_weighted"] = (mse_loss * mse_weight).detach()
-            weighted_mse_loss = mse_loss * mse_weight
-            loss = weighted_mse_loss if loss is None else loss + weighted_mse_loss
-        if use_cosine:
-            target = future_video_targets.to(dtype=video_preds.dtype, device=video_preds.device)
-            pred_norm = F.normalize(video_preds.float(), dim=-1, eps=1e-6)
-            target_norm = F.normalize(target.float().detach(), dim=-1, eps=1e-6)
-            cosine_loss = 1.0 - F.cosine_similarity(pred_norm, target_norm, dim=-1, eps=1e-6).mean()
-            cosine_weight = float(video_cfg.get("cosine_loss_weight", 1.0))
-            metrics[f"align/{metric_prefix}_cosine_loss"] = cosine_loss.detach()
-            metrics[f"align/{metric_prefix}_cosine_loss_weighted"] = (cosine_loss * cosine_weight).detach()
-            weighted_cosine_loss = cosine_loss * cosine_weight
-            loss = weighted_cosine_loss if loss is None else loss + weighted_cosine_loss
-        return loss, metrics
-
-    def _video_cls_loss(self, cls_preds, future_video_cls_targets):
-        align_params = getattr(getattr(self, "config", None), "align_params", {}) or {}
-        video_cfg = align_params.get("video", {}) if hasattr(align_params, "get") else {}
-        cls_loss_type = str(video_cfg.get("cls_loss_type", "cosine")).lower()
-        cls_weight = float(video_cfg.get("cls_loss_weight", 1.0))
-        target = future_video_cls_targets.to(dtype=cls_preds.dtype, device=cls_preds.device)
-        if target.ndim == 3 and target.shape[1] == 1:
-            target = target.squeeze(1)
-
-        metrics = {}
-        loss = None
-        if cls_loss_type in ("smooth_l1", "smoothl1", "huber"):
-            smooth_l1_loss = F.smooth_l1_loss(cls_preds.float(), target.float().detach())
-            metrics["align/future_video_cls_smooth_l1_loss"] = smooth_l1_loss.detach()
-            loss = smooth_l1_loss
-        if cls_loss_type in ("mse", "mse_cosine", "cosine_mse"):
-            mse_loss = F.mse_loss(cls_preds.float(), target.float().detach())
-            metrics["align/future_video_cls_mse_loss"] = mse_loss.detach()
-            loss = mse_loss
-        if cls_loss_type in ("cosine", "mse_cosine", "cosine_mse"):
-            pred_norm = F.normalize(cls_preds.float(), dim=-1, eps=1e-6)
-            target_norm = F.normalize(target.float().detach(), dim=-1, eps=1e-6)
-            cosine_loss = 1.0 - F.cosine_similarity(pred_norm, target_norm, dim=-1, eps=1e-6).mean()
-            metrics["align/future_video_cls_cosine_loss"] = cosine_loss.detach()
-            loss = cosine_loss if loss is None else loss + cosine_loss
-        if loss is None:
-            raise ValueError(f"Unsupported future-video CLS loss type: {cls_loss_type}")
-        weighted_loss = loss * cls_weight
-        metrics["align/future_video_cls_loss"] = loss.detach()
-        metrics["align/future_video_cls_loss_weighted"] = weighted_loss.detach()
-        return weighted_loss, metrics
-
-    def _emb_loss(self, emb_preds, emb_targets):
-        l1_loss = F.smooth_l1_loss(emb_preds.float(), emb_targets.float().detach(), reduction="none")
-        return l1_loss.mean()
 
 
 __all__ = [

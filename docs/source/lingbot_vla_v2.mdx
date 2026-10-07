@@ -4,9 +4,7 @@ LingBot-VLA 2.0 is an open-source vision-language-action model integrated into L
 the `lingbot_vla_v2` policy. It pairs a **Qwen3-VL-4B** multimodal backbone (native-resolution
 image tokens via `image_grid_thw`) with a **sparse-MoE Qwen2 action expert** (32 experts,
 top-4, sigmoid router) and **Flow-Matching** continuous action generation over a unified
-**55-D** state/action space, supporting cross-embodiment and bimanual manipulation. An
-optional predictive-dynamics branch (depth / DINO-video distillation) is available but off by
-default for the no-distillation checkpoint.
+**55-D** state/action space, supporting cross-embodiment and bimanual manipulation.
 
 It is the successor to the [`LingBot-VA`](./lingbot_va) (v1) policy from the same authors and
 slots into the same post-train → evaluate → deploy flow as π0, SmolVLA, WALL-OSS and v1.
