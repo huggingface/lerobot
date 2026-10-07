@@ -27,7 +27,7 @@ References:
 
 import math
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import einops
 import torch
@@ -78,13 +78,16 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self._queues = None
+        self._queues: dict[str, deque[Tensor]] = {}
 
         self.observation_encoder = ObservationEncoder(config)
         conditioning_dim = self.observation_encoder.conditioning_dim
         self.noise_predictor = DiffusionTransformer(config, conditioning_dim=conditioning_dim)
 
-        action_dim = config.action_feature.shape[0]
+        action_feature = config.action_feature
+        if action_feature is None:
+            raise ValueError("MultiTaskDiT requires an action output feature.")
+        action_dim = action_feature.shape[0]
         horizon = config.horizon
 
         if config.is_diffusion:
@@ -106,7 +109,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> list:
+    def get_optim_params(self) -> list[dict[str, Any]]:
         """Returns parameter groups with different learning rates for vision vs non-vision parameters"""
         non_vision_params = []
         vision_encoder_params = []

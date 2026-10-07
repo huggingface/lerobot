@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from functools import cached_property
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
@@ -25,11 +24,9 @@ from ..rebot_b601_follower import RebotB601Follower, RebotB601FollowerRobotConfi
 from ..robot import Robot
 from .config_bi_rebot_b601_follower import BiRebotB601FollowerConfig
 
-logger = logging.getLogger(__name__)
-
 
 class BiRebotB601Follower(BimanualMixin, Robot):
-    """Bimanual Seeed Studio reBot B601-DM follower.
+    """Bimanual Seeed Studio reBot B601 follower.
 
     Composes two single-arm :class:`RebotB601Follower` instances. Observation and
     action keys of each arm are namespaced with a ``left_`` / ``right_`` prefix.
@@ -52,47 +49,46 @@ class BiRebotB601Follower(BimanualMixin, Robot):
             raise ValueError(
                 f"Top-level camera names collide with per-arm camera names: {sorted(_collisions)}"
             )
-        left_arm_cameras = {**config.left_arm_config.cameras, **config.cameras}
-
         left_arm_config = RebotB601FollowerRobotConfig(
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
+            motor_family=config.left_arm_config.motor_family,
             can_adapter=config.left_arm_config.can_adapter,
             dm_serial_baud=config.left_arm_config.dm_serial_baud,
             disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
             max_relative_target=config.left_arm_config.max_relative_target,
-            cameras=left_arm_cameras,
+            cameras={**config.left_arm_config.cameras, **config.cameras},
             motor_can_ids=config.left_arm_config.motor_can_ids,
-            pos_vel_velocity=config.left_arm_config.pos_vel_velocity,
             control_mode=config.left_arm_config.control_mode,
+            gripper_control_mode=config.left_arm_config.gripper_control_mode,
             mit_kp=config.left_arm_config.mit_kp,
             mit_kd=config.left_arm_config.mit_kd,
-            gripper_control_mode=config.left_arm_config.gripper_control_mode,
+            pos_vel_velocity=config.left_arm_config.pos_vel_velocity,
             gripper_torque_ratio=config.left_arm_config.gripper_torque_ratio,
-            gripper_mit_kp=config.left_arm_config.gripper_mit_kp,
-            gripper_mit_kd=config.left_arm_config.gripper_mit_kd,
+            gripper_torque_limit=config.left_arm_config.gripper_torque_limit,
+            gripper_hold_torque_limit=config.left_arm_config.gripper_hold_torque_limit,
             joint_limits=config.left_arm_config.joint_limits,
         )
-
         right_arm_config = RebotB601FollowerRobotConfig(
             id=f"{config.id}_right" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
+            motor_family=config.right_arm_config.motor_family,
             can_adapter=config.right_arm_config.can_adapter,
             dm_serial_baud=config.right_arm_config.dm_serial_baud,
             disable_torque_on_disconnect=config.right_arm_config.disable_torque_on_disconnect,
             max_relative_target=config.right_arm_config.max_relative_target,
             cameras=config.right_arm_config.cameras,
             motor_can_ids=config.right_arm_config.motor_can_ids,
-            pos_vel_velocity=config.right_arm_config.pos_vel_velocity,
             control_mode=config.right_arm_config.control_mode,
+            gripper_control_mode=config.right_arm_config.gripper_control_mode,
             mit_kp=config.right_arm_config.mit_kp,
             mit_kd=config.right_arm_config.mit_kd,
-            gripper_control_mode=config.right_arm_config.gripper_control_mode,
+            pos_vel_velocity=config.right_arm_config.pos_vel_velocity,
             gripper_torque_ratio=config.right_arm_config.gripper_torque_ratio,
-            gripper_mit_kp=config.right_arm_config.gripper_mit_kp,
-            gripper_mit_kd=config.right_arm_config.gripper_mit_kd,
+            gripper_torque_limit=config.right_arm_config.gripper_torque_limit,
+            gripper_hold_torque_limit=config.right_arm_config.gripper_hold_torque_limit,
             joint_limits=config.right_arm_config.joint_limits,
         )
 

@@ -21,7 +21,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 import torch.nn as nn
@@ -39,7 +39,13 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
 
-from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
+from ..common.flow_matching import (
+    FlowConvention,
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_noise,
+    sample_time_beta,
+)
 from ..common.vla_utils import create_sinusoidal_pos_embedding, pad_vector
 from ..pretrained import PreTrainedPolicy
 from .configuration_eo1 import EO1Config
@@ -58,13 +64,22 @@ else:
 logger = logging.getLogger(__name__)
 
 
+def _original_action_dim(config: EO1Config) -> int:
+    """Dataset action size before padding to `max_action_dim` (the ACTION entry `validate_features()` fills in)."""
+    if config.output_features is None:
+        raise ValueError("`output_features` must be resolved before EO-1 can size its actions.")
+    return config.output_features[ACTION].shape[0]
+
+
 class EO1Policy(PreTrainedPolicy):
     """EO1 policy wrapper for LeRobot robot-only training/evaluation."""
 
     config_class = EO1Config
     name = "eo1"
 
-    def __init__(self, config: EO1Config, *, vlm_backbone=None, **kwargs):
+    def __init__(
+        self, config: EO1Config, *, vlm_backbone: Qwen2_5_VLForConditionalGeneration | None = None, **kwargs
+    ):
         require_package("transformers", extra="eo1")
         super().__init__(config)
         config.validate_features()
@@ -81,7 +96,7 @@ class EO1Policy(PreTrainedPolicy):
             else:
                 vlm_backbone = Qwen2_5_VLForConditionalGeneration._from_config(
                     config.vlm_backbone_config,
-                    dtype=config.vlm_backbone_config.dtype if config.dtype == "auto" else config.dtype,
+                    dtype=config.dtype,
                 )
 
         self.model = EO1VisionFlowMatchingModel(config, vlm_backbone)
@@ -110,7 +125,7 @@ class EO1Policy(PreTrainedPolicy):
     ) -> EO1Policy:
         """Restore the backbone without randomly initializing weights that will be overwritten."""
         require_package("transformers", extra="eo1")
-        hub_kwargs = {
+        hub_kwargs: dict[str, Any] = {
             "force_download": force_download,
             "resume_download": resume_download,
             "proxies": proxies,
@@ -121,6 +136,7 @@ class EO1Policy(PreTrainedPolicy):
         }
         if config is None:
             config = PreTrainedConfig.from_pretrained(pretrained_name_or_path, **hub_kwargs, **kwargs)
+        config = cast(EO1Config, config)
         model_id = str(pretrained_name_or_path)
         if Path(model_id).is_dir():
             model_file = str(Path(model_id) / SAFETENSORS_SINGLE_FILE)
@@ -149,7 +165,7 @@ class EO1Policy(PreTrainedPolicy):
             None,
             config=backbone_config,
             state_dict=backbone_weights,
-            dtype=backbone_config.dtype if config.dtype == "auto" else config.dtype,
+            dtype=config.dtype if config.dtype is not None else torch.get_default_dtype(),
         )
         del backbone_weights
         policy = cls(config, vlm_backbone=vlm_backbone, **kwargs)
@@ -202,8 +218,7 @@ class EO1Policy(PreTrainedPolicy):
         model_inputs = self._get_model_inputs(batch, {OBS_STATE})
         actions = self.model.sample_actions(states=states, **model_inputs).to(torch.float32)
 
-        original_action_dim = self.config.output_features[ACTION].shape[0]
-        return actions[:, :, :original_action_dim]
+        return actions[:, :, : _original_action_dim(self.config)]
 
     def prepare_state(self, state: Tensor) -> Tensor:
         return pad_vector(state, self.config.max_state_dim)
@@ -318,8 +333,8 @@ class EO1VisionFlowMatchingModel(nn.Module):
     def __init__(
         self,
         config: EO1Config,
-        vlm_backbone: Qwen2_5_VLForConditionalGeneration | None = None,
-    ):
+        vlm_backbone: Qwen2_5_VLForConditionalGeneration,
+    ) -> None:
         require_package("transformers", extra="eo1")
         super().__init__()
 
@@ -391,7 +406,7 @@ class EO1VisionFlowMatchingModel(nn.Module):
     def get_placeholder_mask(
         self,
         input_ids: torch.LongTensor | None,
-        inputs_embeds: torch.FloatTensor | None,
+        inputs_embeds: torch.FloatTensor,
         state_features: torch.FloatTensor | None = None,
         action_features: torch.FloatTensor | None = None,
         *,
@@ -539,12 +554,14 @@ class EO1VisionFlowMatchingModel(nn.Module):
         action_rows = action_token_mask.any(dim=-1)
         u_t = None
         if action_rows.any():
+            if action is None:
+                raise ValueError("`action` is required when the batch carries action placeholder tokens.")
             active_action = action[action_rows]
             time = self.sample_time(active_action.shape[0], inputs_embeds.device)
             noise = self.sample_noise(active_action.shape, inputs_embeds.device)
-            time_expanded = time[:, None, None]
-            x_t = time_expanded * noise + (1 - time_expanded) * active_action
-            u_t = noise - active_action
+            x_t, u_t, _ = make_flow_matching_inputs(
+                active_action, noise, time, convention=FlowConvention.NOISE_AT_ONE
+            )
             action_time_embs = self.embed_suffix(time, x_t)
             expected_tokens = int(action_token_mask.sum().item())
             if expected_tokens != action_time_embs.shape[0] * action_time_embs.shape[1]:
@@ -558,8 +575,13 @@ class EO1VisionFlowMatchingModel(nn.Module):
         if attention_mask is not None:
             attention_mask = attention_mask.to(inputs_embeds.device)
 
-        active_action_is_pad = None
+        active_action_is_pad: Tensor | None = None
         if action_rows.any() and not self.config.supervise_padding_actions:
+            if action_is_pad is None or attention_mask is None:
+                raise ValueError(
+                    "`action_is_pad` and `attention_mask` are required to drop padded action tokens "
+                    "(`supervise_padding_actions=False`)."
+                )
             active_action_is_pad = action_is_pad[action_rows].to(
                 device=inputs_embeds.device, dtype=torch.bool
             )
@@ -624,9 +646,10 @@ class EO1VisionFlowMatchingModel(nn.Module):
             v_t = v_t.reshape(u_t.shape).to(dtype=u_t.dtype)
             losses = F.mse_loss(u_t, v_t, reduction="none")
             if not self.config.supervise_padding_action_dims:
-                original_action_dim = self.config.output_features[ACTION].shape[0]
-                losses = losses[..., :original_action_dim]
+                losses = losses[..., : _original_action_dim(self.config)]
             if not self.config.supervise_padding_actions:
+                if active_action_is_pad is None:
+                    raise RuntimeError("`active_action_is_pad` is missing although action rows are present.")
                 losses = losses[~active_action_is_pad]
             flow_loss = losses.mean()
 
@@ -648,6 +671,10 @@ class EO1VisionFlowMatchingModel(nn.Module):
         **kwargs,
     ) -> Tensor:
         """Sample actions from the model."""
+        if input_ids is None:
+            raise ValueError("input_ids are required for EO1 action sampling.")
+        if attention_mask is None:
+            raise ValueError("attention_mask is required for EO1 action sampling.")
         if states is None:
             raise ValueError("states are required for EO1 action sampling.")
         if mm_token_type_ids is None:

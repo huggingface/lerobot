@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from copy import deepcopy
 
 import pytest
@@ -59,7 +60,7 @@ def checkpoint(tmp_path):
     return tmp_path, policy
 
 
-@pytest.mark.parametrize("dtype", ["float32", "bfloat16", "auto"])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, None])
 @pytest.mark.parametrize(
     "device",
     [
@@ -75,7 +76,7 @@ def test_checkpoint_restores_weights_dtypes_and_ties(checkpoint, dtype, device):
     config.dtype = dtype
     config.device = device
     loaded = EO1Policy.from_pretrained(path, config=config, strict=True)
-    backbone_dtype = torch.float32 if dtype == "float32" else torch.bfloat16
+    backbone_dtype = dtype if dtype is not None else torch.get_default_dtype()
     for name, param in loaded.named_parameters():
         expected_dtype = backbone_dtype if name.startswith("model.vlm_backbone.") else torch.float32
         assert param.dtype == expected_dtype
@@ -89,6 +90,23 @@ def test_checkpoint_restores_weights_dtypes_and_ties(checkpoint, dtype, device):
     assert not any(t.is_meta for t in loaded.buffers())
     for name, buffer in loaded.named_buffers():
         torch.testing.assert_close(buffer.cpu(), dict(original.named_buffers())[name], rtol=0, atol=0)
+
+
+def test_checkpoint_with_legacy_auto_dtype(checkpoint):
+    path, original = checkpoint
+    config_path = path / "config.json"
+    config = json.loads(config_path.read_text())
+    config["dtype"] = "auto"
+    config_path.write_text(json.dumps(config))
+
+    with pytest.warns(FutureWarning, match="dtype='auto'"):
+        loaded = EO1Policy.from_pretrained(path, strict=True)
+
+    assert loaded.config.dtype == torch.bfloat16
+    for name, param in loaded.named_parameters():
+        expected_dtype = torch.bfloat16 if name.startswith("model.vlm_backbone.") else torch.float32
+        assert param.dtype == expected_dtype
+        torch.testing.assert_close(param, original.state_dict()[name].to(expected_dtype), rtol=0, atol=0)
 
 
 def test_checkpoint_roundtrip_inference_and_training(checkpoint, tmp_path):
