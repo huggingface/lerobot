@@ -11,6 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
+
+import draccus
 import pytest
 
 from lerobot.configs.default import DatasetConfig
@@ -62,3 +65,32 @@ def test_dataset_config_eval_split():
     DatasetConfig(repo_id="user/repo", repo_type="bucket", eval_split=0.1)
     with pytest.raises(ValueError, match="streaming"):
         DatasetConfig(repo_id="user/repo", streaming=True, eval_split=0.1)
+
+
+@pytest.mark.parametrize(
+    "storage_options",
+    [None, {}, {"aws_endpoint": "https://s3.example.com", "aws_region": "us-east-1", "allow_http": "false"}],
+)
+def test_dataset_config_storage_options_cli_roundtrip(storage_options):
+    cfg = draccus.parse(
+        DatasetConfig,
+        args=["--repo_id=user/repo", f"--storage_options={json.dumps(storage_options)}"],
+    )
+
+    assert cfg.storage_options == storage_options
+    assert draccus.decode(DatasetConfig, draccus.encode(cfg)).storage_options == storage_options
+
+
+def test_dataset_config_streaming_accepts_storage_options():
+    options = {"aws_region": "us-east-1"}
+    cfg = DatasetConfig(repo_id="user/repo", streaming=True, storage_options=options)
+
+    assert cfg.storage_options == options
+
+
+@pytest.mark.parametrize("revision_key", ["revision", "REVISION"])
+def test_dataset_config_storage_options_rejects_revision(revision_key):
+    with pytest.raises(ValueError, match="storage_options.*revision"):
+        DatasetConfig(repo_id="user/repo", storage_options={revision_key: "main"})
+
+    DatasetConfig(repo_id="user/repo", revision="main", storage_options={})

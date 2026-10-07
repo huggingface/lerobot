@@ -33,7 +33,8 @@ DEFAULT_STORAGE_FORMAT = "lerobot"
 # the keyword arguments ``meta``, ``root``, ``episodes``, ``delta_timestamps``,
 # ``image_transforms``, ``tolerance_s``, ``revision``, ``return_uint8``,
 # ``depth_output_unit`` and ``token``) and a ``localize_root`` hook for
-# object-store roots.
+# object-store roots. Non-empty ``storage_options`` are forwarded to both the
+# reader and the hook when supplied by the caller.
 _DATASET_READER_MODULES: dict[str, str] = {}
 
 
@@ -78,18 +79,22 @@ def localize_remote_root(
     revision: str | None = None,
     token: str | bool | None = None,
     force_cache_sync: bool = False,
+    *,
+    storage_options: dict[str, str] | None = None,
 ) -> Path:
     """Materialize ``meta/`` for an object-store dataset and return the local dir holding it.
 
     The format cannot be read from ``meta/info.json`` before ``meta/`` exists
     locally, so each backend is asked in turn to recognize and localize the
     root. Data files are never downloaded — backends read them in place.
+    ``storage_options`` configures the connection used to read remote metadata.
     """
     errors = []
+    options_kwargs = {"storage_options": storage_options} if storage_options else {}
     for storage_format in _DATASET_READER_MODULES:
         try:
             return _reader_module(storage_format).localize_root(
-                repo_id, root, revision, token=token, force_cache_sync=force_cache_sync
+                repo_id, root, revision, token=token, force_cache_sync=force_cache_sync, **options_kwargs
             )
         except (FileNotFoundError, ImportError) as error:
             # ImportError: this format's optional dependencies are missing, which
@@ -109,6 +114,8 @@ def load_dataset_metadata(
     repo_type: Literal["dataset", "bucket"] = "dataset",
     token: str | bool | None = None,
     force_cache_sync: bool = False,
+    *,
+    storage_options: dict[str, str] | None = None,
 ) -> LeRobotDatasetMetadata:
     """Load dataset metadata wherever the dataset lives.
 
@@ -118,7 +125,14 @@ def load_dataset_metadata(
     from .dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415  (import cycle)
 
     if root is not None and is_remote_uri(root):
-        root = localize_remote_root(repo_id, root, revision, token=token, force_cache_sync=force_cache_sync)
+        root = localize_remote_root(
+            repo_id,
+            root,
+            revision,
+            token=token,
+            force_cache_sync=force_cache_sync,
+            storage_options=storage_options,
+        )
         force_cache_sync = False  # the localized meta/ is already fresh
     return LeRobotDatasetMetadata(
         repo_id,
