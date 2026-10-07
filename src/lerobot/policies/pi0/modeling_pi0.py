@@ -686,6 +686,8 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 self.config.max_action_dim,
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
+        else:
+            noise = noise.to(device=device, dtype=torch.float32)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks
@@ -1093,9 +1095,17 @@ class PI0Policy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
+        """Predict a chunk of actions given environment observations.
+
+        `noise` is the starting sample of the denoising loop, shaped
+        (batch_size, chunk_size, max_action_dim). When it is None, fresh noise is drawn.
+        """
         self.eval()
 
         # Prepare inputs
@@ -1104,7 +1114,9 @@ class PI0Policy(PreTrainedPolicy):
         state = self.prepare_state(batch)
 
         # Sample actions using the model (pass through RTC kwargs)
-        actions = self.model.sample_actions(images, img_masks, lang_tokens, lang_masks, state, **kwargs)
+        actions = self.model.sample_actions(
+            images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
+        )
 
         # Unpad actions to actual action dimension
         if self.config.output_features is None:
