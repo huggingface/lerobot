@@ -14,8 +14,6 @@
 
 🤗 Sparse-MoE Qwen2 action expert with flow-matching continuous action heads.
 
-🤗 Optional predictive-distillation heads (native-depth / DINO-video) with frozen, first-party teacher implementations — no upstream checkout required.
-
 🤗 Real-robot fine-tuning fits on a single 24GB consumer GPU via expert-only training + gradient checkpointing (LoRA optional), with a validated FSDP2 path for 2×24GB.
 
 ## Quick Start
@@ -26,34 +24,22 @@ lerobot-info
 ```
 
 > Requires Python ≥3.12. `flash-attn` is optional (the sdpa/eager attention
-> fallbacks are used when it is absent); the distillation teachers and the
-> feature-transform tests expect the Qwen3-VL processor files locally (see
-> [Model & Teacher Weights](#model--teacher-weights)).
+> fallbacks are used when it is absent); the feature-transform tests expect
+> the Qwen3-VL processor files locally (see [Model Weights](#model-weights)).
 
-## Model & Teacher Weights
+## Model Weights
 
 All weights are hosted on [Hugging Face](https://huggingface.co) and, where marked, mirrored on [ModelScope](https://modelscope.cn). The base checkpoint is gated on HF — request access first; the ModelScope mirror is an alternative.
 
-| Asset                            | Hub id                                                                                                                                                                         | Size    | Needed for                 |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- | -------------------------- |
-| Base VLA checkpoint (pretrained) | `robbyant/lingbot-vla-v2-6b` — [HF](https://huggingface.co/robbyant/lingbot-vla-v2-6b) · [MS](https://modelscope.cn/models/Robbyant/lingbot-vla-v2-6b)                         | ~26 GB  | all training and inference |
-| Qwen3-VL processor / tokenizer   | `Qwen/Qwen3-VL-4B-Instruct` — [HF](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct) · [MS](https://modelscope.cn/models/Qwen/Qwen3-VL-4B-Instruct)                            | ~13 GB  | always                     |
-| MoGe-v2 depth teacher            | `Ruicheng/moge-2-vitb-normal` — [HF](https://huggingface.co/Ruicheng/moge-2-vitb-normal) ([`model.pt`](https://huggingface.co/Ruicheng/moge-2-vitb-normal/blob/main/model.pt)) | 419 MB  | `--include-depth-heads`    |
-| MoRGBD depth teacher             | `robbyant/lingbot-vla-v2-6b` → [`depth/model.pt`](https://huggingface.co/robbyant/lingbot-vla-v2-6b/tree/main/depth)                                                           | 1.32 GB | `--include-depth-heads`    |
-| DINO-video teacher               | `robbyant/lingbot-vla-v2-6b` → [`dino_video/`](https://huggingface.co/robbyant/lingbot-vla-v2-6b/tree/main/dino_video) (`teacher_step_10000.pth` + `config.yaml`)              | 1.40 GB | `--include-depth-heads`    |
-
-One-shot download for the distillation recipe:
+| Asset                            | Hub id                                                                                                                                                 | Size   | Needed for                 |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | -------------------------- |
+| Base VLA checkpoint (pretrained) | `robbyant/lingbot-vla-v2-6b` — [HF](https://huggingface.co/robbyant/lingbot-vla-v2-6b) · [MS](https://modelscope.cn/models/Robbyant/lingbot-vla-v2-6b) | ~26 GB | all training and inference |
+| Qwen3-VL processor / tokenizer   | `Qwen/Qwen3-VL-4B-Instruct` — [HF](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct) · [MS](https://modelscope.cn/models/Qwen/Qwen3-VL-4B-Instruct)    | ~13 GB | always                     |
 
 ```bash
-# Hugging Face
-hf download Ruicheng/moge-2-vitb-normal model.pt
-hf download robbyant/lingbot-vla-v2-6b --include "depth/*" "dino_video/*"
-
 # ModelScope (China-friendly mirror of the base checkpoint)
 modelscope download --model Robbyant/lingbot-vla-v2-6b
 ```
-
-Note: the MoGe teacher has its own repo, but the MoRGBD and DINO-video teachers have no standalone repository — they are files inside the gated `robbyant/lingbot-vla-v2-6b` checkpoint with no per-file link. Either use the `hf download --include` command above, or open the linked `depth/` / `dino_video/` folders in a browser and download the files manually after gaining access to the base checkpoint. See the distillation setup in [`lingbot_vla_v2.mdx`](./lingbot_vla_v2.mdx).
 
 Use local paths with `--policy.tokenizer_path` or `--policy.pretrained_path` when running offline.
 
@@ -216,15 +202,6 @@ lerobot-train \
 
 The slot mappings are typed dict fields passed as JSON on the CLI (same convention as `--policy.normalization_mapping` on pi05). This runs end-to-end: the preprocessor maps the 6-D raw state/action onto the canonical 55-D slots, training produces checkpoints with the slot mapping + dataset stats embedded, and `lerobot-rollout` / `lerobot-eval` on the saved checkpoint map back to the robot's 6-D action space.
 
-**Distillation teachers (optional, A100-class).** Convert with `--include-depth-heads` (loads the official depth/DINO heads and embeds the teacher `align_params`), then enable the frozen MoGe/MoRGBD/DINO-video teachers at train time — verified with FSDP2 on 8×A100:
-
-```bash
-torchrun --nproc_per_node=N -m lerobot.scripts.lerobot_train <same args> \
-  --policy.dataset_fps=<dataset fps>
-```
-
-Acceptance: `depth_loss`, `future_depth_loss`, and `future_video_loss` all appear in the training logs. Teacher weights are listed in [Model & Teacher Weights](#model--teacher-weights); the distillation walkthrough is in [`lingbot_vla_v2.mdx`](./lingbot_vla_v2.mdx).
-
 **3. Deploy** — see [Inference & Deployment](#inference--deployment) below (`lerobot-rollout` on the robot).
 
 A validated 2×24GB FSDP2 path also exists (Accelerate `fully_shard` with a CPU-offloaded optimizer, gradient checkpointing, validated robot config, and embedded norm stats).
@@ -277,7 +254,7 @@ Inference speed is baked into the checkpoint's `config.json` — sparse MoE rout
 
 Fine-tuning on a robot the checkpoint was not converted for requires only the slot mappings — passed as `--policy.state_slots` / `--policy.action_slots` (typed dict fields). The norm stats are derived from the dataset automatically (LeRobot's `dataset_stats` mechanism), and checkpoints saved during fine-tuning embed the slot mappings so they remain self-contained.
 
-The canonical slot vocabulary (the 55-D layout, per-slot normalization modes), how the norm stats are derived, and the native-depth / DINO-video distillation setup are covered in the full walkthrough: [`lingbot_vla_v2.mdx`](./lingbot_vla_v2.mdx).
+The canonical slot vocabulary (the 55-D layout, per-slot normalization modes), and how the norm stats are derived are covered in the full walkthrough: [`lingbot_vla_v2.mdx`](./lingbot_vla_v2.mdx).
 
 ## Citation
 

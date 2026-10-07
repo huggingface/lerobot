@@ -14,15 +14,6 @@ from transformers.activations import ACT2FN  # noqa: E402
 from transformers.modeling_flash_attention_utils import FlashAttentionKwargs  # noqa: E402
 from transformers.processing_utils import Unpack  # noqa: E402
 
-try:
-    from dinov3.hub.backbones import (
-        dinov3_vitb16,
-        dinov3_vits16,
-        dinov3_vits16plus,
-    )
-except ImportError:
-    dinov3_vits16 = dinov3_vits16plus = dinov3_vitb16 = None
-
 
 def _update_moe_runtime_stats(block, routing_weights, selected_experts):
     """Update MoE runtime buffers outside torch.compile graphs."""

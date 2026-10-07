@@ -101,18 +101,6 @@ _LINGBOT_NORM_MODE_TO_STANDARD = {
 }
 
 
-def _future_video_fps(dataset_fps: float, offset: int, action_is_pad=None):
-    """Use real spacing when LeRobot clamps a requested future to the episode end.
-
-    The default offset 49 is covered by the 50-step action pad mask. An infinite
-    FPS for a duplicated final frame encodes a zero temporal RoPE step.
-    """
-    if isinstance(action_is_pad, torch.Tensor) and offset < action_is_pad.shape[-1]:
-        valid_tail = (~action_is_pad.bool()).sum(dim=-1).sub(1).clamp(min=0, max=offset)
-        return float(dataset_fps) / valid_tail.float()
-    return float(dataset_fps) / max(1, offset)
-
-
 # ---------------------------------------------------------------------------
 # Slot-mapping helpers (shared by the forward and inverse steps)
 # ---------------------------------------------------------------------------
@@ -186,23 +174,6 @@ def _prepare_camera_frame(img: torch.Tensor, size: tuple[int, int]) -> torch.Ten
     if img.dtype.is_floating_point and float(img.max()) <= 1.0 + 1e-4:
         img = img * 255.0
     return img
-
-
-def _split_camera_frames(
-    img: torch.Tensor,
-    size: tuple[int, int],
-    use_future_image: bool,
-) -> tuple[torch.Tensor, torch.Tensor | None]:
-    """Pick the current (and optional future) frame from one camera tensor.
-
-    Training samples with future-frame deltas are [T,C,H,W]; the policy consumes
-    the current frame while the distillation teachers additionally get the last
-    sampled (future) frame. Inference supplies a plain [C,H,W] image even for a
-    depth-aligned checkpoint. Both frames are resized to the target size.
-    """
-    if use_future_image and img.ndim == 4:
-        return _prepare_camera_frame(img[0], size), _prepare_camera_frame(img[-1], size)
-    return _prepare_camera_frame(img, size), None
 
 
 def _normalize_task_at(task: Any, index: int) -> str:
@@ -414,7 +385,6 @@ class LingbotVLAV2SlotMappingProcessorStep(ProcessorStep):
     chunk_size: int = 50
     max_state_dim: int = 55
     max_action_dim: int = 55
-    use_future_image: bool = False
 
     _state_plan: Any = field(default=None, init=False, repr=False)
     _action_plan: Any = field(default=None, init=False, repr=False)
@@ -470,10 +440,6 @@ class LingbotVLAV2SlotMappingProcessorStep(ProcessorStep):
         state = new_obs.get(OBS_STATE)
         if state is None:
             raise ValueError("LingbotVLAV2SlotMappingProcessorStep requires 'observation.state'.")
-        # Future-frame sampling stacks T frames on every observation key; the
-        # policy state is the current frame only.
-        if self.use_future_image and state.ndim == 3:
-            state = state[:, 0]
         state_source = {OBS_STATE: state}
         # Create zero-filled slots on the input device — lerobot-train hands the batch
         # to the preprocessor already on the GPU, so building them on CPU breaks the
@@ -546,7 +512,6 @@ class LingbotVLAV2SlotMappingProcessorStep(ProcessorStep):
             "chunk_size": self.chunk_size,
             "max_state_dim": self.max_state_dim,
             "max_action_dim": self.max_action_dim,
-            "use_future_image": self.use_future_image,
         }
 
     def transform_features(
@@ -626,9 +591,7 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
     Per item and camera: resize to ``resize_imgs_with_padding``, rescale to
     [0, 255], then the HF image processor patchifies at native resolution and
     returns ``pixel_values`` plus the ``image_grid_thw`` patch grid. Missing
-    canonical views are zero-filled with ``img_masks=False``. With the depth /
-    DINO-video distillation branch enabled, the pre-Qwen frames are also carried
-    as ``pil_images`` (and ``future_pil_images`` for the future frame).
+    canonical views are zero-filled with ``img_masks=False``.
     """
 
     tokenizer_path: str = "Qwen/Qwen3-VL-4B-Instruct"
@@ -646,11 +609,6 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
     # on-device for the vision tower. None keeps the per-camera CPU path.
     preprocess_device: str | None = None
     return_image_grid_thw: bool = True
-    use_depth_align: bool = False
-    use_future_image: bool = False
-    dataset_fps: int | None = None
-    future_frame_offset: int | None = None
-    chunk_size: int = 50
 
     _image_processor: Any = field(default=None, init=False, repr=False)
 
@@ -675,70 +633,37 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
         observation = transition.get(TransitionKey.OBSERVATION)
         if observation is None or not isinstance(observation, dict):
             raise ValueError("LingbotVLAV2ImageProcessorStep requires an observation dict.")
-        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) or {}
         new_obs = dict(observation)
 
         state = new_obs[OBS_STATE]
         batch_size = state.shape[0]
         image_keys = [f"{OBS_IMAGES}.{cam}" for cam in self.cameras]
-        pad_mask = complementary.get("action_is_pad")
 
-        images, img_masks, grids, pil_images, future_pil = [], [], [], [], []
+        images, img_masks, grids = [], [], []
         for i in range(batch_size):
             image_dict: dict[str, torch.Tensor] = {}
-            future_dict: dict[str, torch.Tensor] = {}
             for key in image_keys:
                 img = new_obs.get(key)
                 if img is None:
                     continue
-                current, future = _split_camera_frames(
-                    img[i], self.resize_imgs_with_padding, self.use_future_image
-                )
-                image_dict[key] = current
-                if future is not None:
-                    future_dict[key] = future
+                image_dict[key] = _prepare_camera_frame(img[i], self.resize_imgs_with_padding)
 
             item_obs = {"image": image_dict, "state": state[i]}
-            item_images, item_masks, item_pil, item_grid = prepare_images(
+            item_images, item_masks, item_grid = prepare_images(
                 self._image_processor,
                 item_obs,
                 image_keys=image_keys,
-                use_depth_align=self.use_depth_align,
                 return_image_grid_thw=self.return_image_grid_thw,
                 preprocess_device=self.preprocess_device,
             )
             images.append(item_images)
             img_masks.append(item_masks)
             grids.append(item_grid)
-            pil_images.append(item_pil)
-            if self.use_future_image and future_dict:
-                _future_images, _future_masks, future_pil_i, _future_grid = prepare_images(
-                    self._image_processor,
-                    {"image": future_dict, "state": state[i]},
-                    image_keys=image_keys,
-                    use_depth_align=self.use_depth_align,
-                    return_image_grid_thw=False,
-                    augment_params=None,
-                )
-                future_pil.append(future_pil_i)
 
         new_obs["images"] = torch.stack(images, dim=0)
         new_obs["img_masks"] = torch.stack(img_masks, dim=0)
         if self.return_image_grid_thw:
             new_obs["image_grid_thw"] = torch.stack(grids, dim=0)
-        if self.use_depth_align:
-            new_obs["pil_images"] = torch.stack(pil_images, dim=0)
-            if future_pil:
-                new_obs["future_pil_images"] = torch.stack(future_pil, dim=0)
-                if self.dataset_fps is not None:
-                    offset = (
-                        self.future_frame_offset
-                        if self.future_frame_offset is not None
-                        else max(1, self.chunk_size - 1)
-                    )
-                    new_obs["future_video_effective_fps"] = _future_video_fps(
-                        self.dataset_fps, offset, pad_mask
-                    )
         transition[TransitionKey.OBSERVATION] = new_obs
         return transition
 
@@ -754,11 +679,6 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
             "image_min_pixels": self.image_min_pixels,
             "preprocess_device": self.preprocess_device,
             "return_image_grid_thw": self.return_image_grid_thw,
-            "use_depth_align": self.use_depth_align,
-            "use_future_image": self.use_future_image,
-            "dataset_fps": self.dataset_fps,
-            "future_frame_offset": self.future_frame_offset,
-            "chunk_size": self.chunk_size,
         }
 
     def save_artifacts(self, save_directory: Path) -> dict[str, str]:
@@ -904,7 +824,6 @@ def make_lingbot_vla_v2_pre_post_processors(
         chunk_size=config.chunk_size,
         max_state_dim=config.max_state_dim,
         max_action_dim=config.max_action_dim,
-        use_future_image=config.use_future_image,
     )
 
     # Derive camera names from input_features (the actual camera keys in the dataset)
@@ -924,11 +843,6 @@ def make_lingbot_vla_v2_pre_post_processors(
         image_min_pixels=config.image_min_pixels,
         preprocess_device=config.preprocess_device,
         return_image_grid_thw=config.return_image_grid_thw,
-        use_depth_align=config.use_depth_align,
-        use_future_image=config.use_future_image,
-        dataset_fps=config.dataset_fps,
-        future_frame_offset=config.future_frame_offset,
-        chunk_size=config.chunk_size,
     )
 
     tokenizer_name = config.tokenizer_path or config.tokenizer_path
@@ -1041,7 +955,6 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
             "chunk_size": config.chunk_size,
             "max_state_dim": config.max_state_dim,
             "max_action_dim": config.max_action_dim,
-            "use_future_image": config.use_future_image,
         },
     )
     tokenizer_path = config.tokenizer_path or config.tokenizer_path
@@ -1064,11 +977,6 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
             "image_max_pixels": config.image_max_pixels,
             "image_min_pixels": config.image_min_pixels,
             "return_image_grid_thw": config.return_image_grid_thw,
-            "use_depth_align": config.use_depth_align,
-            "use_future_image": config.use_future_image,
-            "dataset_fps": config.dataset_fps,
-            "future_frame_offset": config.future_frame_offset,
-            "chunk_size": config.chunk_size,
         },
     )
     if config.use_qwen3_chat_template is not None:

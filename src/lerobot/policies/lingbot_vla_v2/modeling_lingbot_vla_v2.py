@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import functools
 from collections import deque
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .teachers.depth_teachers import DepthTeacherBundle
+from typing import Any
 
 import einops
 import torch
@@ -39,20 +36,11 @@ from .model_core.qwen2_action_expert import (
 )
 from .model_core.qwen3vl_in_vla import Qwen3VLForConditionalGeneration
 from .model_core.utils import (
-    block_suffix_to_fv_,
     flash_varlen_prefix_attention,
     make_att_2d_masks,
     our_eager_attention_forward,
     our_sdpa_attention_forward,
-    prefix_query_segments,
-    prefix_query_token_spans,
 )
-
-try:
-    from dinov3.hub.backbones import dinov3_vitb16
-except ImportError:
-    dinov3_vitb16 = None
-
 
 logger = logging.get_logger(__name__)
 
@@ -68,8 +56,6 @@ class QwenvlWithExpertV2Config(PretrainedConfig):
         use_lm_head: bool = False,
         attention_implementation: str = "flex_cached",
         tokenizer_path: str | None = None,
-        enable_expert_vision: bool = False,
-        expert_vision_type: str | None = None,
         use_cache: bool = False,
         expert_hidden_size: int = 768,
         expert_intermediate_size: int = 2752,
@@ -82,8 +68,6 @@ class QwenvlWithExpertV2Config(PretrainedConfig):
         self.train_expert_only = train_expert_only
         self.attention_implementation = attention_implementation
         self.tokenizer_path = tokenizer_path
-        self.enable_expert_vision = enable_expert_vision
-        self.expert_vision_type = expert_vision_type
         self.vocab_size = vocab_size
         self.use_lm_head = use_lm_head
         self.action_num_attention_heads = action_num_attention_heads
@@ -179,18 +163,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         self._capture_grid_cache = False
 
         del self.qwen_expert.model.embed_tokens
-        if self.config.enable_expert_vision:
-            if dinov3_vitb16 is None:
-                raise ImportError("dinov3 is required when enable_expert_vision=True")
-            assert self.config.expert_vision_type is not None
-            if "dinov3_vitb16" in self.config.expert_vision_type:
-                self.expert_visual = dinov3_vitb16(pretrained=False)
-            self.expert_visual_mlp = nn.Sequential(
-                nn.Linear(self.expert_visual.embed_dim, self.expert_visual.embed_dim * 2),
-                nn.GELU(),
-                nn.Linear(self.expert_visual.embed_dim * 2, self.config.qwen_expert_config.hidden_size),
-            )
-
         self.attention_interface = self.get_attention_interface()
         self.set_requires_grad()
 
@@ -706,8 +678,6 @@ class FlowMatchingV2(FlowMatchingV1):
             use_lm_head=getattr(self.config, "use_lm_head", False),
             attention_implementation=self.config.attention_implementation,
             tokenizer_path=self.config.tokenizer_path,
-            enable_expert_vision=self.config.enable_expert_vision,
-            expert_vision_type=self.config.expert_vision_type,
             use_cache=getattr(self.config, "use_cache", True),
             expert_hidden_size=getattr(self.config, "expert_hidden_size", 768),
             expert_intermediate_size=getattr(self.config, "expert_intermediate_size", 2752),
@@ -752,25 +722,6 @@ class FlowMatchingV2(FlowMatchingV1):
         self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
         self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
         self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
-
-        self.config.align_params = getattr(self.config, "align_params", None) or {}
-        if self.config.align_params != {}:
-            self.steps = 0
-            self.use_depth_align = True
-            self.init_depth_heads(self.config.align_params)
-            self.use_future_video = self.config.align_params.get("use_future_video", False)
-            if self.use_future_video:
-                self.init_video_heads(self.config.align_params)
-        else:
-            self.use_depth_align = False
-            self.use_future_video = False
-            self.use_future_video_patch = False
-            self.use_current_video_patch = False
-            self.use_current_shared_task_proj = False
-            self.use_future_video_cls = False
-            self.use_shared_future_task_proj = False
-            self.future_video_share_future_depth_query = False
-            self.block_future_depth_to_action = False
 
         self.set_requires_grad()
 
@@ -864,131 +815,10 @@ class FlowMatchingV2(FlowMatchingV1):
 
         lang_emb = self.qwenvl_with_expert.embed_language_tokens(lang_tokens).to(dtype=embed_dtype)
 
-        if self.use_depth_align and self.align_type == "query":
-
-            def _get_align_tokens(tokens):
-                tk_weights = tokens.view(
-                    self.num_task_tokens, tokens.shape[0] // self.num_task_tokens, tokens.shape[1]
-                )
-                tk_weights = tk_weights.mean(dim=1)
-                return tk_weights
-
-            align_pad_masks = torch.ones(bsize, self.num_task_tokens, device=device, dtype=lang_masks.dtype)
-            fake_align_ids = torch.full(
-                (bsize, self.num_task_tokens), cfg.text_config.eos_token_id, dtype=torch.long, device=device
-            )
-
-            current_task = _get_align_tokens(self.depth_align_embs)
-            if (
-                getattr(self, "use_future_video", False)
-                and getattr(self, "use_current_video_patch", False)
-                and getattr(self, "use_current_shared_task_proj", False)
-            ):
-                current_video_task = _get_align_tokens(self.current_video_align_embs)
-                current_task = self.current_shared_task_proj(
-                    torch.cat([current_task, current_video_task], dim=-1)
-                )
-            align_embs = current_task.repeat(img_emb.size(0), 1, 1).to(img_emb.device, img_emb.dtype)
-            parts = [img_emb]
-            masks = [image_pad_masks]
-            input_ids = [fake_image_ids]
-            visual_masks = [visual_pos_masks]
-
-            def _append(
-                tokens,
-                token_masks,
-                token_ids,
-                token_visual_masks=None,
-            ):
-                parts.append(tokens)
-                masks.append(token_masks)
-                input_ids.append(token_ids)
-                if token_visual_masks is None:
-                    token_visual_masks = torch.zeros_like(token_masks)
-                visual_masks.append(token_visual_masks)
-
-            future_align_embs = None
-            if self.use_future_depth:
-                future_task = _get_align_tokens(self.future_depth_align_embs)
-                if (
-                    getattr(self, "use_future_video", False)
-                    and getattr(self, "use_future_video_patch", True)
-                    and getattr(self, "future_video_share_future_depth_query", False)
-                    and getattr(self, "use_shared_future_task_proj", False)
-                ):
-                    future_video_task = _get_align_tokens(self.future_video_align_embs)
-                    future_task = self.future_shared_task_proj(
-                        torch.cat([future_task, future_video_task], dim=-1)
-                    )
-                future_align_embs = future_task.repeat(img_emb.size(0), 1, 1).to(
-                    img_emb.device, img_emb.dtype
-                )
-
-            if (
-                not self.use_future_depth
-                and getattr(self, "use_future_video", False)
-                and getattr(self, "future_video_share_future_depth_query", False)
-            ):
-                raise ValueError("share_future_depth_query=True requires depth.use_future_depth=True.")
-
-            for segment_name in prefix_query_segments(
-                use_depth_align=True,
-                use_future_depth=self.use_future_depth,
-                use_future_video=getattr(self, "use_future_video", False),
-                use_future_video_cls=getattr(self, "use_future_video_cls", False),
-                use_future_video_patch=getattr(self, "use_future_video_patch", True),
-                future_video_share_future_depth_query=getattr(
-                    self,
-                    "future_video_share_future_depth_query",
-                    False,
-                ),
-            ):
-                if segment_name == "language":
-                    _append(
-                        lang_emb,
-                        lang_masks,
-                        lang_tokens.to(device),
-                    )
-                elif segment_name == "current_depth":
-                    _append(align_embs, align_pad_masks, fake_align_ids)
-                elif segment_name == "future_video_cls":
-                    future_video_cls_align_emb = self.future_video_cls_align_emb.weight.repeat(
-                        img_emb.size(0), 1, 1
-                    ).to(img_emb.device, img_emb.dtype)
-                    cls_align_pad_masks = torch.ones(
-                        bsize,
-                        1,
-                        device=device,
-                        dtype=lang_masks.dtype,
-                    )
-                    fake_cls_align_ids = torch.full(
-                        (bsize, 1),
-                        cfg.text_config.eos_token_id,
-                        dtype=torch.long,
-                        device=device,
-                    )
-                    _append(future_video_cls_align_emb, cls_align_pad_masks, fake_cls_align_ids)
-                elif segment_name == "future_video":
-                    future_video_align_embs = (
-                        _get_align_tokens(self.future_video_align_embs)
-                        .repeat(img_emb.size(0), 1, 1)
-                        .to(img_emb.device, img_emb.dtype)
-                    )
-                    _append(future_video_align_embs, align_pad_masks, fake_align_ids)
-                elif segment_name == "future_depth":
-                    _append(future_align_embs, align_pad_masks, fake_align_ids)
-                else:
-                    raise ValueError(f"Unsupported prefix query segment: {segment_name}")
-
-            embs = torch.cat(parts, dim=1)
-            pad_masks = torch.cat(masks, dim=1)
-            prefix_input_ids = torch.cat(input_ids, dim=1)
-            full_visual_pos_masks = torch.cat(visual_masks, dim=1)
-        else:
-            embs = torch.cat([img_emb, lang_emb], dim=1)
-            pad_masks = torch.cat([image_pad_masks, lang_masks], dim=1)
-            prefix_input_ids = torch.cat([fake_image_ids, lang_tokens.to(device)], dim=1)
-            full_visual_pos_masks = torch.cat([visual_pos_masks, torch.zeros_like(lang_masks)], dim=1)
+        embs = torch.cat([img_emb, lang_emb], dim=1)
+        pad_masks = torch.cat([image_pad_masks, lang_masks], dim=1)
+        prefix_input_ids = torch.cat([fake_image_ids, lang_tokens.to(device)], dim=1)
+        full_visual_pos_masks = torch.cat([visual_pos_masks, torch.zeros_like(lang_masks)], dim=1)
 
         if getattr(self.config, "vlm_causal", False):
             att_masks = torch.ones((bsize, embs.shape[1]), device=device, dtype=torch.bool)
@@ -1024,7 +854,7 @@ class FlowMatchingV2(FlowMatchingV1):
                 wrapped[:, :, 1 : 1 + num_patch] = level
                 level = wrapped
             level = einops.rearrange(level, "b n l d -> b (n l) d")
-            if tail_len > 0:  # language (and depth-align query) tail stays zero
+            if tail_len > 0:  # language tail stays zero
                 level = torch.cat([level, level.new_zeros(bsize, tail_len, level.shape[-1])], dim=1)
             dense_deepstack.append(level.to(embed_dtype))
 
@@ -1046,24 +876,6 @@ class FlowMatchingV2(FlowMatchingV1):
         suffix_position_ids = suffix_1d.unsqueeze(0).expand(3, -1, -1)
         return torch.cat([prefix_position_ids, suffix_position_ids], dim=-1)
 
-    def _current_depth_task_tokens(self, hidden_states, num_images=3):
-        query_spans = prefix_query_token_spans(
-            prefix_len=hidden_states.shape[1],
-            num_task_tokens=self.num_task_tokens,
-            use_depth_align=True,
-            use_future_depth=getattr(self, "use_future_depth", False),
-            use_future_video=getattr(self, "use_future_video", False),
-            use_future_video_cls=getattr(self, "use_future_video_cls", False),
-            use_future_video_patch=getattr(self, "use_future_video_patch", True),
-            future_video_share_future_depth_query=getattr(
-                self,
-                "future_video_share_future_depth_query",
-                False,
-            ),
-        )
-        start, end = query_spans["current_depth"]
-        return hidden_states[:, start:end, :]
-
     def forward(
         self,
         images,
@@ -1076,13 +888,8 @@ class FlowMatchingV2(FlowMatchingV1):
         time=None,
         vlm_causal=False,
         loss_type="fm",
-        depth_targets=None,
         precompute_grid_thw=False,
-        future_depth_targets=None,
         image_grid_thw=None,
-        future_video_targets=None,
-        future_video_cls_targets=None,
-        future_video_current_patch=None,
         collect_metrics=True,
     ) -> Tensor:
         dtype = state.dtype
@@ -1115,23 +922,9 @@ class FlowMatchingV2(FlowMatchingV1):
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        prefix_len = prefix_pad_masks.shape[1]
-        if self.block_future_depth_to_action:
-            att_2d_masks = block_suffix_to_fv_(
-                att_2d_masks,
-                suffix_row_start=prefix_len,
-                prefix_len=prefix_len,
-                num_task_tokens=self.num_task_tokens,
-            )
-
-        att_2d_masks = self._block_suffix_to_future_video_if_enabled_(
-            att_2d_masks,
-            suffix_row_start=prefix_len,
-            prefix_len=prefix_len,
-        )
         position_ids = self._build_full_position_ids(prefix_position_ids, prefix_pad_masks, suffix_pad_masks)
 
-        (outputs_embeds, suffix_out), _, router_logits_list = self.qwenvl_with_expert.forward(
+        (_, suffix_out), _, router_logits_list = self.qwenvl_with_expert.forward(
             attention_mask=att_2d_masks,
             position_ids=position_ids,
             vlm_position_ids=prefix_position_ids,
@@ -1145,67 +938,6 @@ class FlowMatchingV2(FlowMatchingV1):
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
         )
-        align_metrics = {}
-        if self.config.align_params != {}:
-            loss_depth, loss_future_depth, depth_preds, future_depth_preds = self.depth_emb_forward(
-                outputs_embeds,
-                depth_targets,
-                img_masks,
-                future_depth_targets,
-            )
-            loss_depth = loss_depth * self.config.align_params["depth_loss_weight"]
-            loss_future_depth = loss_future_depth * self.config.align_params.get(
-                "future_depth_loss_weight", 1.0
-            )
-            loss_future_video = 0
-            future_video_preds = None
-            current_video_preds = None
-            if getattr(self, "use_future_video", False):
-                loss_video, future_video_preds, video_metrics = self.video_emb_forward(
-                    outputs_embeds,
-                    future_video_targets,
-                    future_video_cls_targets=future_video_cls_targets,
-                    future_video_current_patch=future_video_current_patch,
-                )
-                video_total_loss = loss_video
-                if getattr(self, "use_current_video_patch", False) and future_video_current_patch is not None:
-                    current_video_loss, current_video_preds, current_video_metrics = (
-                        self.current_video_emb_forward(
-                            outputs_embeds,
-                            future_video_current_patch,
-                        )
-                    )
-                    video_total_loss = video_total_loss + current_video_loss
-                    video_metrics.update(current_video_metrics)
-                    video_metrics["align/current_video_loss"] = current_video_loss.detach()
-                video_cfg = self.config.align_params.get("video", {})
-                video_weight = video_cfg.get(
-                    "future_video_loss_weight",
-                    self.config.align_params.get(
-                        "future_video_loss_weight",
-                        self.config.align_params["depth_loss_weight"],
-                    ),
-                )
-                loss_future_video = video_total_loss * video_weight
-                align_metrics.update(video_metrics)
-                if "align/current_video_loss" in align_metrics:
-                    align_metrics["align/current_video_loss_weighted"] = (
-                        align_metrics["align/current_video_loss"] * video_weight
-                    )
-                align_metrics["align/future_video_loss"] = loss_video.detach()
-                align_metrics["align/future_video_loss_weighted"] = (loss_video * video_weight).detach()
-                align_metrics["align/video_loss"] = video_total_loss.detach()
-                align_metrics["align/video_loss_weighted"] = loss_future_video.detach()
-            self.steps += 1
-        else:
-            loss_depth = 0
-            loss_future_depth = 0
-            loss_future_video = 0
-            depth_preds = None
-            future_depth_preds = None
-            future_video_preds = None
-            current_video_preds = None
-
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
         if getattr(self.config, "action_fp32", False):
             v_t = self._fp32_linear(self.action_out_proj, suffix_out)
@@ -1224,21 +956,7 @@ class FlowMatchingV2(FlowMatchingV1):
         seq_wise_loss, router_z_loss, moe_metrics = self._moe_losses_and_metrics(
             router_logits_list, losses, collect_metrics=collect_metrics
         )
-        if align_metrics:
-            moe_metrics.update(align_metrics)
-        return (
-            losses,
-            loss_depth,
-            loss_future_depth,
-            loss_future_video,
-            depth_preds,
-            seq_wise_loss,
-            router_z_loss,
-            moe_metrics,
-            future_depth_preds,
-            future_video_preds,
-            current_video_preds,
-        )
+        return losses, seq_wise_loss, router_z_loss, moe_metrics
 
     def _embed_and_fill_prefix(self, images, img_masks, lang_tokens, lang_masks, image_grid_thw):
         """Prefix half of sample_actions as one compilable unit: embed_prefix
@@ -2077,19 +1795,6 @@ class FlowMatchingV2(FlowMatchingV1):
             )
             suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
             full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
-            if self.block_future_depth_to_action:
-                # Query rows here are all suffix (state/action), so row start is 0.
-                full_att_2d_masks = block_suffix_to_fv_(
-                    full_att_2d_masks,
-                    suffix_row_start=0,
-                    prefix_len=prefix_len,
-                    num_task_tokens=self.num_task_tokens,
-                )
-            full_att_2d_masks = self._block_suffix_to_future_video_if_enabled_(
-                full_att_2d_masks,
-                suffix_row_start=0,
-                prefix_len=prefix_len,
-            )
 
             full_position_ids = self._build_full_position_ids(
                 prefix_position_ids,
@@ -2331,11 +2036,6 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         if getattr(self.config, "use_cudagraph_prefix_full", False):
             self.model._use_prefix_graph = True
 
-        # Frozen distillation teachers (native depth / DINO-video), built lazily on
-        # the first *training* forward when align_params is set. Plain attribute on
-        # purpose: see the "Distillation teachers" block below get_optim_params.
-        self._align_teachers: DepthTeacherBundle | None = None
-
         self.reset()
         torch.set_float32_matmul_precision("high")
 
@@ -2373,88 +2073,6 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         if not groups:
             raise ValueError("No trainable LingBot parameters")
         return groups
-
-    # ==================== Distillation teachers (native depth / DINO-video) ====================
-    # Port of the upstream trainer's per-micro-batch teacher block (tasks/vla/
-    # train_lingbotvla.py): frozen MoGe/MoRGBD (+ optional DINO-video) teachers run
-    # under no_grad + bf16 autocast on the raw pre-Qwen camera frames the processor
-    # carries as ``pil_images`` / ``future_pil_images``, and their outputs are fed
-    # to the model as loss targets. The bundle is a plain attribute — never an
-    # nn.Module registration — so teacher weights stay out of optimizers, DDP/FSDP
-    # wrapping, and saved checkpoints. Each DDP rank builds its own frozen copy.
-
-    @torch.compiler.disable
-    def _ensure_align_teachers(self) -> DepthTeacherBundle:
-        if self._align_teachers is None:
-            from .teachers.depth_teachers import DepthTeacherBundle
-
-            device = next(self.model.parameters()).device
-            # Lazy teacher construction must not perturb the student's resumed
-            # per-rank noise/timestep RNG stream.
-            devices = (
-                [device.index if device.index is not None else torch.cuda.current_device()]
-                if device.type == "cuda"
-                else []
-            )
-            with torch.random.fork_rng(devices=devices):
-                self._align_teachers = DepthTeacherBundle.build(self.config.align_params, device)
-        return self._align_teachers
-
-    def _compute_align_targets(self, batch: dict) -> dict:
-        """Teacher targets for one training batch, as model-forward kwargs."""
-        params = self.config.align_params
-        use_future_depth = bool(params["depth"].get("use_future_depth", False))
-        use_future_video = bool(params.get("use_future_video", False))
-
-        pil_images = batch.get("pil_images")
-        if pil_images is None:
-            raise RuntimeError(
-                "align_params is enabled but the batch carries no 'pil_images'. The "
-                "preprocessor step was built without use_depth_align=True — this happens "
-                "when training from a checkpoint whose saved processor predates the "
-                "distillation wiring, or when the processor was constructed from a "
-                "config without align_params. Rebuild with the align_params-carrying "
-                "config."
-            )
-
-        teachers = self._ensure_align_teachers()
-        targets: dict = {}
-        with torch.no_grad():
-            targets["depth_targets"] = teachers.depth_targets(pil_images)
-            if use_future_depth:
-                future_pil = batch.get("future_pil_images")
-                if future_pil is None:
-                    raise RuntimeError(
-                        "align_params.depth.use_future_depth is enabled but the batch carries no "
-                        "'future_pil_images'. Set --policy.dataset_fps and confirm the dataset "
-                        "delta sampling is active (future-frame keys are produced only when the "
-                        "processor step has use_future_image=True)."
-                    )
-                targets["future_depth_targets"] = teachers.depth_targets(future_pil)
-            if use_future_video:
-                future_pil = batch.get("future_pil_images")
-                if future_pil is None:
-                    raise RuntimeError(
-                        "align_params.use_future_video is enabled but the batch carries no "
-                        "'future_pil_images'. The DINO-video teacher needs the future camera "
-                        "frame; confirm the processor step has use_future_image=True "
-                        "(--policy.dataset_fps must be resolvable, see the depth/DINO README)."
-                    )
-                bundle = teachers.video_targets(
-                    pil_images,
-                    future_pil,
-                    params["video"],
-                    effective_fps=batch.get("future_video_effective_fps"),
-                )
-                if isinstance(bundle, dict):
-                    targets["future_video_targets"] = bundle["patch"]
-                    targets["future_video_cls_targets"] = bundle.get("cls")
-                    targets["future_video_current_patch"] = bundle.get("current_patch")
-                elif isinstance(bundle, tuple):
-                    targets["future_video_targets"], targets["future_video_cls_targets"] = bundle
-                else:
-                    targets["future_video_targets"] = bundle
-        return targets
 
     # ==================== PEFT (LoRA) integration ====================
     # The community PEFT path (lerobot `--peft.*` CLI → wrap_with_peft →
@@ -2518,27 +2136,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         interval = max(1, int(getattr(self.config, "moe_metrics_interval", 1)))
         collect_metrics = self._train_step_count % interval == 0
 
-        # External targets remain supported for diagnostic/unit-test callers, but
-        # real training computes them from frozen teachers when the native-depth
-        # branch is configured. Inference follows predict_action_chunk instead and
-        # never builds/runs teachers.
-        align_targets = (
-            self._compute_align_targets(batch) if self.training and self.config.align_params else {}
-        )
-
-        (
-            losses,
-            loss_depth,
-            loss_future_depth,
-            loss_future_video,
-            _depth_preds,
-            seq_wise_loss,
-            router_z_loss,
-            moe_metrics,
-            _future_depth_preds,
-            _future_video_preds,
-            _current_video_preds,
-        ) = self.model.forward(
+        losses, seq_wise_loss, router_z_loss, moe_metrics = self.model.forward(
             images,
             img_masks,
             lang_tokens,
@@ -2548,16 +2146,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             noise=batch.get("noise"),
             time=batch.get("time"),
             loss_type=self.config.loss_type,
-            depth_targets=align_targets.get("depth_targets", batch.get("depth_targets")),
             image_grid_thw=image_grid_thw,
-            future_depth_targets=align_targets.get("future_depth_targets", batch.get("future_depth_targets")),
-            future_video_targets=align_targets.get("future_video_targets", batch.get("future_video_targets")),
-            future_video_cls_targets=align_targets.get(
-                "future_video_cls_targets", batch.get("future_video_cls_targets")
-            ),
-            future_video_current_patch=align_targets.get(
-                "future_video_current_patch", batch.get("future_video_current_patch")
-            ),
             collect_metrics=collect_metrics,
         )
 
@@ -2571,9 +2160,6 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         loss_dict: dict = {"l1_loss" if self.config.loss_type == "L1_fm" else "l2_loss": loss_vla.item()}
         total_loss = loss_vla
         for loss_name, term in (
-            ("depth_loss", loss_depth),
-            ("future_depth_loss", loss_future_depth),
-            ("future_video_loss", loss_future_video),
             ("seq_wise_loss", seq_wise_loss),
             ("router_z_loss", router_z_loss),
         ):

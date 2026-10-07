@@ -196,7 +196,6 @@ def prepare_images(
     observation: dict[str, Tensor],
     image_keys=None,
     train=False,
-    use_depth_align=False,
     return_image_grid_thw=False,
     augment_params=None,
     return_augment_params=False,
@@ -206,7 +205,7 @@ def prepare_images(
 
     Args:
         observation (dict[str, Tensor])
-        preprocess_device: when set (and not train / use_depth_align), all present
+        preprocess_device: when set (and not train), all present
             cameras are uploaded to this device and run through the HF image
             processor in ONE batched call (the TorchvisionBackend keeps torch
             tensors in torch, so resize/rescale/normalize/patchify execute on
@@ -230,10 +229,6 @@ def prepare_images(
                     augment_params = sample_visual_augmentation_params(observation["image"][key])
                 break
 
-    if use_depth_align:
-        pil_images = []
-        pil_image_dict = {}
-
     # The fast path is a GPU optimization. ``preprocess_device="cpu"`` is the
     # explicit opt-out used by deployment configs: keep the original per-camera CPU
     # processor rather than running this tensor-only implementation on CPU.
@@ -242,7 +237,6 @@ def prepare_images(
         and preprocess_device is not None
         and str(preprocess_device).startswith("cuda")
         and not train
-        and not use_depth_align
     )
 
     if gpu_fast_path:
@@ -267,9 +261,6 @@ def prepare_images(
                     augment_params,
                 )
 
-            if use_depth_align:
-                pil_image_dict[key] = img.cpu().numpy()
-
             if image_processor is None:
                 img = img.to(dtype) / 127.5 - 1.0  # to [-1, 1]
             else:
@@ -291,25 +282,16 @@ def prepare_images(
             img_masks.append(True)
             if return_image_grid_thw:
                 image_grid_thw_list.append(image_grid_thw_dict[key])
-            if use_depth_align:
-                pil_img = pil_image_dict[key]
-                pil_images.append(pil_img)
         else:
             # zero padding
             img = image_dict[list(image_dict.keys())[0]]
-            if use_depth_align:
-                pil_img = pil_image_dict[list(pil_image_dict.keys())[0]]
             if isinstance(img, torch.Tensor):
                 img = torch.full_like(img, fill_value=-1.0)  # paligemma [-1,1], now Qwen3vl
             else:
                 img = np.zeros_like(img)  # Qwen2.5vl
-                if use_depth_align:
-                    pil_img = np.zeros_like(pil_img)
             images.append(img)
             if return_image_grid_thw:
                 image_grid_thw_list.append(image_grid_thw_dict.get(list(image_dict.keys())[0]))
-            if use_depth_align:
-                pil_images.append(pil_img)
             img_masks.append(False)
 
     if isinstance(images[0], torch.Tensor):
@@ -317,11 +299,6 @@ def prepare_images(
     elif isinstance(images[0], np.ndarray):
         images = torch.from_numpy(np.stack(images, axis=0))  # (n, c, h, w)
     img_masks = torch.tensor(img_masks, dtype=torch.bool)  # (*n)
-
-    # pil_images = np.stack(pil_images, axis=0)
-    # pil_images = [pil_images[i].transpose(1,2,0) for i in range(pil_images.shape[0])]
-    # pil_images = np.concatenate(pil_images, axis=1)
-    pil_images = torch.from_numpy(np.stack(pil_images, axis=0)) if use_depth_align else []  # (n, c, h, w)
 
     if return_image_grid_thw:
         image_grid_thw = []
@@ -338,5 +315,5 @@ def prepare_images(
         image_grid_thw = None
 
     if return_augment_params:
-        return images, img_masks, pil_images, image_grid_thw, augment_params
-    return images, img_masks, pil_images, image_grid_thw
+        return images, img_masks, image_grid_thw, augment_params
+    return images, img_masks, image_grid_thw

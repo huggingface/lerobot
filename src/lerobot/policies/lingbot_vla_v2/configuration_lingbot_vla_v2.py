@@ -95,8 +95,7 @@ class LingbotVLAV2Config(PreTrainedConfig):
     * a **Qwen3-VL** backbone with native-resolution image tokens (``image_grid_thw``),
     * a **sparse Mixture-of-Experts (MoE)** action expert for cross-embodiment scaling,
     * a **unified 55-dim canonical** state/action representation (arms, end-effectors,
-      grippers, dexterous hands, waist, head, mobile base, reserved slots), and
-    * an optional **predictive-dynamics distillation** branch (depth + DINO-Video).
+      grippers, dexterous hands, waist, head, mobile base, reserved slots).
 
     The canonical layout mirrors the upstream v2 repo (Robbyant/lingbot-vla-v2). The
     feature -> canonical-slot mapping itself is data driven and handled by the processor
@@ -261,24 +260,6 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # "dense", "sparse" (dynamic capacity, one .item() sync), "sparse_gmm" /
     # "sparse_static_gmm" (grouped_mm 3D GEMM, torch >= 2.11 on sm89+), "eager".
     moe_backend: str = "sparse_static"
-
-    # ==================== Optional predictive-dynamics distillation branch ====================
-    # Only used by the native-depth (6B) checkpoint. Empty ``align_params`` disables it,
-    # which keeps the action path identical to the depth-free variant.
-    num_task_tokens: int = 8
-    align_params: dict = field(default_factory=dict)
-    enable_expert_vision: bool = False
-    expert_vision_type: str | None = None
-    # Future-frame spacing for the distillation branch, in dataset frames. Upstream
-    # samples the "future" camera frame at ``chunk_size - 1`` frames ahead — the
-    # horizon the action chunk predicts — and derives the DINO-video teacher's
-    # effective fps as ``fps / max(1, chunk_size - 1)``. None keeps that default;
-    # override only to experiment with other spacings.
-    future_frame_offset: int | None = None
-    # fps of the training dataset, used to synthesize ``future_video_effective_fps``
-    # for the DINO-video teacher (upstream injects it per item from the dataset).
-    # None leaves the teacher on the effective_fps baked into its config.yaml.
-    dataset_fps: int | None = None
 
     # ==================== Modeling internals (FlowMatching / dual-stream expert) ====================
     # Attention used inside the vendored dual-stream model. "sdpa" (fused flash /
@@ -446,102 +427,6 @@ class LingbotVLAV2Config(PreTrainedConfig):
         if self.split_gate_liner and self.nosplit_gate_liner:
             raise ValueError("split_gate_liner and nosplit_gate_liner cannot both be True.")
 
-        # The optional predictive-dynamics distillation branch (native depth /
-        # DINO-video) is driven by the upstream-compatible ``align_params`` dict.
-        # Validate its schema here, at config construction, so a malformed
-        # ``--policy.align_params='{...}'`` fails before any dataset / model /
-        # teacher initialization. Teacher weight *paths* are not checked here —
-        # they are only needed at training time (see teachers/depth_teachers.py).
-        if self.align_params:
-            self._validate_align_params()
-
-        # The expert-vision branch remains unported in this integration (no
-        # forward path, no weight loading) and is NOT the DINO-video teacher —
-        # keep rejecting it separately from align_params.
-        if self.enable_expert_vision:
-            raise NotImplementedError(
-                "enable_expert_vision is not available in this LeRobot integration: the "
-                "expert-vision branch has no forward path and no weight loading here. It is "
-                "NOT the DINO-video distillation teacher (that lives under "
-                "align_params.video in the upstream codebase). Keep "
-                "enable_expert_vision=false for action-only training."
-            )
-
-    _ALIGN_REQUIRED_TOP_KEYS = ("mode", "num_task_tokens", "depth_loss_weight", "llm", "depth")
-    _ALIGN_REQUIRED_LLM_KEYS = ("dim_out", "image_token_size", "image_input_size")
-    _ALIGN_REQUIRED_DEPTH_KEYS = (
-        "model_type",
-        "token_size",
-        "input_size",
-        "num_backbone_tokens",
-        "dim_out",
-        "num_layers",
-        "num_heads",
-        "dim_head",
-        "ff_mult",
-    )
-    _ALIGN_REQUIRED_VIDEO_KEYS = (
-        "num_backbone_tokens",
-        "dim_out",
-        "num_layers",
-        "num_heads",
-        "dim_head",
-        "ff_mult",
-    )
-
-    def _validate_align_params(self) -> None:
-        """Schema validation for the upstream ``align_params`` dict.
-
-        Mirrors the hard requirements the model code enforces (mode/model_type
-        exclusivity, required keys, query-divisibility) but raises them all at
-        config-construction time with actionable messages and upstream values.
-        """
-        params = self.align_params
-
-        def _require(mapping, keys, where):
-            missing = [key for key in keys if key not in mapping]
-            if missing:
-                raise ValueError(f"align_params.{where} is missing required keys: {missing}")
-
-        _require(params, self._ALIGN_REQUIRED_TOP_KEYS, "")
-        if params["mode"] != "query":
-            raise ValueError(f"align_params.mode must be 'query', got {params['mode']!r}.")
-        if params["depth"]["model_type"] != "MoRGBD":
-            raise ValueError(
-                f"align_params.depth.model_type must be 'MoRGBD', got {params['depth']['model_type']!r}."
-            )
-        _require(params["llm"], self._ALIGN_REQUIRED_LLM_KEYS, "llm")
-        _require(params["depth"], self._ALIGN_REQUIRED_DEPTH_KEYS, "depth")
-
-        num_backbone_tokens = params["depth"]["num_backbone_tokens"]
-        num_task_tokens = int(params["num_task_tokens"])
-        if num_backbone_tokens % num_task_tokens:
-            raise ValueError(
-                f"align_params.depth.num_backbone_tokens ({num_backbone_tokens}) must be "
-                f"divisible by align_params.num_task_tokens ({num_task_tokens})."
-            )
-
-        if params.get("use_future_video", False):
-            _require(params.get("video", {}), self._ALIGN_REQUIRED_VIDEO_KEYS, "video")
-            if not params["depth"].get("use_future_depth", False) and params["video"].get(
-                "share_future_depth_query", False
-            ):
-                raise ValueError(
-                    "align_params.video.share_future_depth_query=True requires "
-                    "align_params.depth.use_future_depth=True."
-                )
-            if params["video"].get("use_shared_future_task_proj", False) and not params["video"].get(
-                "share_future_depth_query", False
-            ):
-                raise ValueError(
-                    "align_params.video.use_shared_future_task_proj=True requires "
-                    "align_params.video.share_future_depth_query=True."
-                )
-
-    def num_task_tokens_from(self, params: dict) -> int:
-        """num_task_tokens read from align_params (the field the model consumes)."""
-        return int(params["num_task_tokens"])
-
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
         assert self.input_features is not None
@@ -601,30 +486,7 @@ class LingbotVLAV2Config(PreTrainedConfig):
         )
 
     @property
-    def use_depth_align(self) -> bool:
-        """The native-depth / DINO-video branch is keyed on a non-empty align_params."""
-        return bool(self.align_params)
-
-    @property
-    def use_future_image(self) -> bool:
-        """Future frames are required by future-depth or DINO-video distillation."""
-        if not self.align_params:
-            return False
-        return bool(
-            self.align_params.get("depth", {}).get("use_future_depth", False)
-            or self.align_params.get("use_future_video", False)
-        )
-
-    @property
-    def observation_delta_indices(self) -> list[int] | None:
-        # Future-frame sampling for the distillation branch, mirroring upstream
-        # ``base_dataset.get_video_delta_timestamps``: [current, future] per camera
-        # with the future frame ``chunk_size - 1`` frames ahead (divided by the
-        # dataset fps by ``resolve_delta_timestamps``). State is sliced back to the
-        # current frame inside the processor step; inference never samples futures.
-        if self.use_depth_align and self.use_future_image:
-            offset = self.future_frame_offset if self.future_frame_offset is not None else self.chunk_size - 1
-            return [0, max(1, offset)]
+    def observation_delta_indices(self) -> None:
         return None
 
     @property
