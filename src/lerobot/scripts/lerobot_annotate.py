@@ -80,7 +80,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
     if cfg.job.is_remote:
         # Imported lazily: the submitter pulls in LeRobotDataset (the `dataset`
         # extra), which a local annotation run over --root doesn't need.
-        from lerobot.jobs.annotate import submit_annotate_to_hf
+        from lerobot.jobs import submit_annotate_to_hf
 
         return submit_annotate_to_hf(cfg)
 
