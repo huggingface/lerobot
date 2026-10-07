@@ -1,0 +1,235 @@
+# VLA-JEPA
+
+这是 LeRobot 对 **VLA-JEPA** 的移植版本，一个视觉-语言-动作模型，它将 Qwen3-VL 语言骨干网络与自监督视频世界模型（V-JEPA2）和流匹配 DiT 动作头相结合。
+
+---
+
+## 架构概述
+
+VLA-JEPA 包含三个主要组件：
+
+| 组件                    | 模块                              | 角色                                        |
+| ----------------------- | --------------------------------- | ------------------------------------------- |
+| **Qwen3-VL 骨干网络**   | `Qwen3VLInterface`                | 将图像+语言指令融合为上下文 token           |
+| **DiT-B 动作头**        | `VLAJEPAActionHead`               | 对动作块进行流匹配扩散                     |
+| **V-JEPA2 世界模型**    | `ActionConditionedVideoPredictor` | 自监督视频预测损失（仅用于训练）           |
+
+### 数据流
+
+**训练阶段：**
+
+1. `num_video_frames` 帧的视频片段由 V-JEPA2 编码为每帧的 patch token。
+2. Qwen3-VL 骨干网络处理多视角图像+任务指令，生成包含特殊动作 token（用于世界模型条件化）和具身 token 的上下文 token 序列。
+3. 动作头接收这些上下文 token 作为交叉注意力的键/值，通过流匹配预测去噪后的动作块。
+4. 世界模型预测器使用从 Qwen 提取的动作 token 来预测未来的 V-JEPA2 帧嵌入；这些预测的回归损失会被加到动作损失中。
+
+**推理阶段：**
+仅使用 Qwen + 动作头。推理时不需要世界模型。
+
+### 动作头详情
+
+通过 `action_model_type` 提供的预设配置：
+
+| 预设    | 隐藏维度 | 头数 | 头维度 |
+| ------- | -------- | ---- | ------ |
+| `DiT-B` | 768      | 12   | 64     |
+| `DiT-L` | 1536     | 32   | 48     |
+
+### 世界模型详情
+
+视频预测器是一个 ViT 风格的 Transformer（`ActionConditionedVideoPredictor`），接收：
+
+- **帧 token**：V-JEPA2 patch 嵌入投影到 `predictor_embed_dim`
+- **动作 token**：Qwen 动作 token 嵌入投影到 `predictor_embed_dim`
+
+它使用块因果注意力，使每个时间步可以关注所有之前的步骤。预测器的输入 `embed_dim` 等于 `num_views × video_encoder_hidden_size`（例如，预训练检查点中 2 个视角 × 1024 = 2048）。
+
+---
+
+## 预训练检查点
+
+三个检查点可直接在 LeRobot 组织中获取：[`lerobot/VLA-JEPA`](https://huggingface.co/collections/lerobot/vla-jepa)，从 [ginwind/VLA-JEPA](https://huggingface.co/ginwind/VLA-JEPA) 转换而来：
+
+| 检查点                          | 数据集          | 相机                      | 世界模型 | 动作维度 |
+| ------------------------------- | --------------- | ------------------------- | -------- | -------- |
+| `lerobot/VLA-JEPA-LIBERO`      | LIBERO-10       | 2（agentview + wrist）   | 启用     | 7        |
+| `lerobot/VLA-JEPA-Pretrain`    | DROID 1.0.1     | 2（外部左侧视角）       | 启用     | 7        |
+| `lerobot/VLA-JEPA-SimplerEnv`  | OXE Bridge / RT-1 | 1（视角复制 ×2）        | 启用     | 7        |
+
+所有检查点使用 `Qwen/Qwen3-VL-2B-Instruct` 作为语言骨干网络。
+
+---
+
+## 配置
+
+`VLAJEPAConfig` 中的关键参数：
+
+| 参数                      | 默认值  | 描述                                                                                                                                                     |
+| ------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chunk_size`              | 7       | 每次推理调用预测的动作数量                                                                                                                               |
+| `n_action_steps`          | 7       | 在重新规划之前从预测块中执行的步数                                                                                                                       |
+| `num_video_frames`        | 8       | 输入世界模型的视频片段长度                                                                                                                               |
+| `enable_world_model`      | `True`  | 是否加载并训练 V-JEPA2 预测器                                                                                                                           |
+| `world_model_loss_weight` | 0.1     | JEPA 预测损失相对于动作损失的权重                                                                                                                       |
+| `num_inference_timesteps` | 4       | 动作去噪的 Euler 积分步数                                                                                                                               |
+| `freeze_qwen`             | `False` | 冻结 Qwen3-VL 骨干网络，仅训练动作头                                                                                                                     |
+| `reinit_modules`          | `None`  | 允许在加载时随机重新初始化的键前缀（用于跨具身体迁移，参见[在不同具身体上微调](#fine-tuning-on-a-different-embodiment)）                                |
+| `gripper_dim`             | 6       | 动作向量中夹爪维度的索引（例如，对于 7 自由度机械臂，夹爪作为最后一个关节时为 6）                                                                        |
+| `gripper_threshold`       | 0.5     | `pre_snap_gripper_action` 和 `binarize_gripper_action` 用于二值化夹爪维度的阈值                                                                         |
+| `pre_snap_gripper_action` | `True`  | 在反归一化之前将夹爪维度快照到 {0, 1}。对于没有二值夹爪的机器人，设为 `False`                                                                            |
+| `binarize_gripper_action` | `True`  | 在反归一化之后将夹爪维度二值化到 {-1, 1}。对于没有二值夹爪的机器人，设为 `False`                                                                         |
+
+---
+
+## 训练
+
+训练步数可能根据数据集大小和计算预算而有所不同。原始论文在 ssv2 + droid 上联合预训练了 50k 步，然后在 LIBERO 上额外训练了 30k 步，但从提供的预训练检查点微调时，较少的步数也可能产生良好性能。
+
+### 从零开始完整训练
+
+```bash
+lerobot-train \
+  policy.type=vla_jepa \
+  policy.repo_id=your_org/your_repo \
+  dataset.repo_id=your_org/your_dataset
+```
+
+### 从预训练检查点微调
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+如果你想冻结 Qwen 骨干网络，仅训练动作头，设置 `policy.freeze_qwen=True`：
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --policy.freeze_qwen=true \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+### 在不同具身体上微调
+
+当目标机器人的动作或状态维度与预训练检查点不同时，动作头的输入/输出投影层形状将不匹配，无法直接加载。`reinit_modules` 允许你列出允许不匹配的键前缀——这些层会被随机重新初始化，而其他所有权重都从检查点中复用。列出前缀之外的任何形状不匹配都会引发错误。
+
+依赖于 `action_dim` 和 `state_dim` 的层为：
+
+| 层                                          | 键前缀                            |
+| ------------------------------------------- | --------------------------------- |
+| 动作编码器（action_dim → inner_dim）        | `model.action_model.action_encoder` |
+| 动作解码器（hidden_size → action_dim）      | `model.action_model.action_decoder` |
+| 状态编码器（state_dim → inner_dim）          | `model.action_model.state_encoder`  |
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --policy.freeze_qwen=true \
+  --policy.reinit_modules='["model.action_model.action_encoder", "model.action_model.action_decoder", "model.action_model.state_encoder"]' \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+如果你的机器人没有本体感知状态，从列表中省略 `model.action_model.state_encoder`。
+
+### 复现 LIBERO 结果
+
+**在 LIBERO 上训练：**
+从 Pretrain 检查点开始训练，在 LIBERO 数据集上训练 30k 步。
+原始论文提到在 8 个 GPU 上以 batch size 32 训练，即全局 batch size 为 256。
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --steps=30000
+```
+
+**评估预训练的 LIBERO-10 检查点：**
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/VLA-JEPA-LIBERO \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.n_episodes=10 \
+  --eval.batch_size=5
+```
+
+仅评估部分任务：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/VLA-JEPA-LIBERO \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.task_ids='[0,1,2]' \
+  --eval.n_episodes=10 \
+  --eval.batch_size=5
+```
+
+**预期结果：**
+
+| 任务套件       | 回合数 | 成功数 | 成功率     |
+| -------------- | ------ | ------ | ---------- |
+| libero_spatial | 100    | 93     | **95.0%**  |
+| libero_object  | 100    | 100    | **100.0%** |
+| libero_goal    | 100    | 98     | **98.0%**  |
+| libero_10      | 100    | 96     | **93.0%**  |
+| **总计**       | **400**| **387**| **96.5%**  |
+
+---
+
+## 在不同相机数量数据集上微调
+
+预训练的世界模型预测器使用 `embed_dim = jepa_tubelet_size × 1024`（默认 `jepa_tubelet_size=2`）训练。
+
+**默认行为 — 视角填充/裁剪（无需额外操作）**
+
+从 `VLA-JEPA-Pretrain` 微调时，模型会自动调整输入世界模型的视角数量以匹配 `jepa_tubelet_size`：
+
+- **单视角数据集（如 BridgeV2）：** 单视角潜变量被复制以产生双视角世界模型输入，保留 JEPA 自监督信号而不产生权重不匹配。
+- **多于 2 个视角的数据集（如 DROID 3 个视角）：** 所有视角都传递给 Qwen 骨干网络（以获得更丰富的上下文），但仅前 `jepa_tubelet_size` 个视角（一个腕部+一个第三人称，按配置的视角顺序）用于世界模型。
+
+**方案 1 — 禁用世界模型**
+
+设置 `enable_world_model=False` 以完全跳过 JEPA 损失。仅加载和训练 Qwen 骨干网络和动作头。这足以获得良好的动作性能。
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.enable_world_model=false \
+  --policy.repo_id=your_org/your_repo \
+  --dataset.repo_id=your_org/single_camera_dataset
+```
+
+**方案 2 — 重新初始化预测器输入投影**
+
+如果你想将 `jepa_tubelet_size` 更改为 2 以外的值，使用 `strict=False` 加载检查点并为新的 `embed_dim` 重新初始化 `model.video_predictor.predictor_embed`。所有其他预测器块权重（注意力、MLP、归一化、输出投影）都与相机数量无关，可以从预训练检查点中复用。
+
+---
+
+## 引用
+
+```bibtex
+@misc{sun2026vlajepaenhancingvisionlanguageactionmodel,
+  title         = {VLA-JEPA: Enhancing Vision-Language-Action Model with Latent World Model},
+  author        = {Jingwen Sun and Wenyao Zhang and Zekun Qi and Shaojie Ren and Zezhi Liu and Hanxin Zhu and Guangzhong Sun and Xin Jin and Zhibo Chen},
+  year          = {2026},
+  eprint        = {2602.10098},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  url           = {https://arxiv.org/abs/2602.10098},
+}
+```
+
+---
+
+## 许可证
+
+权重根据原始 [ginwind/VLA-JEPA](https://huggingface.co/ginwind/VLA-JEPA) 仓库的许可证条款分发（**Apache 2.0 许可证**）。LeRobot 集成代码遵循 **Apache 2.0 许可证**。

@@ -1,0 +1,340 @@
+# LeKiwi
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/1740517739083.jpeg"
+  alt="LeKiwi"
+  width="70%"
+/>
+
+在接下来的步骤中，我们将介绍如何组装 LeKiwi 移动机器人。
+
+## 采购零件
+
+参考这个 [README](https://github.com/SIGRobotics-UIUC/LeKiwi)。其中包含物料清单、零件采购链接以及 3D 打印指南。如果你是第一次打印或者没有自己的 3D 打印机，也有相关建议。
+
+### 有线版本
+
+如果你使用的是**有线** LeKiwi 版本，可以跳过 Raspberry Pi 的安装和 SSH 配置。你可以直接在 PC 上运行 LeKiwi 脚本和遥操作的主控臂脚本。
+
+## 在 Pi 上安装软件
+
+现在我们需要设置运行在 LeKiwi 机器人上的远程 PC。通常是 Raspberry Pi，但也可以是任何能在 5V 电压下运行且有足够 USB 端口（2 个或以上）用于相机和电机控制板的 PC。
+
+### 安装操作系统
+
+关于 Raspberry Pi 及其 SD 卡的设置，参见：[Setup PI](https://www.raspberrypi.com/documentation/computers/getting-started.html)。其中介绍了如何下载 [Imager](https://www.raspberrypi.com/software/) 来安装 Raspberry Pi OS 或 Ubuntu。
+
+### 配置 SSH
+
+设置好 Pi 之后，你应该启用并配置 [SSH](https://www.raspberrypi.com/news/coding-on-raspberry-pi-remotely-with-visual-studio-code/)（安全外壳协议），这样你可以从笔记本电脑登录 Pi，无需在 Pi 上连接显示器、键盘和鼠标。一个很好的教程可以在[这里](https://www.raspberrypi.com/documentation/computers/remote-access.html#ssh)找到。登录 Pi 可以在命令提示符（cmd）中进行，如果使用 VSCode，可以使用这个[扩展](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh)。
+
+### 在 Pi 上安装 LeRobot 🤗
+
+在 Raspberry Pi 上按照我们的[安装指南](./installation)安装 LeRobot。
+
+除了这些说明外，你还需要在 Pi 上安装 Feetech SDK 和 ZeroMQ：
+
+```bash
+pip install -e ".[lekiwi]"
+```
+
+## 在本地安装 LeRobot
+
+如果你已经在笔记本/PC 上安装了 LeRobot，可以跳过此步骤；否则请按照我们在 Pi 上做的同样步骤操作。
+
+按照我们的[安装指南](./installation)进行操作。
+
+除了这些说明外，你还需要在笔记本/PC 上安装 Feetech SDK 和 ZeroMQ：
+
+```bash
+pip install -e ".[lekiwi]"
+```
+
+太棒了 🤗！你已经完成了 LeRobot 的安装，现在可以开始组装 SO100/SO101 臂和移动底座了 🤖。以后每次想使用 LeRobot 时，进入我们安装 LeRobot 的 `~/lerobot` 文件夹，运行相应的命令即可。
+
+# 逐步组装指南
+
+首先，我们将组装两个 SO100/SO101 臂。一个安装在移动底座上，一个用于遥操作。然后组装移动底座。组装说明可以在以下两个页面找到：
+
+- [组装 SO101](./so101#step-by-step-assembly-instructions)
+- [组装 LeKiwi](https://github.com/SIGRobotics-UIUC/LeKiwi/blob/main/Assembly.md)
+
+### 查找电机板对应的 USB 端口
+
+要找到每个总线舵机适配器的端口，运行此脚本：
+
+```bash
+lerobot-find-port
+```
+
+<hfoptions id="example">
+<hfoption id="Mac">
+
+示例输出：
+
+```
+Finding all available ports for the MotorBus.
+['/dev/tty.usbmodem575E0032081']
+Remove the USB cable from your MotorsBus and press Enter when done.
+
+[...断开对应的主控或从动臂并按 Enter...]
+
+The port of this MotorsBus is /dev/tty.usbmodem575E0032081
+Reconnect the USB cable.
+```
+
+找到的端口为：`/dev/tty.usbmodem575E0032081`，对应你的控制板。
+
+</hfoption>
+<hfoption id="Linux">
+
+在 Linux 上，你可能需要通过以下命令授予 USB 端口访问权限：
+
+```bash
+sudo chmod 666 /dev/ttyACM0
+sudo chmod 666 /dev/ttyACM1
+```
+
+示例输出：
+
+```
+Finding all available ports for the MotorBus.
+['/dev/ttyACM0']
+Remove the usb cable from your MotorsBus and press Enter when done.
+
+[...断开对应的主控或从动臂并按 Enter...]
+
+The port of this MotorsBus is /dev/ttyACM0
+Reconnect the USB cable.
+```
+
+找到的端口为：`/dev/ttyACM0`，对应你的控制板。
+
+</hfoption>
+</hfoptions>
+
+### 配置电机
+
+电机配置的说明可以在 SO101 [文档](./so101#configure-the-motors)中找到。除了臂部电机的 ID 外，我们还需要为移动底座设置电机 ID。这些需要按照特定顺序才能正常工作。下面是移动底座的电机 ID 和电机安装位置图。注意 LeKiwi 上我们只使用一块电机控制板，这意味着轮子的电机 ID 为 7、8 和 9。
+
+你可以运行以下命令来设置 LeKiwi 的电机。它会先设置臂部电机（id 6..1），然后设置轮子电机（9, 8, 7）：
+
+```bash
+lerobot-setup-motors \
+    --robot.type=lekiwi \
+    --robot.port=/dev/tty.usbmodem58760431551 # <- 粘贴上一步找到的端口
+```
+
+<img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/motor_ids.webp" alt="移动机器人电机 ID" title="移动机器人电机 ID" width="60%">
+
+### 通信故障排除
+
+如果你无法连接到 Mobile SO100，请按以下步骤诊断和解决问题。
+
+#### 1. 验证 IP 地址配置
+
+确保在命令或代码中使用了正确的 Pi IP 地址。要在 Raspberry Pi 上查看 IP 地址，运行（在 Pi 命令行中）：
+
+```bash
+hostname -I
+```
+
+#### 2. 检查 Pi 是否可从笔记本/PC 访问
+
+尝试从笔记本 ping Raspberry Pi：
+
+```bash
+ping <your_pi_ip_address>
+```
+
+如果 ping 失败：
+
+- 确保 Pi 已开机并连接到同一网络。
+- 检查 Pi 上是否启用了 SSH。
+
+#### 3. 尝试 SSH 连接
+
+如果无法 SSH 到 Pi，可能是连接未正确配置。使用：
+
+```bash
+ssh <your_pi_user_name>@<your_pi_ip_address>
+```
+
+如果遇到连接错误：
+
+- 在 Pi 上运行以下命令确保 SSH 已启用：
+  ```bash
+  sudo raspi-config
+  ```
+  然后导航至：**Interfacing Options -> SSH** 并启用它。
+
+### 校准
+
+现在我们需要校准主控臂和从动臂。轮子电机不需要校准。校准过程非常重要，因为它允许在一个机器人上训练的神经网络能在另一个机器人上工作。
+
+### 校准从动臂（在移动底座上）
+
+确保臂已连接到 Raspberry Pi，然后运行此脚本或 API 示例（通过 SSH 在 Raspberry Pi 上）来启动从动臂的校准：
+
+```bash
+lerobot-calibrate \
+    --robot.type=lekiwi \
+    --robot.id=my_awesome_kiwi # <- 给机器人取一个唯一名称
+```
+
+我们统一了大多数机器人的校准方法，因此此 SO100 臂的校准步骤与 Koch 和 SO101 相同。首先，我们需要将机器人移动到每个关节处于其运动范围中间位置，然后按 `Enter`。其次，我们将所有关节移动到其完整运动范围。SO101 同样过程的参考视频可以在[这里](https://huggingface.co/docs/lerobot/en/so101#calibration-video)找到。
+
+### 有线版本
+
+如果你使用的是**有线** LeKiwi 版本，请在笔记本上运行所有命令。
+
+### 校准主控臂
+
+然后，校准主控臂（连接到笔记本/PC）。在笔记本上运行以下命令或 API 示例：
+
+<hfoptions id="calibrate_leader">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 你机器人的端口
+    --teleop.id=my_awesome_leader_arm # <- 给机器人取一个唯一名称
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.so_leader import SO100LeaderConfig, SO100Leader
+
+config = SO100LeaderConfig(
+    port="/dev/tty.usbmodem58760431551",
+    id="my_awesome_leader_arm",
+)
+
+leader = SO100Leader(config)
+leader.connect(calibrate=False)
+leader.calibrate()
+leader.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+## 遥操作 LeKiwi
+
+> [!TIP]
+> 如果你使用的是 Mac，你可能需要在系统偏好设置中给终端授予键盘访问权限以进行遥操作。前往 系统偏好设置 > 安全性与隐私 > 输入监控，勾选终端的复选框。
+
+要进行遥操作，SSH 登录到你的 Raspberry Pi，运行 `conda activate lerobot`，然后执行此命令：
+
+```bash
+python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
+```
+
+然后在笔记本上同样运行 `conda activate lerobot`，运行 API 示例，确保在 `examples/lekiwi/teleoperate.py` 中设置了正确的 `remote_ip` 和 `port`。
+
+```bash
+python examples/lekiwi/teleoperate.py
+```
+
+你应该在笔记本上看到类似这样的输出：`[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.` 现在你可以移动主控臂并使用键盘（w, a, s, d）来驱动前进、左转、后退、右转。使用（z, x）向左转或向右转。使用（r, f）来增减移动机器人的速度。有三种速度模式，见下表：
+
+| 速度模式 | 线速度（m/s） | 旋转速度（deg/s） |
+| -------- | ------------- | ----------------- |
+| 快速     | 0.4           | 90                |
+| 中速     | 0.25          | 60                |
+| 慢速     | 0.1           | 30                |
+
+| 按键 | 动作       |
+| ---- | ---------- |
+| W    | 前进       |
+| A    | 左移       |
+| S    | 后退       |
+| D    | 右移       |
+| Z    | 左转       |
+| X    | 右转       |
+| R    | 加速       |
+| F    | 减速       |
+
+> [!TIP]
+> 如果你使用不同的键盘，可以在 [`LeKiwiClientConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/lekiwi/config_lekiwi.py) 中更改各命令对应的按键。
+
+### 有线版本
+
+如果你使用的是**有线** LeKiwi 版本，请在笔记本上运行所有命令。
+
+## 录制数据集
+
+熟悉遥操作后，你就可以录制第一个数据集了。
+
+我们使用 Hugging Face Hub 功能来上传数据集。如果你之前没有使用过 Hub，请确保可以通过 CLI 使用具有写入权限的 token 登录，token 可以从 [Hugging Face 设置](https://huggingface.co/settings/tokens)中生成。
+
+通过以下命令将 token 添加到 CLI：
+
+```bash
+hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+```
+
+然后将你的 Hugging Face 仓库名称存储在变量中：
+
+```bash
+HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
+echo $HF_USER
+```
+
+现在你可以录制数据集了。要录制片段并将数据集上传到 Hub，执行专为 LeKiwi 定制的 API 示例。确保先在脚本中调整 `remote_ip`、`repo_id`、`port` 和 `task`。如果你想运行更长时间，可以增加 `NB_CYCLES_CLIENT_CONNECTION`。
+
+```bash
+python examples/lekiwi/record.py
+```
+
+#### 数据集上传
+
+在本地，你的数据集存储在此文件夹中：`~/.cache/huggingface/lerobot/{repo-id}`。在数据录制结束时，你的数据集将上传到你的 Hugging Face 页面（例如 https://huggingface.co/datasets/cadene/so101_test），你可以通过运行以下命令获取链接：
+
+```bash
+echo https://huggingface.co/datasets/${HF_USER}/so101_test
+```
+
+你的数据集会自动标记 `LeRobot` 标签，方便社区查找，你也可以添加自定义标签（例如此处的 `tutorial`）。
+
+你可以在 Hub 上通过搜索 `LeRobot` [标签](https://huggingface.co/datasets?other=LeRobot)来查找其他 LeRobot 数据集。
+
+#### 数据采集建议
+
+熟悉数据录制后，你可以创建更大的数据集用于训练。一个好的入门任务是在不同位置抓取物体并放入收纳箱中。我们建议至少录制 50 个片段，每个位置 10 个片段。保持相机固定，并在整个录制过程中保持一致的抓取行为。同时确保你操作的物体在相机画面中可见。一个好的经验法则是：你应该只通过看相机图像就能完成任务。
+
+在接下来的部分中，你将训练神经网络。在实现可靠的抓取性能后，你可以在数据采集中引入更多变化，例如额外的抓取位置、不同的抓取技巧和调整相机位置。
+
+避免过快地添加太多变化，因为这可能会影响你的训练效果。
+
+如果你想深入了解这个重要主题，可以查看我们写的[博客文章](https://huggingface.co/blog/lerobot-datasets#what-makes-a-good-dataset)，了解什么样的数据集才是好的数据集。
+
+#### 故障排除：
+
+- 在 Linux 上，录制控制键（方向键、Escape）在 X11、Wayland 和无头/SSH 会话中都可以工作，只要你在交互式终端中运行录制（保持终端聚焦）——不需要 `$DISPLAY` 设置；字母等效键 `n` / `r` / `q` 也可以使用。注意**LeKiwi 底座的键盘遥操作**有所不同：它依赖全局按键后端，因此仅在 X11 会话、Windows 桌面或已授予辅助功能/输入监控权限的 macOS 上工作——不支持 Wayland 或无头机器。参见 [pynput 限制说明](https://pynput.readthedocs.io/en/latest/limitations.html#linux)。
+
+## 回放片段
+
+要回放一个片段，运行下面的 API 示例，确保更改 `remote_ip`、`port`、LeRobotDatasetId 和片段索引。
+
+```bash
+python examples/lekiwi/replay.py
+```
+
+恭喜 🎉，你的机器人已经准备好自主学习任务了。开始训练它吧，参见教程：[真实世界机器人入门](./il_robots)
+
+## 评估你的策略
+
+要评估你的策略，运行 `evaluate.py` API 示例，确保更改 `remote_ip`、`port`、model 等参数。
+
+```bash
+python examples/lekiwi/evaluate.py
+```
+
+> [!TIP]
+> 如果你有任何问题或需要帮助，请到 [Discord](https://discord.com/invite/s3KuuzsPFb) 联系我们。

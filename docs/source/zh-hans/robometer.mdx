@@ -1,0 +1,185 @@
+# ROBOMETER
+
+ROBOMETER 是一个**通用视频-语言机器人奖励模型**。它根据轨迹视频和任务描述，预测密集的逐帧任务进度和逐帧成功状态。
+
+**论文**：[ROBOMETER: Scaling General-Purpose Robotic Reward Models via Trajectory Comparisons](https://arxiv.org/abs/2603.02115)
+**项目**：[robometer.github.io](https://robometer.github.io/)
+**原始代码**：[github.com/robometer/robometer](https://github.com/robometer/robometer)
+**检查点**：[lerobot/Robometer-4B](https://huggingface.co/lerobot/Robometer-4B)
+
+## 概述
+
+ROBOMETER 基于 `Qwen/Qwen3-VL-4B-Instruct` 构建，并添加了三个轻量级预测头：
+
+- **进度头**：预测每帧任务进度，取值范围 `[0, 1]`。
+- **成功头**：预测每帧任务成功概率。
+- **偏好头**：在训练期间预测两条轨迹中哪条更好地完成了任务。
+
+论文使用复合目标函数训练 ROBOMETER：
+
+```text
+L = L_pref + L_prog + L_succ
+```
+
+当前 LeRobot 集成**仅支持推理**。保留了偏好头以便已发布的 `Robometer-4B` 检查点无需重新映射即可加载，但 `compute_reward()` 仅查询进度头或成功头。
+
+## LeRobot 集成涵盖的内容
+
+- 通过 LeRobot 使用标准的 `reward_model.type=robometer` 配置。
+- 通过 `RobometerEncoderProcessorStep` 进行 Qwen3-VL 图像和文本预处理。
+- 通过 `PreTrainedRewardModel` 支持 LeRobot 奖励模型的保存/加载 API。
+- 内部提供密集的逐帧进度和成功预测。
+- 通过 `compute_reward()` 为下游 LeRobot 奖励模型使用提供标量奖励。
+
+本页面重点介绍将已发布的 ROBOMETER 检查点作为零样本奖励模型使用。从头训练 ROBOMETER 不在当前 LeRobot 集成范围内。
+
+## 安装要求
+
+1. 按照[安装指南](./installation)安装 LeRobot。
+2. 安装 ROBOMETER 依赖：
+
+```bash
+pip install -e ".[robometer]"
+```
+
+如果在源码目录中直接使用 `uv`：
+
+```bash
+uv sync --extra robometer
+```
+
+ROBOMETER 使用 Qwen3-VL-4B 骨干网络，强烈建议使用 GPU 进行推理。
+
+## 模型输入与输出
+
+ROBOMETER 需要：
+
+- 一段轨迹视频或一系列帧。
+- 一段自然语言任务描述。
+
+在 LeRobot 数据集中，预处理器读取：
+
+| 配置字段                     | 默认值                   | 含义                                  |
+| ---------------------------- | ------------------------ | ------------------------------------- |
+| `reward_model.image_key`     | `observation.images.top` | ROBOMETER 使用的摄像头/视频观测       |
+| `reward_model.task_key`      | `task`                   | 辅助数据中存储任务字符串的键          |
+| `reward_model.max_frames`    | `8`                      | 传递给 ROBOMETER 的最大帧数           |
+
+模型内部预测逐帧进度和成功状态。LeRobot 奖励 API 为每个样本返回一个标量：
+
+- `reward_output="progress"`（默认）：返回最后一帧的进度，限制在 `[0, 1]` 范围内。
+- `reward_output="success"`：如果最后一帧成功概率高于 `success_threshold`，返回 `1.0`，否则返回 `0.0`。
+
+## 使用方法
+
+### 直接加载奖励模型
+
+```python
+from lerobot.rewards.robometer import RobometerConfig, RobometerRewardModel
+
+cfg = RobometerConfig(
+    pretrained_path="lerobot/Robometer-4B",
+    device="cuda",
+    reward_output="progress",
+)
+reward_model = RobometerRewardModel.from_pretrained(cfg.pretrained_path, config=cfg)
+```
+
+### 编码帧并计算奖励
+
+对于直接 Python 调用，提供形状为 `(T, H, W, C)` 的 `uint8` 数组帧和任务字符串：
+
+```python
+from lerobot.rewards.robometer.modeling_robometer import ROBOMETER_FEATURE_PREFIX
+from lerobot.rewards.robometer.processor_robometer import RobometerEncoderProcessorStep
+
+# frames: np.ndarray, 形状 (T, H, W, C), 类型 uint8
+# task: str
+encoder = RobometerEncoderProcessorStep(
+    base_model_id=cfg.base_model_id,
+    use_multi_image=cfg.use_multi_image,
+    use_per_frame_progress_token=cfg.use_per_frame_progress_token,
+    max_frames=cfg.max_frames,
+)
+
+encoded = encoder.encode_samples([(frames, task)])
+batch = {f"{ROBOMETER_FEATURE_PREFIX}{key}": value for key, value in encoded.items()}
+
+reward = reward_model.compute_reward(batch)
+```
+
+`reward` 是形状为 `(batch_size,)` 的张量。
+
+### 使用奖励工厂
+
+你也可以通过奖励工厂实例化 ROBOMETER：
+
+```python
+from lerobot.rewards import make_reward_model, make_reward_model_config, make_reward_pre_post_processors
+
+cfg = make_reward_model_config(
+    "robometer",
+    pretrained_path="lerobot/Robometer-4B",
+    device="cuda",
+    image_key="observation.images.top",
+)
+reward_model = make_reward_model(cfg)
+preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
+```
+
+预处理器将 Qwen-VL 张量写入 `observation.robometer.*` 命名空间，`compute_reward()` 读取这些编码后的张量。
+
+## 配置说明
+
+### 骨干网络与词汇表
+
+已发布的检查点使用 Qwen3-VL-4B 骨干网络。ROBOMETER 按固定顺序向分词器添加了五个特殊 token：
+
+```text
+<|split_token|>
+<|reward_token|>
+<|pref_token|>
+<|sim_token|>
+<|prog_token|>
+```
+
+`<|prog_token|>` 在每帧之后插入，是用于逐帧进度和成功预测的隐藏状态位置。`<|split_token|>` 和 `<|pref_token|>` 用于论文中的成对轨迹偏好目标。`<|reward_token|>` 和 `<|sim_token|>` 保留用于检查点兼容性。
+
+LeRobot 配置中存储了序列化后的 `vlm_config`，包含调整大小后的词汇表，这样模型可以从 `config.json` 重新加载而无需先下载基础 Qwen 权重。对于 `Qwen/Qwen3-VL-4B-Instruct`，分词器长度为 `151669`，加上五个 ROBOMETER token 后检查点词汇表大小为 `151674`。
+
+### 进度预测
+
+在已发布的检查点中，进度是离散的。进度头输出 `progress_discrete_bins=10` 个均匀分布的区间中心的 logits。LeRobot 通过 softmax 并取区间中心的期望值将这些 logits 转换为连续值，与上游 ROBOMETER 实现一致。
+
+### 成功预测
+
+成功头为每帧输出原始 logits。LeRobot 通过 `sigmoid` 将其转换为概率。当 `reward_output="success"` 时，`compute_reward()` 使用 `success_threshold` 对最后一帧的成功概率进行阈值化。
+
+## 局限性
+
+- 当前 LeRobot 集成仅支持推理；未实现 ROBOMETER 训练或偏好对训练。
+- `compute_reward()` 为 LeRobot 奖励模型 API 返回每个样本的标量，尽管 ROBOMETER 内部预测逐帧进度和成功状态。
+- ROBOMETER 基于视频-语言，不使用特权机器人状态（如接触力或物体位姿）。
+
+## 参考资料
+
+- [ROBOMETER 项目](https://robometer.github.io/)
+- [ROBOMETER 论文](https://arxiv.org/abs/2603.02115)
+- [ROBOMETER 原始代码](https://github.com/robometer/robometer)
+- [已发布的 ROBOMETER-4B 检查点](https://huggingface.co/lerobot/Robometer-4B)
+- [Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct)
+
+## 引用
+
+```bibtex
+@inproceedings{liang2026robometer,
+title = {Robometer: Scaling General-Purpose Robotic Reward Models via Trajectory Comparisons},
+author={Anthony Liang and Yigit Korkmaz and Jiahui Zhang and Minyoung Hwang and Abrar Anwar and Sidhant Kaushik and Aditya Shah and Alex S. Huang and Luke Zettlemoyer and Dieter Fox and Yu Xiang and Anqi Li and Andreea Bobu and Abhishek Gupta and Stephen Tu and Erdem Biyik and Jesse Zhang},
+year={2026},
+booktitle={Robotics: Science and Systems 2026},
+}
+```
+
+## 许可证
+
+本 LeRobot 集成遵循 LeRobot 使用的 **Apache 2.0 许可证**。请查看上游 ROBOMETER 代码和模型页面了解原始实现和发布检查点的许可证。
