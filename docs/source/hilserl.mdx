@@ -78,7 +78,7 @@ class HILSerlRobotEnvConfig(EnvConfig):
     processor: HILSerlProcessorConfig    # Processing pipeline configuration (nested)
     name: str = "real_robot"    # Environment name
     task: str | None = None    # Task identifier
-    fps: int = 10    # Control frequency
+    fps: int = 30    # Control frequency
 
 # Nested processor configuration
 class HILSerlProcessorConfig:
@@ -314,19 +314,28 @@ lerobot-find-joint-limits \
   --robot.id=black \
   --teleop.type=so100_leader \
   --teleop.port=/dev/tty.usbmodem58760431551 \
-  --teleop.id=blue
+  --teleop.id=blue \
+  --urdf_path=SO-ARM100/Simulation/SO101/so101_new_calib.urdf \
+  --target_frame_name=gripper
 ```
+
+`--urdf_path` is required: it points to your robot's URDF file, which the script uses to compute the end-effector position. For the SO-100/SO-101, clone the [SO-ARM100 repository](https://github.com/TheRobotStudio/SO-ARM100) with `git clone https://github.com/TheRobotStudio/SO-ARM100.git`; the URDF is then at `SO-ARM100/Simulation/SO101/so101_new_calib.urdf`.
 
 **Workflow**
 
 1. Run the script and move the robot through the space that solves the task
 2. The script will record the minimum and maximum end-effector positions and the joint angles and prints them to the console, for example:
+
    ```
-   Max ee position [0.2417 0.2012 0.1027]
-   Min ee position [0.1663 -0.0823 0.0336]
-   Max joint positions [-20.0, -20.0, -20.0, -20.0, -20.0, -20.0]
-   Min joint positions [50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+   # End Effector Bounds (x, y, z):
+   max_ee = [0.2417, 0.2012, 0.1027]
+   min_ee = [0.1663, -0.0823, 0.0336]
+
+   # Joint Position Limits (radians):
+   max_pos = [...]
+   min_pos = [...]
    ```
+
 3. Use these values in your environment configuration under `env.processor.inverse_kinematics.end_effector_bounds` (see `InverseKinematicsConfig` in `lerobot/envs/configs.py`)
 
 **Example Configuration**
@@ -352,7 +361,13 @@ With the bounds defined, you can safely collect demonstrations for training. Tra
 
 **Setting Up Record Mode**
 
-Create a configuration file for recording demonstrations (or edit an existing one like [env_config.json](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/env_config.json)):
+The example configuration files for this guide are in the [lerobot/config_examples](https://huggingface.co/datasets/lerobot/config_examples) dataset on the Hub. Download the environment and training configs into your working directory:
+
+```bash
+hf download lerobot/config_examples rl/env_config.json rl/train_config.json --repo-type dataset --local-dir .
+```
+
+This saves them to `rl/env_config.json` and `rl/train_config.json`, the paths used in the commands below. Edit `rl/env_config.json` for recording demonstrations:
 
 1. Set `mode` to `"record"` at the root level
 2. Specify a unique `repo_id` for your dataset in the `dataset` section (e.g., "username/task_name")
@@ -515,10 +530,10 @@ During the online training, press `space` to take over the policy and `space` ag
 
 **Recording Demonstrations**
 
-Start the recording process, an example of the config file can be found [here](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/env_config_so100.json):
+Start the recording process with the environment config you edited above:
 
 ```bash
-python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/env_config_so100.json
+python -m lerobot.rl.gym_manipulator --config_path rl/env_config.json
 ```
 
 During recording:
@@ -618,7 +633,7 @@ Before training, you need to collect a dataset with labeled examples. Setting `m
 To collect a dataset, you need to modify some parameters in the environment configuration based on HILSerlRobotEnvConfig.
 
 ```bash
-python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/reward_classifier_train_config.json
+python -m lerobot.rl.gym_manipulator --config_path rl/env_config.json
 ```
 
 **Key Parameters for Data Collection**
@@ -684,7 +699,7 @@ The reward classifier is configured using `lerobot/rewards/classifier/configurat
 - **dropout_rate**: Regularization parameter
 - **learning_rate**: Learning rate for optimizer
 
-Example configuration for training the [reward classifier](https://huggingface.co/datasets/aractingi/lerobot-example-config-files/blob/main/reward_classifier_train_config.json):
+Example configuration for training the reward classifier. Save it as `reward_classifier_train_config.json`:
 
 ```json
 {
@@ -741,7 +756,7 @@ Example configuration for training the [reward classifier](https://huggingface.c
 To train the classifier, use the `train.py` script with your configuration:
 
 ```bash
-lerobot-train --config_path path/to/reward_classifier_train_config.json
+lerobot-train --config_path reward_classifier_train_config.json
 ```
 
 **Deploying and Testing the Model**
@@ -787,7 +802,7 @@ or set the argument in the json config file.
 Run `gym_manipulator.py` to test the model.
 
 ```bash
-python -m lerobot.rl.gym_manipulator --config_path path/to/env_config.json
+python -m lerobot.rl.gym_manipulator --config_path rl/env_config.json
 ```
 
 The reward classifier will automatically provide rewards based on the visual input from the robot's cameras.
@@ -795,23 +810,23 @@ The reward classifier will automatically provide rewards based on the visual inp
 **Example Workflow for training the reward classifier**
 
 1. **Create the configuration files**:
-   Create the necessary json configuration files for the reward classifier and the environment. Check the examples [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/reward_classifier/config.json).
+   Create the necessary json configuration files for the reward classifier and the environment: `reward_classifier_train_config.json` from the example above, and the downloaded `rl/env_config.json`.
 
 2. **Collect a dataset**:
 
    ```bash
-   python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/env_config.json
+   python -m lerobot.rl.gym_manipulator --config_path rl/env_config.json
    ```
 
 3. **Train the classifier**:
 
    ```bash
-   lerobot-train --config_path src/lerobot/configs/reward_classifier_train_config.json
+   lerobot-train --config_path reward_classifier_train_config.json
    ```
 
 4. **Test the classifier**:
    ```bash
-   python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/env_config.json
+   python -m lerobot.rl.gym_manipulator --config_path rl/env_config.json
    ```
 
 ### Training with Actor-Learner
@@ -820,7 +835,7 @@ The LeRobot system uses a distributed actor-learner architecture for training. T
 
 **Configuration Setup**
 
-Create a training configuration file (example available [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/train_config.json)). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/rl/train_rl.py`.
+Edit the training configuration file you downloaded earlier, `rl/train_config.json` (example available [here](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/train_config.json)). The training config is based on the main `TrainRLServerPipelineConfig` class in `lerobot/rl/train_rl.py`.
 
 1. Configure the policy settings (`type="gaussian_actor"`, `device`, etc.)
 2. Configure the algorithm settings under the top-level `algorithm` block (`type="sac"`, learning rates, discount, etc., defined in `lerobot/rl/algorithms/sac/configuration_sac.py`).
@@ -834,7 +849,7 @@ Create a training configuration file (example available [here](https://huggingfa
 First, start the learner server process:
 
 ```bash
-python -m lerobot.rl.learner --config_path src/lerobot/configs/train_config_hilserl_so100.json
+python -m lerobot.rl.learner --config_path rl/train_config.json
 ```
 
 The learner:
@@ -849,7 +864,7 @@ The learner:
 In a separate terminal, start the actor process with the same configuration:
 
 ```bash
-python -m lerobot.rl.actor --config_path src/lerobot/configs/train_config_hilserl_so100.json
+python -m lerobot.rl.actor --config_path rl/train_config.json
 ```
 
 The actor:
