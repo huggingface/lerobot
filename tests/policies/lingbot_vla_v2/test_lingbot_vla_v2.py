@@ -41,8 +41,6 @@ def test_config_defaults_match_v2_canonical():
     assert config.chunk_size == 50
     assert config.vlm_family == "qwen3_vl"
     assert config.tokenizer_path == "Qwen/Qwen3-VL-4B-Instruct"
-    # MoE + native-resolution image tokens are the defining v2 additions.
-    assert config.return_image_grid_thw is True
     assert config.action_num_attention_heads == 32
     assert config.action_num_key_value_heads == 8
     assert config.token_moe_layers == list(range(36))

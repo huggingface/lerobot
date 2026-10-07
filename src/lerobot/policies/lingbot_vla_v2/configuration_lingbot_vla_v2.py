@@ -150,13 +150,6 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # vision-token budget and are serialized by the LingBot feature-transform step.
     image_max_pixels: int = 262144
     image_min_pixels: int = 131072
-    # Optional device (e.g. "cuda") for the image preprocessing fast path: camera
-    # frames are uploaded once and the HF image processor runs batched on-device
-    # (resize/rescale/normalize/patchify are all torch ops in the torchvision
-    # backend), so the vision tower consumes GPU tensors without a second copy.
-    # None keeps the default per-camera CPU path. Inference-only; training
-    # (augmentation) and depth-align paths always stay on CPU.
-    preprocess_device: str | None = None
     # Number of flow-matching denoising steps at inference.
     num_steps: int = 10
     # Compute dtype for the whole model. The Qwen3-VL backbone defaults to bfloat16
@@ -187,7 +180,6 @@ class LingbotVLAV2Config(PreTrainedConfig):
 
     # Qwen3-VL specific token/vision handling.
     use_qwen3_chat_template: bool = True
-    return_image_grid_thw: bool = True
     qwen3vl_use_vision_boundaries: bool = True
     precompute_grid_thw: bool = False
     use_qwen3_fixed_grid_cache: bool = True

@@ -73,7 +73,6 @@ from lerobot.utils.constants import (
 from lerobot.utils.import_utils import _transformers_available
 
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config, resolve_robot_config_and_stats
-from .preprocessing.data_transform import prepare_images
 
 if _transformers_available:
     from transformers import AutoImageProcessor, AutoTokenizer
@@ -162,18 +161,6 @@ def _camera_rename_map(robot_config: dict | None) -> dict[str, str]:
             raw_key = slot_cfg["origin_keys"] if isinstance(slot_cfg, dict) else slot_cfg
             mapping[canonical_key] = raw_key
     return mapping
-
-
-def _prepare_camera_frame(img: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
-    """Resize one camera frame and scale it to the [0, 255] range Qwen3-VL expects.
-
-    LeRobot images are float CHW in [0, 1]; the HF image processor rescales by
-    1/255 itself, so the pixel values are scaled only when clearly normalized.
-    """
-    img = tv_resize(img, list(size), antialias=True)
-    if img.dtype.is_floating_point and float(img.max()) <= 1.0 + 1e-4:
-        img = img * 255.0
-    return img
 
 
 def _normalize_task_at(task: Any, index: int) -> str:
@@ -536,10 +523,10 @@ class LingbotVLAV2InverseSlotMappingProcessorStep(PolicyActionProcessorStep):
 class LingbotVLAV2ImageProcessorStep(ProcessorStep):
     """Run the standard Qwen3-VL image processor over the canonical cameras.
 
-    Per item and camera: resize to ``resize_imgs_with_padding``, rescale to
-    [0, 255], then the HF image processor patchifies at native resolution and
-    returns ``pixel_values`` plus the ``image_grid_thw`` patch grid. Missing
-    canonical views are zero-filled with ``img_masks=False``.
+    Each camera is resized to ``resize_imgs_with_padding`` and scaled to [0, 255],
+    then all frames go through the HF image processor in one call, which returns
+    ``pixel_values`` plus the ``image_grid_thw`` patch grid. Missing views are
+    filled with -1 and ``img_masks=False``.
     """
 
     tokenizer_path: str = "Qwen/Qwen3-VL-4B-Instruct"
@@ -552,11 +539,6 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
     # so 1,048,576 px ~= 1024 tokens.
     image_max_pixels: int = 262144
     image_min_pixels: int = 131072
-    # When set (e.g. "cuda"), camera images are uploaded to this device and run
-    # through the HF image processor in one batched call, with the outputs staying
-    # on-device for the vision tower. None keeps the per-camera CPU path.
-    preprocess_device: str | None = None
-    return_image_grid_thw: bool = True
 
     _image_processor: Any = field(default=None, init=False, repr=False)
 
@@ -571,47 +553,38 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
             max_pixels=self.image_max_pixels,
             min_pixels=self.image_min_pixels,
         )
-        # Derive camera keys from input_features if not explicitly provided
-        if not self.cameras:
-            # This will be set by the factory from config.input_features
-            pass
 
     def __call__(self, transition):
         transition = transition.copy()
-        observation = transition.get(TransitionKey.OBSERVATION)
-        if observation is None or not isinstance(observation, dict):
-            raise ValueError("LingbotVLAV2ImageProcessorStep requires an observation dict.")
-        new_obs = dict(observation)
+        new_obs = dict(transition[TransitionKey.OBSERVATION])
 
-        state = new_obs[OBS_STATE]
-        batch_size = state.shape[0]
-        image_keys = [f"{OBS_IMAGES}.{cam}" for cam in self.cameras]
+        keys = [f"{OBS_IMAGES}.{cam}" for cam in self.cameras]
+        present = [key for key in keys if key in new_obs]
+        if not present:
+            raise ValueError(f"None of the configured camera keys are present in the observation: {keys}")
+        # LeRobot images are float in [0, 1]; the HF processor expects [0, 255].
+        frames = torch.stack(
+            [
+                tv_resize(new_obs[key], list(self.resize_imgs_with_padding), antialias=True) * 255.0
+                for key in present
+            ],
+            dim=1,
+        )  # (B, n_present, C, H, W)
+        batch_size, n_present = frames.shape[:2]
+        processed = self._image_processor(list(frames.flatten(0, 1)))
+        pixels = processed["pixel_values"].unflatten(0, (batch_size, n_present, -1))
+        grid = processed["image_grid_thw"].view(batch_size, n_present, 3)
 
-        images, img_masks, grids = [], [], []
-        for i in range(batch_size):
-            image_dict: dict[str, torch.Tensor] = {}
-            for key in image_keys:
-                img = new_obs.get(key)
-                if img is None:
-                    continue
-                image_dict[key] = _prepare_camera_frame(img[i], self.resize_imgs_with_padding)
-
-            item_obs = {"image": image_dict, "state": state[i]}
-            item_images, item_masks, item_grid = prepare_images(
-                self._image_processor,
-                item_obs,
-                image_keys=image_keys,
-                return_image_grid_thw=self.return_image_grid_thw,
-                preprocess_device=self.preprocess_device,
-            )
-            images.append(item_images)
-            img_masks.append(item_masks)
-            grids.append(item_grid)
-
-        new_obs["images"] = torch.stack(images, dim=0)
-        new_obs["img_masks"] = torch.stack(img_masks, dim=0)
-        if self.return_image_grid_thw:
-            new_obs["image_grid_thw"] = torch.stack(grids, dim=0)
+        # Missing views are filled with -1 pixels and masked out.
+        index = {key: i for i, key in enumerate(present)}
+        images, grids = [], []
+        for key in keys:
+            i = index.get(key)
+            images.append(pixels[:, i] if i is not None else torch.full_like(pixels[:, 0], -1.0))
+            grids.append(grid[:, i if i is not None else 0])
+        new_obs["images"] = torch.stack(images, dim=1)
+        new_obs["img_masks"] = torch.tensor([key in index for key in keys]).expand(batch_size, -1)
+        new_obs["image_grid_thw"] = torch.stack(grids, dim=1)
         transition[TransitionKey.OBSERVATION] = new_obs
         return transition
 
@@ -625,8 +598,6 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
             # to defaults and mismatched the checkpoint's training resolution.
             "image_max_pixels": self.image_max_pixels,
             "image_min_pixels": self.image_min_pixels,
-            "preprocess_device": self.preprocess_device,
-            "return_image_grid_thw": self.return_image_grid_thw,
         }
 
     def save_artifacts(self, save_directory: Path) -> dict[str, str]:
@@ -789,8 +760,6 @@ def make_lingbot_vla_v2_pre_post_processors(
         resize_imgs_with_padding=tuple(config.resize_imgs_with_padding),
         image_max_pixels=config.image_max_pixels,
         image_min_pixels=config.image_min_pixels,
-        preprocess_device=config.preprocess_device,
-        return_image_grid_thw=config.return_image_grid_thw,
     )
 
     tokenizer_name = config.tokenizer_path or config.tokenizer_path
@@ -924,7 +893,6 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
             else None,
             "image_max_pixels": config.image_max_pixels,
             "image_min_pixels": config.image_min_pixels,
-            "return_image_grid_thw": config.return_image_grid_thw,
         },
     )
     if config.use_qwen3_chat_template is not None:
@@ -934,25 +902,6 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
     if tokenizer_path is not None:
         preprocessor_overrides.setdefault("tokenizer_processor", {})["tokenizer_name"] = tokenizer_path
         preprocessor_overrides.setdefault(CHAT_TEMPLATE_STEP, {})["tokenizer_name"] = tokenizer_path
-
-    # GPU preprocessing default: when the rollout inference device is CUDA and nobody
-    # explicitly configured preprocess_device (policy config, saved checkpoint, or an
-    # override), default it to that device. The fast path (prepare_images_on_device)
-    # is pure torch/torchvision — bit-exact vs the CPU path (bench/check_gpu_preprocess.py)
-    # — and saves ~171ms of per-tick host preprocessing on the measured 4090 setup
-    # (x86 shared-host CPU contention; on GB10 both paths measure ~5ms). Explicit
-    # config always wins, and ``preprocess_device="cpu"`` is the documented opt-out
-    # (keeps the original per-camera HF processor path).
-    if config.preprocess_device is None:
-        dev_override = (preprocessor_overrides.get("device_processor") or {}).get("device")
-        target_dev = dev_override or getattr(config, "device", None)
-        if (
-            target_dev is not None
-            and str(target_dev).startswith("cuda")
-            and torch.cuda.is_available()
-            and "preprocess_device" not in preprocessor_overrides.get(IMAGE_STEP, {})
-        ):
-            preprocessor_overrides.setdefault(IMAGE_STEP, {})["preprocess_device"] = target_dev
 
     # The inverse slot mapping must mirror the preprocessor's slot mapping: when
     # fine-tuning overrides the slot mapping on the preprocessor, the postprocessor's

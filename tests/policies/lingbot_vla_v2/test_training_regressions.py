@@ -11,14 +11,6 @@ from lerobot.policies.lingbot_vla_v2.model_core.qwen3vl_in_vla import (
     forward_without_grid_thw,
     preprcess_grid_thw,
 )
-from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import _prepare_camera_frame
-
-
-def test_square_resize_scales_to_qwen_range():
-    current = _prepare_camera_frame(torch.ones(3, 480, 640), (256, 256))
-    assert current.shape == (3, 256, 256)
-    # [0, 1] float inputs are scaled to the [0, 255] range Qwen3-VL expects.
-    assert current.max().item() == pytest.approx(255.0, abs=1e-2)
 
 
 class TinyVisual(torch.nn.Module):
