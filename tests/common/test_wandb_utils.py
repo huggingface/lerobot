@@ -119,3 +119,35 @@ def test_wandb_logger_resume_without_output_dir_raises(monkeypatch):
         WandBLogger(cfg)
 
     wandb.init.assert_not_called()
+
+
+def _make_train_cfg(wandb_cfg, tmp_path):
+    return SimpleNamespace(
+        wandb=wandb_cfg,
+        output_dir=tmp_path,
+        job_name="test-run",
+        env=None,
+        trainable_config=SimpleNamespace(type="test-policy"),
+        is_reward_model_training=False,
+        seed=42,
+        dataset=None,
+        resume=False,
+        to_dict=lambda: {},
+    )
+
+
+@pytest.mark.parametrize(("configured_mode", "expected_mode"), [(None, None), ("offline", "offline")])
+def test_wandb_logger_mode_leaves_env_var_in_charge_when_unset(
+    monkeypatch, tmp_path, configured_mode, expected_mode
+):
+    wandb = MagicMock()
+    wandb.run.id = "run-id"
+    wandb.run.get_url.return_value = "https://wandb.ai/test/run-id"
+    monkeypatch.setitem(sys.modules, "wandb", wandb)
+    monkeypatch.setenv("WANDB_SILENT", "False")
+    monkeypatch.setenv("WANDB_MODE", "offline")
+
+    WandBLogger(_make_train_cfg(WandBConfig(run_id="run-id", mode=configured_mode), tmp_path))
+
+    # With no mode configured, wandb.init must not be forced online, otherwise WANDB_MODE is ignored.
+    assert wandb.init.call_args.kwargs["mode"] == expected_mode
