@@ -29,12 +29,14 @@ import datasets
 import numpy as np
 import torch
 
-from lerobot.configs import DEFAULT_DEPTH_UNIT
-from lerobot.streaming.episode_cache import EpisodeByteCache
-from lerobot.streaming.episode_parquet import EpisodeParquetReader
-from lerobot.streaming.episode_pool import ExactCoveragePool, StreamingSamplingStrategy
-from lerobot.streaming.location import StorageLocation
-from lerobot.streaming.manifest import EpisodeVideoManifest
+from lerobot.configs import DEFAULT_DEPTH_UNIT, StreamingSamplingStrategy
+from lerobot.streaming import (
+    EpisodeByteCache,
+    EpisodeParquetReader,
+    EpisodeVideoManifest,
+    ExactCoveragePool,
+    StorageLocation,
+)
 from lerobot.utils.constants import HF_LEROBOT_HOME, LANGUAGE_COLUMNS
 from lerobot.utils.import_utils import get_safe_default_video_backend
 

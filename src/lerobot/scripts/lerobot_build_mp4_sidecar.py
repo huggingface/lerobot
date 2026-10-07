@@ -20,8 +20,6 @@ from typing import TYPE_CHECKING
 import fsspec
 from huggingface_hub import HfApi
 
-from lerobot.streaming.location import LocationKind, StorageLocation
-from lerobot.streaming.sidecar import SidecarSpec
 from lerobot.utils.import_utils import _datasets_available, require_package
 
 if TYPE_CHECKING or _datasets_available:
@@ -32,6 +30,7 @@ if TYPE_CHECKING or _datasets_available:
         make_sidecar_spec,
         published_sidecar_url,
     )
+    from lerobot.streaming import LocationKind, SidecarSpec, StorageLocation
 
 
 def parse_args() -> argparse.Namespace:

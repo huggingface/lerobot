@@ -21,6 +21,8 @@ import numpy as np
 import pytest
 import torch
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.manifest import EpisodeVideoManifest
 from lerobot.streaming.mp4 import (
@@ -43,6 +45,8 @@ from lerobot.streaming.mp4 import (
     synthesized_mp4_size,
 )
 from lerobot.streaming.range_fetch import ThreadLocalRangeFetcher
+
+pytestmark = pytest.mark.dataset
 
 
 def _minimal_mp4(sample_offsets: list[int], *, use_co64: bool = False) -> bytes:

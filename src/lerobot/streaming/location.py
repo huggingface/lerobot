@@ -8,7 +8,6 @@
 
 """One parser for dataset roots: local paths, Hub dataset/bucket URIs and other fsspec URLs.
 
-Kept free of the ``datasets`` extra so the streaming primitives can use it;
 ``lerobot.datasets.storage`` builds its dataset-level helpers on top of it.
 """
 

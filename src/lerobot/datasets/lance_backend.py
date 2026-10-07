@@ -42,7 +42,7 @@ import numpy as np
 import torch
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
-from lerobot.streaming.location import hf_dataset_uri
+from lerobot.streaming import hf_dataset_uri
 from lerobot.utils.import_utils import _lancedb_available, require_package
 
 if TYPE_CHECKING or _lancedb_available:

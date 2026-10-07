@@ -17,10 +17,10 @@
 import logging
 from dataclasses import dataclass, field
 
-from lerobot.streaming.episode_pool import StreamingSamplingStrategy
 from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
+from .types import StreamingSamplingStrategy
 from .video import DEFAULT_DEPTH_UNIT, DEPTH_METER_UNIT, DEPTH_MILLIMETER_UNIT
 
 logger = logging.getLogger(__name__)

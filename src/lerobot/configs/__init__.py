@@ -28,6 +28,7 @@ from .types import (
     PipelineFeatureType,
     PolicyFeature,
     RTCAttentionSchedule,
+    StreamingSamplingStrategy,
 )
 from .video import (
     DEFAULT_DEPTH_MAX,
@@ -64,6 +65,7 @@ __all__ = [
     "PipelineFeatureType",
     "PolicyFeature",
     "RTCAttentionSchedule",
+    "StreamingSamplingStrategy",
     # Config classes
     "DatasetRecordConfig",
     "DatasetConfig",
