@@ -73,6 +73,8 @@ _MODEL_GRIPPER_STROKE_M = 0.0475
 _GRAVITY_MODEL_PATH = Path(__file__).parent / "assets/yam_linear.xml"
 _MAX_GRAVITY_TORQUE_NM = 10.0
 _JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
+# Damiao register holding the CAN loss-of-communication timeout; 0 disables it.
+_CAN_TIMEOUT_REGISTER = 9
 
 
 def yam_arm_params(config: YamFollowerConfigBase) -> MitArmParams:
@@ -98,6 +100,7 @@ def yam_arm_params(config: YamFollowerConfigBase) -> MitArmParams:
             torque_limit=config.gripper_torque_limit,
             max_speed=config.max_gripper_speed_s,
         ),
+        fault_damping_kd=np.r_[config.fault_damping_kd, config.gripper_kd],
     )
 
 
@@ -182,6 +185,12 @@ class _YamBus:
         self.controller.disable_all()
         for motor in self.motors.values():
             motor.ensure_mode(Mode.MIT)
+
+    def can_timeouts(self) -> dict[str, int]:
+        """Read each motor's CAN loss-of-communication timeout register; 0 means it is off."""
+        return {
+            name: int(motor.get_register_u32(_CAN_TIMEOUT_REGISTER)) for name, motor in self.motors.items()
+        }
 
     def enable(self, hold: np.ndarray) -> None:
         """Enable torque after sending zero-gain setpoints at the ``hold`` raw positions."""
@@ -455,7 +464,21 @@ class YamFollower(Robot):
         if self.config.read_only:
             return
         self.bus.set_mit_mode()
+        self._check_can_timeouts()
         self.servo.seed(read_joint_state(self.bus, self._require_params()))
+
+    def _check_can_timeouts(self) -> None:
+        """Require the firmware timeout that stops each motor if this process stops sending commands."""
+        disabled = [name for name, value in self.bus.can_timeouts().items() if value == 0]
+        if not disabled:
+            return
+        message = (
+            f"{self}: the CAN timeout of {', '.join(disabled)} is off, so these motors keep their last "
+            "command if the host stops. Enable it with the Damiao/I2RT motor tools"
+        )
+        if self.config.require_motor_can_timeout:
+            raise ValueError(f"{message}, or set require_motor_can_timeout=false.")
+        logger.warning(message)
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:

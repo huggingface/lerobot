@@ -60,6 +60,7 @@ def mock_bus():
     bus.read_states.return_value = mit_arm.MotorStates(
         position=position, velocity=np.zeros(7), torque=np.zeros(7)
     )
+    bus.can_timeouts.return_value = dict.fromkeys(yam_module.MOTOR_NAMES, 8000)
     return bus
 
 
