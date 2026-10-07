@@ -214,7 +214,7 @@ lerobot-train \
   --batch_size=1 --steps=30000 --save_freq=5000
 ```
 
-This runs end-to-end: the preprocessor maps the 6-D raw state/action onto the canonical 55-D slots, training produces checkpoints with the slot mapping + dataset stats embedded, and `lerobot-rollout` / `lerobot-eval` on the saved checkpoint map back to the robot's 6-D action space.
+The slot mappings are typed dict fields passed as JSON on the CLI (same convention as `--policy.normalization_mapping` on pi05). This runs end-to-end: the preprocessor maps the 6-D raw state/action onto the canonical 55-D slots, training produces checkpoints with the slot mapping + dataset stats embedded, and `lerobot-rollout` / `lerobot-eval` on the saved checkpoint map back to the robot's 6-D action space.
 
 **Distillation teachers (optional, A100-class).** Convert with `--include-depth-heads` (loads the official depth/DINO heads and embeds the teacher `align_params`), then enable the frozen MoGe/MoRGBD/DINO-video teachers at train time — verified with FSDP2 on 8×A100:
 
