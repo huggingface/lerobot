@@ -24,10 +24,10 @@ import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.teleoperators.utils import TeleopEvents
+from lerobot.teleoperators import TeleopEvents
 
 if TYPE_CHECKING:
-    from lerobot.teleoperators.teleoperator import Teleoperator
+    from lerobot.teleoperators import Teleoperator
 
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 

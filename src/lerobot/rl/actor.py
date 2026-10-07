@@ -88,8 +88,7 @@ from lerobot.configs import parser
 from lerobot.policies import make_policy, make_pre_post_processors
 from lerobot.processor import TransitionKey, policy_output_to_transition, transition_to_policy_action
 from lerobot.robots import so_follower  # noqa: F401
-from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
-from lerobot.teleoperators.utils import TeleopEvents
+from lerobot.teleoperators import TeleopEvents, gamepad, so_leader  # noqa: F401
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.process import ProcessSignalHandler, ensure_multiprocessing_start_method
 from lerobot.utils.random_utils import set_seed

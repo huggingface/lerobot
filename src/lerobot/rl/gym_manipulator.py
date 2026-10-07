@@ -66,13 +66,13 @@ from lerobot.robots.so_follower.robot_kinematic_processor import (
     InverseKinematicsRLStep,
 )
 from lerobot.teleoperators import (
+    Teleoperator,
+    TeleopEvents,
     gamepad,  # noqa: F401
     keyboard,  # noqa: F401
     make_teleoperator_from_config,
     so_leader,  # noqa: F401
 )
-from lerobot.teleoperators.teleoperator import Teleoperator
-from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
 from lerobot.utils.import_utils import require_package
 from lerobot.utils.robot_utils import precise_sleep
