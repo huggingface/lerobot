@@ -55,7 +55,8 @@ To make your environment loadable from the Hub, your repository must contain at 
 
 **`env.py`** (or custom Python file)
 
-- Must expose a `make_env(n_envs: int, use_async_envs: bool)` function
+- Must expose a `make_env(n_envs: int, use_async_envs: bool, **kwargs)` function
+- The function should accept `**kwargs` to allow users to pass custom configurations
 - This function should return one of:
   - A `gym.vector.VectorEnv` (most common)
   - A single `gym.Env` (will be automatically wrapped)
@@ -99,6 +100,8 @@ Create an `env.py` file with a `make_env` function:
 ```python
 # env.py
 import gymnasium as gym
+from pathlib import Path
+from typing import Any
 
 def make_env(n_envs: int = 1, use_async_envs: bool = False):
     """
@@ -250,6 +253,76 @@ envs_dict = make_env(
 )
 ```
 
+### Custom Configuration via kwargs
+
+Hub environments can accept custom configurations through keyword arguments. This is useful for parameterizing tasks, loading different objects, or overriding default settings:
+
+```python
+from pathlib import Path
+
+# Pass a config file path
+envs_dict = make_env(
+    "nvkartik/isaaclab-arena-envs:envs/microwave_g1.py",
+    n_envs=4,
+    trust_remote_code=True,
+    config_path=Path("/path/to/my_config.yaml"),
+)
+
+# Pass config overrides as a dictionary
+envs_dict = make_env(
+    "nvkartik/isaaclab-arena-envs:envs/microwave_g1.py",
+    n_envs=4,
+    trust_remote_code=True,
+    config_overrides={
+        "scene.object": "microwave",
+        "sim.dt": 0.01,
+    },
+)
+
+# Combine config path with overrides
+envs_dict = make_env(
+    "username/my-env",
+    n_envs=4,
+    trust_remote_code=True,
+    config_path="configs/gr1_pick_place.yaml",
+    config_overrides={"scene.table_objects": ["apple", "banana", "cup"]},
+)
+```
+
+Any keyword arguments you pass will be forwarded to the hub environment's `make_env` function. Check the environment's documentation for supported configuration options.
+
+### Using Custom kwargs with lerobot-eval
+
+When evaluating policies using the `lerobot-eval` CLI, you can pass custom kwargs to hub environments using the `--env_kwargs.` prefix:
+
+```bash
+lerobot-eval \
+    --policy.path=user123/example-policy-checkpoint \
+    --env=user123/example-sim-backend \
+    --eval.batch_size=1 \
+    --eval.n_episodes=10 \
+    --env_kwargs.task_id=demo_task_alpha \
+    --env_kwargs.agent_profile=arm_v2 \
+    --env_kwargs.target_item=object_red \
+    --env_kwargs.run_mode=offscreen \
+    --env_kwargs.enable_sensors=true \
+    --env_kwargs.record_output=true \
+    --env_kwargs.output_horizon=10 \
+    --env_kwargs.output_stride=15 \
+    --env_kwargs.state_features=joint_angles \
+    --env_kwargs.visual_streams=front_camera
+```
+
+All `--env_kwargs.*` arguments will be collected into a dictionary and passed as keyword arguments to the hub environment's `make_env` function. This allows you to:
+
+- Pass configuration file paths
+- Override default settings
+- Specify custom task parameters
+- Control simulation options (headless mode, camera settings, etc.)
+- Select different embodiments or objects
+
+The hub environment's `make_env` function receives these as regular keyword arguments, so check the environment's documentation for the available options.
+
 ## URL Format Reference
 
 The hub URL format supports several patterns:
@@ -266,7 +339,7 @@ The hub URL format supports several patterns:
 For benchmarks with multiple tasks (like LIBERO), return a nested dictionary:
 
 ```python
-def make_env(n_envs: int = 1, use_async_envs: bool = False):
+def make_env(n_envs: int = 1, use_async_envs: bool = False, **kwargs):
     env_cls = gym.vector.AsyncVectorEnv if use_async_envs else gym.vector.SyncVectorEnv
 
     # Return dict: {suite_name: {task_id: VectorEnv}}
@@ -388,8 +461,9 @@ pip install gymnasium numpy
 Your `env.py` must expose a `make_env` function:
 
 ```python
-def make_env(n_envs: int, use_async_envs: bool):
+def make_env(n_envs: int, use_async_envs: bool, **kwargs):
     # Your implementation
+    # kwargs can include config_path, config_overrides, etc.
     pass
 ```
 
