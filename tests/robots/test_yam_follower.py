@@ -77,6 +77,7 @@ def mock_bus(states=None):
     bus = MagicMock(spec=robot_module._YamBus)
     bus.enabled = False
     bus.read_states.return_value = raw_states() if states is None else states
+    bus.can_timeouts.return_value = dict.fromkeys(MOTOR_NAMES, 8000)
     return bus
 
 
@@ -405,6 +406,41 @@ def test_start_pose_check_uses_degrees(robot, monkeypatch):
     with pytest.raises(ValueError, match="initial pose"):
         robot.connect()
     robot.bus.enable.assert_not_called()
+
+
+def test_connect_requires_the_motor_can_timeout(robot, monkeypatch, caplog):
+    mock_hardware(robot, monkeypatch)
+    robot.config.read_only = False
+    robot.bus.can_timeouts.return_value = {**dict.fromkeys(MOTOR_NAMES, 8000), "joint_2": 0}
+    with pytest.raises(ValueError, match="CAN timeout of joint_2 is off"):
+        robot.connect()
+    robot.bus.enable.assert_not_called()
+    robot.config.require_motor_can_timeout = False
+    robot.connect()
+    assert "CAN timeout of joint_2 is off" in caplog.text
+    robot.bus.enable.assert_called_once()
+    robot.disconnect()
+
+
+def test_read_only_connect_skips_the_can_timeout_check(robot, monkeypatch):
+    mock_hardware(robot, monkeypatch)
+    robot.connect()
+    robot.bus.can_timeouts.assert_not_called()
+    robot.disconnect()
+
+
+def test_bus_reads_the_can_timeout_register():
+    bus = robot_module._YamBus("can0", feedback_timeout_s=0.2)
+    bus.motors = {name: MagicMock() for name in MOTOR_NAMES}
+    for motor in bus.motors.values():
+        motor.get_register_u32.return_value = 8000
+    assert bus.can_timeouts() == dict.fromkeys(MOTOR_NAMES, 8000)
+    bus.motors["gripper"].get_register_u32.assert_called_once_with(9)
+
+
+def test_fault_damping_comes_from_the_config(robot):
+    robot.config.fault_damping_kd = [4.0, 4.0, 4.0, 1.0, 1.0, 1.0]
+    np.testing.assert_allclose(params(robot).fault_damping_kd, [4, 4, 4, 1, 1, 1, robot.config.gripper_kd])
 
 
 def test_configure_refuses_while_servo_holds_the_arm(robot):

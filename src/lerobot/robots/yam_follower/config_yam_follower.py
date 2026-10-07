@@ -67,6 +67,8 @@ class YamFollowerConfigBase:
     initial_gripper_tolerance: float = 10.0
     kp: list[float] = field(default_factory=lambda: [80.0, 80.0, 80.0, 10.0, 10.0, 10.0])
     kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 5.0, 1.5, 1.5, 1.5])
+    # Damping of the six joints after a fault (kp = 0, gravity of the last valid pose kept).
+    fault_damping_kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 5.0, 1.5, 1.5, 1.5])
     gripper_kp: float = 5.0
     gripper_kd: float = 0.005
     gripper_torque_limit: float = 0.5
@@ -80,6 +82,8 @@ class YamFollowerConfigBase:
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # Opt in only after verifying the CAN port, encoder frame and gripper calibration.
     read_only: bool = True
+    # Refuse torque when a motor's CAN timeout is off, as nothing then stops it if the host dies.
+    require_motor_can_timeout: bool = True
     # Degrees and a 0-100 gripper; False gives radians and a 0-1 gripper (I2RT and MolmoAct2 data).
     use_degrees: bool = True
     use_velocity_and_torque: bool = False
@@ -92,13 +96,13 @@ class YamFollowerConfigBase:
     def __post_init__(self) -> None:
         if not self.port:
             raise ValueError("A YAM CAN interface is required")
-        for name in ("joint_signs", "joint_offsets_deg", "kp", "kd", "gravity_factors"):
+        for name in ("joint_signs", "joint_offsets_deg", "kp", "kd", "fault_damping_kd", "gravity_factors"):
             values = getattr(self, name)
             if len(values) != 6 or not all(math.isfinite(v) for v in values):
                 raise ValueError(f"{name} must contain six finite values")
         if any(s not in (-1, 1) for s in self.joint_signs):
             raise ValueError("joint_signs must contain only -1 or +1")
-        for name, maximum in (("kp", 500), ("kd", 5)):
+        for name, maximum in (("kp", 500), ("kd", 5), ("fault_damping_kd", 5)):
             if any(not 0 < x <= maximum for x in getattr(self, name)):
                 raise ValueError(f"{name} outside MIT gain limits")
         for name in (
@@ -165,6 +169,7 @@ class YamFollowerConfig(RobotConfig, YamFollowerConfigBase):
         initial_gripper_tolerance (`float`, *optional*, defaults to 10.0): Allowed deviation from `initial_gripper_position`, on the same 0-100 scale.
         kp (`list`, *optional*): MIT position gains of the six joints.
         kd (`list`, *optional*): MIT damping gains of the six joints.
+        fault_damping_kd (`list`, *optional*): Damping of the six joints after a fault, applied with zero stiffness while keeping the gravity torque of the last valid pose, until `disconnect()` disables torque.
         gripper_kp (`float`, *optional*, defaults to 5.0): MIT position gain of the gripper.
         gripper_kd (`float`, *optional*, defaults to 0.005): MIT damping gain of the gripper.
         gripper_torque_limit (`float`, *optional*, defaults to 0.5): Cap on the gripper's proportional MIT torque in Nm (at most 1); damping may add torque.
@@ -175,6 +180,7 @@ class YamFollowerConfig(RobotConfig, YamFollowerConfigBase):
         gravity_factors (`list`, *optional*): Per-joint scale applied to the model gravity torques.
         cameras (`dict`, *optional*): Cameras read with each observation, keyed by name.
         read_only (`bool`, *optional*, defaults to `True`): Read feedback without ever enabling torque; `send_action` raises. Disable only after checking the CAN port, encoder frame and gripper calibration.
+        require_motor_can_timeout (`bool`, *optional*, defaults to `True`): Refuse to enable torque when a motor's CAN loss-of-communication timeout is off, since nothing then stops that motor if this process dies. Set it to `False` to only warn.
         use_degrees (`bool`, *optional*, defaults to `True`): Report and accept joints in degrees and the gripper from 0 to 100. Set it to `False` for radians and a 0-1 gripper, the units of I2RT and MolmoAct2 data.
         use_velocity_and_torque (`bool`, *optional*, defaults to `False`): Add `.vel` and `.torque` features for each motor to observations.
         control_frequency (`float`, *optional*, defaults to 100.0): Rate of the background servo loop in Hz, between 20 and 250.

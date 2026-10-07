@@ -111,6 +111,8 @@ class MitArmParams:
     gravity_factors: np.ndarray
     max_gravity_torque: float
     gripper: CalibratedGripper
+    # Damping applied to every motor (joints, then the gripper) after a fault, with kp = 0.
+    fault_damping_kd: np.ndarray
 
     @property
     def num_joints(self) -> int:
@@ -205,14 +207,32 @@ def control_step(
     command = clip_to_limits(command, params.joint_limits)
 
     goal = joint_to_motor(command, params)
-    torque = gravity * params.gravity_factors * params.joint_signs
-    torque = np.clip(torque, -params.max_gravity_torque, params.max_gravity_torque)
+    torque = gravity_feedforward(params, gravity)
     commands: dict[str, MitCommand] = {
         name: (float(goal[i]), 0.0, float(params.kp[i]), float(params.kd[i]), float(torque[i]))
         for i, name in enumerate(params.motor_names[:n])
     }
     commands[params.motor_names[n]] = params.gripper.command(float(position[n]), float(command[n]))
     return command, commands
+
+
+def gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
+    """Return the clipped feed-forward torque of each arm joint for model gravity torques."""
+    torque = gravity * params.gravity_factors * params.joint_signs
+    return np.clip(torque, -params.max_gravity_torque, params.max_gravity_torque)
+
+
+def damping_commands(
+    params: MitArmParams, position: np.ndarray, gravity: np.ndarray
+) -> dict[str, MitCommand]:
+    """Build commands that only damp motion (kp = 0) while carrying the gravity of ``position``."""
+    n = params.num_joints
+    goal = joint_to_motor(position, params)
+    torque = np.r_[gravity_feedforward(params, gravity), 0.0]
+    return {
+        name: (float(goal[i]), 0.0, 0.0, float(params.fault_damping_kd[i]), float(torque[i]))
+        for i, name in enumerate(params.motor_names[: n + 1])
+    }
 
 
 def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
@@ -255,8 +275,12 @@ class MitServo:
     """Background servo loop of one arm.
 
     Each cycle reads feedback, holds the measured pose once actions stop arriving, advances the
-    command with ``control_step`` and sends it. Any error stops the loop and disables torque;
-    the next ``latest`` or ``set_target`` call then raises.
+    command with ``control_step`` and sends it.
+
+    After a fault, or when a coupled arm faults, the loop keeps the arm under damping (kp = 0
+    with the gravity of the last valid pose) instead of cutting torque, so it does not depend on
+    what the motor firmware does once commands stop. The next ``latest`` or ``set_target`` call
+    raises. ``stop`` ends the loop and disables torque.
     """
 
     def __init__(
@@ -283,6 +307,8 @@ class MitServo:
         self.failure: Exception | None = None
         # True from start() until stop() succeeds, even if the loop already exited on a fault.
         self.active = False
+        # Set only by stop(): unlike stop_event, it also ends the post-fault damping.
+        self._stop_requested = threading.Event()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._gc_acquired = False
@@ -301,6 +327,7 @@ class MitServo:
         if self.params is None:
             raise RuntimeError(f"{self.name} servo needs calibrated arm parameters before it starts")
         self.failure = None
+        self._stop_requested.clear()
         if self.config.freeze_gc:
             _ControlGC.acquire()
             self._gc_acquired = True
@@ -316,6 +343,7 @@ class MitServo:
         self.active = True
 
     def stop(self, timeout_s: float = 2.0) -> None:
+        self._stop_requested.set()
         self.stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout_s)
@@ -400,12 +428,39 @@ class MitServo:
             )
             self.failure = exc
             self.stop_event.set()
+            logger.error(
+                "%s servo stopped: %s; %s",
+                self.name,
+                self.failure,
+                "; ".join(getattr(self.failure, "__notes__", [])),
+            )
+        try:
+            if not self._stop_requested.is_set():
+                self._damp_until_stopped()
         finally:
             self.bus.disable()
-            if self.failure is not None:
-                logger.error(
-                    "%s servo stopped: %s; %s",
-                    self.name,
-                    self.failure,
-                    "; ".join(getattr(self.failure, "__notes__", [])),
-                )
+
+    def _damp_until_stopped(self) -> None:
+        """Keep sending damping commands, as the arm faulted or a coupled arm did, until stop()."""
+        if not self.bus.enabled or self.params is None:
+            return
+        with self._lock:
+            position = self.state.position
+        if len(position) != self.params.num_joints + 1:
+            return
+        try:
+            commands = damping_commands(self.params, position, self.gravity(position))
+        except Exception:
+            logger.exception("%s could not build damping commands; disabling torque", self.name)
+            return
+        logger.warning("%s holding the arm with damping until disconnect", self.name)
+        period = 1 / self.config.control_frequency
+        while True:
+            try:
+                for name, command in commands.items():
+                    self.bus.send_mit(name, command)
+            except Exception:
+                logger.exception("%s could not send damping commands; use the hardware e-stop", self.name)
+                return
+            if self._stop_requested.wait(period):
+                return
