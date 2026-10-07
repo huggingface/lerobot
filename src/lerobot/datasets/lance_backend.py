@@ -41,6 +41,7 @@ import numpy as np
 import torch
 
 from lerobot.configs.video import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
+from lerobot.streaming.location import hf_dataset_uri
 from lerobot.utils.import_utils import _lancedb_available, require_package
 
 if TYPE_CHECKING or _lancedb_available:
@@ -144,7 +145,7 @@ class LanceDatasetReader(BaseDatasetReader):
         self._token = token
 
         self._db_uri, _ = resolve_lance_root(self.repo_id, root, self._storage_options, revision, token)
-        self._hub_revision = meta.revision if self._db_uri == f"hf://datasets/{self.repo_id}" else None
+        self._hub_revision = meta.revision if self._db_uri == hf_dataset_uri(self.repo_id) else None
 
         if self.meta.image_keys:
             raise NotImplementedError(

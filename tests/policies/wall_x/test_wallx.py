@@ -24,7 +24,6 @@ import torch
 # Skip if required dependencies are not available
 pytest.importorskip("peft")
 pytest.importorskip("transformers")
-pytest.importorskip("torchdiffeq")
 
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.factory import make_policy_config, make_pre_post_processors  # noqa: E402

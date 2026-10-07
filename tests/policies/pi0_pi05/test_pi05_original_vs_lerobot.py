@@ -115,7 +115,7 @@ class PI05BaseOriginalConfig:
 def instantiate_lerobot_pi05(*, compile_model: bool = False, gradient_checkpointing: bool = False):
     config = PreTrainedConfig.from_pretrained("lerobot/pi05_base")
     config.device = str(DEVICE)
-    config.dtype = "float32"
+    config.dtype = torch.float32
     config.compile_model = compile_model
     config.compile_mode = COMPILE_MODE
     config.gradient_checkpointing = gradient_checkpointing
