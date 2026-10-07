@@ -16,13 +16,10 @@
 
 """Single-arm YAM v1 with a gravity-compensated impedance loop."""
 
-import gc
 import logging
 import math
 import threading
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -51,6 +48,16 @@ from .config_yam_follower import (
     YamFollowerConfigBase,
     motor_feature_names,
 )
+from .mit_arm import (
+    CalibratedGripper,
+    MitArmParams,
+    MitCommand,
+    MitServo,
+    MotorStates,
+    clip_to_limits,
+    joint_to_motor,
+    read_joint_state,
+)
 
 if TYPE_CHECKING or _motorbridge_available:
     from motorbridge import Controller, Mode
@@ -65,86 +72,33 @@ _MODEL_GRIPPER_JOINTS = ("joint7", "joint8")
 _MODEL_GRIPPER_STROKE_M = 0.0475
 _GRAVITY_MODEL_PATH = Path(__file__).parent / "assets/yam_linear.xml"
 _MAX_GRAVITY_TORQUE_NM = 10.0
-# Measured poses may exceed the model limits, which are not mechanical stops.
-_FEEDBACK_LIMIT_TOLERANCE_RAD = 0.15
-_GRIPPER_FEEDBACK_MARGIN = 0.10
-
-# One MIT command per motor: (position_rad, velocity_rad_s, kp, kd, feedforward_torque_nm).
-MitCommand = tuple[float, float, float, float, float]
+_JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
 
 
-@dataclass(frozen=True, eq=False)
-class ArmParams:
-    """One arm's control settings in internal units: radians, and the gripper from 0 to 1."""
-
-    joint_signs: np.ndarray
-    joint_offsets: np.ndarray
-    gripper_closed: float
-    gripper_open: float
-    kp: np.ndarray
-    kd: np.ndarray
-    gripper_kp: float
-    gripper_kd: float
-    gripper_torque_limit: float
-    max_joint_speed: float
-    max_gripper_speed: float
-    max_tracking_error: float
-    gravity_factors: np.ndarray
-
-    @classmethod
-    def from_config(cls, config: YamFollowerConfigBase) -> "ArmParams":
-        if config.gripper_closed_deg is None or config.gripper_open_deg is None:
-            raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
-        return cls(
-            joint_signs=np.asarray(config.joint_signs, dtype=float),
-            joint_offsets=np.deg2rad(config.joint_offsets_deg),
-            gripper_closed=math.radians(config.gripper_closed_deg),
-            gripper_open=math.radians(config.gripper_open_deg),
-            kp=np.asarray(config.kp, dtype=float),
-            kd=np.asarray(config.kd, dtype=float),
-            gripper_kp=config.gripper_kp,
-            gripper_kd=config.gripper_kd,
-            gripper_torque_limit=config.gripper_torque_limit,
-            max_joint_speed=math.radians(config.max_joint_speed_deg_s),
-            max_gripper_speed=config.max_gripper_speed_s,
-            max_tracking_error=math.radians(config.max_tracking_error_deg),
-            gravity_factors=np.asarray(config.gravity_factors, dtype=float),
-        )
-
-
-@dataclass(frozen=True, eq=False)
-class MotorStates:
-    """Raw states of the seven motors, in radians, radians per second and newton-metres."""
-
-    position: np.ndarray
-    velocity: np.ndarray
-    torque: np.ndarray
-
-
-@dataclass(frozen=True, eq=False)
-class JointState:
-    """Measured joint state: six joints in radians and the gripper from 0 (closed) to 1 (open)."""
-
-    position: np.ndarray
-    velocity: np.ndarray
-    torque: np.ndarray
-
-
-def motor_to_joint(raw: np.ndarray, params: ArmParams) -> np.ndarray:
-    if not np.isfinite(raw).all():
-        raise ConnectionError("Non-finite YAM feedback")
-    joints = raw[:6] * params.joint_signs + params.joint_offsets
-    gripper = (raw[6] - params.gripper_closed) / (params.gripper_open - params.gripper_closed)
-    if not -_GRIPPER_FEEDBACK_MARGIN <= gripper <= 1 + _GRIPPER_FEEDBACK_MARGIN:
-        raise ValueError("Gripper feedback is outside the calibrated stroke; check endpoints")
-    return np.r_[joints, np.clip(gripper, 0, 1)]
-
-
-def joint_to_motor(positions: np.ndarray, params: ArmParams) -> np.ndarray:
-    raw = (positions[:6] - params.joint_offsets) / params.joint_signs
-    return np.r_[
-        raw, params.gripper_closed + float(positions[6]) * (params.gripper_open - params.gripper_closed)
-    ]
+def yam_arm_params(config: YamFollowerConfigBase) -> MitArmParams:
+    """Build the internal control settings of a calibrated YAM arm from its config."""
+    if config.gripper_closed_deg is None or config.gripper_open_deg is None:
+        raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
+    return MitArmParams(
+        motor_names=MOTOR_NAMES,
+        joint_limits=_JOINT_LIMITS,
+        joint_signs=np.asarray(config.joint_signs, dtype=float),
+        joint_offsets=np.deg2rad(config.joint_offsets_deg),
+        kp=np.asarray(config.kp, dtype=float),
+        kd=np.asarray(config.kd, dtype=float),
+        max_joint_speed=math.radians(config.max_joint_speed_deg_s),
+        max_tracking_error=math.radians(config.max_tracking_error_deg),
+        gravity_factors=np.asarray(config.gravity_factors, dtype=float),
+        max_gravity_torque=_MAX_GRAVITY_TORQUE_NM,
+        gripper=CalibratedGripper(
+            closed=math.radians(config.gripper_closed_deg),
+            open=math.radians(config.gripper_open_deg),
+            kp=config.gripper_kp,
+            kd=config.gripper_kd,
+            torque_limit=config.gripper_torque_limit,
+            max_speed=config.max_gripper_speed_s,
+        ),
+    )
 
 
 def to_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
@@ -161,23 +115,6 @@ def from_public(values: np.ndarray, use_degrees: bool) -> np.ndarray:
     return np.r_[np.deg2rad(values[:6]), values[6] / 100.0]
 
 
-def validate_positions(values: np.ndarray, *, joint_tolerance_rad: float) -> None:
-    if values.shape != (7,) or not np.isfinite(values).all():
-        raise ValueError("YAM requires six finite joint radians and one normalized gripper position")
-    for i, (value, (lower, upper)) in enumerate(zip(values, (*JOINT_LIMITS_RAD, (0, 1)), strict=True)):
-        tolerance = joint_tolerance_rad if i < 6 else 0.0
-        if not lower - tolerance <= value <= upper + tolerance:
-            raise ValueError(f"YAM joint/gripper {i} target {value} outside [{lower}, {upper}]")
-
-
-def clip_to_limits(values: np.ndarray) -> np.ndarray:
-    """Clip internal positions to the joint limits and the gripper stroke."""
-    clipped = values.copy()
-    clipped[:6] = np.clip(clipped[:6], *np.asarray(JOINT_LIMITS_RAD).T)
-    clipped[6] = np.clip(clipped[6], 0.0, 1.0)
-    return clipped
-
-
 def action_to_target(action: RobotAction, use_degrees: bool) -> np.ndarray:
     """Validate a single-arm action and return its internal target, clipped to the limits."""
     if set(action) != set(YAM_FEATURE_NAMES):
@@ -185,51 +122,7 @@ def action_to_target(action: RobotAction, use_degrees: bool) -> np.ndarray:
     values = np.asarray([action[f"{name}.pos"] for name in MOTOR_NAMES], dtype=float)
     if not np.isfinite(values).all():
         raise ValueError("YAM actions must be finite")
-    return clip_to_limits(from_public(values, use_degrees))
-
-
-def control_step(
-    params: ArmParams,
-    position: np.ndarray,
-    target: np.ndarray,
-    command: np.ndarray,
-    gravity: np.ndarray,
-    dt: float,
-) -> tuple[np.ndarray, dict[str, MitCommand]]:
-    """Advance the commanded pose one servo cycle and build the MIT command for each motor.
-
-    Args:
-        params (`ArmParams`): Arm control settings (gains, speed limits, calibration).
-        position (`ndarray`): Measured pose (six joint radians and a normalized gripper).
-        target (`ndarray`): Pose requested by the latest action.
-        command (`ndarray`): Pose commanded on the previous cycle.
-        gravity (`ndarray`): Model gravity torques for `position`, in Nm.
-        dt (`float`): Time since the previous cycle, in seconds.
-
-    Returns:
-        The new commanded pose and the MIT command for each motor.
-    """
-    # Move toward the target no faster than the configured speeds.
-    speeds = np.r_[np.full(6, params.max_joint_speed), params.max_gripper_speed]
-    command = command + np.clip(target - command, -speeds * dt, speeds * dt)
-    # Keep joints near the measured pose, so a blocked or pushed arm limits its force.
-    band = params.max_tracking_error
-    command[:6] = np.clip(command[:6], position[:6] - band, position[:6] + band)
-    command = clip_to_limits(command)
-
-    goal = joint_to_motor(command, params)
-    # Bound the gripper error so its torque stays within gripper_torque_limit.
-    measured_gripper = joint_to_motor(position, params)[6]
-    gripper_band = params.gripper_torque_limit / params.gripper_kp
-    goal[6] = np.clip(goal[6], measured_gripper - gripper_band, measured_gripper + gripper_band)
-
-    torque = gravity * params.gravity_factors * params.joint_signs
-    torque = np.r_[np.clip(torque, -_MAX_GRAVITY_TORQUE_NM, _MAX_GRAVITY_TORQUE_NM), 0.0]
-    kp, kd = np.r_[params.kp, params.gripper_kp], np.r_[params.kd, params.gripper_kd]
-    return command, {
-        name: (float(goal[i]), 0.0, float(kp[i]), float(kd[i]), float(torque[i]))
-        for i, name in enumerate(MOTOR_NAMES)
-    }
+    return clip_to_limits(from_public(values, use_degrees), _JOINT_LIMITS)
 
 
 class _YamBus:
@@ -405,201 +298,6 @@ class _YamBus:
             time.sleep(0.001)
 
 
-class _ControlGC:
-    """Keep preloaded models out of cyclic scans while YAM servo threads run."""
-
-    _lock = threading.Lock()
-    _users = 0
-    _owns_freeze = False
-
-    @classmethod
-    def acquire(cls) -> None:
-        with cls._lock:
-            if cls._users == 0 and gc.isenabled():
-                cls._owns_freeze = gc.get_freeze_count() == 0
-                gc.collect()
-                gc.freeze()
-            cls._users += 1
-
-    @classmethod
-    def release(cls) -> None:
-        with cls._lock:
-            cls._users -= 1
-            if cls._users == 0 and cls._owns_freeze:
-                gc.unfreeze()
-                cls._owns_freeze = False
-
-
-def read_joint_state(bus: _YamBus, params: ArmParams) -> JointState:
-    """Read fresh feedback and return the validated joint state in internal units."""
-    raw = bus.read_states()
-    position = motor_to_joint(raw.position, params)
-    validate_positions(position, joint_tolerance_rad=_FEEDBACK_LIMIT_TOLERANCE_RAD)
-    stroke = params.gripper_open - params.gripper_closed
-    velocity = np.r_[raw.velocity[:6] * params.joint_signs, raw.velocity[6] / stroke]
-    torque = np.r_[raw.torque[:6] * params.joint_signs, raw.torque[6] * math.copysign(1.0, stroke)]
-    return JointState(position=position, velocity=velocity, torque=torque)
-
-
-class _Servo:
-    """Background servo loop of one arm.
-
-    Each cycle reads feedback, holds the measured pose once actions stop arriving, advances the
-    command with ``control_step`` and sends it. Any error stops the loop and disables torque;
-    the next ``latest`` or ``set_target`` call then raises.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        bus: _YamBus,
-        config: YamFollowerConfigBase,
-        gravity: Callable[[np.ndarray], np.ndarray],
-        stop_event: threading.Event,
-    ) -> None:
-        self.name = name
-        self.bus = bus
-        self.config = config
-        self.params: ArmParams | None = None
-        self.gravity = gravity
-        # Shared between both arms of a bimanual robot so a fault on one stops both.
-        self.stop_event = stop_event
-        self.state = JointState(position=np.zeros(7), velocity=np.zeros(7), torque=np.zeros(7))
-        self.target = np.zeros(7)
-        self.command = np.zeros(7)
-        self.updated_at = 0.0
-        self.commanded_at = 0.0
-        self.command_timed_out = False
-        self.failure: Exception | None = None
-        # True from start() until stop() succeeds, even if the loop already exited on a fault.
-        self.active = False
-        self._lock = threading.Lock()
-        self._thread: threading.Thread | None = None
-        self._gc_acquired = False
-
-    def seed(self, state: JointState) -> None:
-        """Start from a measured state: hold its pose until the first target arrives."""
-        self.state = state
-        self.target = state.position.copy()
-        self.command = state.position.copy()
-        self.updated_at = self.commanded_at = time.monotonic()
-        self.command_timed_out = False
-
-    def start(self) -> None:
-        if self.active or self._thread is not None:
-            raise RuntimeError("YAM servo is already running")
-        if self.params is None:
-            raise RuntimeError("YAM servo needs calibrated arm parameters before it starts")
-        self.failure = None
-        if self.config.freeze_gc:
-            _ControlGC.acquire()
-            self._gc_acquired = True
-        self._thread = threading.Thread(target=self._run, name=f"{self.name}-servo", daemon=True)
-        try:
-            self._thread.start()
-        except BaseException:
-            self._thread = None
-            if self._gc_acquired:
-                _ControlGC.release()
-                self._gc_acquired = False
-            raise
-        self.active = True
-
-    def stop(self, timeout_s: float = 2.0) -> None:
-        self.stop_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=timeout_s)
-            if self._thread.is_alive():
-                raise RuntimeError("YAM servo did not stop; use the hardware e-stop")
-            self._thread = None
-        self.active = False
-        if self._gc_acquired:
-            _ControlGC.release()
-            self._gc_acquired = False
-
-    def latest(self) -> JointState:
-        """Return the last measured state, raising if the servo stopped or its feedback is stale."""
-        with self._lock:
-            self._check_healthy()
-            state = self.state
-        return JointState(
-            position=state.position.copy(), velocity=state.velocity.copy(), torque=state.torque.copy()
-        )
-
-    def set_target(self, target: np.ndarray) -> None:
-        with self._lock:
-            self._check_healthy()
-            self.target = target
-            self.commanded_at = time.monotonic()
-            self.command_timed_out = False
-
-    def check_healthy(self) -> None:
-        with self._lock:
-            self._check_healthy()
-
-    def _check_healthy(self) -> None:
-        if self.failure is not None or self.stop_event.is_set():
-            raise ConnectionError("YAM servo stopped after a motor/feedback error") from self.failure
-        # The servo's own read can use the full feedback timeout after the last update.
-        progress_timeout_s = 2 * self.config.feedback_timeout_s + 1 / self.config.control_frequency
-        if time.monotonic() - self.updated_at > progress_timeout_s:
-            self.stop_event.set()
-            raise ConnectionError("YAM servo feedback is stale; reconnect before commanding motion")
-
-    def _run(self) -> None:
-        previous = started = time.monotonic()
-        max_cycle_gap = 0.0
-        try:
-            params = self.params
-            assert params is not None
-            while not self.stop_event.is_set():
-                started = time.monotonic()
-                max_cycle_gap = max(max_cycle_gap, started - previous)
-                state = read_joint_state(self.bus, params)
-                position = state.position
-                with self._lock:
-                    self.state = state
-                    self.updated_at = time.monotonic()
-                    if (
-                        started - self.commanded_at > self.config.command_timeout_s
-                        and not self.command_timed_out
-                    ):
-                        self.target = position.copy()
-                        self.command = position.copy()
-                        self.command_timed_out = True
-                    packet: dict[str, MitCommand] = {}
-                    if self.bus.enabled:
-                        self.command, packet = control_step(
-                            params,
-                            position,
-                            self.target,
-                            self.command,
-                            self.gravity(position),
-                            min(started - previous, 0.05),
-                        )
-                for name, command in packet.items():
-                    if self.stop_event.is_set():
-                        break
-                    self.bus.send_mit(name, command)
-                previous = started
-                self.stop_event.wait(max(0, 1 / self.config.control_frequency - (time.monotonic() - started)))
-        except Exception as exc:
-            exc.add_note(
-                f"YAM maximum servo cycle gap: {max_cycle_gap * 1000:.1f} ms; "
-                f"current cycle elapsed: {(time.monotonic() - started) * 1000:.1f} ms"
-            )
-            self.failure = exc
-            self.stop_event.set()
-        finally:
-            self.bus.disable()
-            if self.failure is not None:
-                logger.error(
-                    "YAM servo stopped: %s; %s",
-                    self.failure,
-                    "; ".join(getattr(self.failure, "__notes__", [])),
-                )
-
-
 class YamFollower(Robot):
     """A YAM arm exposing six joint positions and a gripper opening."""
 
@@ -614,8 +312,8 @@ class YamFollower(Robot):
         self.cameras = make_cameras_from_configs(config.cameras)
         self.bus = _YamBus(config.port, config.feedback_timeout_s, config.expected_adapter_serial)
         self.gravity_model: GravityCompensation | None = None
-        self.params: ArmParams | None = None
-        self.servo = _Servo(
+        self.params: MitArmParams | None = None
+        self.servo = MitServo(
             str(self.id), self.bus, config, self._gravity_torque, stop_event or threading.Event()
         )
         self._connected = False
@@ -794,10 +492,10 @@ class YamFollower(Robot):
 
     def _refresh_params(self) -> None:
         """Rebuild the internal control settings from the config, once the gripper is calibrated."""
-        self.params = ArmParams.from_config(self.config) if self.is_calibrated else None
+        self.params = yam_arm_params(self.config) if self.is_calibrated else None
         self.servo.params = self.params
 
-    def _require_params(self) -> ArmParams:
+    def _require_params(self) -> MitArmParams:
         if self.params is None:
             raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
         return self.params

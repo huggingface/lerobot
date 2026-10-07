@@ -22,7 +22,12 @@ import numpy as np
 import pytest
 
 from lerobot.robots.bi_yam_follower import BiYamFollower, BiYamFollowerConfig
-from lerobot.robots.yam_follower import YamFollower, YamFollowerConfigBase, yam_follower as yam_module
+from lerobot.robots.yam_follower import (
+    YamFollower,
+    YamFollowerConfigBase,
+    mit_arm,
+    yam_follower as yam_module,
+)
 
 
 def arm_config(port="can0", **kwargs):
@@ -52,7 +57,7 @@ def mock_bus():
     bus = MagicMock(spec=yam_module._YamBus)
     bus.enabled = False
     position = np.array([0, 0, 0, 0, 0, 0, 0.1])  # raw radians, gripper closed
-    bus.read_states.return_value = yam_module.MotorStates(
+    bus.read_states.return_value = mit_arm.MotorStates(
         position=position, velocity=np.zeros(7), torque=np.zeros(7)
     )
     return bus
