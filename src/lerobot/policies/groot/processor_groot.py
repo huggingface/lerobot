@@ -46,7 +46,7 @@ else:
     Qwen3VLVideoProcessor = None
 
 if TYPE_CHECKING or _datasets_available:
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets import LeRobotDataset
 else:
     LeRobotDataset = None
 

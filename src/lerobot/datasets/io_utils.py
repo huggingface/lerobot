@@ -30,10 +30,10 @@ from numpy.typing import DTypeLike
 from PIL import Image as PILImage
 from torchvision import transforms
 
+from lerobot.utils.constants import LANGUAGE_COLUMNS
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.utils import SuppressProgressBars, flatten_dict, unflatten_dict
 
-from .language import LANGUAGE_COLUMNS
 from .utils import (
     DEFAULT_DATA_FILE_SIZE_IN_MB,
     DEFAULT_EPISODES_PATH,

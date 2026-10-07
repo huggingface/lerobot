@@ -25,9 +25,9 @@ from lerobot.streaming.sidecar import SidecarSpec
 from lerobot.utils.import_utils import _datasets_available, require_package
 
 if TYPE_CHECKING or _datasets_available:
-    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-    from lerobot.datasets.streaming_sidecar import (
+    from lerobot.datasets import (
         SIDECAR_REPO_BRANCH,
+        LeRobotDatasetMetadata,
         build_mp4_sidecar,
         make_sidecar_spec,
         published_sidecar_url,

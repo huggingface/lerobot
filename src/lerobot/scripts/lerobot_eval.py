@@ -74,7 +74,7 @@ from tqdm import trange
 
 from lerobot.configs import FeatureType, PolicyFeature, parser
 from lerobot.configs.eval import EvalPipelineConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.envs import (
     NEW_ROLLOUT_OPTION,
     check_env_attributes_and_types,

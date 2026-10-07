@@ -48,7 +48,7 @@ else:
 
 if TYPE_CHECKING:
     from lerobot.configs.train import TrainPipelineConfig
-    from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+    from lerobot.datasets import LeRobotDatasetMetadata
 
 T = TypeVar("T", bound="PreTrainedPolicy")
 

@@ -57,9 +57,7 @@ from lerobot.configs import parser
 from lerobot.utils.import_utils import _datasets_available, require_package
 
 if TYPE_CHECKING or _datasets_available:
-    from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
-    from lerobot.datasets.io_utils import load_info
-    from lerobot.datasets.utils import create_lerobot_dataset_card
+    from lerobot.datasets import CODEBASE_VERSION, create_lerobot_dataset_card, load_info
 
 logger = logging.getLogger(__name__)
 

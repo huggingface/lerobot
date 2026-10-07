@@ -165,7 +165,7 @@ class EO1Config(PreTrainedConfig):
         super().__post_init__()
 
         if self.recipe_path is not None:
-            from lerobot.datasets.recipe import resolve_recipe_override
+            from lerobot.datasets import resolve_recipe_override
 
             self.recipe = asdict(resolve_recipe_override(self.recipe, self.recipe_path))
 

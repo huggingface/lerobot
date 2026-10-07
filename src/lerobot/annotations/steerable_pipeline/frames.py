@@ -37,7 +37,7 @@ import PIL.Image
 import torch
 
 from lerobot.configs import RGBEncoderConfig
-from lerobot.datasets.video_utils import decode_video_frames, reencode_video
+from lerobot.datasets import decode_video_frames, reencode_video
 
 from .reader import EpisodeRecord, snap_to_frame
 
@@ -156,7 +156,7 @@ class VideoFrameProvider:
     _warned_decode_fail: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata  # noqa: PLC0415
+        from lerobot.datasets import LeRobotDatasetMetadata  # noqa: PLC0415
 
         self._meta = LeRobotDatasetMetadata(repo_id="local", root=self.root)
         # Only ``video_keys`` are decodable here: the clip/decode paths read

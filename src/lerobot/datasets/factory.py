@@ -16,12 +16,11 @@
 import logging
 import math
 from pprint import pformat
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import torch
 
 from lerobot.configs import PreTrainedConfig, RewardModelConfig
-from lerobot.configs.train import TrainPipelineConfig
 from lerobot.transforms import ImageTransforms
 from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_IMAGE, OBS_PREFIX, OBS_STATE, REWARD
 
@@ -31,6 +30,9 @@ from .multi_dataset import MultiLeRobotDataset
 from .storage import DEFAULT_STORAGE_FORMAT, is_bucket_root, load_dataset_metadata
 from .streaming_dataset import DEFAULT_STREAMING_SEED, StreamingLeRobotDataset
 from .utils import resolve_episode_indices
+
+if TYPE_CHECKING:
+    from lerobot.configs.train import TrainPipelineConfig
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +106,7 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotDataset:
+def make_dataset(cfg: "TrainPipelineConfig") -> LeRobotDataset | StreamingLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -223,7 +225,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
 
 
 def make_train_eval_datasets(
-    cfg: TrainPipelineConfig,
+    cfg: "TrainPipelineConfig",
 ) -> tuple[LeRobotDataset | StreamingLeRobotDataset, LeRobotDataset | None]:
     """Create train and optional eval datasets by splitting episodes based on eval_split.
 

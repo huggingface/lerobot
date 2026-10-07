@@ -24,8 +24,7 @@ from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
 from lerobot.configs import DatasetRecordConfig
-from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.datasets import DEFAULT_VIDEO_FILE_SIZE_IN_MB, LeRobotDataset
 from lerobot.inference import InferenceEngine, commit_action, next_interpolated_action
 from lerobot.lerobot_types import EnvTransition, PolicyPrediction, RobotObservation
 from lerobot.processor import create_transition, transition_to_robot_action

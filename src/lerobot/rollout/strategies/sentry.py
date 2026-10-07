@@ -22,8 +22,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event, Lock
 
-from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.datasets import DEFAULT_VIDEO_FILE_SIZE_IN_MB, LeRobotDataset
 from lerobot.processor import transition_to_robot_action
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer

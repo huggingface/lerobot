@@ -64,11 +64,11 @@ from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.datasets import (
     EpisodeAwareSampler,
     LeRobotDataset,
+    MultiLeRobotDataset,
     StreamingLeRobotDataset,
     compute_sampler_state,
+    make_train_eval_datasets,
 )
-from lerobot.datasets.factory import make_train_eval_datasets
-from lerobot.datasets.multi_dataset import MultiLeRobotDataset
 from lerobot.distributed import (
     ParallelDims,
     finalize_sharded_policy,

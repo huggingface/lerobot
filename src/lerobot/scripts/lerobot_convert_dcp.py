@@ -100,7 +100,7 @@ def _publish_converted(pretrained_dir: Path, repo_id: str, private: bool | None)
         logging.warning(f"{TRAIN_CONFIG_NAME} missing; README will lack training metadata.")
     if train_cfg is not None:
         try:
-            from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+            from lerobot.datasets import LeRobotDatasetMetadata
 
             dataset_meta = LeRobotDatasetMetadata(
                 repo_id=train_cfg.dataset.repo_id,

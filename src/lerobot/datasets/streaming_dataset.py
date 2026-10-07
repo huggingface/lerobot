@@ -35,13 +35,12 @@ from lerobot.streaming.episode_parquet import EpisodeParquetReader
 from lerobot.streaming.episode_pool import ExactCoveragePool, StreamingSamplingStrategy
 from lerobot.streaming.location import StorageLocation
 from lerobot.streaming.manifest import EpisodeVideoManifest
-from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import HF_LEROBOT_HOME, LANGUAGE_COLUMNS
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
 from .io_utils import hf_transform_to_torch
-from .language import LANGUAGE_COLUMNS
 from .storage import is_bucket_root
 from .streaming_sidecar import (
     ensure_dataset_mp4_sidecar,
@@ -179,7 +178,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
     Example:
         Basic usage:
         ```python
-        from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+        from lerobot.datasets import StreamingLeRobotDataset
 
         # Create a streaming dataset with delta timestamps
         delta_timestamps = {

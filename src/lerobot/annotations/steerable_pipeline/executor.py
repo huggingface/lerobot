@@ -138,8 +138,12 @@ class Executor:
         those columns too, otherwise non-streaming ``LeRobotDataset`` loads
         cast against the old schema and fail on the extra parquet columns.
         """
-        from lerobot.datasets.io_utils import load_info, write_info  # noqa: PLC0415
-        from lerobot.datasets.language import SAY_TOOL_SCHEMA, language_feature_info  # noqa: PLC0415
+        from lerobot.datasets import (  # noqa: PLC0415
+            SAY_TOOL_SCHEMA,
+            language_feature_info,
+            load_info,
+            write_info,
+        )
 
         info_path = root / "meta" / "info.json"
         if not info_path.exists():

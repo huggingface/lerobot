@@ -58,8 +58,7 @@ from lerobot.common.control_utils import (
     teleop_smooth_move_to,
     teleop_supports_feedback,
 )
-from lerobot.datasets import VideoEncodingManager
-from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.datasets import DEFAULT_VIDEO_FILE_SIZE_IN_MB, VideoEncodingManager
 from lerobot.inference import InferenceEngine
 from lerobot.lerobot_types import RobotAction
 from lerobot.processor import robot_action_to_transition, transition_to_robot_action
