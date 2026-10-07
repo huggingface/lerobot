@@ -88,11 +88,17 @@ Fine-tune a SmolVLA base on it:
 ```bash
 lerobot-train \
   --policy.path=lerobot/smolvla_base \
+  --policy.repo_id=${HF_USER}/smolvla_robocerebra \
+  --policy.empty_cameras=1 \
   --dataset.repo_id=lerobot/robocerebra_unified \
+  '--rename_map={"observation.images.image": "observation.images.camera1", "observation.images.wrist_image": "observation.images.camera2"}' \
   --env.type=libero \
   --env.task=libero_10 \
+  '--env.camera_name_mapping={"agentview_image": "image", "robot0_eye_in_hand_image": "wrist_image"}' \
   --output_dir=outputs/smolvla_robocerebra
 ```
+
+`smolvla_base` expects cameras named `camera1`–`camera3`, so the camera flags are the same as in the [Evaluation](#evaluation) command: `--rename_map` maps the dataset cameras to those names, and `--env.camera_name_mapping` gives the LIBERO cameras the dataset's names for evaluation during training.
 
 ## Reproducing published results
 
