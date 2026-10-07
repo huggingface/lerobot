@@ -69,9 +69,12 @@ class YamFollowerConfigBase:
     kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 5.0, 1.5, 1.5, 1.5])
     # Damping of the six joints after a fault (kp = 0, gravity of the last valid pose kept).
     fault_damping_kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 5.0, 1.5, 1.5, 1.5])
-    gripper_kp: float = 5.0
-    gripper_kd: float = 0.005
-    gripper_torque_limit: float = 0.5
+    # I2RT's gains for the linear DM4310 gripper.
+    gripper_kp: float = 20.0
+    gripper_kd: float = 0.5
+    # Finger force once the gripper is blocked on an object, and the finger travel between stops.
+    gripper_force_limit_n: float = 50.0
+    gripper_stroke_m: float = 0.096
     max_joint_speed_deg_s: float = 17.0
     max_gripper_speed_s: float = 12.0
     max_tracking_error_deg: float = 8.5
@@ -125,7 +128,8 @@ class YamFollowerConfigBase:
             "initial_gripper_tolerance",
             "gripper_kp",
             "gripper_kd",
-            "gripper_torque_limit",
+            "gripper_force_limit_n",
+            "gripper_stroke_m",
             "max_joint_speed_deg_s",
             "max_gripper_speed_s",
             "max_tracking_error_deg",
@@ -144,8 +148,8 @@ class YamFollowerConfigBase:
             raise ValueError('idle_mode must be "hold" or "float"')
         if self.idle_mode == "float" and not self.gravity_compensation:
             raise ValueError("idle_mode='float' needs gravity_compensation, or the arm would fall")
-        if self.gripper_kp > 500 or self.gripper_kd > 5 or self.gripper_torque_limit > 1:
-            raise ValueError("Gripper gains/torque exceed supported limits (maximum 1 Nm)")
+        if self.gripper_kp > 500 or self.gripper_kd > 5:
+            raise ValueError("Gripper gains exceed the MIT limits")
         if not 20 <= self.control_frequency <= 250:
             raise ValueError("control_frequency must be between 20 and 250 Hz")
         if self.initial_gripper_position is not None and not 0 <= self.initial_gripper_position <= 100:
@@ -193,9 +197,10 @@ class YamFollowerConfig(RobotConfig, YamFollowerConfigBase):
         kp (`list`, *optional*): MIT position gains of the six joints.
         kd (`list`, *optional*): MIT damping gains of the six joints.
         fault_damping_kd (`list`, *optional*): Damping of the six joints after a fault, applied with zero stiffness while keeping the gravity torque of the last valid pose, until `disconnect()` disables torque.
-        gripper_kp (`float`, *optional*, defaults to 5.0): MIT position gain of the gripper.
-        gripper_kd (`float`, *optional*, defaults to 0.005): MIT damping gain of the gripper.
-        gripper_torque_limit (`float`, *optional*, defaults to 0.5): Cap on the gripper's proportional MIT torque in Nm (at most 1); damping may add torque.
+        gripper_kp (`float`, *optional*, defaults to 20.0): MIT position gain of the gripper (I2RT's value).
+        gripper_kd (`float`, *optional*, defaults to 0.5): MIT damping gain of the gripper (I2RT's value).
+        gripper_force_limit_n (`float`, *optional*, defaults to 50.0): Finger force applied once the gripper is blocked on an object, as in I2RT's gripper force limiter. The gripper moves freely until then.
+        gripper_stroke_m (`float`, *optional*, defaults to 0.096): Finger travel between the two gripper stops, in m, used to convert `gripper_force_limit_n` into motor torque.
         max_joint_speed_deg_s (`float`, *optional*, defaults to 17.0): Fastest the commanded joint positions move toward a new target, in degrees per second.
         max_gripper_speed_s (`float`, *optional*, defaults to 12.0): Fastest the commanded gripper opening moves, in full strokes per second.
         max_tracking_error_deg (`float`, *optional*, defaults to 8.5): Furthest a commanded joint may lead its measured position, in degrees, which limits force when the arm is blocked or pushed.
