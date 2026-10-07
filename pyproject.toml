@@ -69,6 +69,9 @@ dependencies = [
     # Config & Hub
     "draccus>=0.11.6,<0.12.0",
     "huggingface-hub>=1.6.0,<2.0.0",
+    "filelock>=3.12.0,<4.0.0",
+    "fsspec>=2023.5.0,<2027.0.0",
+    "httpx>=0.27.0,<1.0.0",
     "requests>=2.32.0,<3.0.0",
 
     # Environments
@@ -372,6 +375,7 @@ all = [
 ]
 
 [project.scripts]
+lerobot-build-mp4-sidecar="lerobot.scripts.lerobot_build_mp4_sidecar:main"
 lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
 lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
 lerobot-find-port="lerobot.scripts.lerobot_find_port:main"
@@ -514,6 +518,7 @@ exclude_dirs = [
 skips = ["B101", "B311", "B404", "B603", "B615"]
 
 [tool.typos]
+default.extend-words = { trak = "trak", nd = "nd" }
 default.extend-ignore-re = [
     "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",                      # spellchecker:disable-line
     "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on", # spellchecker:<on|off>
@@ -535,7 +540,6 @@ default.extend-ignore-identifiers-re = [
     "nd",  # einsum output axes "...nd" in the vendored FLUX 3 Action transformer
     "EmbedND",
 ]
-default.extend-words = { nd = "nd" }
 
 # Docstring coverage gate. `fail-under` is a RATCHET, not a target: it is set just below the currently
 # measured coverage so it passes today, and is raised in the same PR that documents a module. Never set it
