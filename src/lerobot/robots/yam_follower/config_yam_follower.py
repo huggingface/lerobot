@@ -37,7 +37,6 @@ JOINT_LIMITS_RAD = (
 )
 JOINT_LIMITS_DEG = tuple((math.degrees(lower), math.degrees(upper)) for lower, upper in JOINT_LIMITS_RAD)
 DM_MIT_POSITION_LIMIT_RAD = 12.5
-DM_MIT_POSITION_MAX_COUNT = 65535
 
 
 def motor_feature_names(use_velocity_and_torque: bool = False) -> tuple[str, ...]:
@@ -183,7 +182,7 @@ class YamFollowerConfig(RobotConfig, YamFollowerConfigBase):
         command_timeout_s (`float`, *optional*, defaults to 1.0): When no action arrives for this long, the arm holds its current pose.
         freeze_gc (`bool`, *optional*, defaults to `True`): Freeze existing cyclic-GC objects while the servo runs. This affects the whole Python process; disable it if the host application manages GC itself.
         id (`str | None`, *optional*): Name of this arm; it selects the calibration file.
-        calibration_dir (`pathlib.Path | None`, *optional*): Directory of calibration files. Gripper endpoints are stored as DM MIT position counts encoding raw radians; calibration never changes joint zeros.
+        calibration_dir (`pathlib.Path | None`, *optional*): Directory of calibration files. Each file stores the raw motor angles of the gripper stops in whole degrees; calibration never changes joint zeros.
     """
 
     def __post_init__(self) -> None:

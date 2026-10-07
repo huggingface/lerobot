@@ -46,7 +46,7 @@ uv run --no-sync lerobot-calibrate \
   --robot.left_arm_config.port=can0 --robot.right_arm_config.port=can1
 ```
 
-Follow the closed/open prompts. A bimanual calibration handles the left arm and then the right arm. Calibration reads feedback only: it does not enable torque, move the grippers, or change the factory joint zeros. The bimanual robot saves one standard single-arm calibration record for each side, using the derived IDs `bimanual_yam_left` and `bimanual_yam_right`. Without `--robot.id`, the bimanual robot uses `bi_yam_follower`. Either raw gripper polarity is supported. Explicit `gripper_closed_deg` and `gripper_open_deg` (raw motor degrees) override the saved endpoints.
+Follow the closed/open prompts; each prompt names the arm it is measuring. A bimanual calibration handles the left arm and then the right arm. When a calibration is already saved, `lerobot-calibrate` asks whether to keep it or measure again. Calibration reads feedback only: it does not enable torque, move the grippers, or change the factory joint zeros. The bimanual robot saves one standard single-arm calibration record for each side, using the derived IDs `bimanual_yam_left` and `bimanual_yam_right`. Each record stores the raw motor angles of the two gripper stops in whole degrees. Without `--robot.id`, the bimanual robot uses `bi_yam_follower`. Either raw gripper polarity is supported. Explicit `gripper_closed_deg` and `gripper_open_deg` (raw motor degrees) override the saved endpoints.
 
 ## Control and units
 
