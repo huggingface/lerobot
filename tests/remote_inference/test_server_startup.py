@@ -1,5 +1,9 @@
-"""Real checkpoint/processor loading and identity, without network or model downloads."""
+"""Deployment warmup and server lifecycle without model downloads."""
 
+import signal
+import subprocess
+import sys
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -111,12 +115,18 @@ def test_language_warmup_model_errors_fail_startup_and_reset(tmp_path, monkeypat
     assert policy.resets == 2
 
 
-def test_unsupported_runtime_subtask_returns_bounded_error_and_preserves_session(tmp_path, monkeypatch):
+def test_unsupported_runtime_subtask_returns_bounded_error_and_preserves_session(
+    tmp_path, monkeypatch, caplog
+):
+    caplog.set_level("INFO", logger="lerobot.remote_inference.server")
     server, _, _ = _language_deployment(tmp_path, monkeypatch)
     runner, identity = load_deployment(server)
     worker = SessionWorker(runner, deployment="test", artifact_identity=identity, semantics="radians-v1")
     try:
         session = admit(worker)
+        vqa = replace(action_request(worker, session), message_type=MessageType.LANGUAGE_REQUEST)
+        vqa.body.update(kind="vqa", text="Private scene question", intent_generation=0)
+        assert worker.submit(vqa).result(2).message_type is MessageType.LANGUAGE_RESULT
         request = replace(action_request(worker, session), message_type=MessageType.LANGUAGE_REQUEST)
         request.body.update(kind="next_subtask", text="Pick up the cube", intent_generation=0)
         response = worker.submit(request).result(2)
@@ -124,5 +134,54 @@ def test_unsupported_runtime_subtask_returns_bounded_error_and_preserves_session
         assert response.body["code"] == ErrorCode.EXECUTION
         assert "requires a checkpoint recipe" in response.body["message"]
         assert worker.submit(action_request(worker, session)).result(2).message_type is MessageType.ACTION
+        assert "Language request accepted: deployment=test kind=vqa" in caplog.text
+        assert "Language request completed: deployment=test kind=vqa elapsed=" in caplog.text
+        assert "Language request accepted: deployment=test kind=next_subtask" in caplog.text
+        assert "Language request failed: deployment=test kind=next_subtask elapsed=" in caplog.text
+        assert "Private scene question" not in caplog.text
     finally:
         worker.close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process signals")
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_server_signal_logs_and_closes_real_transport(tmp_path, signum):
+    pytest.importorskip("zenoh")
+    script = """
+import signal
+from lerobot.remote_inference import ModelConfig, ServerConfig
+from lerobot.scripts import lerobot_policy_server as entry
+from lerobot.transport.zenoh import ZenohConfig
+from tests.inference.test_policy_runner import ConformingPolicy, runner_for, tiny_config
+
+runner = runner_for(ConformingPolicy(tiny_config()))
+entry.load_deployment = lambda cfg: (runner, "test-artifact")
+cfg = ServerConfig(
+    deployment="signal-test", model=ModelConfig("unused"), semantics="radians-v1",
+    features=list(runner.capabilities.features), action_feature=runner.capabilities.action_feature,
+    zenoh=ZenohConfig(listen_endpoints=["tcp/127.0.0.1:0"]),
+)
+previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+entry.serve(cfg)
+assert all(signal.getsignal(sig) == handler for sig, handler in previous.items())
+"""
+    log = tmp_path / "server.log"
+    with log.open("w") as output:
+        process = subprocess.Popen([sys.executable, "-c", script], stdout=output, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 30
+            while "Policy server ready:" not in log.read_text():
+                assert process.poll() is None and time.monotonic() < deadline, log.read_text()
+                time.sleep(0.02)
+            process.send_signal(signum)
+            assert process.wait(timeout=10) == 0, log.read_text()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+    text = log.read_text()
+    assert text.count("Policy server shutdown requested:") == 1
+    assert f"reason={signal.Signals(signum).name}" in text
+    assert "Policy server stopping:" in text
+    assert "Policy server transport closed:" in text
+    assert "Policy worker stopped:" in text

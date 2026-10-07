@@ -82,7 +82,6 @@ def _inference_identity(cfg: ServerConfig, policy_cfg: PreTrainedConfig) -> dict
             "supported_modes": sorted(cfg.execution.supported_modes),
             "action_fps": cfg.execution.action_fps,
             "rtc": asdict(cfg.execution.rtc) if uses_rtc else None,
-            "blendable_components": sorted(cfg.execution.blendable_components),
         },
         "language": {
             "enabled": cfg.language.enabled,

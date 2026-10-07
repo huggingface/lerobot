@@ -47,11 +47,9 @@ from lerobot.transport.zenoh import (
 from .build_info import SOFTWARE_BUILD
 from .chunk_contract import (
     CHUNK_ALIGNMENT,
-    CHUNK_BLENDING,
     RTC_MODEL_SPACE,
     default_chunk_settings,
     required_chunk_capabilities,
-    validate_blendable_components,
     validate_chunk_contract,
 )
 from .codec import CodecLimits, decode_message, encode_message
@@ -133,7 +131,6 @@ class SessionWorker:
         idle_timeout_s: float = 10.0,
         max_input_chars: int = 4096,
         max_output_chars: int = 8192,
-        blendable_components: tuple[str, ...] = (),
     ) -> None:
         """Start the single policy worker with bounded command and identity bookkeeping."""
         self.runner = runner
@@ -146,15 +143,8 @@ class SessionWorker:
         self.idle_timeout_s = idle_timeout_s
         self.max_input_chars = max_input_chars
         self.max_output_chars = max_output_chars
-        validate_blendable_components(runner.capabilities.action_feature, blendable_components)
-        if blendable_components and (
-            runner.capabilities.action_representation != "canonical"
-            or ExecutionMode.CHUNK not in runner.capabilities.modes
-        ):
-            raise ValueError("Blending requires canonical chunk execution")
-        self.blendable_components = tuple(blendable_components)
         self.execution_contracts = (
-            [CHUNK_ALIGNMENT, *([CHUNK_BLENDING] if blendable_components else [])]
+            [CHUNK_ALIGNMENT]
             if ExecutionMode.CHUNK in runner.capabilities.modes
             and runner.capabilities.action_representation == "canonical"
             else []
@@ -241,7 +231,6 @@ class SessionWorker:
             "semantics": self.semantics,
             "capabilities": capabilities,
             "execution_contracts": list(self.execution_contracts),
-            "blendable_components": list(self.blendable_components),
             "ready": self._failure is None and not self._stopping.is_set(),
             "available": self._failure is None and self._session is None and not self._stopping.is_set(),
             "failure": self._failure,
@@ -369,6 +358,12 @@ class SessionWorker:
                     else:
                         raise ProtocolError(ErrorCode.MALFORMED, "Unexpected request message type")
                 self._commands.put_nowait((message, future, time.monotonic()))
+                if message.message_type is MessageType.LANGUAGE_REQUEST:
+                    logger.info(
+                        "Language request accepted: deployment=%s kind=%s",
+                        self.deployment,
+                        message.body["kind"],
+                    )
             except (
                 ProtocolError,
                 ValueError,
@@ -411,7 +406,7 @@ class SessionWorker:
             raise ProtocolError(ErrorCode.UNSUPPORTED, "Unknown required protocol capabilities")
         settings = body.get("chunk_settings", default_chunk_settings())
         try:
-            validate_chunk_contract(settings, caps, self.blendable_components)
+            validate_chunk_contract(settings, caps)
         except ValueError as exc:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, str(exc)) from exc
         expected = required_chunk_capabilities(settings)
@@ -713,6 +708,14 @@ class SessionWorker:
                     self._actions_since_summary += 1
                 else:
                     self._language_since_summary += 1
+                    logger.info(
+                        "Language request %s: deployment=%s kind=%s elapsed=%.3fs outcome=%s",
+                        "completed" if response.message_type is MessageType.LANGUAGE_RESULT else "failed",
+                        self.deployment,
+                        message.body["kind"],
+                        finished - queued_at,
+                        response.body.get("code", str(response.message_type)),
+                    )
                 if response.message_type is MessageType.ERROR:
                     if response.body.get("code") == ErrorCode.STALE:
                         self._stale_since_summary += 1
@@ -983,19 +986,21 @@ class PolicyServer:
     def serve(self) -> None:
         """Serve bounded control, action and language channels until explicitly stopped."""
         transport, worker = self.transport, self.worker
-        transport.open()
-        prefix = instance_prefix(worker.deployment, worker.instance_id)
-        describe = transport.declare_queryable(deployment_prefix(worker.deployment) + "/describe", capacity=4)
-        opening = transport.declare_queryable(prefix + "/open", capacity=4)
-        transport.declare_token(prefix + "/alive")
-        logger.info(
-            "Policy server ready: deployment=%s instance=%s; awaiting one client",
-            worker.deployment,
-            worker.instance_id,
-        )
         channels: _SessionChannels | None = None
         outbound: list[_PendingReply] = []
         try:
+            transport.open()
+            prefix = instance_prefix(worker.deployment, worker.instance_id)
+            describe = transport.declare_queryable(
+                deployment_prefix(worker.deployment) + "/describe", capacity=4
+            )
+            opening = transport.declare_queryable(prefix + "/open", capacity=4)
+            transport.declare_token(prefix + "/alive")
+            logger.info(
+                "Policy server ready: deployment=%s instance=%s; awaiting one client",
+                worker.deployment,
+                worker.instance_id,
+            )
             while not self._stop.is_set():
                 session_id = worker.session_id
                 channel_session_id = None if channels is None else channels.session_id
@@ -1015,6 +1020,8 @@ class PolicyServer:
                     self._pump_subscribers(channels, outbound)
                 outbound = self._flush_replies(outbound, channels)
                 self._stop.wait(0.002)
+        except KeyboardInterrupt:
+            self.stop(reason="SIGINT")
         finally:
             with worker._lock:
                 logger.info(
@@ -1029,10 +1036,7 @@ class PolicyServer:
                     worker._session is not None and worker._session.closing,
                 )
             try:
-                if channels is not None:
-                    channels.close()
-                describe.close()
-                opening.close()
+                # The transport owns every declared channel, including partial startup.
                 transport.close()
                 logger.info("Policy server transport closed: deployment=%s", worker.deployment)
             finally:
@@ -1042,4 +1046,7 @@ class PolicyServer:
         """Request bounded endpoint teardown from the serving thread."""
         if not self._stop.is_set():
             self._stop_reason = reason
-        self._stop.set()
+            self._stop.set()
+            logger.info(
+                "Policy server shutdown requested: deployment=%s reason=%s", self.worker.deployment, reason
+            )

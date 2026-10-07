@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
-"""Plain alignment and blending must be negotiated before accepting motion."""
+"""Negotiate alignment while validating blending entirely on the client."""
 
 from dataclasses import replace
 from types import SimpleNamespace
@@ -14,17 +14,16 @@ pytest.importorskip("datasets")
 from lerobot.inference import ExecutionMode, RemoteInferenceConfig
 from lerobot.remote_inference.chunk_contract import (
     CHUNK_ALIGNMENT,
-    CHUNK_BLENDING,
     chunk_settings,
     default_chunk_settings,
     required_chunk_capabilities,
-    validate_chunk_contract,
+    validate_blend_settings,
 )
 from lerobot.remote_inference.client import RemoteClient
 from lerobot.remote_inference.protocol import ErrorCode, MessageType, ProtocolError
 from lerobot.remote_inference.server import SessionWorker
 from tests.inference.test_policy_runner import ConformingPolicy, runner_for, tiny_config
-from tests.remote_inference.test_session import action_request, assert_error, open_request
+from tests.remote_inference.test_session import action_request, assert_error, control_request, open_request
 
 
 def client_config(**kwargs):
@@ -38,7 +37,7 @@ def test_client_defaults_align_plain_chunks_without_changing_rtc_or_legacy_wire(
     assert (config.chunk_merge, config.blend_steps, config.blend_components) == (expected, 0, [])
     assert client_config(mode=mode, chunk_merge="append").chunk_merge == "append"
     # Omitted wire settings keep their original meaning; alignment is negotiated explicitly.
-    assert default_chunk_settings() == chunk_settings("append", 0, 0.5, [])
+    assert default_chunk_settings() == {"chunk_merge": "append"}
 
 
 @pytest.fixture
@@ -55,17 +54,14 @@ def worker():
         deployment="test",
         artifact_identity="artifact",
         semantics="test-radians",
-        blendable_components=("shoulder.pos", "elbow.pos"),
     )
     yield worker
     worker.close()
 
 
-def aligned_open(worker, *, blend=False):
+def aligned_open(worker):
     request = open_request(worker)
-    request.body["chunk_settings"] = chunk_settings(
-        "aligned", 2 if blend else 0, 0.5, ["elbow.pos"] if blend else []
-    )
+    request.body["chunk_settings"] = {"chunk_merge": "aligned"}
     request.body["required_capabilities"] = required_chunk_capabilities(request.body["chunk_settings"])
     return request
 
@@ -91,39 +87,28 @@ def admit(client):
     )
 
 
-@pytest.mark.parametrize("blend", [False, True])
-def test_admission_echoes_exact_merge_settings_and_explicit_components(worker, blend):
+def test_admission_echoes_only_merge_settings(worker):
     descriptor = worker.descriptor
-    assert descriptor["execution_contracts"] == [CHUNK_ALIGNMENT, CHUNK_BLENDING]
-    assert descriptor["blendable_components"] == ["shoulder.pos", "elbow.pos"]
-    request = aligned_open(worker, blend=blend)
+    assert descriptor["execution_contracts"] == [CHUNK_ALIGNMENT]
+    assert "blendable_components" not in descriptor
+    request = aligned_open(worker)
     response = worker.submit(request).result(2)
     assert response.message_type is MessageType.ACCEPTED
     assert response.body["chunk_settings"] == request.body["chunk_settings"]
 
 
-def test_deployment_without_components_does_not_advertise_blending():
-    worker = SessionWorker(
-        runner_for(ConformingPolicy(tiny_config())), deployment="test", artifact_identity="a", semantics="s"
-    )
-    try:
-        assert worker.descriptor["execution_contracts"] == [CHUNK_ALIGNMENT]
-        assert worker.descriptor["blendable_components"] == []
-        assert_error(worker.submit(aligned_open(worker, blend=True)).result(2), ErrorCode.UNSUPPORTED)
-    finally:
-        worker.close()
-
-
 @pytest.mark.parametrize(
     "updates",
     [
-        {"blend_components": ["gripper.pos"]},
-        {"blend_steps": 4},
+        {"blend_steps": 2},
+        {"chunk_merge": "unknown"},
+        {"chunk_merge": []},
+        {"chunk_merge": {}},
         {"chunk_merge": "append"},
     ],
 )
 def test_server_rejects_invalid_merge_contract_before_allocating_session(worker, updates):
-    request = aligned_open(worker, blend=True)
+    request = aligned_open(worker)
     request.body["chunk_settings"].update(updates)
     assert_error(worker.submit(request).result(2), ErrorCode.INCOMPATIBLE)
     assert worker.session_id is None
@@ -146,13 +131,13 @@ def test_blending_requires_named_canonical_float_coordinates(worker, alteration)
     else:
         caps = replace(caps, action_feature=replace(caps.action_feature, dtype="int32"))
     with pytest.raises(ValueError):
-        validate_chunk_contract(chunk_settings("aligned", 2, 0.5, ["elbow.pos"]), caps, ["elbow.pos"])
+        validate_blend_settings(chunk_settings("aligned", 2, 0.5, ["elbow.pos"]), caps)
 
 
-def test_old_server_is_rejected_before_open_for_alignment(worker):
+@pytest.mark.parametrize("advertised", [[], ["chunk_alignment_v1", "chunk_blending_v1"]])
+def test_old_server_is_rejected_before_open_for_alignment(worker, advertised):
     descriptor = worker.descriptor
-    del descriptor["execution_contracts"]
-    del descriptor["blendable_components"]
+    descriptor["execution_contracts"] = advertised
     client = client_for(worker, client_config(chunk_merge="aligned"), descriptor)
     with pytest.raises(ProtocolError, match="update the server") as error:
         admit(client)
@@ -161,17 +146,35 @@ def test_old_server_is_rejected_before_open_for_alignment(worker):
     assert worker.session_id is None
 
 
-def test_client_resolves_components_and_checks_exact_acceptance(worker, monkeypatch):
-    client = client_for(
-        worker,
-        client_config(chunk_merge="aligned", blend_steps=2, blend_components=["elbow.pos", "shoulder.pos"]),
-    )
-    monkeypatch.setattr(
-        client, "_query", lambda key, request, timeout, expected: worker.submit(request).result(2)
-    )
-    monkeypatch.setattr(client, "control", lambda *_: None)
-    admit(client)
-    assert client.blend_indices == (1, 0)
+def test_clients_can_change_blending_without_server_reconfiguration(worker, monkeypatch):
+    for components in ([], ["elbow.pos", "shoulder.pos"], ["gripper.pos"]):
+        client = client_for(
+            worker,
+            client_config(blend_steps=2 if components else 0, blend_components=components),
+        )
+
+        def query(key, request, timeout, expected):
+            assert request.body["chunk_settings"] == {"chunk_merge": "aligned"}
+            assert request.body["required_capabilities"] == [CHUNK_ALIGNMENT]
+            return worker.submit(request).result(2)
+
+        monkeypatch.setattr(client, "_query", query)
+        monkeypatch.setattr(client, "control", lambda *_: None)
+        admit(client)
+        names = worker.runner.capabilities.action_feature.names
+        assert client.blend_indices == tuple(names.index(name) for name in components)
+        closed = worker.submit(control_request(worker, client.session_id, 0, "close")).result(2)
+        assert closed.message_type is MessageType.ACK
+
+
+@pytest.mark.parametrize("steps,components", [(2, ["unknown.pos"]), (4, ["elbow.pos"])])
+def test_invalid_blend_settings_fail_client_side_before_open(worker, monkeypatch, steps, components):
+    client = client_for(worker, client_config(blend_steps=steps, blend_components=components))
+    monkeypatch.setattr(client, "_query", lambda *args: pytest.fail("invalid blending must fail before OPEN"))
+    with pytest.raises(ProtocolError) as error:
+        admit(client)
+    assert error.value.code is ErrorCode.INCOMPATIBLE
+    assert worker.session_id is None
 
 
 def test_server_cannot_silently_change_accepted_merge_settings(worker, monkeypatch):

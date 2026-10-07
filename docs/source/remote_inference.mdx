@@ -33,7 +33,7 @@ Refill controls when to request. It is not the time between requests.
 
 **Local RTC** (`--inference.type=rtc`) uses a background thread in the rollout process, without transport. **Same-host remote inference** still uses two processes and `--inference.type=remote`. It offers the same alignment/blending options as LAN, including for policies without RTC.
 
-Specific ACT, SmolVLA, XVLA, EVO1 and LaWAM checkpoints have physical action/task evidence, not blanket checkpoint support. OMX/XVLA also has focused pause/resume, starvation recovery/expiry and recording acceptance with Sentry, Highlight, Episodic and corrections-only DAgger. OMX/SmolVLA has local guided RTC waiting/recovery and grace-expiry acceptance. Useful language behavior, routed robot operation and JPEG require separate validation.
+Specific ACT, SmolVLA, XVLA, EVO1 and LaWAM checkpoints have physical action/task evidence. OMX/XVLA also has pause/resume, starvation recovery/expiry and recording acceptance across all four recording strategies; OMX/SmolVLA has local guided RTC recovery/expiry acceptance. FineART has functional action/text integration evidence, but useful language and task continuity remain unvalidated. See the [policy support table](https://github.com/huggingface/lerobot/blob/main/src/lerobot/remote_inference/REMOTE_INFERENCE_DESIGN.md#policy-support) for limits. Routed robot operation and JPEG remain separate follow-ups.
 
 ## Start from a working rollout
 
@@ -131,13 +131,7 @@ Alignment discards incoming steps already committed. Blending averages overlappi
 <details>
 <summary>Add a short blend to the example</summary>
 
-Allow only continuous arm coordinates on the server. Add this argument to its command, then restart it:
-
-```bash
---execution.blendable_components='[shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos]'
-```
-
-Add these options to the client:
+Blending is configured entirely on the client; the server needs no blending settings or restart. Select continuous arm coordinates from the deployment's action names:
 
 ```bash
 --inference.chunk_merge=aligned \
@@ -254,7 +248,9 @@ Source age includes execution. For append, allow roughly `execution horizon + ef
 
 ## Read the logs and diagnose a run
 
-INFO logs show admission/settings, waiting/shutdown transitions and an activity summary about every five seconds. Read turnaround and queued playback together. For details, use server `--log_level=DEBUG` and client `--inference.log_level=DEBUG`. Interactive sessions mute client logs below ERROR; use a noninteractive run when collecting live timing logs.
+INFO logs show admission/settings, text request outcomes, waiting/shutdown transitions and an activity summary about every five seconds. Read turnaround and queued playback together. For details, use server `--log_level=DEBUG` and client `--inference.log_level=DEBUG`. Interactive sessions mute client logs below ERROR; use a noninteractive run when collecting live timing logs.
+
+When saving logs, use `2>&1 | tee -i server.log` (or `client.log`). The `-i` keeps `tee` alive when Ctrl+C reaches the whole pipeline, so it captures graceful shutdown messages too.
 
 | Observation                                | Next useful check                                                                                                      |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
@@ -363,10 +359,16 @@ The checks also need `openssl`; unavailable prerequisites are reported as skips.
 
 ## Language, recording and migration
 
-Use `/vqa`, `/subtask` and `/autosteer` through [interactive rollout](./inference#interactive-sessions). Enable server `language.enabled=true` only on a checkpoint with supported text generation. Autosteering also needs trained subtask generation; VQA alone is insufficient. Useful real-checkpoint language behavior remains unvalidated. Text is serialized with action inference and starts from a planned pause; continuing buffered motion during VQA is outside this implementation.
+Use `/vqa`, `/subtask` and `/autosteer` through [interactive rollout](./inference#interactive-sessions). Enable server `language.enabled=true` only on a checkpoint with supported text generation. Autosteering also needs trained subtask generation and compatible goal/subtask prompting. FineART checks exercised text requests and instruction changes, but useful language quality remains unvalidated.
+
+Text work pauses motion and discards buffered continuation. VQA keeps your instruction, then resumes with a fresh prediction; the robot may lose task progress when replanning, even after a successful answer. Continuing valid buffered motion during informational VQA is a follow-up.
 
 Recording uses the normal local dataset format. Task labels follow the dispatched action. Diagnostics remain application logs, not dataset records or extra uploaded files. With a dataset, use `--dataset.single_task` for the initial instruction; otherwise use `--task`. Prefer one to avoid conflicting configuration.
 
 The retired `lerobot[async]` extra and `lerobot.async_inference` commands are replaced by `lerobot[remote]`, `lerobot-policy-server` and `lerobot-rollout --inference.type=remote`. Old thresholds/aggregation weights are not interchangeable with refill/alignment/blending. **Unitree G1/SONIC has no supported remote replacement yet**; do not substitute the new CLI into that recipe.
+
+Python integrations should import shared engines/configuration from `lerobot.inference` and remote execution/serving from `lerobot.remote_inference`; the old `lerobot.rollout.inference` location is removed. Local RTC now uses bounded starvation waiting on compatible robots and faults immediately on exhaustion when that capability is unavailable. Remote execution requires the driver's position-hold declaration; there is no `hold_mode` option.
+
+When upgrading an earlier development version, update both peers for the current alignment contract and remove server `execution.blendable_components`. Set blending only through client `inference.blend_*` options. Recheck any `expected_artifact` pin after changing deployment configuration.
 
 For architecture, execution contracts and planned extensions, see the [engineering design reference](https://github.com/huggingface/lerobot/blob/main/src/lerobot/remote_inference/REMOTE_INFERENCE_DESIGN.md).

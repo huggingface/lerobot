@@ -22,7 +22,6 @@ from lerobot.inference import ExecutionMode, FeatureSpec
 from lerobot.policies.rtc import RTCConfig
 from lerobot.transport.zenoh import ZenohConfig
 
-from .chunk_contract import validate_blendable_components
 from .protocol import validate_segment
 
 
@@ -47,8 +46,6 @@ class ExecutionConfig:
     warmup_calls: int = 2
     # Server-owned plain-chunk slice; never supplied by a connecting robot.
     n_action_steps: int | None = None
-    # Explicit continuous canonical coordinates; never infer gripper suitability.
-    blendable_components: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -104,9 +101,6 @@ class ServerConfig:
             raise ValueError("Explicit canonical features and action_feature are required")
         if len({feature.name for feature in self.features}) != len(self.features):
             raise ValueError("Serving observation feature names must be unique")
-        validate_blendable_components(self.action_feature, self.execution.blendable_components)
-        if self.execution.blendable_components and "chunk" not in self.execution.supported_modes:
-            raise ValueError("blendable_components requires the chunk execution mode")
         for name in ("max_input_chars", "max_output_chars"):
             value = getattr(self.language, name)
             if type(value) is not int or value <= 0:
