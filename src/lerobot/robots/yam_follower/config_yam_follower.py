@@ -79,6 +79,12 @@ class YamFollowerConfigBase:
     # require revalidation. This model is not a collision avoidance system.
     gravity_compensation: bool = True
     gravity_factors: list[float] = field(default_factory=lambda: [1.0, 1.1, 1.1, 1.2, 1.0, 1.0])
+    # Before the first action and after command_timeout_s: "hold" the pose or "float" (movable by hand).
+    idle_mode: str = "hold"
+    # I2RT's float-mode damping and Coulomb friction for the standard YAM v1 arm.
+    float_kd: list[float] = field(default_factory=lambda: [0.1, 0.1, 0.1, 0.3, 0.05, 0.05])
+    friction_compensation: bool = False
+    coulomb_friction: list[float] = field(default_factory=lambda: [0.3, 0.3, 0.3, 0.06, 0.06, 0.06])
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
     # Opt in only after verifying the CAN port, encoder frame and gripper calibration.
     read_only: bool = True
@@ -96,7 +102,16 @@ class YamFollowerConfigBase:
     def __post_init__(self) -> None:
         if not self.port:
             raise ValueError("A YAM CAN interface is required")
-        for name in ("joint_signs", "joint_offsets_deg", "kp", "kd", "fault_damping_kd", "gravity_factors"):
+        for name in (
+            "joint_signs",
+            "joint_offsets_deg",
+            "kp",
+            "kd",
+            "fault_damping_kd",
+            "gravity_factors",
+            "float_kd",
+            "coulomb_friction",
+        ):
             values = getattr(self, name)
             if len(values) != 6 or not all(math.isfinite(v) for v in values):
                 raise ValueError(f"{name} must contain six finite values")
@@ -121,6 +136,14 @@ class YamFollowerConfigBase:
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
+        if any(not 0 <= x <= 5 for x in self.float_kd):
+            raise ValueError("float_kd outside MIT gain limits")
+        if any(x < 0 for x in self.coulomb_friction):
+            raise ValueError("coulomb_friction must not be negative")
+        if self.idle_mode not in ("hold", "float"):
+            raise ValueError('idle_mode must be "hold" or "float"')
+        if self.idle_mode == "float" and not self.gravity_compensation:
+            raise ValueError("idle_mode='float' needs gravity_compensation, or the arm would fall")
         if self.gripper_kp > 500 or self.gripper_kd > 5 or self.gripper_torque_limit > 1:
             raise ValueError("Gripper gains/torque exceed supported limits (maximum 1 Nm)")
         if not 20 <= self.control_frequency <= 250:
@@ -178,6 +201,10 @@ class YamFollowerConfig(RobotConfig, YamFollowerConfigBase):
         max_tracking_error_deg (`float`, *optional*, defaults to 8.5): Furthest a commanded joint may lead its measured position, in degrees, which limits force when the arm is blocked or pushed.
         gravity_compensation (`bool`, *optional*, defaults to `True`): Add gravity feed-forward torques from the bundled model of the standard arm with a linear gripper. Payloads or added cameras need revalidation.
         gravity_factors (`list`, *optional*): Per-joint scale applied to the model gravity torques.
+        idle_mode (`str`, *optional*, defaults to `"hold"`): What the arm does before the first action and after `command_timeout_s`: `"hold"` keeps the measured pose stiffly, `"float"` lets it be moved by hand while gravity is compensated (the gripper keeps holding). Float needs `gravity_compensation`.
+        float_kd (`list`, *optional*): Damping of the six joints in float mode, with zero stiffness. The defaults are I2RT's values for the standard arm.
+        friction_compensation (`bool`, *optional*, defaults to `False`): Add Coulomb friction compensation in float mode, in the direction each joint moves.
+        coulomb_friction (`list`, *optional*): Coulomb friction of the six joints in Nm, used when `friction_compensation` is on. The defaults are I2RT's values for the standard arm.
         cameras (`dict`, *optional*): Cameras read with each observation, keyed by name.
         read_only (`bool`, *optional*, defaults to `True`): Read feedback without ever enabling torque; `send_action` raises. Disable only after checking the CAN port, encoder frame and gripper calibration.
         require_motor_can_timeout (`bool`, *optional*, defaults to `True`): Refuse to enable torque when a motor's CAN loss-of-communication timeout is off, since nothing then stops that motor if this process dies. Set it to `False` to only warn.

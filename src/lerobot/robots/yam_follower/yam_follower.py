@@ -101,6 +101,10 @@ def yam_arm_params(config: YamFollowerConfigBase) -> MitArmParams:
             max_speed=config.max_gripper_speed_s,
         ),
         fault_damping_kd=np.r_[config.fault_damping_kd, config.gripper_kd],
+        float_kd=np.asarray(config.float_kd, dtype=float),
+        coulomb_friction=np.asarray(config.coulomb_friction, dtype=float)
+        if config.friction_compensation
+        else np.zeros(6),
     )
 
 

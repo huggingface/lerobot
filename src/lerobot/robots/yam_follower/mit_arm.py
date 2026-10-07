@@ -113,6 +113,10 @@ class MitArmParams:
     gripper: CalibratedGripper
     # Damping applied to every motor (joints, then the gripper) after a fault, with kp = 0.
     fault_damping_kd: np.ndarray
+    # Damping of the arm joints in float mode (kp = 0, live gravity compensation).
+    float_kd: np.ndarray
+    # Coulomb friction of the arm joints compensated in float mode, in Nm; zeros disable it.
+    coulomb_friction: np.ndarray
 
     @property
     def num_joints(self) -> int:
@@ -138,6 +142,8 @@ class ServoSettings(Protocol):
     feedback_timeout_s: float
     command_timeout_s: float
     freeze_gc: bool
+    # What the arm does before the first target and after the command timeout: "hold" or "float".
+    idle_mode: str
 
 
 def motor_to_joint(raw: np.ndarray, params: MitArmParams) -> np.ndarray:
@@ -235,6 +241,26 @@ def damping_commands(
     }
 
 
+def float_commands(
+    params: MitArmParams, state: JointState, gravity: np.ndarray, gripper_command: float
+) -> dict[str, MitCommand]:
+    """Build commands that let the arm be moved by hand while compensating gravity and friction.
+
+    The arm joints get no stiffness, light damping, the gravity torque of the measured pose and,
+    when configured, Coulomb friction compensation. The gripper keeps holding ``gripper_command``.
+    """
+    n = params.num_joints
+    goal = joint_to_motor(state.position, params)
+    friction = params.coulomb_friction * np.sign(state.velocity[:n]) * params.joint_signs
+    torque = gravity_feedforward(params, gravity) + friction
+    commands: dict[str, MitCommand] = {
+        name: (float(goal[i]), 0.0, 0.0, float(params.float_kd[i]), float(torque[i]))
+        for i, name in enumerate(params.motor_names[:n])
+    }
+    commands[params.motor_names[n]] = params.gripper.command(float(state.position[n]), gripper_command)
+    return commands
+
+
 def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
     """Read fresh feedback and return the validated joint state in internal units."""
     raw = bus.read_states()
@@ -274,8 +300,10 @@ class _ControlGC:
 class MitServo:
     """Background servo loop of one arm.
 
-    Each cycle reads feedback, holds the measured pose once actions stop arriving, advances the
-    command with ``control_step`` and sends it.
+    Each cycle reads feedback, advances the command toward the latest target with
+    ``control_step`` and sends it. Before the first target and after the command timeout the arm
+    is idle: with ``idle_mode="hold"`` it holds the measured pose, with ``"float"`` it can be
+    moved by hand while gravity is compensated.
 
     After a fault, or when a coupled arm faults, the loop keeps the arm under damping (kp = 0
     with the gravity of the last valid pose) instead of cutting torque, so it does not depend on
@@ -304,6 +332,8 @@ class MitServo:
         self.updated_at = 0.0
         self.commanded_at = 0.0
         self.command_timed_out = False
+        # False until the first target arrives; the arm is idle until then.
+        self.has_target = False
         self.failure: Exception | None = None
         # True from start() until stop() succeeds, even if the loop already exited on a fault.
         self.active = False
@@ -320,6 +350,12 @@ class MitServo:
         self.command = state.position.copy()
         self.updated_at = self.commanded_at = time.monotonic()
         self.command_timed_out = False
+        self.has_target = False
+
+    @property
+    def idle(self) -> bool:
+        """Whether the arm is waiting for a target: before the first one or after the timeout."""
+        return not self.has_target or self.command_timed_out
 
     def start(self) -> None:
         if self.active or self._thread is not None:
@@ -367,9 +403,13 @@ class MitServo:
     def set_target(self, target: np.ndarray) -> None:
         with self._lock:
             self._check_healthy()
+            if self.idle and self.config.idle_mode == "float":
+                # Resume tracking from wherever the arm was moved by hand.
+                self.command = self.state.position.copy()
             self.target = target
             self.commanded_at = time.monotonic()
             self.command_timed_out = False
+            self.has_target = True
 
     def check_healthy(self) -> None:
         with self._lock:
@@ -406,7 +446,11 @@ class MitServo:
                         self.command = position.copy()
                         self.command_timed_out = True
                     packet: dict[str, MitCommand] = {}
-                    if self.bus.enabled:
+                    if self.bus.enabled and self.idle and self.config.idle_mode == "float":
+                        n = params.num_joints
+                        self.command[:n] = position[:n]
+                        packet = float_commands(params, state, self.gravity(position), float(self.command[n]))
+                    elif self.bus.enabled:
                         self.command, packet = control_step(
                             params,
                             position,
