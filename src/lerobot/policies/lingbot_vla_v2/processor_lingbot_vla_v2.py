@@ -268,58 +268,6 @@ def _resolve_norm_map(canonical_norm_type: dict[str, str]) -> dict[str, Normaliz
     }
 
 
-def _raw_stats_from_slot_stats(
-    robot_config: dict,
-    norm_stats: dict | None,
-) -> dict[str, dict[str, list]] | None:
-    """Assemble raw-feature stats from the checkpoint's per-slot ``norm_stats``.
-
-    The embedded stats are keyed by canonical slot (``observation.state.arm.position``)
-    with per-slot vectors; normalization now happens in raw feature space, so each
-    slot stat slice is written back at its raw span offset. Dims covered by no slot
-    get identity stats (they never reach the model). Returns ``None`` when no stats
-    are embedded (identity passthrough — normalization becomes a no-op).
-    """
-    slot_stats = (norm_stats or {}).get("norm_stats") or {}
-    if not slot_stats:
-        return None
-
-    raw_stats: dict[str, dict[str, list]] = {}
-    total_dims: dict[str, int] = {}
-
-    for category in ("states", "actions"):
-        for entry in robot_config.get(category, []):
-            for slot_key, slot_cfg in entry.items():
-                stats = slot_stats.get(slot_key)
-                if stats is None:
-                    continue
-                offset = 0
-                for origin in slot_cfg.get("origin_keys", []):
-                    for raw_key, span in origin.items():
-                        start, end = int(span["start"]), int(span["end"])
-                        width = end - start
-                        target = raw_stats.setdefault(raw_key, {})
-                        total_dims[raw_key] = max(total_dims.get(raw_key, 0), end)
-                        for stat_name, values in stats.items():
-                            if stat_name == "count":
-                                continue
-                            row = target.setdefault(stat_name, [None] * 0)
-                            if len(row) < end:
-                                row.extend([None] * (end - len(row)))
-                            row[start:end] = values[offset : offset + width]
-                        offset += width
-
-    # Fill dims that no slot covers with identity stats so normalization is a
-    # no-op there (those dims are dropped by the slot mapping anyway).
-    for raw_key, stats in raw_stats.items():
-        dim = total_dims[raw_key]
-        for stat_name, values in list(stats.items()):
-            fill = 1.0 if stat_name in ("std", "q99", "max") else (0.0 if stat_name == "mean" else -1.0)
-            values.extend([fill] * (dim - len(values)))
-            stats[stat_name] = [fill if value is None else value for value in values]
-    return raw_stats
-
-
 def _relative_actions_settings(
     config: LingbotVLAV2Config,
 ) -> dict[str, Any]:

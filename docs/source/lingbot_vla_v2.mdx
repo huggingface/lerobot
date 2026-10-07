@@ -49,24 +49,15 @@ To use LingBot-VLA 2.0 in LeRobot, specify the policy type as:
 policy.type=lingbot_vla_v2
 ```
 
-When fine-tuning from the released upstream checkpoint, first repackage it into the
-LeRobot format with the one-shot converter (the raw upstream checkpoint only carries a
-minimal `config.json` and is no longer loaded at runtime):
-
-```bash
-python -m lerobot.policies.lingbot_vla_v2.scripts.convert_upstream_checkpoint \
-  --input robbyant/lingbot-vla-v2-6b \
-  --output ./lingbot-vla-v2-6b-lerobot
-```
-
-This is a format-only conversion: no embodiment is baked in, and the converted checkpoint
-ships an identity processor (raw features are assumed to already match the canonical
-55-D layout, no normalization). At fine-tuning time you provide the per-robot slot
+When fine-tuning from the released upstream checkpoint, start from the converted LeRobot
+checkpoint [`lerobot/lingbot_vla_v2_base`](https://huggingface.co/lerobot/lingbot_vla_v2_base)
+(the raw upstream checkpoint only carries a minimal `config.json` and is not loaded at
+runtime). No embodiment is baked in: at fine-tuning time you provide the per-robot slot
 mappings and LeRobot builds the real processor from them plus the dataset stats.
 `config.json` carries `type: lingbot_vla_v2`; the Qwen3-VL tokenizer/processor is pulled
-from `Qwen/Qwen3-VL-4B-Instruct` (or a local `--tokenizer-path`) at processor build time,
-as for the other VLAs in this repo. Then use LeRobot's standard checkpoint entry point,
-`policy.path`, pointing at the converted directory (or its Hub repo if you pushed it).
+from `Qwen/Qwen3-VL-4B-Instruct` (or a local `--policy.tokenizer_path`) at processor build
+time, as for the other VLAs in this repo. Pass it with LeRobot's standard checkpoint entry
+point, `policy.path`.
 Do not pass `policy.type` in that command; LeRobot infers `lingbot_vla_v2` from the
 checkpoint's `config.json`.
 
@@ -79,9 +70,10 @@ Norm stats are derived from the dataset automatically (LeRobot's `dataset_stats`
 
 ## Checkpoints
 
-| Checkpoint                   | Params | Notes                                                                                                                                                                                  |
-| ---------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `robbyant/lingbot-vla-v2-6b` | ~6B    | "Native Depth" variant; raw upstream format — convert it first (see above). Action path runs with `use_depth=False` (the 84 distillation-head tensors are dropped at conversion time). |
+| Checkpoint                        | Params | Notes                                                                                                                   |
+| --------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `lerobot/lingbot_vla_v2_base`     | ~6B    | Converted from `robbyant/lingbot-vla-v2-6b` ("Native Depth" variant); the 84 distillation-head tensors are dropped.     |
+| `lerobot/lingbot_vla_v2_robotwin` | ~6B    | Converted from the RoboTwin post-trained upstream weights, with its processor (slot mappings + q01/q99 stats) embedded. |
 
 ## Training / fine-tuning
 
@@ -91,7 +83,7 @@ robot-config assets:
 ```bash
 lerobot-train \
   --dataset.repo_id=<your/dataset> \
-  --policy.path=<converted-lingbot-vla-v2-6b> \
+  --policy.path=lerobot/lingbot_vla_v2_base \
   --policy.repo_id=<your/lingbot_vla_v2_policy> \
   --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 6}}]}}' \
   --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}], "subtract_state": false}}' \
@@ -155,7 +147,7 @@ Example 8-GPU launch:
 ```bash
 torchrun --nproc_per_node=8 -m lerobot.scripts.lerobot_train \
   --dataset.repo_id=<your/dataset> \
-  --policy.path=<converted-lingbot-vla-v2-6b> \
+  --policy.path=lerobot/lingbot_vla_v2_base \
   --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 6}}]}}' \
   --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}], "subtract_state": false}}' \
   --policy.dtype=bfloat16 \
@@ -221,7 +213,7 @@ and processors, so they stay self-contained and portable:
 lerobot-train \
   --dataset.repo_id=<your/rebot_dataset> \
   --dataset.root=<dataset_root> \
-  --policy.path=<converted-lingbot-vla-v2-6b> \
+  --policy.path=lerobot/lingbot_vla_v2_base \
   --policy.state_slots="$STATE_SLOTS" \
   --policy.action_slots="$ACTION_SLOTS" \
   --rename_map='{"observation.images.front": "observation.images.camera_top", "observation.images.wrist": "observation.images.camera_wrist_left"}' \
@@ -287,11 +279,11 @@ success judged by per-task `expert_check`):
 These numbers are reported by the LingBot team for the released upstream weights
 ([project page](https://github.com/Robbyant/lingbot-vla-v2)); the numerical-validation
 section above shows this port matches those weights bit-exactly on the action path.
-To reproduce the evaluation through the LeRobot port with a converted checkpoint:
+To reproduce the evaluation through the LeRobot port with the converted checkpoint:
 
 ```bash
 lerobot-eval \
-  --policy.path=miracle-techlink/lingbot-vla-v2-6b-lerobot-robotwin \
+  --policy.path=lerobot/lingbot_vla_v2_robotwin \
   --env.type=robotwin \
   --env.task=beat_block_hammer \
   --eval.batch_size=1 \

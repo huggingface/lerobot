@@ -99,7 +99,7 @@ def _arm_for_block(block: Any) -> str:
 
 
 def _robotwin_blocks_episode_info(task_name: str, env: Any) -> dict[str, str] | None:
-    """Infer the episode-info dict used by RoboTwin's official instruction generator."""
+    """Infer the episode-info dict used by RoboTwin's official instruction generator for block ranking."""
     if task_name == "blocks_ranking_rgb":
         return {
             "{A}": "red block",
@@ -117,15 +117,6 @@ def _robotwin_blocks_episode_info(task_name: str, env: Any) -> dict[str, str] | 
             "{a}": _arm_for_block(env.block1),
             "{b}": _arm_for_block(env.block2),
             "{c}": _arm_for_block(env.block3),
-        }
-    if task_name == "beat_block_hammer":
-        # Matches the upstream eval client: {A} is the hammer's objaverse id (the
-        # generator expands it to descriptions like "the black and yellow hammer
-        # grip"), {a} is the arm chosen from the block's functional-point x-sign.
-        block_x = float(env.block.get_functional_point(0, "pose").p[0])
-        return {
-            "{A}": "020_hammer/base0",
-            "{a}": "left" if block_x < 0 else "right",
         }
     return None
 
@@ -484,10 +475,7 @@ class RoboTwinEnv(gym.Env):
         self.episode_index += self._reset_stride
         self._step_count = 0
 
-        # Default to official instructions for every task with an episode-info
-        # implementation (blocks_ranking_* and beat_block_hammer); the env flag can
-        # still force it on/off.
-        use_official_instruction = _robotwin_blocks_episode_info(self.task_name, self._env) is not None
+        use_official_instruction = self.task_name in {"blocks_ranking_rgb", "blocks_ranking_size"}
         if _env_flag(OFFICIAL_INSTRUCTION_ENV, default=use_official_instruction):
             self.task_description = _generate_robotwin_official_instruction(self.task_name, self._env)
             if hasattr(self._env, "set_instruction"):
