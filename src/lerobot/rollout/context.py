@@ -591,8 +591,9 @@ def build_rollout_context(
         )
 
         # --- 8. Connect hardware only after policy/processor/engine setup --
-        # Loading tokenizers/processors can hold the GIL long enough to starve a
-        # torque-enabled robot's Python servo loop and trip its feedback watchdog.
+        # Tokenizer or processor loading can hold the GIL and prevent the robot's control
+        # thread from running. Keep hardware disconnected until loading finishes to avoid
+        # triggering the robot's watchdog.
         logger.info("Connecting robot (%s)...", robot_config.type)
         cleanup.callback(_disconnect_if_connected, robot)
         robot.connect()
