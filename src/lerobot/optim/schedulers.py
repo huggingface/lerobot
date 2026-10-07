@@ -69,6 +69,8 @@ class VQBeTSchedulerConfig(LRSchedulerConfig):
     num_cycles: float = 0.5
 
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
+        decay_steps = max(1, num_training_steps - self.num_vqvae_training_steps - self.num_warmup_steps)
+
         def lr_lambda(current_step):
             if current_step < self.num_vqvae_training_steps:
                 return float(1)
@@ -76,9 +78,7 @@ class VQBeTSchedulerConfig(LRSchedulerConfig):
                 adjusted_step = current_step - self.num_vqvae_training_steps
                 if adjusted_step < self.num_warmup_steps:
                     return float(adjusted_step) / float(max(1, self.num_warmup_steps))
-                progress = float(adjusted_step - self.num_warmup_steps) / float(
-                    max(1, num_training_steps - self.num_warmup_steps)
-                )
+                progress = float(adjusted_step - self.num_warmup_steps) / decay_steps
                 return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(self.num_cycles) * 2.0 * progress)))
 
         return LambdaLR(optimizer, lr_lambda, -1)
