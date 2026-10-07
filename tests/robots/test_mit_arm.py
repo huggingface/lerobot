@@ -29,7 +29,7 @@ from lerobot.robots.yam_follower import mit_arm
 
 def gripper(closed=1.0, opened=3.0):
     return mit_arm.CalibratedGripper(
-        closed=closed, open=opened, kp=4.0, kd=0.1, torque_limit=0.4, max_speed=1.0
+        closed=closed, open=opened, kp=4.0, kd=0.1, max_speed=1.0, force_limit_n=10.0, finger_stroke_m=0.1
     )
 
 
@@ -153,17 +153,54 @@ def test_control_step_slews_tracks_clips_and_adds_gravity():
     np.testing.assert_allclose(previous, [0.6, 0.02, 0.5])  # inputs are not mutated
     assert packet["shoulder"] == pytest.approx((0.3, 0, 50, 2, 5.0))  # gravity 8 clipped to 5 Nm
     assert packet["elbow"] == pytest.approx((0.0, 0, 20, 1, -3.0))  # factor 2, sign -1
-    assert packet["gripper"] == pytest.approx((2.1, 0, 4, 0.1, 0))  # 0.4 Nm / kp 4 = 0.1 rad band
-    assert list(packet) == ["shoulder", "elbow", "gripper"]
+    assert list(packet) == ["shoulder", "elbow"]  # the gripper has its own force limiter
 
 
 @pytest.mark.parametrize("closed,opened", [(1.0, 3.0), (3.0, 1.0)])
-def test_gripper_command_caps_its_proportional_torque(closed, opened):
-    grip = gripper(closed, opened)
-    goal, _, kp, _, _ = grip.command(measured=0.5, commanded=1.0)
-    measured_raw = grip.to_raw(0.5)
-    assert abs(goal - measured_raw) * kp == pytest.approx(grip.torque_limit)
-    assert np.sign(goal - measured_raw) == np.sign(opened - closed)
+def test_free_gripper_goes_straight_to_its_target(closed, opened):
+    limiter = mit_arm.GripperForceLimiter(gripper(closed, opened))
+    command = limiter.command(measured=0.5, velocity=1.0, torque=0.1, commanded=0.0, now=0.0)
+    assert command == pytest.approx((closed, 0, 4, 0.1, 0))
+    assert not limiter.blocked
+
+
+def blocked_limiter(torque):
+    """A closing gripper stopped by an object at mid-stroke (raw 2.0), pressing with ``torque``."""
+    limiter = mit_arm.GripperForceLimiter(gripper())
+    command = limiter.command(measured=0.5, velocity=0.0, torque=torque, commanded=0.0, now=0.0)
+    assert limiter.blocked
+    return limiter, command
+
+
+def test_blocked_gripper_backs_off_to_the_force_limit():
+    # Limit torque: 10 N * 0.1 m / 2 rad stroke + 0.3 Nm friction = 0.8 Nm.
+    _, command = blocked_limiter(torque=0.8)
+    assert command[0] == pytest.approx(2.0)  # already at the limit: keep pressing as is
+    # Pressing with 2 Nm: release (2 - 0.8) / kp 4 = 0.3 rad toward open.
+    _, command = blocked_limiter(torque=2.0)
+    assert command[0] == pytest.approx(2.3)
+
+
+def test_blocked_gripper_releases_when_asked_to_open():
+    limiter, _ = blocked_limiter(torque=2.0)
+    command = limiter.command(measured=0.5, velocity=0.0, torque=2.0, commanded=1.0, now=0.01)
+    assert not limiter.blocked
+    assert command[0] == pytest.approx(3.0)
+
+
+def test_blocked_gripper_releases_once_its_torque_drops():
+    limiter, _ = blocked_limiter(torque=2.0)
+    limiter.command(measured=0.5, velocity=0.0, torque=0.0, commanded=0.0, now=0.05)
+    assert limiter.blocked  # 0.1 s average still above 0.2 Nm
+    command = limiter.command(measured=0.5, velocity=0.0, torque=0.0, commanded=0.0, now=0.2)
+    assert not limiter.blocked
+    assert command[0] == pytest.approx(1.0)
+
+
+def test_moving_gripper_is_not_considered_blocked():
+    limiter = mit_arm.GripperForceLimiter(gripper())
+    limiter.command(measured=0.5, velocity=0.5, torque=2.0, commanded=0.0, now=0.0)  # 1 rad/s raw
+    assert not limiter.blocked
 
 
 def test_joint_state_maps_rates_and_torques_to_the_joint_frame():
@@ -211,13 +248,12 @@ def test_float_commands_compensate_gravity_and_friction_without_stiffness():
     state = mit_arm.JointState(
         position=np.array([0.2, 0.5, 0.5]), velocity=np.array([1.0, 1.0, 0.0]), torque=np.zeros(3)
     )
-    commands = mit_arm.float_commands(params(), state, np.array([8.0, 1.5]), gripper_command=0.6)
+    commands = mit_arm.float_commands(params(), state, np.array([8.0, 1.5]))
     # Gravity 8 clipped to 5 Nm, plus friction 0.5 in the direction of motion.
     assert commands["shoulder"] == pytest.approx((0.2, 0, 0, 0.2, 5.5))
     # Gravity -3 Nm and friction -0.2 Nm in the reversed elbow's motor frame.
     assert commands["elbow"] == pytest.approx((-0.5, 0, 0, 0.1, -3.2))
-    # The gripper keeps holding its commanded opening.
-    assert commands["gripper"] == pytest.approx((2.1, 0, 4, 0.1, 0))
+    assert list(commands) == ["shoulder", "elbow"]  # the gripper keeps its own limiter
 
 
 def run_cycles(servo, cycles):

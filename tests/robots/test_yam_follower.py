@@ -275,29 +275,33 @@ def test_disabled_motor_is_allowed_before_enable():
 def test_slew_gripper_torque_and_gravity_feedforward(robot):
     robot.config.max_gripper_speed_s = 2
     position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
-    _, packet = mit_arm.control_step(
+    command, packet = mit_arm.control_step(
         params(robot), position, position + 0.1, position, gravity=np.ones(6), dt=0.01
     )
     assert packet["joint_1"] == pytest.approx((0.003, 0, 80, 5, 1))
     assert packet["joint_2"][-1] == pytest.approx(1.1)
-    assert packet["gripper"] == pytest.approx((3.2, 0, 5, 0.005, 0))
+    assert command[6] == pytest.approx(0.52)  # gripper slews at 2 strokes/s
+    assert "gripper" not in packet  # commanded by its force limiter
 
 
-@pytest.mark.parametrize("direction", [-1, 1])
 @pytest.mark.parametrize("polarity", [-1, 1])
-def test_default_gripper_slew_preserves_torque_bound(robot, direction, polarity):
+def test_gripper_uses_i2rt_gains_and_force_limit(robot, polarity):
     robot.config.gripper_open_deg = robot.config.gripper_closed_deg + polarity * math.degrees(6.0)
-    position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
-    target = position.copy()
-    target[6] = 1 if direction > 0 else 0
-    command, packets = mit_arm.control_step(
-        params(robot), position, target, position, gravity=np.zeros(6), dt=0.01
-    )
-    packet = packets["gripper"]
-    assert command[6] == pytest.approx(0.5 + direction * 0.12)
-    raw_measured = 0.1 + polarity * 3.0
-    assert packet == pytest.approx((raw_measured + direction * polarity * 0.1, 0, 5, 0.005, 0))
-    assert (packet[0] - raw_measured) * packet[2] == pytest.approx(direction * polarity * 0.5)
+    grip = params(robot).gripper
+    assert (grip.kp, grip.kd, grip.force_limit_n, grip.finger_stroke_m) == (20.0, 0.5, 50.0, 0.096)
+    limiter = mit_arm.GripperForceLimiter(grip)
+    # Free motion goes straight to the target, without a torque cap.
+    command = limiter.command(measured=0.5, velocity=1.0, torque=0.1, commanded=1.0, now=0.0)
+    assert command == pytest.approx((grip.to_raw(1.0), 0, 20, 0.5, 0))
+    # Blocked while closing; the limit is 50 N * 0.096 m / 6 rad + 0.3 Nm = 1.1 Nm at the motor.
+    at_limit = mit_arm.GripperForceLimiter(grip)
+    command = at_limit.command(measured=0.5, velocity=0.0, torque=1.1, commanded=0.0, now=0.0)
+    assert at_limit.blocked
+    assert command[0] == pytest.approx(grip.to_raw(0.5))  # pressing with the limit: hold
+    harder = mit_arm.GripperForceLimiter(grip)
+    command = harder.command(measured=0.5, velocity=0.0, torque=2.1, commanded=0.0, now=0.0)
+    # 1 Nm too much: back off 1 Nm / kp 20 = 0.05 rad toward open.
+    assert command[0] == pytest.approx(grip.to_raw(0.5) + polarity * 0.05)
 
 
 def test_control_step_clamps_tracking_limits_and_gravity(robot):
@@ -315,7 +319,6 @@ def test_control_step_clamps_tracking_limits_and_gravity(robot):
     assert packet["joint_2"] == pytest.approx((0.0, 0, 80, 5, -2.2))  # factor 1.1, sign -1
     assert packet["joint_3"] == pytest.approx((1.015, 0, 80, 5, 1.1))
     assert packet["joint_4"] == pytest.approx((0.0, 0, 10, 1.5, 1.2))
-    assert packet["gripper"] == pytest.approx((3.2, 0, 5, 0.005, 0))  # 0.1 rad torque band
 
 
 def test_gravity_matches_reference_torques(robot):

@@ -42,6 +42,14 @@ GRIPPER_FEEDBACK_MARGIN = 0.10
 # One MIT command per motor: (position_rad, velocity_rad_s, kp, kd, feedforward_torque_nm).
 MitCommand = tuple[float, float, float, float, float]
 
+# Blocked-gripper detection and force limiting, from I2RT's GripperForceLimiter.
+_GRIPPER_EFFORT_WINDOW_S = 0.1
+_GRIPPER_BLOCKED_TORQUE_NM = 0.5
+_GRIPPER_BLOCKED_SPEED_RAD_S = 0.3
+_GRIPPER_RELEASED_TORQUE_NM = 0.2
+_GRIPPER_FRICTION_NM = 0.3
+_GRIPPER_GOAL_FILTER = 0.1
+
 
 @dataclass(frozen=True, eq=False)
 class MotorStates:
@@ -63,19 +71,18 @@ class JointState:
 
 @dataclass(frozen=True, eq=False)
 class CalibratedGripper:
-    """A gripper motor in MIT mode, normalized between two measured raw stops.
-
-    Its proportional torque is capped by keeping the commanded position within
-    ``torque_limit / kp`` of the measured one.
-    """
+    """A linear gripper motor in MIT mode, normalized between two measured raw stops."""
 
     closed: float
     open: float
     kp: float
     kd: float
-    torque_limit: float
     # Fastest the commanded opening moves, in full strokes per second.
     max_speed: float
+    # Finger force allowed once the gripper is blocked on an object, in N.
+    force_limit_n: float
+    # Finger travel between the two stops, in m; maps finger force to motor torque.
+    finger_stroke_m: float
 
     @property
     def stroke(self) -> float:
@@ -87,12 +94,62 @@ class CalibratedGripper:
     def to_raw(self, normalized: float) -> float:
         return self.closed + normalized * self.stroke
 
-    def command(self, measured: float, commanded: float) -> MitCommand:
-        """Build the MIT command moving from the ``measured`` toward the ``commanded`` opening."""
-        measured_raw = self.to_raw(measured)
-        band = self.torque_limit / self.kp
-        goal = float(np.clip(self.to_raw(commanded), measured_raw - band, measured_raw + band))
-        return (goal, 0.0, self.kp, self.kd, 0.0)
+
+class GripperForceLimiter:
+    """Command a gripper that moves freely but limits its force once blocked on an object.
+
+    Port of I2RT's ``GripperForceLimiter``. The gripper counts as blocked when its average motor
+    torque over the last 0.1 s is high while it barely moves; it is then driven to push with the
+    torque that gives ``force_limit_n`` at the fingers, until the target asks it to open or the
+    torque drops.
+    """
+
+    def __init__(self, gripper: CalibratedGripper) -> None:
+        self.gripper = gripper
+        self.blocked = False
+        self._efforts: list[tuple[float, float]] = []
+        self._limited_goal: float | None = None
+        self._last_goal: float | None = None
+
+    def command(
+        self, measured: float, velocity: float, torque: float, commanded: float, now: float
+    ) -> MitCommand:
+        """Build the MIT command from the measured opening, rate and torque toward ``commanded``.
+
+        ``measured``, ``commanded`` and ``velocity`` are normalized (0 closed, 1 open, strokes/s).
+        """
+        grip = self.gripper
+        current_raw, target_raw = grip.to_raw(measured), grip.to_raw(commanded)
+        self._efforts = [(t, e) for t, e in self._efforts if now - t <= _GRIPPER_EFFORT_WINDOW_S]
+        self._efforts.append((now, torque))
+        average_effort = abs(float(np.mean([e for _, e in self._efforts])))
+        speed_raw = abs(velocity * grip.stroke)
+
+        if self.blocked:
+            if measured < commanded or average_effort < _GRIPPER_RELEASED_TORQUE_NM:
+                self.blocked = False
+        elif average_effort > _GRIPPER_BLOCKED_TORQUE_NM and speed_raw < _GRIPPER_BLOCKED_SPEED_RAD_S:
+            self.blocked = True
+
+        if self.blocked:
+            # Push past the position where the spring torque would vanish by the torque that
+            # gives force_limit_n at the fingers, plus friction.
+            limit_torque = grip.force_limit_n * grip.finger_stroke_m / abs(grip.stroke) + _GRIPPER_FRICTION_NM
+            direction = float(np.sign(target_raw - current_raw))
+            last_goal = current_raw if self._last_goal is None else self._last_goal
+            zero_torque_raw = last_goal - direction * abs(torque) / grip.kp
+            goal = zero_torque_raw + direction * limit_torque / grip.kp
+            if self._limited_goal is None:
+                self._limited_goal = goal
+            self._limited_goal += _GRIPPER_GOAL_FILTER * (goal - self._limited_goal)
+            goal = self._limited_goal
+        else:
+            # Start a later force limit from where the gripper is, as I2RT does.
+            self._limited_goal = current_raw
+            goal = target_raw
+        goal = float(np.clip(goal, min(grip.closed, grip.open), max(grip.closed, grip.open)))
+        self._last_goal = goal
+        return (goal, 0.0, grip.kp, grip.kd, 0.0)
 
 
 @dataclass(frozen=True, eq=False)
@@ -201,7 +258,8 @@ def control_step(
         dt (`float`): Time since the previous cycle, in seconds.
 
     Returns:
-        The new commanded pose and the MIT command for each motor.
+        The new commanded pose (joints and gripper) and the MIT command of each arm joint; the
+        gripper is commanded by a ``GripperForceLimiter``.
     """
     n = params.num_joints
     # Move toward the target no faster than the configured speeds.
@@ -214,12 +272,10 @@ def control_step(
 
     goal = joint_to_motor(command, params)
     torque = gravity_feedforward(params, gravity)
-    commands: dict[str, MitCommand] = {
+    return command, {
         name: (float(goal[i]), 0.0, float(params.kp[i]), float(params.kd[i]), float(torque[i]))
         for i, name in enumerate(params.motor_names[:n])
     }
-    commands[params.motor_names[n]] = params.gripper.command(float(position[n]), float(command[n]))
-    return command, commands
 
 
 def gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
@@ -241,24 +297,20 @@ def damping_commands(
     }
 
 
-def float_commands(
-    params: MitArmParams, state: JointState, gravity: np.ndarray, gripper_command: float
-) -> dict[str, MitCommand]:
-    """Build commands that let the arm be moved by hand while compensating gravity and friction.
+def float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray) -> dict[str, MitCommand]:
+    """Build arm-joint commands that let the arm be moved by hand.
 
-    The arm joints get no stiffness, light damping, the gravity torque of the measured pose and,
-    when configured, Coulomb friction compensation. The gripper keeps holding ``gripper_command``.
+    The joints get no stiffness, light damping, the gravity torque of the measured pose and,
+    when configured, Coulomb friction compensation.
     """
     n = params.num_joints
     goal = joint_to_motor(state.position, params)
     friction = params.coulomb_friction * np.sign(state.velocity[:n]) * params.joint_signs
     torque = gravity_feedforward(params, gravity) + friction
-    commands: dict[str, MitCommand] = {
+    return {
         name: (float(goal[i]), 0.0, 0.0, float(params.float_kd[i]), float(torque[i]))
         for i, name in enumerate(params.motor_names[:n])
     }
-    commands[params.motor_names[n]] = params.gripper.command(float(state.position[n]), gripper_command)
-    return commands
 
 
 def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
@@ -342,6 +394,7 @@ class MitServo:
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._gc_acquired = False
+        self._gripper: GripperForceLimiter | None = None
 
     def seed(self, state: JointState) -> None:
         """Start from a measured state: hold its pose until the first target arrives."""
@@ -351,6 +404,7 @@ class MitServo:
         self.updated_at = self.commanded_at = time.monotonic()
         self.command_timed_out = False
         self.has_target = False
+        self._gripper = GripperForceLimiter(self.params.gripper) if self.params is not None else None
 
     @property
     def idle(self) -> bool:
@@ -446,10 +500,11 @@ class MitServo:
                         self.command = position.copy()
                         self.command_timed_out = True
                     packet: dict[str, MitCommand] = {}
+                    n = params.num_joints
                     if self.bus.enabled and self.idle and self.config.idle_mode == "float":
-                        n = params.num_joints
+                        # The arm floats; the gripper keeps holding its commanded opening.
                         self.command[:n] = position[:n]
-                        packet = float_commands(params, state, self.gravity(position), float(self.command[n]))
+                        packet = float_commands(params, state, self.gravity(position))
                     elif self.bus.enabled:
                         self.command, packet = control_step(
                             params,
@@ -458,6 +513,14 @@ class MitServo:
                             self.command,
                             self.gravity(position),
                             min(started - previous, 0.05),
+                        )
+                    if self.bus.enabled and self._gripper is not None:
+                        packet[params.motor_names[n]] = self._gripper.command(
+                            float(position[n]),
+                            float(state.velocity[n]),
+                            float(state.torque[n]),
+                            float(self.command[n]),
+                            started,
                         )
                 for name, command in packet.items():
                     if self.stop_event.is_set():
