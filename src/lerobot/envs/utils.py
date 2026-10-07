@@ -65,6 +65,26 @@ def _convert_nested_dict(d):
     return result
 
 
+DEPTH_SUFFIX = "_depth"
+
+
+def _depth_to_tensor(depth: np.ndarray) -> Tensor:
+    """A metric depth map as a `(B, 1, H, W)` float32 tensor.
+
+    Depth is not an image: it is float, already in metres, and has one channel,
+    so it skips the uint8 / channel-last / divide-by-255 handling RGB gets.
+    Accepts `(H, W)`, `(B, H, W)` or `(B, H, W, 1)`.
+    """
+    tensor = torch.from_numpy(np.ascontiguousarray(depth)).to(torch.float32)
+    if tensor.dim() == 4 and tensor.shape[-1] == 1:
+        tensor = tensor.squeeze(-1)
+    if tensor.dim() == 2:
+        tensor = tensor.unsqueeze(0)
+    if tensor.dim() != 3:
+        raise ValueError(f"expected depth as (H, W), (B, H, W) or (B, H, W, 1), got {tuple(depth.shape)}")
+    return tensor.unsqueeze(1)
+
+
 def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
     # TODO(jadechoghari, imstevenpmwork): refactor this to use features from the environment (no hardcoding)
     """Convert environment observation to LeRobot format observation.
@@ -82,6 +102,10 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             imgs = {OBS_IMAGE: observations["pixels"]}
 
         for imgkey, img in imgs.items():
+            if imgkey.endswith(DEPTH_SUFFIX):
+                return_observations[imgkey] = _depth_to_tensor(img)
+                continue
+
             # TODO(aliberts, rcadene): use transforms.ToTensor()?
             img_tensor = torch.from_numpy(img)
 
@@ -102,6 +126,13 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             img_tensor /= 255
 
             return_observations[imgkey] = img_tensor
+
+    # Per-camera pinhole intrinsics, emitted next to depth so it can be unprojected.
+    for camera, matrix in observations.get("intrinsics", {}).items():
+        intrinsics = torch.as_tensor(np.ascontiguousarray(matrix), dtype=torch.float32)
+        if intrinsics.dim() == 2:
+            intrinsics = intrinsics.unsqueeze(0)
+        return_observations[f"{OBS_STR}.intrinsics.{camera}"] = intrinsics
 
     if "environment_state" in observations:
         env_state = torch.from_numpy(observations["environment_state"]).float()
@@ -128,7 +159,15 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
 
     # Pass through any remaining ndarray/tensor keys not already handled above,
     # so env plugins can expose extra observation keys via get_env_processors().
-    _handled = {"pixels", "environment_state", "agent_pos", "robot_state", "policy", "camera_obs"}
+    _handled = {
+        "pixels",
+        "intrinsics",
+        "environment_state",
+        "agent_pos",
+        "robot_state",
+        "policy",
+        "camera_obs",
+    }
     for key, value in observations.items():
         if key in _handled:
             continue

@@ -27,6 +27,7 @@ there lands just in front of each object.
 
 import numpy as np
 import pytest
+import torch
 
 # `lerobot.envs.libero` imports the `libero` package at module scope, so these
 # skip where it is absent. They are pure arithmetic and run in milliseconds
@@ -126,3 +127,10 @@ def test_config_passes_use_depth_through():
 
     assert LiberoEnvConfig().gym_kwargs["use_depth"] is False
     assert LiberoEnvConfig(use_depth=True).gym_kwargs["use_depth"] is True
+
+
+def test_oriented_depth_is_contiguous():
+    """torch.from_numpy rejects negative strides, which is what a bare np.flip returns."""
+    depth = orient_depth(np.random.default_rng(0).uniform(0.5, 3.0, (2, 8, 10, 1)).astype(np.float32))
+    assert depth.flags["C_CONTIGUOUS"]
+    assert torch.from_numpy(depth).shape == (2, 8, 10)

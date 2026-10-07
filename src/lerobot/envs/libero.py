@@ -149,7 +149,8 @@ def orient_depth(depth: np.ndarray) -> np.ndarray:
     """
     if depth.ndim >= 3 and depth.shape[-1] == 1:
         depth = depth[..., 0]
-    return np.flip(depth, axis=-2)
+    # A flipped view has a negative stride, which torch.from_numpy rejects.
+    return np.ascontiguousarray(np.flip(depth, axis=-2))
 
 
 def get_libero_dummy_action():
