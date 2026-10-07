@@ -15,7 +15,7 @@ trained on.
 
 ```text
   your dataset                  lerobot-annotate
-  (LeRobot v3.1)
+  (LeRobotDataset v3.0)
         │
         ▼
   ┌─────────────────────────────────────────────────────┐
@@ -104,9 +104,8 @@ Want to add your own tool? Edit `meta/info.json["tools"]` directly — the
 pipeline preserves whatever is already there. That makes the tool visible
 to the chat template, so the model can learn to _generate_ the call. The
 runtime layer that actually _executes_ a generated call (the `Tool`
-protocol / `TOOL_REGISTRY` under `src/lerobot/tools/`) is not part of
-this PR — the [Tools](./tools) doc marks those pieces as
-not-yet-implemented.
+protocol / `TOOL_REGISTRY` under `src/lerobot/tools/`) is not implemented
+yet — the [Tools](./tools) doc marks those pieces as not-yet-implemented.
 
 ## Running on Hugging Face Jobs
 
@@ -327,10 +326,10 @@ rewriting from scratch.
 
 ## Roughly how much it costs
 
-Per episode, the pipeline makes about `max_steps` plan calls,
+Per episode, the pipeline makes about `plan_max_steps` plan calls,
 `max_interjections_per_episode` interjection calls, and
 `vqa_emission_hz × episode_seconds` VQA calls. With the defaults (8
-subtasks, 1 interjection, 1 Hz × 3 pairs) on a 30-second episode, that's
+subtasks, 3 interjections, 1 Hz × 3 pairs) on a 30-second episode, that's
 ~50 VLM calls.
 
 Storage stays small: `language_persistent` is at most tens of KB per
