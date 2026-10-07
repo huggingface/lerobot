@@ -113,17 +113,11 @@ class XVLAModel(nn.Module):
         # Apply dtype casting based on config
         self._apply_dtype()
 
-    def _get_target_dtype(self) -> torch.dtype:
-        """Get the target dtype based on config."""
-        if self.config.dtype == "bfloat16":
-            return torch.bfloat16
-        return torch.float32
-
     def _apply_dtype(self) -> None:
         """
         Apply dtype casting to model components based on config.
         """
-        target_dtype = self._get_target_dtype()
+        target_dtype = self.config.dtype
         self.to(dtype=target_dtype)
 
     def _apply_freezing(self) -> None:
@@ -208,7 +202,7 @@ class XVLAModel(nn.Module):
         """
         Forward pass for the XVLA model.
         """
-        target_dtype = self._get_target_dtype()
+        target_dtype = self.config.dtype
         image_input = image_input.to(dtype=target_dtype)
         proprio = proprio.to(dtype=target_dtype)
         action = action.to(dtype=target_dtype)
@@ -245,7 +239,7 @@ class XVLAModel(nn.Module):
     ) -> torch.Tensor:
         self.eval()
 
-        target_dtype = self._get_target_dtype()
+        target_dtype = self.config.dtype
         image_input = image_input.to(dtype=target_dtype)
         proprio = proprio.to(dtype=target_dtype)
 

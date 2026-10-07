@@ -18,6 +18,7 @@ items as over the default parquet/mp4 layout, through the same public class."""
 
 import json
 import pickle
+from collections import OrderedDict
 from pathlib import Path
 
 import pytest
@@ -245,6 +246,62 @@ def test_video_decoder_cache_size_reaches_reader(video_dataset_roots):
     assert small[0][small.meta.camera_keys[0]].ndim == 3
     with pytest.raises(ValueError, match="non-default storage formats"):
         LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_decoder_cache_size=4)
+
+
+@pytest.mark.parametrize("cached_decoder", [False, True])
+def test_batch_metadata_survives_cache_eviction(video_dataset_roots, cached_decoder):
+    _, lance_root = video_dataset_roots
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    expected = lance_ds[0]
+    reader = lance_ds.reader
+
+    # Keep one required file as the oldest entry in a full cache. Loading the
+    # other cameras' metadata will evict it before this batch uses it.
+    file_key, meta = next(iter(reader._file_meta.items()))
+    reader._file_meta = OrderedDict([(file_key, meta)])
+    for i in range(2047):
+        reader._file_meta[("unused", 0, i)] = meta
+    if not cached_decoder:
+        reader._decoder_cache = lance_utils._VideoDecoderLRU(
+            reader._decoder_cache.capacity, byte_budget=reader._decoder_cache.byte_budget
+        )
+
+    assert_items_equal(lance_ds[0], expected)
+    assert len(reader._file_meta) <= 2048
+
+
+def test_batch_metadata_larger_than_cache(tmp_path):
+    num_files = 2049
+    table = lancedb.connect(tmp_path).create_table(
+        "videos",
+        data=[
+            {
+                "video_key": "camera",
+                "chunk_index": 0,
+                "file_index": i,
+                "file_size": 1024 + i,
+                "moov_offset": 0,
+                "moov_size": 100,
+                "kf_indices": [0],
+                "kf_positions": [100],
+            }
+            for i in range(num_files)
+        ],
+    )
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader._videos_table = table
+    reader._file_meta = OrderedDict()
+    reader._video_row_ids = {
+        ("camera", 0, row["file_index"]): row["_rowid"]
+        for row in table.search().select(["file_index"]).with_row_id(True).to_arrow().to_pylist()
+    }
+
+    file_meta = reader._load_file_meta(list(reader._video_row_ids))
+
+    assert set(file_meta) == set(reader._video_row_ids)
+    assert len(reader._file_meta) <= 2048
+    for i in range(num_files):
+        assert file_meta[("camera", 0, i)]["file_size"] == 1024 + i
 
 
 def test_sparse_source_fetches_handle_once():

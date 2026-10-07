@@ -314,7 +314,7 @@ This local recipe does not establish remote support for G1 or SONIC latent-token
 
 ## Part 5: SONIC Whole-Body Control (Latent-Token Policies)
 
-LeRobot now ports the **decoder** half of NVIDIA's [SONIC](https://github.com/NVIDIA/sonic) whole-body deploy stack as the `SonicWholeBodyController`. Instead of commanding joints, the policy outputs a 64-D **latent motion token** (`motion_token.{i}.pos`) each tick; the SONIC decoder maps that token plus recent proprioception history onto a residual action that is scaled and added to the standing pose, producing 50 Hz joint-position targets for all 29 DoF.
+LeRobot now ports the **decoder** half of NVIDIA's [SONIC](https://nvlabs.github.io/GEAR-SONIC/) whole-body deploy stack as the `SonicWholeBodyController`. Instead of commanding joints, the policy outputs a 64-D **latent motion token** (`motion_token.{i}.pos`) each tick; the SONIC decoder maps that token plus recent proprioception history onto a residual action that is scaled and added to the standing pose, producing 50 Hz joint-position targets for all 29 DoF.
 
 The controller loads its ONNX decoder and all deploy constants (PD gains, `default_angles`, `action_scale`, and the neutral token) from [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder). The repo also ships a distilled low-latency decoder, selectable with the controller's `policy_type="low_latency"` argument (defaults to `"default"`).
 

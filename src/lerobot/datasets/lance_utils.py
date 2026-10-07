@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Protocol
 import av
 import huggingface_hub
 
+from lerobot.streaming.location import StorageLocation, hf_dataset_uri
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.import_utils import _lancedb_available, require_package
 
@@ -251,7 +252,7 @@ def _storage_options(
     db_uri: str, storage_options: dict | None, revision: str | None, token: str | bool | None = None
 ) -> dict:
     options = dict(storage_options or {})
-    if db_uri.startswith("hf://"):
+    if StorageLocation.parse(db_uri).is_hf:
         if "token" not in options:
             if isinstance(token, str):
                 options["token"] = token
@@ -362,5 +363,5 @@ def resolve_lance_root(
     if (root_path / f"{FRAMES_TABLE}.lance").exists():
         return str(root_path), root_path
     if repo_id is not None:
-        return f"hf://datasets/{repo_id}", root_path
+        return hf_dataset_uri(repo_id), root_path
     raise FileNotFoundError(f"No '{FRAMES_TABLE}.lance' table under {root_path}.")

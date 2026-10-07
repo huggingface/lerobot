@@ -38,7 +38,7 @@ Evaluated on LIBERO with [`ZibinDong/fastwam_libero_uncond_2cam224`](https://hug
 | libero_10      |        94.0% |        500 |
 | **average**    |    **96.4%** |       2000 |
 
-Reproduce: `lerobot-eval --policy.path=ZibinDong/fastwam_libero_uncond_2cam224 --policy.device=cuda --policy.torch_dtype=float32 --policy.n_action_steps=10 --env.type=libero --env.task=libero_spatial --env.observation_height=256 --env.observation_width=256 --eval.batch_size=1 --eval.n_episodes=50 --seed=0 --env.episode_length=300`.
+Reproduce: `lerobot-eval --policy.path=ZibinDong/fastwam_libero_uncond_2cam224 --policy.device=cuda --policy.dtype=float32 --policy.n_action_steps=10 --env.type=libero --env.task=libero_spatial --env.observation_height=256 --env.observation_width=256 --eval.batch_size=1 --eval.n_episodes=50 --seed=0 --env.episode_length=300`.
 
 For LIBERO-10, use `--env.task=libero_10 --env.episode_length=600`:
 
@@ -46,7 +46,7 @@ For LIBERO-10, use `--env.task=libero_10 --env.episode_length=600`:
 lerobot-eval \
     --policy.path=ZibinDong/fastwam_libero_uncond_2cam224 \
     --policy.device=cuda \
-    --policy.torch_dtype=float32 \
+    --policy.dtype=float32 \
     --policy.n_action_steps=10 \
     --env.type=libero \
     --env.task=libero_10 --env.observation_height=256 --env.observation_width=256 \
