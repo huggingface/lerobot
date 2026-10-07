@@ -486,24 +486,86 @@ def test_gravity_model_loads_before_hardware(robot, monkeypatch):
     assert events[:2] == ["model", "connect"]
 
 
-def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
-    mock_hardware(robot, monkeypatch)
-    robot.connect(calibrate=False)
+def measure_gripper(robot, monkeypatch, *, closed=0.1, opened=6.1, answers=()):
+    """Run calibrate() with the gripper reading ``closed``/``opened`` raw radians at the prompts."""
+    pending = list(answers)
+    prompts = []
 
     def prompt(text):
-        robot.bus.read_states.return_value = raw_states(6.1 if "open" in text else 0.1)
+        prompts.append(text)
+        if pending:
+            return pending.pop(0)
+        robot.bus.read_states.return_value = raw_states(opened if "open" in text else closed)
+        return ""
 
     monkeypatch.setattr("builtins.input", prompt)
     monkeypatch.setattr(robot_module.time, "sleep", lambda _: None)
     robot.calibrate()
-    assert robot.calibration["gripper"].homing_offset == 0
-    assert robot.calibration["gripper"].drive_mode == 0
-    assert robot.config.gripper_open_deg == pytest.approx(math.degrees(6.1), abs=0.02)
+    return prompts
+
+
+def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
+    mock_hardware(robot, monkeypatch)
+    robot.connect(calibrate=False)
+    prompts = measure_gripper(robot, monkeypatch)
+    calibration = robot.calibration["gripper"]
+    assert (calibration.homing_offset, calibration.drive_mode) == (0, 0)
+    # Raw motor angles of the stops, in whole degrees.
+    assert (calibration.range_min, calibration.range_max) == (6, 350)
+    assert robot.config.gripper_open_deg == 350.0
     assert robot.params is not None
-    assert robot.params.gripper_open == pytest.approx(6.1, abs=0.0002)
+    assert robot.params.gripper_open == pytest.approx(6.1, abs=0.01)
+    assert all("[test]" in text for text in prompts)
     assert robot.calibration_fpath.is_file()
     robot.bus.enable.assert_not_called()
     robot.disconnect()
+
+
+def saved_calibration_robot(tmp_path, monkeypatch, *, closed=0.1, opened=6.1):
+    """Calibrate once, then build a new robot that only knows the saved file."""
+    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
+    first = make_robot(tmp_path)
+    mock_hardware(first, monkeypatch)
+    first.connect(calibrate=False)
+    measure_gripper(first, monkeypatch, closed=closed, opened=opened)
+    first.disconnect()
+    return make_robot(tmp_path, gripper_closed_deg=None, gripper_open_deg=None)
+
+
+@pytest.mark.parametrize("closed,opened", [(0.1, 6.1), (6.1, 0.1)])
+def test_saved_calibration_loads_either_polarity(tmp_path, monkeypatch, closed, opened):
+    robot = saved_calibration_robot(tmp_path, monkeypatch, closed=closed, opened=opened)
+    assert robot.is_calibrated
+    assert robot.config.gripper_closed_deg == round(math.degrees(closed))
+    assert robot.config.gripper_open_deg == round(math.degrees(opened))
+
+
+def test_existing_calibration_is_kept_unless_recalibrating(tmp_path, monkeypatch):
+    robot = saved_calibration_robot(tmp_path, monkeypatch)
+    mock_hardware(robot, monkeypatch)
+    robot.connect(calibrate=False)
+    robot.bus.read_states.reset_mock()
+    prompts = measure_gripper(robot, monkeypatch, answers=[""])
+    assert len(prompts) == 1 and "ENTER" in prompts[0]
+    robot.bus.read_states.assert_not_called()
+
+    prompts = measure_gripper(robot, monkeypatch, opened=5.1, answers=["c"])
+    assert len(prompts) == 3
+    assert robot.config.gripper_open_deg == round(math.degrees(5.1))
+    robot.disconnect()
+
+
+def test_count_based_calibration_file_asks_to_recalibrate(tmp_path, monkeypatch):
+    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
+    robot = make_robot(tmp_path)
+    robot.calibration = {
+        "gripper": robot_module.MotorCalibration(
+            id=7, drive_mode=0, homing_offset=0, range_min=33000, range_max=48000
+        )
+    }
+    robot._save_calibration()
+    with pytest.raises(ValueError, match="run lerobot-calibrate again"):
+        make_robot(tmp_path, gripper_closed_deg=None, gripper_open_deg=None)
 
 
 def test_servo_error_disables_single_arm(robot):
