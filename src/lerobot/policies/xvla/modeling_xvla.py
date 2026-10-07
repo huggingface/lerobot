@@ -29,7 +29,11 @@ from typing import TYPE_CHECKING
 import torch
 from torch import Tensor, nn
 
-from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
+from lerobot.configs import (
+    FeatureType,
+    NormalizationMode,
+    PreTrainedConfig,
+)
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 

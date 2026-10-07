@@ -40,8 +40,11 @@ import torch
 from safetensors import safe_open
 from torch import Tensor, nn
 
-from lerobot.policies.flux3.configuration_flux3 import Flux3Config
-from lerobot.policies.flux3.f3 import (
+from lerobot.utils.constants import ACTION, OBS_STATE
+
+from ..pretrained import PreTrainedPolicy
+from .configuration_flux3 import Flux3Config
+from .f3 import (
     REQUIRED_CONTENT_STREAMS,
     VEC_DIM,
     JointSingleSeq,
@@ -62,10 +65,7 @@ from lerobot.policies.flux3.f3 import (
     times_to_ids,
     unused_content_key,
 )
-from lerobot.policies.flux3.processor_flux3 import PAST_ACTIONS
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION, OBS_STATE
-
+from .processor_flux3 import PAST_ACTIONS
 from .utils import resolve_weights
 
 logger = logging.getLogger(__name__)

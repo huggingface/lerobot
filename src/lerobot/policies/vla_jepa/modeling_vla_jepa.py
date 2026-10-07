@@ -24,13 +24,19 @@ from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType
-from lerobot.policies.pretrained import PreTrainedPolicy, T
-from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import get_autocast_context, resolve_safetensors_device
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 from ..chunk import ChunkPolicySpec, FeatureSpec
+from ..pretrained import (
+    PreTrainedPolicy,
+    T,
+)
+from ..utils import (
+    log_model_loading_keys,
+    populate_queues,
+)
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoModel, AutoVideoProcessor

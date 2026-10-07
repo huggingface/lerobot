@@ -50,10 +50,7 @@ from torch import Tensor
 from torch.nn import CrossEntropyLoss
 
 from lerobot.utils.constants import ACTION, MESSAGES_RENDERED
-from lerobot.utils.import_utils import (
-    _wallx_deps_available,
-    require_package,
-)
+from lerobot.utils.import_utils import _wallx_deps_available, require_package
 from lerobot.utils.language import require_single_text_output
 
 from ..common.flow_matching import (

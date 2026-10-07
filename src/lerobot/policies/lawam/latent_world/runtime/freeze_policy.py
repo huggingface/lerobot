@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from lerobot.policies.lawam.vlas.qwen3vl import (
+from ...vlas.qwen3vl import (
     freeze_qwen3vl,
     keep_first_n_llm_layers,
     unfreeze_last_n_llm_layers,

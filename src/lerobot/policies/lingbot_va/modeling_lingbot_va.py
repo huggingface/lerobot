@@ -39,10 +39,10 @@ from einops import rearrange
 from torch import Tensor
 
 from lerobot.lerobot_types import PolicyOutput
-from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, PREDICTION
 from lerobot.utils.import_utils import require_package
 
+from ..pretrained import PreTrainedPolicy
 from .configuration_lingbot_va import LingBotVAConfig
 from .utils import (
     FlowMatchScheduler,

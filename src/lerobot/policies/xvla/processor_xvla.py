@@ -32,12 +32,7 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.utils.constants import (
-    IMAGENET_STATS,
-    OBS_IMAGES,
-    OBS_PREFIX,
-    OBS_STATE,
-)
+from lerobot.utils.constants import IMAGENET_STATS, OBS_IMAGES, OBS_PREFIX, OBS_STATE
 
 from .configuration_xvla import XVLAConfig
 from .utils import rotate6d_to_axis_angle

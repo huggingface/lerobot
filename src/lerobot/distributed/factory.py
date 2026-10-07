@@ -32,7 +32,7 @@ from .utils import unwrap_peft_model
 if TYPE_CHECKING:
     from accelerate import Accelerator
 
-    from lerobot.policies.pretrained import PreTrainedPolicy
+    from lerobot.policies import PreTrainedPolicy
 
 # Env vars through which `accelerate launch --config_file` (or a stray shell) would configure
 # accelerate behind the config system's back, making train_config.json lie about what ran.

@@ -23,27 +23,23 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.configs import FeatureType
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import populate_queues
-from lerobot.utils import ACTION, OBS_STATE
-from lerobot.utils.import_utils import (
-    _diffusers_available,
-    _transformers_available,
-    require_package,
-)
+from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
 from ..chunk import ChunkPolicySpec, FeatureSpec
+from ..pretrained import PreTrainedPolicy
+from ..utils import populate_queues
 from .configuration_lawam import LaWAMConfig
 
 _lawam_deps_available = _transformers_available and _diffusers_available
 
 if TYPE_CHECKING or _lawam_deps_available:
-    from lerobot.policies.lawam.latent_world.runtime.freeze_policy import (
+    from .latent_world.runtime.freeze_policy import (
         apply_policy_freeze,
         parse_policy_freeze_config,
     )
-    from lerobot.policies.lawam.vlas.flowmatching_expert import ConditionalFlowMatchingConfig
-    from lerobot.policies.lawam.vlas.lawam import LatentWorldPolicyBackend, LatentWorldPolicyConfig
+    from .vlas.flowmatching_expert import ConditionalFlowMatchingConfig
+    from .vlas.lawam import LatentWorldPolicyBackend, LatentWorldPolicyConfig
 else:
     ConditionalFlowMatchingConfig = None
     LatentWorldPolicyBackend = None

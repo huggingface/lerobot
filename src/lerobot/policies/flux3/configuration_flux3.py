@@ -29,8 +29,9 @@ import torch
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamWConfig, FrozenWarmupConstantSchedulerConfig
-from lerobot.policies.flux3.f3 import packing
 from lerobot.utils.constants import ACTION, OBS_STATE
+
+from .f3 import packing
 
 # Frozen video VAE from FLUX 3 Action and the official Qwen3-VL text encoder.
 DEFAULT_VIDEO_VAE_ID = "black-forest-labs/flux-3-action-base:video_vae.safetensors"

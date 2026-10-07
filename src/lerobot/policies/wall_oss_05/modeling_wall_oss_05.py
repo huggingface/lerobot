@@ -25,10 +25,11 @@ import torch
 import torch.nn.functional as functional
 from torch import Tensor, nn
 
-from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.utils.language import require_single_text_output
+
+from ..pretrained import PreTrainedPolicy
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import Qwen2_5_VLConfig, Qwen2_5_VLProcessor

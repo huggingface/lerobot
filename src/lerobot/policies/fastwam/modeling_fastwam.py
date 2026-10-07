@@ -23,10 +23,10 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import require_package
 
+from ..pretrained import PreTrainedPolicy
 from .configuration_fastwam import FastWAMConfig
 from .wan import (
     ActionDiT,

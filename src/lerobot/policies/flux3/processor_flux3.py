@@ -32,7 +32,6 @@ import torch.nn.functional as F  # noqa: N812
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
-from lerobot.policies.flux3.configuration_flux3 import Flux3Config
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     ActionProcessorStep,
@@ -53,6 +52,8 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
+
+from .configuration_flux3 import Flux3Config
 
 
 def make_flux3_pre_post_processors_from_pretrained(

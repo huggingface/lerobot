@@ -34,10 +34,10 @@ from typing import TYPE_CHECKING, Any, Self
 import torch
 from torch import Tensor, nn
 
-from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
+from ..pretrained import PreTrainedPolicy
 from .configuration_longwam import LongWAMConfig
 from .mot_longwam import LongWAMDiT
 

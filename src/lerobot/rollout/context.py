@@ -49,10 +49,10 @@ from lerobot.inference import (
 from lerobot.policies import (
     PreTrainedPolicy,
     get_policy_class,
+    has_peft_adapter_config,
     make_pre_post_processors,
     validate_trained_rtc_horizon,
 )
-from lerobot.policies.factory import has_peft_adapter_config
 from lerobot.processor import (
     PolicyProcessorPipeline,
     RenderRuntimeMessagesStep,
