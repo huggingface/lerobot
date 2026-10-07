@@ -510,20 +510,34 @@ class Flux3Policy(PreTrainedPolicy):
 
     # ------------------------------------------------------------------ inference
     @torch.no_grad()
-    def _sample(self, cond: dict[str, Tensor], caption: str, seed: int) -> Tensor:
+    def _sample(
+        self,
+        cond: dict[str, Tensor],
+        caption: str,
+        seed: int,
+        *,
+        action_noise: Tensor | None = None,
+        video_noise: Tensor | None = None,
+    ) -> Tensor:
         """Joint video + action denoising from pure noise -> ``(chunk, D)`` in model units / action_scale."""
         cfg, m, mdt = self.config, self.modality, self.dtype_
         ak, ck = f"x_{m}", f"x_{m}_cond"
         device = cond["x_video_cond"].device
         n_pred = self.packer.predicted_latent_frames(cfg)
         rng = torch.Generator().manual_seed(seed)
-        video_noise = torch.randn(1, packing.LATENT_CHANNELS, n_pred, *cfg.latent_hw, generator=rng)
+        if video_noise is None:
+            video_noise = torch.randn(1, packing.LATENT_CHANNELS, n_pred, *cfg.latent_hw, generator=rng)
+        else:
+            video_noise = video_noise.to(device=device, dtype=torch.float32)
         x_video, x_video_ids = batched_prc_vid(
             video_noise,
             self.packer.predicted_video_times(cfg, 1),
         )
         times = self.packer.action_times(cfg, 1)
-        action_noise = torch.randn(1, cfg.action_dim, cfg.chunk_size, generator=rng)
+        if action_noise is None:
+            action_noise = torch.randn(1, cfg.action_dim, cfg.chunk_size, generator=rng)
+        else:
+            action_noise = action_noise.to(device=device, dtype=torch.float32)
         x_action, x_action_ids = batched_prc_audio(action_noise, times_to_ids(times))
         # The solver state stays fp32 (scaled joint targets would lose ~0.01 rad per bf16 round trip);
         # inputs are cast at the model boundary.
@@ -578,8 +592,22 @@ class Flux3Policy(PreTrainedPolicy):
         return out[ak][0].float() / cfg.action_scale
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Any], **kwargs: Any) -> Tensor:
-        """Observation batch -> ``(B, chunk_size, action_dim)`` in the (normalized) action space of the dataset."""
+    def predict_action_chunk(
+        self,
+        batch: dict[str, Any],
+        *,
+        noise: Tensor | None = None,
+        video_noise: Tensor | None = None,
+        **kwargs: Any,
+    ) -> Tensor:
+        """Observation batch -> ``(B, chunk_size, action_dim)`` in the (normalized) action space of the dataset.
+
+        ``noise`` is the starting action sample ``(B, action_dim, chunk_size)`` and ``video_noise`` the
+        starting video latent ``(B, 96, n_pred, *latent_hw)``, where ``n_pred`` is the number of predicted
+        latent frames. When None, each is drawn as before from a CPU generator seeded with ``inference_seed``.
+        That generator draws the video sample first, so passing only ``video_noise`` also changes the drawn
+        action sample.
+        """
         if kwargs:
             raise NotImplementedError("flux3 does not implement RTC inference arguments yet")
         self.eval()
@@ -604,7 +632,15 @@ class Flux3Policy(PreTrainedPolicy):
                 targets=False,
             )
             cond.update(action)
-            chunks.append(self._sample(cond, caption, cfg.inference_seed))
+            chunks.append(
+                self._sample(
+                    cond,
+                    caption,
+                    cfg.inference_seed,
+                    action_noise=noise[i : i + 1] if noise is not None else None,
+                    video_noise=video_noise[i : i + 1] if video_noise is not None else None,
+                )
+            )
         return self._flip(torch.stack(chunks)).float()
 
     @torch.no_grad()
