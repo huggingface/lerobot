@@ -1182,17 +1182,12 @@ with warnings.catch_warnings():
 
 
 def get_audio_info(video_path: Path | str) -> dict:
-    # Set logging level
-    logging.getLogger("libav").setLevel(av.logging.WARNING)
-
     # Getting audio stream information
     audio_info = {}
     with av.open(str(video_path), "r") as audio_file:
         try:
             audio_stream = audio_file.streams.audio[0]
         except IndexError:
-            # Reset logging level
-            av.logging.restore_default_callback()
             return {"has_audio": False}
 
         audio_info["audio.channels"] = audio_stream.channels
@@ -1206,9 +1201,6 @@ def get_audio_info(video_path: Path | str) -> dict:
         audio_info["audio.bit_depth"] = audio_stream.format.bits
         audio_info["audio.channel_layout"] = audio_stream.layout.name
         audio_info["has_audio"] = True
-
-    # Reset logging level
-    av.logging.restore_default_callback()
 
     return audio_info
 
@@ -1233,16 +1225,12 @@ def get_video_info(
         ``True`` only when ``video_encoder`` is a
         :class:`~lerobot.configs.video.DepthEncoderConfig`.
     """
-    logging.getLogger("libav").setLevel(av.logging.WARNING)
-
     # Getting video stream information
     video_info = {}
     with av.open(str(video_path), "r") as video_file:
         try:
             video_stream = video_file.streams.video[0]
         except IndexError:
-            # Reset logging level
-            av.logging.restore_default_callback()
             return {}
 
         video_info["video.height"] = video_stream.height
@@ -1253,9 +1241,6 @@ def get_video_info(
         # Calculate fps from r_frame_rate
         video_info["video.fps"] = int(video_stream.base_rate)
         video_info["video.channels"] = get_pix_fmt_channels(video_stream.pix_fmt)
-
-    # Reset logging level
-    av.logging.restore_default_callback()
 
     # Adding audio stream information
     video_info.update(**get_audio_info(video_path))
