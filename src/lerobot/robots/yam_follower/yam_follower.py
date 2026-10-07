@@ -41,6 +41,7 @@ from lerobot.utils.import_utils import (
 from ..robot import Robot
 from .config_yam_follower import (
     DM_MIT_POSITION_LIMIT_RAD,
+    GRIPPER_STROKE_RANGE_DEG,
     JOINT_LIMITS_RAD,
     MOTOR_NAMES,
     YAM_FEATURE_NAMES,
@@ -434,14 +435,15 @@ class YamFollower(Robot):
                 raise ValueError("Gripper moved or returned invalid feedback; calibration was not saved")
             measurements[endpoint] = float(np.median(samples))
         closed, opened = measurements["closed"], measurements["open"]
+        # Raw motor angles of the two stops, in whole degrees; drive_mode records which is closed.
+        stops_deg = sorted(round(math.degrees(value)) for value in (closed, opened))
+        low, high = GRIPPER_STROKE_RANGE_DEG
         if not (
             abs(closed) <= DM_MIT_POSITION_LIMIT_RAD
             and abs(opened) <= DM_MIT_POSITION_LIMIT_RAD
-            and 0.5 < abs(opened - closed) < 10
+            and low <= stops_deg[1] - stops_deg[0] <= high
         ):
             raise ValueError("Implausible gripper stroke; calibration was not saved")
-        # Raw motor angles of the two stops, in whole degrees; drive_mode records which is closed.
-        stops_deg = sorted(round(math.degrees(value)) for value in (closed, opened))
         previous: dict[str, MotorCalibration] = self.calibration
         self.calibration = {
             "gripper": MotorCalibration(

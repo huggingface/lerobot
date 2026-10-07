@@ -613,6 +613,23 @@ def test_count_based_calibration_file_asks_to_recalibrate(tmp_path, monkeypatch)
         make_robot(tmp_path, gripper_closed_deg=None, gripper_open_deg=None)
 
 
+def test_gripper_stroke_is_checked_in_degrees(tmp_path, monkeypatch):
+    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
+    for open_deg in (2.0, 600.0):  # outside 0.5 to 10 rad
+        with pytest.raises(ValueError, match="Gripper stroke"):
+            make_robot(tmp_path, gripper_closed_deg=0.0, gripper_open_deg=open_deg)
+    # A saved calibration goes through the same check.
+    robot = make_robot(tmp_path)
+    robot.calibration = {
+        "gripper": robot_module.MotorCalibration(
+            id=7, drive_mode=0, homing_offset=0, range_min=6, range_max=8
+        )
+    }
+    robot._save_calibration()
+    with pytest.raises(ValueError, match="Gripper stroke"):
+        make_robot(tmp_path, gripper_closed_deg=None, gripper_open_deg=None)
+
+
 def test_servo_error_disables_single_arm(robot):
     bus = attach_bus(robot, mock_bus())
     bus.read_states.side_effect = ConnectionError("lost")
