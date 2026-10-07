@@ -143,16 +143,21 @@ def resolve_episode_indices(
     return [episode for episode in candidates if episode not in excluded]
 
 
-def delta_window(anchor: int, deltas: Sequence[int], start: int, end: int) -> tuple[list[int], torch.Tensor]:
+def delta_window(
+    anchor: int, deltas: Sequence[int] | np.ndarray, start: int, end: int
+) -> tuple[list[int], torch.Tensor]:
     """Clamp an anchor's temporal window to the episode rows ``[start, end)``.
 
     Returns the clamped row indices and a boolean mask marking the positions that fell outside
     the episode and were padded with its first or last row. Works with absolute dataset indices
     (map-style) and episode-local indices (streaming) alike.
+
+    Uses NumPy rather than small torch ops: those release the GIL and must take it back, which
+    waits behind the other streaming decode threads.
     """
-    indices = [max(start, min(end - 1, anchor + delta)) for delta in deltas]
-    padding = torch.BoolTensor([anchor + delta < start or anchor + delta >= end for delta in deltas])
-    return indices, padding
+    positions = anchor + np.asarray(deltas, dtype=np.int64)
+    padding = (positions < start) | (positions >= end)
+    return np.clip(positions, start, end - 1).tolist(), torch.from_numpy(padding)
 
 
 def shift_timestamps(timestamps: Sequence[float], offset: float) -> list[float]:

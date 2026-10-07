@@ -38,7 +38,7 @@ def test_prepared_numeric_rows_are_independent(
     stream = StreamingLeRobotDataset(DUMMY_REPO_ID, root=root, delta_timestamps=deltas)
     data = stream._load_episode_dataset(EpisodeParquetReader(root, columns=stream._projected_columns), 0)
     assert {"action", "state", "timestamp", "index"} <= data.numeric.keys()
-    expected = data.numeric["action"][0].clone()
+    expected = torch.from_numpy(data.numeric["action"][0].copy())
     getitem = datasets.Dataset.__getitem__
 
     def numeric_reads_are_prepared(self: datasets.Dataset, key: Any) -> Any:
@@ -50,7 +50,7 @@ def test_prepared_numeric_rows_are_independent(
     monkeypatch.setattr(datasets.Dataset, "__getitem__", numeric_reads_are_prepared)
     item = stream._make_episode_item(data, 0, 0, video_cache=None)
     item["action"].fill_(-100)
-    assert torch.equal(data.numeric["action"][0], expected)
+    assert torch.equal(torch.from_numpy(data.numeric["action"][0]), expected)
     again = stream._make_episode_item(data, 0, 0, video_cache=None)
     assert torch.equal(again["action"][0] if window else again["action"], expected)
     if window:
@@ -80,7 +80,7 @@ def test_numeric_dtype_matches_existing_formatter(tmp_path: Path, dtype: str, ve
     assert "value" in data.numeric
     for index in range(2):
         expected = reference[index]["value"]
-        actual = data.numeric["value"][index]
+        actual = data.get_item(index)["value"]
         assert actual.dtype == expected.dtype
         assert actual.shape == expected.shape
         torch.testing.assert_close(actual, expected, rtol=0, atol=0)

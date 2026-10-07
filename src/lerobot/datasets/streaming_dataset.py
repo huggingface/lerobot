@@ -67,11 +67,16 @@ from .video_utils import (
 
 @dataclass(frozen=True)
 class _EpisodeData:
-    """Keep prepared numeric tensors and fallback feature views for one resident episode."""
+    """Keep prepared numeric columns and fallback feature views for one resident episode.
+
+    Numeric columns are NumPy arrays: item assembly indexes them and wraps the copies with
+    ``torch.from_numpy``, which keeps the GIL. Small torch ops (indexing, ``clone``, ``item``)
+    release the GIL and must take it back, which waits behind the other decode threads.
+    """
 
     dataset: datasets.Dataset
     columns: dict[str, datasets.Dataset]
-    numeric: dict[str, torch.Tensor]
+    numeric: dict[str, np.ndarray]
     other: datasets.Dataset | None
     dataset_from_index: int
     video_from_timestamps: dict[str, float]
@@ -79,14 +84,25 @@ class _EpisodeData:
     def get_item(self, index: int) -> dict[str, Any]:
         """Return an independently owned row without reformatting prepared numeric columns."""
         item = self.other[index] if self.other is not None else {}
-        item.update({key: values[index].clone() for key, values in self.numeric.items()})
+        item.update({key: torch.from_numpy(np.array(values[index])) for key, values in self.numeric.items()})
         return item
 
     def get_column(self, key: str, indices: list[int]) -> torch.Tensor:
         """Gather a temporal window, preserving repeated indices and sample ownership."""
         if key in self.numeric:
-            return self.numeric[key][indices]
+            return torch.from_numpy(self.numeric[key][indices])
         return torch.stack(self.columns[key][indices][key])
+
+    def column_values(self, key: str, indices: list[int]) -> list[Any]:
+        """Return a temporal window as Python scalars, without building a tensor."""
+        if key in self.numeric:
+            return self.numeric[key][indices].tolist()
+        return self.get_column(key, indices).tolist()
+
+    def row_int(self, key: str, index: int, item: dict[str, Any]) -> int:
+        """Read one integer field of a row, from its NumPy column when the column is numeric."""
+        values = self.numeric.get(key)
+        return int(values[index]) if values is not None else int(item[key])
 
 
 def _balanced_episode_shards(
@@ -627,7 +643,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         # while retaining the episode-sized memory bound.
         dataset = datasets.Dataset.from_dict(table.to_pydict(), features=self._hf_features)
         dataset.set_transform(hf_transform_to_torch)
-        numeric: dict[str, torch.Tensor] = {}
+        numeric: dict[str, np.ndarray] = {}
         for key, feature in self._hf_features.items():
             if key in LANGUAGE_COLUMNS:
                 continue
@@ -652,7 +668,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 # Same values and dtypes as torch.stack(hf_transform_to_torch(...)[key]) (both infer
                 # from Python values, not the Arrow dtype), but one tensor per episode column
                 # instead of one per row. Nullable columns stay on the hf_transform_to_torch path.
-                numeric[key] = torch.tensor(values)
+                numeric[key] = torch.tensor(values).numpy()
             except (TypeError, ValueError, RuntimeError):
                 continue
         other_keys = [key for key in dataset.column_names if key not in numeric]
@@ -721,13 +737,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
 
         # Episode-local windows: the whole episode is resident, so rows are 0..length-1.
         windows: dict[str, list[int]] = {}
-        if self.delta_indices is not None:
-            for key, delta_indices in self.delta_indices.items():
-                windows[key], item[f"{key}_is_pad"] = delta_window(
-                    frame_index, delta_indices, 0, episode_length
-                )
-                if key not in self.meta.video_keys:
-                    item[key] = episode_data.get_column(key, windows[key])
+        for key, deltas in self._delta_arrays.items():
+            windows[key], item[f"{key}_is_pad"] = delta_window(frame_index, deltas, 0, episode_length)
+            if key not in self.meta.video_keys:
+                item[key] = episode_data.get_column(key, windows[key])
 
         if self.meta.video_keys:
             if video_cache is None:
@@ -735,8 +748,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             for video_key in self.meta.video_keys:
                 target_indices = windows.get(video_key, [frame_index])
                 local_timestamps = [
-                    float(timestamp.item())
-                    for timestamp in episode_data.get_column("timestamp", target_indices)
+                    float(timestamp) for timestamp in episode_data.column_values("timestamp", target_indices)
                 ]
                 query_timestamps = shift_timestamps(
                     local_timestamps, episode_data.video_from_timestamps[video_key]
@@ -762,14 +774,24 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         # Runs on the decode thread, so augmentation parallelizes with decoding.
         self._apply_image_transforms(item)
         convert_image_depth_units(item, self._image_depth_units, self._depth_output_unit)
-        item["task"] = task_name(self.meta.tasks, item["task_index"])
-        if int(item["episode_index"].item()) != episode_index:
+        item["task"] = self._task_names[episode_data.row_int("task_index", frame_index, item)]
+        if episode_data.row_int("episode_index", frame_index, item) != episode_index:
             raise RuntimeError(f"Episode reader returned episode {item['episode_index']} for {episode_index}")
-        if int(item["index"].item()) != episode_start + frame_index:
+        if episode_data.row_int("index", frame_index, item) != episode_start + frame_index:
             raise RuntimeError(
                 f"Episode {episode_index} frame {frame_index} has unexpected absolute index {item['index']}"
             )
         return item
+
+    @cached_property
+    def _delta_arrays(self) -> dict[str, np.ndarray]:
+        """Frame offsets of each temporal window, converted once for ``delta_window``."""
+        return {key: np.asarray(deltas, dtype=np.int64) for key, deltas in (self.delta_indices or {}).items()}
+
+    @cached_property
+    def _task_names(self) -> list[Any]:
+        """Task strings by ``task_index``: one list lookup in place of a pandas row lookup per sample."""
+        return [task_name(self.meta.tasks, index) for index in range(len(self.meta.tasks))]
 
     def _apply_image_transforms(self, item: dict[str, Any]) -> None:
         """Transform RGB images in place, leaving physical depth values unchanged."""

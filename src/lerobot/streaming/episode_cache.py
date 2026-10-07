@@ -226,7 +226,9 @@ class EpisodeByteCache:
         """Open an episode decoder, falling back to PyAV if TorchCodec rejects the bytes."""
         try:
             if self.video_backend == "torchcodec":
-                return open_video_decoder(io.BytesIO(data))
+                # Raw bytes: TorchCodec then reads from memory without a Python read callback,
+                # which would need the GIL for every FFmpeg read.
+                return open_video_decoder(data)
             return open_video_decoder(io.BytesIO(data), backend=self.video_backend)
         except Exception as primary_error:
             if self.video_backend != "torchcodec":
@@ -576,10 +578,12 @@ def _close_decoder(decoder: object) -> None:
 
 
 def open_video_decoder(
-    file_like_or_bytesio: BinaryIO, *, backend: str = "torchcodec"
+    file_like_or_bytesio: bytes | BinaryIO, *, backend: str = "torchcodec"
 ) -> VideoDecoder | _PyAVVideoDecoder:
     """Open a TorchCodec or PyAV decoder over synthesized MP4 bytes."""
     if backend == "pyav":
+        if isinstance(file_like_or_bytesio, bytes):
+            file_like_or_bytesio = io.BytesIO(file_like_or_bytesio)
         return _PyAVVideoDecoder(file_like_or_bytesio)
     if backend != "torchcodec":
         raise ValueError(f"Unsupported video backend: {backend}")
