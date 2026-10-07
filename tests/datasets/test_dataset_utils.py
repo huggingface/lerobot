@@ -23,8 +23,14 @@ from packaging.version import Version
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import httpx
 from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
+from huggingface_hub.errors import (
+    HfHubHTTPError,
+    OfflineModeIsEnabled,
+    RepositoryNotFoundError,
+)
 
 import lerobot.datasets.utils as dataset_utils
 from lerobot.datasets.io_utils import hf_transform_to_torch
@@ -216,3 +222,81 @@ def test_get_safe_version_error_reports_repo_id(monkeypatch):
         get_safe_version(repo_id, "v3.0")
 
     assert repo_id in str(exc_info.value)
+
+
+def _hub_http_error(status: int, reason: str) -> HfHubHTTPError:
+    request = httpx.Request("GET", "https://huggingface.co")
+    return HfHubHTTPError(f"{status} Error: {reason}", response=httpx.Response(status, request=request))
+
+
+# Factories, not instances: a raised exception keeps its ``__traceback__``, so sharing one
+# across parametrized runs would accumulate state between tests.
+HUB_UNUSABLE_ERRORS = {
+    "offline": lambda: OfflineModeIsEnabled(
+        "Cannot reach https://huggingface.co/api/datasets/private/repo/refs: offline mode is enabled."
+    ),
+    "connect": lambda: httpx.ConnectError("[Errno 61] Connection refused"),
+    "timeout": lambda: httpx.ReadTimeout("timed out"),
+    "hub-5xx": lambda: _hub_http_error(500, "Internal Server Error"),
+    "hub-rate-limited": lambda: _hub_http_error(429, "Too Many Requests"),
+    "repo-not-found": lambda: RepositoryNotFoundError(
+        "404 Client Error. Repository Not Found",
+        response=httpx.Response(404, request=httpx.Request("GET", "https://huggingface.co")),
+    ),
+}
+
+
+@pytest.mark.parametrize("make_error", HUB_UNUSABLE_ERRORS.values(), ids=HUB_UNUSABLE_ERRORS)
+def test_get_safe_version_keeps_requested_version_when_hub_unusable(monkeypatch, make_error):
+    """The Hub cannot say which versions exist, so the requested one is passed through.
+
+    Measured against a warm cache: these are exactly the failures `snapshot_download` absorbs to
+    resolve the revision from `refs/` instead. Aborting here would fail a load the cache serves.
+    """
+    api = Mock()
+    api.list_repo_refs.side_effect = make_error()
+    monkeypatch.setattr(dataset_utils, "HfApi", Mock(return_value=api))
+
+    # Deliberately not CODEBASE_VERSION: what comes back must be what was asked for, not the
+    # version lerobot happens to default to. With "v3.0" the two are indistinguishable today.
+    assert get_safe_version("private/repo", "v2.1") == "v2.1"
+    api.list_repo_refs.assert_called_once_with("private/repo", repo_type="dataset")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ProxyError("failed to connect to proxy"),
+        httpx.RemoteProtocolError("server disconnected without sending a response"),
+        httpx.UnsupportedProtocol("Request URL is missing an 'http://' protocol."),
+    ],
+    ids=["proxy-error", "mid-stream-drop", "no-scheme-endpoint"],
+)
+def test_get_safe_version_propagates_errors_that_are_not_a_hub_being_unusable(monkeypatch, error):
+    """Transport failures that `snapshot_download` re-raises too, measured against a warm cache.
+
+    Swallowing them here would not save the load: the very next call fails the same way, one frame
+    further from its cause. All three are `httpx.TransportError` subclasses outside the caught
+    tuple, which is why that tuple names `ConnectError` and `TimeoutException` rather than their
+    shared base.
+    """
+    api = Mock()
+    api.list_repo_refs.side_effect = error
+    monkeypatch.setattr(dataset_utils, "HfApi", Mock(return_value=api))
+
+    with pytest.raises(type(error)):
+        get_safe_version("private/repo", "v2.1")
+
+
+@pytest.mark.parametrize("token", [None, "hf_test_token"])
+def test_get_safe_version_unusable_hub_does_not_raise_missing_version_tag(monkeypatch, token):
+    """A Hub that cannot answer must not be reported as "this dataset has no version tags".
+
+    Checked on both token paths, since each takes a different `get_repo_versions` call.
+    """
+    get_versions = Mock(side_effect=OfflineModeIsEnabled("offline mode is enabled"))
+    monkeypatch.setattr(dataset_utils, "get_repo_versions", get_versions)
+
+    kwargs = {} if token is None else {"token": token}
+    assert get_safe_version("private/repo", Version("2.1"), **kwargs) == "v2.1"
+    get_versions.assert_called_once_with("private/repo", **kwargs)
