@@ -30,7 +30,7 @@ from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .storage import DEFAULT_STORAGE_FORMAT, is_bucket_root, load_dataset_metadata
-from .streaming_dataset import StreamingLeRobotDataset
+from .streaming_dataset import DEFAULT_STREAMING_SEED, StreamingLeRobotDataset
 from .utils import resolve_episode_indices
 
 logger = logging.getLogger(__name__)
@@ -175,6 +175,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 delta_timestamps=delta_timestamps,
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
+                seed=cfg.seed if cfg.seed is not None else DEFAULT_STREAMING_SEED,
                 max_num_shards=max(1, cfg.num_workers),
                 tolerance_s=cfg.tolerance_s,
                 return_uint8=True,

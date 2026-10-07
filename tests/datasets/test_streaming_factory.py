@@ -8,7 +8,10 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 
+from itertools import islice
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -17,6 +20,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.configs.default import DatasetConfig
 from lerobot.datasets import factory
 from lerobot.datasets.storage import is_bucket_root
+from lerobot.datasets.streaming_dataset import DEFAULT_STREAMING_SEED, StreamingLeRobotDataset
+from tests.fixtures.constants import DUMMY_REPO_ID
 
 
 @pytest.mark.parametrize(
@@ -66,6 +71,7 @@ def test_factory_wires_production_streaming_settings(
     cfg = SimpleNamespace(
         dataset=dataset_config,
         trainable_config=object(),
+        seed=123,
         num_workers=0,
         tolerance_s=1e-4,
         rename_map={},
@@ -94,6 +100,90 @@ def test_factory_wires_production_streaming_settings(
     assert captured["kwargs"]["video_backend"] == "pyav"
     assert captured["kwargs"]["return_uint8"] is True
     assert captured["kwargs"]["repeat"] is True
+    assert captured["kwargs"]["seed"] == 123
+
+
+def _streaming_cfg(root: Path | None, seed: int | None) -> SimpleNamespace:
+    return SimpleNamespace(
+        dataset=DatasetConfig(
+            repo_id=DUMMY_REPO_ID,
+            root=str(root) if root is not None else None,
+            streaming=True,
+            video_backend="pyav",
+            streaming_episode_pool_size=3,
+        ),
+        trainable_config=object(),
+        seed=seed,
+        num_workers=0,
+        tolerance_s=1e-4,
+        rename_map={},
+    )
+
+
+def _anchor_order(dataset: StreamingLeRobotDataset, count: int) -> list[int]:
+    return [int(sample["index"]) for sample in islice(iter(dataset), count)]
+
+
+@pytest.mark.parametrize(
+    ("cfg_seed", "expected_seed"), [(0, 0), (7, 7), (1000, 1000), (None, DEFAULT_STREAMING_SEED)]
+)
+def test_factory_passes_train_seed_to_streaming_dataset(
+    monkeypatch: pytest.MonkeyPatch, cfg_seed: int | None, expected_seed: int
+) -> None:
+    captured = {}
+
+    class DummyStreamingDataset:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            captured["kwargs"] = kwargs
+            self.meta = SimpleNamespace(camera_keys=[], depth_keys=[], stats={})
+
+    monkeypatch.setattr(
+        factory,
+        "load_dataset_metadata",
+        lambda *args, **kwargs: SimpleNamespace(storage_format="lerobot", total_episodes=1),
+    )
+    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: None)
+    monkeypatch.setattr(factory, "StreamingLeRobotDataset", DummyStreamingDataset)
+
+    factory.make_dataset(_streaming_cfg(None, cfg_seed))
+
+    assert captured["kwargs"]["seed"] == expected_seed
+
+
+def test_make_dataset_streaming_order_follows_train_seed(
+    tmp_path: Path, lerobot_dataset_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Different `--seed` values give different orders; the same value repeats the order."""
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(
+        root=root, repo_id=DUMMY_REPO_ID, total_episodes=6, total_frames=120, use_videos=False
+    )
+    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: None)
+
+    def order(seed: int | None) -> list[int]:
+        return _anchor_order(factory.make_dataset(_streaming_cfg(root, seed)), 60)
+
+    assert order(1) == order(1)
+    assert order(1) != order(2)
+    assert order(None) == order(DEFAULT_STREAMING_SEED)
+
+
+def test_make_dataset_streaming_resume_continues_same_seed_order(
+    tmp_path: Path, lerobot_dataset_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed run with the saved seed continues the order of the original run."""
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(
+        root=root, repo_id=DUMMY_REPO_ID, total_episodes=6, total_frames=120, use_videos=False
+    )
+    monkeypatch.setattr(factory, "resolve_delta_timestamps", lambda *args, **kwargs: None)
+    offset = 25
+
+    full = _anchor_order(factory.make_dataset(_streaming_cfg(root, 5)), 60)
+    resumed_dataset = factory.make_dataset(_streaming_cfg(root, 5))
+    resumed_dataset.load_state_dict({"epoch": 0, "offset": offset, "batch_size": 1})
+
+    assert _anchor_order(resumed_dataset, 60 - offset) == full[offset:]
 
 
 def test_is_bucket_root() -> None:
