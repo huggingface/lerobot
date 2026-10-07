@@ -33,10 +33,10 @@ pip install -e ".[metaworld]"
 ```
 
 <Tip warning={true}>
-If you encounter an `AssertionError: ['human', 'rgb_array', 'depth_array']` when running Meta-World environments, this is a mismatch between Meta-World and your Gymnasium version. Fix it with:
+If you encounter an `AssertionError: ['human', 'rgb_array', 'depth_array']` when running Meta-World environments, this is a mismatch between Meta-World and your Gymnasium version. Reinstall the Gymnasium version LeRobot supports (Meta-World `3.0.0` works with it):
 
 ```bash
-pip install "gymnasium==1.1.0"
+pip install "gymnasium>=1.1.1,<2.0.0"
 ```
 
 </Tip>
