@@ -108,6 +108,68 @@ SUITE_TASKS: dict[str, list[str]] = {
 }
 
 
+# Dataset-format prefixes of `lerobot/vlabench_unified`'s task strings ("primitive: Please pick the
+# poker 7 of spades"). The simulator's own instruction has no such prefix; the dataset builder adds
+# it according to which VLABench task family the task belongs to.
+_DATASET_TASK_PREFIXES = ("primitive", "composite")
+
+
+def resolve_task_language(task_obj: Any, task_name: str) -> tuple[str, str]:
+    """Return ``(text, source)``: the language string the policy receives at eval time.
+
+    Policies trained on `lerobot/vlabench_unified` were conditioned on referent-bearing natural
+    language ("primitive: Please pick the poker 7 of spades"). VLABench's `LM4ManipDMTask` exposes no
+    `task_description`/`language_instruction` attribute, so the previous lookup silently fell through
+    to the bare task name ("select_poker") -- no referent, and a string never seen in training.
+
+    Resolution order (never a *silent* fallback):
+      1. ``task_obj.task_description`` / ``.language_instruction`` if a task ever provides one, used verbatim.
+      2. VLABench's native ``task_obj.get_instruction()`` (what VLABench's own evaluator feeds its
+         policies, `evaluation/evaluator/base.py`), prefixed with the dataset's task-family tag
+         (``primitive: `` / ``composite: ``, derived from the task class's module path; never inserted
+         twice). It draws from the *global* ``random`` module, so that state is saved and restored --
+         this lookup must not perturb the scene/sim RNG stream.
+      3. Task name, with a loud warning (``source == "task_name_fallback"``).
+    """
+    for attr in ("task_description", "language_instruction"):
+        value = getattr(task_obj, attr, None)
+        if isinstance(value, str) and value:
+            return value, attr
+
+    getter = getattr(task_obj, "get_instruction", None)
+    if callable(getter):
+        rng_state = random.getstate()
+        try:
+            instruction = getter()
+        finally:
+            random.setstate(rng_state)
+        if isinstance(instruction, str) and instruction.strip():
+            instruction = instruction.strip()
+            if instruction.startswith(tuple(f"{p}:" for p in _DATASET_TASK_PREFIXES)):
+                return instruction, "native_get_instruction"
+            module = type(task_obj).__module__
+            family = next(
+                (p for p in _DATASET_TASK_PREFIXES if f".{p}." in module or module.endswith(f".{p}")), None
+            )
+            if family is None:
+                logger.warning(
+                    "VLABench task %r (%s): cannot infer the dataset task-family prefix; passing the native "
+                    "instruction without one: %r",
+                    task_name,
+                    module,
+                    instruction,
+                )
+                return instruction, "native_get_instruction_no_prefix"
+            return f"{family}: {instruction}", "native_get_instruction"
+
+    logger.warning(
+        "VLABench task %r exposes no usable natural-language instruction; FALLING BACK TO THE TASK NAME. "
+        "The policy will receive no referent information.",
+        task_name,
+    )
+    return task_name, "task_name_fallback"
+
+
 class VLABenchEnv(gym.Env):
     """Gymnasium wrapper for VLABench environments.
 
@@ -143,6 +205,7 @@ class VLABenchEnv(gym.Env):
         # refetch it via `self._env.physics` at the call site.
         self._env = None
         self.task_description = ""  # populated on first reset
+        self.task_description_source = ""  # provenance of `task_description`, see `resolve_task_language`
         # Cached world-frame XYZ of the robot base link. The VLABench datasets
         # log both `observation.state` positions and `actions` positions in
         # robot-base frame (see VLABench/scripts/convert_to_lerobot.py which
@@ -260,14 +323,8 @@ class VLABenchEnv(gym.Env):
                 f"from the eval set. Last physics error: {last_exc}"
             ) from last_exc
 
-        # Extract task description from the dm_control task
-        task_obj = self._env.task
-        if hasattr(task_obj, "task_description"):
-            self.task_description = task_obj.task_description
-        elif hasattr(task_obj, "language_instruction"):
-            self.task_description = task_obj.language_instruction
-        else:
-            self.task_description = self.task
+        # Extract the language the policy will be conditioned on (see `resolve_task_language`).
+        self.task_description, self.task_description_source = resolve_task_language(self._env.task, self.task)
 
         # Cache robot base world position so `_build_ctrl_from_action` and
         # `_get_obs` can translate between robot-frame (dataset) and
