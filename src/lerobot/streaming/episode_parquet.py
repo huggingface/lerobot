@@ -22,7 +22,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from lerobot.streaming.location import StorageLocation
+from .location import StorageLocation
 
 
 class EpisodeParquetReader:
