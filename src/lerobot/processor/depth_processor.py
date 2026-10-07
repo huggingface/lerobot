@@ -17,7 +17,8 @@
 LeRobot has no 3D observation path today: no policy unprojects depth, and there
 is no convention for where calibration lives. This step adds one, and it is
 deliberately a *processor* rather than part of a policy so that the existing
-policies can use it.
+policies can use it. A Diffusion Policy with this step in front of it and a
+`PointCloudEncoder` in its observation encoder is 3D Diffusion Policy.
 
 Observation keys this step reads and writes:
 

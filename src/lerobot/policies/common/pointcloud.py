@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Point-cloud geometry, for policies that consume depth.
+"""Point-cloud geometry and encoding, for policies that consume depth.
 
 This module has no LeRobot imports and no optional dependencies: it is plain
 PyTorch, so it works wherever LeRobot works, including aarch64 and CPU-only
@@ -20,10 +20,15 @@ machines. That is deliberate. The reference implementations of 3D manipulation
 policies generally need PyTorch3D or a custom CUDA extension, and for a lot of
 people that is the reason they never try one.
 
+Two pieces:
+
 * `unproject` -- depth image plus pinhole intrinsics to 3D points. Optionally
   transformed to a world frame by an extrinsic.
-* `sample_points` -- a fixed-size subsample of the valid points.
-* `normalize_points` -- map a workspace cube to roughly [-1, 1].
+* `PointCloudEncoder` -- the encoder from *3D Diffusion Policy* (Ze et al.,
+  RSS 2024): a per-point MLP, a max-pool, and a projection. It is deliberately
+  small, because that paper's result is that a simple encoder beats PointNet++
+  and its relatives on manipulation, and the simplicity is the finding rather
+  than a shortcut.
 
 **On frames, which is the decision that matters.** `unproject` will give you
 points in the camera's own frame or in a world frame, and the choice has
@@ -61,7 +66,7 @@ clouds from different cameras are otherwise in different frames.
 from __future__ import annotations
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
 
 def unproject(
@@ -159,6 +164,71 @@ def sample_points(
     # A frame with no valid returns at all yields zeros rather than raising: a
     # dropped depth frame should not kill a training run.
     return gathered * any_valid[:, None, None].to(gathered.dtype)
+
+
+class PointCloudEncoder(nn.Module):
+    """The 3D Diffusion Policy encoder: per-point MLP, max-pool, project.
+
+    Reference: Ze et al., *3D Diffusion Policy: Generalizable Visuomotor Policy
+    Learning via Simple 3D Representations*, RSS 2024.
+
+    Args:
+        in_channels: 3 for XYZ, 6 if colour is concatenated.
+        hidden_sizes: widths of the per-point MLP.
+        out_features: dimension of the pooled embedding.
+        use_layernorm: LayerNorm between layers. On in the reference
+            implementation and worth keeping; it matters more here than usual
+            because point coordinates are in metres and are not normalised.
+
+    Shape:
+        input `(B, N, in_channels)` -> output `(B, out_features)`.
+
+    At the default sizes the whole thing is about 109k parameters. That is not
+    an oversight: DP3's contribution is partly the observation that a small
+    encoder on a sparse cloud outperforms heavier point-cloud backbones for
+    manipulation, so making it bigger would be reproducing something other than
+    the method.
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 3,
+        hidden_sizes: tuple[int, ...] = (64, 128, 256),
+        out_features: int = 256,
+        use_layernorm: bool = True,
+    ) -> None:
+        super().__init__()
+        if in_channels not in (3, 6):
+            raise ValueError(f"in_channels must be 3 (XYZ) or 6 (XYZ+RGB), got {in_channels}")
+        self.in_channels = in_channels
+        self.out_features = out_features
+
+        layers: list[nn.Module] = []
+        width = in_channels
+        for size in hidden_sizes:
+            layers.append(nn.Linear(width, size))
+            if use_layernorm:
+                layers.append(nn.LayerNorm(size))
+            layers.append(nn.ReLU(inplace=True))
+            width = size
+        self.point_mlp = nn.Sequential(*layers)
+
+        head: list[nn.Module] = [nn.Linear(width, out_features)]
+        if use_layernorm:
+            head.append(nn.LayerNorm(out_features))
+        self.projection = nn.Sequential(*head)
+
+    @property
+    def feature_dim(self) -> int:
+        """Match the attribute name LeRobot's image encoders expose."""
+        return self.out_features
+
+    def forward(self, points: Tensor) -> Tensor:
+        if points.ndim != 3 or points.shape[-1] != self.in_channels:
+            raise ValueError(f"expected (B, N, {self.in_channels}) point cloud, got {tuple(points.shape)}")
+        per_point = self.point_mlp(points)
+        pooled = per_point.max(dim=1).values  # permutation invariant, as it must be
+        return self.projection(pooled)
 
 
 def normalize_points(points: Tensor, centre: Tensor, extent: float) -> Tensor:

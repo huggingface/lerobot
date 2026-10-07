@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for point-cloud geometry.
+"""Tests for point-cloud geometry and the DP3 encoder.
 
 The geometry is checked against facts known independently of the code -- a plane
 at a known depth, a pixel exactly one focal length off-axis, a pure translation,
@@ -25,6 +25,7 @@ import pytest
 import torch
 
 from lerobot.policies.common.pointcloud import (
+    PointCloudEncoder,
     normalize_points,
     sample_points,
     unproject,
@@ -156,6 +157,36 @@ def test_sample_points_never_returns_invalid_points_when_valid_are_scarce():
     for b in range(4):
         for i in range(32):
             assert any(torch.allclose(sampled[b, i], points[b, j]) for j in range(9))
+
+
+@pytest.mark.parametrize("in_channels", [3, 6])
+def test_encoder_shapes_and_feature_dim(in_channels):
+    encoder = PointCloudEncoder(in_channels=in_channels, out_features=128)
+    out = encoder(torch.randn(3, 256, in_channels))
+    assert out.shape == (3, 128)
+    assert encoder.feature_dim == 128
+
+
+def test_encoder_is_permutation_invariant():
+    """A point cloud is a set. If shuffling changes the embedding, it is not."""
+    encoder = PointCloudEncoder(out_features=64).eval()
+    points = torch.randn(2, 128, 3)
+    shuffled = points[:, torch.randperm(128)]
+    with torch.no_grad():
+        assert torch.allclose(encoder(points), encoder(shuffled), atol=1e-5)
+
+
+def test_encoder_stays_small():
+    """DP3's finding is that a *simple* encoder wins; guard against creep."""
+    n_params = sum(p.numel() for p in PointCloudEncoder().parameters())
+    assert n_params == 108_800  # the "about 109k" quoted in the docstring and docs
+
+
+def test_encoder_rejects_wrong_channel_count():
+    with pytest.raises(ValueError):
+        PointCloudEncoder(in_channels=3)(torch.randn(2, 64, 6))
+    with pytest.raises(ValueError):
+        PointCloudEncoder(in_channels=4)
 
 
 def test_normalize_points_maps_the_workspace_cube_to_unit_range():
