@@ -333,3 +333,67 @@ def test_plausible_metric_depth_does_not_trip_the_guard():
     step = DepthToPointCloudStep(num_points=16, max_depth=1.0, intrinsics={"top": (10.0, 10.0, 4.0, 4.0)})
     cloud = step.observation(dict(observation))["observation.pointcloud"]
     assert cloud.shape == (16, 3)
+
+
+# --- empty frames and leading dimensions ---------------------------------------
+#
+# Both reported on #4863 with this setup: a 2x2 depth map, configured intrinsics,
+# and a bare `cam_depth` key.
+
+
+def _repro_step(**kwargs) -> DepthToPointCloudStep:
+    return DepthToPointCloudStep(num_points=4, intrinsics={"cam": (2, 4, 0, 0)}, **kwargs)
+
+
+@pytest.mark.parametrize("fill", [float("nan"), float("inf"), float("-inf")])
+def test_frame_with_no_finite_depth_gives_the_documented_zero_cloud(fill):
+    cloud = _repro_step().observation({"cam_depth": torch.full((2, 2), fill)})[OBS_POINTCLOUD]
+    assert cloud.shape == (4, 3)
+    assert torch.isfinite(cloud).all()
+    assert torch.equal(cloud, torch.zeros_like(cloud))
+
+
+def test_empty_frame_in_a_batch_does_not_affect_the_others():
+    depth = torch.ones(2, 2, 2)
+    depth[0] = float("nan")
+    cloud = _repro_step().observation({"cam_depth": depth})[OBS_POINTCLOUD]
+    assert torch.equal(cloud[0], torch.zeros(4, 3))
+    assert torch.equal(cloud[1, :, 2], torch.ones(4))
+
+
+def test_empty_frame_stays_zero_after_the_workspace_crop():
+    depth = torch.ones(2, 2, 2)
+    depth[0] = float("nan")
+    step = _repro_step(workspace_centre=(0.0, 0.0, 1.0), workspace_extent=4.0)
+    cloud = step.observation({"cam_depth": depth})[OBS_POINTCLOUD]
+    assert torch.equal(cloud[0], torch.zeros(4, 3))
+    assert torch.isfinite(cloud).all()
+
+
+def test_batch_and_time_dimensions_are_both_kept():
+    cloud = _repro_step().observation({"cam_depth": torch.ones(2, 3, 2, 2)})[OBS_POINTCLOUD]
+    assert cloud.shape == (2, 3, 4, 3)
+
+
+def test_each_frame_of_a_temporal_batch_is_sampled_from_its_own_depth():
+    """Distinct depth per (batch, time) frame: a mixed-up flatten would show in z."""
+    values = 1.0 + 0.25 * torch.arange(6, dtype=torch.float32).reshape(2, 3)  # 1.0-2.25 m, inside max_depth
+    depth = values[..., None, None].expand(2, 3, 2, 2).clone()
+    cloud = _repro_step().observation({"cam_depth": depth})[OBS_POINTCLOUD]
+    assert torch.equal(cloud[..., 2], values[..., None].expand(2, 3, 4))
+
+
+def test_per_batch_intrinsics_broadcast_over_time():
+    """(B, 3, 3) intrinsics with a (B, T, H, W) stack line B up with B, not with T."""
+    intrinsics = torch.eye(3).repeat(2, 1, 1)
+    intrinsics[1, 0, 2] = 10.0  # cx: shifts x by -10 for batch element 1 only
+    observation = {"cam_depth": torch.ones(2, 3, 2, 2), "observation.intrinsics.cam": intrinsics}
+    cloud = DepthToPointCloudStep(num_points=4).observation(observation)[OBS_POINTCLOUD]
+    assert cloud.shape == (2, 3, 4, 3)
+    assert set(cloud[0, ..., 0].unique().tolist()) <= {0.0, 1.0}
+    assert set(cloud[1, ..., 0].unique().tolist()) <= {-10.0, -9.0}
+
+
+def test_explicit_channel_axis_with_a_single_time_step():
+    cloud = _repro_step().observation({"cam_depth": torch.ones(2, 1, 1, 2, 2)})[OBS_POINTCLOUD]
+    assert cloud.shape == (2, 1, 4, 3)

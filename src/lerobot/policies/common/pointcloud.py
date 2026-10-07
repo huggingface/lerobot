@@ -157,8 +157,10 @@ def sample_points(
 
     gathered = torch.gather(points, 1, order.unsqueeze(-1).expand(-1, -1, points.shape[-1]))
     # A frame with no valid returns at all yields zeros rather than raising: a
-    # dropped depth frame should not kill a training run.
-    return gathered * any_valid[:, None, None].to(gathered.dtype)
+    # dropped depth frame should not kill a training run. Its gathered points are
+    # invalid ones, which can be NaN or inf, so they are replaced rather than
+    # multiplied by zero (NaN * 0 is NaN).
+    return torch.where(any_valid[:, None, None], gathered, torch.zeros_like(gathered))
 
 
 def normalize_points(points: Tensor, centre: Tensor, extent: float) -> Tensor:

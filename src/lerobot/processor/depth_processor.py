@@ -81,6 +81,26 @@ OBS_EXTRINSICS = f"{OBS_STR}.extrinsics"
 OBS_POINTCLOUD = f"{OBS_STR}.pointcloud"
 
 
+def _align_leading(matrix: Tensor, lead: tuple[int, ...], matrix_dims: int) -> Tensor:
+    """Give a calibration matrix the depth's leading dimensions, for broadcasting.
+
+    Calibration can come per frame with fewer leading dimensions than the depth, for
+    example `(B, 3, 3)` intrinsics against a `(B, T, H, W)` stack of frames. Leading
+    dimensions are matched from the left and missing ones become size 1, so B lines
+    up with B rather than with T. A config matrix with no leading dimensions is
+    returned unchanged.
+    """
+    have = matrix.ndim - matrix_dims
+    if have == 0 or have == len(lead):
+        return matrix
+    if have > len(lead) or tuple(matrix.shape[:have]) != lead[:have]:
+        raise ValueError(
+            f"calibration with leading shape {tuple(matrix.shape[:have])} does not match "
+            f"depth with leading shape {lead}"
+        )
+    return matrix.reshape(*matrix.shape[:have], *([1] * (len(lead) - have)), *matrix.shape[have:])
+
+
 def _serialisable(table: dict[str, Any] | None) -> dict[str, Any] | None:
     """Config has to survive a round trip through JSON, so tensors become lists."""
     if table is None:
@@ -309,17 +329,25 @@ class DepthToPointCloudStep(ObservationProcessorStep):
             )
 
         clouds, valids = [], []
+        lead: tuple[int, ...] = ()
         for camera in cameras:
             depth = observation[depth_keys[camera]]
+            # A size-1 axis directly before (H, W) is the channel axis, as LeRobotDataset
+            # stores depth: (..., 1, H, W) -> (..., H, W). Everything before it is batch
+            # and/or time, of any number of dimensions. A length-1 time axis therefore
+            # needs its channel axis too: (B, 1, 1, H, W), not (B, 1, H, W).
             if depth.ndim >= 3 and depth.shape[-3] == 1:
-                depth = depth.squeeze(-3)  # (..., 1, H, W) -> (..., H, W)
+                depth = depth.squeeze(-3)
             depth = depth.to(torch.float32) * self.depth_scale
             self._check_scale(depth, camera)
+            lead = tuple(depth.shape[:-2])
 
-            intrinsics = self._calibration(observation, camera, "intrinsics", depth)
+            intrinsics = _align_leading(self._calibration(observation, camera, "intrinsics", depth), lead, 2)
             extrinsics = None
             if self.frame == "world":
-                extrinsics = self._calibration(observation, camera, "extrinsics", depth)
+                extrinsics = _align_leading(
+                    self._calibration(observation, camera, "extrinsics", depth), lead, 2
+                )
 
             points = unproject(depth, intrinsics, extrinsics)
             valid = (depth > self.min_depth) & (depth < self.max_depth)
@@ -343,9 +371,9 @@ class DepthToPointCloudStep(ObservationProcessorStep):
             inside = ((cloud[..., :3] - centre).abs() <= half).all(dim=-1)
             valid = valid & inside
 
-        batched = cloud.ndim == 3
-        if not batched:
-            cloud, valid = cloud[None], valid[None]
+        # Sample per frame: flatten every leading batch/time dimension into one, then restore.
+        n, channels = cloud.shape[-2], cloud.shape[-1]
+        cloud, valid = cloud.reshape(-1, n, channels), valid.reshape(-1, n)
         cloud = sample_points(cloud, valid, self.num_points, generator=self._rng(cloud.device))
         if self.workspace_centre is not None:
             centre = cloud.new_tensor(self.workspace_centre)
@@ -353,8 +381,9 @@ class DepthToPointCloudStep(ObservationProcessorStep):
                 [normalize_points(cloud[..., :3], centre, self.workspace_extent), cloud[..., 3:]],
                 dim=-1,
             )
-        if not batched:
-            cloud = cloud[0]
+            # Normalising would move an empty frame's zeros to -centre / half; keep them zero.
+            cloud = torch.where(valid.any(dim=1)[:, None, None], cloud, torch.zeros_like(cloud))
+        cloud = cloud.reshape(*lead, self.num_points, channels)
 
         observation[OBS_POINTCLOUD] = cloud
         return observation
