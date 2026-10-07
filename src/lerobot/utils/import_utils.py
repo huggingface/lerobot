@@ -132,6 +132,7 @@ def require_package(pkg_name: str, extra: str, import_name: str | None = None) -
 _lancedb_available = is_package_available("lancedb")
 _transformers_available = is_package_available("transformers")
 _peft_available = is_package_available("peft")
+_accelerate_available = is_package_available("accelerate")
 _scipy_available = is_package_available("scipy")
 _diffusers_available = is_package_available("diffusers")
 _natten_available = is_package_available("natten")
