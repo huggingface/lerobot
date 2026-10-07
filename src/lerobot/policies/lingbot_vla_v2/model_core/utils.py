@@ -1,32 +1,9 @@
 import math
 
 import einops
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
-
-# from xformers.ops import memory_efficient_attention
-
-
-def find_next_divisible_by_8_numpy(n: np.ndarray) -> np.ndarray:
-    """
-    Finds the smallest integers greater than each element in a NumPy array 'n'
-    that are divisible by 8. Assumes non-negative integers.
-
-    Args:
-        n: A NumPy array of integers.
-
-    Returns:
-        A NumPy array containing the smallest integers greater than each input element
-        that are divisible by 8.
-    """
-    remainder = n % 8
-    # Calculate the amount to add: 0 if already divisible, otherwise 8 - remainder
-    # np.where is efficient for conditional operations on arrays
-    amount_to_add = np.where(remainder == 0, 8, 8 - remainder)
-    return n + amount_to_add
 
 
 def create_sinusoidal_pos_embedding(
@@ -92,28 +69,6 @@ def make_att_2d_masks(pad_masks, att_masks):
     return att_2d_masks
 
 
-def resize_with_pad(img, width, height, pad_value=-1):
-    # assume no-op when width height fits already
-    if img.ndim != 4:
-        raise ValueError(f"(b,c,h,w) expected, but {img.shape}")
-
-    cur_height, cur_width = img.shape[2:]
-
-    ratio = max(cur_width / width, cur_height / height)
-    resized_height = int(cur_height / ratio)
-    resized_width = int(cur_width / ratio)
-    resized_img = F.interpolate(
-        img, size=(resized_height, resized_width), mode="bilinear", align_corners=False
-    )
-
-    pad_height = max(0, int(height - resized_height))
-    pad_width = max(0, int(width - resized_width))
-
-    # pad on left and top of image
-    padded_img = F.pad(resized_img, (pad_width, 0, pad_height, 0), value=pad_value)
-    return padded_img
-
-
 def our_eager_attention_forward(
     query_states: torch.Tensor,
     key_states: torch.Tensor,
@@ -168,7 +123,6 @@ def our_sdpa_attention_forward(
     key_states: torch.Tensor,
     value_states: torch.Tensor,
     attention_mask: torch.Tensor,
-    sdpa_backend: str | None = None,
 ):
     """SDPA attention with the SAME (b, l, h, d) in / (b, l, h*d) out contract as
     ``our_eager_attention_forward``.
@@ -185,8 +139,6 @@ def our_sdpa_attention_forward(
         query_states: ``[batch, seq, num_att_heads, head_dim]``.
         key_states / value_states: ``[batch, seq, num_kv_heads, head_dim]``.
         attention_mask: bool tensor, ``True`` = attend; ``[batch, seq, seq]`` or ``[batch, 1, seq, seq]``.
-        sdpa_backend: optional ``SDPBackend`` enum name (e.g. "CUDNN_ATTENTION") to force a
-            specific kernel backend instead of torch auto-selection.
     """
     bsize, seq_len, num_att_heads, head_dim = query_states.shape
     num_kv_heads = key_states.shape[2]
@@ -203,108 +155,14 @@ def our_sdpa_attention_forward(
         if mask.dtype != torch.bool:
             mask = mask.bool()
 
-    if sdpa_backend is not None:
-        from torch.nn.attention import SDPBackend, sdpa_kernel
-
-        backend_ctx = sdpa_kernel([getattr(SDPBackend, sdpa_backend)])
-    else:
-        import contextlib
-
-        backend_ctx = contextlib.nullcontext()
-    with backend_ctx:
-        att_output = nn.functional.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=mask,  # bool: True keeps, False masks (matches the eager where-mask)
-            enable_gqa=num_kv_heads != num_att_heads,
-        )
+    att_output = nn.functional.scaled_dot_product_attention(
+        q,
+        k,
+        v,
+        attn_mask=mask,  # bool: True keeps, False masks (matches the eager where-mask)
+        enable_gqa=num_kv_heads != num_att_heads,
+    )
 
     # (b, h, l, d) -> (b, l, h*d)
     att_output = att_output.transpose(1, 2).reshape(bsize, seq_len, num_att_heads * head_dim)
     return att_output
-
-
-def flash_varlen_prefix_attention(query_states, key_states, value_states, attention_mask):
-    """Prefix-block self-attention via flash_attn varlen over the unpadded tokens.
-
-    Same (b, l, h, d) in / (b, l, h*d) out contract as ``our_sdpa_attention_forward``.
-    The prefix block of the dual-stream 2D mask is bidirectional over the valid
-    (non-padding) tokens — the att-mask cumsum is constant across the prefix — so
-    packing the valid tokens per sample (any order) reproduces the joint call's
-    prefix rows exactly, at kernel-reassociation precision. Padding rows come back
-    as zeros; downstream they are quarantined just like the garbage the joint call
-    leaves there (pad rows are masked out as keys and excluded from the loss).
-    GQA (num_kv_heads < num_att_heads) is handled natively by the varlen kernel.
-
-    No host syncs: cu_seqlens stays on device, allocation sizes come from the
-    kernel output shape.
-
-    Args:
-        query_states / key_states / value_states: ``[batch, prefix_len, heads, head_dim]``.
-        attention_mask: bool ``[batch, prefix_len, prefix_len]``, True = attend.
-    """
-    from flash_attn import flash_attn_varlen_func
-
-    bsize, seq_len, num_att_heads, head_dim = query_states.shape
-
-    # Valid-token set per sample: a column is a valid key iff some row attends it,
-    # a row is a valid query iff it attends anything. In the prefix block these are
-    # the same set (bidirectional over valid tokens; pad rows/cols all-False).
-    valid = attention_mask.any(dim=1) & attention_mask.any(dim=2)  # [b, s]
-    lens = valid.sum(dim=1).to(torch.int32)  # [b]
-    cu_seqlens = torch.zeros(bsize + 1, dtype=torch.int32, device=query_states.device)
-    cu_seqlens[1:] = torch.cumsum(lens, dim=0)
-
-    batch_idx, pos_idx = valid.nonzero(as_tuple=True)  # row-major: grouped by batch
-    q_u = query_states[batch_idx, pos_idx]  # [total, hq, d]
-    k_u = key_states[batch_idx, pos_idx]
-    v_u = value_states[batch_idx, pos_idx]
-
-    out_u = flash_attn_varlen_func(
-        q_u,
-        k_u,
-        v_u,
-        cu_seqlens_q=cu_seqlens,
-        cu_seqlens_k=cu_seqlens,
-        max_seqlen_q=seq_len,
-        max_seqlen_k=seq_len,
-        causal=False,
-    )  # [total, hq, d]
-
-    att_output = query_states.new_zeros(bsize, seq_len, num_att_heads, head_dim)
-    att_output[batch_idx, pos_idx] = out_u
-    return att_output.reshape(bsize, seq_len, num_att_heads * head_dim)
-
-
-# @torch.jit.script
-def apply_rope(
-    x: torch.Tensor,
-    positions: torch.Tensor,
-    max_wavelength: float = 10_000.0,
-    dtype: torch.dtype = torch.float32,
-) -> torch.Tensor:
-    """Applies RoPE positions [B, L] to x [B, L, H, D]."""
-    original_dtype = x.dtype  # bf16
-    d = x.shape[-1]
-    d_half = d // 2
-    device = x.device
-
-    # Cast input to compute_dtype for all internal operations
-    x_casted = x.to(dtype)
-    positions_casted = positions.to(dtype)
-
-    freq_exponents = (2.0 / d) * torch.arange(d_half, dtype=dtype, device=device)
-    timescale = max_wavelength**freq_exponents
-    radians = torch.einsum("bl,h->blh", positions_casted, 1.0 / timescale)  # fp32 -> bf16
-
-    radians = radians[..., None, :]  # [B, L, 1, D_half]
-
-    sin = torch.sin(radians)  # bf16
-    cos = torch.cos(radians)  # bf16
-
-    x1, x2 = x_casted.split(d_half, dim=-1)  # fp32
-
-    res = torch.cat([x1 * cos - x2 * sin, x2 * cos + x1 * sin], dim=-1)  # fp32
-
-    return res.to(original_dtype)  # bf16

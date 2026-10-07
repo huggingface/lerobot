@@ -27,10 +27,8 @@ slots into the same post-train → evaluate → deploy flow as π0, SmolVLA, WAL
   slot mapping → Qwen3-VL image tokenization → chat template → tokenizer), where only the
   raw→canonical 55-D slot mapping step is LingBot-specific. Normalization stats come from
   the dataset (`dataset_stats`) and live in the saved processor state.
-- Flash-attention is optional: the policy defaults to `sdpa` attention (fused PyTorch
-  kernels, bf16) and only uses `flash_attention_2` when explicitly requested (and when
-  `flash-attn` is installed). `attention_fp32=true` restores the original fp32-attention
-  parity path.
+- Flash-attention is not required: the policy defaults to `sdpa` attention (fused PyTorch
+  kernels, bf16).
 
 ## Installation
 
@@ -111,29 +109,25 @@ the policy has been run with 4-way FSDP on 24 GB cards (cap `image_max_pixels` a
 
 ### Key Training Parameters
 
-| Parameter                               | Default                     | Description                                                                                                      |
-| --------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `state_slots`                           | `null`                      | Typed dict mapping dataset state keys into the 55-D canonical LingBot slots.                                     |
-| `action_slots`                          | `null`                      | Typed dict mapping dataset action keys into the 55-D canonical LingBot slots.                                    |
-| `tokenizer_path`                        | `Qwen/Qwen3-VL-4B-Instruct` | Qwen3-VL processor/tokenizer path or Hub id. Use a local path when the training node cannot access the Hub.      |
-| `dtype`                                 | `bfloat16`                  | Model dtype; LeRobot maps this to Accelerate mixed precision. Use `float32` for CPU smoke tests.                 |
-| `attention_implementation`              | `sdpa`                      | Action-stream attention backend: `eager`, `sdpa`, `fa2`, `flex`, or `flex_cached`.                               |
-| `vit_attn_implementation`               | `sdpa`                      | Qwen3-VL vision attention backend; use Hugging Face names such as `eager`, `sdpa`, or `flash_attention_2`.       |
-| `moe_implementation`                    | `fused`                     | `fused` (default) matches the released checkpoint's grouped expert layout; `null` uses the dense eager MoE path. |
-| `image_max_pixels` / `image_min_pixels` | `262144` / `131072`         | Qwen3-VL dynamic-resolution bounds; increasing them can raise memory quadratically with eager attention.         |
-| `loss_type`                             | `fm`                        | Flow-matching loss; the real-world recipe uses `L1_fm`.                                                          |
+| Parameter                               | Default                     | Description                                                                                                 |
+| --------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `state_slots`                           | `null`                      | Typed dict mapping dataset state keys into the 55-D canonical LingBot slots.                                |
+| `action_slots`                          | `null`                      | Typed dict mapping dataset action keys into the 55-D canonical LingBot slots.                               |
+| `tokenizer_path`                        | `Qwen/Qwen3-VL-4B-Instruct` | Qwen3-VL processor/tokenizer path or Hub id. Use a local path when the training node cannot access the Hub. |
+| `dtype`                                 | `bfloat16`                  | Model dtype; LeRobot maps this to Accelerate mixed precision. Use `float32` for CPU smoke tests.            |
+| `attention_implementation`              | `sdpa`                      | Action-stream attention backend: `eager` or `sdpa`.                                                         |
+| `vit_attn_implementation`               | `sdpa`                      | Qwen3-VL vision attention backend; use Hugging Face names such as `eager`, `sdpa`, or `flash_attention_2`.  |
+| `moe_implementation`                    | `fused`                     | `fused` (the only supported value) matches the released checkpoint's grouped expert layout.                 |
+| `image_max_pixels` / `image_min_pixels` | `262144` / `131072`         | Qwen3-VL dynamic-resolution bounds; increasing them can raise memory quadratically with eager attention.    |
+| `loss_type`                             | `fm`                        | Flow-matching loss; the real-world recipe uses `L1_fm`.                                                     |
 
 ### Acceleration Options
 
 The default `attention_implementation=sdpa` uses fused PyTorch kernels in the model dtype
-(bf16 on GPU). Set `attention_fp32=true` for the original fp32-attention parity path, or
-`attention_implementation=eager` for a conservative debug fallback. `gradient_checkpointing=true`
+(bf16 on GPU). Set `attention_implementation=eager` for a conservative debug fallback. `gradient_checkpointing=true`
 trades ~30% step time for a much smaller activation footprint, and `moe_metrics_interval=N`
 (default 50) limits MoE monitoring overhead to every Nth step. `sdpa` preserves
-the tested eager parity. `attention_implementation=fa2` requires a compatible `flash-attn`
-installation; set `vit_attn_implementation=flash_attention_2` only when the Qwen3-VL runtime
-accepts that backend. The `flex` and `flex_cached` paths are experimental and should be treated
-as opt-in.
+the tested eager parity.
 
 MoE is enabled by default (`use_moe=true`) to match the released v2 architecture. Do not disable
 it, change `token_num_experts`, `token_top_k`, `token_moe_intermediate_size`,

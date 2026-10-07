@@ -84,7 +84,7 @@ lerobot-train \
   --policy.normalization_mapping='{"VISUAL": "IDENTITY", "STATE": "QUANTILES", "ACTION": "QUANTILES"}' \
   --policy.optimizer_lr=1e-4 --policy.scheduler_decay_lr=5e-5 \
   --policy.scheduler_warmup_steps=0 --policy.scheduler_decay_steps=50000 \
-  --policy.gradient_checkpointing=true --policy.moe_backend=sparse_static \
+  --policy.gradient_checkpointing=true \
   --policy.use_moe_expert_lr=true \
   --batch_size=16 --steps=50000 --save_freq=5000 --num_workers=8 --seed=42 \
   --policy.push_to_hub=false \

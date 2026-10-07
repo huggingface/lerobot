@@ -53,22 +53,6 @@ from transformers.models.qwen2.modeling_qwen2 import (  # noqa: E402
 # from transformers.models.mistral.modeling_mistral import MistralMLP
 
 
-# Modified from transformers.models.mistral.modeling_mistral.MistralMLP with Mistral->Qwen2Moe
-class Qwen2MoeRoutedExpertMLP(nn.Module):
-    def __init__(self, config, intermediate_size=None):
-        super().__init__()
-        self.config = config
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = intermediate_size
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
-        self.act_fn = ACT2FN[config.hidden_act]
-
-    def forward(self, x):
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-
-
 class Qwen2MoeSharedExpertMLP(nn.Module):
     def __init__(self, config, intermediate_size=None):
         super().__init__()
@@ -106,10 +90,6 @@ class Qwen2FusedExperts(nn.Module):
         self.up_proj = nn.Parameter(torch.empty(num_experts, intermediate_size, hidden_size))
         self.down_proj = nn.Parameter(torch.empty(num_experts, hidden_size, intermediate_size))
         self.register_buffer("_gate_up_proj_cache", None, persistent=False)
-        self._gate_up_proj_cache_key = None
-        self.register_buffer("_dense_w1_cache", None, persistent=False)
-        self.register_buffer("_dense_w2_cache", None, persistent=False)
-        self._dense_cache_key = None
         self.register_buffer("_sparse_wd_cache", None, persistent=False)
         self._sparse_cache_key = None
         self.reset_parameters()
@@ -122,10 +102,6 @@ class Qwen2FusedExperts(nn.Module):
 
     def clear_inference_cache(self):
         self._gate_up_proj_cache = None
-        self._gate_up_proj_cache_key = None
-        self._dense_w1_cache = None
-        self._dense_w2_cache = None
-        self._dense_cache_key = None
         self._sparse_wd_cache = None
         self._sparse_cache_key = None
 
@@ -134,77 +110,14 @@ class Qwen2FusedExperts(nn.Module):
         super()._load_from_state_dict(*args, **kwargs)
         self.clear_inference_cache()
 
-    def _dense_packed_weights(self):
-        """E-major repacked weights for the two-GEMM dense path.
-
-        w1: [H, E*2I] — gate and up concatenated along the output dim, so a single
-            ``x @ w1`` computes every expert's gate and up projections at once.
-        w2: [E*I, H] — down projections concatenated along the input dim, so the
-            second GEMM's reduction over E*I performs the (weight-folded) expert
-            combine for free.
-
-        Cached only when gradients are disabled (inference); under autograd the
-        repack is rebuilt each call so gradients flow into the Parameters.
-        """
-        e, inter_dim, h = self.gate_proj.shape
-        if torch.is_grad_enabled():
-            w1 = torch.cat([self.gate_proj, self.up_proj], dim=1).reshape(e * 2 * inter_dim, h).t()
-            w2 = self.down_proj.permute(0, 2, 1).reshape(e * inter_dim, h)
-            return w1, w2
-        # Key on the parameter versions: in-place updates (optimizer.step,
-        # load_state_dict copy_) bump _version, so stale packed weights are
-        # rebuilt instead of silently serving the old values.
-        cache_key = (self.gate_proj._version, self.up_proj._version, self.down_proj._version)
-        if self._dense_w1_cache is None or self._dense_cache_key != cache_key:
-            with torch.no_grad():
-                self._dense_w1_cache = (
-                    torch.cat([self.gate_proj, self.up_proj], dim=1)
-                    .reshape(e * 2 * inter_dim, h)
-                    .t()
-                    .contiguous()
-                )
-                self._dense_w2_cache = self.down_proj.permute(0, 2, 1).reshape(e * inter_dim, h).contiguous()
-            self._dense_cache_key = cache_key
-        return self._dense_w1_cache, self._dense_w2_cache
-
-    def _dense_forward(self, routing_weights, selected_experts, hidden_states):
-        """Dense two-GEMM MoE: compute ALL experts for ALL tokens, fold the top-k
-        routing weights into the intermediate, and let the down GEMM's reduction
-        perform the weighted expert combine.
-
-        Algebraically identical to the grouped/eager paths (unselected experts get
-        an exact 0 weight), differing only in floating-point reassociation. At the
-        tiny token counts of flow-matching inference (T ~= chunk+1 = 51) the 8x
-        extra FLOPs of computing every expert cost less than the routing machinery
-        (argsort / gather / scatter / per-expert launches) they replace — and being
-        two plain matmuls with static shapes, the whole block stays inside a single
-        torch.compile graph instead of forcing a graph break per MoE layer.
-
-        Routing weights are combined in fp32, matching the eager path's fp32
-        accumulation; cast back to the input dtype at the end.
-        """
-        t, h = hidden_states.shape
-        e, inter_dim = self.gate_proj.shape[0], self.gate_proj.shape[1]
-        w1, w2 = self._dense_packed_weights()  # [h, e*2I], [e*I, h]
-
-        gu = (hidden_states @ w1).view(t, e, 2 * inter_dim)
-        inter = F.silu(gu[..., :inter_dim]) * gu[..., inter_dim:]  # [t, e, I]
-
-        # One-hot the top-k routing weights back to a dense [t, e] table (0 for
-        # unselected experts) and fold them into the intermediate activations.
-        w = torch.zeros(t, e, dtype=torch.float32, device=hidden_states.device)
-        w.scatter_(1, selected_experts, routing_weights.to(torch.float32))
-        inter = inter * w.unsqueeze(-1).to(inter.dtype)
-
-        return (inter.reshape(t, e * inter_dim) @ w2).to(hidden_states.dtype)
-
     def _sparse_packed_weights(self):
         """Per-expert packed weights for the padded sparse path.
 
-        wgu: [E, H, 2I] — gate/up concatenated, transposed for bmm/grouped_mm.
+        wgu: [E, H, 2I] — gate/up concatenated, transposed for bmm.
         wd:  [E, I, H] — down projection transposed.
-        Cached inference-only, keyed on parameter versions (same discipline as
-        :meth:`_dense_packed_weights`); rebuilt each call under autograd.
+        Cached inference-only, keyed on parameter versions (in-place updates such as
+        optimizer.step or load_state_dict bump ``_version``); rebuilt each call under
+        autograd so gradients flow into the Parameters.
         """
         if torch.is_grad_enabled():
             return (
@@ -221,26 +134,16 @@ class Qwen2FusedExperts(nn.Module):
             self._sparse_cache_key = cache_key
         return self._gate_up_proj_cache, self._sparse_wd_cache
 
-    def _sparse_forward(
-        self, routing_weights, selected_experts, hidden_states, use_grouped_mm=False, static_capacity=False
-    ):
+    def _sparse_forward(self, routing_weights, selected_experts, hidden_states):
         """Padded sparse MoE: real per-token expert activation with two fixed
         batched-GEMM launches.
 
         Sort the (token, expert) routing pairs by expert, scatter the routed
-        token rows into a padded [E, Tm, H] tensor (Tm = max tokens routed to
-        any single expert), run gate/up and down as one bmm — or grouped_mm 3D
-        static where the running torch dispatches it to a real kernel — then
-        gather the live rows back and accumulate the top-k weighted outputs in
-        fp32 (matching the eager path's combine).
-
-        Only the routed top-k rows ever touch expert weights, so FLOPs scale
-        with top-k/E instead of E (unlike the dense path). The dynamic Tm
-        needs one host sync per call (counts.max()), so this backend is
-        eager-mode; CUDA-graph capture requires a static capacity.
-
-        bmm is the universal GEMM backend (any arch, any torch); grouped_mm
-        3D static is an opt-in (~2.11+ on sm89/sm121) that shares this padding.
+        token rows into a padded [E, T, H] tensor, run gate/up and down as one
+        bmm, then gather the live rows back and accumulate the top-k weighted
+        outputs in fp32. The capacity is pinned to T (each token routes to top_k
+        distinct experts, so no expert sees more than T pairs), which keeps the
+        shapes static: no host sync, CUDA-graph capturable, pure torch (CPU too).
         """
         t, h = hidden_states.shape
         e, inter_dim = self.gate_proj.shape[0], self.gate_proj.shape[1]
@@ -258,118 +161,28 @@ class Qwen2FusedExperts(nn.Module):
         # CUDA-graph capture; scatter_add_ has no host round-trip.
         counts = torch.zeros(e, dtype=torch.long, device=hidden_states.device)
         counts.scatter_add_(0, flat_expert, torch.ones_like(flat_expert))
-        # Graph-safe upper bound when static: each token routes to top_k
-        # DISTINCT experts, so no expert sees more than t pairs. Dynamic capacity
-        # costs one host sync (counts.max()) but pads less; provably <= t.
-        t_m = t if static_capacity else int(counts.max().item())
         starts = torch.cumsum(counts, 0) - counts
         slot = torch.arange(t * top_k, device=hidden_states.device) - starts[sorted_expert]
 
-        ap = torch.zeros(e, t_m, h, dtype=hidden_states.dtype, device=hidden_states.device)
+        ap = torch.zeros(e, t, h, dtype=hidden_states.dtype, device=hidden_states.device)
         ap[sorted_expert, slot] = hidden_states[sorted_token]
         wgu, wd = self._sparse_packed_weights()  # [e,h,2I], [e,I,h]
 
-        gu = torch.nn.functional.grouped_mm(ap, wgu) if use_grouped_mm else torch.bmm(ap, wgu)  # [e, t_m, 2I]
+        gu = torch.bmm(ap, wgu)  # [e, t, 2I]
         inter = F.silu(gu[..., :inter_dim]) * gu[..., inter_dim:]
-        d = (
-            torch.nn.functional.grouped_mm(inter, wd) if use_grouped_mm else torch.bmm(inter, wd)
-        )  # [e, t_m, h]
+        d = torch.bmm(inter, wd)  # [e, t, h]
 
         dp = d[sorted_expert, slot]  # [t * top_k, h] live rows only
         out = torch.zeros(t, h, dtype=torch.float32, device=hidden_states.device)
         out.index_add_(0, sorted_token, flat_weight[order] * dp.to(torch.float32))
         return out.to(hidden_states.dtype)
 
-    def forward(self, module, num_experts, routing_weights, selected_experts, hidden_states):
+    def forward(self, routing_weights, selected_experts, hidden_states):
         """Run the fused experts with FSDP2-managed weights.
 
-        Must be called via self.experts(...) so FSDP2 unshards params first. Backends
-        (module._moe_backend, numerically equivalent up to floating-point /
-        tensor-core reassociation):
-          - "sparse_static" (shipped default): :meth:`_sparse_forward` with the
-            padded capacity pinned to T — real per-token expert activation with
-            static shapes (CUDA-graph capturable, no host sync, fastest
-            training step time);
-          - "sparse": same, but with dynamic capacity (one .item() sync —
-            breaks CUDA graph capture and stalls the training pipeline);
-          - "sparse_gmm" / "sparse_static_gmm": same padding with grouped_mm
-            3D as the GEMM (requires a torch that dispatches it on this arch;
-            sm89/sm121 ~2.11+; measured e2e-equal to bmm);
-          - "auto": dense two-GEMM for small token counts (flow-matching
-            denoise: T ~= 51), grouped-by-expert eager for everything else;
-          - "dense": force the dense two-GEMM path (-1.5~2.7% model-only
-            inference time vs sparse_static, +2.7% training step time);
-          - "eager": grouped-by-expert eager fallback (CPU / large T / training).
+        Must be called via self.experts(...) so FSDP2 unshards params first.
         """
-        backend = getattr(module, "_moe_backend", "auto")
-        if backend == "sparse":
-            return self._sparse_forward(routing_weights, selected_experts, hidden_states)
-        if backend == "sparse_static":
-            return self._sparse_forward(
-                routing_weights, selected_experts, hidden_states, static_capacity=True
-            )
-        if backend == "sparse_static_gmm":
-            return self._sparse_forward(
-                routing_weights, selected_experts, hidden_states, use_grouped_mm=True, static_capacity=True
-            )
-        if backend == "sparse_gmm":
-            return self._sparse_forward(routing_weights, selected_experts, hidden_states, use_grouped_mm=True)
-
-        # dense two-GEMM path for small token counts (flow-matching denoise:
-        # T ~= 51). Pure torch, static shapes, no graph breaks under torch.compile.
-        dense_max_tokens = getattr(module, "_dense_max_tokens", 512)
-        if (
-            backend in ("auto", "dense")
-            and dense_max_tokens > 0
-            and hidden_states.shape[0] <= dense_max_tokens
-        ):
-            return self._dense_forward(routing_weights, selected_experts, hidden_states)
-
-        # pure-torch grouped-by-expert eager fallback (CPU / large T / training).
-        return self._eager_forward(routing_weights, selected_experts, hidden_states)
-
-    def _eager_forward(self, routing_weights, selected_experts, hidden_states):
-        """Grouped-by-EXPERT eager MoE over the stacked (num_experts, ...) weights.
-
-        For each expert we gather the tokens routed to it and run a single dense matmul
-        (gate/up: ``[I, H]``; down: ``[H, I]``) — the expert weight is loaded once and reused
-        across its tokens. This replaces the naive per-token form (which materialized a
-        ``[T, I, H]`` weight copy per route, i.e. O(T) activation memory and O(T) matmuls).
-        It is algebraically identical (the same per-(token, route) SwiGLU terms, only
-        reordered/reassociated); cost is O(num_experts) matmuls with O(T) activations. Pure
-        torch, works on any backend. gate/up: ``[E, I, H]``; down: ``[E, H, I]``.
-        """
-        t, h = hidden_states.shape
-        num_experts = self.gate_proj.shape[0]
-        top_k = selected_experts.shape[-1]
-        out = torch.zeros(t, h, dtype=torch.float32, device=hidden_states.device)
-
-        # Flatten the (token, route) routing table so each expert can pull its rows.
-        flat_expert = selected_experts.reshape(-1)  # [t * top_k]
-        flat_token = torch.arange(t, device=hidden_states.device).repeat_interleave(top_k)
-        flat_weight = routing_weights.reshape(-1).to(torch.float32).unsqueeze(-1)  # [t*top_k, 1]
-
-        # Sort routes by expert once — a single host sync for the split sizes —
-        # instead of a per-expert torch.nonzero (one device sync per expert, i.e.
-        # num_experts syncs per MoE layer per forward).
-        order = torch.argsort(flat_expert)
-        counts = torch.bincount(flat_expert, minlength=num_experts).tolist()
-        sorted_token = flat_token[order]
-        sorted_weight = flat_weight[order]
-
-        offset = 0
-        for e in range(num_experts):
-            n_e = counts[e]
-            if n_e == 0:
-                continue
-            tok = sorted_token[offset : offset + n_e]
-            xe = hidden_states[tok]  # [n_e, H] — tokens routed to expert e
-            gate = xe @ self.gate_proj[e].t()  # [n_e, I]
-            up = xe @ self.up_proj[e].t()  # [n_e, I]
-            ye = (F.silu(gate) * up) @ self.down_proj[e].t()  # [n_e, H]
-            out.index_add_(0, tok, sorted_weight[offset : offset + n_e] * ye.to(torch.float32))
-            offset += n_e
-        return out.to(hidden_states.dtype)
+        return self._sparse_forward(routing_weights, selected_experts, hidden_states)
 
 
 class FixQwen2RMSNorm(nn.Module):
@@ -422,30 +235,12 @@ class Qwen2TokenMoeBlock(nn.Module):
 
         # gating (per-token)
         self.gate = nn.Linear(config.hidden_size, config.num_experts, bias=False)
-        # Token-count ceiling for the dense two-GEMM MoE path (0 disables it and
-        # falls through to the grouped-eager backend).
-        self._dense_max_tokens = getattr(config, "moe_dense_max_tokens", 512)
-        # MoE execution backend override: "sparse_static" (shipped default,
-        # from LingBotVLAV2Config.moe_backend) | "auto" | "sparse" (padded
-        # bmm) | "sparse_gmm" (padded + grouped_mm 3D) | "dense" | "eager".
-        self._moe_backend = getattr(config, "moe_backend", "sparse_static")
-
-        # EP/fused support: choose expert storage based on moe_implementation
-        self._moe_implementation = getattr(config, "_moe_implementation", None) or "eager"
-        if self._moe_implementation == "fused":
-            self.experts = Qwen2FusedExperts(
-                self.num_experts,
-                config.hidden_size,
-                config.moe_intermediate_size,
-                initializer_range=getattr(config, "initializer_range", 0.02),
-            )
-        else:
-            self.experts = nn.ModuleList(
-                [
-                    Qwen2MoeRoutedExpertMLP(config, intermediate_size=config.moe_intermediate_size)
-                    for _ in range(self.num_experts)
-                ]
-            )
+        self.experts = Qwen2FusedExperts(
+            self.num_experts,
+            config.hidden_size,
+            config.moe_intermediate_size,
+            initializer_range=getattr(config, "initializer_range", 0.02),
+        )
 
         self.shared_expert = Qwen2MoeSharedExpertMLP(
             config, intermediate_size=config.shared_expert_intermediate_size
@@ -484,27 +279,11 @@ class Qwen2TokenMoeBlock(nn.Module):
             routing_weights = routing_weights * self.routed_scaling_factor
         routing_weights = routing_weights.to(hidden_states.dtype)
 
-        # Expert computation: dense two-GEMM (small T) / grouped eager (fallback)
-        if self._moe_implementation == "fused":
-            final_hidden_states = self.experts(
-                module=self,
-                num_experts=self.num_experts,
-                routing_weights=routing_weights,
-                selected_experts=selected_experts,
-                hidden_states=hidden_flat,
-            )
-        else:
-            # Original eager path: every expert processes all tokens
-            expert_outputs = torch.stack(
-                [expert(hidden_flat) for expert in self.experts], dim=0
-            )  # (num_experts, B*T, D)
-            expert_mask = F.one_hot(
-                selected_experts, num_classes=self.num_experts
-            ).float()  # (B*T, top_k, num_experts)
-            weights = (
-                (expert_mask * routing_weights.unsqueeze(-1).float()).sum(dim=1).to(hidden_states.dtype)
-            )  # (B*T, num_experts)
-            final_hidden_states = torch.einsum("ebd,be->bd", expert_outputs, weights)  # (B*T, D)
+        final_hidden_states = self.experts(
+            routing_weights=routing_weights,
+            selected_experts=selected_experts,
+            hidden_states=hidden_flat,
+        )
 
         # Shared expert: applied to all tokens (fixed shape)
         if final_hidden_states.dtype != hidden_flat.dtype:
