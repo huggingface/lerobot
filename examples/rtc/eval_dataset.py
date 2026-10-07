@@ -109,14 +109,10 @@ except ImportError:
     MATPLOTLIB_AVAILABLE = False
     plt = None
 
-from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.datasets.factory import resolve_delta_timestamps
-from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.configs import DatasetConfig, PreTrainedConfig, RTCAttentionSchedule, parser
+from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata, resolve_delta_timestamps
+from lerobot.policies import get_policy_class, make_pre_post_processors
+from lerobot.policies.rtc import RTCConfig
 from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import init_logging
@@ -310,6 +306,7 @@ class RTCEvaluator:
         # Configure RTC
         rtc_config = RTCConfig(
             enabled=rtc_enabled,
+            mode=self.cfg.rtc.mode,
             execution_horizon=self.cfg.rtc.execution_horizon,
             max_guidance_weight=self.cfg.rtc.max_guidance_weight,
             prefix_attention_schedule=self.cfg.rtc.prefix_attention_schedule,
@@ -421,7 +418,7 @@ class RTCEvaluator:
     def run_evaluation(self):
         """Run evaluation on two random dataset samples using three separate policies.
 
-        Note: Policies are deinitalized after each step to free memory. Large models
+        Note: Policies are deinitialized after each step to free memory. Large models
         (e.g., VLA models with billions of parameters) cannot fit three instances in
         memory simultaneously. By deleting and garbage collecting after each step,
         we ensure only one policy is loaded at a time.

@@ -23,23 +23,34 @@ from __future__ import annotations
 
 import abc
 import logging
+import time
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from pprint import pformat
-from typing import Protocol, TypeAlias
+from typing import TYPE_CHECKING, Protocol
 
-import serial
-from deepdiff import DeepDiff
 from tqdm import tqdm
+
+from lerobot.utils.import_utils import _deepdiff_available, _serial_available, require_package
+
+if TYPE_CHECKING or _serial_available:
+    import serial
+else:
+    serial = None  # type: ignore[assignment]
+
+if TYPE_CHECKING or _deepdiff_available:
+    from deepdiff import DeepDiff
+else:
+    DeepDiff = None  # type: ignore[assignment, misc]
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
-NameOrID: TypeAlias = str | int
-Value: TypeAlias = int | float
+type NameOrID = str | int
+type Value = int | float
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +357,8 @@ class SerialMotorsBus(MotorsBusBase):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
+        require_package("pyserial", extra="pyserial-dep", import_name="serial")
+        require_package("deepdiff", extra="deepdiff-dep")
         super().__init__(port, motors, calibration)
 
         self.port_handler: PortHandler
@@ -806,13 +819,13 @@ class SerialMotorsBus(MotorsBusBase):
         """
         motor_names = self._get_motors_list(motors)
 
-        start_positions = self.sync_read("Present_Position", motor_names, normalize=False)
+        start_positions = self.sync_read("Present_Position", motor_names, normalize=False, num_retry=5)
         mins = start_positions.copy()
         maxes = start_positions.copy()
 
         user_pressed_enter = False
         while not user_pressed_enter:
-            positions = self.sync_read("Present_Position", motor_names, normalize=False)
+            positions = self.sync_read("Present_Position", motor_names, normalize=False, num_retry=5)
             mins = {motor: min(positions[motor], min_) for motor, min_ in mins.items()}
             maxes = {motor: max(positions[motor], max_) for motor, max_ in maxes.items()}
 
@@ -825,9 +838,12 @@ class SerialMotorsBus(MotorsBusBase):
             if enter_pressed():
                 user_pressed_enter = True
 
-            if display_values and not user_pressed_enter:
-                # Move cursor up to overwrite the previous output
-                move_cursor_up(len(motor_names) + 3)
+            if not user_pressed_enter:
+                if display_values:
+                    # Move cursor up to overwrite the previous output
+                    move_cursor_up(len(motor_names) + 3)
+                # Throttle reads even when the live table is disabled.
+                time.sleep(0.02)
 
         same_min_max = [motor for motor in motor_names if mins[motor] == maxes[motor]]
         if same_min_max:
@@ -1277,4 +1293,4 @@ class SerialMotorsBus(MotorsBusBase):
 
 
 # Backward compatibility alias
-MotorsBus: TypeAlias = SerialMotorsBus
+MotorsBus = SerialMotorsBus

@@ -23,12 +23,12 @@ import draccus
 import torch
 from safetensors.torch import load_file, save_file
 
-from lerobot.datasets.utils import flatten_dict, unflatten_dict, write_json
 from lerobot.utils.constants import (
     OPTIMIZER_PARAM_GROUPS,
     OPTIMIZER_STATE,
 )
-from lerobot.utils.io_utils import deserialize_json_into_object
+from lerobot.utils.io_utils import deserialize_json_into_object, write_json
+from lerobot.utils.utils import flatten_dict, unflatten_dict
 
 # Type alias for parameters accepted by optimizer build() methods.
 # This matches PyTorch's optimizer signature while also supporting:
@@ -51,6 +51,11 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
+
+    @property
+    def builds_multiple_optimizers(self) -> bool:
+        """True when build() returns a dict of optimizers (unsupported under sharded training)."""
+        return False
 
     @classmethod
     def default_choice_name(cls) -> str | None:
@@ -245,6 +250,10 @@ class MultiAdamConfig(OptimizerConfig):
     grad_clip_norm: float = 10.0
     optimizer_groups: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    @property
+    def builds_multiple_optimizers(self) -> bool:
+        return True
+
     def build(self, params: OptimizerParams) -> dict[str, torch.optim.Optimizer]:
         """Build multiple Adam optimizers.
 
@@ -281,9 +290,10 @@ class MultiAdamConfig(OptimizerConfig):
 
 
 def save_optimizer_state(
-    optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer], save_dir: Path
+    optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer],
+    save_dir: Path,
 ) -> None:
-    """Save optimizer state to disk.
+    """Save optimizer state to disk (non-sharded runs; sharded runs use the DCP channel).
 
     Args:
         optimizer: Either a single optimizer or a dictionary of optimizers.

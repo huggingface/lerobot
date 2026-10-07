@@ -22,14 +22,12 @@ import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
-from lerobot.policies.smolvla.processor_smolvla import (
-    SmolVLANewLineProcessor,
-    make_smolvla_pre_post_processors,
-)
+from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     EnvTransition,
+    NewLineTaskProcessorStep,
     NormalizerProcessorStep,
     ProcessorStep,
     RenameObservationsProcessorStep,
@@ -108,7 +106,7 @@ def test_make_smolvla_processor_basic():
     assert len(preprocessor.steps) == 6
     assert isinstance(preprocessor.steps[0], RenameObservationsProcessorStep)
     assert isinstance(preprocessor.steps[1], AddBatchDimensionProcessorStep)
-    assert isinstance(preprocessor.steps[2], SmolVLANewLineProcessor)
+    assert isinstance(preprocessor.steps[2], NewLineTaskProcessorStep)
     # Step 3 would be TokenizerProcessorStep but it's mocked
     assert isinstance(preprocessor.steps[4], DeviceProcessorStep)
     assert isinstance(preprocessor.steps[5], NormalizerProcessorStep)
@@ -120,8 +118,8 @@ def test_make_smolvla_processor_basic():
 
 
 def test_smolvla_newline_processor_single_task():
-    """Test SmolVLANewLineProcessor with single task string."""
-    processor = SmolVLANewLineProcessor()
+    """Test NewLineTaskProcessorStep with single task string."""
+    processor = NewLineTaskProcessorStep()
 
     # Test with task that doesn't have newline
     transition = create_transition(complementary_data={"task": "test task"})
@@ -135,8 +133,8 @@ def test_smolvla_newline_processor_single_task():
 
 
 def test_smolvla_newline_processor_list_of_tasks():
-    """Test SmolVLANewLineProcessor with list of task strings."""
-    processor = SmolVLANewLineProcessor()
+    """Test NewLineTaskProcessorStep with list of task strings."""
+    processor = NewLineTaskProcessorStep()
 
     # Test with list of tasks
     tasks = ["task1", "task2\n", "task3"]
@@ -147,8 +145,8 @@ def test_smolvla_newline_processor_list_of_tasks():
 
 
 def test_smolvla_newline_processor_empty_transition():
-    """Test SmolVLANewLineProcessor with empty transition."""
-    processor = SmolVLANewLineProcessor()
+    """Test NewLineTaskProcessorStep with empty transition."""
+    processor = NewLineTaskProcessorStep()
 
     # Test with no complementary_data
     transition = create_transition()
@@ -221,7 +219,7 @@ def test_smolvla_processor_cuda():
     # Check that data is on CUDA
     assert processed[OBS_STATE].device.type == "cuda"
     assert processed[OBS_IMAGE].device.type == "cuda"
-    assert processed[TransitionKey.ACTION.value].device.type == "cuda"
+    assert processed[TransitionKey.ACTION].device.type == "cuda"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -280,7 +278,7 @@ def test_smolvla_processor_accelerate_scenario():
     # Check that data stays on same GPU
     assert processed[OBS_STATE].device == device
     assert processed[OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION.value].device == device
+    assert processed[TransitionKey.ACTION].device == device
 
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires at least 2 GPUs")
@@ -339,7 +337,7 @@ def test_smolvla_processor_multi_gpu():
     # Check that data stays on cuda:1
     assert processed[OBS_STATE].device == device
     assert processed[OBS_IMAGE].device == device
-    assert processed[TransitionKey.ACTION.value].device == device
+    assert processed[TransitionKey.ACTION].device == device
 
 
 def test_smolvla_processor_without_stats():
@@ -361,8 +359,8 @@ def test_smolvla_processor_without_stats():
 
 
 def test_smolvla_newline_processor_state_dict():
-    """Test SmolVLANewLineProcessor state dict methods."""
-    processor = SmolVLANewLineProcessor()
+    """Test NewLineTaskProcessorStep state dict methods."""
+    processor = NewLineTaskProcessorStep()
 
     # Test state_dict (should be empty)
     state = processor.state_dict()
@@ -380,8 +378,8 @@ def test_smolvla_newline_processor_state_dict():
 
 
 def test_smolvla_newline_processor_transform_features():
-    """Test SmolVLANewLineProcessor transform_features method."""
-    processor = SmolVLANewLineProcessor()
+    """Test NewLineTaskProcessorStep transform_features method."""
+    processor = NewLineTaskProcessorStep()
 
     # Test transform_features
     features = {
@@ -449,7 +447,7 @@ def test_smolvla_processor_bfloat16_device_float32_normalizer():
     # Verify: DeviceProcessor → bfloat16, NormalizerProcessor adapts → final output is bfloat16
     assert processed[OBS_STATE].dtype == torch.bfloat16
     assert processed[OBS_IMAGE].dtype == torch.bfloat16  # IDENTITY normalization still gets dtype conversion
-    assert processed[TransitionKey.ACTION.value].dtype == torch.bfloat16
+    assert processed[TransitionKey.ACTION].dtype == torch.bfloat16
 
     # Verify normalizer automatically adapted its internal state
     assert normalizer_step.dtype == torch.bfloat16

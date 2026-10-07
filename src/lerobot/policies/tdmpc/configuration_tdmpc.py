@@ -16,9 +16,8 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
-from lerobot.optim.optimizers import AdamConfig
+from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.optim import AdamConfig
 
 
 @PreTrainedConfig.register_subclass("tdmpc")
@@ -204,5 +203,5 @@ class TDMPCConfig(PreTrainedConfig):
         return list(range(self.horizon))
 
     @property
-    def reward_delta_indices(self) -> None:
+    def reward_delta_indices(self) -> list[int]:
         return list(range(self.horizon))

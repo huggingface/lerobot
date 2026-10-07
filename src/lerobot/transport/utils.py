@@ -25,11 +25,11 @@ from typing import Any
 
 import torch
 
-from lerobot.transport import services_pb2
 from lerobot.utils.transition import Transition
 
-# FIX for protobuf: Assign the enum to a variable and ignore the type error once
-TransferState = services_pb2.TransferState  # type: ignore[attr-defined]
+from . import services_pb2
+
+TransferState = services_pb2.TransferState
 
 CHUNK_SIZE = 2 * 1024 * 1024  # 2 MB
 MAX_MESSAGE_SIZE = 4 * 1024 * 1024  # 4 MB

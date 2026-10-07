@@ -17,17 +17,18 @@
 import logging
 from functools import cached_property
 
-from lerobot.processor import RobotAction, RobotObservation
-from lerobot.robots.openarm_follower import OpenArmFollower, OpenArmFollowerConfig
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.utils.bimanual import BimanualMixin
+from lerobot.utils.decorators import check_if_not_connected
 
+from ..openarm_follower import OpenArmFollower, OpenArmFollowerConfig
 from ..robot import Robot
 from .config_bi_openarm_follower import BiOpenArmFollowerConfig
 
 logger = logging.getLogger(__name__)
 
 
-class BiOpenArmFollower(Robot):
+class BiOpenArmFollower(BimanualMixin, Robot):
     """
     Bimanual OpenArm Follower Arms
     """
@@ -39,13 +40,26 @@ class BiOpenArmFollower(Robot):
         super().__init__(config)
         self.config = config
 
+        # Top-level cameras are opened by `left_arm` for convenience, but their
+        # keys stay unprefixed in observations (tracked via `_top_level_cam_keys`).
+        self._top_level_cam_keys = set(config.cameras)
+        _collisions = self._top_level_cam_keys & set(
+            config.left_arm_config.cameras
+        ) | self._top_level_cam_keys & set(config.right_arm_config.cameras)
+        if _collisions:
+            raise ValueError(
+                f"Top-level camera names collide with per-arm camera names: {sorted(_collisions)}"
+            )
+        left_arm_cameras = {**config.left_arm_config.cameras, **config.cameras}
+
         left_arm_config = OpenArmFollowerConfig(
             id=f"{config.id}_left" if config.id else None,
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
             disable_torque_on_disconnect=config.left_arm_config.disable_torque_on_disconnect,
+            use_velocity_and_torque=config.left_arm_config.use_velocity_and_torque,
             max_relative_target=config.left_arm_config.max_relative_target,
-            cameras=config.left_arm_config.cameras,
+            cameras=left_arm_cameras,
             side=config.left_arm_config.side,
             can_interface=config.left_arm_config.can_interface,
             use_can_fd=config.left_arm_config.use_can_fd,
@@ -62,6 +76,7 @@ class BiOpenArmFollower(Robot):
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
             disable_torque_on_disconnect=config.right_arm_config.disable_torque_on_disconnect,
+            use_velocity_and_torque=config.right_arm_config.use_velocity_and_torque,
             max_relative_target=config.right_arm_config.max_relative_target,
             cameras=config.right_arm_config.cameras,
             side=config.right_arm_config.side,
@@ -83,23 +98,19 @@ class BiOpenArmFollower(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        left_arm_motors_ft = self.left_arm._motors_ft
-        right_arm_motors_ft = self.right_arm._motors_ft
-
         return {
-            **{f"left_{k}": v for k, v in left_arm_motors_ft.items()},
-            **{f"right_{k}": v for k, v in right_arm_motors_ft.items()},
+            **{f"left_{k}": v for k, v in self.left_arm._motors_ft.items()},
+            **{f"right_{k}": v for k, v in self.right_arm._motors_ft.items()},
         }
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        left_arm_cameras_ft = self.left_arm._cameras_ft
-        right_arm_cameras_ft = self.right_arm._cameras_ft
-
-        return {
-            **{f"left_{k}": v for k, v in left_arm_cameras_ft.items()},
-            **{f"right_{k}": v for k, v in right_arm_cameras_ft.items()},
-        }
+        out: dict[str, tuple] = {}
+        for k, v in self.left_arm._cameras_ft.items():
+            out[k if k in self._top_level_cam_keys else f"left_{k}"] = v
+        for k, v in self.right_arm._cameras_ft.items():
+            out[f"right_{k}"] = v
+        return out
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -109,27 +120,6 @@ class BiOpenArmFollower(Robot):
     def action_features(self) -> dict[str, type]:
         return self._motors_ft
 
-    @property
-    def is_connected(self) -> bool:
-        return self.left_arm.is_connected and self.right_arm.is_connected
-
-    @check_if_already_connected
-    def connect(self, calibrate: bool = True) -> None:
-        self.left_arm.connect(calibrate)
-        self.right_arm.connect(calibrate)
-
-    @property
-    def is_calibrated(self) -> bool:
-        return self.left_arm.is_calibrated and self.right_arm.is_calibrated
-
-    def calibrate(self) -> None:
-        self.left_arm.calibrate()
-        self.right_arm.calibrate()
-
-    def configure(self) -> None:
-        self.left_arm.configure()
-        self.right_arm.configure()
-
     def setup_motors(self) -> None:
         raise NotImplementedError(
             "Motor ID configuration is typically done via manufacturer tools for CAN motors."
@@ -137,15 +127,15 @@ class BiOpenArmFollower(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        obs_dict = {}
+        obs_dict: RobotObservation = {}
 
-        # Add "left_" prefix
-        left_obs = self.left_arm.get_observation()
-        obs_dict.update({f"left_{key}": value for key, value in left_obs.items()})
+        # Add "left_" prefix to per-arm keys; keep top-level camera keys unprefixed.
+        for key, value in self.left_arm.get_observation().items():
+            obs_dict[key if key in self._top_level_cam_keys else f"left_{key}"] = value
 
         # Add "right_" prefix
-        right_obs = self.right_arm.get_observation()
-        obs_dict.update({f"right_{key}": value for key, value in right_obs.items()})
+        for key, value in self.right_arm.get_observation().items():
+            obs_dict[f"right_{key}"] = value
 
         return obs_dict
 
@@ -173,8 +163,3 @@ class BiOpenArmFollower(Robot):
         prefixed_sent_action_right = {f"right_{key}": value for key, value in sent_action_right.items()}
 
         return {**prefixed_sent_action_left, **prefixed_sent_action_right}
-
-    @check_if_not_connected
-    def disconnect(self):
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()

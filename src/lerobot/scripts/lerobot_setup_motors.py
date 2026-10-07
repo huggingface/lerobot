@@ -29,36 +29,31 @@ from dataclasses import dataclass
 import draccus
 
 from lerobot.robots import (  # noqa: F401
+    Robot,
     RobotConfig,
+    bi_rebot_b601_follower,
     bi_so_follower,
     koch_follower,
     lekiwi,
     make_robot_from_config,
     omx_follower,
+    rebot_b601_follower,
     so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
+    Teleoperator,
     TeleoperatorConfig,
+    bi_openarm_mini,
+    bi_rebot_102_leader,
     bi_so_leader,
     koch_leader,
     make_teleoperator_from_config,
     omx_leader,
     openarm_mini,
+    rebot_102_leader,
     so_leader,
 )
-
-COMPATIBLE_DEVICES = [
-    "koch_follower",
-    "koch_leader",
-    "omx_follower",
-    "omx_leader",
-    "openarm_mini",
-    "so100_follower",
-    "so100_leader",
-    "so101_follower",
-    "so101_leader",
-    "lekiwi",
-]
+from lerobot.utils.import_utils import register_third_party_plugins
 
 
 @dataclass
@@ -66,27 +61,36 @@ class SetupConfig:
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if bool(self.teleop) == bool(self.robot):
             raise ValueError("Choose either a teleop or a robot.")
 
-        self.device = self.robot if self.robot else self.teleop
+    @property
+    def device(self) -> RobotConfig | TeleoperatorConfig:
+        """The one device config given on the CLI (`__post_init__` enforces exactly one)."""
+        if self.robot is not None:
+            return self.robot
+        if self.teleop is not None:
+            return self.teleop
+        raise ValueError("Choose either a teleop or a robot.")
 
 
 @draccus.wrap()
-def setup_motors(cfg: SetupConfig):
-    if cfg.device.type not in COMPATIBLE_DEVICES:
-        raise NotImplementedError
-
+def setup_motors(cfg: SetupConfig) -> None:
+    device: Robot | Teleoperator
     if isinstance(cfg.device, RobotConfig):
         device = make_robot_from_config(cfg.device)
     else:
         device = make_teleoperator_from_config(cfg.device)
 
-    device.setup_motors()
+    setup = getattr(device, "setup_motors", None)
+    if not callable(setup):
+        raise NotImplementedError(f"Device type '{cfg.device.type}' does not support motor setup.")
+    setup()
 
 
 def main():
+    register_third_party_plugins()
     setup_motors()
 
 

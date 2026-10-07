@@ -14,6 +14,7 @@
 # keys
 import os
 from pathlib import Path
+from typing import Final
 
 from huggingface_hub.constants import HF_HOME
 
@@ -26,6 +27,7 @@ OBS_IMAGES = OBS_IMAGE + "s"
 OBS_LANGUAGE = OBS_STR + ".language"
 OBS_LANGUAGE_TOKENS = OBS_LANGUAGE + ".tokens"
 OBS_LANGUAGE_ATTENTION_MASK = OBS_LANGUAGE + ".attention_mask"
+OBS_LANGUAGE_CAUSAL_MARKS = OBS_LANGUAGE + ".causal_marks"
 OBS_LANGUAGE_SUBTASK = OBS_STR + ".subtask"
 OBS_LANGUAGE_SUBTASK_TOKENS = OBS_LANGUAGE_SUBTASK + ".tokens"
 OBS_LANGUAGE_SUBTASK_ATTENTION_MASK = OBS_LANGUAGE_SUBTASK + ".attention_mask"
@@ -34,10 +36,25 @@ ACTION = "action"
 ACTION_PREFIX = ACTION + "."
 ACTION_TOKENS = ACTION + ".tokens"
 ACTION_TOKEN_MASK = ACTION + ".token_mask"
+ACTION_CODE_TOKEN_MASK = ACTION + ".code_token_mask"
 REWARD = "next.reward"
 TRUNCATED = "next.truncated"
 DONE = "next.done"
+SUCCESS = "next.success"
 INFO = "info"
+
+# Complementary-data keys describing a text-generation request, set by the rollout
+# inference engines before the preprocessor runs so a processor step can format the
+# prompt: QUERY_KIND is what is being asked for ("vqa", "next_subtask", ...) and
+# QUERY_TEXT the request itself.  Absent on ordinary action inference.
+QUERY_KIND = "query_kind"
+QUERY_TEXT = "query_text"
+
+# Raw semantic-language dataset columns. These live here so lightweight policy
+# processors do not need to import the optional datasets/pyarrow stack.
+LANGUAGE_PERSISTENT: Final = "language_persistent"
+LANGUAGE_EVENTS: Final = "language_events"
+MESSAGES_RENDERED = "messages_rendered"
 
 ROBOTS = "robots"
 TELEOPERATORS = "teleoperators"
@@ -47,11 +64,13 @@ CHECKPOINTS_DIR = "checkpoints"
 LAST_CHECKPOINT_LINK = "last"
 PRETRAINED_MODEL_DIR = "pretrained_model"
 TRAINING_STATE_DIR = "training_state"
+ALGORITHM_DIR = "algorithm"
 RNG_STATE = "rng_state.safetensors"
 TRAINING_STEP = "training_step.json"
 OPTIMIZER_STATE = "optimizer_state.safetensors"
 OPTIMIZER_PARAM_GROUPS = "optimizer_param_groups.json"
 SCHEDULER_STATE = "scheduler_state.json"
+SCALER_STATE = "scaler_state.json"
 
 POLICY_PREPROCESSOR_DEFAULT_NAME = "policy_preprocessor"
 POLICY_POSTPROCESSOR_DEFAULT_NAME = "policy_postprocessor"
@@ -65,15 +84,30 @@ if "LEROBOT_HOME" in os.environ:
 # cache dir
 default_cache_path = Path(HF_HOME) / "lerobot"
 HF_LEROBOT_HOME = Path(os.getenv("HF_LEROBOT_HOME", default_cache_path)).expanduser()
+# LeRobot's own revision-safe Hub cache (NOT the system-wide ~/.cache/huggingface/hub/).
+# Used as the ``cache_dir`` argument to ``snapshot_download`` so that different
+# dataset revisions are stored in isolated snapshot directories.
+HF_LEROBOT_HUB_CACHE = HF_LEROBOT_HOME / "hub"
 
 # calibration dir
 default_calibration_path = HF_LEROBOT_HOME / "calibration"
 HF_LEROBOT_CALIBRATION = Path(os.getenv("HF_LEROBOT_CALIBRATION", default_calibration_path)).expanduser()
 
 
-# streaming datasets
-LOOKBACK_BACKTRACKTABLE = 100
-LOOKAHEAD_BACKTRACKTABLE = 100
+# Dataset meta-features (auto-populated by the recording pipeline)
+DEFAULT_FEATURES = {
+    "timestamp": {"dtype": "float32", "shape": (1,), "names": None},
+    "frame_index": {"dtype": "int64", "shape": (1,), "names": None},
+    "episode_index": {"dtype": "int64", "shape": (1,), "names": None},
+    "index": {"dtype": "int64", "shape": (1,), "names": None},
+    "task_index": {"dtype": "int64", "shape": (1,), "names": None},
+}
+
+# ImageNet normalization constants
+IMAGENET_STATS = {
+    "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
+    "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
+}
 
 # openpi
 OPENPI_ATTENTION_MASK_VALUE = -2.3819763e38  # TODO(pepijn): Modify this when extending support to fp8 models

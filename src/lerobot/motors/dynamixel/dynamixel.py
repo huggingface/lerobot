@@ -21,6 +21,9 @@
 import logging
 from copy import deepcopy
 from enum import Enum
+from typing import TYPE_CHECKING
+
+from lerobot.utils.import_utils import _dynamixel_sdk_available, require_package
 
 from ..encoding_utils import decode_twos_complement, encode_twos_complement
 from ..motors_bus import Motor, MotorCalibration, NameOrID, SerialMotorsBus, Value, get_address
@@ -32,6 +35,11 @@ from .tables import (
     MODEL_NUMBER_TABLE,
     MODEL_RESOLUTION,
 )
+
+if TYPE_CHECKING or _dynamixel_sdk_available:
+    import dynamixel_sdk as dxl
+else:
+    dxl = None
 
 PROTOCOL_VERSION = 2.0
 DEFAULT_BAUDRATE = 1_000_000
@@ -82,23 +90,6 @@ class TorqueMode(Enum):
     DISABLED = 0
 
 
-def _split_into_byte_chunks(value: int, length: int) -> list[int]:
-    import dynamixel_sdk as dxl
-
-    if length == 1:
-        data = [value]
-    elif length == 2:
-        data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
-    elif length == 4:
-        data = [
-            dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
-            dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
-            dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
-            dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
-        ]
-    return data
-
-
 class DynamixelMotorsBus(SerialMotorsBus):
     """
     The Dynamixel implementation for a MotorsBus. It relies on the python dynamixel sdk to communicate with
@@ -123,9 +114,8 @@ class DynamixelMotorsBus(SerialMotorsBus):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
     ):
+        require_package("dynamixel-sdk", extra="dynamixel", import_name="dynamixel_sdk")
         super().__init__(port, motors, calibration)
-        import dynamixel_sdk as dxl
-
         self.port_handler = dxl.PortHandler(self.port)
         self.packet_handler = dxl.PacketHandler(PROTOCOL_VERSION)
         self.sync_reader = dxl.GroupSyncRead(self.port_handler, self.packet_handler, 0, 0)
@@ -244,7 +234,18 @@ class DynamixelMotorsBus(SerialMotorsBus):
         return half_turn_homings
 
     def _split_into_byte_chunks(self, value: int, length: int) -> list[int]:
-        return _split_into_byte_chunks(value, length)
+        if length == 1:
+            data = [value]
+        elif length == 2:
+            data = [dxl.DXL_LOBYTE(value), dxl.DXL_HIBYTE(value)]
+        elif length == 4:
+            data = [
+                dxl.DXL_LOBYTE(dxl.DXL_LOWORD(value)),
+                dxl.DXL_HIBYTE(dxl.DXL_LOWORD(value)),
+                dxl.DXL_LOBYTE(dxl.DXL_HIWORD(value)),
+                dxl.DXL_HIBYTE(dxl.DXL_HIWORD(value)),
+            ]
+        return data
 
     def broadcast_ping(self, num_retry: int = 0, raise_on_error: bool = False) -> dict[int, int] | None:
         for n_try in range(1 + num_retry):

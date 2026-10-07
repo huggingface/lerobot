@@ -51,14 +51,15 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, get_type_hints
 
+import draccus
 import torch
 from huggingface_hub import HfApi, hf_hub_download
 from safetensors.torch import load_file as load_safetensors
 
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.policies import get_policy_class, make_policy_config, make_pre_post_processors
 from lerobot.utils.constants import ACTION
 
 
@@ -78,7 +79,7 @@ def extract_normalization_stats(state_dict: dict[str, torch.Tensor]) -> dict[str
         'observation.state') and inner keys are statistic types ('mean', 'std'),
         mapping to their corresponding tensor values.
     """
-    stats = {}
+    stats: dict[str, dict[str, torch.Tensor]] = {}
 
     # Define patterns to match and their prefixes to remove
     normalization_patterns = [
@@ -586,6 +587,11 @@ def main():
     # Add normalization mapping to config
     cleaned_config["normalization_mapping"] = norm_map
 
+    # config.json stores `dtype` by name; decode it the way config loading does (a torch.dtype).
+    if "dtype" in cleaned_config:
+        dtype_type = get_type_hints(PreTrainedConfig.get_choice_class(policy_type))["dtype"]
+        cleaned_config["dtype"] = draccus.decode(dtype_type, cleaned_config["dtype"])
+
     # Create policy configuration using the factory
     print(f"Creating {policy_type} policy configuration...")
     policy_config = make_policy_config(policy_type, **cleaned_config)
@@ -647,10 +653,15 @@ def main():
     tags = set(tags).union({"robotics", "lerobot", policy_type})
     tags = list(tags)
 
-    # Generate model card
-    card = policy.generate_model_card(
-        dataset_repo_id=dataset_repo_id, model_type=policy_type, license=license, tags=tags
-    )
+    # Generate model card through the free helper (PreTrainedPolicy.generate_model_card was
+    # removed with the publisher redesign), then apply the metadata recovered above — the
+    # migrated policy config does not carry the original repo's card fields.
+    from lerobot.common.train_utils import generate_model_card
+
+    card = generate_model_card(policy.config)
+    card.data.datasets = dataset_repo_id
+    card.data.license = license
+    card.data.tags = sorted(tags)
 
     # Save model card locally
     card.save(str(output_dir / "README.md"))

@@ -34,11 +34,6 @@ As described by Physical Intelligence, while AI has achieved remarkable success 
    pip install -e ".[pi]"
    ```
 
-   > [!NOTE]
-   > For lerobot 0.4.0, if you want to install pi tag, you will have to do: `pip install "lerobot[pi]@git+https://github.com/huggingface/lerobot.git"`.
-   >
-   > This will be solved in the next patch release
-
 ## Training Data and Capabilities
 
 π₀ is trained on the largest robot interaction dataset to date, combining three key data sources:
@@ -95,6 +90,45 @@ lerobot-train \
 | `train_expert_only`     | `false` | Do not freeze the VLM, train all parameters |
 
 **💡 Tip**: Setting `train_expert_only=true` freezes the VLM and trains only the action expert and projections, allowing finetuning with reduced memory usage.
+
+## Relative Actions
+
+By default, π₀ predicts absolute actions. You can enable **relative actions** so the model predicts offsets relative to the current robot state. This can improve training stability for certain setups.
+
+To use relative actions, first recompute your dataset stats in relative space via the CLI:
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.chunk_size 50 \
+    --operation.relative_exclude_joints "['gripper']" \
+    --push_to_hub true
+```
+
+Or equivalently in Python:
+
+```python
+from lerobot.datasets import LeRobotDataset, recompute_stats
+
+dataset = LeRobotDataset("your_dataset")
+recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_joints=["gripper"])
+dataset.push_to_hub()
+```
+
+The `chunk_size` should match your policy's `chunk_size` (default 50 for π₀). `relative_exclude_joints` lists joint names that should remain in absolute space (e.g. gripper commands). Use `--push_to_hub true` to upload the updated stats to the Hub.
+
+Then train with relative actions enabled:
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --policy.use_relative_actions=true \
+    --policy.relative_exclude_joints='["gripper"]' \
+    ...
+```
 
 ## License
 

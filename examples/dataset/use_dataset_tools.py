@@ -29,7 +29,8 @@ Usage:
 
 import numpy as np
 
-from lerobot.datasets.dataset_tools import (
+from lerobot.datasets import (
+    LeRobotDataset,
     add_features,
     delete_episodes,
     merge_datasets,
@@ -37,7 +38,6 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
 def main():

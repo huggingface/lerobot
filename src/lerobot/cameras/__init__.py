@@ -12,6 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .camera import Camera
+from .camera import Camera, DepthCamera
 from .configs import CameraConfig, ColorMode, Cv2Backends, Cv2Rotation
 from .utils import make_cameras_from_configs
+
+# NOTE: Camera submodule configs and implementations (OpenCVCameraConfig, RealSenseCamera, etc.)
+# are intentionally NOT re-exported here to avoid pulling backend-specific dependencies.
+# Import from submodules: ``from lerobot.cameras.opencv import OpenCVCameraConfig``
+
+__all__ = [
+    "Camera",
+    "CameraConfig",
+    "ColorMode",
+    "Cv2Backends",
+    "Cv2Rotation",
+    "DepthCamera",
+    "make_cameras_from_configs",
+]

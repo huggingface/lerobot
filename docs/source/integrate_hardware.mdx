@@ -18,7 +18,7 @@ If you're using Feetech or Dynamixel motors, LeRobot provides built-in bus inter
 - [`DynamixelMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/dynamixel/dynamixel.py) – for controlling Dynamixel servos
 
 Please refer to the [`MotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py) abstract class to learn about its API.
-For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/so_follower/so101_follower/so101_follower.py)
+For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/so_follower/so_follower.py)
 
 Use these if compatible. Otherwise, you'll need to find or write a Python interface (not covered in this tutorial):
 
@@ -234,7 +234,7 @@ def is_calibrated(self) -> bool:
 The goal of the calibration is twofold:
 
 - Know the physical range of motion of each motors in order to only send commands within this range.
-- Normalize raw motors positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete value dependant on the specific motor used that will not replicate elsewhere.
+- Normalize raw motor positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete values dependent on the specific motor used that will not replicate elsewhere.
 
 It should implement the logic for calibration (if relevant) and update the `self.calibration` dictionary. If you are using Feetech or Dynamixel motors, our bus interfaces already include methods to help with this.
 
@@ -354,6 +354,7 @@ Your project must be a standard, installable Python package. Crucially, the name
 - `lerobot_robot_` for a robot.
 - `lerobot_camera_` for a camera.
 - `lerobot_teleoperator_` for a teleoperation device.
+- `lerobot_strategy_` for a `lerobot-rollout` strategy (see [Bring your own strategy](./inference#bring-your-own-strategy)).
 
 This prefix system is how `lerobot` automatically finds your plugin in the Python environment.
 

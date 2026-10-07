@@ -2,11 +2,6 @@
 
 Short, imperative summary (e.g., "fix(robots): handle None in sensor parser"). See [CONTRIBUTING.md](../CONTRIBUTING.md) for PR conventions.
 
-## Type / Scope
-
-- **Type**: (Bug | Feature | Docs | Performance | Test | CI | Chore)
-- **Scope**: (optional — name of module or package affected)
-
 ## Summary / Motivation
 
 - One-paragraph description of what changes and why.
@@ -19,28 +14,14 @@ Short, imperative summary (e.g., "fix(robots): handle None in sensor parser"). S
 
 ## What changed
 
-- Short, concrete bullets of the modifications (files/behaviour).
+- Short, concrete bullets explaining the functional changes (how the behavior or output differs now).
 - Short note if this introduces breaking changes and migration steps.
 
 ## How was this tested (or how to run locally)
 
-- Tests added: list new tests or test files.
+- Tests added: list new tests or test files. `pytest -q tests/ -k <keyword>`
 - Manual checks / dataset runs performed.
-- Instructions for the reviewer
-
-Example:
-
-- Ran the relevant tests:
-
-  ```bash
-  pytest -q tests/ -k <keyword>
-  ```
-
-- Reproduce with a quick example or CLI (if applicable):
-
-  ```bash
-  lerobot-train --some.option=true
-  ```
+- Instructions for the reviewer for reproducing with a quick example or CLI (if applicable)
 
 ## Checklist (required before merge)
 
@@ -48,6 +29,7 @@ Example:
 - [ ] All tests pass locally (`pytest`)
 - [ ] Documentation updated
 - [ ] CI is green
+- [ ] Community Review: I have reviewed another contributor's open PR and linked it here: # (insert PR number/link)
 
 ## Reviewer notes
 

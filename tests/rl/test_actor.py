@@ -19,11 +19,14 @@ from unittest.mock import patch
 
 import pytest
 import torch
+
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from torch.multiprocessing import Event, Queue
 
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.transition import Transition
-from tests.utils import require_package
+from tests.utils import skip_if_package_missing
 
 
 def create_learner_service_stub():
@@ -64,7 +67,7 @@ def close_service_stub(channel, server):
     server.stop(None)
 
 
-@require_package("grpcio", "grpc")
+@skip_if_package_missing("grpcio", "grpc")
 def test_establish_learner_connection_success():
     from lerobot.rl.actor import establish_learner_connection
 
@@ -81,7 +84,7 @@ def test_establish_learner_connection_success():
     close_service_stub(channel, server)
 
 
-@require_package("grpcio", "grpc")
+@skip_if_package_missing("grpcio", "grpc")
 def test_establish_learner_connection_failure():
     from lerobot.rl.actor import establish_learner_connection
 
@@ -100,7 +103,7 @@ def test_establish_learner_connection_failure():
     close_service_stub(channel, server)
 
 
-@require_package("grpcio", "grpc")
+@skip_if_package_missing("grpcio", "grpc")
 def test_push_transitions_to_transport_queue():
     from lerobot.rl.actor import push_transitions_to_transport_queue
     from lerobot.transport.utils import bytes_to_transitions
@@ -135,7 +138,7 @@ def test_push_transitions_to_transport_queue():
         assert_transitions_equal(deserialized_transition, transitions[i])
 
 
-@require_package("grpcio", "grpc")
+@skip_if_package_missing("grpcio", "grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_transitions_stream():
     from lerobot.rl.actor import transitions_stream
@@ -167,7 +170,7 @@ def test_transitions_stream():
     assert streamed_data[2].data == b"transition_data_3"
 
 
-@require_package("grpcio", "grpc")
+@skip_if_package_missing("grpcio", "grpc")
 @pytest.mark.timeout(3)  # force cross-platform watchdog
 def test_interactions_stream():
     from lerobot.rl.actor import interactions_stream

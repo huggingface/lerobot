@@ -1,0 +1,42 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Benchmark image for LIBERO integration tests.
+# Extends the nightly GPU image (which already has all extras installed)
+# with the PR's source code and LIBERO-specific asset setup.
+#
+# Build:  docker build -f docker/Dockerfile.benchmark.libero -t lerobot-benchmark-libero .
+# Run:    docker run --gpus all --rm lerobot-benchmark-libero lerobot-eval ...
+
+FROM huggingface/lerobot-gpu:latest
+
+# Pre-download lerobot/libero-assets from HF Hub so nothing is fetched at
+# runtime (which times out on CI). Point the libero config at the cached path.
+# libero/libero/__init__.py calls input() when ~/.libero/config.yaml is missing,
+# so we write the config before any libero import can happen.
+RUN LIBERO_DIR=$(python -c \
+      "import importlib.util, os; s=importlib.util.find_spec('libero'); \
+       print(os.path.join(os.path.dirname(s.origin), 'libero'))") && \
+    mkdir -p /home/user_lerobot/.libero && \
+    python -c "\
+from huggingface_hub import snapshot_download; \
+snapshot_download(repo_id='lerobot/libero-assets', repo_type='dataset', \
+                  local_dir='/home/user_lerobot/.libero/assets')" && \
+    printf "assets: /home/user_lerobot/.libero/assets\nbddl_files: ${LIBERO_DIR}/bddl_files\ndatasets: ${LIBERO_DIR}/../datasets\ninit_states: ${LIBERO_DIR}/init_files\n" \
+    > /home/user_lerobot/.libero/config.yaml
+
+# Overlay the PR's source code on top of the nightly image.
+COPY --chown=user_lerobot:user_lerobot . .
+
+CMD ["/bin/bash"]

@@ -29,15 +29,14 @@ on:
       - "tests/**"
       - ".github/workflows/**"
       - "pyproject.toml"
+      - "uv.lock"
       - "Makefile"
 
-permissions:
-  contents: read
 
 # Sets up the environment variables
 env:
-  UV_VERSION: "0.8.0"
-  PYTHON_VERSION: "3.10"
+  UV_VERSION: "0.11.30"
+  PYTHON_VERSION: "3.12"
   DOCKER_IMAGE_NAME: huggingface/lerobot-gpu
 
 # Ensures that only the latest action is built, canceling older runs.
@@ -45,11 +44,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
 
   # This job runs the E2E tests + pytest with all extras
   # It runs everytime a PR is approved or a push to main
   full-tests:
+    permissions:
+      contents: read
     name: Full Tests
     runs-on: ubuntu-latest
     if: |
@@ -60,8 +63,9 @@ jobs:
       MUJOCO_GL: egl
       HF_HOME: /mnt/cache/.cache/huggingface
       HF_LEROBOT_HOME: /mnt/cache/.cache/huggingface/lerobot
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           lfs: true
           persist-credentials: false
@@ -78,14 +82,23 @@ jobs:
           speech-dispatcher libgeos-dev portaudio19-dev
 
       - name: Setup uv and Python
-        uses: astral-sh/setup-uv@v6 # zizmor: ignore[unpinned-uses]
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
           enable-cache: true
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install lerobot with all extras
-        run: uv sync --extra all # TODO(Steven): Make flash-attn optional
+        run: uv sync --locked --extra all # TODO(Steven): Make flash-attn optional
+
+      - name: Install lerobot-lancedb (converts fixtures for the lance backend tests)
+        run: uv sync --locked --extra all --extra lancedb-convert
+
+      - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          uv run hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          uv run hf auth whoami
 
       - name: Run pytest (all extras)
         run: uv run pytest tests -vv --maxfail=10
@@ -97,6 +110,8 @@ jobs:
   # It runs everytime a PR is approved or a push to main
   # TODO(Steven): For now we skip this job for community PRs
   build-and-push-docker:
+    permissions:
+      contents: read
     name: Build and Push Docker
     runs-on:
       group: aws-general-8-plus
@@ -129,21 +144,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install git-lfs
           git lfs install
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           lfs: true
           persist-credentials: false
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3 # zizmor: ignore[unpinned-uses]
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
         with:
           cache-binary: false
       - name: Login to Docker Hub
-        uses: docker/login-action@v3 # zizmor: ignore[unpinned-uses]
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0  # v4.4.0
         with:
           username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
           password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6 # zizmor: ignore[unpinned-uses]
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
         with:
           context: .
           file: ./docker/Dockerfile.internal
@@ -153,6 +168,7 @@ jobs:
   # This job runs pytest with all extras in a GPU enabled host
   # It runs everytime a test image is created
   gpu-tests:
+    permissions: {}
     name: GPU Tests
     needs: [build-and-push-docker]
     runs-on:
@@ -162,6 +178,7 @@ jobs:
       HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
       TORCH_HOME: /home/user_lerobot/.cache/torch
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
+      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
       image: ${{ needs.build-and-push-docker.outputs.image_tag }} # zizmor: ignore[unpinned-images]
       options: --gpus all --shm-size "16gb"
@@ -173,8 +190,13 @@ jobs:
         shell: bash
         working-directory: /lerobot
     steps:
+      - name: Login to Hugging Face
+        if: env.HF_USER_TOKEN != ''
+        run: |
+          hf auth login --token "$HF_USER_TOKEN" --add-to-git-credential
+          hf auth whoami
       - name: Fix ptxas permissions
-        run: chmod +x /lerobot/.venv/lib/python3.10/site-packages/triton/backends/nvidia/bin/ptxas
+        run: chmod +x /lerobot/.venv/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas
       - name: Run pytest on GPU
         run: pytest tests -vv --maxfail=10
       - name: Run end-to-end tests
@@ -183,6 +205,7 @@ jobs:
   # This job deletes the test image recently created
   # It runs everytime after the gpu-tests have finished
   delete-pr-image:
+    permissions: {}
     name: Delete PR Image
     needs: [gpu-tests, build-and-push-docker]
     if: always() && ((github.event.review.state == 'approved') || (github.event_name == 'workflow_dispatch')) && needs.build-and-push-docker.result == 'success'
@@ -195,8 +218,8 @@ jobs:
           DOCKERHUB_LEROBOT_PASSWORD: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
           IMAGE_FULL: ${{ needs.build-and-push-docker.outputs.image_tag }}
         run: |
-          IMAGE_NAME=$(echo "$IMAGE_FULL" | cut -d':' -f1)
-          IMAGE_TAG=$(echo "$IMAGE_FULL" | cut -d':' -f2-)
+          IMAGE_NAME=$(echo "${IMAGE_FULL}" | cut -d':' -f1)
+          IMAGE_TAG=$(echo "${IMAGE_FULL}" | cut -d':' -f2-)
           echo "Attempting to delete image: $IMAGE_NAME:$IMAGE_TAG"
 
           TOKEN=$(curl -s -H "Content-Type: application/json" \

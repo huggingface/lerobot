@@ -65,6 +65,7 @@ def get_sys_info() -> dict[str, str]:
         "Platform": platform.platform(),
         "Python version": platform.python_version(),
         "Huggingface Hub version": get_package_version("huggingface_hub"),
+        "Transformers version": get_package_version("transformers"),
         "Datasets version": get_package_version("datasets"),
         "Numpy version": get_package_version("numpy"),
         "FFmpeg version": get_ffmpeg_version(),
@@ -72,7 +73,7 @@ def get_sys_info() -> dict[str, str]:
 
     # PyTorch and GPU specific information
     torch_version = "N/A"
-    torch_cuda_available = "N/A"
+    torch_cuda_available: str | bool = "N/A"
     cuda_version = "N/A"
     gpu_model = "N/A"
     try:
@@ -91,13 +92,14 @@ def get_sys_info() -> dict[str, str]:
     info.update(
         {
             "PyTorch version": torch_version,
+            "Torchcodec version": get_package_version("torchcodec"),
             "Is PyTorch built with CUDA support?": str(torch_cuda_available),
             "Cuda version": cuda_version,
             "GPU model": gpu_model,
             "Using GPU in script?": "<fill in>",
         }
     )
-    scripts = "N/A"
+    scripts: str | list[str] = "N/A"
     try:
         dist = distribution(PACKAGE_NAME)
         scripts = [ep.name for ep in dist.entry_points if ep.group == "console_scripts"]

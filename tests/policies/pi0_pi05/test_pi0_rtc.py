@@ -24,8 +24,9 @@ import torch
 # Skip this entire module in CI
 pytestmark = pytest.mark.skipif(
     os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local OpenPI installation and is not meant for CI",
+    reason="TODO: This test seems to hang the CI",
 )
+
 
 from lerobot.configs.types import FeatureType, PolicyFeature, RTCAttentionSchedule  # noqa: E402
 from lerobot.policies.pi0 import PI0Config, PI0Policy, make_pi0_pre_post_processors  # noqa: E402
@@ -39,7 +40,7 @@ def test_pi0_rtc_initialization():
     """Test PI0 policy can initialize RTC processor."""
     set_seed(42)
 
-    config = PI0Config(max_action_dim=7, max_state_dim=14, dtype="float32")
+    config = PI0Config(max_action_dim=7, max_state_dim=14, dtype=torch.float32)
 
     # Add RTC config
     config.rtc_config = RTCConfig(
@@ -74,7 +75,7 @@ def test_pi0_rtc_initialization_without_rtc_config():
     """Test PI0 policy can initialize without RTC config."""
     set_seed(42)
 
-    config = PI0Config(max_action_dim=7, max_state_dim=14, dtype="float32")
+    config = PI0Config(max_action_dim=7, max_state_dim=14, dtype=torch.float32)
 
     # Instantiate policy
     policy = PI0Policy(config)
@@ -88,11 +89,12 @@ def test_pi0_rtc_initialization_without_rtc_config():
     print("✓ PI0 RTC initialization without RTC config: Test passed")
 
 
+@require_cuda
 def test_pi0_rtc_inference_with_prev_chunk():
     """Test PI0 policy inference with RTC and previous chunk."""
     set_seed(42)
 
-    config = PI0Config(max_action_dim=7, max_state_dim=14, chunk_size=50, dtype="float32")
+    config = PI0Config(max_action_dim=7, max_state_dim=14, chunk_size=50, dtype=torch.float32)
 
     # Add RTC config
     config.rtc_config = RTCConfig(
@@ -169,7 +171,7 @@ def test_pi0_rtc_inference_without_prev_chunk():
     """Test PI0 policy inference with RTC but no previous chunk (RTC should have no effect)."""
     set_seed(42)
 
-    config = PI0Config(max_action_dim=7, max_state_dim=14, chunk_size=50, dtype="float32")
+    config = PI0Config(max_action_dim=7, max_state_dim=14, chunk_size=50, dtype=torch.float32)
 
     # Add RTC config
     config.rtc_config = RTCConfig(
@@ -237,7 +239,7 @@ def test_pi0_rtc_validation_rules():
     """Test PI0 policy with RTC follows all three validation rules."""
     set_seed(42)
 
-    config = PI0Config(max_action_dim=7, max_state_dim=14, chunk_size=50, dtype="float32")
+    config = PI0Config(max_action_dim=7, max_state_dim=14, chunk_size=50, dtype=torch.float32)
 
     # Add RTC config
     config.rtc_config = RTCConfig(
@@ -314,7 +316,7 @@ def test_pi0_rtc_validation_rules():
         RTCAttentionSchedule.EXP,
     ]
 
-    config = PI0Config(max_action_dim=7, max_state_dim=14, chunk_size=50, dtype="float32")
+    config = PI0Config(max_action_dim=7, max_state_dim=14, chunk_size=50, dtype=torch.float32)
 
     config.input_features = {
         "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(14,)),

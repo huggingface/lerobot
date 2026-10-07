@@ -16,7 +16,6 @@
 
 import logging
 import time
-from typing import TypeAlias
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -29,6 +28,27 @@ from ..teleoperator import Teleoperator
 from .config_so_leader import SOLeaderTeleopConfig
 
 logger = logging.getLogger(__name__)
+
+_HOMING_POSITION_DIAGRAM = r"""
+       ╭─────┬────────────────────┬──────╮ ◉╲═════╗   ← moveable claw
+       │     │      forearm       │  ▤▤  │╤══╲════╝
+       ╰┬───┬┴────────────────────┴──────┴┴═══════╝
+        │   │                                  ███
+        │   │                                  ███  ← handle
+        │   │                                  ███
+        │   │   upper arm
+        │   │
+        │   │
+        │   │
+   ╭────┴───┴────╮
+   │   base ◉    │
+   ╰──┬───────┬──╯
+  ╭───┴───────┴───╮
+  │▓▓▓ C-clamp ▓▓▓│
+  ╰───────────────╯
+ ═══════════════════════════════════════════════════
+                table edge
+"""
 
 
 class SOLeader(Teleoperator):
@@ -60,7 +80,7 @@ class SOLeader(Teleoperator):
 
     @property
     def feedback_features(self) -> dict[str, type]:
-        return {}
+        return self.action_features
 
     @property
     def is_connected(self) -> bool:
@@ -98,7 +118,9 @@ class SOLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
-        input(f"Move {self} to the middle of its range of motion and press ENTER....")
+        print(_HOMING_POSITION_DIAGRAM)
+        print("Video walkthrough: https://huggingface.co/docs/lerobot/main/en/so101#calibration-video")
+        input(f"Move {self} to the middle of its range of motion (shown above) and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()
 
         full_turn_motor = "wrist_roll"
@@ -111,14 +133,14 @@ class SOLeader(Teleoperator):
         range_mins[full_turn_motor] = 0
         range_maxes[full_turn_motor] = 4095
 
-        self.calibration = {}
+        self.calibration: dict[str, MotorCalibration] = {}
         for motor, m in self.bus.motors.items():
             self.calibration[motor] = MotorCalibration(
                 id=m.id,
                 drive_mode=0,
-                homing_offset=homing_offsets[motor],
-                range_min=range_mins[motor],
-                range_max=range_maxes[motor],
+                homing_offset=int(homing_offsets[motor]),
+                range_min=int(range_mins[motor]),
+                range_max=int(range_maxes[motor]),
             )
 
         self.bus.write_calibration(self.calibration)
@@ -131,6 +153,12 @@ class SOLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
+    def enable_torque(self) -> None:
+        self.bus.enable_torque()
+
+    def disable_torque(self) -> None:
+        self.bus.disable_torque()
+
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
@@ -140,15 +168,17 @@ class SOLeader(Teleoperator):
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
-        action = self.bus.sync_read("Present_Position")
+        action = self.bus.sync_read("Present_Position", num_retry=self.config.num_read_retries)
         action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
 
+    @check_if_not_connected
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        # TODO: Implement force feedback
-        raise NotImplementedError
+        goals = {k.removesuffix(".pos"): v for k, v in feedback.items() if k.endswith(".pos")}
+        if goals:
+            self.bus.sync_write("Goal_Position", goals)
 
     @check_if_not_connected
     def disconnect(self) -> None:
@@ -156,5 +186,5 @@ class SOLeader(Teleoperator):
         logger.info(f"{self} disconnected.")
 
 
-SO100Leader: TypeAlias = SOLeader
-SO101Leader: TypeAlias = SOLeader
+SO100Leader = SOLeader
+SO101Leader = SOLeader
