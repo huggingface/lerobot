@@ -464,33 +464,44 @@ class SerialMotorsBus(MotorsBusBase):
             initial_id (int | None, optional): Current ID (skips scanning when provided). Defaults to None.
 
         Raises:
-            RuntimeError: The motor could not be found or its model number
-                does not match the expected one.
+            RuntimeError: The motor could not be found, its model number does not match the
+                expected one, or it does not answer as configured once set up.
             ConnectionError: Communication with the motor failed.
         """
         if not self.is_connected:
             self._connect(handshake=False)
 
-        if initial_baudrate is None:
-            initial_baudrate, initial_id = self._find_single_motor(motor)
-
-        if initial_id is None:
-            _, initial_id = self._find_single_motor(motor, initial_baudrate)
-
         definition = self._definition(motor)
         target_id = self.motors[motor].id
-        self.set_baudrate(initial_baudrate)
+        # The search walks the baud rates too: the port goes back to the default whatever happens.
         try:
-            # The motor may answer at an id the bus does not have, or has for another
-            # motor: rustypot reaches it there through its definition.
-            self._bus.change_id(definition, initial_id, target_id)
-            self._bus.change_baudrate(definition, target_id, self.default_baudrate)
-        except _TRANSPORT_ERRORS as e:
-            raise ConnectionError(
-                f"Failed to set up '{motor}' (id {initial_id} at {initial_baudrate}). {e}"
-            ) from e
+            if initial_baudrate is None:
+                initial_baudrate, initial_id = self._find_single_motor(motor)
+
+            if initial_id is None:
+                _, initial_id = self._find_single_motor(motor, initial_baudrate)
+
+            self.set_baudrate(initial_baudrate)
+            try:
+                # The motor may answer at an id the bus does not have, or has for another
+                # motor: rustypot reaches it there through its definition.
+                self._bus.change_id(definition, initial_id, target_id)
+                self._bus.change_baudrate(definition, target_id, self.default_baudrate)
+            except _TRANSPORT_ERRORS as e:
+                raise ConnectionError(
+                    f"Failed to set up '{motor}' (id {initial_id} at {initial_baudrate}). {e}"
+                ) from e
         finally:
             self.set_baudrate(self.default_baudrate)
+
+        # A motor answers the id and baud rate writes before they take effect: check it now
+        # answers as configured.
+        expected = self._model_number(self.motors[motor].model)
+        if (found := self.ping(target_id)) != expected:
+            raise RuntimeError(
+                f"'{motor}' does not answer at id {target_id} and {self.default_baudrate} baud with model "
+                f"number {expected} after its setup (got {found})."
+            )
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         model = self.motors[motor].model

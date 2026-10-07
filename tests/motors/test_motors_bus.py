@@ -250,6 +250,8 @@ def test_setup_motor_gives_the_motor_its_id_and_the_default_baudrate(dummy_motor
     """A new motor answers at an id the bus does not have (9 here); rustypot reaches it
     there through its definition."""
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
+    bus.connect(handshake=False)
+    bus._bus.seed(9, "model_number", 5678)
 
     bus.setup_motor("dummy_3", initial_baudrate=500_000, initial_id=9)
 
@@ -271,6 +273,27 @@ def test_a_failed_setup_puts_the_port_back_at_the_default_baudrate(dummy_motors)
 
     assert bus.is_connected
     assert bus._bus.baudrate == bus.default_baudrate
+
+
+def test_a_failed_motor_search_puts_the_port_back_at_the_default_baudrate(bus):
+    """The search walks the baud rates; finding nothing must not leave the port on the last."""
+    with pytest.raises(RuntimeError, match="was not found"):
+        bus.setup_motor("dummy_3")
+
+    assert bus._bus.baudrate == bus.default_baudrate
+
+
+def test_a_motor_that_does_not_answer_as_set_up_fails_its_setup(bus):
+    """The id and baud rate writes are answered before they take effect: the setup reads
+    the model number back at the new id and the default baud rate."""
+    bus._bus.seed(9, "model_number", 5678)
+
+    # The id write is acknowledged, but the motor keeps its old id.
+    with (
+        patch.object(MockBus, "change_id", autospec=True),
+        pytest.raises(RuntimeError, match=r"'dummy_3' does not answer at id 3"),
+    ):
+        bus.setup_motor("dummy_3", initial_baudrate=500_000, initial_id=9)
 
 
 def test_constructing_does_not_open_the_port(dummy_motors):

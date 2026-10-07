@@ -188,9 +188,12 @@ class MockBus:
         return failed
 
     def change_id(self, definition, motor_id: int, new_id: int) -> None:
+        """The motor's registers move with it to its new id."""
         if motor_id in self.absent:
             raise RuntimeError("Timeout error")
         self.setups.append(("change_id", definition, motor_id, new_id))
+        for id_, register in [key for key in self.registers if key[0] == motor_id]:
+            self.registers[(new_id, register)] = self.registers.pop((id_, register))
 
     def change_baudrate(self, definition, motor_id: int, baudrate: int) -> None:
         if motor_id in self.absent:
