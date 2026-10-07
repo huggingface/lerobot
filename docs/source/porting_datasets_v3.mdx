@@ -96,9 +96,9 @@ DROID_FEATURES = {
     "observation.state.joint_position": {"dtype": "float32", "shape": (7,)},
 
     # Camera observations
-    "observation.images.wrist_left": {"dtype": "image"},
-    "observation.images.exterior_1_left": {"dtype": "image"},
-    "observation.images.exterior_2_left": {"dtype": "image"},
+    "observation.images.wrist_left": {"dtype": "video", "shape": (180, 320, 3), "names": ["height", "width", "channels"]},
+    "observation.images.exterior_1_left": {"dtype": "video", "shape": (180, 320, 3), "names": ["height", "width", "channels"]},
+    "observation.images.exterior_2_left": {"dtype": "video", "shape": (180, 320, 3), "names": ["height", "width", "channels"]},
 
     # Actions
     "action.gripper_position": {"dtype": "float32", "shape": (1,)},
