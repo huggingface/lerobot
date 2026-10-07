@@ -17,7 +17,6 @@
 import logging
 import time
 from functools import cached_property
-from itertools import chain
 from typing import Any
 
 import numpy as np
@@ -131,52 +130,25 @@ class LeKiwi(Robot):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        if self.calibration:
-            # Calibration file exists, ask user whether to use it or run new calibration
-            user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
-                self.bus.write_calibration(self.calibration)
-                return
-        logger.info(f"\nRunning calibration of {self}")
+        if self._keep_calibration_file(self.bus):
+            return
 
-        motors = self.arm_motors + self.base_motors
-
-        self.bus.disable_torque(self.arm_motors)
-        for name in self.arm_motors:
-            self.bus.set_operating_mode("position", name)
-
-        input("Move robot to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings(self.arm_motors)
-
-        homing_offsets.update(dict.fromkeys(self.base_motors, 0))
-
-        full_turn_motor = [
-            motor for motor in motors if any(keyword in motor for keyword in ["wheel", "wrist_roll"])
-        ]
-        unknown_range_motors = [motor for motor in motors if motor not in full_turn_motor]
-
-        print(
-            f"Move all arm joints except '{full_turn_motor}' sequentially through their "
-            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
+        arm_calibration = self.bus.record_calibration(
+            "position", full_turn_motors=["arm_wrist_roll"], motors=self.arm_motors
         )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        for name in full_turn_motor:
-            range_mins[name] = 0
-            range_maxes[name] = 4095
-
-        self.calibration = {}
-        for name, motor in self.bus.motors.items():
-            self.calibration[name] = MotorCalibration(
+        # The wheels turn endlessly: no homing, the whole encoder.
+        wheels_calibration = {
+            name: MotorCalibration(
                 id=motor.id,
                 drive_mode=0,
-                homing_offset=int(homing_offsets[name]),
-                range_min=int(range_mins[name]),
-                range_max=int(range_maxes[name]),
+                homing_offset=0,
+                range_min=0,
+                range_max=self.bus.resolution(motor.model) - 1,
             )
-
+            for name, motor in self.bus.motors.items()
+            if name in self.base_motors
+        }
+        self.calibration = arm_calibration | wheels_calibration
         self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print("Calibration saved to", self.calibration_fpath)
@@ -201,10 +173,7 @@ class LeKiwi(Robot):
         self.bus.enable_torque()
 
     def setup_motors(self) -> None:
-        for motor in chain(reversed(self.arm_motors), reversed(self.base_motors)):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors([*reversed(self.arm_motors), *reversed(self.base_motors)])
 
     @staticmethod
     def _degps_to_raw(degps: float) -> int:

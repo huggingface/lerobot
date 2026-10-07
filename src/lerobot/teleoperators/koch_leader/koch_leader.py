@@ -17,7 +17,7 @@
 import logging
 import time
 
-from lerobot.motors import DriveMode, Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
+from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
@@ -81,50 +81,17 @@ class KochLeader(Teleoperator):
         return self.bus.is_calibrated
 
     def calibrate(self) -> None:
-        self.bus.disable_torque()
-        if self.calibration:
-            # Calibration file exists, ask user whether to use it or run new calibration
-            user_input = input(
-                f"Press ENTER to use provided calibration file associated with the id {self.id}, or type 'c' and press ENTER to run calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Writing calibration file associated with the id {self.id} to the motors")
-                self.bus.write_calibration(self.calibration)
-                return
-        logger.info(f"\nRunning calibration of {self}")
-        for motor in self.bus.motors:
-            self.bus.set_operating_mode("extended_position", motor)
+        if self._keep_calibration_file(self.bus):
+            return
 
-        self.bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
-        drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}
-
-        input(f"Move {self} to the middle of its range of motion and press ENTER....")
-        homing_offsets = self.bus.set_half_turn_homings()
-
-        full_turn_motors = ["shoulder_pan", "wrist_roll"]
-        unknown_range_motors = [motor for motor in self.bus.motors if motor not in full_turn_motors]
-        print(
-            f"Move all joints except {full_turn_motors} sequentially through their "
-            "entire ranges of motion.\nRecording positions. Press ENTER to stop..."
+        self.calibration = self.bus.record_calibration(
+            "extended_position",
+            full_turn_motors=["shoulder_pan", "wrist_roll"],
+            inverted_motors=["elbow_flex"],
         )
-        range_mins, range_maxes = self.bus.record_ranges_of_motion(unknown_range_motors)
-        for motor in full_turn_motors:
-            range_mins[motor] = 0
-            range_maxes[motor] = 4095
-
-        self.calibration: dict[str, MotorCalibration] = {}
-        for motor, m in self.bus.motors.items():
-            self.calibration[motor] = MotorCalibration(
-                id=m.id,
-                drive_mode=drive_modes[motor],
-                homing_offset=int(homing_offsets[motor]),
-                range_min=int(range_mins[motor]),
-                range_max=int(range_maxes[motor]),
-            )
-
         self.bus.write_calibration(self.calibration)
         self._save_calibration()
-        logger.info(f"Calibration saved to {self.calibration_fpath}")
+        print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
         self.bus.disable_torque()
@@ -149,10 +116,7 @@ class KochLeader(Teleoperator):
             self.bus.write("Goal_Position", "gripper", self.config.gripper_open_pos)
 
     def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors()
 
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:

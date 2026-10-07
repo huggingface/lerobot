@@ -111,17 +111,8 @@ class OpenArmMini(Teleoperator):
         4. Interactive gripper calibration (open/close positions)
         5. Save calibration
         """
-        if self.calibration:
-            user_input = input(
-                f"Press ENTER to use existing calibration for {self.id}, "
-                f"or type 'c' and press ENTER to run new calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Using existing calibration for {self.id}")
-                self.bus.write_calibration(self.calibration)
-                return
-
-        logger.info(f"\nRunning calibration for {self}")
+        if self._keep_calibration_file(self.bus):
+            return
 
         self.bus.disable_torque()
 
@@ -200,10 +191,7 @@ class OpenArmMini(Teleoperator):
             self.bus.set_operating_mode("position", motor)
 
     def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors()
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:

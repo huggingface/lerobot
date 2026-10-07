@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lerobot.motors.motors_bus import Motor, MotorNormMode, SerialMotorsBus
+from lerobot.motors.motors_bus import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _require_package_cache
 from tests.mocks.mock_motors_bus import DUMMY_1, DUMMY_2, MockBus, MockMotorsBus
@@ -414,3 +414,31 @@ def test_the_port_reopens_at_the_default_baudrate(bus):
     bus.connect(handshake=False)
 
     assert bus._bus.baudrate == bus.default_baudrate
+
+
+def test_record_calibration(bus, monkeypatch):
+    """Homed at the pose held, ranges swept by hand, a full-turn motor over its whole encoder."""
+    monkeypatch.setattr(DUMMY_2, "resolution", 1024)
+    poses = [{1: 600, 2: 300, 3: 400}, {1: 100, 3: 200}, {1: 900, 3: 700}]  # held, then swept
+
+    def move() -> bool:
+        if not poses:
+            return True
+        for id_, position in poses.pop(0).items():
+            bus._bus.seed(id_, "present_position", position)
+        return False
+
+    monkeypatch.setattr("builtins.input", lambda prompt: move() or "")
+    monkeypatch.setattr("lerobot.motors.motors_bus.enter_pressed", move)
+
+    calibration = bus.record_calibration(
+        "position", full_turn_motors=["dummy_2"], inverted_motors=["dummy_3"]
+    )
+
+    assert bus._bus.torques == [([1, 2, 3], False, 0)]
+    assert [bus._bus.stored(id_, "operating_mode") for id_ in (1, 2, 3)] == [3, 3, 3]
+    assert calibration == {
+        "dummy_1": MotorCalibration(id=1, drive_mode=0, homing_offset=-89, range_min=100, range_max=900),
+        "dummy_2": MotorCalibration(id=2, drive_mode=0, homing_offset=211, range_min=0, range_max=1023),
+        "dummy_3": MotorCalibration(id=3, drive_mode=1, homing_offset=111, range_min=200, range_max=700),
+    }

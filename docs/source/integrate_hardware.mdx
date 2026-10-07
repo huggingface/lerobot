@@ -236,34 +236,15 @@ The goal of the calibration is twofold:
 - Know the physical range of motion of each motors in order to only send commands within this range.
 - Normalize raw motor positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete values dependent on the specific motor used that will not replicate elsewhere.
 
-It should implement the logic for calibration (if relevant) and update the `self.calibration` dictionary. If you are using Feetech or Dynamixel motors, our bus interfaces already include methods to help with this.
+It should implement the logic for calibration (if relevant) and update the `self.calibration` dictionary. If you are using Feetech or Dynamixel motors, `SerialMotorsBus` already runs the calibration by hand: `record_calibration()` frees the motors, puts them in the operating mode you give, asks you to hold the joints in the middle of their range of motion (that pose becomes a half turn of each motor), then records the range of each joint as you move it. Joints that turn endlessly go in `full_turn_motors`: they get the whole encoder range instead. `_keep_calibration_file()` first offers to reuse the calibration file of this id, and writes it to the motors when you keep it.
 
 <!-- prettier-ignore-start -->
 ```python
 def calibrate(self) -> None:
-    self.bus.disable_torque()
-    for motor in self.bus.motors:
-        self.bus.set_operating_mode("position", motor)
+    if self._keep_calibration_file(self.bus):
+        return
 
-    input(f"Move {self} to the middle of its range of motion and press ENTER....")
-    homing_offsets = self.bus.set_half_turn_homings()
-
-    print(
-        "Move all joints sequentially through their entire ranges "
-        "of motion.\nRecording positions. Press ENTER to stop..."
-    )
-    range_mins, range_maxes = self.bus.record_ranges_of_motion()
-
-    self.calibration = {}
-    for motor, m in self.bus.motors.items():
-        self.calibration[motor] = MotorCalibration(
-            id=m.id,
-            drive_mode=0,
-            homing_offset=homing_offsets[motor],
-            range_min=range_mins[motor],
-            range_max=range_maxes[motor],
-        )
-
+    self.calibration = self.bus.record_calibration("position", full_turn_motors=["wrist_roll"])
     self.bus.write_calibration(self.calibration)
     self._save_calibration()
     print("Calibration saved to", self.calibration_fpath)
