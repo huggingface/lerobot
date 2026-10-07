@@ -37,7 +37,7 @@ from huggingface_hub import HfApi
 
 import lerobot.policies  # noqa: F401  (registers the policy config types)
 from lerobot.configs import PreTrainedConfig, parser
-from lerobot.distributed.checkpoint import dcp_to_safetensors
+from lerobot.distributed import dcp_to_safetensors
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 from lerobot.utils.import_utils import register_third_party_plugins, require_package
 from lerobot.utils.utils import init_logging

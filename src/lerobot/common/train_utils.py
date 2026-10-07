@@ -48,7 +48,8 @@ from torch.optim.lr_scheduler import LRScheduler
 from lerobot.__version__ import __version__
 from lerobot.configs import PolicyFeature, PreTrainedConfig, RewardModelConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
-from lerobot.distributed.checkpoint import (
+from lerobot.distributed import (
+    is_main_process,
     is_sharded_module,
     load_sharded_ema,
     load_sharded_model,
@@ -58,7 +59,6 @@ from lerobot.distributed.checkpoint import (
     save_sharded_model,
     save_sharded_optimizer,
 )
-from lerobot.distributed.utils import is_main_process
 from lerobot.optim import (
     load_optimizer_state,
     load_scaler_state,

@@ -22,7 +22,7 @@ import torch.distributed as dist
 from torch import nn
 
 if TYPE_CHECKING:
-    from lerobot.distributed.parallel_dims import ParallelDims
+    from .parallel_dims import ParallelDims
 
 
 def is_main_process() -> bool:

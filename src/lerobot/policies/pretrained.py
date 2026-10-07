@@ -140,8 +140,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 safetensors weight file(s).
         """
         # Lazy imports: the persistence layer pulls in lerobot.distributed only when saving.
-        from lerobot.distributed.checkpoint import full_model_state_dict, is_sharded_module
-        from lerobot.distributed.utils import is_main_process
+        from lerobot.distributed import full_model_state_dict, is_main_process, is_sharded_module
 
         model_to_save = self.module if hasattr(self, "module") else self
         if is_sharded_module(model_to_save):

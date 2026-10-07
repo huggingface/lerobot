@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 import torch
 from torch import nn
 
-from lerobot.optim.ema import EMA
+from lerobot.optim import EMA
 from lerobot.utils.constants import EMA_SHARDED_STATE
 
 from .utils import is_main_process
