@@ -47,6 +47,9 @@ class BiYamFollowerConfig(RobotConfig):
         super().__post_init__()
         if self.left_arm_config.port == self.right_arm_config.port:
             raise ValueError("YAM arms use duplicate motor IDs and require distinct CAN interfaces")
+        if self.left_arm_config.read_only != self.right_arm_config.read_only:
+            # A powered arm next to a read-only one could never be commanded.
+            raise ValueError("Set the same read_only on both YAM arms")
         motor_features = {
             f"{side}_{name}" for side in ("left", "right") for name in motor_feature_names(True)
         }

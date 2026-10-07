@@ -37,6 +37,8 @@ JOINT_LIMITS_RAD = (
 )
 JOINT_LIMITS_DEG = tuple((math.degrees(lower), math.degrees(upper)) for lower, upper in JOINT_LIMITS_RAD)
 DM_MIT_POSITION_LIMIT_RAD = 12.5
+# Plausible raw motor travel between the two gripper stops (0.5 to 10 rad).
+GRIPPER_STROKE_RANGE_DEG = (math.degrees(0.5), math.degrees(10.0))
 
 
 def motor_feature_names(use_velocity_and_torque: bool = False) -> tuple[str, ...]:
@@ -169,8 +171,9 @@ class YamFollowerConfigBase:
                 raise ValueError("Provide both finite raw gripper endpoints within motor limits")
             closed, opened = ends
             assert closed is not None and opened is not None
-            if abs(opened - closed) < 0.5:
-                raise ValueError("Gripper endpoints must be distinct")
+            low, high = GRIPPER_STROKE_RANGE_DEG
+            if not low <= abs(opened - closed) <= high:
+                raise ValueError(f"Gripper stroke must be between {low:.0f} and {high:.0f} raw motor degrees")
         if set(self.cameras) & set(motor_feature_names(use_velocity_and_torque=True)):
             raise ValueError("Camera names collide with YAM motor features")
 

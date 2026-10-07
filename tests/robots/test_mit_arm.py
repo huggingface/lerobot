@@ -156,6 +156,16 @@ def test_control_step_slews_tracks_clips_and_adds_gravity():
     assert list(packet) == ["shoulder", "elbow"]  # the gripper has its own force limiter
 
 
+def test_control_step_returns_from_past_a_limit_without_jumping():
+    position = np.array([0.2, -0.1, 0.5])  # elbow past its 0 lower limit
+    command, _ = mit_arm.control_step(params(), position, position, position.copy(), np.zeros(2), dt=0.01)
+    np.testing.assert_allclose(command, [0.2, -0.095, 0.5])  # back toward 0 at 0.5 rad/s
+    # A command further out than the measured pose is pulled back to it, never beyond.
+    previous = np.array([0.2, -0.3, 0.5])
+    command, _ = mit_arm.control_step(params(), position, position, previous, np.zeros(2), dt=0.01)
+    assert command[1] == pytest.approx(-0.1)
+
+
 @pytest.mark.parametrize("closed,opened", [(1.0, 3.0), (3.0, 1.0)])
 def test_free_gripper_goes_straight_to_its_target(closed, opened):
     limiter = mit_arm.GripperForceLimiter(gripper(closed, opened))
@@ -297,6 +307,18 @@ def test_float_mode_floats_again_after_the_command_timeout():
     run_cycles(servo, 1)
     assert servo.idle
     assert set(joint_stiffness(bus)) == {0.0}
+
+
+@pytest.mark.parametrize("idle_mode", ["hold", "float"])
+def test_servo_starts_past_a_limit_without_jumping(idle_mode):
+    # Raw elbow 0.1 is joint -0.1 (sign -1): past its 0 lower limit, within the feedback tolerance.
+    bus = FakeBus(position=(0.2, 0.1, 2.0))
+    servo = make_servo(bus, Settings(idle_mode=idle_mode))
+    servo.seed(mit_arm.read_joint_state(bus, servo.params))
+    servo.set_target(np.array([0.2, 0.5, 0.5]))
+    run_cycles(servo, 2)
+    elbow_goals = [-command[0] for name, command in bus.sent if name == "elbow"]
+    assert elbow_goals and all(goal == pytest.approx(-0.1, abs=2 * 0.5 * 0.05) for goal in elbow_goals)
 
 
 def test_hold_mode_keeps_stiffness_while_idle():

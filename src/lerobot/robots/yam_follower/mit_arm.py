@@ -252,7 +252,7 @@ def control_step(
     Args:
         params (`MitArmParams`): Arm control settings (gains, limits, speed limits, gripper).
         position (`ndarray`): Measured pose (joint radians and a normalized gripper).
-        target (`ndarray`): Pose requested by the latest action.
+        target (`ndarray`): Pose requested by the latest action; it is clipped to the limits.
         command (`ndarray`): Pose commanded on the previous cycle.
         gravity (`ndarray`): Model gravity torques of the arm joints for `position`, in Nm.
         dt (`float`): Time since the previous cycle, in seconds.
@@ -262,13 +262,18 @@ def control_step(
         gripper is commanded by a ``GripperForceLimiter``.
     """
     n = params.num_joints
-    # Move toward the target no faster than the configured speeds.
+    # Move toward the target, inside the limits, no faster than the configured speeds.
     speeds = np.r_[np.full(n, params.max_joint_speed), params.gripper.max_speed]
+    target = clip_to_limits(target, params.joint_limits)
     command = command + np.clip(target - command, -speeds * dt, speeds * dt)
     # Keep joints near the measured pose, so a blocked or pushed arm limits its force.
     band = params.max_tracking_error
     command[:n] = np.clip(command[:n], position[:n] - band, position[:n] + band)
-    command = clip_to_limits(command, params.joint_limits)
+    # The measured pose may be past a limit: never command further out than it, so the arm
+    # returns inside at the speed limit instead of jumping to the limit.
+    lower, upper = np.asarray(params.joint_limits).T
+    command[:n] = np.clip(command[:n], np.minimum(lower, position[:n]), np.maximum(upper, position[:n]))
+    command[n] = np.clip(command[n], 0.0, 1.0)
 
     goal = joint_to_motor(command, params)
     torque = gravity_feedforward(params, gravity)

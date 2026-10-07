@@ -106,6 +106,13 @@ def test_default_id_gives_each_arm_its_own_calibration_file(tmp_path, monkeypatc
     assert robot.right_arm.calibration_fpath.name == "bi_yam_follower_right.json"
 
 
+def test_both_arms_must_share_read_only():
+    with pytest.raises(ValueError, match="same read_only"):
+        BiYamFollowerConfig(
+            left_arm_config=arm_config("can0"), right_arm_config=arm_config("can1", read_only=False)
+        )
+
+
 def test_per_arm_and_top_level_cameras_follow_bimanual_conventions(tmp_path, monkeypatch):
     pytest.importorskip("cv2")
     from lerobot.cameras.opencv import OpenCVCameraConfig
