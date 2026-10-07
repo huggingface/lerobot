@@ -443,6 +443,22 @@ def test_fault_damping_comes_from_the_config(robot):
     np.testing.assert_allclose(params(robot).fault_damping_kd, [4, 4, 4, 1, 1, 1, robot.config.gripper_kd])
 
 
+def test_float_mode_requires_gravity_compensation(tmp_path):
+    with pytest.raises(ValueError, match="needs gravity_compensation"):
+        YamFollowerConfig(port="can0", idle_mode="float", gravity_compensation=False)
+    with pytest.raises(ValueError, match="idle_mode"):
+        YamFollowerConfig(port="can0", idle_mode="limp")
+
+
+@pytest.mark.parametrize("friction_compensation", [False, True])
+def test_float_parameters_come_from_the_config(robot, friction_compensation):
+    robot.config.friction_compensation = friction_compensation
+    arm = params(robot)
+    np.testing.assert_allclose(arm.float_kd, [0.1, 0.1, 0.1, 0.3, 0.05, 0.05])
+    expected = [0.3, 0.3, 0.3, 0.06, 0.06, 0.06] if friction_compensation else [0.0] * 6
+    np.testing.assert_allclose(arm.coulomb_friction, expected)
+
+
 def test_configure_refuses_while_servo_holds_the_arm(robot):
     robot.servo.active = True
     with pytest.raises(RuntimeError, match="before the servo starts"):

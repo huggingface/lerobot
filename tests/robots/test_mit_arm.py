@@ -47,6 +47,8 @@ def params(**overrides):
         "max_gravity_torque": 5.0,
         "gripper": gripper(),
         "fault_damping_kd": np.array([3.0, 2.0, 0.5]),
+        "float_kd": np.array([0.2, 0.1]),
+        "coulomb_friction": np.array([0.5, 0.2]),
         **overrides,
     }
     return mit_arm.MitArmParams(**values)
@@ -66,6 +68,7 @@ class Settings:
     feedback_timeout_s: float = 0.2
     command_timeout_s: float = 1.0
     freeze_gc: bool = False
+    idle_mode: str = "hold"
 
 
 class FakeBus:
@@ -202,6 +205,71 @@ def test_damping_commands_keep_gravity_without_stiffness():
     assert commands["shoulder"] == pytest.approx((0.2, 0, 0, 3.0, 5.0))  # gravity 8 clipped to 5 Nm
     assert commands["elbow"] == pytest.approx((-0.5, 0, 0, 2.0, -3.0))
     assert commands["gripper"] == pytest.approx((2.0, 0, 0, 0.5, 0))
+
+
+def test_float_commands_compensate_gravity_and_friction_without_stiffness():
+    state = mit_arm.JointState(
+        position=np.array([0.2, 0.5, 0.5]), velocity=np.array([1.0, 1.0, 0.0]), torque=np.zeros(3)
+    )
+    commands = mit_arm.float_commands(params(), state, np.array([8.0, 1.5]), gripper_command=0.6)
+    # Gravity 8 clipped to 5 Nm, plus friction 0.5 in the direction of motion.
+    assert commands["shoulder"] == pytest.approx((0.2, 0, 0, 0.2, 5.5))
+    # Gravity -3 Nm and friction -0.2 Nm in the reversed elbow's motor frame.
+    assert commands["elbow"] == pytest.approx((-0.5, 0, 0, 0.1, -3.2))
+    # The gripper keeps holding its commanded opening.
+    assert commands["gripper"] == pytest.approx((2.1, 0, 4, 0.1, 0))
+
+
+def run_cycles(servo, cycles):
+    """Run ``cycles`` full servo cycles in this thread, then leave the servo ready for more."""
+    bus = servo.bus
+    bus.enabled, bus.stop_after, bus.reads = True, cycles + 1, 0
+    bus.sent.clear()
+    servo._run()
+    servo._stop_requested.clear()
+    servo.stop_event.clear()
+    servo.updated_at = time.monotonic()
+
+
+def joint_stiffness(bus):
+    return [command[2] for name, command in bus.sent if name != "gripper"]
+
+
+def test_float_mode_floats_until_the_first_target_then_tracks_from_the_measured_pose():
+    bus = FakeBus()
+    servo = make_servo(bus, Settings(idle_mode="float"))
+    servo.seed(mit_arm.read_joint_state(bus, servo.params))
+    bus.enabled = True
+    run_cycles(servo, 2)
+    assert joint_stiffness(bus) and set(joint_stiffness(bus)) == {0.0}
+
+    measured = servo.state.position
+    servo.set_target(measured + np.array([0.5, 0.5, 0.0]))
+    run_cycles(servo, 1)
+    assert set(joint_stiffness(bus)) == {50.0, 20.0}
+    shoulder_goal = dict(bus.sent)["shoulder"][0]
+    assert shoulder_goal == pytest.approx(measured[0], abs=0.5 * 0.05)  # no jump from a stale command
+
+
+def test_float_mode_floats_again_after_the_command_timeout():
+    bus = FakeBus()
+    servo = make_servo(bus, Settings(idle_mode="float", command_timeout_s=0.01))
+    servo.seed(mit_arm.read_joint_state(bus, servo.params))
+    bus.enabled = True
+    servo.set_target(servo.state.position)
+    servo.commanded_at -= 1
+    run_cycles(servo, 1)
+    assert servo.idle
+    assert set(joint_stiffness(bus)) == {0.0}
+
+
+def test_hold_mode_keeps_stiffness_while_idle():
+    bus = FakeBus()
+    servo = make_servo(bus)
+    servo.seed(mit_arm.read_joint_state(bus, servo.params))
+    bus.enabled = True
+    run_cycles(servo, 2)
+    assert set(joint_stiffness(bus)) == {50.0, 20.0}
 
 
 def start_enabled(servo):
