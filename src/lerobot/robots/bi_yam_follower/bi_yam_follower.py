@@ -20,6 +20,7 @@ import logging
 import threading
 from copy import deepcopy
 from dataclasses import fields
+from functools import cached_property
 
 from lerobot.cameras import CameraConfig
 from lerobot.lerobot_types import RobotAction, RobotObservation
@@ -28,7 +29,7 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..robot import Robot
-from ..yam_follower import YamArmConfig, YamFollower, YamFollowerConfig
+from ..yam_follower import YamFollower, YamFollowerConfig, YamFollowerConfigBase
 from ..yam_follower.yam_follower import action_to_target
 from .config_bi_yam_follower import BiYamFollowerConfig
 
@@ -44,49 +45,70 @@ class BiYamFollower(BimanualMixin, Robot):
     def __init__(self, config: BiYamFollowerConfig) -> None:
         super().__init__(config)
         self.config = config
+
+        # Top-level cameras are opened by `left_arm` for convenience, but their
+        # keys stay unprefixed in observations (tracked via `_top_level_cam_keys`).
         self._top_level_cam_keys = set(config.cameras)
+        collisions = self._top_level_cam_keys & (
+            set(config.left_arm_config.cameras) | set(config.right_arm_config.cameras)
+        )
+        if collisions:
+            raise ValueError(
+                f"Top-level camera names collide with per-arm camera names: {sorted(collisions)}"
+            )
+        left_arm_cameras = {**config.left_arm_config.cameras, **config.cameras}
+
         # One stop event for both servos, so a fault on either arm stops both.
         self._stop = threading.Event()
         self.left_arm = YamFollower(
-            self._arm_robot_config("left", config.left_arm, config.cameras), stop_event=self._stop
+            self._arm_robot_config("left", config.left_arm_config, left_arm_cameras), stop_event=self._stop
         )
         self.right_arm = YamFollower(
-            self._arm_robot_config("right", config.right_arm, {}), stop_event=self._stop
+            self._arm_robot_config("right", config.right_arm_config, config.right_arm_config.cameras),
+            stop_event=self._stop,
         )
         self.arms = {"left": self.left_arm, "right": self.right_arm}
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
 
     def _arm_robot_config(
-        self, side: str, arm_config: YamArmConfig, cameras: dict[str, CameraConfig]
+        self, side: str, arm_config: YamFollowerConfigBase, cameras: dict[str, CameraConfig]
     ) -> YamFollowerConfig:
-        values = {field.name: deepcopy(getattr(arm_config, field.name)) for field in fields(YamArmConfig)}
+        values = {
+            field.name: deepcopy(getattr(arm_config, field.name)) for field in fields(YamFollowerConfigBase)
+        }
+        values["cameras"] = deepcopy(cameras)
         return YamFollowerConfig(
             id=f"{self.config.id}_{side}" if self.config.id else None,
             calibration_dir=self.config.calibration_dir,
-            cameras=deepcopy(cameras),
-            read_only=self.config.read_only,
-            control_frequency=self.config.control_frequency,
-            feedback_timeout_s=self.config.feedback_timeout_s,
-            command_timeout_s=self.config.command_timeout_s,
-            freeze_gc=self.config.freeze_gc,
             **values,
         )
 
     @property
-    def action_features(self) -> dict[str, type]:
+    def _motors_ft(self) -> dict[str, type]:
         return {
-            **{f"left_{name}": value for name, value in self.left_arm.action_features.items()},
-            **{f"right_{name}": value for name, value in self.right_arm.action_features.items()},
+            **{f"left_{k}": v for k, v in self.left_arm._motors_ft.items()},
+            **{f"right_{k}": v for k, v in self.right_arm._motors_ft.items()},
         }
 
     @property
+    def _cameras_ft(self) -> dict[str, tuple]:
+        out: dict[str, tuple] = {}
+        for k, v in self.left_arm._cameras_ft.items():
+            out[k if k in self._top_level_cam_keys else f"left_{k}"] = v
+        for k, v in self.right_arm._cameras_ft.items():
+            out[f"right_{k}"] = v
+        return out
+
+    @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        features: dict[str, type | tuple] = {}
-        for name, value in self.left_arm.observation_features.items():
-            features[name if name in self._top_level_cam_keys else f"left_{name}"] = value
-        for name, value in self.right_arm.observation_features.items():
-            features[f"right_{name}"] = value
-        return features
+        return {**self._motors_ft, **self._cameras_ft}
+
+    @cached_property
+    def action_features(self) -> dict[str, type]:
+        return {
+            **{f"left_{k}": v for k, v in self.left_arm.action_features.items()},
+            **{f"right_{k}": v for k, v in self.right_arm.action_features.items()},
+        }
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
@@ -128,7 +150,7 @@ class BiYamFollower(BimanualMixin, Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        if self.config.read_only or not self.left_arm.servo.active:
+        if any(arm.config.read_only for arm in self.arms.values()) or not self.left_arm.servo.active:
             raise RuntimeError("YAM read-only/calibration connection forbids motor commands")
         if set(action) != set(self.action_features):
             raise ValueError("YAM requires all 14 absolute joint/gripper targets; Cartesian actions need IK")
@@ -138,8 +160,8 @@ class BiYamFollower(BimanualMixin, Robot):
         }
         # Validate and health-check both arms before moving either; a later fault on one
         # stops both servos through the shared stop event.
-        for arm_action in arm_actions.values():
-            action_to_target(arm_action)
+        for side, arm in self.arms.items():
+            action_to_target(arm_actions[side], arm.config.use_degrees)
         for arm in self.arms.values():
             arm.servo.check_healthy()
         sent = {side: arm.send_action(arm_actions[side]) for side, arm in self.arms.items()}

@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import time
 from collections import deque
 from types import SimpleNamespace
@@ -27,32 +28,54 @@ from lerobot.robots.yam_follower import (
     YamFollowerConfig,
     yam_follower as robot_module,
 )
-from lerobot.robots.yam_follower.config_yam_follower import JOINT_LIMITS, MOTOR_NAMES, YAM_FEATURE_NAMES
+from lerobot.robots.yam_follower.config_yam_follower import (
+    JOINT_LIMITS_RAD,
+    MOTOR_NAMES,
+    YAM_FEATURE_NAMES,
+    motor_feature_names,
+)
+
+
+def make_robot(tmp_path, **overrides):
+    config = {
+        "id": "test",
+        "calibration_dir": tmp_path,
+        "port": "can0",
+        "gripper_closed_deg": math.degrees(0.1),
+        "gripper_open_deg": math.degrees(6.1),
+        "gravity_compensation": False,
+        # Equal to the former radian defaults, so the control numbers below stay unchanged.
+        "max_joint_speed_deg_s": math.degrees(0.3),
+        "max_tracking_error_deg": math.degrees(0.15),
+        **overrides,
+    }
+    return YamFollower(YamFollowerConfig(**config))
 
 
 @pytest.fixture
 def robot(tmp_path, monkeypatch):
     monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
-    return YamFollower(
-        YamFollowerConfig(
-            id="test",
-            calibration_dir=tmp_path,
-            port="can0",
-            gripper_closed_rad=0.1,
-            gripper_open_rad=6.1,
-            gravity_compensation=False,
-        )
-    )
+    return make_robot(tmp_path)
 
 
-def raw_positions(gripper=0.1):
-    return np.array([0, 0, 0, 0, 0, 0, gripper], dtype=float)
+def params(robot):
+    return robot_module.ArmParams.from_config(robot.config)
 
 
-def mock_bus(positions=None):
+def raw_states(gripper=0.1):
+    position = np.array([0, 0, 0, 0, 0, 0, gripper], dtype=float)
+    return robot_module.MotorStates(position=position, velocity=np.zeros(7), torque=np.zeros(7))
+
+
+def joint_state(position=None):
+    position = np.zeros(7) if position is None else np.asarray(position, dtype=float)
+    return robot_module.JointState(position=position, velocity=np.zeros(7), torque=np.zeros(7))
+
+
+def mock_bus(states=None):
     bus = MagicMock(spec=robot_module._YamBus)
     bus.enabled = False
-    bus.read_positions.return_value = raw_positions() if positions is None else positions
+    bus.read_states.return_value = raw_states() if states is None else states
     return bus
 
 
@@ -76,41 +99,73 @@ def ready(robot):
 
 @pytest.mark.parametrize("opened", [6.1, -5.9])
 def test_units_order_and_gripper_polarity(robot, opened):
-    robot.config.gripper_open_rad = opened
+    robot.config.gripper_open_deg = math.degrees(opened)
     raw = [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, (0.1 + opened) / 2]
     robot.config.joint_signs[0] = -1
-    robot.config.joint_offsets_rad[0] = 0.2
-    feedback = {name: SimpleNamespace(pos=value) for name, value in zip(MOTOR_NAMES, raw, strict=True)}
-    decoded = robot_module.motor_to_joint(
-        np.asarray([feedback[name].pos for name in MOTOR_NAMES]), robot.config
-    )
+    robot.config.joint_offsets_deg[0] = math.degrees(0.2)
+    decoded = robot_module.motor_to_joint(np.asarray(raw), params(robot))
     np.testing.assert_allclose(decoded, [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, 0.5])
-    np.testing.assert_allclose(robot_module.joint_to_motor(decoded, robot.config), raw)
+    np.testing.assert_allclose(robot_module.joint_to_motor(decoded, params(robot)), raw)
+
+
+def test_public_units_are_degrees_and_percent_or_internal_units():
+    internal = np.array([0.1, 0.2, 0.3, -0.4, 0.5, -0.6, 0.5])
+    public = robot_module.to_public(internal, use_degrees=True)
+    np.testing.assert_allclose(public, [*np.rad2deg(internal[:6]), 50.0])
+    np.testing.assert_allclose(robot_module.from_public(public, use_degrees=True), internal)
+    np.testing.assert_allclose(robot_module.to_public(internal, use_degrees=False), internal)
+    np.testing.assert_allclose(robot_module.from_public(internal, use_degrees=False), internal)
 
 
 def test_position_validation_and_clipping_are_pure():
-    values = np.array([JOINT_LIMITS[0][0] - 0.02, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5])
-    robot_module.validate_positions(values, joint_tolerance_rad=0.03)
+    values = np.array([JOINT_LIMITS_RAD[0][0] - 0.02, 0.0, 0.0, 0.0, 0.0, 0.0, 1.2])
+    robot_module.validate_positions(np.r_[values[:6], 0.5], joint_tolerance_rad=0.03)
     clipped = robot_module.clip_to_limits(values)
-    assert values[0] == JOINT_LIMITS[0][0] - 0.02
-    assert clipped[0] == JOINT_LIMITS[0][0]
-    assert clipped[6] == values[6]
+    assert values[0] == JOINT_LIMITS_RAD[0][0] - 0.02
+    assert clipped[0] == JOINT_LIMITS_RAD[0][0]
+    assert clipped[6] == 1.0
     with pytest.raises(ValueError):
-        robot_module.validate_positions(values, joint_tolerance_rad=0.0)
+        robot_module.validate_positions(np.r_[values[:6], 0.5], joint_tolerance_rad=0.0)
+
+
+@pytest.mark.parametrize("use_degrees", [True, False])
+def test_actions_clip_finite_overshoot_and_reject_non_finite(use_degrees):
+    action = dict.fromkeys(YAM_FEATURE_NAMES, 0.0)
+    action["gripper.pos"] = 100.4 if use_degrees else 1.004
+    action["joint_2.pos"] = -1.0  # below the 0 lower limit in either unit
+    target = robot_module.action_to_target(action, use_degrees)
+    assert target[6] == 1.0
+    assert target[1] == 0.0
+    action["joint_1.pos"] = float("nan")
+    with pytest.raises(ValueError, match="finite"):
+        robot_module.action_to_target(action, use_degrees)
 
 
 def test_measured_pose_has_wider_margin_than_action(robot):
-    raw = raw_positions(gripper=6.4)
-    raw[0] = JOINT_LIMITS[0][0] - 0.08
-    bus = attach_bus(robot, mock_bus(raw))
-    measured = robot_module.read_joint_positions(bus, robot.config)
-    assert measured[0] == pytest.approx(raw[0])
+    states = raw_states(gripper=6.4)
+    states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.08
+    bus = attach_bus(robot, mock_bus(states))
+    measured = robot_module.read_joint_state(bus, params(robot)).position
+    assert measured[0] == pytest.approx(states.position[0])
     assert measured[6] == 1.0
-    with pytest.raises(ValueError):
-        robot_module.action_to_target(dict(zip(YAM_FEATURE_NAMES, measured, strict=True)))
-    raw[0] = JOINT_LIMITS[0][0] - 0.2
+    # Actions are clipped to the model limits instead of being rejected.
+    action = dict(zip(YAM_FEATURE_NAMES, robot_module.to_public(measured, True), strict=True))
+    assert robot_module.action_to_target(action, use_degrees=True)[0] == JOINT_LIMITS_RAD[0][0]
+    states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.2
     with pytest.raises(ValueError, match="outside"):
-        robot_module.read_joint_positions(bus, robot.config)
+        robot_module.read_joint_state(bus, params(robot))
+
+
+def test_joint_state_maps_velocity_and_torque_to_joint_frame(robot):
+    robot.config.joint_signs[0] = -1
+    states = raw_states(gripper=3.1)
+    states.velocity[:] = [0.5, 0, 0, 0, 0, 0, 3.0]
+    states.torque[:] = [2.0, 0, 0, 0, 0, 0, 0.2]
+    state = robot_module.read_joint_state(mock_bus(states), params(robot))
+    assert state.velocity[0] == pytest.approx(-0.5)
+    assert state.torque[0] == pytest.approx(-2.0)
+    assert state.velocity[6] == pytest.approx(0.5)  # 3 rad/s over a 6 rad stroke
+    assert state.torque[6] == pytest.approx(0.2)
 
 
 def test_motorbridge_mapping_and_mit_radians(monkeypatch):
@@ -127,7 +182,7 @@ def test_motorbridge_mapping_and_mit_radians(monkeypatch):
     ]
     motors = dict(bus.motors)
     bus.enable(np.array([0.2, 0.5, 0.3, 0, 0, 0, 6.1]))
-    motors["joint_0"].send_mit.assert_called_once_with(0.2, 0, 0, 0, 0)
+    motors["joint_1"].send_mit.assert_called_once_with(0.2, 0, 0, 0, 0)
     motors["gripper"].send_mit.assert_called_once_with(6.1, 0, 0, 0, 0)
     controller.enable_all.assert_called_once()
     bus.close()
@@ -169,31 +224,34 @@ def feedback_bus(frames):
     bus.monitor = SimpleNamespace(recv=lambda timeout: queued.popleft() if queued else None)
     bus.motors = {name: MagicMock() for name in MOTOR_NAMES}
     for motor in bus.motors.values():
-        motor.get_state.return_value = SimpleNamespace(pos=0.1, status_code=1)
+        motor.get_state.return_value = SimpleNamespace(pos=0.1, vel=0.2, torq=0.3, status_code=1)
     return bus
 
 
 def test_cached_motorbridge_states_do_not_hide_missing_motor():
     bus = feedback_bus([frame(i) for i in range(1, 7)])
     with pytest.raises(ConnectionError, match="stale"):
-        bus.read_positions(wait=False)
+        bus.read_states(wait=False)
 
 
 def test_queued_old_packets_do_not_count_as_fresh():
     bus = feedback_bus([frame(i, age=1) for i in range(1, 8)])
     with pytest.raises(ConnectionError, match="stale"):
-        bus.read_positions(wait=False)
+        bus.read_states(wait=False)
 
 
 def test_fault_in_any_feedback_packet_fails():
     bus = feedback_bus([frame(i, status=13 if i == 3 else 1) for i in range(1, 8)])
     with pytest.raises(ConnectionError, match="fault 0xd"):
-        bus.read_positions(wait=False)
+        bus.read_states(wait=False)
 
 
 def test_fresh_feedback_accepts_stationary_motors():
     bus = feedback_bus([frame(i) for i in range(1, 8)])
-    np.testing.assert_allclose(bus.read_positions(wait=False), np.full(7, 0.1))
+    states = bus.read_states(wait=False)
+    np.testing.assert_allclose(states.position, np.full(7, 0.1))
+    np.testing.assert_allclose(states.velocity, np.full(7, 0.2))
+    np.testing.assert_allclose(states.torque, np.full(7, 0.3))
 
 
 def test_disabled_motor_after_enable_grace_is_a_fault():
@@ -201,48 +259,48 @@ def test_disabled_motor_after_enable_grace_is_a_fault():
     bus.enabled = True
     bus._enabled_at = time.monotonic() - 1
     with pytest.raises(ConnectionError, match="motor 3 unexpectedly disabled"):
-        bus.read_positions(wait=False)
+        bus.read_states(wait=False)
 
 
 def test_disabled_motor_is_allowed_during_enable_transition():
     bus = feedback_bus([frame(i, status=0) for i in range(1, 8)])
     bus.enabled = True
     bus._enabled_at = time.monotonic()
-    np.testing.assert_allclose(bus.read_positions(wait=False), np.full(7, 0.1))
+    np.testing.assert_allclose(bus.read_states(wait=False).position, np.full(7, 0.1))
 
 
 def test_old_disabled_frame_does_not_override_new_enabled_frame():
     bus = feedback_bus([frame(3, status=0), *[frame(i) for i in range(1, 8)]])
     bus.enabled = True
     bus._enabled_at = time.monotonic() - 1
-    np.testing.assert_allclose(bus.read_positions(wait=False), np.full(7, 0.1))
+    np.testing.assert_allclose(bus.read_states(wait=False).position, np.full(7, 0.1))
 
 
 def test_disabled_motor_is_allowed_before_enable():
     bus = feedback_bus([frame(i, status=0) for i in range(1, 8)])
-    np.testing.assert_allclose(bus.read_positions(wait=False), np.full(7, 0.1))
+    np.testing.assert_allclose(bus.read_states(wait=False).position, np.full(7, 0.1))
 
 
 def test_slew_gripper_torque_and_gravity_feedforward(robot):
     robot.config.max_gripper_speed_s = 2
     position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
     _, packet = robot_module.control_step(
-        robot.config, position, position + 0.1, position, gravity=np.ones(6), dt=0.01
+        params(robot), position, position + 0.1, position, gravity=np.ones(6), dt=0.01
     )
-    assert packet["joint_0"] == pytest.approx((0.003, 0, 80, 5, 1))
-    assert packet["joint_1"][-1] == pytest.approx(1.1)
+    assert packet["joint_1"] == pytest.approx((0.003, 0, 80, 5, 1))
+    assert packet["joint_2"][-1] == pytest.approx(1.1)
     assert packet["gripper"] == pytest.approx((3.2, 0, 5, 0.005, 0))
 
 
 @pytest.mark.parametrize("direction", [-1, 1])
 @pytest.mark.parametrize("polarity", [-1, 1])
 def test_default_gripper_slew_preserves_torque_bound(robot, direction, polarity):
-    robot.config.gripper_open_rad = robot.config.gripper_closed_rad + polarity * 6.0
+    robot.config.gripper_open_deg = robot.config.gripper_closed_deg + polarity * math.degrees(6.0)
     position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
     target = position.copy()
     target[6] = 1 if direction > 0 else 0
     command, packets = robot_module.control_step(
-        robot.config, position, target, position, gravity=np.zeros(6), dt=0.01
+        params(robot), position, target, position, gravity=np.zeros(6), dt=0.01
     )
     packet = packets["gripper"]
     assert command[6] == pytest.approx(0.5 + direction * 0.12)
@@ -258,14 +316,14 @@ def test_control_step_clamps_tracking_limits_and_gravity(robot):
     previous = np.array([0.9, 0.0, 1.0, 0, 0, 0, 0.5])
     target = np.array([0.9, -0.2, 1.5, 0, 0, 0, 1.0])
     gravity = np.array([20.0, 2, 1, 1, 1, 1])
-    command, packet = robot_module.control_step(robot.config, position, target, previous, gravity, dt=0.05)
-    # joint_0 tracking band, joint_1 lower limit, joint_2 slew; the gripper slews freely.
+    command, packet = robot_module.control_step(params(robot), position, target, previous, gravity, dt=0.05)
+    # joint_1 tracking band, joint_2 lower limit, joint_3 slew; the gripper slews freely.
     np.testing.assert_allclose(command, [0.65, 0.0, 1.015, 0, 0, 0, 1.0])
     np.testing.assert_allclose(previous, [0.9, 0.0, 1.0, 0, 0, 0, 0.5])  # inputs are not mutated
-    assert packet["joint_0"] == pytest.approx((0.65, 0, 80, 5, 10.0))  # gravity clipped to 10 Nm
-    assert packet["joint_1"] == pytest.approx((0.0, 0, 80, 5, -2.2))  # factor 1.1, sign -1
-    assert packet["joint_2"] == pytest.approx((1.015, 0, 80, 5, 1.1))
-    assert packet["joint_3"] == pytest.approx((0.0, 0, 10, 1.5, 1.2))
+    assert packet["joint_1"] == pytest.approx((0.65, 0, 80, 5, 10.0))  # gravity clipped to 10 Nm
+    assert packet["joint_2"] == pytest.approx((0.0, 0, 80, 5, -2.2))  # factor 1.1, sign -1
+    assert packet["joint_3"] == pytest.approx((1.015, 0, 80, 5, 1.1))
+    assert packet["joint_4"] == pytest.approx((0.0, 0, 10, 1.5, 1.2))
     assert packet["gripper"] == pytest.approx((3.2, 0, 5, 0.005, 0))  # 0.1 rad torque band
 
 
@@ -283,20 +341,48 @@ def test_gravity_matches_reference_torques(robot):
 def test_single_arm_features_are_not_prefixed(robot):
     assert tuple(robot.action_features) == YAM_FEATURE_NAMES
     assert robot.observation_features == robot.action_features
+    assert YAM_FEATURE_NAMES[0] == "joint_1.pos"
+
+
+def test_velocity_and_torque_features_are_grouped_per_motor(tmp_path, monkeypatch):
+    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
+    robot = make_robot(tmp_path, use_velocity_and_torque=True)
+    assert tuple(robot.observation_features) == motor_feature_names(use_velocity_and_torque=True)
+    assert tuple(robot.observation_features)[:3] == ("joint_1.pos", "joint_1.vel", "joint_1.torque")
+    assert tuple(robot.action_features) == YAM_FEATURE_NAMES
+
+
+@pytest.mark.parametrize("use_degrees", [True, False])
+def test_observation_uses_public_units(tmp_path, monkeypatch, use_degrees):
+    monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
+    robot = make_robot(tmp_path, use_degrees=use_degrees, use_velocity_and_torque=True)
+    ready(robot)
+    robot.servo.state = robot_module.JointState(
+        position=np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.5]),
+        velocity=np.array([1.0, 0, 0, 0, 0, 0, 0.25]),
+        torque=np.array([2.0, 0, 0, 0, 0, 0, 0.3]),
+    )
+    observation = robot.get_observation()
+    scale, gripper_scale = (math.degrees(1), 100.0) if use_degrees else (1.0, 1.0)
+    assert observation["joint_1.pos"] == pytest.approx(0.1 * scale)
+    assert observation["joint_1.vel"] == pytest.approx(1.0 * scale)
+    assert observation["joint_1.torque"] == pytest.approx(2.0)
+    assert observation["gripper.pos"] == pytest.approx(0.5 * gripper_scale)
+    assert observation["gripper.vel"] == pytest.approx(0.25 * gripper_scale)
 
 
 def test_single_arm_action_updates_target(robot):
     action = ready(robot)
-    action["joint_0.pos"] = 0.2
-    action["gripper.pos"] = 0.5
-    assert robot.send_action(action) == action
+    action["joint_1.pos"] = math.degrees(0.2)
+    action["gripper.pos"] = 50.0
+    assert robot.send_action(action) == pytest.approx(action)
     np.testing.assert_allclose(robot.servo.target, [0.2, 0, 0, 0, 0, 0, 0.5])
 
 
 def test_single_arm_rejects_partial_action(robot):
     ready(robot)
     with pytest.raises(ValueError, match="all seven"):
-        robot.send_action({"joint_0.pos": 0.2})
+        robot.send_action({"joint_1.pos": 0.2})
 
 
 def test_calibration_connection_never_enables_motor(robot, monkeypatch):
@@ -320,6 +406,17 @@ def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch, read_onl
     robot.disconnect()
 
 
+def test_start_pose_check_uses_degrees(robot, monkeypatch):
+    mock_hardware(robot, monkeypatch)
+    robot.config.read_only = False
+    states = raw_states()
+    states.position[0] = math.radians(robot.config.initial_tolerance_deg + 1)
+    robot.bus.read_states.return_value = states
+    with pytest.raises(ValueError, match="initial pose"):
+        robot.connect()
+    robot.bus.enable.assert_not_called()
+
+
 def test_configure_refuses_while_servo_holds_the_arm(robot):
     robot.servo.active = True
     with pytest.raises(RuntimeError, match="before the servo starts"):
@@ -339,7 +436,7 @@ def test_start_refuses_second_servo_before_enabling_again(robot, monkeypatch):
 
 def test_servo_start_refuses_second_thread(robot):
     attach_bus(robot, mock_bus())
-    robot.servo.seed(np.zeros(7))
+    robot.servo.seed(joint_state())
     robot.servo.start()
     original_thread = robot.servo._thread
     with pytest.raises(RuntimeError, match="already running"):
@@ -394,14 +491,16 @@ def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
     robot.connect(calibrate=False)
 
     def prompt(text):
-        robot.bus.read_positions.return_value = raw_positions(6.1 if "open" in text else 0.1)
+        robot.bus.read_states.return_value = raw_states(6.1 if "open" in text else 0.1)
 
     monkeypatch.setattr("builtins.input", prompt)
     monkeypatch.setattr(robot_module.time, "sleep", lambda _: None)
     robot.calibrate()
     assert robot.calibration["gripper"].homing_offset == 0
     assert robot.calibration["gripper"].drive_mode == 0
-    assert robot.config.gripper_open_rad == pytest.approx(6.1, abs=0.0002)
+    assert robot.config.gripper_open_deg == pytest.approx(math.degrees(6.1), abs=0.02)
+    assert robot.params is not None
+    assert robot.params.gripper_open == pytest.approx(6.1, abs=0.0002)
     assert robot.calibration_fpath.is_file()
     robot.bus.enable.assert_not_called()
     robot.disconnect()
@@ -409,7 +508,7 @@ def test_single_arm_calibration_preserves_factory_zeros(robot, monkeypatch):
 
 def test_servo_error_disables_single_arm(robot):
     bus = attach_bus(robot, mock_bus())
-    bus.read_positions.side_effect = ConnectionError("lost")
+    bus.read_states.side_effect = ConnectionError("lost")
     robot.servo._run()
     assert isinstance(robot.servo.failure, ConnectionError)
     assert robot.servo.stop_event.is_set()
@@ -455,7 +554,7 @@ def test_gc_freeze_lasts_exactly_as_long_as_the_servo(robot, monkeypatch):
     guard = MagicMock()
     monkeypatch.setattr(robot_module, "_ControlGC", guard)
     attach_bus(robot, mock_bus())
-    robot.servo.seed(np.zeros(7))
+    robot.servo.seed(joint_state())
     robot.servo.start()
     guard.acquire.assert_called_once()
     guard.release.assert_not_called()
@@ -468,7 +567,7 @@ def test_gc_freeze_can_be_disabled(robot, monkeypatch):
     monkeypatch.setattr(robot_module, "_ControlGC", guard)
     attach_bus(robot, mock_bus())
     robot.config.freeze_gc = False
-    robot.servo.seed(np.zeros(7))
+    robot.servo.seed(joint_state())
     robot.servo.start()
     robot.servo.stop()
     guard.acquire.assert_not_called()
