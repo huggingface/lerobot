@@ -240,60 +240,19 @@ class LingbotVLAV2Config(PreTrainedConfig):
     router_activation: str = "sigmoid"
     routed_scaling_factor: float = 4.0
     use_shared_expert_gate: bool = False
-    # The released upstream checkpoint stores experts in the stacked/fused layout.
-    # Set to None only for fresh experiments that intentionally use a ModuleList MoE.
-    moe_implementation: str | None = "fused"
-    # Token-count ceiling for the dense two-GEMM pure-torch MoE path (fused layout
-    # only): when B*T <= this, every expert is computed with two plain matmuls and
-    # the routing weights are folded into the down GEMM — no argsort/gather/scatter,
-    # static shapes, no torch.compile graph breaks. At the flow-matching denoise
-    # token count (51) this is much faster than routed dispatch; the 8x FLOP waste
-    # is free at that scale. 0 disables (falls back to triton/grouped-eager).
-    moe_dense_max_tokens: int = 512
-    # MoE execution backend. "sparse_static" is the shipped default: real
-    # per-token expert activation via the pure-torch padded bmm path
-    # (argsort -> scatter into [E, T, H] -> 2 bmm -> gather -> weighted combine),
-    # with the padded capacity pinned to T so shapes stay static (CUDA-graph
-    # capturable, no host sync). It beats dense in training (-2.7% step time at
-    # B=8) at bit-identical loss and costs +1.5~2.7% model-only inference time.
-    # Alternatives: "auto" (dense for small T, grouped-eager otherwise),
-    # "dense", "sparse" (dynamic capacity, one .item() sync), "sparse_gmm" /
-    # "sparse_static_gmm" (grouped_mm 3D GEMM, torch >= 2.11 on sm89+), "eager".
-    moe_backend: str = "sparse_static"
+    # The released upstream checkpoint stores experts in the stacked/fused layout,
+    # the only supported one. Routed experts run the pure-torch padded sparse path
+    # (argsort -> scatter into [E, T, H] -> 2 bmm -> gather -> weighted combine)
+    # with the capacity pinned to T, so shapes stay static (CUDA-graph capturable).
+    moe_implementation: str = "fused"
 
     # ==================== Modeling internals (FlowMatching / dual-stream expert) ====================
     # Attention used inside the vendored dual-stream model. "sdpa" (fused flash /
     # memory-efficient kernels, O(L) memory) is the default; "eager" materializes
-    # the [B, H, L, L] score matrix and is only kept for debugging; "fa2" needs the
-    # flash-attn package; "flex"/"flex_cached" use torch flex-attention BlockMasks.
+    # the [B, H, L, L] score matrix and is only kept for debugging.
     attention_implementation: str = "sdpa"
     # Same implementation choices, applied to the vision tower (ViT) attention.
     vit_attn_implementation: str = "sdpa"
-    # Upcast attention Q/K/V (and the KV cache) to fp32 — the original upstream
-    # parity path. False (default) runs attention in the model dtype (bf16 tensor
-    # cores, half the KV-cache memory); outputs match to bf16 reassociation error.
-    attention_fp32: bool = False
-    # Force a specific SDPA kernel backend (an `SDPBackend` enum name, e.g.
-    # "CUDNN_ATTENTION") instead of torch's auto-selection. Only applies when
-    # attention_implementation="sdpa". Motivation: with bool masks torch 2.8
-    # auto-selects mem_efficient, but the cuDNN backend is ~14% faster end-to-end
-    # in training (measured on A100, B=4, bf16) and cuts activation memory by a
-    # third. None (default) keeps torch auto-selection.
-    sdpa_backend: str | None = None
-    # Split the joint dual-stream attention into two calls: (1) prefix
-    # self-attention — prefix rows only ever see prefix keys (att-mask cumsum is
-    # constant over the prefix), so this equals their rows in the joint call —
-    # and (2) suffix rows over the full K/V. When the prefix (VLM) stream has no
-    # trainable params (expert-only LoRA), the prefix halves are detached, so
-    # autograd never tracks the frozen VLM activations (the joint call tracks
-    # them spuriously: gradients flow into prefix rows via the concatenated
-    # Q/K/V tensors and die at the frozen params). Mathematically identical
-    # outputs; the only numeric difference is kernel reassociation.
-    attn_split_prefix_suffix: bool = False
-    # Kernel for the prefix half when attn_split_prefix_suffix is on: "flash"
-    # (flash_attn_varlen_func over the unpadded valid prefix tokens; needs
-    # flash-attn and fp16/bf16) or "sdpa" (the regular attention path).
-    attn_split_prefix_backend: str = "flash"
     # Recompute each dual-stream layer in backward instead of storing activations
     # (training only; ~60% slower step for ~half the activation memory — enables
     # 2-4x larger batches on a single 80GB card).
@@ -307,13 +266,6 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # "max-autotune-no-cudagraphs" (slow first compile, GEMM autotuning; CUDA
     # graphs stay disabled either way).
     compile_predict_velocity_mode: str = "default"
-    # Also compile the prefix path (embed_prefix: vision tower + language/state
-    # embedding + mrope position ids, then the 36-layer prefix KV fill) with the
-    # same inductor mode. Requires compile_predict_velocity=True to take effect
-    # (the flag only matters when the denoise loop is compiled). The prefix runs
-    # once per action chunk; compiling it removes the per-layer launch gaps that
-    # dominate its eager wall time.
-    compile_prefix: bool = False
     # Capture the whole denoise loop (the num_steps predict_velocity calls plus
     # the Euler updates) as one CUDA graph and replay it per action chunk: the
     # loop's per-step guard evaluations and Python glue disappear into a single
@@ -332,11 +284,7 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # (their host syncs forbid capture); the graph covers only
     # qwenvl_with_expert.forward(inputs_embeds=[prefix_embs, None],
     # fill_kv_cache=True). Numerically lossless — a replay re-executes the
-    # identical kernel sequence (validated bitwise). When on, it supersedes
-    # compile_prefix for the prefix path. Capturable attention stacks:
-    # eager / sdpa / flex / flex_cached; attn_split_prefix_suffix=True with
-    # the flash backend cannot capture (its varlen packing host-syncs) and
-    # falls back with a warning. The KV outputs live in the graph's private
+    # identical kernel sequence (validated bitwise). The KV outputs live in the graph's private
     # pool and are aliased directly into the denoise CUDA graph when both
     # graphs are on (skipping the per-chunk KV copy); every prefix-graph
     # state transition (re-capture / drop / disable) invalidates the alias
@@ -396,13 +344,8 @@ class LingbotVLAV2Config(PreTrainedConfig):
     def __post_init__(self):
         super().__post_init__()
 
-        # The vendored QwenvlWithExpertV2 reads the expert-storage layout from
-        # ``_moe_implementation``; expose our public ``moe_implementation`` under that
-        # private name so "fused" selects the stacked-parameter experts that the
-        # released MoE checkpoints (e.g. the 6B) were saved with.
-        if self.moe_implementation is not None and self.moe_implementation not in ("eager", "fused"):
-            raise ValueError(f"Invalid moe_implementation: {self.moe_implementation}")
-        self._moe_implementation = self.moe_implementation
+        if self.moe_implementation != "fused":
+            raise ValueError(f"moe_implementation must be 'fused', got {self.moe_implementation!r}.")
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
@@ -410,19 +353,10 @@ class LingbotVLAV2Config(PreTrainedConfig):
                 f"{self.n_action_steps} for `n_action_steps` and {self.chunk_size} for `chunk_size`."
             )
 
-        if self.attention_implementation not in ["eager", "sdpa", "fa2", "flex", "flex_cached"]:
+        if self.attention_implementation not in ["eager", "sdpa"]:
             raise ValueError(
-                f"attention_implementation must be one of 'eager', 'sdpa', 'fa2', 'flex', "
-                f"'flex_cached', got {self.attention_implementation}"
+                f"attention_implementation must be one of 'eager', 'sdpa', got {self.attention_implementation}"
             )
-        if self.attention_implementation == "fa2":
-            try:
-                import flash_attn  # noqa: F401
-            except ImportError as err:
-                raise ValueError(
-                    "attention_implementation='fa2' requires the flash-attn package. "
-                    "Install it with: pip install flash-attn --no-build-isolation"
-                ) from err
 
         if self.split_gate_liner and self.nosplit_gate_liner:
             raise ValueError("split_gate_liner and nosplit_gate_liner cannot both be True.")

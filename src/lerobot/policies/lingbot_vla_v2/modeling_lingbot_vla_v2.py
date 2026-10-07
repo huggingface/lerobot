@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import functools
 from collections import deque
 from typing import Any
 
@@ -20,11 +19,6 @@ from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config as LeRobotLingbotVLAV2Config
-from .model_core.flex_attention import (
-    build_block_mask,
-    flex_attention_forward,
-    flex_attention_with_block_mask,
-)
 from .model_core.modeling_lingbot_vla_v2_base import (
     FlowMatching as FlowMatchingV1,
     replace_lnorm_with_adanorm,
@@ -36,7 +30,6 @@ from .model_core.qwen2_action_expert import (
 )
 from .model_core.qwen3vl_in_vla import Qwen3VLForConditionalGeneration
 from .model_core.utils import (
-    flash_varlen_prefix_attention,
     make_att_2d_masks,
     our_eager_attention_forward,
     our_sdpa_attention_forward,
@@ -54,7 +47,7 @@ class QwenvlWithExpertV2Config(PretrainedConfig):
         train_expert_only: bool = False,
         vocab_size: int = 0,
         use_lm_head: bool = False,
-        attention_implementation: str = "flex_cached",
+        attention_implementation: str = "sdpa",
         tokenizer_path: str | None = None,
         use_cache: bool = False,
         expert_hidden_size: int = 768,
@@ -117,19 +110,10 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
     def __init__(self, config: QwenvlWithExpertV2Config, eval=False):
         super().__init__(config=config)
         self.config = config
-        # Map our attention_implementation to a transformers-valid attn class for the
-        # HF model instantiation. "fa2" -> flash_attention_2; everything else (eager /
-        # flex / flex_cached) builds with "eager" — the flex paths override attention in
-        # the custom forward, and eager is required where flash-attn is absent (Jetson,
-        # CPU, this A100 box without the flash_attn package).
-        hf_attn = "flash_attention_2" if self.config.attention_implementation == "fa2" else "eager"
-        # The vision tower reads the value straight through, so "fa2" needs the same
-        # translation here (eager / sdpa are already transformers-valid).
-        hf_vit_attn = (
-            "flash_attention_2"
-            if self.config.vit_attn_implementation == "fa2"
-            else self.config.vit_attn_implementation
-        )
+        # The LLM attention is computed by the custom dual-stream forward, so the HF
+        # model is built with "eager"; the vision tower reads its value straight through.
+        hf_attn = "eager"
+        hf_vit_attn = self.config.vit_attn_implementation
         vlm_config = AutoConfig.from_pretrained(self.config.tokenizer_path)
         if self.config.vocab_size not in (0, 257152):
             vlm_config.text_config.vocab_size = self.config.vocab_size
@@ -173,8 +157,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         hidden_size = self.config.qwen_expert_config.hidden_size
         token_moe_layers = getattr(self.config, "token_moe_layers", None) or []
 
-        _moe_impl = getattr(self.config, "_moe_implementation", None)
-
         if token_moe_layers:
             token_config = CONFIG_MAPPING["qwen2_moe"](
                 num_experts=getattr(self.config, "token_num_experts", 32),
@@ -186,9 +168,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
                 output_router_logits=False,
             )
             token_config.bias_update_speed = bias_update_speed
-            token_config._moe_implementation = _moe_impl
-            token_config.moe_dense_max_tokens = getattr(self.config, "moe_dense_max_tokens", 512)
-            token_config.moe_backend = getattr(self.config, "moe_backend", "sparse_static")
             token_config.router_activation = getattr(self.config, "router_activation", "softmax")
             token_config.routed_scaling_factor = getattr(self.config, "routed_scaling_factor", 1.0)
             token_config.use_shared_expert_gate = getattr(self.config, "use_shared_expert_gate", True)
@@ -362,7 +341,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         visual_pos_masks: torch.Tensor | None = None,
         deepstack_visual_embeds: list[torch.Tensor] | None = None,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
-        block_mask=None,
     ):
         # Every call site passes inputs_embeds explicitly (list of per-stream
         # embeds, entries possibly None); the default only satisfies the signature.
@@ -377,36 +355,13 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             f"(got action={action_num_layers}, vlm={num_layers})."
         )
 
-        # Attention runs in the model (half) dtype by default; attention_fp32=True
-        # restores the original fp32 upcast used for bit-exact parity checks.
-        attn_fp32 = getattr(self.config, "attention_fp32", False)
-
         # mrope cos/sin depend only on position_ids (and dtype/device) — compute once
         # per forward instead of once per layer. Callers with a loop-invariant
         # position_ids (e.g. the flow-matching denoise loop) can pass a precomputed
         # ``position_embeddings`` to skip this entirely.
         if position_embeddings is None:
             rep = next(h for h in inputs_embeds if h is not None)
-            # rotary_emb casts cos/sin to the representative tensor's dtype; under
-            # attention_fp32 keep the old fp32 cos/sin for bit-exact parity.
-            if attn_fp32:
-                rep = rep.float()
             position_embeddings = self.qwenvl.model.language_model.rotary_emb(rep, position_ids)
-
-        _full_block_mask = block_mask
-        if _full_block_mask is None and self.config.attention_implementation == "flex_cached":
-            # Build once per forward (not per layer). q_len is the concatenated stream
-            # length; with a filled KV cache the kv side additionally covers the prefix.
-            q_len = sum(h.shape[1] for h in inputs_embeds if h is not None)
-            kv_len = q_len
-            if use_cache and not fill_kv_cache and past_key_values:
-                kv_len += past_key_values[0]["key_states"].shape[1]
-            _full_block_mask = build_block_mask(
-                attention_mask,
-                self.qwenvl.config.text_config.num_attention_heads,
-                q_len,
-                kv_len,
-            )
 
         use_gradient_checkpointing = (
             getattr(self.config, "gradient_checkpointing", False)
@@ -425,12 +380,10 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
                     ada_cond,
                     visual_pos_masks,
                     deepstack_visual_embeds,
-                    _full_block_mask,
-                    attn_fp32,
                 )
                 router_logits_list.extend(layer_router_logits)
                 continue
-            inputs_embeds, layer_router_logits, _full_block_mask, past_key_values = self._layer_forward(
+            inputs_embeds, layer_router_logits, past_key_values = self._layer_forward(
                 layer_idx,
                 inputs_embeds,
                 attention_mask,
@@ -441,8 +394,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
                 ada_cond,
                 visual_pos_masks,
                 deepstack_visual_embeds,
-                _full_block_mask,
-                attn_fp32,
             )
             router_logits_list.extend(layer_router_logits)
 
@@ -469,8 +420,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         ada_cond,
         visual_pos_masks,
         deepstack_visual_embeds,
-        block_mask,
-        attn_fp32,
     ):
         """One dual-stream layer: per-stream QKV -> joint attention -> per-stream out/MLP."""
         models = [self.qwenvl.model.language_model, self.qwen_expert.model]
@@ -485,8 +434,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
                 q, k, v = models[i].layers[layer_idx](hidden_states, compute_kqv=True, ada_cond=ada_cond)
             else:
                 q, k, v = models[i].layers[layer_idx](hidden_states, compute_kqv=True)
-            if attn_fp32:
-                q, k, v = q.float(), k.float(), v.float()
             query_states.append(q)
             key_states.append(k)
             value_states.append(v)
@@ -505,69 +452,7 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             use_cache=use_cache,
             fill_kv_cache=fill_kv_cache,
         )
-        split = False
-        detach_prefix = False
-        if self.config.attention_implementation == "flex_cached":
-            if block_mask is None:
-                block_mask = build_block_mask(
-                    attention_mask,
-                    self.qwenvl.config.text_config.num_attention_heads,
-                    query_states.shape[1],
-                    key_states.shape[1],
-                )
-            att_output = flex_attention_with_block_mask(
-                query_states,
-                key_states,
-                value_states,
-                block_mask,
-                query_states.shape[1],
-                force_fp32=attn_fp32,
-            )
-        elif self.config.attention_implementation == "flex":
-            att_output = flex_attention_forward(
-                query_states, key_states, value_states, attention_mask, force_fp32=attn_fp32
-            )
-        else:
-            split = (
-                getattr(self.config, "attn_split_prefix_suffix", False)
-                and inputs_embeds
-                and inputs_embeds[0] is not None
-                and attention_mask is not None
-                and attention_mask.dim() == 3
-            )
-            if split:
-                prefix_len = inputs_embeds[0].shape[1]
-                # The prefix (VLM) stream must have NO trainable params (expert-only
-                # LoRA): detach its Q/K/V so autograd never tracks the frozen VLM
-                # activations (the joint call tracks them spuriously via the
-                # concatenated Q/K/V and the gradient dies at the frozen params).
-                # Guard: if any VLM param is trainable (A-arm regex / full FT), keep
-                # the graph — the prefix path then carries real adapter gradients.
-                models_local = [self.qwenvl.model.language_model, self.qwen_expert.model]
-                detach_prefix = not inputs_embeds[0].requires_grad and not any(
-                    p.requires_grad for p in models_local[0].parameters()
-                )
-                q_p, k_p, v_p = (
-                    query_states[:, :prefix_len],
-                    key_states[:, :prefix_len],
-                    value_states[:, :prefix_len],
-                )
-                if detach_prefix:
-                    q_p, k_p, v_p = q_p.detach(), k_p.detach(), v_p.detach()
-                mask_p = attention_mask[:, :prefix_len, :prefix_len]
-                if getattr(self.config, "attn_split_prefix_backend", "flash") == "flash" and q_p.dtype in (
-                    torch.bfloat16,
-                    torch.float16,
-                ):
-                    att_p = flash_varlen_prefix_attention(q_p, k_p, v_p, mask_p)
-                else:
-                    att_p = self.attention_interface(q_p, k_p, v_p, mask_p)
-                att_s = self.attention_interface(
-                    query_states[:, prefix_len:], key_states, value_states, attention_mask[:, prefix_len:, :]
-                )
-                att_output = torch.cat([att_p, att_s], dim=1)
-            else:
-                att_output = self.attention_interface(query_states, key_states, value_states, attention_mask)
+        att_output = self.attention_interface(query_states, key_states, value_states, attention_mask)
 
         outputs_embeds = []
         start = 0
@@ -588,21 +473,13 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
                 if router_logits is not None:
                     router_logits_list.append(router_logits)
             else:
-                # Under the split with a grad-free prefix stream, hand the VLM
-                # stream a detached att_output: without this, cat([no-grad prefix,
-                # grad suffix]) re-couples gradients into the prefix rows and the
-                # whole frozen-VLM backward keeps running. Values are identical;
-                # the prefix gradient is discarded at frozen params anyway.
-                att_output_stream = (
-                    att_output.detach() if (i == 0 and split and detach_prefix) else att_output
-                )
                 out_emb = models[i].layers[layer_idx](
-                    hidden_states, att_output_stream, start, end, output_atten=True
+                    hidden_states, att_output, start, end, output_atten=True
                 )
                 out_emb = self._apply_deepstack(out_emb, layer_idx, visual_pos_masks, deepstack_visual_embeds)
             outputs_embeds.append(out_emb)
             start = end
-        return outputs_embeds, router_logits_list, block_mask, past_key_values
+        return outputs_embeds, router_logits_list, past_key_values
 
     @torch.compiler.disable
     def _checkpoint_layer_eager(self, *args):
@@ -627,11 +504,9 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         ada_cond,
         visual_pos_masks,
         deepstack_visual_embeds,
-        block_mask,
-        attn_fp32,
     ):
         """Gradient-checkpointed layer step (training only, KV cache disabled)."""
-        outputs_embeds, router_logits_list, _, _ = torch_checkpoint(
+        outputs_embeds, router_logits_list, _ = torch_checkpoint(
             self._checkpoint_layer_eager,
             layer_idx,
             inputs_embeds,
@@ -643,23 +518,12 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             ada_cond,
             visual_pos_masks,
             deepstack_visual_embeds,
-            block_mask,
-            attn_fp32,
             use_reentrant=False,
         )
         return outputs_embeds, router_logits_list
 
     def get_attention_interface(self):
-        if self.config.attention_implementation == "flex":
-            logger.debug("Using Flex attention")
-            return flex_attention_forward
-        if self.config.attention_implementation == "flex_cached":
-            logger.debug("Using Flex Cached attention with prebuilt BlockMask")
-            return flex_attention_forward
         if self.config.attention_implementation == "sdpa":
-            sdpa_backend = getattr(self.config, "sdpa_backend", None)
-            if sdpa_backend is not None:
-                return functools.partial(our_sdpa_attention_forward, sdpa_backend=sdpa_backend)
             return our_sdpa_attention_forward
         if self.config.attention_implementation == "eager":
             logger.debug("Using Eager attention")
@@ -690,10 +554,6 @@ class FlowMatchingV2(FlowMatchingV1):
             "final_norm_adanorm",
             "precompute_grid_thw",
             "vit_attn_implementation",
-            "attention_fp32",
-            "sdpa_backend",
-            "attn_split_prefix_suffix",
-            "attn_split_prefix_backend",
             "gradient_checkpointing",
             "use_moe",
             "bias_update_speed",
@@ -705,9 +565,6 @@ class FlowMatchingV2(FlowMatchingV1):
             "router_activation",
             "routed_scaling_factor",
             "use_shared_expert_gate",
-            "_moe_implementation",
-            "moe_dense_max_tokens",
-            "moe_backend",
         ]:
             if hasattr(config, name):
                 setattr(qwenvl_with_export_config, name, getattr(config, name))
@@ -959,7 +816,7 @@ class FlowMatchingV2(FlowMatchingV1):
         return losses, seq_wise_loss, router_z_loss, moe_metrics
 
     def _embed_and_fill_prefix(self, images, img_masks, lang_tokens, lang_masks, image_grid_thw):
-        """Prefix half of sample_actions as one compilable unit: embed_prefix
+        """Prefix half of sample_actions: embed_prefix
         (vision tower + language embedding + mrope position ids) followed by the
         36-layer KV fill. Returns exactly what the denoise loop consumes."""
         (
@@ -1053,8 +910,8 @@ class FlowMatchingV2(FlowMatchingV1):
             noise = torch.randn(actions_shape, device=device, dtype=dtype)
 
         if getattr(self, "_use_prefix_graph", False):
-            # CUDA-graphed prefix (see config docs). Falls through to the
-            # compiled/eager paths below only for the non-CUDA / use_cache
+            # CUDA-graphed prefix (see config docs). Falls back to the
+            # eager prefix only for the non-CUDA / use_cache
             # guards; capture failures finish eagerly from the already-run
             # embed_prefix (no second vision pass).
             got = self._prefix_graphed(images, img_masks, lang_tokens, lang_masks, image_grid_thw)
@@ -1064,18 +921,6 @@ class FlowMatchingV2(FlowMatchingV1):
                 prefix_pad_masks, prefix_position_ids, past_key_values = self._embed_and_fill_prefix(
                     images, img_masks, lang_tokens, lang_masks, image_grid_thw
                 )
-        elif getattr(self, "_use_compile_prefix", False):
-            prefix_fn = getattr(self, "_compiled_prefix", None)
-            if prefix_fn is None:
-                prefix_fn = self._compile_with_mode(self._embed_and_fill_prefix)
-                self._compiled_prefix = prefix_fn
-            prefix_pad_masks, prefix_position_ids, past_key_values = prefix_fn(
-                images,
-                img_masks,
-                lang_tokens,
-                lang_masks,
-                image_grid_thw,
-            )
         else:
             prefix_pad_masks, prefix_position_ids, past_key_values = self._embed_and_fill_prefix(
                 images,
@@ -1135,8 +980,8 @@ class FlowMatchingV2(FlowMatchingV1):
                 return graphed
             # Shape change or capture failure — fall through to the plain loop.
 
-        # Loop-invariant tensors (suffix 2D masks / position ids / mrope cos-sin /
-        # flex BlockMask) are computed on the first predict_velocity call and reused
+        # Loop-invariant tensors (suffix 2D masks / position ids / mrope cos-sin)
+        # are computed on the first predict_velocity call and reused
         # for the remaining denoise steps — they depend on the prefix masks only,
         # not on x_t or the timestep.
         denoise_cache: dict = {}
@@ -1579,17 +1424,9 @@ class FlowMatchingV2(FlowMatchingV1):
         else:
             vision_outputs = None
 
-        # Capture target: the thin 36-layer fill, optionally torch.compile'd
-        # (mirroring how the denoise graph captures the compiled
-        # predict_velocity). Post-dense-deepstack this region is sync-free,
-        # so it compiles and captures; the compiled kernels keep their
-        # inductor fusion inside the graph.
+        # Capture target: the thin 36-layer fill. Post-dense-deepstack this
+        # region is sync-free, so it captures.
         prefix_llm_fn = self._prefix_llm_forward
-        if getattr(self, "_use_compile_prefix", False):
-            prefix_llm_fn = getattr(self, "_compiled_prefix_llm", None)
-            if prefix_llm_fn is None:
-                prefix_llm_fn = self._compile_with_mode(self._prefix_llm_forward)
-                self._compiled_prefix_llm = prefix_llm_fn
 
         (
             prefix_embs,
@@ -1770,9 +1607,8 @@ class FlowMatchingV2(FlowMatchingV1):
         """Predict velocity at time t using cached Qwen3-VL prefix states.
 
         ``_denoise_cache`` (optional) is a dict that persists across the denoise
-        loop: the suffix attention mask, position ids, mrope cos/sin and flex
-        BlockMask are loop-invariant, so they are computed on the first step and
-        reused afterwards.
+        loop: the suffix attention mask, position ids and mrope cos/sin are
+        loop-invariant, so they are computed on the first step and reused afterwards.
         """
         if prefix_position_ids is None:
             raise ValueError("FlowMatchingV2.predict_velocity requires Qwen3-VL prefix_position_ids.")
@@ -1803,18 +1639,10 @@ class FlowMatchingV2(FlowMatchingV1):
             )
             position_ids = full_position_ids[:, :, -suffix_len:]
             core = self.qwenvl_with_expert
-            rep = suffix_embs.float() if getattr(core.config, "attention_fp32", False) else suffix_embs
-            position_embeddings = core.qwenvl.model.language_model.rotary_emb(rep, position_ids)
+            position_embeddings = core.qwenvl.model.language_model.rotary_emb(suffix_embs, position_ids)
             cache["full_att_2d_masks"] = full_att_2d_masks
             cache["position_ids"] = position_ids
             cache["position_embeddings"] = position_embeddings
-            if core.config.attention_implementation == "flex_cached":
-                cache["block_mask"] = build_block_mask(
-                    full_att_2d_masks,
-                    core.qwenvl.config.text_config.num_attention_heads,
-                    suffix_len,
-                    prefix_len + suffix_len,
-                )
 
         outputs_embeds, _, _ = self.qwenvl_with_expert.forward(
             attention_mask=cache["full_att_2d_masks"],
@@ -1825,7 +1653,6 @@ class FlowMatchingV2(FlowMatchingV1):
             fill_kv_cache=False,
             ada_cond=time_embs if getattr(self.config, "adanorm_time", False) else None,
             position_embeddings=cache["position_embeddings"],
-            block_mask=cache.get("block_mask"),
         )
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.n_action_steps :]
@@ -2025,10 +1852,6 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             self.model._compile_predict_velocity_mode = getattr(
                 self.config, "compile_predict_velocity_mode", "default"
             )
-            if getattr(self.config, "compile_prefix", False):
-                self.model._use_compile_prefix = True
-        # Independent of the compile flags (see config docs): the prefix CUDA
-        # graph supersedes compile_prefix when both are set.
         if getattr(self.config, "use_cudagraph_prefix", False):
             self.model._use_prefix_graph = True
         # use_cudagraph_prefix_full lives inside _prefix_graphed (vision graph + LLM
@@ -2208,14 +2031,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             inference_delay=inference_delay,
             prev_chunk_left_over=prev_chunk_left_over,
         )
-        # The RTC engine keeps a guidance reference in the SAMPLING (normalized) space;
-        # stash the chunk for it (see get_last_normalized_chunk).
-        self._last_normalized_chunk = actions.detach()
         return actions
-
-    def get_last_normalized_chunk(self) -> Tensor:
-        """Normalized sampling-space output of the most recent ``predict_action_chunk``."""
-        return self._last_normalized_chunk
 
     @torch.no_grad()
     def select_action(self, batch: dict, noise: Tensor | None = None) -> Tensor:

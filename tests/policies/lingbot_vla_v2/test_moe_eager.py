@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CPU test that the grouped-by-expert eager MoE is algebraically equivalent to the naive
-per-token reference (so swapping in the faster, O(1)-activation-memory expert loop does not
-change the pretrained model's outputs beyond floating-point reassociation)."""
+"""CPU test that the padded sparse MoE is algebraically equivalent to the naive per-token
+reference (so it does not change the pretrained model's outputs beyond floating-point
+reassociation)."""
 
 import pytest
 
@@ -24,7 +24,7 @@ import torch.nn.functional as F  # noqa: E402, N812
 
 
 def _per_token_reference(experts, routing_weights, selected_experts, hidden_states):
-    """The previous per-token eager MoE (materializes [T, I, H] weights per route)."""
+    """Naive per-token MoE (materializes [T, I, H] weights per route)."""
     t, h = hidden_states.shape
     top_k = selected_experts.shape[-1]
     out = torch.zeros(t, h, dtype=torch.float32, device=hidden_states.device)
@@ -43,7 +43,7 @@ def _per_token_reference(experts, routing_weights, selected_experts, hidden_stat
     return out.to(hidden_states.dtype)
 
 
-def test_grouped_expert_eager_matches_per_token_reference():
+def test_sparse_experts_match_per_token_reference():
     from lerobot.policies.lingbot_vla_v2.model_core.qwen2_action_expert import Qwen2FusedExperts
 
     torch.manual_seed(0)
@@ -55,7 +55,7 @@ def test_grouped_expert_eager_matches_per_token_reference():
     scores = torch.randn(t, num_experts).sigmoid()
     routing_weights, selected_experts = torch.topk(scores, top_k, dim=-1)
 
-    grouped = experts._eager_forward(routing_weights, selected_experts, hidden_states)
+    grouped = experts._sparse_forward(routing_weights, selected_experts, hidden_states)
     reference = _per_token_reference(experts, routing_weights, selected_experts, hidden_states)
 
     assert grouped.shape == (t, hidden)
@@ -64,7 +64,7 @@ def test_grouped_expert_eager_matches_per_token_reference():
     torch.testing.assert_close(grouped, reference, atol=1e-5, rtol=1e-4)
 
 
-def test_grouped_expert_eager_handles_unused_experts():
+def test_sparse_experts_handle_unused_experts():
     """Experts with no routed tokens must be skipped without error and not contribute."""
     from lerobot.policies.lingbot_vla_v2.model_core.qwen2_action_expert import Qwen2FusedExperts
 
@@ -78,6 +78,6 @@ def test_grouped_expert_eager_handles_unused_experts():
     selected_experts = torch.zeros(t, top_k, dtype=torch.long)
     routing_weights = torch.ones(t, top_k)
 
-    out = experts._eager_forward(routing_weights, selected_experts, hidden_states)
+    out = experts._sparse_forward(routing_weights, selected_experts, hidden_states)
     reference = _per_token_reference(experts, routing_weights, selected_experts, hidden_states)
     torch.testing.assert_close(out, reference, atol=1e-5, rtol=1e-4)
