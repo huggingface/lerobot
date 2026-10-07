@@ -68,11 +68,12 @@ from huggingface_hub.errors import HfHubHTTPError
 from torch import Tensor
 from torch.nn.functional import cross_entropy
 
-from lerobot.configs.rewards import RewardModelConfig
-from lerobot.rewards.pretrained import PreTrainedRewardModel
-from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
-from lerobot.rewards.topreward.processor_topreward import TOPREWARD_FEATURE_PREFIX, TOPREWARD_INPUT_KEYS
+from lerobot.configs import RewardModelConfig
 from lerobot.utils.import_utils import _transformers_available, require_package
+
+from ..pretrained import PreTrainedRewardModel
+from .configuration_topreward import TOPRewardConfig
+from .processor_topreward import TOPREWARD_FEATURE_PREFIX, TOPREWARD_INPUT_KEYS
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import Qwen3VLForConditionalGeneration

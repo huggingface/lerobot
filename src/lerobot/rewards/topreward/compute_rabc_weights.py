@@ -50,9 +50,10 @@ from tqdm import tqdm
 from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import create_transition
-from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
-from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
-from lerobot.rewards.topreward.processor_topreward import TOPRewardEncoderProcessorStep
+
+from .configuration_topreward import TOPRewardConfig
+from .modeling_topreward import TOPRewardModel
+from .processor_topreward import TOPRewardEncoderProcessorStep
 
 DEFAULT_OUTPUT_FILENAME = "topreward_progress.parquet"
 

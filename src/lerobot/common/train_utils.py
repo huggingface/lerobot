@@ -86,7 +86,7 @@ if TYPE_CHECKING:
     from accelerate import Accelerator
 
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-    from lerobot.rewards.pretrained import PreTrainedRewardModel
+    from lerobot.rewards import PreTrainedRewardModel
 
 
 def get_step_identifier(step: int, total_steps: int) -> str:

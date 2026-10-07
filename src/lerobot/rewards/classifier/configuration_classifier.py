@@ -13,8 +13,7 @@
 # limitations under the License.
 from dataclasses import dataclass, field
 
-from lerobot.configs import NormalizationMode
-from lerobot.configs.rewards import RewardModelConfig
+from lerobot.configs import NormalizationMode, RewardModelConfig
 from lerobot.optim import AdamWConfig, LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import OBS_IMAGE
 

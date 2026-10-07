@@ -59,9 +59,10 @@ from tqdm import tqdm
 from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor import create_transition
-from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
-from lerobot.rewards.robometer.modeling_robometer import RobometerRewardModel
-from lerobot.rewards.robometer.processor_robometer import RobometerEncoderProcessorStep
+
+from .configuration_robometer import RobometerConfig
+from .modeling_robometer import RobometerRewardModel
+from .processor_robometer import RobometerEncoderProcessorStep
 
 DEFAULT_OUTPUT_FILENAME = "robometer_progress.parquet"
 
