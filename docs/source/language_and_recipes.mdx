@@ -18,7 +18,7 @@ The design splits cleanly into three layers:
    how to lay them out as chat turns (`role`, `content`, optional images,
    optional tool calls). Recipes are pure config; no Python required to add a
    new one.
-3. **Training format** — at sample time, `RenderMessagesStep` resolves the
+3. **Training format** — at sample time, `RenderTrainingMessagesStep` resolves the
    recipe against the per-frame annotations and emits HF-style `messages` plus
    LeRobot-specific sidecars (`message_streams`, `target_message_indices`)
    that policy processors consume.
@@ -60,7 +60,7 @@ The language stack itself has three internal modules backing layer 1:
 
 1. `lerobot.datasets.language` defines the schema, style registry, and `column_for_style`.
 2. `lerobot.datasets.language_render` resolves rows and renders messages.
-3. `RenderMessagesStep` turns dataset samples into `messages`, `message_streams`, and `target_message_indices`.
+3. `RenderTrainingMessagesStep` turns dataset samples into `messages`, `message_streams`, and `target_message_indices`.
 
 `LeRobotDataset` stays recipe-agnostic. It passes `language_persistent` and `language_events` through when present, and unannotated datasets keep their existing behavior.
 
@@ -153,12 +153,11 @@ Blend recipes select one weighted sub-recipe deterministically from the sample i
 `recipes/subtask_joint.yaml` demonstrates joint sequence training rather than a
 weighted blend. For the same sample, its assistant subtask is supervised with
 text cross-entropy on the `low_level` stream while action prediction remains
-active, matching the joint setup from the π0.5 paper. Enable
-`--policy.joint_subtask_conditioning=true` to use that subtask conditioning at inference.
+active, matching the joint setup from the π0.5 paper.
 
 ## Graceful absence
 
-If both language columns are missing, `None`, or empty, `RenderMessagesStep` uses
+If both language columns are missing, `None`, or empty, `RenderTrainingMessagesStep` uses
 the task string as low-level supervision when available and otherwise leaves the
 sample unchanged. For an annotated sample, if no recipe branch applies and no
 task fallback exists, rendering returns `None`, allowing a loader to retry another sample.
