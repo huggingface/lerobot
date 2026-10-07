@@ -16,37 +16,39 @@
 
 """Bimanual YAM follower configuration."""
 
-import math
 from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
-from ..yam_follower.config_yam_follower import BI_YAM_FEATURE_NAMES, YamArmConfig
+from ..yam_follower.config_yam_follower import YamFollowerConfigBase, motor_feature_names
 
 
 @RobotConfig.register_subclass("bi_yam_follower")
-@dataclass
+@dataclass(kw_only=True)
 class BiYamFollowerConfig(RobotConfig):
-    left_arm: YamArmConfig = field(default_factory=lambda: YamArmConfig(port="can_left"))
-    right_arm: YamArmConfig = field(default_factory=lambda: YamArmConfig(port="can_right"))
+    """Configuration of two YAM follower arms on separate CAN interfaces.
+
+    Each arm keeps its own gripper calibration file, named after `id` with a `_left` or
+    `_right` suffix, so calibrate with the same `id` used for control.
+    """
+
+    id: str | None = "bi_yam_follower"
+
+    left_arm_config: YamFollowerConfigBase
+    right_arm_config: YamFollowerConfigBase
+
+    # Top-level cameras not attached to a specific side. Keys are kept as-is in
+    # observations (no `left_`/`right_` prefix). Per-arm cameras (declared on
+    # `{left,right}_arm_config.cameras`) are prefixed.
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
-    # Opt in only after verifying CAN side assignment, encoder frame, and gripper calibration.
-    read_only: bool = True
-    # Leave classic CAN bandwidth for both refresh and MIT command feedback.
-    control_frequency: float = 100.0
-    feedback_timeout_s: float = 0.2
-    command_timeout_s: float = 1.0
-    freeze_gc: bool = True
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.left_arm.port == self.right_arm.port:
+        if self.left_arm_config.port == self.right_arm_config.port:
             raise ValueError("YAM arms use duplicate motor IDs and require distinct CAN interfaces")
-        for name in ("control_frequency", "feedback_timeout_s", "command_timeout_s"):
-            if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
-                raise ValueError(f"{name} must be finite and positive")
-        if not 20 <= self.control_frequency <= 250:
-            raise ValueError("control_frequency must be between 20 and 250 Hz")
-        if set(self.cameras) & set(BI_YAM_FEATURE_NAMES):
+        motor_features = {
+            f"{side}_{name}" for side in ("left", "right") for name in motor_feature_names(True)
+        }
+        if set(self.cameras) & motor_features:
             raise ValueError("Camera names collide with YAM motor features")

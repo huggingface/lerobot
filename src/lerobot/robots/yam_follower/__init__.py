@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_yam_follower import YamArmConfig, YamFollowerConfig
+from .config_yam_follower import YamFollowerConfig, YamFollowerConfigBase
 from .yam_follower import YamFollower
 
-__all__ = ["YamArmConfig", "YamFollower", "YamFollowerConfig"]
+__all__ = ["YamFollower", "YamFollowerConfig", "YamFollowerConfigBase"]

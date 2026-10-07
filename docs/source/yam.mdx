@@ -43,16 +43,16 @@ For two arms:
 ```bash
 uv run --no-sync lerobot-calibrate \
   --robot.type=bi_yam_follower --robot.id=bimanual_yam \
-  --robot.left_arm.port=can0 --robot.right_arm.port=can1
+  --robot.left_arm_config.port=can0 --robot.right_arm_config.port=can1
 ```
 
-Follow the closed/open prompts. A bimanual calibration handles the left arm and then the right arm. Calibration reads feedback only: it does not enable torque, move the grippers, or change the factory joint zeros. The bimanual robot saves one standard single-arm calibration record for each side, using the derived IDs `bimanual_yam_left` and `bimanual_yam_right`. Either raw gripper polarity is supported. Explicit `gripper_closed_rad` and `gripper_open_rad` override the saved endpoints.
+Follow the closed/open prompts. A bimanual calibration handles the left arm and then the right arm. Calibration reads feedback only: it does not enable torque, move the grippers, or change the factory joint zeros. The bimanual robot saves one standard single-arm calibration record for each side, using the derived IDs `bimanual_yam_left` and `bimanual_yam_right`. Without `--robot.id`, the bimanual robot uses `bi_yam_follower`. Either raw gripper polarity is supported. Explicit `gripper_closed_deg` and `gripper_open_deg` (raw motor degrees) override the saved endpoints.
 
 ## Control and units
 
-For one arm, the observation and action order is `joint_0.pos` through `joint_5.pos`, then `gripper.pos`. The bimanual robot prefixes the same fields with `left_` and `right_`. Joints are **absolute radians**; each gripper is **0 closed, 1 open**. These are not reBot's degree-valued features. End-effector policies require a separately configured IK processor.
+For one arm, the observation and action order is `joint_1.pos` through `joint_6.pos`, then `gripper.pos`. The bimanual robot prefixes the same fields with `left_` and `right_`; top-level cameras keep their names and per-arm cameras are prefixed. By default joints are **absolute degrees** and each gripper goes from **0 (closed) to 100 (open)**, like other LeRobot arms. Set `use_degrees=false` for **radians** and a **0–1 gripper**, the units of I2RT and MolmoAct2 data. `use_velocity_and_torque=true` adds `.vel` and `.torque` features for each motor. Actions slightly past a joint limit or the gripper stroke are clipped; non-finite actions are rejected. End-effector policies require a separately configured IK processor.
 
-`read_only` defaults to `true`. With `read_only=false`, connecting validates every configured arm and camera before enabling impedance control at the measured pose. This begins holding immediately; interactive `/start` begins policy actions. There is no automatic startup homing. By default, the six joints must be within 0.2 radians of the factory folded zero pose; gripper opening is unrestricted within its calibrated stroke. Set `initial_position_rad` and `initial_tolerance_rad` for a verified alternative starting pose.
+Each arm's `read_only` defaults to `true`. With `read_only=false`, connecting validates every configured arm and camera before enabling impedance control at the measured pose. This begins holding immediately; interactive `/start` begins policy actions. There is no automatic startup homing. By default, the six joints must be within 11.5° of the factory folded zero pose; gripper opening is unrestricted within its calibrated stroke. Set `initial_position_deg` and `initial_tolerance_deg` for a verified alternative starting pose.
 
 Each arm has a robot-owned servo loop that maintains position stiffness and gravity feed-forward while inference runs. It limits joint/gripper target speed, joint tracking error, and gripper proportional torque. If commands expire, it captures and holds the measured position once. A fault or missing feedback stops the arm; in a bimanual setup it stops both arms. This can remove their support. A return motion is never attempted using stale feedback.
 
@@ -64,7 +64,7 @@ Gravity feed-forward uses the bundled inertial-only I2RT model, including the li
 
 ## MolmoAct2 rollout
 
-Use a **LeRobot-format** checkpoint directory with its saved processors, not the original model repository as `policy.path`. For `allenai/MolmoAct2-BimanualYAM`, the original embodiment tag is `yam_dual_molmoact2`: absolute joint pose, the 14 features above, and camera order **top, left, right**. Keep the released quantile statistics and `normalize_gripper=false`; the two gripper dimensions are excluded from quantile normalization. Do not estimate replacement statistics from live observations. See [MolmoAct2](molmoact2) for policy loading.
+Use a **LeRobot-format** checkpoint directory with its saved processors, not the original model repository as `policy.path`. For `allenai/MolmoAct2-BimanualYAM`, the original embodiment tag is `yam_dual_molmoact2`: absolute joint pose, the 14 features above, and camera order **top, left, right**. It was trained on radians and a 0–1 gripper, so set `use_degrees=false` on both arms, as below. Keep the released quantile statistics and `normalize_gripper=false`; the two gripper dimensions are excluded from quantile normalization. Do not estimate replacement statistics from live observations. See [MolmoAct2](molmoact2) for policy loading.
 
 Rollout finishes loading the policy, its processors, and the inference engine before connecting the robot. This keeps startup loading outside the active servo loop.
 
@@ -73,8 +73,9 @@ For an already converted checkpoint, configure your three RGB camera paths and r
 ```bash
 uv run --no-sync lerobot-rollout \
   --robot.type=bi_yam_follower --robot.id=bimanual_yam \
-  --robot.read_only=false \
-  --robot.left_arm.port=can0 --robot.right_arm.port=can1 \
+  --robot.left_arm_config.port=can0 --robot.right_arm_config.port=can1 \
+  --robot.left_arm_config.read_only=false --robot.right_arm_config.read_only=false \
+  --robot.left_arm_config.use_degrees=false --robot.right_arm_config.use_degrees=false \
   --robot.cameras='{"top":{"type":"opencv","index_or_path":"/dev/v4l/by-id/TOP_CAMERA","width":640,"height":480,"fps":30},"left":{"type":"opencv","index_or_path":"/dev/v4l/by-id/LEFT_CAMERA","width":640,"height":480,"fps":30,"fourcc":"MJPG"},"right":{"type":"opencv","index_or_path":"/dev/v4l/by-id/RIGHT_CAMERA","width":640,"height":480,"fps":30,"fourcc":"MJPG"}}' \
   --policy.path=/path/to/molmoact2-bimanual-yam \
   --inference.type=rtc --inference.rtc.mode=guided \

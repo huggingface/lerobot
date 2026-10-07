@@ -23,12 +23,11 @@ from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
 
-JOINT_NAMES = tuple(f"joint_{i}" for i in range(6))
+JOINT_NAMES = tuple(f"joint_{i}" for i in range(1, 7))
 MOTOR_NAMES = (*JOINT_NAMES, "gripper")
 YAM_FEATURE_NAMES = tuple(f"{name}.pos" for name in MOTOR_NAMES)
-BI_YAM_FEATURE_NAMES = tuple(f"{side}_{name}.pos" for side in ("left", "right") for name in MOTOR_NAMES)
 # I2RT yam/v1/yam.xml; radians, without widening the manufacturer's limits.
-JOINT_LIMITS = (
+JOINT_LIMITS_RAD = (
     (-2.61799, 3.14159),
     (0.0, 3.66519),
     (0.0, 3.14159),
@@ -36,45 +35,65 @@ JOINT_LIMITS = (
     (-1.5708, 1.5708),
     (-2.0944, 2.0944),
 )
+JOINT_LIMITS_DEG = tuple((math.degrees(lower), math.degrees(upper)) for lower, upper in JOINT_LIMITS_RAD)
 DM_MIT_POSITION_LIMIT_RAD = 12.5
 DM_MIT_POSITION_MAX_COUNT = 65535
 
 
+def motor_feature_names(use_velocity_and_torque: bool = False) -> tuple[str, ...]:
+    """Return the motor feature names of one arm, grouped per motor."""
+    suffixes = (".pos", ".vel", ".torque") if use_velocity_and_torque else (".pos",)
+    return tuple(f"{name}{suffix}" for name in MOTOR_NAMES for suffix in suffixes)
+
+
 @dataclass
-class YamArmConfig:
+class YamFollowerConfigBase:
+    """Settings of one YAM follower arm, shared by the single-arm and bimanual robots."""
+
     port: str
     # Linux USB serial verification prevents can0/can1 enumeration swapping arms.
     expected_adapter_serial: str | None = None
-    # Measured raw MOTOR radians at the physical closed and open stops.
+    # Raw motor angles at the physical closed and open stops, normally loaded from calibration.
     # Either polarity is supported; no nominal stroke or automatic homing guess.
-    gripper_closed_rad: float | None = None
-    gripper_open_rad: float | None = None
+    gripper_closed_deg: float | None = None
+    gripper_open_deg: float | None = None
     joint_signs: list[float] = field(default_factory=lambda: [1.0] * 6)
-    joint_offsets_rad: list[float] = field(default_factory=lambda: [0.0] * 6)
-    # An assertion, NOT a motion command. Place the supported arm in this pose
-    # before enabling control. Zero is the manufacturer's folded reference pose.
-    # None accepts the current valid measured pose instead of a fixed startup pose.
-    initial_position_rad: list[float] | None = field(default_factory=lambda: [0.0] * 6)
-    initial_tolerance_rad: float = 0.2
+    joint_offsets_deg: list[float] = field(default_factory=lambda: [0.0] * 6)
+    # A check, NOT a motion command. Place the supported arm in this pose before enabling
+    # control. Zero is the manufacturer's folded reference pose; None accepts any valid pose.
+    initial_position_deg: list[float] | None = field(default_factory=lambda: [0.0] * 6)
+    initial_tolerance_deg: float = 11.5
+    # Gripper opening from 0 (closed) to 100 (open); None skips the check.
     initial_gripper_position: float | None = None
-    initial_gripper_tolerance: float = 0.1
+    initial_gripper_tolerance: float = 10.0
     kp: list[float] = field(default_factory=lambda: [80.0, 80.0, 80.0, 10.0, 10.0, 10.0])
     kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 5.0, 1.5, 1.5, 1.5])
     gripper_kp: float = 5.0
     gripper_kd: float = 0.005
     gripper_torque_limit: float = 0.5
-    max_joint_speed_rad_s: float = 0.3
+    max_joint_speed_deg_s: float = 17.0
     max_gripper_speed_s: float = 12.0
-    max_tracking_error_rad: float = 0.15
+    max_tracking_error_deg: float = 8.5
     # Feedforward for the standard linear_4310 hardware. Camera/payload changes
     # require revalidation. This model is not a collision avoidance system.
     gravity_compensation: bool = True
     gravity_factors: list[float] = field(default_factory=lambda: [1.0, 1.1, 1.1, 1.2, 1.0, 1.0])
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)
+    # Opt in only after verifying the CAN port, encoder frame and gripper calibration.
+    read_only: bool = True
+    # Degrees and a 0-100 gripper; False gives radians and a 0-1 gripper (I2RT and MolmoAct2 data).
+    use_degrees: bool = True
+    use_velocity_and_torque: bool = False
+    # Leave classic CAN bandwidth for both refresh and MIT command feedback.
+    control_frequency: float = 100.0
+    feedback_timeout_s: float = 0.2
+    command_timeout_s: float = 1.0
+    freeze_gc: bool = True
 
     def __post_init__(self) -> None:
         if not self.port:
             raise ValueError("A YAM CAN interface is required")
-        for name in ("joint_signs", "joint_offsets_rad", "kp", "kd", "gravity_factors"):
+        for name in ("joint_signs", "joint_offsets_deg", "kp", "kd", "gravity_factors"):
             values = getattr(self, name)
             if len(values) != 6 or not all(math.isfinite(v) for v in values):
                 raise ValueError(f"{name} must contain six finite values")
@@ -84,43 +103,51 @@ class YamArmConfig:
             if any(not 0 < x <= maximum for x in getattr(self, name)):
                 raise ValueError(f"{name} outside MIT gain limits")
         for name in (
-            "initial_tolerance_rad",
+            "initial_tolerance_deg",
             "initial_gripper_tolerance",
             "gripper_kp",
             "gripper_kd",
             "gripper_torque_limit",
-            "max_joint_speed_rad_s",
+            "max_joint_speed_deg_s",
             "max_gripper_speed_s",
-            "max_tracking_error_rad",
+            "max_tracking_error_deg",
+            "control_frequency",
+            "feedback_timeout_s",
+            "command_timeout_s",
         ):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
         if self.gripper_kp > 500 or self.gripper_kd > 5 or self.gripper_torque_limit > 1:
             raise ValueError("Gripper gains/torque exceed supported limits (maximum 1 Nm)")
-        if self.initial_gripper_position is not None and not 0 <= self.initial_gripper_position <= 1:
-            raise ValueError("initial_gripper_position must be between 0 closed and 1 open")
-        if self.initial_position_rad is not None:
-            if len(self.initial_position_rad) != 6 or not all(
-                math.isfinite(v) for v in self.initial_position_rad
+        if not 20 <= self.control_frequency <= 250:
+            raise ValueError("control_frequency must be between 20 and 250 Hz")
+        if self.initial_gripper_position is not None and not 0 <= self.initial_gripper_position <= 100:
+            raise ValueError("initial_gripper_position must be between 0 closed and 100 open")
+        if self.initial_position_deg is not None:
+            if len(self.initial_position_deg) != 6 or not all(
+                math.isfinite(v) for v in self.initial_position_deg
             ):
-                raise ValueError("initial_position_rad must contain six finite values or be null")
-            for value, limits in zip(self.initial_position_rad, JOINT_LIMITS, strict=True):
-                if not limits[0] <= value <= limits[1]:
-                    raise ValueError("initial_position_rad is outside YAM joint limits")
-        ends = (self.gripper_closed_rad, self.gripper_open_rad)
+                raise ValueError("initial_position_deg must contain six finite values or be null")
+            for value, (lower, upper) in zip(self.initial_position_deg, JOINT_LIMITS_DEG, strict=True):
+                if not lower <= value <= upper:
+                    raise ValueError("initial_position_deg is outside YAM joint limits")
+        ends = (self.gripper_closed_deg, self.gripper_open_deg)
         if any(x is not None for x in ends):
-            if any(x is None or not math.isfinite(x) or abs(x) > DM_MIT_POSITION_LIMIT_RAD for x in ends):
+            motor_limit_deg = math.degrees(DM_MIT_POSITION_LIMIT_RAD)
+            if any(x is None or not math.isfinite(x) or abs(x) > motor_limit_deg for x in ends):
                 raise ValueError("Provide both finite raw gripper endpoints within motor limits")
             closed, opened = ends
             assert closed is not None and opened is not None
-            if abs(opened - closed) < 0.01:
+            if abs(opened - closed) < 0.5:
                 raise ValueError("Gripper endpoints must be distinct")
+        if set(self.cameras) & set(motor_feature_names(use_velocity_and_torque=True)):
+            raise ValueError("Camera names collide with YAM motor features")
 
 
 @RobotConfig.register_subclass("yam_follower")
 @dataclass
-class YamFollowerConfig(RobotConfig, YamArmConfig):
+class YamFollowerConfig(RobotConfig, YamFollowerConfigBase):
     """Configuration of a single YAM v1 follower arm on Linux SocketCAN.
 
     Run `lerobot-calibrate` once per arm to measure its gripper stops; connecting for control
@@ -129,26 +156,28 @@ class YamFollowerConfig(RobotConfig, YamArmConfig):
     Args:
         port (`str`): SocketCAN interface of the arm, e.g. `can0`.
         expected_adapter_serial (`str | None`, *optional*): USB serial of the CAN adapter. When set, connecting fails if `port` belongs to another adapter, so a `can0`/`can1` enumeration swap cannot swap arms.
-        gripper_closed_rad (`float | None`, *optional*): Raw motor radians at the closed gripper stop. Normally loaded from the calibration file; set it only to override.
-        gripper_open_rad (`float | None`, *optional*): Raw motor radians at the open gripper stop. Normally loaded from the calibration file; set it only to override.
+        gripper_closed_deg (`float | None`, *optional*): Raw motor angle in degrees at the closed gripper stop. Normally loaded from the calibration file; set it only to override.
+        gripper_open_deg (`float | None`, *optional*): Raw motor angle in degrees at the open gripper stop. Normally loaded from the calibration file; set it only to override.
         joint_signs (`list`, *optional*): Sign (+1 or -1) mapping each of the six motor directions to the joint frame.
-        joint_offsets_rad (`list`, *optional*): Offset in radians added to each of the six joints after the sign.
-        initial_position_rad (`list[float] | None`, *optional*): Joint pose, in radians, the arm must be in before torque is enabled. It is a check, not a motion command; the default zeros are the folded reference pose, and `None` accepts any valid pose.
-        initial_tolerance_rad (`float`, *optional*, defaults to 0.2): Allowed per-joint deviation from `initial_position_rad`.
-        initial_gripper_position (`float | None`, *optional*): Gripper opening (0 closed, 1 open) required before torque is enabled; `None` skips the check.
-        initial_gripper_tolerance (`float`, *optional*, defaults to 0.1): Allowed deviation from `initial_gripper_position`.
+        joint_offsets_deg (`list`, *optional*): Offset in degrees added to each of the six joints after the sign.
+        initial_position_deg (`list[float] | None`, *optional*): Joint pose in degrees the arm must be in before torque is enabled. It is a check, not a motion command; the default zeros are the folded reference pose, and `None` accepts any valid pose.
+        initial_tolerance_deg (`float`, *optional*, defaults to 11.5): Allowed per-joint deviation from `initial_position_deg`, in degrees.
+        initial_gripper_position (`float | None`, *optional*): Gripper opening (0 closed, 100 open) required before torque is enabled; `None` skips the check.
+        initial_gripper_tolerance (`float`, *optional*, defaults to 10.0): Allowed deviation from `initial_gripper_position`, on the same 0-100 scale.
         kp (`list`, *optional*): MIT position gains of the six joints.
         kd (`list`, *optional*): MIT damping gains of the six joints.
         gripper_kp (`float`, *optional*, defaults to 5.0): MIT position gain of the gripper.
         gripper_kd (`float`, *optional*, defaults to 0.005): MIT damping gain of the gripper.
         gripper_torque_limit (`float`, *optional*, defaults to 0.5): Cap on the gripper's proportional MIT torque in Nm (at most 1); damping may add torque.
-        max_joint_speed_rad_s (`float`, *optional*, defaults to 0.3): Fastest the commanded joint positions move toward a new target.
+        max_joint_speed_deg_s (`float`, *optional*, defaults to 17.0): Fastest the commanded joint positions move toward a new target, in degrees per second.
         max_gripper_speed_s (`float`, *optional*, defaults to 12.0): Fastest the commanded gripper opening moves, in full strokes per second.
-        max_tracking_error_rad (`float`, *optional*, defaults to 0.15): Furthest a commanded joint may lead its measured position, which limits force when the arm is blocked or pushed.
+        max_tracking_error_deg (`float`, *optional*, defaults to 8.5): Furthest a commanded joint may lead its measured position, in degrees, which limits force when the arm is blocked or pushed.
         gravity_compensation (`bool`, *optional*, defaults to `True`): Add gravity feed-forward torques from the bundled model of the standard arm with a linear gripper. Payloads or added cameras need revalidation.
         gravity_factors (`list`, *optional*): Per-joint scale applied to the model gravity torques.
         cameras (`dict`, *optional*): Cameras read with each observation, keyed by name.
         read_only (`bool`, *optional*, defaults to `True`): Read feedback without ever enabling torque; `send_action` raises. Disable only after checking the CAN port, encoder frame and gripper calibration.
+        use_degrees (`bool`, *optional*, defaults to `True`): Report and accept joints in degrees and the gripper from 0 to 100. Set it to `False` for radians and a 0-1 gripper, the units of I2RT and MolmoAct2 data.
+        use_velocity_and_torque (`bool`, *optional*, defaults to `False`): Add `.vel` and `.torque` features for each motor to observations.
         control_frequency (`float`, *optional*, defaults to 100.0): Rate of the background servo loop in Hz, between 20 and 250.
         feedback_timeout_s (`float`, *optional*, defaults to 0.2): Maximum age of each motor reply. The foreground check allows two such intervals plus one servo period; long Python scheduling stalls can still stop the servo.
         command_timeout_s (`float`, *optional*, defaults to 1.0): When no action arrives for this long, the arm holds its current pose.
@@ -157,21 +186,6 @@ class YamFollowerConfig(RobotConfig, YamArmConfig):
         calibration_dir (`pathlib.Path | None`, *optional*): Directory of calibration files. Gripper endpoints are stored as DM MIT position counts encoding raw radians; calibration never changes joint zeros.
     """
 
-    cameras: dict[str, CameraConfig] = field(default_factory=dict)
-    read_only: bool = True
-    control_frequency: float = 100.0
-    feedback_timeout_s: float = 0.2
-    command_timeout_s: float = 1.0
-    freeze_gc: bool = True
-
     def __post_init__(self) -> None:
         RobotConfig.__post_init__(self)
-        YamArmConfig.__post_init__(self)
-        for name in ("control_frequency", "feedback_timeout_s", "command_timeout_s"):
-            value = getattr(self, name)
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError(f"{name} must be finite and positive")
-        if not 20 <= self.control_frequency <= 250:
-            raise ValueError("control_frequency must be between 20 and 250 Hz")
-        if set(self.cameras) & set(YAM_FEATURE_NAMES):
-            raise ValueError("Camera names collide with YAM motor features")
+        YamFollowerConfigBase.__post_init__(self)
