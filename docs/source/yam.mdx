@@ -66,8 +66,6 @@ Gravity feed-forward uses the bundled inertial-only I2RT model, including the li
 
 Use a **LeRobot-format** checkpoint directory with its saved processors, not the original model repository as `policy.path`. For `allenai/MolmoAct2-BimanualYAM`, the original embodiment tag is `yam_dual_molmoact2`: absolute joint pose, the 14 features above, and camera order **top, left, right**. It was trained on radians and a 0–1 gripper, so set `use_degrees=false` on both arms, as below. Keep the released quantile statistics and `normalize_gripper=false`; the two gripper dimensions are excluded from quantile normalization. Do not estimate replacement statistics from live observations. See [MolmoAct2](molmoact2) for policy loading.
 
-Rollout finishes loading the policy, its processors, and the inference engine before connecting the robot. This keeps startup loading outside the active servo loop.
-
 For an already converted checkpoint, configure your three RGB camera paths and run:
 
 ```bash
