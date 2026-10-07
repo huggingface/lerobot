@@ -29,8 +29,7 @@ import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import FrozenWarmupConstantSchedulerConfig
+from lerobot.optim import AdamWConfig, FrozenWarmupConstantSchedulerConfig
 from lerobot.policies.flux3.f3 import packing
 from lerobot.utils.constants import ACTION, OBS_STATE
 

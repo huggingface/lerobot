@@ -26,8 +26,7 @@ from torch.optim.lr_scheduler import LambdaLR
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.optim import AdamWConfig, LRSchedulerConfig
 
 
 @LRSchedulerConfig.register_subclass("lawam_cosine_with_min_lr")

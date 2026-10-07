@@ -30,7 +30,7 @@ from torch import Tensor, nn
 
 from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.lerobot_types import PolicyOutput
-from lerobot.optim.optimizers import OptimizerParams
+from lerobot.optim import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
 from lerobot.utils.hub import HubMixin

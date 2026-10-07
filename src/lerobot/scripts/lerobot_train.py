@@ -79,8 +79,8 @@ from lerobot.distributed import (
 )
 from lerobot.envs import EnvConfig, close_envs, make_env, make_env_pre_post_processors
 from lerobot.jobs import submit_to_hf
+from lerobot.optim import make_optimizer_and_scheduler
 from lerobot.optim.ema import EMA
-from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
 from lerobot.processor import ImageAugmentationProcessorStep

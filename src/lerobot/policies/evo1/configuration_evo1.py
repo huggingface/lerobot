@@ -22,8 +22,7 @@ import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import CosineAnnealingWithWarmupSchedulerConfig
+from lerobot.optim import AdamWConfig, CosineAnnealingWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 from ..rtc.configuration_rtc import RTCConfig

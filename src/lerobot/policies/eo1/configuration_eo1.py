@@ -25,8 +25,7 @@ import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
+from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
