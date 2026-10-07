@@ -220,7 +220,7 @@ class TrainPipelineConfig(HubMixin):
             self._resolve_resume_checkpoint()
 
     def _resolve_resume_checkpoint(self) -> None:
-        """Point the trainable config at the checkpoint named by `--config_path`.
+        """Resolve the checkpoint named by `--config_path` into `checkpoint_path`.
 
         `config_path` is either a local path (to a checkpoint's train_config.json or its
         pretrained_model/ dir) or a Hub repo id. For a Hub repo, the latest checkpoint is downloaded
@@ -256,12 +256,8 @@ class TrainPipelineConfig(HubMixin):
                 now = dt.datetime.now()
                 self.output_dir = Path("outputs/train") / f"{now:%Y-%m-%d}/{now:%H-%M-%S}_resume"
             self.checkpoint_path = resolve_resume_checkpoint(config_path, self.output_dir)
-            policy_dir = self.checkpoint_path / PRETRAINED_MODEL_DIR
-
-        if self.policy is not None:
-            self.policy.pretrained_path = policy_dir
-        if self.reward_model is not None:
-            self.reward_model.pretrained_path = str(policy_dir)
+        # `pretrained_path` keeps naming the model the run started from (the model card's
+        # `base_model`); the resumed weights and processors load from `checkpoint_path`.
 
     def validate(self) -> None:
         available_contexts = multiprocessing.get_all_start_methods()
@@ -284,7 +280,7 @@ class TrainPipelineConfig(HubMixin):
             )
 
         active_cfg = self.trainable_config
-        if self.rename_map and active_cfg.pretrained_path is None:
+        if self.rename_map and active_cfg.pretrained_path is None and not self.resume:
             raise ValueError(
                 "`rename_map` requires a pretrained policy checkpoint. "
                 "Fresh initialization derives feature names from the current dataset, so no rename is applied."

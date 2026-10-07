@@ -34,7 +34,7 @@ import logging
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, cast
 
 import torch
 from safetensors import safe_open
@@ -135,7 +135,7 @@ class Flux3Policy(PreTrainedPolicy):
         self.config = config
         self.dataset_stats = dataset_stats
         self.modality = config.action_modality
-        self.dtype_ = getattr(torch, config.dtype)
+        self.dtype_ = cast(torch.dtype, config.dtype)
         self.packer = packing.build_packer(config)
         self.dit_params = self._dit_params(config)
         # A full policy (including a deferred distributed restore) already owns its trunk.
