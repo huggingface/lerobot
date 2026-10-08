@@ -25,4 +25,4 @@ teleop:
   # TODO: second leader's port. Find it with:  ls -l /dev/serial/by-id/
   port: REPLACE_WITH_SECOND_LEADER_PORT
 
-display_data: true
+display_data: false

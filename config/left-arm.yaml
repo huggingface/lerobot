@@ -20,18 +20,12 @@ robot:
       height: 720
       fps: 30
       warmup_s: 1
-    head:
-      type: intelrealsense
-      serial_number_or_name: "836112060112"
-      fps: 30
-      width: 1280
-      height: 720
-      color_mode: BGR
-      use_depth: true
 
 teleop:
   type: so101_leader
   id: xlerobot_leaders_left
   port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00   # Leader #1
 
-display_data: true
+# Set true once teleop is proven; rerun is heavy on a Pi and it is easier to
+# separate "do the motors move" from "does visualization work".
+display_data: false
