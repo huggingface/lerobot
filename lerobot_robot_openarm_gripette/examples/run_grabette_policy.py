@@ -108,6 +108,18 @@ def main():
     parser.add_argument("--n_action_steps", type=int, default=None, help="Defaults to the policy's.")
     parser.add_argument("--duration", type=float, default=60.0, help="Episode length in seconds.")
     parser.add_argument(
+        "--initial_gripper_strategy",
+        type=float,
+        default=None,
+        help="Initial gripper strategy in [0, 1]; defaults to the measured state.",
+    )
+    parser.add_argument(
+        "--initial_gripper_closure",
+        type=float,
+        default=None,
+        help="Initial gripper closure in [0, 1]; 0 is open and 1 is closed.",
+    )
+    parser.add_argument(
         "--log_dir",
         type=Path,
         default=Path("outputs/openarm_gripette_policy"),
@@ -128,6 +140,10 @@ def main():
     )
     parser.add_argument("--dry_run", action="store_true", help="Run the policy and IK without moving.")
     args = parser.parse_args()
+    for name in ("initial_gripper_strategy", "initial_gripper_closure"):
+        value = getattr(args, name)
+        if value is not None and not 0.0 <= value <= 1.0:
+            parser.error(f"--{name} must be between 0 and 1")
 
     device = args.device or auto_select_torch_device().type
     cfg, policy, preprocessor, postprocessor = load_policy(args, device)
@@ -169,6 +185,41 @@ def main():
         q_cmd = signs * np.array([held[f"{joint}.pos"] for joint in ROBOT_JOINTS])
         print("Held joints (URDF deg):", np.round(q_cmd, 1))
         print("Held oak_l position (m):", np.round(kin.forward_kinematics(q_cmd)[:3, 3], 3))
+        initial_gripper = None
+        if args.initial_gripper_strategy is not None or args.initial_gripper_closure is not None:
+            observation = robot.get_observation()
+            measured_strategy, measured_closure = projection.encode(
+                observation["proximal.pos"], observation["distal.pos"]
+            )
+            strategy = (
+                measured_strategy if args.initial_gripper_strategy is None else args.initial_gripper_strategy
+            )
+            closure = (
+                measured_closure if args.initial_gripper_closure is None else args.initial_gripper_closure
+            )
+            proximal, distal = projection.decode(strategy, closure)
+            initial_gripper = {
+                "strategy": strategy,
+                "closure": closure,
+                "proximal_rad": proximal,
+                "distal_rad": distal,
+                "executed": not args.dry_run,
+            }
+            print(
+                f"{'DRY RUN: ' if args.dry_run else ''}Initial gripper: "
+                f"strategy={strategy:.2f} closure={closure:.2f}"
+            )
+            if not args.dry_run:
+                robot.send_action(
+                    {
+                        **{
+                            f"{joint}.pos": sign * target
+                            for joint, sign, target in zip(ROBOT_JOINTS, signs, q_cmd, strict=True)
+                        },
+                        "proximal.pos": proximal,
+                        "distal.pos": distal,
+                    }
+                )
         input(f"{'DRY RUN: the arm will not move. ' if args.dry_run else ''}Press ENTER to start...")
 
         logger.write(
@@ -181,6 +232,7 @@ def main():
                 "dry_run": args.dry_run,
                 "n_action_steps": n_exec,
                 "initial_joints_deg": dict(zip(ROBOT_JOINTS, q_cmd, strict=True)),
+                "initial_gripper": initial_gripper,
             }
         )
         run_started = time.perf_counter()

@@ -63,6 +63,9 @@ python lerobot_robot_openarm_gripette/examples/run_grabette_policy.py \
 - After connecting, the runner disables only the arm torque. Support the arm, place the Gripette
   where the demonstrations started, and press ENTER. The runner enables torque, holds the measured
   pose, prints its joints and `oak_l` position, then requires a second ENTER before policy execution.
+- Set the initial gripper with `--initial_gripper_closure 0` to open it or
+  `--initial_gripper_closure 1` to close it. Use `--initial_gripper_strategy` to select the grasp
+  strategy; omitted values preserve the measured state.
 - The URDF is the right arm, with joints mapped `r_arm_pitch..r_wrist_pitch` -> `joint_1..joint_7`.
   Joint zeros must match the URDF (arm hanging straight down); flip reversed joints with
   `--joint_signs`.
