@@ -366,7 +366,6 @@ Control-thread reporting uses bounded queues drained by the worker; diagnostic I
 | Shared predictor, separate owners               | Reuses coordinate/gradient validation without moving rollout or transport concerns into policies           |
 | Explicit public APIs and directed dependencies  | Exposes package boundaries without lazy initializer machinery or requiring unrelated optional dependencies |
 
-
 ## 13. Future work
 
 ### Follow-ups after landing
