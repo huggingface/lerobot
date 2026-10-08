@@ -228,7 +228,7 @@ def test_both_arms_configure_before_either_is_enabled(robot, monkeypatch):
     assert events == ["left:configure", "right:configure", "left:enable", "right:enable"]
 
 
-def test_servo_error_stops_and_disables_both_arms(robot):
+def test_servo_error_stops_both_arms_until_disconnect(robot):
     for arm in robot.arms.values():
         attach_bus(arm, mock_bus())
     robot.left_arm.bus.read_states.side_effect = ConnectionError("lost")
@@ -237,6 +237,8 @@ def test_servo_error_stops_and_disables_both_arms(robot):
     assert isinstance(robot.left_arm.servo.failure, ConnectionError)
     assert robot._stop.is_set()
     for arm in robot.arms.values():
+        arm.bus.disable.assert_not_called()
+        arm.servo.stop()
         arm.bus.disable.assert_called_once()
 
 

@@ -411,16 +411,17 @@ def test_start_pose_check_uses_degrees(robot, monkeypatch):
     robot.bus.enable.assert_not_called()
 
 
-def test_connect_requires_the_motor_can_timeout(robot, monkeypatch, caplog):
+@pytest.mark.parametrize(("timeout", "detail"), [(0, "joint_2=off"), (8001, "joint_2=400.05 ms")])
+def test_connect_requires_a_prompt_motor_can_timeout(robot, monkeypatch, caplog, timeout, detail):
     mock_hardware(robot, monkeypatch)
     robot.config.read_only = False
-    robot.bus.can_timeouts.return_value = {**dict.fromkeys(MOTOR_NAMES, 8000), "joint_2": 0}
-    with pytest.raises(ValueError, match="CAN timeout of joint_2 is off"):
+    robot.bus.can_timeouts.return_value = {**dict.fromkeys(MOTOR_NAMES, 8000), "joint_2": timeout}
+    with pytest.raises(ValueError, match="unsafe motor CAN timeout"):
         robot.connect()
     robot.bus.enable.assert_not_called()
     robot.config.require_motor_can_timeout = False
     robot.connect()
-    assert "CAN timeout of joint_2 is off" in caplog.text
+    assert detail in caplog.text
     robot.bus.enable.assert_called_once()
     robot.disconnect()
 
@@ -439,11 +440,6 @@ def test_bus_reads_the_can_timeout_register():
         motor.get_register_u32.return_value = 8000
     assert bus.can_timeouts() == dict.fromkeys(MOTOR_NAMES, 8000)
     bus.motors["gripper"].get_register_u32.assert_called_once_with(9)
-
-
-def test_fault_damping_comes_from_the_config(robot):
-    robot.config.fault_damping_kd = [4.0, 4.0, 4.0, 1.0, 1.0, 1.0]
-    np.testing.assert_allclose(params(robot).fault_damping_kd, [4, 4, 4, 1, 1, 1, robot.config.gripper_kd])
 
 
 def test_float_mode_requires_gravity_compensation(tmp_path):
@@ -630,12 +626,14 @@ def test_gripper_stroke_is_checked_in_degrees(tmp_path, monkeypatch):
         make_robot(tmp_path, gripper_closed_deg=None, gripper_open_deg=None)
 
 
-def test_servo_error_disables_single_arm(robot):
+def test_servo_error_stops_single_arm_until_disconnect(robot):
     bus = attach_bus(robot, mock_bus())
     bus.read_states.side_effect = ConnectionError("lost")
     robot.servo._run()
     assert isinstance(robot.servo.failure, ConnectionError)
     assert robot.servo.stop_event.is_set()
+    bus.disable.assert_not_called()
+    robot.servo.stop()
     bus.disable.assert_called_once()
 
 

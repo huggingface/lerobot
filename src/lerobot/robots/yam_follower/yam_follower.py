@@ -74,8 +74,10 @@ _MODEL_GRIPPER_STROKE_M = 0.0475
 _GRAVITY_MODEL_PATH = Path(__file__).parent / "assets/yam_linear.xml"
 _MAX_GRAVITY_TORQUE_NM = 10.0
 _JOINT_LIMITS = np.asarray(JOINT_LIMITS_RAD)
-# Damiao register holding the CAN loss-of-communication timeout; 0 disables it.
+# Damiao register 9 stores the CAN loss-of-communication timeout in 50 us ticks.
 _CAN_TIMEOUT_REGISTER = 9
+_CAN_TIMEOUT_TICK_US = 50
+_MAX_CAN_TIMEOUT_TICKS = 8000  # I2RT's 400 ms YAM timeout.
 
 
 def yam_arm_params(config: YamFollowerConfigBase) -> MitArmParams:
@@ -102,7 +104,6 @@ def yam_arm_params(config: YamFollowerConfigBase) -> MitArmParams:
             force_limit_n=config.gripper_force_limit_n,
             finger_stroke_m=config.gripper_stroke_m,
         ),
-        fault_damping_kd=np.r_[config.fault_damping_kd, config.gripper_kd],
         float_kd=np.asarray(config.float_kd, dtype=float),
         coulomb_friction=np.asarray(config.coulomb_friction, dtype=float)
         if config.friction_compensation
@@ -475,13 +476,21 @@ class YamFollower(Robot):
         self.servo.seed(read_joint_state(self.bus, self._require_params()))
 
     def _check_can_timeouts(self) -> None:
-        """Require the firmware timeout that stops each motor if this process stops sending commands."""
-        disabled = [name for name, value in self.bus.can_timeouts().items() if value == 0]
-        if not disabled:
+        """Require a prompt firmware fallback if this process stops sending commands."""
+        unsafe = {
+            name: value
+            for name, value in self.bus.can_timeouts().items()
+            if not 0 < value <= _MAX_CAN_TIMEOUT_TICKS
+        }
+        if not unsafe:
             return
+        details = ", ".join(
+            f"{name}=off" if value == 0 else f"{name}={value * _CAN_TIMEOUT_TICK_US / 1000:g} ms"
+            for name, value in unsafe.items()
+        )
         message = (
-            f"{self}: the CAN timeout of {', '.join(disabled)} is off, so these motors keep their last "
-            "command if the host stops. Enable it with the Damiao/I2RT motor tools"
+            f"{self}: unsafe motor CAN timeout ({details}); configure every motor to at most 400 ms "
+            "with the Damiao/I2RT motor tools"
         )
         if self.config.require_motor_can_timeout:
             raise ValueError(f"{message}, or set require_motor_can_timeout=false.")
