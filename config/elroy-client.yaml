@@ -7,16 +7,30 @@
 #
 #   elroy:  lerobot-teleoperate --config_path=config/elroy-client.yaml
 #
-# TWO LIMITATIONS, both expected rather than broken:
+# SUPERSEDED - use the xlerobot_leader_gamepad teleoperator instead.
 #
-# 1. Arms only. xlerobot's action space is 17 values - 12 arm joints, 2 head,
-#    and x/y/theta velocity - but bi_so_leader produces only the 12 arm joints.
-#    send_action skips what it isn't given, so the head holds position and the
-#    base stays stopped. Driving those needs a second input (the examples under
-#    XLeRobot software/examples/ pair a leader with the keyboard) or the VR
-#    teleoperator, which covers the whole space.
+# The teleop block below pairs bi_so_leader directly with xlerobot_client, and
+# that DOES NOT WORK: BiSOLeader emits left_shoulder_pan.pos while XLerobot
+# filters incoming actions with startswith("left_arm_"), so every arm key is
+# dropped. The robot connects, the loop runs, and nothing moves - no error.
 #
-# 2. No cameras. xlerobot_cameras_config() is empty upstream and the host's
+# It also covers only 12 of xlerobot's 17 action values; the head and base have
+# no input at all.
+#
+# Both are fixed by the composite teleoperator in the XLeRobot repo, which
+# remaps the prefixes and adds a gamepad for the head and base:
+#
+#   teleop:
+#     type: xlerobot_leader_gamepad
+#     id: xlerobot_leaders
+#     left_arm_config:  {port: ...5B90149222-if00}
+#     right_arm_config: {port: ...5A7A017922-if00}
+#
+# Run probe_gamepad.py first to get your controller's real axis numbers.
+#
+# ONE REMAINING LIMITATION:
+#
+# No cameras. xlerobot_cameras_config() is empty upstream and the host's
 #    argparse takes no camera arguments, so the host streams none and this
 #    client declares none. Fine for proving the link; needs solving before
 #    recording, since a dataset without images is not much use.
