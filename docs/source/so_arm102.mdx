@@ -88,14 +88,25 @@ Label the ports as leader and follower. Reconnect the adapter requested by the t
 
 Set IDs **before installing the servos in the arms**. Each arm has its own bus, with IDs 1-6; the two arms must use separate adapters. Record the servo model and ID for each joint:
 
-| ID  | LeRobot joint name             | Follower servo | Leader servo |
-| --- | ------------------------------ | -------------- | ------------ |
-| 1   | `shoulder_pan` / base rotation | STS3235        | STS3215      |
-| 2   | `shoulder_lift`                | STS3250        | STS3215      |
-| 3   | `elbow_flex`                   | STS3250        | STS3215      |
-| 4   | `wrist_flex`                   | STS3235        | STS3215      |
-| 5   | `wrist_roll`                   | STS3215        | STS3215      |
-| 6   | `gripper` / leader trigger     | STS3215        | STS3215      |
+| ID  | LeRobot joint name             | Follower servo                     | Leader servo                  |
+| --- | ------------------------------ | ---------------------------------- | ----------------------------- |
+| 1   | `shoulder_pan` / base rotation | ST-3235-C001 (STS3235)             | ST-3215-C044 (STS3215), 1:191 |
+| 2   | `shoulder_lift`                | ST-3250-C001 (STS3250)             | ST-3215-C044 (STS3215), 1:191 |
+| 3   | `elbow_flex`                   | ST-3250-C001 (STS3250)             | ST-3215-C044 (STS3215), 1:191 |
+| 4   | `wrist_flex`                   | ST-3235-C001 (STS3235)             | ST-3215-C044 (STS3215), 1:191 |
+| 5   | `wrist_roll`                   | ST-3215-C018 (STS3215), 1:345      | ST-3215-C044 (STS3215), 1:191 |
+| 6   | `gripper` / leader trigger     | STS3215, 1:191; full SKU pending\* | ST-3215-C044 (STS3215), 1:191 |
+
+Full manufacturer designations: [ST-3235-C001](https://www.feetechrc.com/12v-30kg-metal-shell-metal-tooth-iron-core-motor-magnetic-coding-double-shaft-ttl-series-steering-gear), [ST-3250-C001](https://www.feetechrc.com/562636), [ST-3215-C018, 12 V, 1:345 datasheet](https://www.feetechrc.com/Data/feetechrc/upload/file/20240507/6385067068652648096680943.pdf), and [ST-3215-C044, 1:191 datasheet](https://files.seeedstudio.com/products/Feetech/101090141_Feetech_ST-3215-C044_Datasheet.pdf). All six leader motors use 1:191 gearing; do not substitute the SO-101 leader's mixed gear-ratio layout.
+
+\*The follower gripper is specified as STS3215 with 1:191 gearing. The standard catalog variant with that ratio is **ST-3215-C044**, rated for **5–8.4 V**, not the follower's 12 V bus. The exact full SKU and power arrangement of the kit's gripper are not yet confirmed. A 12 V motor fitted with a different gearbox must be identified as a modified variant; do not label it C044 solely from its gear ratio or substitute C018's 1:345 gearing in this table.
+
+<Tip warning={true}>
+  Before powering the follower, confirm the gripper's actual voltage rating and
+  its power arrangement. A standard ST-3215-C044 must not be connected to the 12
+  V follower supply. Torque or current limits in software do not change its
+  permitted supply voltage.
+</Tip>
 
 Robonine links its ID-setting and calibration tools at [lab.robonine.com](https://lab.robonine.com). Follow the tool's hardware instructions, connect only the servo being assigned an ID, and confirm the ID before connecting the next servo. Record the configured bus baud rate for the future driver; do not assume factory IDs are unique.
 
@@ -183,7 +194,7 @@ Check that the handle, wrist roll, and trigger move freely. Optional 8 x 2 mm O-
 
 1. Fix each base to the table with two clamps.
 2. Check wiring and cable slack with power disconnected.
-3. Connect the follower HAT to **12 V** and the leader adapter to **5 V**, checking polarity and connector compatibility.
+3. After confirming the gripper variant and power arrangement above, connect the follower HAT to **12 V** and the leader adapter to **5 V**, checking polarity and connector compatibility.
 4. Connect both controllers to the computer with USB-C data cables and identify their ports.
 5. Complete the compatibility and calibration checks below before enabling follower motion.
 
