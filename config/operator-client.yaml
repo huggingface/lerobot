@@ -18,7 +18,7 @@
 robot:
   type: xlerobot_client
   id: xlerobot
-  remote_ip: 192.168.1.56      # elroy on the cart. Use elroy.local if DHCP moves it.
+  remote_ip: 192.168.1.215     # elroy on the cart. Use elroy.local if DHCP moves it.
   port_zmq_cmd: 5555
   port_zmq_observations: 5556
   polling_timeout_ms: 15
