@@ -1,0 +1,76 @@
+# SO-ARM 102
+
+SO-ARM 102 is an open-source leader–follower arm kit by [Robonine](https://robonine.com), with five arm joints and a parallel gripper. Its hardware repository includes editable STEP files, printable STL/3MF files, a bill of materials, and assembly instructions.
+
+<img
+  src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/photos/so-arm-102-live.jpg"
+  alt="SO-ARM 102 leader and follower arms"
+  width="640"
+/>
+
+_Photo: Robonine, [CC BY 4.0](https://github.com/roboninecom/SO-ARM-102/blob/a62866a6d65efa4be7fd421e318ce8e649ac806a/DOCS-LICENSE.txt). [Hardware preview video](https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/video/so-arm-102-preview.mp4)._
+
+<Tip warning={true}>
+  This page describes the hardware. A dedicated SO-ARM 102 robot type is not
+  registered in LeRobot, and an end-to-end hardware validation report is not
+  available yet. The SO-101 joint layout alone does not establish compatibility
+  with the different follower motors. Follow the integration status below before
+  using the SO-101 setup, calibration, or motion commands on this kit.
+</Tip>
+
+## Source and assemble the parts
+
+The [hardware repository](https://github.com/roboninecom/SO-ARM-102) provides:
+
+- [Bill of materials and component links](https://github.com/roboninecom/SO-ARM-102/blob/main/docs/bom.md).
+- [Printing instructions](https://github.com/roboninecom/SO-ARM-102/blob/main/docs/printing.md) and [CAD and print files](https://github.com/roboninecom/SO-ARM-102/tree/main/models).
+- [Assembly guide](https://github.com/roboninecom/SO-ARM-102/blob/main/docs/assembly-guide.md), including wiring and servo placement.
+
+The follower uses a PET-CF frame and a parallel gripper. The leader uses a hand-operated handle and trigger. Hardware fabrication designs are licensed under [CERN-OHL-P-2.0](https://github.com/roboninecom/SO-ARM-102/blob/main/HARDWARE-LICENSE.txt).
+
+## Motor configuration
+
+The kit retains the SO-101 joint order, but the follower uses three servo models:
+
+| Servo ID | Joint                        | Follower | Leader  |
+| -------- | ---------------------------- | -------- | ------- |
+| 1        | Shoulder pan / base rotation | STS3235  | STS3215 |
+| 2        | Shoulder lift                | STS3250  | STS3215 |
+| 3        | Elbow flex                   | STS3250  | STS3215 |
+| 4        | Wrist flex                   | STS3235  | STS3215 |
+| 5        | Wrist roll                   | STS3215  | STS3215 |
+| 6        | Gripper / trigger            | STS3215  | STS3215 |
+
+<Tip warning={true}>
+  The leader uses a 5 V supply and the follower uses a 12 V supply. Keep the
+  supplies separate and follow the hardware assembly guide when wiring the arms.
+</Tip>
+
+## LeRobot integration status
+
+The existing SO-101 follower configuration declares all six motors as `sts3215`. SO-ARM 102's mixed follower configuration therefore needs verification before that implementation can be reused. In particular, the current Feetech model table includes `sts3250` but does not include `sts3235`.
+
+The integration discussion is tracked in [LeRobot issue #4868](https://github.com/huggingface/lerobot/issues/4868). Before publishing SO-ARM 102 motion commands, the integration should establish:
+
+- Motor identification and control-table support for STS3235, and the correct per-joint model mapping.
+- Calibration of both arms, including joint limits and the parallel gripper's travel and direction.
+- Reproducible teleoperation and dataset recording on an identified LeRobot revision.
+- Policy deployment results with the robot's actual observation and action configuration.
+
+Use [Bring Your Own Hardware](./integrate_hardware) for the integration interfaces. Community-maintained robot and teleoperator packages are documented in [Third-Party Robots & Teleoperators](./third_party_robots).
+
+## Prepare the software environment
+
+Follow the [Installation Guide](./installation) and install the Feetech extra from the LeRobot checkout:
+
+```bash
+pip install -e ".[feetech]"
+```
+
+With the USB servo adapters connected, identify their serial ports:
+
+```bash
+lerobot-find-port
+```
+
+These preparation steps do not register a SO-ARM 102 driver. Motor setup, calibration, teleoperation, recording, and policy deployment commands depend on the validated integration described above.
