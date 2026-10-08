@@ -223,7 +223,7 @@ def test_streaming_applies_rgb_transforms_and_preserves_uint8(
         assert torch.equal(sample[camera_key], reference[camera_key])
 
 
-def test_streaming_applies_rgb_transforms_on_decode_threads(tmp_path: Path, lerobot_dataset_factory) -> None:
+def test_streaming_applies_transforms_on_consumer_thread(tmp_path: Path, lerobot_dataset_factory) -> None:
     root = tmp_path / "dataset"
     lerobot_dataset_factory(root=root, repo_id=DUMMY_REPO_ID, total_episodes=2, total_frames=10)
     thread_names: set[str] = set()
@@ -243,7 +243,32 @@ def test_streaming_applies_rgb_transforms_on_decode_threads(tmp_path: Path, lero
 
     assert len(list(streaming)) == 10
     assert thread_names
-    assert all(name.startswith("lerobot-decode") for name in thread_names), thread_names
+    assert thread_names == {threading.current_thread().name}
+
+
+def test_streaming_random_transforms_are_reproducible_in_process(
+    tmp_path: Path, lerobot_dataset_factory
+) -> None:
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(root=root, repo_id=DUMMY_REPO_ID, total_episodes=4, total_frames=40)
+
+    def random_fill(image: torch.Tensor) -> torch.Tensor:
+        time.sleep(0.002 * float(torch.rand(1)))  # Jitter reorders decode threads.
+        return torch.full_like(image, float(torch.rand(1)), dtype=torch.float32)
+
+    def run() -> list[float]:
+        streaming = StreamingLeRobotDataset(
+            DUMMY_REPO_ID,
+            root=root,
+            shuffle=False,
+            buffer_size=3,
+            image_transforms=random_fill,
+            decode_threads=3,
+        )
+        torch.manual_seed(1000)
+        return [float(item[key].flatten()[0]) for item in streaming for key in streaming.meta.camera_keys]
+
+    assert run() == run()
 
 
 def test_streaming_argument_is_deprecated(tmp_path: Path, lerobot_dataset_factory) -> None:

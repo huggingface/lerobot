@@ -47,7 +47,8 @@ rank, `--num_workers` no longer means "N processes". In `lerobot-train` it sets
 `streaming_episode_pool_size + streaming_prefetch_episodes`). Raising it speeds up episode
 admission. It does not split episodes further, add samplers, or multiply the byte budget.
 `--num_workers=0` keeps the dataset in the training process, and any positive value moves it
-into a single DataLoader worker.
+into a single DataLoader worker. In the training process, the training thread applies the image
+transforms, so the same `--seed` gives the same transforms.
 
 One worker per rank keeps a single episode pool, byte budget and decoder cache per rank, so
 memory stays bounded, episode mixing uses the whole pool, and the exactly-once order is
