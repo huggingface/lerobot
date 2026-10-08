@@ -532,6 +532,7 @@ class RTCInferenceEngine(InferenceEngine):
                         original = actions.squeeze(0).clone()
                         processed = self._postprocessor(actions).squeeze(0)
                         new_latency = time.perf_counter() - current_time
+                        self.inference_seconds.append(new_latency)
                         new_delay = math.ceil(new_latency / time_per_chunk)
 
                         inference_count += 1

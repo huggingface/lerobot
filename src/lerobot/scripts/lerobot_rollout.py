@@ -194,6 +194,7 @@ from lerobot.rollout import (
     build_rollout_context,
     create_strategy,
 )
+from lerobot.rollout.status_line import StatusLine
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -261,7 +262,9 @@ def rollout(cfg: RolloutConfig):
             InteractiveSession(strategy, ctx).run()
         else:
             logger.info("Rollout setup complete, starting rollout...")
-            strategy.run(ctx)
+            tick_hz = cfg.fps * cfg.interpolation_multiplier
+            with StatusLine(ctx.hardware.robot_wrapper, ctx.policy.inference, tick_hz, cfg.device):
+                strategy.run(ctx)
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     finally:
