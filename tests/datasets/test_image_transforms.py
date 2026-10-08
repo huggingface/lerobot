@@ -586,8 +586,13 @@ def test_jpeg_compression_is_not_silent_noop():
     ],
 )
 def test_robotics_transform_random_params_are_reused(transform):
+    """Parameters drawn from a generator fully determine the output, so they can be applied again.
+
+    `PerSampleTransform` only puts seeds in its parameters when given a generator; without one it draws
+    from the default generators at call time, which is what keeps it safe on concurrent decode threads.
+    """
     frames = torch.rand(1, 1, 3, 32, 32)
-    params = transform.make_params(frames.shape, CPU)
+    params = transform.make_params(frames.shape, CPU, torch.Generator().manual_seed(0))
     torch.testing.assert_close(transform.transform(frames, params), transform.transform(frames, params))
 
 

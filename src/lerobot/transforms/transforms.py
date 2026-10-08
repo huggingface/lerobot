@@ -15,7 +15,7 @@
 # limitations under the License.
 import math
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -1349,14 +1349,18 @@ def _seeded_default_generators(seed: int, device: torch.device) -> Iterator[None
 
 
 class PerSampleTransform(BatchedTransform):
-    """Run a per-sample transform on each sample of a batch in turn, seeded from the batch generator.
+    """Run a per-sample transform on each sample of a batch in turn.
 
     The adapter for transform types with no batched implementation: any `torchvision.transforms.v2` class
-    by name, and `JPEGCompression`. `make_params` draws one seed per sample from the generator, and
-    `transform` seeds the default generators with it (under `torch.random.fork_rng`, so they are restored
-    afterwards) before calling the wrapped transform on that sample's `(N, C, H, W)` frames. The
-    augmentation is therefore reproducible from the batch generator, and the frames of one sample share
-    the parameters the wrapped transform draws, as on the dataloader backend.
+    by name, and `JPEGCompression`. The wrapped transform draws its parameters from the default
+    generators, and the frames of one sample share them, as on the dataloader backend.
+
+    When the caller passes a generator (the gpu-backend training step), `make_params` draws one seed per
+    sample from it, and `transform` seeds the default generators with that seed (under
+    `torch.random.fork_rng`, so they are restored afterwards), which makes the augmentation reproducible from
+    the batch generator. Without one (the DataLoader workers, and the streaming dataset's decode threads),
+    the wrapped transform draws from the default generators directly: reseeding process-wide generators is
+    not safe when several threads transform at once.
 
     The loop is not vectorized: it costs one call per sample, and on an accelerator `JPEGCompression`
     round-trips through the CPU. The wrapped transform may change the frame size; see
@@ -1375,6 +1379,8 @@ class PerSampleTransform(BatchedTransform):
     def make_params(
         self, shape: torch.Size, device: torch.device, generator: torch.Generator | None = None
     ) -> dict[str, Any]:
+        if generator is None:
+            return {"seed": None}
         high = torch.iinfo(torch.int64).max
         return {"seed": torch.randint(0, high, (shape[0],), device=device, generator=generator)}
 
@@ -1383,11 +1389,12 @@ class PerSampleTransform(BatchedTransform):
         # The wrapped transform's own arguments (`fill`, a solarize threshold, ...) are in the pixel scale of
         # the caller's input, so it is handed that input's dtype rather than the [0, 1] working copy.
         uint8_input = params.get("uint8_input", False)
+        seeds = [None] * frames.shape[0] if params["seed"] is None else params["seed"].tolist()
         outputs = []
-        for sample, seed in zip(frames.unbind(0), params["seed"].tolist(), strict=True):
+        for sample, seed in zip(frames.unbind(0), seeds, strict=True):
             if uint8_input:
                 sample = (sample * 255.0).round_().clamp_(0, 255).to(torch.uint8)
-            with _seeded_default_generators(seed, frames.device):
+            with nullcontext() if seed is None else _seeded_default_generators(seed, frames.device):
                 out = self.per_sample(sample)
             outputs.append(out.to(frames.dtype) / 255.0 if uint8_input else out)
         return torch.stack(outputs)

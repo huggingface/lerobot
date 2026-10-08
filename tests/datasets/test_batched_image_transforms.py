@@ -519,3 +519,16 @@ def test_deprecated_front_end_interprets_fill_in_the_input_pixel_scale():
         )
     out = transform(torch.full((3, 32, 32), 100, dtype=torch.uint8))
     assert out[:, 0, 0].tolist() == [255, 255, 255]
+
+
+def test_fallback_without_a_generator_leaves_the_global_generators_alone(monkeypatch):
+    """Workers and the streaming dataset's decode threads call the transforms without a generator, several
+    threads at once in one process; reseeding the process-wide generators there would race."""
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("reseeded the process-wide generators")
+
+    monkeypatch.setattr(tf, "_seeded_default_generators", refuse)
+    frames8 = torch.randint(0, 256, (3, 16, 16), dtype=torch.uint8, generator=_generator(0))
+    out = ImageTransforms(_only("RandomSolarize", threshold=128, p=1.0))(frames8)
+    torch.testing.assert_close(out, F.solarize(frames8, threshold=128))
