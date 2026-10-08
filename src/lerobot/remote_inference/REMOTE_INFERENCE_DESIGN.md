@@ -386,20 +386,18 @@ Keep this reference focused on current contracts and open work. Record logs, com
 
 ### Remaining integration validation
 
-The recording, local RTC and functional language hardware batch is complete within the limits above. No further HW run is planned; remaining work is the focused follow-ups below, documentation, contribution review and final automated checks.
+The recording, local RTC and functional language hardware batch is complete within the limits above. No further HW run is planned. Contribution inventory, PR description and migration guidance have been reviewed; research artifacts and learning exports remain outside the implementation contribution.
+
+The affected local regression suite passed with 540 tests and four skips: two require CUDA and two require a Zenoh router binary. Contribution-wide quality hooks, repository type checking and maintained documentation-link checks passed. These results do not replace CI on the final submitted revision.
 
 #### Documentation and contribution readiness
 
 - [ ] Refresh companion learning material against this reference, including package paths, defaults, driver capability constraints, starvation recovery, terminal shutdown and recording behavior. Keep learning exports separate from the implementation contribution.
-- [ ] Review the final file inventory. Keep runtime code, focused tests, public docs, this reference, the generic server YAML and router fixtures. Preserve internal review records and research artifacts separately before removing them from the contribution. No maintained document or test should depend on those artifacts.
-- [ ] Update the PR description and migration guidance with the actual validation status, new public import locations, local RTC exhaustion behavior and robot support limits. Remove completed temporary checklist items here once their outcome is recorded with the PR; retain enduring design limits and deferred work.
 
 #### Final automated checks
 
-- [ ] Run the affected inference, transport, rollout/recording and robot-contract regressions after the last relevant implementation change.
-- [ ] Run repository type checking and applicable formatting/lint checks; verify maintained documentation links.
 - [ ] Confirm Fast Tests, Full CPU/GPU Tests, Quality and Docs on the exact submitted revision. Keep remote integration dependencies in Full Tests, not the Fast Tests tiers.
-- [ ] Assess any skipped or unavailable check explicitly. A local pass, mock, dependency-isolation probe or earlier CI result does not replace a missing physical, real-model or final-revision check.
+- [ ] Reconcile final CI results and any remaining skips with the PR validation summary. A local pass, mock, dependency-isolation probe or earlier CI result does not replace a missing physical, real-model or final-revision check.
 
 Repeat a physical check only when a change affects its behavior or leaves a concrete question unresolved. The remaining work does not include broad camera-versus-motor failure handling, a general hardware-cleanup redesign or exhaustive tuning sweeps.
 
