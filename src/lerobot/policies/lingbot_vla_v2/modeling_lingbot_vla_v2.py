@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 from collections import deque
+from contextlib import contextmanager
 from typing import Any
 
 import einops
@@ -12,9 +14,10 @@ from transformers import AutoConfig, PretrainedConfig, PreTrainedModel
 from transformers.cache_utils import Cache
 from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.qwen3_vl.modeling_qwen3_vl import apply_rotary_pos_emb
-from transformers.utils import logging
 
+from lerobot.policies.common.flow_matching import FlowConvention, make_flow_matching_inputs
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
@@ -23,7 +26,7 @@ from .model_core.modeling_lingbot_vla_v2_base import (
     FlowMatching as FlowMatchingV1,
     replace_lnorm_with_adanorm,
 )
-from .model_core.moe_loss import sequence_wise_balance_loss as triton_sequence_wise_balance_loss
+from .model_core.moe_loss import sequence_wise_balance_loss
 from .model_core.qwen2_action_expert import (
     Qwen2ForCausalLM,
     Qwen2TokenMoeBlock,
@@ -35,7 +38,20 @@ from .model_core.utils import (
     our_sdpa_attention_forward,
 )
 
-logger = logging.get_logger(__name__)
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _frozen_params(module: nn.Module):
+    """Temporarily freeze trainable params so RTC guidance only builds the x_t graph."""
+    params = [p for p in module.parameters() if p.requires_grad]
+    for p in params:
+        p.requires_grad_(False)
+    try:
+        yield
+    finally:
+        for p in params:
+            p.requires_grad_(True)
 
 
 class QwenvlWithExpertV2Config(PretrainedConfig):
@@ -55,6 +71,7 @@ class QwenvlWithExpertV2Config(PretrainedConfig):
         action_num_attention_heads: int = 32,
         action_num_key_value_heads: int = 8,
         action_head_dim: int = 128,
+        num_layers: int = 36,
         **kwargs,
     ):
         self.freeze_vision_encoder = freeze_vision_encoder
@@ -66,7 +83,6 @@ class QwenvlWithExpertV2Config(PretrainedConfig):
         self.action_num_attention_heads = action_num_attention_heads
         self.action_num_key_value_heads = action_num_key_value_heads
         self.action_head_dim = action_head_dim
-        num_layers = 36
 
         self.qwen_expert_config = CONFIG_MAPPING["qwen2"](
             attention_dropout=0.0,
@@ -93,29 +109,20 @@ class QwenvlWithExpertV2Config(PretrainedConfig):
             use_sliding_window=False,
             vocab_size=151936,
         )
-        logger.debug(
-            "Initializing Action Expert V2: layers=%s, hidden=%s, q_heads=%s, kv_heads=%s, head_dim=%s",
-            num_layers,
-            expert_hidden_size,
-            action_num_attention_heads,
-            action_num_key_value_heads,
-            action_head_dim,
-        )
         super().__init__(**kwargs)
 
 
 class QwenvlWithExpertV2Model(PreTrainedModel):
     config_class = QwenvlWithExpertV2Config
 
-    def __init__(self, config: QwenvlWithExpertV2Config, eval=False):
+    def __init__(self, config: QwenvlWithExpertV2Config, vlm_config: PretrainedConfig):
         super().__init__(config=config)
         self.config = config
         # The LLM attention is computed by the custom dual-stream forward, so the HF
         # model is built with "eager"; the vision tower reads its value straight through.
         hf_attn = "eager"
         hf_vit_attn = self.config.vit_attn_implementation
-        vlm_config = AutoConfig.from_pretrained(self.config.tokenizer_path)
-        if self.config.vocab_size not in (0, 257152):
+        if self.config.vocab_size:
             vlm_config.text_config.vocab_size = self.config.vocab_size
         vlm_config._attn_implementation = hf_attn
         vlm_config.text_config._attn_implementation = hf_attn
@@ -125,9 +132,9 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             self.qwenvl.tie_weights()
 
         self.config.qwen_expert_config._attn_implementation = hf_attn
-        self.qwen_expert = Qwen2ForCausalLM._from_config(self.config.qwen_expert_config, eval=eval)
+        self.qwen_expert = Qwen2ForCausalLM._from_config(self.config.qwen_expert_config)
 
-        if getattr(self.config, "adanorm_time", False):
+        if self.config.adanorm_time:
             replace_lnorm_with_adanorm(
                 self.qwen_expert,
                 self.config.qwen_expert_config.hidden_size,
@@ -151,26 +158,27 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         self.set_requires_grad()
 
     def _install_moe_blocks(self):
-        if not getattr(self.config, "use_moe", False):
+        if not self.config.use_moe:
             return
-        hidden_size = self.config.qwen_expert_config.hidden_size
-        token_moe_layers = getattr(self.config, "token_moe_layers", None) or []
+        layers = self.qwen_expert.model.layers
+        # Layers past the expert depth (e.g. the 36-layer default on a smaller VLM) are skipped.
+        token_moe_layers = [idx for idx in self.config.token_moe_layers if idx < len(layers)]
 
         if token_moe_layers:
             token_config = CONFIG_MAPPING["qwen2_moe"](
-                num_experts=getattr(self.config, "token_num_experts", 32),
-                num_experts_per_tok=getattr(self.config, "token_top_k", 1),
+                num_experts=self.config.token_num_experts,
+                num_experts_per_tok=self.config.token_top_k,
                 norm_topk_prob=True,
-                hidden_size=hidden_size,
-                moe_intermediate_size=getattr(self.config, "token_moe_intermediate_size", 256),
-                shared_expert_intermediate_size=getattr(self.config, "token_shared_intermediate_size", 256),
+                hidden_size=self.config.qwen_expert_config.hidden_size,
+                moe_intermediate_size=self.config.token_moe_intermediate_size,
+                shared_expert_intermediate_size=self.config.token_shared_intermediate_size,
                 output_router_logits=False,
             )
-            token_config.router_activation = getattr(self.config, "router_activation", "softmax")
-            token_config.routed_scaling_factor = getattr(self.config, "routed_scaling_factor", 1.0)
-            token_config.use_shared_expert_gate = getattr(self.config, "use_shared_expert_gate", True)
+            token_config.router_activation = self.config.router_activation
+            token_config.routed_scaling_factor = self.config.routed_scaling_factor
+            token_config.use_shared_expert_gate = self.config.use_shared_expert_gate
             for idx in token_moe_layers:
-                self.qwen_expert.model.layers[idx].mlp = Qwen2TokenMoeBlock(token_config)
+                layers[idx].mlp = Qwen2TokenMoeBlock(token_config)
 
     def set_requires_grad(self):
         if self.config.freeze_vision_encoder:
@@ -194,7 +202,7 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         pixel_values: torch.FloatTensor,
         image_grid_thw: torch.LongTensor,
     ):
-        precompute_grid_thw = getattr(self.config, "precompute_grid_thw", False)
+        precompute_grid_thw = self.config.precompute_grid_thw
         # Hoist the host-syncing grid preprocess when (a) the precompute flag wants it
         # cached and it is not yet, or (b) the capture grid cache is armed but empty
         # (first warm-up pass of a vision-graph capture). Once populated, subsequent
@@ -330,7 +338,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         self,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        vlm_position_ids: torch.LongTensor | None = None,
         past_key_values: list[torch.FloatTensor] | Cache | None = None,
         inputs_embeds: list[torch.FloatTensor] | None = None,
         use_cache: bool | None = None,
@@ -345,13 +352,7 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
         assert inputs_embeds is not None
         models = [self.qwenvl.model.language_model, self.qwen_expert.model]
         num_layers = self.qwenvl.config.text_config.num_hidden_layers
-        action_num_layers = self.config.qwen_expert_config.num_hidden_layers
         router_logits_list = []
-
-        assert action_num_layers == num_layers, (
-            "Action expert and VLM must have the same number of layers "
-            f"(got action={action_num_layers}, vlm={num_layers})."
-        )
 
         # mrope cos/sin depend only on position_ids (and dtype/device) — compute once
         # per forward instead of once per layer. Callers with a loop-invariant
@@ -362,10 +363,7 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
             position_embeddings = self.qwenvl.model.language_model.rotary_emb(rep, position_ids)
 
         use_gradient_checkpointing = (
-            getattr(self.config, "gradient_checkpointing", False)
-            and self.training
-            and torch.is_grad_enabled()
-            and not use_cache
+            self.config.gradient_checkpointing and self.training and torch.is_grad_enabled() and not use_cache
         )
 
         for layer_idx in range(num_layers):
@@ -530,22 +528,25 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
 
 
 class FlowMatchingV2(FlowMatchingV1):
-    def __init__(self, config, eval):
+    def __init__(self, config, rtc_processor: RTCProcessor | None = None):
         nn.Module.__init__(self)
         self.config = config
+        self.rtc_processor = rtc_processor
+        vlm_config = AutoConfig.from_pretrained(config.tokenizer_path)
         qwenvl_with_export_config = QwenvlWithExpertV2Config(
-            freeze_vision_encoder=self.config.freeze_vision_encoder,
-            train_expert_only=self.config.train_expert_only,
-            vocab_size=getattr(self.config, "vocab_size", 0),
-            use_lm_head=getattr(self.config, "use_lm_head", False),
-            attention_implementation=self.config.attention_implementation,
-            tokenizer_path=self.config.tokenizer_path,
-            use_cache=getattr(self.config, "use_cache", True),
-            expert_hidden_size=getattr(self.config, "expert_hidden_size", 768),
-            expert_intermediate_size=getattr(self.config, "expert_intermediate_size", 2752),
-            action_num_attention_heads=getattr(self.config, "action_num_attention_heads", 32),
-            action_num_key_value_heads=getattr(self.config, "action_num_key_value_heads", 8),
-            action_head_dim=getattr(self.config, "action_head_dim", 128),
+            freeze_vision_encoder=config.freeze_vision_encoder,
+            train_expert_only=config.train_expert_only,
+            vocab_size=config.vocab_size,
+            use_lm_head=config.use_lm_head,
+            attention_implementation=config.attention_implementation,
+            tokenizer_path=config.tokenizer_path,
+            use_cache=config.use_cache,
+            expert_hidden_size=config.expert_hidden_size,
+            expert_intermediate_size=config.expert_intermediate_size,
+            action_num_attention_heads=config.action_num_attention_heads,
+            action_num_key_value_heads=config.action_num_key_value_heads,
+            action_head_dim=config.action_head_dim,
+            num_layers=vlm_config.text_config.num_hidden_layers,
         )
         for name in [
             "adanorm_time",
@@ -563,19 +564,15 @@ class FlowMatchingV2(FlowMatchingV1):
             "routed_scaling_factor",
             "use_shared_expert_gate",
         ]:
-            if hasattr(config, name):
-                setattr(qwenvl_with_export_config, name, getattr(config, name))
-        self.qwenvl_with_expert = QwenvlWithExpertV2Model(qwenvl_with_export_config, eval)
-        self.config.proj_width = qwenvl_with_export_config.qwen_expert_config.hidden_size
-        self.config.initializer_range = getattr(
-            qwenvl_with_export_config.qwen_expert_config, "initializer_range", None
-        )
+            setattr(qwenvl_with_export_config, name, getattr(config, name))
+        self.qwenvl_with_expert = QwenvlWithExpertV2Model(qwenvl_with_export_config, vlm_config)
+        self.proj_width = width = config.expert_hidden_size
 
-        self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
-        self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
-        self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
-        self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
-        self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
+        self.state_proj = nn.Linear(config.max_state_dim, width)
+        self.action_in_proj = nn.Linear(config.max_action_dim, width)
+        self.action_out_proj = nn.Linear(width, config.max_action_dim)
+        self.action_time_mlp_in = nn.Linear(width * 2, width)
+        self.action_time_mlp_out = nn.Linear(width, width)
 
         self.set_requires_grad()
 
@@ -628,7 +625,7 @@ class FlowMatchingV2(FlowMatchingV1):
         cfg = self.qwenvl_with_expert.qwenvl.config
         visual_token_id = cfg.image_token_id
 
-        if getattr(self.config, "qwen3vl_use_vision_boundaries", True):
+        if self.config.qwen3vl_use_vision_boundaries:
             start_emb = self.qwenvl_with_expert.embed_special_token(
                 cfg.vision_start_token_id, bsize, num_images, device, embed_dtype
             )
@@ -674,7 +671,7 @@ class FlowMatchingV2(FlowMatchingV1):
         prefix_input_ids = torch.cat([fake_image_ids, lang_tokens.to(device)], dim=1)
         full_visual_pos_masks = torch.cat([visual_pos_masks, torch.zeros_like(lang_masks)], dim=1)
 
-        if getattr(self.config, "vlm_causal", False):
+        if self.config.vlm_causal:
             att_masks = torch.ones((bsize, embs.shape[1]), device=device, dtype=torch.bool)
         else:
             att_masks = torch.zeros((bsize, embs.shape[1]), device=device, dtype=torch.bool)
@@ -740,9 +737,6 @@ class FlowMatchingV2(FlowMatchingV1):
         actions,
         noise=None,
         time=None,
-        vlm_causal=False,
-        loss_type="fm",
-        precompute_grid_thw=False,
         image_grid_thw=None,
         collect_metrics=True,
     ) -> Tensor:
@@ -753,9 +747,9 @@ class FlowMatchingV2(FlowMatchingV1):
         if time is None:
             time = self.sample_time(actions.size(0), device).to(dtype)
 
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
+        x_t, u_t, time = make_flow_matching_inputs(
+            actions, noise, time, convention=FlowConvention.NOISE_AT_ONE
+        )
 
         (
             prefix_embs,
@@ -781,31 +775,30 @@ class FlowMatchingV2(FlowMatchingV1):
         (_, suffix_out), _, router_logits_list = self.qwenvl_with_expert.forward(
             attention_mask=att_2d_masks,
             position_ids=position_ids,
-            vlm_position_ids=prefix_position_ids,
             past_key_values=None,
             inputs_embeds=[prefix_embs, suffix_embs],
             # Training never reuses a KV cache — filling one here only wastes memory
             # (a full-sequence fp32/bf16 K/V copy per layer, discarded immediately).
             use_cache=False,
             fill_kv_cache=False,
-            ada_cond=time_embs if getattr(self.config, "adanorm_time", False) else None,
+            ada_cond=time_embs if self.config.adanorm_time else None,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
         )
-        suffix_out = suffix_out[:, -self.config.n_action_steps :]
-        if getattr(self.config, "action_fp32", False):
+        suffix_out = suffix_out[:, -self.config.chunk_size :]
+        if self.config.action_fp32:
             v_t = self._fp32_linear(self.action_out_proj, suffix_out)
         else:
             if suffix_out.dtype != self.action_out_proj.weight.dtype:
                 suffix_out = suffix_out.to(self.action_out_proj.weight.dtype)
             v_t = self.action_out_proj(suffix_out)
 
-        if loss_type == "fm":
+        if self.config.loss_type == "fm":
             losses = F.mse_loss(u_t, v_t, reduction="none")
-        elif loss_type == "L1_fm":
+        elif self.config.loss_type == "L1_fm":
             losses = F.l1_loss(u_t, v_t, reduction="none")
         else:
-            raise ValueError(f"Unsupported loss_type: {loss_type!r} (expected 'fm' or 'L1_fm').")
+            raise ValueError(f"Unsupported loss_type: {self.config.loss_type!r} (expected 'fm' or 'L1_fm').")
 
         seq_wise_loss, router_z_loss, moe_metrics = self._moe_losses_and_metrics(
             router_logits_list, losses, collect_metrics=collect_metrics
@@ -834,7 +827,6 @@ class FlowMatchingV2(FlowMatchingV1):
         _, past_key_values, _ = self.qwenvl_with_expert.forward(
             attention_mask=prefix_att_2d_masks,
             position_ids=prefix_position_ids,
-            vlm_position_ids=prefix_position_ids,
             past_key_values=None,
             inputs_embeds=[prefix_embs, None],
             use_cache=self.config.use_cache,
@@ -848,30 +840,13 @@ class FlowMatchingV2(FlowMatchingV1):
         """torch.compile with the shared mode. The default mode keeps
         triton.cudagraphs off via options (torch.compile forbids mode+options
         together; the *-no-cudagraphs modes already keep CUDA graphs off)."""
-        mode = getattr(self, "_compile_predict_velocity_mode", "default")
+        mode = self.config.compile_predict_velocity_mode
         if mode == "default":
             return torch.compile(fn, fullgraph=False, dynamic=False, options={"triton.cudagraphs": False})
         return torch.compile(fn, fullgraph=False, dynamic=False, mode=mode)
 
-    def _get_rtc_processor(self):
-        """Lazily build the RTC guidance processor.
-
-        Defaults come from ``RTCConfig``; policy-config fields named ``rtc_<field>``
-        (e.g. ``rtc_max_guidance_weight``) override them for deployment tuning.
-        """
-        proc = getattr(self, "_rtc_processor", None)
-        if proc is None:
-            from lerobot.policies.rtc.configuration_rtc import RTCConfig
-            from lerobot.policies.rtc.modeling_rtc import RTCProcessor
-
-            cfg = RTCConfig()
-            for field_name in ("max_guidance_weight", "execution_horizon"):
-                override = getattr(self.config, f"rtc_{field_name}", None)
-                if override is not None:
-                    setattr(cfg, field_name, override)
-            proc = RTCProcessor(cfg)
-            self._rtc_processor = proc
-        return proc
+    def _rtc_enabled(self) -> bool:
+        return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     def sample_actions(
         self,
@@ -880,14 +855,13 @@ class FlowMatchingV2(FlowMatchingV1):
         lang_tokens,
         lang_masks,
         state,
-        vlm_causal=False,
         noise=None,
         image_grid_thw=None,
         inference_delay: int = 0,
         prev_chunk_left_over: Tensor | None = None,
     ) -> Tensor:
         """Do a full Qwen3-VL inference forward and compute the action."""
-        if not getattr(self.config, "use_cache", True):
+        if not self.config.use_cache:
             raise ValueError(
                 "sample_actions requires config.use_cache=True: the denoise loop reuses "
                 "the prefix KV cache, and with use_cache=False the prefix fill returns "
@@ -901,12 +875,12 @@ class FlowMatchingV2(FlowMatchingV1):
         if noise is None:
             actions_shape = (
                 bsize,
-                self.config.n_action_steps,
+                self.config.chunk_size,
                 self.config.max_action_dim,
             )
             noise = torch.randn(actions_shape, device=device, dtype=dtype)
 
-        if getattr(self, "_use_prefix_graph", False):
+        if self.config.use_cudagraph_prefix or self.config.use_cudagraph_prefix_full:
             # CUDA-graphed prefix (see config docs). Falls back to the
             # eager prefix only for the non-CUDA / use_cache
             # guards; capture failures finish eagerly from the already-run
@@ -943,24 +917,15 @@ class FlowMatchingV2(FlowMatchingV1):
             time = time + dt
         count = 0
         predict_velocity_fn = self.predict_velocity
-        if getattr(self, "_use_compile_predict_velocity", False):
+        if self.config.compile_predict_velocity:
             compiled = getattr(self, "_compiled_predict_velocity", None)
             if compiled is None:
                 compiled = self._compile_with_mode(self.predict_velocity)
                 self._compiled_predict_velocity = compiled
             predict_velocity_fn = compiled
 
-        guided = prev_chunk_left_over is not None
-        if guided and any(p.requires_grad for p in self.parameters()):
-            # Guided (RTC) steps run under grad mode: RTCProcessor.denoise_step needs
-            # autograd from x_t to the denoiser output. With trainable params the graph
-            # would additionally carry a dead full-network backward per step whose saved
-            # activations OOM smaller GPUs (measured on a 24GB 4090). Inference never
-            # updates weights, so freeze once on first guided use.
-            for p in self.parameters():
-                p.requires_grad_(False)
-
-        if getattr(self.config, "use_cudagraph_denoise", False) and not guided:
+        guided = self._rtc_enabled() and prev_chunk_left_over is not None
+        if self.config.use_cudagraph_denoise and not guided:
             # The captured graph has no guidance hook; replay it only unguided.
             graphed = self._denoise_loop_graphed(
                 predict_velocity_fn,
@@ -987,30 +952,27 @@ class FlowMatchingV2(FlowMatchingV1):
             expanded_time = step_time.expand(bsize)
 
             if guided:
-                assert prev_chunk_left_over is not None
+                assert self.rtc_processor is not None
 
-                # RTC guidance (bench/rtc_bench.py parity): per-step local denoise cache —
-                # a shared cache would alias step k's tensors into step k+1's autograd graph.
+                # No shared denoise cache: it would alias step k's tensors into step k+1's graph.
                 def _pv_step(input_x_t, _et=expanded_time):
-                    return predict_velocity_fn(
-                        state,
-                        prefix_pad_masks,
-                        past_key_values,
-                        input_x_t,
-                        _et,
-                        prefix_position_ids=prefix_position_ids,
-                        _denoise_cache=None,
-                    )
+                    with _frozen_params(self):
+                        return predict_velocity_fn(
+                            state,
+                            prefix_pad_masks,
+                            past_key_values,
+                            input_x_t,
+                            _et,
+                            prefix_position_ids=prefix_position_ids,
+                        )
 
-                with torch.enable_grad():
-                    v_t = self._get_rtc_processor().denoise_step(
-                        x_t=x_t,
-                        prev_chunk_left_over=prev_chunk_left_over,
-                        inference_delay=inference_delay,
-                        time=step_time,
-                        original_denoise_step_partial=_pv_step,
-                        execution_horizon=int(prev_chunk_left_over.shape[0]),
-                    )
+                v_t = self.rtc_processor.denoise_step(
+                    x_t=x_t,
+                    prev_chunk_left_over=prev_chunk_left_over,
+                    inference_delay=inference_delay,
+                    time=step_time,
+                    original_denoise_step_partial=_pv_step,
+                )
                 v_t = v_t.to(x_t.dtype)  # guidance math upcasts to f32; keep x_t dtype
             else:
                 v_t = predict_velocity_fn(
@@ -1234,7 +1196,6 @@ class FlowMatchingV2(FlowMatchingV1):
         _, past_kv, _ = self.qwenvl_with_expert.forward(
             attention_mask=prefix_att_2d_masks,
             position_ids=prefix_position_ids,
-            vlm_position_ids=prefix_position_ids,
             past_key_values=None,
             inputs_embeds=[prefix_embs, None],
             use_cache=True,
@@ -1303,7 +1264,7 @@ class FlowMatchingV2(FlowMatchingV1):
     def _capture_vision_graph(self, images, flat_grid_thw, sig):
         core = self.qwenvl_with_expert
         prev_flag = core._capture_grid_cache
-        prev_precompute = getattr(core.config, "precompute_grid_thw", False)
+        prev_precompute = core.config.precompute_grid_thw
         prev_grid = (
             core.pos_embeds,
             core.position_embeddings,
@@ -1402,10 +1363,10 @@ class FlowMatchingV2(FlowMatchingV1):
         """
         if not images.is_cuda or getattr(self, "_prefix_graph_disabled", False):
             return None
-        if not getattr(self.config, "use_cache", True):
+        if not self.config.use_cache:
             return None
 
-        if getattr(self.config, "use_cudagraph_prefix_full", False):
+        if self.config.use_cudagraph_prefix_full:
             # Vision tower as its own graph (grid metadata cached on `core`); the embed
             # glue (language embed / masks / mrope ids / dense deepstack) stays eager —
             # it is light and get_rope_index's data-dependent host syncs cannot be
@@ -1648,12 +1609,12 @@ class FlowMatchingV2(FlowMatchingV1):
             inputs_embeds=[None, suffix_embs],
             use_cache=self.config.use_cache,
             fill_kv_cache=False,
-            ada_cond=time_embs if getattr(self.config, "adanorm_time", False) else None,
+            ada_cond=time_embs if self.config.adanorm_time else None,
             position_embeddings=cache["position_embeddings"],
         )
         suffix_out = outputs_embeds[1]
-        suffix_out = suffix_out[:, -self.config.n_action_steps :]
-        if getattr(self.config, "action_fp32", False):
+        suffix_out = suffix_out[:, -self.config.chunk_size :]
+        if self.config.action_fp32:
             v_t = self._fp32_linear(self.action_out_proj, suffix_out)
         else:
             if suffix_out.dtype != self.action_out_proj.weight.dtype:
@@ -1662,134 +1623,69 @@ class FlowMatchingV2(FlowMatchingV1):
         return v_t
 
     def _moe_losses_and_metrics(self, router_logits_list, losses, collect_metrics=True):
-        router_z_loss_coeff = getattr(self.config, "router_z_loss_coeff", 0)
+        router_z_loss_coeff = self.config.router_z_loss_coeff
         router_z_loss = losses.new_zeros(())
-        router_z_layer_losses = None  # per-layer raw z-loss (pre-coeff), for monitoring
         if router_z_loss_coeff > 0 and router_logits_list:
             router_z_layer_losses = [
                 torch.logsumexp(logits.float(), dim=-1).pow(2).mean() for logits in router_logits_list
             ]
             router_z_loss = router_z_loss_coeff * torch.stack(router_z_layer_losses).mean()
 
-        seq_wise_loss_coeff = getattr(self.config, "sequence_wise_loss_coeff", 0)
+        # MoE blocks in layer order, matching router_logits_list.
+        moe_blocks = [
+            layer.mlp
+            for layer in self.qwenvl_with_expert.qwen_expert.model.layers
+            if isinstance(layer.mlp, Qwen2TokenMoeBlock)
+        ]
+        seq_wise_loss_coeff = self.config.sequence_wise_loss_coeff
         seq_wise_loss = 0
-        seqwise_layer_losses = None  # per-layer raw seq-wise balance loss (pre-coeff), for monitoring
         if seq_wise_loss_coeff > 0 and router_logits_list:
             # router_logits are [B*T, E] (action-expert tokens, fixed length T per sample).
             # per_sequence -> balance experts within each sample's T tokens (DeepSeek-V3 intent);
             # global -> treat the whole B*T batch as one sequence.
-            mode = getattr(self.config, "sequence_wise_mode", "per_sequence")
-            score_func = getattr(self.config, "router_activation", "softmax")
-            if mode == "global":
+            if self.config.sequence_wise_mode == "global":
                 seq_lengths = None
             else:
                 batch = losses.shape[0]
                 tokens = router_logits_list[0].shape[0]
                 seq_lengths = [tokens // batch] * batch
-            seqwise_moe_layer_ids = sorted(getattr(self.config, "token_moe_layers", None) or [])
-            # Per-layer e_score_correction_bias so the loss's f_i top-k matches the
-            # router's actual (bias-corrected) selection.
-            seqwise_router_biases = tuple(
-                getattr(
-                    self.qwenvl_with_expert.qwen_expert.model.layers[
-                        seqwise_moe_layer_ids[i] if i < len(seqwise_moe_layer_ids) else i
-                    ].mlp,
-                    "e_score_correction_bias",
-                    None,
-                )
-                for i in range(len(router_logits_list))
-            )
-            seqwise_layer_losses = triton_sequence_wise_balance_loss(
+            seqwise_layer_losses = sequence_wise_balance_loss(
                 router_logits_list=tuple(router_logits_list),
-                top_k=getattr(self.config, "token_top_k", 4),
+                top_k=self.config.token_top_k,
                 seq_lengths=seq_lengths,
                 padding_len=0,
-                score_func=score_func,
-                e_score_correction_bias_list=seqwise_router_biases,
+                score_func=self.config.router_activation,
+                # The loss's top-k must match the router's bias-corrected selection.
+                e_score_correction_bias_list=tuple(block.e_score_correction_bias for block in moe_blocks),
             )
             if seqwise_layer_losses:
                 seq_wise_loss = seq_wise_loss_coeff * torch.stack(seqwise_layer_losses).mean()
 
+        # Monitoring-only cross-layer aggregates, computed on logging steps only.
         moe_metrics = {}
-        # Monitoring-only block (per-layer MaxVio/entropy/dead-expert stats + the
-        # per-metric .item() syncs in the caller). Gated by collect_metrics so it
-        # runs on logging steps only, not every training step.
         if collect_metrics and router_logits_list:
-            token_moe_layers_list = sorted(getattr(self.config, "token_moe_layers", None) or [])
-            all_moe_indices = token_moe_layers_list
-            token_expert_counts = []
-            # Per-layer token-MoE stats, collected for moe_summary/* cross-layer aggregates.
-            tok_maxvio, tok_minvio, tok_minload, tok_entropy, tok_sigmoid = [], [], [], [], []
-            tok_bias = []  # per-layer max(|e_score_correction_bias|) (loss-free); >1 -> bias dominates sigmoid score
-            any_dead = None  # OR-accumulated bool: any token-MoE layer with a 0-count expert
+            maxvio, minvio, minload, entropy, bias = [], [], [], [], []
             with torch.no_grad():
-                for i, logits in enumerate(router_logits_list):
-                    layer_id = all_moe_indices[i] if i < len(all_moe_indices) else i
-                    num_experts = logits.shape[-1]
+                for logits, block in zip(router_logits_list, moe_blocks, strict=True):
                     routing_probs = F.softmax(logits, dim=1, dtype=torch.float)
-                    moe_block = self.qwenvl_with_expert.qwen_expert.model.layers[layer_id].mlp
-                    _, selected = torch.topk(routing_probs, 1, dim=-1)
-                    counts = F.one_hot(selected.squeeze(-1), num_classes=num_experts).float().sum(dim=0)
-                    avg_load = counts.mean()
-                    denom = avg_load.clamp(min=1e-9)
-                    maxvio = (counts.max() - avg_load) / denom  # peak overload  (>=0, larger=worse)
-                    minvio = (avg_load - counts.min()) / denom  # valley underload (=1 -> dead expert)
-                    min_load_ratio = counts.min() / denom  # =0 -> dead expert
-                    # entropy is rank-local (this rank's routing_probs, last micro-batch).
-                    per_sample_entropy = -(routing_probs * routing_probs.clamp(min=1e-9).log()).sum(dim=-1)
-                    entropy = per_sample_entropy.mean()
-                    ll = f"{layer_id:02d}"
-                    token_expert_counts.append((layer_id, counts))
-                    moe_metrics[f"moe_maxvio/layer{ll}"] = maxvio
-                    moe_metrics[f"moe_minvio/layer{ll}"] = minvio
-                    moe_metrics[f"moe_minload/layer{ll}"] = min_load_ratio
-                    moe_metrics[f"moe_entropy_rank0/layer{ll}"] = entropy
-                    tok_maxvio.append(maxvio)
-                    tok_minvio.append(minvio)
-                    tok_minload.append(min_load_ratio)
-                    tok_entropy.append(entropy)
-                    dead = counts.min() == 0
-                    any_dead = dead if any_dead is None else (any_dead | dead)
-                    if hasattr(moe_block, "avg_topk_sigmoid_score"):
-                        sig = moe_block.avg_topk_sigmoid_score.detach().reshape(()).to(denom)
-                        moe_metrics[f"moe_topksigmoid_rank0/layer{ll}"] = sig
-                        tok_sigmoid.append(sig)
-                    if hasattr(moe_block, "e_score_correction_bias"):
-                        bias_absmax = moe_block.e_score_correction_bias.detach().abs().max().to(denom)
-                        moe_metrics[f"moe_bias/layer{ll}"] = bias_absmax
-                        tok_bias.append(bias_absmax)
-                # ---- moe_summary/* : cross-layer aggregates over token-MoE layers (written every step) ----
-                if tok_maxvio:
-                    moe_metrics["moe_summary/maxvio_avg"] = torch.stack(tok_maxvio).mean()
-                    moe_metrics["moe_summary/maxvio_max"] = torch.stack(tok_maxvio).max()
-                    moe_metrics["moe_summary/minvio_avg"] = torch.stack(tok_minvio).mean()
-                    moe_metrics["moe_summary/minvio_max"] = torch.stack(tok_minvio).max()
-                    moe_metrics["moe_summary/min_load_ratio"] = torch.stack(tok_minload).min()
-                    moe_metrics["moe_summary/has_dead_expert"] = any_dead.float()
-                    moe_metrics["moe_summary/entropy_avg_rank0"] = torch.stack(tok_entropy).mean()
-                if tok_sigmoid:
-                    moe_metrics["moe_summary/topk_sigmoid_avg_rank0"] = torch.stack(tok_sigmoid).mean()
-                if tok_bias:
-                    moe_metrics["moe_summary/bias_absmax"] = torch.stack(tok_bias).max()
-                # ---- moe_seqwise/* : per-layer raw sequence-wise balance loss (pre-coeff) + average ----
-                if seqwise_layer_losses and len(seqwise_layer_losses) == len(all_moe_indices):
-                    sw_vals = []
-                    for lid, sw in zip(all_moe_indices, seqwise_layer_losses, strict=True):
-                        v = sw.detach()
-                        moe_metrics[f"moe_seqwise/layer{lid:02d}"] = v
-                        sw_vals.append(v)
-                    moe_metrics["moe_seqwise/avg"] = torch.stack(sw_vals).mean()
-                # ---- moe_zloss/* : per-layer raw router z-loss (pre-coeff) + average/weighted loss ----
-                if router_z_layer_losses and len(router_z_layer_losses) == len(all_moe_indices):
-                    zl_vals = []
-                    for lid, zl in zip(all_moe_indices, router_z_layer_losses, strict=True):
-                        v = zl.detach()
-                        moe_metrics[f"moe_zloss/layer{lid:02d}"] = v
-                        zl_vals.append(v)
-                    moe_metrics["moe_zloss/avg_raw"] = torch.stack(zl_vals).mean()
-                    moe_metrics["moe_zloss/weighted"] = router_z_loss.detach()
-                if token_expert_counts:
-                    moe_metrics["_token_moe_expert_counts"] = token_expert_counts
+                    selected = routing_probs.argmax(dim=-1)
+                    counts = F.one_hot(selected, num_classes=logits.shape[-1]).float().sum(dim=0)
+                    avg_load = counts.mean().clamp(min=1e-9)
+                    maxvio.append((counts.max() - avg_load) / avg_load)
+                    minvio.append((avg_load - counts.min()) / avg_load)
+                    minload.append(counts.min() / avg_load)
+                    entropy.append(-(routing_probs * routing_probs.clamp(min=1e-9).log()).sum(dim=-1).mean())
+                    bias.append(block.e_score_correction_bias.abs().max().float())
+            moe_metrics = {
+                "moe_summary/maxvio_avg": torch.stack(maxvio).mean(),
+                "moe_summary/maxvio_max": torch.stack(maxvio).max(),
+                "moe_summary/minvio_avg": torch.stack(minvio).mean(),
+                "moe_summary/minvio_max": torch.stack(minvio).max(),
+                "moe_summary/min_load_ratio": torch.stack(minload).min(),
+                "moe_summary/has_dead_expert": (torch.stack(minload).min() == 0).float(),
+                "moe_summary/entropy_avg_rank0": torch.stack(entropy).mean(),
+                "moe_summary/bias_absmax": torch.stack(bias).max(),
+            }
         return seq_wise_loss, router_z_loss, moe_metrics
 
 
@@ -1830,9 +1726,10 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self.model = FlowMatchingV2(config, eval=False)
+        self.init_rtc_processor()
+        self.model = FlowMatchingV2(config, rtc_processor=self.rtc_processor)
 
-        if not getattr(self.config, "use_lm_head", False):
+        if not self.config.use_lm_head:
             del self.model.qwenvl_with_expert.qwenvl.lm_head
         del self.model.qwenvl_with_expert.qwen_expert.lm_head
 
@@ -1843,21 +1740,16 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         if model_dtype.is_floating_point:
             self.model.to(model_dtype)
 
-        # Opt-in torch.compile for the denoise inner loop (see config docs).
-        if getattr(self.config, "compile_predict_velocity", False):
-            self.model._use_compile_predict_velocity = True
-            self.model._compile_predict_velocity_mode = getattr(
-                self.config, "compile_predict_velocity_mode", "default"
-            )
-        if getattr(self.config, "use_cudagraph_prefix", False):
-            self.model._use_prefix_graph = True
-        # use_cudagraph_prefix_full lives inside _prefix_graphed (vision graph + LLM
-        # fill graph), so it implies the prefix graph is active.
-        if getattr(self.config, "use_cudagraph_prefix_full", False):
-            self.model._use_prefix_graph = True
-
         self.reset()
-        torch.set_float32_matmul_precision("high")
+
+    def init_rtc_processor(self):
+        """Build the RTC processor from ``config.rtc_config`` (called again by the rollout RTC engine)."""
+        self.rtc_processor = (
+            RTCProcessor(self.config.rtc_config) if self.config.rtc_config is not None else None
+        )
+        model = getattr(self, "model", None)
+        if model is not None:
+            model.rtc_processor = self.rtc_processor
 
     def reset(self):
         """Reset the rolling action queue used by select_action."""
@@ -1887,7 +1779,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
 
         groups = []
         if base_params:
-            groups.append({"params": base_params, "lr": cfg.optimizer_lr})
+            groups.append({"params": base_params})
         if expert_params:
             groups.append({"params": expert_params, "lr": cfg.optimizer_lr * expert_lr_scale})
         if not groups:
@@ -1921,13 +1813,13 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             targets = [targets]
         mlp_targets = {"gate_proj", "up_proj", "down_proj"} & set(targets)
         if mlp_targets:
-            logging.get_logger(__name__).warning(
+            logger.warning(
                 "PEFT target_modules %s only match the shared-expert MLP (nn.Linear); the routed "
                 "experts use fused grouped-GEMM storage (Qwen2FusedExperts) and will NOT be adapted.",
                 sorted(mlp_targets),
             )
-        if not getattr(self.config, "gradient_checkpointing", False):
-            logging.get_logger(__name__).warning(
+        if not self.config.gradient_checkpointing:
+            logger.warning(
                 "LoRA adapters are inside every decoder layer, so backward still traverses the "
                 "frozen backbone's activations. Consider --policy.gradient_checkpointing=true to "
                 "cut activation memory."
@@ -1944,17 +1836,16 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         image_grid_thw = batch.get("image_grid_thw")
         return images, img_masks, lang_tokens, lang_masks, state, image_grid_thw
 
-    def forward(self, batch: dict) -> tuple[Tensor, dict]:
-        """Training forward pass returning the flow-matching loss (lerobot convention)."""
+    def forward(self, batch: dict, reduction: str = "mean") -> tuple[Tensor, dict]:
+        """Training forward pass returning the flow-matching loss (per sample with ``reduction="none"``)."""
         images, img_masks, lang_tokens, lang_masks, state, image_grid_thw = self._extract_model_inputs(batch)
         actions = batch[ACTION].to(dtype=state.dtype)
         action_dim = actions.shape[-1]
         actions = F.pad(actions, (0, self.config.max_action_dim - action_dim))
 
-        # MoE monitoring metrics (per-layer stats + .item() syncs) only on logging steps.
+        # MoE monitoring metrics (.item() syncs) only on logging steps.
         self._train_step_count = getattr(self, "_train_step_count", 0) + 1
-        interval = max(1, int(getattr(self.config, "moe_metrics_interval", 1)))
-        collect_metrics = self._train_step_count % interval == 0
+        collect_metrics = self._train_step_count % max(1, self.config.moe_metrics_interval) == 0
 
         losses, seq_wise_loss, router_z_loss, moe_metrics = self.model.forward(
             images,
@@ -1965,19 +1856,20 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             actions,
             noise=batch.get("noise"),
             time=batch.get("time"),
-            loss_type=self.config.loss_type,
             image_grid_thw=image_grid_thw,
             collect_metrics=collect_metrics,
         )
 
+        dims = (1, 2) if reduction == "none" else None
         joint_mask = batch.get("joint_mask")
         if joint_mask is not None:
-            masked_losses = losses * joint_mask
-            loss_vla = masked_losses.sum() / joint_mask.sum().clamp(min=1)
+            loss_vla = (losses * joint_mask).sum(dim=dims) / joint_mask.sum(dim=dims).clamp(min=1)
         else:
-            loss_vla = losses[:, :, :action_dim].mean()
+            loss_vla = losses[:, :, :action_dim].mean(dim=dims)
 
-        loss_dict: dict = {"l1_loss" if self.config.loss_type == "L1_fm" else "l2_loss": loss_vla.item()}
+        loss_dict: dict = {
+            "l1_loss" if self.config.loss_type == "L1_fm" else "l2_loss": loss_vla.mean().item()
+        }
         total_loss = loss_vla
         for loss_name, term in (
             ("seq_wise_loss", seq_wise_loss),
@@ -1986,14 +1878,11 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             if torch.is_tensor(term):
                 loss_dict[loss_name] = term.item()
                 total_loss = total_loss + term
-        if moe_metrics:
-            loss_dict.update({k: (v.item() if torch.is_tensor(v) else v) for k, v in moe_metrics.items()})
-        loss_dict["loss"] = total_loss.item()
+        loss_dict.update({k: v.item() for k, v in moe_metrics.items()})
+        loss_dict["loss"] = total_loss.mean().item()
         return total_loss, loss_dict
 
-    @staticmethod
-    def supports_rtc() -> bool:
-        """Declare RTC inference support: ``lerobot-rollout --inference.type=rtc``."""
+    def supports_rtc(self) -> bool:
         return True
 
     @torch.no_grad()

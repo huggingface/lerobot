@@ -90,7 +90,7 @@ def replace_lnorm_with_adanorm(module, hidden_size, cond_dim, final_norm_adanorm
 
 
 class FlowMatching(nn.Module):
-    def __init__(self, config, eval):
+    def __init__(self, config):
         super().__init__()
         raise TypeError("FlowMatching is a helper base for FlowMatchingV2 and is not instantiated directly.")
 
@@ -106,6 +106,7 @@ class FlowMatching(nn.Module):
         )
 
     def sample_time(self, bsize, device):
+        # Not a true Beta(1.5, 1) (see utils.sample_beta), but it is the released training recipe.
         time_beta = sample_beta(1.5, 1.0, bsize, device)
         time = time_beta * 0.999 + 0.001
         return time.to(dtype=torch.float32, device=device)
@@ -116,14 +117,14 @@ class FlowMatching(nn.Module):
         bsize = state.shape[0]  # state_bs = img_bs
         device = state.device
         dtype = state.dtype
-        _fp32 = getattr(self.config, "action_fp32", False)
+        _fp32 = self.config.action_fp32
         # embed state
         state_emb = self._fp32_linear(self.state_proj, state) if _fp32 else self.state_proj(state)
 
         # embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(  # 1, 1024
             timestep,  # torch.Size([1]))
-            self.config.proj_width,  # 1024
+            self.proj_width,
             min_period=4e-3,
             max_period=4.0,
             device=device,
