@@ -24,12 +24,12 @@ import tempfile
 import threading
 import warnings
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from pathlib import Path
 from threading import Lock
-from typing import Any, BinaryIO, ClassVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, cast
 
 import av
 import fsspec
@@ -40,6 +40,7 @@ from datasets.features.features import register_feature
 from PIL import Image
 
 from lerobot.configs import (
+    DEPTH_METER_UNIT,
     DepthEncoderConfig,
     RGBEncoderConfig,
     VideoEncoderConfig,
@@ -48,10 +49,73 @@ from lerobot.configs import (
 )
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
-from .depth_utils import quantize_depth
+from .depth_utils import MM_PER_METRE, dequantize_depth, quantize_depth
 from .pyav_utils import get_pix_fmt_channels
 
+if TYPE_CHECKING:
+    from .dataset_metadata import LeRobotDatasetMetadata
+
 logger = logging.getLogger(__name__)
+
+
+def depth_encoder_configs(meta: "LeRobotDatasetMetadata") -> dict[str, DepthEncoderConfig]:
+    """Quantization settings of every depth video stream, used to dequantize decoded frames."""
+    return {
+        key: DepthEncoderConfig.from_video_info(meta.features[key].get("info")) for key in meta.depth_keys
+    }
+
+
+def image_depth_units(meta: "LeRobotDatasetMetadata") -> dict[str, str | None]:
+    """Stored physical unit of each depth feature saved as raw images rather than video."""
+    return {
+        key: (meta.features[key].get("info") or {}).get("depth_unit")
+        for key in meta.depth_keys
+        if key in meta.image_keys
+    }
+
+
+def dequantize_depth_frames(
+    frames: torch.Tensor, encoder: DepthEncoderConfig, output_unit: str
+) -> torch.Tensor:
+    """Turn decoded depth-video codes back into physical depth in ``output_unit``."""
+    return dequantize_depth(
+        frames,
+        depth_min=encoder.depth_min,
+        depth_max=encoder.depth_max,
+        shift=encoder.shift,
+        use_log=encoder.use_log,
+        output_unit=output_unit,
+    )
+
+
+def convert_image_depth_units(
+    item: dict[str, Any], stored_units: Mapping[str, str | None], output_unit: str
+) -> None:
+    """Rescale raw-image depth features in place from their stored unit to ``output_unit``."""
+    for key, stored_unit in stored_units.items():
+        if key in item and stored_unit is not None and stored_unit != output_unit:
+            item[key] = (
+                item[key] * MM_PER_METRE if stored_unit == DEPTH_METER_UNIT else item[key] / MM_PER_METRE
+            )
+
+
+def normalize_rgb_frames(frames: torch.Tensor, return_uint8: bool) -> torch.Tensor:
+    """Keep uint8 RGB frames, or convert them to float32 in ``[0, 1]``."""
+    return frames if return_uint8 else frames.to(torch.float32) / 255.0
+
+
+def apply_rgb_transforms(
+    item: dict[str, Any],
+    transforms: Callable[[torch.Tensor], torch.Tensor] | None,
+    camera_keys: list[str],
+    depth_keys: list[str],
+) -> None:
+    """Apply image augmentations in place to RGB cameras, never to physical depth maps."""
+    if transforms is None:
+        return
+    for key in camera_keys:
+        if key not in depth_keys:
+            item[key] = transforms(item[key])
 
 
 def decode_video_frames(
@@ -221,12 +285,8 @@ def decode_video_frames_pyav(
             f"number of queried timestamps ({len(timestamps)})"
         )
 
-    if return_uint8 or is_depth:
-        return closest_frames
-
-    # convert to the pytorch format which is float32 in [0,1] range (and channel first)
-    closest_frames = closest_frames.type(torch.float32) / 255
-    return closest_frames
+    # Depth codes stay integer for dequantization; RGB becomes float32 in [0, 1] unless uint8 is asked.
+    return normalize_rgb_frames(closest_frames, return_uint8 or is_depth)
 
 
 DEFAULT_DECODER_CACHE_SIZE = 100
@@ -383,35 +443,29 @@ def decode_video_frames_torchcodec(
     # Use cached decoder instead of creating new one each time
     decoder = decoder_cache.get_decoder(str(video_path))
 
-    loaded_ts = []
-    loaded_frames = []
-
     # get metadata for frame information
     metadata = decoder.metadata
     average_fps = metadata.average_fps
     # convert timestamps to frame indices
     frame_indices = [round(ts * average_fps) for ts in timestamps]
-    # retrieve frames based on indices
+    # retrieve frames based on indices: get_frames_at returns exactly one frame per
+    # requested index, in order, so frame i already corresponds to timestamps[i] --
+    # no nearest-match/re-stack needed (that redundant copy dominates decode overhead).
     frames_batch = decoder.get_frames_at(indices=frame_indices)
-
-    for frame, pts in zip(frames_batch.data, frames_batch.pts_seconds, strict=True):
-        loaded_frames.append(frame)
-        loaded_ts.append(pts.item())
-        if log_loaded_timestamps:
-            logger.info(f"Frame loaded at timestamp={pts:.4f}")
+    closest_frames = frames_batch.data
 
     # float64: hour-scale timestamps quantize past tolerance_s in float32.
     query_ts = torch.tensor(timestamps, dtype=torch.float64)
-    loaded_ts = torch.tensor(loaded_ts, dtype=torch.float64)
+    loaded_ts = frames_batch.pts_seconds.to(torch.float64)
 
-    # compute distances between each query timestamp and loaded timestamps
-    dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
-    min_, argmin_ = dist.min(1)
+    if log_loaded_timestamps:
+        logger.info(f"{loaded_ts=}")
 
-    is_within_tol = min_ <= tolerance_s
+    dist = (query_ts - loaded_ts).abs()
+    is_within_tol = dist <= tolerance_s
     if not is_within_tol.all():
         raise FrameTimestampError(
-            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} >= {tolerance_s=})."
+            f"One or several query timestamps unexpectedly violate the tolerance ({dist[~is_within_tol]} >= {tolerance_s=})."
             " It means that the closest frame that can be loaded from the video is too far away in time."
             " This might be due to synchronization issues with timestamps during data collection."
             " To be safe, we advise to ignore this item during training."
@@ -420,24 +474,7 @@ def decode_video_frames_torchcodec(
             f"\nvideo: {video_path}"
         )
 
-    # get closest frames to the query timestamps
-    closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
-    closest_ts = loaded_ts[argmin_]
-
-    if log_loaded_timestamps:
-        logger.info(f"{closest_ts=}")
-
-    if not len(timestamps) == len(closest_frames):
-        raise FrameTimestampError(
-            f"Retrieved timestamps differ from queried {set(closest_frames) - set(timestamps)}"
-        )
-
-    if return_uint8:
-        return closest_frames
-
-    # convert to float32 in [0,1] range
-    closest_frames = (closest_frames / 255.0).type(torch.float32)
-    return closest_frames
+    return normalize_rgb_frames(closest_frames, return_uint8)
 
 
 def encode_video_frames(
@@ -506,8 +543,9 @@ def encode_video_frames(
         # "While less efficient, it is generally preferable to modify logging with Python's logging"
         logging.getLogger("libav").setLevel(log_level)
 
-    # Create and open output file (overwrite by default)
-    with av.open(str(video_path), "w") as output:
+    # Create and open output file (overwrite by default).
+    # faststart moves the moov atom to the front so decoders can seek without reading the whole file.
+    with av.open(str(video_path), "w", options={"movflags": "faststart"}) as output:
         output_stream = output.add_stream(vcodec, fps, options=video_options)
         output_stream.pix_fmt = pix_fmt
         output_stream.width = width
@@ -821,7 +859,7 @@ class _CameraEncoderThread(threading.Thread):
                 if container is None or output_stream is None:
                     height, width = frame_data.shape[:2]
                     Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
-                    container = av.open(str(self.video_path), "w")
+                    container = av.open(str(self.video_path), "w", options={"movflags": "faststart"})
                     output_stream = container.add_stream(
                         self.video_encoder.vcodec,
                         self.fps,
