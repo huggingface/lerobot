@@ -65,4 +65,7 @@ teleop:
   right_arm_config:
     port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00   # Right leader (ttyACM3)
 
-display_data: true
+# Headless by default (SSH has no DISPLAY and rerun fails without one).
+# Turn on per run:  --display_data=true
+# Over the network: --display_data=true --display_mode=foxglove --display_ip=0.0.0.0 --display_port=8765
+display_data: false
