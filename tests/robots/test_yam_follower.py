@@ -328,7 +328,8 @@ def test_gravity_matches_reference_torques(robot):
     robot._load_control_model()
     assert robot.gravity_model is not None
     pose = np.array([0.2, 1.0, 1.1, -0.5, 0.3, -0.2, 0.5])
-    expected = [0.0, -1.3779441132, 5.9408414183, 1.0582110186, -0.0023627509, -0.0002296899]
+    # I2RT's runtime-combined YAM v1 and linear 4310 model at this pose.
+    expected = [0.0, -1.8471475506, 6.4100448557, 1.5274144560, 0.0594020982, -0.0011334136]
     np.testing.assert_allclose(robot._gravity_torque(pose), expected, atol=1e-6)
 
 
