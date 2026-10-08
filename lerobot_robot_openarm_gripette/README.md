@@ -74,7 +74,8 @@ python lerobot_robot_openarm_gripette/examples/run_grabette_policy.py \
 - The run aborts if IK moves any joint more than `--max_joint_step` degrees in one tick.
 - Predictions are flushed to a timestamped JSONL file under `outputs/openarm_gripette_policy`.
   Each action records the raw policy output, chunk/action indices, IK and gripper targets, and
-  whether it was sent to the robot. Override the directory with `--log_dir`.
+  whether it was sent to the robot. Records are also printed live in the terminal. Override the
+  directory with `--log_dir`.
 
 ## Tests
 
