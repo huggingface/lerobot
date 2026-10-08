@@ -58,6 +58,21 @@ def test_bundle_tampering_and_code_mismatch(tmp_path, monkeypatch):
         processing.execute_bundle(store, key, digest)
     with pytest.raises(ValueError, match="checksum"):
         processing.execute_bundle(store, key, "0" * 64)
+    key, digest = processing.write_bundle(store, "worker", {}, None)
+    monkeypatch.delenv("LEROBOT_PROCESSING_CODE_REVISION", raising=False)
+    with pytest.raises(ValueError, match="pinned revision"):
+        processing.execute_bundle(store, key, digest)
+
+
+def test_local_only_module_cannot_dispatch_paid_groups(tmp_path, monkeypatch):
+    store = ArtifactStore(tmp_path / "store")
+    plan = make_plan(store, {"log_path": str(tmp_path / "host-log")})
+    monkeypatch.setattr(processing, "require_persistent_remote", lambda *args: None)
+    monkeypatch.setattr(
+        processing, "run_job", lambda **kwargs: pytest.fail("local-only module was dispatched")
+    )
+    with pytest.raises(ValueError, match="remote-readable"):
+        processing.run_hf_stage(store, plan, RuntimeConfig())
 
 
 def test_retained_release_survives_local_deletion_and_has_no_duplicate_video(tmp_path, monkeypatch):

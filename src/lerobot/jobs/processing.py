@@ -22,7 +22,7 @@ import draccus
 from huggingface_hub import get_token, inspect_job, list_jobs_hardware, run_job
 
 from lerobot.data_processing.artifacts import ArtifactStore
-from lerobot.data_processing.bundles import write_bundle
+from lerobot.data_processing.bundles import check_credentials, write_bundle
 from lerobot.data_processing.planner import StagePlan, load_module
 from lerobot.data_processing.runtime import finalize_stage
 from lerobot.data_processing.types import Artifact, Resources, fingerprint
@@ -160,7 +160,12 @@ def run_hf_stage(store, plan, runtime):
     ):
         return finalize_stage(store, plan)
     cfg = runtime.hf_jobs
-    resources = load_module(plan.factory, plan.config).spec.resources
+    spec = load_module(plan.factory, plan.config).spec
+    if not spec.hf_jobs_compatible:
+        raise ValueError(
+            "This module does not declare remote-readable HF Jobs inputs; use a single-node bundle or Slurm"
+        )
+    resources = spec.resources
     image = cfg.gpu_image if resources.gpus else cfg.cpu_image
     flavor = cfg.gpu_flavor if resources.gpus else cfg.cpu_flavor
     groups = min(runtime.workers, plan.shards)
@@ -248,6 +253,7 @@ def retain_release(store, root: Path, *, source=None, config=None):
     annotation storage. Videos are content-addressed once and reused on retries.
     """
     root = root.resolve()
+    check_credentials({"source": source, "config": config})
     files, source_files = [], []
     paths = [
         (f"{name}/{path.relative_to((root / name).resolve()).as_posix()}", path)
@@ -344,7 +350,10 @@ def execute_bundle(store, key, digest):
     bundle = json.loads(data)
     if bundle["version"] != 1:
         raise ValueError("Unsupported processing bundle version")
-    if os.environ.get("LEROBOT_PROCESSING_CODE_REVISION") != bundle["code_revision"]:
+    if (
+        not re.fullmatch(r"[0-9a-f]{40}", bundle["code_revision"] or "")
+        or os.environ.get("LEROBOT_PROCESSING_CODE_REVISION") != bundle["code_revision"]
+    ):
         raise ValueError("The running code does not match the bundle's pinned revision")
     config = copy.deepcopy(bundle["config"])
     action = bundle["action"]

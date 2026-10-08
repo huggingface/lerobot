@@ -178,7 +178,9 @@ Annotation/conversion compatibility jobs run a **single-node** controller with i
 local worker pool. The controller advances the stage graph after the client
 detaches. Generic stages with remote-readable payloads can instead use bounded HF
 worker groups via `runtime.hf_jobs.cpu_image/cpu_flavor` or `gpu_image/gpu_flavor`.
-`max_parallel` caps outstanding groups. It does not distribute local source paths
+`max_parallel` caps outstanding groups. Modules must explicitly declare
+`ModuleSpec.hf_jobs_compatible=True` after ensuring their inputs are readable remotely;
+local-only modules fail before paid dispatch. It does not distribute local source paths
 or a controller's localhost VLM across nodes; use Slurm/shared inputs or an explicit
 external service for that workflow. Factories must exist in the pinned code/image.
 
