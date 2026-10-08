@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import MagicMock
+
 import gymnasium as gym
 import numpy as np
 import pytest
@@ -22,9 +24,11 @@ pytest.importorskip("datasets")
 
 from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.flux3 import make_flux3_pre_post_processors
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
-from lerobot.scripts.lerobot_eval import rollout
+from lerobot.scripts import lerobot_eval
+from lerobot.scripts.lerobot_eval import _get_episode_end_indices_and_mask, rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.policies.flux3.helpers import task_config
 
@@ -144,3 +148,75 @@ def test_rollout_starts_each_episode_with_fresh_processor_state(pipeline_kind):
     if pipeline_kind == "flux3":
         # Delta 0.25 unnormalizes to 0.5 and must be added to B's initial measured position.
         torch.testing.assert_close(reused_actions[0, 0, :-1], torch.full((5,), 2.5), rtol=0, atol=0)
+
+
+def test_episode_mask_excludes_steps_after_first_done():
+    done = torch.tensor(
+        [
+            [False, True, True],
+            [False, False, True],
+        ]
+    )
+
+    done_indices, mask = _get_episode_end_indices_and_mask(done)
+
+    torch.testing.assert_close(done_indices, torch.tensor([1, 2]))
+    torch.testing.assert_close(
+        mask,
+        torch.tensor(
+            [
+                [True, True, False],
+                [True, True, True],
+            ]
+        ),
+    )
+
+
+def test_eval_policy_ignores_padded_steps_in_metrics(monkeypatch):
+    rollout_data = {
+        "done": torch.tensor(
+            [
+                [False, True, True],
+                [False, False, True],
+            ]
+        ),
+        "reward": torch.tensor(
+            [
+                [-2.0, -1.0, 0.0],
+                [1.0, 2.0, 3.0],
+            ]
+        ),
+        "success": torch.tensor(
+            [
+                [False, False, True],
+                [False, False, True],
+            ]
+        ),
+    }
+    monkeypatch.setattr(lerobot_eval, "rollout", lambda **_: rollout_data)
+
+    env = MagicMock()
+    env.num_envs = 2
+    policy = MagicMock(spec=PreTrainedPolicy)
+    policy.training = True
+
+    result = lerobot_eval.eval_policy(
+        env=env,
+        policy=policy,
+        env_preprocessor=None,
+        env_postprocessor=None,
+        preprocessor=None,
+        postprocessor=None,
+        n_episodes=2,
+    )
+
+    assert result["per_episode"][0] == {
+        "episode_ix": 0,
+        "sum_reward": -3.0,
+        "max_reward": -1.0,
+        "success": False,
+        "seed": None,
+    }
+    assert result["per_episode"][1]["sum_reward"] == 6.0
+    assert result["per_episode"][1]["max_reward"] == 3.0
+    assert result["per_episode"][1]["success"] is True
