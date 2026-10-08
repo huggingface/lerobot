@@ -1,0 +1,67 @@
+# Both SO-101 arms as one bimanual robot, driven by two leader arms.
+# Standard lerobot classes only (bi_so_follower / bi_so_leader) - no custom code.
+#
+#   lerobot-teleoperate --config_path=config/bi-arms.yaml
+#   lerobot-record      --config_path=config/bi-arms.yaml --dataset.repo_id=<user>/<name> ...
+#
+# Calibration: bi_so_follower and bi_so_leader append _left / _right to their
+# own id, so this config looks for exactly the calibration files produced by
+# config/left-arm.yaml and config/right-arm.yaml:
+#     xlerobot_arms_left     xlerobot_arms_right
+#     xlerobot_leaders_left  xlerobot_leaders_right
+# Calibrate once per arm in single-arm mode; this config reuses it.
+#
+# Camera keys: per-arm cameras are prefixed by side, top-level ones are not.
+# So observations carry  left_front  right_front  head.
+
+robot:
+  type: bi_so_follower
+  id: xlerobot_arms
+
+  left_arm_config:
+    port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00   # Left follower
+    disable_torque_on_disconnect: true
+    cameras:
+      front:
+        type: opencv
+        index_or_path: /dev/cam_left
+        width: 1280
+        height: 720
+        fps: 30
+        warmup_s: 1
+
+  right_arm_config:
+    port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00   # Right follower
+    disable_torque_on_disconnect: true
+    cameras:
+      front:
+        type: opencv
+        index_or_path: /dev/cam_right
+        width: 1280
+        height: 720
+        fps: 30
+        warmup_s: 1
+
+  # Head RealSense belongs to neither arm, so its key stays unprefixed: "head".
+  cameras:
+    head:
+      type: intelrealsense
+      serial_number_or_name: "836112060112"
+      fps: 30
+      width: 1280
+      height: 720
+      color_mode: BGR
+      use_depth: true
+
+teleop:
+  type: bi_so_leader
+  id: xlerobot_leaders
+
+  left_arm_config:
+    port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00   # Leader #1
+
+  right_arm_config:
+    # TODO: second leader's port. Find it with:  ls -l /dev/serial/by-id/
+    port: REPLACE_WITH_SECOND_LEADER_PORT
+
+display_data: true

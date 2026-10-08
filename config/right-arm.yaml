@@ -1,8 +1,14 @@
+# Single right SO-101 arm + its leader. Standard lerobot, no custom code.
+#
+#   lerobot-teleoperate --config_path=config/right-arm.yaml
+#
+# IDs match what config/bi-arms.yaml derives, so calibration is shared.
+
 robot:
   type: so101_follower
-  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00 # Right PI
-  id: xlerobot_right_arm
+  id: xlerobot_arms_right
   disable_torque_on_disconnect: true
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00   # Right follower
 
   cameras:
     front:
@@ -13,10 +19,10 @@ robot:
       fps: 30
       warmup_s: 1
 
-
 teleop:
   type: so101_leader
-  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00
-  id: xlerobot_leader
+  id: xlerobot_leaders_right
+  # TODO: second leader's port. Find it with:  ls -l /dev/serial/by-id/
+  port: REPLACE_WITH_SECOND_LEADER_PORT
 
-#display_data: true
+display_data: true

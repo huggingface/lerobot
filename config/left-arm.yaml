@@ -1,29 +1,37 @@
+# Single left SO-101 arm + its leader. Standard lerobot, no custom code.
+#
+#   lerobot-teleoperate --config_path=config/left-arm.yaml
+#
+# IDs are chosen to match what config/bi-arms.yaml derives
+# (bi_so_follower/bi_so_leader append _left / _right to their own id),
+# so calibration done here is reused by the bimanual config.
+
 robot:
   type: so101_follower
-  id: xlerobot_left_arm
+  id: xlerobot_arms_left
   disable_torque_on_disconnect: true
-  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00 # Left PI
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00   # Left follower
 
   cameras:
     front:
-       type: opencv
-       index_or_path: /dev/cam_left
-       width: 1280
-       height: 720
-       fps: 30
-       warmup_s: 1
+      type: opencv
+      index_or_path: /dev/cam_left
+      width: 1280
+      height: 720
+      fps: 30
+      warmup_s: 1
     head:
-       type: intelrealsense
-       serial_number_or_name: "836112060112"
-       fps: 30
-       width: 1280
-       height: 720
-       color_mode: BGR
-       use_depth: True
+      type: intelrealsense
+      serial_number_or_name: "836112060112"
+      fps: 30
+      width: 1280
+      height: 720
+      color_mode: BGR
+      use_depth: true
 
 teleop:
   type: so101_leader
-  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00
-  id: xlerobot_leader
+  id: xlerobot_leaders_left
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00   # Leader #1
 
 display_data: true
