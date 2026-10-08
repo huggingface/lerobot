@@ -226,7 +226,7 @@ class CLIPVisionEncoder(nn.Module):
         self.num_non_spatial_tokens = 1
         self.embed_dim = self.model.config.hidden_size
         if compile_model:
-            self.forward = compile_forward(self, compile_mode)
+            self.forward = compile_forward(self, compile_mode)  # type: ignore[method-assign]
 
     def forward(self, x: Tensor) -> Tensor:
         """Encode RGB image to CLS token."""
@@ -635,7 +635,7 @@ class DiffusionTransformer(nn.Module):
         self.output_proj = nn.Linear(self.hidden_size, self.action_dim)
         self._initialize_weights()
         if config.compile_model:
-            self.forward = compile_forward(self, config.compile_mode)
+            self.forward = compile_forward(self, config.compile_mode)  # type: ignore[method-assign]
 
     def _initialize_weights(self):
         for block in self.transformer_blocks:

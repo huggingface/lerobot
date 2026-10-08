@@ -20,6 +20,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from lerobot.lerobot_types import RobotObservation
 from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
@@ -28,7 +29,6 @@ from lerobot.processor import (
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
-from lerobot.processor.pipeline import RobotObservation
 from lerobot.utils.constants import OBS_LANGUAGE, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
 
 from .configuration_multi_task_dit import MultiTaskDiTConfig
