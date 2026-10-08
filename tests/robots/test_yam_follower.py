@@ -653,37 +653,3 @@ def test_servo_waits_for_asynchronous_feedback(robot):
     robot.servo._run()
     assert robot.servo.failure is None
     assert robot.servo.updated_at > 0
-
-
-def test_gc_freeze_lasts_exactly_as_long_as_the_servo(robot, monkeypatch):
-    guard = MagicMock()
-    monkeypatch.setattr(mit_arm, "_ControlGC", guard)
-    attach_bus(robot, mock_bus())
-    robot.servo.seed(joint_state())
-    robot.servo.start()
-    guard.acquire.assert_called_once()
-    guard.release.assert_not_called()
-    robot.servo.stop()
-    guard.release.assert_called_once()
-
-
-def test_gc_freeze_can_be_disabled(robot, monkeypatch):
-    guard = MagicMock()
-    monkeypatch.setattr(mit_arm, "_ControlGC", guard)
-    attach_bus(robot, mock_bus())
-    robot.config.freeze_gc = False
-    robot.servo.seed(joint_state())
-    robot.servo.start()
-    robot.servo.stop()
-    guard.acquire.assert_not_called()
-    guard.release.assert_not_called()
-
-
-def test_connect_failure_before_servo_never_freezes_gc(robot, monkeypatch):
-    guard = MagicMock()
-    monkeypatch.setattr(mit_arm, "_ControlGC", guard)
-    attach_bus(robot, mock_bus()).open.side_effect = ConnectionError("no adapter")
-    with pytest.raises(ConnectionError, match="no adapter"):
-        robot.connect()
-    guard.acquire.assert_not_called()
-    guard.release.assert_not_called()

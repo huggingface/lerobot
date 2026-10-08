@@ -102,7 +102,6 @@ class YamFollowerConfigBase:
     control_frequency: float = 100.0
     feedback_timeout_s: float = 0.2
     command_timeout_s: float = 1.0
-    freeze_gc: bool = True
 
     def __post_init__(self) -> None:
         if not self.port:
@@ -221,7 +220,6 @@ class YamFollowerConfig(RobotConfig, YamFollowerConfigBase):
         control_frequency (`float`, *optional*, defaults to 100.0): Rate of the background servo loop in Hz, between 20 and 250.
         feedback_timeout_s (`float`, *optional*, defaults to 0.2): Maximum age of each motor reply. The foreground check allows two such intervals plus one servo period; long Python scheduling stalls can still stop the servo.
         command_timeout_s (`float`, *optional*, defaults to 1.0): When no action arrives for this long, the arm holds its current pose.
-        freeze_gc (`bool`, *optional*, defaults to `True`): Freeze existing cyclic-GC objects while the servo runs. This affects the whole Python process; disable it if the host application manages GC itself.
         id (`str | None`, *optional*): Name of this arm; it selects the calibration file.
         calibration_dir (`pathlib.Path | None`, *optional*): Directory of calibration files. Each file stores the raw motor angles of the gripper stops in whole degrees; calibration never changes joint zeros.
     """
