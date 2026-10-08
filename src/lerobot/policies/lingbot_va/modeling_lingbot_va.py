@@ -38,7 +38,9 @@ import torch.nn.functional as F  # noqa: N812
 from einops import rearrange
 from torch import Tensor
 
+from lerobot.lerobot_types import EnvTransition
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.processor import create_transition
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import require_package
 
@@ -171,6 +173,11 @@ class LingBotVAPolicy(PreTrainedPolicy):
         self._negative_prompt_embeds = None
         self.last_predicted_frames = None
         self.last_predicted_latents = None
+        # With ``return_predicted_video``: the current chunk's decoded clip, how many actions it
+        # spans, and the frame last returned (see ``_with_predicted_frame``).
+        self._chunk_frames: Tensor | None = None
+        self._chunk_len = 0
+        self._shown_frame = -1
         self._use_cfg = (cfg.guidance_scale > 1) or (cfg.action_guidance_scale > 1)
         # Two independent flow-matching schedulers (video latent + action streams).
         self._scheduler = FlowMatchScheduler(shift=cfg.snr_shift, sigma_min=0.0, extra_one_step=True)
@@ -399,13 +406,16 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return torch.cat(per_cam, dim=-1).to(self.config.device)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor | EnvTransition:
         """Return one action, refilling the chunk (and feeding back observed keyframes) as needed.
 
         Mirrors the upstream LIBERO client loop (``evaluation/libero/client.py``): the first obs is
         the conditioning frame; every observation produced afterwards is buffered as a keyframe and,
         once the chunk's actions are exhausted, the buffered frames + executed actions are fed back
         into the KV cache before the next chunk is predicted.
+
+        With ``config.return_predicted_video``, returns a transition whose prediction holds the
+        imagined camera frames matching the action being served (see ``_with_predicted_frame``).
         """
         self.eval()
         self._ensure_frozen_modules()
@@ -414,7 +424,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         if not self._started:
             # First call: this observation conditions the first chunk (it is *not* a keyframe).
             self._started = True
-            actions = self.predict_action_chunk(batch)  # [B, chunk_size, n_used]
+            actions = self._predict_and_decode(batch)  # [B, chunk_size, n_used]
             self._action_queue.extend(actions.transpose(0, 1))  # [chunk_size, B, n_used]
             self._obs_buffer = []
             self._exec_step = 0
@@ -426,17 +436,55 @@ class LingBotVAPolicy(PreTrainedPolicy):
             if len(self._action_queue) == 0:
                 # All actions for the current chunk have been executed; feed the observed
                 # keyframes + executed actions back and predict the next chunk.
-                actions = self.predict_action_chunk(None)
+                actions = self._predict_and_decode(None)
                 self._action_queue.extend(actions.transpose(0, 1))
                 self._exec_step = 0
 
         self._prev_j = self._exec_step % self.config.action_per_frame
         self._exec_step += 1
-        return self._action_queue.popleft()
+        return self._with_predicted_frame(self._action_queue.popleft())
+
+    def _predict_and_decode(self, batch: dict[str, Tensor] | None) -> Tensor:
+        """Predict the next chunk; with ``return_predicted_video``, also decode its imagined clip."""
+        actions, latents = self._predict_chunk(batch)
+        if self.config.return_predicted_video:
+            self._chunk_frames = self._decode_predicted_video(latents)  # [T, H, W, 3] uint8, batch 0
+            self._chunk_len = actions.shape[1]
+            self._shown_frame = -1
+        return actions
+
+    def _with_predicted_frame(self, action: Tensor) -> Tensor | EnvTransition:
+        """Pair ``action`` with the imagined frame it belongs to, when that frame changes.
+
+        The clip's frames are spread evenly over the chunk's actions, so the imagined video plays
+        as the chunk executes. Returns the bare action when there is no new frame to show.
+        """
+        if self._chunk_frames is None:
+            return action
+        served = self._chunk_len - len(self._action_queue) - 1  # index of ``action`` in its chunk
+        index = min(served * len(self._chunk_frames) // self._chunk_len, len(self._chunk_frames) - 1)
+        if index == self._shown_frame:
+            return action
+        self._shown_frame = index
+        frame = self._chunk_frames[index].permute(2, 0, 1)  # [3, H, W], like a camera frame
+        return create_transition(action=action, prediction={"observation": self._split_cameras(frame)})
+
+    def _split_cameras(self, frame: Tensor) -> dict[str, Tensor]:
+        """Split a decoded frame back into the cameras it tiles (inverse of the latent layout)."""
+        keys, h, w = self.config.obs_cam_keys, self.config.height, self.config.width
+        if self.config.camera_layout == "robotwin_tshape":
+            wrists, head = frame.split([h // 2, h], dim=1)
+            left, right = wrists.split(w // 2, dim=2)
+            return {keys[0]: head, keys[1]: left, keys[2]: right}
+        return dict(zip(keys, frame.split(w, dim=2), strict=True))
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         """Run one autoregressive chunk and return actions ``[B, chunk_size, n_used]`` (normalized)."""
+        return self._predict_chunk(batch)[0]
+
+    def _predict_chunk(self, batch: dict[str, Tensor] | None) -> tuple[Tensor, Tensor]:
+        """Run one autoregressive chunk; return its actions and predicted video latents."""
         self.eval()
         self._ensure_frozen_modules()
         self._maybe_init_prompt(batch)
@@ -472,7 +520,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             a = a[:, :, 1:]  # drop frame 0 -> (F-1) frames of actions
         a = a.squeeze(-1).flatten(2)  # [B, n_used, n_steps]
         a = a.transpose(1, 2).contiguous()  # [B, n_steps, n_used]
-        return a.to(torch.float32)
+        return a.to(torch.float32), latents
 
     # Prompt / text encoding
     def _maybe_init_prompt(self, batch):
