@@ -314,4 +314,5 @@ def test_full_conversion_benchmark_and_unmeasured_matrix(tmp_path):
     result = benchmark["benchmark_conversion"](cfg, [1, 2])
     assert all(row["physical_input_hours"] == 2 / 3600 for row in result["results"])
     assert all(row["output_bytes"] > 0 and row["realtime_multiplier"] > 0 for row in result["results"])
+    assert all(row["stages"][0]["timer_seconds"]["decode"] is None for row in result["results"])
     print(json.dumps(result, indent=2))

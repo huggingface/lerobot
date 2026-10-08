@@ -67,7 +67,7 @@ def record_worker(store, plan_id, metrics, resources):
     row = {
         "plan_id": plan_id,
         "worker_id": identifier,
-        **{timer + "_seconds": 0.0 for timer in TIMERS},
+        **{timer + "_seconds": None for timer in TIMERS},
         "batches": 0,
         "items_computed": 0,
         "items_reused": 0,
@@ -129,6 +129,14 @@ def report_stage(store, plan, summary, *, wall_seconds, worker_paths=None):
         "worker_attempts": len(records),
         "bytes_written": sum(row["bytes_written"] for row in records),
         "retries": sum(row["retries"] for row in records),
-        "timer_seconds": {timer: sum(row[timer + "_seconds"] for row in records) for timer in TIMERS},
+        "timer_seconds": {
+            timer: sum(row[timer + "_seconds"] or 0 for row in records)
+            if any(row[timer + "_seconds"] is not None for row in records)
+            else None
+            for timer in TIMERS
+        },
+        "instrumented_worker_attempts": {
+            timer: sum(row[timer + "_seconds"] is not None for row in records) for timer in TIMERS
+        },
         "resource_accounting": "declared worker resources only; controller/services/queue not measured",
     }
