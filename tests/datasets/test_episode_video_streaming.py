@@ -103,6 +103,57 @@ def test_synthesized_mp4_size_matches_materialized_bytes():
     assert synthesized_mp4_size(mp4, sample_slice) == len(mini)
 
 
+def test_streaming_video_query_rebuilds_timestamp_from_frame_index():
+    from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset, _EpisodeData
+
+    fps = 30
+    target_frame = 100004
+    indices = np.arange(target_frame + 1, dtype=np.int64)
+    timestamps = (indices / fps).astype(np.float32)
+    assert abs(float(timestamps[target_frame]) - target_frame / fps) > 1e-4
+
+    class SizedEpisode:
+        def __len__(self):
+            return len(indices)
+
+    episode = _EpisodeData(
+        dataset=SizedEpisode(),
+        columns={},
+        numeric={
+            "index": indices,
+            "episode_index": np.zeros_like(indices),
+            "frame_index": indices,
+            "timestamp": timestamps,
+            "task_index": np.zeros_like(indices),
+        },
+        other=None,
+        dataset_from_index=0,
+        video_from_timestamps={"camera": 7.0},
+    )
+
+    class VideoCache:
+        timestamps = None
+
+        def get_frames(self, _episode_index, _camera_key, query_timestamps):
+            self.timestamps = query_timestamps
+            return torch.zeros((1, 3, 2, 2), dtype=torch.uint8)
+
+    cache = VideoCache()
+    dataset = object.__new__(StreamingLeRobotDataset)
+    dataset.meta = SimpleNamespace(video_keys=["camera"], depth_keys=[], camera_keys=["camera"], fps=fps)
+    dataset._delta_arrays = {}
+    dataset._return_uint8 = True
+    dataset._depth_encoder_configs = {}
+    dataset._depth_output_unit = "mm"
+    dataset._image_depth_units = {}
+    dataset.image_transforms = None
+    dataset._task_names = ["task"]
+
+    dataset._make_episode_item(episode, 0, target_frame, video_cache=cache)
+
+    assert cache.timestamps == [7.0 + target_frame / fps]
+
+
 def test_parser_accepts_co64_chunk_offsets():
     mp4 = parse_mp4_index("test.mp4", _minimal_mp4([10_000, 10_050, 10_025], use_co64=True))
 
