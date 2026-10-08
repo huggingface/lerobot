@@ -17,11 +17,13 @@
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from lerobot.robots import make_robot_from_config
 from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
 from lerobot_robot_openarm_gripette import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
+from lerobot_robot_openarm_gripette.manual_start import prepare_manual_start
 
 _ADAPTER = "lerobot.motors.damiao.motorbridge_bus"
 _FOLLOWER = "lerobot.robots.openarm_follower.openarm_follower"
@@ -59,6 +61,25 @@ def test_features_and_arm_bus_without_gripper():
         motors = {f"{j}.pos" for j in _JOINTS} | {"proximal.pos", "distal.pos"}
         assert set(robot.action_features) == motors
         assert robot.observation_features == {**dict.fromkeys(motors, float), "gripette": (4, 3, 3)}
+
+
+def test_prepare_manual_start_disables_torque_captures_pose_and_holds():
+    robot = MagicMock()
+    events = []
+    robot.arm.bus.disable_torque.side_effect = lambda: events.append("disable")
+    robot.arm.bus.enable_torque.side_effect = lambda: events.append("enable")
+    robot.arm.get_observation.return_value = {f"joint_{i}.pos": float(i) for i in range(1, 8)}
+
+    result = prepare_manual_start(
+        robot,
+        np.array([1, -1, 1, -1, 1, -1, 1]),
+        input_fn=lambda _: events.append("prompt"),
+        sleep_fn=lambda _: events.append("sleep"),
+    )
+
+    assert events == ["disable", "sleep", "disable", "prompt", "enable", "sleep", "enable"]
+    assert result.tolist() == [1, -2, 3, -4, 5, -6, 7]
+    robot.arm.send_action.assert_called_once_with({f"joint_{i}.pos": float(i) for i in range(1, 8)})
 
 
 @pytest.mark.parametrize(
