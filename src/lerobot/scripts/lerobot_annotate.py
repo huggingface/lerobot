@@ -42,17 +42,17 @@ from typing import TYPE_CHECKING
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
-from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
-from lerobot.annotations.steerable_pipeline.executor import Executor
-from lerobot.annotations.steerable_pipeline.frames import make_frame_provider
-from lerobot.annotations.steerable_pipeline.modules import (
+from lerobot.annotations import (
+    AnnotationPipelineConfig,
+    Executor,
     GeneralVqaModule,
     InterjectionsAndSpeechModule,
+    LanguageColumnsWriter,
     PlanSubtasksMemoryModule,
+    StagingValidator,
+    make_frame_provider,
+    make_vlm_client,
 )
-from lerobot.annotations.steerable_pipeline.validator import StagingValidator
-from lerobot.annotations.steerable_pipeline.vlm_client import make_vlm_client
-from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter
 from lerobot.configs import parser
 from lerobot.utils.import_utils import _datasets_available, require_package
 
