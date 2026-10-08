@@ -46,8 +46,9 @@ from lerobot.rollout import (  # noqa: E402
 )
 
 # Front-end and engine internals, imported from their defining modules.
-from lerobot.rollout.inference import PolicyQuery  # noqa: E402
+from lerobot.rollout.inference import PlannerReply, PolicyQuery  # noqa: E402
 from lerobot.rollout.interactive import InteractiveCommand, parse_command  # noqa: E402
+from lerobot.rollout.planner import PlannerConfig, VlmPlanner, training_vocabulary  # noqa: E402
 
 
 def _wait_for(predicate, timeout: float = 2.0) -> bool:
@@ -1469,3 +1470,432 @@ def test_autosteer_interval_bounds():
         autosteer_interval_s=0.0,
     )
     assert cfg.autosteer_interval_s == 0.0
+
+
+def _tick_until(engine, obs_processed, predicate) -> bool:
+    return _wait_for(lambda: (engine.pump_query(obs_processed), predicate())[1])
+
+
+def test_engine_external_text_backend_answers_off_the_control_thread():
+    engine = _FakeEngine()
+    seen = []
+
+    def external(obs_processed, query, task):
+        seen.append((current_thread(), query.kind, task))
+        if query.kind is QueryKind.VQA:
+            return f"external: {query.text}"
+        return "pick up the cup" if query.kind is QueryKind.NEXT_SUBTASK else "stack the cubes"
+
+    engine.external_text = external
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    engine.ask("what do you see?")
+    assert _tick_until(engine, {"joint.pos": 0.0}, lambda: len(delivered) == 1)
+    assert delivered[0].answer == "external: what do you see?"
+    assert seen[0][0] is not current_thread() and engine.seen_queries == []
+
+    engine.start_autosteer("clear the table", interval_s=0.0)
+    assert _tick_until(engine, {"joint.pos": 1.0}, lambda: engine.task == "pick up the cup")
+    engine.stop_autosteer()
+    assert seen[1][1:] == (QueryKind.NEXT_SUBTASK, "pick up the cube")
+
+
+@pytest.mark.parametrize("cancel", ["takeover", "reset", "stop", "same_goal", "segment_end"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_external_planner_discards_stale_results_and_serializes_requests(cancel, fails):
+    controller, _, _, engine, _, _ = _make_controller()
+    entered, release, finished = Event(), Event(), Event()
+    observations = {"camera": np.zeros((2, 2, 3), dtype=np.uint8)}
+    seen = []
+
+    def external(obs, query, task):
+        entered.set()
+        assert release.wait(2)
+        seen.append((obs["camera"].copy(), task))
+        finished.set()
+        if fails:
+            raise ValueError("late failure")
+        return "stale instruction"
+
+    engine.external_text = external
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    engine.start_autosteer("tidy", interval_s=10)
+    engine.pump_query(observations)
+    try:
+        assert entered.wait(2)
+        assert not engine.ask("second request")
+        observations["camera"][:] = 255
+        if cancel == "takeover":
+            controller.set_task("new instruction")
+        elif cancel == "reset":
+            controller.reset()
+        elif cancel == "stop":
+            controller.stop()
+        elif cancel == "same_goal":
+            engine.stop_autosteer()
+            engine.start_autosteer("tidy", interval_s=10)
+        else:
+            engine.stop_autosteer()
+            engine.drop_pending_query()
+        expected = engine.task
+    finally:
+        release.set()
+    assert finished.wait(2)
+    assert _wait_for(lambda: not engine._query_in_flight)
+    engine.pump_query(None)
+    assert engine.task == expected
+    assert delivered == []
+    assert not engine.external_history
+    assert seen[0][0].sum() == 0  # snapshot predates mutations in the control loop
+    assert seen[0][1] == "pick up the cube"
+
+
+def test_vlm_planner_reuses_recipe_and_validates_explicit_constraints():
+    from lerobot.datasets.recipe import TrainingRecipe
+    from lerobot.processor import RenderRuntimeMessagesStep
+
+    recipe = TrainingRecipe.from_dict(
+        {
+            "messages": [
+                {"role": "user", "content": "Trained prompt: ${task}", "stream": "high_level"},
+                {"role": "assistant", "content": "${subtask}", "stream": "high_level", "target": True},
+            ]
+        }
+    )
+    client = MagicMock()
+    client.generate_json.return_value = [{"instruction": "grasp the cup"}]
+    config = PlannerConfig(model_id="test", camera_key="front")
+    planner = VlmPlanner(config, "test_robot", RenderRuntimeMessagesStep(recipe), client)
+    obs = {"front": np.zeros((8, 8, 3), dtype=np.uint8), "wrist": np.ones((8, 8, 3), dtype=np.uint8)}
+    query = PolicyQuery(QueryKind.NEXT_SUBTASK, "clear the table")
+    assert planner(obs, query, "reach for the cup").text == "grasp the cup"
+    messages = client.generate_json.call_args.args[0][0]
+    assert messages[1] == {"role": "user", "content": "Trained prompt: clear the table"}
+    content = messages[-1]["content"]
+    assert "Current instruction: reach for the cup" in content[0]["text"]
+    assert len([part for part in content if part["type"] == "image"]) == 1
+
+    config.instructions = ["open the drawer"]
+    with pytest.raises(ValueError, match="allowed list"):
+        planner(obs, query, "reach for the cup")
+    client.generate_json.return_value = [{"instruction": "open the drawer"}]
+    assert planner(obs, query, "reach for the cup").text == "open the drawer"
+    client.generate_json.return_value = [{"instruction": "Done."}]
+    assert planner(obs, query, "reach for the cup").completed
+    # VQA does not inherit the action vocabulary restriction or the subtask recipe.
+    client.generate_json.return_value = [{"answer": "A cup."}]
+    assert planner(obs, PolicyQuery(QueryKind.VQA, "what is visible?"), "x").text == "A cup."
+    assert len(client.generate_json.call_args.args[0][0]) == 2
+    for bad in [None, {}, {"answer": 42}, {"answer": " "}]:
+        client.generate_json.return_value = [bad]
+        with pytest.raises(ValueError, match="non-empty"):
+            planner(obs, PolicyQuery(QueryKind.VQA, "what is visible?"), "x")
+
+
+@pytest.mark.parametrize("history_size", [0, 2])
+def test_external_planner_history_tracks_applied_commands_and_images(history_size):
+    from collections import deque
+
+    engine = _FakeEngine()
+    client = MagicMock()
+    client.generate_json.return_value = [{"instruction": "hold the cup"}]
+    planner = VlmPlanner(PlannerConfig(model_id="test", history=history_size), "test_robot", client=client)
+    engine.external_text = planner
+    engine.external_history = deque(maxlen=history_size)
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    engine.start_autosteer("tidy", interval_s=1000)
+    for index in range(4):
+        obs = {"front": np.full((2, 2, 3), index, dtype=np.uint8)}
+        if index:
+            assert engine._queue_query(PolicyQuery(QueryKind.NEXT_SUBTASK, "tidy"))
+        assert _tick_until(engine, obs, lambda index=index: len(delivered) == index + 1)
+        content = client.generate_json.call_args.args[0][0][-1]["content"]
+        pixels = [part["image"].getpixel((0, 0))[0] for part in content if part["type"] == "image"]
+        assert pixels == list(range(max(0, index - history_size), index + 1))
+        commands = [
+            part["text"]
+            for part in content
+            if part.get("text", "").startswith("Command given after observation")
+        ]
+        assert commands == [
+            f"Command given after observation {position}: hold the cup"
+            for position in range(1, min(index, history_size) + 1)
+        ]
+        obs["front"][:] = 255  # stored history must not alias the control-loop observation
+    assert len(engine.external_history) == history_size
+
+    client.generate_json.return_value = [{"answer": "The cup has not moved."}]
+    assert engine.ask("any progress?")
+    assert _tick_until(engine, obs, lambda: len(delivered) == 5)
+    assert len(engine.external_history) == history_size  # VQA does not become a command
+    engine.stop_autosteer()
+    assert not engine.external_history
+    engine.external_history.append((obs, "old command"))
+    engine.start_autosteer("tidy", interval_s=1000)
+    assert not engine.external_history
+
+
+def test_planner_rejects_negative_history():
+    with pytest.raises(ValueError, match="non-negative"):
+        PlannerConfig(history=-1)
+
+
+def test_external_planner_repeat_holds_without_resending():
+    engine = _FakeEngine()
+    engine.external_text = lambda obs, query, task: task  # planner asks to keep the instruction
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    engine.start_autosteer("tidy", interval_s=0.0)
+    assert _tick_until(engine, {"joint.pos": 0.0}, lambda: len(delivered) == 1)
+    assert delivered[0].held and delivered[0].answer == "pick up the cube"
+    assert engine.task == "pick up the cube"
+    # A held turn still enters the history, so the planner can judge lack of progress.
+    assert [instruction for _, instruction in engine.external_history] == ["pick up the cube"]
+    engine.stop_autosteer()
+
+
+def test_vlm_planner_in_progress_verdict_holds_current_instruction():
+    client = MagicMock()
+    client.generate_json.return_value = [
+        {"scene": "arm still moving", "previous_command": "in progress", "instruction": "not in the list"}
+    ]
+    planner = VlmPlanner(
+        PlannerConfig(model_id="test", instructions=["pick up the cup"]), "test_robot", client=client
+    )
+    obs = {"front": np.zeros((8, 8, 3), dtype=np.uint8)}
+    out = planner(obs, PolicyQuery(QueryKind.NEXT_SUBTASK, "goal"), "pick up the cup")
+    # In progress means hold: the wording is returned unchanged and never validated.
+    assert out.text == "pick up the cup"
+    assert out.detail == "scene: arm still moving; previous command: in progress"
+
+
+def test_vlm_planner_matches_allowed_instruction_loosely():
+    client = MagicMock()
+    client.generate_json.side_effect = [
+        [{"previous_command": "completed", "instruction": "  Open the  drawer."}],
+        [{"previous_command": "completed", "instruction": "open the fridge"}],
+    ]
+    planner = VlmPlanner(
+        PlannerConfig(model_id="test", instructions=["pick up the cup", "open the drawer"]),
+        "test_robot",
+        client=client,
+    )
+    obs = {"front": np.zeros((8, 8, 3), dtype=np.uint8)}
+    query = PolicyQuery(QueryKind.NEXT_SUBTASK, "goal")
+    assert planner(obs, query, "pick up the cup").text == "open the drawer"
+    with pytest.raises(ValueError, match="outside the allowed list"):
+        planner(obs, query, "pick up the cup")
+
+
+def test_vlm_planner_logs_each_exchange(tmp_path):
+    import json
+
+    log = tmp_path / "planner.jsonl"
+    client = MagicMock()
+    client.generate_json.side_effect = [[{"answer": "a cup on the table"}], [{}]]
+    planner = VlmPlanner(PlannerConfig(model_id="test", log_path=str(log)), "test_robot", client=client)
+    obs = {"front": np.zeros((8, 8, 3), dtype=np.uint8)}
+
+    assert planner(obs, PolicyQuery(QueryKind.VQA, "what do you see?"), "task").text == "a cup on the table"
+    with pytest.raises(ValueError):
+        planner(obs, PolicyQuery(QueryKind.VQA, "what do you see?"), "task")
+
+    lines = [json.loads(line) for line in log.read_text().splitlines()]
+    assert len(lines) == 2
+    assert lines[0]["reply"] == {"answer": "a cup on the table"}
+    assert lines[0]["error"] is None and lines[0]["latency_s"] >= 0
+    assert "Request: what do you see?" in lines[0]["request"]
+    assert lines[1]["error"].startswith("ValueError") and lines[1]["returned"] is None
+    assert lines[1]["reply"] == {}  # the raw reply is kept when parsing fails
+
+
+def test_training_vocabulary_reads_dataset_tasks(tmp_path, monkeypatch):
+    import json
+
+    import pandas as pd
+
+    train_config = tmp_path / "train_config.json"
+    train_config.write_text(json.dumps({"dataset": {"repo_id": "org/ds"}}))
+    tasks_file = tmp_path / "tasks.parquet"
+    pd.DataFrame(
+        {"task_index": [1, 0, 2]}, index=["open the drawer", "close the drawer", "pick up the cup"]
+    ).to_parquet(tasks_file)
+
+    downloads = {"lerobot/pol": str(train_config), "org/ds": str(tasks_file)}
+    monkeypatch.setattr(
+        "lerobot.rollout.planner.hf_hub_download", lambda repo_id, filename, **kw: downloads[repo_id]
+    )
+    assert training_vocabulary("lerobot/pol") == ["close the drawer", "open the drawer", "pick up the cup"]
+
+
+def test_vlm_planner_replays_past_assessments_and_drops_them_with_history():
+    client = MagicMock()
+    client.generate_json.side_effect = [
+        [{"scene": "soup on the table", "previous_command": "none", "instruction": "do the soup"}],
+        [
+            {
+                "scene": "soup in the basket",
+                "previous_command": "completed",
+                "instruction": "do the cream cheese",
+            }
+        ],
+        [{"scene": "fresh scene", "previous_command": "none", "instruction": "do the soup"}],
+    ]
+    planner = VlmPlanner(PlannerConfig(model_id="test"), "test_robot", client=client)
+    obs = {"front": np.zeros((8, 8, 3), dtype=np.uint8)}
+
+    assert planner(obs, PolicyQuery(QueryKind.NEXT_SUBTASK, "goal"), "none").text == "do the soup"
+
+    # Second turn carries one history pair: the matching assessment sits right after its command.
+    history = (({"front": np.ones((8, 8, 3), dtype=np.uint8)}, "do the soup"),)
+    planner(obs, PolicyQuery(QueryKind.NEXT_SUBTASK, "goal", history=history), "do the soup")
+    content = client.generate_json.call_args.args[0][0][-1]["content"]
+    texts = [part["text"] for part in content if part["type"] == "text"]
+    command_at = texts.index("Command given after observation 1: do the soup")
+    assert texts[command_at + 1] == (
+        "Your assessment after observation 1: scene: soup on the table; previous command: none"
+    )
+
+    # History cleared (takeover/reset/new goal): past assessments are dropped too.
+    planner(obs, PolicyQuery(QueryKind.NEXT_SUBTASK, "goal"), "do the cream cheese")
+    content = client.generate_json.call_args.args[0][0][-1]["content"]
+    assert not [
+        part for part in content if part["type"] == "text" and part["text"].startswith("Your assessment")
+    ]
+
+
+def test_planner_gate_holds_policy_until_first_reply():
+    engine = _FakeEngine()
+    assert not engine.hold_for_planner()  # no planner attached
+    engine.external_text = lambda obs, query, task: "pick up the cup"
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    assert not engine.hold_for_planner()  # no autosteer goal armed
+
+    engine.start_autosteer("clear the table", interval_s=0.0)
+    assert engine.hold_for_planner()  # planner owns the stream, has not spoken
+    assert _tick_until(engine, {"joint.pos": 0.0}, lambda: len(delivered) == 1)
+    assert not engine.hold_for_planner()  # first subtask applied
+    assert engine.task == "pick up the cup"
+
+    engine.start_autosteer("clear the table", interval_s=0.0)  # same-goal restart re-arms the gate
+    assert engine.hold_for_planner()
+    engine.stop_autosteer()
+    assert not engine.hold_for_planner()
+
+
+def test_planner_gate_opens_even_when_first_reply_holds():
+    engine = _FakeEngine()
+    engine.external_text = lambda obs, query, task: task  # first reply holds the current instruction
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    engine.start_autosteer("tidy", interval_s=0.0)
+    assert engine.hold_for_planner()
+    assert _tick_until(engine, {"joint.pos": 0.0}, lambda: len(delivered) == 1)
+    assert delivered[0].held
+    assert not engine.hold_for_planner()  # an accepted reply ends the wait, even a hold
+    engine.stop_autosteer()
+
+
+def test_external_planner_first_reply_cannot_release_preplanner_rtc_actions():
+    from lerobot.policies.rtc import ActionQueue
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+    engine, _policy = _make_rtc_engine()
+    queue = ActionQueue(RTCConfig(enabled=True, execution_horizon=8, max_guidance_weight=1.0))
+    queue.merge(torch.zeros(4, 2), torch.zeros(4, 2), real_delay=0, task="task A")
+    engine._action_queue = queue
+    engine.external_text = lambda *args, **kwargs: "task B"
+    epoch = engine._reset_epoch
+    engine.start_autosteer("clear table", interval_s=5)
+    assert engine._reset_epoch == epoch + 1  # an in-flight task-A chunk is discarded too
+    assert engine.get_action(None) is None
+    engine._apply_subtask(PolicyQuery(QueryKind.NEXT_SUBTASK, "clear table"), "task B")
+    # No task-B chunk exists yet: queued task-A motion must not be released.
+    assert engine.get_action(None) is None
+
+
+def test_planner_completion_is_status_not_error_or_robot_instruction(caplog):
+    engine = _FakeEngine()
+    original_task = engine.task
+    planner_calls = []
+
+    def planner(obs, query, task):
+        planner_calls.append(query)
+        return PlannerReply(text="done", completed=True)
+
+    engine.external_text = planner
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    engine.start_autosteer("tidy the table", interval_s=0)
+    assert _tick_until(engine, {"joint.pos": 0.0}, lambda: len(delivered) == 1)
+    assert engine.autosteer_goal is None
+    assert engine.task == original_task
+    assert len(delivered) == 1
+    assert delivered[0].ok and delivered[0].completed and delivered[0].answer == "done"
+    assert delivered[0].latency_s is not None
+    assert "Policy text query failed" not in caplog.text
+    engine.pump_query({"joint.pos": 0.0})
+    assert len(planner_calls) == 1
+
+
+def test_cancelled_planner_completion_is_not_published():
+    engine = _FakeEngine()
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    engine.start_autosteer("tidy", interval_s=0)
+    epoch = engine._query_epoch
+    engine.stop_autosteer()
+
+    def finish(*args):
+        return PlannerReply(text="done", completed=True)
+
+    engine._resolve_query(PolicyQuery(QueryKind.NEXT_SUBTASK, "tidy"), {}, finish, epoch=epoch)
+    engine.pump_query({"joint.pos": 0.0})
+    assert not delivered
+
+
+def test_controller_ends_segment_when_planner_completes():
+    controller, events, strategy, _engine, _parent, run_started = _make_controller()
+    thread = _serve_thread(controller)
+    try:
+        assert controller.start()
+        assert _wait_for(run_started.is_set)
+        controller._on_query_answer(
+            QueryAnswer(question="tidy", answer="done", kind=QueryKind.NEXT_SUBTASK, completed=True)
+        )
+        assert _wait_for(lambda: RolloutEvent.SEGMENT_ENDED in events)
+        assert not controller.running
+        assert not controller.stopped
+        strategy.return_to_initial_position.assert_not_called()
+    finally:
+        controller.stop()
+        _join_session(thread)
+
+
+def test_external_planner_detail_reaches_the_answer():
+    engine = _FakeEngine()
+    engine.external_text = lambda obs, query, task: PlannerReply("pick up the cup", "scene: cup on the table")
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    engine.start_autosteer("tidy", interval_s=0.0)
+    assert _tick_until(engine, {"joint.pos": 0.0}, lambda: len(delivered) == 1)
+    assert delivered[0].answer == "pick up the cup"
+    assert delivered[0].detail == "scene: cup on the table"
+    engine.stop_autosteer()
+
+
+def test_vlm_planner_first_turn_does_not_present_the_goal_as_current_instruction():
+    planner = VlmPlanner(PlannerConfig(model_id="test"), "test_robot", client=MagicMock())
+    goal = "Put all colored cubes in the green bin"
+    first = planner.request_text(PolicyQuery(QueryKind.NEXT_SUBTASK, goal), goal)
+    assert "Current instruction: No planner subtask has been issued yet." in first
+    assert "choose one concrete subtask, not the entire goal" in first
+    history = (({}, "pick up the red cube"),)
+    later = planner.request_text(PolicyQuery(QueryKind.NEXT_SUBTASK, goal, history=history), goal)
+    assert f"Current instruction: {goal}" in later

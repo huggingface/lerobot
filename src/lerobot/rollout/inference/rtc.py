@@ -361,8 +361,24 @@ class RTCInferenceEngine(InferenceEngine):
     # Action production (called from main thread)
     # ------------------------------------------------------------------
 
+    def start_autosteer(self, goal: str, interval_s: float) -> None:
+        """Also drop queued and in-flight chunks when an external planner takes over.
+
+        They were predicted for the previous instruction, so the planner's first reply must
+        not release them.
+        """
+        with self._query_lock:
+            super().start_autosteer(goal, interval_s)
+            if self.external_text is not None:
+                with self._obs_lock:
+                    self._reset_epoch += 1
+                    if self._action_queue is not None:
+                        self._action_queue.clear()
+
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
         """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
+        if self.hold_for_planner():
+            return None
         if self._action_queue is None:
             return None
         queued = self._action_queue.get_with_task()
@@ -389,8 +405,8 @@ class RTCInferenceEngine(InferenceEngine):
 
     @property
     def supports_text_queries(self) -> bool:
-        """True when the policy has a text head."""
-        return self._policy.supports_text_generation()
+        """True when an external text backend is attached or the policy has a text head."""
+        return super().supports_text_queries or self._policy.supports_text_generation()
 
     @property
     def control_thread_owns_policy(self) -> bool:
@@ -457,6 +473,11 @@ class RTCInferenceEngine(InferenceEngine):
                         epoch_before = self._reset_epoch
                     if obs is None:  # a reset mid-query dropped the observation
                         continue
+
+                if self.hold_for_planner():
+                    # No chunk from the previous instruction while the planner prepares its first reply.
+                    time.sleep(_RTC_IDLE_SLEEP_S)
+                    continue
 
                 if queue.qsize() <= self._rtc_queue_threshold:
                     try:

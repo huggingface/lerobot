@@ -268,6 +268,7 @@ class RolloutController:
             if self._stopped.is_set():
                 return
             self._start_requested.clear()  # last command wins, see reset()
+            self._ctx.policy.inference.stop_autosteer()
             self._stop_requested.set()
             self._segment_stop.set()
             self._wake.set()
@@ -449,8 +450,14 @@ class RolloutController:
             self._emit(RolloutEvent.RESET_FAILED)
 
     def _on_query_answer(self, answer: QueryAnswer) -> None:
-        """Engine answer observer — runs on the serve thread (see ``__init__``)."""
+        """Engine answer observer — runs on the serve thread (see ``__init__``).
+
+        A completed autosteer goal ends the run segment; the robot holds its pose until
+        :meth:`reset` or :meth:`start`.
+        """
         self._emit(RolloutEvent.QUERY_ANSWERED, answer)
+        if answer.completed:
+            self._segment_stop.set()
 
     def _emit(self, event: RolloutEvent, payload: QueryAnswer | None = None) -> None:
         if self._on_event is None:

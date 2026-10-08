@@ -30,6 +30,7 @@ from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
 from .inference import InferenceEngineConfig, SyncInferenceConfig
+from .planner import PlannerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -290,6 +291,7 @@ class RolloutConfig:
 
     # Inference backend (polymorphic: --inference.type=sync|rtc)
     inference: InferenceEngineConfig = field(default_factory=SyncInferenceConfig)
+    planner: PlannerConfig | None = None
 
     # Dataset (required, optional or rejected according to the strategy's ``dataset_mode``)
     dataset: DatasetRecordConfig | None = None
