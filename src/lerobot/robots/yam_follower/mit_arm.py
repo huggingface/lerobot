@@ -23,7 +23,6 @@ a gravity model; ``MitServo`` then holds and moves the arm from a background thr
 Internal units: joints in radians, the gripper from 0 (closed) to 1 (open).
 """
 
-import gc
 import logging
 import threading
 import time
@@ -198,7 +197,6 @@ class ServoSettings(Protocol):
     control_frequency: float
     feedback_timeout_s: float
     command_timeout_s: float
-    freeze_gc: bool
     # What the arm does before the first target and after the command timeout: "hold" or "float".
     idle_mode: str
 
@@ -329,31 +327,6 @@ def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
     return JointState(position=position, velocity=velocity, torque=torque)
 
 
-class _ControlGC:
-    """Keep preloaded models out of cyclic scans while servo threads run."""
-
-    _lock = threading.Lock()
-    _users = 0
-    _owns_freeze = False
-
-    @classmethod
-    def acquire(cls) -> None:
-        with cls._lock:
-            if cls._users == 0 and gc.isenabled():
-                cls._owns_freeze = gc.get_freeze_count() == 0
-                gc.collect()
-                gc.freeze()
-            cls._users += 1
-
-    @classmethod
-    def release(cls) -> None:
-        with cls._lock:
-            cls._users -= 1
-            if cls._users == 0 and cls._owns_freeze:
-                gc.unfreeze()
-                cls._owns_freeze = False
-
-
 class MitServo:
     """Background servo loop of one arm.
 
@@ -398,7 +371,6 @@ class MitServo:
         self._stop_requested = threading.Event()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
-        self._gc_acquired = False
         self._gripper: GripperForceLimiter | None = None
 
     def seed(self, state: JointState) -> None:
@@ -423,17 +395,11 @@ class MitServo:
             raise RuntimeError(f"{self.name} servo needs calibrated arm parameters before it starts")
         self.failure = None
         self._stop_requested.clear()
-        if self.config.freeze_gc:
-            _ControlGC.acquire()
-            self._gc_acquired = True
         self._thread = threading.Thread(target=self._run, name=f"{self.name}-servo", daemon=True)
         try:
             self._thread.start()
         except BaseException:
             self._thread = None
-            if self._gc_acquired:
-                _ControlGC.release()
-                self._gc_acquired = False
             raise
         self.active = True
 
@@ -446,9 +412,6 @@ class MitServo:
                 raise RuntimeError(f"{self.name} servo did not stop; use the hardware e-stop")
             self._thread = None
         self.active = False
-        if self._gc_acquired:
-            _ControlGC.release()
-            self._gc_acquired = False
 
     def latest(self) -> JointState:
         """Return the last measured state, raising if the servo stopped or its feedback is stale."""

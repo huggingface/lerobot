@@ -19,7 +19,6 @@
 import threading
 import time
 from dataclasses import dataclass
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -67,7 +66,6 @@ class Settings:
     control_frequency: float = 100.0
     feedback_timeout_s: float = 0.2
     command_timeout_s: float = 1.0
-    freeze_gc: bool = False
     idle_mode: str = "hold"
 
 
@@ -406,35 +404,3 @@ def test_foreground_watchdog_allows_one_late_feedback_window():
     servo.updated_at = time.monotonic() - 3 * 0.2
     with pytest.raises(ConnectionError, match="stale"):
         servo.check_healthy()
-
-
-@pytest.mark.parametrize("enabled,preexisting", [(True, False), (True, True), (False, False)])
-def test_gc_freeze_is_shared_and_preserves_callers_state(monkeypatch, enabled, preexisting):
-    gc_mock = MagicMock()
-    gc_mock.isenabled.return_value = enabled
-    gc_mock.get_freeze_count.return_value = int(preexisting)
-    monkeypatch.setattr(mit_arm, "gc", gc_mock)
-    guard = mit_arm._ControlGC
-    assert guard._users == 0
-    guard.acquire()
-    guard.acquire()
-    guard.release()
-    gc_mock.unfreeze.assert_not_called()
-    guard.release()
-    assert gc_mock.collect.call_count == int(enabled)
-    assert gc_mock.freeze.call_count == int(enabled)
-    assert gc_mock.unfreeze.call_count == int(enabled and not preexisting)
-    assert guard._users == 0
-
-
-@pytest.mark.parametrize("freeze_gc", [True, False])
-def test_gc_freeze_lasts_exactly_as_long_as_the_servo(monkeypatch, freeze_gc):
-    guard = MagicMock()
-    monkeypatch.setattr(mit_arm, "_ControlGC", guard)
-    servo = make_servo(settings=Settings(freeze_gc=freeze_gc))
-    servo.seed(mit_arm.read_joint_state(servo.bus, servo.params))
-    servo.start()
-    assert guard.acquire.call_count == int(freeze_gc)
-    guard.release.assert_not_called()
-    servo.stop()
-    assert guard.release.call_count == int(freeze_gc)
