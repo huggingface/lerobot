@@ -135,7 +135,7 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True lerobot-train \
   --policy.loss_type=fm \
   --dataset.repo_id=${HF_USER}/my-dataset \
   --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 6}}]}}' \
-  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}], "subtract_state": false}}' \
+  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}]}}' \
   --policy.dtype=bfloat16 \
   --policy.train_expert_only=true --policy.gradient_checkpointing=true \
   --policy.push_to_hub=false \
@@ -163,7 +163,7 @@ lerobot-train \
   --policy.path=lerobot/lingbot_vla_v2_base \
   --policy.tokenizer_path=Qwen/Qwen3-VL-4B-Instruct \
   --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 5}}]}, "observation.state.effector.position": {"origin_keys": [{"observation.state": {"start": 5, "end": 6}}]}}' \
-  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 5}}], "subtract_state": false}, "action.effector.position": {"origin_keys": [{"action": {"start": 5, "end": 6}}], "subtract_state": false}}' \
+  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 5}}]}, "action.effector.position": {"origin_keys": [{"action": {"start": 5, "end": 6}}]}}' \
   --rename_map='{"observation.images.top": "observation.images.camera_top", "observation.images.wrist": "observation.images.camera_wrist_left"}' \
   --policy.dtype=bfloat16 \
   --policy.push_to_hub=false \
@@ -179,7 +179,7 @@ A validated 2×24GB FSDP2 path also exists (Accelerate `fully_shard` with a CPU-
 ### Optimizer
 
 The default recipe uses AdamW and is fully supported. A Muon-based optimizer
-(`--policy.optimizer_type=muon`) matching the upstream training recipe is provided by
+matching the upstream training recipe is provided by
 the standalone Muon PR — it implements the 3D-MoE / FSDP2-distributed Muon that
 `torch.optim.Muon` does not (batched Newton–Schulz over expert stacks, sharded-parameter
 mega-batching). The benchmark numbers in this README were produced with the default

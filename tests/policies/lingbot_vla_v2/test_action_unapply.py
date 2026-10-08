@@ -34,23 +34,7 @@ from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import (  # noqa: 
 from lerobot.processor import UnnormalizerProcessorStep  # noqa: E402
 from lerobot.utils.constants import ACTION  # noqa: E402
 
-
-def _so101_robot_config():
-    return {
-        "states": [
-            {
-                "observation.state.arm.position": {
-                    "origin_keys": [{"observation.state": {"start": 0, "end": 6}}]
-                }
-            },
-        ],
-        "actions": [
-            {"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}]}},
-        ],
-        "images": [
-            {"observation.images.camera_top": {"origin_keys": "observation.images.front"}},
-        ],
-    }
+SO101_ACTION_SPANS = {"arm.position": [[0, 6]]}
 
 
 def _canonical_joints():
@@ -62,7 +46,7 @@ def test_action_unapply_denormalizes():
     mean = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
     std = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
     inverse = LingbotVLAV2InverseSlotMappingProcessorStep(
-        robot_config=_so101_robot_config(),
+        action_spans=SO101_ACTION_SPANS,
         canonical_joints=_canonical_joints(),
     )
     unnormalizer = UnnormalizerProcessorStep(
@@ -86,19 +70,10 @@ def test_action_unapply_denormalizes():
 def test_inverse_slot_mapping_handles_single_step_chunks():
     """select_action feeds (B, max_action_dim) single-step actions through the same step."""
     inverse = LingbotVLAV2InverseSlotMappingProcessorStep(
-        robot_config=_so101_robot_config(),
+        action_spans=SO101_ACTION_SPANS,
         canonical_joints=_canonical_joints(),
     )
     chunk = torch.randn(2, 10)
     raw = inverse({TransitionKey.ACTION: chunk})[TransitionKey.ACTION]
     assert raw.shape == (2, 6)
     torch.testing.assert_close(raw, chunk[:, :6])
-
-
-def test_inverse_slot_mapping_without_action_spans_raises():
-    inverse = LingbotVLAV2InverseSlotMappingProcessorStep(
-        robot_config={"states": [], "actions": []},
-        canonical_joints=_canonical_joints(),
-    )
-    with pytest.raises(ValueError, match="no action slot mapping"):
-        inverse({TransitionKey.ACTION: torch.zeros(1, 10)})

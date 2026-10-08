@@ -214,9 +214,8 @@ class Qwen2TokenMoeBlock(nn.Module):
         self.top_k = config.num_experts_per_tok
         self.norm_topk_prob = config.norm_topk_prob
 
-        # Loss-free balancing support. With zero correction bias this is
-        # equivalent to unbiased top-k selection; the optimizer pre-hook updates
-        # the bias when bias_update_speed > 0.
+        # Loss-free balancing bias (a checkpoint buffer). The loss-free update is not
+        # ported, so selection uses whatever bias the checkpoint carries.
         self.register_buffer(
             "e_score_correction_bias",
             torch.zeros(config.num_experts),

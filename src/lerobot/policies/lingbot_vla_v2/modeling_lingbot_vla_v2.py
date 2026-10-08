@@ -153,7 +153,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
     def _install_moe_blocks(self):
         if not getattr(self.config, "use_moe", False):
             return
-        bias_update_speed = getattr(self.config, "bias_update_speed", 0.001)
         hidden_size = self.config.qwen_expert_config.hidden_size
         token_moe_layers = getattr(self.config, "token_moe_layers", None) or []
 
@@ -167,7 +166,6 @@ class QwenvlWithExpertV2Model(PreTrainedModel):
                 shared_expert_intermediate_size=getattr(self.config, "token_shared_intermediate_size", 256),
                 output_router_logits=False,
             )
-            token_config.bias_update_speed = bias_update_speed
             token_config.router_activation = getattr(self.config, "router_activation", "softmax")
             token_config.routed_scaling_factor = getattr(self.config, "routed_scaling_factor", 1.0)
             token_config.use_shared_expert_gate = getattr(self.config, "use_shared_expert_gate", True)
@@ -556,7 +554,6 @@ class FlowMatchingV2(FlowMatchingV1):
             "vit_attn_implementation",
             "gradient_checkpointing",
             "use_moe",
-            "bias_update_speed",
             "token_moe_layers",
             "token_num_experts",
             "token_top_k",

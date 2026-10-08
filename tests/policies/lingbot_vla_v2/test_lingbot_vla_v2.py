@@ -39,7 +39,6 @@ def test_config_defaults_match_v2_canonical():
     assert config.max_state_dim == 55
     assert config.max_action_dim == 55
     assert config.chunk_size == 50
-    assert config.vlm_family == "qwen3_vl"
     assert config.tokenizer_path == "Qwen/Qwen3-VL-4B-Instruct"
     assert config.action_num_attention_heads == 32
     assert config.action_num_key_value_heads == 8

@@ -29,7 +29,6 @@ torch = pytest.importorskip("torch")
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature  # noqa: E402
 from lerobot.lerobot_types import TransitionKey  # noqa: E402
-from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import _resolve_norm_map  # noqa: E402
 from lerobot.processor import NormalizerProcessorStep, UnnormalizerProcessorStep  # noqa: E402
 from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
 
@@ -115,21 +114,3 @@ def test_horizon_indexed_action_stats_broadcast_per_timestep():
     # out[t] = (0 - mean[t]) / 1 == -mean[t]; per-timestep means preserved.
     torch.testing.assert_close(out[0], -torch.from_numpy(mean).float(), atol=1e-5, rtol=1e-5)
     torch.testing.assert_close(out[1], out[0], atol=1e-6, rtol=1e-6)
-
-
-def test_norm_mode_resolution_maps_upstream_modes():
-    uniform_meanstd = _resolve_norm_map({"arm.position": "meanstd", "effector.position": "meanstd"})
-    assert uniform_meanstd["STATE"] is NormalizationMode.MEAN_STD
-    assert uniform_meanstd["ACTION"] is NormalizationMode.MEAN_STD
-
-    quantiles = _resolve_norm_map({"arm.position": "bounds_99_woclip"})
-    assert quantiles["STATE"] is NormalizationMode.QUANTILES
-    assert quantiles["ACTION"] is NormalizationMode.QUANTILES
-
-    # Mixed per-slot modes collapse to the first joint's mode (standard step is
-    # per-type); the resolution must at least stay deterministic and standard.
-    mixed = _resolve_norm_map({"arm.position": "bounds_99_woclip", "hand.position": "meanstd"})
-    assert mixed["ACTION"] is NormalizationMode.QUANTILES
-
-    identity = _resolve_norm_map({"reserved.slots": "identity"})
-    assert identity["STATE"] is NormalizationMode.IDENTITY

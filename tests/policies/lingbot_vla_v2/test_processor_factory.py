@@ -19,11 +19,9 @@ pytest.importorskip("transformers")
 from lerobot.policies import factory
 from lerobot.policies.lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config
 
-# Override keys of the custom LingBot steps. Written out (not derived) on purpose:
-# a typo here fails with a confusing KeyError, see the assertion below.
+# Override keys of the custom LingBot steps. Written out (not derived) on purpose.
 SLOT_MAPPING_STEP = "lingbot_vla_v2_slot_mapping"
-IMAGE_STEP = "lingbot_vla_v2_image"
-CHAT_TEMPLATE_STEP = "lingbot_vla_v2_chat_template"
+INVERSE_SLOT_MAPPING_STEP = "lingbot_vla_v2_inverse_slot_mapping"
 
 
 def test_saved_checkpoint_forwards_standard_and_config_overrides(monkeypatch):
@@ -67,32 +65,19 @@ def test_saved_checkpoint_forwards_standard_and_config_overrides(monkeypatch):
     # Generic overrides pass through untouched.
     assert pre_overrides["device_processor"] == {"device": "cuda"}
     assert pre_overrides["rename_observations_processor"] == {"rename_map": {}}
-    # The postprocessor mirrors the preprocessor's device unless told otherwise.
-    assert post_overrides["device_processor"] == {"device": "cuda"}
+    # The postprocessor keeps its own device (CPU).
+    assert "device_processor" not in post_overrides
 
-    # The config-derived custom-step overrides are forwarded (same rule as
-    # ``resolve_robot_config_and_stats``; see
-    # ``make_lingbot_vla_v2_pre_post_processors_from_pretrained``).
-    assert SLOT_MAPPING_STEP in pre_overrides, (
-        f"expected the config-derived step overrides under {SLOT_MAPPING_STEP!r}, got {sorted(pre_overrides)}"
-    )
+    # Only the slot mapping is taken from the active config, on both pipelines.
     cfg = LingbotVLAV2Config()
-    slot_overrides = pre_overrides[SLOT_MAPPING_STEP]
-    assert slot_overrides["chunk_size"] == cfg.chunk_size
-    assert slot_overrides["max_state_dim"] == cfg.max_state_dim
-    assert slot_overrides["max_action_dim"] == cfg.max_action_dim
-    assert slot_overrides["canonical_joints"] == cfg.canonical_joints
-    assert slot_overrides["cameras"] == cfg.canonical_cameras
-    # robot_config is None on a slot-less config (identity passthrough); None fields
-    # never override the checkpoint's saved slot mapping.
-    assert "robot_config" not in slot_overrides
-
-    image_overrides = pre_overrides[IMAGE_STEP]
-    assert image_overrides["tokenizer_path"] == cfg.tokenizer_path
-    # Cameras come from input_features (none on a bare config), so no cameras override
-    # is forwarded — the checkpoint's saved camera names win.
-    assert "cameras" not in image_overrides
-
-    tokenizer_name = cfg.tokenizer_path
-    assert pre_overrides["tokenizer_processor"]["tokenizer_name"] == tokenizer_name
-    assert pre_overrides[CHAT_TEMPLATE_STEP]["tokenizer_name"] == tokenizer_name
+    assert pre_overrides[SLOT_MAPPING_STEP] == {
+        "state_spans": cfg.slot_spans("observation.state"),
+        "action_spans": cfg.slot_spans("action"),
+    }
+    assert post_overrides[INVERSE_SLOT_MAPPING_STEP] == {"action_spans": cfg.slot_spans("action")}
+    assert set(pre_overrides) == {
+        "device_processor",
+        "normalizer_processor",
+        "rename_observations_processor",
+        SLOT_MAPPING_STEP,
+    }

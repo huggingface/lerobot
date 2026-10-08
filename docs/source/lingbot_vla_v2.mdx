@@ -84,7 +84,7 @@ lerobot-train \
   --policy.path=lerobot/lingbot_vla_v2_base \
   --policy.repo_id=<your/lingbot_vla_v2_policy> \
   --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 6}}]}}' \
-  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}], "subtract_state": false}}' \
+  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}]}}' \
   --policy.tokenizer_path=Qwen/Qwen3-VL-4B-Instruct \
   --policy.dtype=bfloat16 \
   --policy.attention_implementation=sdpa \
@@ -143,7 +143,7 @@ torchrun --nproc_per_node=8 -m lerobot.scripts.lerobot_train \
   --dataset.repo_id=<your/dataset> \
   --policy.path=lerobot/lingbot_vla_v2_base \
   --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 6}}]}}' \
-  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}], "subtract_state": false}}' \
+  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}]}}' \
   --policy.dtype=bfloat16 \
   --policy.attention_implementation=sdpa \
   --policy.vit_attn_implementation=sdpa \
@@ -177,9 +177,9 @@ Seeed reBot B601-RS dataset recorded with LeRobot.
 
 **1. Declare the slot mappings.** The canonical layout packs filled dims from
 position 0 of each slot; unfilled slots are zero-padded and excluded from the loss via
-`joint_mask`. `subtract_state: false` keeps an action slot absolute (set it to `true` only
-when the dataset stores actions as deltas relative to the state, and never for
-`effector.position`). The mappings are passed directly as config fields — no YAML or
+`joint_mask`. Actions stay absolute unless `--policy.use_relative_actions=true`, which
+subtracts the state from every action dim except those named in
+`--policy.relative_exclude_joints` (default `gripper`). The mappings are passed directly as config fields — no YAML or
 stats files:
 
 ```bash
@@ -188,8 +188,8 @@ STATE_SLOTS='{
   "observation.state.effector.position": {"origin_keys": [{"observation.state": {"start": 6, "end": 7}}]}
 }'
 ACTION_SLOTS='{
-  "action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}], "subtract_state": false},
-  "action.effector.position": {"origin_keys": [{"action": {"start": 6, "end": 7}}], "subtract_state": false}
+  "action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 6}}]},
+  "action.effector.position": {"origin_keys": [{"action": {"start": 6, "end": 7}}]}
 }'
 ```
 

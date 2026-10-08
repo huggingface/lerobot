@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -23,64 +23,18 @@ from lerobot.optim import (
     CosineDecayWithWarmupSchedulerConfig,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
-
-
-def _slot_mappings_to_robot_config(config: "LingbotVLAV2Config") -> dict | None:
-    """Convert the dataclass slot-mapping fields into the robot_config dict format
-    the processor's slot-mapping step expects.
-
-    Returns None if no slot mappings are defined (e.g. a format-only converted
-    checkpoint that hasn't been fine-tuned yet). Camera renames are handled by
-    ``--rename_map`` at the pipeline level, not here.
-    """
-    robot_config: dict = {}
-
-    if config.state_slots:
-        robot_config["states"] = [
-            {slot_key: {"origin_keys": mapping.origin_keys}}
-            for slot_key, mapping in config.state_slots.items()
-        ]
-    if config.action_slots:
-        robot_config["actions"] = [
-            {
-                slot_key: {
-                    "origin_keys": mapping.origin_keys,
-                    "subtract_state": mapping.subtract_state,
-                }
-            }
-            for slot_key, mapping in config.action_slots.items()
-        ]
-
-    return robot_config if robot_config else None
-
-
-def resolve_robot_config_and_stats(config: "LingbotVLAV2Config") -> dict | None:
-    """Build the robot_config dict from the dataclass slot-mapping fields.
-
-    The slot mappings (state_slots / action_slots) are the canonical source — they
-    live in config.json as typed fields with CLI override and validation. The
-    robot_config dict is derived from them for the processor's slot-mapping step.
-    norm_stats are either embedded in the checkpoint or derived from the dataset at
-    training time. Camera renames are handled by ``--rename_map``.
-
-    Returns the robot_config dict (or None if no slot mappings are defined), without
-    mutating the config.
-    """
-    return _slot_mappings_to_robot_config(config)
+from lerobot.utils.feature_utils import dataset_to_policy_features
 
 
 @dataclass
 class SlotMapping:
-    """Mapping from raw dataset feature dims onto a canonical slot.
+    """Raw dims gathered into one canonical slot.
 
-    Each origin_key is a ``{raw_key: {"start": int, "end": int}}`` dict; the slot's
-    vector is the concatenation of those slices in order. This replaces the
-    robot-config YAML — the mapping now lives in config.json as typed fields,
-    with CLI override and validation.
+    ``origin_keys`` is a list of ``{raw_key: {"start": int, "end": int}}`` spans, concatenated in
+    order. ``raw_key`` must be ``observation.state`` for state slots and ``action`` for action slots.
     """
 
     origin_keys: list[dict[str, dict[str, int]]] = field(default_factory=list)
-    subtract_state: bool = False
 
 
 @PreTrainedConfig.register_subclass("lingbot_vla_v2")
@@ -97,9 +51,8 @@ class LingbotVLAV2Config(PreTrainedConfig):
     * a **unified 55-dim canonical** state/action representation (arms, end-effectors,
       grippers, dexterous hands, waist, head, mobile base, reserved slots).
 
-    The canonical layout mirrors the upstream v2 repo (Robbyant/lingbot-vla-v2). The
-    feature -> canonical-slot mapping itself is data driven and handled by the processor
-    via a per-embodiment robot config (see ``processor_lingbot_vla_v2``).
+    The canonical layout mirrors the upstream v2 repo (Robbyant/lingbot-vla-v2). The raw
+    state/action dims are mapped onto it by ``state_slots`` / ``action_slots``.
     """
 
     # ==================== Input / Output Structure ====================
@@ -122,32 +75,26 @@ class LingbotVLAV2Config(PreTrainedConfig):
         }
     )
 
-    # ==================== Feature transform (slot mapping) ====================
-    # Per-embodiment slot mapping: raw dataset state/action/image keys → canonical
-    # slots. Lives in config.json as typed fields (no YAML path needed).
-    # The processor builds the slot-mapping step from these fields; norm_stats are
-    # derived from the dataset at training time and embedded in the checkpoint.
+    # ==================== Slot mapping ====================
+    # Canonical slot (``arm.position`` or ``observation.state.arm.position``) -> raw spans.
+    # None maps the raw feature 1:1 onto the canonical layout (base checkpoint, 55-D features).
     state_slots: dict[str, SlotMapping] | None = None
     action_slots: dict[str, SlotMapping] | None = None
-    # Relative actions (standard ``RelativeActionsProcessorStep``): subtract the
-    # current state from the action for the non-excluded dims. Enabled
-    # automatically when any action slot declares ``subtract_state``; the
-    # non-subtracting slots are added to ``relative_exclude_joints`` so they stay
-    # absolute.
+    # Relative actions: subtract the current state from the action, except for the
+    # dims whose name contains one of ``relative_exclude_joints``.
     use_relative_actions: bool = False
-    relative_exclude_joints: list[str] = field(default_factory=list)
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated from the dataset at training time.
+    action_feature_names: list[str] | None = None
 
     # ==================== Pretrained backbone ====================
     tokenizer_path: str = "Qwen/Qwen3-VL-4B-Instruct"
-    vlm_family: str = "qwen3_vl"
     tokenizer_max_length: int = 72
 
     # Image resize target (width, height). Qwen3-VL consumes native-resolution tokens,
-    # Image resize target (width, height). Qwen3-VL consumes native-resolution tokens,
     # so this is the pre-patchify resize applied by the image processor.
     resize_imgs_with_padding: tuple[int, int] = (224, 224)
-    # Qwen3-VL dynamic-resolution bounds forwarded to AutoProcessor. These cap the
-    # vision-token budget and are serialized by the LingBot feature-transform step.
+    # Qwen3-VL dynamic-resolution bounds (cap the vision-token budget).
     image_max_pixels: int = 262144
     image_min_pixels: int = 131072
     # Number of flow-matching denoising steps at inference.
@@ -157,9 +104,8 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # after build so the streams stay consistent (mixed dtypes break the custom AdaRMSNorm
     # linears under autocast). lerobot-train also reads this to drive Accelerate autocast.
     dtype: torch.dtype | None = torch.bfloat16
-    # Canonical joint vocabulary (name -> dim) and per-joint normalization mode. These
-    # define the unified cross-embodiment layout the checkpoint was trained with and
-    # MUST match it. Defaults mirror the v2 55-D canonical vector.
+    # Canonical joint vocabulary (name -> dim): the unified cross-embodiment layout the
+    # checkpoint was trained with, which MUST match it. Defaults mirror the v2 55-D vector.
     canonical_joints: dict[str, int] = field(
         default_factory=lambda: {
             "arm.position": 14,
@@ -172,26 +118,10 @@ class LingbotVLAV2Config(PreTrainedConfig):
             "reserved.slots": 4,
         }
     )
-    # Canonical camera-view slots the checkpoint expects. The robot config maps raw
-    # dataset cameras onto these; missing views are zero-filled at inference.
-    canonical_cameras: list[str] = field(
-        default_factory=lambda: ["camera_top", "camera_wrist_left", "camera_wrist_right"]
-    )
 
     # Qwen3-VL specific token/vision handling.
-    use_qwen3_chat_template: bool = True
     qwen3vl_use_vision_boundaries: bool = True
     precompute_grid_thw: bool = False
-    use_qwen3_fixed_grid_cache: bool = True
-    # When ``use_cudagraph_prefix`` is on, also fold the vision tower (ViT) and the
-    # embed glue (language embedding, mrope position ids, attention masks) into the
-    # captured prefix CUDA graph, instead of running them eagerly and capturing only
-    # the 36-layer KV fill. The grid-derived metadata (pos_embeds / cu_seqlens /
-    # split_sizes / position_ids) is hoisted into a fixed-grid cache seeded at capture
-    # time, so replay copies only the raw inputs (pixels + tokens + masks). Requires a
-    # fixed input layout (image grid + token length) per capture; a layout change drops
-    # the graph and re-captures. Inference-only (driven from ``sample_actions``).
-    use_cudagraph_prefix_full: bool = False
 
     # ==================== Action expert (Qwen2 decoder, MoE-capable) ====================
     expert_hidden_size: int = 768
@@ -213,16 +143,6 @@ class LingbotVLAV2Config(PreTrainedConfig):
     token_moe_intermediate_size: int = 512
     token_shared_intermediate_size: int = 704
     # ----- MoE load balancing -----
-    # The released v2 checkpoints balance experts with the auxiliary-LOSS terms
-    # below (sequence-wise + router-z); the loss-free bias hook is left disabled
-    # (bias_update_speed=0) there. Both mechanisms are wired here so either can
-    # be used, matching upstream train_lingbotvla.py.
-    #
-    # Auxiliary-loss-FREE bias correction (upstream-only). ``bias_update_speed``
-    # is parsed for checkpoint-config compatibility, but the optimizer pre-hook
-    # that would consume it is not ported — the field has no effect here.
-    # Released recipe leaves it at 0.
-    bias_update_speed: float = 0.0
     # Auxiliary-LOSS balancing (DeepSeek-V3 sequence-wise) — the PRIMARY balancer
     # in the released recipe. Added as a differentiable penalty to the loss.
     sequence_wise_loss_coeff: float = 1e-3
@@ -249,48 +169,23 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # (training only; ~60% slower step for ~half the activation memory — enables
     # 2-4x larger batches on a single 80GB card).
     gradient_checkpointing: bool = False
-    # torch.compile the per-step velocity prediction (inductor fusion, CUDA graphs
-    # disabled). The denoise loop is launch-overhead bound (51-token suffix through
-    # 36 dual-stream layers), so this gives a large latency win on GPU. First call
-    # compiles (minutes); shapes must stay fixed across calls.
+    # Inference speed-ups (CUDA only, fixed input shapes, no extra deps). The CUDA graphs
+    # replay the identical kernels (bit-exact in bf16); together with compile they take
+    # a RoboTwin chunk from ~750 ms to ~120 ms (bf16, RTX PRO 6000).
+    # torch.compile the per-step velocity prediction (first call compiles for ~1 min).
     compile_predict_velocity: bool = False
-    # Inductor mode for compile_predict_velocity: "default" (fast compile) or
-    # "max-autotune-no-cudagraphs" (slow first compile, GEMM autotuning; CUDA
-    # graphs stay disabled either way).
     compile_predict_velocity_mode: str = "default"
-    # Capture the whole denoise loop (the num_steps predict_velocity calls plus
-    # the Euler updates) as one CUDA graph and replay it per action chunk: the
-    # loop's per-step guard evaluations and Python glue disappear into a single
-    # graph replay, which is the dominant host-side cost once the loop is
-    # compiled. Numerically lossless — a replay re-executes the identical kernel
-    # sequence on copied-in inputs (validated bitwise against the plain loop).
-    # CUDA only; works with or without compile_predict_velocity. The first call
-    # pays two extra warmup iterations plus capture; if observation shapes
-    # change the stale graph is dropped and re-captured (warning once per new
-    # shape), and a warm-up/capture failure disables the graph for this
-    # instance and falls back to the plain loop with a warning.
+    # Capture the denoise loop as one CUDA graph (re-captured if shapes change).
     use_cudagraph_denoise: bool = False
-    # Capture the prefix pass (the 36-layer KV fill after embed_prefix) as one
-    # CUDA graph and replay it per action chunk, removing the prefix forward's
-    # per-layer launch gaps. The vision tower and the embed/glue stay eager
-    # (their host syncs forbid capture); the graph covers only
-    # qwenvl_with_expert.forward(inputs_embeds=[prefix_embs, None],
-    # fill_kv_cache=True). Numerically lossless — a replay re-executes the
-    # identical kernel sequence (validated bitwise). The KV outputs live in the graph's private
-    # pool and are aliased directly into the denoise CUDA graph when both
-    # graphs are on (skipping the per-chunk KV copy); every prefix-graph
-    # state transition (re-capture / drop / disable) invalidates the alias
-    # via a generation counter in the denoise graph's shape signature.
-    # Capture-failure/warm-up discipline matches use_cudagraph_denoise, plus
-    # a re-capture circuit breaker (shape flicker stops re-capturing and
-    # falls back to the eager prefix).
+    # Capture the 36-layer prefix KV fill as one CUDA graph.
     use_cudagraph_prefix: bool = False
+    # Also capture the vision tower and embedding glue in the prefix graph.
+    use_cudagraph_prefix_full: bool = False
     # Compute/log the MoE monitoring metrics (per-layer MaxVio/entropy/dead-expert,
     # plus the per-metric .item() syncs) once every N training steps. 1 = every
     # step (original behavior).
     moe_metrics_interval: int = 50
     use_cache: bool = True
-    post_training: bool = True
     # Match the official RoboTwin SFT recipe for newly-created configs. Existing
     # checkpoints retain their serialized values when loaded from --policy.path.
     freeze_vision_encoder: bool = False
@@ -304,11 +199,7 @@ class LingbotVLAV2Config(PreTrainedConfig):
 
     # Adaptive layernorm settings for the action expert (LingBot training defaults).
     adanorm_time: bool = True
-    split_gate_liner: bool = False
-    nosplit_gate_liner: bool = False
-    separate_time_proj: bool = False
     final_norm_adanorm: bool = False
-    norm_qkv: bool = False
 
     # ==================== Optimizer / Scheduler Presets ====================
     # Mirror upstream ``use_moe_expert_lr`` (configs/vla/robotwin/robotwin.yaml):
@@ -322,12 +213,6 @@ class LingbotVLAV2Config(PreTrainedConfig):
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 0.0
     optimizer_grad_clip_norm: float = 1.0
-    # fused AdamW (single-kernel step on GPU). Same math as the default foreach
-    # path; measured a few % faster per training step on A100.
-    optimizer_fused: bool = False
-    # "adamw" (lingbot_adamw). Muon support lives in #4658 and will be wired
-    # here once that lands.
-    optimizer_type: str = "adamw"
 
     scheduler_warmup_steps: int = 1000
     scheduler_decay_steps: int = 30000
@@ -350,13 +235,53 @@ class LingbotVLAV2Config(PreTrainedConfig):
                 f"attention_implementation must be one of 'eager', 'sdpa', got {self.attention_implementation}"
             )
 
-        if self.split_gate_liner and self.nosplit_gate_liner:
-            raise ValueError("split_gate_liner and nosplit_gate_liner cannot both be True.")
+        for key, slots in ((OBS_STATE, self.state_slots), (ACTION, self.action_slots)):
+            for name, mapping in (slots or {}).items():
+                joint = name.removeprefix(f"{key}.")
+                if joint not in self.canonical_joints:
+                    raise ValueError(
+                        f"Unknown {key} slot {name!r}; expected one of {list(self.canonical_joints)}."
+                    )
+                width = 0
+                for origin in mapping.origin_keys:
+                    for raw_key, span in origin.items():
+                        if raw_key != key:
+                            raise ValueError(f"{key} slot {name!r} must read from {key!r}, got {raw_key!r}.")
+                        width += span["end"] - span["start"]
+                if width > self.canonical_joints[joint]:
+                    raise ValueError(
+                        f"{key} slot {name!r} spans {width} dims, wider than its canonical "
+                        f"dimension {self.canonical_joints[joint]}."
+                    )
+
+    def slot_spans(self, key: str) -> dict[str, list[list[int]]]:
+        """Canonical joint -> ``[[start, end], ...]`` spans on the raw ``key`` feature."""
+        slots = self.state_slots if key == OBS_STATE else self.action_slots
+        if slots is None:
+            spans, offset = {}, 0
+            for joint, dim in self.canonical_joints.items():
+                spans[joint] = [[offset, offset + dim]]
+                offset += dim
+            return spans
+        return {
+            name.removeprefix(f"{key}."): [
+                [span["start"], span["end"]] for origin in mapping.origin_keys for span in origin.values()
+            ]
+            for name, mapping in slots.items()
+        }
+
+    def set_dataset_feature_metadata(self, features: dict[str, Any]) -> None:
+        """Adopt the dataset's raw state shape (a fine-tuned base checkpoint would keep its 55-D one)."""
+        state = dataset_to_policy_features(features).get(OBS_STATE)
+        if state is not None:
+            self.input_features = {**(self.input_features or {}), OBS_STATE: state}
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
-        assert self.input_features is not None
-        assert self.output_features is not None
+        if self.input_features is None:
+            self.input_features = {}
+        if self.output_features is None:
+            self.output_features = {}
         image_features = [key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL]
         if not image_features:
             raise ValueError(
@@ -364,37 +289,24 @@ class LingbotVLAV2Config(PreTrainedConfig):
                 "No features of type FeatureType.VISUAL found in input_features."
             )
 
-        if OBS_STATE not in self.input_features:
-            self.input_features[OBS_STATE] = PolicyFeature(
-                type=FeatureType.STATE,
-                shape=(self.max_state_dim,),
-            )
-        else:
-            state_shape = self.input_features[OBS_STATE].shape
-            state_dim = state_shape[0] if state_shape else 0
-            if state_dim > self.max_state_dim:
+        self.input_features.setdefault(
+            OBS_STATE, PolicyFeature(type=FeatureType.STATE, shape=(self.max_state_dim,))
+        )
+        self.output_features.setdefault(
+            ACTION, PolicyFeature(type=FeatureType.ACTION, shape=(self.max_action_dim,))
+        )
+        for key, feature, flag in (
+            (OBS_STATE, self.input_features[OBS_STATE], "state_slots"),
+            (ACTION, self.output_features[ACTION], "action_slots"),
+        ):
+            end = max((span[1] for spans in self.slot_spans(key).values() for span in spans), default=0)
+            if end > feature.shape[-1]:
                 raise ValueError(
-                    f"State dimension {state_dim} exceeds max_state_dim {self.max_state_dim}. "
-                    f"Either reduce state dimension or increase max_state_dim in config."
-                )
-
-        if ACTION not in self.output_features:
-            self.output_features[ACTION] = PolicyFeature(
-                type=FeatureType.ACTION,
-                shape=(self.max_action_dim,),
-            )
-        else:
-            action_shape = self.output_features[ACTION].shape
-            action_dim = action_shape[0] if action_shape else 0
-            if action_dim > self.max_action_dim:
-                raise ValueError(
-                    f"Action dimension {action_dim} exceeds max_action_dim {self.max_action_dim}. "
-                    f"Either reduce action dimension or increase max_action_dim in config."
+                    f"{key} has {feature.shape[-1]} dims but its slot mapping reads up to dim {end}; "
+                    f"set --policy.{flag} to map the robot's dims onto the canonical slots."
                 )
 
     def get_optimizer_preset(self) -> AdamWConfig:
-        if self.optimizer_type != "adamw":
-            raise ValueError(f"optimizer_type must be 'adamw', got {self.optimizer_type!r}.")
         return AdamWConfig(
             lr=self.optimizer_lr,
             betas=self.optimizer_betas,
@@ -422,25 +334,3 @@ class LingbotVLAV2Config(PreTrainedConfig):
     @property
     def reward_delta_indices(self) -> None:
         return None
-
-    def as_official_recipe(self) -> "LingbotVLAV2Config":
-        """Return a copy carrying the official upstream RoboTwin SFT recipe values.
-
-        Kept for callers that start from an existing config object (e.g. a loaded
-        checkpoint with legacy port defaults) and want the official training
-        values applied in one call. Newly-created configs already default to the
-        official recipe.
-        """
-        import copy
-
-        recipe = copy.copy(self)
-        recipe.loss_type = "L1_fm"
-        recipe.freeze_vision_encoder = False
-        recipe.vlm_causal = True
-        recipe.optimizer_lr = 1e-4
-        recipe.scheduler_decay_lr = 5e-5
-        recipe.scheduler_warmup_steps = 0
-        return recipe
-
-    def _save_pretrained(self, save_directory: Path) -> None:
-        super()._save_pretrained(save_directory)
