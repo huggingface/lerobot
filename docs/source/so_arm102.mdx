@@ -109,7 +109,8 @@ Robonine links its ID-setting and calibration tools at [lab.robonine.com](https:
   The upstream SO-101 setup declares every servo as STS3215. Do not use its
   follower setup command for the mixed-model SO-ARM 102 follower. Adding STS3250
   to the library's model table alone does not change the SO-101 robot's motor
-  mapping, and STS3235 is not currently listed.
+  mapping. STS3235 support added alongside this guide does not change that
+  mapping.
 </Tip>
 
 ## Step-by-step assembly
@@ -199,7 +200,13 @@ The following findings are based on upstream revision [`c441ebb`](https://github
 | Connection handshake | [Motor verification](https://github.com/huggingface/lerobot/blob/c441ebb785b7a1008203b85a241e610bec0a0711/src/lerobot/motors/motors_bus.py) compares reported model numbers with the configured models; the [Feetech handshake](https://github.com/huggingface/lerobot/blob/c441ebb785b7a1008203b85a241e610bec0a0711/src/lerobot/motors/feetech/feetech.py) calls that verification. | An STS3250 reporting 2825 fails a configuration expecting STS3215's 777. Do not bypass identification checks to make the connection appear successful. |
 | Leader               | Its six STS3215 servos match the models in the [SO-101 leader mapping](https://github.com/huggingface/lerobot/blob/c441ebb785b7a1008203b85a241e610bec0a0711/src/lerobot/teleoperators/so_leader/so_leader.py).                                                                                                                                                                       | This is a candidate for reuse, but the handle, trigger range, joint limits, and direction still need physical validation.                              |
 
-There is no dedicated upstream `so_arm102` robot type at this revision. The hardware guide's reference to the SO-101 workflow does not establish compatibility with this upstream version. Integration is tracked in [issue #4868](https://github.com/huggingface/lerobot/issues/4868).
+### STS3235 support accompanying this guide
+
+The accompanying Feetech table changes register `sts3235` with model number **2057**, the STS control table, 4096-count resolution, STS baud rates and sign-magnitude encodings, and protocol version 0. FEETECH's [FD1.9.8.5 model catalog](https://gitee.com/ftservo/fddebug/tree/179d6e8c2db40e82e57aa56e8679db855c2ed605) lists `9,8,8,0,STS3235` in the archive's `ft_setup_bat/setup_en.log`; the model bytes at addresses 3 and 4 give `9 + (8 << 8) = 2057`. The same catalog identifies STS3215 as 777 and STS3250 as 2825.
+
+Mock-based checks exercise mixed-model identification, rejection of incorrect or missing motors, homing-offset encoding, and rejection of an incompatible protocol. They do not validate motion or firmware behavior on physical STS3235 servos.
+
+There is no dedicated upstream `so_arm102` robot type at the checked revision. The follower still needs its per-joint mapping even with all three servo models registered. The hardware guide's reference to the SO-101 workflow does not establish compatibility with this upstream version. Integration is tracked in [issue #4868](https://github.com/huggingface/lerobot/issues/4868).
 
 Use [Bring Your Own Hardware](./integrate_hardware) for the robot and teleoperator interfaces. A separately maintained integration can use the [third-party plugin mechanism](./third_party_robots); installing the hardware files alone does not register a CLI type.
 
