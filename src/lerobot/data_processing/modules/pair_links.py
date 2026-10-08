@@ -108,8 +108,9 @@ class PairLinks:
                     "pair_type": payload["pair_type"],
                     "split": source["split"],
                     "action_loss": payload["pair_type"] != "weak_semantic"
-                    and bool(payload.get("alignment_validated"))
-                    and bool(payload.get("alignment_evidence")),
+                    and payload.get("alignment_validated") is True
+                    and isinstance(payload.get("alignment_evidence"), str)
+                    and bool(payload["alignment_evidence"].strip()),
                     "validation_evidence": payload.get("alignment_evidence")
                     or target["simulation_validation"],
                 }

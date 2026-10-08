@@ -177,6 +177,7 @@ def test_pair_reducer_validated_links_weak_pairs_and_bad_ranges(tmp_path):
         "alignment_evidence": "reviewed procedure/order/outcome match",
     }
     weak = {**payload, "pair_type": "weak_semantic"}
+    mistyped = {**payload, "alignment_validated": "false"}
     invalid = copy.deepcopy(payload)
     invalid["target"]["end"] = 101
     missing = copy.deepcopy(payload)
@@ -187,18 +188,21 @@ def test_pair_reducer_validated_links_weak_pairs_and_bad_ranges(tmp_path):
         REF,
         "lerobot.data_processing.modules.pair_links:PairLinks",
         {"inventory_uri": str(inventory), "inventory_sha256": file_checksum(inventory)[0]},
-        [InputItem(str(index), value) for index, value in enumerate((payload, weak, invalid, missing))],
+        [
+            InputItem(str(index), value)
+            for index, value in enumerate((payload, weak, mistyped, invalid, missing))
+        ],
         shard_size=4,
     )
     summary = run_local(store, plan, batch_size=4)
-    assert summary.completed == 2 and summary.rejected == 2
+    assert summary.completed == 3 and summary.rejected == 2
     accepted = accepted_in_shard(store, plan, 0)
     outputs = []
     for result in accepted.values():
         for artifact in result.artifacts:
             with store.open(artifact.path) as stream:
                 outputs.extend(pq.read_table(stream).to_pylist())
-    assert [row["action_loss"] for row in outputs] == [True, False]
+    assert [row["action_loss"] for row in outputs] == [True, False, False]
     assert all(artifact.name == "pairs" for result in accepted.values() for artifact in result.artifacts)
 
 
