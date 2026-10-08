@@ -88,7 +88,6 @@ def _make_tiny_config() -> LingbotVLAV2Config:
             "arm.position": 6,
             "effector.position": 1,
         },
-        canonical_cameras=["camera_top"],
         # Feature transform
         state_slots={
             "arm.position": SlotMapping(
@@ -101,11 +100,9 @@ def _make_tiny_config() -> LingbotVLAV2Config:
         action_slots={
             "arm.position": SlotMapping(
                 origin_keys=[{"action": {"start": 0, "end": 6}}],
-                subtract_state=False,
             ),
             "effector.position": SlotMapping(
                 origin_keys=[{"action": {"start": 6, "end": 7}}],
-                subtract_state=False,
             ),
         },
         # Input/output features
@@ -210,7 +207,5 @@ def test_identity_passthrough_processor():
     assert not postprocessor.steps[1].stats
     # The identity slot mapping reads cumulative raw spans.
     slot_step = preprocessor.steps[4]
-    assert slot_step.robot_config is not None
-    state_spans = [spans for _joint, _dim, spans in slot_step._state_plan if spans is not None]
-    assert state_spans[0] == [("observation.state", 0, 14)]
-    assert state_spans[1] == [("observation.state", 14, 28)]
+    assert slot_step.state_spans["arm.position"] == [[0, 14]]
+    assert slot_step.state_spans["end.position"] == [[14, 28]]
