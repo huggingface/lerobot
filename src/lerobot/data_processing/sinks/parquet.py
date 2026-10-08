@@ -57,6 +57,8 @@ def patch_table(
             values = [None] * source.num_rows
         for frame_key, value in zip(patch_keys, patch.column(column).to_pylist(), strict=True):
             values[positions[frame_key]] = value
+        if not field.nullable and any(value is None for value in values):
+            raise ValueError(f"Patch introduced nulls in nonnullable column: {column}")
         array = pa.array(values, type=field.type)
         if column in result.column_names:
             result = result.set_column(result.column_names.index(column), field, array)

@@ -48,6 +48,15 @@ def test_typed_empty_nested_annotation_keeps_schema():
     assert result["annotations"].to_pylist() == [[], None, None]
 
 
+def test_patch_rejects_null_in_nonnullable_owned_column():
+    source = source_table()
+    label_field = pa.field("label", pa.string(), nullable=False)
+    source = source.set_column(source.column_names.index("label"), label_field, source["label"])
+    patch = pa.table({"episode_index": [0], "frame_index": [0], "label": pa.array([None], type=pa.string())})
+    with pytest.raises(ValueError, match="nonnullable"):
+        patch_table(source, patch, columns=("label",))
+
+
 @pytest.mark.parametrize("kind", ["duplicate", "unknown", "timeline", "extra", "type"])
 def test_invalid_patch_fails_without_mutation(kind):
     source = source_table()
