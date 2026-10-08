@@ -131,7 +131,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         for w in summary.validation_report.warnings:
             logger.warning(w)
 
-    if cfg.push_to_hub:
+    if cfg.push_to_hub and cfg.runtime.mode != "plan":
         if cfg.repo_id is None and cfg.new_repo_id is None:
             raise ValueError(
                 "--push_to_hub requires --repo_id or --new_repo_id (the dataset repo to push to)."
