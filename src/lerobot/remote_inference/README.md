@@ -366,40 +366,8 @@ Control-thread reporting uses bounded queues drained by the worker; diagnostic I
 | Shared predictor, separate owners               | Reuses coordinate/gradient validation without moving rollout or transport concerns into policies           |
 | Explicit public APIs and directed dependencies  | Exposes package boundaries without lazy initializer machinery or requiring unrelated optional dependencies |
 
-## 13. Validation and current limits
 
-Automated tests concentrate each guarantee at its owning layer: runtime/queue tests cover timing, alignment and provenance; policy/processor tests cover preparation and coordinate semantics; worker tests cover cancellation and session ownership; rollout tests cover dispatch, recording and shutdown. Representative real transport and separate-process tests check how these boundaries compose. Keep regressions that protect observable behavior, contracts and public APIs; avoid repeating full rejection matrices through every backend, policy and robot. This focused coverage does not exhaust every configuration, diagnostic message or transition combination.
-
-A driver capability declaration establishes the command contract, not physical load support. A policy declaration or successful warmup establishes neither useful task execution nor language quality. A transport test establishes neither adequate playback margin nor robot behavior through that topology. Validate the checkpoint, processors, robot configuration and network together before treating a deployment as suitable for its task.
-
-Acceptance should distinguish useful action execution, target retention and fresh resumption, bounded failure/shutdown, dataset correctness, and language behavior. Local RTC and remote execution share runtime contracts but have different workers, so same-host remote execution does not validate the local RTC path. Functional language integration has real-model hardware evidence; useful checkpoint language/task behavior and representative routed/hosted robot operation remain separate follow-ups. Passing software tests is not a universal support or deployment-readiness claim.
-
-OMX/XVLA remote recording has physical acceptance with Sentry, Highlight, Episodic and corrections-only DAgger. Coverage includes blocking recording transitions, episode reset, human correction and autonomous resumption, finalization and Hub upload. Uploaded tables and decoded videos confirm frame counts, episode offsets, component ordering, fixed task labels and DAgger intervention labels. This acceptance is specific to the exercised configuration; continuous DAgger recording and instruction changes during recording were not exercised.
-
-Local guided RTC has physical waiting/recovery and grace-expiry acceptance with OMX/SmolVLA. Delayed predictions exercised target retention, rejection of pre-hold results, fresh resumption without old continuation, and terminal expiry followed by configured homing/disconnection without late-result resumption. This establishes the exercised transport-free guided RTC path, not trained RTC or every supported robot/checkpoint.
-
-OMX/FineART checks exercised VQA, subtask application, manual retargeting, reset/restart and clean shutdown. Useful language/task behavior remains unvalidated; physical hold quality was inconclusive, and pending-query takeover and language timeout were not exercised.
-
-Keep this reference focused on current contracts and open work. Record logs, commands, model revisions and physical observations with the relevant test or issue; do not turn the design into an experiment journal. Close an item only for the behavior actually exercised, and update the corresponding design section when implementation changes.
-
-## 14. Future work
-
-### Remaining integration validation
-
-The recording, local RTC and functional language hardware batch is complete within the limits above. No further HW run is planned. Contribution inventory, PR description and migration guidance have been reviewed; research artifacts and learning exports remain outside the implementation contribution.
-
-The affected local regression suite passed with 540 tests and four skips: two require CUDA and two require a Zenoh router binary. Contribution-wide quality hooks, repository type checking and maintained documentation-link checks passed. These results do not replace CI on the final submitted revision.
-
-#### Documentation and contribution readiness
-
-- [ ] Refresh companion learning material against this reference, including package paths, defaults, driver capability constraints, starvation recovery, terminal shutdown and recording behavior. Keep learning exports separate from the implementation contribution.
-
-#### Final automated checks
-
-- [ ] Confirm Fast Tests, Full CPU/GPU Tests, Quality and Docs on the exact submitted revision. Keep remote integration dependencies in Full Tests, not the Fast Tests tiers.
-- [ ] Reconcile final CI results and any remaining skips with the PR validation summary. A local pass, mock, dependency-isolation probe or earlier CI result does not replace a missing physical, real-model or final-revision check.
-
-Repeat a physical check only when a change affects its behavior or leaves a concrete question unresolved. The remaining work does not include broad camera-versus-motor failure handling, a general hardware-cleanup redesign or exhaustive tuning sweeps.
+## 13. Future work
 
 ### Follow-ups after landing
 
