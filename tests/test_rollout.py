@@ -32,6 +32,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 # Hoisted rather than re-imported inside each test: the module-scoped `importorskip`
 # above already guards everything below it.
+from lerobot.processor import transition_to_prediction  # noqa: E402
 from lerobot.utils.cycle_timer import CycleTimer  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -1532,3 +1533,165 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
     policy.config.use_amp = False
     assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
     _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Policy side outputs
+# ---------------------------------------------------------------------------
+
+
+def test_sync_engine_returns_the_prediction_with_the_action():
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.rollout import SyncInferenceEngine
+    from lerobot.utils.constants import ACTION, PREDICTION
+
+    returned = {"subtask": None}
+    policy = MagicMock()
+    policy.config.use_amp = False
+
+    def select_action(_obs):
+        action = torch.zeros(1, 2)
+        if returned["subtask"] is None:
+            return action
+        return {ACTION: action, PREDICTION: {"language": {"subtask": [returned["subtask"]]}}}
+
+    policy.select_action.side_effect = select_action
+    postprocessor = MagicMock(side_effect=lambda action: action + 1)
+    engine = SyncInferenceEngine(
+        policy=policy,
+        preprocessor=MagicMock(side_effect=lambda obs: obs),
+        postprocessor=postprocessor,
+        dataset_features={},
+        ordered_action_keys=[],
+        task="test",
+        device="cpu",
+        robot_type="mock",
+    )
+
+    # No prediction: a bare action, as before.
+    torch.testing.assert_close(engine.get_action({}), torch.ones(2))
+
+    # With a prediction: a transition carrying the postprocessed action and the prediction.
+    returned["subtask"] = "reach"
+    step = engine.get_action({})
+    assert isinstance(postprocessor.call_args.args[0], torch.Tensor)  # only the action is postprocessed
+    torch.testing.assert_close(step[TransitionKey.ACTION], torch.ones(2))
+    assert transition_to_prediction(step) == {"language": {"subtask": ["reach"]}}
+
+
+class _Identity:
+    """A processor pipeline stand-in with no steps."""
+
+    steps = ()
+
+    def __call__(self, data):
+        return data
+
+    def reset(self):
+        pass
+
+
+def _rtc_engine(predict_action_chunk):
+    """An RTC engine over a 2-joint robot whose policy chunks with ``predict_action_chunk``."""
+    from lerobot.policies.rtc import ActionQueue
+    from lerobot.policies.rtc.configuration_rtc import RTCConfig
+    from lerobot.rollout.inference import RTCInferenceEngine
+
+    rtc_config = RTCConfig(enabled=True, execution_horizon=4)
+    policy = SimpleNamespace(config=SimpleNamespace(use_amp=False), predict_action_chunk=predict_action_chunk)
+    engine = RTCInferenceEngine(
+        policy=policy,
+        preprocessor=_Identity(),
+        postprocessor=_Identity(),
+        robot_wrapper=SimpleNamespace(robot_type="mock", action_features={}),
+        rtc_config=rtc_config,
+        dataset_features={"observation.state": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]}},
+        task="test",
+        fps=30.0,
+        device="cpu",
+    )
+    engine._action_queue = ActionQueue(rtc_config)
+    engine._obs_holder["obs"] = {"a": 1.0, "b": 2.0}
+    engine._policy_active.set()
+    return engine
+
+
+def _run_one_rtc_chunk(*, reset_mid_inference: bool = False):
+    """Run the RTC loop for exactly one chunk; returns the engine."""
+    from lerobot.utils.constants import ACTION, PREDICTION
+
+    def predict_action_chunk(batch, **kwargs):
+        engine._shutdown_event.set()  # one iteration
+        if reset_mid_inference:
+            engine._reset_epoch += 1
+        return {ACTION: torch.zeros(1, 3, 2), PREDICTION: {"language": {"subtask": ["reach"]}}}
+
+    engine = _rtc_engine(predict_action_chunk)
+    engine._rtc_loop()
+    return engine
+
+
+def test_rtc_engine_hands_a_chunk_prediction_out_once_with_the_next_action():
+    engine = _run_one_rtc_chunk()
+
+    first = engine.get_action(None)
+    assert transition_to_prediction(first) == {"language": {"subtask": ["reach"]}}
+    assert isinstance(engine.get_action(None), torch.Tensor)  # the rest of the chunk is bare
+
+
+def test_rtc_engine_drops_the_prediction_of_a_discarded_chunk():
+    # A reset during inference discards the chunk: its prediction must not be shown either.
+    engine = _run_one_rtc_chunk(reset_mid_inference=True)
+    assert engine._chunk_prediction is None
+
+
+def test_rtc_engine_reset_clears_a_pending_prediction():
+    engine = _run_one_rtc_chunk()
+    engine._policy.reset = lambda: None
+    engine.reset()
+    assert engine._chunk_prediction is None
+
+
+def test_send_next_action_returns_the_step_with_the_prediction():
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.processor import create_transition
+    from lerobot.rollout.strategies.core import send_next_action
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, _ = _make_loop_ctx(fps=30.0, multiplier=2, num_ticks=10)
+    engine = ctx.policy.inference
+    engine.get_action.side_effect = [
+        create_transition(action=torch.tensor([1.0]), prediction={"language": {"subtask": ["reach"]}}),
+        torch.tensor([2.0]),
+    ]
+    interpolator = ActionInterpolator(multiplier=2)
+
+    first = send_next_action({"m.pos": 0.0}, {"m.pos": 0.0}, ctx, interpolator)
+    assert first[TransitionKey.ACTION] == {"m.pos": 1.0}
+    assert transition_to_prediction(first) == {"language": {"subtask": ["reach"]}}
+
+    # The next policy step returned a bare action, and the interpolated tick in between
+    # pulled nothing from the engine: neither carries a prediction.
+    for _ in range(2):
+        step = send_next_action({"m.pos": 0.0}, {"m.pos": 0.0}, ctx, interpolator)
+        assert transition_to_prediction(step) == {}
+
+
+def test_log_telemetry_passes_the_step_only_with_display_data(monkeypatch):
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.processor import create_transition
+    from lerobot.rollout.strategies import core
+
+    logged = []
+    monkeypatch.setattr(core, "log_visualization_data", lambda *a, **k: logged.append(k))
+    step = create_transition(action={"m.pos": 1.0}, prediction={"language": {"subtask": ["reach"]}})
+    cfg = SimpleNamespace(display_data=False, display_mode="rerun", display_compressed_images=False)
+    runtime = SimpleNamespace(cfg=cfg)
+
+    core.RolloutStrategy._log_telemetry({"x": 1.0}, step, runtime)
+    assert logged == []
+
+    cfg.display_data = True
+    core.RolloutStrategy._log_telemetry({"x": 1.0}, step, runtime)
+    assert logged[-1]["action"] == step[TransitionKey.ACTION]
+    assert logged[-1]["policy_step"] is step  # passed as is; the viewer extracts what to show

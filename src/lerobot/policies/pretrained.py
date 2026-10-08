@@ -29,6 +29,7 @@ from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
@@ -310,20 +311,41 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor | PolicyOutput:
         """Returns the action chunk (for action chunking policies) for a given observation, potentially in batch mode.
 
         Child classes using action chunking should use this method within `select_action` to form the action chunk
         cached for selection.
+
+        May return a `PolicyOutput` carrying the chunk and its prediction, as for `select_action`.
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]
+    ) -> Tensor | PolicyOutput:
         """Return one action to run in the environment (potentially in batch mode).
 
         When the model uses a history of observations, or outputs a sequence of actions, this method deals
         with caching.
+
+        Returns a bare action tensor, or a `PolicyOutput`: a batch, keyed like the input batch, holding
+        the action under ``"action"`` and what the policy expects or believes besides it under
+        ``"prediction"`` (a `PolicyPrediction`). The prediction is batched like the action, one value
+        per environment, and each entry is keyed by what it refers to: predicted frames by the
+        observation key they predict, language by annotation style ("subtask", "plan", "memory"),
+        boxes (annotation VQA schema) by the camera they are drawn on. Callers normalize the two
+        return types with `lerobot.processor.policy_output_to_transition`; `--display_data` shows
+        the prediction of the first environment.
+
+        A prediction holds values for this step: one spanning a chunk (e.g. an imagined clip) is
+        returned piece by piece, with the action each piece belongs to. Each entry stays displayed
+        until it is returned again. Predicting is opt-in through a config field of the policy's
+        choosing, and must not change the actions; text that should steer the policy goes
+        through `generate_text`.
         """
         raise NotImplementedError
 

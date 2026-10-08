@@ -34,6 +34,9 @@ OBS_LANGUAGE_SUBTASK_ATTENTION_MASK = OBS_LANGUAGE_SUBTASK + ".attention_mask"
 
 ACTION = "action"
 ACTION_PREFIX = ACTION + "."
+# Batch key of a policy's prediction (see ``PolicyOutput``), and the prefix naming what it predicts:
+# ``observation.images.top`` predicted is ``prediction.images.top``.
+PREDICTION = "prediction"
 ACTION_TOKENS = ACTION + ".tokens"
 ACTION_TOKEN_MASK = ACTION + ".token_mask"
 ACTION_CODE_TOKEN_MASK = ACTION + ".code_token_mask"

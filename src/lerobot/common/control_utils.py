@@ -37,7 +37,11 @@ if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
     from lerobot.teleoperators import Teleoperator
 from lerobot.lerobot_types import PolicyAction, RobotAction
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import (
+    PolicyProcessorPipeline,
+    policy_output_to_transition,
+    transition_to_policy_action,
+)
 from lerobot.robots import Robot
 
 
@@ -85,7 +89,7 @@ def predict_action(
 
         # Compute the next action with the policy
         # based on the current observation
-        action = policy.select_action(observation)
+        action = transition_to_policy_action(policy_output_to_transition(policy.select_action(observation)))
 
         action = postprocessor(action)
 

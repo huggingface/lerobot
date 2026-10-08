@@ -32,6 +32,7 @@ from threading import Lock
 
 import torch
 
+from lerobot.lerobot_types import EnvTransition
 from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
 
 logger = logging.getLogger(__name__)
@@ -468,8 +469,12 @@ class InferenceEngine(abc.ABC):
         """Clear episode-scoped state."""
 
     @abc.abstractmethod
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Return the next action tensor, or ``None`` if unavailable."""
+    def get_action(self, obs_frame: dict | None) -> torch.Tensor | EnvTransition | None:
+        """Return the next action tensor, or ``None`` if unavailable.
+
+        Like the policy itself: when the policy returned a prediction besides the action, the action
+        comes back with it as an ``EnvTransition`` (see ``PreTrainedPolicy.select_action``).
+        """
 
     def notify_observation(self, obs: dict) -> None:  # noqa: B027
         """Publish the latest processed observation.  Default: no-op."""

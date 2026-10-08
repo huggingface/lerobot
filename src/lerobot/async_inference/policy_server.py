@@ -41,7 +41,11 @@ import torch
 from lerobot.configs import PolicyFeature
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, get_policy_class, make_pre_post_processors
-from lerobot.processor import PolicyProcessorPipeline
+from lerobot.processor import (
+    PolicyProcessorPipeline,
+    policy_output_to_transition,
+    transition_to_policy_action,
+)
 from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import receive_bytes_in_chunks
 
@@ -327,7 +331,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         """Get an action chunk from the policy, keeping only the first `actions_per_chunk` actions."""
         if self.policy is None or self.actions_per_chunk is None:
             raise RuntimeError(_POLICY_NOT_LOADED)
-        chunk = self.policy.predict_action_chunk(observation)
+        chunk = transition_to_policy_action(
+            policy_output_to_transition(self.policy.predict_action_chunk(observation))
+        )
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
 

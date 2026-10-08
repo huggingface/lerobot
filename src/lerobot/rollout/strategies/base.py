@@ -73,9 +73,9 @@ class BaseStrategy(RolloutStrategy):
                 if self._handle_warmup(cfg.use_torch_compile, timer):
                     continue
 
-                action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
                 with timer.section("telemetry"):
-                    self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                    self._log_telemetry(obs_processed, step, ctx.runtime)
 
                 # Service the text-query channel (/vqa answers, /autosteer turns) at
                 # the end of the tick; no-op when nothing is queued.

@@ -21,7 +21,7 @@ this module does not import ``rerun`` or ``foxglove`` (each backend imports its 
 ``require_package`` guard).
 """
 
-from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.lerobot_types import EnvTransition, RobotAction, RobotObservation, TransitionKey
 
 from .foxglove_visualization import init_foxglove, log_foxglove_data, shutdown_foxglove
 from .rerun_visualization import init_rerun, log_rerun_data, shutdown_rerun
@@ -57,13 +57,30 @@ def log_visualization_data(
     observation: RobotObservation | None = None,
     action: RobotAction | None = None,
     compress_images: bool = False,
+    policy_step: EnvTransition | None = None,
 ) -> None:
-    """Logs observation/action data to the backend selected by ``display_mode``."""
+    """Logs observation/action data and the policy's prediction to the backend selected by ``display_mode``.
+
+    ``policy_step`` is the transition a policy returned with its action; its prediction (see
+    ``PreTrainedPolicy.select_action``) is shown.
+    """
+
+    prediction = policy_step.get(TransitionKey.PREDICTION) if policy_step is not None else None
 
     if display_mode == "rerun":
-        log_rerun_data(observation=observation, action=action, compress_images=compress_images)
+        log_rerun_data(
+            observation=observation,
+            action=action,
+            compress_images=compress_images,
+            prediction=prediction,
+        )
     elif display_mode == "foxglove":
-        log_foxglove_data(observation=observation, action=action, compress_images=compress_images)
+        log_foxglove_data(
+            observation=observation,
+            action=action,
+            compress_images=compress_images,
+            prediction=prediction,
+        )
     else:
         raise ValueError(f"Unknown display_mode '{display_mode}'. Expected one of {VISUALIZATION_MODES}.")
 

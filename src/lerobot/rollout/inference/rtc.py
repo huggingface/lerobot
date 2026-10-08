@@ -32,6 +32,7 @@ from typing import Any, Protocol, cast
 
 import torch
 
+from lerobot.lerobot_types import EnvTransition, PolicyOutput, PolicyPrediction
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionQueue, LatencyTracker, reanchor_relative_rtc_prefix
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -40,6 +41,10 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    create_transition,
+    policy_output_to_transition,
+    transition_to_policy_action,
+    transition_to_prediction,
 )
 from lerobot.utils.feature_utils import build_dataset_frame
 
@@ -82,7 +87,7 @@ class _RTCPredictActionChunk(Protocol):
         *,
         inference_delay: int | None,
         prev_chunk_left_over: torch.Tensor | None,
-    ) -> torch.Tensor: ...
+    ) -> torch.Tensor | PolicyOutput: ...
 
 
 def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
@@ -231,6 +236,9 @@ class RTCInferenceEngine(InferenceEngine):
         # Bumped by reset() under _obs_lock, so a chunk whose inference started before a
         # reset is discarded instead of merged into the fresh queue.
         self._reset_epoch = 0
+        # The latest chunk's prediction, handed out with the next action (see get_action).
+        self._chunk_prediction: PolicyPrediction | None = None
+        self._prediction_lock = Lock()
         self._policy_active = Event()
         self._compile_warmup_done = Event()
         self._shutdown_event = Event()
@@ -344,6 +352,8 @@ class RTCInferenceEngine(InferenceEngine):
         """
         logger.info("Resetting RTC inference state (policy + processors + queue)")
         self._policy.reset()
+        with self._prediction_lock:
+            self._chunk_prediction = None
         self._preprocessor.reset()
         self._postprocessor.reset()
         with self._obs_lock:
@@ -361,8 +371,11 @@ class RTCInferenceEngine(InferenceEngine):
     # Action production (called from main thread)
     # ------------------------------------------------------------------
 
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
+    def get_action(self, obs_frame: dict | None) -> torch.Tensor | EnvTransition | None:
+        """Pop the next action from the RTC queue (ignores ``obs_frame``).
+
+        The first action served after a chunk lands carries that chunk's prediction.
+        """
         if self._action_queue is None:
             return None
         queued = self._action_queue.get_with_task()
@@ -376,7 +389,11 @@ class RTCInferenceEngine(InferenceEngine):
             # writer: fail loudly rather than corrupt dispatched_task and frame labels.
             raise RuntimeError("RTC action queue returned an action without task provenance")
         self._set_dispatched_task(task)
-        return action
+        with self._prediction_lock:
+            prediction, self._chunk_prediction = self._chunk_prediction, None
+        if prediction is None:
+            return action
+        return create_transition(action=action, prediction=prediction)
 
     def notify_observation(self, obs: dict) -> None:
         """Publish the latest observation for the RTC thread to consume."""
@@ -525,9 +542,12 @@ class RTCInferenceEngine(InferenceEngine):
                             prev_actions = None
 
                         predict_action_chunk = cast(_RTCPredictActionChunk, self._policy.predict_action_chunk)
-                        actions = predict_action_chunk(
-                            preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
+                        transition = policy_output_to_transition(
+                            predict_action_chunk(
+                                preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
+                            )
                         )
+                        actions = transition_to_policy_action(transition)
 
                         original = actions.squeeze(0).clone()
                         processed = self._postprocessor(actions).squeeze(0)
@@ -584,6 +604,10 @@ class RTCInferenceEngine(InferenceEngine):
                             epoch_unchanged = epoch_before == self._reset_epoch
                             if epoch_unchanged:
                                 queue.merge(original, processed, new_delay, idx_before, task=task)
+                                # Shown once per chunk, and only for a chunk that will be served.
+                                if prediction := transition_to_prediction(transition):
+                                    with self._prediction_lock:
+                                        self._chunk_prediction = prediction
                         if not epoch_unchanged:
                             logger.info("Discarding action chunk computed before an engine reset")
 
