@@ -35,12 +35,13 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
                 <joint name="joint5" pos="0 0 0" axis="1 0 0" type="hinge" range="-1.5708 1.5708" actuatorfrcrange="-10 10" />
                 <body name="gripper" pos="0.0404996 0 -0.0356" quat="0 0.70711 0.70711 0">
                   <joint name="joint6" pos="0 0 0" axis="0 0 1" type="hinge" range="-2.0944 2.0944" actuatorfrcrange="-10 10" />
-                  <inertial pos="-3.57066e-05 0.000249371 -0.0293133" quat="0.667981 0.744113 -0.00433092 0.00882801" mass="0.553219" diaginertia="0.000409686 0.000369758 0.000324415" />
-                  <body name="tip_left" pos="-0.0238981 0.0450619 -0.0545599" quat="0.499998 -0.5 -0.5 -0.500002">
+                  <!-- Flatten I2RT's gripper-root transform because Placo ignores joints inside MJCF frames. -->
+                  <inertial pos="0.00024937359540348595 -3.570919540348596e-05 0.029313833748291725" quat="-0.5231073065888 0.47857841906110005 0.46609367075890001 -0.5292321802712" mass="0.553219" diaginertia="0.000409686 0.000369758 0.000324415" />
+                  <body name="tip_left" pos="0.045061900000000009 -0.023898100000000005 0.054559900000000015" quat="0.70710678118654757 -2.8284271246792336e-06 0.70710678118654746 0">
                     <inertial pos="-0.0224716 0.0143408 -0.0426253" quat="0.498899 0.455348 -0.0576406 0.735143" mass="0.0710042" diaginertia="6.24193e-05 6.01079e-05 2.83591e-05" />
                     <joint name="joint7" pos="0 0 0" type="slide" axis="0 0 -1" range="0 0.0475" />
                   </body>
-                  <body name="tip_right" pos="0.0238981 -0.0450619 -0.0545599" quat="0.707105 0.707108 0 0">
+                  <body name="tip_right" pos="-0.045061900000000009 0.023898100000000005 0.054559900000000015" quat="-0.50000086183125725 0.4999987405109137 0.4999987405109137 -0.50000086183125725">
                     <inertial pos="-0.0143408 -0.0224716 -0.0426253" quat="0.281222 0.8726 0.16705 -0.362738" mass="0.0710042" diaginertia="6.24193e-05 6.01079e-05 2.83591e-05" />
                     <joint name="joint8" pos="0 0 0" type="slide" axis="0 0 -1" range="0 0.0475" />
                   </body>
