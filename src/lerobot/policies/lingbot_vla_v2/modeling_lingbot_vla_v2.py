@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 from collections import deque
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 import einops
 import torch
 import torch.nn.functional as F  # noqa: N812
+from huggingface_hub import hf_hub_download
 from torch import Tensor, nn
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 from transformers import AutoConfig, PretrainedConfig, PreTrainedModel
@@ -20,9 +22,11 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
+from lerobot.utils.import_utils import require_package
 
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config as LeRobotLingbotVLAV2Config
 from .model_core.align_heads import TaskTokenDepthHead
+from .model_core.depth_teachers import MoGe2, MoRGBDEncoder, load_depth_teacher
 from .model_core.modeling_lingbot_vla_v2_base import (
     FlowMatching as FlowMatchingV1,
     replace_lnorm_with_adanorm,
@@ -38,6 +42,8 @@ from .model_core.utils import (
     our_eager_attention_forward,
     our_sdpa_attention_forward,
 )
+from .model_core.video_teacher import load_video_teacher, video_input
+from .processor_lingbot_vla_v2 import TEACHER_IMAGES
 
 logger = logging.getLogger(__name__)
 
@@ -586,7 +592,7 @@ class FlowMatchingV2(FlowMatchingV1):
         self.use_align = bool(params)
         self.num_task_tokens = 0
         self.use_future_depth = self.use_future_video = self.use_future_video_patch = False
-        self.use_current_shared_task_proj = self.use_future_video_cls = False
+        self.use_current_shared_task_proj = self.use_current_video_patch = self.use_future_video_cls = False
         self.future_video_share_future_depth_query = self.use_shared_future_task_proj = False
         self.block_future_depth_to_action = self.block_suffix_to_future_video = False
         if not params:
@@ -615,7 +621,7 @@ class FlowMatchingV2(FlowMatchingV1):
             return
         video = {**depth, **params.get("video", {})}
         self.use_future_video_patch = bool(video.get("use_patch_loss", True))
-        use_current_patch = bool(video.get("use_current_patch_loss", False))
+        self.use_current_video_patch = use_current_patch = bool(video.get("use_current_patch_loss", False))
         self.use_current_shared_task_proj = bool(video.get("use_current_shared_task_proj", use_current_patch))
         self.use_future_video_cls = bool(video.get("use_cls_loss", False))
         self.future_video_share_future_depth_query = bool(video.get("share_future_depth_query", False))
@@ -694,6 +700,99 @@ class FlowMatchingV2(FlowMatchingV1):
             end = prefix_len - (n if self.use_future_depth else 0)
             att_2d_masks[:, suffix_row_start:, end - own : end] = False
         return att_2d_masks
+
+    def _align_losses(self, hidden: Tensor, targets: dict) -> dict:
+        """Distillation losses (upstream ``depth_emb_forward`` / ``video_emb_forward`` / ``current_video_emb_forward``).
+
+        Each head reads the first camera's image tokens plus its query tokens from the prefix output and
+        regresses a frozen teacher's features. Returns {name: (weighted loss, unweighted value)}."""
+        params = self.config.align_params
+        video = params.get("video", {})
+        n = self.num_task_tokens
+        image = hidden[:, 1 : 1 + params["llm"]["image_token_size"] ** 2]  # after the vision-start token
+        future_end = hidden.shape[1] - (n if self.use_future_depth else 0)
+        own = int(self.use_future_video_cls) + (
+            n if self.use_future_video_patch and not self.future_video_share_future_depth_query else 0
+        )
+        video_start = future_end - own
+        current_tokens, future_tokens = hidden[:, video_start - n : video_start], hidden[:, future_end:]
+
+        def predict(head, context, tokens, queries):
+            context = torch.cat([context, tokens], dim=1)
+            return head(context, queries.expand(context.shape[0], -1, -1).to(context.dtype)).float()
+
+        def smooth_l1(pred, target):
+            return F.smooth_l1_loss(pred.float(), target.float())
+
+        def cosine(pred, target):
+            pred, target = (
+                F.normalize(pred.float(), dim=-1, eps=1e-6),
+                F.normalize(target.float(), dim=-1, eps=1e-6),
+            )
+            return 1.0 - F.cosine_similarity(pred, target, dim=-1, eps=1e-6).mean()
+
+        def video_loss(pred, target):  # upstream _video_emb_loss
+            terms = []
+            if video.get("use_smooth_l1_loss", True):
+                terms.append(smooth_l1(pred, target))
+            if video.get("use_mse_loss", False):
+                terms.append(
+                    F.mse_loss(pred.float(), target.float()) * float(video.get("mse_loss_weight", 1.0))
+                )
+            if video.get("use_cosine_loss", False):
+                terms.append(cosine(pred, target) * float(video.get("cosine_loss_weight", 1.0)))
+            return sum(terms)
+
+        losses = {}
+        weight = params["depth_loss_weight"]
+        loss = smooth_l1(
+            predict(self.depth_align_head, image, current_tokens, self.depth_align_embs), targets["depth"]
+        )
+        losses["depth_loss"] = (loss * weight, loss)
+        if self.use_future_depth:
+            context = image.detach() if params["depth"].get("detach_future_image_feats", False) else image
+            pred = predict(self.future_depth_align_head, context, future_tokens, self.future_depth_align_embs)
+            loss = smooth_l1(pred, targets["future_depth"])
+            losses["future_depth_loss"] = (loss * params.get("future_depth_loss_weight", 1.0), loss)
+        if self.use_future_video:
+            weight = video.get("future_video_loss_weight", params.get("future_video_loss_weight", weight))
+            loss = 0
+            if self.use_future_video_patch:
+                shared = self.future_video_share_future_depth_query
+                tokens = (
+                    future_tokens
+                    if shared
+                    else hidden[:, video_start + int(self.use_future_video_cls) : future_end]
+                )
+                context = image.detach() if video.get("detach_image_feats", False) else image
+                if str(video.get("context_mode", "img_query")).lower() == "query_only":
+                    context = context[:, :0]
+                queries = (
+                    self.future_depth_align_embs
+                    if shared and not self.use_shared_future_task_proj
+                    else self.future_video_align_embs
+                )
+                loss = video_loss(
+                    predict(self.future_video_align_head, context, tokens, queries), targets["future_video"]
+                )
+            if self.use_future_video_cls:  # upstream _video_cls_loss
+                pred = self.future_video_cls_head(hidden[:, video_start]).float()
+                target = targets["future_video_cls"].float().reshape(pred.shape)
+                kind = str(video.get("cls_loss_type", "cosine")).lower()
+                terms = [F.smooth_l1_loss(pred, target)] if kind in ("smooth_l1", "smoothl1", "huber") else []
+                terms += [F.mse_loss(pred, target)] if kind in ("mse", "mse_cosine", "cosine_mse") else []
+                terms += [cosine(pred, target)] if kind in ("cosine", "mse_cosine", "cosine_mse") else []
+                if not terms:
+                    raise ValueError(f"Unsupported align_params.video.cls_loss_type {kind!r}.")
+                loss = loss + sum(terms) * float(video.get("cls_loss_weight", 1.0))
+            losses["future_video_loss"] = (loss * weight, loss)
+            if self.use_current_video_patch:
+                pred = predict(
+                    self.current_video_align_head, image, current_tokens, self.current_video_align_embs
+                )
+                loss = video_loss(pred, targets["current_video"])
+                losses["current_video_loss"] = (loss * weight, loss)
+        return losses
 
     def embed_prefix(
         self,
@@ -871,6 +970,7 @@ class FlowMatchingV2(FlowMatchingV1):
         time=None,
         image_grid_thw=None,
         collect_metrics=True,
+        align_targets=None,
     ) -> Tensor:
         dtype = state.dtype
         device = state.device
@@ -906,7 +1006,7 @@ class FlowMatchingV2(FlowMatchingV1):
         att_2d_masks = self._block_suffix_to_queries_(att_2d_masks, prefix_len, prefix_len)
         position_ids = self._build_full_position_ids(prefix_position_ids, prefix_pad_masks, suffix_pad_masks)
 
-        (_, suffix_out), _, router_logits_list = self.qwenvl_with_expert.forward(
+        (prefix_out, suffix_out), _, router_logits_list = self.qwenvl_with_expert.forward(
             attention_mask=att_2d_masks,
             position_ids=position_ids,
             past_key_values=None,
@@ -937,7 +1037,8 @@ class FlowMatchingV2(FlowMatchingV1):
         seq_wise_loss, router_z_loss, moe_metrics = self._moe_losses_and_metrics(
             router_logits_list, losses, collect_metrics=collect_metrics
         )
-        return losses, seq_wise_loss, router_z_loss, moe_metrics
+        align_losses = self._align_losses(prefix_out, align_targets) if align_targets is not None else {}
+        return losses, seq_wise_loss, router_z_loss, moe_metrics, align_losses
 
     def _embed_and_fill_prefix(self, images, img_masks, lang_tokens, lang_masks, image_grid_thw):
         """Prefix half of sample_actions: embed_prefix
@@ -1824,6 +1925,80 @@ class FlowMatchingV2(FlowMatchingV1):
         return seq_wise_loss, router_z_loss, moe_metrics
 
 
+# Teacher weights: (align_params section, local-path key, Hub repo, file).
+TEACHER_FILES = {
+    "moge": ("depth", "moge_path", "Ruicheng/moge-2-vitb-normal", "model.pt"),
+    "morgbd": ("depth", "morgbd_path", "robbyant/lingbot-vla-v2-6b", "depth/model.pt"),
+    "video": ("video", "ckpt_path", "robbyant/lingbot-vla-v2-6b", "dino_video/teacher_step_10000.pth"),
+    "video_config": ("video", "config_path", "robbyant/lingbot-vla-v2-6b", "dino_video/config.yaml"),
+}
+
+
+def _teacher_file(params: dict, name: str) -> str:
+    section, key, repo_id, filename = TEACHER_FILES[name]
+    path = (params.get(section) or {}).get(key)
+    if path and Path(path).expanduser().is_file():
+        return str(Path(path).expanduser())
+    logger.info(
+        "align_params.%s.%s=%r is not a local file: using %s/%s", section, key, path, repo_id, filename
+    )
+    return hf_hub_download(repo_id, filename)
+
+
+class DistillationTeachers:
+    """Frozen teachers of the dual-query distillation (upstream ``build_depth_model`` / ``build_video_model``
+    and ``get_depth_target`` / ``get_video_target``). Not an ``nn.Module``: never saved, moved or trained.
+
+    On CUDA they run in upstream's precision (bf16 autocast, MoGe in fp16, DINO-Video bf16 weights)."""
+
+    def __init__(self, params: dict, device: torch.device):
+        require_package("scipy", extra="scipy-dep")  # MoGe's focal/shift recovery
+        self.params, self.device = params, device
+        self.mixed = device.type == "cuda"
+        self.moge = load_depth_teacher(MoGe2, _teacher_file(params, "moge")).to(device).eval()
+        self.morgbd = load_depth_teacher(MoRGBDEncoder, _teacher_file(params, "morgbd")).to(device).eval()
+        self.video = None
+        if params.get("use_future_video", False):
+            video = load_video_teacher(
+                _teacher_file(params, "video"),
+                _teacher_file(params, "video_config"),
+                cls_pool=params["video"].get("cls_pool", "mean"),
+            )
+            periods = (video.periods.clone(), video.periods_t.clone())
+            video.to(device, torch.bfloat16 if self.mixed else torch.float32).eval()
+            video.periods.data, video.periods_t.data = (p.to(device) for p in periods)  # RoPE stays fp32
+            self.video = video
+
+    def depth(self, images: Tensor) -> Tensor:
+        depth = self.moge.depth(images, use_fp16=self.mixed)
+        depth = torch.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
+        return self.morgbd.features(images, depth, use_fp16=self.mixed)
+
+    @torch.no_grad()
+    def targets(self, current: Tensor, future: Tensor, fps: float | None = None) -> dict:
+        """First-camera current / future frames [B, 3, H, W] in [0, 1] -> bf16 targets keyed as the losses use them."""
+        params, video = self.params, self.params.get("video", {})
+        current, future = current.to(self.device, torch.float32), future.to(self.device, torch.float32)
+        out = {}
+        with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.mixed):
+            out["depth"] = self.depth(current)
+            if params["depth"].get("use_future_depth", False):
+                out["future_depth"] = self.depth(future)
+            if self.video is not None:
+                size = int(video.get("input_size", 256))
+                cur, fut = video_input(current, size), video_input(future, size)
+                clip = [cur.clone(), cur, fut] if video.get("use_warmup_frame", False) else [cur, fut]
+                fps = fps if fps is not None else video.get("effective_fps", video.get("fps"))
+                patches, frame_cls, pooled = self.video(
+                    torch.stack(clip, dim=2).to(self.video.cls_token.dtype), fps
+                )
+                out["future_video"], out["current_video"] = patches[:, -1], patches[:, -2]
+                out["future_video_cls"] = (
+                    frame_cls[:, -1] if video.get("use_current_patch_loss", False) else pooled
+                )
+        return {k: v.to(torch.bfloat16) for k, v in out.items()}
+
+
 # ============================================================================
 # LeRobot policy wrapper
 # ============================================================================
@@ -1863,6 +2038,11 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         self.config = config
         self.init_rtc_processor()
         self.model = FlowMatchingV2(config, rtc_processor=self.rtc_processor)
+        # Distillation teachers: frozen, outside the module tree, loaded on the first training step.
+        self._teachers: DistillationTeachers | None = None
+        # DINO-Video frame rate of the [current, future] pair (upstream future_video_effective_fps, an fp32 tensor)
+        fps = getattr(kwargs.get("dataset_meta"), "fps", None)
+        self._teacher_fps = float(torch.tensor(fps / max(1, config.chunk_size - 1))) if fps else None
 
         if not self.config.use_lm_head:
             del self.model.qwenvl_with_expert.qwenvl.lm_head
@@ -1982,7 +2162,8 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
         self._train_step_count = getattr(self, "_train_step_count", 0) + 1
         collect_metrics = self._train_step_count % max(1, self.config.moe_metrics_interval) == 0
 
-        losses, seq_wise_loss, router_z_loss, moe_metrics = self.model.forward(
+        align_targets = self._teacher_targets(batch) if self.training and self.model.use_align else None
+        losses, seq_wise_loss, router_z_loss, moe_metrics, align_losses = self.model.forward(
             images,
             img_masks,
             lang_tokens,
@@ -1993,6 +2174,7 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             time=batch.get("time"),
             image_grid_thw=image_grid_thw,
             collect_metrics=collect_metrics,
+            align_targets=align_targets,
         )
 
         dims = (1, 2) if reduction == "none" else None
@@ -2013,9 +2195,24 @@ class LingbotVLAV2Policy(PreTrainedPolicy):
             if torch.is_tensor(term):
                 loss_dict[loss_name] = term.item()
                 total_loss = total_loss + term
+        for name, (weighted, value) in align_losses.items():  # logged unweighted, as upstream
+            loss_dict[name] = value.item()
+            total_loss = total_loss + weighted
         loss_dict.update({k: v.item() for k, v in moe_metrics.items()})
         loss_dict["loss"] = total_loss.mean().item()
         return total_loss, loss_dict
+
+    def _teacher_targets(self, batch: dict) -> dict:
+        """Distillation targets from the frozen teachers, built on first use (training with align_params only)."""
+        if TEACHER_IMAGES not in batch:
+            raise ValueError(
+                "Training with align_params needs the current and future frames (`image_observation_delta_indices`): "
+                "train through the lingbot_vla_v2 processor on a LeRobotDataset."
+            )
+        if self._teachers is None:
+            self._teachers = DistillationTeachers(self.config.align_params, next(self.parameters()).device)
+        frames = batch[TEACHER_IMAGES]
+        return self._teachers.targets(frames[:, 0], frames[:, -1], self._teacher_fps)
 
     def supports_rtc(self) -> bool:
         return True

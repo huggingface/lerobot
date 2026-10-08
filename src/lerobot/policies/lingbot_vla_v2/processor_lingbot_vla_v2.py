@@ -67,6 +67,8 @@ SLOT_MAPPING_STEP = "lingbot_vla_v2_slot_mapping"
 INVERSE_SLOT_MAPPING_STEP = "lingbot_vla_v2_inverse_slot_mapping"
 IMAGE_STEP = "lingbot_vla_v2_image"
 CHAT_TEMPLATE_STEP = "lingbot_vla_v2_chat_template"
+# Distillation teacher inputs (training with align_params): first camera, current and future frame.
+TEACHER_IMAGES = "teacher_images"
 
 
 def _canonical_mask(
@@ -201,6 +203,9 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
     then all frames go through the HF image processor in one call, which returns
     ``pixel_values`` plus the ``image_grid_thw`` patch grid. Missing views are
     filled with -1 and ``img_masks=False``.
+
+    Frame stacks [B, T, C, H, W] (distillation training) feed the current frame to the model and emit
+    the first camera's current and last frame, quantized to uint8 levels as upstream, as ``teacher_images``.
     """
 
     tokenizer_path: str = "Qwen/Qwen3-VL-4B-Instruct"
@@ -236,14 +241,16 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
         present = [key for key in keys if key in new_obs]
         if not present:
             raise ValueError(f"None of the configured camera keys are present in the observation: {keys}")
+        resized = {
+            key: tv_resize(new_obs[key], list(self.resize_imgs_with_padding), antialias=True)
+            for key in present
+        }
+        if resized[present[0]].ndim == 5:  # (B, T, C, H, W): current + future frame
+            teacher = resized[present[0]][:, [0, -1]]
+            new_obs[TEACHER_IMAGES] = (teacher * 255).round().clamp(0, 255) / 255
+            resized = {key: frames[:, 0] for key, frames in resized.items()}
         # LeRobot images are float in [0, 1]; the HF processor expects [0, 255].
-        frames = torch.stack(
-            [
-                tv_resize(new_obs[key], list(self.resize_imgs_with_padding), antialias=True) * 255.0
-                for key in present
-            ],
-            dim=1,
-        )  # (B, n_present, C, H, W)
+        frames = torch.stack([resized[key] * 255.0 for key in present], dim=1)  # (B, n_present, C, H, W)
         batch_size, n_present = frames.shape[:2]
         processed = self._image_processor(list(frames.flatten(0, 1)))
         pixels = processed["pixel_values"].unflatten(0, (batch_size, n_present, -1))

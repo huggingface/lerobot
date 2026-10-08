@@ -160,11 +160,15 @@ def test_train_and_select_action(tiny_backbone):
     assert torch.isfinite(action).all()
 
 
-def test_align_query_tokens(tiny_backbone):
-    """A tiny RoboTwin-style align recipe appends 2 x num_task_tokens query tokens to the prefix."""
+def test_align_query_tokens(tiny_backbone, monkeypatch):
+    """A tiny RoboTwin-style align recipe appends 2 x num_task_tokens query tokens to the prefix, and a
+    training step on [current, future] frames adds the distillation losses (teachers stubbed: no download)."""
+    import lerobot.policies.lingbot_vla_v2.modeling_lingbot_vla_v2 as modeling
+
     head = {"num_layers": 1, "num_heads": 2, "dim_head": 8, "ff_mult": 1, "num_backbone_tokens": 8}
     shared = {"share_future_depth_query": True, "use_shared_future_task_proj": True}
-    align = {"mode": "query", "num_task_tokens": 4, "use_future_video": True, "llm": {"dim_out": 64}}
+    align = {"mode": "query", "num_task_tokens": 4, "use_future_video": True, "depth_loss_weight": 0.004}
+    align["llm"] = {"dim_out": 64, "image_token_size": 2}
     align["depth"] = {**head, "dim_out": 16, "use_future_depth": True}
     align["video"] = {**head, **shared, "dim_out": 16, "use_current_patch_loss": True}
     slots, meta = _slot_kwargs(arm=[[0, 6]], effector=[[6, 7]]), _ds_meta(7)
@@ -177,6 +181,25 @@ def test_align_query_tokens(tiny_backbone):
     prefix_len = policy.model.embed_prefix(images, img_masks, tokens, masks, grid)[0].shape[1]
     assert prefix_len == plain.model.embed_prefix(images, img_masks, tokens, masks, grid)[0].shape[1] + 8
     assert _select_action(policy, preprocessor, postprocessor, 7, "cpu").shape == (2, 7)
+
+    class Teachers:  # the frozen teachers' target shapes: [B, num_backbone_tokens, dim_out]
+        def __init__(self, params, device):
+            pass
+
+        def targets(self, current, future, fps):
+            assert current.shape == future.shape == (2, 3, 64, 64)
+            names = ("depth", "future_depth", "future_video", "current_video")
+            return {name: torch.randn(2, 8, 16) for name in names}
+
+    monkeypatch.setattr(modeling, "DistillationTeachers", Teachers)
+    assert cfg.image_observation_delta_indices == [0, CHUNK - 1]
+    batch = _raw_batch(7)
+    batch[CAMERA] = torch.stack([batch[CAMERA], batch[CAMERA].flip(-1)], dim=1)  # current, future
+    policy.train()
+    loss, logs = policy.forward(preprocessor(batch))
+    assert {"depth_loss", "future_depth_loss", "future_video_loss", "current_video_loss"} <= logs.keys()
+    loss.backward()
+    assert policy.model.future_video_align_head.projector.proj_out.weight.grad.abs().sum() > 0
 
 
 @pytest.mark.parametrize(
