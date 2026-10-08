@@ -20,7 +20,13 @@ from functools import cached_property
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import DriveMode, Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
+from lerobot.motors import (
+    DriveMode,
+    Motor,
+    MotorCalibration,
+    MotorNormMode,
+    SerialMotorsBus,
+)
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot

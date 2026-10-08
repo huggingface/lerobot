@@ -26,7 +26,7 @@ import draccus
 
 from lerobot.configs import DatasetRecordConfig, PreTrainedConfig, parser
 from lerobot.inference import InferenceEngineConfig, RemoteInferenceConfig, SyncInferenceConfig
-from lerobot.robots.config import RobotConfig
+from lerobot.robots import RobotConfig
 from lerobot.teleoperators import TeleoperatorConfig
 from lerobot.utils.device_utils import auto_select_torch_device, is_torch_device_available
 
