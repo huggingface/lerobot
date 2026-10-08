@@ -70,6 +70,8 @@ from lerobot.utils.keyboard_input import create_key_listener
 from lerobot.utils.pedal import start_pedal_listener
 from lerobot.utils.utils import log_say
 
+from lerobot.utils.visualization_utils import log_visualization_data # used for reset_loop()
+
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
 from ..context import RolloutContext
 from ..inference import InferenceEngine
@@ -120,6 +122,10 @@ class DAggerEvents:
         # Session-level flags
         self.stop_recording = Event()
         self.upload_requested = Event()
+        # events for arrow keys
+        self.exit_early = Event()
+        self.rerecord_episode = Event()
+
 
     # -- Thread-safe phase access ------------------------------------------
 
@@ -194,12 +200,19 @@ def _init_dagger_keyboard(events: DAggerEvents, cfg: DAggerKeyboardConfig):
             events.request_transition(key_to_event[name])
         if name == cfg.upload:
             events.upload_requested.set()
+        # dispatch for arrow keys:
+        if name == cfg.exit_early:
+            events.exit_early.set()
+        if name == cfg.rerecord_episode:
+            events.rerecord_episode.set()
 
     return create_key_listener(
         dispatch,
         controls_help=(
             f"pause_resume='{cfg.pause_resume}', correction='{cfg.correction}', "
-            f"upload='{cfg.upload}', ESC=stop"
+            f"upload='{cfg.upload}', ESC=stop, "
+            f"(episodic only): exit_early='{cfg.exit_early}, rerecord_episode='{cfg.rerecord_episode}'"
+
         ),
     )
 
@@ -294,8 +307,17 @@ class DAggerStrategy(RolloutStrategy):
     def run(self, ctx: RolloutContext) -> None:
         """Run DAgger episodes with human-in-the-loop intervention."""
         if self.config.record_autonomous:
-            self._run_continuous(ctx)
+            if self.config.use_sentry_rotation:
+                logger.info("Running DAgger + sentry")
+                self._run_continuous(ctx)
+            else:
+                logger.info("Running DAgger + episodic")
+                self._run_episodic(ctx)
         else:
+            # let user know that this flag doesnt do anything on this logic branch
+            if self.config.use_sentry_rotation:
+                logger.warning("--strategy.use_sentry_rotation=True does nothing when --strategy.record_autonomous=False")
+            # capture only HIL corrections where each correction is an episode
             self._run_corrections_only(ctx)
 
     def teardown(self, ctx: RolloutContext) -> None:
@@ -332,6 +354,372 @@ class DAggerStrategy(RolloutStrategy):
             return_to_initial_position=ctx.runtime.cfg.return_to_initial_position,
         )
         logger.info("DAgger strategy teardown complete")
+
+
+    # ------------------------------------------------------------------
+    # run HIL episodically where it records everything
+    # ------------------------------------------------------------------
+
+    def _run_episodic(self, ctx: RolloutContext) -> None:
+        """follow episodic with DAgger phases"""
+
+        # hardware setup
+        engine = self._engine
+        cfg = ctx.runtime.cfg
+        robot = ctx.hardware.robot_wrapper
+        teleop = ctx.hardware.teleop
+
+        # dataset (created in background)
+        dataset = ctx.data.dataset
+
+        # phases stored in events.phase, arrow key (attributes) as events.<attribute>
+        events = self._events
+
+        interpolator = self._interpolator
+        features = ctx.data.dataset_features
+        
+
+        # timing setup
+        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
+        timer = CycleTimer(cfg.fps, interpolator.multiplier)
+        correction_stride = interpolator.multiplier
+
+
+        # noises
+        play_sounds = cfg.play_sounds
+
+        # timing
+        record_stride = max(1, cfg.interpolation_multiplier)
+
+        # TODO: the use of cfg.dataset.episode_time_s -> episode_time_s -> control_time_s is redundant? and confusing
+        #   i left like this to mimic the variable structure in episodic.py that follows the same pathing pretty much
+        episode_time_s = cfg.dataset.episode_time_s
+
+        # used in reset "phase" (not DAggerPhase)
+        fps = cfg.fps
+        reset_time_s = cfg.dataset.reset_time_s
+        display_compressed = (
+            True
+            if (cfg.display_data and cfg.display_ip is not None and cfg.display_port is not None)
+            else cfg.display_compressed_images
+        )
+
+        num_episodes = self.config.num_episodes
+
+        """
+        instead of the _run_continuous continuous running loop, loop on episodes with recording loop inside:
+        TODO: add cfg.resume
+        """
+        
+        # loop functionality inspired by loop in episodic.py which seems to be from lerobot_record.py + a try block
+        with VideoEncodingManager(dataset):
+            try:
+                # loop thru episodes
+                recorded_episodes = 0
+                while recorded_episodes < num_episodes and not events.stop_recording.is_set():
+
+                    if ctx.runtime.shutdown_event.is_set():
+                        break
+
+                    engine.reset()
+                    interpolator.reset()
+                    events.reset() # clears phase back to AUTONOMOUS, clears upload_requested
+                    timer.restart()
+                    correction_tick = 0
+
+                    # reset this each time
+                    rerecord_occurred_during_main_loop = False
+
+                    # per episode last_action and ticks (strides stay the same, instantiated earlier)
+                    # NOTE: used for pause phase, can use for rewinding phase
+                    last_action: RobotAction | None = None
+                    record_tick = 0
+
+                    # breaking condition per episode loop (besides previous stop_recording and shutdown events only)
+                    episode_start = time.perf_counter()
+
+                    timestamp = 0.0
+                    control_time_s = episode_time_s
+
+                    # while loop from continuous/corrections functions WITH timestamp and conotrol time functionality from episodic.py _policy_loop
+                    log_say(f"Recording episode {recorded_episodes}", play_sounds)
+    
+                    engine.resume()
+
+                    while not events.stop_recording.is_set() and not ctx.runtime.shutdown_event.is_set() and timestamp < control_time_s:
+                        
+                        
+                        if cfg.duration > 0 and (time.perf_counter() - episode_start) >= cfg.duration:
+                            logger.info("Duration limit reached (%.0fs)", cfg.duration)
+                            break
+
+                        # loop_start = time.perf_counter()
+                        timer.tick(new_cycle=interpolator.needs_new_action())
+
+                        # keyboard event handler for "_DAGGER_TRANSITIONS"
+                        transition = events.consume_transition()
+
+                        if transition is not None:
+                            old_phase, new_phase = transition
+                            self._apply_transition(
+                                old_phase,
+                                new_phase,
+                                engine,
+                                interpolator,
+                                teleop,
+                                ctx,
+                                last_action,
+                                timer
+                            )
+                            if new_phase == DAggerPhase.AUTONOMOUS:
+                                last_action = None
+
+                        #
+                        obs = robot.get_observation()
+
+                        # phase handling:
+                        phase = events.phase
+
+                        if phase == DAggerPhase.CORRECTING:
+
+                            # arrow key functionality should be listened for here BUT NOT BE ALLOWED (confusing)
+                            if events.exit_early.is_set():
+                                logger.info("Cannot break during CORRECTING phase, transition to PAUSED phase") # TODO: make cli more specific
+                                events.exit_early.clear()
+                            if events.rerecord_episode.is_set():
+                                logger.info("Cannot re-record during CORRECTING phase, transition to PAUSED phase") # TODO: make cli more specific
+                                events.rerecord_episode.clear()
+
+                            obs_processed = ctx.processors.robot_observation_processor(obs)
+
+                            teleop_action = teleop.get_action()
+                            processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
+
+                            robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
+                            robot.send_action(robot_action_to_send)
+
+                            last_action = robot_action_to_send
+
+                            # create data frame and add to episode
+                            self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
+                            if record_tick % record_stride == 0:
+                                obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                                action_frame = build_dataset_frame(features, processed_teleop, prefix=ACTION)
+                                frame = {
+                                    **obs_frame,
+                                    **action_frame,
+                                    "task": task_str,
+                                    "intervention": np.array([True], dtype=bool)
+                                }
+                                dataset.add_frame(frame)
+
+                            record_tick +=1
+
+                        elif phase == DAggerPhase.PAUSED:
+
+                            # arrow key functioning enabled during this phase
+                            # break out of recording loop via right arrow key
+                            if events.exit_early.is_set():
+                                logger.info("Exiting recording loop...")
+                                events.exit_early.clear()
+                                break
+                            # break out of recording loop via left arrow key
+                            if events.rerecord_episode.is_set():
+                                logger.info("Rerecording...")
+                                rerecord_occurred_during_main_loop = True
+                                events.rerecord_episode.clear()
+                                break
+
+                            if last_action:
+                                robot.send_action(last_action)
+                            else:
+                                # previously no else here but i think better practice to have one?
+                                logger.info("Invalid last_action, breaking out of the loop.")
+                                break
+
+                        else: # defaults to AUTONOMOUS ... TODO: should be explicit???
+
+                            # stop the teleop at the same place TODO: return to home?
+                            # this is done to prevent the teleoperator just dropping onto the table and breaking hardware
+                            if teleop_supports_feedback(teleop):
+                                teleop.enable_torque()
+
+                            # arrow key functioning enabled during this phase
+                            # break out of recording loop via right arrow key
+                            if events.exit_early.is_set():
+                                logger.info("Exiting recording loop...")
+                                events.exit_early.clear()
+                                break
+                            # break out of recording loop via left arrow key
+                            if events.rerecord_episode.is_set():
+                                logger.info("Rerecording...")
+                                rerecord_occurred_during_main_loop = True
+                                events.rerecord_episode.clear()
+                                break
+                            
+                            # NOTE: this uses a different function for getting obs_processed specifically because of RTC i think
+                            obs_processed = self._process_observation_and_notify(ctx.processors, obs)
+
+                            # 
+                            if self._handle_warmup(cfg.use_torch_compile, timer):
+                                logger.info("Running warmup")
+                                continue
+
+                            # obs sent to inference engine and then robot all-in-one
+                            #   (calls "ctx.hardware.robot_wrapper.send_action(processed))
+                            # action_dict = send_next_action(obs_processed, obs, ctx, interpolator)
+                            action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+
+                            # create data frame and add to episode
+                            #   TODO: add else guard??
+                            if action_dict is not None:
+
+                                self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+
+                                # TODO: dict for rewind phase can be filled here maybe
+                                last_action = ctx.processors.robot_action_processor((action_dict, obs)) 
+
+                                if record_tick % record_stride == 0:
+                                    obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+                                    action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
+                                    frame = {
+                                        **obs_frame,
+                                        **action_frame,
+                                        "task": task_str,
+                                        "intervention": np.array([False], dtype=bool),
+                                    }
+                                    dataset.add_frame(frame)
+                                record_tick += 1
+
+                        timer.wait()  
+
+                    # end of recording loop
+                    logger.info(f"End of recording loop for episode {recorded_episodes}")
+                    timer.log_episode_summary(f"episode {recorded_episodes}")
+
+                    # unconditionally home the follower
+                    self.return_to_initial_position(hw=ctx.hardware, duration_s=3)
+
+                    # unconditionally home teleop too if possible by sending it to the returned teleop position
+                    if teleop_supports_feedback(teleop):
+                        obs = robot.get_observation()
+                        home_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+                        teleop_smooth_move_to(teleop, home_pos, duration_s=3)
+                        teleop.disable_torque()
+
+                    # must unconditionally run reset_loop(), inner logic affects other parts of the code so we capture results in its bool return
+                    rerecord_occurred_during_reset = self._reset_loop(
+                        ctx=ctx,
+                        robot=robot,
+                        teleop=teleop,
+                        events=events,
+                        fps=fps,
+                        control_time_s=reset_time_s,
+                        display_data=cfg.display_data,
+                        display_mode=cfg.display_mode,
+                        display_compressed=display_compressed,
+                    )
+
+                    if rerecord_occurred_during_main_loop or rerecord_occurred_during_reset:
+                        logger.info("Rerecord has been triggered, resetting buffer and flags")
+                        events.rerecord_episode.clear()
+                        events.exit_early.clear()
+                        dataset.clear_episode_buffer()
+
+                        # returns to its initial joint positions captured at startup
+                        if not teleop and self.config.reset_to_initial_position:
+                            self.return_to_initial_position(hw=ctx.hardware, duration_s=1)
+                        
+                    else:
+                        dataset.save_episode()
+                        recorded_episodes += 1
+         
+            finally:
+                timer.log_run_summary()
+                logger.info("DAgger episodic control loop ended")
+                engine.pause()
+
+                # guarentee final episode saves data if crash occurs
+                with contextlib.suppress(Exception):
+                    with self._episode_lock:
+                        dataset.save_episode()
+                    logger.info("Final in-progress episode saved")
+
+                # NOTE: this variable set here but still checks for CLI arg --dataset.push_to_hub=T/F in teardown()
+                self._needs_push.set()
+
+    # copied mostly from episodic.py, meant to allow teleop usage for resetting the environment between episodes
+    # arguably should be named something like "_teleop_reset_loop()"?
+    def _reset_loop(
+            self,
+            ctx: RolloutContext,
+            robot,
+            teleop,
+            events: DAggerEvents,
+            fps: float,
+            control_time_s: float,
+            display_data: bool,
+            display_mode: str,
+            display_compressed: bool,
+            timer: CycleTimer | None = None,
+        ) -> bool:
+
+            logger.info(f"Starting reset loop, running for {control_time_s} seconds...")
+
+            processors = ctx.processors
+
+            if timer is None:
+                timer = CycleTimer(fps, 1)
+
+            timestamp = 0.0
+            start_t = time.perf_counter()
+
+            # reset attributes before entering loop to avoid instant loop exit
+            #   NOTE: we still need them in this loop since they are what triggers on key presses and the break conditions to the loop
+            events.exit_early.clear()
+            events.rerecord_episode.clear()
+
+            rerecord_during_reset = False
+
+            while timestamp < control_time_s:
+                timer.tick(new_cycle=True)
+
+                # trigger exit or re-record from during the reset loop like lerobot-record
+                if events.exit_early.is_set():
+                    logger.info("Exiting reset loop early.")
+                    events.exit_early.clear()
+                    break
+                if events.rerecord_episode.is_set():
+                    logger.info("Rerecording previous episode")
+                    rerecord_during_reset = True
+                    events.rerecord_episode.clear()
+                    break
+
+                if ctx.runtime.shutdown_event.is_set():
+                    break
+
+                # standard teleop loop
+                obs = robot.get_observation()
+
+                if teleop is not None:
+                    act = teleop.get_action()
+                    act_teleop = processors.teleop_action_processor((act, obs))
+                    robot_action = processors.robot_action_processor((act_teleop, obs))
+                    robot.send_action(robot_action)
+
+                    if display_data:
+                        obs_processed = processors.robot_observation_processor(obs)
+                        log_visualization_data(
+                            display_mode,
+                            observation=obs_processed,
+                            action=act_teleop,
+                            compress_images=display_compressed,
+                        )
+
+                timestamp = time.perf_counter() - start_t
+
+            timer.log_run_summary()
+            return rerecord_during_reset
 
     # ------------------------------------------------------------------
     # Continuous recording mode (record_autonomous=True)
