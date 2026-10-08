@@ -204,6 +204,11 @@ class LingbotVLAV2Config(PreTrainedConfig):
     adanorm_time: bool = True
     final_norm_adanorm: bool = False
 
+    # Dual-query distillation (upstream ``align_params`` schema). When set, learned depth/video
+    # query tokens are appended after the language tokens and the action expert attends to them,
+    # in training and at inference. The released checkpoints carry their recipe; {} disables it.
+    align_params: dict = field(default_factory=dict)
+
     # ==================== Optimizer / Scheduler Presets ====================
     # Mirror upstream ``use_moe_expert_lr`` (configs/vla/robotwin/robotwin.yaml):
     # routed experts train at base_lr * (token_num_experts / token_top_k) ** 0.5

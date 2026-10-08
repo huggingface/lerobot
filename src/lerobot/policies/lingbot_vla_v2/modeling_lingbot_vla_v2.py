@@ -22,6 +22,7 @@ from lerobot.policies.utils import populate_queues
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 
 from .configuration_lingbot_vla_v2 import LingbotVLAV2Config as LeRobotLingbotVLAV2Config
+from .model_core.align_heads import TaskTokenDepthHead
 from .model_core.modeling_lingbot_vla_v2_base import (
     FlowMatching as FlowMatchingV1,
     replace_lnorm_with_adanorm,
@@ -574,7 +575,125 @@ class FlowMatchingV2(FlowMatchingV1):
         self.action_time_mlp_in = nn.Linear(width * 2, width)
         self.action_time_mlp_out = nn.Linear(width, width)
 
+        self._init_align(config.align_params, vlm_config.text_config.hidden_size)
         self.set_requires_grad()
+
+    def _init_align(self, params: dict, llm_hidden_size: int):
+        """Dual-query modules (upstream ``init_depth_heads`` / ``init_video_heads``, same build order).
+
+        The ``*_align_embs`` are pooled into query tokens appended to the prefix; the heads only
+        serve the training distillation losses."""
+        self.use_align = bool(params)
+        self.num_task_tokens = 0
+        self.use_future_depth = self.use_future_video = self.use_future_video_patch = False
+        self.use_current_shared_task_proj = self.use_future_video_cls = False
+        self.future_video_share_future_depth_query = self.use_shared_future_task_proj = False
+        self.block_future_depth_to_action = self.block_suffix_to_future_video = False
+        if not params:
+            return
+        if params.get("mode") != "query":
+            raise ValueError(f"align_params.mode must be 'query', got {params.get('mode')!r}.")
+        dim = params["llm"]["dim_out"]
+        if dim != llm_hidden_size:
+            raise ValueError(
+                f"align_params.llm.dim_out ({dim}) must equal the VLM hidden size ({llm_hidden_size})."
+            )
+        depth = params["depth"]
+        self.num_task_tokens = params["num_task_tokens"]
+        if depth["num_backbone_tokens"] % self.num_task_tokens:
+            raise ValueError("align_params.depth.num_backbone_tokens must be divisible by num_task_tokens.")
+        self.use_future_depth = bool(depth.get("use_future_depth", False))
+        self.block_future_depth_to_action = bool(depth.get("block_future_depth_to_action", False))
+        self.depth_align_embs = nn.Parameter(torch.randn(depth["num_backbone_tokens"], dim))
+        self.depth_align_head = TaskTokenDepthHead(depth, dim)
+        if self.use_future_depth:
+            self.future_depth_align_embs = nn.Parameter(torch.randn(depth["num_backbone_tokens"], dim))
+            self.future_depth_align_head = TaskTokenDepthHead(depth, dim)
+
+        self.use_future_video = bool(params.get("use_future_video", False))
+        if not self.use_future_video:
+            return
+        video = {**depth, **params.get("video", {})}
+        self.use_future_video_patch = bool(video.get("use_patch_loss", True))
+        use_current_patch = bool(video.get("use_current_patch_loss", False))
+        self.use_current_shared_task_proj = bool(video.get("use_current_shared_task_proj", use_current_patch))
+        self.use_future_video_cls = bool(video.get("use_cls_loss", False))
+        self.future_video_share_future_depth_query = bool(video.get("share_future_depth_query", False))
+        self.use_shared_future_task_proj = bool(video.get("use_shared_future_task_proj", False))
+        self.block_suffix_to_future_video = bool(video.get("block_suffix_to_future_video", False))
+        if use_current_patch and not self.use_future_video_patch:
+            raise ValueError("align_params.video.use_current_patch_loss requires use_patch_loss.")
+        if self.use_current_shared_task_proj and not use_current_patch:
+            raise ValueError(
+                "align_params.video.use_current_shared_task_proj requires use_current_patch_loss."
+            )
+        if self.use_shared_future_task_proj and not (
+            self.use_future_video_patch and self.future_video_share_future_depth_query
+        ):
+            raise ValueError(
+                "align_params.video.use_shared_future_task_proj requires use_patch_loss and share_future_depth_query."
+            )
+        if self.future_video_share_future_depth_query and (
+            not self.use_future_depth or video["num_backbone_tokens"] != depth["num_backbone_tokens"]
+        ):
+            raise ValueError(
+                "align_params.video.share_future_depth_query requires depth.use_future_depth and equal "
+                "num_backbone_tokens."
+            )
+        if self.use_future_video_patch:
+            if use_current_patch:
+                self.current_video_align_embs = nn.Parameter(torch.randn(video["num_backbone_tokens"], dim))
+                if self.use_current_shared_task_proj:
+                    self.current_shared_task_proj = nn.Linear(dim * 2, dim)
+                self.current_video_align_head = TaskTokenDepthHead(video, dim)
+            if not self.future_video_share_future_depth_query or self.use_shared_future_task_proj:
+                self.future_video_align_embs = nn.Parameter(torch.randn(video["num_backbone_tokens"], dim))
+            if self.use_shared_future_task_proj:
+                self.future_shared_task_proj = nn.Linear(dim * 2, dim)
+            self.future_video_align_head = TaskTokenDepthHead(video, dim)
+        if self.use_future_video_cls:
+            self.future_video_cls_align_emb = nn.Embedding(1, dim)
+            self.future_video_cls_head = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, video["dim_out"]))
+
+    def _align_query_tokens(self):
+        """[n, D] query tokens appended after the language tokens, in upstream ``prefix_query_segments``
+        order: current (depth, mixed with current video), future-video cls, future video, future depth
+        (mixed with future video when the future query is shared)."""
+
+        def pool(embs):  # group consecutive rows into num_task_tokens tokens
+            return embs.view(self.num_task_tokens, -1, embs.shape[-1]).mean(dim=1)
+
+        current = pool(self.depth_align_embs)
+        if self.use_current_shared_task_proj:
+            current = self.current_shared_task_proj(
+                torch.cat([current, pool(self.current_video_align_embs)], -1)
+            )
+        tokens = [current]
+        if self.use_future_video_cls:
+            tokens.append(self.future_video_cls_align_emb.weight)
+        if self.use_future_video_patch and not self.future_video_share_future_depth_query:
+            tokens.append(pool(self.future_video_align_embs))
+        if self.use_future_depth:
+            future = pool(self.future_depth_align_embs)
+            if self.use_shared_future_task_proj:
+                future = self.future_shared_task_proj(
+                    torch.cat([future, pool(self.future_video_align_embs)], -1)
+                )
+            tokens.append(future)
+        return torch.cat(tokens, dim=0)
+
+    def _block_suffix_to_queries_(self, att_2d_masks, suffix_row_start, prefix_len):
+        """Optional upstream masks hiding the future query tokens from the suffix (off in released recipes)."""
+        n = self.num_task_tokens
+        if self.block_future_depth_to_action:  # upstream block_suffix_to_fv_: the last n prefix tokens
+            att_2d_masks[:, suffix_row_start:, prefix_len - n : prefix_len] = False
+        if self.block_suffix_to_future_video:
+            own = int(self.use_future_video_cls) + (
+                n if self.use_future_video_patch and not self.future_video_share_future_depth_query else 0
+            )
+            end = prefix_len - (n if self.use_future_depth else 0)
+            att_2d_masks[:, suffix_row_start:, end - own : end] = False
+        return att_2d_masks
 
     def embed_prefix(
         self,
@@ -666,10 +785,23 @@ class FlowMatchingV2(FlowMatchingV1):
 
         lang_emb = self.qwenvl_with_expert.embed_language_tokens(lang_tokens).to(dtype=embed_dtype)
 
-        embs = torch.cat([img_emb, lang_emb], dim=1)
-        pad_masks = torch.cat([image_pad_masks, lang_masks], dim=1)
-        prefix_input_ids = torch.cat([fake_image_ids, lang_tokens.to(device)], dim=1)
-        full_visual_pos_masks = torch.cat([visual_pos_masks, torch.zeros_like(lang_masks)], dim=1)
+        embs = [img_emb, lang_emb]
+        pad_masks = [image_pad_masks, lang_masks]
+        prefix_input_ids = [fake_image_ids, lang_tokens.to(device)]
+        full_visual_pos_masks = [visual_pos_masks, torch.zeros_like(lang_masks)]
+        if self.use_align:  # query tokens after the language: text tokens with eos ids for mrope
+            queries = self._align_query_tokens().to(embed_dtype).expand(bsize, -1, -1)
+            query_masks = lang_masks.new_ones(bsize, queries.shape[1])
+            embs.append(queries)
+            pad_masks.append(query_masks)
+            prefix_input_ids.append(
+                torch.full_like(query_masks, cfg.text_config.eos_token_id, dtype=torch.long)
+            )
+            full_visual_pos_masks.append(torch.zeros_like(query_masks))
+        embs = torch.cat(embs, dim=1)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        prefix_input_ids = torch.cat(prefix_input_ids, dim=1)
+        full_visual_pos_masks = torch.cat(full_visual_pos_masks, dim=1)
 
         if self.config.vlm_causal:
             att_masks = torch.ones((bsize, embs.shape[1]), device=device, dtype=torch.bool)
@@ -705,7 +837,7 @@ class FlowMatchingV2(FlowMatchingV1):
                 wrapped[:, :, 1 : 1 + num_patch] = level
                 level = wrapped
             level = einops.rearrange(level, "b n l d -> b (n l) d")
-            if tail_len > 0:  # language tail stays zero
+            if tail_len > 0:  # language (and query) tail stays zero
                 level = torch.cat([level, level.new_zeros(bsize, tail_len, level.shape[-1])], dim=1)
             dense_deepstack.append(level.to(embed_dtype))
 
@@ -770,6 +902,8 @@ class FlowMatchingV2(FlowMatchingV1):
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        prefix_len = prefix_pad_masks.shape[1]
+        att_2d_masks = self._block_suffix_to_queries_(att_2d_masks, prefix_len, prefix_len)
         position_ids = self._build_full_position_ids(prefix_position_ids, prefix_pad_masks, suffix_pad_masks)
 
         (_, suffix_out), _, router_logits_list = self.qwenvl_with_expert.forward(
@@ -1589,6 +1723,7 @@ class FlowMatchingV2(FlowMatchingV1):
             )
             suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
             full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+            full_att_2d_masks = self._block_suffix_to_queries_(full_att_2d_masks, 0, prefix_len)
 
             full_position_ids = self._build_full_position_ids(
                 prefix_position_ids,

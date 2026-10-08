@@ -87,6 +87,7 @@ def tiny_backbone(tmp_path, monkeypatch):
     t.num_hidden_layers, t.hidden_size, t.intermediate_size = 2, 64, 128
     t.num_attention_heads, t.num_key_value_heads, t.head_dim = 4, 2, 16
     t.rope_parameters = {**t.rope_parameters, "mrope_section": [2, 3, 3]}
+    t.eos_token_id = 3
     v.hidden_size, v.intermediate_size, v.num_heads, v.depth, v.out_hidden_size = 64, 128, 2, 2, 64
     v.deepstack_visual_indexes = [0, 1]
     monkeypatch.setattr(modeling.AutoConfig, "from_pretrained", lambda *args, **kwargs: vlm)
@@ -157,6 +158,25 @@ def test_train_and_select_action(tiny_backbone):
     action = _select_action(policy, preprocessor, postprocessor, 7, "cpu")
     assert action.shape == (2, 7)
     assert torch.isfinite(action).all()
+
+
+def test_align_query_tokens(tiny_backbone):
+    """A tiny RoboTwin-style align recipe appends 2 x num_task_tokens query tokens to the prefix."""
+    head = {"num_layers": 1, "num_heads": 2, "dim_head": 8, "ff_mult": 1, "num_backbone_tokens": 8}
+    shared = {"share_future_depth_query": True, "use_shared_future_task_proj": True}
+    align = {"mode": "query", "num_task_tokens": 4, "use_future_video": True, "llm": {"dim_out": 64}}
+    align["depth"] = {**head, "dim_out": 16, "use_future_depth": True}
+    align["video"] = {**head, **shared, "dim_out": 16, "use_current_patch_loss": True}
+    slots, meta = _slot_kwargs(arm=[[0, 6]], effector=[[6, 7]]), _ds_meta(7)
+    cfg = _tiny_config(tiny_backbone, align_params=align, **slots)
+    policy = make_policy(cfg, ds_meta=meta)
+    plain = make_policy(_tiny_config(tiny_backbone, **slots), ds_meta=meta)
+    preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=meta.stats)
+
+    images, img_masks, tokens, masks, _, grid = policy._extract_model_inputs(preprocessor(_raw_batch(7)))
+    prefix_len = policy.model.embed_prefix(images, img_masks, tokens, masks, grid)[0].shape[1]
+    assert prefix_len == plain.model.embed_prefix(images, img_masks, tokens, masks, grid)[0].shape[1] + 8
+    assert _select_action(policy, preprocessor, postprocessor, 7, "cpu").shape == (2, 7)
 
 
 @pytest.mark.parametrize(
