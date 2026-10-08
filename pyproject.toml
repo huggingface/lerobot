@@ -413,8 +413,13 @@ url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
-torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
+# NOTE (fork-local): upstream pins torch to the CUDA index for ALL of linux.
+# download.pytorch.org/whl/cu128 publishes no aarch64 wheels, so on ARM boards
+# (Raspberry Pi, Jetson) that makes the resolver fail. Restrict the CUDA index
+# to x86_64 linux; ARM falls through to PyPI's CPU builds. Jetson users wanting
+# GPU torch install NVIDIA's own JetPack wheels separately.
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
 
 [tool.setuptools.package-data]
 lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt", "configs/recipes/*.yaml"]
