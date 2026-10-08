@@ -39,13 +39,26 @@ class ArrayVideoSource:
         self.open()
         inputs = []
         for episode in self.episodes:
+            import numpy as np
+
             checksums = {}
             for relative in [*episode["arrays"].values(), *episode.get("videos", {}).values()]:
                 path = self.root / relative
                 if not path.resolve().is_relative_to(self.root):
                     raise ValueError("Source reference escapes its declared root")
                 checksums[relative] = file_checksum(path)
-            inputs.append({"episode": episode, "checksums": checksums})
+            frames = (
+                len(
+                    np.load(
+                        self.root / next(iter(episode["arrays"].values())), mmap_mode="r", allow_pickle=False
+                    )
+                )
+                if episode["arrays"]
+                else episode.get("frames")
+            )
+            if not isinstance(frames, int) or frames < 1:
+                raise ValueError("Video-only sources require an explicit positive episode frames count")
+            inputs.append({"episode": episode, "checksums": checksums, "frames": frames})
         self.inputs = inputs
         self.dataset_ref = DatasetRef(
             str(self.root), fingerprint({"manifest": self.manifest, "inputs": inputs})
@@ -89,7 +102,14 @@ class ArrayVideoSource:
 
     def discover(self, stage, store, upstream):
         for value in self.inputs:
-            yield InputItem(value["episode"]["id"], value)
+            seconds = value["frames"] / self.fps
+            yield InputItem(
+                value["episode"]["id"],
+                value,
+                value["frames"],
+                physical_seconds=seconds,
+                camera_seconds=seconds * len(self.camera_keys),
+            )
 
     def frames(self, payload):
         import av
@@ -103,7 +123,7 @@ class ArrayVideoSource:
             key: np.load(self.root / relative, mmap_mode="r", allow_pickle=False)
             for key, relative in episode["arrays"].items()
         }
-        lengths = {len(array) for array in arrays.values()}
+        lengths = {len(array) for array in arrays.values()} if arrays else {payload["frames"]}
         if len(lengths) != 1 or next(iter(lengths)) < 1:
             raise ValueError("Native feature lengths are empty or inconsistent")
         count = next(iter(lengths))

@@ -78,7 +78,15 @@ class StagePlan:
         if fingerprint(rows) != self.shard_hashes[shard]:
             raise ValueError("Work shard checksum mismatch")
         return [
-            WorkItem(row["item_id"], row["key"], json.loads(row["payload"]), row["cost"], row["seed"])
+            WorkItem(
+                row["item_id"],
+                row["key"],
+                json.loads(row["payload"]),
+                row["cost"],
+                row["seed"],
+                row.get("physical_seconds"),
+                row.get("camera_seconds"),
+            )
             for row in rows
         ]
 
@@ -109,7 +117,7 @@ def seal_plan(
     identity = {
         "dataset": asdict(dataset),
         "factory": factory,
-        "config": config,
+        "config": module.scientific_config() if hasattr(module, "scientific_config") else config,
         "module": {"name": module.spec.name, "version": module.spec.version, "scope": module.spec.scope},
         "schemas": schemas,
         "upstream": upstream or {},
@@ -123,6 +131,8 @@ def seal_plan(
             ("payload", pa.string()),
             ("cost", pa.float64()),
             ("seed", pa.int64()),
+            ("physical_seconds", pa.float64()),
+            ("camera_seconds", pa.float64()),
         ]
     )
     selection = hashlib.sha256()
@@ -138,7 +148,15 @@ def seal_plan(
                     raise ValueError(f"Duplicate source item key: {item.key}")
                 seen.add(item.key)
                 selection.update(canonical_json(asdict(item)) + b"\n")
-                item_id = fingerprint({"stage": semantic_id, "key": item.key, "payload": item.payload})
+                item_id = fingerprint(
+                    {
+                        "stage": semantic_id,
+                        "key": item.key,
+                        "payload": item.identity_payload
+                        if item.identity_payload is not None
+                        else item.payload,
+                    }
+                )
                 batch.append(
                     {
                         "item_id": item_id,
@@ -146,6 +164,12 @@ def seal_plan(
                         "payload": canonical_json(item.payload).decode(),
                         "cost": float(item.cost),
                         "seed": int(item_id[:15], 16),
+                        "physical_seconds": float(item.physical_seconds)
+                        if item.physical_seconds is not None
+                        else None,
+                        "camera_seconds": float(item.camera_seconds)
+                        if item.camera_seconds is not None
+                        else None,
                     }
                 )
                 count += 1
@@ -159,7 +183,12 @@ def seal_plan(
                 writer.write_table(pa.Table.from_pylist(batch, schema=schema), row_group_size=shard_size)
                 shards += 1
         plan_id = fingerprint(
-            {"identity": identity, "shard_size": shard_size, "selection": selection.hexdigest()}
+            {
+                "identity": identity,
+                "execution_config": config,
+                "shard_size": shard_size,
+                "selection": selection.hexdigest(),
+            }
         )
         manifest_path = f"stages/{plan_id}/plan.json"
         if store.exists(manifest_path):

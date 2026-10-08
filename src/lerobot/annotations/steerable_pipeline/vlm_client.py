@@ -244,7 +244,7 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
     Compatible with ``vllm serve``, ``transformers serve``,
     ``ktransformers serve``, and hosted endpoints. By default the server
     is expected to be already running. Set ``auto_serve=True`` to have
-    this client spawn one (default: ``transformers serve``), wait until
+    this client spawn one (default: ``vllm serve``), wait until
     it's ready, and tear it down on process exit.
 
     Image blocks ``{"type":"image", "image":<PIL.Image>}`` are
@@ -357,6 +357,38 @@ def _bind_serve_port(cmd: str, port: int) -> str:
     return cmd
 
 
+def _replica_gpu_ids(config):
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    count = config.num_gpus or config.parallel_servers
+    devices = (
+        [entry.strip() for entry in visible.split(",") if entry.strip() and entry.strip() != "-1"]
+        if visible is not None
+        else [str(index) for index in range(count)]
+    )
+    if count > len(devices) or config.parallel_servers > count:
+        raise ValueError("Inference replicas exceed assigned GPUs; do not share model replicas on one GPU")
+    return devices[: config.parallel_servers]
+
+
+def _bind_model_revision(command, revision):
+    if not revision:
+        return command
+    if "{revision}" in command:
+        return command.replace("{revision}", shlex.quote(revision))
+    tokens = shlex.split(command)
+    for index, argument in enumerate(tokens):
+        if argument == "--revision" or argument.startswith("--revision="):
+            if argument == "--revision" and index + 1 == len(tokens):
+                raise ValueError("serve_command --revision requires a value")
+            actual = argument.split("=", 1)[1] if "=" in argument else tokens[index + 1]
+            if actual != revision:
+                raise ValueError("serve_command revision does not match expected model_revision")
+            return command
+    if tokens[:2] == ["vllm", "serve"]:
+        return command + " --revision " + shlex.quote(revision)
+    raise ValueError("Custom serve_command must bind the expected model_revision with {revision}")
+
+
 def _spawn_parallel_inference_servers(config: VlmConfig, *, shutdowns=None) -> list[str]:
     """Spawn ``config.parallel_servers`` independent vllm replicas.
 
@@ -369,6 +401,9 @@ def _spawn_parallel_inference_servers(config: VlmConfig, *, shutdowns=None) -> l
     across.
     """
     n = config.parallel_servers
+    gpu_ids = _replica_gpu_ids(config)
+    if config.serve_command and "--port" in config.serve_command and "{port}" not in config.serve_command:
+        raise ValueError("Parallel serve_command must omit --port or use {port}")
     api_bases: list[str] = []
     procs: list[subprocess.Popen] = []
     ready_events: list[threading.Event] = []
@@ -408,11 +443,10 @@ def _spawn_parallel_inference_servers(config: VlmConfig, *, shutdowns=None) -> l
         f"--max-model-len {config.max_model_len or 32768} "
         f"--uvicorn-log-level warning"
     )
-
-    num_gpus = config.num_gpus if config.num_gpus > 0 else n
+    base_cmd = _bind_model_revision(base_cmd, config.model_revision)
     for i in range(n):
         port = config.serve_port + i
-        gpu = i % num_gpus
+        gpu = gpu_ids[i]
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
         cmd = _bind_serve_port(base_cmd, port)
@@ -485,7 +519,7 @@ def _server_is_up(api_base: str) -> bool:
 
 
 def _spawn_inference_server(config: VlmConfig, *, shutdowns=None) -> str:
-    """Spawn ``transformers serve`` (or ``serve_command``), wait until it
+    """Spawn ``vllm serve`` (or ``serve_command``), wait until it
     accepts ``/v1/models``, and register a shutdown hook.
 
     Streams the server's stdout/stderr to the parent terminal in
@@ -497,14 +531,15 @@ def _spawn_inference_server(config: VlmConfig, *, shutdowns=None) -> str:
     cmd = config.serve_command
     if not cmd:
         cmd = (
-            f"transformers serve {shlex.quote(config.model_id)} "
-            f"--port {config.serve_port} --continuous-batching"
+            f"vllm serve {shlex.quote(config.model_id)} "
+            f"--port {config.serve_port} --max-model-len {config.max_model_len or 32768} "
+            f"--tensor-parallel-size {config.num_gpus or 1}"
         )
     # Bind the single server to ``serve_port`` (what ``api_base`` below
     # targets): substitute a literal ``{port}`` placeholder, else append
     # ``--port``. Without this a serve_command carrying ``{port}`` would
     # reach the server unsubstituted and fail to parse.
-    cmd = _bind_serve_port(cmd, config.serve_port)
+    cmd = _bind_serve_port(_bind_model_revision(cmd, config.model_revision), config.serve_port)
     api_base = f"http://localhost:{config.serve_port}/v1"
     print(f"[server] launching: {cmd}", flush=True)
     proc = subprocess.Popen(

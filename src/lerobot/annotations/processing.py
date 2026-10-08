@@ -31,6 +31,7 @@ from lerobot.data_processing.types import (
     ItemResult,
     ModuleSpec,
     Outcome,
+    artifact_identities,
     canonical_json,
     fingerprint,
 )
@@ -181,6 +182,10 @@ class LeRobotEpisodeSource:
                         value["paths"].append(relative)
                     value["rows"] += 1
         info = json.loads((root / "meta/info.json").read_text())
+        self.fps = info["fps"]
+        self.cameras = sum(
+            feature["dtype"] in {"image", "video"} for feature in info.get("features", {}).values()
+        )
         self.info_checksum = file_checksum(root / "meta/info.json")
         info["features"] = {
             key: value
@@ -230,11 +235,26 @@ class LeRobotEpisodeSource:
                         else None,
                     },
                     sum(self.episodes[int(ep)]["rows"] for ep in episodes),
+                    identity_payload={
+                        "path": path,
+                        "episodes": artifact_identities(episodes),
+                        "source_checksum": file_checksum(self.root / path),
+                        "ownership_checksum": file_checksum(ownership_path)
+                        if ownership_path.exists()
+                        else None,
+                    },
                 )
         else:
             for ep, payload in sorted(self.episodes.items()):
                 parent = {name: outputs[str(ep)]["atoms"] for name, outputs in bindings.items()}
-                yield InputItem(str(ep), {**payload, "upstream": parent}, payload["rows"])
+                yield InputItem(
+                    str(ep),
+                    {**payload, "upstream": parent},
+                    payload["rows"],
+                    identity_payload={**payload, "upstream": artifact_identities(parent)},
+                    physical_seconds=payload["rows"] / self.fps,
+                    camera_seconds=payload["rows"] / self.fps * self.cameras,
+                )
 
 
 class LanguageModule:
@@ -274,6 +294,20 @@ class LanguageModule:
             self.module = GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed, frame_provider=provider)
         else:
             raise ValueError("Unknown language phase")
+
+    def scientific_config(self):
+        import draccus
+
+        values = draccus.encode(self.config)
+        shared = {key: values[key] for key in ("vlm", "seed", "video_backend")}
+        shared["vlm"].pop("client_concurrency", None)
+        names = ("plan",) if self.phase in {"plan", "plan_update"} else (self.phase,)
+        return {
+            "root": str(self.root),
+            "phase": self.phase,
+            "client_factory": self.client_factory,
+            "annotation_config": {**shared, **{name: values[name] for name in names}},
+        }
 
     def teardown(self):
         close = getattr(self.client, "close", None) if hasattr(self, "client") else None
@@ -546,6 +580,12 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
         )
     }
     config["vlm"]["api_key"] = "EMPTY"
+
+    def phase_config(name):
+        shared = {key: value for key, value in config.items() if key not in {"plan", "interjections", "vqa"}}
+        family = "plan" if name == "plan_update" else name
+        return {**shared, family: config[family]}
+
     stages = []
     for name in enabled:
         dependencies = ("plan",) if name == "interjections" and "plan" in enabled else ()
@@ -556,7 +596,7 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
                 {
                     "root": str(root),
                     "phase": name,
-                    "annotation_config": config,
+                    "annotation_config": phase_config(name),
                     "client_factory": client_factory,
                 },
                 dependencies,
@@ -570,7 +610,7 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
                 {
                     "root": str(root),
                     "phase": "plan_update",
-                    "annotation_config": config,
+                    "annotation_config": phase_config("plan_update"),
                     "client_factory": client_factory,
                 },
                 ("plan", "interjections"),

@@ -169,6 +169,9 @@ class VlmConfig:
     # auto_serve=True); ``stub`` is for tests.
     backend: str = "openai"
     model_id: str = "Qwen/Qwen3.6-27B"
+    model_revision: str | None = None
+    # Pin to a model commit SHA for reproducible runs. Externally owned endpoints
+    # must independently attest that they serve that revision.
 
     # OpenAI-compatible endpoint; ``EMPTY`` key works for local servers.
     api_base: str = "http://localhost:8000/v1"
@@ -179,7 +182,7 @@ class VlmConfig:
     # Spawn a server if none answers api_base; False = fail fast on a remote.
     auto_serve: bool = True
     serve_port: int = 8000
-    # Override the auto-serve command; ``{port}`` substituted per replica.
+    # Override auto-serve; ``{port}`` / ``{revision}`` substituted per replica.
     serve_command: str | None = None
 
     # Independent servers for round-robin routing (one per GPU). num_gpus=0 = one each.
