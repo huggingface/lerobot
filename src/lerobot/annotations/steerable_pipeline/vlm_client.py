@@ -148,6 +148,7 @@ class _GenericTextClient:
     generate_text: Callable[[Sequence[Sequence[dict[str, Any]]], int, float], list[str]]
     config: VlmConfig
     close_callback: Callable[[], None] | None = None
+    api_bases: tuple[str, ...] = ()
 
     def close(self):
         if self.close_callback:
@@ -340,7 +341,7 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
         for shutdown in shutdowns:
             shutdown()
 
-    return _GenericTextClient(_gen, config, close)
+    return _GenericTextClient(_gen, config, close, tuple(api_bases))
 
 
 def _bind_serve_port(cmd: str, port: int) -> str:

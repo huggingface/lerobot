@@ -252,6 +252,8 @@ class LanguageModule:
         cfg = self.config
         if cfg.vlm.api_key_env:
             cfg.vlm.api_key = os.environ[cfg.vlm.api_key_env]
+        if os.environ.get("LEROBOT_ANNOTATION_ENDPOINTS"):
+            cfg.vlm.api_bases = tuple(json.loads(os.environ["LEROBOT_ANNOTATION_ENDPOINTS"]))
         if self.client_factory:
             module, name = self.client_factory.split(":", 1)
             vlm = getattr(importlib.import_module(module), name)()
@@ -545,10 +547,6 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
         )
     }
     config["vlm"]["api_key"] = "EMPTY"
-    if cfg.vlm.auto_serve and cfg.vlm.parallel_servers > 1:
-        config["vlm"]["api_bases"] = [
-            f"http://localhost:{cfg.vlm.serve_port + i}/v1" for i in range(cfg.vlm.parallel_servers)
-        ]
     stages = []
     for name in enabled:
         dependencies = ("plan",) if name == "interjections" and "plan" in enabled else ()
@@ -599,6 +597,7 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
         cfg.runtime, run_uri=cfg.runtime.run_uri or str(cfg.resolved_staging_dir(root) / "processing")
     )
     service: list[Any] = []
+    previous_endpoints = os.environ.get("LEROBOT_ANNOTATION_ENDPOINTS")
 
     def before_execute(store, plan):
         if not cfg.vlm.auto_serve or client_factory or not plan.factory.endswith("LanguageModule") or service:
@@ -607,7 +606,9 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
             len(accepted_in_shard(store, plan, shard)) < len(plan.read_shard(store, shard))
             for shard in range(plan.shards)
         ):
-            service.append(make_vlm_client(cfg.vlm))
+            client = make_vlm_client(cfg.vlm)
+            service.append(client)
+            os.environ["LEROBOT_ANNOTATION_ENDPOINTS"] = json.dumps(client.api_bases)
 
     try:
         store, completed = run_pipeline(source, stages, runtime, before_execute=before_execute)
@@ -616,6 +617,10 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
             close = getattr(client, "close", None)
             if close:
                 close()
+        if previous_endpoints is None:
+            os.environ.pop("LEROBOT_ANNOTATION_ENDPOINTS", None)
+        else:
+            os.environ["LEROBOT_ANNOTATION_ENDPOINTS"] = previous_endpoints
     if runtime.mode == "plan":
         return PipelineRunSummary([], [], ValidationReport())
     plan, _ = completed["materialize"]
