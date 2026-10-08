@@ -26,6 +26,7 @@ References:
 """
 
 import math
+import types
 from collections import deque
 from typing import TYPE_CHECKING
 
@@ -202,6 +203,19 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
 # -- Observation Encoders --
 
 
+def compile_forward(module: nn.Module, mode: str | None):
+    """Return `module`'s forward compiled with torch.compile, to assign to `module.forward`.
+
+    Only forward is compiled: `module(...)` still goes through `nn.Module.__call__`, so hooks on the
+    module and its children (e.g. FSDP2's unshard/reshard) keep firing, and modules, parameters and
+    state_dict keys are unchanged. The class's forward is compiled and bound to `module`, not the
+    bound method, so `copy.deepcopy` rebinds it to the copy instead of running the original's weights.
+    dynamic=False: a second batch shape (the dataloader's partial last batch, or inference) compiles
+    its own static graph once instead of moving every shape to slower dynamic-shape kernels.
+    """
+    return types.MethodType(torch.compile(type(module).forward, dynamic=False, mode=mode), module)
+
+
 class CLIPVisionEncoder(nn.Module):
     """CLIP vision encoder using the CLS token for global image representation."""
 
@@ -211,20 +225,12 @@ class CLIPVisionEncoder(nn.Module):
         self.model = CLIPVisionModel.from_pretrained(self.model_name)
         self.num_non_spatial_tokens = 1
         self.embed_dim = self.model.config.hidden_size
-        # The compiled callable wraps the bound forward rather than replacing the module, so
-        # parameters, state_dict keys and .to() are untouched.
-        # dynamic=False: a second batch shape (the dataloader's partial last batch, or inference)
-        # compiles its own static graph once instead of moving every shape to slower
-        # dynamic-shape kernels.
-        self._model_forward = (
-            torch.compile(self.model.forward, dynamic=False, mode=compile_mode)
-            if compile_model
-            else self.model.forward
-        )
+        if compile_model:
+            self.forward = compile_forward(self, compile_mode)
 
     def forward(self, x: Tensor) -> Tensor:
         """Encode RGB image to CLS token."""
-        outputs = self._model_forward(pixel_values=x, output_hidden_states=False)
+        outputs = self.model(pixel_values=x, output_hidden_states=False)
         cls_token = outputs.last_hidden_state[:, 0]
         b, embed_dim = cls_token.shape
         return cls_token.reshape(b, embed_dim, 1, 1)
@@ -628,11 +634,8 @@ class DiffusionTransformer(nn.Module):
 
         self.output_proj = nn.Linear(self.hidden_size, self.action_dim)
         self._initialize_weights()
-        self._blocks_forward = (
-            torch.compile(self._run_blocks, dynamic=False, mode=config.compile_mode)
-            if config.compile_model
-            else self._run_blocks
-        )
+        if config.compile_model:
+            self.forward = compile_forward(self, config.compile_mode)
 
     def _initialize_weights(self):
         for block in self.transformer_blocks:
@@ -650,12 +653,10 @@ class DiffusionTransformer(nn.Module):
         if self.pos_embedding is not None:
             hidden_seq = hidden_seq + self.pos_embedding[:, :seq_len, :]
 
-        return self.output_proj(self._blocks_forward(hidden_seq, cond_features))
-
-    def _run_blocks(self, hidden_seq: Tensor, cond_features: Tensor) -> Tensor:
         for block in self.transformer_blocks:
             hidden_seq = block(hidden_seq, cond_features)
-        return hidden_seq
+
+        return self.output_proj(hidden_seq)
 
 
 # -- Objectives --
