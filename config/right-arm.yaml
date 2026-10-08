@@ -17,6 +17,7 @@ robot:
       width: 1280
       height: 720
       fps: 30
+      fourcc: MJPG   # YUYV caps 1280x720 at 10fps; MJPG does 30
       warmup_s: 1
 
 teleop:
