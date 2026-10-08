@@ -27,6 +27,7 @@ from lerobot.lerobot_types import (
     EnvAction,
     EnvTransition,
     PolicyAction,
+    PolicyPrediction,
     RobotAction,
     RobotObservation,
     TransitionKey,
@@ -208,6 +209,7 @@ def create_transition(
     truncated: bool | torch.Tensor = False,
     info: dict[str, Any] | None = None,
     complementary_data: dict[str, Any] | None = None,
+    prediction: PolicyPrediction | None = None,
 ) -> EnvTransition:
     """
     Create an `EnvTransition` dictionary with sensible defaults.
@@ -220,6 +222,7 @@ def create_transition(
         truncated: Episode truncation flag.
         info: Additional info dictionary.
         complementary_data: Complementary data dictionary.
+        prediction: What the policy predicts besides its action.
 
     Returns:
         A complete `EnvTransition` dictionary.
@@ -227,6 +230,7 @@ def create_transition(
     return {
         TransitionKey.OBSERVATION: observation,
         TransitionKey.ACTION: action,
+        TransitionKey.PREDICTION: prediction,
         TransitionKey.REWARD: reward,
         TransitionKey.DONE: done,
         TransitionKey.TRUNCATED: truncated,
@@ -347,6 +351,28 @@ def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
     if not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return create_transition(action=action)
+
+
+def policy_output_to_transition(output: PolicyAction | EnvTransition) -> EnvTransition:
+    """
+    Convert what ``select_action`` / ``predict_action_chunk`` returned to an `EnvTransition`.
+
+    A policy returns a bare `PolicyAction`, or an `EnvTransition` carrying the action and its
+    prediction (see `transition_to_prediction`).
+    """
+    if isinstance(output, torch.Tensor):
+        return policy_action_to_transition(output)
+    return output
+
+
+def transition_to_prediction(transition: EnvTransition) -> PolicyPrediction:
+    """
+    Extract what a policy predicted besides its action.
+
+    Returns an empty `PolicyPrediction` when the transition carries none.
+    """
+    prediction = transition.get(TransitionKey.PREDICTION)
+    return prediction if prediction is not None else PolicyPrediction()
 
 
 def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
