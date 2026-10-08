@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69.0,<81.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lerobot_robot_openarm_gripette"
+version = "0.1.0"
+description = "LeRobot plugin: OpenArm 7-joint follower with a networked Pollen Gripette gripper."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "lerobot[openarms]>=0.6.2,<0.7.0",
+    "gripette @ git+https://github.com/pollen-robotics/grabette.git@develop#subdirectory=packages/gripette",
+]
+
+[tool.setuptools.packages.find]
+include = ["lerobot_robot_openarm_gripette*"]
+
+[tool.ruff]
+extend = "../pyproject.toml"
+
+[tool.ruff.lint.extend-per-file-ignores]
+"**" = ["D"]
