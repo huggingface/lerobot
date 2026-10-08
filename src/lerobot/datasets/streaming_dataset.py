@@ -322,6 +322,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         self._resume_offset = 0
         self._resume_batch_size = 1
         self._state_offset = 0
+        self._shard_rank: int | None = None
+        self._shard_world_size: int | None = None
 
         if self._requested_root is not None:
             self.root.mkdir(exist_ok=True, parents=True)
@@ -594,9 +596,18 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             self._active_epoch = epoch + 1 if self.shuffle else 0
             self._state_offset = 0
 
+    def set_data_parallel_shard(self, rank: int, world_size: int) -> None:
+        """Pin the data-parallel rank and world size, ahead of ``torch.distributed`` and the environment.
+
+        A spawned DataLoader worker has no initialized ``torch.distributed``; the values reach it by pickling.
+        """
+        self._shard_rank, self._shard_world_size = rank, world_size
+
     def _rank_episodes(self) -> tuple[list[int], int, int]:
         """Resolve the distributed rank and its deterministic, frame-balanced episode shard."""
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
+        if self._shard_rank is not None and self._shard_world_size is not None:
+            rank, world_size = self._shard_rank, self._shard_world_size
+        elif torch.distributed.is_available() and torch.distributed.is_initialized():
             rank = torch.distributed.get_rank()
             world_size = torch.distributed.get_world_size()
         else:

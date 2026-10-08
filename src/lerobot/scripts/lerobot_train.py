@@ -432,6 +432,7 @@ def make_dataloaders(
                 "available as the dataset's internal fetch concurrency.",
                 cfg.num_workers,
             )
+        dataset.set_data_parallel_shard(parallel_dims.dp_rank, parallel_dims.dp_world_size)  # not RANK env
         if (
             dataset.num_frames_for_rank(parallel_dims.dp_rank, parallel_dims.dp_world_size, train_num_workers)
             == 0
