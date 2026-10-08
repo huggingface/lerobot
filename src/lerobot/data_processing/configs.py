@@ -29,6 +29,25 @@ class SlurmConfig:
 
 
 @dataclass
+class HFJobsConfig:
+    """Pinned, operator-selected images; credentials are environment references only."""
+
+    cpu_image: str | None = None
+    gpu_image: str | None = None
+    cpu_flavor: str = "cpu-upgrade"
+    gpu_flavor: str | None = None
+    code_revision: str | None = None
+    timeout: str = "2h"
+    max_parallel: int = 4
+    detach: bool = False
+    secret_env: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if self.max_parallel < 1:
+            raise ValueError("HF Jobs concurrency must be positive")
+
+
+@dataclass
 class RuntimeConfig:
     backend: Literal["local", "slurm", "hf_jobs"] = "local"
     mode: Literal["run", "plan", "resume"] = "run"
@@ -38,6 +57,7 @@ class RuntimeConfig:
     shard_size: int = 64
     max_retries: int = 2
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
+    hf_jobs: HFJobsConfig = field(default_factory=HFJobsConfig)
 
     def __post_init__(self):
         if self.workers < 1 or self.batch_size < 1 or self.shard_size < 1 or self.max_retries < 0:

@@ -33,7 +33,7 @@ def run_pipeline(source, stages: list[StageConfig], runtime: RuntimeConfig, *, b
     not initialize services. Downstream plans are deferred when upstream results
     do not yet exist; planning never fabricates those results.
     """
-    if runtime.backend not in {"local", "slurm"}:
+    if runtime.backend not in {"local", "slurm", "hf_jobs"}:
         raise ValueError("This backend requires the processing launcher integration")
     if not runtime.run_uri:
         raise ValueError("A persistent runtime.run_uri is required")
@@ -60,7 +60,11 @@ def run_pipeline(source, stages: list[StageConfig], runtime: RuntimeConfig, *, b
             continue
         if before_execute:
             before_execute(store, plan)
-        if runtime.backend == "slurm":
+        if runtime.backend == "hf_jobs":
+            from lerobot.jobs.processing import run_hf_stage
+
+            summary = run_hf_stage(store, plan, runtime)
+        elif runtime.backend == "slurm":
             from lerobot.jobs.slurm import run_slurm
 
             summary = run_slurm(store, plan, runtime)

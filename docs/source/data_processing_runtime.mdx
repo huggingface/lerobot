@@ -146,3 +146,81 @@ complete dataset publication are subsequent integration steps.
 
 Cluster acceptance and measured throughput require actual cluster resources. Generated
 scripts and local tests do not establish 1,024-worker or 500–1,000× realtime performance.
+
+## HF Jobs and retained releases
+
+Remote annotation keeps `--job.target=<flavor>`; conversion uses
+`--runtime.backend=hf_jobs`. Resolved dataclass configuration is serialized, so
+`--config_path` works remotely. Host-local roots are never silently uploaded.
+Choose a code commit SHA and an image digest before dispatch:
+
+```bash
+lerobot-annotate --repo_id=owner/source --revision=<source_sha> \
+  --runtime.run_uri=hf://buckets/your-org/processing/example \
+  --runtime.hf_jobs.code_revision=<git_sha> \
+  --job.target=h200 --job.image=your-runtime@sha256:<image_digest> \
+  --job.detach=true --config_path=annotation.json
+```
+
+Images must supply Python 3.12+, git, ffmpeg and compatible LeRobot source/model
+dependencies. CPU conversion images do not need vLLM; annotation images need it
+only when owning a vLLM service. The launcher installs the pinned LeRobot code
+without changing the image's dependency versions. HF hardware admission checks
+declared CPU/GPU/memory needs against the current hardware inventory. Actual model
+memory/scratch acceptance still requires a smoke run on the chosen image/flavor.
+
+Tokens and model/API credentials travel as job secrets, not persisted configuration.
+Use `vlm.api_key_env` and `runtime.hf_jobs.secret_env` for environment names. Run
+storage must be remotely writable from jobs, e.g. HF buckets or an appropriately
+configured S3 store. Plan mode persists a bundle but submits no paid job.
+
+Annotation/conversion compatibility jobs run a **single-node** controller with its
+local worker pool. The controller advances the stage graph after the client
+detaches. Generic stages with remote-readable payloads can instead use bounded HF
+worker groups via `runtime.hf_jobs.cpu_image/cpu_flavor` or `gpu_image/gpu_flavor`.
+`max_parallel` caps outstanding groups. It does not distribute local source paths
+or a controller's localhost VLM across nodes; use Slurm/shared inputs or an explicit
+external service for that workflow. Factories must exist in the pinned code/image.
+
+Remote conversion initially supports recipes with a pinned `archive_uri`,
+`archive_sha256`, and a top-level manifest filename. Host output/cache paths are
+replaced with pod-local scratch. Retained outputs survive job termination:
+
+```python
+from pathlib import Path
+from lerobot.data_processing.artifacts import ArtifactStore
+from lerobot.jobs.processing import restore_release
+
+store = ArtifactStore("hf://buckets/your-org/processing/example")
+restore_release(store, "releases/<digest>.json", Path("restored"))
+```
+
+Release indices reference validated, content-addressed Parquet/metadata files.
+Unchanged annotation videos reference the immutable source Hub revision, rather
+than being copied to the processing bucket. Restoring checks their hashes. Failed
+jobs retain accepted attempts; a new submission reuses valid work. Active exact
+bundle submissions cannot be blindly duplicated. Remote stores require a single
+controller owner; there is no distributed lock service in this launcher.
+
+### Explicit publication
+
+Processing and publication are separate. `--push_to_hub=true` additionally requires
+an explicit `--new_repo_id`, source `--revision`, `--release_tag=finerobotics-v0`,
+and `--redistribution_permission=<reviewed terms or permission record>`.
+This is a human permission assertion, not automatic legal approval.
+
+New targets receive the complete dataset. Later annotation must start from that
+processed target's pinned revision, provide the matching
+`--expected_target_revision`, and use a new release tag. Only changed data/ownership
+Parquet, metadata, card and lineage are committed; videos are not re-uploaded.
+Original licence/attribution and upstream lineage are retained, including a
+missing licence remaining missing. `parent_commit` detects concurrent target
+updates; immutable release tags are never deleted/moved. Existing format tags
+are left intact; load a specific processing release with `revision=...`.
+
+The publisher refuses releases exceeding bounded single-commit file/byte limits.
+Large conversion publication through a staged branch with guarded promotion remains
+a separate integration task; it is not silently split into partially public
+uploads. Retained bucket releases remain usable without Hub publication.
+Mocked API tests do not establish real HF Jobs or publication acceptance. See the
+[official Jobs guide](https://huggingface.co/docs/huggingface_hub/guides/jobs).
