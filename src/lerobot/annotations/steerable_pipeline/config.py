@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from lerobot.configs.default import JobConfig
+from lerobot.data_processing.configs import RuntimeConfig
 
 # The annotation pipeline boots its own vLLM server, so the pod starts from the
 # official vLLM runtime rather than the prebuilt `lerobot-gpu` training image;
@@ -171,7 +172,9 @@ class VlmConfig:
 
     # OpenAI-compatible endpoint; ``EMPTY`` key works for local servers.
     api_base: str = "http://localhost:8000/v1"
+    api_bases: tuple[str, ...] = ()
     api_key: str = "EMPTY"
+    api_key_env: str | None = None
 
     # Spawn a server if none answers api_base; False = fail fast on a remote.
     auto_serve: bool = True
@@ -217,6 +220,7 @@ class AnnotationPipelineConfig:
     # Hub dataset: download source when ``root`` unset; push target when push_to_hub
     # is on and ``new_repo_id`` unset.
     repo_id: str | None = None
+    revision: str | None = None
 
     # Separate push target (matches the LeRobot edit tools). Unset → push in place.
     new_repo_id: str | None = None
@@ -234,6 +238,7 @@ class AnnotationPipelineConfig:
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
     # Where the annotation runs: omitted / "local" annotates on this machine, any
     # other value is an HF Jobs flavor (e.g. "h200") and submits the run there.

@@ -103,7 +103,7 @@ def seal_plan(
         raise ValueError("shard_size must be positive")
     module = load_module(factory, config)
     schemas = {
-        name: base64.b64encode(schema.serialize().to_pybytes()).decode()
+        name: base64.b64encode(schema.serialize().to_pybytes()).decode() if schema is not None else "asset"
         for name, schema in module.spec.outputs.items()
     }
     identity = {

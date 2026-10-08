@@ -33,16 +33,20 @@ class WorkerContext:
         require_package("pyarrow", "dataset")
         self.store, self.plan, self.attempt, self.scratch = store, plan, attempt, scratch
         self.schemas = {
-            name: pa.ipc.read_schema(pa.BufferReader(base64.b64decode(schema)))
+            name: pa.ipc.read_schema(pa.BufferReader(base64.b64decode(schema))) if schema != "asset" else None
             for name, schema in plan.outputs.items()
         }
 
     def write_parquet(self, item: WorkItem, name: str, table: pa.Table) -> Artifact:
-        if name not in self.schemas or not table.schema.equals(self.schemas[name], check_metadata=True):
+        if (
+            name not in self.schemas
+            or self.schemas[name] is None
+            or not table.schema.equals(self.schemas[name], check_metadata=True)
+        ):
             raise ValueError(f"Undeclared output or schema mismatch: {name}")
         path = self.scratch / f"{uuid.uuid4().hex}.parquet"
         try:
-            pq.write_table(table, path)
+            pq.write_table(table, path, use_compliant_nested_type=False)
             return self.store.put_file(
                 f"{self.attempt}/outputs/{item.item_id}/{checked_name(name)}.parquet",
                 path,
@@ -51,6 +55,14 @@ class WorkerContext:
             )
         finally:
             path.unlink(missing_ok=True)
+
+    def write_asset(self, item: WorkItem, name: str, path: Path) -> Artifact:
+        """Upload a closed noncanonical media/file asset; its module validates semantics."""
+        if name not in self.schemas or self.schemas[name] is not None:
+            raise ValueError(f"Undeclared asset output: {name}")
+        return self.store.put_file(
+            f"{self.attempt}/outputs/{item.item_id}/{checked_name(name)}{path.suffix}", path, name=name
+        )
 
 
 def validate_result(result: ItemResult, item: WorkItem, context: WorkerContext) -> None:
@@ -66,6 +78,8 @@ def validate_result(result: ItemResult, item: WorkItem, context: WorkerContext) 
             raise ValueError("Output belongs to another item or attempt")
         if artifact.name not in context.schemas or not context.store.verify(artifact):
             raise ValueError("Invalid artifact checksum or name")
+        if context.schemas[artifact.name] is None:
+            continue
         with context.store.open(artifact.path) as stream:
             parquet = pq.ParquetFile(stream)
             if (
