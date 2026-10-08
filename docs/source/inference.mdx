@@ -261,6 +261,18 @@ lerobot-rollout \
 
 ---
 
+## Visualizing policy predictions
+
+With `--display_data`, the viewer also shows what the policy predicts besides actions: a world
+model's imagined camera frames, a predicted subtask, bounding boxes drawn over a camera. Each policy
+decides what it predicts and turns it on through its own config, for example
+`--policy.return_predicted_video=true` for LingBot-VA. A prediction is named after what it predicts:
+Rerun shows a predicted `observation.images.top` as `prediction.images.top`, a predicted subtask as
+`prediction.subtask`, and boxes under their camera (`<camera>/prediction`); Foxglove publishes them
+on `/prediction/...` topics and `<camera topic>/prediction` image annotations. With RTC, the
+prediction refreshes once per chunk. See [Bring your own policy](./bring_your_own_policies) to return
+a prediction from a policy.
+
 ## Inference Backends
 
 Select a backend with `--inference.type=<name>`. All strategies work with both backends.
