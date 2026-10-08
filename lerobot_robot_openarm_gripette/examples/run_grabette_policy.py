@@ -44,6 +44,7 @@ from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot_robot_openarm_gripette import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
 from lerobot_robot_openarm_gripette.manual_start import prepare_manual_start
+from lerobot_robot_openarm_gripette.prediction_logger import PredictionLogger
 
 URDF_JOINTS = [
     "r_arm_pitch",
@@ -107,6 +108,12 @@ def main():
     parser.add_argument("--n_action_steps", type=int, default=None, help="Defaults to the policy's.")
     parser.add_argument("--duration", type=float, default=60.0, help="Episode length in seconds.")
     parser.add_argument(
+        "--log_dir",
+        type=Path,
+        default=Path("outputs/openarm_gripette_policy"),
+        help="Directory for timestamped policy prediction JSONL logs.",
+    )
+    parser.add_argument(
         "--joint_signs",
         type=float,
         nargs=7,
@@ -151,8 +158,12 @@ def main():
             gripper_camera_width=image_feature.shape[2],
         )
     )
-    robot.connect()
+    logger = PredictionLogger(args.log_dir)
+    print(f"Prediction log: {logger.path}")
+    connected = False
     try:
+        robot.connect()
+        connected = True
         q_cmd = prepare_manual_start(robot, signs)
         held = robot.arm.get_observation()
         q_cmd = signs * np.array([held[f"{joint}.pos"] for joint in ROBOT_JOINTS])
@@ -160,6 +171,20 @@ def main():
         print("Held oak_l position (m):", np.round(kin.forward_kinematics(q_cmd)[:3, 3], 3))
         input(f"{'DRY RUN: the arm will not move. ' if args.dry_run else ''}Press ENTER to start...")
 
+        logger.write(
+            {
+                "type": "metadata",
+                "policy": args.policy,
+                "checkpoint": args.checkpoint,
+                "device": device,
+                "fps": args.fps,
+                "dry_run": args.dry_run,
+                "n_action_steps": n_exec,
+                "initial_joints_deg": dict(zip(ROBOT_JOINTS, q_cmd, strict=True)),
+            }
+        )
+        run_started = time.perf_counter()
+        chunk_index = 0
         t_end = time.perf_counter() + args.duration
         while time.perf_counter() < t_end:
             obs = robot.get_observation()
@@ -182,7 +207,7 @@ def main():
             # chains the chunk's steps from the arm's current pose without a jump on the first tick.
             anchor = kin.forward_kinematics(q_cmd) @ np.linalg.inv(poses[0])
             q_chunk_start = q_cmd
-            for action, pose in zip(chunk[:n_exec], poses[:n_exec], strict=True):
+            for action_index, (action, pose) in enumerate(zip(chunk[:n_exec], poses[:n_exec], strict=True)):
                 tick = time.perf_counter()
                 q_target = kin.inverse_kinematics(
                     q_cmd, anchor @ pose, position_weight=100.0, orientation_weight=10.0, max_iters=30
@@ -194,12 +219,34 @@ def main():
                     )
                 q_cmd = q_target
                 proximal, distal = projection.decode(action[strategy_idx], action[closure_idx])
-                if not args.dry_run:
-                    robot.send_action(
+                executed = False
+                try:
+                    if not args.dry_run:
+                        robot.send_action(
+                            {
+                                **{
+                                    f"{j}.pos": s * q
+                                    for j, s, q in zip(ROBOT_JOINTS, signs, q_cmd, strict=True)
+                                },
+                                "proximal.pos": proximal,
+                                "distal.pos": distal,
+                            }
+                        )
+                        executed = True
+                finally:
+                    logger.write(
                         {
-                            **{f"{j}.pos": s * q for j, s, q in zip(ROBOT_JOINTS, signs, q_cmd, strict=True)},
-                            "proximal.pos": proximal,
-                            "distal.pos": distal,
+                            "type": "prediction",
+                            "elapsed_s": time.perf_counter() - run_started,
+                            "chunk_index": chunk_index,
+                            "action_index": action_index,
+                            "raw": dict(zip(cfg.action_feature_names, action, strict=True)),
+                            "joint_targets_deg": dict(zip(ROBOT_JOINTS, q_cmd, strict=True)),
+                            "gripper_targets_rad": {
+                                "proximal": proximal,
+                                "distal": distal,
+                            },
+                            "executed": executed,
                         }
                     )
                 precise_sleep(max(0.0, 1 / args.fps - (time.perf_counter() - tick)))
@@ -212,13 +259,19 @@ def main():
                 f"max joint change {np.abs(q_cmd - q_chunk_start).max():.1f} deg, "
                 f"gripper strategy={action[strategy_idx]:.2f} closure={action[closure_idx]:.2f}"
             )
+            chunk_index += 1
             if args.dry_run:
                 q_cmd = signs * np.array([robot.get_observation()[f"{j}.pos"] for j in ROBOT_JOINTS])
     except KeyboardInterrupt:
         pass
     finally:
-        input("Support the arm, then press ENTER to disable torque and disconnect...")
-        robot.disconnect()
+        try:
+            if connected:
+                input("Support the arm, then press ENTER to disable torque and disconnect...")
+                robot.disconnect()
+        finally:
+            logger.close()
+            print(f"Prediction log saved: {logger.path}")
 
 
 if __name__ == "__main__":
