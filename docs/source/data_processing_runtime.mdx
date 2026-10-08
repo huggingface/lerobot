@@ -1,0 +1,67 @@
+# Offline data-processing runtime
+
+This experimental runtime is shared infrastructure for conversion and annotation. It is
+developed on the FineRobotics integration branch, not yet a replacement for every public
+dataset workflow.
+
+A source supplies a pinned `DatasetRef` and a stable stream of `InputItem` metadata. A
+module supplies its version, scope, resources and Arrow output schemas. `seal_plan` writes
+bounded Parquet row groups; `run_local` runs the same module in persistent spawn workers.
+Workers initialize a model once, write isolated artifacts, and commit validated batches.
+Failed runs reuse valid batches. `finalize_stage` requires complete coverage and returns an
+immutable accepted index. A rejected or masked item must carry a reason.
+
+```python
+from lerobot.data_processing.artifacts import ArtifactStore
+from lerobot.data_processing.planner import seal_plan
+from lerobot.data_processing.runtime import run_local
+from lerobot.data_processing.types import DatasetRef, InputItem
+
+store = ArtifactStore("./runs/quality")
+plan = seal_plan(
+    store,
+    DatasetRef("./source", input_manifest_sha256),
+    "lerobot.data_processing.modules.video_quality:VideoQuality",
+    {"sample_every": 30},
+    [InputItem("front", {"video_path": "./source/front.mp4", "expected_frames": 300})],
+)
+summary = run_local(store, plan, workers=1)
+print(summary.accepted_path)
+```
+
+Install `lerobot[dataset]` for Arrow and filesystem dependencies. CPU stages neither import
+Torch nor construct a VLM. Source adapters are responsible for verifying that their raw
+inputs still match the pinned manifest; arbitrary external files are not made immutable by
+writing a digest into `DatasetRef`.
+
+## Reliability boundaries
+
+- One controller owns a plan. Concurrent controllers for the same plan are not supported.
+- Each worker has unique attempt paths. Remote publication uses manifest-last writes and
+  checksum validation, not atomic remote directory renames.
+- Checkpoints pack a batch of results; work completed inside an uncommitted batch can repeat.
+- An incomplete or corrupt output is recomputed. Repaired accepted indexes receive new
+  content-addressed paths so downstream stages can invalidate their inputs.
+- Item identities and seeds exclude worker count and shard packing. Module code must bump
+  its declared version when behavior changes; pin the code environment externally.
+- CPU determinism is module-specific. Seeds alone cannot promise bitwise GPU/VLM equality.
+- Local spawn workers can share local/shared storage. An in-memory filesystem is only useful
+  for single-process testing, not distributed workers.
+
+`patch_table` replaces declared columns at explicit frame identities. It preserves other
+rows, columns and source metadata, rejects duplicate/unknown identities, and does not
+interpret missing patches as deletion. `materialize_patch` writes a separate file, never
+overwriting an input dataset or immutable Hub cache. Family-aware language merging and
+complete dataset publication are subsequent integration steps.
+
+## FineRobotics implementation sequence
+
+1. Contracts, local workers, checkpoints, safe dense patches and CPU quality module.
+2. Existing annotation migration, canonical language ownership and compatibility.
+3. Conversion CLI, raw source recipes, encoding and deterministic dataset assembly.
+4. Slurm CPU/GPU launchers, dependency handling and worker entry point.
+5. HF Jobs, serialized run packages, persistent outputs and guarded publication.
+6. Extension examples, reducers, metrics, failure tests and scaling benchmarks.
+
+Cluster acceptance and measured throughput require actual cluster resources. Generated
+scripts and local tests do not establish 1,024-worker or 500–1,000× realtime performance.
