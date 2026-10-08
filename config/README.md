@@ -40,26 +40,35 @@ lerobot auto-imports any installed package named `lerobot_robot_*`,
 `lerobot.utils.import_utils`), so an installed plugin makes its
 `--robot.type=...` available on every standard CLI.
 
-From a checkout of the XLeRobot repo:
+**Do not install anything from this repo directly.** The XLeRobot repo is a
+uv workspace root that declares this fork plus its plugins, so one command
+there builds the whole environment:
 
 ```bash
-pip install -e software/plugins/xlerobot_model
-pip install -e software/plugins/lerobot_robot_xlerobot          # 3 omniwheels
-pip install -e software/plugins/lerobot_robot_xlerobot_2wheels  # 2 wheels, Feetech servos
-pip install -e software/plugins/lerobot_robot_xlerobot_mecanum
-pip install -e software/plugins/lerobot_teleoperator_xlerobot_vr
+cd ../XLeRobot
+uv sync                           # this fork (editable) + model + xlerobot + 2wheels
+uv sync --extra mecanum --extra vr
+uv sync --extra dataset           # adds torchcodec, needed to record
 ```
 
-Verify:
+That assumes the two repos are **siblings**:
 
-```bash
-python -c "
-from lerobot.utils.import_utils import register_third_party_plugins
-register_third_party_plugins()
-from lerobot.robots.config import RobotConfig
-print(RobotConfig.get_choice_class('xlerobot'))
-"
 ```
+<somewhere>/
+  lerobot/     <- this repo
+  XLeRobot/    <- workspace root; its pyproject points at ../lerobot
+```
+
+Why that direction: the plugins all depend on `lerobot`, so declaring them
+here would invert the dependency. Worse, this fork is itself named `lerobot`,
+so uv would resolve the plugins' `lerobot` from PyPI and install upstream
+lerobot beside the fork, both providing a `lerobot` module. The workspace
+root maps `lerobot` to `../lerobot` for every member, which removes the
+ambiguity by construction.
+
+`uv sync` from *this* directory still works for lerobot alone, but it will
+prune the plugins, and `--robot.type=xlerobot` then stops resolving. Sync
+from XLeRobot.
 
 Examples live in the XLeRobot repo under `software/examples/`.
 
