@@ -16,9 +16,9 @@
 
 """Wrapper around Pollen's Gripette gRPC client.
 
-Exposes the 2-motor gripper as a single ``gripper.pos`` (radians) and decodes the server's
-JPEG ``StreamState`` into an RGB camera frame. A background daemon thread consumes the stream
-and caches the latest position + image.
+Exposes the gripper's two motors as ``proximal.pos`` / ``distal.pos`` (radians, Gripette robot
+frame: 0 = open, positive = closing) and decodes the server's JPEG ``StreamState`` into an RGB
+camera frame. A background daemon thread consumes the stream and caches the latest state + image.
 """
 
 import logging
@@ -31,18 +31,18 @@ from gripette.client import GripperClient
 
 logger = logging.getLogger(__name__)
 
+MOTORS = ("proximal", "distal")
+
 
 class GripetteGripper:
     def __init__(
         self,
         addr: str,
-        motor_scales: tuple[float, float],
         motor_max: tuple[float, float],
         camera_name: str | None,
         camera_shape: tuple[int, int],
     ):
         self.addr = addr
-        self.motor_scales = motor_scales
         self.motor_max = motor_max
         self.camera_name = camera_name
         self.camera_shape = camera_shape
@@ -51,7 +51,7 @@ class GripetteGripper:
         self._stop = threading.Event()
         self._has_frame = threading.Event()
         self._lock = threading.Lock()
-        self._latest_pos: float = 0.0
+        self._latest_pos: tuple[float, float] = (0.0, 0.0)
         self._latest_image: np.ndarray | None = None
 
     @property
@@ -89,23 +89,29 @@ class GripetteGripper:
                     bgr = cv2.resize(bgr, (width, height), interpolation=cv2.INTER_AREA)
                 image = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         with self._lock:
-            self._latest_pos = frame.motor1 / self.motor_scales[0]
+            self._latest_pos = (frame.motor1, frame.motor2)
             if image is not None:
                 self._latest_image = image
         self._has_frame.set()
 
-    def send_goal(self, pos: float) -> float:
+    def send_goal(self, goals: dict[str, float]) -> dict[str, float]:
+        """Move both motors, clipped to [0, motor_max] since the server rejects out-of-range goals.
+
+        A motor missing from ``goals`` keeps its last observed position.
+        """
         assert self._client is not None
-        goals = [
-            min(max(scale * pos, 0.0), max_pos)
-            for scale, max_pos in zip(self.motor_scales, self.motor_max, strict=True)
+        with self._lock:
+            current = dict(zip(MOTORS, self._latest_pos, strict=True))
+        clipped = [
+            min(max(goals.get(motor, current[motor]), 0.0), max_pos)
+            for motor, max_pos in zip(MOTORS, self.motor_max, strict=True)
         ]
-        self._client.move(goals[0], goals[1])
-        return goals[0] / self.motor_scales[0]
+        self._client.move(clipped[0], clipped[1])
+        return dict(zip(MOTORS, clipped, strict=True))
 
     def read_observation(self) -> dict[str, Any]:
         with self._lock:
-            obs: dict[str, Any] = {"gripper.pos": self._latest_pos}
+            obs: dict[str, Any] = {f"{m}.pos": p for m, p in zip(MOTORS, self._latest_pos, strict=True)}
             if self.camera_name is not None and self._latest_image is not None:
                 obs[self.camera_name] = self._latest_image
         return obs
