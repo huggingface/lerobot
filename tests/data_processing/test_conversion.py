@@ -179,3 +179,25 @@ def test_clock_failure_retries_do_not_publish_partial_dataset(tmp_path):
     with pytest.raises(ValueError, match="more frames"):
         convert_dataset(cfg)
     assert not cfg.output.exists()
+
+
+def test_fresh_worker_counts_preserve_part_hashes(tmp_path):
+    manifest = raw_source(tmp_path)
+    hashes = []
+    for workers in (1, 2):
+        cfg = ConvertConfig(
+            source={"manifest": str(manifest)},
+            output=tmp_path / f"output-{workers}",
+            size=64,
+            encoder=RGBEncoderConfig(vcodec="h264"),
+        )
+        cfg.runtime.workers, cfg.runtime.shard_size = workers, 1
+        convert_dataset(cfg)
+        records = {}
+        for path in (tmp_path / f"output-{workers}.processing").rglob("checkpoints/*.json"):
+            for row in json.loads(path.read_text())["results"]:
+                records[row["item_id"]] = [
+                    (artifact["name"], artifact["sha256"]) for artifact in row["artifacts"]
+                ]
+        hashes.append(records)
+    assert hashes[0] == hashes[1]

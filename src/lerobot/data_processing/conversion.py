@@ -206,10 +206,22 @@ class EpisodeConversion:
             # Complete parts are immutable artifacts. Packing is a later choice,
             # not an input-ID or model-worker dependency.
             archive = context.scratch / f"{item.item_id}.tar"
+
+            def normalize_member(member):
+                member.uid = member.gid = member.mtime = 0
+                member.uname = member.gname = ""
+                member.mode = 0o644
+                return member
+
             with tarfile.open(archive, "w") as stream:
                 for path in sorted(root.rglob("*")):
                     if path.is_file() and not path.is_symlink():
-                        stream.add(path, arcname=str(path.relative_to(root)), recursive=False)
+                        stream.add(
+                            path,
+                            arcname=str(path.relative_to(root)),
+                            recursive=False,
+                            filter=normalize_member,
+                        )
             artifact = context.write_asset(item, "dataset", archive)
             geometry = context.write_parquet(
                 item,
