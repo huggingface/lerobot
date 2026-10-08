@@ -180,7 +180,7 @@ def _log_prediction(
     text_paths: set[str],
     compress_images: bool,
 ) -> None:
-    """Log a policy's prediction, named after what it predicts.
+    """Log the first environment of a policy's prediction, named after what it predicts.
 
     A predicted ``observation.images.top`` is logged as ``prediction.images.top`` and predicted
     language as ``prediction.<style>``. Boxes are logged under their camera's entity instead, so they
@@ -188,17 +188,19 @@ def _log_prediction(
     """
     for key, value in prediction.get("observation", {}).items():
         path = f"{PREDICTION}.{key.removeprefix(OBS_PREFIX)}"
-        arr = value.numpy(force=True)
+        arr = value[0].numpy(force=True)
         if arr.ndim == 1:
             rr.log(path, rr.Scalars(arr.astype(float)))
             observation_paths.add(path)
         else:
             _log_image(rr, path, arr, image_paths, compress_images)
-    for style, text in prediction.get("language", {}).items():
+    for style, texts in prediction.get("language", {}).items():
+        text = texts[0]
         path = f"{PREDICTION}.{style}"
         rr.log(path, rr.TextDocument(text))
         text_paths.add(path)
-    for camera_key, answer in prediction.get("boxes", {}).items():
+    for camera_key, answers in prediction.get("boxes", {}).items():
+        answer = answers[0]
         camera = _camera_entity(camera_key)
         if camera is None:
             logger.debug("Skipping predicted boxes: camera %r was not logged", camera_key)
@@ -245,9 +247,9 @@ def log_rerun_data(
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
         compress_images: Whether to compress images before logging to save bandwidth & memory in exchange for cpu and quality.
-        prediction: An optional `PolicyPrediction`, named after what it predicts: a predicted
-            ``observation.images.top`` as ``prediction.images.top``, language as ``prediction.<style>``
-            in text panels, and boxes over the camera they are drawn on.
+        prediction: An optional `PolicyPrediction`, of which the first environment is logged, named
+            after what it predicts: a predicted ``observation.images.top`` as ``prediction.images.top``,
+            language as ``prediction.<style>`` in text panels, and boxes over the camera they are on.
     """
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")

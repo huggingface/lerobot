@@ -27,6 +27,7 @@ from lerobot.lerobot_types import (
     EnvAction,
     EnvTransition,
     PolicyAction,
+    PolicyOutput,
     PolicyPrediction,
     RobotAction,
     RobotObservation,
@@ -38,6 +39,7 @@ from lerobot.utils.constants import (
     INFO,
     MESSAGES_RENDERED,
     OBS_PREFIX,
+    PREDICTION,
     QUERY_KIND,
     QUERY_TEXT,
     REWARD,
@@ -353,16 +355,16 @@ def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
     return create_transition(action=action)
 
 
-def policy_output_to_transition(output: PolicyAction | EnvTransition) -> EnvTransition:
+def policy_output_to_transition(output: PolicyAction | PolicyOutput) -> EnvTransition:
     """
     Convert what ``select_action`` / ``predict_action_chunk`` returned to an `EnvTransition`.
 
-    A policy returns a bare `PolicyAction`, or an `EnvTransition` carrying the action and its
+    A policy returns a bare `PolicyAction`, or a `PolicyOutput` batch carrying the action and its
     prediction (see `transition_to_prediction`).
     """
     if isinstance(output, torch.Tensor):
         return policy_action_to_transition(output)
-    return output
+    return batch_to_transition(dict(output))
 
 
 def transition_to_prediction(transition: EnvTransition) -> PolicyPrediction:
@@ -412,6 +414,7 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
         truncated=batch.get(TRUNCATED, False),
         info=batch.get("info", {}),
         complementary_data=complementary_data if complementary_data else None,
+        prediction=batch.get(PREDICTION),
     )
 
 
@@ -437,6 +440,8 @@ def transition_to_batch(transition: EnvTransition) -> dict[str, Any]:
         TRUNCATED: transition.get(TransitionKey.TRUNCATED, False),
         INFO: transition.get(TransitionKey.INFO, {}),
     }
+    if (prediction := transition.get(TransitionKey.PREDICTION)) is not None:
+        batch[PREDICTION] = prediction
 
     # Add complementary data.
     comp_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})

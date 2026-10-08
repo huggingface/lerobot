@@ -24,7 +24,7 @@ from typing import Any, Protocol, cast
 
 import torch
 
-from lerobot.lerobot_types import EnvTransition, PolicyPrediction
+from lerobot.lerobot_types import PolicyOutput, PolicyPrediction
 from lerobot.policies import PreTrainedPolicy, reanchor_relative_rtc_prefix
 from lerobot.processor import (
     NormalizerProcessorStep,
@@ -45,7 +45,7 @@ class _RTCPredictActionChunk(Protocol):
         *,
         inference_delay: int,
         prev_chunk_left_over: torch.Tensor | None,
-    ) -> torch.Tensor | EnvTransition: ...
+    ) -> torch.Tensor | PolicyOutput: ...
 
 
 @contextmanager

@@ -336,12 +336,12 @@ def test_log_rerun_prediction_named_after_what_it_predicts(mock_rerun):
     rv, calls, blueprints = mock_rerun
     import torch
 
-    # A predicted camera frame (CHW tensor) and a predicted subtask.
+    # A predicted camera frame (BCHW tensor) and a predicted subtask, for one env.
     rv.log_rerun_data(
         observation={"temp": 1.0},
         prediction={
-            "observation": {"observation.images.top": torch.zeros(3, 4, 6, dtype=torch.uint8)},
-            "language": {"subtask": "grasp the cube"},
+            "observation": {"observation.images.top": torch.zeros(1, 3, 4, 6, dtype=torch.uint8)},
+            "language": {"subtask": ["grasp the cube"]},
         },
     )
 
@@ -355,6 +355,34 @@ def test_log_rerun_prediction_named_after_what_it_predicts(mock_rerun):
     assert {v.name for v in _views_by_kind(bp, "TimeSeriesView")} == {"observation"}
 
 
+def test_log_rerun_shows_the_first_env_of_a_batched_prediction(mock_rerun):
+    rv, calls, _ = mock_rerun
+    import torch
+
+    frames = torch.stack([torch.zeros(3, 4, 6), torch.ones(3, 4, 6)]).to(torch.uint8)
+    rv.log_rerun_data(
+        observation={"top": np.zeros((100, 200, 3), dtype=np.uint8)},
+        prediction={
+            "observation": {
+                "observation.images.top": frames,
+                "observation.state": torch.tensor([[1.0], [2.0]]),
+            },
+            "language": {"subtask": ["reach", "grasp"]},
+            "boxes": {
+                "observation.images.top": [
+                    {"detections": [{"label": "env0", "bbox": [0.0, 0.0, 0.5, 0.5]}]},
+                    {"detections": [{"label": "env1", "bbox": [0.5, 0.5, 1.0, 1.0]}]},
+                ]
+            },
+        },
+    )
+
+    assert _obj_for(calls, "prediction.images.top").arr.max() == 0  # env 0's frame
+    np.testing.assert_allclose(_obj_for(calls, "prediction.state").value, [1.0])  # env 0's state
+    assert _obj_for(calls, "prediction.subtask").args == ("reach",)
+    assert _obj_for(calls, "observation.top/prediction").kwargs["labels"] == ["env0"]
+
+
 def test_log_rerun_predicted_boxes_draw_over_their_camera(mock_rerun):
     rv, calls, _ = mock_rerun
     # Robot camera "top" (logged as observation.top), referenced by its feature key; spatial
@@ -363,7 +391,7 @@ def test_log_rerun_predicted_boxes_draw_over_their_camera(mock_rerun):
         observation={"top": np.zeros((100, 200, 3), dtype=np.uint8)},
         prediction={
             "boxes": {
-                "observation.images.top": {"detections": [{"label": "cube", "bbox": [0.1, 0.2, 0.5, 1.0]}]}
+                "observation.images.top": [{"detections": [{"label": "cube", "bbox": [0.1, 0.2, 0.5, 1.0]}]}]
             }
         },
     )
@@ -374,14 +402,14 @@ def test_log_rerun_predicted_boxes_draw_over_their_camera(mock_rerun):
     assert boxes.kwargs["labels"] == ["cube"]
 
     # No detections clears the boxes.
-    rv.log_rerun_data(prediction={"boxes": {"observation.images.top": {"detections": []}}})
+    rv.log_rerun_data(prediction={"boxes": {"observation.images.top": [{"detections": []}]}})
     assert calls[-1][0] == "observation.top/prediction" and calls[-1][1].kind == "Clear"
 
 
 def test_log_rerun_predicted_boxes_without_camera_are_skipped(mock_rerun):
     rv, calls, _ = mock_rerun
     answer = {"detections": [{"label": "cube", "bbox": [0.0, 0.0, 1.0, 1.0]}]}
-    rv.log_rerun_data(prediction={"boxes": {"observation.images.wrist": answer}})
+    rv.log_rerun_data(prediction={"boxes": {"observation.images.wrist": [answer]}})
     assert calls == []
 
 
@@ -392,8 +420,8 @@ def test_log_rerun_blueprint_grows_with_a_late_prediction(mock_rerun):
     assert len(blueprints) == 1
 
     # The first chunk's prediction arrives later: the layout is re-sent with a panel for it, once.
-    rv.log_rerun_data(observation={"temp": 3.0}, prediction={"language": {"subtask": "reach"}})
-    rv.log_rerun_data(observation={"temp": 4.0}, prediction={"language": {"subtask": "grasp"}})
+    rv.log_rerun_data(observation={"temp": 3.0}, prediction={"language": {"subtask": ["reach"]}})
+    rv.log_rerun_data(observation={"temp": 4.0}, prediction={"language": {"subtask": ["grasp"]}})
     assert len(blueprints) == 2
     assert {v.origin for v in _views_by_kind(blueprints[-1], "TextDocumentView")} == {"prediction.subtask"}
     assert _views_by_kind(blueprints[-1], "TimeSeriesView")[0].contents == ["observation.temp"]

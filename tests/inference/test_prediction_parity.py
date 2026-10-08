@@ -21,7 +21,7 @@ pytest.importorskip("datasets", reason="local rollout imports the dataset integr
 
 from lerobot.inference import ExecutionMode, predict_chunk
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.processor import create_transition
+from lerobot.processor import transition_to_prediction
 from tests.inference.policy_helpers import (
     ConformingPolicy,
     local_engine_for,
@@ -150,7 +150,8 @@ def test_shared_prediction_preserves_model_coordinates_before_inplace_postproces
 
 def test_shared_prediction_keeps_the_policy_prediction_beside_the_actions():
     policy = ObservedPolicy(tiny_config())
-    policy.output = create_transition(action=policy.output, prediction={"language": {"subtask": "pick"}})
+    # A `PolicyOutput`: the chunk and a prediction batched like it.
+    policy.output = {"action": policy.output, "prediction": {"language": {"subtask": ["pick"]}}}
     prediction = predict_chunk(
         policy,
         lambda actions: actions,
@@ -162,4 +163,47 @@ def test_shared_prediction_keeps_the_policy_prediction_beside_the_actions():
         device="cpu",
     )
     torch.testing.assert_close(prediction.model_actions, torch.arange(9, dtype=torch.float32).reshape(3, 3))
-    assert prediction.prediction == {"language": {"subtask": "pick"}}
+    assert prediction.prediction == {"language": {"subtask": ["pick"]}}
+
+
+def _rtc_engine_after_one_chunk(monkeypatch, *, accept=True):
+    """A local RTC engine that ran one chunk of a policy predicting a subtask with it."""
+    config = tiny_config()
+    config.rtc_config = RTCConfig(enabled=False)
+    policy = ObservedPolicy(config)
+    policy.output = {"action": policy.output, "prediction": {"language": {"subtask": ["reach"]}}}
+    engine = local_engine_for(policy, queue_threshold=8)
+    engine.resume()
+    engine._runtime.turnarounds.append(1 / 30)
+    engine.notify_observation(
+        {"a.pos": 20.0, "b.pos": 20.0, "c.pos": 20.0, "env_a": 0.0, "env_b": 0.0, "env_c": 0.0}
+    )
+    real_accept = engine._runtime.accept
+
+    def accept_once(request, chunk, *, task_version):
+        engine._shutdown_event.set()
+        return real_accept(request, chunk, task_version=task_version) if accept else False
+
+    monkeypatch.setattr(engine._runtime, "accept", accept_once)
+    engine._rtc_loop()
+    return engine
+
+
+def test_rtc_engine_hands_a_chunk_prediction_out_once_with_the_next_action(monkeypatch):
+    engine = _rtc_engine_after_one_chunk(monkeypatch)
+
+    first = engine.get_action(None)
+    assert transition_to_prediction(first) == {"language": {"subtask": ["reach"]}}
+    assert isinstance(engine.get_action(None), torch.Tensor)  # the rest of the chunk is bare
+
+
+def test_rtc_engine_drops_the_prediction_of_a_discarded_chunk(monkeypatch):
+    # A chunk the runtime does not accept is never served: its prediction must not be shown either.
+    engine = _rtc_engine_after_one_chunk(monkeypatch, accept=False)
+    assert engine._chunk_prediction is None
+
+
+def test_rtc_engine_reset_clears_a_pending_prediction(monkeypatch):
+    engine = _rtc_engine_after_one_chunk(monkeypatch)
+    engine.reset()
+    assert engine._chunk_prediction is None
