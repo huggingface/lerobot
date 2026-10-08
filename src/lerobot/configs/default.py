@@ -69,6 +69,8 @@ class DatasetConfig:
     # Per-rank native HTTP limits. None preserves the fetcher's worker-derived default.
     streaming_native_http_connections: int | None = None
     streaming_native_http_subranges: int = 1
+    # Seconds to wait for another process that builds the same MP4 sidecar.
+    streaming_sidecar_lock_timeout_s: float = 30 * 60
     # Maximum open video decoders. Streaming: per rank, None covers every camera in the episode pool.
     # Map-style: only for non-default storage formats (e.g. lance), per DataLoader worker.
     video_decoder_cache_size: int | None = None
@@ -105,6 +107,8 @@ class DatasetConfig:
             raise ValueError("streaming_native_http_connections must be positive")
         if self.streaming_native_http_subranges <= 0:
             raise ValueError("streaming_native_http_subranges must be positive")
+        if self.streaming_sidecar_lock_timeout_s <= 0:
+            raise ValueError("streaming_sidecar_lock_timeout_s must be positive")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(

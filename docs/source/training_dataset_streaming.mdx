@@ -59,7 +59,9 @@ decode threads scale within that process.
 Video streaming uses an MP4 index sidecar. Dataset initialization first checks the
 revision-keyed local cache, then looks for a valid published sidecar. If neither is available,
 LeRobot builds the sidecar locally while holding a process lock and installs it atomically. A
-failed or interrupted build does not replace the previous valid file.
+failed or interrupted build does not replace the previous valid file. Other processes that need
+the same sidecar wait for the lock for up to `--dataset.streaming_sidecar_lock_timeout_s`
+(30 minutes by default). Raise it for large datasets that take longer to index.
 
 Hub payload reads are pinned to the metadata snapshot's commit. Bucket indexes are checked
 against a fresh object listing, including content hashes, so replacing a video at the same
@@ -129,6 +131,7 @@ The production defaults are:
 | `video_decoder_cache_size`          | pool × cameras | Open video decoder LRU cap per rank                 |
 | `streaming_native_http_connections` |          unset | Native HTTP connection cap per rank                 |
 | `streaming_native_http_subranges`   |              1 | Concurrent subranges per native HTTP range read     |
+| `streaming_sidecar_lock_timeout_s`  |           1800 | Seconds to wait for another sidecar build           |
 | `max_num_shards` (`--num_workers`)  |             16 | Episodes fetched concurrently per rank              |
 
 All options except `max_num_shards` are `--dataset.*` flags. `max_num_shards` is a
