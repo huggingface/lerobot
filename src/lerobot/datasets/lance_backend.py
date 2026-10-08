@@ -73,7 +73,7 @@ from .lance_utils import (  # noqa: F401
     resolve_lance_root,
     to_lance_column,
 )
-from .utils import resolve_episode_indices
+from .utils import frame_indices_to_timestamps, resolve_episode_indices, shift_timestamps
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
 
 
@@ -469,7 +469,7 @@ class LanceDatasetReader(BaseDatasetReader):
         prepared: dict[tuple, tuple],
     ) -> list[dict[str, torch.Tensor]]:
         """Decode all camera frames a batch needs, one blob fetch + one decode pass per file."""
-        requests = self._build_video_requests(plans, columns["timestamp"], row_pos)
+        requests = self._build_video_requests(plans, columns["frame_index"], row_pos)
         entries = prepared
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
@@ -506,7 +506,7 @@ class LanceDatasetReader(BaseDatasetReader):
     def _build_video_requests(
         self,
         plans: list[_SamplePlan],
-        timestamps: np.ndarray,
+        frame_indices: np.ndarray,
         row_pos: dict[int, int],
     ) -> dict[tuple, list[tuple[int, list[float]]]]:
         requests: dict[tuple, list[tuple[int, list[float]]]] = defaultdict(list)
@@ -515,7 +515,10 @@ class LanceDatasetReader(BaseDatasetReader):
             for key in self.meta.video_keys:
                 window = plan["windows"].get(key, [plan["abs_idx"]])
                 requests[self._video_file_key(key, ep_idx)].append(
-                    (sample_idx, self._shifted_video_timestamps(key, ep_idx, window, timestamps, row_pos))
+                    (
+                        sample_idx,
+                        self._shifted_video_timestamps(key, ep_idx, window, frame_indices, row_pos),
+                    )
                 )
         return requests
 
@@ -601,12 +604,15 @@ class LanceDatasetReader(BaseDatasetReader):
         key: str,
         ep_idx: int,
         window: list[int],
-        timestamps: np.ndarray,
+        frame_indices: np.ndarray,
         row_pos: dict[int, int],
     ) -> list[float]:
         _, _, from_ts_arr = self._video_locator[key]
         base = float(from_ts_arr[ep_idx])
-        return [base + float(timestamps[row_pos[row]]) for row in window]
+        local_timestamps = frame_indices_to_timestamps(
+            [int(frame_indices[row_pos[row]]) for row in window], self.meta.fps
+        )
+        return shift_timestamps(local_timestamps, base)
 
     def _decode_depth_window(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
         """Decode one depth window with upstream's pyav decoder over our sparse source."""
