@@ -22,7 +22,6 @@ robot:
 teleop:
   type: so101_leader
   id: xlerobot_leaders_right
-  # TODO: second leader's port. Find it with:  ls -l /dev/serial/by-id/
-  port: REPLACE_WITH_SECOND_LEADER_PORT
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00   # Right leader (ttyACM3)
 
 display_data: false
