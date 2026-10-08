@@ -60,11 +60,14 @@ python lerobot_robot_openarm_gripette/examples/run_grabette_policy.py \
 
 - Start with `--dry_run`: it runs the policy and IK on live camera frames and prints how far each
   chunk would move the camera, without moving anything.
+- After connecting, the runner disables only the arm torque. Support the arm, place the Gripette
+  where the demonstrations started, and press ENTER. The runner enables torque, holds the measured
+  pose, prints its joints and `oak_l` position, then requires a second ENTER before policy execution.
 - The URDF is the right arm, with joints mapped `r_arm_pitch..r_wrist_pitch` -> `joint_1..joint_7`.
   Joint zeros must match the URDF (arm hanging straight down); flip reversed joints with
   `--joint_signs`.
-- Place the Gripette as the demonstrations started (distance and view of the scene): the policy
-  reproduces demo-scale motions relative to wherever the arm starts.
+- Match the demonstrations' distance and view of the scene: the policy reproduces demo-scale
+  motions relative to wherever the arm starts.
 - The run aborts if IK moves any joint more than `--max_joint_step` degrees in one tick.
 
 ## Tests
