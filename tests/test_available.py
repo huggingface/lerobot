@@ -60,3 +60,60 @@ def test_require_package_error_message_includes_uv():
                 require_package("grpcio", extra="async", import_name="grpc")
         finally:
             _require_package_cache.clear()
+
+
+def _write_broken_package(tmp_path, name="broken_dep_for_test"):
+    """Create a fake package that is present per find_spec but raises on import."""
+    pkg = tmp_path / name
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("raise ImportError('simulated broken install')\n")
+
+
+def _write_broken_transformers_with_metadata(tmp_path):
+    """Fake 'transformers' with dist metadata: present AND versioned, but unimportable."""
+    _write_broken_package(tmp_path, name="transformers")
+    dist_info = tmp_path / "transformers-4.57.1.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text("Metadata-Version: 2.1\nName: transformers\nVersion: 4.57.1\n")
+
+
+def test_is_importable_broken_package(tmp_path, monkeypatch, caplog):
+    """A package that exists per find_spec but raises on import is not importable."""
+    import importlib.util
+
+    from lerobot.utils.import_utils import _is_importable
+
+    _write_broken_package(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert importlib.util.find_spec("broken_dep_for_test") is not None
+
+    with caplog.at_level("WARNING", logger="lerobot.utils.import_utils"):
+        assert _is_importable("broken_dep_for_test") is False
+    assert "treating it as unavailable" in caplog.text
+
+
+def test_is_importable_healthy_module():
+    from lerobot.utils.import_utils import _is_importable
+
+    assert _is_importable("json") is True
+    assert _is_importable("definitely_not_a_real_module_xyz") is False
+
+
+def test_transformers_flag_false_for_broken_install(tmp_path, monkeypatch, caplog):
+    """_transformers_available is False when transformers is present but unimportable (#4332)."""
+    import importlib
+    import importlib.util
+
+    import lerobot.utils.import_utils as import_utils
+
+    _write_broken_transformers_with_metadata(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert importlib.util.find_spec("transformers") is not None
+    assert import_utils.is_package_available("transformers") is True
+
+    with caplog.at_level("WARNING", logger="lerobot.utils.import_utils"):
+        reloaded = importlib.reload(import_utils)
+    try:
+        assert reloaded._transformers_available is False
+    finally:
+        importlib.reload(import_utils)
