@@ -20,6 +20,8 @@ to ``lerobot.common``. ``visualization_utils`` remains here but is
 intentionally NOT re-exported to avoid pulling in optional dependencies.
 """
 
+from typing import TYPE_CHECKING
+
 from .constants import (
     ACTION,
     DEFAULT_FEATURES,
@@ -33,9 +35,23 @@ from .constants import (
     REWARD,
 )
 from .decorators import check_if_already_connected, check_if_not_connected
-from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
 from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from .import_utils import is_package_available, require_package
+
+if TYPE_CHECKING:
+    from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
+
+
+def __getattr__(name: str):
+    """Load device utilities only when requested, keeping CPU data imports lightweight."""
+    if name in {"auto_select_torch_device", "get_safe_torch_device", "is_torch_device_available"}:
+        from . import device_utils
+
+        value = getattr(device_utils, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Constants
