@@ -617,7 +617,7 @@ def test_grid_layout_runs_any_camera_count_and_mixed_resolutions(fake_vae):
         camera_layout="grid",
         canvas_hw=(64, 96),
         dit_config=TINY_DIT,
-        dtype="float32",
+        dtype=torch.float32,
         video_vae_id=None,
         device="cpu",
     )

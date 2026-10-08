@@ -383,7 +383,16 @@ def test_cached_anchor_and_queue_binding_not_in_config():
     step(create_transition(observation={OBS_STATE: torch.tensor([[1.0, 2.0, 3.0, 4.0]])}))
     step.bind_action_queue(lambda: 0)
     assert step.get_cached_state() is not None
-    assert set(step.get_config()) == {"enabled", "exclude_joints", "action_names"}
+    assert set(step.get_config()) == {
+        "enabled",
+        "exclude_joints",
+        "action_names",
+        "mode",
+        "position_names",
+        "rotation_names",
+        "rotation_format",
+        "reference_key",
+    }
 
 
 # --------------------------------------------------------------------------------------

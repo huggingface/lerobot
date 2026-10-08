@@ -93,6 +93,21 @@ class ACTConfig(PreTrainedConfig):
         }
     )
 
+    # Relative actions: converts absolute actions to relative (relative to state).
+    use_relative_actions: bool = False
+    # Joint names to exclude from relative (kept absolute). Empty list = all dims relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # "subtract" (action - state) or "pose" (SE(3) composition on named end-effector pose dims).
+    relative_action_mode: str = "subtract"
+    relative_pose_position_names: list[str] = field(default_factory=lambda: ["x", "y", "z"])
+    # None = ["ax", "ay", "az"] for axis_angle, ["r6d_0", ..., "r6d_5"] for rot6d.
+    relative_pose_rotation_names: list[str] | None = None
+    relative_pose_rotation_format: str = "axis_angle"
+    # Feature holding the reference pose (not fed to the model). None = the chunk's first action.
+    relative_reference_key: str | None = None
+    # Populated at runtime from dataset metadata by make_policy.
+    action_feature_names: list[str] | None = None
+
     # Architecture.
     # Vision backbone.
     vision_backbone: str = "resnet18"
@@ -139,6 +154,11 @@ class ACTConfig(PreTrainedConfig):
             raise NotImplementedError(
                 "`n_action_steps` must be 1 when using temporal ensembling. This is "
                 "because the policy needs to be queried every step to compute the ensembled action."
+            )
+        if self.temporal_ensemble_coeff is not None and self.use_relative_actions:
+            raise NotImplementedError(
+                "Temporal ensembling is not supported with relative actions: it averages chunks "
+                "anchored on different states before they are converted back to absolute."
             )
         if self.n_action_steps > self.chunk_size:
             raise ValueError(

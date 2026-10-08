@@ -23,6 +23,7 @@ orchestration are handled by LeRobot's standard training stack.
 """
 
 import builtins
+import dataclasses
 import logging
 import os
 from collections import deque
@@ -114,7 +115,7 @@ class GrootPolicy(PreTrainedPolicy):
         qwen_model = getattr(backbone, "model", None)
         if qwen_model is not None:
             _tie_unused_qwen_lm_head(qwen_model)
-        if self.config.model_params_fp32:
+        if self.config.dtype == torch.float32:
             self._cast_model_parameters_to_fp32(model)
         return model
 
@@ -244,11 +245,15 @@ class GrootPolicy(PreTrainedPolicy):
         # This is a base GR00T model - load it fresh
         logger.info("Detected base GR00T model, loading from HuggingFace...")
 
+        # Config overrides from kwargs go through the constructor (or `dataclasses.replace`) rather than
+        # setattr, so that `__post_init__` validates them (and warns about deprecated keys) exactly as it
+        # does for config.json and the CLI.
+        field_names = {f.name for f in dataclasses.fields(GrootConfig)}
+        field_kwargs = {key: value for key, value in kwargs.items() if key in field_names}
+
         if config is None:
             # Create default config with the pretrained path
-            config = GrootConfig(
-                base_model_path=str(pretrained_name_or_path),
-            )
+            config = GrootConfig(**{"base_model_path": str(pretrained_name_or_path), **field_kwargs})
 
             # Add minimal visual feature required for validation
             # validate_features() will automatically add state and action features
@@ -263,11 +268,8 @@ class GrootPolicy(PreTrainedPolicy):
         else:
             # Override the base_model_path with the provided path
             config.base_model_path = str(pretrained_name_or_path)
-
-        # Pass through any additional config overrides from kwargs
-        for key, value in kwargs.items():
-            if hasattr(config, key):
-                setattr(config, key, value)
+            if field_kwargs:
+                config = dataclasses.replace(config, **field_kwargs)
 
         inferred_version = infer_groot_model_version(config.base_model_path)
         if inferred_version is not None and inferred_version != GROOT_N1_7:

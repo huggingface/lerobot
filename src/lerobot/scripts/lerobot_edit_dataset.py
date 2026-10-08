@@ -201,6 +201,15 @@ Recompute stats for relative actions and push to hub:
         --operation.num_workers 4 \
         --push_to_hub true
 
+Recompute stats for Cartesian pose relative actions (rot6d end-effector pose, reference = chunk's first action):
+    lerobot-edit-dataset \
+        --repo_id user/ee_pose_dataset \
+        --operation.type recompute_stats \
+        --operation.relative_action true \
+        --operation.relative_action_mode pose \
+        --operation.relative_pose_rotation_format rot6d \
+        --operation.chunk_size 50
+
 Re-encode all videos in a dataset (saves to lerobot/pusht_reencoded by default):
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \
@@ -331,6 +340,11 @@ class RecomputeStatsConfig(OperationConfig):
     skip_image_video: bool = True
     relative_action: bool = False
     relative_exclude_joints: list[str] | None = None
+    relative_action_mode: str = "subtract"
+    relative_pose_position_names: list[str] | None = None
+    relative_pose_rotation_names: list[str] | None = None
+    relative_pose_rotation_format: str = "axis_angle"
+    relative_reference_key: str | None = None
     chunk_size: int = 50
     num_workers: int = 0
     overwrite: bool = False
@@ -735,7 +749,8 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
     logging.info(f"Recomputing stats for {cfg.repo_id}")
     if cfg.operation.relative_action:
         logging.info(
-            f"Relative action stats enabled (chunk_size={cfg.operation.chunk_size}, "
+            f"Relative action stats enabled (mode={cfg.operation.relative_action_mode}, "
+            f"chunk_size={cfg.operation.chunk_size}, "
             f"exclude_joints={cfg.operation.relative_exclude_joints})"
         )
 
@@ -746,6 +761,11 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         relative_exclude_joints=cfg.operation.relative_exclude_joints,
         chunk_size=cfg.operation.chunk_size,
         num_workers=cfg.operation.num_workers,
+        relative_action_mode=cfg.operation.relative_action_mode,
+        relative_pose_position_names=cfg.operation.relative_pose_position_names,
+        relative_pose_rotation_names=cfg.operation.relative_pose_rotation_names,
+        relative_pose_rotation_format=cfg.operation.relative_pose_rotation_format,
+        relative_reference_key=cfg.operation.relative_reference_key,
     )
 
     logging.info(f"Stats written to {dataset.root}")

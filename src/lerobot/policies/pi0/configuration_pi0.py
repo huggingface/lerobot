@@ -16,6 +16,8 @@
 
 from dataclasses import dataclass, field
 
+import torch
+
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -30,7 +32,7 @@ DEFAULT_IMAGE_SIZE = 224
 class PI0Config(PreTrainedConfig):
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
-    dtype: str = "float32"  # Options: "bfloat16", "float32"
+    dtype: torch.dtype | None = torch.float32
 
     n_obs_steps: int = 1
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
@@ -53,6 +55,14 @@ class PI0Config(PreTrainedConfig):
     use_relative_actions: bool = False
     # Joint names to exclude from relative (kept absolute). Empty list = all dims relative.
     relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # "subtract" (action - state) or "pose" (SE(3) composition on named end-effector pose dims).
+    relative_action_mode: str = "subtract"
+    relative_pose_position_names: list[str] = field(default_factory=lambda: ["x", "y", "z"])
+    # None = ["ax", "ay", "az"] for axis_angle, ["r6d_0", ..., "r6d_5"] for rot6d.
+    relative_pose_rotation_names: list[str] | None = None
+    relative_pose_rotation_format: str = "axis_angle"
+    # Feature holding the reference pose (not fed to the model). None = the chunk's first action.
+    relative_reference_key: str | None = None
     # Populated at runtime from dataset metadata by make_policy.
     action_feature_names: list[str] | None = None
 
@@ -118,7 +128,7 @@ class PI0Config(PreTrainedConfig):
         if self.action_expert_variant not in ["gemma_300m", "gemma_2b"]:
             raise ValueError(f"Invalid action_expert_variant: {self.action_expert_variant}")
 
-        if self.dtype not in ["bfloat16", "float32"]:
+        if self.dtype not in [torch.bfloat16, torch.float32]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
 
     def validate_features(self) -> None:

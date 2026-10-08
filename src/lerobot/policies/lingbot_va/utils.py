@@ -166,10 +166,6 @@ def clean_prompt(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _torch_dtype(name: str) -> torch.dtype:
-    return {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[name]
-
-
 def _sample_timestep_id(
     batch_size: int = 1,
     min_timestep_bd: float = 0.0,

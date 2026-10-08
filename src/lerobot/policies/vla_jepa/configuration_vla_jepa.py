@@ -15,8 +15,11 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
+
+import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -66,6 +69,14 @@ class VLAJEPAConfig(PreTrainedConfig):
     use_relative_actions: bool = False
     # Joint names to keep absolute (not converted to relative). Empty list = all dims relative.
     relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # "subtract" (action - state) or "pose" (SE(3) composition on named end-effector pose dims).
+    relative_action_mode: str = "subtract"
+    relative_pose_position_names: list[str] = field(default_factory=lambda: ["x", "y", "z"])
+    # None = ["ax", "ay", "az"] for axis_angle, ["r6d_0", ..., "r6d_5"] for rot6d.
+    relative_pose_rotation_names: list[str] | None = None
+    relative_pose_rotation_format: str = "axis_angle"
+    # Feature holding the reference pose (not fed to the model). None = the chunk's first action.
+    relative_reference_key: str | None = None
     # Populated at runtime from dataset metadata by make_policy (used to build the exclude mask).
     action_feature_names: list[str] | None = None
 
@@ -123,7 +134,11 @@ class VLAJEPAConfig(PreTrainedConfig):
     # Action-dimension names identifying the gripper. When these match `action_feature_names`,
     # the resolved index wins over `gripper_dim`.
     gripper_joint_names: list[str] = field(default_factory=lambda: ["gripper"])
-    torch_dtype: str = "bfloat16"
+    dtype: torch.dtype | None = torch.bfloat16
+
+    # Deprecated and ignored: superseded by `dtype`. Declared only so configs written before the
+    # rename still parse — draccus rejects config.json keys the dataclass no longer declares.
+    torch_dtype: str | None = None
 
     optimizer_lr: float = 1e-4
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
@@ -135,7 +150,19 @@ class VLAJEPAConfig(PreTrainedConfig):
     scheduler_decay_lr: float = 2.5e-6
 
     def __post_init__(self) -> None:
+        if self.torch_dtype is not None:
+            warnings.warn(
+                "`torch_dtype` is deprecated; use `--policy.dtype` instead.",
+                FutureWarning,
+                stacklevel=3,
+            )
+            self.torch_dtype = None
+
         super().__post_init__()
+        if self.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
+            raise ValueError(
+                f"Unsupported dtype={self.dtype!r}. Expected torch.float32, torch.float16 or torch.bfloat16."
+            )
         if self.freeze_qwen and self.enable_world_model:
             # freezing qwen backbone makes world model training irrelevant since no grad flows
             self.enable_world_model = False

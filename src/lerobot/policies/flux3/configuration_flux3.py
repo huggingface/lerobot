@@ -25,6 +25,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+import torch
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
@@ -129,6 +131,14 @@ class Flux3Config(PreTrainedConfig):
     gripper_flip_dims: list[int] = field(default_factory=list)
     use_relative_actions: bool = False
     relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # "subtract" (action - state) or "pose" (SE(3) composition on named end-effector pose dims).
+    relative_action_mode: str = "subtract"
+    relative_pose_position_names: list[str] = field(default_factory=lambda: ["x", "y", "z"])
+    # None = ["ax", "ay", "az"] for axis_angle, ["r6d_0", ..., "r6d_5"] for rot6d.
+    relative_pose_rotation_names: list[str] | None = None
+    relative_pose_rotation_format: str = "axis_angle"
+    # Feature holding the reference pose (not fed to the model). None = the chunk's first action.
+    relative_reference_key: str | None = None
     action_feature_names: list[str] | None = None
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -144,7 +154,7 @@ class Flux3Config(PreTrainedConfig):
     text_encoder_id: str = DEFAULT_TEXT_ENCODER_ID
     dit_config: dict[str, Any] | None = None
     attn_mode: str = "torch"
-    dtype: str = "bfloat16"  # Options: "bfloat16", "float32"
+    dtype: torch.dtype | None = torch.bfloat16
     compile_model: bool = False
 
     # --- sampling ---
@@ -177,6 +187,8 @@ class Flux3Config(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.dtype not in {torch.float32, torch.bfloat16}:
+            raise ValueError(f"Unsupported dtype={self.dtype!r}. Expected torch.float32 or torch.bfloat16.")
         if not self.text_encoder_id or not self.text_encoder_id.strip():
             raise ValueError("text_encoder_id must be a non-empty Hub ID or local path")
         if len(self.canvas_hw) != 2:
