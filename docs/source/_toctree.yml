@@ -153,10 +153,10 @@
     title: Action Representations
   title: "Robot Processors"
 - sections:
-  - local: so101
-    title: SO-101
   - local: so_arm102
     title: SO-ARM 102
+  - local: so101
+    title: SO-101
   - local: so100
     title: SO-100
   - local: koch

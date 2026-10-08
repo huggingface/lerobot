@@ -1,6 +1,6 @@
 # SO-ARM 102
 
-SO-ARM 102 is an open-source leader–follower arm kit by [Robonine](https://robonine.com), with five arm joints and a parallel gripper. Its hardware repository includes editable STEP files, printable STL/3MF files, a bill of materials, and assembly instructions.
+SO-ARM 102 is an open-source leader-follower arm kit by [Robonine](https://robonine.com). Each arm has five arm joints and a sixth servo for the follower's parallel gripper or the leader's trigger. This guide covers sourcing, printing, motor placement, assembly, and the requirements for using the kit with LeRobot.
 
 <img
   src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/photos/so-arm-102-live.jpg"
@@ -8,69 +8,226 @@ SO-ARM 102 is an open-source leader–follower arm kit by [Robonine](https://rob
   width="640"
 />
 
-_Photo: Robonine, [CC BY 4.0](https://github.com/roboninecom/SO-ARM-102/blob/a62866a6d65efa4be7fd421e318ce8e649ac806a/DOCS-LICENSE.txt). [Hardware preview video](https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/video/so-arm-102-preview.mp4)._
+<div class="video-container">
+  <video
+    controls
+    width="640"
+    preload="none"
+    poster="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/photos/so-arm-102-live.jpg"
+  >
+    <source
+      src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/video/so-arm-102-preview.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+Assembly instructions and media adapted from Robonine's [hardware documentation](https://github.com/roboninecom/SO-ARM-102/blob/a62866a6d65efa4be7fd421e318ce8e649ac806a/docs/assembly-guide.md), [CC BY 4.0](https://github.com/roboninecom/SO-ARM-102/blob/a62866a6d65efa4be7fd421e318ce8e649ac806a/DOCS-LICENSE.txt). Fabrication designs are licensed under [CERN-OHL-P-2.0](https://github.com/roboninecom/SO-ARM-102/blob/a62866a6d65efa4be7fd421e318ce8e649ac806a/HARDWARE-LICENSE.txt).
 
 <Tip warning={true}>
-  This page describes the hardware. A dedicated SO-ARM 102 robot type is not
-  registered in LeRobot, and an end-to-end hardware validation report is not
-  available yet. The SO-101 joint layout alone does not establish compatibility
-  with the different follower motors. Follow the integration status below before
-  using the SO-101 setup, calibration, or motion commands on this kit.
+  SO-ARM 102 does not yet have a dedicated driver in upstream LeRobot. Its
+  follower uses mixed servo models, so the SO-101 commands are not a verified
+  substitute. See the compatibility findings below before motor setup or motion.
+  The assembly instructions can be followed independently of that integration.
 </Tip>
 
-## Source and assemble the parts
+## Source the parts
 
-The [hardware repository](https://github.com/roboninecom/SO-ARM-102) provides:
+Use the [bill of materials](https://github.com/roboninecom/SO-ARM-102/blob/a62866a6d65efa4be7fd421e318ce8e649ac806a/docs/bom.md) for exact part variants and fasteners. Quantities below cover one follower and one leader:
 
-- [Bill of materials and component links](https://github.com/roboninecom/SO-ARM-102/blob/main/docs/bom.md).
-- [Printing instructions](https://github.com/roboninecom/SO-ARM-102/blob/main/docs/printing.md) and [CAD and print files](https://github.com/roboninecom/SO-ARM-102/tree/main/models).
-- [Assembly guide](https://github.com/roboninecom/SO-ARM-102/blob/main/docs/assembly-guide.md), including wiring and servo placement.
+| Component                               | Quantity | Use                                                |
+| --------------------------------------- | -------- | -------------------------------------------------- |
+| Feetech STS3215                         | 8        | Six leader joints; follower wrist roll and gripper |
+| Feetech STS3235                         | 2        | Follower base rotation and wrist flex              |
+| Feetech STS3250                         | 2        | Follower shoulder lift and elbow flex              |
+| Waveshare Bus Servo Driver HAT          | 1        | Follower controller                                |
+| Waveshare Bus Servo Adapter             | 1        | Leader controller                                  |
+| 12 V supply / 5 V supply                | 1 each   | Follower / leader respectively                     |
+| USB-C data cable                        | 2        | One per controller                                 |
+| USB camera                              | 1        | Follower wrist camera; check holder dimensions     |
+| 6812 bearing                            | 2        | One base bearing per arm                           |
+| MF106ZZ bearing                         | 2        | Parallel gripper                                   |
+| Guide rod, diameter 6 mm, length 125 mm | 2        | Parallel gripper                                   |
+| Table clamp                             | 4        | Two per base                                       |
 
-The follower uses a PET-CF frame and a parallel gripper. The leader uses a hand-operated handle and trigger. Hardware fabrication designs are licensed under [CERN-OHL-P-2.0](https://github.com/roboninecom/SO-ARM-102/blob/main/HARDWARE-LICENSE.txt).
+Collect the printed parts, servo horns, servo cables, and fasteners listed in the BOM. You need 1.5 mm and 2 mm hex keys. Keep the 5 V leader supply separate from the 12 V follower supply and check each controller's connector and polarity.
 
-## Motor configuration
+## Print the parts
 
-The kit retains the SO-101 joint order, but the follower uses three servo models:
+Download the [STL files](https://github.com/roboninecom/SO-ARM-102/tree/a62866a6d65efa4be7fd421e318ce8e649ac806a/models/stl), or use the [3MF projects](https://github.com/roboninecom/SO-ARM-102/tree/a62866a6d65efa4be7fd421e318ce8e649ac806a/models/3mf) with saved orientations and supports. Editable STEP sources are in the [models repository](https://github.com/roboninecom/SO-ARM-102/tree/a62866a6d65efa4be7fd421e318ce8e649ac806a/models/step).
 
-| Servo ID | Joint                        | Follower | Leader  |
-| -------- | ---------------------------- | -------- | ------- |
-| 1        | Shoulder pan / base rotation | STS3235  | STS3215 |
-| 2        | Shoulder lift                | STS3250  | STS3215 |
-| 3        | Elbow flex                   | STS3250  | STS3215 |
-| 4        | Wrist flex                   | STS3235  | STS3215 |
-| 5        | Wrist roll                   | STS3215  | STS3215 |
-| 6        | Gripper / trigger            | STS3215  | STS3215 |
+1. Print the quantities in the [printing guide](https://github.com/roboninecom/SO-ARM-102/blob/a62866a6d65efa4be7fd421e318ce8e649ac806a/docs/printing.md). The common-part quantities already cover **both arms**; follower and leader folders contain their separate end effectors and board cases.
+2. Use PET-CF for the follower links, base, and servo holders. PETG or PET-CF is specified for gripper clamps, covers, and the leader handle and trigger. The prototype used Fiberon PET-CF17.
+3. Open 3MF files as projects in Bambu Studio, select your printer and filament, and inspect supports before slicing. The saved layouts use a 256 x 256 mm bed; individual parts fit a 180 x 180 mm bed, but smaller printers need rearranged plates.
+4. Print each of the three projects once, plus **one extra cable snap**: the projects contain two, while the part list calls for three.
+5. Remove supports and check bearing seats, screw access, and rod fit before assembly. The guide specifies 100% infill for the gripper gear and racks. Check its separate test-arm settings rather than assuming that every saved 3MF profile matches them.
 
-<Tip warning={true}>
-  The leader uses a 5 V supply and the follower uses a 12 V supply. Keep the
-  supplies separate and follow the hardware assembly guide when wiring the arms.
-</Tip>
+<img
+  src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/printed-parts.jpg"
+  alt="Printed parts for a complete SO-ARM 102 leader and follower kit"
+  width="640"
+/>
 
-## LeRobot integration status
+## Install LeRobot
 
-The existing SO-101 follower configuration declares all six motors as `sts3215`. SO-ARM 102's mixed follower configuration therefore needs verification before that implementation can be reused. In particular, the current Feetech model table includes `sts3250` but does not include `sts3235`.
-
-The integration discussion is tracked in [LeRobot issue #4868](https://github.com/huggingface/lerobot/issues/4868). Before publishing SO-ARM 102 motion commands, the integration should establish:
-
-- Motor identification and control-table support for STS3235, and the correct per-joint model mapping.
-- Calibration of both arms, including joint limits and the parallel gripper's travel and direction.
-- Reproducible teleoperation and dataset recording on an identified LeRobot revision.
-- Policy deployment results with the robot's actual observation and action configuration.
-
-Use [Bring Your Own Hardware](./integrate_hardware) for the integration interfaces. Community-maintained robot and teleoperator packages are documented in [Third-Party Robots & Teleoperators](./third_party_robots).
-
-## Prepare the software environment
-
-Follow the [Installation Guide](./installation) and install the Feetech extra from the LeRobot checkout:
+Follow the [Installation Guide](./installation), then install Feetech support from the LeRobot checkout:
 
 ```bash
 pip install -e ".[feetech]"
 ```
 
-With the USB servo adapters connected, identify their serial ports:
+Connect the USB adapters and identify each port separately:
 
 ```bash
 lerobot-find-port
 ```
 
-These preparation steps do not register a SO-ARM 102 driver. Motor setup, calibration, teleoperation, recording, and policy deployment commands depend on the validated integration described above.
+Label the ports as leader and follower. Reconnect the adapter requested by the tool to identify it; port names depend on the operating system. Installing this extra and finding ports do not add a SO-ARM 102 driver.
+
+## Configure the motors
+
+Set IDs **before installing the servos in the arms**. Each arm has its own bus, with IDs 1-6; the two arms must use separate adapters. Record the servo model and ID for each joint:
+
+| ID  | LeRobot joint name             | Follower servo | Leader servo |
+| --- | ------------------------------ | -------------- | ------------ |
+| 1   | `shoulder_pan` / base rotation | STS3235        | STS3215      |
+| 2   | `shoulder_lift`                | STS3250        | STS3215      |
+| 3   | `elbow_flex`                   | STS3250        | STS3215      |
+| 4   | `wrist_flex`                   | STS3235        | STS3215      |
+| 5   | `wrist_roll`                   | STS3215        | STS3215      |
+| 6   | `gripper` / leader trigger     | STS3215        | STS3215      |
+
+Robonine links its ID-setting and calibration tools at [lab.robonine.com](https://lab.robonine.com). Follow the tool's hardware instructions, connect only the servo being assigned an ID, and confirm the ID before connecting the next servo. Record the configured bus baud rate for the future driver; do not assume factory IDs are unique.
+
+<img
+  src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/servo-ids.jpg"
+  alt="SO-ARM 102 motor placement and IDs"
+  width="640"
+/>
+
+<Tip warning={true}>
+  The upstream SO-101 setup declares every servo as STS3215. Do not use its
+  follower setup command for the mixed-model SO-ARM 102 follower. Adding STS3250
+  to the library's model table alone does not change the SO-101 robot's motor
+  mapping, and STS3235 is not currently listed.
+</Tip>
+
+## Step-by-step assembly
+
+The [illustrated assembly guide](https://github.com/roboninecom/SO-ARM-102/blob/a62866a6d65efa4be7fd421e318ce8e649ac806a/docs/assembly-guide.md) and [A5 assembly booklet, v0.6](https://github.com/roboninecom/SO-ARM-102/blob/a62866a6d65efa4be7fd421e318ce8e649ac806a/docs/SO-ARM102_assembly_A5_v0.6.pdf) provide full-size diagrams. Read two steps ahead before tightening: some M2 screws become difficult to reach after adjacent parts are installed.
+
+### 1. Mount the servo horns
+
+Fit one horn to servo ID 1 using an M3 x 6 screw. Fit horns on both sides of IDs 2, 3, and 4; use the horn screws supplied with the servos. If using optional leader O-rings, fit them between the servo and horn now, keeping them clear of the servo shell so they do not jam.
+
+### 2. Build both arm bodies
+
+Repeat the following sequence once for the follower and once for the leader. Use the appropriate servo model from the ID table. The part numbers match the STL and STEP filenames.
+
+| Step | Parts / operation                                                                 | Fasteners                                                                                                                                                                                                                          | Diagram |
+| ---- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| 1    | SO102.02.060 Bottom servo holder, SO102.02.040 Bottom top plate                   | 3 × M3×16, 3 × M3 nut <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-01.jpg" alt="Shared assembly step 1" width="240" />          |
+| 2    | —                                                                                 | 3 × M3×16, 3 × M3 nut <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-02.jpg" alt="Shared assembly step 2" width="240" />          |
+| 3    | Servo ID 1                                                                        | 4 × M2×6 <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-03.jpg" alt="Shared assembly step 3" width="240" />                       |
+| 4    | SO102.02.020 Base ring, bearing 6812, SO102.02.050 Bottom ring, SO102.02.010 Base | 6 × M3×16, 6 × M3 nut <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-04.jpg" alt="Shared assembly step 4" width="240" />          |
+| 5    | SO102.02.030 Base washer                                                          | 4 × M3×10, 6 × M3×16 <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-05.jpg" alt="Shared assembly step 5" width="240" />           |
+| 6    | Servos ID 2 and ID 3, 2 × SO102.02.070 Bottom arm, 2 short cables, 1 long cable   | 16 × M2×6 <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-06.jpg" alt="Shared assembly step 6" width="240" />                      |
+| 7    | Servo ID 4, SO102.02.080-01 Upper arm right, 1 short cable                        | 4 × M2×6 <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-07.jpg" alt="Shared assembly step 7" width="240" />                       |
+| 8    | SO102.02.080 Upper arm left, 2 × SO102.02.130 Cable snap                          | 4 × M2×6, 8 × M3×10 <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-08.jpg" alt="Shared assembly step 8" width="240" />            |
+| 9    | Servo ID 5, SO102.02.090 Wrist holder, servo horn                                 | 1 × M3×6, 4 × 2×6 self-tapping <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-09.jpg" alt="Shared assembly step 9" width="240" /> |
+| 10   | 1 short cable                                                                     | 8 × M3×10 <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-10.jpg" alt="Shared assembly step 10" width="240" />                     |
+| 11   | —                                                                                 | 8 × M3×10 <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/shared-11.jpg" alt="Shared assembly step 11" width="240" />                     |
+
+Before closing each joint, check that its cable reaches the next servo with slack throughout the intended movement. Pay particular attention to the base-to-shoulder cable. Do not trap cables between the arm halves or tighten fasteners against a cable.
+
+### 3. Build the follower's parallel gripper
+
+| Step | Parts / operation                                                               | Fasteners                                                                                                                                                                                                                          | Diagram |
+| ---- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| 1    | RB9.01.062.040 Gear for gripper on the servo horn, servo ID 6                   | 4 × M3×4 set screw, 1 × M3×6 <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/gripper-01.jpg" alt="Gripper assembly step 1" width="240" /> |
+| 2    | 2 × RB9.01.062.024 Clamp, 2 × RB9.01.062.030 Gear rack, 2 × RB9.01.062.100 Nail | — <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/gripper-02.jpg" alt="Gripper assembly step 2" width="240" />                            |
+| 3    | 2 × rod Ø6 × 125 mm                                                             | — <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/gripper-03.jpg" alt="Gripper assembly step 3" width="240" />                            |
+| 4    | RB9.01.062.011 Main frame, 2 × bearing MF106ZZ                                  | 2 × M4×8 <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/gripper-04.jpg" alt="Gripper assembly step 4" width="240" />                     |
+| 5    | Snap the rods into the main frame                                               | — <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/gripper-05.jpg" alt="Gripper assembly step 5" width="240" />                            |
+| 6    | Push the clamps to their outer stops, insert the servo                          | 3 × 2×6 self-tapping <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/gripper-06.jpg" alt="Gripper assembly step 6" width="240" />         |
+
+Tighten the gear's set screws from the horn side towards the gear, preventing a gap between them. Before inserting servo ID 6, use the hardware tool's positioning procedure to put it at the minimum position specified in the assembly guide. Correct gear alignment is needed for full closure and the documented 85 mm opening; this assembly position does not replace software calibration.
+
+Slide both clamps along the rods by hand before closing the assembly. They should move freely without binding. The clamp bores are nominally 6.1 mm; carbon rod diameters vary, so check the fit rather than forcing the clamps onto the rods.
+
+### 4. Finish the follower
+
+| Step | Parts / operation                                                  | Fasteners                                                                                                                                                                                                                    | Diagram |
+| ---- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| 1    | RB9.01.060.075 Camera holder                                       | 4 × M3×10 <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/follower-01.jpg" alt="Follower assembly step 1" width="240" />            |
+| 2    | Gripper assembly onto the wrist                                    | 4 × 2×6 self-tapping <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/follower-02.jpg" alt="Follower assembly step 2" width="240" /> |
+| 3    | RB9.01.062.090 Camera spacer, USB camera                           | 4 × M2×8, 4 × M2 nut <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/follower-03.jpg" alt="Follower assembly step 3" width="240" /> |
+| 4    | SO102.02.100 Board holder follower, Waveshare Bus Servo Driver HAT | 4 × M2×8, 4 × M2 nut <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/follower-04.jpg" alt="Follower assembly step 4" width="240" /> |
+| 5    | SO102.02.100-01 Board cap follower, long cable                     | — <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/follower-05.jpg" alt="Follower assembly step 5" width="240" />                    |
+
+Route the wrist camera's USB cable so it does not pull on the gripper or limit wrist movement. Check the camera module's mounting holes against the holder and spacer before fastening it.
+
+### 5. Finish the leader
+
+| Step | Parts / operation                                             | Fasteners                                                                                                                                                                                                                          | Diagram |
+| ---- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| 1    | SO102 Handle, SO102 Wrist roll                                | 4 × M3×6, 1 × 2×6 self-tapping <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/leader-01.jpg" alt="Leader assembly step 1" width="240" /> |
+| 2    | SO102 Trigger, servo ID 6                                     | 4 × M3×6, 4 × 2×6 self-tapping <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/leader-02.jpg" alt="Leader assembly step 2" width="240" /> |
+| 3    | SO102.02.110 Board holder leader, Waveshare Bus Servo Adapter | 4 × M2×8, 4 × M2 nut <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/leader-03.jpg" alt="Leader assembly step 3" width="240" />           |
+| 4    | SO102.02.110-01 Board cap leader, long cable                  | — <img src="https://raw.githubusercontent.com/roboninecom/SO-ARM-102/a62866a6d65efa4be7fd421e318ce8e649ac806a/assets/images/assembly/steps/leader-04.jpg" alt="Leader assembly step 4" width="240" />                              |
+
+Check that the handle, wrist roll, and trigger move freely. Optional 8 x 2 mm O-rings add leader friction: the hardware guide specifies two per servo on joints 1-4 and one on joints 5-6.
+
+### 6. Mount and connect the arms
+
+1. Fix each base to the table with two clamps.
+2. Check wiring and cable slack with power disconnected.
+3. Connect the follower HAT to **12 V** and the leader adapter to **5 V**, checking polarity and connector compatibility.
+4. Connect both controllers to the computer with USB-C data cables and identify their ports.
+5. Complete the compatibility and calibration checks below before enabling follower motion.
+
+## LeRobot compatibility check
+
+The following findings are based on upstream revision [`c441ebb`](https://github.com/huggingface/lerobot/tree/c441ebb785b7a1008203b85a241e610bec0a0711), checked on October 8, 2026. They are source-code findings, not results from a connected SO-ARM 102.
+
+| Component            | Finding                                                                                                                                                                                                                                                                                                                                                                              | Consequence                                                                                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SO-101 follower      | Its [motor mapping](https://github.com/huggingface/lerobot/blob/c441ebb785b7a1008203b85a241e610bec0a0711/src/lerobot/robots/so_follower/so_follower.py) declares all six joints as `sts3215`.                                                                                                                                                                                        | The mixed SO-ARM 102 follower needs a different mapping.                                                                                               |
+| STS3215              | The [Feetech tables](https://github.com/huggingface/lerobot/blob/c441ebb785b7a1008203b85a241e610bec0a0711/src/lerobot/motors/feetech/tables.py) include its control table, resolution, protocol, and model number (777).                                                                                                                                                             | Motor-level support exists; SO-ARM 102 calibration still requires hardware validation.                                                                 |
+| STS3250              | The same tables include support with model number 2825.                                                                                                                                                                                                                                                                                                                              | It must be declared as `sts3250`, rather than `sts3215`, at follower joints 2 and 3.                                                                   |
+| STS3235              | No `sts3235` entry exists in those tables.                                                                                                                                                                                                                                                                                                                                           | Its reported model number, register layout, protocol, resolution, and encoding must be established before adding support.                              |
+| Connection handshake | [Motor verification](https://github.com/huggingface/lerobot/blob/c441ebb785b7a1008203b85a241e610bec0a0711/src/lerobot/motors/motors_bus.py) compares reported model numbers with the configured models; the [Feetech handshake](https://github.com/huggingface/lerobot/blob/c441ebb785b7a1008203b85a241e610bec0a0711/src/lerobot/motors/feetech/feetech.py) calls that verification. | An STS3250 reporting 2825 fails a configuration expecting STS3215's 777. Do not bypass identification checks to make the connection appear successful. |
+| Leader               | Its six STS3215 servos match the models in the [SO-101 leader mapping](https://github.com/huggingface/lerobot/blob/c441ebb785b7a1008203b85a241e610bec0a0711/src/lerobot/teleoperators/so_leader/so_leader.py).                                                                                                                                                                       | This is a candidate for reuse, but the handle, trigger range, joint limits, and direction still need physical validation.                              |
+
+There is no dedicated upstream `so_arm102` robot type at this revision. The hardware guide's reference to the SO-101 workflow does not establish compatibility with this upstream version. Integration is tracked in [issue #4868](https://github.com/huggingface/lerobot/issues/4868).
+
+Use [Bring Your Own Hardware](./integrate_hardware) for the robot and teleoperator interfaces. A separately maintained integration can use the [third-party plugin mechanism](./third_party_robots); installing the hardware files alone does not register a CLI type.
+
+## Calibrate and validate the integration
+
+Once a driver identifies all six follower motors with the correct model mapping, validate both arms on the actual hardware. Keep separate robot IDs and calibration files for the leader and follower; do not reuse SO-101 calibration values simply because the joint names match.
+
+### Calibration
+
+1. Confirm all IDs, model numbers, firmware versions, and baud rates before enabling torque. Record the LeRobot revision and any integration patches.
+2. Follow the driver's torque-disabled calibration procedure. Move each arm to its specified reference pose and measure the usable range of every joint without forcing mechanical stops or pulling cables.
+3. Validate wrist-roll limits against the actual cable routing. The SO-101 implementation treats wrist roll as a full-range motor; that assumption needs checking on this assembly.
+4. Measure the leader trigger and follower gripper ranges separately. Confirm that opening the trigger opens the parallel gripper and that both endpoints stay within its mechanical travel.
+5. Save and reload calibration, then compare leader and follower position values at matching poses before teleoperation.
+
+The SO-101 calibration command is intentionally not prescribed here: the follower's model mapping and STS3235 support must be resolved first. Robonine's lab tools are an alternative hardware workflow, not evidence that upstream LeRobot calibration has passed.
+
+### Teleoperation, recording, and policy deployment
+
+After calibration, validate these stages in order using the integration's documented robot and teleoperator types:
+
+| Stage             | Required hardware check                                                                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Teleoperation     | Start with small movements and an empty gripper. Verify all joint directions, limits, leader-to-follower mapping, and stop/disconnect behavior.                         |
+| Camera            | Verify wrist-camera capture, camera name, resolution, frame rate, and cable clearance through the working range.                                                        |
+| Recording         | Record a short episode containing joint states, actions, and camera frames; replay the dataset to confirm feature names, timing, and gripper values.                    |
+| Policy deployment | Use a policy compatible with the recorded features, joint normalization, and camera configuration. Validate its actions on this hardware before evaluating a full task. |
+
+For the general dataset and training workflow, see [Getting started with real-world robots](./il_robots). A shared six-joint layout alone does not guarantee that a policy trained on another arm transfers to SO-ARM 102's geometry and gripper.
+
+An end-to-end SO-ARM 102 hardware validation report is not available for this upstream revision. A reproducible report should include the hardware revision, servo IDs/model numbers/firmware, driver version, calibration results, exact commands, a teleoperation video, and a sample recorded episode. Until these checks pass, this page documents assembly and integration requirements rather than verified native support.
