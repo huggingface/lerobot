@@ -4,6 +4,34 @@ This experimental runtime is shared infrastructure for conversion and annotation
 developed on the FineRobotics integration branch, not yet a replacement for every public
 dataset workflow.
 
+## Slurm CPU and GPU workers
+
+Set `--runtime.backend=slurm`. `--runtime.mode=plan` writes inspectable worker/finalizer
+scripts but submits nothing. Configure the cluster-visible Python environment, source
+paths, working directory and script directory under `runtime.slurm`; the controller
+must run where `sbatch`/`squeue` and those shared paths are available. `runtime.workers`
+controls persistent array groups; `slurm.max_concurrent` caps simultaneous allocations.
+For 1,024 groups, request at least 1,024 work shards; this is job generation, not a
+measured 1,024-CPU benchmark.
+
+Worker CPU, memory and GPU requests come from the module's declared `Resources`.
+GPU modules request GPU allocations just like CPU modules request cores. Stage finalizers
+use CPU-only jobs and run only after the array succeeds. The controller advances the
+pipeline after real finalization, when downstream discovery has valid inputs. Failed
+dependencies are cancelled rather than left waiting forever; see the official
+[sbatch dependency/wait options](https://slurm.schedmd.com/sbatch.html).
+
+Job IDs and accepted artifacts persist. Restarted runs refuse to duplicate a still-active
+array and skip fully accepted stages. Interrupting a controller does not automatically
+cancel its cluster jobs. `SBATCH_*` environment defaults are not forwarded into submissions:
+typed configuration and module resources determine requests. Other environment credentials
+remain deployment-owned; they are not written into work plans.
+
+Language clients on cluster nodes need reachable VLM endpoints and `vlm.auto_serve=false`;
+a controller's localhost server is not reachable as localhost on other nodes. Local model
+modules instead use their scheduler-provided GPU allocation. This implementation is tested
+with mocked scheduler responses and actual local workers, not a live cluster.
+
 ## Conversion
 
 Install the dataset extra, then run `lerobot-convert --config_path=convert.yaml`.

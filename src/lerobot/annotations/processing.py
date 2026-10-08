@@ -510,6 +510,16 @@ class LanguageMaterializer:
 
 def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client_factory=None):
     """Build a language recipe; current flags remain compatible, execution is shared."""
+    root = root.resolve()
+    if (
+        cfg.runtime.backend == "slurm"
+        and cfg.vlm.auto_serve
+        and cfg.runtime.mode != "plan"
+        and not client_factory
+    ):
+        raise ValueError(
+            "Slurm language clients require reachable external endpoints and vlm.auto_serve=false"
+        )
     recover_local_commit(root)
     enabled = [name for name in ("plan", "interjections", "vqa") if getattr(cfg, name).enabled]
     if not enabled:

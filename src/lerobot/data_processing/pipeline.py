@@ -33,7 +33,7 @@ def run_pipeline(source, stages: list[StageConfig], runtime: RuntimeConfig, *, b
     not initialize services. Downstream plans are deferred when upstream results
     do not yet exist; planning never fabricates those results.
     """
-    if runtime.backend != "local":
+    if runtime.backend not in {"local", "slurm"}:
         raise ValueError("This backend requires the processing launcher integration")
     if not runtime.run_uri:
         raise ValueError("A persistent runtime.run_uri is required")
@@ -53,15 +53,24 @@ def run_pipeline(source, stages: list[StageConfig], runtime: RuntimeConfig, *, b
             upstream={name: summary.accepted_path for name, (_, summary) in upstream.items()},
         )
         if runtime.mode == "plan":
+            if runtime.backend == "slurm":
+                from lerobot.jobs.slurm import render_slurm
+
+                render_slurm(store, plan, runtime)
             continue
         if before_execute:
             before_execute(store, plan)
-        summary = run_local(
-            store,
-            plan,
-            workers=runtime.workers,
-            batch_size=runtime.batch_size,
-            max_retries=runtime.max_retries,
-        )
+        if runtime.backend == "slurm":
+            from lerobot.jobs.slurm import run_slurm
+
+            summary = run_slurm(store, plan, runtime)
+        else:
+            summary = run_local(
+                store,
+                plan,
+                workers=runtime.workers,
+                batch_size=runtime.batch_size,
+                max_retries=runtime.max_retries,
+            )
         completed[stage.id] = (plan, summary)
     return store, completed
