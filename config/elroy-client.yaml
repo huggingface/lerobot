@@ -30,6 +30,31 @@ robot:
   polling_timeout_ms: 15
   connect_timeout_s: 5
 
+  # Must match config/rosie-host.yaml exactly - same keys, same sizes. The
+  # client never opens these devices; it only needs the shapes to decode the
+  # JPEG frames the host sends under each key. index_or_path and
+  # serial_number_or_name are ignored here but the config classes require them.
+  cameras:
+    left_wrist:
+      type: opencv
+      index_or_path: /dev/cam_left
+      width: 1280
+      height: 720
+      fps: 30
+    right_wrist:
+      type: opencv
+      index_or_path: /dev/cam_right
+      width: 1280
+      height: 720
+      fps: 30
+    head:
+      type: intelrealsense
+      serial_number_or_name: "836112060112"
+      width: 1280
+      height: 720
+      fps: 30
+      use_depth: false
+
 # The leaders are plugged into elroy. Same physical arms, so the by-id paths
 # are identical to rosie's - the serial travels with the adapter.
 teleop:
