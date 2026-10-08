@@ -80,9 +80,12 @@ class RandomSubsetApply(Transform):
         if not self.random_order:
             selected_indices = selected_indices.sort().values
 
-        self.selected_transforms = [self.transforms[i] for i in selected_indices]
+        # Iterate the local selection: the attribute is only for inspection and may be
+        # overwritten by a concurrent call on another decode thread.
+        selected = [self.transforms[i] for i in selected_indices]
+        self.selected_transforms = selected
 
-        for transform in self.selected_transforms:
+        for transform in selected:
             outputs = transform(*inputs)
             inputs = outputs if needs_unpacking else (outputs,)
 

@@ -54,7 +54,13 @@ from lerobot.utils.constants import (
     OBS_STATE,
 )
 
-from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
+from ..common.flow_matching import (
+    FlowConvention,
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_noise,
+    sample_time_beta,
+)
 from ..common.vla_utils import (
     clone_past_key_values,
     create_sinusoidal_pos_embedding,
@@ -570,7 +576,6 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             max_period=self.config.max_period,
             device=timestep.device,
         )
-        time_emb = time_emb.type(dtype=timestep.dtype)
 
         # Fuse timestep + action information using an MLP
         def action_proj_func(noisy_actions):
@@ -578,6 +583,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
 
+        time_emb = time_emb.to(dtype=action_emb.dtype)
         time_emb = time_emb[:, None, :].expand_as(action_emb)
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
@@ -606,9 +612,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def forward(self, images, img_masks, lang_tokens, lang_masks, state, actions, noise, time) -> Tensor:
         """Do a full training forward pass and compute the loss."""
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
+        x_t, u_t, _ = make_flow_matching_inputs(actions, noise, time, convention=FlowConvention.NOISE_AT_ONE)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks
