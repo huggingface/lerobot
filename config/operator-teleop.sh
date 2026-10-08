@@ -1,37 +1,40 @@
 #!/usr/bin/env bash
-# Run ON ELROY (the Orin), after rosie-host.sh is up on the Pi.
+# Run AT THE OPERATOR STATION (rosie, the Pi), after cart-host.sh is up on
+# the cart.
 #
-#   ./scripts/elroy-teleop.sh
-#   ./scripts/elroy-teleop.sh --display_data=true     # any override passes through
+#   ./config/operator-teleop.sh
+#   ./config/operator-teleop.sh --display            rerun, on a local desktop
+#   ./config/operator-teleop.sh --display=web        foxglove on :8765, any browser
 #
-# Drives the arms only: bi_so_leader supplies 12 of xlerobot's 17 action
-# dimensions, so the head holds position and the base stays stopped. See
-# config/elroy-client.yaml.
+# Leader arms drive the two arms; the gamepad drives the head and base. All
+# 17 action dimensions are covered. See config/operator-client.yaml.
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
-CONFIG="${CONFIG:-$REPO/config/elroy-client.yaml}"
+CONFIG="${CONFIG:-$REPO/config/operator-client.yaml}"
 LEFT_LEADER="${LEFT_LEADER:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90149222-if00}"
 RIGHT_LEADER="${RIGHT_LEADER:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00}"
 
 require_dev "$LEFT_LEADER"  "left leader arm"
 require_dev "$RIGHT_LEADER" "right leader arm"
 
+if ! ls /dev/input/js* >/dev/null 2>&1; then
+  echo "warning: no /dev/input/js* - the gamepad is not attached." >&2
+  echo "         The arms will still work; the head and base will not." >&2
+fi
+
 HOST_IP="$(awk -F'[ #]+' '/remote_ip:/ {print $3; exit}' "$CONFIG")"
 echo "config : $CONFIG"
-echo "host    : $HOST_IP"
+echo "cart   : $HOST_IP"
 if ! ping -c1 -W2 "$HOST_IP" >/dev/null 2>&1; then
-  echo "warning: $HOST_IP does not answer ping - is rosie-host.sh running?" >&2
+  echo "warning: $HOST_IP does not answer ping - is cart-host.sh running?" >&2
 fi
 echo
 
-# Video. On elroy's own desktop, rerun opens one window with a panel per
-# camera - three feeds, not three OS windows; lerobot has no three-window
-# mode. Over SSH use foxglove and view it in a browser instead, since rerun
-# needs a DISPLAY.
-#
-#   ./config/elroy-teleop.sh --display         rerun, local desktop
-#   ./config/elroy-teleop.sh --display=web     foxglove on :8765, any browser
+# Video. On a local desktop, rerun opens one window with a panel per camera -
+# three feeds, not three OS windows; lerobot has no three-window mode. Over
+# SSH use foxglove and view it in a browser instead, since rerun needs a
+# display.
 DISPLAY_ARGS=()
 case "${1:-}" in
   --display)

@@ -6,11 +6,57 @@ Run them with stock lerobot CLIs:
 ```bash
 lerobot-teleoperate --config_path=config/left-arm.yaml
 lerobot-teleoperate --config_path=config/right-arm.yaml
-lerobot-teleoperate --config_path=config/bi-arms.yaml
+lerobot-teleoperate --config_path=config/bi-arms.yaml   # both, one machine
 ```
 
-`rosie.yaml` uses `--robot.type=xlerobot`, which comes from the XLeRobot
+`cart.yaml` uses `--robot.type=xlerobot`, which comes from the XLeRobot
 plugin rather than from this repo — see below.
+
+## Which machine runs what
+
+```
+         CART                                 OPERATOR STATION
+  elroy — Jetson Orin Nano                 rosie — Raspberry Pi 5
+  ───────────────────────               ─────────────────────
+  follower arms, wrist cams,     wifi     leader arms, gamepad,
+  head RealSense, base            <──>    the operator's screen
+  cart-host.sh                            operator-teleop.sh
+```
+
+The GPU goes where the sensors and motors are, because that is where a
+policy has to run: at full camera rate, with no network between seeing and
+acting. Teleoperation is the only part that genuinely has two ends, so it is
+the only part that crosses the wifi — and what crosses is small and
+loss-tolerant (joint targets out, a downscaled view back).
+
+Recording is done **on the cart** with the leaders temporarily plugged in
+there (`cart-record.sh`), not across the link. Two reasons: the ZMQ host
+conflates observations, so recording over it drops frames silently; and the
+dataset should be captured through the same pipeline the policy will see at
+inference, or you get a train/serve skew you cannot observe.
+
+| file | runs on |
+| --- | --- |
+| `cart-host.sh` + `cart-host.yaml` | cart |
+| `cart-record.sh` (uses `bi-arms.yaml`) | cart, leaders plugged in |
+| `cart.yaml` | cart, everything local |
+| `operator-teleop.sh` + `operator-client.yaml` | operator station |
+| `left-arm.yaml`, `right-arm.yaml`, `bi-arms.yaml` | one machine, direct |
+
+Files are named by role, not by hostname: the cart computer has already
+swapped once.
+
+### Prerequisites this arrangement adds
+
+- **The Orin needs wifi on the cart.** Some Orin Nano dev kits ship without
+  an M.2 wifi card. Check before mounting; a USB dongle also works.
+- **The Pi needs a desktop session** to show the live view with rerun. Over
+  SSH, `operator-teleop.sh --display=web` serves Foxglove instead.
+- **The udev rules and calibration move to the Orin.** `/dev/cam_left` and
+  `/dev/cam_right` come from `/etc/udev/rules.d/99-cameras.rules`, keyed on
+  `ENV{ID_PATH}` — the port paths differ on the Orin, so regenerate them
+  there. Copy
+  `~/.cache/huggingface/lerobot/calibration/robots/` across as well.
 
 ## What this fork changes in lerobot
 

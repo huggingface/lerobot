@@ -1,0 +1,36 @@
+# Full xlerobot, all devices LOCAL. Run on the cart (elroy, the Orin) when
+# nothing is being teleoperated from another machine - checking motors,
+# running a policy, driving from a program.
+#
+# For split teleoperation use cart-host.yaml + operator-client.yaml instead.
+#
+# Needs the full motor layout: bus1 = left arm 1-6 + head 7-8,
+# bus2 = right arm 1-6 + base wheels 7-9.
+
+robot:
+  id: xlerobot
+  type: xlerobot
+  port1: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00 # left arm + head
+  port2: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00 # right arm + base
+
+  cameras:
+    left_wrist:
+      type: opencv
+      index_or_path: /dev/cam_left
+      width: 640
+      height: 480
+      fps: 30
+    right_wrist:
+      type: opencv
+      index_or_path: /dev/cam_right
+      width: 640
+      height: 480
+      fps: 30
+    head:
+      type: intelrealsense
+      serial_number_or_name: "836112060112"
+      fps: 30
+      width: 1280
+      height: 720
+      color_mode: BGR
+      use_depth: True

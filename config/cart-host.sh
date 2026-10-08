@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Run ON ROSIE (the Pi). Serves the robot over ZMQ for a remote client.
+# Run ON THE CART (elroy, the Orin). Serves the robot over ZMQ for the
+# operator station.
 #
-#   ./scripts/rosie-host.sh
+#   ./config/cart-host.sh
 #
-# Any extra arguments are passed through to the host, so you can override
-# anything:  ./scripts/rosie-host.sh --host.max_loop_freq_hz=20
+# Any extra arguments pass through, so you can override anything:
+#   ./config/cart-host.sh --host.max_loop_freq_hz=20
 #
 # Requires the full xlerobot motor layout, not just the arms:
 #   bus1  left arm 1-6  + head 7-8
@@ -16,8 +17,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 # The robot config lives in a YAML because the host's individual flags cannot
 # express cameras. Set HOST_CONFIG= to override, or NO_CAMERAS=1 to fall back
 # to the bare flags (joint state only - useful to isolate a camera problem).
-HOST_CONFIG="${HOST_CONFIG:-$REPO/config/rosie-host.yaml}"
-ROBOT_ID="${ROBOT_ID:-rosie}"
+HOST_CONFIG="${HOST_CONFIG:-$REPO/config/cart-host.yaml}"
+ROBOT_ID="${ROBOT_ID:-xlerobot}"
 PORT1="${PORT1:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00}"  # left bus
 PORT2="${PORT2:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00}"  # right bus
 ZMQ_CMD="${ZMQ_CMD:-5555}"

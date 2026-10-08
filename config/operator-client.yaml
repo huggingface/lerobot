@@ -1,0 +1,94 @@
+# Split teleoperation, OPERATOR SIDE: leader arms and gamepad here, robot on
+# the cart.
+#
+#   cart     ./config/cart-host.sh
+#   operator ./config/operator-teleop.sh
+#
+# WHICH MACHINE: rosie, the Raspberry Pi, sitting on the desk with both
+# leader arms and the 8BitDo gamepad plugged into it. It needs no GPU - it
+# reads two serial buses and a HID device and draws pictures.
+#
+# WHY THIS WAY ROUND. The cart carries the Orin because autonomy runs there:
+# a policy needs the cameras and the motors on the same machine as the GPU,
+# at full rate, with no network in the loop. Teleoperation is the one thing
+# that genuinely has two ends, so it is the one thing that crosses the wifi
+# - and what crosses is small and loss-tolerant: joint targets out, a
+# downscaled view back.
+
+robot:
+  type: xlerobot_client
+  id: xlerobot
+  remote_ip: 192.168.1.56      # elroy on the cart. Use elroy.local if DHCP moves it.
+  port_zmq_cmd: 5555
+  port_zmq_observations: 5556
+  polling_timeout_ms: 15
+  connect_timeout_s: 5
+
+  # Must match config/cart-host.yaml exactly - same keys, same sizes. The
+  # client never opens these devices; it only needs the shapes to decode the
+  # JPEG frames the host sends under each key. index_or_path and
+  # serial_number_or_name are ignored here but the config classes require
+  # them.
+  cameras:
+    left_wrist:
+      type: opencv
+      index_or_path: /dev/cam_left
+      width: 640
+      height: 480
+      fps: 30
+    right_wrist:
+      type: opencv
+      index_or_path: /dev/cam_right
+      width: 640
+      height: 480
+      fps: 30
+    head:
+      type: intelrealsense
+      serial_number_or_name: "836112060112"
+      width: 640
+      height: 480
+      fps: 30
+      use_depth: false
+
+# Leader arms for the two arms, gamepad for the head and base.
+#
+# NOT bi_so_leader. That emits left_shoulder_pan.pos while XLerobot filters
+# incoming actions with startswith("left_arm_"), so every arm key is silently
+# dropped - the robot connects, the loop runs, and nothing moves. It also
+# covers only 12 of xlerobot's 17 action values, leaving the head and base
+# with no input at all. The composite teleoperator in the XLeRobot repo fixes
+# the prefixes and adds the gamepad.
+#
+# The by-id paths are the leaders' own adapters, so they are the same strings
+# whichever machine they are plugged into.
+teleop:
+  type: xlerobot_leader_gamepad
+  id: xlerobot_leaders
+  left_arm_config:
+    port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90149222-if00
+  right_arm_config:
+    port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00
+
+  # UNVERIFIED - these are the common XInput numbers, not measured on the
+  # SF30 Pro. Run the probe once, in the input mode you intend to keep
+  # (the mode changes the numbering), and correct them here:
+  #
+  #   uv run --project ../XLeRobot python -m \
+  #     lerobot_teleoperator_xlerobot_leader_gamepad.probe_gamepad
+  #
+  joystick_index: 0
+  deadzone: 0.15
+  axis_base_forward: 1
+  axis_base_strafe: 0
+  axis_base_turn: 2
+  axis_head_pan: 2
+  axis_head_tilt: 3
+  button_head_modifier: 4
+  button_speed_up: 5
+  button_speed_down: 7
+
+  # The 2-wheel base is differential drive: it cannot strafe, so y.vel is
+  # dropped. Set true if you go back to the 3-omniwheel base.
+  emit_y_vel: false
+
+display_data: false
