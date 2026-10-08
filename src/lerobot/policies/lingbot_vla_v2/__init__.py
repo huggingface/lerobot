@@ -15,13 +15,13 @@
 # Importing the processor module here is what registers the LingBot
 # `ProcessorStep`s in the registry on `import lerobot.policies` — the same path
 # every other policy takes (the outer `policies/__init__.py` stays config-only,
-# which keeps `import lerobot` free of the heavy optional deps: transformers,
-# qwen-vl-utils etc. arrive via `pip install 'lerobot[lingbot_vla2]'`).
+# which keeps `import lerobot` free of the heavy optional deps: transformers
+# arrives via `pip install 'lerobot[lingbot_vla_v2]'`).
 #
 # NOTE: the modeling module is deliberately NOT imported here. It pulls in
 # `transformers` at module top level (the vendored Qwen2/Qwen3-VL cores derive
 # from `PreTrainedModel`), so importing it eagerly would break
-# `import lerobot.policies` in environments without `lerobot[lingbot_vla2]`
+# `import lerobot.policies` in environments without `lerobot[lingbot_vla_v2]`
 # (e.g. the doc-builder light-install). `LingbotVLAV2Policy` is imported lazily
 # by every consumer (factory `get_policy_class`, scripts, tests) directly from
 # `.modeling_lingbot_vla_v2`.

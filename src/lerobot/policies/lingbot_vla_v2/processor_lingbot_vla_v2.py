@@ -220,7 +220,7 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
         if not _transformers_available:
             raise ImportError(
                 "transformers is required for LingbotVLAV2ImageProcessorStep. "
-                "Install it with `pip install 'lerobot[lingbot_vla2]'`."
+                "Install it with `pip install 'lerobot[lingbot_vla_v2]'`."
             )
         self._image_processor = AutoImageProcessor.from_pretrained(
             self.tokenizer_path,
@@ -300,7 +300,7 @@ class LingbotVLAV2ChatTemplateProcessorStep(ProcessorStep):
         if not _transformers_available:
             raise ImportError(
                 "transformers is required for LingbotVLAV2ChatTemplateProcessorStep. "
-                "Install it with `pip install 'lerobot[lingbot_vla2]'`."
+                "Install it with `pip install 'lerobot[lingbot_vla_v2]'`."
             )
         if self.tokenizer_name is None:
             raise ValueError("LingbotVLAV2ChatTemplateProcessorStep requires a tokenizer_name.")
