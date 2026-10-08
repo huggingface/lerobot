@@ -60,6 +60,10 @@ class LeRobotSource:
                 str(episode["episode_index"]),
                 episode,
                 episode["dataset_to_index"] - episode["dataset_from_index"],
+                physical_seconds=(episode["dataset_to_index"] - episode["dataset_from_index"]) / self.fps,
+                camera_seconds=(episode["dataset_to_index"] - episode["dataset_from_index"])
+                / self.fps
+                * len(self.camera_keys),
             )
 
     def frames(self, payload):

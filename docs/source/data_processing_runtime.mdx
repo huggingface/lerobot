@@ -132,8 +132,8 @@ writing a digest into `DatasetRef`.
 `patch_table` replaces declared columns at explicit frame identities. It preserves other
 rows, columns and source metadata, rejects duplicate/unknown identities, and does not
 interpret missing patches as deletion. `materialize_patch` writes a separate file, never
-overwriting an input dataset or immutable Hub cache. Family-aware language merging and
-complete dataset publication are subsequent integration steps.
+overwriting an input dataset or immutable Hub cache. The annotation recipe adds the
+family-aware language merge; publication remains a separate explicit action.
 
 ## FineRobotics implementation sequence
 
@@ -226,3 +226,104 @@ a separate integration task; it is not silently split into partially public
 uploads. Retained bucket releases remain usable without Hub publication.
 Mocked API tests do not establish real HF Jobs or publication acceptance. See the
 [official Jobs guide](https://huggingface.co/docs/huggingface_hub/guides/jobs).
+
+## Model extensions, pairs and measurements
+
+`VideoEmbeddings` is a working optional model extension, not a hand/value model.
+Supply a trusted SHA-256-pinned PyTorch exported `.pt2` encoder accepting dynamic
+`[N, 3, H, W]` RGB float32 images in `[0, 1]` and returning finite `[N, embedding_dim]`
+features. Its example transform resizes to a square; use the model owner's transform
+for a production encoder. Setup loads once per persistent worker; requests are bounded
+by `max_batch_frames` and outputs are typed Parquet.
+Set `trusted_checkpoint=true` only for a model you trust: exported objects may execute
+code when loaded. A checksum identifies a file; it does not establish trust.
+
+```python
+plan = seal_plan(
+    store, DatasetRef("./source", input_manifest_sha256),
+    "lerobot.data_processing.modules.video_embeddings:VideoEmbeddings",
+    {"checkpoint_uri": "./encoder.pt2", "checkpoint_sha256": model_sha256,
+     "embedding_dim": 768, "trusted_checkpoint": True, "device": "cuda", "max_batch_frames": 128},
+    [InputItem("episode-0/front", {
+        "video_path": "./source/front.mp4", "video_sha256": video_sha256,
+        "episode_index": 0, "camera": "front", "frame_indices": [0, 30, 60],
+        "video_from_frame": 0,
+    }, physical_seconds=3, camera_seconds=3)],
+)
+summary = run_local(store, plan, workers=1, batch_size=1)
+```
+
+Frame indices are episode-relative; `video_from_frame` handles packed-video offsets.
+This baseline decodes sequentially through the last selected frame and hashes input
+video per item. Sparse access to long packed videos needs further benchmarking and
+decoder optimization. CPU execution is tested with real videos; CUDA execution still
+needs acceptance on actual hardware. Local CUDA workers use separate spawned processes
+and preserve scheduler-assigned `CUDA_VISIBLE_DEVICES` IDs. Admission rejects requests
+exceeding visible GPUs or available CPU cores. Memory remains a declared request, not
+a measured guarantee; budget workers × encoder threads, decoding and scratch separately.
+
+For language annotation, owned servers default to vLLM. Set `vlm.model_revision` to a
+commit SHA and pin `serve_command` through `{revision}` when overriding it. A single
+server can use `num_gpus` for tensor parallelism; independent replicas use one assigned
+GPU each. Existing external servers are not restarted: operators must verify their
+actual model revision. `client_concurrency` limits requests **per worker/client**, not
+across an entire cluster. See the [vLLM serve options](https://docs.vllm.ai/en/latest/cli/serve/).
+
+### Reference-only ICL pair reduction
+
+`PairLinks` consumes a SHA-pinned inventory with the `INVENTORY` Arrow schema in
+`modules/pair_links.py`. Each episode specifies a pinned dataset revision, camera list,
+frame count, fixed split, actions flag and real/ego/UMI/sim kind. Optional
+`origin_group` keeps known generated relatives together; it is not a near-duplicate
+detector. Pair inputs have this shape:
+
+```python
+InputItem("ego-to-robot-0", {
+    "pair_type": "ego_to_robot",
+    "source": {"dataset_uri": "hf://datasets/owner/ego", "revision": ego_sha,
+               "episode_id": "12", "camera": "ego", "start": 0, "end": 300},
+    "target": {"dataset_uri": "hf://datasets/owner/robot", "revision": robot_sha,
+               "episode_id": "8", "camera": "front", "start": 30, "end": 330},
+    "alignment_validated": True,
+    "alignment_evidence": "reviewed procedure/order/outcome match",
+})
+```
+
+Ranges are `[start, end)` frame indices. Unresolved references, invalid ranges,
+cross-split pairs, targets without robot actions and unvalidated simulated targets
+are rejected with reasons. Outputs contain references, not duplicated videos or
+invented actions. Direct action loss is off unless alignment and evidence are
+explicitly supplied; `weak_semantic` pairs always keep it off. The reducer verifies
+metadata, not physical alignment. Retrieval, Zero-WAM/ego-to-robot generation and
+simulation validation are separate domain modules. This baseline holds its inventory
+in RAM; large-scale retrieval/indexing is a subsequent optimization.
+
+### Honest throughput and cache accounting
+
+Worker telemetry is Parquet under `metrics/<plan_id>/workers/`; stage summaries are
+JSON control records. Reports include physical/camera input hours (declared by sources),
+wall time, setup/read/decode/inference/write/validation/checkpoint/teardown timers,
+retries and bytes written. Timers overlap and concurrent request durations accumulate;
+do not sum them as a wall-time decomposition. CPU/GPU hours estimate declared worker
+resources × worker wall time, excluding controllers, external services, queues and
+billing. Unknown duration or cached/partly reused runs report no realtime multiplier.
+
+```bash
+uv run benchmarks/benchmark_processing.py --config source.json --workers 1 2
+uv run benchmarks/benchmark_processing.py --plan-matrix --encoder-threads 8
+```
+
+The maintained local benchmark times the entire conversion call, including acquisition,
+planning, setup, decoding/encoding, validation, retries, upload and assembly. Repeat in
+reverse order and verify output parity. The CPU 1/16/128/1024 and GPU 1/4/16/32 matrix
+is **unmeasured resource arithmetic**. Peak memory, scratch, actual GPU utilization,
+cluster acceptance and the 500–1,000× target remain to be measured.
+
+Logical IDs use upstream content hashes, not temporary attempt paths. Sources can
+separate immutable content identity from execution bindings using `identity_payload`;
+modules can define `scientific_config()` excluding genuinely execution-only knobs.
+Changing model/prompt/owned-family configuration invalidates the affected stage;
+unrelated disabled-family options do not. Cache reuse is within a sealed plan, not a
+global per-item cache across changed corpus revisions or shard packing. Dataset revision
+and upstream digest invalidation is deliberately coarse. Accepted GPU/VLM outputs are
+reused; fresh inference is not promised bitwise deterministic.

@@ -44,3 +44,69 @@ def test_commit_recovery_and_expected_inputs(tmp_path, monkeypatch):
     assert not (root / ".processing_commit.json").exists()
     with pytest.raises(RuntimeError, match="after planning"):
         commit_local_files(root, sources, tmp_path / "prepared", expected={"a": None})
+
+
+def test_fresh_dependency_ids_do_not_depend_on_attempt_paths(tmp_path):
+    from lerobot.data_processing.configs import RuntimeConfig
+    from lerobot.data_processing.pipeline import run_pipeline
+    from lerobot.data_processing.types import DatasetRef, InputItem
+
+    class Source:
+        dataset_ref = DatasetRef("fixture/source", "a" * 40)
+
+        def discover(self, stage, store, upstream):
+            for index in range(6):
+                yield InputItem(str(index), {"value": index})
+
+    stages = [
+        StageConfig("a", "tests.data_processing._modules:Echo"),
+        StageConfig("b", "tests.data_processing._modules:Echo", depends_on=("a",)),
+    ]
+    identifiers = []
+    for workers in (1, 2):
+        store, completed = run_pipeline(
+            Source(),
+            stages,
+            RuntimeConfig(
+                run_uri=str(tmp_path / f"run-{workers}"),
+                workers=workers,
+                shard_size=workers,
+                batch_size=workers,
+            ),
+        )
+        identifiers.append(
+            {
+                name: [item.item_id for shard in range(plan.shards) for item in plan.read_shard(store, shard)]
+                for name, (plan, _) in completed.items()
+            }
+        )
+    assert identifiers[0]["a"] == identifiers[1]["a"]
+    assert identifiers[0]["b"] == identifiers[1]["b"]
+
+
+def test_unavailable_telemetry_does_not_block_processing(tmp_path, monkeypatch):
+    from lerobot.data_processing.artifacts import ArtifactStore
+    from lerobot.data_processing.configs import RuntimeConfig
+    from lerobot.data_processing.pipeline import run_pipeline
+    from lerobot.data_processing.types import DatasetRef, InputItem
+
+    class Source:
+        dataset_ref = DatasetRef("fixture/source", "a" * 40)
+
+        def discover(self, stage, store, upstream):
+            yield InputItem("0", {"value": 0})
+
+    original = ArtifactStore.list
+
+    def listing(self, pattern):
+        if pattern.startswith("metrics/"):
+            raise OSError("injected telemetry outage")
+        return original(self, pattern)
+
+    monkeypatch.setattr(ArtifactStore, "list", listing)
+    _, completed = run_pipeline(
+        Source(),
+        [StageConfig("echo", "tests.data_processing._modules:Echo")],
+        RuntimeConfig(run_uri=str(tmp_path / "run")),
+    )
+    assert completed["echo"][1].completed == 1

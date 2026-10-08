@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import multiprocessing
+import os
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,7 +21,7 @@ from filelock import FileLock, Timeout
 from lerobot.utils.import_utils import _pyarrow_available, require_package
 
 from .artifacts import ArtifactStore, file_checksum
-from .planner import StagePlan
+from .planner import StagePlan, load_module
 from .types import Outcome, canonical_json
 from .worker import accepted_in_shard, run_worker_group
 
@@ -36,6 +38,7 @@ class StageSummary:
     masked: int
     rejected: int
     accepted_path: str
+    content_digest: str
 
 
 def finalize_stage(store: ArtifactStore, plan: StagePlan) -> StageSummary:
@@ -50,6 +53,7 @@ def finalize_stage(store: ArtifactStore, plan: StagePlan) -> StageSummary:
         ]
     )
     counts = dict.fromkeys(Outcome, 0)
+    semantic_digest = hashlib.sha256()
     with tempfile.TemporaryDirectory(prefix="lerobot-finalize-") as directory:
         path = Path(directory) / "accepted.parquet"
         with pq.ParquetWriter(path, schema) as writer:
@@ -64,6 +68,22 @@ def finalize_stage(store: ArtifactStore, plan: StagePlan) -> StageSummary:
                 for item in items:
                     result = accepted[item.item_id]
                     counts[result.outcome] += 1
+                    semantic_digest.update(
+                        canonical_json(
+                            {
+                                "item_id": item.item_id,
+                                "outcome": result.outcome.value,
+                                "reason": result.reason,
+                                "artifacts": [
+                                    {key: value for key, value in artifact.items() if key != "path"}
+                                    for artifact in sorted(
+                                        result.to_dict()["artifacts"], key=lambda value: value["name"]
+                                    )
+                                ],
+                            }
+                        )
+                        + b"\n"
+                    )
                     rows.append(
                         {
                             "item_id": item.item_id,
@@ -87,6 +107,7 @@ def finalize_stage(store: ArtifactStore, plan: StagePlan) -> StageSummary:
         counts[Outcome.MASKED],
         counts[Outcome.REJECTED],
         accepted_path,
+        semantic_digest.hexdigest(),
     )
 
 
@@ -118,7 +139,37 @@ def _run_local_owned(store, plan, workers, batch_size, max_retries):
     if workers > 1 and store.uri.startswith("memory://"):
         raise ValueError("Spawn workers require persistent shared storage, not memory://")
     groups = [list(range(index, plan.shards, workers)) for index in range(workers)]
-    if workers == 1:
+    resources = load_module(plan.factory, plan.config).spec.resources
+    capacity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
+    if workers * resources.cpus > capacity:
+        raise ValueError(f"Requested {workers * resources.cpus} CPU cores, but this process has {capacity}")
+    if resources.gpus:
+        devices = gpu_assignments(workers, resources.gpus)
+        # One pool per GPU group guarantees a fresh process will never switch
+        # CUDA visibility after it has initialized the CUDA runtime.
+        with ExitStack() as stack:
+            pools = [
+                stack.enter_context(
+                    ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+                )
+                for _ in groups
+            ]
+            futures = [
+                pool.submit(
+                    run_worker_group,
+                    store.uri,
+                    plan.plan_id,
+                    group,
+                    batch_size,
+                    max_retries,
+                    store.storage_options,
+                    devices[index],
+                )
+                for index, (pool, group) in enumerate(zip(pools, groups, strict=True))
+            ]
+            for future in futures:
+                future.result()
+    elif workers == 1:
         run_worker_group(store.uri, plan.plan_id, groups[0], batch_size, max_retries, store.storage_options)
     else:
         with ProcessPoolExecutor(
@@ -139,3 +190,20 @@ def _run_local_owned(store, plan, workers, batch_size, max_retries):
             for future in futures:
                 future.result()
     return finalize_stage(store, plan)
+
+
+def gpu_assignments(workers, gpus_per_worker):
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        import torch
+
+        devices = [str(index) for index in range(torch.cuda.device_count())]
+    else:
+        devices = [entry.strip() for entry in visible.split(",") if entry.strip() and entry.strip() != "-1"]
+    if len(set(devices)) != len(devices):
+        raise ValueError("Visible GPU IDs must be unique; duplicate IDs would oversubscribe one GPU")
+    if workers * gpus_per_worker > len(devices):
+        raise ValueError("Local GPU workers exceed visible GPUs; reduce workers or use Slurm/HF Jobs")
+    return [
+        tuple(devices[index * gpus_per_worker : (index + 1) * gpus_per_worker]) for index in range(workers)
+    ]

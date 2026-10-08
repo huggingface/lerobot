@@ -89,11 +89,19 @@ class InputItem:
     key: str
     payload: dict[str, Any]
     cost: float = 1
+    identity_payload: dict[str, Any] | None = None
+    physical_seconds: float | None = None
+    camera_seconds: float | None = None
 
     def __post_init__(self):
         if not self.key or not math.isfinite(self.cost) or self.cost < 0:
             raise ValueError("Input items need a nonempty key and finite nonnegative cost")
         canonical_json(self.payload)
+        if self.identity_payload is not None:
+            canonical_json(self.identity_payload)
+        for seconds in (self.physical_seconds, self.camera_seconds):
+            if seconds is not None and (not math.isfinite(seconds) or seconds < 0):
+                raise ValueError("Input duration must be finite and nonnegative")
 
 
 @dataclass(frozen=True)
@@ -103,6 +111,22 @@ class WorkItem:
     payload: dict[str, Any]
     cost: float
     seed: int
+    physical_seconds: float | None = None
+    camera_seconds: float | None = None
+
+
+def artifact_identities(value):
+    """Explicit source helper: use artifact content, not attempt/storage bindings.
+
+    Apply only to a source's known artifact references, never arbitrary raw paths.
+    """
+    if isinstance(value, dict):
+        if {"path", "sha256", "size"} <= value.keys() <= {"path", "sha256", "size", "name", "rows"}:
+            return {key: entry for key, entry in value.items() if key != "path"}
+        return {key: artifact_identities(entry) for key, entry in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [artifact_identities(entry) for entry in value]
+    return value
 
 
 @dataclass(frozen=True)

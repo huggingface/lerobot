@@ -194,3 +194,24 @@ def test_serialized_job_keeps_real_enriched_parquet(single_episode_root, tmp_pat
     assert (
         "language_persistent" not in pq.read_table(snapshot / "data/chunk-000/file-000.parquet").column_names
     )
+
+
+def test_unrelated_vqa_settings_do_not_repeat_subtask_inference(single_episode_root):
+    cfg = config()
+    CLIENTS.clear()
+    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    count = len(CLIENTS)
+    cfg.vqa.question_types = ("attribute",)
+    cfg.vqa.K = 4
+    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    assert len(CLIENTS) == count
+
+
+def test_model_revision_invalidates_subtask_inference(single_episode_root):
+    cfg = config()
+    CLIENTS.clear()
+    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    count = len(CLIENTS)
+    cfg.vlm.model_revision = "a" * 40
+    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    assert len(CLIENTS) > count

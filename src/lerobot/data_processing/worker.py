@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import tempfile
+import threading
 import time
 import uuid
 from dataclasses import asdict
@@ -18,6 +20,7 @@ from typing import TYPE_CHECKING
 from lerobot.utils.import_utils import _pyarrow_available, require_package
 
 from .artifacts import ArtifactStore
+from .metrics import measure, record_worker
 from .planner import StagePlan, load_module
 from .types import Artifact, ItemResult, Outcome, WorkItem, checked_name
 
@@ -32,6 +35,8 @@ class WorkerContext:
     def __init__(self, store: ArtifactStore, plan: StagePlan, attempt: str, scratch: Path):
         require_package("pyarrow", "dataset")
         self.store, self.plan, self.attempt, self.scratch = store, plan, attempt, scratch
+        self.metrics: dict[str, float | int | str] = {}
+        self._metric_lock = threading.Lock()
         self.schemas = {
             name: pa.ipc.read_schema(pa.BufferReader(base64.b64decode(schema))) if schema != "asset" else None
             for name, schema in plan.outputs.items()
@@ -47,12 +52,15 @@ class WorkerContext:
         path = self.scratch / f"{uuid.uuid4().hex}.parquet"
         try:
             pq.write_table(table, path, use_compliant_nested_type=False)
-            return self.store.put_file(
-                f"{self.attempt}/outputs/{item.item_id}/{checked_name(name)}.parquet",
-                path,
-                name=name,
-                rows=table.num_rows,
-            )
+            with self.measure("write"):
+                artifact = self.store.put_file(
+                    f"{self.attempt}/outputs/{item.item_id}/{checked_name(name)}.parquet",
+                    path,
+                    name=name,
+                    rows=table.num_rows,
+                )
+            self.add_metric("bytes_written", artifact.size)
+            return artifact
         finally:
             path.unlink(missing_ok=True)
 
@@ -60,9 +68,19 @@ class WorkerContext:
         """Upload a closed noncanonical media/file asset; its module validates semantics."""
         if name not in self.schemas or self.schemas[name] is not None:
             raise ValueError(f"Undeclared asset output: {name}")
-        return self.store.put_file(
-            f"{self.attempt}/outputs/{item.item_id}/{checked_name(name)}{path.suffix}", path, name=name
-        )
+        with self.measure("write"):
+            artifact = self.store.put_file(
+                f"{self.attempt}/outputs/{item.item_id}/{checked_name(name)}{path.suffix}", path, name=name
+            )
+        self.add_metric("bytes_written", artifact.size)
+        return artifact
+
+    def measure(self, name):
+        return measure(self.metrics, name, self._metric_lock)
+
+    def add_metric(self, name, value):
+        with self._metric_lock:
+            self.metrics[name] = self.metrics.get(name, 0) + value
 
 
 def validate_result(result: ItemResult, item: WorkItem, context: WorkerContext) -> None:
@@ -127,8 +145,24 @@ def run_worker_group(
     batch_size: int,
     max_retries: int,
     storage_options: dict | None = None,
+    device_ids: tuple[str, ...] | None = None,
 ) -> None:
+    previous = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if device_ids is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(device_ids)
+    try:
+        return _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, storage_options)
+    finally:
+        if device_ids is not None:
+            if previous is None:
+                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            else:
+                os.environ["CUDA_VISIBLE_DEVICES"] = previous
+
+
+def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, storage_options):
     """One model setup across all assigned shards; retries preserve validated batches."""
+    start = time.perf_counter()
     if batch_size < 1 or max_retries < 0:
         raise ValueError("Invalid batch size or retry limit")
     store = ArtifactStore(store_uri, storage_options=storage_options)
@@ -139,16 +173,21 @@ def run_worker_group(
     with tempfile.TemporaryDirectory(prefix="lerobot-worker-") as directory:
         context = WorkerContext(store, plan, "", Path(directory))
         initialized = False
+        status = "failed"
+        reused = set()
         try:
             for shard in shards:
                 for retry in range(max_retries + 1):
-                    accepted = accepted_in_shard(store, plan, shard)
+                    with context.measure("resume_scan"):
+                        accepted = accepted_in_shard(store, plan, shard)
+                    reused.update(accepted)
                     pending = [item for item in plan.read_shard(store, shard) if item.item_id not in accepted]
                     if not pending:
                         break
                     if not initialized:
                         initialized = True
-                        module.setup(context)
+                        with context.measure("setup"):
+                            module.setup(context)
                     # UUID gives each concurrently requeued worker its own output
                     # namespace. Timestamp orders persisted attempts, not item IDs.
                     attempt = f"{plan.prefix}/attempts/{shard:08d}/{time.time_ns():020d}-{uuid.uuid4().hex}"
@@ -156,22 +195,45 @@ def run_worker_group(
                     try:
                         for offset in range(0, len(pending), batch_size):
                             batch = pending[offset : offset + batch_size]
-                            results = module.process_batch(batch, context)
+                            with context.measure("process"):
+                                results = module.process_batch(batch, context)
+                            context.metrics["batches"] = context.metrics.get("batches", 0) + 1
+                            context.metrics["items_computed"] = context.metrics.get(
+                                "items_computed", 0
+                            ) + len(batch)
                             if len(results) != len(batch) or len({r.item_id for r in results}) != len(batch):
                                 raise ValueError("Module must return exactly one result per input item")
                             by_id = {result.item_id: result for result in results}
-                            for item in batch:
-                                validate_result(by_id[item.item_id], item, context)
+                            with context.measure("validation"):
+                                for item in batch:
+                                    validate_result(by_id[item.item_id], item, context)
                             if any(r.outcome == Outcome.FAILED for r in results):
                                 raise RuntimeError("Module reported failed work")
-                            store.put_json(
-                                f"{attempt}/checkpoints/{offset:08d}.json",
-                                {"plan_id": plan_id, "shard": shard, "results": [asdict(r) for r in results]},
-                            )
+                            with context.measure("checkpoint"):
+                                store.put_json(
+                                    f"{attempt}/checkpoints/{offset:08d}.json",
+                                    {
+                                        "plan_id": plan_id,
+                                        "shard": shard,
+                                        "results": [asdict(r) for r in results],
+                                    },
+                                )
                         break
                     except Exception:
                         if retry == max_retries:
                             raise
+                        context.metrics["retries"] = context.metrics.get("retries", 0) + 1
+            status = "completed"
         finally:
-            if initialized:
-                module.teardown()
+            try:
+                if initialized:
+                    with context.measure("teardown"):
+                        module.teardown()
+            except BaseException:
+                status = "failed"
+                raise
+            finally:
+                context.metrics.update(
+                    status=status, wall_seconds=time.perf_counter() - start, items_reused=len(reused)
+                )
+                record_worker(store, plan_id, context.metrics, module.spec.resources)

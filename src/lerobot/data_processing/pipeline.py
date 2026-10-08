@@ -2,6 +2,10 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 """Dependency graphs over the same source, planner, worker and finalizer contracts."""
 
+import logging
+import time
+import uuid
+
 from .artifacts import ArtifactStore
 from .configs import RuntimeConfig, StageConfig
 from .planner import StagePlan, seal_plan
@@ -43,6 +47,7 @@ def run_pipeline(source, stages: list[StageConfig], runtime: RuntimeConfig, *, b
         if set(stage.depends_on) - completed.keys():
             continue  # plan mode defers discovery which needs real upstream data
         upstream = {name: completed[name] for name in stage.depends_on}
+        start = time.perf_counter()
         plan = seal_plan(
             store,
             source.dataset_ref,
@@ -50,7 +55,7 @@ def run_pipeline(source, stages: list[StageConfig], runtime: RuntimeConfig, *, b
             stage.config,
             source.discover(stage, store, upstream),
             shard_size=runtime.shard_size,
-            upstream={name: summary.accepted_path for name, (_, summary) in upstream.items()},
+            upstream={name: summary.content_digest for name, (_, summary) in upstream.items()},
         )
         if runtime.mode == "plan":
             if runtime.backend == "slurm":
@@ -60,6 +65,11 @@ def run_pipeline(source, stages: list[StageConfig], runtime: RuntimeConfig, *, b
             continue
         if before_execute:
             before_execute(store, plan)
+        try:
+            previous_metrics = set(store.list(f"metrics/{plan.plan_id}/workers/*.parquet"))
+        except Exception:
+            previous_metrics = None
+            logging.getLogger(__name__).warning("Could not list worker metrics", exc_info=True)
         if runtime.backend == "hf_jobs":
             from lerobot.jobs.processing import run_hf_stage
 
@@ -77,4 +87,22 @@ def run_pipeline(source, stages: list[StageConfig], runtime: RuntimeConfig, *, b
                 max_retries=runtime.max_retries,
             )
         completed[stage.id] = (plan, summary)
+        if previous_metrics is None:
+            continue  # Telemetry availability must not block scientific work.
+        from .metrics import report_stage
+
+        try:
+            store.put_json(
+                f"metrics/{plan.plan_id}/stages/{uuid.uuid4().hex}.json",
+                report_stage(
+                    store,
+                    plan,
+                    summary,
+                    wall_seconds=time.perf_counter() - start,
+                    worker_paths=set(store.list(f"metrics/{plan.plan_id}/workers/*.parquet"))
+                    - previous_metrics,
+                ),
+            )
+        except Exception:
+            logging.getLogger(__name__).warning("Could not record stage metrics", exc_info=True)
     return store, completed
