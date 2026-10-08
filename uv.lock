@@ -3462,6 +3462,7 @@ lingbot-va = [
     { name = "transformers" },
 ]
 lingbot-vla-v2 = [
+    { name = "scipy" },
     { name = "transformers" },
 ]
 matplotlib-dep = [
@@ -3789,6 +3790,7 @@ requires-dist = [
     { name = "lerobot", extras = ["sarm"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'aloha'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'libero'" },
+    { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'lingbot-vla-v2'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'metaworld'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'molmoact2'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'phone'" },
