@@ -49,6 +49,8 @@ def rotate_queries_or_keys(x: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
     omega = 1.0 / 10000**omega
     freqs = torch.einsum("..., f -> ... f", pos, omega)
     # Each adjacent coordinate pair is rotated by one frequency.
+    # Upstream proposal: https://github.com/facebookresearch/vjepa2/pull/15
+    # Checkpoint compatibility notes: https://github.com/facebookresearch/vjepa2/pull/75
     emb_sin = freqs.sin().repeat_interleave(2, dim=-1)
     emb_cos = freqs.cos().repeat_interleave(2, dim=-1)
 
