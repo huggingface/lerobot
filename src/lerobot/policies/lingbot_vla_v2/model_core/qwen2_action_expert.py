@@ -12,34 +12,6 @@ from transformers.utils import (
 logger = logging.get_logger(__name__)  # module logger (missing in upstream vendored file)
 from transformers.activations import ACT2FN  # noqa: E402
 from transformers.modeling_flash_attention_utils import FlashAttentionKwargs  # noqa: E402
-from transformers.processing_utils import Unpack  # noqa: E402
-
-
-def _update_moe_runtime_stats(block, routing_weights, selected_experts):
-    """Update MoE runtime buffers outside torch.compile graphs."""
-    with torch.no_grad():
-        if routing_weights is not None and hasattr(block, "avg_topk_sigmoid_score"):
-            avg_score = routing_weights.detach().float().mean()
-            block.avg_topk_sigmoid_score.copy_(
-                avg_score.reshape_as(block.avg_topk_sigmoid_score).to(
-                    device=block.avg_topk_sigmoid_score.device,
-                    dtype=block.avg_topk_sigmoid_score.dtype,
-                )
-            )
-
-        if hasattr(block, "tokens_per_expert"):
-            counts = F.one_hot(
-                selected_experts.detach().reshape(-1),
-                num_classes=block.num_experts,
-            ).sum(dim=0)
-            block.tokens_per_expert.add_(
-                counts.to(
-                    device=block.tokens_per_expert.device,
-                    dtype=block.tokens_per_expert.dtype,
-                )
-            )
-
-
 from transformers.models.qwen2.modeling_qwen2 import (  # noqa: E402
     PreTrainedModel,
     Qwen2Attention,
@@ -49,6 +21,7 @@ from transformers.models.qwen2.modeling_qwen2 import (  # noqa: E402
     Qwen2RMSNorm,
     Qwen2RotaryEmbedding,
 )
+from transformers.processing_utils import Unpack  # noqa: E402
 
 # from transformers.models.mistral.modeling_mistral import MistralMLP
 
@@ -221,16 +194,6 @@ class Qwen2TokenMoeBlock(nn.Module):
             torch.zeros(config.num_experts),
             persistent=True,
         )
-        self.register_buffer(
-            "tokens_per_expert",
-            torch.zeros(config.num_experts, dtype=torch.float32),
-            persistent=False,
-        )
-        self.register_buffer(
-            "avg_topk_sigmoid_score",
-            torch.zeros(1, dtype=torch.float32),
-            persistent=False,
-        )
 
         # gating (per-token)
         self.gate = nn.Linear(config.hidden_size, config.num_experts, bias=False)
@@ -238,15 +201,15 @@ class Qwen2TokenMoeBlock(nn.Module):
             self.num_experts,
             config.hidden_size,
             config.moe_intermediate_size,
-            initializer_range=getattr(config, "initializer_range", 0.02),
+            initializer_range=config.initializer_range,
         )
 
         self.shared_expert = Qwen2MoeSharedExpertMLP(
             config, intermediate_size=config.shared_expert_intermediate_size
         )
-        self._router_activation = getattr(config, "router_activation", "softmax")
-        self.routed_scaling_factor = getattr(config, "routed_scaling_factor", 1.0)
-        self._use_shared_expert_gate = getattr(config, "use_shared_expert_gate", True)
+        self._router_activation = config.router_activation
+        self.routed_scaling_factor = config.routed_scaling_factor
+        self._use_shared_expert_gate = config.use_shared_expert_gate
         if self._use_shared_expert_gate:
             self.shared_expert_gate = torch.nn.Linear(config.hidden_size, 1, bias=False)
 
@@ -270,8 +233,6 @@ class Qwen2TokenMoeBlock(nn.Module):
         scores_for_choice = routing_scores + self.e_score_correction_bias.unsqueeze(0)
         _, selected_experts = torch.topk(scores_for_choice, self.top_k, dim=-1)
         routing_weights = routing_scores.gather(1, selected_experts)
-        if self.training:
-            _update_moe_runtime_stats(self, routing_weights, selected_experts)
         if self.norm_topk_prob:
             routing_weights = routing_weights / (routing_weights.sum(dim=-1, keepdim=True) + 1e-20)
         if self.routed_scaling_factor != 1.0:
@@ -428,7 +389,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
             "not supported."
         )
 
-    def __init__(self, config: Qwen2Config, eval=False):
+    def __init__(self, config: Qwen2Config):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
@@ -442,8 +403,6 @@ class Qwen2Model(Qwen2PreTrainedModel):
         self.gradient_checkpointing = False
 
         # Initialize weights and apply final processing
-        if eval:
-            self._init_weights = lambda module: None  # type: ignore[method-assign]
         self.post_init()
 
 
@@ -467,9 +426,9 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel, GenerationMixin):
             "not supported."
         )
 
-    def __init__(self, config, eval):
+    def __init__(self, config):
         super().__init__(config)
-        self.model = Qwen2Model(config, eval)
+        self.model = Qwen2Model(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
