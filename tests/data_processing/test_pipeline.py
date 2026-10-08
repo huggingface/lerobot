@@ -47,6 +47,7 @@ def test_commit_recovery_and_expected_inputs(tmp_path, monkeypatch):
 
 
 def test_fresh_dependency_ids_do_not_depend_on_attempt_paths(tmp_path):
+    pytest.importorskip("pyarrow", reason="Work plans require lerobot[dataset]")
     from lerobot.data_processing.configs import RuntimeConfig
     from lerobot.data_processing.pipeline import run_pipeline
     from lerobot.data_processing.types import DatasetRef, InputItem
@@ -85,6 +86,7 @@ def test_fresh_dependency_ids_do_not_depend_on_attempt_paths(tmp_path):
 
 
 def test_unavailable_telemetry_does_not_block_processing(tmp_path, monkeypatch):
+    pytest.importorskip("pyarrow", reason="Work plans require lerobot[dataset]")
     from lerobot.data_processing.artifacts import ArtifactStore
     from lerobot.data_processing.configs import RuntimeConfig
     from lerobot.data_processing.pipeline import run_pipeline
