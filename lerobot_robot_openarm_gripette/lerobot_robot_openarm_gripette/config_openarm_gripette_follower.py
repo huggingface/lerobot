@@ -30,10 +30,8 @@ class OpenArmGripetteFollowerConfig(RobotConfig):
     )
     # gRPC target of the Gripette server, e.g. "192.168.1.x:50051".
     gripette_addr: str = "localhost:50051"
-    # gripper.pos (radians, Gripette robot frame: 0 = open, positive = closing) is multiplied by
-    # these per-motor factors, then clipped to [0, gripper_motor_max] since the server rejects
-    # out-of-range goals.
-    gripper_motor_scales: tuple[float, float] = (1.0, 1.0)
+    # proximal.pos / distal.pos goals (radians, Gripette robot frame: 0 = open, positive = closing)
+    # are clipped to [0, gripper_motor_max] since the server rejects out-of-range goals.
     gripper_motor_max: tuple[float, float] = (1.632, 2.025)
     # Expose the Gripette's JPEG stream as a camera observation. Frames are resized to
     # (height, width) so the feature shape is known before connecting.

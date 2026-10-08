@@ -28,7 +28,7 @@ from lerobot.robots.openarm_follower import (
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from .config_openarm_gripette_follower import OpenArmGripetteFollowerConfig
-from .gripette_gripper import GripetteGripper
+from .gripette_gripper import MOTORS, GripetteGripper
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,6 @@ class OpenArmGripetteFollower(Robot):
 
         self._gripper = GripetteGripper(
             addr=config.gripette_addr,
-            motor_scales=config.gripper_motor_scales,
             motor_max=config.gripper_motor_max,
             camera_name=config.gripper_camera_name if config.use_gripper_camera else None,
             camera_shape=(config.gripper_camera_height, config.gripper_camera_width),
@@ -63,11 +62,14 @@ class OpenArmGripetteFollower(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {**self.arm.action_features, "gripper.pos": float}
+        return {**self.arm.action_features, **{f"{m}.pos": float for m in MOTORS}}
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
-        features: dict[str, type | tuple] = {**self.arm.observation_features, "gripper.pos": float}
+        features: dict[str, type | tuple] = {
+            **self.arm.observation_features,
+            **{f"{m}.pos": float for m in MOTORS},
+        }
         if self.config.use_gripper_camera:
             features[self.config.gripper_camera_name] = (
                 self.config.gripper_camera_height,
@@ -102,9 +104,11 @@ class OpenArmGripetteFollower(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        sent = self.arm.send_action({k: v for k, v in action.items() if k != "gripper.pos"})
-        if "gripper.pos" in action:
-            sent["gripper.pos"] = self._gripper.send_goal(action["gripper.pos"])
+        gripper_keys = {f"{m}.pos" for m in MOTORS}
+        sent = self.arm.send_action({k: v for k, v in action.items() if k not in gripper_keys})
+        goals = {k.removesuffix(".pos"): v for k, v in action.items() if k in gripper_keys}
+        if goals:
+            sent.update({f"{m}.pos": v for m, v in self._gripper.send_goal(goals).items()})
         return sent
 
     @check_if_not_connected

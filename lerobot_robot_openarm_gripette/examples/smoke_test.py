@@ -59,7 +59,11 @@ def main():
         obs = robot.get_observation()
         home = {k: obs[k] for k in JOINTS}
         print("Arm (deg):", {k: round(v, 1) for k, v in home.items()})
-        print("Gripper (rad):", round(obs["gripper.pos"], 3), "| camera:", obs["gripette"].shape)
+        print(
+            f"Gripper (rad): proximal={obs['proximal.pos']:.3f} distal={obs['distal.pos']:.3f}",
+            "| camera:",
+            obs["gripette"].shape,
+        )
         input("Each joint will move a few degrees and back. Press ENTER to start...")
 
         for k in JOINTS:
@@ -70,9 +74,10 @@ def main():
 
         for name, goal in [("close", args.close), ("open", 0.0)]:
             print(f"Gripper {name} -> {goal} rad")
-            robot.send_action({**home, "gripper.pos": goal})
+            robot.send_action({**home, "proximal.pos": goal, "distal.pos": goal})
             time.sleep(1.5)
-            print("  gripper.pos =", round(robot.get_observation()["gripper.pos"], 3))
+            obs = robot.get_observation()
+            print(f"  proximal={obs['proximal.pos']:.3f} distal={obs['distal.pos']:.3f}")
     finally:
         robot.disconnect()
 

@@ -56,31 +56,35 @@ def test_features_and_arm_bus_without_gripper():
     with _robot() as robot:
         assert isinstance(robot, OpenArmGripetteFollower)
         assert set(robot.arm.bus.motors) == set(_JOINTS)
-        motors = {f"{j}.pos" for j in _JOINTS} | {"gripper.pos"}
+        motors = {f"{j}.pos" for j in _JOINTS} | {"proximal.pos", "distal.pos"}
         assert set(robot.action_features) == motors
         assert robot.observation_features == {**dict.fromkeys(motors, float), "gripette": (4, 3, 3)}
 
 
 @pytest.mark.parametrize(
-    ("goal", "expected_move", "expected_sent"),
-    [(0.5, (0.5, 1.0), 0.5), (-1.0, (0.0, 0.0), 0.0), (3.0, (1.632, 2.025), 1.632)],
+    ("goals", "expected_move"),
+    [
+        ({"proximal.pos": 0.5, "distal.pos": 1.0}, (0.5, 1.0)),
+        ({"proximal.pos": -1.0, "distal.pos": 3.0}, (0.0, 2.025)),
+        ({"proximal.pos": 3.0}, (1.632, 0.5)),  # distal holds its observed position
+    ],
 )
-def test_connect_observe_act_disconnect(goal, expected_move, expected_sent):
-    with _robot(gripper_motor_scales=(1.0, 2.0)) as robot:
+def test_connect_observe_act_disconnect(goals, expected_move):
+    with _robot() as robot:
         robot.connect(calibrate=False)
         client = robot._gripper._client
         client.torque_on.assert_called_once()
 
         obs = robot.get_observation()
         assert {f"{j}.pos" for j in _JOINTS} <= obs.keys()
-        assert obs["gripper.pos"] == pytest.approx(0.4)
+        assert (obs["proximal.pos"], obs["distal.pos"]) == pytest.approx((0.4, 0.5))
         assert obs["gripette"].shape == (4, 3, 3)
         assert obs["gripette"][0, 0, 2] > 100  # BGR blue decoded into the RGB blue channel
 
-        sent = robot.send_action({"joint_1.pos": 1.0, "gripper.pos": goal})
+        sent = robot.send_action({"joint_1.pos": 1.0, **goals})
         client.move.assert_called_once_with(*expected_move)
         assert sent["joint_1.pos"] == pytest.approx(1.0)
-        assert sent["gripper.pos"] == pytest.approx(expected_sent)
+        assert (sent["proximal.pos"], sent["distal.pos"]) == pytest.approx(expected_move)
 
         robot.disconnect()
         client.torque_off.assert_called_once()
