@@ -5,8 +5,7 @@ Qwen3-VL-4B backbone with a sparse Mixture-of-Experts Qwen2 action expert (32 ex
 generates action chunks with flow matching over a 55-D canonical state/action space shared across embodiments.
 
 The LeRobot port is the `lingbot_vla_v2` policy. It uses standard LeRobot datasets, processors, `lerobot-train`,
-`lerobot-eval` and `lerobot-rollout`. The upstream depth and video distillation heads are not ported: fine-tuning
-trains the flow-matching action loss only.
+`lerobot-eval` and `lerobot-rollout`, including upstream's dual-query depth and video distillation.
 
 For model details, see the [upstream repository](https://github.com/Robbyant/lingbot-vla-v2) and the
 [technical report](https://arxiv.org/abs/2607.06403).
@@ -95,6 +94,19 @@ lerobot-train \
 
 Normalization statistics come from the dataset. Multi-GPU training uses the standard `torchrun` launcher with
 the `--parallelism.*` and `--accelerator.*` flags.
+
+### Dual-query distillation
+
+LingBot-VLA 2.0 appends learned query tokens (current and future depth/video) after the language tokens, and
+the action expert attends to them. Both checkpoints carry upstream's recipe in `align_params`, so the query
+tokens are always used at inference. During training, small heads read those tokens and are distilled from
+frozen teachers (LingBot-Depth with MoGe-2, and DINO-Video) with upstream's loss weights; the extra losses are
+logged as `depth_loss`, `future_depth_loss`, `current_video_loss` and `future_video_loss`.
+
+The teachers are downloaded on the first training step (about 3 GB from `robbyant/lingbot-vla-v2-6b` and
+`Ruicheng/moge-2-vitb-normal`), take about 2 GB of GPU memory and add roughly 130 ms per sample to each step.
+Each sample also loads the frame `chunk_size - 1` steps ahead, which the future targets need. Nothing extra
+runs at inference.
 
 ### Key training parameters
 
