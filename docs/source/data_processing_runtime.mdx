@@ -4,6 +4,37 @@ This experimental runtime is shared infrastructure for conversion and annotation
 developed on the FineRobotics integration branch, not yet a replacement for every public
 dataset workflow.
 
+## Conversion
+
+Install the dataset extra, then run `lerobot-convert --config_path=convert.yaml`.
+The NPY/video example source file owns acquisition, safe unpacking, metadata discovery
+and raw reading. A new source replaces those methods, not the runtime. The built-in
+`lerobot.data_processing.sources.lerobot:LeRobotSource` also normalizes v3 inputs,
+preserving native action/state values, subtask IDs and canonical language annotations.
+Pre-v3 inputs need the existing official format-upgrade recipe first. Asynchronous
+clocks, depth and missing-camera policies must be handled explicitly by their source
+recipe, rather than silently treated as synchronous RGB.
+View-dependent native language labels require source-specific reprojection when image
+geometry changes; conversion refuses to silently associate old pixel labels with new views.
+
+Each worker writes a complete isolated episode using LeRobot's current writer and
+encoding parameters. RGB becomes an aspect-ratio-preserving square (512 by default);
+exact rounded scale/padding is recorded in `meta/camera_geometry.parquet`. Source IDs
+and selected frame indices remain available. Native FPS is kept unless a lower FPS
+is explicitly selected; upsampling never invents actions. Cameras keep their source
+names; semantic view mapping and action alignment are later processing stages.
+
+Validated parts are assembled in source-ID order without concatenating/re-encoding
+videos. `meta/processing.json` records the input hash, recipe and parameters. The final
+directory is published only after ordinary LeRobot loading succeeds; existing outputs
+are not overwritten. An accepted run can be assembled into another release without
+repeating encoding. Conversion defaults to one episode per checkpoint.
+
+This initial vertical slice uses the existing image spool before encoding, temporary
+episode archives, and a serial metadata/part assembly pass. Budget extra temporary
+storage and input/output bandwidth. No 1,024-worker scaling result is claimed; replacing
+the spool/assembly bottlenecks should be driven by the maintained benchmarks.
+
 ## Language annotation
 
 `lerobot-annotate` now builds an ordered processing recipe: plan, interjections, VQA,
