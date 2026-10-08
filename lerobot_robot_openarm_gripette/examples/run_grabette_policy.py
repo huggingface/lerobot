@@ -43,6 +43,7 @@ from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
 from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot_robot_openarm_gripette import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
+from lerobot_robot_openarm_gripette.manual_start import prepare_manual_start
 
 URDF_JOINTS = [
     "r_arm_pitch",
@@ -152,10 +153,11 @@ def main():
     )
     robot.connect()
     try:
-        obs = robot.get_observation()
-        q_cmd = signs * np.array([obs[f"{j}.pos"] for j in ROBOT_JOINTS])
-        print("Start joints (URDF deg):", np.round(q_cmd, 1))
-        print("Start oak_l position (m):", np.round(kin.forward_kinematics(q_cmd)[:3, 3], 3))
+        q_cmd = prepare_manual_start(robot, signs)
+        held = robot.arm.get_observation()
+        q_cmd = signs * np.array([held[f"{joint}.pos"] for joint in ROBOT_JOINTS])
+        print("Held joints (URDF deg):", np.round(q_cmd, 1))
+        print("Held oak_l position (m):", np.round(kin.forward_kinematics(q_cmd)[:3, 3], 3))
         input(f"{'DRY RUN: the arm will not move. ' if args.dry_run else ''}Press ENTER to start...")
 
         t_end = time.perf_counter() + args.duration
