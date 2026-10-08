@@ -55,6 +55,15 @@ def mock_rerun(monkeypatch):
             self.meter = meter
             self.colormap = colormap
 
+    class DummyArchetype:
+        """Stands in for TextDocument / Boxes2D / Clear: records its args."""
+
+        def __init__(self, kind):
+            self.kind = kind
+
+        def __call__(self, *args, **kwargs):
+            return SimpleNamespace(kind=self.kind, args=args, kwargs=kwargs)
+
     def dummy_log(key, obj=None, **kwargs):
         # Accept either positional `obj` or keyword `entity` and record remaining kwargs.
         if obj is None and "entity" in kwargs:
@@ -72,6 +81,9 @@ def mock_rerun(monkeypatch):
         TimeSeriesView=lambda name=None, contents=None: SimpleNamespace(
             kind="TimeSeriesView", name=name, contents=contents
         ),
+        TextDocumentView=lambda origin=None, name=None: SimpleNamespace(
+            kind="TextDocumentView", origin=origin, name=name
+        ),
         Grid=lambda *views: SimpleNamespace(kind="Grid", views=list(views)),
         Blueprint=lambda root: SimpleNamespace(kind="Blueprint", root=root),
     )
@@ -84,6 +96,10 @@ def mock_rerun(monkeypatch):
         Image=DummyImage,
         DepthImage=DummyDepthImage,
         components=SimpleNamespace(Colormap=SimpleNamespace(Viridis="viridis")),
+        TextDocument=DummyArchetype("TextDocument"),
+        Boxes2D=DummyArchetype("Boxes2D"),
+        Clear=DummyArchetype("Clear"),
+        Box2DFormat=SimpleNamespace(XYXY="xyxy"),
         log=dummy_log,
         send_blueprint=dummy_send_blueprint,
         init=lambda *a, **k: None,
@@ -309,3 +325,75 @@ def test_log_rerun_data_blueprint_sent_only_once(mock_rerun):
     # Still only one blueprint, and the cached one is unchanged.
     assert len(blueprints) == 1
     assert rv.log_rerun_data.blueprint is first_blueprint
+
+
+# ---------------------------------------------------------------------------
+# Policy prediction
+# ---------------------------------------------------------------------------
+
+
+def test_log_rerun_prediction_named_after_what_it_predicts(mock_rerun):
+    rv, calls, blueprints = mock_rerun
+    import torch
+
+    # A predicted camera frame (CHW tensor) and a predicted subtask.
+    rv.log_rerun_data(
+        observation={"temp": 1.0},
+        prediction={
+            "observation": {"observation.images.top": torch.zeros(3, 4, 6, dtype=torch.uint8)},
+            "language": {"subtask": "grasp the cube"},
+        },
+    )
+
+    assert _obj_for(calls, "prediction.subtask").args == ("grasp the cube",)
+    assert _obj_for(calls, "prediction.images.top").arr.shape == (4, 6, 3)  # CHW -> HWC
+    assert _kwargs_for(calls, "prediction.images.top")["static"] is True
+
+    bp = blueprints[-1]
+    assert {v.origin for v in _views_by_kind(bp, "Spatial2DView")} == {"prediction.images.top"}
+    assert {v.origin for v in _views_by_kind(bp, "TextDocumentView")} == {"prediction.subtask"}
+    assert {v.name for v in _views_by_kind(bp, "TimeSeriesView")} == {"observation"}
+
+
+def test_log_rerun_predicted_boxes_draw_over_their_camera(mock_rerun):
+    rv, calls, _ = mock_rerun
+    # Robot camera "top" (logged as observation.top), referenced by its feature key; spatial
+    # answers follow the annotation VQA schema.
+    rv.log_rerun_data(
+        observation={"top": np.zeros((100, 200, 3), dtype=np.uint8)},
+        prediction={
+            "boxes": {
+                "observation.images.top": {"detections": [{"label": "cube", "bbox": [0.1, 0.2, 0.5, 1.0]}]}
+            }
+        },
+    )
+
+    boxes = _obj_for(calls, "observation.top/prediction")
+    assert boxes.kind == "Boxes2D"
+    np.testing.assert_allclose(boxes.kwargs["array"], [[20.0, 20.0, 100.0, 100.0]])  # fractions -> pixels
+    assert boxes.kwargs["labels"] == ["cube"]
+
+    # No detections clears the boxes.
+    rv.log_rerun_data(prediction={"boxes": {"observation.images.top": {"detections": []}}})
+    assert calls[-1][0] == "observation.top/prediction" and calls[-1][1].kind == "Clear"
+
+
+def test_log_rerun_predicted_boxes_without_camera_are_skipped(mock_rerun):
+    rv, calls, _ = mock_rerun
+    answer = {"detections": [{"label": "cube", "bbox": [0.0, 0.0, 1.0, 1.0]}]}
+    rv.log_rerun_data(prediction={"boxes": {"observation.images.wrist": answer}})
+    assert calls == []
+
+
+def test_log_rerun_blueprint_grows_with_a_late_prediction(mock_rerun):
+    rv, _, blueprints = mock_rerun
+    rv.log_rerun_data(observation={"temp": 1.0})
+    rv.log_rerun_data(observation={"temp": 2.0})
+    assert len(blueprints) == 1
+
+    # The first chunk's prediction arrives later: the layout is re-sent with a panel for it, once.
+    rv.log_rerun_data(observation={"temp": 3.0}, prediction={"language": {"subtask": "reach"}})
+    rv.log_rerun_data(observation={"temp": 4.0}, prediction={"language": {"subtask": "grasp"}})
+    assert len(blueprints) == 2
+    assert {v.origin for v in _views_by_kind(blueprints[-1], "TextDocumentView")} == {"prediction.subtask"}
+    assert _views_by_kind(blueprints[-1], "TimeSeriesView")[0].contents == ["observation.temp"]
