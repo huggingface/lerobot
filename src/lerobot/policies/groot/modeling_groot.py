@@ -23,11 +23,12 @@ orchestration are handled by LeRobot's standard training stack.
 """
 
 import builtins
+import dataclasses
 import logging
 import os
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, Unpack
 
 import torch
 from huggingface_hub import hf_hub_download
@@ -39,7 +40,7 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.import_utils import _transformers_available, require_package
 
-from ..pretrained import PreTrainedPolicy
+from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..utils import get_device_from_parameters
 from .configuration_groot import (
     GROOT_N1_5,
@@ -65,6 +66,7 @@ T = TypeVar("T", bound="GrootPolicy")
 class GrootPolicy(PreTrainedPolicy):
     """Wrapper around external Groot model for LeRobot integration."""
 
+    config: GrootConfig
     name = "groot"
     config_class = GrootConfig
 
@@ -113,7 +115,7 @@ class GrootPolicy(PreTrainedPolicy):
         qwen_model = getattr(backbone, "model", None)
         if qwen_model is not None:
             _tie_unused_qwen_lm_head(qwen_model)
-        if self.config.model_params_fp32:
+        if self.config.dtype == torch.float32:
             self._cast_model_parameters_to_fp32(model)
         return model
 
@@ -124,7 +126,7 @@ class GrootPolicy(PreTrainedPolicy):
                 parameter.data = parameter.data.to(torch.float32)
 
     @staticmethod
-    def _build_weight_decay_parameter_groups(model: torch.nn.Module) -> list[dict[str, object]]:
+    def _build_weight_decay_parameter_groups(model: torch.nn.Module) -> list[dict[str, Any]]:
         forbidden_name_patterns = [
             r"bias",
             r"layernorm",
@@ -243,11 +245,15 @@ class GrootPolicy(PreTrainedPolicy):
         # This is a base GR00T model - load it fresh
         logger.info("Detected base GR00T model, loading from HuggingFace...")
 
+        # Config overrides from kwargs go through the constructor (or `dataclasses.replace`) rather than
+        # setattr, so that `__post_init__` validates them (and warns about deprecated keys) exactly as it
+        # does for config.json and the CLI.
+        field_names = {f.name for f in dataclasses.fields(GrootConfig)}
+        field_kwargs = {key: value for key, value in kwargs.items() if key in field_names}
+
         if config is None:
             # Create default config with the pretrained path
-            config = GrootConfig(
-                base_model_path=str(pretrained_name_or_path),
-            )
+            config = GrootConfig(**{"base_model_path": str(pretrained_name_or_path), **field_kwargs})
 
             # Add minimal visual feature required for validation
             # validate_features() will automatically add state and action features
@@ -262,11 +268,8 @@ class GrootPolicy(PreTrainedPolicy):
         else:
             # Override the base_model_path with the provided path
             config.base_model_path = str(pretrained_name_or_path)
-
-        # Pass through any additional config overrides from kwargs
-        for key, value in kwargs.items():
-            if hasattr(config, key):
-                setattr(config, key, value)
+            if field_kwargs:
+                config = dataclasses.replace(config, **field_kwargs)
 
         inferred_version = infer_groot_model_version(config.base_model_path)
         if inferred_version is not None and inferred_version != GROOT_N1_7:
@@ -284,7 +287,7 @@ class GrootPolicy(PreTrainedPolicy):
         policy.eval()
         return policy
 
-    def get_optim_params(self):  # type: ignore[override]
+    def get_optim_params(self) -> list[dict[str, Any]]:
         """Isaac-GR00T excludes biases and normalization parameters from weight decay."""
         return self._build_weight_decay_parameter_groups(self)
 
@@ -348,8 +351,8 @@ class GrootPolicy(PreTrainedPolicy):
         self,
         inputs: dict[str, Tensor],
         *,
-        inference_delay: object,
-        prev_chunk_left_over: object,
+        inference_delay: int | None,
+        prev_chunk_left_over: Tensor | None,
     ) -> tuple[dict[str, Tensor], dict[str, object] | None]:
         if prev_chunk_left_over is None:
             return inputs, None
@@ -432,7 +435,7 @@ class GrootPolicy(PreTrainedPolicy):
             frozen_steps = 0
         frozen_steps = max(0, min(frozen_steps, overlap_steps))
 
-        options = {
+        options: dict[str, object] = {
             "action_horizon": action_horizon,
             "rtc_overlap_steps": overlap_steps,
             "rtc_frozen_steps": frozen_steps,
@@ -471,7 +474,9 @@ class GrootPolicy(PreTrainedPolicy):
         return loss, loss_dict
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: object) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+    ) -> Tensor:
         """Predict a chunk of actions for inference by delegating to Isaac-GR00T.
 
         Returns a tensor of shape (B, n_action_steps, action_dim).
@@ -506,6 +511,8 @@ class GrootPolicy(PreTrainedPolicy):
         prediction_horizon = self._resolve_prediction_horizon(actions)
         actions = actions[:, :prediction_horizon]
 
+        if self.config.output_features is None:
+            raise ValueError("`GrootConfig.output_features` must be resolved before predicting actions.")
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
 

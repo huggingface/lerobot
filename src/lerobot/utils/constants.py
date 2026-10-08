@@ -14,6 +14,7 @@
 # keys
 import os
 from pathlib import Path
+from typing import Final
 
 from huggingface_hub.constants import HF_HOME
 
@@ -51,8 +52,8 @@ QUERY_TEXT = "query_text"
 
 # Raw semantic-language dataset columns. These live here so lightweight policy
 # processors do not need to import the optional datasets/pyarrow stack.
-LANGUAGE_PERSISTENT = "language_persistent"
-LANGUAGE_EVENTS = "language_events"
+LANGUAGE_PERSISTENT: Final = "language_persistent"
+LANGUAGE_EVENTS: Final = "language_events"
 MESSAGES_RENDERED = "messages_rendered"
 
 ROBOTS = "robots"
@@ -69,6 +70,7 @@ TRAINING_STEP = "training_step.json"
 OPTIMIZER_STATE = "optimizer_state.safetensors"
 OPTIMIZER_PARAM_GROUPS = "optimizer_param_groups.json"
 SCHEDULER_STATE = "scheduler_state.json"
+SCALER_STATE = "scaler_state.json"
 
 POLICY_PREPROCESSOR_DEFAULT_NAME = "policy_preprocessor"
 POLICY_POSTPROCESSOR_DEFAULT_NAME = "policy_postprocessor"
@@ -106,10 +108,6 @@ IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
     "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
 }
-
-# streaming datasets
-LOOKBACK_BACKTRACKTABLE = 100
-LOOKAHEAD_BACKTRACKTABLE = 100
 
 # openpi
 OPENPI_ATTENTION_MASK_VALUE = -2.3819763e38  # TODO(pepijn): Modify this when extending support to fp8 models

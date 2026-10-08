@@ -64,6 +64,21 @@ This will launch a [MuJoCo sim instance](https://huggingface.co/lerobot/unitree-
 - Press `9` to release the robot
 - Press `7` / `8` to increase / decrease waist height
 
+#### Choosing the End Effector
+
+`--robot.end_effector` says what the arms carry: `dex1` for the parallel grippers (the default), `dex3` for the three-finger hands, or `dummy` for bare wrists. In simulation it picks the MuJoCo model, which decides the finger actuators and which cameras the scene carries — the wrist cameras are mounted on the end effector, so `dummy` only has `head_camera`.
+
+```bash
+lerobot-teleoperate \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.end_effector=dex3 \
+  --teleop.id=wbc_unitree \
+  --robot.controller=GrootLocomotionController
+```
+
+The sim publishes the model's cameras over ZMQ on `--robot.sim_camera_port` (5555 by default), which is where the `zmq` cameras in `--robot.cameras` read them from. Pass `--robot.sim_publish_images=false` to open MuJoCo's interactive window instead: the sim renders either its cameras or its window, never both, since the offscreen contexts belong to the thread that creates them rather than to the viewer's. `--robot.sim_onscreen` names that choice outright rather than leaving it to the cameras, and asking for both is refused; set it and `--robot.sim_publish_images` both false to render neither, which is what a machine with no display can do.
+
 ### Connect to the Physical Robot
 
 The G1's Ethernet IP is fixed at `192.168.123.164`. Your machine must have a static IP on the same subnet: `192.168.123.x` where `x ≠ 164`.
@@ -292,7 +307,7 @@ lerobot-rollout \
 
 ## Part 5: SONIC Whole-Body Control (Latent-Token Policies)
 
-LeRobot now ports the **decoder** half of NVIDIA's [SONIC](https://github.com/NVIDIA/sonic) whole-body deploy stack as the `SonicWholeBodyController`. Instead of commanding joints, the policy outputs a 64-D **latent motion token** (`motion_token.{i}.pos`) each tick; the SONIC decoder maps that token plus recent proprioception history onto a residual action that is scaled and added to the standing pose, producing 50 Hz joint-position targets for all 29 DoF.
+LeRobot now ports the **decoder** half of NVIDIA's [SONIC](https://nvlabs.github.io/GEAR-SONIC/) whole-body deploy stack as the `SonicWholeBodyController`. Instead of commanding joints, the policy outputs a 64-D **latent motion token** (`motion_token.{i}.pos`) each tick; the SONIC decoder maps that token plus recent proprioception history onto a residual action that is scaled and added to the standing pose, producing 50 Hz joint-position targets for all 29 DoF.
 
 The controller loads its ONNX decoder and all deploy constants (PD gains, `default_angles`, `action_scale`, and the neutral token) from [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder). The repo also ships a distilled low-latency decoder, selectable with the controller's `policy_type="low_latency"` argument (defaults to `"default"`).
 

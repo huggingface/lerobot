@@ -23,8 +23,11 @@ def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_ar
     monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)
     monkeypatch.setattr(factory, "_make_processors_from_policy_config", rebuild)
 
+    config = _act_config()
+    config.recipe = {"messages": []}
+    config.recipe_path = "recipe.yaml"
     result = factory.make_pre_post_processors(
-        SimpleNamespace(recipe={"messages": []}, recipe_path="recipe.yaml"),
+        config,
         pretrained_path="checkpoint",
         dataset_stats={"action": {"mean": 42.0}},
     )
@@ -122,9 +125,10 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
 ):
     config = _act_config()
     pre, post = factory.make_pre_post_processors(config, dataset_stats=_stats(10.0))
-    pre.save_pretrained(tmp_path)
-    post.save_pretrained(tmp_path)
-    config.pretrained_path = str(tmp_path)
+    checkpoint_dir = tmp_path / "pretrained_model"
+    pre.save_pretrained(checkpoint_dir)
+    post.save_pretrained(checkpoint_dir)
+    config.pretrained_path = str(checkpoint_dir)
     from lerobot.datasets.recipe import MessageTurn, TrainingRecipe, resolve_recipe_override
 
     recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
@@ -135,7 +139,12 @@ def test_training_entrypoint_only_rebuilds_for_language_finetuning(
     elif recipe_mode != "absent":
         config.recipe = recipe if recipe_mode == "builtin" else None
     cfg = SimpleNamespace(
-        trainable_config=config, policy=config, resume=resume, rename_map={}, is_reward_model_training=False
+        trainable_config=config,
+        policy=config,
+        resume=resume,
+        checkpoint_path=tmp_path if resume else None,
+        rename_map={},
+        is_reward_model_training=False,
     )
     load = MagicMock(wraps=factory.PolicyProcessorPipeline.from_pretrained)
     monkeypatch.setattr(factory.PolicyProcessorPipeline, "from_pretrained", load)
@@ -210,7 +219,12 @@ def test_finetuning_preserves_statistics_adapted_by_policy_factory(monkeypatch, 
 
     config.recipe = TrainingRecipe(messages=[MessageTurn(role="user", content="${task}", stream="low_level")])
     cfg = SimpleNamespace(
-        trainable_config=config, policy=config, resume=False, rename_map={}, is_reward_model_training=False
+        trainable_config=config,
+        policy=config,
+        resume=False,
+        checkpoint_path=None,
+        rename_map={},
+        is_reward_model_training=False,
     )
     pre, post = _run_training_until_processors(monkeypatch, cfg, _stats(20.0))
     torch.testing.assert_close(
@@ -259,6 +273,7 @@ def test_fresh_training_preserves_relative_action_links_and_batch_renaming(
         trainable_config=config,
         policy=config,
         resume=False,
+        checkpoint_path=None,
         rename_map={"observation.old_state": "observation.state"},
         is_reward_model_training=False,
     )

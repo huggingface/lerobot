@@ -15,10 +15,15 @@
 # limitations under the License.
 
 from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
+import torch
 
+from lerobot.common import train_utils
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
@@ -41,6 +46,10 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
+from lerobot.utils.import_utils import _datasets_available
+
+if TYPE_CHECKING or _datasets_available:
+    from lerobot.scripts.lerobot_train import make_dataloaders
 
 
 def test_get_step_identifier():
@@ -150,8 +159,6 @@ def test_push_checkpoint_to_hub_defaults_to_hub_default_visibility(tmp_path, mon
 
 
 def test_resolve_resume_checkpoint_downloads_latest_and_links(tmp_path, monkeypatch):
-    from lerobot.common import train_utils
-
     out = tmp_path / "run"
 
     def fake_snapshot_download(repo_id, repo_type, allow_patterns, local_dir):
@@ -175,8 +182,54 @@ def test_resolve_resume_checkpoint_downloads_latest_and_links(tmp_path, monkeypa
 
 
 def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypatch):
-    from lerobot.common import train_utils
-
     monkeypatch.setattr("lerobot.common.train_utils.find_latest_hub_checkpoint", lambda repo_id: None)
     with pytest.raises(FileNotFoundError, match="No checkpoint"):
         train_utils.resolve_resume_checkpoint("u/run", tmp_path / "run")
+
+
+@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+@pytest.mark.parametrize("frames,drop_first,drop_last,max_eval_samples", [(12, 2, 3, 3), (64, 0, 32, 0)])
+def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
+    frames, drop_first, drop_last, max_eval_samples
+):
+    policy = SimpleNamespace(drop_n_first_frames=drop_first, drop_n_last_frames=drop_last)
+    expected = list(range(drop_first, frames - drop_last))
+
+    class Dataset(torch.utils.data.Dataset):
+        episodes = [0]
+        absolute_to_relative_idx = None
+        meta = SimpleNamespace(
+            episodes={"dataset_from_index": [0], "dataset_to_index": [frames]},
+            has_language_columns=False,
+        )
+        hf_dataset = SimpleNamespace(
+            data=SimpleNamespace(column=lambda name: SimpleNamespace(to_numpy=lambda: np.zeros(frames)))
+        )
+
+        def __len__(self):
+            return frames
+
+        def __getitem__(self, index):
+            return index
+
+    cfg = SimpleNamespace(
+        trainable_config=policy,
+        dataset=SimpleNamespace(streaming=False),
+        resume=False,
+        seed=42,
+        num_workers=0,
+        batch_size=2,
+        prefetch_factor=None,
+        persistent_workers=False,
+        dataloader_multiprocessing_context=None,
+        max_eval_samples=max_eval_samples,
+    )
+    train, evaluation = make_dataloaders(cfg, Dataset(), Dataset(), 0, SimpleNamespace(device_type="cpu"))
+    assert sorted(train.sampler) == expected
+    rng = torch.get_rng_state().clone()
+    next(iter(train))
+    assert torch.equal(rng, torch.get_rng_state())
+    assert torch.cat(list(evaluation)).tolist() == (
+        expected[:max_eval_samples] if max_eval_samples else expected
+    )
+    assert torch.equal(rng, torch.get_rng_state())

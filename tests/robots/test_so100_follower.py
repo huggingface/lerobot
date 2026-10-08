@@ -99,6 +99,19 @@ def test_get_observation(follower):
         assert obs[f"{motor}.pos"] == idx
 
 
+def test_observation_keys_match_features_with_mock_camera(follower):
+    # `observation_features` and `get_observation()` must use the same depth predicate:
+    # a bare mock camera is not a `DepthCamera`, so neither side may advertise `<cam>_depth`.
+    cam = MagicMock(name="CameraMock")
+    cam.height, cam.width = 480, 640
+    follower.cameras = {"wrist": cam}
+    follower.connect()
+
+    obs = follower.get_observation()
+    assert set(obs) == set(follower.observation_features)
+    assert "wrist" in obs and "wrist_depth" not in obs
+
+
 def test_get_observation_uses_read_retries(follower):
     # Feetech buses can intermittently fail a sync_read; the follower should forward the configured
     # retry count so transient failures don't abort the control loop (see #3131).

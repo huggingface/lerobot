@@ -14,8 +14,6 @@
 
 # This workflow handles linting, formatting, and static analysis checks for the codebase.
 name: Quality
-permissions:
-  contents: read
 
 on:
   # Allows running this workflow manually from the Actions tab
@@ -36,9 +34,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   # This job runs pre-commit hooks to check code style and formatting.
   pre-commit-checks:
+    permissions:
+      contents: read
     name: Run Pre-commit Hooks (Lint, Format & Static Analysis)
     runs-on: ubuntu-latest
     steps:
@@ -60,6 +62,8 @@ jobs:
   # This job runs the examples in our docstrings and validates the doctest allowlist.
   # See docs/source/writing_docstrings.mdx for the standard these enforce.
   doc-checks:
+    permissions:
+      contents: read
     name: Run Documentation Checks (Doctests)
     runs-on: ubuntu-latest
     env:

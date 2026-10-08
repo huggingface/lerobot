@@ -17,6 +17,7 @@
 import logging
 from dataclasses import dataclass, field
 
+from lerobot.streaming.episode_pool import StreamingSamplingStrategy
 from lerobot.transforms import ImageTransformsConfig
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
@@ -38,6 +39,7 @@ class DatasetConfig:
     repo_type: str = "dataset"
     # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
+    # With streaming=true, an 'hf://buckets/OWNER/BUCKET' URI is also accepted and implies repo_type="bucket".
     root: str | None = None
     episodes: list[int] | None = None
     # Episode indices to drop (e.g. corrupt or heterogeneous ones). Applied on top of `episodes`.
@@ -53,6 +55,23 @@ class DatasetConfig:
     # Has no effect on datasets without depth cameras.
     depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
+    # Number of complete episodes mixed by the rank-level exact-coverage sampler.
+    streaming_episode_pool_size: int = 32
+    # Round-robin trades frame-weighted sampling for more even resident-episode mixing.
+    streaming_sampling_strategy: StreamingSamplingStrategy = StreamingSamplingStrategy.REMAINING
+    # Complete episodes fetched ahead of the current admission frontier.
+    streaming_prefetch_episodes: int = 8
+    # Hard per-rank cap for synthesized episode-video bytes.
+    streaming_byte_budget_gb: float = 8.0
+    # Parallel sample assembly/decode workers and their bounded in-order result queue.
+    streaming_decode_threads: int = 2
+    streaming_decoded_queue_size: int = 8
+    # Per-rank native HTTP limits. None preserves the fetcher's worker-derived default.
+    streaming_native_http_connections: int | None = None
+    streaming_native_http_subranges: int = 1
+    # Maximum open video decoders. Streaming: per rank, None covers every camera in the episode pool.
+    # Map-style: only for non-default storage formats (e.g. lance), per DataLoader worker.
+    video_decoder_cache_size: int | None = None
     # Fraction of episodes held out per task for offline evaluation (0.0 = disabled).
     eval_split: float = 0.0
 
@@ -69,6 +88,23 @@ class DatasetConfig:
             )
         if not (0.0 <= self.eval_split < 1.0):
             raise ValueError(f"eval_split must be in [0.0, 1.0), got {self.eval_split}")
+        self.streaming_sampling_strategy = StreamingSamplingStrategy(self.streaming_sampling_strategy)
+        if self.streaming_episode_pool_size <= 0:
+            raise ValueError("streaming_episode_pool_size must be positive")
+        if self.streaming_prefetch_episodes < 0:
+            raise ValueError("streaming_prefetch_episodes must be non-negative")
+        if self.streaming_byte_budget_gb <= 0:
+            raise ValueError("streaming_byte_budget_gb must be positive")
+        if self.streaming_decode_threads <= 0:
+            raise ValueError("streaming_decode_threads must be positive")
+        if self.streaming_decoded_queue_size <= 0:
+            raise ValueError("streaming_decoded_queue_size must be positive")
+        if self.video_decoder_cache_size is not None and self.video_decoder_cache_size <= 0:
+            raise ValueError("video_decoder_cache_size must be positive")
+        if self.streaming_native_http_connections is not None and self.streaming_native_http_connections <= 0:
+            raise ValueError("streaming_native_http_connections must be positive")
+        if self.streaming_native_http_subranges <= 0:
+            raise ValueError("streaming_native_http_subranges must be positive")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(

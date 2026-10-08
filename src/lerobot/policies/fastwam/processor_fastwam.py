@@ -24,6 +24,7 @@ from lerobot.processor import (
     ActionProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    ProcessorStep,
     ProcessorStepRegistry,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
@@ -98,13 +99,13 @@ def make_fastwam_pre_post_processors(
 
     steps = make_default_policy_processor_steps(config, normalization_stats, normalizer_device=config.device)
 
-    input_steps = [
+    input_steps: list[ProcessorStep] = [
         steps.rename_observations,
         steps.add_batch_dim,
         steps.to_device,
         steps.normalize,
     ]
-    output_steps = [
+    output_steps: list[ProcessorStep] = [
         steps.unnormalize,
     ]
     if config.toggle_action_dimensions:

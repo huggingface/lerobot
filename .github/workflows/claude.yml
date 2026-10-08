@@ -23,15 +23,17 @@ on:
   pull_request_review:
     types: [submitted]
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-  id-token: write # Required for OIDC authentication
-  actions: read
+
+permissions: {}
 
 jobs:
   claude:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
     if: |
       github.repository == 'huggingface/lerobot' &&
       contains(
@@ -44,7 +46,7 @@ jobs:
         (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude'))
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -65,7 +67,7 @@ jobs:
             --model claude-fable-5-1
             --effort xhigh
             --fallback-model claude-opus-5
-            --max-turns 50
+            --max-turns 100
             --verbose
             --tools "Read,Grep,Glob,Agent"
             --strict-mcp-config

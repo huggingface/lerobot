@@ -273,7 +273,7 @@ def test_query_hf_dataset_matches_row_query(tmp_path, lerobot_dataset_factory):
     for abs_idx in range(reader.num_frames):
         ep_idx = int(reader.hf_dataset[abs_idx]["episode_index"])
         query_indices, _ = reader._get_query_indices(abs_idx, ep_idx)
-        result = reader._query_hf_dataset(query_indices)
+        result = reader._query_hf_dataset([query_indices])[0]
         for key, q_idx in query_indices.items():
             expected = torch.stack(reader.hf_dataset[q_idx][key])
             assert torch.equal(result[key], expected)
@@ -307,7 +307,7 @@ def test_delta_query_transform_receives_only_requested_column(tmp_path, lerobot_
     reader.hf_dataset.set_transform(spy_transform)
 
     query_indices, _ = reader._get_query_indices(5, 0)
-    reader._query_hf_dataset(query_indices)
+    reader._query_hf_dataset([query_indices])
 
     assert seen_key_sets, "expected the transform to be invoked"
     assert all(keys == {"action"} for keys in seen_key_sets)
@@ -331,7 +331,7 @@ def test_column_views_are_rebuilt_after_set_transform(tmp_path, lerobot_dataset_
     reader = dataset.reader
 
     query_indices, _ = reader._get_query_indices(5, 0)
-    baseline = reader._query_hf_dataset(query_indices)
+    baseline = reader._query_hf_dataset([query_indices])[0]
 
     def doubling_transform(items_dict):
         items = hf_transform_to_torch(items_dict)
@@ -339,5 +339,5 @@ def test_column_views_are_rebuilt_after_set_transform(tmp_path, lerobot_dataset_
 
     reader.hf_dataset.set_transform(doubling_transform)
 
-    result = reader._query_hf_dataset(query_indices)
+    result = reader._query_hf_dataset([query_indices])[0]
     assert torch.equal(result["action"], 2 * baseline["action"])
