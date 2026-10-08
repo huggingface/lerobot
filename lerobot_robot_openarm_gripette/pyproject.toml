@@ -12,6 +12,15 @@ license = { text = "Apache-2.0" }
 dependencies = [
     "lerobot[openarms]>=0.6.2,<0.7.0",
     "gripette @ git+https://github.com/pollen-robotics/grabette.git@develop#subdirectory=packages/gripette",
+    # gripette's generated gRPC code requires this runtime, but its own metadata only asks for >=4.25.
+    "protobuf>=6.33.5,<8.0.0",
+]
+
+[project.optional-dependencies]
+# examples/run_grabette_policy.py: placo IK on Pollen's OpenArm + Gripette URDF.
+policy = [
+    "lerobot[kinematics]>=0.6.2,<0.7.0",
+    "openarm-gripette-model @ git+https://github.com/pollen-robotics/grabette.git@develop#subdirectory=integrations/openarm/openarm_gripette_model",
 ]
 
 [tool.setuptools.packages.find]

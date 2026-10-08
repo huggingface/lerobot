@@ -34,15 +34,38 @@ lerobot-teleoperate \
 ## Features
 
 - Arm: `joint_1.pos` … `joint_7.pos` in degrees, exactly as `openarm_follower`.
-- Gripper: a single `gripper.pos` in radians in the Gripette frame (0 = open, positive = closing).
-  Each motor receives `gripper.pos * gripper_motor_scales[i]`, clipped to
-  `[0, gripper_motor_max[i]]` (the server rejects out-of-range goals).
+- Gripper: `proximal.pos` and `distal.pos` in radians in the Gripette frame (0 = open,
+  positive = closing), clipped to `[0, gripper_motor_max]` (the server rejects out-of-range goals).
 - Camera: `gripette` (configurable via `gripper_camera_name`), an RGB frame resized to
   `gripper_camera_height` x `gripper_camera_width` (defaults match the server's 648x486 stream).
   Disable with `--robot.use_gripper_camera=false`.
 
-The OpenArm leader and OpenArm Mini emit `gripper.pos` in degrees (0 to -65), not Gripette
-radians, so their gripper command is clipped to "open" until a mapping is added.
+The OpenArm leader and OpenArm Mini emit a single `gripper.pos` in degrees, so teleoperation
+drives the arm only until a gripper mapping is added.
+
+## Running a Grabette policy
+
+`examples/run_grabette_policy.py` runs policies trained on handheld Grabette data with Cartesian
+pose-relative actions (LeRobot's `feat/cartesian-relative-actions`), e.g.
+[CarolinePascal/grabette-pick-and-place-texture-act](https://huggingface.co/CarolinePascal/grabette-pick-and-place-texture-act).
+Each 50-step chunk of `oak_l` camera poses is anchored at the arm's current pose and solved with
+placo IK on Pollen's OpenArm + Gripette URDF; the predicted (strategy, closure) is decoded to the
+two Gripette motors with `gripette.grasp_projection`.
+
+```bash
+pip install -e "lerobot_robot_openarm_gripette[policy]"
+python lerobot_robot_openarm_gripette/examples/run_grabette_policy.py \
+    --port can0 --gripette 172.18.7.107:50051 --dry_run
+```
+
+- Start with `--dry_run`: it runs the policy and IK on live camera frames and prints how far each
+  chunk would move the camera, without moving anything.
+- The URDF is the right arm, with joints mapped `r_arm_pitch..r_wrist_pitch` -> `joint_1..joint_7`.
+  Joint zeros must match the URDF (arm hanging straight down); flip reversed joints with
+  `--joint_signs`.
+- Place the Gripette as the demonstrations started (distance and view of the scene): the policy
+  reproduces demo-scale motions relative to wherever the arm starts.
+- The run aborts if IK moves any joint more than `--max_joint_step` degrees in one tick.
 
 ## Tests
 
