@@ -58,6 +58,24 @@ require_libsvtav1 = _require_encoder("libsvtav1")
 require_h264 = _require_encoder("h264")
 require_hevc = _require_encoder("hevc")
 require_videotoolbox = _require_encoder("h264_videotoolbox")
+
+
+def _write_synthetic_video(path: Path, fps: int, n_frames: int, width: int = 32, height: int = 24) -> None:
+    """Encode a synthetic H.264 clip with ``n_frames`` frames on a clean 1/fps pts grid."""
+    with av.open(str(path), "w") as container:
+        stream = container.add_stream("h264", rate=fps, options={"preset": "ultrafast"})
+        stream.width = width
+        stream.height = height
+        stream.pix_fmt = "yuv420p"
+        for i in range(n_frames):
+            frame = av.VideoFrame(width, height, "yuv420p")
+            frame.pts = i
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
 require_nvenc = _require_encoder("h264_nvenc")
 require_vaapi = _require_encoder("h264_vaapi")
 require_qsv = _require_encoder("h264_qsv")
@@ -533,6 +551,66 @@ class TestReencodeVideo:
         # Only the frames at 0.067 and 0.1 s fall inside [0.05, 0.12).
         assert len(frames) == 2
         assert frames[0].time == pytest.approx(0.0, abs=1e-3)
+
+    @require_h264
+    def test_reencode_video_trim_long_clip_30fps(self, tmp_path):
+        """Trimming a clip well past the muxer dts threshold (~8.7 s at 30 fps) must not raise.
+
+        Clearing ``frame.pts`` made the mp4 muxer reject the output with
+        ``[Errno 22] Invalid argument`` ("non monotonically increasing dts") as
+        soon as a trimmed clip exceeded a frame-count threshold that depends on
+        the frame rate — long enough to crash most per-episode clip extraction.
+        """
+        src = tmp_path / "src_30fps.mp4"
+        _write_synthetic_video(src, fps=30, n_frames=600)  # 20 s
+        cfg = RGBEncoderConfig(vcodec="h264", preset="ultrafast")
+
+        out = tmp_path / "trim_head_30fps.mp4"
+        reencode_video(src, out, video_encoder=cfg, start_time_s=0.0, end_time_s=10.0, overwrite=True)
+        with av.open(str(out)) as container:
+            frames = list(container.decode(video=0))
+        assert len(frames) == 300
+        assert frames[0].time == pytest.approx(0.0, abs=1e-3)
+
+        out = tmp_path / "trim_mid_30fps.mp4"
+        reencode_video(src, out, video_encoder=cfg, start_time_s=5.0, end_time_s=15.0, overwrite=True)
+        with av.open(str(out)) as container:
+            frames = list(container.decode(video=0))
+        assert len(frames) == 300
+        # The trimmed clip is rebased so it starts at t=0.
+        assert frames[0].time == pytest.approx(0.0, abs=1e-3)
+        assert frames[-1].time == pytest.approx(299 / 30, abs=1e-3)
+
+    @require_h264
+    def test_reencode_video_trim_long_clip_60fps(self, tmp_path):
+        """The dts threshold is reached even sooner at 60 fps (~2.2 s)."""
+        src = tmp_path / "src_60fps.mp4"
+        _write_synthetic_video(src, fps=60, n_frames=240)  # 4 s
+        cfg = RGBEncoderConfig(vcodec="h264", preset="ultrafast")
+        out = tmp_path / "trim_60fps.mp4"
+        reencode_video(src, out, video_encoder=cfg, start_time_s=0.0, end_time_s=2.5, overwrite=True)
+
+        with av.open(str(out)) as container:
+            frames = list(container.decode(video=0))
+        assert len(frames) == 150
+        assert frames[0].time == pytest.approx(0.0, abs=1e-3)
+
+    @require_h264
+    @pytest.mark.parametrize("fps", [10, 15, 30, 60])
+    def test_reencode_video_trim_end_boundary_is_exclusive(self, tmp_path, fps):
+        """``end_time_s`` is exclusive: trimming ``[0, n/fps)`` keeps exactly ``n`` frames."""
+        n = 12
+        src = tmp_path / f"src_{fps}fps.mp4"
+        _write_synthetic_video(src, fps=fps, n_frames=n)
+        cfg = RGBEncoderConfig(vcodec="h264", preset="ultrafast")
+        out = tmp_path / f"trim_{fps}fps.mp4"
+        reencode_video(src, out, video_encoder=cfg, start_time_s=0.0, end_time_s=n / fps, overwrite=True)
+
+        with av.open(str(out)) as container:
+            frames = list(container.decode(video=0))
+        assert len(frames) == n
+        assert frames[0].time == pytest.approx(0.0, abs=1e-3)
+        assert frames[-1].time == pytest.approx((n - 1) / fps, abs=1e-3)
 
 
 class TestConcatenateVideoFiles:
