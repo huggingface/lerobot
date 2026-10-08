@@ -1555,7 +1555,7 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
 def test_sync_engine_returns_the_prediction_with_the_action():
     from lerobot.inference import SyncInferenceEngine
     from lerobot.lerobot_types import TransitionKey
-    from lerobot.processor import create_transition
+    from lerobot.utils.constants import ACTION, PREDICTION
 
     returned = {"subtask": None}
     policy = MagicMock()
@@ -1565,7 +1565,7 @@ def test_sync_engine_returns_the_prediction_with_the_action():
         action = torch.zeros(1, 2)
         if returned["subtask"] is None:
             return action
-        return create_transition(action=action, prediction={"language": {"subtask": returned["subtask"]}})
+        return {ACTION: action, PREDICTION: {"language": {"subtask": [returned["subtask"]]}}}
 
     policy.select_action.side_effect = select_action
     postprocessor = MagicMock(side_effect=lambda action: action + 1)
@@ -1588,7 +1588,19 @@ def test_sync_engine_returns_the_prediction_with_the_action():
     step = engine.get_action({})
     assert isinstance(postprocessor.call_args.args[0], torch.Tensor)  # only the action is postprocessed
     torch.testing.assert_close(step[TransitionKey.ACTION], torch.ones(2))
-    assert transition_to_prediction(step) == {"language": {"subtask": "reach"}}
+    assert transition_to_prediction(step) == {"language": {"subtask": ["reach"]}}
+
+
+class _Identity:
+    """A processor pipeline stand-in with no steps."""
+
+    steps = ()
+
+    def __call__(self, data):
+        return data
+
+    def reset(self):
+        pass
 
 
 def test_send_next_action_returns_the_step_with_the_prediction():
@@ -1600,14 +1612,14 @@ def test_send_next_action_returns_the_step_with_the_prediction():
     ctx, _ = _make_loop_ctx(fps=30.0, multiplier=2, num_ticks=10)
     engine = ctx.policy.inference
     engine.get_action.side_effect = [
-        create_transition(action=torch.tensor([1.0]), prediction={"language": {"subtask": "reach"}}),
+        create_transition(action=torch.tensor([1.0]), prediction={"language": {"subtask": ["reach"]}}),
         torch.tensor([2.0]),
     ]
     interpolator = ActionInterpolator(multiplier=2)
 
     first = send_next_action({"m.pos": 0.0}, {"m.pos": 0.0}, ctx, interpolator)
     assert first[TransitionKey.ACTION] == {"m.pos": 1.0}
-    assert transition_to_prediction(first) == {"language": {"subtask": "reach"}}
+    assert transition_to_prediction(first) == {"language": {"subtask": ["reach"]}}
 
     # The next policy step returned a bare action, and the interpolated tick in between
     # pulled nothing from the engine: neither carries a prediction.
@@ -1623,7 +1635,7 @@ def test_log_telemetry_passes_the_step_only_with_display_data(monkeypatch):
 
     logged = []
     monkeypatch.setattr(core, "log_visualization_data", lambda *a, **k: logged.append(k))
-    step = create_transition(action={"m.pos": 1.0}, prediction={"language": {"subtask": "reach"}})
+    step = create_transition(action={"m.pos": 1.0}, prediction={"language": {"subtask": ["reach"]}})
     cfg = SimpleNamespace(display_data=False, display_mode="rerun", display_compressed_images=False)
     runtime = SimpleNamespace(cfg=cfg)
 
