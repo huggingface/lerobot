@@ -271,6 +271,11 @@ def main():
                     )
                 q_cmd = q_target
                 proximal, distal = projection.decode(action[strategy_idx], action[closure_idx])
+                print(
+                    "cartesian:",
+                    {cfg.action_feature_names[index]: float(action[index]) for index in [*pos_idx, *rot_idx]},
+                    flush=True,
+                )
                 executed = False
                 try:
                     if not args.dry_run:
