@@ -22,7 +22,7 @@ from tokenizers.trainers import BpeTrainer
 from transformers import PreTrainedTokenizerFast
 from transformers.processing_utils import ProcessorMixin
 
-from ..modeling_molmoact2 import _hf_token
+from ..utils_molmoact2 import hf_token
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def _resolve_tokenizer_location(
         revision=revision,
         force_download=force_download,
         ignore_patterns=["*.py", "*.pyc", "__pycache__/*"],
-        token=_hf_token(),
+        token=hf_token(),
     )
 
 

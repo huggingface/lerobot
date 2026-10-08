@@ -371,7 +371,7 @@ def aggregate_datasets(
     Args:
         repo_ids: List of repository IDs for the datasets to aggregate.
         aggr_repo_id: Repository ID for the aggregated output dataset.
-        roots: Optional list of root paths for the source datasets.
+        roots: Optional list containing one root path for each source dataset.
         aggr_root: Optional root path for the aggregated dataset.
         data_files_size_in_mb: Maximum size for data files in MB (defaults to DEFAULT_DATA_FILE_SIZE_IN_MB)
         video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
@@ -380,6 +380,9 @@ def aggregate_datasets(
         concatenate_data: When False, keep one parquet per source file instead of packing into shards.
     """
     logger.info("Start aggregate_datasets")
+
+    if roots is not None and len(roots) != len(repo_ids):
+        raise ValueError("repo_ids and roots must have the same length")
 
     if data_files_size_in_mb is None:
         data_files_size_in_mb = DEFAULT_DATA_FILE_SIZE_IN_MB
@@ -392,7 +395,7 @@ def aggregate_datasets(
         [LeRobotDatasetMetadata(repo_id) for repo_id in repo_ids]
         if roots is None
         else [
-            LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots, strict=False)
+            LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots, strict=True)
         ]
     )
     fps, robot_type, _ = validate_all_metadata(all_metadata)

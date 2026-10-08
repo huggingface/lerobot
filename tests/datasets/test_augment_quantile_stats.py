@@ -21,6 +21,7 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.scripts.augment_dataset_quantile_stats import (
+    augment_dataset_with_quantile_stats,
     compute_quantile_stats_for_dataset,
     has_quantile_stats,
 )
@@ -107,6 +108,31 @@ def test_quantile_stats_present_after_compute(tmp_path, lerobot_dataset_factory)
     )
     stats = compute_quantile_stats_for_dataset(dataset, use_sampling=True)
     assert has_quantile_stats(stats)
+
+
+@pytest.mark.parametrize(("skip_images", "download_videos"), [(True, False), (False, True)])
+def test_augment_dataset_video_download_matches_skip_images(monkeypatch, skip_images, download_videos):
+    calls = []
+
+    class FakeDataset:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+            self.meta = SimpleNamespace(stats={"action": {"q01": [0.0]}})
+
+    monkeypatch.setattr(
+        "lerobot.scripts.augment_dataset_quantile_stats.LeRobotDataset",
+        FakeDataset,
+    )
+
+    augment_dataset_with_quantile_stats("org/dataset", skip_images=skip_images)
+
+    assert calls == [
+        {
+            "repo_id": "org/dataset",
+            "root": None,
+            "download_videos": download_videos,
+        }
+    ]
 
 
 class FakeHFDataset:

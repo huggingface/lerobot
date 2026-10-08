@@ -33,6 +33,7 @@ from .components import (
     load_wan_video_dit,
     resolve_wan_dit_paths,
 )
+from .model import sinusoidal_embedding_1d
 from .video_dit import (
     FastWAMAttentionBlock,
     WanContinuousFlowMatchScheduler,
@@ -40,7 +41,6 @@ from .video_dit import (
     gradient_checkpoint_forward,
     modulate,
     precompute_freqs_cis,
-    sinusoidal_embedding_1d,
 )
 
 logger = logging.getLogger(__name__)
@@ -941,6 +941,8 @@ class FastWAM(torch.nn.Module):
             raise ValueError("`video_dit_config` is required for FastWAM.from_wan22_pretrained().")
         if "text_dim" not in video_dit_config:
             raise ValueError("`video_dit_config['text_dim']` is required for FastWAM.")
+        if action_dit_config is None:
+            raise ValueError("`action_dit_config` is required for FastWAM.from_wan22_pretrained().")
 
         # Custom MoT video DiT from the original Wan2.2 repo; frozen VAE / UMT5 from
         # the diffusers conversion. This is the offline base-creation path; the
@@ -1799,6 +1801,7 @@ class FastWAM(torch.nn.Module):
         seed: int | None = None,
         rand_device: str = "cpu",
         tiled: bool = False,
+        compile_action_infer: bool = False,
     ) -> dict[str, Any]:
         self.eval()
         if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
@@ -1834,7 +1837,27 @@ class FastWAM(torch.nn.Module):
             video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
             device=video_pre["tokens"].device,
         )
-        video_kv_cache = self.mot.prefill_video_cache(
+        video_prefiller = self.mot.prefill_video_cache
+        action_denoiser = self._predict_action_noise_with_cache
+        if compile_action_infer:
+            if not hasattr(self, "_compiled_video_prefiller"):
+                self._compiled_video_prefiller = torch.compile(
+                    self.mot.prefill_video_cache,
+                    mode="reduce-overhead",
+                    fullgraph=True,
+                )
+            if not hasattr(self, "_compiled_action_denoiser"):
+                self._compiled_action_denoiser = torch.compile(
+                    self._predict_action_noise_with_cache,
+                    mode="reduce-overhead",
+                    fullgraph=True,
+                )
+            video_prefiller = self._compiled_video_prefiller
+            action_denoiser = self._compiled_action_denoiser
+            if self.device.type == "cuda":
+                torch.compiler.cudagraph_mark_step_begin()
+
+        video_kv_cache = video_prefiller(
             video_tokens=video_pre["tokens"],
             video_freqs=video_pre["freqs"],
             video_t_mod=video_pre["t_mod"],
@@ -1844,6 +1867,14 @@ class FastWAM(torch.nn.Module):
             },
             video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
         )
+        if compile_action_infer:
+            # Inductor's reduce-overhead mode can return CUDA Graph-owned output
+            # buffers. The denoising graph replays repeatedly, so keep stable cache
+            # tensors that cannot be overwritten by a later graph replay.
+            video_kv_cache = [
+                {"k": layer_cache["k"].clone(), "v": layer_cache["v"].clone()}
+                for layer_cache in video_kv_cache
+            ]
 
         infer_timesteps_action, infer_deltas_action = self.infer_action_scheduler.build_inference_schedule(
             num_inference_steps=num_inference_steps,
@@ -1852,9 +1883,11 @@ class FastWAM(torch.nn.Module):
             shift_override=sigma_shift,
         )
         for step_t_action, step_delta_action in zip(infer_timesteps_action, infer_deltas_action, strict=True):
+            if compile_action_infer and self.device.type == "cuda":
+                torch.compiler.cudagraph_mark_step_begin()
             timestep_action = step_t_action.unsqueeze(0).to(dtype=latents_action.dtype, device=self.device)
 
-            pred_action = self._predict_action_noise_with_cache(
+            pred_action = action_denoiser(
                 latents_action=latents_action,
                 timestep_action=timestep_action,
                 context=context,

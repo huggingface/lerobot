@@ -14,9 +14,12 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import torch
 
 from lerobot.configs import (
     FeatureType,
@@ -137,13 +140,17 @@ def _validate_wan_model_id(value: str, field_name: str) -> str:
 def is_fastwam_base_compatible_config(config: FastWAMConfig) -> bool:
     """Return whether `fastwam_base` partial weights can initialize this config."""
 
+    video_dit_config = config.video_dit_config
+    action_dit_config = config.action_dit_config
+    if video_dit_config is None or action_dit_config is None:
+        # FastWAMConfig.__post_init__ always fills both; None here is a programming error.
+        raise ValueError("`FastWAMConfig.video_dit_config` and `action_dit_config` must be resolved.")
     default_video_config = default_video_dit_config(config.action_dim)
     default_action_config = default_action_dit_config(config.action_dim)
     return all(
-        config.video_dit_config.get(key) == default_video_config.get(key)
-        for key in _FASTWAM_VIDEO_BASE_COMPAT_KEYS
+        video_dit_config.get(key) == default_video_config.get(key) for key in _FASTWAM_VIDEO_BASE_COMPAT_KEYS
     ) and all(
-        config.action_dit_config.get(key) == default_action_config.get(key)
+        action_dit_config.get(key) == default_action_config.get(key)
         for key in _FASTWAM_ACTION_BASE_COMPAT_KEYS
     )
 
@@ -172,6 +179,9 @@ class FastWAMConfig(PreTrainedConfig):
         action_dit_config (dict[str, Any] | None): Action expert config.
         use_gradient_checkpointing (bool): Enable activation checkpointing in both DiT
             experts (trades compute for memory; propagated into the DiT configs).
+        compile_action_infer (bool): Compile the cached action-denoising path with
+            ``torch.compile`` in reduce-overhead mode. The first inference call incurs
+            compilation warm-up; subsequent calls with the same shapes reuse the graph.
         freeze_video_expert (bool): Freeze the ~5B Wan video expert
             (`model.video_expert`) so only the action expert + proprio encoder train.
             Cuts the AdamW optimizer footprint substantially; the video expert keeps its
@@ -195,7 +205,11 @@ class FastWAMConfig(PreTrainedConfig):
     tokenizer_max_len: int = 128
     load_text_encoder: bool = True
     mot_checkpoint_mixed_attn: bool = False
-    torch_dtype: str = "bfloat16"
+    dtype: torch.dtype | None = torch.bfloat16
+
+    # Deprecated and ignored: superseded by `dtype`. Declared only so configs written before the
+    # rename still parse — draccus rejects config.json keys the dataclass no longer declares.
+    torch_dtype: str | None = None
     prompt_template: str = (
         "A video recorded from a robot's point of view executing the following instruction: {task}"
     )
@@ -207,6 +221,7 @@ class FastWAMConfig(PreTrainedConfig):
     sigma_shift: float | None = None
     tiled: bool = False
     fp32_attention: bool = True
+    compile_action_infer: bool = False
     use_gradient_checkpointing: bool = False
     freeze_video_expert: bool = False
     toggle_action_dimensions: list[int] = field(default_factory=list)
@@ -232,8 +247,21 @@ class FastWAMConfig(PreTrainedConfig):
     optimizer_weight_decay: float = 1.0e-2
 
     def __post_init__(self) -> None:
+        if self.torch_dtype is not None:
+            warnings.warn(
+                "`torch_dtype` is deprecated; use `--policy.dtype` instead.",
+                FutureWarning,
+                stacklevel=3,
+            )
+            self.torch_dtype = None
+
         super().__post_init__()
-        self.image_size = tuple(self.image_size)
+        if self.dtype not in {torch.float32, torch.float16, torch.bfloat16}:
+            raise ValueError(
+                f"Unsupported dtype={self.dtype!r}. Expected torch.float32, torch.float16 or torch.bfloat16."
+            )
+        image_height, image_width = self.image_size
+        self.image_size = (image_height, image_width)
         self.model_id = _validate_wan_model_id(self.model_id, "model_id")
         self.input_features = _coerce_policy_features(self.input_features)
         self.output_features = _coerce_policy_features(self.output_features)

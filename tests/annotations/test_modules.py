@@ -368,6 +368,49 @@ def test_module3_attaches_frame_image_block_to_prompt(single_episode_root: Path,
         assert camera in provider.cameras
 
 
+@pytest.mark.parametrize(
+    ("coordinate_scale", "answer", "stored"),
+    [
+        # 0-1000 grid answers (Qwen3-VL convention) are stored as [0, 1] fractions.
+        (
+            1000.0,
+            {"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [100, 200, 300, 1004]}]},
+            {"detections": [{"label": "cup", "bbox_format": "xyxy", "bbox": [0.1, 0.2, 0.3, 1.0]}]},
+        ),
+        (
+            1000.0,
+            {"label": "gripper", "point_format": "xy", "point": [868, 568]},
+            {"label": "gripper", "point_format": "xy", "point": [0.868, 0.568]},
+        ),
+        # Pixel answers are divided by the 640x480 frame size.
+        (
+            None,
+            {"label": "gripper", "point_format": "xy", "point": [320, 120]},
+            {"label": "gripper", "point_format": "xy", "point": [0.5, 0.25]},
+        ),
+        (1000.0, {"label": "cup", "count": 2}, None),
+    ],
+)
+def test_module3_stores_unit_coordinates(
+    single_episode_root: Path, tmp_path: Path, coordinate_scale, answer, stored
+) -> None:
+    captured: list[list[dict[str, Any]]] = []
+    module = GeneralVqaModule(
+        vlm=_spy_responder(captured, {"question": "Where is it?", "answer": answer}),
+        config=VqaConfig(vqa_emission_hz=1.0, coordinate_scale=coordinate_scale),
+        seed=0,
+        frame_provider=_StubFrameProvider(sentinel=PIL.Image.new("RGB", (640, 480))),
+    )
+    record = next(iter_episodes(single_episode_root))
+    staging = EpisodeStaging(tmp_path / "stage", record.episode_index)
+    module.run_episode(record, staging)
+
+    answers = [json.loads(r["content"]) for r in staging.read("vqa") if r["role"] == "assistant"]
+    assert answers and all(a == (stored or answer) for a in answers)
+    prompt = captured[0][0]["content"][-1]["text"]
+    assert ("0-1000 grid" in prompt) == (coordinate_scale is not None)
+
+
 def test_module3_assistant_content_is_valid_json(single_episode_root: Path, tmp_path: Path) -> None:
     payload = {
         "question": "Where is the cup?",

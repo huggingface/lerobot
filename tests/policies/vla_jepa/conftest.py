@@ -1,4 +1,19 @@
 #!/usr/bin/env python
+
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Shared fixtures and helpers for VLA-JEPA tests."""
 
 from __future__ import annotations
@@ -177,10 +192,6 @@ class _FakeQwenInterface(nn.Module):
         super().__init__()
         self.config = config
         self.model = _FakeQwenBackbone(hidden_size=QWEN_HIDDEN_SIZE)
-
-    @staticmethod
-    def _get_torch_dtype(dtype_name: str) -> torch.dtype:
-        return torch.float32 if dtype_name == "float32" else torch.bfloat16
 
     def expand_tokenizer(self) -> tuple[list[str], list[int], int]:
         max_action_tokens = self.config.chunk_size * self.config.num_action_tokens_per_timestep

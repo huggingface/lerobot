@@ -23,6 +23,7 @@ importing from here directly. Requires the ``viz`` extra (``pip install 'lerobot
 import logging
 import numbers
 import time
+from typing import Any
 
 import cv2
 import numpy as np
@@ -89,11 +90,11 @@ def init_foxglove(host: str = "127.0.0.1", port: int | None = 8765) -> None:
 
     # Live-stream state lives as attributes on ``log_foxglove_data``:
     # ``.server`` is the shared WebSocket server and
-    # ``.channels`` caches one Foxglove channel per topic
+    # ``.channels`` caches one Foxglove channel per topic.
     if getattr(log_foxglove_data, "server", None) is not None:
         return
-    log_foxglove_data.server = foxglove.start_server(host=host, port=port or 8765)
-    log_foxglove_data.channels = {}
+    log_foxglove_data.server = foxglove.start_server(host=host, port=port or 8765)  # type: ignore[attr-defined]
+    log_foxglove_data.channels = {}  # type: ignore[attr-defined]
 
 
 def shutdown_foxglove() -> None:
@@ -102,8 +103,8 @@ def shutdown_foxglove() -> None:
     server = getattr(log_foxglove_data, "server", None)
     if server is not None:
         server.stop()
-    log_foxglove_data.server = None
-    log_foxglove_data.channels = {}
+    log_foxglove_data.server = None  # type: ignore[attr-defined]
+    log_foxglove_data.channels = {}  # type: ignore[attr-defined]
 
 
 def _foxglove_safe_name(name: str) -> str:
@@ -136,7 +137,11 @@ def _foxglove_topic(key: str, *, is_image: bool = False) -> str:
 
 
 def _log_foxglove_scalars(
-    topic: str, values: dict[str, float], *, channels: dict | None = None, log_time: int | None = None
+    topic: str,
+    values: dict[str, float],
+    *,
+    channels: dict[str, Any] | None = None,
+    log_time: int | None = None,
 ) -> None:
     """Log scalars on a typed JSON channel using the static :data:`_SCALARS_SCHEMA`.
 
@@ -154,7 +159,7 @@ def _log_foxglove_scalars(
     import foxglove
 
     if channels is None:
-        channels = log_foxglove_data.channels
+        channels = log_foxglove_data.channels  # type: ignore[attr-defined]
     channel = channels.get(topic)
     if channel is None:
         channel = channels[topic] = foxglove.Channel(topic, schema=_SCALARS_SCHEMA, message_encoding="json")
@@ -180,7 +185,7 @@ def _log_foxglove_image(
     arr: np.ndarray,
     *,
     compress_images: bool,
-    channels: dict | None = None,
+    channels: dict[str, Any] | None = None,
     log_time: int | None = None,
     depth_range: tuple[float, float] | None = None,
     raw_depth_values: bool = False,
@@ -211,7 +216,7 @@ def _log_foxglove_image(
     from foxglove.messages import CompressedImage, RawImage, Timestamp
 
     if channels is None:
-        channels = log_foxglove_data.channels
+        channels = log_foxglove_data.channels  # type: ignore[attr-defined]
     time_ns = time.time_ns() if log_time is None else log_time
     timestamp = Timestamp(sec=time_ns // 1_000_000_000, nsec=time_ns % 1_000_000_000)
     log_kwargs = {} if log_time is None else {"log_time": log_time}
@@ -222,6 +227,7 @@ def _log_foxglove_image(
     height, width = arr.shape[0], arr.shape[1]
     n_channels = 1 if arr.ndim == 2 else arr.shape[2]
 
+    encoding: str | None
     if n_channels == 1 and arr.dtype != np.uint8:
         # Depth map: infer the encoding from the dtype.
         encoding, target_dtype, value_max = (
@@ -405,6 +411,14 @@ def _frame_to_scalars(sample: dict, key: str, labels: list[str] | None = None) -
     return _labeled_scalars(name, arr.flatten(), labels)
 
 
+def _playback_times_ns(dataset) -> list[int]:
+    """Per-frame timestamps in nanoseconds, read without decoding video."""
+    if hasattr(dataset, "hf_dataset"):
+        return [int(round(float(t) * 1e9)) for t in dataset.hf_dataset["timestamp"]]
+    # Storage formats without hf_dataset (e.g. lance): timestamps lie on the fps grid.
+    return [int(round(i * 1e9 / dataset.fps)) for i in range(len(dataset))]
+
+
 def serve_foxglove_dataset_playback(
     dataset,
     episode_index: int,
@@ -445,8 +459,7 @@ def serve_foxglove_dataset_playback(
         ServerListener,
     )
 
-    # Per-frame timestamps in nanoseconds (read straight from the table, no video decode).
-    times_ns = [int(round(float(t) * 1e9)) for t in dataset.hf_dataset["timestamp"]]
+    times_ns = _playback_times_ns(dataset)
     n_frames = len(times_ns)
     if n_frames == 0:
         raise ValueError("Cannot visualize an empty episode.")

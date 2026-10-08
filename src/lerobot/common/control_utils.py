@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 from contextlib import nullcontext
 from copy import copy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 import numpy as np
 import torch
@@ -35,7 +35,8 @@ else:
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
-from lerobot.lerobot_types import PolicyAction
+    from lerobot.teleoperators import Teleoperator
+from lerobot.lerobot_types import PolicyAction, RobotAction
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.robots import Robot
 
@@ -169,7 +170,19 @@ def sanity_check_dataset_robot_compatibility(
 ########################################################################################
 
 
-def teleop_supports_feedback(teleop) -> bool:
+class ActuatedTeleoperator(Protocol):
+    """A teleoperator whose arm can be driven: position feedback plus torque control."""
+
+    def get_action(self) -> RobotAction: ...
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None: ...
+
+    def enable_torque(self) -> None: ...
+
+    def disable_torque(self) -> None: ...
+
+
+def teleop_supports_feedback(teleop: Teleoperator) -> TypeGuard[ActuatedTeleoperator]:
     """Return True when the teleop can receive position feedback (is actuated).
 
     Actuated teleops (e.g. SO-101, OpenArmMini) have non-empty ``feedback_features``
@@ -184,7 +197,9 @@ def teleop_supports_feedback(teleop) -> bool:
     )
 
 
-def teleop_smooth_move_to(teleop, target_pos: dict, duration_s: float = 2.0, fps: int = 30) -> None:
+def teleop_smooth_move_to(
+    teleop: ActuatedTeleoperator, target_pos: RobotAction, duration_s: float = 2.0, fps: int = 30
+) -> None:
     """Smoothly move an actuated teleop to ``target_pos`` via linear interpolation.
 
     Requires the teleoperator to support feedback (i.e. have non-empty

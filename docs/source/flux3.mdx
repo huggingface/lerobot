@@ -1,0 +1,269 @@
+# FLUX 3 Action
+
+FLUX 3 Action predicts robot actions from camera observations, state and a task instruction. A frozen
+Video VAE and text encoder feed a diffusion transformer that predicts video latents and action chunks;
+only actions are returned at inference. LeRobot supports inference and PEFT: LoRA adapts the trunk
+while the robot's action and conditioning heads train in full.
+
+We ship `flux-3-action-base` as base action model along with finetunings for the SO-101 `flux-3-action-so101` and Franka Panda robots `flux-3-action-droid` (finetuned on the DROID dataset).
+The central example here is a task adaptation via a LoRA based on the `flux-3-action-so101` model.
+
+For training a new robot embodiment from the base model or full finetuning, use our standalone
+[flux-action](https://github.com/black-forest-labs/flux-action) repository.
+
+## Installation
+
+From the LeRobot checkout, install the training, policy, PEFT and EMA dependencies:
+
+```bash
+pip install -e ".[training,flux3,peft,diffusion]"
+```
+
+The Video VAE also requires a torch/CUDA-compatible **NATTEN** wheel from https://whl.natten.org.
+For torch 2.11 with CUDA 12.8:
+
+```bash
+uv pip install natten==0.21.6+torch2110cu128 --find-links https://whl.natten.org
+```
+
+Use `natten==0.21.6+torch2100cu128` for torch 2.10, or build for your environment.
+
+## SO-101 task adaptation
+
+Use a LeRobot v3 dataset at **30 Hz**, with six absolute commanded-action channels and six measured-state
+channels in matching joint order and units. The gripper is last. Supply raw values, consistent robot
+calibration and instructions in `task`.
+
+### Cameras
+
+Camera names, count and layout are configurable. The SO-101 package names its two cameras for
+what they show:
+
+| Camera | Key                        |
+| ------ | -------------------------- |
+| Scene  | `observation.images.scene` |
+| Wrist  | `observation.images.wrist` |
+
+![SO-101 scene camera (left) and wrist camera (right), showing the blue box and container](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/so101_camera_tiling.png)
+
+You can use `--rename_map` to map camera names to the expected keys, for example:
+
+```bash
+--rename_map='{"observation.images.top":"observation.images.scene","observation.images.gripper_cam":"observation.images.wrist"}'
+```
+
+Use the same mapping for rollout; matching keys need no map. See [rename maps](https://huggingface.co/docs/lerobot/main/en/rename_map).
+
+### Load and train
+
+Load the SO-101 policy from
+[`black-forest-labs/flux-3-action-so101`](https://huggingface.co/black-forest-labs/flux-3-action-so101).
+The saved configuration automatically loads the shared VAE and text encoder from a pinned
+revision of `black-forest-labs/flux-3-action-base`.
+If access is restricted, authenticate with `hf auth login` using an account with access.
+Run from the LeRobot checkout:
+
+```bash
+python -m lerobot.scripts.lerobot_train \
+  --config_path=examples/flux3/lora.json \
+  --policy.path=black-forest-labs/flux-3-action-so101 --policy.device=cuda \
+  --dataset.repo_id=YOUR_ORG/YOUR_SO101_DATASET \
+  --output_dir=outputs/so101_lora
+```
+
+The Hub cache retains the downloaded model and shared encoders for resume and adapter inference.
+
+The pinned SO-101-finetuned checkpoint uses `scene` / `wrist` camera keys, eight observation timesteps,
+two independently encoded visual snapshots, and past-action/state conditioning. It predicts 42 actions,
+executes the first 32 at 30 Hz, then replans. Its saved processors carry the base's matching normalization
+statistics. These checkpoint settings are preserved during task adaptation.
+The shared `examples/flux3/lora.json` supplies only training/runtime settings and the training budget;
+the same file is bundled as `lora.json` in each Hub package. Camera layout, conditioning, action
+representation and loss settings come from the checkpoint. These commands retain the saved
+execution length of 32, guidance 3/3 and eager execution. For guidance 4/1 and compilation,
+add `--policy.guidance_scale=4 --policy.guidance_scale_action=1 --policy.compile_model=true`.
+
+> **Conditioning experiments:** LeRobot exposes `n_obs_steps`, `history_snapshots` and
+> `condition_on_past_actions`. Changing them requires compatible model/processor settings and
+> fine-tuning; keep the checkpoint's saved values for ordinary task adaptation.
+
+The preset enables rank/alpha 32 LoRA and EMA with decay 0.999; nothing uploads automatically. Enable
+new adapters through top-level `peft` settings, not `--policy.use_peft=true`, which identifies a saved adapter.
+
+In our experiments, EMA provided substantial benefits on DROID, while SO-101 results have been mixed
+so far. Its benefit depends on the data and training setup. We recommend keeping EMA enabled and
+evaluating both raw and EMA checkpoints under the same rollout protocol before choosing which to deploy.
+Periodic offline validation loss uses raw weights; it does not compare both variants automatically.
+
+Start with the single-GPU budget for fast iteration. For a larger training budget, use the same config
+with these overrides:
+
+```bash
+accelerate launch --num_processes=4 --multi_gpu -m lerobot.scripts.lerobot_train \
+  --config_path=examples/flux3/lora.json \
+  --policy.path=black-forest-labs/flux-3-action-so101 --policy.device=cuda \
+  --dataset.repo_id=YOUR_ORG/YOUR_SO101_DATASET \
+  --batch_size=8 --steps=14000 \
+  --output_dir=outputs/so101_lora_large
+```
+
+| Budget                   | GPUs | Batch per GPU | Accumulation | Effective batch | Microsteps (`steps`) | Optimizer updates |
+| ------------------------ | ---- | ------------- | ------------ | --------------- | -------------------- | ----------------- |
+| Fast iteration (default) | 1    | 2             | 4            | 8               | 10,000               | 2,500             |
+| Larger budget            | 4    | 8             | 4            | 128             | 14,000               | 3,500             |
+
+Effective batch is GPUs × batch per GPU × accumulation. LeRobot counts `steps`, `save_freq` and
+`eval_steps` in microsteps; divide by accumulation for optimizer updates. The preset saves and evaluates
+every 500 microsteps (125 updates). Keep all three settings divisible by accumulation when changing it.
+Scheduler freeze, warmup, decay and cooldown lengths also use microsteps. Multiply a desired
+number of optimizer updates by the accumulation factor when setting these phase lengths.
+Both budgets use the same LoRA, optimizer and EMA settings, and preserve the loaded base's conditioning,
+action dimensions and normalization. Checkpoints include both raw and EMA adapters. Choose the budget
+and checkpoint using held-out evaluation and rollouts; a larger batch does not guarantee better results.
+
+The preset holds out the last 20% of episodes per task for evaluation. Adjust batch size and accumulation
+for your hardware; see [multi-GPU training](https://huggingface.co/docs/lerobot/main/en/multi_gpu_training)
+and [PEFT training](https://huggingface.co/docs/lerobot/main/en/peft_training).
+
+## DROID task adaptation
+
+**Experimental:** `examples/flux3/lora.json` reuses the SO-101 PEFT optimizer, LoRA, dropout,
+EMA and training-budget settings. Configuration loading has been checked, but end-to-end DROID PEFT
+training and task performance have not yet been validated.
+
+Load the [DROID policy](https://huggingface.co/black-forest-labs/flux-3-action-droid)
+directly by repo ID; its shared encoders resolve automatically:
+
+```bash
+lerobot-train \
+  --config_path=examples/flux3/lora.json \
+  --policy.path=black-forest-labs/flux-3-action-droid \
+  --dataset.repo_id=YOUR_ORG/YOUR_DROID_TASK_DATASET \
+  --output_dir=outputs/droid_lora
+```
+
+This uses effective batch 8 and 2,500 optimizer updates, with EMA enabled and raw/EMA checkpoints
+saved every 125 updates. Automatic Hub uploads are disabled. For the larger budget, launch with four
+GPUs as in the SO-101 example and add `--batch_size=8 --steps=14000`.
+
+The preset loads the DROID checkpoint's camera layout, conditioning, action representation, control
+rate and processors, overriding only the listed training/runtime settings. Your dataset must match
+the checkpoint's contract: the current package uses three cameras, eight state/action channels and
+absolute joint-position commands at 15 Hz. Map camera names with `--rename_map` if needed.
+Both robots use the same training example; no robot-specific recipe is needed for loading or inference.
+
+## Defaults and normalization
+
+New configs use these PEFT defaults. Loading `--policy.path` uses the checkpoint's saved settings;
+explicit config/CLI overrides take precedence. DROID checkpoints retain their own configuration.
+
+| Setting                                     | Default                                                        |
+| ------------------------------------------- | -------------------------------------------------------------- |
+| Conditioning                                | Current images and measured state; 1 snapshot, no past actions |
+| Actions                                     | Command deltas; 32 predicted and 32 executed at 30 Hz          |
+| Cameras                                     | Two views side by side on a 256 × 512 canvas                   |
+| Adapter / head learning rate                | `1e-4` / `5e-4`                                                |
+| Weight decay / gradient clipping            | `0` / `1`                                                      |
+| Freeze / warmup                             | None                                                           |
+| Gradient checkpointing / image augmentation | On / off                                                       |
+
+New configs use `n_obs_steps=1`, `history_snapshots=1` and `condition_on_past_actions=false`.
+Loading a checkpoint preserves its explicit values: the pinned SO-101 package uses eight history
+timesteps, two visual snapshots and past-action/state conditioning. `conditioning="history"` selects
+independent snapshot encoding; it does not by itself determine the number of timesteps. Training also
+reads future frames and commands as targets, plus the preceding command to calculate action deltas.
+
+Camera names/order, state/action dimensions and absolute action channels remain robot-specific.
+The SO-101 checkpoint keeps the last channel absolute (`delta_absolute_dims=[-1]`) and uses channel weights
+`[1, 1, 1, 1, 1, 2]`. Class defaults use no absolute-channel exceptions and equal weights.
+
+The base's saved processors own normalization statistics. Feed raw states/actions and keep the same
+statistics for training, resume and inference. The SO-101 package's quantiles assume its joint order,
+units and calibration; they are not universal SO-101 calibration values. To use different statistics,
+prepare a separate base with matching processors before training. Absolute-action dataset statistics
+cannot substitute for command-delta statistics.
+
+Training saves adapters and trained heads with a reference to the complete base. Keep that base and
+its frozen encoder files accessible when reloading; adapters are not automatically merged into it.
+
+## Resume
+
+```bash
+lerobot-train \
+  --config_path=outputs/so101_lora/checkpoints/last/pretrained_model/train_config.json \
+  --resume=true
+```
+
+Resume from the raw `pretrained_model` checkpoint, which restores optimizer and EMA state. For inference,
+you can select its `pretrained_model_ema` sibling when EMA is enabled. Keep each adapter's original base
+and processors; a freshly downloaded base is not a replacement for one used by an older adapter.
+
+## Inference
+
+Point the LeRobot runner's `--policy.path` at the trained adapter checkpoint; it loads the referenced
+base and saved processors. For direct calls with a **complete base**, load the processors alongside it:
+
+```python
+from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies.flux3 import Flux3Policy
+
+checkpoint = "black-forest-labs/flux-3-action-so101"
+policy = Flux3Policy.from_pretrained(checkpoint).eval()
+preprocessor, postprocessor = make_pre_post_processors(policy.config, pretrained_path=checkpoint)
+
+# Run on every control tick, including while actions are queued:
+prepared = preprocessor(observation)
+normalized_action = policy.select_action(prepared)
+absolute_command = postprocessor(normalized_action)
+```
+
+The preprocessor buffers observation/command history. The postprocessor undoes normalization, integrates
+deltas and updates shared command history on every tick. The first command is anchored to measured
+state; later commands integrate from the preceding command. Direct policy outputs are normalized and
+must be postprocessed. Reset the policy and both processors at episode boundaries or after intervention;
+LeRobot's synchronous runner does this. RTC/asynchronous inference is not supported.
+
+For the default single-timestep policy, current images and measured state are sufficient. For offline
+prediction with an explicit delta anchor, supply `observation.command_history` with one preceding command;
+this anchors output integration without adding a command to the model's conditioning. Checkpoints explicitly
+configured for multiple observation timesteps require `policy.config.n_obs_steps` images/states and command
+history. Pass inputs through the preprocessor, call `predict_action_chunk`, then postprocess.
+`--policy.compile_model=true` enables lazy compilation of the frozen encoders and inference DiT;
+it does not compile the training DiT.
+
+For lower inference VRAM, move Qwen to CPU after loading and the final `policy.to(...)` call:
+
+```python
+policy.frozen.text_encoder.cpu()
+```
+
+This moves about 8.3 GiB of weights to host RAM; uncached instructions encode more slowly, while
+embeddings are still transferred to the policy device and cached. It does not reduce peak memory
+during loading, and a later `policy.to(...)` moves Qwen back with the policy.
+
+## Training other embodiments
+
+For embodiments where we do not offer a finetuned checkpoint yet, start from the base model in
+[flux-action](https://github.com/black-forest-labs/flux-action). That workflow requires defining the
+robot's action and conditioning heads, camera layout, action representation and normalization.
+Equal dimensions alone do not make another robot's heads reusable.
+
+For subsequent LeRobot inference or task adaptation, package the trained model as a complete LeRobot
+policy with its configuration and matching processors. A raw weights file alone is not a loadable
+`--policy.path` package. This guide focuses on adapting existing SO-101 and DROID policies to new tasks.
+
+All policies build only the `video` and `video_cond` content streams, plus the robot's action streams.
+Unused image/audio weights are filtered before loading, saving about 28% of DiT parameters without
+changing action predictions. Saved stream lists do not enable image/audio branches; loading and saving
+a full base records the reduced layout. Adapters targeting removed streams require their original
+base and an older code revision.
+
+Complete policies load strictly by default. After filtering known unused streams, missing, unexpected
+or incorrectly shaped weights raise an error. Explicit `strict=False` permits initializing missing or
+resizing mismatched embodiment heads only; trunk weights remain mandatory and shape-checked.
+
+## Validation
+
+CPU tests cover packing, processors, PEFT updates and checkpoint/resume. Earlier real-weight H200 checks
+preceded the current processor refactor. This exact revision still needs GPU and
+robot validation; existing checks do not establish four-GPU capacity or PEFT quality on a new embodiment.
