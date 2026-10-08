@@ -34,7 +34,7 @@ from lerobot.configs import VALID_VIDEO_CODECS, VideoEncoderConfig
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import make_dataset
-from lerobot.datasets.feature_utils import get_hf_features_from_features
+from lerobot.datasets.feature_utils import get_hf_features_from_features, validate_feature_dtype_and_shape
 from lerobot.datasets.image_writer import image_array_to_pil_image
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -335,6 +335,44 @@ def test_add_frame_image_wrong_shape(image_dataset):
     ):
         c, h, w = DUMMY_CHW
         dataset.add_frame({"image": torch.randn(c, w, h), "task": "Dummy task"})
+
+
+@pytest.mark.parametrize(
+    "declared_shape, declared_names, value_shape",
+    [
+        # Default layout produced by `hw_to_dataset_features`: (H, W, C) declared, channel-first value.
+        (DUMMY_HWC, ["height", "width", "channels"], DUMMY_CHW),
+        # Depth map declared (H, W, 1), channel-first value (1, H, W).
+        ((DUMMY_HWC[0], DUMMY_HWC[1], 1), ["height", "width", "channels"], (1, DUMMY_HWC[0], DUMMY_HWC[1])),
+        # (C, H, W) declared, channel-last value.
+        (DUMMY_CHW, ["channels", "height", "width"], DUMMY_HWC),
+    ],
+)
+def test_validate_feature_image_accepts_channel_first_and_channel_last(
+    declared_shape, declared_names, value_shape
+):
+    """`validate_feature_image_or_video` documents that both channel-first and channel-last
+    arrays are accepted, and `image_array_to_pil_image` handles both. The check must therefore
+    accept the declared layout and its transposed counterpart regardless of which layout the
+    feature declares."""
+    feature = {"dtype": "image", "shape": declared_shape, "names": declared_names}
+    value = np.zeros(value_shape, dtype=np.uint8)
+    assert validate_feature_dtype_and_shape("image", feature, value) == ""
+
+
+def test_add_frame_image_channel_first_with_hwc_features(tmp_path, empty_lerobot_dataset_factory):
+    """Features built with `hw_to_dataset_features` declare images as (H, W, C). A channel-first
+    frame (the PyTorch convention, e.g. a tensor coming from `dataset[i]`) must still be accepted
+    by `add_frame`, since the image writer transposes it itself."""
+    features = hw_to_dataset_features({"cam": DUMMY_HWC}, OBS_STR, use_video=False)
+    dataset = empty_lerobot_dataset_factory(root=tmp_path / "test", features=features)
+    key = f"{OBS_IMAGES}.cam"
+    c, h, w = DUMMY_CHW
+    dataset.add_frame({key: torch.rand(c, h, w), "task": "Dummy task"})
+    dataset.save_episode()
+    dataset.finalize()
+
+    assert dataset[0][key].shape == torch.Size(DUMMY_CHW)
 
 
 def test_add_frame_image_wrong_range(image_dataset):
