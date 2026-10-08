@@ -207,6 +207,9 @@ class LingbotVLAV2Config(PreTrainedConfig):
     # Dual-query distillation (upstream ``align_params`` schema). When set, learned depth/video
     # query tokens are appended after the language tokens and the action expert attends to them,
     # in training and at inference. The released checkpoints carry their recipe; {} disables it.
+    # Training then adds upstream's distillation losses against frozen teachers (MoGe-2 + LingBot-Depth,
+    # DINO-Video), downloaded from the Hub on the first step; existing files at the recipe's
+    # depth.moge_path / depth.morgbd_path / video.ckpt_path / video.config_path override them.
     align_params: dict = field(default_factory=dict)
 
     # ==================== Optimizer / Scheduler Presets ====================
@@ -334,6 +337,11 @@ class LingbotVLAV2Config(PreTrainedConfig):
     @property
     def observation_delta_indices(self) -> None:
         return None
+
+    @property
+    def image_observation_delta_indices(self) -> list | None:
+        """The distillation teachers also see the chunk's last frame (upstream ``use_future_image``)."""
+        return [0, self.chunk_size - 1] if self.align_params else None
 
     @property
     def action_delta_indices(self) -> list:
