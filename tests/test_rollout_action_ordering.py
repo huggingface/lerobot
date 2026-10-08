@@ -33,6 +33,7 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+from lerobot.lerobot_types import TransitionKey  # noqa: E402
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.processor import (  # noqa: E402
     AbsoluteActionsProcessorStep,
@@ -292,13 +293,14 @@ def _run_sync_tick(*, align_state, align_action, remap):
         data=SimpleNamespace(dataset_features=dataset_features, ordered_action_keys=ordered_action_keys),
     )
 
-    action_dict = send_next_action(
+    step = send_next_action(
         obs_processed=dict(obs_raw),
         obs_raw=obs_raw,
         ctx=ctx,
         interpolator=ActionInterpolator(multiplier=1),
     )
-    assert action_dict is not None
+    assert step is not None
+    action_dict = step[TransitionKey.ACTION]
     return action_dict, dataset_features, ordered_action_keys, policy
 
 

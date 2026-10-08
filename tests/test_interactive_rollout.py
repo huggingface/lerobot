@@ -725,12 +725,14 @@ def _make_sentry(monkeypatch):
     # Keep setup independent of camera features and never rotate episodes mid-test.
     monkeypatch.setattr("lerobot.rollout.strategies.sentry.estimate_max_episode_seconds", lambda *a, **k: 1e9)
 
+    from lerobot.processor import create_transition
+
     def _fake_send(obs_processed, obs_raw, ctx, interpolator, timer=None):
         # Recording is gated on ``interpolator.emitted_policy_action``, so push an action too.
         if interpolator.needs_new_action():
             interpolator.add(torch.zeros(1))
         interpolator.get()
-        return {"joint.pos": 0.5}
+        return create_transition(action={"joint.pos": 0.5})
 
     monkeypatch.setattr("lerobot.rollout.strategies.sentry.send_next_action", _fake_send)
     monkeypatch.setattr("lerobot.rollout.strategies.sentry.build_dataset_frame", lambda *a, **k: {})

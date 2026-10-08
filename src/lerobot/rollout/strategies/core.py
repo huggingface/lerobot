@@ -24,7 +24,13 @@ from typing import TYPE_CHECKING
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
-from lerobot.lerobot_types import RobotObservation
+from lerobot.lerobot_types import EnvTransition, PolicyPrediction, RobotObservation, TransitionKey
+from lerobot.processor import (
+    create_transition,
+    policy_output_to_transition,
+    transition_to_policy_action,
+    transition_to_robot_action,
+)
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.constants import OBS_STR
@@ -256,18 +262,19 @@ class RolloutStrategy(abc.ABC):
     @staticmethod
     def _log_telemetry(
         obs_processed: dict | None,
-        action_dict: dict | None,
+        step: EnvTransition | None,
         runtime_ctx: RuntimeContext,
     ) -> None:
-        """Log observation/action telemetry to the visualization backend if display_data is enabled."""
+        """Log the observation and the step's action and prediction if display_data is enabled."""
         cfg = runtime_ctx.cfg
         if not cfg.display_data:
             return
         log_visualization_data(
             cfg.display_mode,
             observation=obs_processed,
-            action=action_dict,
+            action=transition_to_robot_action(step) if step is not None else None,
             compress_images=cfg.display_compressed_images,
+            policy_step=step,
         )
 
     def setup(self, ctx: RolloutContext) -> None:
@@ -386,7 +393,7 @@ def send_next_action(
     ctx: RolloutContext,
     interpolator: ActionInterpolator,
     timer: CycleTimer | None = None,
-) -> dict | None:
+) -> EnvTransition | None:
     """Dispatch the next action to the robot.
 
     Pulls the next action tensor from the inference engine, feeds the
@@ -400,8 +407,9 @@ def send_next_action(
     queue pull — inference runs off-thread, so its latency surfaces as starved
     ticks rather than as loop-body time.
 
-    Returns the action dict that was sent, or ``None`` if no action was
-    ready (e.g. empty async queue, interpolator not yet primed).
+    Returns the step as a transition: the action dict that was sent, plus the policy's
+    prediction on the tick that pulled it from the engine. ``None`` if no action was
+    ready (e.g. empty async queue).
     """
     engine = ctx.policy.inference
     features = ctx.data.dataset_features
@@ -410,12 +418,15 @@ def send_next_action(
     # ``timer.section`` verbatim when no timer was passed.
     section = timer.section if timer is not None else contextlib.nullcontext
 
+    prediction: PolicyPrediction | None = None
     if interpolator.needs_new_action():
         with section("infer"):
             obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-            action_tensor = engine.get_action(obs_frame)
-        if action_tensor is not None:
-            interpolator.add(action_tensor.cpu())
+            result = engine.get_action(obs_frame)
+        if result is not None:
+            policy_step = policy_output_to_transition(result)
+            interpolator.add(transition_to_policy_action(policy_step).cpu())
+            prediction = policy_step.get(TransitionKey.PREDICTION)
 
     interp = interpolator.get()
     if interp is None:
@@ -429,4 +440,4 @@ def send_next_action(
     with section("send"):
         processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
         ctx.hardware.robot_wrapper.send_action(processed)
-    return action_dict
+    return create_transition(action=action_dict, prediction=prediction)

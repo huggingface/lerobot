@@ -23,6 +23,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event as ThreadingEvent, Lock
 
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.processor import transition_to_robot_action
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -127,11 +128,12 @@ class HighlightStrategy(RolloutStrategy):
                     if self._handle_warmup(cfg.use_torch_compile, timer):
                         continue
 
-                    action_dict = send_next_action(obs_processed, obs, ctx, interpolator, timer)
+                    step = send_next_action(obs_processed, obs, ctx, interpolator, timer)
 
-                    if action_dict is not None:
+                    if step is not None:
+                        action_dict = transition_to_robot_action(step)
                         with timer.section("telemetry"):
-                            self._log_telemetry(obs_processed, action_dict, ctx.runtime)
+                            self._log_telemetry(obs_processed, step, ctx.runtime)
 
                         if self._push_requested.is_set():
                             self._push_requested.clear()
