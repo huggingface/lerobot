@@ -21,8 +21,11 @@ are intentionally NOT re-exported here to avoid circular dependencies
 Import them directly: ``from lerobot.configs.train import TrainPipelineConfig``
 """
 
+from typing import TYPE_CHECKING
+
+from lerobot.utils.import_utils import lazy_exports
+
 from .dataset import DatasetRecordConfig
-from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
 from .policies import PreTrainedConfig
 from .types import (
     FeatureType,
@@ -46,6 +49,22 @@ from .video import (
     is_depth_map,
     rgb_encoder_defaults,
 )
+
+# These import the torch image transforms, so each is imported the first time it is used.
+if TYPE_CHECKING:
+    from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
+else:
+    __getattr__, __dir__ = lazy_exports(
+        __name__,
+        {
+            "DatasetConfig": ".default.DatasetConfig",
+            "EMAConfig": ".default.EMAConfig",
+            "EvalConfig": ".default.EvalConfig",
+            "JobConfig": ".default.JobConfig",
+            "PeftConfig": ".default.PeftConfig",
+            "WandBConfig": ".default.WandBConfig",
+        },
+    )
 
 __all__ = [
     # Types

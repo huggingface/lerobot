@@ -14,12 +14,29 @@
 
 """Real-Time Chunking (RTC) utilities for action-chunking policies."""
 
-from .action_interpolator import ActionInterpolator
-from .action_queue import ActionQueue
+from typing import TYPE_CHECKING
+
+from lerobot.utils.import_utils import lazy_exports
+
 from .configuration_rtc import RTCConfig
 from .latency_tracker import LatencyTracker
-from .modeling_rtc import RTCProcessor
-from .relative import reanchor_relative_rtc_prefix
+
+# These import torch, so each is imported the first time it is used.
+if TYPE_CHECKING:
+    from .action_interpolator import ActionInterpolator
+    from .action_queue import ActionQueue
+    from .modeling_rtc import RTCProcessor
+    from .relative import reanchor_relative_rtc_prefix
+else:
+    __getattr__, __dir__ = lazy_exports(
+        __name__,
+        {
+            "ActionInterpolator": ".action_interpolator.ActionInterpolator",
+            "ActionQueue": ".action_queue.ActionQueue",
+            "RTCProcessor": ".modeling_rtc.RTCProcessor",
+            "reanchor_relative_rtc_prefix": ".relative.reanchor_relative_rtc_prefix",
+        },
+    )
 
 __all__ = [
     "ActionInterpolator",

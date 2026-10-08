@@ -27,6 +27,7 @@ from lerobot.utils.constants import (
     OPTIMIZER_PARAM_GROUPS,
     OPTIMIZER_STATE,
 )
+from lerobot.utils.import_utils import ChoicesFromPolicies
 from lerobot.utils.io_utils import deserialize_json_into_object, write_json
 from lerobot.utils.utils import flatten_dict, unflatten_dict
 
@@ -43,7 +44,7 @@ OptimizerParams = (
 
 
 @dataclass
-class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
+class OptimizerConfig(ChoicesFromPolicies, draccus.ChoiceRegistry, abc.ABC):
     lr: float
     weight_decay: float
     grad_clip_norm: float
