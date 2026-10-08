@@ -27,11 +27,13 @@ from typing import Any
 
 import torch
 
+from lerobot.lerobot_types import EnvTransition, PolicyPrediction
 from lerobot.policies import ActionQueue, PreTrainedPolicy, RTCConfig, prepare_observation_for_inference
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
+    create_transition,
 )
 from lerobot.utils.feature_utils import build_dataset_frame
 
@@ -192,6 +194,9 @@ class RTCInferenceEngine(InferenceEngine):
         # Bumped by reset() under _obs_lock, so a chunk whose inference started before a
         # reset is discarded instead of merged into the fresh queue.
         self._reset_epoch = 0
+        # The latest accepted chunk's prediction, handed out with the next action (see get_action).
+        self._chunk_prediction: PolicyPrediction | None = None
+        self._prediction_lock = Lock()
         self._policy_active = Event()
         self._compile_warmup_done = Event()
         self._shutdown_event = Event()
@@ -344,6 +349,8 @@ class RTCInferenceEngine(InferenceEngine):
         """
         logger.info("Resetting RTC inference state (policy + processors + queue)")
         self.drop_pending_query()
+        with self._prediction_lock:
+            self._chunk_prediction = None
         with self._obs_lock:
             # Clear and bump in one critical section, mirroring _rtc_loop's epoch
             # check-and-merge, so a reset cannot leak a pre-reset chunk into the fresh
@@ -360,8 +367,11 @@ class RTCInferenceEngine(InferenceEngine):
     # Action production (called from main thread)
     # ------------------------------------------------------------------
 
-    def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Pop the next action from the RTC queue (ignores ``obs_frame``)."""
+    def get_action(self, obs_frame: dict | None) -> torch.Tensor | EnvTransition | None:
+        """Pop the next action from the RTC queue (ignores ``obs_frame``).
+
+        The first action served after a chunk is accepted carries that chunk's prediction.
+        """
         queued = self._runtime.pop()
         if self._runtime.starvation_deadline is not None and self._runtime.held:
             self._request_hold("Action starvation", self._runtime.starvation_grace)
@@ -369,7 +379,11 @@ class RTCInferenceEngine(InferenceEngine):
             return None
         action, provenance = queued
         self._set_dispatched_task(provenance.task)
-        return action
+        with self._prediction_lock:
+            prediction, self._chunk_prediction = self._chunk_prediction, None
+        if prediction is None:
+            return action
+        return create_transition(action=action, prediction=prediction)
 
     def notify_observation(self, obs: dict) -> None:
         """Publish an owned snapshot and its original control-thread capture time."""
@@ -644,6 +658,10 @@ class RTCInferenceEngine(InferenceEngine):
                     accepted = self._runtime.accept(request, chunk, task_version=self._task_version)
                 if accepted:
                     consecutive_discards = 0
+                    # Shown once per chunk, and only for a chunk that will be served.
+                    if prediction.prediction is not None:
+                        with self._prediction_lock:
+                            self._chunk_prediction = prediction.prediction
                 elif request.generation != self._runtime.generation:
                     logger.info("Discarding action chunk computed before an engine reset or hold")
                 elif (

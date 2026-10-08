@@ -21,6 +21,7 @@ pytest.importorskip("datasets", reason="local rollout imports the dataset integr
 
 from lerobot.inference import ExecutionMode, predict_chunk
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.processor import create_transition
 from tests.inference.policy_helpers import (
     ConformingPolicy,
     local_engine_for,
@@ -145,3 +146,20 @@ def test_shared_prediction_preserves_model_coordinates_before_inplace_postproces
     torch.testing.assert_close(prediction.canonical_actions, expected + 10)
     assert not prediction.model_actions.requires_grad
     assert not prediction.canonical_actions.requires_grad
+
+
+def test_shared_prediction_keeps_the_policy_prediction_beside_the_actions():
+    policy = ObservedPolicy(tiny_config())
+    policy.output = create_transition(action=policy.output, prediction={"language": {"subtask": "pick"}})
+    prediction = predict_chunk(
+        policy,
+        lambda actions: actions,
+        {},
+        spec=policy.chunk_inference_spec(),
+        mode=ExecutionMode.CHUNK,
+        canonical_action_dim=3,
+        model_action_dim=None,
+        device="cpu",
+    )
+    torch.testing.assert_close(prediction.model_actions, torch.arange(9, dtype=torch.float32).reshape(3, 3))
+    assert prediction.prediction == {"language": {"subtask": "pick"}}
