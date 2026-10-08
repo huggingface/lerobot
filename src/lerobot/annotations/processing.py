@@ -37,6 +37,7 @@ from lerobot.data_processing.types import (
 from lerobot.data_processing.worker import accepted_in_shard
 from lerobot.datasets.io_utils import write_table_one_row_group_per_episode
 from lerobot.datasets.language import (
+    language_array,
     language_events_arrow_type,
     language_feature_info,
     language_persistent_arrow_type,
@@ -344,19 +345,7 @@ def _canonical_atom(row, persistent):
 def _language_array(values, dtype):
     # Arrow cannot construct nested extension arrays directly. Construct JSON
     # storage strings, then restore the canonical extension type with a cast.
-    storage = pa.list_(
-        pa.struct(
-            [
-                pa.field(
-                    field.name,
-                    pa.list_(pa.string()) if field.name == "tool_calls" else field.type,
-                    nullable=field.nullable,
-                )
-                for field in dtype.value_type
-            ]
-        )
-    )
-    return pa.array(values, type=storage).cast(dtype)
+    return language_array(values, dtype)
 
 
 def _ownership_path(relative):

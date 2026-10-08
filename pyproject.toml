@@ -375,6 +375,7 @@ all = [
 ]
 
 [project.scripts]
+lerobot-convert = "lerobot.scripts.lerobot_convert:main"
 lerobot-build-mp4-sidecar="lerobot.scripts.lerobot_build_mp4_sidecar:main"
 lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
 lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
