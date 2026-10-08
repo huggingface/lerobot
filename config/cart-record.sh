@@ -1,38 +1,44 @@
 #!/usr/bin/env bash
-# Run ON THE CART (elroy, the Orin). Records a dataset from the two arms and
-# their leaders, with every device local.
+# Run ON THE CART (elroy, the Orin). Records a dataset while the operator
+# drives from the Pi.
 #
 #   ./config/cart-record.sh <repo_id> "<task description>"
-#   ./config/cart-record.sh carlkesselman/xlerobot-pick "Pick the block and drop it in the box"
+#   ./config/cart-record.sh --watch carlkesselman/xlerobot-pick "Pick the block, drop it in the box"
+#   ./config/cart-record.sh --full --watch me/ds "task"
 #
-#   --watch     also serve the live view to the operator station
-#               (foxglove, ws://<cart>.local:8765)
+# Flags, in this order, before the repo id:
+#   --full      arms + head + base (needs those motors; default is arms only)
+#   --watch     video to the operator station - see config/_video.sh for
+#               --watch=web and --watch=local
 #
 # Everything else passes through:
-#   ./config/cart-record.sh me/ds "task" --dataset.num_episodes=10 --dataset.episode_time_s=30
+#   ./config/cart-record.sh me/ds "task" --dataset.num_episodes=10
 #
-# WHY ON THE CART, AND NOT OVER THE LINK
+# WHAT CROSSES THE WIFI, AND WHAT DOES NOT
 #
-# Two reasons, and the second is the one that matters now.
+# Only the leader actions, one direction, plus the operator's video if you
+# ask for it. The followers and all three cameras are wired to THIS machine,
+# so every frame goes from USB straight into the dataset at full rate. There
+# is no conflated socket between the sensors and the disk, which is what
+# would otherwise drop frames silently on each wifi hiccup.
 #
-# 1. The ZMQ host sets CONFLATE on the observation socket: it keeps only the
-#    newest frame and silently discards the rest. That is right for
-#    teleoperation - you see current state, a slow link costs latency not
-#    backlog - but recording across it drops frames whenever wifi hiccups,
-#    with nothing in the logs to say so.
+# This machine is also the one that will run the policy, so the dataset is
+# captured through exactly the camera pipeline, resolution and timing that
+# inference will see. Record on one machine and infer on another and you get
+# a train/serve skew you cannot observe.
 #
-# 2. This machine is the one that will later run the policy. Recording here
-#    means the dataset is captured through exactly the camera pipeline,
-#    resolution and timing the policy will see at inference. Record on one
-#    machine and infer on another and you have a train/serve skew you cannot
-#    see.
+# What the link costs instead is feel: wifi jitter lands in the action
+# stream, and what the operator actually commanded is what gets recorded.
+# The dataset stays self-consistent either way - but jerky input makes jerky
+# demonstrations. Watch for "Leader link stalled" in the log; past
+# stale_after_ms the base is zeroed and the arms hold.
 #
-# The price is that the leader arms have to be plugged into the cart while
-# recording - this is a tethered session, not a driven-around one. Unplug
-# them afterwards and the cart goes back to being autonomous hardware.
-#
-# Cameras run at 1280x720 here (config/bi-arms.yaml), not the 640x480 of
-# cart-host.yaml: these frames never cross the air.
+# EPISODE CONTROL
+# lerobot's keys (right arrow = end episode, left = re-record, escape =
+# stop) are read by the process running here. Drive this script from an SSH
+# session opened FROM the Pi and they work from the operator's keyboard -
+# lerobot falls back to a terminal listener when pynput cannot capture, so
+# an SSH session with a TTY is enough.
 #
 # UPLOAD
 # push_to_hub defaults to true, so the dataset uploads when recording ends.
@@ -40,37 +46,40 @@
 # To stay local:              --dataset.push_to_hub=false
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/_video.sh"
+
+CONFIG="$REPO/config/cart-remote-arms.yaml"
+if [[ "${1:-}" == "--full" ]]; then
+  shift
+  CONFIG="$REPO/config/cart-remote.yaml"
+fi
+parse_watch "${1:-}" && shift
+CONFIG="${CONFIG_OVERRIDE:-$CONFIG}"
 
 if [[ $# -lt 2 ]]; then
-  sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
   exit 1
 fi
 
 REPO_ID="$1"; shift
 TASK="$1"; shift
 
-CONFIG="${CONFIG:-$REPO/config/bi-arms.yaml}"
 FPS="${FPS:-30}"
 NUM_EPISODES="${NUM_EPISODES:-5}"
 EPISODE_TIME_S="${EPISODE_TIME_S:-30}"
 RESET_TIME_S="${RESET_TIME_S:-15}"
 
-WATCH_ARGS=()
-if [[ "${1:-}" == "--watch" ]]; then
-  shift
-  WATCH_ARGS=(--display_data=true --display_mode=foxglove
-              --display_ip=0.0.0.0 --display_port=8765
-              --display_compressed_images=true)
-  echo "watch   : open Foxglove on the operator station at  ws://$(hostname).local:8765"
+# The followers are here. The leaders are not, and must not be.
+require_dev "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00" "left follower (bus1)"
+require_dev "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00" "right follower (bus2)"
+
+OPERATOR="$(awk -F'[ #]+' '/remote_ip:/ {print $3; exit}' "$CONFIG")"
+if ! ping -c1 -W2 "$OPERATOR" >/dev/null 2>&1; then
+  echo "warning: $OPERATOR does not answer ping - is operator-leader-host.sh running?" >&2
 fi
 
-# Both followers and both leaders must be on THIS machine to record.
-require_dev "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00" "left follower"
-require_dev "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00" "right follower"
-require_dev "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90149222-if00" "left leader"
-require_dev "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00" "right leader"
-
 echo "config  : $CONFIG"
+echo "leaders : $OPERATOR:5557"
 echo "dataset : $REPO_ID"
 echo "task    : $TASK"
 echo "episodes: $NUM_EPISODES x ${EPISODE_TIME_S}s (reset ${RESET_TIME_S}s) at ${FPS}fps"
@@ -84,5 +93,5 @@ exec run lerobot-record \
   --dataset.num_episodes="$NUM_EPISODES" \
   --dataset.episode_time_s="$EPISODE_TIME_S" \
   --dataset.reset_time_s="$RESET_TIME_S" \
-  "${WATCH_ARGS[@]+"${WATCH_ARGS[@]}"}" \
+  "${DISPLAY_ARGS[@]+"${DISPLAY_ARGS[@]}"}" \
   "$@"

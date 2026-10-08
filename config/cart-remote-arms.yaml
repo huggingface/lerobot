@@ -1,0 +1,86 @@
+# The cart, driven by leaders at the operator station. ARMS ONLY - today's
+# hardware. Runs ON THE CART (elroy, the Orin):
+#
+#   ./config/cart-teleop.sh                       drive, record nothing
+#   ./config/cart-record.sh <repo_id> "<task>"    drive and record
+#
+# Everything the robot has is LOCAL to this machine: both follower arms,
+# both wrist cameras, the head RealSense. Only the leaders are remote, and
+# only their actions cross the wifi.
+#
+# That is the whole point of this arrangement. Camera frames go straight
+# from USB to the dataset at full rate - they never touch the network, so
+# nothing can conflate or drop them - while the one thing that does cross
+# the air is small and tolerates loss. And since this machine both records
+# and will later run the policy, the dataset is captured through exactly
+# the pipeline inference will see.
+#
+# Use config/cart-remote.yaml instead once the head and base exist. The
+# teleop end must agree: see emit_head/emit_base in
+# config/operator-leader-host.yaml.
+
+robot:
+  type: bi_so_follower
+  id: xlerobot_arms            # derives xlerobot_arms_left / _right
+
+  left_arm_config:
+    port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00
+    disable_torque_on_disconnect: true
+    cameras:
+      wrist:                   # prefixed by side -> observation key "left_wrist"
+        type: opencv
+        index_or_path: /dev/cam_left
+        width: 1280
+        height: 720
+        fps: 30
+        fourcc: MJPG           # YUYV caps 1280x720 at 10fps on these Innomakers
+        warmup_s: 1
+
+  right_arm_config:
+    port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00
+    disable_torque_on_disconnect: true
+    cameras:
+      wrist:                   # prefixed by side -> observation key "right_wrist"
+        type: opencv
+        index_or_path: /dev/cam_right
+        width: 1280
+        height: 720
+        fps: 30
+        fourcc: MJPG
+        warmup_s: 1
+
+  cameras:
+    head:
+      type: intelrealsense
+      serial_number_or_name: "836112060112"
+      width: 1280
+      height: 720
+      fps: 30
+      color_mode: BGR
+      use_depth: false
+
+# The leaders are at the operator station. This end only opens a socket.
+teleop:
+  type: xlerobot_leader_remote
+  id: xlerobot_leaders
+  remote_ip: 192.168.1.100     # rosie. Use rosie.local if DHCP moves it.
+  port_zmq_actions: 5557
+
+  # NOTE: the operator end must set remap_arm_prefix: false for this robot.
+  # bi_so_follower strips "left_" from incoming keys, so it needs BiSOLeader's
+  # native naming; xlerobot wants "left_arm_" instead. Mismatch is silent -
+  # the loop runs and the arms do not move.
+
+  # connect() waits this long for the first action, and will not invent one:
+  # the first action carries the leaders' current pose and the followers
+  # move to it.
+  connect_timeout_s: 10.0
+
+  # Past this with no new action the link counts as stalled. The arms hold
+  # their last commanded position; the base is zeroed, because a base keeps
+  # driving on its last velocity and the operator who would have stopped it
+  # is on the far side of the break.
+  stale_after_ms: 300
+  stop_base_when_stale: true
+
+display_data: false            # the scripts turn this on; see them for how

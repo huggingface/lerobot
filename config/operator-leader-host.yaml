@@ -1,0 +1,67 @@
+# The leader arms and gamepad, served to the cart. Runs AT THE OPERATOR
+# STATION (rosie, the Pi):
+#
+#   ./config/operator-leader-host.sh
+#
+# Fields are at the TOP LEVEL - this is an XLerobotLeaderGamepadConfig, not a
+# teleoperate config, so there is no `teleop:` key to nest under.
+#
+# Nothing about the robot appears here. This process only reads the leaders
+# and the pad and publishes actions; the cart decides what to do with them.
+
+id: xlerobot_leaders
+
+# The by-id paths travel with the USB adapter, so they are the same strings
+# whichever machine the leaders are plugged into.
+left_arm_config:
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90149222-if00
+right_arm_config:
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00
+
+# --- which robot is on the other end ----------------------------------
+#
+# false  -> keys stay as BiSOLeader emits them (left_shoulder_pan.pos),
+#           which is what bi_so_follower wants: its send_action does
+#           key.removeprefix("left_").   Use with cart-remote-arms.yaml.
+# true   -> keys become left_arm_shoulder_pan.pos, which is what xlerobot
+#           wants: it filters with startswith("left_arm_").
+#           Use with cart-remote.yaml.
+#
+# Getting this wrong is SILENT. The link comes up, the loop runs at the
+# right rate, and the arms never move.
+remap_arm_prefix: false
+
+# --- which parts of the robot this speaks for -------------------------
+#
+# TODAY: arms only. The head servos (IDs 7-8 on bus1) and the base wheels
+# are not built yet, and sending a bi_so_follower keys it has no motors for
+# is not harmless - it would also put columns in a recorded dataset that the
+# robot cannot reproduce.
+#
+# Flip both to true once the head and base exist, and switch the cart to
+# config/cart-remote.yaml at the same time. The two must agree.
+emit_head: false
+emit_base: false
+
+# Differential drive cannot strafe, so no y.vel when the base does arrive.
+emit_y_vel: false
+
+# --- gamepad ----------------------------------------------------------
+#
+# UNVERIFIED - generic XInput numbers, not measured on the SF30 Pro. Probe
+# once, in the input mode you intend to keep (the mode changes the
+# numbering), and correct them here:
+#
+#   uv run --project ../XLeRobot python -m \
+#     lerobot_teleoperator_xlerobot_leader_gamepad.probe_gamepad
+#
+joystick_index: 0
+deadzone: 0.15
+axis_base_forward: 1
+axis_base_strafe: 0
+axis_base_turn: 2
+axis_head_pan: 2
+axis_head_tilt: 3
+button_head_modifier: 4
+button_speed_up: 5
+button_speed_down: 7

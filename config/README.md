@@ -17,46 +17,92 @@ plugin rather than from this repo — see below.
 ```
          CART                                 OPERATOR STATION
   elroy — Jetson Orin Nano                 rosie — Raspberry Pi 5
-  ───────────────────────               ─────────────────────
-  follower arms, wrist cams,     wifi     leader arms, gamepad,
-  head RealSense, base            <──>    the operator's screen
-  cart-host.sh                            operator-teleop.sh
+  ──────────────────────               ─────────────────────
+  follower arms                           leader arms
+  wrist cams + head RealSense             gamepad
+  the base                                the rerun viewer
+  the dataset                     actions
+  the policy, later               <──────
+                                  ──────>
+                                   video
 ```
 
 The GPU goes where the sensors and motors are, because that is where a
 policy has to run: at full camera rate, with no network between seeing and
-acting. Teleoperation is the only part that genuinely has two ends, so it is
-the only part that crosses the wifi — and what crosses is small and
-loss-tolerant (joint targets out, a downscaled view back).
+acting. So the Orin owns the robot, the cameras and the dataset, and the
+only thing it does not have is the operator.
 
-Recording is done **on the cart** with the leaders temporarily plugged in
-there (`cart-record.sh`), not across the link. Two reasons: the ZMQ host
-conflates observations, so recording over it drops frames silently; and the
-dataset should be captured through the same pipeline the policy will see at
-inference, or you get a train/serve skew you cannot observe.
+That makes the **leaders** the remote device, not the robot — the mirror
+image of lekiwi. Two things cross the wifi and both tolerate loss: leader
+actions one way, the operator's view the other. Camera frames go from USB
+straight to disk without touching the network, so nothing can conflate or
+drop them.
+
+### The normal path
+
+```
+rosie   rerun --port 9876                        # viewer, first
+rosie   ./config/operator-leader-host.sh         # leaders + gamepad
+elroy   ./config/cart-teleop.sh --watch          # drive, record nothing
+elroy   ./config/cart-record.sh --watch me/ds "task"
+```
+
+Run `cart-record.sh` from an SSH session opened *from the Pi*: lerobot's
+episode keys (right arrow = end episode, left = re-record, escape = stop)
+are read by the process on the cart, and it falls back to a terminal
+listener when pynput cannot capture, so an SSH TTY puts them under the
+operator's hands.
 
 | file | runs on |
 | --- | --- |
-| `cart-host.sh` + `cart-host.yaml` | cart |
-| `cart-record.sh` (uses `bi-arms.yaml`) | cart, leaders plugged in |
-| `cart.yaml` | cart, everything local |
-| `operator-teleop.sh` + `operator-client.yaml` | operator station |
-| `left-arm.yaml`, `right-arm.yaml`, `bi-arms.yaml` | one machine, direct |
+| `operator-leader-host.{sh,yaml}` | operator station |
+| `cart-teleop.sh`, `cart-record.sh` | cart |
+| `cart-remote-arms.yaml` | cart — arms only, today's hardware |
+| `cart-remote.yaml` | cart — arms + head + base, once those motors exist |
+| `_video.sh` | sourced by the cart scripts; `--watch` lives here |
+| `left-arm.yaml`, `right-arm.yaml`, `bi-arms.yaml` | one machine, everything local |
 
-Files are named by role, not by hostname: the cart computer has already
-swapped once.
+### The two settings that fail silently
 
-### Prerequisites this arrangement adds
+The teleoperator and the robot have to agree on naming and on which joints
+exist. Nothing checks this at startup, and a mismatch does not raise — the
+link comes up, the loop runs at the right rate, and the arms do not move.
 
-- **The Orin needs wifi on the cart.** Some Orin Nano dev kits ship without
-  an M.2 wifi card. Check before mounting; a USB dongle also works.
-- **The Pi needs a desktop session** to show the live view with rerun. Over
-  SSH, `operator-teleop.sh --display=web` serves Foxglove instead.
-- **The udev rules and calibration move to the Orin.** `/dev/cam_left` and
-  `/dev/cam_right` come from `/etc/udev/rules.d/99-cameras.rules`, keyed on
-  `ENV{ID_PATH}` — the port paths differ on the Orin, so regenerate them
-  there. Copy
-  `~/.cache/huggingface/lerobot/calibration/robots/` across as well.
+| cart config | `remap_arm_prefix` | `emit_head` / `emit_base` |
+| --- | --- | --- |
+| `cart-remote-arms.yaml` (`bi_so_follower`) | `false` | `false` |
+| `cart-remote.yaml` (`xlerobot`) | `true` | `true` |
+
+`bi_so_follower.send_action` does `key.removeprefix("left_")`, so it wants
+BiSOLeader's native `left_shoulder_pan.pos`. `XLerobot.send_action` filters
+with `startswith("left_arm_")`, so it wants the remapped form. They are
+exact opposites.
+
+### The other path: robot served to a client
+
+`cart-host.{sh,yaml}` + `operator-teleop.sh`/`operator-client.yaml` are the
+lekiwi arrangement — the robot published over ZMQ, the teleoperator local to
+the operator. Kept because it is the right shape for driving the cart from a
+laptop with no leaders attached, and because the video comes free with it.
+
+Do not record through it. `lerobot_record.py:468` calls
+`len(robot.cameras)`, and no client robot has a `.cameras` attribute — not
+`xlerobot_client`, not upstream's `lekiwi_client` — so recording against one
+raises `AttributeError` before the first episode. (The resume branch at
+line 443 guards it; the create branch does not.)
+
+### Prerequisites
+
+- **udev rules and calibration live on the Orin now.** `/dev/cam_left` and
+  `/dev/cam_right` are keyed on `ENV{ID_PATH}`, and the port paths differ on
+  the Orin — read the real ones with
+  `udevadm info -q property /dev/video0 | grep ID_PATH`. Copy
+  `~/.cache/huggingface/lerobot/calibration/` across as well; the leaders'
+  half has to be on the Pi and the followers' half on the Orin.
+- **JetPack torch on the Orin.** The fork routes ARM to PyPI's CPU wheels,
+  which is wrong for the machine that will run the policy.
+- **The rerun viewer on the Pi** for `--watch`. Check `rerun --help` for
+  your version's listen flag.
 
 ## What this fork changes in lerobot
 
