@@ -16,7 +16,7 @@
 
 from typing import Any
 
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from .decorators import check_if_already_connected, check_if_not_connected
 
 
 class BimanualMixin:

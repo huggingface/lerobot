@@ -16,8 +16,7 @@
 Public API for lightweight, base-dependency-only utilities.
 
 Heavy cross-cutting modules (train_utils, control_utils) have been moved
-to ``lerobot.common``. ``visualization_utils`` remains here but is
-intentionally NOT re-exported to avoid pulling in optional dependencies.
+to ``lerobot.common``.
 """
 
 from .action_interpolator import ActionInterpolator
@@ -40,6 +39,10 @@ from .device_utils import auto_select_torch_device, get_safe_torch_device, is_to
 from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from .import_utils import is_package_available, register_third_party_plugins, require_package
 from .utils import init_logging
+
+# NOTE: The modules here are intentionally NOT re-exported so callers load only what they need.
+# The re-exports below are legacy, kept for backward compatibility.
+# Import from submodules: ``from lerobot.utils.constants import ACTION``
 
 __all__ = [
     # Constants

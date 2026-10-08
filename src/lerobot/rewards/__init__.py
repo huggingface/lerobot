@@ -23,6 +23,7 @@ from .factory import (
 from .pretrained import PreTrainedRewardModel as PreTrainedRewardModel
 from .robometer.configuration_robometer import RobometerConfig as RobometerConfig
 from .sarm.configuration_sarm import SARMConfig as SARMConfig
+from .sarm.rabc import RABCWeights
 from .topreward.configuration_topreward import TOPRewardConfig as TOPRewardConfig
 
 # NOTE: Reward model classes and reward-specific helpers not used by other lerobot packages are intentionally
@@ -40,6 +41,7 @@ __all__ = [
     "PreTrainedRewardModel",
     # Model classes
     "Classifier",
+    "RABCWeights",
     # Factory functions
     "get_reward_model_class",
     "make_reward_model",

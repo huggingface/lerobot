@@ -221,7 +221,7 @@ class HubMixin:
         """
         # Lazy import: hub code must not import the distributed package at module load
         # (configs -> hub is on the import path of lerobot.distributed itself).
-        from lerobot.distributed.utils import is_main_process
+        from lerobot.distributed import is_main_process
 
         # Distributed contract: `save_pretrained` runs on EVERY rank — for sharded policies it
         # contains a collective gather (rank-gating it would deadlock) and it writes into this
