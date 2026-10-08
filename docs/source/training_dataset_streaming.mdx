@@ -139,7 +139,12 @@ Each round shuffles the currently resident episodes and samples one shuffled fra
 episodes admitted during a round join the next one. Both strategies retain exactly-once epoch
 coverage and the same resource bounds. Neither is a global uniform permutation: round-robin
 favors shorter episodes in finite prefixes and can increase decoder churn and reduce throughput.
-Keep the same strategy, seed and pool settings when resuming a checkpoint.
+The order comes from `--seed` (default 1000), together with the policy initialization and the
+other seeded random generators. Different seeds give different episode and anchor orders, and the
+same seed repeats the order. `--seed=null` uses the fixed streaming seed 42. Keep the same strategy,
+`--seed` and pool settings when resuming a checkpoint. The checkpoint stores the seed, so a plain
+`--resume` keeps the order. A checkpoint from a run that started before `--seed` reached the
+streaming dataset used seed 42 for its order: pass `--seed=42` when you resume it to keep that order.
 
 The active episode set is capped by both episode count and the exact synthesized mini-MP4 sizes
 computed from the sidecar. An episode larger than the complete rank budget fails before training
