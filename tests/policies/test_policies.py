@@ -43,6 +43,8 @@ from lerobot.policies.factory import (
     make_pre_post_processors,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies.tdmpc.configuration_tdmpc import TDMPCConfig
+from lerobot.policies.tdmpc.modeling_tdmpc import TDMPCPolicy
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.vqbet.modeling_vqbet import VQBeTHead
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -508,6 +510,41 @@ def test_act_temporal_ensembler():
         assert torch.all(offline_avg <= einops.reduce(seq_slice, "b s 1 -> b 1", "max"))
         # Selected atol=1e-4 keeping in mind actions in [-1, 1] and excepting 0.01% error.
         torch.testing.assert_close(online_avg, offline_avg, rtol=1e-4, atol=1e-4)
+
+
+@pytest.mark.parametrize("use_mpc", [False, True])
+def test_tdmpc_predict_action_chunk_is_batch_first_without_select_action(use_mpc: bool):
+    """Regression test for https://github.com/huggingface/lerobot/issues/4870.
+
+    The async ``PolicyServer`` calls ``predict_action_chunk()`` directly, so the observation queues
+    that ``select_action()`` fills are empty, and it expects a ``(batch, chunk, action_dim)`` chunk
+    like the other policies.
+    """
+    config = TDMPCConfig(
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
+        horizon=5,
+        n_action_steps=5 if use_mpc else 1,
+        n_action_repeats=1,
+        use_mpc=use_mpc,
+    )
+    policy = TDMPCPolicy(config).to(DEVICE).eval()
+    batch = {OBS_STATE: torch.randn(2, 6, device=DEVICE)}
+    chunk_len = config.horizon if use_mpc else 1
+
+    policy.reset()
+    chunk = policy.predict_action_chunk(dict(batch))
+    assert chunk.shape == (2, chunk_len, 6)
+
+    policy.reset()
+    action = policy.select_action(dict(batch))
+    assert action.shape == (2, 6)
+    queued_chunk = policy.predict_action_chunk(dict(batch))
+    assert queued_chunk.shape == (2, chunk_len, 6)
+    if not use_mpc:
+        # Planning with the policy alone is deterministic, so both paths give the same actions
+        torch.testing.assert_close(queued_chunk, chunk)
+        torch.testing.assert_close(action, chunk[:, 0])
 
 
 def test_vqbet_discretize_keeps_buffers_on_device():
