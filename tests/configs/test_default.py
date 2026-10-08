@@ -66,6 +66,7 @@ def test_streaming_sampling_strategy_cli_and_round_trip() -> None:
         ("video_decoder_cache_size", 0, "video_decoder_cache_size"),
         ("streaming_native_http_connections", 0, "native_http_connections"),
         ("streaming_native_http_subranges", 0, "native_http_subranges"),
+        ("streaming_sidecar_lock_timeout_s", 0, "sidecar_lock_timeout_s"),
     ],
 )
 def test_dataset_config_rejects_invalid_streaming_resource_limits(field, value, message):

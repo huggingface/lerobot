@@ -192,6 +192,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         video_decoder_cache_size: int | None = None,
         native_http_connections: int | None = None,
         native_http_subranges: int = 1,
+        sidecar_lock_timeout_s: float = 30 * 60,
         sampling_strategy: StreamingSamplingStrategy | str = StreamingSamplingStrategy.REMAINING,
     ) -> None:
         """Initialize an episode-scoped streaming reader.
@@ -260,6 +261,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 Per-rank HTTP connection limit; None derives it from fetch concurrency.
             native_http_subranges (`int`, *optional*, defaults to `1`):
                 Maximum concurrent subrequests for one sufficiently large byte range.
+            sidecar_lock_timeout_s (`float`, *optional*, defaults to 30 minutes):
+                Seconds to wait for another process that builds the same MP4 sidecar.
             sampling_strategy (`StreamingSamplingStrategy | str`, *optional*, defaults to `"remaining"`):
                 Weight episodes by remaining anchors, or draw one anchor per episode each
                 shuffled round. Neither strategy is a global uniform shuffle.
@@ -372,13 +375,21 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             token=self._streaming_io_token,
         )
         sidecar_backend = StorageLocation.parse(self._data_root).range_backend
-        self._sidecar_path = ensure_dataset_mp4_sidecar(
-            self.meta,
-            self._data_root,
-            workers=max_num_shards,
-            range_backend=sidecar_backend,
-            token=self._streaming_io_token,
-        )
+        try:
+            self._sidecar_path = ensure_dataset_mp4_sidecar(
+                self.meta,
+                self._data_root,
+                workers=max_num_shards,
+                range_backend=sidecar_backend,
+                lock_timeout_s=sidecar_lock_timeout_s,
+                token=self._streaming_io_token,
+            )
+        except TimeoutError as exc:
+            exc.add_note(
+                "Another process still builds this MP4 sidecar. To wait longer, raise "
+                "--dataset.streaming_sidecar_lock_timeout_s (sidecar_lock_timeout_s in Python)."
+            )
+            raise
         self._hf_features = get_hf_features_from_features(self.meta.features)
         self._projected_columns = tuple(self._hf_features)
         self.num_shards = min(max_num_shards, max(1, len(self._selected_episodes)))
