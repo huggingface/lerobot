@@ -132,6 +132,16 @@ For reproducible benchmarking, use **10 episodes per task** across all four stan
 
 `lerobot-eval` reports a 95% Wilson interval (`pc_success_ci95`) next to every success rate. At 10 episodes a task scored 9/10 has an interval of roughly 60% to 98%, and a 400-episode suite total at 80% has one of roughly 76% to 84%. Two policies whose intervals overlap on a task have not been shown to differ on that task by that run. The interval covers which episodes were drawn; it does not cover the training seed of the policy, which needs more than one training run to measure.
 
+### Comparing two evaluations task by task
+
+To check whether a new checkpoint regressed on any task, compare its `eval_info.json` against the previous one:
+
+```bash
+lerobot-eval-compare outputs/eval/previous/eval_info.json outputs/eval/new/eval_info.json
+```
+
+For every task in both files it prints the two success rates, the difference with its 95% interval, a two-sided Fisher exact p-value, and one call: `REGRESSED` (the whole interval of the difference is at or below `--min-drop`, default 5 points), `SUSPECT` (the drop is at least that large but the interval reaches above it, so more episodes are needed to tell), `HELD`, `IMPROVED`, or `UNDERPOWERED` (fewer than `--min-episodes`, default 10, on a side). The exit code is 1 when any task regressed, so the command can gate a CI job; `--json` prints the same report as JSON. The last line of the report gives the smallest drop the comparison could have called at these episode counts, which is what "held" is worth.
+
 <Tip>
   To compare two policies on the same episodes, use the same `--seed`, keep
   `--env.init_states=true`, and run each task in a single batch
