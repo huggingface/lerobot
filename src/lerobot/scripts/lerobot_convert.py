@@ -8,6 +8,10 @@ from lerobot.data_processing.conversion import ConvertConfig, convert_dataset
 
 @parser.wrap()
 def convert(cfg: ConvertConfig):
+    if cfg.runtime.backend == "hf_jobs":
+        from lerobot.jobs.processing import submit_convert_to_hf
+
+        return submit_convert_to_hf(cfg)
     convert_dataset(cfg)
 
 

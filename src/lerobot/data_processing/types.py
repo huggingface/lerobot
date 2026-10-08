@@ -72,6 +72,7 @@ class ModuleSpec:
     scope: str
     outputs: dict[str, pa.Schema | None]
     resources: Resources = field(default_factory=Resources)
+    hf_jobs_compatible: bool = False
 
     def __post_init__(self):
         checked_name(self.name)

@@ -42,7 +42,7 @@ class AnnotationJobConfig(JobConfig):
     # Annotation is a bounded pass over a dataset; a tighter cap than training's
     # "2d" keeps a wedged vLLM server from burning a day of GPU time.
     timeout: str | None = "2h"
-    lerobot_ref: str = "main"
+    lerobot_ref: str | None = None
 
 
 @dataclass
@@ -217,12 +217,11 @@ class ExecutorConfig:
 class AnnotationPipelineConfig:
     """Top-level config for ``lerobot-annotate`` (rewrites data shards in place)."""
 
-    # Hub dataset: download source when ``root`` unset; push target when push_to_hub
-    # is on and ``new_repo_id`` unset.
+    # Hub source. Publication never implicitly selects a publisher-owned target.
     repo_id: str | None = None
     revision: str | None = None
 
-    # Separate push target (matches the LeRobot edit tools). Unset → push in place.
+    # Explicit processed target; same repo requires processed lineage and an expected revision.
     new_repo_id: str | None = None
 
     root: Path | None = None
@@ -257,6 +256,11 @@ class AnnotationPipelineConfig:
     push_to_hub: bool = False
     push_private: bool = False
     push_commit_message: str | None = None
+    release_tag: str | None = None
+    expected_target_revision: str | None = None
+    redistribution_permission: str | None = None
+    max_publish_files: int = 512
+    max_publish_bytes: int = 5_000_000_000
 
     def resolved_staging_dir(self, root: Path) -> Path:
         return self.staging_dir if self.staging_dir is not None else root / ".annotate_staging"

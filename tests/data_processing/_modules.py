@@ -16,7 +16,13 @@ class Echo:
         self.failure_marker = failure_marker
         self.bad_schema = bad_schema
         self.schema = pa.schema([("key", pa.string()), ("seed", pa.int64())])
-        self.spec = ModuleSpec("echo", "1", "episode", {"echo": self.schema})
+        self.spec = ModuleSpec(
+            "echo",
+            "1",
+            "episode",
+            {"echo": self.schema},
+            hf_jobs_compatible=not log_path and not failure_marker,
+        )
 
     def log(self, text):
         if self.log_path:

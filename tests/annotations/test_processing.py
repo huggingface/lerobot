@@ -161,3 +161,36 @@ def test_partial_update_preserves_disabled_families(single_episode_root):
     cfg.plan.emit_memory = False
     run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
     assert pq.read_table(path)["language_events"].to_pylist() == before
+
+
+def test_serialized_job_keeps_real_enriched_parquet(single_episode_root, tmp_path, monkeypatch):
+    import shutil
+
+    import draccus
+
+    from lerobot.data_processing.artifacts import ArtifactStore
+    from lerobot.jobs import processing
+    from lerobot.scripts import lerobot_annotate
+
+    snapshot = tmp_path / ("a" * 40)
+    shutil.copytree(single_episode_root, snapshot)
+    monkeypatch.setattr(lerobot_annotate, "snapshot_download", lambda **kwargs: str(snapshot))
+    monkeypatch.setattr(lerobot_annotate, "HF_LEROBOT_HOME", tmp_path / "cache")
+    monkeypatch.setattr(
+        lerobot_annotate,
+        "run_annotation_pipeline",
+        lambda cfg, root: run_annotation_pipeline(cfg, root, client_factory=FACTORY),
+    )
+    cfg = config()
+    cfg.repo_id, cfg.revision = "owner/source", "a" * 40
+    cfg.runtime.run_uri = str(tmp_path / "persistent-job-store")
+    store = ArtifactStore(cfg.runtime.run_uri)
+    key, digest = processing.write_bundle(store, "annotate", draccus.encode(cfg), "b" * 40)
+    monkeypatch.setenv("LEROBOT_PROCESSING_CODE_REVISION", "b" * 40)
+    release = processing.execute_bundle(store, key, digest)
+    restored = processing.restore_release(store, release, tmp_path / "restored")
+    table = pq.read_table(restored / "data/chunk-000/file-000.parquet")
+    assert table.num_rows == 30 and table["language_persistent"].to_pylist()[0]
+    assert (
+        "language_persistent" not in pq.read_table(snapshot / "data/chunk-000/file-000.parquet").column_names
+    )
