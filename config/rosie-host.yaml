@@ -8,6 +8,13 @@
 # the host encodes frames under these keys and the client decodes by the same
 # keys and shapes. A mismatch shows up as missing or garbled images, not as an
 # error.
+#
+# RESOLUTION IS SET FOR WIFI. rosie is wireless, so every frame crosses the
+# air. Three 720p30 JPEG streams is ~100 Mbps sustained and the link will not
+# hold it; 640x480 is roughly a third of that. This is also the usual size for
+# lerobot imitation-learning datasets, so it costs nothing in training terms.
+#
+# If you ever run rosie wired, 1280x720 is fine - change BOTH files.
 
 id: rosie
 
@@ -20,8 +27,8 @@ cameras:
   left_wrist:
     type: opencv
     index_or_path: /dev/cam_left
-    width: 1280
-    height: 720
+    width: 640
+    height: 480
     fps: 30
     fourcc: MJPG       # YUYV caps 1280x720 at 10fps on these Innomakers
     warmup_s: 1
@@ -29,8 +36,8 @@ cameras:
   right_wrist:
     type: opencv
     index_or_path: /dev/cam_right
-    width: 1280
-    height: 720
+    width: 640
+    height: 480
     fps: 30
     fourcc: MJPG
     warmup_s: 1
@@ -38,8 +45,8 @@ cameras:
   head:
     type: intelrealsense
     serial_number_or_name: "836112060112"
-    width: 1280
-    height: 720
+    width: 640
+    height: 480
     fps: 30
     color_mode: BGR
     # Depth is not streamed over ZMQ - the host JPEG-encodes colour frames

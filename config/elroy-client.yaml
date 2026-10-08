@@ -38,20 +38,20 @@ robot:
     left_wrist:
       type: opencv
       index_or_path: /dev/cam_left
-      width: 1280
-      height: 720
+      width: 640
+      height: 480
       fps: 30
     right_wrist:
       type: opencv
       index_or_path: /dev/cam_right
-      width: 1280
-      height: 720
+      width: 640
+      height: 480
       fps: 30
     head:
       type: intelrealsense
       serial_number_or_name: "836112060112"
-      width: 1280
-      height: 720
+      width: 640
+      height: 480
       fps: 30
       use_depth: false
 
