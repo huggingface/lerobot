@@ -27,6 +27,7 @@ import dataclasses
 import logging
 import os
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, Unpack
 
@@ -40,6 +41,7 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..chunk import ChunkPolicySpec
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..utils import get_device_from_parameters
 from .configuration_groot import (
@@ -308,10 +310,23 @@ class GrootPolicy(PreTrainedPolicy):
             horizons.append(execution_horizon)
         return min(horizons)
 
-    def _resolve_prediction_horizon(self, actions: Tensor) -> int:
-        """Return the policy-facing action horizon for a native GR00T prediction."""
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Declare the native wrapper's cropped prediction and playback horizons."""
+        spec = super().chunk_inference_spec()
+        native_horizon = getattr(self._groot_model.config, "action_horizon", None)
+        if not isinstance(native_horizon, int) or native_horizon <= 0:
+            raise ValueError("GR00T chunk serving requires a positive native action_horizon.")
+        prediction_steps = self._bound_prediction_horizon(native_horizon)
+        return replace(
+            spec,
+            prediction_steps=prediction_steps,
+            execution_steps=min(prediction_steps, self._resolve_action_queue_steps()),
+        )
 
-        horizons = [actions.shape[1]]
+    def _bound_prediction_horizon(self, available_steps: int) -> int:
+        """Apply the same checkpoint and playback bounds before and after inference."""
+
+        horizons = [available_steps]
         checkpoint_action_horizon = infer_groot_n1_7_action_horizon(
             self.config.base_model_path,
             self.config.embodiment_tag,
@@ -325,6 +340,10 @@ class GrootPolicy(PreTrainedPolicy):
                 horizons.append(horizon)
 
         return max(1, min(horizons))
+
+    def _resolve_prediction_horizon(self, actions: Tensor) -> int:
+        """Return the policy-facing action horizon for a native GR00T prediction."""
+        return self._bound_prediction_horizon(actions.shape[1])
 
     def _filter_groot_inputs(self, batch: dict[str, Tensor], *, include_action: bool) -> dict[str, Tensor]:
         allowed_base = {"state", "state_mask", "action_mask", "embodiment_id"}

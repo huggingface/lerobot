@@ -43,6 +43,7 @@ class KochFollower(Robot):
 
     config_class = KochFollowerConfig
     name = "koch_follower"
+    supports_position_hold = True
 
     def __init__(self, config: KochFollowerConfig):
         super().__init__(config)

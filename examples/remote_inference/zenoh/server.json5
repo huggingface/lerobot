@@ -1,0 +1,17 @@
+{
+  mode: "client",
+  connect: { endpoints: ["tls/localhost:7447"] },
+  scouting: { multicast: { enabled: false }, gossip: { enabled: false } },
+  transport: {
+    link: {
+      protocols: ["tls"],
+      tls: {
+        root_ca_certificate: "./certs/ca.pem",
+        connect_certificate: "./certs/policy-server.pem",
+        connect_private_key: "./certs/policy-server-key.pem",
+        enable_mtls: true,
+        close_link_on_expiration: true,
+      },
+    },
+  },
+}

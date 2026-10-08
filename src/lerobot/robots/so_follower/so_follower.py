@@ -63,6 +63,7 @@ class SOFollower(Robot):
 
     config_class = SOFollowerRobotConfig
     name = "so_follower"
+    supports_position_hold = True
 
     def __init__(self, config: SOFollowerRobotConfig):
         super().__init__(config)

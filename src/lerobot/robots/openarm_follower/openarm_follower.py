@@ -49,6 +49,7 @@ class OpenArmFollower(Robot):
     def __init__(self, config: OpenArmFollowerConfig):
         super().__init__(config)
         self.config = config
+        self.supports_position_hold = not config.use_velocity_and_torque
 
         # Arm motors
         motors: dict[str, Motor] = {}

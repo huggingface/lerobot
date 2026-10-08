@@ -56,6 +56,8 @@ repos:
     hooks:
     -   id: pyupgrade
         args: [--py312-plus]
+        # Keep generated protobuf sources identical to protoc's output.
+        exclude: ^src/lerobot/transport/.*_pb2(?:_grpc)?\.py$
 
   ##### Markdown Quality #####
   - repo: https://github.com/rbubley/mirrors-prettier

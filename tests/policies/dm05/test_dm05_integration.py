@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import fnmatch
-import importlib.util
 import json
 import logging
 import shutil
@@ -31,6 +30,7 @@ pytest.importorskip("transformers")
 
 from lerobot.common.train_utils import generate_model_card, publish_trained_model
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.inference import FeatureSpec, ObservationSnapshot, PolicyRunner
 from lerobot.policies.dm05.configuration_dm05 import DM05Config
 from lerobot.policies.dm05.core.modeling import (
     DM05CoreModelConfig,
@@ -866,57 +866,40 @@ def test_dm05_tiny_real_processor_core_save_and_offline_hub_reload(monkeypatch, 
     assert actions.dtype == torch.float32
     assert torch.isfinite(actions).all()
 
-    if importlib.util.find_spec("grpc") is not None:
-        # Exercise the supported async-server boundary with the same real tiny
-        # checkpoint and processors. No socket is needed for this policy contract.
-        import pickle  # nosec
-        import time
-
-        from lerobot.async_inference.configs import PolicyServerConfig
-        from lerobot.async_inference.helpers import RemotePolicyConfig, TimedObservation
-        from lerobot.async_inference.policy_server import PolicyServer
-
-        server = PolicyServer(PolicyServerConfig(host="localhost", port=9999))
-        lerobot_features = {
-            OBS_STATE: {
-                "dtype": "float32",
-                "shape": [4],
-                "names": ["joint_0", "joint_1", "joint_2", "joint_3"],
+    # The remote runner uses the same saved policy/processors without legacy RPC dependencies.
+    serving_pre, serving_post = make_pre_post_processors(reloaded.config, pretrained_path=checkpoint)
+    joint_names = tuple(reloaded.config.action_feature_names)
+    runner = PolicyRunner(
+        reloaded,
+        serving_pre,
+        serving_post,
+        action_interval=1 / 30,
+        features=(
+            FeatureSpec(OBS_STATE, (4,), "float32", names=joint_names, semantics="joint positions"),
+            FeatureSpec(
+                "observation.images.front", (16, 16, 3), "uint8", kind="rgb", semantics="front camera"
+            ),
+        ),
+        action_feature=FeatureSpec(ACTION, (4,), "float32", names=joint_names, semantics="joint positions"),
+    )
+    torch.manual_seed(42)
+    expected_actions = postprocessor(reloaded.predict_action_chunk(inference_batch))[0]
+    torch.manual_seed(42)
+    chunk = runner.predict(
+        ObservationSnapshot(
+            features={
+                OBS_STATE: np.zeros(4, dtype=np.float32),
+                "observation.images.front": np.full((16, 16, 3), 255, dtype=np.uint8),
             },
-            "observation.images.front": {
-                "dtype": "image",
-                "shape": [16, 16, 3],
-                "names": ["height", "width", "channel"],
-            },
-        }
-        instructions = RemotePolicyConfig(
-            policy_type="dm05",
-            pretrained_name_or_path=str(checkpoint),
-            lerobot_features=lerobot_features,
-            actions_per_chunk=2,
-            device="cpu",
+            capture_time=3.0,
+            task="pick",
         )
-        server.SendPolicyInstructions(
-            SimpleNamespace(data=pickle.dumps(instructions)),  # nosec
-            SimpleNamespace(peer=lambda: "test-client"),
-        )
-        assert server.policy.config.device == "cpu"
-        timed_actions = server._predict_action_chunk(
-            TimedObservation(
-                observation={
-                    "joint_0": 0.0,
-                    "joint_1": 0.0,
-                    "joint_2": 0.0,
-                    "joint_3": 0.0,
-                    "front": np.full((16, 16, 3), 255, dtype=np.uint8),
-                    "task": "pick",
-                },
-                timestamp=time.time(),
-                timestep=3,
-            )
-        )
-        assert [item.get_timestep() for item in timed_actions] == [3, 4]
-        assert all(torch.isfinite(item.get_action()).all() for item in timed_actions)
+    )
+    torch.testing.assert_close(chunk.canonical_actions, expected_actions)
+    assert chunk.execution_steps == 2
+    assert chunk.canonical_actions.shape == (2, 4)
+    assert torch.isfinite(chunk.canonical_actions).all()
+    runner.reset(full=True)
 
     policy_batch = preprocessor(
         {

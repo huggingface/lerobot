@@ -1,0 +1,39 @@
+# Generic schema example, not a tested checkpoint/robot profile.
+# Copy and adapt the checkpoint, calibration, camera names/views and units together.
+# Nested CLI flags override this file; see docs/source/remote_inference.mdx.
+deployment: manipulation
+model:
+  repo_or_path: /absolute/path/to/checkpoint
+  revision: null  # For Hub checkpoints, pin a commit before validating a deployment.
+  device: cuda
+execution:
+  supported_modes: [chunk]
+  action_fps: 30.0
+  action_deadline_s: 5.0
+  idle_timeout_s: 10.0  # Absent-client ownership grace, not a robot motion timeout.
+  warmup_calls: 2
+language:
+  enabled: false
+  deadline_s: 60.0
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/127.0.0.1:7447]
+semantics: so101-degrees-gripper-percent-v1
+robot_type: so101_follower
+features:
+  - name: observation.state
+    shape: [6]
+    dtype: float32
+    names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+    semantics: so101-degrees-gripper-percent-v1
+  - name: observation.images.front
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-front-table-v1
+action_feature:
+  name: action
+  shape: [6]
+  dtype: float32
+  names: [shoulder_pan.pos, shoulder_lift.pos, elbow_flex.pos, wrist_flex.pos, wrist_roll.pos, gripper.pos]
+  semantics: so101-degrees-gripper-percent-v1

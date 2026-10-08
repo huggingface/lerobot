@@ -47,10 +47,10 @@ def test_rollout_top_level_imports():
 
 
 def test_inference_submodule_imports():
-    import lerobot.rollout.inference
+    import lerobot.inference
 
-    for name in lerobot.rollout.inference.__all__:
-        assert hasattr(lerobot.rollout.inference, name), f"Missing export: {name}"
+    for name in lerobot.inference.__all__:
+        assert hasattr(lerobot.inference, name), f"Missing export: {name}"
 
 
 def test_strategies_submodule_imports():
@@ -109,69 +109,36 @@ def test_inference_config_types():
 
 
 def test_trained_rtc_retries_chunk_when_measured_delay_exceeds_conditioning():
-    from lerobot.rollout.inference.rtc import _trained_rtc_chunk_can_merge
+    from lerobot.inference import trained_overlap_valid
 
-    assert not _trained_rtc_chunk_can_merge(
-        conditioned_delay=2,
-        measured_delay=3,
-        training_max_delay=4,
-        has_previous_actions=True,
-    )
-    assert _trained_rtc_chunk_can_merge(
-        conditioned_delay=2,
-        measured_delay=5,
-        training_max_delay=4,
-        has_previous_actions=False,
-    )
+    assert not trained_overlap_valid(conditioned=2, measured=3, maximum=4, has_previous=True)
+    assert trained_overlap_valid(conditioned=2, measured=5, maximum=4, has_previous=False)
 
 
 def test_trained_rtc_bootstraps_first_overlap_with_checkpoint_capacity():
-    from lerobot.rollout.inference.rtc import _estimate_rtc_delay
+    from lerobot.inference import ExecutionMode, estimate_delay
 
-    assert (
-        _estimate_rtc_delay(
-            latency=0,
-            time_per_step=1 / 30,
-            mode="trained",
-            training_max_delay=10,
-            has_previous_actions=False,
-        )
-        == 0
-    )
-    assert (
-        _estimate_rtc_delay(
-            latency=0,
-            time_per_step=1 / 30,
-            mode="trained",
-            training_max_delay=10,
-            has_previous_actions=True,
-        )
-        == 10
-    )
+    assert estimate_delay(0, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=0) == 0
+    assert estimate_delay(0, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=20) == 10
 
 
 def test_trained_rtc_discards_chunk_measured_above_checkpoint_support():
     """A latency spike past the trained delay discards the chunk; it must not kill the rollout."""
-    from lerobot.rollout.inference.rtc import _trained_rtc_chunk_can_merge
+    from lerobot.inference import trained_overlap_valid
 
-    assert not _trained_rtc_chunk_can_merge(
-        conditioned_delay=3,
-        measured_delay=5,
-        training_max_delay=4,
-        has_previous_actions=True,
-    )
+    assert not trained_overlap_valid(conditioned=3, measured=5, maximum=4, has_previous=True)
 
 
 def test_trained_rtc_clamps_prefix_to_checkpoint_and_queue():
     """Conditioning past the queue tail would hard-inpaint zero padding, so clamp instead."""
-    from lerobot.rollout.inference.rtc import _clamp_trained_rtc_delay
+    from lerobot.inference import ExecutionMode, estimate_delay
 
     # Queue tail is the binding limit.
-    assert _clamp_trained_rtc_delay(conditioned_delay=4, available_steps=2, training_max_delay=10) == 2
+    assert estimate_delay(4 / 30, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=2) == 2
     # Trained capacity is the binding limit.
-    assert _clamp_trained_rtc_delay(conditioned_delay=12, available_steps=30, training_max_delay=10) == 10
+    assert estimate_delay(12 / 30, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=30) == 10
     # Neither binds.
-    assert _clamp_trained_rtc_delay(conditioned_delay=4, available_steps=30, training_max_delay=10) == 4
+    assert estimate_delay(4 / 30, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=30) == 4
 
 
 @pytest.mark.parametrize(
@@ -179,14 +146,14 @@ def test_trained_rtc_clamps_prefix_to_checkpoint_and_queue():
     [
         (3, 4, "execution_horizon"),
         (4, 3, "queue_threshold"),
-        # RTC needs d <= s <= H - d; s = 17 exceeds chunk_size - max_delay = 16.
+        # Preserve the conservative admission bound on configured prefix capacity.
         (17, 20, "at most"),
     ],
 )
 def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, queue_threshold, match):
+    from lerobot.inference import RTCInferenceConfig
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
     from lerobot.rollout.context import _validate_trained_rtc_rollout_config
-    from lerobot.rollout.inference import RTCInferenceConfig
 
     policy_config = SimpleNamespace(type="pi05", rtc_training_max_delay=4, chunk_size=20)
     inference_config = RTCInferenceConfig(
@@ -199,9 +166,9 @@ def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, 
 
 
 def test_trained_rtc_rollout_accepts_valid_capacity():
+    from lerobot.inference import RTCInferenceConfig
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
     from lerobot.rollout.context import _validate_trained_rtc_rollout_config
-    from lerobot.rollout.inference import RTCInferenceConfig
 
     policy_config = SimpleNamespace(type="pi05", rtc_training_max_delay=4, chunk_size=50)
     inference_config = RTCInferenceConfig(
@@ -341,6 +308,45 @@ def test_build_rollout_context_uses_resolved_device(
     finally:
         if robot.is_connected:
             robot.disconnect()
+
+
+@pytest.mark.parametrize("failure_stage", ["observation", "processors", "engine"])
+def test_local_setup_failure_disconnects_hardware(monkeypatch, failure_stage):
+    import lerobot.rollout.context as rollout_context
+    from lerobot.policies import ACTConfig
+    from lerobot.processor import PolicyProcessorPipeline
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+
+    cfg = RolloutConfig(
+        robot=MockRobotConfig(random_values=False, static_values=[0.0, 0.0, 0.0]),
+        policy=ACTConfig(device="cpu", pretrained_path=Path("unused-checkpoint")),
+        device="cpu",
+    )
+    robot = MockRobot(cfg.robot)
+    failure = RuntimeError("setup failed")
+    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
+    monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
+    if failure_stage == "observation":
+        monkeypatch.setattr(robot, "get_observation", MagicMock(side_effect=failure))
+    elif failure_stage == "processors":
+        monkeypatch.setattr(rollout_context, "make_pre_post_processors", MagicMock(side_effect=failure))
+    else:
+        monkeypatch.setattr(
+            rollout_context,
+            "make_pre_post_processors",
+            lambda **_: (PolicyProcessorPipeline([]), PolicyProcessorPipeline([])),
+        )
+
+        def fail_engine(*args, **kwargs):
+            assert robot.is_connected, "the engine is constructed after hardware is connected"
+            raise failure
+
+        monkeypatch.setattr(rollout_context, "create_inference_engine", fail_engine)
+    with pytest.raises(RuntimeError) as raised:
+        rollout_context.build_rollout_context(cfg, threading.Event())
+    assert raised.value is failure
+    assert not robot.is_connected
 
 
 def test_load_pretrained_policy_passes_revision(monkeypatch):
@@ -644,6 +650,26 @@ def test_create_inference_engine_sync():
     assert isinstance(engine, SyncInferenceEngine)
 
 
+def test_create_inference_engine_remote_explains_session_construction():
+    from lerobot.inference import RemoteInferenceConfig
+    from lerobot.rollout import create_inference_engine
+
+    config = RemoteInferenceConfig(deployment="test", semantics="radians-v1")
+    with pytest.raises(ValueError, match="connected RemoteClient; use build_rollout_context"):
+        create_inference_engine(
+            config,
+            policy=MagicMock(),
+            preprocessor=MagicMock(),
+            postprocessor=MagicMock(),
+            robot_wrapper=MagicMock(),
+            dataset_features={},
+            ordered_action_keys=[],
+            task="test",
+            fps=30.0,
+            device="cpu",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Pure functions
 # ---------------------------------------------------------------------------
@@ -860,7 +886,7 @@ _TIMER_LOGGER = "lerobot.utils.cycle_timer"
 
 
 def _timer_warnings(caplog):
-    return [r for r in caplog.records if r.levelno >= logging.WARNING]
+    return [r for r in caplog.records if r.levelno >= logging.WARNING and r.name == _TIMER_LOGGER]
 
 
 def _info_messages(caplog):
@@ -879,7 +905,7 @@ def test_handle_warmup_paces_then_flushes_and_exempts_the_reprimed_group(caplog,
     # budget, so `timer.restart()` must re-arm the start-up exemption; without it
     # every torch.compile run would warn once right after warm-up.
     fps, multiplier = 20.0, 2  # 25 ms slots, 50 ms cycle budget
-    engine = MagicMock(ready=False)
+    engine = MagicMock(ready=False, failed=False)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._engine = engine
     strategy._interpolator = ActionInterpolator(multiplier=multiplier)
@@ -919,48 +945,6 @@ def test_handle_warmup_paces_then_flushes_and_exempts_the_reprimed_group(caplog,
             clock.advance(0.04)
             timer.wait()
     assert len(_timer_warnings(caplog)) == 1
-
-
-# ---------------------------------------------------------------------------
-# RTC prefix padding
-# ---------------------------------------------------------------------------
-
-
-def test_normalize_prev_actions_length_holds_the_last_action():
-    """Padding must repeat the last action, not fill with zeros.
-
-    Zero in normalized action space decodes to the dataset mean, which lands inside the RTC
-    guided region and yanks the spliced action toward a neutral pose.
-    """
-    from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
-
-    prev = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
-
-    padded = _normalize_prev_actions_length(prev, target_steps=4)
-
-    assert padded.shape == (4, 2)
-    torch.testing.assert_close(padded[:2], prev)
-    torch.testing.assert_close(padded[2:], prev[-1:].expand(2, -1))
-
-
-@pytest.mark.parametrize(("steps", "target"), [(4, 4), (6, 4)])
-def test_normalize_prev_actions_length_passes_through_or_truncates(steps, target):
-    from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
-
-    prev = torch.arange(steps * 2, dtype=torch.float32).reshape(steps, 2)
-
-    result = _normalize_prev_actions_length(prev, target_steps=target)
-
-    assert result.shape == (target, 2)
-    torch.testing.assert_close(result, prev[:target])
-
-
-def test_normalize_prev_actions_length_rejects_an_empty_prefix():
-    """There is no last action to hold, so this must fail rather than invent one."""
-    from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
-
-    with pytest.raises(ValueError, match="Cannot pad an empty prefix"):
-        _normalize_prev_actions_length(torch.empty(0, 2), target_steps=4)
 
 
 # ---------------------------------------------------------------------------
@@ -1174,7 +1158,6 @@ def test_episodic_records_once_per_interpolation_cycle():
         timer=CycleTimer(200.0, 2),
         control_time_s=10.0,
         dataset=dataset,
-        single_task="task",
     )
 
     assert dataset.add_frame.call_count == 4
@@ -1349,7 +1332,7 @@ def test_starved_engine_is_counted_through_the_real_dispatch_path(caplog):
     assert dataset.add_frame.call_count == 0
 
 
-def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
+def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog, clock):
     from lerobot.rollout import EpisodicStrategyConfig
     from lerobot.rollout.strategies import EpisodicStrategy
     from lerobot.utils.action_interpolator import ActionInterpolator
@@ -1357,6 +1340,8 @@ def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
     # Episodic owns one timer across the whole session (episodes used to get a
     # fresh one each), so this also covers the `restart()` that keeps a
     # re-primed interpolator from being reported as a slow episode.
+    # Use the virtual clock so the no-warning assertion below is independent of
+    # scheduler delays on a loaded CI runner.
     ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
     ctx.runtime.cfg.dataset = SimpleNamespace(
         single_task="task",

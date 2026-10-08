@@ -83,7 +83,7 @@ lerobot-rollout \
 
 ### Highlight (`--strategy.type=highlight`)
 
-Autonomous rollout with on-demand recording via a memory-bounded ring buffer. The robot runs continuously while the buffer captures the last N seconds of telemetry. Press the save key to flush the buffer and start live recording; press it again to save the episode.
+Autonomous rollout with on-demand recording via a memory-bounded ring buffer. The buffer captures the last N seconds of telemetry. Press the save key to flush the buffer and start live recording; press it again to save the episode. With an asynchronous backend, each toggle pauses inference, invalidates queued/interpolated motion and requests a supported local hold before the blocking drain or save. A healthy run resumes from a fresh capture afterward.
 
 ```bash
 lerobot-rollout \
@@ -108,8 +108,8 @@ lerobot-rollout \
 
 | Flag                                   | Description                                    |
 | -------------------------------------- | ---------------------------------------------- |
-| `--strategy.ring_buffer_seconds`       | Duration of buffered telemetry (default: 30)   |
-| `--strategy.ring_buffer_max_memory_mb` | Memory cap for the ring buffer (default: 2048) |
+| `--strategy.ring_buffer_seconds`       | Duration of buffered telemetry (default: 10)   |
+| `--strategy.ring_buffer_max_memory_mb` | Memory cap for the ring buffer (default: 1024) |
 | `--strategy.save_key`                  | Key to toggle recording (default: `s`)         |
 | `--strategy.push_key`                  | Key to push to Hub (default: `h`)              |
 
@@ -158,6 +158,8 @@ lerobot-rollout \
 | `ESC`   | Stop the session                            |
 
 Foot pedal input is also supported via `--strategy.input_device=pedal`. Configure pedal codes with `--strategy.pedal.*` flags.
+
+Where the robot supports the rollout position hold, a pause refreshes the last position target actually applied by the driver, including its clipping and the gripper target. Before the first command, a validated measured pose supplies the target. This preserves the commanded position error instead of changing the target to the measured pose; the robot can finish settling toward that target while policy trajectory advancement stops. Validate loaded-arm and gripper behavior on the actual robot; this software hold does not guarantee retained grip or physical immobility.
 
 | Flag                                 | Description                                                                                                                                                    |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -259,11 +261,17 @@ lerobot-rollout \
 
 `SentryStrategy` (recording, interactive-safe) and `BaseStrategy` (no recording) are the reference implementations to copy from; `send_next_action`, `safe_push_to_hub` and `estimate_max_episode_seconds` from `lerobot.rollout.strategies` are the helpers they build on.
 
+For asynchronous backends, the dispatch contract is mandatory. Publish each captured observation with `engine.notify_observation(obs_processed)`, call `send_next_action(...)` on **every autonomous motor tick**, including interpolation and held ticks, then call `engine.pump_query(obs_processed)`. Calling only `engine.get_action()` bypasses the permission and hold handshake: a planned text query can wait indefinitely, and a terminal fault may never signal shutdown.
+
+If you implement dispatch yourself, preserve the helper's order: `begin_control_tick()`, `dispatch_allowed()` before pulling an action and again before sending, interpolation invalidation plus a supported local hold and `acknowledge_hold()` when denied, and `record_dispatch()` after sending. Never acknowledge a hold that failed. Inspect `send_next_action` for the processor and provenance details. Remote contexts have `ctx.policy.policy`, `preprocessor` and `postprocessor` set to `None`; use `ctx.policy.inference` and the robot-side pipelines in `ctx.processors`.
+
+Wrap known blocking mid-run recording work in `self._pause_for_recording(ctx)`, including ring-buffer drains and episode finalization. This invalidates asynchronous motion before the recording stall and resumes only if the run is still healthy and active. Strategies with operator-controlled phases must pass their current motion permission as `resume_allowed`. The next action must come from a fresh observation; saved work must not revive a paused, stopped or faulted run.
+
 ---
 
 ## Inference Backends
 
-Select a backend with `--inference.type=<name>`. All strategies work with both backends.
+Select a backend with `--inference.type=<name>`. Local synchronous and RTC inference use the policy configured below. The [remote backend](./remote_inference) obtains its policy contract from a server and does not load weights on the robot computer.
 
 ### Sync (default)
 
@@ -275,7 +283,7 @@ Works with all policies. No extra flags needed.
 
 A background thread produces action chunks asynchronously. The main control loop polls for the next ready action while the policy computes the next chunk in parallel.
 
-Use RTC with large, slow VLA models (Pi0, Pi0.5, SmolVLA) for smooth, continuous motion despite high inference latency.
+Use RTC with compatible VLA models (Pi0, Pi0.5, SmolVLA) to overlap inference and motion. Continuous execution still requires enough usable action playback to cover inference latency and its variation.
 
 ```bash
 lerobot-rollout \
@@ -292,15 +300,70 @@ lerobot-rollout \
     --device=cuda
 ```
 
-| Flag                                        | Description                                                                    |
-| ------------------------------------------- | ------------------------------------------------------------------------------ |
-| `--inference.rtc.execution_horizon`         | Steps to blend with previous chunk (default: varies by policy)                 |
-| `--inference.rtc.mode`                      | `guided` (default) or trained-prefix `trained` for compatible Pi05 checkpoints |
-| `--inference.rtc.max_guidance_weight`       | Consistency enforcement strength (default: varies by policy)                   |
-| `--inference.rtc.prefix_attention_schedule` | Blend schedule: `LINEAR`, `EXP`, `ONES`, `ZEROS`                               |
-| `--inference.queue_threshold`               | Backpressure threshold; trained RTC requires at least its maximum delay        |
+| Flag                                        | Description                                                                                         |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `--inference.rtc.execution_horizon`         | Steps to blend with previous chunk (default: varies by policy)                                      |
+| `--inference.rtc.mode`                      | `guided` (default) or trained-prefix `trained` for compatible Pi05 checkpoints                      |
+| `--inference.rtc.max_guidance_weight`       | Consistency enforcement strength (default: varies by policy)                                        |
+| `--inference.rtc.prefix_attention_schedule` | Blend schedule: `LINEAR`, `EXP`, `ONES`, `ZEROS`                                                    |
+| `--inference.queue_threshold`               | Backpressure threshold; trained RTC requires at least its maximum delay                             |
+| `--inference.action_starvation_grace_s`     | Wait for fresh motion after starvation on a supported robot (default `1.0`; `0` faults immediately) |
 
 See the [Real-Time Chunking](./rtc) guide for details on tuning RTC parameters.
+
+Local RTC runs in a background thread in the rollout process, without transport. A
+server and client on the same computer use `--inference.type=remote` instead.
+See the [remote guide](./remote_inference) for chunk alignment/blending and the
+[waiting behavior](./remote_inference#what-the-robot-does-while-waiting-or-stopping)
+shared by asynchronous backends.
+
+**Waiting requires a supported robot.** Ordinary local RTC remains available without
+that capability, but planned text/instruction-change pauses and recoverable starvation
+need it. Position-controlled SO, OMX, Koch, HopeJr and Rebot followers support it;
+OpenArm, Reachy2 and bimanual wrappers have configuration constraints listed in the
+[robot support table](./integrate_hardware#waiting-between-predictions).
+With support, an empty buffer can retain the last applied target for
+`action_starvation_grace_s` (default 1 second), including the time needed to drain old
+inference and predict from a fresh capture. After motion has started, zero grace or
+an unsupported robot faults immediately on exhaustion; startup has its own deadline.
+Unlike the former local RTC path, exhaustion is no longer an indefinitely skipped
+tick. Grace never extends expired request or freshness limits.
+
+Local RTC exposes these additional budgets through `--inference.`:
+
+| Parameter               | Default | Meaning                                      |
+| ----------------------- | ------- | -------------------------------------------- |
+| `max_observation_age_s` | `5 s`   | Maximum source age through action execution  |
+| `action_timeout_s`      | `10 s`  | Outstanding action request                   |
+| `startup_timeout_s`     | `120 s` | Initial preparation and fresh-action startup |
+| `language_timeout_s`    | `120 s` | Planned language operation                   |
+
+These are starting values, not measured hardware guarantees. RTC must retain enough
+**post-trim playback** for another inference and timing margin. Raising
+`queue_threshold` cannot help if inference routinely consumes the usable prediction
+horizon; reduce latency or validate a longer horizon/different action frequency.
+
+A terminal fault never automatically resumes policy motion. With usable observation
+acquisition and actuator control, shutdown honors `--return_to_initial_position`
+(default true) and disconnects. Returning reads a full observation, so a persistent
+camera failure can prevent it. Failed command application suppresses further shutdown
+movement for all backends, including sync. This does not change synchronous prediction
+or introduce camera-specific recovery.
+
+<details>
+<summary>Compilation and instruction changes</summary>
+
+RTC compilation warms both initial and prefixed calls, including a representative
+nonzero delay, before motion. Although `--compile_warmup_inferences` defaults to 2,
+enabled RTC requires at least 3; startup logs report the effective count. Warmup must
+fit `startup_timeout_s`. Later instructions that change tensor shapes can trigger
+recompilation and exceed playback or an operation deadline.
+
+A task change during inference discards the obsolete result. Supported robots pause
+and request fresh actions; without that waiting capability, remaining actions can run
+out. Prefer changing tasks between runs on those robots.
+
+</details>
 
 ---
 
@@ -319,15 +382,15 @@ lerobot-rollout \
     --interactive=true
 ```
 
-| Command             | Action                                                                                                                                                                             |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/start`            | Start (or restart) the policy control loop                                                                                                                                         |
-| `/subtask <text>`   | Change the instruction the policy follows, without stopping. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar) |
-| `/vqa <text>`       | Ask the policy a question about what it currently sees. Only while a run is in progress, and only for policies with a text head                                                    |
-| `/autosteer <goal>` | Hand the policy a high-level goal and let it choose its own subtasks. `/autosteer off` hands control back; no argument reports the current goal                                    |
-| `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                      |
-| `/stop`             | End the session and run the normal shutdown routines                                                                                                                               |
-| `/help`             | List the commands                                                                                                                                                                  |
+| Command             | Action                                                                                                                                                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/start`            | Start (or restart) the policy control loop                                                                                                                                                                            |
+| `/subtask <text>`   | Change the instruction within the current run; asynchronous inference may enter a planned hold. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar) |
+| `/vqa <text>`       | Ask the policy a question about what it currently sees. Only while a run is in progress, and only for policies with a text head                                                                                       |
+| `/autosteer <goal>` | Hand the policy a high-level goal and let it choose its own subtasks. `/autosteer off` hands control back; no argument reports the current goal                                                                       |
+| `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                                                         |
+| `/stop`             | End the session and run the normal shutdown routines                                                                                                                                                                  |
+| `/help`             | List the commands                                                                                                                                                                                                     |
 
 ```text
 > /start
@@ -353,13 +416,13 @@ Lines starting with `>` are what you type; the session renders no prompt of its 
 (printf '/start\n'; sleep 60; printf '/stop\n') | lerobot-rollout ... --interactive=true
 ```
 
-**`/subtask`** applies from the next inference. With `--inference.type=sync` the precomputed chunk actions are dropped, so the switch lands on the next control tick; with `rtc` the new chunk is blended over the previous chunk's leftover prefix, so it lands within one inference and the motion stays continuous (with `--inference.rtc.enabled=false` the queued chunk drains first, delaying the switch by up to one chunk).
+**`/subtask`** updates the task for subsequent inference. With `--inference.type=sync`, precomputed chunk actions are dropped. With local RTC or remote inference, a change during an action request discards the obsolete result. On a robot supporting local hold, the engine invalidates queued/interpolated motion, waits for the control loop to acknowledge the hold, then requests fresh motion under the new task. Expect a stop during this transition; it is not a guaranteed continuous blend. A change between requests can retain already accepted actions for continuity. Local RTC on a robot without hold support still discards the obsolete result, but can exhaust its remaining actions and terminate. Change instructions between runs if that robot cannot hold appropriately.
 
-With `--use_torch_compile=true`, an instruction that tokenizes to a different length can trigger a recompilation, pausing inference for as long as the original warm-up took — leave compilation off if you expect to re-instruct often.
+With local `--use_torch_compile=true`, an instruction that changes processed tensor shapes can trigger recompilation. Padding may keep some task changes at the same shape, but later compilation is not guaranteed to fit the remaining playback or the instruction-change deadline: it can cause a terminal fault. Leave compilation off when exploring instructions unless those transitions have been validated. Changes during initial compile warmup do not request a motion hold, because policy motion has not started yet.
 
-`/vqa` and `/autosteer` need a policy with a text head (an implementation of `PreTrainedPolicy.generate_text()`); no built-in LeRobot policy ships one yet, so both commands are refused unless yours does.
+`/vqa` and `/autosteer` require a policy that declares text generation support and implements `PreTrainedPolicy.generate_text()`, such as an appropriately trained EO1 checkpoint. Capability is checked before accepting a query; checkpoint-specific behavior still needs validation.
 
-**`/vqa`** answers from the next observation and prints when ready, so you can keep typing meanwhile; only one question is in flight at a time (autosteer's own queries share that slot). Text generation is far slower than a control tick, so the robot drains its queued actions and then holds position until the answer lands, and that time counts against `--duration`. Questions are only accepted while a run is in progress — an idle engine has no current view — and one still unanswered when a segment ends is dropped and reported.
+**`/vqa`** answers from the next observation and prints when ready, so you can keep typing meanwhile; only one question is in flight at a time (autosteer's own queries share that slot). Asynchronous backends first enter an acknowledged local hold and invalidate queued/interpolated motion, then submit a fresh observation to the text path. A healthy active run resumes from a fresh action chunk after the answer; paused or stopped runs stay inactive. Synchronous text generation continues to run inline. Query time counts against `--duration`. Questions are only accepted while a run is in progress — an idle engine has no current view. If the instruction or execution context invalidates an asynchronous answer, the question receives one cancellation notice instead of the obsolete answer. Segment end also reports unanswered questions, including generation still in progress; reporting cancellation does not interrupt a running model call or free its query slot early.
 
 **`/autosteer`** hands the policy a goal and asks it for the next subtask every `--autosteer_interval_s` seconds (default 10), applying each one through the same path as `/subtask` and announcing it in the chat. Every query is a full text generation, so the interval is a cost knob: lower values re-plan sooner but spend more of the loop generating text instead of acting. Plan progress lives in the policy, not the rollout, so the plan dies with the segment; the sequencer also stops on `/reset`, `/subtask`, `/autosteer off`, and the first planning failure.
 
@@ -368,6 +431,8 @@ With `--use_torch_compile=true`, an instruction that tokenizes to a different le
 Sessions work over SSH and on headless machines — no display server needed.
 
 **Recording while interactive.** `--strategy.type=sentry` also accepts `--interactive=true` and records continuously while you steer: each `/start`…`/reset` segment saves complete episodes plus one final partial episode, and the dataset stays open until shutdown. Frames carry the task provenance of the action actually sent, so actions already queued or interpolated under the old task keep the old label.
+
+Blocking mid-run episode saves pause asynchronous inference, invalidate queued/interpolated actions and request a supported local hold. They resume from a fresh capture only if the run remains active and healthy. The same protection applies to DAgger saves and Highlight ring-buffer drains/saves. Recording pauses and ordinary starvation share the physical waiting behavior, but their deadlines and reasons for resumption remain separate.
 
 ```bash
 lerobot-rollout \
@@ -471,11 +536,13 @@ In [interactive sessions](#interactive-sessions) each `/start` segment owns its 
 
 ## Programmatic Usage
 
+For extensions, `lerobot.inference` is the public package for backend configurations, local engines and shared scheduling contracts. `lerobot.remote_inference` owns the remote engine, protocol, deployment and session implementation; `lerobot.rollout` owns the robot loop, strategies, interpolation and recording. Import public symbols from their package rather than implementation files. The optional remote dependencies are needed only when the remote backend or server is used.
+
 For custom deployments (e.g. with kinematics processors), use the rollout module API directly:
 
 ```python
 from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
-from lerobot.rollout.inference import SyncInferenceConfig
+from lerobot.inference import SyncInferenceConfig
 from lerobot.rollout.strategies import BaseStrategy
 from lerobot.utils.process import ProcessSignalHandler
 
