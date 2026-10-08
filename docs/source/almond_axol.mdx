@@ -1,0 +1,223 @@
+# Almond Axol
+
+[Almond Axol](https://docs.almond.bot) is a dual-arm robot by [Almond Bot](https://almond.bot): two 7-DoF torque-controlled arms with grippers (16 joints total), teleoperated from a VR headset and built for imitation-learning data collection and policy deployment.
+
+## What's Unique?
+
+- **Dual-arm by design**: a single `almond_axol` robot exposes both arms — 16 joint positions in one observation/action space, no bimanual pairing of separate devices.
+
+- **Torque-controlled arms**: the arms run impedance control with gravity and friction feedforward, so they are compliant around people, can be hand-guided under gravity compensation, and track teleoperation smoothly.
+
+- **VR-native teleoperation**: no leader arm needed. A WebXR app ([axol.almond.bot](https://axol.almond.bot)) streams 6-DoF hand poses from the headset; an inverse-kinematics solver turns them into joint targets. Episode control (start / save / re-record) happens from the controllers.
+
+- **Integrated vision**: Stereolabs ZED cameras (including stereo ZED X units) attach to the robot machine, so datasets can carry overhead stereo plus wrist views.
+
+- **Turnkey robot machine**: the robot is driven by a ZED Box (NVIDIA Jetson) set up with a one-command installer and controlled from a web control panel — the browser drives everything if you prefer no terminal.
+
+## Platform Requirements
+
+<Tip warning={true}>
+  **Linux Only**: the Axol stack runs on the Linux robot machine (typically the
+  ZED Box / NVIDIA Jetson wired to the robot). The `almond-axol` SDK requires
+  **Python 3.12+**.
+</Tip>
+
+## Safety Guide
+
+Before operating the robot:
+
+- **Clear workspace**: keep body parts and objects outside both arms' range of motion during teleoperation and policy rollouts
+- **Compliant but powerful**: the arms are torque-controlled and compliant, but still move quickly under teleoperation — keep the operator's line of sight on the robot
+- **First power-on**: read the [Almond documentation](https://docs.almond.bot) before first use
+
+## Hardware Setup
+
+The Axol ships with its robot machine; follow the official [installation guide](https://docs.almond.bot/installation). Robot machines from Almond come with the `axol` SDK preinstalled and a web control panel running — for a fresh machine, one command sets everything up:
+
+```bash
+curl https://axol.almond.bot/install -fsS | bash
+```
+
+## CAN Bus Setup
+
+The arms speak CAN through two SocketCAN interfaces (`can_alm_axol_l` / `can_alm_axol_r` by default). The web control panel brings them up automatically on first connect; from a terminal:
+
+```bash
+axol can.setup
+```
+
+## Install LeRobot 🤗
+
+Follow our [Installation Guide](./installation), then install the Almond Axol support:
+
+```bash
+pip install -e ".[almond_axol]"
+```
+
+> [!TIP]
+> On released LeRobot versions you can use the same classes through the
+> [`lerobot_robot_axol`](https://github.com/almond-bot/axol/tree/main/plugins/lerobot_robot_axol)
+> drop-in plugin (`pip install lerobot_robot_axol`, types `axol` / `axol_vr`)
+> instead of this in-repo integration.
+
+## Usage
+
+### Robot
+
+<hfoptions id="robot">
+<hfoption id="Command">
+
+```bash
+lerobot-teleoperate \
+    --robot.type=almond_axol \
+    --robot.id=my_axol \
+    --teleop.type=almond_axol_vr
+```
+
+</hfoption>
+<hfoption id="API example">
+
+```python
+from lerobot.robots.almond_axol import AlmondAxol, AlmondAxolConfig
+
+config = AlmondAxolConfig(id="my_axol")
+
+robot = AlmondAxol(config)
+robot.connect()
+
+# Read current state: 16 joint positions (8 per arm), in radians
+obs = robot.get_observation()
+print(obs)
+
+# Send a joint-position action (here: hold the current position)
+action = {key: obs[key] for key in robot.action_features}
+robot.send_action(action)
+
+robot.disconnect()
+```
+
+</hfoption>
+</hfoptions>
+
+No calibration step is needed — encoder zeros are managed by the Axol hardware setup, so `lerobot-calibrate` is a no-op for this robot.
+
+### Teleoperator (VR headset)
+
+The Axol is teleoperated from a VR headset (e.g. Meta Quest) instead of a leader arm:
+
+1. Put the headset on the same network as the robot machine.
+2. Open [axol.almond.bot](https://axol.almond.bot) in the headset browser and enter the robot machine's address (the teleoperator serves a WebSocket on port `8000`).
+3. Hold the grip buttons to engage tracking; the arms follow your hands. The controller buttons start, save, and re-record episodes during recording.
+
+<hfoptions id="teleop">
+<hfoption id="Command">
+
+```bash
+lerobot-teleoperate \
+    --robot.type=almond_axol \
+    --robot.id=my_axol \
+    --teleop.type=almond_axol_vr \
+    --teleop.port=8000
+```
+
+</hfoption>
+<hfoption id="API example">
+
+```python
+from lerobot.teleoperators.almond_axol_vr import AlmondAxolVR, AlmondAxolVRConfig
+
+teleop = AlmondAxolVR(AlmondAxolVRConfig())
+teleop.connect()
+
+# Latest smoothed joint-position action derived from the tracked hand poses
+action = teleop.get_action()
+
+# Episode-control events driven from the headset controllers
+events = teleop.get_teleop_events()
+
+teleop.disconnect()
+```
+
+</hfoption>
+</hfoptions>
+
+### Recording Data
+
+To record a dataset during VR teleoperation, with an overhead stereo ZED and a wrist camera:
+
+```bash
+lerobot-record \
+    --robot.type=almond_axol \
+    --robot.id=my_axol \
+    --robot.cameras "{overhead: {serial: 41234567, stereo: true}, left_arm: {serial: 41234568}}" \
+    --teleop.type=almond_axol_vr \
+    --dataset.repo_id=${HF_USER}/my_axol_dataset \
+    --dataset.fps=30 \
+    --dataset.num_episodes=10
+```
+
+> [!TIP]
+> For the highest-rate collection (out-of-process ZED capture, Jetson NVENC
+> dataset encoding, and live camera streaming into the headset), the SDK's own
+> [`axol collect-data`](https://docs.almond.bot/cli/collect-data) command is
+> built on these same LeRobot classes with a tuned capture pipeline, and the
+> [web control panel](https://docs.almond.bot/guides/control-panel) drives it
+> from a browser.
+
+## Configuration Options
+
+### Robot (`almond_axol`)
+
+| Parameter           | Default          | Description                                                                     |
+| ------------------- | ---------------- | ------------------------------------------------------------------------------- |
+| `left_channel`      | `can_alm_axol_l` | SocketCAN interface of the left arm                                             |
+| `right_channel`     | `can_alm_axol_r` | SocketCAN interface of the right arm                                            |
+| `telemetry_hz`      | `120.0`          | Background joint-telemetry polling rate                                         |
+| `observe_torques`   | `False`          | Include joint torques in observations                                           |
+| `observe_cartesian` | `False`          | Per-arm 6-axis end-effector poses instead of joint positions (IK/FK in the SDK) |
+| `cameras`           | `{}`             | ZED camera slots keyed by name (see below)                                      |
+
+### Camera slots
+
+| Parameter | Default | Description                                                                         |
+| --------- | ------- | ----------------------------------------------------------------------------------- |
+| `serial`  | -       | Serial number of the ZED camera to open                                             |
+| `fps`     | `60`    | Capture rate                                                                        |
+| `width`   | `960`   | Frame width                                                                         |
+| `height`  | `600`   | Frame height                                                                        |
+| `stereo`  | `False` | Stereo ZED (e.g. ZED X) on the stereo grab path                                     |
+| `eyes`    | `both`  | Eye(s) of a stereo camera to record (`both` records `<name>_left` / `<name>_right`) |
+
+### Teleoperator (`almond_axol_vr`)
+
+| Parameter     | Default | Description                                              |
+| ------------- | ------- | -------------------------------------------------------- |
+| `port`        | `8000`  | VR WebSocket (wss) port the headset connects to          |
+| `has_gripper` | `True`  | Set `False` for the gripperless SKU (drops gripper keys) |
+
+## Troubleshooting
+
+### CAN interface not found
+
+```bash
+ip link show can_alm_axol_l
+axol can.setup
+```
+
+### Headset can't connect
+
+1. Confirm the headset and robot machine are on the same network
+2. Accept the self-signed TLS certificate once when first opening the connection
+3. Check nothing else is bound to the teleoperator port (default `8000`)
+
+### `zed` camera fails to open
+
+The ZED SDK and its Python bindings ship with the robot machine, not pip. On a fresh machine run `axol zed.install` (done automatically by the one-command installer).
+
+## Resources
+
+- [Almond documentation](https://docs.almond.bot)
+- [almond-axol SDK on GitHub](https://github.com/almond-bot/axol)
+- [VR teleoperation guide](https://docs.almond.bot/operations/teleop)
+- [Data collection guide](https://docs.almond.bot/operations/data-collection)
+- [`lerobot_robot_axol` plugin](https://github.com/almond-bot/axol/tree/main/plugins/lerobot_robot_axol)
