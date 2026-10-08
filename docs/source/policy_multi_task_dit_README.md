@@ -1,5 +1,13 @@
 # Multitask DiT Policy
 
+## Training throughput
+
+On CUDA, pass `--policy.compile_model=true`. The training step is dominated by the CLIP ViT-B/16
+forward and backward, and `torch.compile` fuses the elementwise work around its GEMMs. Measured on one
+A100 80GB in bf16 at an effective batch of 320: +22% to +31% samples/s and about 22% less peak memory
+across LIBERO (256x256 images), RoboCasa (256x256 video, 3 cameras) and a 480x640 real-robot dataset.
+It costs a one-off compile (~90s) at the first step and once per new batch shape.
+
 ## Citation
 
 If you use this work, please cite the following works:
