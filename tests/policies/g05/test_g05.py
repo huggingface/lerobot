@@ -1936,35 +1936,78 @@ def test_subtask_as_task_sample_trains_the_action_only_template():
     assert "<chat_assistant_prefix>Action: <EOV><EOC><action_action>|<eos>" in sample["template"]
 
 
-def test_with_text_pairs_same_pass_cot_with_its_chunk():
-    import torch
+def _policy_with_cot(*texts: str) -> G05Policy:
+    """A tiny policy whose inference returns a 4-step chunk per text and, in System 2, the texts as CoTs.
 
-    from lerobot.policies.g05.modeling_g05 import G05Policy
-
-    chunk = torch.zeros(1, 2, 3)
-
-    class Stub:
-        def _run_inference(self, batch, **kwargs):
-            return chunk, {"cot_text": ["Subtask: grasp the cup"]}
-
-    action, text = G05Policy.predict_action_chunk(Stub(), {}, with_text=True)
-
-    assert action is chunk
-    assert text == "Subtask: grasp the cup"
+    No text means System 1: a single-env chunk and no CoT.
+    """
+    policy = G05Policy(_config(n_action_steps=2), backend=TinyG05Backend())
+    metadata = {"cot_text": list(texts)} if texts else {}
+    chunk = torch.zeros(max(len(texts), 1), 4, 20)
+    policy._run_inference = lambda batch, **kwargs: (chunk, metadata)
+    return policy
 
 
-def test_with_text_reports_no_text_for_system1():
-    import torch
+def _bbox_target(label: str, xyxy: list[float]) -> str:
+    """The BBox target as training formats it, so decoding inverts the encoder."""
+    return format_g05_bbox_target(json.dumps({"detections": [{"label": label, "bbox": xyxy}]}))
 
-    from lerobot.policies.g05.modeling_g05 import G05Policy
 
-    class Stub:
-        def _run_inference(self, batch, **kwargs):
-            return torch.zeros(1, 2, 3), {}
+def test_system2_chunk_carries_the_cot_subtask_and_boxes_on_the_bbox_camera():
+    from lerobot.processor import (
+        policy_output_to_transition,
+        transition_to_policy_action,
+        transition_to_prediction,
+    )
 
-    assert G05Policy.predict_action_chunk(Stub(), {}, with_text=True)[1] is None
-    # Without the flag the bare chunk comes back, as every other policy returns.
-    assert isinstance(G05Policy.predict_action_chunk(Stub(), {}), torch.Tensor)
+    policy = _policy_with_cot(f"{_bbox_target('cube', [0.25, 0.5, 0.75, 0.875])}|Subtask: grasp the cup")
+
+    step = policy_output_to_transition(policy.predict_action_chunk({}))
+
+    assert transition_to_policy_action(step).shape == (1, 4, 20)
+    camera = policy.config.bbox_camera
+    assert transition_to_prediction(step) == {
+        "language": {"subtask": ["grasp the cup"]},
+        "boxes": {camera: [{"detections": [{"label": "cube", "bbox": [0.25, 0.5, 0.75, 0.875]}]}]},
+    }
+
+
+def test_system2_prediction_has_one_value_per_env():
+    # Env 0 predicts a box and a subtask, env 1 only a subtask: env 1 gets no detections.
+    policy = _policy_with_cot(
+        f"{_bbox_target('cup', [0.125, 0.25, 0.5, 0.75])}|Subtask: grasp the cup", "Subtask: open the drawer"
+    )
+
+    output = policy.predict_action_chunk({})
+
+    assert output["action"].shape == (2, 4, 20)
+    assert output["prediction"] == {
+        "language": {"subtask": ["grasp the cup", "open the drawer"]},
+        "boxes": {
+            policy.config.bbox_camera: [
+                {"detections": [{"label": "cup", "bbox": [0.125, 0.25, 0.5, 0.75]}]},
+                {"detections": []},
+            ]
+        },
+    }
+
+
+def test_system2_cot_without_fields_returns_a_bare_chunk():
+    assert isinstance(_policy_with_cot("I see a table.").predict_action_chunk({}), torch.Tensor)
+
+
+def test_system1_chunk_is_a_bare_tensor():
+    assert isinstance(_policy_with_cot().predict_action_chunk({}), torch.Tensor)
+
+
+def test_select_action_returns_the_prediction_with_the_first_action_of_a_chunk():
+    policy = _policy_with_cot("Subtask: grasp the cup")
+
+    first, second = policy.select_action({}), policy.select_action({})
+
+    assert first["action"].shape == (1, 20)
+    assert first["prediction"] == {"language": {"subtask": ["grasp the cup"]}}
+    assert isinstance(second, torch.Tensor)
 
 
 def test_relative_anchor_is_held_while_a_chunk_is_in_flight():

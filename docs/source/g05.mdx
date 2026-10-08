@@ -95,10 +95,8 @@ head, camera order, dimensions, normalization, and execution horizon.
 
 ### Interactive System 1 and System 2 Runtime
 
-G0.5 emits reasoning and actions from one inference stream:
-`predict_action_chunk(batch, with_text=True)` returns the chunk together with
-the chain-of-thought generated in the same pass, and the action is conditioned
-on that reasoning.
+G0.5 emits reasoning and actions from one inference stream: the chain of thought
+is generated in the same pass as the chunk, and the action is conditioned on it.
 
 `policy.runtime_system` on the checkpoint selects the path. System 1 executes
 the selected ActionCodec or flow chunk directly and generates no CoT:
@@ -112,14 +110,24 @@ lerobot-rollout \
 ```
 
 System 2 is available only when the packaged checkpoint metadata has
-`predict_cot=true`:
+`predict_cot=true`. Its chain of thought comes back as the policy's prediction:
+`predict_action_chunk` returns a `PolicyOutput` batch holding the chunk under
+`"action"` and, under `"prediction"`, each env's CoT subtask (`language["subtask"]`,
+one string per env) and boxes as [0, 1] xyxy fractions on
+`policy.config.bbox_camera` (`boxes[camera]`, one answer per env), and
+`select_action` returns it with the first action of each chunk. The model names
+no camera: its BBox targets are all drawn on that camera during training. System 1
+generates no CoT and returns bare actions.
 
 ```python
-action, text = policy.predict_action_chunk(batch, with_text=True)
-print(text)  # "Subtask: grasp the cup"
+output = policy.predict_action_chunk(batch)
+print(output["prediction"])
+# {"language": {"subtask": ["grasp the cup"]},
+#  "boxes": {"observation.images.top": [{"detections": [{"label": "cup", "bbox": [...]}]}]}}
 ```
 
-System 1 generates none and reports `text=None`.
+With `--display_data=true`, `lerobot-rollout` shows the subtask and draws the
+boxes over the bbox camera in Rerun or Foxglove.
 
 #### Driving a session from stdin
 
