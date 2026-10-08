@@ -1,6 +1,7 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License").
 import json
+import os
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -140,3 +141,25 @@ def test_active_submission_cannot_be_duplicated(tmp_path, monkeypatch):
     monkeypatch.setattr(slurm.subprocess, "run", active)
     with pytest.raises(RuntimeError, match="still active"):
         run_slurm(store, plan, runtime(tmp_path))
+
+
+def test_process_local_storage_is_rejected(tmp_path):
+    store = ArtifactStore("memory://slurm-local-only")
+    plan = make_plan(store)
+    with pytest.raises(ValueError, match="process-local"):
+        render_slurm(store, plan, runtime(tmp_path))
+
+
+def test_generated_shell_executes_with_spaces(tmp_path):
+    store = ArtifactStore(tmp_path / "run with spaces")
+    plan = make_plan(store, size=3, shard_size=1)
+    cfg = runtime(tmp_path)
+    scripts = render_slurm(store, plan, cfg)
+    for index in range(3):
+        subprocess.run(
+            ["/bin/sh", str(scripts.worker)],
+            env={**os.environ, "SLURM_ARRAY_TASK_ID": str(index)},
+            check=True,
+        )
+    result = subprocess.run(["/bin/sh", str(scripts.finalizer)], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout)["completed"] == 3

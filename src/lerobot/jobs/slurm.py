@@ -34,6 +34,9 @@ class SlurmScripts:
 
 def render_slurm(store, plan, runtime: RuntimeConfig) -> SlurmScripts:
     """Write operational scripts separately from immutable scientific identities."""
+    protocols = store.fs.protocol if isinstance(store.fs.protocol, tuple) else (store.fs.protocol,)
+    if "memory" in protocols:
+        raise ValueError("Slurm workers cannot read process-local memory storage; use shared storage")
     cfg = runtime.slurm
     resources = load_module(plan.factory, plan.config).spec.resources
     groups = min(runtime.workers, plan.shards)
