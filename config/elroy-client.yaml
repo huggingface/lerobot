@@ -1,0 +1,43 @@
+# Split teleoperation: leaders on elroy (Orin), robot on rosie (Pi).
+#
+#   rosie:  python -m lerobot_robot_xlerobot.xlerobot_host \
+#             --robot.id=rosie \
+#             --robot.port1=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00 \
+#             --robot.port2=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00
+#
+#   elroy:  lerobot-teleoperate --config_path=config/elroy-client.yaml
+#
+# TWO LIMITATIONS, both expected rather than broken:
+#
+# 1. Arms only. xlerobot's action space is 17 values - 12 arm joints, 2 head,
+#    and x/y/theta velocity - but bi_so_leader produces only the 12 arm joints.
+#    send_action skips what it isn't given, so the head holds position and the
+#    base stays stopped. Driving those needs a second input (the examples under
+#    XLeRobot software/examples/ pair a leader with the keyboard) or the VR
+#    teleoperator, which covers the whole space.
+#
+# 2. No cameras. xlerobot_cameras_config() is empty upstream and the host's
+#    argparse takes no camera arguments, so the host streams none and this
+#    client declares none. Fine for proving the link; needs solving before
+#    recording, since a dataset without images is not much use.
+
+robot:
+  type: xlerobot_client
+  id: rosie
+  remote_ip: 192.168.1.100     # rosie. Use rosie.local if DHCP moves this.
+  port_zmq_cmd: 5555
+  port_zmq_observations: 5556
+  polling_timeout_ms: 15
+  connect_timeout_s: 5
+
+# The leaders are plugged into elroy. Same physical arms, so the by-id paths
+# are identical to rosie's - the serial travels with the adapter.
+teleop:
+  type: bi_so_leader
+  id: xlerobot_leaders
+  left_arm_config:
+    port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90149222-if00
+  right_arm_config:
+    port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00
+
+display_data: false
