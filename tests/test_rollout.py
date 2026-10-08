@@ -343,6 +343,127 @@ def test_build_rollout_context_uses_resolved_device(
             robot.disconnect()
 
 
+@pytest.mark.parametrize("failure", [None, "processors", "engine", "observation", "teleop"])
+def test_rollout_finishes_loading_before_connecting_hardware(monkeypatch, failure):
+    import lerobot.rollout.context as rollout_context
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.processor import PolicyProcessorPipeline
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+
+    cfg = RolloutConfig(robot=MockRobotConfig(), policy=ACTConfig(device="cpu"), device="cpu")
+    robot = MockRobot(cfg.robot)
+    teleop = SimpleNamespace(is_connected=False)
+    cfg.teleop = SimpleNamespace(type="mock")
+    events = []
+
+    def processors(**kwargs):
+        events.append("processors")
+        assert not robot.is_connected and not teleop.is_connected
+        if failure == "processors":
+            raise RuntimeError("processors")
+        return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
+
+    def engine(*args, **kwargs):
+        events.append("engine")
+        assert not robot.is_connected and not teleop.is_connected
+        if failure == "engine":
+            raise RuntimeError("engine")
+        return MagicMock()
+
+    connect = robot.connect
+    observe = robot.get_observation
+
+    def connect_robot():
+        events.append("connect")
+        connect()
+
+    def observe_robot():
+        if failure == "observation":
+            raise RuntimeError("observation")
+        return observe()
+
+    def connect_teleop():
+        teleop.is_connected = True
+        if failure == "teleop":
+            raise RuntimeError("teleop")
+
+    teleop.connect = connect_teleop
+    teleop.disconnect = lambda: setattr(teleop, "is_connected", False)
+    monkeypatch.setattr(robot, "connect", connect_robot)
+    monkeypatch.setattr(robot, "get_observation", observe_robot)
+    monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
+    monkeypatch.setattr(rollout_context, "make_teleoperator_from_config", lambda _: teleop)
+    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
+    monkeypatch.setattr(rollout_context, "make_pre_post_processors", processors)
+    monkeypatch.setattr(rollout_context, "create_inference_engine", engine)
+    try:
+        if failure is not None:
+            with pytest.raises(RuntimeError, match=failure):
+                rollout_context.build_rollout_context(cfg, threading.Event())
+            assert not robot.is_connected and not teleop.is_connected
+            assert ("connect" in events) == (failure in ("observation", "teleop"))
+        else:
+            ctx = rollout_context.build_rollout_context(cfg, threading.Event())
+            assert events == ["processors", "engine", "connect"]
+            assert robot.is_connected and teleop.is_connected
+            assert len(ctx.hardware.initial_position) == 3
+    finally:
+        if robot.is_connected:
+            robot.disconnect()
+        if teleop.is_connected:
+            teleop.disconnect()
+
+
+@pytest.mark.parametrize("failure", [None, "processors", "observation"])
+def test_rollout_closes_the_dataset_when_startup_fails(monkeypatch, tmp_path, failure):
+    import lerobot.rollout.context as rollout_context
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.processor import PolicyProcessorPipeline
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+
+    cfg = RolloutConfig(robot=MockRobotConfig(), policy=ACTConfig(device="cpu"), device="cpu")
+    cfg.dataset = DatasetRecordConfig(repo_id="user/rollout_test", single_task="task", root=tmp_path)
+    robot = MockRobot(cfg.robot)
+    dataset = MagicMock(num_episodes=0, repo_id="user/rollout_test")
+    dataset.meta.stats = {}
+    observe = robot.get_observation
+
+    def processors(**kwargs):
+        if failure == "processors":
+            raise RuntimeError("processors")
+        return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
+
+    def observe_robot():
+        if failure == "observation":
+            raise RuntimeError("observation")
+        return observe()
+
+    monkeypatch.setattr(robot, "get_observation", observe_robot)
+    monkeypatch.setattr(rollout_context, "LeRobotDataset", MagicMock(create=MagicMock(return_value=dataset)))
+    monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
+    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
+    monkeypatch.setattr(rollout_context, "make_pre_post_processors", processors)
+    monkeypatch.setattr(rollout_context, "create_inference_engine", lambda *a, **kw: MagicMock())
+    try:
+        if failure is not None:
+            # The dataset's writers are closed whether setup or hardware startup failed.
+            with pytest.raises(RuntimeError, match=failure):
+                rollout_context.build_rollout_context(cfg, threading.Event())
+            dataset.finalize.assert_called_once()
+            assert not robot.is_connected
+        else:
+            # On success the strategy's teardown owns the dataset.
+            ctx = rollout_context.build_rollout_context(cfg, threading.Event())
+            assert ctx.data.dataset is dataset
+            dataset.finalize.assert_not_called()
+    finally:
+        if robot.is_connected:
+            robot.disconnect()
+
+
 def test_load_pretrained_policy_passes_revision(monkeypatch):
     import lerobot.rollout.context as rollout_context
 

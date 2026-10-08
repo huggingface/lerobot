@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from contextlib import ExitStack
 from copy import copy
 from dataclasses import dataclass, field
 from threading import Event
@@ -47,7 +48,7 @@ from lerobot.processor import (
     make_default_processors,
     rename_stats,
 )
-from lerobot.robots import make_robot_from_config
+from lerobot.robots import Robot, make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
@@ -308,6 +309,11 @@ def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy
     )
 
 
+def _disconnect_if_connected(device: Robot | Teleoperator) -> None:
+    if device.is_connected:
+        device.disconnect()
+
+
 def build_rollout_context(
     cfg: RolloutConfig,
     shutdown_event: Event,
@@ -385,28 +391,13 @@ def build_rollout_context(
         robot_action_processor = robot_action_processor or _r
         robot_observation_processor = robot_observation_processor or _o
 
-    # --- 3. Hardware (heaviest side-effect, deferred) -----------------
+    # --- 3. Hardware descriptions (heaviest side-effect deferred) -----
     robot_config = cfg.robot
     if robot_config is None:
         raise ValueError("--robot.type is required for rollout")
-    logger.info("Connecting robot (%s)...", robot_config.type)
     robot = make_robot_from_config(robot_config)
-    robot.connect()
-    logger.info("Robot connected: %s", robot.name)
-
-    # Store the initial joint positions so we can return to a safe pose on shutdown.
-    initial_obs = robot.get_observation()
-    initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
-    logger.info("Captured initial robot position (%d keys)", len(initial_position))
-
     robot_wrapper = ThreadSafeRobot(robot)
-
-    teleop = None
-    if cfg.teleop is not None:
-        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
-        teleop = make_teleoperator_from_config(cfg.teleop)
-        teleop.connect()
-        logger.info("Teleoperator connected")
+    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
     # TODO(Steven): once Teleoperator motor-control methods are standardised
     # (``enable_torque`` / ``disable_torque`` / ``write_goal_positions``), gate
@@ -546,54 +537,83 @@ def build_rollout_context(
     if dataset is not None:
         logger.info("Dataset ready: %s (%d existing episodes)", dataset.repo_id, dataset.num_episodes)
 
-    # --- 6. Policy pre/post processors (needs dataset stats if any) ---
-    dataset_stats = None
-    if dataset is not None:
-        dataset_stats = rename_stats(
-            dataset.meta.stats,
-            cfg.rename_map,
+    # No context is returned if a later step fails, so strategy teardown cannot run: close what
+    # was opened here (hardware first, then the dataset) before re-raising.
+    with ExitStack() as cleanup:
+        if dataset is not None:
+            cleanup.callback(dataset.finalize)
+
+        # --- 6. Policy pre/post processors (needs dataset stats if any) ---
+        dataset_stats = None
+        if dataset is not None:
+            dataset_stats = rename_stats(
+                dataset.meta.stats,
+                cfg.rename_map,
+            )
+
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=policy_config,
+            pretrained_path=policy_config.pretrained_path,
+            pretrained_revision=policy_config.pretrained_revision,
+            dataset_stats=dataset_stats,
+            preprocessor_overrides={
+                "device_processor": {"device": cfg.device},
+                "rename_observations_processor": {"rename_map": cfg.rename_map},
+            },
         )
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=policy_config,
-        pretrained_path=policy_config.pretrained_path,
-        pretrained_revision=policy_config.pretrained_revision,
-        dataset_stats=dataset_stats,
-        preprocessor_overrides={
-            "device_processor": {"device": cfg.device},
-            "rename_observations_processor": {"rename_map": cfg.rename_map},
-        },
-    )
+        # A relative-action chunk is anchored to the state it was predicted from, and the engines
+        # below rerun the preprocessor once per tick. Hand the step the policy's queue depth so it
+        # holds that anchor until the chunk drains, instead of following the moving arm. Harmless
+        # for the chunk-at-once engines (RTC), whose policy queue is always empty.
+        bind_relative_anchor(policy, preprocessor)
 
-    # A relative-action chunk is anchored to the state it was predicted from, and the engines
-    # below rerun the preprocessor once per tick. Hand the step the policy's queue depth so it
-    # holds that anchor until the chunk drains, instead of following the moving arm. Harmless
-    # for the chunk-at-once engines (RTC), whose policy queue is always empty.
-    bind_relative_anchor(policy, preprocessor)
+        # --- 7. Inference strategy (needs policy + pre/post + hardware) --
+        logger.info(
+            "Creating inference engine (type=%s)...",
+            cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
+        )
+        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
+        inference_strategy = create_inference_engine(
+            cfg.inference,
+            policy=policy,
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            robot_wrapper=robot_wrapper,
+            dataset_features=dataset_features,
+            ordered_action_keys=ordered_action_keys,
+            task=task_str,
+            fps=cfg.fps,
+            device=cfg.device,
+            use_torch_compile=torch_compile_active,
+            compile_warmup_inferences=cfg.compile_warmup_inferences,
+            shutdown_event=shutdown_event,
+        )
 
-    # --- 7. Inference strategy (needs policy + pre/post + hardware) --
-    logger.info(
-        "Creating inference engine (type=%s)...",
-        cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
-    )
-    task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
-    inference_strategy = create_inference_engine(
-        cfg.inference,
-        policy=policy,
-        preprocessor=preprocessor,
-        postprocessor=postprocessor,
-        robot_wrapper=robot_wrapper,
-        dataset_features=dataset_features,
-        ordered_action_keys=ordered_action_keys,
-        task=task_str,
-        fps=cfg.fps,
-        device=cfg.device,
-        use_torch_compile=torch_compile_active,
-        compile_warmup_inferences=cfg.compile_warmup_inferences,
-        shutdown_event=shutdown_event,
-    )
+        # --- 8. Connect hardware only after policy/processor/engine setup --
+        # Tokenizer or processor loading can hold the GIL and prevent the robot's control
+        # thread from running. Keep hardware disconnected until loading finishes to avoid
+        # triggering the robot's watchdog.
+        logger.info("Connecting robot (%s)...", robot_config.type)
+        cleanup.callback(_disconnect_if_connected, robot)
+        robot.connect()
+        logger.info("Robot connected: %s", robot.name)
 
-    # --- 8. Assemble ---------------------------------------------------
+        # Store the initial joint positions so we can return to a safe pose on shutdown.
+        initial_obs = robot.get_observation()
+        initial_position = {k: v for k, v in initial_obs.items() if k.endswith(".pos")}
+        logger.info("Captured initial robot position (%d keys)", len(initial_position))
+
+        if teleop is not None:
+            logger.info("Connecting teleoperator (%s)...", cfg.teleop.type if cfg.teleop else "?")
+            cleanup.callback(_disconnect_if_connected, teleop)
+            teleop.connect()
+            logger.info("Teleoperator connected")
+
+        # Startup succeeded: the strategy's teardown now owns the dataset and the hardware.
+        cleanup.pop_all()
+
+    # --- 9. Assemble ---------------------------------------------------
     logger.info("Rollout context assembled successfully")
     return RolloutContext(
         runtime=RuntimeContext(cfg=cfg, shutdown_event=shutdown_event),
