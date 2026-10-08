@@ -405,6 +405,27 @@ def test_streaming_rank_shards_are_disjoint(
     assert per_rank[0] | per_rank[1] == set(range(len(map_dataset)))
 
 
+def test_explicit_shard_beats_environment_in_spawned_worker(
+    tmp_path: Path, lerobot_dataset_factory, monkeypatch
+) -> None:
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(
+        root=root, repo_id=DUMMY_REPO_ID, total_episodes=8, total_frames=80, use_videos=False
+    )
+    monkeypatch.setenv("RANK", "1")
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    expected = set(_indices(StreamingLeRobotDataset(DUMMY_REPO_ID, root=root, shuffle=False, buffer_size=2)))
+    monkeypatch.setenv("RANK", "0")
+    monkeypatch.setenv("WORLD_SIZE", "1")
+    streaming = StreamingLeRobotDataset(DUMMY_REPO_ID, root=root, shuffle=False, buffer_size=2)
+    streaming.set_data_parallel_shard(1, 2)
+    loader = torch.utils.data.DataLoader(
+        streaming, batch_size=None, num_workers=1, multiprocessing_context="spawn"
+    )
+
+    assert {int(item["index"]) for item in loader} == expected < set(range(80))
+
+
 def test_rank_shards_are_greedily_balanced_by_frame_count() -> None:
     shards = _balanced_episode_shards(
         [0, 1, 2, 3, 4],

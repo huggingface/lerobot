@@ -233,3 +233,31 @@ def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
         expected[:max_eval_samples] if max_eval_samples else expected
     )
     assert torch.equal(rng, torch.get_rng_state())
+
+
+@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+def test_streaming_dataloader_receives_the_trainers_data_parallel_rank():
+    class StreamingDataset(torch.utils.data.IterableDataset):
+        meta = SimpleNamespace(has_language_columns=False)
+        set_data_parallel_shard = MagicMock()
+        num_frames_for_rank = MagicMock(return_value=1)
+
+        def __iter__(self):
+            return iter([])
+
+    cfg = SimpleNamespace(
+        trainable_config=SimpleNamespace(),
+        dataset=SimpleNamespace(streaming=True),
+        resume=False,
+        seed=42,
+        num_workers=0,
+        batch_size=2,
+        prefetch_factor=None,
+        persistent_workers=False,
+        dataloader_multiprocessing_context=None,
+    )
+    parallel_dims = SimpleNamespace(device_type="cpu", dp_rank=3, dp_world_size=4)
+
+    make_dataloaders(cfg, StreamingDataset(), None, 0, parallel_dims)
+
+    StreamingDataset.set_data_parallel_shard.assert_called_once_with(3, 4)
