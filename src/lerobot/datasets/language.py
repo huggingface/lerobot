@@ -21,9 +21,8 @@ from typing import Literal
 import datasets
 import pyarrow as pa
 
-from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
+from lerobot.utils.constants import LANGUAGE_COLUMNS, LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 
-LANGUAGE_COLUMNS = (LANGUAGE_PERSISTENT, LANGUAGE_EVENTS)
 PERSISTENT_ROW_FIELDS = ("role", "content", "style", "timestamp", "camera", "tool_calls")
 EVENT_ROW_FIELDS = ("role", "content", "style", "camera", "tool_calls")
 
