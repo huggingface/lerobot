@@ -69,6 +69,9 @@ python lerobot_robot_openarm_gripette/examples/run_grabette_policy.py \
 - Match the demonstrations' distance and view of the scene: the policy reproduces demo-scale
   motions relative to wherever the arm starts.
 - The run aborts if IK moves any joint more than `--max_joint_step` degrees in one tick.
+- Predictions are flushed to a timestamped JSONL file under `outputs/openarm_gripette_policy`.
+  Each action records the raw policy output, chunk/action indices, IK and gripper targets, and
+  whether it was sent to the robot. Override the directory with `--log_dir`.
 
 ## Tests
 

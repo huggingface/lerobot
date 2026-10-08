@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,7 @@ from lerobot.robots import make_robot_from_config
 from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
 from lerobot_robot_openarm_gripette import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
 from lerobot_robot_openarm_gripette.manual_start import prepare_manual_start
+from lerobot_robot_openarm_gripette.prediction_logger import PredictionLogger
 
 _ADAPTER = "lerobot.motors.damiao.motorbridge_bus"
 _FOLLOWER = "lerobot.robots.openarm_follower.openarm_follower"
@@ -80,6 +82,37 @@ def test_prepare_manual_start_disables_torque_captures_pose_and_holds():
     assert events == ["disable", "sleep", "disable", "prompt", "enable", "sleep", "enable"]
     assert result.tolist() == [1, -2, 3, -4, 5, -6, 7]
     robot.arm.send_action.assert_called_once_with({f"joint_{i}.pos": float(i) for i in range(1, 8)})
+
+
+def test_prediction_logger_writes_and_flushes_jsonl(tmp_path):
+    logger = PredictionLogger(tmp_path)
+    logger.write({"type": "metadata", "initial_joints_deg": np.array([1.0, 2.0])})
+    logger.write(
+        {
+            "type": "prediction",
+            "chunk_index": 0,
+            "action_index": 1,
+            "raw": {"x": np.float32(0.25), "closure": np.float64(0.8)},
+            "joint_targets_deg": np.arange(7, dtype=np.float32),
+            "executed": False,
+        }
+    )
+
+    with logger.path.open() as f:
+        records = [json.loads(line) for line in f]
+    logger.close()
+
+    assert records == [
+        {"type": "metadata", "initial_joints_deg": [1.0, 2.0]},
+        {
+            "type": "prediction",
+            "chunk_index": 0,
+            "action_index": 1,
+            "raw": {"x": 0.25, "closure": 0.8},
+            "joint_targets_deg": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            "executed": False,
+        },
+    ]
 
 
 @pytest.mark.parametrize(
