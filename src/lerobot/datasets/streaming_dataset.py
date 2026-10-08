@@ -287,7 +287,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 N workers 1/N of them. A larger pool mixes more episodes in each batch, but uses more
                 memory and fetches more data before the first sample.
             prefetch_episodes (`int`, *optional*, defaults to `8`):
-                Pending episodes eligible for speculative prefetch beyond the active pool.
+                Pending episodes eligible for speculative prefetch beyond the active pool, for each
+                DataLoader worker.
             byte_budget_gb (`float`, *optional*, defaults to `8.0`):
                 Per-rank reservation limit in GiB for synthesized video bytes, not total RAM. Each of the
                 N DataLoader workers of a rank gets 1/N of it.

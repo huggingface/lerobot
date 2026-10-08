@@ -46,8 +46,10 @@ wait for each other, so the rank uses only about 2 CPU cores. Each worker is a s
 N workers assemble and decode samples in parallel.
 
 **Pool size and batch diversity.** `streaming_episode_pool_size` sets the pool of each worker. If
-you do not set it, the rank mixes 32 episodes and each of the N workers gets 32/N of them, so the
-memory of the rank stays the same as with one worker. The DataLoader takes each batch from one
+you do not set it, the rank mixes 32 episodes and each of the N workers gets 32/N of them. Each
+worker also prefetches `streaming_prefetch_episodes` episodes and is a separate Python process, so
+more workers use more memory: on one dataset with 3 cameras, 4 workers used about 8 GB in total,
+against about 3 GB with one worker. The DataLoader takes each batch from one
 worker, so a batch mixes episodes from one worker's pool. A larger pool mixes more episodes in each
 batch, but uses more memory and fetches more data before the first sample.
 
@@ -124,7 +126,7 @@ The production defaults are:
 | ----------------------------------- | -------------: | --------------------------------------------------- |
 | `streaming_episode_pool_size`       |    32 / N each | Maximum complete episodes mixed by each worker      |
 | `streaming_sampling_strategy`       |    `remaining` | Remaining-frame weighting or shuffled `round_robin` |
-| `streaming_prefetch_episodes`       |              8 | Episodes fetched ahead of the active pool           |
+| `streaming_prefetch_episodes`       |              8 | Episodes fetched ahead of each worker's pool        |
 | `streaming_byte_budget_gb`          |              8 | Maximum synthesized MP4 bytes per rank              |
 | `streaming_decode_threads`          |              2 | Parallel sample assembly and video decode workers   |
 | `streaming_decoded_queue_size`      |              8 | Decoded samples buffered ahead, in planner order    |
