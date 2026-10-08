@@ -315,6 +315,9 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         Child classes using action chunking should use this method within `select_action` to form the action chunk
         cached for selection.
+
+        A policy that supports a `noise` keyword starts its sampling from that tensor, shaped as the policy would
+        draw it. When `noise` is None, the policy draws it as usual.
         """
         raise NotImplementedError
 

@@ -206,12 +206,17 @@ class FastWAMPolicy(PreTrainedPolicy):
         return loss, dict(metrics or {})
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **_: Any) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, **_: Any
+    ) -> Tensor:
         """Predict a chunk of actions from the current FastWAM observation.
 
         Args:
             batch (dict[str, Tensor]): Inference batch with `input_image` or
                 image observation keys, plus `context/context_mask` or `prompt`.
+            noise (Tensor | None): Optional starting action sample of shape
+                `[B, action_horizon, action_dim]`. When None, each sample draws it
+                from `seed` as before.
 
         Returns:
             Tensor: Action chunk with shape `[B, action_horizon, action_dim]`.
@@ -219,6 +224,7 @@ class FastWAMPolicy(PreTrainedPolicy):
 
         self.eval()
         infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
+        infer_kwargs["noise"] = noise
         batch_size = _infer_kwargs_batch_size(infer_kwargs)
         if batch_size == 1:
             action = _action_from_model_output(self.model.infer_action(**infer_kwargs))
