@@ -24,8 +24,16 @@ from typing import Any, Protocol, cast
 
 import torch
 
+from lerobot.lerobot_types import EnvTransition, PolicyPrediction
 from lerobot.policies import PreTrainedPolicy, reanchor_relative_rtc_prefix
-from lerobot.processor import NormalizerProcessorStep, PolicyProcessorPipeline, RelativeActionsProcessorStep
+from lerobot.processor import (
+    NormalizerProcessorStep,
+    PolicyProcessorPipeline,
+    RelativeActionsProcessorStep,
+    policy_output_to_transition,
+    transition_to_policy_action,
+    transition_to_prediction,
+)
 
 from .contracts import ChunkPolicySpec, ExecutionMode
 
@@ -37,7 +45,7 @@ class _RTCPredictActionChunk(Protocol):
         *,
         inference_delay: int,
         prev_chunk_left_over: torch.Tensor | None,
-    ) -> torch.Tensor: ...
+    ) -> torch.Tensor | EnvTransition: ...
 
 
 @contextmanager
@@ -62,6 +70,8 @@ class ChunkPrediction:
     model_actions: torch.Tensor
     canonical_actions: torch.Tensor
     predicted_at: float
+    # What the policy returned besides the actions (see `PreTrainedPolicy.select_action`), if anything.
+    prediction: PolicyPrediction | None = None
 
 
 def _prepare_continuation(
@@ -143,6 +153,9 @@ def predict_chunk(
             predict = cast(_RTCPredictActionChunk, policy.predict_action_chunk)
             predicted = predict(prepared, inference_delay=inference_delay, prev_chunk_left_over=prefix)
         predicted_at = time.perf_counter()
+        # A policy may return the chunk with a prediction; only the actions are validated and postprocessed.
+        output = policy_output_to_transition(predicted)
+        predicted = transition_to_policy_action(output)
         if (
             not isinstance(predicted, torch.Tensor)
             or predicted.ndim != 3
@@ -170,4 +183,9 @@ def predict_chunk(
         if not canonical.is_floating_point() or not torch.isfinite(canonical).all():
             raise ValueError("Policy/processor returned non-finite or non-floating actions.")
         steps = spec.execution_steps if mode is ExecutionMode.CHUNK else spec.prediction_steps
-        return ChunkPrediction(original[0, :steps], canonical[0, :steps].detach(), predicted_at)
+        return ChunkPrediction(
+            original[0, :steps],
+            canonical[0, :steps].detach(),
+            predicted_at,
+            transition_to_prediction(output) or None,
+        )
