@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+
 import gymnasium as gym
 import numpy as np
 import pytest
@@ -24,8 +26,9 @@ from lerobot.lerobot_types import TransitionKey
 from lerobot.policies.flux3 import make_flux3_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, ProcessorStep
 from lerobot.processor.factory import make_policy_processor_pipelines
-from lerobot.scripts.lerobot_eval import rollout
+from lerobot.scripts.lerobot_eval import eval_policy, eval_policy_all, rollout
 from lerobot.utils.constants import ACTION, OBS_STATE
+from tests.fixtures.dummy_checkpoint_policy import DummyCheckpointConfig, DummyCheckpointPolicy
 from tests.policies.flux3.helpers import task_config
 
 
@@ -144,3 +147,92 @@ def test_rollout_starts_each_episode_with_fresh_processor_state(pipeline_kind):
     if pipeline_kind == "flux3":
         # Delta 0.25 unnormalizes to 0.5 and must be added to B's initial measured position.
         torch.testing.assert_close(reused_actions[0, 0, :-1], torch.full((5,), 2.5), rtol=0, atol=0)
+
+
+class _TwoStepEnvWithFps(_TwoStepEnv):
+    """_TwoStepEnv declaring a render_fps, as gymnasium envs with video support do."""
+
+    metadata = {"render_modes": [], "render_fps": 30}
+
+
+def _make_dummy_policy(**config_overrides):
+    """A tiny real PreTrainedPolicy; `config_overrides` are injected post-hoc so tests can
+    simulate chunking policies (whose configs define chunk_size/n_action_steps) and ones that
+    don't."""
+    policy = DummyCheckpointPolicy(DummyCheckpointConfig(device="cpu", hidden=6))
+    for key, value in config_overrides.items():
+        setattr(policy.config, key, value)
+    return policy
+
+
+def _run_eval_policy(env, policy, n_episodes=2):
+    return eval_policy(
+        env,
+        policy,
+        env_preprocessor=PolicyProcessorPipeline(steps=[]),
+        env_postprocessor=PolicyProcessorPipeline(steps=[]),
+        preprocessor=make_policy_processor_pipelines([], [])[0],
+        postprocessor=make_policy_processor_pipelines([], [])[1],
+        n_episodes=n_episodes,
+        start_seed=0,  # low seeds: eval batches increment the seed and image content is episode * 100
+    )
+
+
+@pytest.mark.parametrize("chunking_policy", [True, False])
+def test_eval_policy_aggregated_records_replan_horizon_metadata(chunking_policy):
+    """The aggregated block must be self-describing about the replan horizon it used."""
+    # Without overrides the dummy config defines no chunking attributes: fields must be null.
+    policy = _make_dummy_policy(chunk_size=50, n_action_steps=10) if chunking_policy else _make_dummy_policy()
+    env = gym.vector.SyncVectorEnv([_TwoStepEnvWithFps])
+    try:
+        info = _run_eval_policy(env, policy)
+    finally:
+        env.close()
+
+    aggregated = info["aggregated"]
+    expected_chunk = 50 if chunking_policy else None
+    assert aggregated["chunk_size"] == expected_chunk
+    assert aggregated["n_action_steps"] == (10 if chunking_policy else None)
+    assert aggregated["env_fps"] == 30
+    # eval_info.json consumers rely on plain JSON types.
+    json.dumps(aggregated)
+
+
+def test_eval_policy_aggregated_env_fps_is_null_without_env_metadata():
+    """Envs without a render_fps metadata entry must not break the metadata fields."""
+    policy = _make_dummy_policy()
+    env = gym.vector.SyncVectorEnv([_TwoStepEnv])
+    try:
+        info = _run_eval_policy(env, policy)
+    finally:
+        env.close()
+
+    assert info["aggregated"]["env_fps"] is None
+    assert info["aggregated"]["chunk_size"] is None
+    assert info["aggregated"]["n_action_steps"] is None
+
+
+def test_eval_policy_all_aggregates_record_replan_horizon_metadata():
+    """per_group and overall aggregates must carry the same replan-horizon metadata."""
+    env = gym.vector.SyncVectorEnv([_TwoStepEnvWithFps])
+    envs = {"suite_a": {0: env}}
+    policy = _make_dummy_policy(chunk_size=50, n_action_steps=10)
+    try:
+        info = eval_policy_all(
+            envs,
+            policy,
+            PolicyProcessorPipeline(steps=[]),
+            PolicyProcessorPipeline(steps=[]),
+            *make_policy_processor_pipelines([], []),
+            n_episodes=2,
+            start_seed=0,  # low seeds: eval batches increment the seed and image content is episode * 100
+        )
+    finally:
+        env.close()
+
+    for block in (info["per_group"]["suite_a"], info["overall"]):
+        assert block["chunk_size"] == 50
+        assert block["n_action_steps"] == 10
+        assert block["env_fps"] == 30
+    json.dumps(info["per_group"])
+    json.dumps(info["overall"])
