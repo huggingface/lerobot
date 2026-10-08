@@ -45,7 +45,6 @@ def params(**overrides):
         "gravity_factors": np.array([1.0, 2.0]),
         "max_gravity_torque": 5.0,
         "gripper": gripper(),
-        "fault_damping_kd": np.array([3.0, 2.0, 0.5]),
         "float_kd": np.array([0.2, 0.1]),
         "coulomb_friction": np.array([0.5, 0.2]),
         **overrides,
@@ -87,8 +86,6 @@ class FakeBus:
         if self.error is not None:
             raise self.error
         if self.stop_after is not None and self.reads >= self.stop_after:
-            # Ends the loop as stop() would, from inside the servo thread.
-            self.servo._stop_requested.set()
             self.servo.stop_event.set()
         return self.states
 
@@ -230,6 +227,8 @@ def test_servo_holds_then_sends_one_command_per_motor():
     servo._run()
     assert servo.failure is None
     assert [name for name, _ in bus.sent[:3]] == ["shoulder", "elbow", "gripper"]
+    assert bus.disable_calls == 0
+    servo.stop()
     assert bus.disable_calls == 1
 
 
@@ -243,13 +242,6 @@ def test_servo_holds_the_measured_pose_once_commands_expire():
     servo._run()
     assert servo.command_timed_out
     np.testing.assert_allclose(servo.target, servo.state.position)
-
-
-def test_damping_commands_keep_gravity_without_stiffness():
-    commands = mit_arm.damping_commands(params(), np.array([0.2, 0.5, 0.5]), np.array([8.0, 1.5]))
-    assert commands["shoulder"] == pytest.approx((0.2, 0, 0, 3.0, 5.0))  # gravity 8 clipped to 5 Nm
-    assert commands["elbow"] == pytest.approx((-0.5, 0, 0, 2.0, -3.0))
-    assert commands["gripper"] == pytest.approx((2.0, 0, 0, 0.5, 0))
 
 
 def test_float_commands_compensate_gravity_and_friction_without_stiffness():
@@ -270,7 +262,6 @@ def run_cycles(servo, cycles):
     bus.enabled, bus.stop_after, bus.reads = True, cycles + 1, 0
     bus.sent.clear()
     servo._run()
-    servo._stop_requested.clear()
     servo.stop_event.clear()
     servo.updated_at = time.monotonic()
 
@@ -334,22 +325,21 @@ def start_enabled(servo):
     servo.start()
 
 
-def damping_sent(bus):
-    return [command for _, command in bus.sent if command[2] == 0]
-
-
 @pytest.mark.parametrize("cause", ["own fault", "coupled arm"])
-def test_fault_keeps_the_arm_damped_until_stop(cause):
+def test_fault_stops_commands_until_disconnect(cause):
     bus = FakeBus()
-    servo = make_servo(bus, gravity=(8.0, 1.5))
+    servo = make_servo(bus)
     start_enabled(servo)
+    wait_for(lambda: len(bus.sent) >= 3)
     if cause == "own fault":
         bus.error = ConnectionError("lost")
     else:
         servo.stop_event.set()  # what a fault on the other arm of a bimanual robot does
-    wait_for(lambda: len(damping_sent(bus)) >= 3)
-    assert {command[3] for command in damping_sent(bus)} == {3.0, 2.0, 0.5}
-    assert bus.disable_calls == 0  # torque stays on, damped, until disconnect
+    wait_for(lambda: not servo._thread.is_alive())
+    sent = len(bus.sent)
+    time.sleep(0.02)
+    assert len(bus.sent) == sent
+    assert bus.disable_calls == 0  # Firmware owns the fallback until disconnect.
     with pytest.raises(ConnectionError, match="stopped"):
         servo.latest()
     servo.stop()
@@ -363,20 +353,21 @@ def test_normal_stop_disables_without_damping():
     start_enabled(servo)
     wait_for(lambda: len(bus.sent) >= 3)
     servo.stop()
-    assert damping_sent(bus) == []
     assert bus.disable_calls == 1
 
 
-def test_servo_error_stops_the_loop_and_disables_torque():
+def test_servo_error_stops_commands_until_disconnect():
     bus = FakeBus()
     bus.error = ConnectionError("lost")
     servo = make_servo(bus)
     servo._run()
     assert isinstance(servo.failure, ConnectionError)
     assert servo.stop_event.is_set()
-    assert bus.disable_calls == 1
+    assert bus.disable_calls == 0
     with pytest.raises(ConnectionError, match="stopped"):
         servo.latest()
+    servo.stop()
+    assert bus.disable_calls == 1
 
 
 def test_servo_start_refuses_a_second_thread():
