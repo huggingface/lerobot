@@ -9,6 +9,7 @@ from __future__ import annotations
 import itertools
 import json
 import math
+import re
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -57,6 +58,7 @@ else:
     Qwen3_5GatedDeltaNet = nn.Module  # subclassed at module scope
 
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.lerobot_types import BboxAnswer, Detection, PolicyOutput, PolicyPrediction
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.policies.common.flow_matching import (
     FlowConvention,
@@ -65,7 +67,7 @@ from lerobot.policies.common.flow_matching import (
     sample_noise,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, PREDICTION
 from lerobot.utils.device_utils import resolve_safetensors_device
 
 from .action_codec_g05 import G05NativeActionCodec, g05_codec_parts
@@ -1706,6 +1708,28 @@ def _cot_subtask(text: str) -> str | None:
     return None
 
 
+# One ``<label> <loc y1><loc x1><loc y2><loc x2>`` entry of a ``BBox:`` field.
+_BBOX_ENTRY = re.compile(r"([^;|]+?)\s*((?:<loc\d{4}>){4})")
+
+
+def _cot_boxes(text: str) -> BboxAnswer | None:
+    """The ``BBox:`` field of a cleaned chain of thought as [0, 1] xyxy boxes, or None without one.
+
+    Inverse of ``format_g05_bbox_target``: each location token is a 1024-bin fraction of the bbox
+    camera's frame, in (y1, x1, y2, x2) order.
+    """
+    for segment in text.split("|"):
+        segment = segment.strip()
+        if not segment.startswith("BBox:"):
+            continue
+        detections: list[Detection] = []
+        for label, locations in _BBOX_ENTRY.findall(segment.removeprefix("BBox:")):
+            y1, x1, y2, x2 = (int(value) / 1024 for value in re.findall(r"\d{4}", locations))
+            detections.append(Detection(label=label.strip() or "object", bbox=[x1, y1, x2, y2]))
+        return BboxAnswer(detections=detections)
+    return None
+
+
 def _first_cot_text(metadata: Mapping[str, Any]) -> str | None:
     """First non-empty chain-of-thought string in a batched inference result."""
     texts = metadata.get("cot_text")
@@ -1887,26 +1911,52 @@ class G05Policy(PreTrainedPolicy):
         )
         return action, metadata
 
+    def _cot_prediction(self, metadata: Mapping[str, Any]) -> PolicyPrediction:
+        """What each env's chain of thought predicts: its subtask, and its boxes on the bbox camera.
+
+        A field is returned when any env's CoT has it; the other envs get an empty subtask or no
+        detections.
+        """
+        texts = metadata.get("cot_text")
+        texts = [texts] if isinstance(texts, str) else list(texts or [])
+        subtasks = [_cot_subtask(text) for text in texts]
+        boxes = [_cot_boxes(text) for text in texts]
+        prediction = PolicyPrediction()
+        if any(subtask is not None for subtask in subtasks):
+            prediction["language"] = {"subtask": [subtask or "" for subtask in subtasks]}
+        if any(answer is not None for answer in boxes):
+            # The model names no camera: its BBox targets were all drawn on bbox_camera.
+            empty = BboxAnswer(detections=[])
+            prediction["boxes"] = {self.config.bbox_camera: [answer or empty for answer in boxes]}
+        return prediction
+
     @torch.no_grad()
-    def predict_action_chunk(
-        self, batch: dict[str, Any], *, with_text: bool = False, **kwargs
-    ) -> Tensor | tuple[Tensor, str | None]:
-        """The action chunk, and with `with_text` the same-pass chain-of-thought.
+    def predict_action_chunk(self, batch: dict[str, Any], **kwargs) -> Tensor | PolicyOutput:
+        """The action chunk, with what its same-pass chain of thought predicts in System 2.
 
         G0.5 emits reasoning and actions from one inference stream: `_generate_text`
         extends the prefill cache with the CoT tokens and the flow head then runs on
         that extended cache, so the action really is conditioned on this text rather
-        than merely accompanied by it. This is why G0.5 honours `with_text` at all.
-        System 1 generates no CoT and reports `None`.
+        than merely accompanied by it. In System 2 the chunk comes back in a `PolicyOutput`
+        whose prediction holds each env's CoT subtask and boxes; System 1 generates no CoT
+        and returns the bare chunk.
         """
         action, metadata = self._run_inference(batch)
-        return (action, _first_cot_text(metadata)) if with_text else action
+        prediction = self._cot_prediction(metadata)
+        return PolicyOutput(action=action, prediction=prediction) if prediction else action
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Any], **kwargs) -> Tensor:
-        """Return the next action, refilling the queue when it empties."""
+    def select_action(self, batch: dict[str, Any], **kwargs) -> Tensor | PolicyOutput:
+        """Return the next action, refilling the queue when it empties.
+
+        The first action of a chunk carries the chunk's prediction (see `predict_action_chunk`).
+        """
+        prediction = None
         if not self._action_queue:
-            chunk = self.predict_action_chunk(batch, **kwargs)
+            output = self.predict_action_chunk(batch, **kwargs)
+            chunk, prediction = (
+                (output, None) if isinstance(output, Tensor) else (output[ACTION], output.get(PREDICTION))
+            )
             if chunk.ndim != 3:
                 raise ValueError(f"G0.5 action chunk must be [B,T,D], got {tuple(chunk.shape)}.")
             # LeRobot's synchronous select_action queue is intentionally batch-size one.
@@ -1915,7 +1965,8 @@ class G05Policy(PreTrainedPolicy):
                     "G0.5 select_action requires batch size 1; use predict_action_chunk for B>1."
                 )
             self._action_queue.extend(chunk[0, : self.config.n_action_steps])
-        return self._action_queue.popleft().unsqueeze(0)
+        action = self._action_queue.popleft().unsqueeze(0)
+        return PolicyOutput(action=action, prediction=prediction) if prediction else action
 
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Any] | None]:
         """Run the training forward pass."""
