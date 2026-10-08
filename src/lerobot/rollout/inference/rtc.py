@@ -32,7 +32,7 @@ from typing import Any, Protocol, cast
 
 import torch
 
-from lerobot.lerobot_types import EnvTransition, PolicyPrediction
+from lerobot.lerobot_types import EnvTransition, PolicyOutput, PolicyPrediction
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc import ActionQueue, LatencyTracker, reanchor_relative_rtc_prefix
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
@@ -87,7 +87,7 @@ class _RTCPredictActionChunk(Protocol):
         *,
         inference_delay: int | None,
         prev_chunk_left_over: torch.Tensor | None,
-    ) -> torch.Tensor | EnvTransition: ...
+    ) -> torch.Tensor | PolicyOutput: ...
 
 
 def supports_rtc_inference(policy: PreTrainedPolicy) -> bool:
@@ -547,10 +547,6 @@ class RTCInferenceEngine(InferenceEngine):
                                 preprocessed, inference_delay=delay, prev_chunk_left_over=prev_actions
                             )
                         )
-                        # The prediction of a chunk-level call is shown once per chunk.
-                        if prediction := transition_to_prediction(transition):
-                            with self._prediction_lock:
-                                self._chunk_prediction = prediction
                         actions = transition_to_policy_action(transition)
 
                         original = actions.squeeze(0).clone()
@@ -608,6 +604,10 @@ class RTCInferenceEngine(InferenceEngine):
                             epoch_unchanged = epoch_before == self._reset_epoch
                             if epoch_unchanged:
                                 queue.merge(original, processed, new_delay, idx_before, task=task)
+                                # Shown once per chunk, and only for a chunk that will be served.
+                                if prediction := transition_to_prediction(transition):
+                                    with self._prediction_lock:
+                                        self._chunk_prediction = prediction
                         if not epoch_unchanged:
                             logger.info("Discarding action chunk computed before an engine reset")
 

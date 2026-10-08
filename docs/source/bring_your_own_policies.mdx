@@ -249,43 +249,45 @@ For working examples, see [`processor_evo1.py`](https://github.com/huggingface/l
 
 A policy may return what it expects or believes besides the action it takes, such as a world
 model's imagined frames, a predicted subtask or bounding boxes, so `--display_data` shows it live in
-Rerun or Foxglove. `select_action` and `predict_action_chunk` return either a bare action tensor
-(the default for every policy) or an `EnvTransition`, the type processors already use, built with
-`create_transition(action=..., prediction=...)`. The prediction is a `PolicyPrediction`
-(`lerobot.lerobot_types`) for the first environment of the batch, every entry keyed by what it
-refers to:
+Rerun or Foxglove. `select_action` and `predict_action_chunk` take a batch and return either a bare
+action tensor (the default for every policy) or a `PolicyOutput` (`lerobot.lerobot_types`): a batch,
+keyed like the input batch, with the action under `"action"` and a `PolicyPrediction` under
+`"prediction"`. The prediction is batched like the action, one value per environment, and every
+entry is keyed by what it refers to:
 
 - `observation`: the predicted future observation, by observation key
-  (`"observation.images.top"` -> a `[C, H, W]` frame). It is shown as `prediction.images.top`.
-- `language`: text by annotation style (`"subtask"`, `"plan"`, `"memory"`), the styles of the
-  annotation pipeline's language columns. It is shown as `prediction.subtask`.
-- `boxes`: by the observation image key they are drawn on, a bbox answer in the annotation VQA
-  schema (`{"detections": [{"label", "bbox": [x1, y1, x2, y2]}]}`, image fractions 0 to 1).
+  (`"observation.images.top"` -> `[B, C, H, W]` frames). It is shown as `prediction.images.top`.
+- `language`: one string per environment, by annotation style (`"subtask"`, `"plan"`, `"memory"`),
+  the styles of the annotation pipeline's language columns. It is shown as `prediction.subtask`.
+- `boxes`: by the observation image key they are drawn on, one bbox answer per environment in the
+  annotation VQA schema (`{"detections": [{"label", "bbox": [x1, y1, x2, y2]}]}`, image fractions
+  0 to 1).
 
-Callers normalize the two return types with `policy_output_to_transition`, so only policies that
-predict something change.
+Callers normalize the two return types with `policy_output_to_transition`, which turns a
+`PolicyOutput` into the `EnvTransition` processors use, so only policies that predict something
+change. The viewers show the first environment.
 
 ```python
-from lerobot.processor import create_transition
+from lerobot.utils.constants import ACTION, PREDICTION
 
 
 class MyPolicy(PreTrainedPolicy):
-    def select_action(self, batch, **kwargs) -> Tensor | EnvTransition:
+    def select_action(self, batch, **kwargs) -> Tensor | PolicyOutput:
         if not self._action_queue:
             chunk, extras = self.model.sample(batch)
             self._action_queue.extend(chunk.transpose(0, 1))
             if self.config.return_prediction:  # a config field of your choosing
                 # The prediction goes with the step that computed it; the others return a bare action.
                 prediction = {
-                    "observation": {"observation.images.top": extras.next_frame[0]},  # [C, H, W]
-                    "language": {"subtask": extras.subtasks[0]},
+                    "observation": {"observation.images.top": extras.next_frames},  # [B, C, H, W]
+                    "language": {"subtask": extras.subtasks},  # list[str], one per env
                     "boxes": {
-                        "observation.images.top": {
-                            "detections": [{"label": "cube", "bbox": extras.cube_xyxy[0]}]
-                        }
+                        "observation.images.top": [
+                            {"detections": [{"label": "cube", "bbox": xyxy}]} for xyxy in extras.cube_xyxy
+                        ]
                     },
                 }
-                return create_transition(action=self._action_queue.popleft(), prediction=prediction)
+                return {ACTION: self._action_queue.popleft(), PREDICTION: prediction}
         return self._action_queue.popleft()
 ```
 

@@ -346,7 +346,7 @@ def _log_foxglove_boxes(topic: str, answer: BboxAnswer, size: tuple[int, int], l
 
 
 def _log_foxglove_prediction(prediction: PolicyPrediction, *, compress_images: bool, log_time: int) -> None:
-    """Log a policy's prediction on ``/prediction/...`` topics, mirroring what it predicts.
+    """Log the first environment of a policy's prediction on ``/prediction/...`` topics.
 
     A predicted ``observation.images.top`` goes to ``/prediction/images/top`` and predicted state to
     ``/prediction/state``; language goes to ``/prediction/<style>`` (``lerobot.Text`` JSON), and boxes
@@ -359,20 +359,22 @@ def _log_foxglove_prediction(prediction: PolicyPrediction, *, compress_images: b
     scalars: dict[str, float] = {}
     for key, value in prediction.get("observation", {}).items():
         name = key.removeprefix(OBS_PREFIX)
-        arr = value.numpy(force=True)
+        arr = value[0].numpy(force=True)
         if arr.ndim == 1:
             scalars.update(_labeled_scalars(name, arr))
         else:
             topic = f"/{PREDICTION}/images/{_foxglove_safe_name(name.removeprefix('images.'))}"
             _log_foxglove_image(topic, name, arr, compress_images=compress_images, log_time=log_time)
     _log_foxglove_scalars(f"/{PREDICTION}/state", scalars, log_time=log_time)
-    for style, text in prediction.get("language", {}).items():
+    for style, texts in prediction.get("language", {}).items():
+        text = texts[0]
         topic = f"/{PREDICTION}/{_foxglove_safe_name(style)}"
         channel = channels.get(topic)
         if channel is None:
             channel = channels[topic] = foxglove.Channel(topic, schema=_TEXT_SCHEMA, message_encoding="json")
         channel.log({"text": text}, log_time=log_time)
-    for camera_key, answer in prediction.get("boxes", {}).items():
+    for camera_key, answers in prediction.get("boxes", {}).items():
+        answer = answers[0]
         camera_topic = _foxglove_topic(camera_key, is_image=True)
         size = _IMAGE_SIZES.get(camera_topic)
         if size is None:

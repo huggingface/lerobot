@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Final, Literal, TypeAlias, TypedDict, final
+from typing import Any, Final, Literal, NotRequired, TypeAlias, TypedDict, final
 
 import numpy as np
 import torch
@@ -58,18 +58,29 @@ class BboxAnswer(TypedDict):
 
 
 class PolicyPrediction(TypedDict, total=False):
-    """What a policy expects or believes besides the action it takes, for one environment.
+    """What a policy expects or believes besides the action it takes, batched like the action.
 
-    Every entry is keyed by what it refers to, so it maps to existing names (see
-    ``PreTrainedPolicy.select_action``).
+    Every entry is keyed by what it refers to, so it maps to existing names, and holds one value
+    per environment of the batch (see ``PreTrainedPolicy.select_action``).
     """
 
-    # Predicted future observation, by observation key ("observation.images.top" -> [C, H, W]).
+    # Predicted future observation, by observation key ("observation.images.top" -> [B, C, H, W]).
     observation: dict[str, torch.Tensor]
-    # Predicted language, by annotation style ("subtask", "plan", "memory").
-    language: dict[str, str]
-    # Boxes, by the observation image key they are drawn on.
-    boxes: dict[str, BboxAnswer]
+    # Predicted language, by annotation style ("subtask", "plan", "memory"), one string per env.
+    language: dict[str, list[str]]
+    # Boxes, by the observation image key they are drawn on, one answer per env.
+    boxes: dict[str, list[BboxAnswer]]
+
+
+class PolicyOutput(TypedDict):
+    """What ``select_action`` / ``predict_action_chunk`` return when they predict more than actions.
+
+    A batch keyed like the input batch: the action under ``"action"`` and the prediction under
+    ``"prediction"``. `batch_to_transition` turns it into an `EnvTransition`.
+    """
+
+    action: torch.Tensor
+    prediction: NotRequired[PolicyPrediction]
 
 
 class EnvTransition(TypedDict):

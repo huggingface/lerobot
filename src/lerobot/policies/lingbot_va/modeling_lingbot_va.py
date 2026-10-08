@@ -38,10 +38,9 @@ import torch.nn.functional as F  # noqa: N812
 from einops import rearrange
 from torch import Tensor
 
-from lerobot.lerobot_types import EnvTransition
+from lerobot.lerobot_types import PolicyOutput
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.processor import create_transition
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, PREDICTION
 from lerobot.utils.import_utils import require_package
 
 from .configuration_lingbot_va import LingBotVAConfig
@@ -406,7 +405,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return torch.cat(per_cam, dim=-1).to(self.config.device)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor | EnvTransition:
+    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor | PolicyOutput:
         """Return one action, refilling the chunk (and feeding back observed keyframes) as needed.
 
         Mirrors the upstream LIBERO client loop (``evaluation/libero/client.py``): the first obs is
@@ -414,7 +413,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         once the chunk's actions are exhausted, the buffered frames + executed actions are fed back
         into the KV cache before the next chunk is predicted.
 
-        With ``config.return_predicted_video``, returns a transition whose prediction holds the
+        With ``config.return_predicted_video``, returns a `PolicyOutput` whose prediction holds the
         imagined camera frames matching the action being served (see ``_with_predicted_frame``).
         """
         self.eval()
@@ -448,12 +447,12 @@ class LingBotVAPolicy(PreTrainedPolicy):
         """Predict the next chunk; with ``return_predicted_video``, also decode its imagined clip."""
         actions, latents = self._predict_chunk(batch)
         if self.config.return_predicted_video:
-            self._chunk_frames = self._decode_predicted_video(latents)  # [T, H, W, 3] uint8, batch 0
+            self._chunk_frames = self._decode_video_batch(latents)  # [B, T, H, W, 3] uint8
             self._chunk_len = actions.shape[1]
             self._shown_frame = -1
         return actions
 
-    def _with_predicted_frame(self, action: Tensor) -> Tensor | EnvTransition:
+    def _with_predicted_frame(self, action: Tensor) -> Tensor | PolicyOutput:
         """Pair ``action`` with the imagined frame it belongs to, when that frame changes.
 
         The clip's frames are spread evenly over the chunk's actions, so the imagined video plays
@@ -461,22 +460,23 @@ class LingBotVAPolicy(PreTrainedPolicy):
         """
         if self._chunk_frames is None:
             return action
+        n_frames = self._chunk_frames.shape[1]
         served = self._chunk_len - len(self._action_queue) - 1  # index of ``action`` in its chunk
-        index = min(served * len(self._chunk_frames) // self._chunk_len, len(self._chunk_frames) - 1)
+        index = min(served * n_frames // self._chunk_len, n_frames - 1)
         if index == self._shown_frame:
             return action
         self._shown_frame = index
-        frame = self._chunk_frames[index].permute(2, 0, 1)  # [3, H, W], like a camera frame
-        return create_transition(action=action, prediction={"observation": self._split_cameras(frame)})
+        frames = self._chunk_frames[:, index].permute(0, 3, 1, 2)  # [B, 3, H, W], like camera frames
+        return {ACTION: action, PREDICTION: {"observation": self._split_cameras(frames)}}
 
-    def _split_cameras(self, frame: Tensor) -> dict[str, Tensor]:
-        """Split a decoded frame back into the cameras it tiles (inverse of the latent layout)."""
+    def _split_cameras(self, frames: Tensor) -> dict[str, Tensor]:
+        """Split decoded ``[B, 3, H, W]`` frames back into the cameras they tile (inverse of the layout)."""
         keys, h, w = self.config.obs_cam_keys, self.config.height, self.config.width
         if self.config.camera_layout == "robotwin_tshape":
-            wrists, head = frame.split([h // 2, h], dim=1)
-            left, right = wrists.split(w // 2, dim=2)
+            wrists, head = frames.split([h // 2, h], dim=2)
+            left, right = wrists.split(w // 2, dim=3)
             return {keys[0]: head, keys[1]: left, keys[2]: right}
-        return dict(zip(keys, frame.split(w, dim=2), strict=True))
+        return dict(zip(keys, frames.split(w, dim=3), strict=True))
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
@@ -888,7 +888,12 @@ class LingBotVAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def _decode_predicted_video(self, latents) -> Tensor:
-        """VAE-decode predicted latents into a uint8 frame stack ``[T, H, W, 3]`` on CPU."""
+        """VAE-decode predicted latents into the first env's uint8 frame stack ``[T, H, W, 3]`` on CPU."""
+        return self._decode_video_batch(latents)[0]
+
+    @torch.no_grad()
+    def _decode_video_batch(self, latents) -> Tensor:
+        """VAE-decode predicted latents into uint8 frame stacks ``[B, T, H, W, 3]`` on CPU."""
         vae = self._vae
         z_dim = vae.config.z_dim
         vae_device = next(vae.parameters()).device
@@ -896,5 +901,5 @@ class LingBotVAPolicy(PreTrainedPolicy):
         latents = denormalize_latents(latents, vae.config.latents_mean, vae.config.latents_std, z_dim)
         video = vae.decode(latents, return_dict=False)[0]  # [B, C, F, H, W] in [-1, 1]
         video = (video.float().clamp(-1, 1) + 1.0) / 2.0
-        video = (video[0].permute(1, 2, 3, 0) * 255.0).round().to(torch.uint8)  # [F, H, W, C]
+        video = (video.permute(0, 2, 3, 4, 1) * 255.0).round().to(torch.uint8)  # [B, F, H, W, C]
         return video.cpu()
