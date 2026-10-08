@@ -41,7 +41,6 @@ class PredictionLogger:
         line = json.dumps(record, default=self._json_default)
         self._file.write(line + "\n")
         self._file.flush()
-        print(line, flush=True)
 
     def close(self) -> None:
         self._file.close()
