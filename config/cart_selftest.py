@@ -163,6 +163,7 @@ def test_cameras(robot: XLerobot, outdir: Path) -> None:
 
 def test_head(robot: XLerobot, base: dict, span: float = 12.0) -> None:
     print(f"\n--- head " + "-" * 51)
+    print("      The wheels should not move; see the note under --arms.")
     if not ask(f"Sweep both head servos +/-{span:.0f} degrees?"):
         record(WARN, "head sweep skipped")
         return
@@ -193,6 +194,11 @@ def test_arms(robot: XLerobot, base: dict, span: float = 5.0) -> None:
     print(f"\n--- arms " + "-" * 51)
     print("      Each joint moves a few degrees and returns. Make sure both")
     print("      arms are clear of the table, each other and the cameras.")
+    print()
+    print("      The wheels should NOT move. send_action writes a goal velocity")
+    print("      to all three on every call, and with no .vel keys that goal is")
+    print("      zero - so a twitch here means the base calibration is wrong,")
+    print("      not that the arms are misbehaving.")
     if not ask(f"Nudge all 12 arm joints by {span:.0f} degrees, one at a time?"):
         record(WARN, "arm nudge skipped")
         return
@@ -256,6 +262,10 @@ def test_base(robot: XLerobot, speed: float = 0.08, turn: float = 25.0) -> None:
     print("\n      Watch the wheels as well as the numbers. The body velocity is")
     print("      derived from all three, so two correct wheels can mask a third")
     print("      that is spinning the wrong way.")
+    print()
+    print("      Geometry is hardcoded in _body_to_wheel_raw: wheel_radius 0.05 m,")
+    print("      base_radius 0.125 m. If x.vel reads consistently high or low by")
+    print("      the same factor, measure yours - it is a scale error, not a fault.")
 
 
 # ----------------------------------------------------------------- main
