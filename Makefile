@@ -188,7 +188,7 @@ annotation-e2e:
 # Docstring & doctest checks. See docs/source/writing_docstrings.mdx for the standard these enforce.
 
 # Run the examples in the docstrings listed in utils/documentation_tests.txt. Hardware and GPU examples are
-# skipped by content (see src/lerobot/utils/doctest_utils.py); CI sets both flags.
+# skipped by content (see tests/doctest_utils.py); CI sets both flags.
 doctest:
 	@files=$$(grep -v '^\s*#' utils/documentation_tests.txt | grep -v '^\s*$$'); \
 	if [ -z "$$files" ]; then \

@@ -22,7 +22,7 @@ import doctest
 
 import _pytest.doctest
 
-from lerobot.utils.doctest_utils import LeRobotDoctestModule, LeRobotDocTestParser
+from tests.doctest_utils import LeRobotDoctestModule, LeRobotDocTestParser
 
 # Lets an example opt out of output comparison with `# doctest: +IGNORE_RESULT`, for calls whose output is
 # a progress bar or otherwise not reproducible.
