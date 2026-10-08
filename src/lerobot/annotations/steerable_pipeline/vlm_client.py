@@ -147,6 +147,13 @@ class _GenericTextClient:
 
     generate_text: Callable[[Sequence[Sequence[dict[str, Any]]], int, float], list[str]]
     config: VlmConfig
+    close_callback: Callable[[], None] | None = None
+    api_bases: tuple[str, ...] = ()
+
+    def close(self):
+        if self.close_callback:
+            self.close_callback()
+            self.close_callback = None
 
     def generate_json(
         self,
@@ -222,6 +229,16 @@ def make_vlm_client(config: VlmConfig) -> VlmClient:
 
 
 def _make_openai_client(config: VlmConfig) -> VlmClient:
+    shutdowns: list[Callable[[], None]] = []
+    try:
+        return _build_openai_client(config, shutdowns)
+    except BaseException:
+        for shutdown in shutdowns:
+            shutdown()
+        raise
+
+
+def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
     """Backend that talks to any OpenAI-compatible server.
 
     Compatible with ``vllm serve``, ``transformers serve``,
@@ -245,7 +262,7 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
     api_base = config.api_base
     api_key = config.api_key
     auto_serve = config.auto_serve
-    api_bases: list[str] = [api_base]
+    api_bases: list[str] = list(config.api_bases) or [api_base]
 
     print(
         f"[lerobot-annotate] backend=openai model={config.model_id} "
@@ -258,12 +275,12 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
                 f"[lerobot-annotate] spawning {config.parallel_servers} parallel servers",
                 flush=True,
             )
-            api_bases = _spawn_parallel_inference_servers(config)
+            api_bases = _spawn_parallel_inference_servers(config, shutdowns=shutdowns)
         elif _server_is_up(api_base):
             print(f"[lerobot-annotate] reusing server already up at {api_base}", flush=True)
         else:
             print("[lerobot-annotate] no server reachable; spawning one", flush=True)
-            api_base = _spawn_inference_server(config)
+            api_base = _spawn_inference_server(config, shutdowns=shutdowns)
             api_bases = [api_base]
             print(f"[lerobot-annotate] server ready at {api_base}", flush=True)
 
@@ -277,6 +294,7 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
     send_mm_kwargs = os.environ.get("LEROBOT_OPENAI_SEND_MM_KWARGS", "").lower() in {"1", "true", "yes"}
 
     rr_lock = threading.Lock()
+    request_limit = threading.BoundedSemaphore(max(1, config.client_concurrency))
 
     def _one_call(messages: Sequence[dict[str, Any]], max_tok: int, temp: float) -> str:
         api_messages, mm_kwargs = _to_openai_messages(messages)
@@ -298,7 +316,8 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
         with rr_lock:
             chosen = clients[rr_counter["i"] % len(clients)]
             rr_counter["i"] += 1
-        response = chosen.chat.completions.create(**kwargs)
+        with request_limit:
+            response = chosen.chat.completions.create(**kwargs)
         # Some OpenAI-compatible servers can return a choice with no message
         # (safety filter, or a "thinking" model that spends the whole budget
         # before emitting content). Treat that as an empty reply so the
@@ -316,7 +335,13 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             futures = [pool.submit(_one_call, messages, max_tok, temp) for messages in batch]
             return [f.result() for f in futures]
 
-    return _GenericTextClient(_gen, config)
+    def close():
+        for client in clients:
+            client.close()
+        for shutdown in shutdowns:
+            shutdown()
+
+    return _GenericTextClient(_gen, config, close, tuple(api_bases))
 
 
 def _bind_serve_port(cmd: str, port: int) -> str:
@@ -332,7 +357,7 @@ def _bind_serve_port(cmd: str, port: int) -> str:
     return cmd
 
 
-def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
+def _spawn_parallel_inference_servers(config: VlmConfig, *, shutdowns=None) -> list[str]:
     """Spawn ``config.parallel_servers`` independent vllm replicas.
 
     Each replica:
@@ -347,6 +372,22 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
     api_bases: list[str] = []
     procs: list[subprocess.Popen] = []
     ready_events: list[threading.Event] = []
+
+    def _shutdown() -> None:
+        for i, p in enumerate(procs):
+            if p.poll() is None:
+                print(f"[server-{i}] stopping pid={p.pid}", flush=True)
+                p.send_signal(signal.SIGINT)
+        for p in procs:
+            try:
+                p.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=5)
+
+    atexit.register(_shutdown)
+    if shutdowns is not None:
+        shutdowns.append(_shutdown)
     # Multiple readiness signals — uvicorn's own banner is suppressed at
     # ``--uvicorn-log-level warning``, so we also accept vllm's own
     # "Starting vLLM API server" line and the route-listing line. The
@@ -415,20 +456,6 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
 
         threading.Thread(target=_probe, args=(i, api_base, ready, proc), daemon=True).start()
 
-    def _shutdown() -> None:
-        for i, p in enumerate(procs):
-            if p.poll() is None:
-                print(f"[server-{i}] stopping pid={p.pid}", flush=True)
-                p.send_signal(signal.SIGINT)
-        for p in procs:
-            try:
-                p.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                p.kill()
-                p.wait(timeout=5)
-
-    atexit.register(_shutdown)
-
     deadline = time.monotonic() + config.serve_ready_timeout_s
     while any(not ev.is_set() for ev in ready_events) and time.monotonic() < deadline:
         for i, p in enumerate(procs):
@@ -457,7 +484,7 @@ def _server_is_up(api_base: str) -> bool:
         return False
 
 
-def _spawn_inference_server(config: VlmConfig) -> str:
+def _spawn_inference_server(config: VlmConfig, *, shutdowns=None) -> str:
     """Spawn ``transformers serve`` (or ``serve_command``), wait until it
     accepts ``/v1/models``, and register a shutdown hook.
 
@@ -550,6 +577,8 @@ def _spawn_inference_server(config: VlmConfig) -> str:
                 proc.wait(timeout=5)
 
     atexit.register(_shutdown)
+    if shutdowns is not None:
+        shutdowns.append(_shutdown)
 
     deadline = time.monotonic() + config.serve_ready_timeout_s
     while time.monotonic() < deadline:

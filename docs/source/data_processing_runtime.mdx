@@ -4,6 +4,28 @@ This experimental runtime is shared infrastructure for conversion and annotation
 developed on the FineRobotics integration branch, not yet a replacement for every public
 dataset workflow.
 
+## Language annotation
+
+`lerobot-annotate` now builds an ordered processing recipe: plan, interjections, VQA,
+plan refresh, validation, and file materialization. Existing annotation flags remain;
+`--runtime.workers=4 --runtime.batch_size=8` controls local execution. Use
+`--runtime.mode=plan` to seal independent stages without initializing a model. Dependent
+stages are planned only after their real upstream artifacts exist. A persistent
+`--runtime.run_uri=/path/to/run` holds resumable work and accepted Parquet artifacts.
+
+Original language atoms, native actions and `subtask_index` are preserved. Generated
+families have ownership records in `meta/annotations/ownership/*.parquet`; reruns replace
+only families they generated, leaving disabled families and unselected episodes intact.
+Unknown/source-owned atoms are never inferred to be generated. Videos are unchanged.
+Dataset files are prepared and validated before a recoverable local commit. Interrupted
+commits roll forward before the next run. This is not an atomic snapshot for simultaneous
+readers: use a separate version directory while training or reading a live dataset.
+
+Hub inputs get a persistent writable working copy; immutable snapshot caches are not
+modified. Credentials use `--vlm.api_key_env=VARIABLE`, not plaintext in stored plans.
+Local services are owned by the controller, reused across stages, and closed at the end;
+workers do not spawn replacement servers. Concurrency is bounded per worker/client.
+
 A source supplies a pinned `DatasetRef` and a stable stream of `InputItem` metadata. A
 module supplies its version, scope, resources and Arrow output schemas. `seal_plan` writes
 bounded Parquet row groups; `run_local` runs the same module in persistent spawn workers.

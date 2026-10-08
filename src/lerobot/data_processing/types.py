@@ -70,7 +70,7 @@ class ModuleSpec:
     name: str
     version: str
     scope: str
-    outputs: dict[str, pa.Schema]
+    outputs: dict[str, pa.Schema | None]
     resources: Resources = field(default_factory=Resources)
 
     def __post_init__(self):

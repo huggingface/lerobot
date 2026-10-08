@@ -35,25 +35,20 @@ Jobs GPU instead of this machine (see ``lerobot.jobs.annotate``):
 """
 
 import logging
+import shutil
+import tempfile
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.errors import RevisionNotFoundError
 
+from lerobot.annotations.processing import run_annotation_pipeline
 from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
-from lerobot.annotations.steerable_pipeline.executor import Executor
-from lerobot.annotations.steerable_pipeline.frames import make_frame_provider
-from lerobot.annotations.steerable_pipeline.modules import (
-    GeneralVqaModule,
-    InterjectionsAndSpeechModule,
-    PlanSubtasksMemoryModule,
-)
-from lerobot.annotations.steerable_pipeline.validator import StagingValidator
-from lerobot.annotations.steerable_pipeline.vlm_client import make_vlm_client
-from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter
 from lerobot.configs import parser
+from lerobot.utils.constants import HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.import_utils import _datasets_available, require_package
 
 if TYPE_CHECKING or _datasets_available:
@@ -66,10 +61,46 @@ logger = logging.getLogger(__name__)
 
 def _resolve_root(cfg: AnnotationPipelineConfig) -> Path:
     if cfg.root is not None:
+        if any(
+            Path(cfg.root).resolve().is_relative_to(Path(cache).resolve())
+            for cache in (HF_HUB_CACHE, HF_LEROBOT_HUB_CACHE)
+        ):
+            raise ValueError(
+                "Do not annotate an immutable Hub snapshot in place; use --repo_id or a writable copy"
+            )
         return Path(cfg.root)
     if cfg.repo_id is not None:
-        return Path(snapshot_download(repo_id=cfg.repo_id, repo_type="dataset"))
+        source = Path(snapshot_download(repo_id=cfg.repo_id, repo_type="dataset", revision=cfg.revision))
+        # Videos are immutable shared inputs; only tabular metadata/data need a
+        # writable working copy. Never rewrite the revision-safe Hub cache.
+        from filelock import FileLock
+
+        base = (
+            Path(cfg.runtime.run_uri)
+            if cfg.runtime.run_uri and "://" not in cfg.runtime.run_uri
+            else HF_LEROBOT_HOME / "processing"
+        )
+        parent = base / "inputs" / cfg.repo_id.replace("/", "--")
+        parent.mkdir(parents=True, exist_ok=True)
+        root = parent / source.name
+        with FileLock(parent / ".copy.lock"):
+            if root.exists():
+                return root
+            temporary = Path(tempfile.mkdtemp(prefix="copy-", dir=parent))
+            _copy_snapshot(source, temporary)
+            temporary.rename(root)
+        return root
     raise ValueError("Either --root or --repo_id must be provided.")
+
+
+def _copy_snapshot(source, root):
+    for path in source.iterdir():
+        if path.name == "videos":
+            (root / path.name).symlink_to(path, target_is_directory=True)
+        elif path.is_dir():
+            shutil.copytree(path, root / path.name)
+        else:
+            shutil.copy2(path, root / path.name)
 
 
 @parser.wrap()
@@ -87,43 +118,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
     root = _resolve_root(cfg)
     logger.info("annotate: root=%s", root)
 
-    vlm = make_vlm_client(cfg.vlm)
-    frame_provider = make_frame_provider(root, camera_key=cfg.vlm.camera_key, video_backend=cfg.video_backend)
-    # Surface the resolved cameras up front so a silent vqa-module no-op
-    # is obvious in job output rather than discovered post-hoc by counting
-    # parquet rows.
-    cam_keys = list(getattr(frame_provider, "camera_keys", []) or [])
-    logger.info(
-        "annotate: frame_provider default camera=%r, all cameras=%s",
-        getattr(frame_provider, "camera_key", None),
-        cam_keys,
-    )
-    if cfg.vqa.enabled and not cam_keys:
-        logger.warning(
-            "annotate: the vqa module is enabled but no cameras were "
-            "resolved — it will produce zero VQA rows. Check "
-            "meta/info.json for observation.images.* features, or pass "
-            "--vlm.camera_key=<key> to seed the cameras list."
-        )
-    plan = PlanSubtasksMemoryModule(vlm=vlm, config=cfg.plan, frame_provider=frame_provider)
-    interjections = InterjectionsAndSpeechModule(
-        vlm=vlm, config=cfg.interjections, seed=cfg.seed, frame_provider=frame_provider
-    )
-    vqa = GeneralVqaModule(vlm=vlm, config=cfg.vqa, seed=cfg.seed, frame_provider=frame_provider)
-    writer = LanguageColumnsWriter()
-    validator = StagingValidator(
-        dataset_camera_keys=tuple(getattr(frame_provider, "camera_keys", []) or []) or None,
-    )
-
-    executor = Executor(
-        config=cfg,
-        plan=plan,
-        interjections=interjections,
-        vqa=vqa,
-        writer=writer,
-        validator=validator,
-    )
-    summary = executor.run(root)
+    summary = run_annotation_pipeline(cfg, root)
     logger.info("annotate: wrote %d shard(s)", len(summary.written_paths))
     for phase in summary.phases:
         logger.info(
@@ -136,7 +131,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
         for w in summary.validation_report.warnings:
             logger.warning(w)
 
-    if cfg.push_to_hub:
+    if cfg.push_to_hub and cfg.runtime.mode != "plan":
         if cfg.repo_id is None and cfg.new_repo_id is None:
             raise ValueError(
                 "--push_to_hub requires --repo_id or --new_repo_id (the dataset repo to push to)."
