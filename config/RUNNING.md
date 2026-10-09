@@ -41,11 +41,20 @@ uvx --from rerun-sdk==0.33.1 rerun     # version must match uv.lock
 
 **No flags.** That one process is both the window and the listener — it
 opens the viewer *and* serves gRPC on `0.0.0.0:9876`, which is what elroy
-connects out to. There is no separate server to start. (`--port 9876` is
-the default and changes nothing; the thing to avoid is `--serve-grpc`,
-which is a server with *no* window and answers with "Connect by running
-`rerun --connect ...`". You can make a working three-process setup out of
-it, but there is no reason to.)
+connects out to. There is no separate server to start, and `--port 9876`
+is just the default spelled out.
+
+It prints this on startup, and it is **not** a sign anything is wrong:
+
+```
+INFO re_grpc_server: Listening for gRPC connections on 0.0.0.0:9876.
+Connect by running `rerun --connect rerun+http://127.0.0.1:9876/proxy`
+```
+
+Every mode that starts the server prints it, window or no window. It is
+advice for the case where you *also* want a second viewer attached from
+somewhere else — not an instruction to go and run something. Ignore it.
+(`--serve-grpc` is the genuinely headless mode. You will not need it.)
 
 </details>
 

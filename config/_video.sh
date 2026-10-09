@@ -26,11 +26,12 @@
 #                      it is not a viewer that needs a server put in front
 #                      of it. `--port 9876` is the default and adds nothing.
 #
-#                      Do not use `--serve-grpc`. That is the other thing: a
-#                      server with no window, which is why it answers with
-#                      "Connect by running `rerun --connect ...`". You can
-#                      build a working three-process setup out of it, but
-#                      there is no reason to.
+#                      On startup it says "Listening for gRPC connections
+#                      ... Connect by running `rerun --connect ...`". That
+#                      is printed by every mode that starts the server,
+#                      window or no window, and is only relevant if you
+#                      want a SECOND viewer attached from elsewhere. It is
+#                      not an instruction. Ignore it.
 #
 #                      Override the host with WATCH_HOST=<ip>. If the cart
 #                      cannot reach it, suspect the viewer machine's

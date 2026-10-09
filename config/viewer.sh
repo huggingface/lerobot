@@ -57,6 +57,10 @@ port    : $PORT on all interfaces
 A window will open and stay on the welcome screen until the cart connects.
 That is correct; start the cart afterwards.
 
+The "Listening for gRPC connections ... Connect by running \`rerun
+--connect ...\`" line below is normal and is not telling you to do
+anything. Every mode that starts the server prints it.
+
 FIRST LAUNCH OF A VERSION IS SLOW - give it a minute or two before you
 decide it is wedged. The wheel is ~125 MB, uvx fetches and unpacks it,
 macOS then scans the unpacked binary because nothing signed it, and wgpu
