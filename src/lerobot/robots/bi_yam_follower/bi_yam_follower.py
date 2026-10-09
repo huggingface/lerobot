@@ -112,6 +112,7 @@ class BiYamFollower(BimanualMixin, Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        """Connect both arms, checking both before either receives torque."""
         if any(arm.is_connected for arm in self.arms.values()):
             raise RuntimeError("Disconnect both YAM arms before reconnecting")
         if calibrate and not self.is_calibrated:
@@ -141,6 +142,7 @@ class BiYamFollower(BimanualMixin, Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
+        """Return observations from both arms with side-prefixed keys."""
         observation: RobotObservation = {}
         for name, value in self.left_arm.get_observation().items():
             observation[name if name in self._top_level_cam_keys else f"left_{name}"] = value
@@ -150,8 +152,9 @@ class BiYamFollower(BimanualMixin, Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        if any(arm.config.read_only for arm in self.arms.values()) or not self.left_arm.servo.active:
-            raise RuntimeError("YAM read-only/calibration connection forbids motor commands")
+        """Validate both arm targets before submitting either one."""
+        if any(arm.config.read_only or not arm.servo.active for arm in self.arms.values()):
+            raise RuntimeError("YAM commands require both servos active and neither arm read-only")
         if set(action) != set(self.action_features):
             raise ValueError("YAM requires all 14 absolute joint/gripper targets; Cartesian actions need IK")
         arm_actions = {
@@ -168,6 +171,7 @@ class BiYamFollower(BimanualMixin, Robot):
         return {f"{side}_{name}": value for side, values in sent.items() for name, value in values.items()}
 
     def disconnect(self) -> None:
+        """Stop both arms, attempting the second even if the first fails."""
         if not any(arm.is_connected for arm in self.arms.values()):
             raise DeviceNotConnectedError("BiYamFollower is not connected. Run `.connect()` first.")
         self._stop.set()

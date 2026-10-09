@@ -176,6 +176,14 @@ def test_readonly_rejects_actions(robot):
         robot.send_action(dict.fromkeys(robot.action_features, 0))
 
 
+def test_inactive_arm_rejects_action_atomically(robot):
+    action = ready(robot)
+    robot.right_arm.servo.active = False
+    with pytest.raises(RuntimeError, match="both servos active"):
+        robot.send_action(action)
+    assert all(np.all(arm.servo.target == 0) for arm in robot.arms.values())
+
+
 def test_calibration_connect_never_enables_motors(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
     make_writable(robot)
