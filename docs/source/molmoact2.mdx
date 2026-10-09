@@ -58,7 +58,7 @@ LeRobot disables dataset image augmentation by default. Keep
 original MolmoAct2 transform recipe is not LeRobot's generic transform default,
 so the first command also pins its 95% crop, 5-degree rotation, and color
 jitter explicitly. The original recipe additionally applies a Gaussian blur
-with probability 0.2; LeRobot's generic `RandomSubsetApply` configuration cannot
+with probability 0.2; LeRobot's generic transform-subset configuration cannot
 express that optional fourth transform without sometimes dropping one of the
 three required transforms.
 
