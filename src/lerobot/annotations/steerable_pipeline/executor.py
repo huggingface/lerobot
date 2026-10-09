@@ -41,7 +41,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +70,7 @@ class PipelineRunSummary:
     phases: list[PhaseResult]
     written_paths: list[Path]
     validation_report: Any  # ValidationReport, kept Any to avoid import cycle
+    metadata_paths: list[Path] = field(default_factory=list)
 
 
 @dataclass

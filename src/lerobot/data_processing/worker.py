@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from lerobot.utils.import_utils import _pyarrow_available, require_package
 
 from .artifacts import ArtifactStore
+from .errors import ErrorCategory, classify_error, retry_delay
 from .metrics import measure, record_worker
 from .planner import StagePlan, load_module
 from .types import Artifact, ItemResult, Outcome, WorkItem, checked_name
@@ -173,6 +174,7 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
     with tempfile.TemporaryDirectory(prefix="lerobot-worker-") as directory:
         context = WorkerContext(store, plan, "", Path(directory))
         initialized = False
+        setup_complete = False
         status = "failed"
         reused = set()
         try:
@@ -184,10 +186,6 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
                     pending = [item for item in plan.read_shard(store, shard) if item.item_id not in accepted]
                     if not pending:
                         break
-                    if not initialized:
-                        initialized = True
-                        with context.measure("setup"):
-                            module.setup(context)
                     # UUID gives each concurrently requeued worker its own output
                     # namespace. Timestamp orders persisted attempts, not item IDs.
                     attempt = f"{plan.prefix}/attempts/{shard:08d}/{time.time_ns():020d}-{uuid.uuid4().hex}"
@@ -195,12 +193,26 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
                     try:
                         for offset in range(0, len(pending), batch_size):
                             batch = pending[offset : offset + batch_size]
+                            active = [item for item in batch if item.mask_reason is None]
+                            if active and not initialized:
+                                initialized = True
+                                with context.measure("setup"):
+                                    module.setup(context)
+                                setup_complete = True
                             with context.measure("process"):
-                                results = module.process_batch(batch, context)
+                                results = module.process_batch(active, context) if active else []
+                            results = [
+                                *results,
+                                *[
+                                    ItemResult(item.item_id, Outcome.MASKED, reason=item.mask_reason)
+                                    for item in batch
+                                    if item.mask_reason is not None
+                                ],
+                            ]
                             context.metrics["batches"] = context.metrics.get("batches", 0) + 1
                             context.metrics["items_computed"] = context.metrics.get(
                                 "items_computed", 0
-                            ) + len(batch)
+                            ) + len(active)
                             if len(results) != len(batch) or len({r.item_id for r in results}) != len(batch):
                                 raise ValueError("Module must return exactly one result per input item")
                             by_id = {result.item_id: result for result in results}
@@ -219,10 +231,31 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
                                     },
                                 )
                         break
-                    except Exception:
-                        if retry == max_retries:
+                    except Exception as exc:
+                        category = classify_error(exc)
+                        retryable = category in {ErrorCategory.NETWORK, ErrorCategory.SERVICE}
+                        delay = retry_delay(retry) if retryable and retry < max_retries else 0.0
+                        store.put_json(
+                            f"{attempt}/error.json",
+                            {
+                                "category": category.value,
+                                "exception_type": type(exc).__name__,
+                                "retry": retry,
+                                "retryable": retryable,
+                                "backoff_seconds": delay,
+                            },
+                        )
+                        context.metrics["last_error_category"] = category.value
+                        if not retryable or retry == max_retries:
                             raise
+                        if initialized and not setup_complete:
+                            # Never retry using a partly initialized model/client.
+                            # Its teardown contract also covers failed setup.
+                            module.teardown()
+                            initialized = False
+                            module = load_module(plan.factory, plan.config)
                         context.metrics["retries"] = context.metrics.get("retries", 0) + 1
+                        time.sleep(delay)
             status = "completed"
         finally:
             try:

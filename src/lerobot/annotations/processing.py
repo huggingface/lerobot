@@ -53,6 +53,7 @@ from .steerable_pipeline.modules import (
     InterjectionsAndSpeechModule,
     PlanSubtasksMemoryModule,
 )
+from .steerable_pipeline.modules.plan_subtasks_memory import subtask_windows
 from .steerable_pipeline.reader import EpisodeRecord, _load_tasks_lookup
 from .steerable_pipeline.staging import EpisodeStaging
 from .steerable_pipeline.validator import StagingValidator, ValidationReport
@@ -82,6 +83,19 @@ OWNERSHIP_SCHEMA = pa.schema(
         ("atom_hash", pa.string()),
         ("owner", pa.string()),
         ("count", pa.int64()),
+    ]
+)
+WINDOW_SCHEMA = pa.schema(
+    [
+        ("window_index", pa.int64()),
+        ("context_start", pa.int64()),
+        ("context_end", pa.int64()),
+        ("output_start", pa.int64()),
+        ("output_end", pa.int64()),
+        ("episode_index", pa.int64()),
+        ("frame_index", pa.int64()),
+        ("timestamp", pa.float64()),
+        ("owned", pa.bool_()),
     ]
 )
 
@@ -218,7 +232,7 @@ class LeRobotEpisodeSource:
                 owner_outputs = {}
                 for owner in ("plan", "interjections", "vqa"):
                     stage_name = "plan_update" if owner == "plan" and "plan_update" in bindings else owner
-                    if stage_name in bindings:
+                    if stage_name in bindings and "atoms" in bindings[stage_name][str(ep)]:
                         owner_outputs[owner] = bindings[stage_name][str(ep)]["atoms"]
                 for path in payload["paths"]:
                     by_file[path][str(ep)] = owner_outputs
@@ -253,15 +267,98 @@ class LeRobotEpisodeSource:
                 )
         else:
             for ep, payload in sorted(self.episodes.items()):
-                parent = {name: outputs[str(ep)]["atoms"] for name, outputs in bindings.items()}
+                parent = {
+                    name: outputs[str(ep)]["atoms"]
+                    for name, outputs in bindings.items()
+                    if "atoms" in outputs[str(ep)]
+                }
+                quality = None
+                if "quality" in bindings:
+                    artifact = Artifact(**bindings["quality"][str(ep)]["quality"])
+                    if not store.verify(artifact):
+                        raise ValueError("Quality artifact checksum mismatch")
+                    with store.open(artifact.path) as stream:
+                        quality = pq.read_table(stream).to_pylist()[0]
+                mask = (
+                    quality["reason"]
+                    if quality and not quality["usable"] and stage.id not in {"validate", "materialize"}
+                    else None
+                )
+                metadata = {**payload, "upstream": parent, **({"quality": quality} if quality else {})}
                 yield InputItem(
                     str(ep),
-                    {**payload, "upstream": parent},
+                    metadata,
                     payload["rows"],
-                    identity_payload={**payload, "upstream": artifact_identities(parent)},
+                    identity_payload=artifact_identities(metadata),
                     physical_seconds=payload["rows"] / self.fps,
                     camera_seconds=payload["rows"] / self.fps * self.cameras,
+                    mask_reason=mask,
                 )
+
+
+class EpisodeQuality:
+    """Cheap sampled gate before language inference, with an auditable decision."""
+
+    def __init__(self, root, quality_config, camera_key=None, video_backend=None):
+        from .steerable_pipeline.config import QualityConfig
+
+        self.root = Path(root)
+        self.config = QualityConfig(**quality_config)
+        self.camera_key, self.video_backend = camera_key, video_backend
+        self.schema = pa.schema(
+            [
+                ("episode_index", pa.int64()),
+                ("usable", pa.bool_()),
+                ("reason", pa.string()),
+                ("sampled_frames", pa.int64()),
+                ("black_frames", pa.int64()),
+                ("frame_indices", pa.list_(pa.int64())),
+                ("timestamps", pa.list_(pa.float64())),
+            ]
+        )
+        self.spec = ModuleSpec("episode_quality", "1", "episode", {"quality": self.schema})
+
+    def setup(self, context):
+        self.provider = make_frame_provider(
+            self.root, camera_key=self.camera_key, video_backend=self.video_backend
+        )
+
+    def teardown(self):
+        pass
+
+    def process_batch(self, items, context):
+        results = []
+        for item in items:
+            record = _load_record(self.root, item.payload)
+            indices = sorted(
+                {
+                    round(i * (record.row_count - 1) / max(1, self.config.sample_frames - 1))
+                    for i in range(self.config.sample_frames)
+                }
+            )
+            timestamps = [record.frame_timestamps[i] for i in indices]
+            frames = self.provider.frames_at(record, timestamps)
+            black = sum(float(frame.float().mean()) <= self.config.black_threshold for frame in frames)
+            usable = (
+                len(frames) == len(indices) and black / max(1, len(frames)) <= self.config.max_black_fraction
+            )
+            reason = (
+                None
+                if usable
+                else ("missing_camera_frames" if len(frames) != len(indices) else "black_frame_fraction")
+            )
+            row = {
+                "episode_index": record.episode_index,
+                "usable": usable,
+                "reason": reason,
+                "sampled_frames": len(frames),
+                "black_frames": black,
+                "frame_indices": [record.frame_indices[i] for i in indices],
+                "timestamps": timestamps,
+            }
+            artifact = context.write_parquet(item, "quality", pa.Table.from_pylist([row], schema=self.schema))
+            results.append(ItemResult(item.item_id, Outcome.COMPLETED, (artifact,)))
+        return results
 
 
 class LanguageModule:
@@ -274,7 +371,8 @@ class LanguageModule:
 
         self.config = draccus.decode(AnnotationPipelineConfig, annotation_config)
         self.client_factory = client_factory
-        self.spec = ModuleSpec(f"language_{phase}", "2", "episode", {"atoms": ATOM_SCHEMA})
+        outputs = {"atoms": ATOM_SCHEMA, **({"windows": WINDOW_SCHEMA} if phase == "plan" else {})}
+        self.spec = ModuleSpec(f"language_{phase}", "3", "episode", outputs)
 
     def setup(self, context):
         cfg = self.config
@@ -308,6 +406,13 @@ class LanguageModule:
         values = draccus.encode(self.config)
         shared = {key: values[key] for key in ("vlm", "seed", "video_backend")}
         shared["vlm"].pop("client_concurrency", None)
+        for key in (
+            "endpoint_limit_url",
+            "endpoint_limit_key",
+            "endpoint_limit_token_env",
+            "endpoint_limit_timeout_s",
+        ):
+            shared["vlm"].pop(key, None)
         names = ("plan",) if self.phase in {"plan", "plan_update"} else (self.phase,)
         return {
             "root": str(self.root),
@@ -349,8 +454,30 @@ class LanguageModule:
                     "Subtask annotation returned no subtasks; refusing a successful empty result"
                 )
             artifact = context.write_parquet(item, "atoms", _staged_table(output))
-            shutil.rmtree(staging.root)
-            return ItemResult(item.item_id, Outcome.COMPLETED, (artifact,))
+            artifacts = [artifact]
+            if self.phase == "plan":
+                windows = subtask_windows(record, self.config.plan)
+                rows = [
+                    {
+                        "window_index": window.index,
+                        "context_start": window.context_start,
+                        "context_end": window.context_end,
+                        "output_start": window.output_start,
+                        "output_end": window.output_end,
+                        "episode_index": frame.episode_index,
+                        "frame_index": frame.frame_index,
+                        "timestamp": frame.timestamp,
+                        "owned": window.output_start <= window.context_start + offset < window.output_end,
+                    }
+                    for window in windows
+                    for offset, frame in enumerate(window.frames)
+                ]
+                artifacts.append(
+                    context.write_parquet(item, "windows", pa.Table.from_pylist(rows, schema=WINDOW_SCHEMA))
+                )
+            if staging.root.exists():
+                shutil.rmtree(staging.root)
+            return ItemResult(item.item_id, Outcome.COMPLETED, tuple(artifacts))
 
         with ThreadPoolExecutor(
             max_workers=min(self.config.executor.episode_parallelism, len(items))
@@ -423,7 +550,8 @@ class LanguageValidator:
                 schema=self.schema,
             )
             artifact = context.write_parquet(item, "validation", table)
-            shutil.rmtree(staging.root)
+            if staging.root.exists():
+                shutil.rmtree(staging.root)
             results.append(ItemResult(item.item_id, Outcome.COMPLETED, (artifact,)))
         return results
 
@@ -487,7 +615,8 @@ class LanguageMaterializer:
                 # partial episode files receive their own matching event subset.
                 if raw_atoms and not frame_times:
                     raise ValueError("Annotations reference a missing episode")
-                shutil.rmtree(staging.root)
+                if staging.root.exists():
+                    shutil.rmtree(staging.root)
             removal = defaultdict(Counter)
             kept = []
             for ownership in old:
@@ -594,8 +723,23 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
         return {**shared, family: config[family]}
 
     stages = []
+    if cfg.quality.enabled:
+        stages.append(
+            StageConfig(
+                "quality",
+                "lerobot.annotations.processing:EpisodeQuality",
+                {
+                    "root": str(root),
+                    "quality_config": draccus.encode(cfg.quality),
+                    "camera_key": cfg.vlm.camera_key,
+                    "video_backend": cfg.video_backend,
+                },
+            )
+        )
     for name in enabled:
-        dependencies = ("plan",) if name == "interjections" and "plan" in enabled else ()
+        dependencies = (("quality",) if cfg.quality.enabled else ()) + (
+            ("plan",) if name == "interjections" and "plan" in enabled else ()
+        )
         stages.append(
             StageConfig(
                 name,
@@ -607,6 +751,7 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
                     "client_factory": client_factory,
                 },
                 dependencies,
+                when="quality.usable" if cfg.quality.enabled else None,
             )
         )
     if "plan" in enabled and "interjections" in enabled:
@@ -620,7 +765,8 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
                     "annotation_config": phase_config("plan_update"),
                     "client_factory": client_factory,
                 },
-                ("plan", "interjections"),
+                ("plan", "interjections") + (("quality",) if cfg.quality.enabled else ()),
+                when="quality.usable" if cfg.quality.enabled else None,
             )
         )
     stages.append(
@@ -648,10 +794,15 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
     def before_execute(store, plan):
         if not cfg.vlm.auto_serve or client_factory or not plan.factory.endswith("LanguageModule") or service:
             return
-        if any(
-            len(accepted_in_shard(store, plan, shard)) < len(plan.read_shard(store, shard))
-            for shard in range(plan.shards)
-        ):
+
+        def needs_inference(shard):
+            accepted = accepted_in_shard(store, plan, shard)
+            return any(
+                item.mask_reason is None and item.item_id not in accepted
+                for item in plan.read_shard(store, shard)
+            )
+
+        if any(needs_inference(shard) for shard in range(plan.shards)):
             client = make_vlm_client(cfg.vlm)
             service.append(client)
             os.environ["LEROBOT_ANNOTATION_ENDPOINTS"] = json.dumps(client.api_bases)
@@ -694,6 +845,29 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
                         raise ValueError("Accepted release file was corrupted during download")
                     files[relative] = target
         info = json.loads((root / "meta/info.json").read_text())
+        # Small provenance tables live beside the enriched data, not only in the
+        # runtime cache. Keep native videos untouched and publication explicit.
+        for stage_name, output_name in (("quality", "quality"), ("plan", "windows")):
+            if stage_name not in completed:
+                continue
+            provenance_plan, _ = completed[stage_name]
+            for shard in range(provenance_plan.shards):
+                results = accepted_in_shard(store, provenance_plan, shard)
+                for item in provenance_plan.read_shard(store, shard):
+                    for artifact in results[item.item_id].artifacts:
+                        if artifact.name != output_name:
+                            continue
+                        relative = f"meta/annotations/{output_name}/episode-{item.key}.parquet"
+                        target = directory / relative
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with store.open(artifact.path) as stream, target.open("wb") as output:
+                            shutil.copyfileobj(stream, output)
+                        if file_checksum(target) != (artifact.sha256, artifact.size):
+                            raise ValueError("Annotation provenance checksum mismatch")
+                        expected[relative] = (
+                            file_checksum(root / relative) if (root / relative).exists() else None
+                        )
+                        files[relative] = target
         info["features"] = {**info.get("features", {}), **language_feature_info()}
         from lerobot.datasets.language import SAY_TOOL_SCHEMA
 
@@ -723,4 +897,5 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
         phases,
         [root / path for path in files if path.startswith("data/")],
         validation,
+        metadata_paths=[root / path for path in files if path.startswith("meta/")],
     )

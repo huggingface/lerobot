@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from .types import checked_name
+from .types import Resources, checked_name
 
 
 @dataclass
@@ -59,12 +59,23 @@ class RuntimeConfig:
     batch_size: int = 16
     shard_size: int = 64
     max_retries: int = 2
+    # Sequential by default. Parallel admission reserves every worker's resources.
+    max_parallel_stages: int = 1
+    resource_budget: Resources | None = None
     slurm: SlurmConfig = field(default_factory=SlurmConfig)
     hf_jobs: HFJobsConfig = field(default_factory=HFJobsConfig)
 
     def __post_init__(self):
-        if self.workers < 1 or self.batch_size < 1 or self.shard_size < 1 or self.max_retries < 0:
+        if (
+            self.workers < 1
+            or self.batch_size < 1
+            or self.shard_size < 1
+            or self.max_retries < 0
+            or self.max_parallel_stages < 1
+        ):
             raise ValueError("Invalid runtime limits")
+        if self.max_parallel_stages > 1 and self.resource_budget is None:
+            raise ValueError("Concurrent stages require an explicit resource_budget")
 
 
 @dataclass
@@ -73,6 +84,12 @@ class StageConfig:
     factory: str
     config: dict[str, Any] = field(default_factory=dict)
     depends_on: tuple[str, ...] = ()
+    # A source attaches quality results to each item's metadata. Missing/non-bool
+    # predicates are errors; false means a recorded mask, never dropped work.
+    when: str | None = None
+    skip_reason: str = "quality_condition_false"
 
     def __post_init__(self):
         checked_name(self.id)
+        if self.when is not None and (not self.when or not self.depends_on or not self.skip_reason):
+            raise ValueError("A conditional stage needs a predicate, quality dependency and skip reason")

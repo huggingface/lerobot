@@ -112,7 +112,14 @@ def finalize_stage(store: ArtifactStore, plan: StagePlan) -> StageSummary:
 
 
 def run_local(
-    store: ArtifactStore, plan: StagePlan, *, workers: int = 1, batch_size: int = 1, max_retries: int = 2
+    store: ArtifactStore,
+    plan: StagePlan,
+    *,
+    workers: int = 1,
+    batch_size: int = 1,
+    max_retries: int = 2,
+    force_spawn: bool = False,
+    device_groups: list[tuple[str, ...]] | None = None,
 ) -> StageSummary:
     """Run static bounded groups with spawn; no CUDA/VLM construction in the coordinator.
 
@@ -129,12 +136,14 @@ def run_local(
         lock = FileLock(lock_path, timeout=0)
     try:
         with lock:
-            return _run_local_owned(store, plan, workers, batch_size, max_retries)
+            return _run_local_owned(store, plan, workers, batch_size, max_retries, force_spawn, device_groups)
     except Timeout as exc:
         raise RuntimeError("Another controller owns this local processing plan") from exc
 
 
-def _run_local_owned(store, plan, workers, batch_size, max_retries):
+def _run_local_owned(store, plan, workers, batch_size, max_retries, force_spawn=False, device_groups=None):
+    if not plan.shards:
+        return finalize_stage(store, plan)
     workers = min(workers, max(1, plan.shards))
     if workers > 1 and store.uri.startswith("memory://"):
         raise ValueError("Spawn workers require persistent shared storage, not memory://")
@@ -144,7 +153,11 @@ def _run_local_owned(store, plan, workers, batch_size, max_retries):
     if workers * resources.cpus > capacity:
         raise ValueError(f"Requested {workers * resources.cpus} CPU cores, but this process has {capacity}")
     if resources.gpus:
-        devices = gpu_assignments(workers, resources.gpus)
+        devices = device_groups if device_groups is not None else gpu_assignments(workers, resources.gpus)
+        if len(devices) != workers or any(len(group) != resources.gpus for group in devices):
+            raise ValueError("GPU assignments do not match worker resource requests")
+        if len({device for group in devices for device in group}) != workers * resources.gpus:
+            raise ValueError("GPU assignments must not overlap")
         # One pool per GPU group guarantees a fresh process will never switch
         # CUDA visibility after it has initialized the CUDA runtime.
         with ExitStack() as stack:
@@ -169,7 +182,7 @@ def _run_local_owned(store, plan, workers, batch_size, max_retries):
             ]
             for future in futures:
                 future.result()
-    elif workers == 1:
+    elif workers == 1 and not force_spawn:
         run_worker_group(store.uri, plan.plan_id, groups[0], batch_size, max_retries, store.storage_options)
     else:
         with ProcessPoolExecutor(

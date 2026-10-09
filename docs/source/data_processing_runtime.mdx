@@ -84,7 +84,17 @@ readers: use a separate version directory while training or reading a live datas
 Hub inputs get a persistent writable working copy; immutable snapshot caches are not
 modified. Credentials use `--vlm.api_key_env=VARIABLE`, not plaintext in stored plans.
 Local services are owned by the controller, reused across stages, and closed at the end;
-workers do not spawn replacement servers. Concurrency is bounded per worker/client.
+workers do not spawn replacement servers. Use `runtime.max_parallel_stages` with an
+explicit CPU/GPU/memory `resource_budget` for dependency-aware parallel stages.
+For a shared model service, configure `vlm.endpoint_limit_url` and
+`vlm.endpoint_limit_key` to enforce one authenticated limit across workers/runs;
+per-client concurrency alone is not a global limit. See the
+[parallelism and recovery design](data_processing_design).
+
+Optional `quality.enabled=true` records sampled quality decisions and masks unusable
+episodes before inference. Long subtasks use overlapping context with nonoverlapping
+output ownership and exact source clocks; provenance is stored in Parquet alongside
+the annotations. Workers retry classified temporary failures, not schema/input bugs.
 
 A source supplies a pinned `DatasetRef` and a stable stream of `InputItem` metadata. A
 module supplies its version, scope, resources and Arrow output schemas. `seal_plan` writes

@@ -92,11 +92,14 @@ class InputItem:
     identity_payload: dict[str, Any] | None = None
     physical_seconds: float | None = None
     camera_seconds: float | None = None
+    mask_reason: str | None = None
 
     def __post_init__(self):
         if not self.key or not math.isfinite(self.cost) or self.cost < 0:
             raise ValueError("Input items need a nonempty key and finite nonnegative cost")
         canonical_json(self.payload)
+        if self.mask_reason is not None and not self.mask_reason.strip():
+            raise ValueError("Masks require a nonempty reason")
         if self.identity_payload is not None:
             canonical_json(self.identity_payload)
         for seconds in (self.physical_seconds, self.camera_seconds):
@@ -113,6 +116,7 @@ class WorkItem:
     seed: int
     physical_seconds: float | None = None
     camera_seconds: float | None = None
+    mask_reason: str | None = None
 
 
 def artifact_identities(value):

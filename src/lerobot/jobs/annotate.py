@@ -43,7 +43,11 @@ def submit_annotate_to_hf(cfg):
         return key
     names = tuple(
         dict.fromkeys(
-            (*cfg.runtime.hf_jobs.secret_env, *((cfg.vlm.api_key_env,) if cfg.vlm.api_key_env else ()))
+            (
+                *cfg.runtime.hf_jobs.secret_env,
+                *((cfg.vlm.api_key_env,) if cfg.vlm.api_key_env else ()),
+                *((cfg.vlm.endpoint_limit_token_env,) if cfg.vlm.endpoint_limit_url else ()),
+            )
         )
     )
     job = dispatch_bundle(

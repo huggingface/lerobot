@@ -12,6 +12,7 @@ import cv2
 
 from lerobot.utils.import_utils import _pyarrow_available, require_package
 
+from ..errors import UndecodableInputError
 from ..types import ItemResult, ModuleSpec, Outcome, Resources, WorkItem
 from ..worker import WorkerContext
 
@@ -50,7 +51,7 @@ class VideoQuality:
             count = sampled = black = 0
             try:
                 if not capture.isOpened():
-                    raise ValueError(f"Cannot decode video: {item.key}")
+                    raise UndecodableInputError(f"Cannot decode video: {item.key}")
                 while True:
                     ok, frame = capture.read()
                     if not ok:
@@ -61,7 +62,9 @@ class VideoQuality:
                     count += 1
                 expected = item.payload.get("expected_frames")
                 if not count or (expected is not None and count != expected):
-                    raise ValueError(f"Incomplete video {item.key}: decoded {count}, expected {expected}")
+                    raise UndecodableInputError(
+                        f"Incomplete video {item.key}: decoded {count}, expected {expected}"
+                    )
             finally:
                 capture.release()
             table = pa.Table.from_pylist(

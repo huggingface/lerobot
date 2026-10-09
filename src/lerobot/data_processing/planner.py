@@ -86,6 +86,7 @@ class StagePlan:
                 row["seed"],
                 row.get("physical_seconds"),
                 row.get("camera_seconds"),
+                row.get("mask_reason"),
             )
             for row in rows
         ]
@@ -133,6 +134,7 @@ def seal_plan(
             ("seed", pa.int64()),
             ("physical_seconds", pa.float64()),
             ("camera_seconds", pa.float64()),
+            ("mask_reason", pa.string()),
         ]
     )
     selection = hashlib.sha256()
@@ -155,6 +157,7 @@ def seal_plan(
                         "payload": item.identity_payload
                         if item.identity_payload is not None
                         else item.payload,
+                        **({"mask_reason": item.mask_reason} if item.mask_reason is not None else {}),
                     }
                 )
                 batch.append(
@@ -170,6 +173,7 @@ def seal_plan(
                         "camera_seconds": float(item.camera_seconds)
                         if item.camera_seconds is not None
                         else None,
+                        "mask_reason": item.mask_reason,
                     }
                 )
                 count += 1
