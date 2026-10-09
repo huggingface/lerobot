@@ -1,0 +1,64 @@
+# 使用 🤗 PEFT 進行參數高效微調（parameter efficient fine-tuning with PEFT）
+
+[🤗 PEFT](https://github.com/huggingface/peft)（Parameter-Efficient Fine-Tuning）是一個用於將如預訓練策略（pre-trained policies，例如 SmolVLA、π₀ 等）的大型預訓練模型（pretrained models）高效地適配到（adapting）新任務（new tasks）的函式庫，
+無需訓練模型的所有參數，
+同時能達到相當的效能表現（comparable performance）。
+
+安裝 `lerobot[peft]` 選用套件（optional package）以啟用 PEFT 支援。
+
+若要了解所有可用的適配方法（possible methods of adaption），請參閱 [🤗 PEFT 文件](https://huggingface.co/docs/peft/index)。
+
+## 訓練 SmolVLA（training SmolVLA）
+
+在本節中，我們將展示如何使用 PEFT 在 libero 資料集（libero dataset）上訓練預訓練的 SmolVLA 策略（train a pre-trained SmolVLA policy）。
+為求簡潔，我們僅在 libero_spatial 子集（subset）上進行訓練（training）。
+我們將使用 lerobot/smolvla_base 作為要進行參數高效微調（parameter efficiently fine-tune）的模型（model）：
+
+```
+lerobot-train \
+ --policy.path=lerobot/smolvla_base \
+ --policy.repo_id=your_hub_name/my_libero_smolvla \
+ --dataset.repo_id=HuggingFaceVLA/libero \
+ --policy.output_features=null \
+ --policy.input_features=null \
+ --policy.optimizer_lr=1e-3 \
+ --policy.scheduler_decay_lr=1e-4 \
+ --env.type=libero \
+ --env.task=libero_spatial \
+ --steps=100000 \
+ --batch_size=32 \
+ --peft.method_type=LORA \
+ --peft.r=64 \
+ --peft.lora_alpha=64
+```
+
+請注意 `--peft.method_type` 參數（parameter），它可讓你選擇使用哪種 PEFT 方法。
+這裡我們使用 [LoRA](https://huggingface.co/docs/peft/main/en/package_reference/lora)（Low-Rank Adapter，低秩適配），這可能是目前最流行的微調方法（fine-tuning method）。
+低秩適配（low-rank adaption）意味著我們只微調（fine-tune）一個秩相對較低的矩陣（a matrix with comparably low rank），而非完整的權重矩陣（full weight matrix）。
+這個秩（rank）可以透過 `--peft.r` 參數（parameter）來指定，而 LoRA 縮放因子（scaling factor）則透過 `--peft.lora_alpha` 指定（其中 `scaling = lora_alpha / r`）。
+秩（rank）越高，
+就越接近完整微調（fine-tune）。
+
+還有更複雜且具有更多參數的方法。這些方法目前尚未支援，
+如果你希望看到特定的 PEFT 方法被支援，歡迎提出 issue。
+
+預設情況下，PEFT 會針對 SmolVLA 中 LM expert 的 `q_proj` 和 `v_proj` 層（layers）。
+它也會針對狀態和動作投影矩陣（state and action projection matrices），因為這些最可能與任務相關（task-dependent）。
+如果你需要針對不同的層（layers），可以使用 `--peft.target_modules` 來指定要針對哪些層。
+你可以參閱對應 PEFT 方法的文件以了解支援哪些輸入（例如 [LoRA 的 target_modules 文件](https://huggingface.co/docs/peft/main/en/package_reference/lora#peft.LoraConfig.target_modules)）。
+通常支援後綴名列表（list of suffixes）或正規表達式（regex）。例如，要針對 `lm_expert` 的 MLP 而非 `q` 和 `v` 投影（projections），
+可使用：
+
+```
+--peft.target_modules='(model\.vlm_with_expert\.lm_expert\..*\.(down|gate|up)_proj|.*\.(state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out))'
+```
+
+如果你需要完整微調某一層（fully fine-tune a layer）而非僅進行適配（adapting it），
+可以透過 `--peft.full_training_modules` 參數（parameter）提供層後綴名列表（list of layer suffixes）：
+
+```
+--peft.full_training_modules=["state_proj"]
+```
+
+學習率（learning rate）和排程目標學習率（scheduled target learning rate）通常可以比完整微調（full fine-tuning）所使用的學習率放大 10 倍
+（例如，一般為 1e-4，使用 LoRA 時則為 1e-3）。

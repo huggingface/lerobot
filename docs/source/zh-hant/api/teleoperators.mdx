@@ -1,0 +1,27 @@
+# 遙操作器（Teleoperators）[[teleoperators]]
+
+遙操作器產生讓機器人跟隨的動作，例如主臂、遊戲手把、鍵盤或手機。它們都實作了 [`Teleoperator`] 介面（interface），因此針對此介面撰寫的錄製腳本可以搭配任何輸入裝置使用。
+
+設定指南請參閱[手機遙操作](../phone_teleop)與 [Isaac Teleop](../isaac_teleop)，錄製流程請參閱[機器人的模仿學習](../il_robots)。
+
+## Teleoperator
+
+[[autodoc]] lerobot.teleoperators.Teleoperator
+    - connect
+    - disconnect
+    - configure
+    - calibrate
+    - get_action
+    - send_feedback
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+## TeleoperatorConfig
+
+[[autodoc]] lerobot.teleoperators.TeleoperatorConfig
+
+## make_teleoperator_from_config
+
+[[autodoc]] lerobot.teleoperators.make_teleoperator_from_config

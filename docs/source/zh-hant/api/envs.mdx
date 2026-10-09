@@ -1,0 +1,17 @@
+# 環境（Environments）[[environments]]
+
+模擬環境透過 [`EnvConfig`] 設定，並由 [`make_env`] 建立。每個子類都會宣告自己的 `gym_kwargs`，以及如何建構向量化環境（vectorised environments）。
+
+使用已發布的環境請參閱[來自 Hub 的環境](../envhub)，貢獻新的基準測試請參閱[新增基準測試](../adding_benchmarks)。
+
+## EnvConfig
+
+[[autodoc]] lerobot.envs.EnvConfig
+
+## make_env
+
+[[autodoc]] lerobot.envs.make_env
+
+## make_env_config
+
+[[autodoc]] lerobot.envs.make_env_config
