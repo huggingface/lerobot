@@ -57,6 +57,13 @@ port    : $PORT on all interfaces
 A window will open and stay on the welcome screen until the cart connects.
 That is correct; start the cart afterwards.
 
+FIRST LAUNCH OF A VERSION IS SLOW - give it a minute or two before you
+decide it is wedged. The wheel is ~125 MB, uvx fetches and unpacks it,
+macOS then scans the unpacked binary because nothing signed it, and wgpu
+compiles its Metal pipelines. The window appears partway through all that,
+so macOS may well call it "not responding" for a while. It is cached per
+version, so this happens once.
+
 If the cart cannot reach this machine, suspect this machine's firewall
 first - rerun binds 0.0.0.0 already. On macOS: System Settings > Network >
 Firewall. Allow the connection when asked, or turn it off long enough to
