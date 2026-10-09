@@ -1,0 +1,28 @@
+deployment: vlabench
+sim:
+  type: vlabench
+  task: select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower
+  fps: 10
+  control: eef_pose
+  semantics: vlabench-eef-pose-v1
+  kwargs:
+    gym_kwargs:
+      obs_type: pixels_agent_pos
+      render_mode: rgb_array
+      render_resolution:
+      - 480
+      - 480
+      robot: franka
+      max_episode_steps: 50
+      action_mode: eef
+  state_names: &id001
+  - eef.x
+  - eef.y
+  - eef.z
+  - eef.euler.x
+  - eef.euler.y
+  - eef.euler.z
+  - gripper.opening
+  action_names: *id001
+  gripper_indices:
+  - 6

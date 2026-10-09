@@ -1,0 +1,34 @@
+deployment: robomme
+sim:
+  type: robomme
+  task: PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock
+  fps: 10
+  control: position
+  semantics: robomme-position-v1
+  kwargs:
+    action_space_type: joint_angle
+    dataset: test
+    episode_length: 300
+    task_ids:
+    - 0
+    front_camera_name: image
+    wrist_camera_name: wrist_image
+  state_names:
+  - command_0.pos
+  - command_1.pos
+  - command_2.pos
+  - command_3.pos
+  - command_4.pos
+  - command_5.pos
+  - command_6.pos
+  - command_7.pos
+  action_names:
+  - command_0.pos
+  - command_1.pos
+  - command_2.pos
+  - command_3.pos
+  - command_4.pos
+  - command_5.pos
+  - command_6.pos
+  - command_7.pos
+  gripper_indices: []
