@@ -155,10 +155,11 @@ class SharedEndpointLimit:
         try:
             yield
         except Exception as exc:
-            if classify_error(exc) != ErrorCategory.NETWORK:
+            status = exc.code if isinstance(exc, HTTPError) else getattr(exc, "status_code", None)
+            if classify_error(exc) != ErrorCategory.NETWORK and status != 504:
                 self._release(request_id)
-            # Network timeouts may leave inference running. Preserve that slot
-            # until the operator has drained/cancelled the endpoint, not by TTL.
+            # Transport and gateway timeouts may leave upstream inference running.
+            # Preserve the slot until the operator drains/cancels the endpoint, not by TTL.
             raise
         else:
             self._release(request_id)
