@@ -279,14 +279,21 @@ def install_sidecar(source: Path, destination: Path) -> None:
         before = os.fstat(handle.fileno())
         if _cache_path(source, _signature(before, content)) != prepared:
             raise OSError("MP4 sidecar changed before installation")
-        os.replace(source, destination)
+    # Windows cannot rename a file while our read handle is open.
+    os.replace(source, destination)
+    with destination.open("rb") as handle:
         after = os.fstat(handle.fileno())
-        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ) or _content_digest(handle) != content:
             raise OSError("MP4 sidecar changed during installation")
         installed = _cache_path(destination, _signature(after, content))
-        if installed != prepared:
-            with FileLock(str(installed) + ".lock", timeout=30 * 60):
-                os.replace(prepared, installed)
+    if installed != prepared:
+        with FileLock(str(installed) + ".lock", timeout=30 * 60):
+            os.replace(prepared, installed)
 
 
 def mapped_arrays(buffer: np.memmap[Any, Any], item: dict[str, Any]) -> dict[str, NDArray[np.generic]]:
