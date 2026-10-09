@@ -41,6 +41,11 @@ class LeRobotSource:
             if key not in {*DEFAULT_FEATURES, *self.camera_keys}
         }
         self.metadata_files = {}
+        # Conversion is not permission to discard the publisher's attribution
+        # or notices. Keep originals separate from the processed dataset card.
+        for name in ("README.md", "LICENSE", "LICENSE.md", "LICENSE.txt", "NOTICE"):
+            if (self.root / name).is_file():
+                self.metadata_files[f"meta/source/{name}"] = self.root / name
         if (self.root / "meta/subtasks.parquet").exists():
             self.metadata_files["meta/subtasks.parquet"] = self.root / "meta/subtasks.parquet"
 

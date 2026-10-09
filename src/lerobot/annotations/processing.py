@@ -222,6 +222,13 @@ class LeRobotEpisodeSource:
                         owner_outputs[owner] = bindings[stage_name][str(ep)]["atoms"]
                 for path in payload["paths"]:
                     by_file[path][str(ep)] = owner_outputs
+            # info.json declares one dataset-wide schema. Unselected files must
+            # also contain typed empty language columns before that schema is
+            # published: datasets cannot synthesize nested Arrow JSON nulls for
+            # a missing column. This adds no labels or inference to those files.
+            for path in sorted((self.root / "data").rglob("*.parquet")):
+                if {LANGUAGE_PERSISTENT, LANGUAGE_EVENTS} - set(pq.read_schema(path).names):
+                    by_file.setdefault(str(path.relative_to(self.root)), {})
             for path, episodes in sorted(by_file.items()):
                 ownership_path = self.root / _ownership_path(path)
                 yield InputItem(
@@ -428,7 +435,7 @@ class LanguageMaterializer:
         self.root = Path(root)
         self.annotation_config = annotation_config
         self.spec = ModuleSpec(
-            "language_materialize", "1", "asset", {"data": None, "ownership": OWNERSHIP_SCHEMA}
+            "language_materialize", "2", "asset", {"data": None, "ownership": OWNERSHIP_SCHEMA}
         )
 
     def setup(self, context):

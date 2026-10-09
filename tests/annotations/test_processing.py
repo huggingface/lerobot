@@ -86,13 +86,37 @@ def test_runtime_preserves_source_labels_and_resumes(single_episode_root):
 
 
 def test_disabled_families_and_unselected_episodes(fixture_dataset_root):
+    import json
+
+    from lerobot.datasets.feature_utils import get_hf_features_from_features
+    from lerobot.datasets.io_utils import load_info, load_nested_dataset
+
     root = fixture_dataset_root
     untouched = root / "data/chunk-000/file-001.parquet"
-    before = untouched.read_bytes()
+    before = pq.read_table(untouched)
+    info_path = root / "meta/info.json"
+    info = json.loads(info_path.read_text())
+    info["features"] = {
+        field.name: {"dtype": str(field.type), "shape": [1], "names": None} for field in before.schema
+    }
+    info_path.write_text(json.dumps(info))
     cfg = config()
     cfg.only_episodes = (0,)
     run_annotation_pipeline(cfg, root, client_factory=FACTORY)
-    assert untouched.read_bytes() == before
+    after = pq.read_table(untouched)
+    assert after.select(before.column_names).equals(before)
+    assert after["language_persistent"].to_pylist() == [[]] * len(before)
+    assert after["language_events"].to_pylist() == [[]] * len(before)
+    # A partial annotation must remain readable as one dataset, including files
+    # that have no generated labels. This failed with nested JSON Arrow types.
+    loaded = load_nested_dataset(
+        root / "data", features=get_hf_features_from_features(load_info(root).features)
+    )
+    assert len(loaded) == 24
+    assert loaded[12]["language_persistent"] == []
+    normalized = untouched.read_bytes()
+    run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert untouched.read_bytes() == normalized  # no rewrite once its schema is consistent
     cfg.plan.enabled = False
     result = run_annotation_pipeline(cfg, root, client_factory=FACTORY)
     assert not result.written_paths

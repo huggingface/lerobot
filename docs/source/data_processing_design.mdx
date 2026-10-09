@@ -103,6 +103,9 @@ repeat work performed before its last committed batch.
 
 Materialization preserves source-owned atoms and native columns. Generated families
 have Parquet ownership records, so reprocessing replaces only the families it owns.
+Partial annotation adds typed empty language columns to unselected files that lack
+them, keeping the dataset-wide schema readable without generating labels there.
+Files already carrying both language columns need no schema-only rewrite.
 A recoverable local journal rolls forward interrupted commits. It is not an atomic
 snapshot for simultaneous readers: process a separate version while training.
 

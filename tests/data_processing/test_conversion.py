@@ -153,6 +153,8 @@ def test_already_lerobot_native_subtasks(tmp_path):
     info = json.loads(info_path.read_text())
     info["features"]["language_persistent"] = {"dtype": "language", "shape": [1], "names": None}
     info_path.write_text(json.dumps(info))
+    (root / "README.md").write_text("Publisher card; do not infer a licence from this text.\n")
+    (root / "NOTICE").write_text("Original publisher attribution.\n")
     before = next((root / "data").rglob("*.parquet")).read_bytes()
     cfg = ConvertConfig(
         source_factory="lerobot.data_processing.sources.lerobot:LeRobotSource",
@@ -163,6 +165,9 @@ def test_already_lerobot_native_subtasks(tmp_path):
     loaded = LeRobotDataset(cfg.repo_id, root=converted)
     assert int(loaded[0]["subtask_index"]) == 7
     assert loaded[0]["language_persistent"][0]["content"] == "Native subtask"
+    assert (converted / "meta/source/README.md").read_bytes() == (root / "README.md").read_bytes()
+    assert (converted / "meta/source/NOTICE").read_bytes() == (root / "NOTICE").read_bytes()
+    assert not (converted / "meta/source/LICENSE").exists()
     assert next((root / "data").rglob("*.parquet")).read_bytes() == before
 
 
