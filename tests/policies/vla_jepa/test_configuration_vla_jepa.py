@@ -35,6 +35,11 @@ def test_n_action_steps_exceeds_chunk_size_raises() -> None:
         VLAJEPAConfig(chunk_size=4, n_action_steps=8)
 
 
+def test_zero_inference_timesteps_raises() -> None:
+    with pytest.raises(ValueError, match="num_inference_timesteps"):
+        VLAJEPAConfig(num_inference_timesteps=0)
+
+
 def test_too_few_video_frames_raises() -> None:
     with pytest.raises(ValueError, match="video_horizon"):
         VLAJEPAConfig(

@@ -168,6 +168,8 @@ class VLAJEPAConfig(PreTrainedConfig):
             )
         if self.n_action_steps > self.chunk_size:
             raise ValueError("`n_action_steps` must be <= `chunk_size`.")
+        if self.num_inference_timesteps < 1:
+            raise ValueError("`num_inference_timesteps` must be >= 1.")
         if self.num_video_frames < 2 * self.jepa_tubelet_size:
             raise ValueError(
                 f"`video_horizon` ({self.num_video_frames}) must be >= 2 * `jepa_tubelet_size` "
