@@ -202,4 +202,15 @@ Real-Time Chunking is available with `--inference.type=rtc`, as for the other fl
 
 ## License
 
-Apache-2.0, as the upstream LingBot-VLA 2.0 and Qwen3-VL releases.
+The code and the converted checkpoints are Apache-2.0, as the upstream LingBot-VLA 2.0 and Qwen3-VL releases.
+
+Distillation training downloads three frozen teachers under their own licenses (inference never loads them):
+
+| Teacher       | Weights                                      | License                                                                           |
+| ------------- | -------------------------------------------- | --------------------------------------------------------------------------------- |
+| MoGe-2        | `Ruicheng/moge-2-vitb-normal`                | MIT                                                                               |
+| LingBot-Depth | `robbyant/lingbot-vla-v2-6b` (`depth/`)      | Apache-2.0                                                                        |
+| DINO-Video    | `robbyant/lingbot-vla-v2-6b` (`dino_video/`) | [DINOv3 License](https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md) |
+
+The DINO-Video weights are derived from Meta's DINOv3, so training with distillation means using them under the
+DINOv3 License, which among other terms asks you to acknowledge DINOv3 in publications and restricts some end uses.
