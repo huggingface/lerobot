@@ -189,6 +189,10 @@ openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]
+# The vendor ships prebuilt SDK wheels per platform, and the newest build differs by
+# platform: 4.1.1 covers Linux only, while 4.1.0 is the newest Windows wheel.  The floor
+# therefore stays at 4.1.0 so that Windows resolves; Linux installs pick up 4.1.1.
+limx_humanoid = ["limxsdk>=4.1.0"]
 unitree_g1 = [
     # "unitree-sdk2==1.0.1",
     "lerobot[pyzmq-dep]",
