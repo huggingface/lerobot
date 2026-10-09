@@ -85,7 +85,7 @@ echo "task    : $TASK"
 echo "episodes: $NUM_EPISODES x ${EPISODE_TIME_S}s (reset ${RESET_TIME_S}s) at ${FPS}fps"
 echo
 
-exec run lerobot-record \
+exec "${RUN[@]}" lerobot-record \
   --config_path="$CONFIG" \
   --dataset.repo_id="$REPO_ID" \
   --dataset.single_task="$TASK" \

@@ -28,4 +28,4 @@ for dev in /dev/cam_left /dev/cam_right; do
   fi
 done
 
-exec run python "$REPO/config/cart_selftest.py" --config_path="$CONFIG" "$@"
+exec "${RUN[@]}" python "$REPO/config/cart_selftest.py" --config_path="$CONFIG" "$@"

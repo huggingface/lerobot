@@ -54,4 +54,4 @@ case "${1:-}" in
     ;;
 esac
 
-exec run lerobot-teleoperate --config_path="$CONFIG" "${DISPLAY_ARGS[@]+"${DISPLAY_ARGS[@]}"}" "$@"
+exec "${RUN[@]}" lerobot-teleoperate --config_path="$CONFIG" "${DISPLAY_ARGS[@]+"${DISPLAY_ARGS[@]}"}" "$@"

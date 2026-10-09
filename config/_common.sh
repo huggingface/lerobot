@@ -15,7 +15,17 @@ if [[ ! -f "$XLEROBOT/pyproject.toml" ]]; then
   exit 1
 fi
 
-run() { uv run --project "$XLEROBOT" "$@"; }
+# Two spellings of the same thing.
+#
+#   run some-cmd ...          a normal call; the script waits for it
+#   exec "${RUN[@]}" ...      hand the process over and do not come back
+#
+# The array is not decoration. `exec` replaces the shell with an EXECUTABLE,
+# and a shell function is not one, so the obvious-looking `exec run python`
+# dies at startup with "exec: run: not found". Expanding an array in its
+# place hands exec a real command.
+RUN=(uv run --project "$XLEROBOT")
+run() { "${RUN[@]}" "$@"; }
 
 # Fail with something readable instead of a serial traceback. Tonight's
 # lesson: a half-seated USB cable looks exactly like a config error.

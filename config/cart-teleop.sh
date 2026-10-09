@@ -34,5 +34,5 @@ fi
 parse_watch "${1:-}" && shift
 echo
 
-exec run lerobot-teleoperate --config_path="$CONFIG" \
+exec "${RUN[@]}" lerobot-teleoperate --config_path="$CONFIG" \
   "${DISPLAY_ARGS[@]+"${DISPLAY_ARGS[@]}"}" "$@"

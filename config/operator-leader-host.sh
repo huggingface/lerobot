@@ -43,5 +43,5 @@ grep -E '^(remap_arm_prefix|emit_head|emit_base|emit_y_vel):' "$CONFIG" | sed 's
 echo "         ^ these must match the cart's config. A mismatch is silent."
 echo
 
-exec run python -m lerobot_teleoperator_xlerobot_leader_remote.leader_host \
+exec "${RUN[@]}" python -m lerobot_teleoperator_xlerobot_leader_remote.leader_host \
   --config_path="$CONFIG" "$@"

@@ -37,7 +37,7 @@ echo
 if [[ -n "${NO_CAMERAS:-}" ]]; then
   echo "cameras: disabled (NO_CAMERAS set)"
   echo
-  exec run python -m lerobot_robot_xlerobot.xlerobot_host \
+  exec "${RUN[@]}" python -m lerobot_robot_xlerobot.xlerobot_host \
     --robot.id="$ROBOT_ID" \
     --robot.port1="$PORT1" \
     --robot.port2="$PORT2" \
@@ -48,7 +48,7 @@ fi
 
 echo "cameras: from $HOST_CONFIG"
 echo
-exec run python -m lerobot_robot_xlerobot.xlerobot_host \
+exec "${RUN[@]}" python -m lerobot_robot_xlerobot.xlerobot_host \
   --config_path="$HOST_CONFIG" \
   --host.port_zmq_cmd="$ZMQ_CMD" \
   --host.port_zmq_observations="$ZMQ_OBS" \

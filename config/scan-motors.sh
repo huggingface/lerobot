@@ -9,4 +9,4 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
-exec run python "$REPO/config/scan_motors.py" "$@"
+exec "${RUN[@]}" python "$REPO/config/scan_motors.py" "$@"
