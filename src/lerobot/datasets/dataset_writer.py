@@ -217,9 +217,6 @@ class DatasetWriter:
 
         validate_frame(frame, self._meta.features)
 
-        if self.episode_buffer is None:
-            self.episode_buffer = self._create_episode_buffer()
-
         # Automatically add frame_index and timestamp to episode buffer
         frame_index = self.episode_buffer["size"]
         timestamp = frame_index / self._meta.fps
