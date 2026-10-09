@@ -21,7 +21,7 @@ from collections.abc import Callable, Generator, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack, closing
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cached_property, partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -646,7 +646,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         # from_dict applies the declared HF feature encoders (images, nested language/JSON fields)
         # while retaining the episode-sized memory bound.
         dataset = datasets.Dataset.from_dict(table.to_pydict(), features=self._hf_features)
-        dataset.set_transform(hf_transform_to_torch)
+        # Empty numeric lists need metadata to recover their dtype and trailing dimensions.
+        dataset.set_transform(partial(hf_transform_to_torch, features=self.meta.features))
         numeric: dict[str, np.ndarray] = {}
         for key, feature in self._hf_features.items():
             if key in LANGUAGE_COLUMNS:
