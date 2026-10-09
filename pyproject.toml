@@ -272,6 +272,7 @@ lawam = [
 
 # Features
 # Remote inference: supported binding range validated by direct transport tests.
+sim-server = ["eclipse-zenoh>=1.9.0,<1.11.0", "msgpack>=1.1.0,<2.0.0", "PyYAML>=6,<7"]
 remote = ["eclipse-zenoh>=1.9.0,<1.11.0", "msgpack>=1.1.0,<2.0.0"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
@@ -385,6 +386,7 @@ lerobot-replay="lerobot.scripts.lerobot_replay:main"
 lerobot-setup-motors="lerobot.scripts.lerobot_setup_motors:main"
 lerobot-teleoperate="lerobot.scripts.lerobot_teleoperate:main"
 lerobot-convert-dcp="lerobot.scripts.lerobot_convert_dcp:main"
+lerobot-env-server="lerobot.scripts.lerobot_env_server:main"
 lerobot-eval="lerobot.scripts.lerobot_eval:main"
 lerobot-train="lerobot.scripts.lerobot_train:main"
 lerobot-train-tokenizer="lerobot.scripts.lerobot_train_tokenizer:main"
@@ -414,7 +416,7 @@ torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.package-data]
-lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt", "configs/recipes/*.yaml"]
+lerobot = ["envs/*.json", "sims/native/*.json", "annotations/steerable_pipeline/prompts/*.txt", "configs/recipes/*.yaml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -477,6 +479,7 @@ ignore = [
 "src/lerobot/datasets/**" = ["D"]
 "src/lerobot/distributed/**" = ["D"]
 "src/lerobot/envs/**" = ["D"]
+"src/lerobot/sims/native/**" = ["D"]
 "src/lerobot/jobs/**" = ["D"]
 "src/lerobot/model/**" = ["D"]
 "src/lerobot/motors/**" = ["D"]

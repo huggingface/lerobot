@@ -48,8 +48,11 @@ class EvalPipelineConfig:
         if policy_path:
             yaml_overrides = parser.get_yaml_overrides("policy")
             cli_overrides = parser.get_cli_overrides("policy") or []
+            revision = parser.parse_arg("policy.pretrained_revision") or parser.parse_arg(
+                "pretrained_revision", yaml_overrides
+            )
             self.policy = PreTrainedConfig.from_pretrained(
-                policy_path, cli_overrides=yaml_overrides + cli_overrides
+                policy_path, revision=revision, cli_overrides=yaml_overrides + cli_overrides
             )
             self.policy.pretrained_path = Path(policy_path)
 
@@ -57,6 +60,17 @@ class EvalPipelineConfig:
             logger.warning(
                 "No pretrained path was provided, evaluated policy will be built from scratch (random weights)."
             )
+
+        if self.eval.profile:
+            if self.env.type != "sim":
+                raise ValueError("eval.profile requires env.type=sim")
+            from lerobot.env_server.profiles import EvalProfile
+
+            profile = EvalProfile.load(self.eval.profile)
+            self.env.profile = self.eval.profile
+            self.rename_map = profile.feature_mapping
+            if self.policy is not None and hasattr(self.policy, "empty_cameras"):
+                self.policy.empty_cameras = profile.empty_cameras
 
         if not self.job_name:
             if self.env is None:

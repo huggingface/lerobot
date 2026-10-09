@@ -28,6 +28,7 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine
 from lerobot.lerobot_types import RobotObservation
+from lerobot.robots.remote.world import get_world
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.constants import OBS_STR
@@ -47,6 +48,15 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+
+def world_finished(robot) -> bool:
+    """Read terminal status from the latest serialized simulator observation."""
+    world = get_world(robot.inner)
+    if world is not None:
+        status = world.episode_status
+        return status.success or status.terminated or status.truncated
+    return False
 
 
 class RolloutStrategy(abc.ABC):
@@ -361,6 +371,18 @@ class RolloutStrategy(abc.ABC):
             action=action_dict,
             compress_images=cfg.display_compressed_images,
         )
+
+    def _reset_sim_world(self, ctx: RolloutContext) -> None:
+        """Start a new world and discard inference from the previous generation."""
+        robot = ctx.hardware.robot_wrapper
+        world = get_world(robot.inner)
+        if world is not None:
+            engine = self._require_engine()
+            engine.pause()
+            robot.reset_world()
+            engine.reset()
+            self._require_interpolator().reset()
+            engine.set_task(world.task_description)
 
     def setup(self, ctx: RolloutContext) -> None:
         """Strategy-specific initialisation (keyboard listeners, buffers, etc.).

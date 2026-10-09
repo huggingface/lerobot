@@ -45,6 +45,9 @@ def make_env_pre_post_processors(
     ``env_cfg.get_env_processors()``.  The XVLAConfig policy-specific override
     stays here because it depends on the *policy* config, not the env config.
     """
+    if env_cfg.type == "sim":
+        return env_cfg.get_env_processors()
+
     from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 
     if isinstance(policy_cfg, XVLAConfig):
