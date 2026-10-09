@@ -444,6 +444,20 @@ leader.disconnect()
 </hfoption>
 </hfoptions>
 
+## Monitor motor temperatures
+
+The six STS3215 motors provide temperature telemetry. With the Feetech extra installed, read it without recalibrating, configuring motors, or changing torque:
+
+```shell
+lerobot-monitor-temperature --port /dev/tty.usbmodemYOUR_PORT
+```
+
+The monitor polls once per second and warns when each motor reaches **52°C**. Override with `--threshold` and `--interval`. It logs a warning and attempts a macOS/Linux desktop notification on each threshold crossing; notification delivery depends on your desktop permissions. Pause safely and allow cooling yourself: this command does not stop the arm. A telemetry failure stops monitoring with an error rather than reporting the motors as cool.
+
+Add `--display-mode=rerun` or `--display-mode=foxglove` (both use the `viz` extra) to reuse LeRobot's live scalar plots. Foxglove listens on `ws://127.0.0.1:8765`; plot `/observation/state.scalars[:]` using the array labels, or configure an Indicator panel to show a warning at 52°C. Rerun plots `observation.<motor>.temperature`.
+
+This standalone command must exclusively own the serial port. Stop teleoperation/recording before running it; monitoring during those loops would require polling their already-open bus within the same process. The sensor reading is not a calibrated estimate of the winding's hottest temperature, and the warning threshold does not replace the motor's built-in protection.
+
 Congrats 🎉, your robot is all set to learn a task on its own. Start training it by following this tutorial: [Getting started with real-world robots](./il_robots)
 
 > [!TIP]
