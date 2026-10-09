@@ -829,6 +829,8 @@ Create a training configuration file (example available [here](https://huggingfa
 5. Check the other parameters related to the Gaussian Actor in [configuration_gaussian_actor.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/gaussian_actor/configuration_gaussian_actor.py#L79).
 6. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
 
+The learned Gaussian head predicts pre-tanh standard deviations, clamped by `policy_kwargs.std_min` and `policy_kwargs.std_max`. The diagonal variances are the squares of those scales. Correcting the previous interpretation of scales as variances can change action sampling and log-probabilities from existing actor checkpoints. Parameter names and shapes are unchanged; re-evaluate these checkpoints before using them to control a robot.
+
 **Starting the Learner**
 
 First, start the learner server process:
