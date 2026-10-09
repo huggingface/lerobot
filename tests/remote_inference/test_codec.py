@@ -13,7 +13,7 @@ pytest.importorskip("msgpack")
 import msgpack
 
 from lerobot.remote_inference import codec
-from lerobot.remote_inference.codec import CodecLimits, RGBImage, decode_message, encode_message
+from lerobot.remote_inference.codec import CodecLimits, decode_message, encode_message
 from lerobot.remote_inference.protocol import (
     Envelope,
     ErrorCode,
@@ -21,36 +21,11 @@ from lerobot.remote_inference.protocol import (
     ProtocolError,
     deployment_prefix,
 )
+from lerobot.transport.wire import codec as wire_codec
 
 
 def message(body=None):
     return Envelope(MessageType.ACTION, "instance", "session", 4, "request", body or {})
-
-
-def packed_record(value):
-    envelope = msgpack.unpackb(encode_message(message()), raw=False)
-    envelope["body"] = {"value": value}
-    return msgpack.packb(envelope, use_bin_type=True)
-
-
-@pytest.mark.parametrize(
-    "dtype", ["bool", "uint8", "int16", "uint64", "float16", "float32", "float64", ">f4"]
-)
-def test_raw_tensor_exactness_and_ownership(dtype):
-    source = np.arange(12).astype(dtype).reshape(3, 4).T  # deliberately noncontiguous
-    result = decode_message(encode_message(message({"action": source})))
-    actual = result.body["action"]
-    np.testing.assert_array_equal(actual, source)
-    assert actual.dtype.name == source.dtype.name
-    assert actual.flags.writeable
-    actual[0, 0] = 1
-    assert source[0, 0] == 0
-    assert (result.instance_id, result.session_id, result.generation, result.request_id) == (
-        "instance",
-        "session",
-        4,
-        "request",
-    )
 
 
 def test_nested_torch_and_scalars():
@@ -65,178 +40,16 @@ def test_nested_torch_and_scalars():
     assert actual["task"] == "move"
 
 
-@pytest.mark.parametrize("encoding", ["raw", "jpeg"])
-def test_rgb_channel_order(encoding):
-    rgb = np.zeros((16, 16, 3), dtype=np.uint8)
-    rgb[:, :, 0] = 255
-    decoded = decode_message(encode_message(message({"camera": RGBImage(rgb, encoding)}))).body["camera"]
-    assert decoded.shape == rgb.shape
-    assert decoded.dtype == rgb.dtype
-    if encoding == "raw":
-        np.testing.assert_array_equal(decoded, rgb)
-    else:
-        assert np.max(abs(decoded.astype(int) - rgb.astype(int))) <= 2
-
-
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"dtype": "object"},
-        {"dtype": "V10000000"},
-        {"shape": [True, 3]},
-        {"shape": [-1]},
-        {"shape": [1] * 9},
-        {"shape": [1000000]},
-        {"shape": [3]},
-        {"endianness": "native"},
-        {"data": b""},
-        {"data": np.array([np.nan], np.float32).tobytes()},
-    ],
-)
-def test_tensor_metadata_rejected_before_allocation(changes):
-    record = {
-        "__lerobot_type__": "tensor",
-        "dtype": "float32",
-        "endianness": "little",
-        "shape": [1],
-        "data": np.array([1], np.float32).tobytes(),
-    }
-    record.update(changes)
-    with pytest.raises(ProtocolError, match="dtype|dimensions|rank|size|count|finite|byte|Tensor"):
-        decode_message(packed_record(record))
-
-
-def test_jpeg_header_checked_before_decode(monkeypatch):
-    rgb = np.zeros((32, 32, 3), np.uint8)
-    wire = msgpack.unpackb(encode_message(message({"image": RGBImage(rgb, "jpeg")})), raw=False)
-    wire["body"]["image"]["shape"] = [1, 1, 3]
-    # Header comparison must reject the lie without entering NumPy pixel allocation.
-    monkeypatch.setattr(np, "array", lambda *a, **k: pytest.fail("allocated malformed image"))
-    with pytest.raises(ProtocolError, match="header"):
-        decode_message(msgpack.packb(wire, use_bin_type=True))
-
-
-def test_rgb_declared_limit_before_decode():
-    record = {
-        "__lerobot_type__": "rgb",
-        "dtype": "uint8",
-        "encoding": "jpeg",
-        "channel_order": "RGB",
-        "shape": [32, 32, 3],
-        "data": b"not a jpeg",
-    }
-    with pytest.raises(ProtocolError, match="pixel limit"):
-        decode_message(packed_record(record), replace(CodecLimits(), max_image_pixels=16))
-
-
-@pytest.mark.parametrize(
-    "value", [np.array([np.nan]), np.array([np.inf]), float("inf"), torch.tensor([float("nan")])]
-)
-def test_non_finite_rejected(value):
-    with pytest.raises(ProtocolError, match="finite"):
-        encode_message(message({"action": value}))
-
-
-def test_protocol_major_validated_before_tensors(monkeypatch):
-    wire = msgpack.unpackb(encode_message(message({"action": np.ones(4)})), raw=False)
-    wire["version"] = 9000
-    monkeypatch.setattr(np, "frombuffer", lambda *a, **k: pytest.fail("allocated incompatible protocol"))
-    with pytest.raises(ProtocolError) as exc:
-        decode_message(msgpack.packb(wire, use_bin_type=True))
-    assert exc.value.code == ErrorCode.PROTOCOL
-
-
-def test_payload_string_node_and_decoded_limits():
-    with pytest.raises(ProtocolError, match="byte limit"):
-        decode_message(b"x" * 100, replace(CodecLimits(), max_payload_bytes=32))
-    with pytest.raises(ProtocolError, match="String"):
-        encode_message(message({"task": "é" * 20}), replace(CodecLimits(), max_string_bytes=32))
-    with pytest.raises(ProtocolError, match="node count"):
-        decode_message(
-            encode_message(message({"list": list(range(20))})), replace(CodecLimits(), max_nodes=8)
-        )
-    with pytest.raises(ProtocolError, match="Total decoded"):
-        decode_message(
-            encode_message(message({"x": np.zeros(8), "y": np.zeros(8)})),
-            replace(CodecLimits(), max_decoded_bytes=100),
-        )
-
-
-@pytest.mark.parametrize(
-    "payload", [b"\x81\xa1x", b"\xc1", b"\x82\xa1x\xc0\xa1x\xc0", msgpack.packb(msgpack.ExtType(1, b"x"))]
-)
-def test_malformed_messagepack(payload):
-    with pytest.raises(ProtocolError):
-        decode_message(payload)
-
-
 @pytest.mark.parametrize("deployment", ["../x", "user/model", "*", "a b", "a?b", ""])
 def test_invalid_routing_segment(deployment):
     with pytest.raises(ProtocolError):
         deployment_prefix(deployment)
 
 
-def test_session_message_requires_identity():
-    with pytest.raises(ProtocolError, match="require instance"):
-        Envelope(MessageType.OBSERVATION)
-
-
-def test_peek_correlates_malformed_obsolete_body_without_allocating(monkeypatch):
-    from lerobot.remote_inference.codec import peek_envelope
-
-    invalid = {"__lerobot_type__": "tensor", "dtype": "object", "shape": [1], "data": b""}
-    monkeypatch.setattr(np, "frombuffer", lambda *a, **k: pytest.fail("allocated in header peek"))
-    header = peek_envelope(packed_record(invalid))
-    assert header.body == {}
-    assert header.request_id == "request"
-    with pytest.raises(ProtocolError):
-        decode_message(packed_record(invalid))
-
-
-@pytest.mark.parametrize("read", [codec.decode_message, codec.peek_envelope])
-@pytest.mark.parametrize("nested", [[], {}])
-def test_aggregate_nodes_are_bounded_during_unpacking(read, nested, monkeypatch):
-    envelope = msgpack.unpackb(codec.encode_message(Envelope(MessageType.DESCRIBE)), raw=False)
-    # Every individual container is within the item bound. The aggregate is not.
-    envelope["body"] = {"groups": [[nested for _ in range(8)] for _ in range(8)]}
-    payload = msgpack.packb(envelope, use_bin_type=True)
-    limits = replace(codec.CodecLimits(), max_container_items=16, max_nodes=24)
-    completed = []
-    sequence = codec._UnpackBudget.sequence
-
-    def count_sequence(self, items):
-        completed.append(len(items))
-        return sequence(self, items)
-
-    monkeypatch.setattr(codec._UnpackBudget, "sequence", count_sequence)
-    monkeypatch.setattr(codec, "_decode_value", lambda *args: pytest.fail("reached full body decoding"))
-    with pytest.raises(ProtocolError, match="node count.*parsing"):
-        read(payload, limits)
-    # The outer groups list is never completed: parsing stopped within its children.
-    assert len(completed) < 64
-
-
-def test_wire_node_budget_accepts_small_mixed_containers():
-    source = Envelope(MessageType.DESCRIBE, body={"values": [[], {}, [1], {"value": 2}]})
-    encoded = codec.encode_message(source)
-    decoded = codec.decode_message(encoded, replace(codec.CodecLimits(), max_nodes=32))
-    assert decoded == source
-
-
-def test_noncanonical_boolean_wire_bytes_are_rejected():
-    source = Envelope(MessageType.DESCRIBE, body={"mask": np.array([False, True])})
-    envelope = msgpack.unpackb(codec.encode_message(source), raw=False)
-    envelope["body"]["mask"]["data"] = bytes([0, 2])
-    with pytest.raises(ProtocolError, match="Boolean tensor bytes must be 0 or 1") as exc:
-        codec.decode_message(msgpack.packb(envelope, use_bin_type=True))
-    assert exc.value.code is ErrorCode.MALFORMED
-
-
-@pytest.mark.parametrize("as_tensor", [False, True])
-def test_boolean_encoding_normalizes_valid_local_backing_bytes(as_tensor):
+def test_boolean_encoding_normalizes_valid_local_backing_bytes():
     storage = np.array([[0, 9, 2], [255, 9, 1]], dtype=np.uint8)
     mask = storage.view(np.bool_)[:, ::2]  # Valid bool values, noncanonical and noncontiguous storage.
-    values = torch.from_numpy(mask) if as_tensor else mask
+    values = torch.from_numpy(mask)
     encoded = codec.encode_message(Envelope(MessageType.DESCRIBE, body={"mask": values}))
     envelope = msgpack.unpackb(encoded, raw=False)
     assert envelope["body"]["mask"]["data"] == b"\x00\x01\x01\x01"
@@ -247,3 +60,30 @@ def test_boolean_encoding_normalizes_valid_local_backing_bytes(as_tensor):
     assert decoded.tobytes() == b"\x00\x01\x01\x01"
     torch.testing.assert_close(torch.from_numpy(decoded).eq(True), torch.from_numpy(decoded))
     np.testing.assert_array_equal(storage, [[0, 9, 2], [255, 9, 1]])
+
+
+@pytest.mark.parametrize("dtype", ["float32", "bool", "uint8"])
+def test_torch_adapter_matches_numpy_wire_bytes_and_cross_decoding(dtype):
+    array = np.arange(12).astype(dtype).reshape(3, 4).T
+    numpy_message = message({"values": {"state": array}, "task": "reach"})
+    torch_message = message({"values": {"state": torch.from_numpy(array)}, "task": "reach"})
+    numpy_bytes = wire_codec.encode_message(numpy_message)
+    assert encode_message(numpy_message) == numpy_bytes
+    assert encode_message(torch_message) == numpy_bytes
+    for decode in (decode_message, wire_codec.decode_message):
+        actual = decode(numpy_bytes).body["values"]["state"]
+        np.testing.assert_array_equal(actual, array)
+        assert actual.flags.writeable
+        assert not np.shares_memory(actual, array)
+
+
+@pytest.mark.parametrize("encoder", [encode_message, wire_codec.encode_message])
+def test_both_encoders_enforce_payload_limits(encoder):
+    with pytest.raises(ProtocolError) as exc:
+        encoder(message({"state": np.zeros(32, np.float32)}), replace(CodecLimits(), max_payload_bytes=64))
+    assert exc.value.code is ErrorCode.MALFORMED
+
+
+def test_non_finite_torch_rejected():
+    with pytest.raises(ProtocolError, match="finite"):
+        encode_message(message({"action": torch.tensor([float("nan")])}))
