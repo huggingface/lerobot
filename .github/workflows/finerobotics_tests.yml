@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        tier: [base, dataset]
+        tier: [base, dataset, viz]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -36,6 +36,9 @@ jobs:
       - name: Install dataset dependencies
         if: matrix.tier == 'dataset'
         run: uv sync --locked --extra test --extra dev --extra dataset
+      - name: Install visualization dependencies without dataset
+        if: matrix.tier == 'viz'
+        run: uv sync --locked --extra test --extra dev --extra viz
       - name: Focused processing and compatibility tests
         run: uv run --no-sync pytest tests/data_processing tests/annotations tests/jobs tests/scripts/test_lerobot_annotate.py -q
       - name: Lint processing code
