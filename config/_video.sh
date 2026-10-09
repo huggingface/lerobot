@@ -3,13 +3,21 @@
 # The cart has the cameras; the operator is at the Pi. lerobot's display
 # layer can send either way round, so both are offered:
 #
-#   --watch            push to a rerun viewer on the operator station.
-#                      Preferred: the viewer runs on the Pi and renders
-#                      there, so the Pi's display does the work and you get
-#                      the full blueprint - a panel per camera plus action
-#                      and observation time series.
-#                      Start `rerun` on the Pi FIRST, listening on
-#                      $WATCH_PORT; the cart connects out to it.
+#   --watch            push to a rerun viewer, by default on the Mac. You
+#                      get lerobot's full blueprint - a panel per camera
+#                      plus action and observation time series - rendered
+#                      wherever the viewer runs.
+#
+#                      START THE VIEWER FIRST; the cart connects out to it
+#                      and init_rerun runs during startup, so nothing
+#                      listening means the launch fails rather than
+#                      carrying on without video.
+#
+#                        uvx --from rerun-sdk rerun --port 9876
+#
+#                      Override with WATCH_HOST=<ip>. If the cart cannot
+#                      connect, the viewer may be bound to localhost only -
+#                      check `rerun --help` for a bind option.
 #
 #   --watch=web        serve Foxglove from the cart on :8765 and open a
 #                      browser on the Pi. No viewer install needed, but it
@@ -24,7 +32,12 @@
 # is written from the uncompressed originals on this machine - so costing
 # them some quality to keep the link responsive is free.
 
-WATCH_HOST="${WATCH_HOST:-192.168.1.100}"   # rosie
+# The Mac, not rosie. The operator station is headless by design - it reads
+# two serial buses and a HID device and needs no display - and the video
+# originates on the cart anyway, so the viewer can be any machine on the
+# network. The Mac is the better screen and does not compete with the
+# leader host for the Pi's CPU during a recording run.
+WATCH_HOST="${WATCH_HOST:-192.168.1.52}"    # the Mac
 WATCH_PORT="${WATCH_PORT:-9876}"
 
 DISPLAY_ARGS=()
