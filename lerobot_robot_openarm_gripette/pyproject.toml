@@ -17,9 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# examples/run_grabette_policy.py: placo IK on Pollen's OpenArm + Gripette URDF.
+# Grabette policy runners: rollout/data visualization and placo IK on the OpenArm + Gripette URDF.
 policy = [
-    "lerobot[kinematics]>=0.6.2,<0.7.0",
+    "lerobot[dataset,kinematics,viz]>=0.6.2,<0.7.0",
     "openarm-gripette-model @ git+https://github.com/pollen-robotics/grabette.git@develop#subdirectory=integrations/openarm/openarm_gripette_model",
 ]
 

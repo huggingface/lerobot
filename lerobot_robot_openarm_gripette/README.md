@@ -54,12 +54,15 @@ two Gripette motors with `gripette.grasp_projection`.
 
 ```bash
 pip install -e "lerobot_robot_openarm_gripette[policy]"
-python lerobot_robot_openarm_gripette/examples/run_grabette_policy.py \
-    --port can0 --gripette 172.18.7.107:50051 --dry_run
+python lerobot_robot_openarm_gripette/examples/run_grabette_rollout.py \
+    --port can0 --gripette 172.18.7.107:50051 \
+    --fps 10 --n_action_steps 10 --display_data --dry_run
 ```
 
-- Start with `--dry_run`: it runs the policy and IK on live camera frames and prints how far each
-  chunk would move the camera, without moving anything.
+- `run_grabette_rollout.py` uses LeRobot's standard synchronous rollout engine and robot processors.
+  `--display_data` opens Rerun with the camera, policy commands, and robot state.
+- Start with `--dry_run`: it runs the policy and IK on live camera frames without moving anything.
+  Remove it only after checking the targets in Rerun.
 - After connecting, the runner disables only the arm torque. Support the arm, place the Gripette
   where the demonstrations started, and press ENTER. The runner enables torque, holds the measured
   pose, prints its joints and `oak_l` position, then requires a second ENTER before policy execution.
@@ -75,7 +78,8 @@ python lerobot_robot_openarm_gripette/examples/run_grabette_policy.py \
 - Predictions are flushed to a timestamped JSONL file under `outputs/openarm_gripette_policy`.
   Each action records the raw policy output, chunk/action indices, IK and gripper targets, and
   whether it was sent to the robot. Cartesian, strategy, and closure commands are also printed live
-  in the terminal. Override the directory with `--log_dir`.
+  in the terminal. Override the directory with `--log_dir`. This JSONL logging remains available in
+  the legacy `run_grabette_policy.py` runner.
 
 ## Tests
 

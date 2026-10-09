@@ -173,6 +173,14 @@ def _align_to_checkpoint_order(
     return reordered
 
 
+def _policy_action_features(
+    hardware_features: dict[str, type | tuple], policy_action_names: list[str] | None
+) -> dict[str, type | tuple]:
+    if not policy_action_names or set(hardware_features) == set(policy_action_names):
+        return _align_to_checkpoint_order(hardware_features, policy_action_names, what="action")
+    return dict.fromkeys(policy_action_names, float)
+
+
 def _assert_state_matches_action_order(dataset_features: dict, ordered_action_keys: list[str]) -> None:
     """Reject a state layout that is a permutation of the action dispatch order.
 
@@ -453,13 +461,13 @@ def build_rollout_context(
     # a no-op for them. Without the .vel keys the base velocities are silently
     # dropped from dataset_features[ACTION]/ordered_action_keys and the base never moves.
     action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
-    action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
+    policy_action_features = _policy_action_features(action_features_hw, checkpoint_order)
 
     # The action side is always needed: sync inference reads action names from
     # ``dataset_features[ACTION]`` to map policy tensors back to robot actions.
     action_dataset_features = aggregate_pipeline_dataset_features(
         pipeline=teleop_action_processor,
-        initial_features=create_initial_features(action=action_features_hw),
+        initial_features=create_initial_features(action=policy_action_features),
         use_videos=cfg.dataset.video if cfg.dataset else True,
     )
     # Observation-side aggregation is needed because of build_dataset_frame
@@ -470,8 +478,7 @@ def build_rollout_context(
     )
     dataset_features = combine_feature_dicts(action_dataset_features, observation_dataset_features)
     hw_features = hw_to_dataset_features(observation_features_hw, "observation")
-    # ``action_features_hw`` is already in checkpoint order, so it *is* the dispatch order.
-    ordered_action_keys = list(action_features_hw)
+    ordered_action_keys = list(policy_action_features)
     _assert_state_matches_action_order(dataset_features, ordered_action_keys)
 
     # Validate visual features if no rename_map is active
