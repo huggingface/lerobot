@@ -190,9 +190,9 @@ class SOFollower(Robot):
                 self.bus.write("D_Coefficient", motor, self.config.position_d_coefficient)
 
                 if motor == "gripper":
-                    self.bus.write("Max_Torque_Limit", motor, 500)  # 50% of max torque to avoid burnout
-                    self.bus.write("Protection_Current", motor, 250)  # 50% of max current to avoid burnout
-                    self.bus.write("Overload_Torque", motor, 25)  # 25% torque when overloaded
+                    self.bus.write("Max_Torque_Limit", motor, self.config.gripper_max_torque_limit)
+                    self.bus.write("Protection_Current", motor, self.config.gripper_protection_current)
+                    self.bus.write("Overload_Torque", motor, self.config.gripper_overload_torque)
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
