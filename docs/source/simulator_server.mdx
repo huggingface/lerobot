@@ -1,0 +1,97 @@
+# Simulator servers
+
+Simulator servers keep physics, assets, rendering, native controllers, and their dependency pins in a separate process. The policy environment runs inference, saved processors, evaluation, and rollout. Both clients use the same canonical observations and actions.
+
+`lerobot-eval` supports the simulator server through `--env.type=sim`. Existing in-process environment types remain available for compatibility. New benchmark integrations should use the server path.
+
+## Shared transport contracts
+
+Simulator serving and remote policy inference use the same `transport/wire` exchanges, envelopes, feature schemas, bounded NumPy/RGB codec, reply validation, and array validation. Remote inference adapts torch tensors to NumPy before encoding; both paths decode through the shared codec. The shared modules import neither torch nor the policy and remote-inference packages.
+
+Inference addresses, execution identity fields, and admission-denial explanations live in `remote_inference/protocol.py`, which explicitly re-exports the common protocol types for existing callers. Simulator addressing stays in `env_server/protocol.py`. Environment addressing now uses `lerobot/env/v1/deployments/{deployment}`. The former simulator wire namespace is removed; update both server and client together. Inference addressing and messages remain unchanged.
+
+Reply validation checks request identity and generation before interpreting peer errors or successful reply types. Feature checks compare names, shapes, dtypes, modalities, component order, and semantics after explicit client aliases are applied. Checkpoint image layout conversion and simulator transition status remain service-specific. The clients retain their own cancellation, deadlines, and session failure handling; shared validation introduces no automatic retries.
+
+The migration is awaiting GPU acceptance and corrected benchmark checkpoint metadata. See [the acceptance record](https://github.com/huggingface/lerobot/blob/main/benchmarks/ACCEPTANCE.md) for the known schema mismatches. Admission stays strict; the pinned legacy smoke checkpoints currently fail it.
+
+## Start a simulator with Docker
+
+Run from the repository root:
+
+```bash
+uv run scripts/run_sim.py docker/sims/configs/libero.yaml
+```
+
+The launcher uses `docker/sims/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Its isolated uv environment installs only PyYAML; the host does not need simulator or policy dependencies to launch Docker. Swap the YAML to select another backend. The client must use a compatible checkpoint, deployment, and profile.
+
+Overrides accept existing dotted keys, parse values as YAML, and leave the source file unchanged. The launcher retains the effective configuration in a temporary cache for container restarts; rerun it after a host reboot. Switching configuration recreates the server and ends active sessions. Add `--no-build` to reuse an image or `--stop` to shut down the server.
+
+The simulator container requires working Docker GPU access for EGL rendering. For the policy running on the host, install the appropriate policy extras and use the host's CUDA installation.
+
+## Evaluate a checkpoint
+
+Install the policy extras in your host environment, then choose a checkpoint and profile compatible with the simulator configuration. The checkpoint must contain correct feature metadata. Connect evaluation to the server started above:
+
+```bash
+uv run --no-sync python -m lerobot.scripts.lerobot_eval \
+  --policy.path=/path/to/corrected-checkpoint \
+  --policy.device=cuda \
+  --env.type=sim --env.endpoint=tcp/127.0.0.1:7448 --env.deployment=libero \
+  --env.task=libero_spatial --env.task_ids='[0]' \
+  --eval.profile=/path/to/matching-profile.yaml \
+  --eval.n_episodes=1 --eval.batch_size=1 \
+  --output_dir=outputs/eval_libero
+```
+
+Set `HF_TOKEN` for authenticated checkpoint downloads. The checked-in benchmark manifest lists tasks, checkpoints, pinned revisions, profiles, and image build arguments; CI builds and starts its simulator sidecars independently of the local launcher.
+
+Profiles declare camera mappings, state/action component order, controller semantics, and explicit empty-camera configuration. The checkpoint owns model feature shapes. Admission fails before stepping when these declarations disagree. Image normalization and conversion to model tensors occur on the policy side; simulator images remain HWC uint8 on the wire.
+
+The gym client advances the simulator in lockstep. Completed worlds retain their terminal transition until the next explicit reset; stepping another world in the batch cannot restart them. RPC mutations are never retried. After an ambiguous timeout, close the client and create a new session.
+
+## Run a policy through the Robot API
+
+The same environment opens a one-world realtime session through `RemoteRobot`, which inherits the same `Robot` API as local hardware drivers. Existing local hardware configurations continue to connect directly, without a server:
+
+For local policy inference:
+
+```bash
+uv run --no-sync python -m lerobot.scripts.lerobot_rollout \
+  --robot.type=remote --robot.endpoint=tcp/127.0.0.1:7448 \
+  --robot.deployment=libero --robot.profile=/path/to/matching-profile.yaml \
+  --robot.task=libero_spatial --robot.task_id=0 \
+  --policy.path=/path/to/corrected-checkpoint \
+  --device=cuda --fps=20 --inference.type=sync \
+  --display_data=true --display_mode=rerun \
+  --return_to_initial_position=false --play_sounds=false
+```
+
+`--no-sync` requires an installed worktree environment with the selected policy extras. The Python module invocation selects that interpreter explicitly. The older SmolVLA smoke checkpoint requires corrected metadata before it can pass strict admission.
+
+Use the existing rollout strategy and dataset options to record episodes. The episodic strategy resets the world between episodes and stops when the simulator reports success or termination. Recordings use the world's task description.
+
+For remote inference, use `--inference.type=remote` and the existing remote-inference endpoint, deployment, and semantics options. Configure the policy server with the simulator's exact feature names, shapes, ordered components, and semantic conventions. Its saved processors must accept these canonical values. Camera names can be mapped by the robot profile. The example `docker/sims/policy_libero.yaml` declares the LIBERO server schema; adapt its checkpoint and saved processors before deployment. Start it independently with `lerobot-policy-server --config=docker/sims/policy_libero.yaml`. It is a schema template whose legacy smoke checkpoint still requires corrected metadata, not a ready-to-run policy deployment.
+
+Local RTC uses `--inference.type=rtc` with the ordinary RTC policy settings. Delta controllers expose command hold: zero movement and the retained gripper command. An action RPC replies after a physics tick with execution feedback, never on queue admission. Feedback includes the command request ID, generation, sequence, applied values, server monotonic timestamps, and an `advanced` mask. Completed worlds have `advanced=false` and zero placeholders for newly applied values; no new command reaches those worlds. Excess pending commands receive BUSY rather than replacing accepted commands. A delta command is consumed once per physics tick; the server holds zero delta between commands. Position controllers retain applied position targets. Simulator command faults propagate to rollout's hardware-failure latch.
+
+Rollout uses wall-clock timing. Lockstep rollout, modeled remote latency, and calibrated physical-robot twins are future work; the gym face already supports lockstep benchmarks.
+
+## Start a server outside Docker
+
+Install the simulator's native dependencies in an isolated environment, install LeRobot with `--no-deps`, and install `docker/sims/requirements.txt`. Then run:
+
+```bash
+lerobot-env-server --config=docker/sims/configs/metaworld.yaml
+```
+
+LIBERO runtime images use converted NumPy initial-state files. The image build converts trusted upstream assets with `scripts/ci/convert_sim_assets.py`; the server rejects missing converted files. RoboTwin and RoboMME require their own torch for native planning and ManiSkill, respectively. Their torch installations are isolated from the policy environment.
+
+## Add a benchmark
+
+1. Add a backend factory under `lerobot.sims.native` and a NumPy adapter that emits canonical dataset values.
+2. Declare the native factory options, controller convention, state/action names, gripper indices, FPS, and task selection in a simulator YAML configuration.
+3. Add a simulator Dockerfile with pinned dependencies and asset revisions. Run a torch-disabled import guard unless the native simulator requires torch.
+4. Add a checkpoint profile and an entry to `benchmarks/benchmarks.yaml`.
+5. Test adapter parity and seeded transitions before comparing checkpoint results. Record any baseline changes caused by simulator version changes.
+
+CI builds the policy image from the tested checkout and dependency lock. Simulator image identities include backend code, shared wire contracts, build arguments, and asset/dependency declarations. Persistent BuildKit caches retain heavy native builds. CI fails on crashes, admission mismatch, or missing/invalid evaluation metrics; 0% success is a valid smoke result. Statistical baseline gating remains separate work.

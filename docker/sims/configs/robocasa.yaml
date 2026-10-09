@@ -1,0 +1,53 @@
+deployment: robocasa
+sim:
+  type: robocasa
+  task: CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle
+  fps: 20
+  control: delta
+  semantics: robocasa-delta-v1
+  kwargs:
+    gym_kwargs:
+      obs_type: pixels_agent_pos
+      render_mode: rgb_array
+      observation_height: 256
+      observation_width: 256
+      visualization_height: 512
+      visualization_width: 512
+    camera_name: robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right
+    episode_length: null
+    obj_registries:
+    - lightwheel
+  state_names:
+  - base.position.x
+  - base.position.y
+  - base.position.z
+  - base.quaternion.x
+  - base.quaternion.y
+  - base.quaternion.z
+  - base.quaternion.w
+  - eef.position.x
+  - eef.position.y
+  - eef.position.z
+  - eef.quaternion.x
+  - eef.quaternion.y
+  - eef.quaternion.z
+  - eef.quaternion.w
+  - gripper.left.pos
+  - gripper.right.pos
+  action_names:
+  - base.motion.x
+  - base.motion.y
+  - base.motion.z
+  - base.motion.yaw
+  - controller.mode
+  - eef.delta.x
+  - eef.delta.y
+  - eef.delta.z
+  - eef.delta.rotation.x
+  - eef.delta.rotation.y
+  - eef.delta.rotation.z
+  - gripper.command
+  gripper_indices:
+  - 11
+  command_retention_indices:
+  - 4

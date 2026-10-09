@@ -66,6 +66,10 @@ class InferenceRobot(Protocol):
         """Validate and enable the robot's local waiting behavior."""
         ...
 
+    def configure_hold(self) -> None:
+        """Enable the driver's declared command or position hold behavior."""
+        ...
+
 
 @dataclass(frozen=True)
 class PolicyQuery:

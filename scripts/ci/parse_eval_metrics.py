@@ -46,14 +46,14 @@ def _safe_float(v: float | int | None) -> float | None:
     if v is None:
         return None
     f = float(v)
-    return None if math.isnan(f) else f
+    return None if not math.isfinite(f) else f
 
 
 def _safe_int(v: float | int | None) -> int | None:
     if v is None:
         return None
     f = float(v)
-    return None if math.isnan(f) else int(f)
+    return None if not math.isfinite(f) or not f.is_integer() else int(f)
 
 
 def _extract_metrics(info: dict) -> tuple[float | None, int | None, float | None, float | None]:
@@ -105,7 +105,7 @@ def main() -> int:
         try:
             info = json.loads(eval_info_path.read_text())
             pc_success, n_episodes, avg_sum_reward, eval_s = _extract_metrics(info)
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError, OverflowError) as exc:
             print(f"[parse_eval_metrics] Warning: could not parse eval_info.json: {exc}", file=sys.stderr)
     else:
         print(
@@ -135,11 +135,21 @@ def main() -> int:
         "task_descriptions": task_descriptions,
     }
 
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
     out_path = artifacts_dir / "metrics.json"
     out_path.write_text(json.dumps(metrics, indent=2))
     print(f"[parse_eval_metrics] Written: {out_path}")
     print(json.dumps(metrics, indent=2))
 
+    if (
+        pc_success is None
+        or not math.isfinite(pc_success)
+        or not 0 <= pc_success <= 100
+        or n_episodes is None
+        or n_episodes <= 0
+    ):
+        print("[parse_eval_metrics] Missing or invalid success/episode metrics", file=sys.stderr)
+        return 1
     return 0
 
 

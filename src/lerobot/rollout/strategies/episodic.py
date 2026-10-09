@@ -40,6 +40,7 @@ from lerobot.common.control_utils import (
 )
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.robots.remote.world import get_world
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -142,6 +143,11 @@ class EpisodicStrategy(RolloutStrategy):
                         break
 
                     # Reset policy state at episode start (discard leftover hidden state / queue)
+                    world = get_world(robot.inner)
+                    if world is not None:
+                        engine.pause()
+                        robot.reset_world()
+                        engine.set_task(world.task_description)
                     engine.reset()
                     interpolator.reset()
                     # A reset interpolator re-primes over two consecutive inference
@@ -167,7 +173,9 @@ class EpisodicStrategy(RolloutStrategy):
                     ):
                         log_say("Reset the environment", play_sounds)
 
-                        if teleop:
+                        if get_world(robot.inner) is not None:
+                            pass
+                        elif teleop:
                             # Smooth handover so the transition to teleop control is jerk-free.
                             # For actuated teleops: drive the leader arm to the follower's current
                             # position so the operator takes over without fighting the arm.
@@ -291,6 +299,11 @@ class EpisodicStrategy(RolloutStrategy):
             self._require_engine().pump_query(obs_processed)
             timer.wait()
             timestamp = time.perf_counter() - start_t
+            world = get_world(robot.inner)
+            if world is not None:
+                status = world.episode_status
+                if status.success or status.terminated or status.truncated:
+                    break
 
     def _reset_loop(
         self,
@@ -305,6 +318,8 @@ class EpisodicStrategy(RolloutStrategy):
         display_compressed: bool,
     ) -> None:
         """Reset-phase loop: teleop drives the robot if available, no recording."""
+        if get_world(robot.inner) is not None:
+            return  # The next episode performs an explicit reset under the wrapper lock.
         processors = ctx.processors
         control_interval = 1.0 / fps
 

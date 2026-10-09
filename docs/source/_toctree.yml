@@ -117,6 +117,8 @@
     title: Control & Train Robots in Sim (LeIsaac)
   title: "Simulation"
 - sections:
+  - local: simulator_server
+    title: Simulator servers
   - local: adding_benchmarks
     title: Adding a New Benchmark
   - local: libero

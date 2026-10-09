@@ -289,7 +289,12 @@ def rollout(
     try:
         while not np.all(done) and step < max_steps:
             # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-            observation = preprocess_observation(observation)
+            if getattr(env, "canonical_observations", False):
+                from lerobot.envs.sim_client import prepare_canonical_observation
+
+                observation = prepare_canonical_observation(observation)
+            else:
+                observation = preprocess_observation(observation)
             if return_observations:
                 all_observations.append(deepcopy(observation))
 
@@ -407,7 +412,12 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
-        observation = preprocess_observation(observation)
+        if getattr(env, "canonical_observations", False):
+            from lerobot.envs.sim_client import prepare_canonical_observation
+
+            observation = prepare_canonical_observation(observation)
+        else:
+            observation = preprocess_observation(observation)
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
@@ -794,8 +804,17 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         trust_remote_code=cfg.trust_remote_code,
     )
 
-    logging.info("Making policy.")
+    if cfg.env.type == "sim":
+        from lerobot.env_server.profiles import EvalProfile
 
+        profile = (
+            EvalProfile.load(cfg.env.profile)
+            if cfg.env.profile
+            else EvalProfile(cfg.env.descriptor.semantics, control=cfg.env.descriptor.control)
+        )
+        profile.validate_policy(cfg.env.descriptor, cfg.policy)
+
+    logging.info("Making policy.")
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
@@ -813,6 +832,7 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
+        pretrained_revision=cfg.policy.pretrained_revision,
         preprocessor_overrides=preprocessor_overrides,
     )
 
@@ -860,6 +880,15 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
             logger.info(task_group_info)
     # Close all vec envs
     close_envs(envs)
+
+    if cfg.env.type == "sim":
+        descriptions = {
+            f"{group}_{task_id}": env.latest.task[0]
+            for group, tasks in envs.items()
+            for task_id, env in tasks.items()
+            if env.latest is not None
+        }
+        (Path(cfg.output_dir) / "task_descriptions.json").write_text(json.dumps(descriptions, indent=2))
 
     # Save info
     with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:

@@ -20,12 +20,11 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from dataclasses import asdict, fields
+from dataclasses import asdict, replace
 from queue import Empty
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-import numpy as np
 import torch
 
 from lerobot.inference import (
@@ -37,6 +36,9 @@ from lerobot.inference import (
     ObservationSnapshot,
     PolicyCapabilities,
 )
+from lerobot.transport.wire.client import decode_reply, query_reply
+from lerobot.transport.wire.features import feature_mismatch, validate_array
+from lerobot.transport.wire.protocol import validate_reply
 from lerobot.transport.zenoh import (
     BoundedSubscriber,
     PresenceToken,
@@ -53,7 +55,7 @@ from .chunk_contract import (
     validate_blend_settings,
     validate_chunk_contract,
 )
-from .codec import RGBImage, decode_message, encode_message, peek_envelope
+from .codec import RGBImage, decode_message, encode_message
 from .protocol import (
     IDENTITY_KEYS,
     PROTOCOL_VERSION,
@@ -88,14 +90,9 @@ def parse_capabilities(value: dict[str, Any]) -> PolicyCapabilities:
 
 def _compare_feature(actual: FeatureSpec, expected: FeatureSpec) -> None:
     """Identify the first incompatible field without dumping unrelated schemas."""
-    for field in fields(FeatureSpec):
-        actual_value, expected_value = getattr(actual, field.name), getattr(expected, field.name)
-        if actual_value != expected_value:
-            raise ProtocolError(
-                ErrorCode.INCOMPATIBLE,
-                f"Feature {expected.name!r} field {field.name!r} differs: "
-                f"client={actual_value!r}, server={expected_value!r}",
-            )
+    mismatch = feature_mismatch(actual, expected)
+    if mismatch:
+        raise ProtocolError(ErrorCode.INCOMPATIBLE, mismatch)
 
 
 class RemoteClient:
@@ -163,11 +160,7 @@ class RemoteClient:
             descriptors: dict[str, dict] = {}
             for payload in replies:
                 response = decode_message(payload)
-                if (
-                    response.message_type is not MessageType.DESCRIPTOR
-                    or response.request_id != request.request_id
-                ):
-                    raise ProtocolError(ErrorCode.MALFORMED, "Invalid deployment descriptor response")
+                validate_reply(response, request, MessageType.DESCRIPTOR, check_instance=False)
                 descriptor = response.body
                 if (
                     descriptor.get("instance_id") != response.instance_id
@@ -216,48 +209,20 @@ class RemoteClient:
         cancelled: Callable[[], bool] | None = None,
     ) -> Envelope:
         try:
-            replies = (
-                self.transport.query(key, encode_message(request), timeout)
-                if cancelled is None
-                else self.transport.query(key, encode_message(request), timeout, cancelled=cancelled)
+            return query_reply(
+                self.transport,
+                key,
+                request,
+                timeout,
+                expected,
+                encoder=encode_message,
+                check_session=expected is not MessageType.ACCEPTED,
+                cancelled=cancelled,
             )
         except QueryCancelled as exc:
             if not self.present:
                 raise ConnectionError("Server presence was lost during control acknowledgement") from exc
             raise RequestCancelled(str(exc)) from exc
-        if len(replies) != 1:
-            raise TimeoutError("Expected one control reply within its deadline")
-        response = decode_message(replies[0])
-        self._correlate(response, request, session=expected is not MessageType.ACCEPTED)
-        self._raise_error(response)
-        if response.message_type is not expected:
-            raise ProtocolError(ErrorCode.MALFORMED, "Unexpected control reply type")
-        return response
-
-    @staticmethod
-    def _raise_error(response: Envelope) -> None:
-        if response.message_type is MessageType.ERROR:
-            try:
-                code = ErrorCode(response.body["code"])
-            except (KeyError, ValueError, TypeError) as exc:
-                raise ProtocolError(ErrorCode.MALFORMED, "Invalid error code") from exc
-            details = response.body.get("details")
-            if details is not None and not isinstance(details, dict):
-                raise ProtocolError(ErrorCode.MALFORMED, "Invalid error details")
-            message = response.body.get("message", "Remote inference error")
-            if not isinstance(message, str):
-                raise ProtocolError(ErrorCode.MALFORMED, "Invalid error message")
-            raise ProtocolError(code, message, details=details)
-
-    @staticmethod
-    def _correlate(response: Envelope, request: Envelope, *, session: bool = True) -> None:
-        if (
-            response.instance_id != request.instance_id
-            or response.request_id != request.request_id
-            or response.generation != request.generation
-            or (session and response.session_id != request.session_id)
-        ):
-            raise ProtocolError(ErrorCode.STALE, "Reply context differs from the active request")
 
     def admit(
         self,
@@ -488,14 +453,9 @@ class RemoteClient:
             except Empty:
                 continue
             # Obsolete traffic has no authority to refresh deadlines or permission.
-            header = peek_envelope(payload)
-            try:
-                self._correlate(header, request)
-            except ProtocolError:
-                continue
-            response = decode_message(payload)
-            self._raise_error(response)
-            return response
+            response = decode_reply(payload, request, discard_stale=True)
+            if response is not None:
+                return response
         raise TimeoutError("Remote inference request deadline exceeded")
 
     def infer(self, request: ChunkRequest, *, cancelled: Callable[[], bool] = lambda: False) -> ActionChunk:
@@ -531,21 +491,23 @@ class RemoteClient:
         model = response.body.get("model_actions")
         caps = self.capabilities
         steps = caps.execution_steps if request.mode is ExecutionMode.CHUNK else caps.prediction_steps
-        if (
-            not isinstance(actions, np.ndarray)
-            or actions.shape != (steps, *caps.action_feature.shape)
-            or actions.dtype.name != "float32"
-            or not np.isfinite(actions).all()
-            or response.body.get("execution_steps") != steps
-        ):
+        try:
+            validate_array(actions, replace(caps.action_feature, dtype="float32"), leading_shape=(steps,))
+        except ValueError as exc:
+            raise ProtocolError(ErrorCode.MALFORMED, "Invalid canonical action chunk") from exc
+        if response.body.get("execution_steps") != steps:
             raise ProtocolError(ErrorCode.MALFORMED, "Invalid canonical action chunk")
-        if request.mode is not ExecutionMode.CHUNK and (
-            not isinstance(model, np.ndarray)
-            or model.shape != (steps, caps.model_action_dim or caps.action_feature.shape[0])
-            or model.dtype.name != "float32"
-            or not np.isfinite(model).all()
-        ):
-            raise ProtocolError(ErrorCode.MALFORMED, "Missing or invalid RTC model continuation")
+        if request.mode is not ExecutionMode.CHUNK:
+            model_feature = replace(
+                caps.action_feature,
+                shape=(caps.model_action_dim or caps.action_feature.shape[0],),
+                dtype="float32",
+                names=(),
+            )
+            try:
+                validate_array(model, model_feature, leading_shape=(steps,))
+            except ValueError as exc:
+                raise ProtocolError(ErrorCode.MALFORMED, "Missing or invalid RTC model continuation") from exc
         provenance = ActionProvenance(
             request.observation.capture_time,
             request.observation.task,

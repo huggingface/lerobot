@@ -39,6 +39,7 @@ class ThreadSafeRobot:
         self._robot = robot
         self._lock = Lock()
         self._position_hold_enabled = False
+        self._command_hold_enabled = False
         self._observed_positions: dict[str, float] = {}
         self._last_applied_action: dict[str, float] | None = None
         self._observation_time: float | None = None
@@ -104,9 +105,33 @@ class ThreadSafeRobot:
             raise ValueError(f"{self.robot_type} has no supported local position-hold contract")
         self._position_hold_enabled = True
 
+    def configure_hold(self) -> None:
+        if getattr(self._robot, "supports_command_hold", False):
+            if not callable(getattr(self._robot, "hold", None)):
+                raise ValueError("Command hold requires a driver hold implementation")
+            self._command_hold_enabled = True
+        else:
+            self.configure_position_hold()
+
+    def reset_world(self, task=None, seed=None) -> None:
+        from lerobot.robots.remote.world import get_world
+
+        with self._lock:
+            world = get_world(self._robot)
+            if world is None:
+                raise TypeError("This robot does not expose a simulator world")
+            world.reset_world(task, seed)
+            self._last_applied_action = None
+            self._observed_positions.clear()
+            self._observation_time = None
+
     @property
     def supports_hold(self) -> bool:
-        return self._position_hold_enabled
+        return self._position_hold_enabled or self._command_hold_enabled
+
+    @property
+    def supports_command_hold(self) -> bool:
+        return bool(getattr(self._robot, "supports_command_hold", False))
 
     @property
     def supports_position_hold(self) -> bool:
@@ -121,6 +146,13 @@ class ThreadSafeRobot:
         toward these targets; this is not an instantaneous physical stop.
         """
         with self._lock:
+            if self._command_hold_enabled:
+                try:
+                    self._robot.hold()
+                except Exception as exc:
+                    self._record_hardware_failure("hold", exc)
+                    raise
+                return
             if not self._position_hold_enabled:
                 raise RuntimeError("Local hold was not configured for this robot")
             try:

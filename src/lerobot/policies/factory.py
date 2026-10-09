@@ -295,7 +295,12 @@ def make_policy(
             )
         if env_cfg is None:
             raise ValueError("env_cfg cannot be None when ds_meta is not provided")
-        features = env_to_policy_features(env_cfg)
+        if env_cfg.type == "sim" and cfg.pretrained_path:
+            if cfg.input_features is None or cfg.output_features is None:
+                raise ValueError("Simulator evaluation requires checkpoint feature declarations")
+            features = {**cfg.input_features, **cfg.output_features}
+        else:
+            features = env_to_policy_features(env_cfg)
 
     if rename_map:
         features = {rename_map.get(key, key): feature for key, feature in features.items()}

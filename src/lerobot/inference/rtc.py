@@ -174,7 +174,9 @@ class RTCInferenceEngine(InferenceEngine):
         self._hold_reason = "Language request"
         self._active_query_generation = 0
         self._language_preprocessor, self._language_postprocessor = deepcopy((preprocessor, postprocessor))
-        if getattr(robot_wrapper, "supports_position_hold", False):
+        if getattr(robot_wrapper, "supports_command_hold", False):
+            robot_wrapper.configure_hold()
+        elif getattr(robot_wrapper, "supports_position_hold", False):
             robot_wrapper.configure_position_hold()
         if not getattr(robot_wrapper, "supports_hold", False):
             self._runtime.starvation_grace = 0.0

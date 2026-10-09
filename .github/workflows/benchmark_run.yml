@@ -1,0 +1,108 @@
+name: Simulator benchmark
+on:
+  workflow_call:
+    secrets:
+      LEROBOT_HF_USER:
+        required: true
+    inputs:
+      name:
+        required: true
+        type: string
+      dockerfile:
+        required: true
+        type: string
+      sim_tag:
+        required: true
+        type: string
+      build_args:
+        required: true
+        type: string
+      policy_extras:
+        required: true
+        type: string
+permissions: {}
+jobs:
+  run:
+    permissions:
+      contents: read
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    env:
+      HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+      BENCHMARK_NAME: ${{ inputs.name }}
+      SIM_IMAGE: lerobot-sim-${{ inputs.name }}:${{ inputs.sim_tag }}
+      POLICY_IMAGE: lerobot-policy:${{ github.sha }}-${{ inputs.name }}
+      ARTIFACTS: ${{ runner.temp }}/sim-${{ inputs.name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          lfs: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        with:
+          cache-binary: false
+      - name: Format build arguments
+        id: arguments
+        env:
+          BUILD_ARGUMENTS: ${{ inputs.build_args }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('args<<ARGS\n')
+              for key, value in json.loads(os.environ['BUILD_ARGUMENTS']).items():
+                  f.write(f'{key}={value}\n')
+              f.write('ARGS\n')
+          PY
+      - name: Prepare persistent build cache
+        run: mkdir -p /tmp/lerobot-buildkit
+      - name: Build simulator
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          tags: ${{ env.SIM_IMAGE }}
+          build-args: ${{ steps.arguments.outputs.args }}
+          load: true
+          push: false
+          cache-from: type=local,src=/tmp/lerobot-buildkit/sim-cache-${{ inputs.name }}
+          cache-to: type=local,dest=/tmp/lerobot-buildkit/sim-cache-next-${{ inputs.name }},mode=max
+      - name: Retain simulator cache
+        if: always()
+        run: |
+          if [ -d "/tmp/lerobot-buildkit/sim-cache-next-${BENCHMARK_NAME}" ]; then
+            rm -rf "/tmp/lerobot-buildkit/sim-cache-${BENCHMARK_NAME}"
+            mv "/tmp/lerobot-buildkit/sim-cache-next-${BENCHMARK_NAME}" "/tmp/lerobot-buildkit/sim-cache-${BENCHMARK_NAME}"
+          fi
+      - name: Build policy from tested checkout
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          file: docker/Dockerfile.policy
+          tags: ${{ env.POLICY_IMAGE }}
+          cache-from: type=local,src=/tmp/lerobot-buildkit/policy-cache-${{ inputs.name }}
+          cache-to: type=local,dest=/tmp/lerobot-buildkit/policy-cache-next-${{ inputs.name }},mode=max
+          build-args: POLICY_EXTRAS=${{ inputs.policy_extras }}
+          load: true
+          push: false
+      - name: Retain policy cache
+        if: always()
+        run: |
+          if [ -d "/tmp/lerobot-buildkit/policy-cache-next-${BENCHMARK_NAME}" ]; then
+            rm -rf "/tmp/lerobot-buildkit/policy-cache-${BENCHMARK_NAME}"
+            mv "/tmp/lerobot-buildkit/policy-cache-next-${BENCHMARK_NAME}" "/tmp/lerobot-buildkit/policy-cache-${BENCHMARK_NAME}"
+          fi
+      - name: Require benchmark credentials
+        run: test -n "$HF_TOKEN"
+      - name: Run evaluation and training smoke
+        run: |
+          python3 -m pip install 'PyYAML>=6,<7'
+          python3 scripts/ci/run_sim_benchmark.py --name "$BENCHMARK_NAME" \
+            --sim-image "$SIM_IMAGE" --policy-image "$POLICY_IMAGE" --artifacts "$ARTIFACTS"
+      - name: Upload metrics, videos, training artifacts and server logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ inputs.name }}-benchmark
+          path: ${{ env.ARTIFACTS }}/
+          if-no-files-found: warn
