@@ -171,6 +171,36 @@ def test_cameras(robot: XLerobot, outdir: Path) -> None:
     print("      a camera can be live, correctly sized and pointed at the wrong thing.")
 
 
+# ------------------------------------------------------------- movement
+
+def nudge(robot: XLerobot, key: str, start: float, span: float, settle: float = 0.5) -> tuple[float, str]:
+    """Move one joint by `span` and put it back. Returns (travel, direction).
+
+    Tries both directions before giving up. Positions are normalised to
+    -100..100 (grippers 0..100) and a joint parked at its calibrated limit
+    has nowhere to go that way - it clamps, reports zero travel, and looks
+    broken. Which is exactly what a resting arm does: folded up, several
+    joints sit hard against an end of their range.
+    """
+    best, best_dir = 0.0, ""
+    for sign, label in ((+1, "+"), (-1, "-")):
+        seen = [start]
+        try:
+            for target in (start + sign * span, start):
+                robot.send_action({key: target})
+                time.sleep(settle)
+                seen.append(robot.get_observation()[key])
+        finally:
+            robot.send_action({key: start})
+            time.sleep(0.3)
+        travel = max(seen) - min(seen)
+        if travel > best:
+            best, best_dir = travel, label
+        if travel > span * 0.5:
+            break          # good enough; no need to disturb it twice
+    return best, best_dir
+
+
 # ----------------------------------------------------------------- head
 
 def test_head(robot: XLerobot, base: dict, span: float = 12.0) -> None:
@@ -182,22 +212,12 @@ def test_head(robot: XLerobot, base: dict, span: float = 12.0) -> None:
 
     for motor in ("head_motor_1", "head_motor_2"):
         key = f"{motor}.pos"
-        start = base[key]
-        seen = []
-        try:
-            for target in (start + span, start - span, start):
-                robot.send_action({key: target})
-                time.sleep(0.6)
-                seen.append(robot.get_observation()[key])
-        finally:
-            robot.send_action({key: start})
-            time.sleep(0.4)
-
-        travel = max(seen) - min(seen)
+        travel, direction = nudge(robot, key, base[key], span)
         if travel > span * 0.5:
-            record(PASS, f"{motor} moved", f"{travel:.1f} deg over a {2 * span:.0f} deg command")
+            record(PASS, f"{motor} moved", f"{travel:.1f} deg ({direction}{span:.0f} commanded)")
         else:
-            record(FAIL, f"{motor} barely moved", f"{travel:.1f} deg - stalled, or blocked")
+            record(FAIL, f"{motor} barely moved",
+                   f"{travel:.1f} deg in either direction from {base[key]:.1f} - stalled, or blocked")
 
 
 # ----------------------------------------------------------------- arms
@@ -218,22 +238,12 @@ def test_arms(robot: XLerobot, base: dict, span: float = 5.0) -> None:
     for side in ("left", "right"):
         for j in ARM_JOINTS:
             key = f"{side}_arm_{j}.pos"
-            start = base[key]
-            seen = []
-            try:
-                for target in (start + span, start):
-                    robot.send_action({key: target})
-                    time.sleep(0.5)
-                    seen.append(robot.get_observation()[key])
-            finally:
-                robot.send_action({key: start})
-                time.sleep(0.3)
-
-            travel = max(seen + [start]) - min(seen + [start])
-            if travel > span * 0.4:
-                record(PASS, f"{side}_arm_{j}", f"{travel:.1f} deg")
+            travel, direction = nudge(robot, key, base[key], span)
+            if travel > span * 0.5:
+                record(PASS, f"{side}_arm_{j}", f"{travel:.1f} deg ({direction}{span:.0f})")
             else:
-                record(FAIL, f"{side}_arm_{j} did not move", f"{travel:.1f} deg")
+                record(FAIL, f"{side}_arm_{j} did not move",
+                       f"{travel:.1f} deg in either direction from {base[key]:.1f}")
 
 
 # ----------------------------------------------------------------- base
