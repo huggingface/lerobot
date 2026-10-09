@@ -178,7 +178,8 @@ class _GenericTextClient:
                     "role": "user",
                     "content": (
                         "Your previous reply was not valid JSON. "
-                        "Reply with strictly valid JSON, no prose, no fences."
+                        "Reply with strictly valid JSON, no prose, no fences. "
+                        "Numeric timestamps must not have leading zeroes: use 2.52, not 002.52."
                     ),
                 },
             ]

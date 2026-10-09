@@ -24,6 +24,26 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.annotations.steerable_pipeline.vlm_client import _bind_serve_port  # noqa: E402
 
 
+def test_json_retry_corrects_but_does_not_silently_accept_leading_zeroes():
+    import json
+
+    from lerobot.annotations.steerable_pipeline.config import VlmConfig
+    from lerobot.annotations.steerable_pipeline.vlm_client import _GenericTextClient, _strip_to_json
+
+    invalid = '{"start":002.52}'
+    with pytest.raises(json.JSONDecodeError):
+        _strip_to_json(invalid)
+    calls = []
+
+    def generate(batch, max_tokens, temperature):
+        calls.append(batch)
+        return [invalid if len(calls) == 1 else '{"start":2.52}']
+
+    client = _GenericTextClient(generate, VlmConfig())
+    assert client.generate_json([[{"role": "user", "content": "Segment this video."}]]) == [{"start": 2.52}]
+    assert "use 2.52, not 002.52" in calls[1][0][-1]["content"]
+
+
 def test_bind_serve_port_substitutes_placeholder() -> None:
     # The {port} placeholder is replaced everywhere it appears, regardless of
     # parallel vs single server — the bug was the single-server path passing

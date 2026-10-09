@@ -37,7 +37,10 @@ def write_report(root, name, report):
     path = root / "reports" / f"{name}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, default=str))
-    print(json.dumps({"report": str(path), **report}, default=str), flush=True)
+    print(
+        json.dumps({"report": str(path), **{k: v for k, v in report.items() if k != "atoms"}}, default=str),
+        flush=True,
+    )
 
 
 def prepare_fixture(root):
@@ -336,7 +339,11 @@ def annotate(args):
                             **atom,
                         }
                     )
-    unique = list({fingerprint(atom): atom for atom in atoms}.values())
+    # Persistent recipes repeat the full list on every frame. Keep one example
+    # frame per semantic atom rather than duplicating megabytes in the report.
+    unique = list(
+        {fingerprint({k: v for k, v in atom.items() if k != "frame_index"}): atom for atom in atoms}.values()
+    )
     styles = {}
     for atom in atoms:
         style = atom.get("style") or "speech"

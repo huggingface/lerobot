@@ -423,7 +423,9 @@ def _draw_timestamp_badge(image: PIL.Image.Image, timestamp: float) -> PIL.Image
         font = ImageFont.load_default(size=badge_px)
     except TypeError:
         font = ImageFont.load_default()
-    label = f"{timestamp:06.2f}s"
+    # Models often copy badges into JSON numeric fields. Zero-padding (e.g.
+    # ``002.52``) is not a valid JSON number, even though it looks like a clock.
+    label = f"{timestamp:.2f}s"
     left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
     text_w, text_h = right - left, bottom - top
     pad = max(3, round(min(image.width, image.height) * 0.018))

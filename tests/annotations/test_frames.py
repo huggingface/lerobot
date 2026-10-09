@@ -41,6 +41,23 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.annotations.steerable_pipeline.frames import VideoFrameProvider  # noqa: E402
 
 
+def test_timestamp_badges_do_not_encourage_invalid_json_numbers(monkeypatch):
+    from PIL import Image, ImageDraw
+
+    from lerobot.annotations.steerable_pipeline.frames import _draw_timestamp_badge
+
+    labels = []
+    draw_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        labels.append(text)
+        return draw_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    _draw_timestamp_badge(Image.new("RGB", (192, 128)), 2.52)
+    assert labels == ["2.52s"]
+
+
 class _FakeMeta:
     """Minimal metadata stub exposing ``video_keys`` / ``camera_keys``."""
 

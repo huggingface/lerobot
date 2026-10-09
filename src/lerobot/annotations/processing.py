@@ -267,7 +267,7 @@ class LanguageModule:
 
         self.config = draccus.decode(AnnotationPipelineConfig, annotation_config)
         self.client_factory = client_factory
-        self.spec = ModuleSpec(f"language_{phase}", "1", "episode", {"atoms": ATOM_SCHEMA})
+        self.spec = ModuleSpec(f"language_{phase}", "2", "episode", {"atoms": ATOM_SCHEMA})
 
     def setup(self, context):
         cfg = self.config
