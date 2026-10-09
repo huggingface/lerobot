@@ -1,0 +1,99 @@
+# The leader arms and gamepad, served to the cart. Runs AT THE OPERATOR
+# STATION (rosie, the Pi):
+#
+#   ./config/operator-leader-host.sh
+#
+# Fields are at the TOP LEVEL - this is an XLerobotLeaderGamepadConfig, not a
+# teleoperate config, so there is no `teleop:` key to nest under.
+#
+# Nothing about the robot appears here. This process only reads the leaders
+# and the pad and publishes actions; the cart decides what to do with them.
+
+id: xlerobot_leaders
+
+# The by-id paths travel with the USB adapter, so they are the same strings
+# whichever machine the leaders are plugged into.
+left_arm_config:
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90149222-if00
+right_arm_config:
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00
+
+# --- which robot is on the other end ----------------------------------
+#
+# SET FOR THE FULL xlerobot, which is what elroy actually has: arms, head
+# servos at bus1 7-8, and the 3-omni base at bus2 7-9, all calibrated
+# together as robots/xlerobot/xlerobot.json.
+#
+# remap_arm_prefix
+#   true   -> left_arm_shoulder_pan.pos, which XLerobot filters for with
+#             startswith("left_arm_").            Use with cart-remote.yaml.
+#   false  -> left_shoulder_pan.pos, BiSOLeader's native naming, which
+#             bi_so_follower wants because its send_action does
+#             key.removeprefix("left_"). Nothing here uses that now; it
+#             would be for a machine with two arms and nothing else.
+#
+# Getting this wrong is SILENT. The link comes up, the loop runs at the
+# right rate, and the arms never move.
+remap_arm_prefix: true
+
+# --- which parts of the robot this speaks for -------------------------
+#
+# All of them. 17 action keys: 12 arm, 2 head, 3 base.
+emit_head: true
+emit_base: true
+
+# The base on the cart today is the 3-OMNI one, which can strafe - so y.vel
+# is real and the left stick's X axis drives it. Set false when the 2-wheel
+# differential base replaces it; a differential drive cannot translate
+# sideways and the key would be a column the robot cannot reproduce.
+emit_y_vel: true
+
+# --- gamepad ----------------------------------------------------------
+#
+# MEASURED 2026-10-09 on the 8BitDo SF30 Pro with the guided probe, not
+# guessed. Four of the nine previous values were wrong.
+#
+# The pad was in a PLAYSTATION-COMPATIBLE MODE - it enumerates as
+# "Sony Computer Entertainment Wireless Controller", vendor 054c product
+# 05c4, 6 axes / 13 buttons. That is why these are DS4-style numbers rather
+# than the XInput layout that was here before.
+#
+# IF THE PAD EVER POWER-CYCLES INTO A DIFFERENT MODE, EVERY NUMBER BELOW
+# BECOMES WRONG AT ONCE, and the symptom is not an error - it is a cart
+# that drives sideways when you push forward. Re-probe rather than guess:
+#
+#   uv run --project ../XLeRobot python -m \
+#     lerobot_teleoperator_xlerobot_leader_gamepad.probe_gamepad
+#
+joystick_index: 0
+deadzone: 0.15
+
+axis_base_forward: 1      # left stick Y
+axis_base_strafe: 0       # left stick X
+axis_base_turn: 3         # right stick X
+axis_head_pan: 3          #   shared with turn; hold the modifier to aim the head
+axis_head_tilt: 4         # right stick Y
+
+# The probe measured the STICK's sign - both report negative upward - but it
+# cannot know which way a servo is mounted. invert_head_tilt was therefore
+# only half-derived, and it was wrong: head up and down came out backwards
+# on the hardware. Flipped by observation, 2026-10-09.
+invert_base_forward: true
+invert_head_tilt: false
+
+# --- head on the D-pad ------------------------------------------------
+#
+# The head gets its own control, the right stick stays on turn, and nothing
+# has to be held. The probe reported hats=1 on this pad.
+#
+# Discrete rather than proportional, but the head integrates a rate into a
+# target - holding a direction sweeps it, same as the stick did.
+#
+# Set hat_head: -1 to go back to holding L1 and sharing the right stick.
+hat_head: 0
+invert_hat_pan: false
+invert_hat_tilt: true     # hat says +1 for up; head_motor_2 decreases to raise
+
+button_head_modifier: 4   # L1 - unused while hat_head >= 0
+button_speed_up: 5        # R1
+button_speed_down: 6      # L2 - a button on this pad, not an axis

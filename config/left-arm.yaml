@@ -1,0 +1,32 @@
+# Single left SO-101 arm + its leader. Standard lerobot, no custom code.
+#
+#   lerobot-teleoperate --config_path=config/left-arm.yaml
+#
+# IDs are chosen to match what config/bi-arms.yaml derives
+# (bi_so_follower/bi_so_leader append _left / _right to their own id),
+# so calibration done here is reused by the bimanual config.
+
+robot:
+  type: so101_follower
+  id: xlerobot_arms_left
+  disable_torque_on_disconnect: true
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00   # Left follower
+
+  cameras:
+    front:
+      type: opencv
+      index_or_path: /dev/cam_left
+      width: 1280
+      height: 720
+      fps: 30
+      fourcc: MJPG   # YUYV caps 1280x720 at 10fps; MJPG does 30
+      warmup_s: 1
+
+teleop:
+  type: so101_leader
+  id: xlerobot_leaders_left
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90149222-if00   # Left leader  (ttyACM2)
+
+# Set true once teleop is proven; rerun is heavy on a Pi and it is easier to
+# separate "do the motors move" from "does visualization work".
+display_data: false

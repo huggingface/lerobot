@@ -1,0 +1,92 @@
+# The cart, driven by leaders at the operator station. FULL ROBOT - arms,
+# head and base. Runs ON THE CART (elroy, the Orin):
+#
+#   ./config/cart-teleop.sh --full
+#   ./config/cart-record.sh --full <repo_id> "<task>"
+#
+# NOT USABLE YET: xlerobot requires the head servos at IDs 7-8 on bus1 and
+# the base wheels at 7-9 on bus2. Until those exist, use
+# Missing motors fail with "no status packet"
+# naming the id.
+#
+# Everything the robot has is LOCAL to this machine; only the leaders are
+# remote. Camera frames go straight from USB to the dataset at full rate -
+# they never touch the network - while the one thing that does cross the air
+# is small and tolerates loss. This machine both records and will later run
+# the policy, so the dataset is captured through exactly the pipeline
+# inference will see.
+#
+# The operator end must agree with this file:
+#   remap_arm_prefix: true    xlerobot filters on "left_arm_"
+#   emit_head: true
+#   emit_base: true
+# See config/operator-leader-host.yaml.
+
+# Match the cameras. lerobot's teleoperate defaults to fps: 60, which three
+# 30 fps cameras can never satisfy - observe() alone cannot beat ~33 ms - so
+# the loop spends its life being told off for missing a target that was
+# never reachable. Measured: observe is 94.6% of all work at 31.7 ms mean,
+# while the remote leader costs 0.05 ms.
+fps: 30
+
+robot:
+  type: xlerobot
+  id: xlerobot
+
+  port1: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00   # left arm + head
+  port2: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00   # right arm + base
+
+  disable_torque_on_disconnect: true
+
+  cameras:
+    left_wrist:
+      type: opencv
+      index_or_path: /dev/cam_left
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG           # YUYV caps 1280x720 at 10fps on these Innomakers
+      warmup_s: 1
+
+    right_wrist:
+      type: opencv
+      index_or_path: /dev/cam_right
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG
+      warmup_s: 1
+
+    head:
+      type: intelrealsense
+      serial_number_or_name: "836112060112"
+      width: 640
+      height: 480
+      fps: 30
+      color_mode: BGR
+      use_depth: false
+
+# The leaders are at the operator station. This end only opens a socket.
+teleop:
+  type: xlerobot_leader_remote
+  id: xlerobot_leaders
+  remote_ip: 192.168.1.100     # rosie. Use rosie.local if DHCP moves it.
+  port_zmq_actions: 5557
+
+  # NOTE: the operator end must set remap_arm_prefix: TRUE for this robot.
+  # xlerobot filters incoming actions with startswith("left_arm_").
+  # Mismatch is silent - the loop runs and the arms do not move.
+
+  # connect() waits this long for the first action, and will not invent one:
+  # the first action carries the leaders' current pose and the followers
+  # move to it.
+  connect_timeout_s: 10.0
+
+  # Past this with no new action the link counts as stalled. The arms hold
+  # their last commanded position; the base is zeroed, because a base keeps
+  # driving on its last velocity and the operator who would have stopped it
+  # is on the far side of the break.
+  stale_after_ms: 300
+  stop_base_when_stale: true
+
+display_data: false            # the scripts turn this on; see them for how
