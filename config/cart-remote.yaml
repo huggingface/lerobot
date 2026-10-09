@@ -22,6 +22,13 @@
 #   emit_base: true
 # See config/operator-leader-host.yaml.
 
+# Match the cameras. lerobot's teleoperate defaults to fps: 60, which three
+# 30 fps cameras can never satisfy - observe() alone cannot beat ~33 ms - so
+# the loop spends its life being told off for missing a target that was
+# never reachable. Measured: observe is 94.6% of all work at 31.7 ms mean,
+# while the remote leader costs 0.05 ms.
+fps: 30
+
 robot:
   type: xlerobot
   id: xlerobot
@@ -35,8 +42,8 @@ robot:
     left_wrist:
       type: opencv
       index_or_path: /dev/cam_left
-      width: 1280
-      height: 720
+      width: 640
+      height: 480
       fps: 30
       fourcc: MJPG           # YUYV caps 1280x720 at 10fps on these Innomakers
       warmup_s: 1
@@ -44,8 +51,8 @@ robot:
     right_wrist:
       type: opencv
       index_or_path: /dev/cam_right
-      width: 1280
-      height: 720
+      width: 640
+      height: 480
       fps: 30
       fourcc: MJPG
       warmup_s: 1
@@ -53,8 +60,8 @@ robot:
     head:
       type: intelrealsense
       serial_number_or_name: "836112060112"
-      width: 1280
-      height: 720
+      width: 640
+      height: 480
       fps: 30
       color_mode: BGR
       use_depth: false

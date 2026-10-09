@@ -40,6 +40,19 @@
 WATCH_HOST="${WATCH_HOST:-192.168.1.52}"    # the Mac
 WATCH_PORT="${WATCH_PORT:-9876}"
 
+# JPEG-compress before anything crosses the wire, in every remote mode.
+# These frames are for the operator; the dataset is written from the
+# uncompressed originals on the cart, so quality spent here is free.
+#
+# It also matters for STABILITY, not just bandwidth. rerun's sink
+# back-pressures: when it cannot keep up - or cannot connect at all - its
+# batcher channel fills and the sender BLOCKS INSIDE THE CONTROL LOOP:
+#
+#   WARN re_quota_channel::sync: batcher_output: Sender has been blocked
+#   for over 5 seconds waiting for space in channel
+#
+# Measured: a run pointed at a host with no viewer listening sat at 22 Hz
+# where the same configuration without video managed 29.
 DISPLAY_ARGS=()
 
 # Scans ALL arguments and removes the one it consumes, so --watch can sit
@@ -61,9 +74,19 @@ parse_watch() {
   case "${1:-}" in
     --watch)
       DISPLAY_ARGS=(--display_data=true --display_mode=rerun
-                    --display_ip="$WATCH_HOST" --display_port="$WATCH_PORT")
+                    --display_ip="$WATCH_HOST" --display_port="$WATCH_PORT"
+                    --display_compressed_images=true)
       echo "video   : pushing to the rerun viewer at $WATCH_HOST:$WATCH_PORT"
-      echo "          start it there first, or this exits on connect"
+      echo "          START THE VIEWER FIRST. With nothing listening, rerun"
+      echo "          does not just fail - it back-pressures into the control"
+      echo "          loop and costs you several Hz."
+      if command -v nc >/dev/null 2>&1 && ! nc -z -w2 "$WATCH_HOST" "$WATCH_PORT" 2>/dev/null; then
+        echo
+        echo "  WARNING: nothing is listening on $WATCH_HOST:$WATCH_PORT." >&2
+        echo "           Start it with:  uvx --from rerun-sdk rerun --port $WATCH_PORT" >&2
+        echo "           Or run without --watch." >&2
+        echo
+      fi
       return 0 ;;
     --watch=web)
       DISPLAY_ARGS=(--display_data=true --display_mode=foxglove
