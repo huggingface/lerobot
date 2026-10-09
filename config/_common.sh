@@ -133,3 +133,21 @@ guard_arms_config() {
   echo                                                                     >&2
   exit 1
 }
+
+# ---------------------------------------------------------------- rerun
+#
+# The SDK here and the viewer on the other machine are two halves of one
+# release, and the wire format moves with it - a mismatched pair can be
+# refused outright. Nothing ties them together: this one is pinned by
+# lerobot[viz], the viewer is whatever `uvx --from rerun-sdk` last fetched.
+#
+# So print the number rather than make someone go and ask for it.
+rerun_version() {
+  local d
+  for d in "$XLEROBOT"/.venv/lib/python3*/site-packages/rerun_sdk-*.dist-info; do
+    [[ -d "$d" ]] || continue
+    basename "$d" | sed -E 's/^rerun_sdk-(.*)\.dist-info$/\1/'
+    return 0
+  done
+  return 1
+}

@@ -76,7 +76,10 @@ parse_watch() {
       DISPLAY_ARGS=(--display_data=true --display_mode=rerun
                     --display_ip="$WATCH_HOST" --display_port="$WATCH_PORT"
                     --display_compressed_images=true)
+      local rv; rv="$(rerun_version 2>/dev/null || echo unknown)"
       echo "video   : pushing to the rerun viewer at $WATCH_HOST:$WATCH_PORT"
+      echo "          this machine has rerun-sdk $rv - the viewer must match:"
+      echo "            uvx --from rerun-sdk==$rv rerun --port $WATCH_PORT"
       echo "          START THE VIEWER FIRST. With nothing listening, rerun"
       echo "          does not just fail - it back-pressures into the control"
       echo "          loop and costs you several Hz."
