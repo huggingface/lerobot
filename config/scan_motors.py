@@ -185,7 +185,7 @@ def main() -> int:
         print("  --robot.type=xlerobot will fail on connect: it reads every")
         print("  motor unconditionally, including base velocity.")
         print("\n  Use the arms-only path until those are wired:")
-        print("    config/bi-arms.yaml, config/cart-remote-arms.yaml")
+        print("    config/bi-arms.yaml")
         print("\n  To bring a new servo onto a bus, set its id first:")
         print("    lerobot-setup-motors --robot.type=xlerobot --robot.port1=... --robot.port2=...")
     else:

@@ -6,7 +6,7 @@
 #
 # NOT USABLE YET: xlerobot requires the head servos at IDs 7-8 on bus1 and
 # the base wheels at 7-9 on bus2. Until those exist, use
-# config/cart-remote-arms.yaml. Missing motors fail with "no status packet"
+# Missing motors fail with "no status packet"
 # naming the id.
 #
 # Everything the robot has is LOCAL to this machine; only the leaders are

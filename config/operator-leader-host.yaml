@@ -29,23 +29,16 @@ right_arm_config:
 #             startswith("left_arm_").            Use with cart-remote.yaml.
 #   false  -> left_shoulder_pan.pos, BiSOLeader's native naming, which
 #             bi_so_follower wants because its send_action does
-#             key.removeprefix("left_").     Use with cart-remote-arms.yaml.
+#             key.removeprefix("left_"). Nothing here uses that now; it
+#             would be for a machine with two arms and nothing else.
 #
 # Getting this wrong is SILENT. The link comes up, the loop runs at the
 # right rate, and the arms never move.
-#
-# THE ARMS-ONLY PATH NEEDS ITS OWN CALIBRATION. bi_so_follower looks for
-# so_follower/xlerobot_arms_{left,right}.json, which exist on rosie from
-# when the Pi was the cart - not on elroy. Pointing elroy at it triggers a
-# fresh calibration that OVERWRITES the homing offsets in the motors and
-# invalidates the xlerobot calibration. Do not go back to it casually.
 remap_arm_prefix: true
 
 # --- which parts of the robot this speaks for -------------------------
 #
-# All of them, now that they exist. Set both false, with
-# remap_arm_prefix: false, only if you deliberately return to
-# cart-remote-arms.yaml - and read the warning above first.
+# All of them. 17 action keys: 12 arm, 2 head, 3 base.
 emit_head: true
 emit_base: true
 

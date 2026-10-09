@@ -63,39 +63,22 @@ operator's hands.
 | --- | --- |
 | `operator-leader-host.{sh,yaml}` | operator station |
 | `cart-teleop.sh`, `cart-record.sh` | cart |
-| `cart-remote-arms.yaml` | cart — arms only, today's hardware |
 | `cart-remote.yaml` | cart — arms + head + base, once those motors exist |
 | `_video.sh` | sourced by the cart scripts; `--watch` lives here |
 | `left-arm.yaml`, `right-arm.yaml`, `bi-arms.yaml` | one machine, everything local |
 
 ### The two settings that fail silently
 
-The teleoperator and the robot have to agree on naming and on which joints
-exist. Nothing checks this at startup, and a mismatch does not raise — the
-link comes up, the loop runs at the right rate, and the arms do not move.
+The teleoperator and the robot must agree on arm key naming and on which
+joints exist. Nothing checks this at startup and a mismatch does not
+raise — the link comes up, the loop runs at the right rate, and the arms do
+not move.
 
-| cart config | `remap_arm_prefix` | `emit_head` / `emit_base` |
-| --- | --- | --- |
-| `cart-remote-arms.yaml` (`bi_so_follower`) | `false` | `false` |
-| `cart-remote.yaml` (`xlerobot`) | `true` | `true` |
-
-`bi_so_follower.send_action` does `key.removeprefix("left_")`, so it wants
-BiSOLeader's native `left_shoulder_pan.pos`. `XLerobot.send_action` filters
-with `startswith("left_arm_")`, so it wants the remapped form. They are
-exact opposites.
-
-### The other path: robot served to a client
-
-`cart-host.{sh,yaml}` + `operator-teleop.sh`/`operator-client.yaml` are the
-lekiwi arrangement — the robot published over ZMQ, the teleoperator local to
-the operator. Kept because it is the right shape for driving the cart from a
-laptop with no leaders attached, and because the video comes free with it.
-
-Do not record through it. `lerobot_record.py:468` calls
-`len(robot.cameras)`, and no client robot has a `.cameras` attribute — not
-`xlerobot_client`, not upstream's `lekiwi_client` — so recording against one
-raises `AttributeError` before the first episode. (The resume branch at
-line 443 guards it; the create branch does not.)
+`operator-leader-host.yaml` must have `remap_arm_prefix: true` (XLerobot
+filters with `startswith("left_arm_")`) and `emit_head`/`emit_base` true.
+`operator-leader-host.sh` echoes all four on startup for this reason, and
+the leader host reports **17 action keys** when they are right — 12 arm,
+2 head, 3 base.
 
 ### Prerequisites
 

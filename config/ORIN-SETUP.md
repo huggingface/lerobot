@@ -33,9 +33,8 @@ The three outcomes:
   Continue through this document as written.
 - **Arms only** → `--robot.type=xlerobot` will fail on connect. It reads
   every motor unconditionally, base velocity included, so a missing head
-  servo stops the arms too. Use `config/bi-arms.yaml` and
-  `config/cart-remote-arms.yaml` until the rest is wired, and skip the
-  calibration step below in favour of the per-arm one.
+  servo stops the arms too. Use `config/bi-arms.yaml` until the rest is
+  wired, and skip the calibration step below in favour of the per-arm one.
 - **Something at the wrong baud rate** → `lerobot-setup-motors` for those
   servos. lerobot talks at 1000000 and will not find them otherwise.
 

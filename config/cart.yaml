@@ -2,7 +2,8 @@
 # nothing is being teleoperated from another machine - checking motors,
 # running a policy, driving from a program.
 #
-# For split teleoperation use cart-host.yaml + operator-client.yaml instead.
+# For split teleoperation use cart-remote.yaml, with the leaders published
+# from the operator station by operator-leader-host.sh.
 #
 # Needs the full motor layout: bus1 = left arm 1-6 + head 7-8,
 # bus2 = right arm 1-6 + base wheels 7-9.
