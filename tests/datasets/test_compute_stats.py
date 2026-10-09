@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
@@ -26,12 +27,14 @@ from lerobot.datasets.compute_stats import (
     aggregate_feature_stats,
     aggregate_stats,
     compute_episode_stats,
+    compute_relative_action_stats,
     estimate_num_samples,
     get_feature_stats,
     sample_images,
     sample_indices,
 )
-from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
+from lerobot.processor.relative_action_processor import to_relative_actions
+from lerobot.utils.constants import ACTION, OBS_IMAGE, OBS_STATE
 
 
 def mock_load_image_as_numpy(path, dtype, channel_first):
@@ -937,3 +940,51 @@ def test_aggregate_stats_incremental_resume():
     # Bounds should widen monotonically
     np.testing.assert_allclose(cumulative2["action"]["q01"], np.array([-25.0, -18.0]))
     np.testing.assert_allclose(cumulative2["action"]["q99"], np.array([35.0, 22.0]))
+
+
+def test_compute_relative_action_stats_matches_se3_training_distribution():
+    """Stats must describe the values the normalizer actually receives.
+
+    With `se3_pose_groups` set, training composes chunks in SE(3), so statistics derived by
+    subtraction describe a different -- much wider -- distribution.
+    """
+    rng = np.random.default_rng(0)
+    num_frames, chunk_size = 600, 20
+    state = np.concatenate(
+        [
+            np.cumsum(rng.normal(0, 0.01, (num_frames, 3)), axis=0),
+            np.cumsum(rng.normal(0, 0.3, (num_frames, 3)), axis=0),
+            rng.uniform(0, 1, (num_frames, 1)),
+        ],
+        axis=-1,
+    ).astype(np.float32)
+    action = np.roll(state, -1, axis=0).astype(np.float32)
+    episode_index = np.repeat(np.arange(num_frames // 200), 200)
+    names = ["x", "y", "z", "rx", "ry", "rz", "gripper"]
+    pose_groups = [[0, 1, 2, 3, 4, 5]]
+    hf_dataset = {
+        ACTION: action.tolist(),
+        OBS_STATE: state.tolist(),
+        "episode_index": episode_index.tolist(),
+    }
+    features = {ACTION: {"shape": (len(names),), "names": names}}
+
+    se3_stats = compute_relative_action_stats(
+        hf_dataset, features, chunk_size, ["gripper"], se3_pose_groups=pose_groups
+    )
+    subtraction_stats = compute_relative_action_stats(hf_dataset, features, chunk_size, ["gripper"])
+
+    # Reference: exactly what RelativeActionsProcessorStep produces for every valid chunk.
+    starts = np.arange(num_frames - chunk_size + 1)
+    starts = starts[episode_index[starts] == episode_index[starts + chunk_size - 1]]
+    chunks = torch.from_numpy(action[starts[:, None] + np.arange(chunk_size)[None, :]])
+    expected = (
+        to_relative_actions(chunks, torch.from_numpy(state[starts]), [True] * 6 + [False], pose_groups)
+        .reshape(-1, len(names))
+        .numpy()
+    )
+
+    np.testing.assert_allclose(se3_stats["mean"], expected.mean(axis=0), rtol=1e-4, atol=1e-6)
+    np.testing.assert_allclose(se3_stats["std"], expected.std(axis=0), rtol=1e-4, atol=1e-6)
+    with pytest.raises(AssertionError):
+        np.testing.assert_allclose(subtraction_stats["std"], expected.std(axis=0), rtol=0.05)
