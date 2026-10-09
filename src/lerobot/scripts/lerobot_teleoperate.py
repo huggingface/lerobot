@@ -87,6 +87,8 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    disconnect_quietly,
+    stop_motion,
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
@@ -286,10 +288,20 @@ def teleoperate(cfg: TeleoperateConfig):
     except KeyboardInterrupt:
         pass
     finally:
+        # Order matters. The robot first - stop anything moving, drop torque,
+        # release the buses - and the display last. shutdown_visualization()
+        # flushes to the viewer and blocks while it does; on a saturated link
+        # or a viewer that has gone away that is an indefinite wait, and it
+        # used to sit BEFORE robot.disconnect(), with the base still driving
+        # on its last command. Each step is guarded so none can skip the next.
+        stop_motion(robot)
+        disconnect_quietly(robot, "robot")
+        disconnect_quietly(teleop, "teleop")
         if cfg.display_data:
-            shutdown_visualization(cfg.display_mode)
-        teleop.disconnect()
-        robot.disconnect()
+            try:
+                shutdown_visualization(cfg.display_mode)
+            except Exception as e:  # noqa: BLE001
+                logging.warning("display shutdown failed: %s", e)
 
 
 def main():
