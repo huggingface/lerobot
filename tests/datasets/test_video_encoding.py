@@ -416,6 +416,27 @@ class TestGetVideoInfo:
         assert info["video.fps"] != 29
         assert abs(info["video.fps"] - float(rate)) < 1e-6
 
+    @require_h264
+    def test_integer_frame_rate_stays_an_int(self, tmp_path):
+        """An exact 30 fps stream stays an int. The fractional case stays a float."""
+        path = tmp_path / "thirty.mp4"
+        with av.open(str(path), "w") as container:
+            stream = container.add_stream("h264", rate=30)
+            stream.width = 16
+            stream.height = 16
+            stream.pix_fmt = "yuv420p"
+            for i in range(3):
+                frame = av.VideoFrame(16, 16, "yuv420p")
+                frame.pts = i
+                for packet in stream.encode(frame):
+                    container.mux(packet)
+            for packet in stream.encode():
+                container.mux(packet)
+
+        info = get_video_info(path)
+        assert info["video.fps"] == 30
+        assert type(info["video.fps"]) is int
+
     @require_libsvtav1
     def test_merges_encoder_config_as_video_prefixed_entries(self):
         cfg = RGBEncoderConfig(vcodec="libsvtav1", g=2, crf=30, preset=12)
