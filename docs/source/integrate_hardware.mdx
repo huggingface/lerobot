@@ -355,6 +355,7 @@ Your project must be a standard, installable Python package. Crucially, the name
 - `lerobot_camera_` for a camera.
 - `lerobot_teleoperator_` for a teleoperation device.
 - `lerobot_strategy_` for a `lerobot-rollout` strategy (see [Bring your own strategy](./inference#bring-your-own-strategy)).
+- `lerobot_processor_` for a pre- or post-processor step (a `ProcessorStep` that registers itself with `ProcessorStepRegistry`).
 
 This prefix system is how `lerobot` automatically finds your plugin in the Python environment.
 
