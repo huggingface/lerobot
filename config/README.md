@@ -113,12 +113,21 @@ upstream stay cheap:
   routes all linux there, and `cu128` has no aarch64 wheels, so a Pi or
   Jetson cannot resolve torch at all.
 
-  This only bites if you sync from *this* repo, which you should not — the
-  XLeRobot workspace root drives resolution and `tool.uv.sources` is not
-  read from dependencies. GPU torch for the Jetson is the `jetson` extra
-  there (`uv sync --extra jetson`), which routes to `cu132`. Note that
-  newer CUDA indexes **do** publish aarch64 wheels now, so the premise
-  above is specific to `cu128`, not a permanent fact about ARM.
+  **This entry is live even when you sync from the XLeRobot workspace.**
+  uv reads it as part of that resolution, so it is not dormant — adding a
+  second index for `torch` without a disjoint marker makes uv refuse to
+  resolve anything:
+
+  ```
+  Requirements contain conflicting indexes for package `torch` in split
+  `... platform_machine == 'x86_64' and sys_platform == 'linux'`
+  ```
+
+  GPU torch for the Jetson is the `jetson` extra in the workspace
+  (`uv sync --extra jetson`), scoped to `aarch64` for exactly that reason,
+  routing to `cu132`. Note also that newer CUDA indexes **do** publish
+  aarch64 wheels, so the premise above is specific to `cu128` rather than a
+  permanent fact about ARM.
 - `pyrealsense2` may go to >=2.57.7 on ARM linux. Upstream pins <2.57.0, but
   the first aarch64 **cp312** wheels appear in 2.57.7, and lerobot requires
   Python >=3.12.
