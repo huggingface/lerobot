@@ -105,11 +105,9 @@ def aggregate_pipeline_dataset_features(
     }
     images_token = OBS_IMAGES.split(".")[-1]
 
-    # Iterate through all features transformed by the pipeline.
+    # Iterate through all features transformed by the pipeline. PipelineFeatureType has
+    # exactly two members (ACTION, OBSERVATION), both handled below, so every ptype is covered.
     for ptype, feats in all_features.items():
-        if ptype not in [PipelineFeatureType.ACTION, PipelineFeatureType.OBSERVATION]:
-            continue
-
         for key, value in feats.items():
             # 1. Categorize the feature.
             is_action = ptype == PipelineFeatureType.ACTION

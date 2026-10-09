@@ -22,7 +22,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -181,9 +181,9 @@ class UnitreeG1(Robot):
             self._ChannelSubscriber = ChannelSubscriber
 
         # Initialize state variables
-        self.sim_env = None
+        self.sim_env: gym.Env[Any, Any] | None = None
         self._env_wrapper: dict[str, dict[int, gym.vector.VectorEnv]] | None = None
-        self._lowstate = None
+        self._lowstate: G1_29_LowState | None = None
         self._lowstate_lock = threading.Lock()
         # Guards the shared lowcmd message: the controller thread, send_action(), reset() and
         # the shutdown path all publish through it, and a torn update still carries a valid CRC.
@@ -410,7 +410,7 @@ class UnitreeG1(Robot):
 
         # Prefer the active controller's gains (e.g. SONIC loads kp/kd from its ONNX);
         # otherwise fall back to the config defaults.
-        if self.controller is not None and hasattr(self.controller, "kp"):
+        if self.controller is not None and hasattr(self.controller, "kp") and hasattr(self.controller, "kd"):
             self.kp = np.array(self.controller.kp, dtype=np.float32)
             self.kd = np.array(self.controller.kd, dtype=np.float32)
         else:
@@ -502,7 +502,7 @@ class UnitreeG1(Robot):
         if lowstate is None:
             return {}
 
-        obs = {}
+        obs: RobotObservation = {}
 
         # Motors - q, dq, tau for all joints
         for motor in G1_29_JointIndex:

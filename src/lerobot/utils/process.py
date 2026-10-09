@@ -40,9 +40,13 @@ def ensure_multiprocessing_start_method(start_method: str | None) -> None:
             f"got {start_method!r}."
         )
 
+    # Both multiprocessing.get_start_method() and get_context().get_start_method() resolve to
+    # DefaultContext.get_start_method, which typeshed types as always returning `str`: it
+    # re-declares the method instead of inheriting BaseContext's `allow_none`-aware overloads.
+    # At runtime it does return None before any context is set, so the guard below is real.
     current_method = multiprocessing.get_start_method(allow_none=True)
     if current_method is None:
-        multiprocessing.set_start_method(start_method)
+        multiprocessing.set_start_method(start_method)  # type: ignore[unreachable]
     elif current_method != start_method:
         raise RuntimeError(
             f"Multiprocessing start method is already {current_method!r}; cannot change it to "

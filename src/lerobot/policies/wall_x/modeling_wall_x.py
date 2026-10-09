@@ -74,6 +74,7 @@ from .qwen_model.vision_attention import VisionAttentionBackend
 if TYPE_CHECKING or _wallx_deps_available:
     from peft import LoraConfig, get_peft_model
     from transformers import AutoProcessor, BatchFeature
+    from transformers.cache_utils import Cache
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
         Qwen2_5_VisionTransformerPretrainedModel,
         Qwen2_5_VLForConditionalGeneration,
@@ -90,6 +91,7 @@ else:
     get_peft_model = None
     AutoProcessor = None
     BatchFeature = None
+    Cache = None
     # Conditional base: when transformers is unavailable the class still parses
     # (inheriting from nn.Module) but cannot be instantiated—require_package in
     # WallXPolicy.__init__ gives the user a clear error before that happens.
@@ -443,7 +445,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
         self.define_action_token_id()
 
         # Cache for rope deltas
-        self.rope_deltas = None
+        self.rope_deltas: torch.LongTensor | None = None
 
         # Initialize action preprocessor
         self.action_preprocessor = ActionHead(config)
@@ -744,7 +746,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
         input_ids: torch.LongTensor = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        past_key_values: list[torch.FloatTensor] | None = None,
+        past_key_values: Cache | list[torch.FloatTensor] | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         moe_token_types: torch.LongTensor | None = None,  # MoE token type assignments
         labels: torch.LongTensor | None = None,
@@ -822,7 +824,11 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             if (
                 (cache_position is not None and cache_position[0] == 0)
                 or self.rope_deltas is None
-                or (past_key_values is None or past_key_values.get_seq_length() == 0)
+                or (
+                    past_key_values is None
+                    or not isinstance(past_key_values, Cache)
+                    or past_key_values.get_seq_length() == 0
+                )
             ):
                 position_ids, rope_deltas = self.get_rope_index(
                     input_ids,
@@ -834,16 +840,12 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
                 self.rope_deltas = rope_deltas
             # Use previously calculated rope deltas to get correct position IDs
             else:
-                delta = (
-                    (cache_position[0] + self.rope_deltas).to(self.device)
-                    if cache_position is not None
-                    else 0
-                )
                 position_ids = torch.arange(seq_length, device=self.device)
                 position_ids = position_ids.view(1, -1).expand(batch_size, -1)
-                if cache_position is not None:  # otherwise `deltas` is an int `0`
+                if cache_position is not None:
+                    delta = (cache_position[0] + self.rope_deltas).to(self.device)
                     delta = delta.repeat_interleave(batch_size // delta.shape[0], dim=0)
-                position_ids = position_ids.add(delta)
+                    position_ids = position_ids.add(delta)
                 position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
 
         # Process input embeddings with multi-modal data
@@ -1057,7 +1059,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
         input_ids: torch.LongTensor = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        past_key_values: list[torch.FloatTensor] | None = None,
+        past_key_values: Cache | list[torch.FloatTensor] | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         moe_token_types: torch.LongTensor | None = None,
         labels: torch.LongTensor | None = None,
@@ -1217,7 +1219,11 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             if (
                 (cache_position is not None and cache_position[0] == 0)
                 or self.rope_deltas is None
-                or (past_key_values is None or past_key_values.get_seq_length() == 0)
+                or (
+                    past_key_values is None
+                    or not isinstance(past_key_values, Cache)
+                    or past_key_values.get_seq_length() == 0
+                )
             ):
                 position_ids, rope_deltas = self.get_rope_index(
                     input_ids,
@@ -1230,16 +1236,12 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             # Use previously calculated rope deltas to get correct position IDs
             else:
                 batch_size, seq_length, _ = inputs_embeds.shape
-                delta = (
-                    (cache_position[0] + self.rope_deltas).to(inputs_embeds.device)
-                    if cache_position is not None
-                    else 0
-                )
                 position_ids = torch.arange(seq_length, device=inputs_embeds.device)
                 position_ids = position_ids.view(1, -1).expand(batch_size, -1)
-                if cache_position is not None:  # otherwise `deltas` is an int `0`
+                if cache_position is not None:
+                    delta = (cache_position[0] + self.rope_deltas).to(inputs_embeds.device)
                     delta = delta.repeat_interleave(batch_size // delta.shape[0], dim=0)
-                position_ids = position_ids.add(delta)
+                    position_ids = position_ids.add(delta)
                 position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
 
         # Prepare action chunk data if provided

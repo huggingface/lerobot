@@ -497,10 +497,8 @@ class Policy(nn.Module):
         """Get encoded features from observations"""
         device = get_device_from_parameters(self)
         observations = observations.to(device)
-        if self.encoder is not None:
-            with torch.inference_mode():
-                return self.encoder(observations)
-        return observations
+        with torch.inference_mode():
+            return self.encoder(observations)
 
 
 class DefaultImageEncoder(nn.Module):

@@ -32,6 +32,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
+from typing import Any
 
 from lerobot.common.control_utils import (
     follower_smooth_move_to,
@@ -81,7 +82,9 @@ class EpisodicStrategy(RolloutStrategy):
 
     def __init__(self, config: EpisodicStrategyConfig) -> None:
         super().__init__(config)
-        self._listener = None
+        # init_keyboard_listener() has no return type annotation (returns a pynput Listener,
+        # TerminalKeyListener, or None), so Any is the honest type here.
+        self._listener: Any = None
         self._events: dict[str, bool] | None = None
 
     def setup(self, ctx: RolloutContext) -> None:
