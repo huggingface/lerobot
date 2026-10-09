@@ -84,8 +84,8 @@ class OpenCVCamera(Camera):
         # Read 1 frame asynchronously (waits for new frame with a timeout)
         async_image = camera.async_read()
 
-        # Get the latest frame immediately (no wait, returns timestamp)
-        latest_image, timestamp = camera.read_latest()
+        # Get the latest frame immediately (no wait)
+        latest_image = camera.read_latest()
 
         # When done, properly disconnect the camera using
         camera.disconnect()
