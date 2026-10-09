@@ -47,7 +47,12 @@ def build_pod_command(
     if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", code_repository):
         raise ValueError("code_repository must be a public HTTPS GitHub repository URL without credentials")
     spec = f"lerobot @ git+{code_repository}@{code_revision}"
-    install = shlex.join(["python", "-m", "pip", "install", "--no-deps", spec])
+    pip_install = shlex.join(["python", "-m", "pip", "install", "--no-deps", spec])
+    # Our official images use uv-created environments without pip. Installing
+    # into the interpreter that will run the driver also avoids targeting uv's
+    # own tool environment or a different Python found on PATH.
+    uv_install = 'uv pip install --python "$(command -v python)" --no-deps ' + shlex.quote(spec)
+    install = f"if command -v uv >/dev/null 2>&1; then {uv_install}; else {pip_install}; fi"
     driver = shlex.join(
         [
             "python",
