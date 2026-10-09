@@ -1,7 +1,13 @@
 # Wrist camera names for elroy (the Orin). Install as:
 #   sudo cp config/99-cameras-elroy.rules /etc/udev/rules.d/99-cameras.rules
-#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --action=add --subsystem-match=video4linux
 #   ls -l /dev/cam_*
+#
+# --action=add IS NOT OPTIONAL. Plain `udevadm trigger` fires CHANGE events,
+# and these rules do not take effect on a change - reload, trigger, and get
+# no symlink, with no error anywhere. Replugging the camera works too, for
+# the same reason: that is a real add event.
 #
 # WHY POSITIONAL. Both Innomaker U20CAM-1080p-S1 report serial SN0001, so
 # /dev/v4l/by-id collides and only one entry is ever created. Nothing in the
@@ -17,7 +23,13 @@
 # WHY ID_PATH AND NOT KERNELS. On the Pi a KERNELS rule stopped working
 # after a camera changed ports and would not come back even once the value
 # was corrected - udevadm test showed the right value in the device chain
-# and created no symlink. Never explained. ID_PATH has not done it.
+# and created no symlink.
+#
+# That was probably the trigger action, not the KERNELS key: the same
+# symptom turned up here with a rule that was correct in every respect, and
+# `--action=add` fixed it. Not proven for the Pi - if those ID_PATH rules
+# really did take with a plain trigger, something else was going on - but
+# check the action before blaming the match next time.
 #
 # MEASURED 2026-10-09 on elroy, with both cameras on the external hub:
 #

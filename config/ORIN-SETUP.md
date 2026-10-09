@@ -142,11 +142,23 @@ lives in one udev rule instead of three config files.
 
 ```bash
 sudo cp config/99-cameras-elroy.rules /etc/udev/rules.d/99-cameras.rules
-sudo udevadm control --reload-rules && sudo udevadm trigger
+sudo udevadm control --reload-rules
+sudo udevadm trigger --action=add --subsystem-match=video4linux
 ls -l /dev/cam_*
 ```
 
-You should see `cam_left -> ../video6` and `cam_right -> ../video8`.
+You should see `cam_left -> video6` and `cam_right -> video8`.
+
+**`--action=add` is load-bearing.** Plain `udevadm trigger` fires *change*
+events, and these rules do not take effect on a change: you reload, you
+trigger, you get no symlink, and nothing anywhere reports an error. The
+rules file is correct, the paths are correct, and it simply does not fire.
+Unplugging and replugging the camera also works, for the same reason - that
+is a genuine add event.
+
+This is worth remembering because the symptom is indistinguishable from a
+wrong `ID_PATH`, and you will burn an hour checking paths that were right
+all along.
 
 If you ever need to redo this mapping — a new machine, a moved hub — the
 reliable method is positional, because both Innomakers report serial
