@@ -60,6 +60,26 @@ def read1(bus, name, reg):
         return None
 
 
+def limits(bus, motors, label):
+    """What the servos themselves consider acceptable.
+
+    Saves having to know which STS3215 variant is fitted: the motor stores
+    its own Min/Max_Voltage_Limit, so Present_Voltage can be judged against
+    the part rather than against a guess.
+    """
+    print(f"\n  {label}")
+    seen = set()
+    for name in motors:
+        lo = read1(bus, name, "Min_Voltage_Limit")
+        hi = read1(bus, name, "Max_Voltage_Limit")
+        if lo is None or hi is None:
+            continue
+        seen.add((lo, hi))
+    for lo, hi in sorted(seen):
+        print(f"    the servos accept {volts(lo):.1f} - {volts(hi):.1f} V")
+    return min((lo for lo, _ in seen), default=None)
+
+
 def table(bus, motors, label):
     print(f"\n  {label}")
     print(f"    {'motor':<26}{'volts':>8}{'temp C':>8}{'load':>8}{'current':>9}")
@@ -119,7 +139,13 @@ def run(port, motors, label):
         print(f"  (could not relax everything first: {e})")
     time.sleep(0.3)
 
+    floor = limits(bus, motors, "0. what the servos will accept")
     rest = table(bus, motors, "1. relaxed")
+    if rest is not None and floor is not None and rest < floor:
+        print(f"\n    *** {volts(rest):.1f} V IS BELOW THE SERVOS' OWN MINIMUM "
+              f"OF {volts(floor):.1f} V ***")
+        print("    Nothing downstream of this will be reliable. Stop here and")
+        print("    fix the supply; the rest of the test only measures how bad.")
     worst = progressive(bus, motors, "2. progressive")
     held = table(bus, motors, "3. all holding")
 
@@ -157,6 +183,12 @@ def main() -> int:
             print(f"  {label}: {volts(rest):.1f} V relaxed -> {volts(worst):.1f} V worst "
                   f"(sag {volts(rest) - volts(worst):.1f} V)")
     print("""
+  Compare the relaxed voltage against the range the servos reported. A
+  plain USB-C port with no PD negotiation supplies 5 V, which is below
+  what an STS3215 needs - it is enough for the logic to answer a scan and
+  enough to move one joint under light load, but not enough when six
+  energize together. That failure looks exactly like a dead servo.
+
   A sag of a few tenths is normal. A volt or more, or any motor below
   about 9 V, is a supply that cannot hold up the whole robot - and the
   motor that stops answering will be the one at the end of the longest
