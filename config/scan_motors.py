@@ -53,18 +53,71 @@ DEFAULT_PORT2 = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00"
 EXPECTED_BAUD = FeetechMotorsBus.default_baudrate
 
 
+def diagnose_port(port: str) -> list[str]:
+    """Say why a port cannot be opened. 'Make sure you are using the correct
+    port' is lerobot's answer to every failure here, and it is wrong more
+    often than it is right - the port is usually correct and something else
+    is in the way."""
+    import glob
+    import grp
+    import os
+    import subprocess
+
+    notes: list[str] = []
+
+    if not os.path.exists(port):
+        notes.append("The path does not exist. Present now:")
+        for p in sorted(glob.glob("/dev/serial/by-id/*")) or ["(none)"]:
+            notes.append(f"  {p}")
+        notes.append("")
+        notes.append("A half-seated USB cable looks exactly like a wrong path.")
+        return notes
+
+    real = os.path.realpath(port)
+    st = os.stat(real)
+    owner_group = grp.getgrgid(st.st_gid).gr_name
+    notes.append(f"{port}")
+    notes.append(f"  -> {real}  {owner_group}  {oct(st.st_mode & 0o777)}")
+
+    if not os.access(real, os.R_OK | os.W_OK):
+        mine = {g.gr_name for g in grp.getgrall() if os.getlogin() in g.gr_mem}
+        notes.append("")
+        notes.append(f"  PERMISSION DENIED. You are not in '{owner_group}'.")
+        notes.append(f"    sudo usermod -aG {owner_group} $USER")
+        notes.append("  then LOG OUT AND BACK IN - group membership is set at")
+        notes.append("  login, so a new shell in the same session will not have it.")
+        notes.append(f"  (your groups: {' '.join(sorted(mine)) or 'unknown'})")
+        return notes
+
+    notes.append("  Permissions are fine, so something else holds the port.")
+    try:
+        mm = subprocess.run(
+            ["systemctl", "is-active", "ModemManager"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+    except Exception:
+        mm = "unknown"
+    if mm == "active":
+        notes.append("")
+        notes.append("  ModemManager is RUNNING. It probes every new CDC-ACM device")
+        notes.append("  and holds it open for ~20s talking AT commands at it, which")
+        notes.append("  looks identical to a permissions failure. See config/README.md")
+        notes.append("  for the udev rule that makes it ignore these adapters.")
+    else:
+        notes.append("  ModemManager is not running, so look for a stale process:")
+        notes.append(f"    sudo lsof {real}")
+    return notes
+
+
 def scan(port: str, expected: dict[int, str], label: str) -> tuple[set[int], bool]:
     print(f"\n{'=' * 68}\n{label}\n  {port}\n{'=' * 68}")
     try:
         found = FeetechMotorsBus.scan_port(port)
     except Exception as e:
-        print(f"  ERROR: could not open the port - {e}")
-        print("\n  Present now:")
-        import glob
-
-        for p in sorted(glob.glob("/dev/serial/by-id/*")) or ["    (none)"]:
-            print(f"    {p}")
-        return set(), False
+        print(f"  ERROR: could not open the port.\n  {e}\n")
+        for line in diagnose_port(port):
+            print(f"  {line}")
+        # Not a baud-rate verdict - we never got far enough to have one.
+        return set(), True
 
     if not found:
         print("  Nothing answered at any baud rate.")

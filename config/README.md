@@ -164,6 +164,43 @@ from XLeRobot.
 
 Examples live in the XLeRobot repo under `software/examples/`.
 
+## Serial ports that exist but will not open
+
+`lerobot-find-port` says the device is there; everything else says
+"Could not connect on port ... Make sure you are using the correct port."
+The port is almost always correct. Two things cause this on Ubuntu, and a
+fresh machine usually has both:
+
+**1. You are not in `dialout`.** `/dev/ttyACM*` is `root:dialout` mode 660.
+
+```bash
+id -nG | tr ' ' '\n' | grep -x dialout || sudo usermod -aG dialout $USER
+```
+
+Then **log out and back in** — group membership is established at login, so
+a new shell in the same session still will not have it. `newgrp dialout`
+works for one shell.
+
+**2. ModemManager is probing the adapters.** These are CDC-ACM devices;
+ModemManager opens every new one and talks AT commands at it for ~20
+seconds. While it holds the port, your open fails in a way that is
+indistinguishable from a permissions error — and because it lets go
+eventually, a retry a minute later can succeed, which makes it look
+intermittent and unexplainable.
+
+```bash
+sudo tee /etc/udev/rules.d/98-feetech-no-mm.rules >/dev/null <<'EOF'
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ENV{ID_MM_DEVICE_IGNORE}="1"
+EOF
+sudo udevadm control --reload-rules
+sudo udevadm trigger --action=add --subsystem-match=tty
+```
+
+`--action=add` matters; see `ORIN-SETUP.md`. If the machine has no cellular
+modem at all, `sudo systemctl disable --now ModemManager` is simpler.
+
+`config/scan-motors.sh` diagnoses both of these for you now.
+
 ## Python version
 
 `pyrealsense2` publishes aarch64 wheels for cp39/cp310/cp312 only, and no
