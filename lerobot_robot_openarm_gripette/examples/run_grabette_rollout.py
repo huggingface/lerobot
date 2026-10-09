@@ -43,6 +43,7 @@ from lerobot.rollout.strategies import BaseStrategy
 from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.utils import init_logging
+from lerobot.utils.visualization_utils import init_visualization, shutdown_visualization
 from lerobot_robot_openarm_gripette import OpenArmGripetteFollower, OpenArmGripetteFollowerConfig
 from lerobot_robot_openarm_gripette.grabette_processors import (
     ROBOT_JOINTS,
@@ -215,12 +216,23 @@ def main() -> None:
     input(f"{'DRY RUN: the robot will not move. ' if args.dry_run else ''}Press ENTER to start...")
 
     strategy_runner = BaseStrategy(rollout_config.strategy)
+    if rollout_config.display_data:
+        init_visualization(
+            rollout_config.display_mode,
+            session_name="openarm_gripette_rollout",
+            ip=rollout_config.display_ip,
+            port=rollout_config.display_port,
+        )
     try:
         strategy_runner.setup(context)
         strategy_runner.run(context)
     finally:
-        input("Support the arm, then press ENTER to disable torque and disconnect...")
-        strategy_runner.teardown(context)
+        try:
+            input("Support the arm, then press ENTER to disable torque and disconnect...")
+            strategy_runner.teardown(context)
+        finally:
+            if rollout_config.display_data:
+                shutdown_visualization(rollout_config.display_mode)
 
 
 if __name__ == "__main__":
