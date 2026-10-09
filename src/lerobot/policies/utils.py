@@ -23,7 +23,7 @@ from torch import nn
 
 from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
 from lerobot.lerobot_types import PolicyAction, RobotAction, RobotObservation
-from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.constants import ACTION, OBS_STATE, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
 
@@ -257,3 +257,93 @@ def validate_visual_features_consistency(
 
     if not (policy_subset_of_dataset or dataset_subset_of_policy):
         raise_feature_mismatch_error(provided_visuals, expected_visuals)
+
+
+def check_state(cfg: PreTrainedConfig, features: dict[str, PolicyFeature]) -> None:
+    """
+    Warns about state features the policy is given but never reads.
+
+    A policy takes exactly one proprioceptive input: the feature named
+    `observation.state`, which is what `PreTrainedConfig.robot_state_feature` returns. Every other
+    non-visual `observation.*` key is typed STATE by `dataset_to_policy_features` and then dropped.
+    Nothing downstream says so -- the key is still normalised, batched and moved to the device every
+    step, and it is still listed under `input_features` in the saved `config.json`, which reads as if
+    the model used it.
+
+    The singular `observation.state` is deliberate (#1664: taking the first STATE feature picked the
+    wrong one on multi-key datasets). This only makes that choice audible, so that a dataset column
+    nobody reads is a warning rather than a silent assumption.
+
+    Args:
+        cfg (PreTrainedConfig): The policy configuration, with `input_features` already resolved.
+        features (Dict[str, PolicyFeature]): A mapping of feature names to PolicyFeature objects,
+            as provided by the dataset or the environment.
+    """
+    if not cfg.input_features:
+        return
+
+    state_keys = sorted(k for k, ft in cfg.input_features.items() if ft.type is FeatureType.STATE)
+    if not state_keys:
+        return
+
+    if OBS_STATE not in state_keys:
+        # The dataset offered proprioception under some other name, so the policy builds no state
+        # input at all and trains on vision alone. A misspelled key and a deliberate vision-only
+        # run look identical from here, hence a warning and not an error.
+        provided = sorted(k for k, ft in features.items() if ft.type is FeatureType.STATE)
+        logging.warning(
+            f"No input feature is named '{OBS_STATE}', so the '{cfg.type}' policy will be trained "
+            f"without proprioception. These state features were given and will be ignored: "
+            f"{state_keys} (the dataset or environment provides {provided}). If one of them is the "
+            f"robot state, rename that column to '{OBS_STATE}' in your dataset -- or, when "
+            f"fine-tuning an existing checkpoint, pass:\n"
+            f'  --rename_map=\'{{"{state_keys[0]}": "{OBS_STATE}"}}\''
+        )
+        return
+
+    ignored = [k for k in state_keys if k != OBS_STATE]
+    if ignored:
+        logging.warning(
+            f"The '{cfg.type}' policy only reads the state feature named '{OBS_STATE}', so these "
+            f"input features are ignored: {ignored}. They are still normalised and loaded every "
+            f"step, and they are saved under `input_features`. To actually use them, concatenate "
+            f"them into '{OBS_STATE}' in your dataset."
+        )
+
+
+def check_action(cfg: PreTrainedConfig, features: dict[str, PolicyFeature]) -> None:
+    """
+    Warns about action features the policy is asked for but never predicts.
+
+    The output side drops keys the same way the input side does: `PreTrainedConfig.action_feature`
+    returns only the feature named `action`, so a second ACTION key is never predicted and never
+    supervised, while still appearing under `output_features` in the saved `config.json`.
+
+    Args:
+        cfg (PreTrainedConfig): The policy configuration, with `output_features` already resolved.
+        features (Dict[str, PolicyFeature]): A mapping of feature names to PolicyFeature objects,
+            as provided by the dataset or the environment.
+    """
+    if not cfg.output_features:
+        return
+
+    action_keys = sorted(k for k, ft in cfg.output_features.items() if ft.type is FeatureType.ACTION)
+    if not action_keys:
+        return
+
+    if ACTION not in action_keys:
+        provided = sorted(k for k, ft in features.items() if ft.type is FeatureType.ACTION)
+        logging.warning(
+            f"No output feature is named '{ACTION}', so the '{cfg.type}' policy has nothing to "
+            f"predict. These action features were given and will be ignored: {action_keys} (the "
+            f"dataset or environment provides {provided})."
+        )
+        return
+
+    ignored = [k for k in action_keys if k != ACTION]
+    if ignored:
+        logging.warning(
+            f"The '{cfg.type}' policy only predicts the action feature named '{ACTION}', so these "
+            f"output features are ignored: {ignored}. To actually predict them, concatenate them "
+            f"into '{ACTION}' in your dataset."
+        )
