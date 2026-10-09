@@ -12,102 +12,217 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
+import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
-from lerobot.scripts import lerobot_monitor_temperature as monitor
+from lerobot.scripts import lerobot_monitor_temperature as cli
+from lerobot.utils import motor_temperature as thermal
+
+NAMES = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
 
 
 @pytest.fixture
-def bus(monkeypatch):
-    robot = MagicMock()
-    robot.bus.motors = {
-        name: object()
-        for name in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
-    }
-    robot.bus.is_connected = True
-    monkeypatch.setattr(monitor, "SO101Follower", lambda _: robot)
-    monkeypatch.setattr(monitor.time, "sleep", lambda _: None)
-    return robot.bus
+def setup(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(thermal.time, "monotonic", lambda: clock[0])
+    bus = MagicMock(motors=dict.fromkeys(NAMES), is_connected=True)
+    bus.sync_read.return_value = dict.fromkeys(NAMES, 30)
+    monitor = thermal.MotorTemperatureMonitor(bus)
+    monkeypatch.setattr(monitor, "_warn", MagicMock())
+    yield monitor, bus, clock
+    monitor.notifications.shutdown(wait=True)
 
 
-@pytest.mark.parametrize("mode", [None, "rerun", "foxglove"])
-def test_per_motor_crossings_and_read_only_cleanup(bus, monkeypatch, mode):
-    cool = dict.fromkeys(bus.motors, 30)
-    first = {**cool, "shoulder_pan": 52}
-    second = {**first, "gripper": 53}
-    bus.sync_read.side_effect = [cool, first, first, second, cool, first, KeyboardInterrupt()]
-    notify, init, log, shutdown = (MagicMock() for _ in range(4))
-    for name, mock in zip(
-        ("send_notification", "init_visualization", "log_visualization_data", "shutdown_visualization"),
-        (notify, init, log, shutdown),
-        strict=True,
-    ):
-        monkeypatch.setattr(monitor, name, mock)
-    monitor.monitor_temperature("unused", "test", 52, 1, mode)
-    assert [call.args[0].split(":")[0] for call in notify.call_args_list] == [
-        "shoulder_pan",
-        "gripper",
-        "shoulder_pan",
-    ]
-    bus.connect.assert_called_once_with()
-    bus.disconnect.assert_called_once_with(disable_torque=False)
-    assert all(
-        call.args == ("Present_Temperature",) and call.kwargs == {"normalize": False}
-        for call in bus.sync_read.call_args_list
-    )
+def test_stages_once_per_motor_and_rearm_after_cooling(setup):
+    monitor, bus, clock = setup
+    for second, value in enumerate((49, 50, 54.9, 55, 64.9, 65, 70, 55, 65, 49, 50)):
+        clock[0] = second
+        bus.sync_read.return_value = {**dict.fromkeys(NAMES, 30), "shoulder_pan": value}
+        assert len(monitor.poll()) == 6
+    messages = [call.args[0] for call in monitor._warn.call_args_list]
+    assert len(messages) == 4
+    assert "Heating" in messages[0] and "50 C" in messages[0]
+    assert "Overheating" in messages[1] and "55 C" in messages[1]
+    assert "cool down before continuing" in messages[2] and "65 C" in messages[2]
+    assert "50 C" in messages[3]
+    bus.connect.assert_not_called()
+    bus.disconnect.assert_not_called()
     bus.write.assert_not_called()
-    if mode:
-        init.assert_called_once_with(mode, session_name="lerobot_temperature")
-        assert log.call_count == 6
-        assert log.call_args.kwargs["observation"]["shoulder_pan.temperature"] == 52.0
-        shutdown.assert_called_once_with(mode)
+
+
+def test_new_hot_motor_and_direct_jump_to_critical(setup):
+    monitor, bus, clock = setup
+    bus.sync_read.return_value = {**dict.fromkeys(NAMES, 30), "shoulder_pan": 50}
+    monitor.poll()
+    clock[0] = 1
+    bus.sync_read.return_value = {**bus.sync_read.return_value, "gripper": 65}
+    monitor.poll()
+    assert monitor._warn.call_count == 2
+    assert "gripper=65" in monitor._warn.call_args.args[0]
+    assert "cool down" in monitor._warn.call_args.args[0]
+
+
+@pytest.mark.parametrize("failure", [ConnectionError("No reply"), {}, dict.fromkeys(NAMES, float("nan"))])
+def test_retry_at_one_hz_without_treating_missing_readings_as_cool(setup, failure):
+    monitor, bus, clock = setup
+    if isinstance(failure, Exception):
+        bus.sync_read.side_effect = failure
     else:
-        init.assert_not_called()
+        bus.sync_read.return_value = failure
+    monitor.warned["shoulder_pan"] = 3
+    for value in (0, 0.1, 0.9, 1, 1.5, 2):
+        clock[0] = value
+        assert monitor.poll() == {}
+    assert bus.sync_read.call_count == 3
+    assert monitor._warn.call_count == 1
+    assert monitor.warned["shoulder_pan"] == 3
+    bus.sync_read.side_effect = None
+    bus.sync_read.return_value = dict.fromkeys(NAMES, 30)
+    clock[0] = 3
+    assert len(monitor.poll()) == 6
+    assert not monitor.unavailable and not monitor.warned
 
 
-@pytest.mark.parametrize("value", [None, float("nan"), 151])
-def test_invalid_telemetry_warns_and_closes(bus, monkeypatch, value):
-    notify = MagicMock()
-    monkeypatch.setattr(monitor, "send_notification", notify)
-    bus.sync_read.return_value = (
-        {} if value is None else {**dict.fromkeys(bus.motors, 30), "shoulder_pan": value}
+def test_slow_desktop_notification_does_not_block_sensor_reads(setup, monkeypatch):
+    monitor, bus, clock = setup
+    started, release = threading.Event(), threading.Event()
+
+    def blocked_notification(_):
+        started.set()
+        release.wait(3)
+
+    monkeypatch.setattr(thermal, "_desktop_notification", blocked_notification)
+    monkeypatch.setattr(
+        monitor, "_warn", lambda message: monitor.notifications.submit(thermal._desktop_notification, message)
     )
-    with pytest.raises(ValueError, match="telemetry"):
-        monitor.monitor_temperature("unused", "test", 52, 1)
-    notify.assert_called_once()
+    try:
+        bus.sync_read.return_value = dict.fromkeys(NAMES, 50)
+        monitor.poll()
+        assert started.wait(1)
+        clock[0] = 1
+        assert len(monitor.poll()) == 6
+        assert bus.sync_read.call_count == 2
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize("mode", ["rerun", "foxglove"])
+def test_standalone_closes_without_changing_torque(setup, monkeypatch, mode):
+    monitor, bus, _ = setup
+    robot = MagicMock(bus=bus)
+    monkeypatch.setattr(cli, "SO101Follower", lambda _: robot)
+    monkeypatch.setattr(cli, "MotorTemperatureMonitor", lambda _: monitor)
+    init, log, shutdown = MagicMock(), MagicMock(), MagicMock()
+    monkeypatch.setattr(cli, "init_visualization", init)
+    monkeypatch.setattr(cli, "log_visualization_data", log)
+    monkeypatch.setattr(cli, "shutdown_visualization", shutdown)
+    monkeypatch.setattr(cli.time, "sleep", MagicMock(side_effect=KeyboardInterrupt))
+    cli.monitor_temperature("unused", "test", mode)
+    init.assert_called_once_with(mode, session_name="lerobot_temperature")
+    assert len(log.call_args.kwargs["observation"]) == 6
     bus.disconnect.assert_called_once_with(disable_torque=False)
+    robot.connect.assert_not_called()
+    shutdown.assert_called_once_with(mode)
 
 
-def test_read_failure_warns_and_closes(bus, monkeypatch):
-    monkeypatch.setattr(monitor, "send_notification", MagicMock())
-    bus.sync_read.side_effect = ConnectionError("No reply")
-    with pytest.raises(ConnectionError):
-        monitor.monitor_temperature("unused", "test", 52, 1)
-    bus.disconnect.assert_called_once_with(disable_torque=False)
+@pytest.mark.parametrize("loop_name", ["record", "teleop"])
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("display", [False, True])
+def test_control_loops_share_bus_and_keep_temperature_out_of_dataset(
+    setup, monkeypatch, loop_name, enabled, display
+):
+    from lerobot.scripts import lerobot_record as record, lerobot_teleoperate as teleop
+
+    monitor, bus, clock = setup
+    bus.sync_read.side_effect = [dict.fromkeys(NAMES, value) for value in (50, 55, 65)]
+    monkeypatch.setattr(thermal.time, "perf_counter", lambda: clock[0])
+
+    class Timer:
+        def tick(self):
+            pass
+
+        def section(self, _):
+            return contextlib.nullcontext()
+
+        def wait(self):
+            clock[0] = round(clock[0] + 0.1, 1)
+
+        def log_run_summary(self):
+            pass
+
+    robot = MagicMock(action_features={"joint.pos": float})
+    robot.get_observation.return_value = {"joint.pos": 1.0}
+    leader = MagicMock(spec=record.Teleoperator)
+    leader.get_action.return_value = {"joint.pos": 1.0}
+    kwargs = {
+        "robot": robot,
+        "teleop": leader,
+        "fps": 10,
+        "display_data": display,
+        "teleop_action_processor": lambda pair: pair[0],
+        "robot_action_processor": lambda pair: pair[0],
+        "robot_observation_processor": lambda obs: obs,
+        "temperature_monitor": monitor if enabled else None,
+    }
+    module = record if loop_name == "record" else teleop
+    visualize = MagicMock()
+    monkeypatch.setattr(module, "log_visualization_data", visualize)
+    if loop_name == "record":
+        dataset = SimpleNamespace(fps=10, features={}, add_frame=MagicMock())
+        monkeypatch.setattr(
+            record, "build_dataset_frame", lambda features, values, prefix: {prefix: dict(values)}
+        )
+        record.record_loop(
+            events={"exit_early": False}, control_time_s=2.2, timer=Timer(), dataset=dataset, **kwargs
+        )
+        assert dataset.add_frame.call_count == 22
+        assert all("temperature" not in str(call.args[0]) for call in dataset.add_frame.call_args_list)
+    else:
+        monkeypatch.setattr(teleop, "CycleTimer", lambda *args, **kwargs: Timer())
+        teleop.teleop_loop(duration=2.2, **kwargs)
+    assert bus.sync_read.call_count == (3 if enabled else 0)
+    assert visualize.call_count == (22 if display else (3 if enabled else 0))
+    if enabled:
+        temperature_frames = [
+            call.kwargs["observation"]
+            for call in visualize.call_args_list
+            if "shoulder_pan.temperature" in call.kwargs["observation"]
+        ]
+        assert len(temperature_frames) == 3
+        assert all(len(frame) == (7 if display else 6) for frame in temperature_frames)
+        assert monitor._warn.call_count == 3
+    bus.connect.assert_not_called()
+    bus.write.assert_not_called()
 
 
-def test_notification_failure_does_not_stop_monitoring(monkeypatch, caplog):
-    monkeypatch.setattr(monitor.platform, "system", lambda: "Darwin")
-    command = MagicMock(side_effect=OSError("notification denied"))
-    monkeypatch.setattr(monitor.subprocess, "run", command)
-    monitor.send_notification('Motor "hot": 52 C')
-    assert command.call_args.args[0][-2] == 'Motor "hot": 52 C'
+def test_factory_borrows_existing_bus(setup):
+    _, bus, _ = setup
+    robot = MagicMock(spec=thermal.SOFollower, bus=bus)
+    monitor = thermal.make_temperature_monitor(robot)
+    assert monitor.bus is bus
+    monitor.close()
+    robot.connect.assert_not_called()
+
+
+def test_factory_rejects_unsupported_robot():
+    with pytest.raises(ValueError, match="SO-100/SO-101"):
+        thermal.make_temperature_monitor(MagicMock())
+
+
+def test_notification_failure_is_logged(monkeypatch, caplog):
+    monkeypatch.setattr(thermal.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(thermal.subprocess, "run", MagicMock(side_effect=OSError("notification denied")))
+    thermal._desktop_notification("Heating")
     assert "notification denied" in caplog.text
 
 
-@pytest.mark.parametrize("option", [["--interval", "nan"], ["--interval", "0"], ["--threshold", "0"]])
-def test_cli_rejects_invalid_options(monkeypatch, option):
-    monkeypatch.setattr("sys.argv", ["lerobot-monitor-temperature", "--port", "unused", *option])
-    with pytest.raises(SystemExit) as exc:
-        monitor.main()
-    assert exc.value.code == 2
-
-
-def test_cli_defaults_to_52_degrees(monkeypatch):
+def test_cli_defaults_to_live_rerun(monkeypatch):
     monkeypatch.setattr("sys.argv", ["lerobot-monitor-temperature", "--port", "unused"])
     run = MagicMock()
-    monkeypatch.setattr(monitor, "monitor_temperature", run)
-    monitor.main()
-    run.assert_called_once_with("unused", "temperature_monitor", 52, 1, None)
+    monkeypatch.setattr(cli, "monitor_temperature", run)
+    cli.main()
+    run.assert_called_once_with("unused", "temperature_monitor", "rerun")

@@ -452,11 +452,23 @@ The six STS3215 motors provide temperature telemetry. With the Feetech extra ins
 lerobot-monitor-temperature --port /dev/tty.usbmodemYOUR_PORT
 ```
 
-The monitor polls once per second and warns when each motor reaches **52°C**. Override with `--threshold` and `--interval`. It logs a warning and attempts a macOS/Linux desktop notification on each threshold crossing; notification delivery depends on your desktop permissions. Pause safely and allow cooling yourself: this command does not stop the arm. A telemetry failure stops monitoring with an error rather than reporting the motors as cool.
+The monitor samples all six motor sensors once per second and shows live plots in Rerun. Use `--display-mode=foxglove` to plot in Foxglove instead. Both viewers require the `viz` extra.
 
-Add `--display-mode=rerun` or `--display-mode=foxglove` (both use the `viz` extra) to reuse LeRobot's live scalar plots. Foxglove listens on `ws://127.0.0.1:8765`; plot `/observation/state.scalars[:]` using the array labels, or configure an Indicator panel to show a warning at 52°C. Rerun plots `observation.<motor>.temperature`.
+Warnings escalate independently for each motor:
 
-This standalone command must exclusively own the serial port. Stop teleoperation/recording before running it; monitoring during those loops would require polling their already-open bus within the same process. The sensor reading is not a calibrated estimate of the winding's hottest temperature, and the warning threshold does not replace the motor's built-in protection.
+| Temperature | Warning                                                         |
+| ----------- | --------------------------------------------------------------- |
+| **50°C**    | Heating                                                         |
+| **55°C**    | Overheating                                                     |
+| **65°C**    | Excessive heating: pause safely and cool down before continuing |
+
+Each stage sends a terminal warning and attempts a macOS/Linux desktop notification. Repeated readings at the same stage do not repeat notifications; warnings rearm after that motor cools below 50°C. If a reading jumps straight to 65°C, the excessive-heating warning is sent immediately. Desktop delivery depends on permissions. A failed temperature read reports UNAVAILABLE and retries once per second without treating a missing reading as cool.
+
+During teleoperation or recording, add `--monitor_motor_temperature=true` to the existing command. This uses the robot's already-open bus, keeps alerts active across episodes and reset phases, and shows temperature plots even when `--display_data=false`. Temperature readings are kept separate from recorded training features. The option is off by default and currently supports SO-100/SO-101 followers.
+
+Foxglove listens on `ws://127.0.0.1:8765`; plot `/observation/state.scalars[:]` using the labels, or configure Indicator panels with the thresholds above. Rerun plots `observation.<motor>.temperature`.
+
+Use the standalone command only when teleoperation/recording is stopped; use the option above while controlling the arm. These are operator warnings: they do not stop motion, disable torque, detect every stall, or replace the motor's built-in protection. Pause safely and allow cooling yourself. The sensor reading need not equal the winding's hottest temperature. Sampling happens on the next control tick at least one second after the previous poll, so a stalled control loop also delays temperature reads.
 
 Congrats 🎉, your robot is all set to learn a task on its own. Start training it by following this tutorial: [Getting started with real-world robots](./il_robots)
 
