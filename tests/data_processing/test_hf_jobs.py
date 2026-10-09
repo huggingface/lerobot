@@ -21,6 +21,15 @@ def test_pod_command_pins_fork_without_credentials():
     assert f"git+https://github.com/pkooij/lerobot.git@{SHA}" in command[2]
     assert 'uv pip install --python "$(command -v python)" --no-deps' in command[2]
     assert "python -m pip install --no-deps" in command[2]
+    pinned = processing.build_pod_command(
+        "hf://buckets/me/run", "bundles/x", "b" * 64, SHA, bootstrap_packages=("openai==1.109.1",)
+    )
+    assert "--no-deps openai==1.109.1" in pinned[2]
+    for package in ("openai", "openai>=1", "--index-url=secret", "https://user:password@host/package"):
+        with pytest.raises(ValueError, match="bootstrap_packages"):
+            processing.build_pod_command(
+                "hf://buckets/me/run", "bundles/x", "b" * 64, SHA, bootstrap_packages=(package,)
+            )
     for repository in (
         "https://token@github.com/a/b",
         "https://github.com/a/b?token=secret",

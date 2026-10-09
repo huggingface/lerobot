@@ -38,7 +38,12 @@ def require_persistent_remote(store):
 
 
 def build_pod_command(
-    run_uri, bundle_key, digest, code_revision, code_repository="https://github.com/huggingface/lerobot.git"
+    run_uri,
+    bundle_key,
+    digest,
+    code_revision,
+    code_repository="https://github.com/huggingface/lerobot.git",
+    bootstrap_packages=(),
 ):
     if not re.fullmatch(r"[0-9a-f]{40}", code_revision or ""):
         raise ValueError("HF Jobs code_revision must be an immutable 40-character Git commit SHA")
@@ -47,11 +52,19 @@ def build_pod_command(
     if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", code_repository):
         raise ValueError("code_repository must be a public HTTPS GitHub repository URL without credentials")
     spec = f"lerobot @ git+{code_repository}@{code_revision}"
-    pip_install = shlex.join(["python", "-m", "pip", "install", "--no-deps", spec])
+    if any(
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*==[A-Za-z0-9][A-Za-z0-9_.+!-]*", p)
+        for p in bootstrap_packages
+    ):
+        raise ValueError(
+            "bootstrap_packages require exact name==version pins, not URLs/options or credentials"
+        )
+    packages = [*bootstrap_packages, spec]
+    pip_install = shlex.join(["python", "-m", "pip", "install", "--no-deps", *packages])
     # Our official images use uv-created environments without pip. Installing
     # into the interpreter that will run the driver also avoids targeting uv's
     # own tool environment or a different Python found on PATH.
-    uv_install = 'uv pip install --python "$(command -v python)" --no-deps ' + shlex.quote(spec)
+    uv_install = 'uv pip install --python "$(command -v python)" --no-deps ' + shlex.join(packages)
     install = f"if command -v uv >/dev/null 2>&1; then {uv_install}; else {pip_install}; fi"
     driver = shlex.join(
         [
@@ -112,6 +125,7 @@ def dispatch_bundle(
     timeout,
     code_repository="https://github.com/huggingface/lerobot.git",
     namespace=None,
+    bootstrap_packages=(),
     secret_env=(),
     labels=None,
     resources=Resources(),
@@ -121,7 +135,7 @@ def dispatch_bundle(
         raise ValueError("Choose an immutable image@sha256:digest before HF Jobs dispatch")
     if not flavor or flavor == "local":
         raise ValueError("An HF Jobs hardware flavor is required")
-    command = build_pod_command(store.uri, key, digest, code_revision, code_repository)
+    command = build_pod_command(store.uri, key, digest, code_revision, code_repository, bootstrap_packages)
     validate_hardware(flavor, resources)
     # Refuse to duplicate an active job for this exact bundle on resume.
     for path in store.list(f"submissions/hf/{digest}/*.json"):
@@ -224,6 +238,7 @@ def run_hf_stage(store, plan, runtime):
                     timeout=cfg.timeout,
                     code_repository=cfg.code_repository,
                     namespace=cfg.namespace,
+                    bootstrap_packages=cfg.bootstrap_packages,
                     secret_env=cfg.secret_env,
                     resources=resources,
                 )
@@ -270,6 +285,7 @@ def submit_convert_to_hf(cfg):
         timeout=jobs.timeout,
         code_repository=jobs.code_repository,
         namespace=jobs.namespace,
+        bootstrap_packages=jobs.bootstrap_packages,
         secret_env=jobs.secret_env,
         resources=Resources(cpus=cfg.runtime.workers * cfg.encoder_threads),
     )

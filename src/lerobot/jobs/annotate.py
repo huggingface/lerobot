@@ -56,6 +56,7 @@ def submit_annotate_to_hf(cfg):
         timeout=cfg.job.timeout,
         code_repository=cfg.runtime.hf_jobs.code_repository,
         namespace=cfg.runtime.hf_jobs.namespace,
+        bootstrap_packages=cfg.runtime.hf_jobs.bootstrap_packages,
         secret_env=names,
         labels=dict.fromkeys(cfg.job.tags, "true"),
         resources=Resources(

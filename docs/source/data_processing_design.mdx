@@ -140,6 +140,11 @@ Choose an explicit account/namespace, immutable code SHA, public HTTPS code
 repository and image digest. The image owns dependency versions; the launcher
 installs pinned LeRobot code without resolving replacement CUDA/model dependencies.
 Use `uv pip` for uv-created environments without pip, with pip as the fallback.
+For missing small dependencies, operators may supply exact `bootstrap_packages`
+pins, also installed with `--no-deps`. Include their required dependencies explicitly;
+this is not an automatic environment resolver. Prefer baking production environments
+into a pinned image. The standard GPU training image does not include every annotation
+extra; verify the OpenAI client as well as the separately owned vLLM service.
 
 Conversion and annotation compatibility bundles run a single-node controller with
 local workers. Configuration is serialized, not reconstructed by replaying argv.

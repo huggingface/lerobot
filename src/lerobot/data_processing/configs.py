@@ -39,6 +39,7 @@ class HFJobsConfig:
     code_revision: str | None = None
     code_repository: str = "https://github.com/huggingface/lerobot.git"
     namespace: str | None = None
+    bootstrap_packages: tuple[str, ...] = ()
     timeout: str = "2h"
     max_parallel: int = 4
     detach: bool = False

@@ -4,7 +4,7 @@ name: FineRobotics Tests
 
 on:
   pull_request:
-    branches: [codex/finerobotics]
+    branches: [main, codex/finerobotics]
   push:
     branches: [codex/finerobotics]
   workflow_dispatch:
