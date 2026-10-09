@@ -29,8 +29,9 @@ remain deployment-owned; they are not written into work plans.
 
 Language clients on cluster nodes need reachable VLM endpoints and `vlm.auto_serve=false`;
 a controller's localhost server is not reachable as localhost on other nodes. Local model
-modules instead use their scheduler-provided GPU allocation. This implementation is tested
-with mocked scheduler responses and actual local workers, not a live cluster.
+modules instead use their scheduler-provided GPU allocation. Bounded live CPU arrays,
+an H100 encoder and external-service language workers passed science-cluster acceptance;
+see the [results and limits](data_processing_acceptance).
 
 ## Conversion
 
@@ -224,7 +225,10 @@ The publisher refuses releases exceeding bounded single-commit file/byte limits.
 Large conversion publication through a staged branch with guarded promotion remains
 a separate integration task; it is not silently split into partially public
 uploads. Retained bucket releases remain usable without Hub publication.
-Mocked API tests do not establish real HF Jobs or publication acceptance. See the
+Live personal-account CPU conversion and A100 annotation jobs passed retention/restore
+and cached-resume checks; generic multi-pod worker groups and public release promotion
+still have simulated integration coverage rather than live acceptance. See the
+[acceptance report](data_processing_acceptance) and the
 [official Jobs guide](https://huggingface.co/docs/huggingface_hub/guides/jobs).
 
 ## Model extensions, pairs and measurements
@@ -319,7 +323,7 @@ The maintained local benchmark times the entire conversion call, including acqui
 planning, setup, decoding/encoding, validation, retries, upload and assembly. Repeat in
 reverse order and verify output parity. The CPU 1/16/128/1024 and GPU 1/4/16/32 matrix
 is **unmeasured resource arithmetic**. Peak memory, scratch, actual GPU utilization,
-cluster acceptance and the 500–1,000× target remain to be measured.
+production-scale cluster utilization and the 500–1,000× target remain to be measured.
 
 Logical IDs use upstream content hashes, not temporary attempt paths. Sources can
 separate immutable content identity from execution bindings using `identity_payload`;

@@ -1,0 +1,159 @@
+# FineRobotics runtime: live acceptance
+
+The exploratory runtime passed bounded laptop, science Slurm CPU/H100 and personal
+HF Jobs CPU/A100 checks. This report concerns the processing engine, not completion
+of the FineRobotics source inventory, production scaling or an annotation accuracy
+benchmark. The [design](data_processing_design) explains those boundaries.
+
+## What ran
+
+Tests ran on macOS 15.6.1 ARM64/Python 3.12.11 and science Linux/Python 3.12.14.
+The controlled fixture has four episodes, two cameras, 96 frames at 12 fps, native
+six-dimensional actions/state and two deliberately black frames. Real data comes
+from the first three SO-100 pick-and-place episodes: 1,342 frames, two cameras,
+30 fps, 44.73 physical seconds. Conversion letterboxes to 512×512, uses current
+LeRobot AV1 parameters and MP4 faststart, and does not change native actions.
+
+| Workload                                | Laptop                                               | Science Slurm                                                                  | Personal HF Jobs                                                                            |
+| --------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| Tiny archive conversion                 | 1 worker: 1.953s; 2: 2.993s                          | Linux local: 6.048s; 2-worker array: 76.017s                                   | CPU: 67s running + 68s scheduling = 135s                                                    |
+| Video quality + exported encoder        | CPU: 0.811s; cached encoder: 0.024s                  | CPU: 53.324s; H100: 54.234s; cached encoder: 0.168/0.175s                      | GPU exercised by the real VLM job below, not a separate exported-encoder job                |
+| Real three-episode conversion           | Inspect/download only                                | 2 workers: 141.304s                                                            | Tiny raw archive above, not the real conversion recipe                                      |
+| Real language annotations               | 1 episode: 16.781s using remote H100; cached: 0.146s | 3 episodes: 318.103s; updated materializer resume: 43.599s, no model inference | 3 episodes: 534s running + 5s scheduling = 539s; final-code cached resume: 171s + 4s = 176s |
+| Selected tests on final functional code | 179 passed, 3 warnings, 25.97s                       | 179 passed, 3 warnings, 154.74s                                                | Actual pinned-image workflows, not the entire pytest suite                                  |
+
+Local and Slurm numbers time their full processing calls, excluding fixture setup,
+source download and external model-service cold start. Slurm includes arrays and
+finalizers. HF Jobs numbers are service-reported job durations, including code/client
+installation, source download, model/environment startup and retained output writes.
+These boundaries differ; the columns are not a hardware speed comparison. Each
+timing is one bounded trial, not a statistical benchmark. Tiny parallel runs are
+slower because startup and durable I/O dominate.
+
+The laptop hosts no model weights. A failed fresh annotation attempt peaked at
+0.90 GB RSS, with no swaps; successful cached/partial-schema runs peaked at
+0.49/0.48 GB. Fresh-success peak RSS was not captured. Heavy source/model downloads
+and restoration stayed on the cluster; the local inspection dataset is about 16 MB.
+
+## Verified invariants
+
+- Fresh 1/2-worker conversion has matching native arrays and video hashes. Within
+  the same Linux environment, local/Slurm part and video hashes match exactly.
+  Mac/Linux codec bytes differ; cross-platform byte identity is not promised.
+- The real converted subset matches source action/state, timestamps, frame index,
+  episode index and index values exactly. Images are 512×512; recorded geometry
+  preserves aspect ratio. MP4 `moov` precedes `mdat`.
+- Quality detects both inserted black frames; encoder produces 40 finite vectors
+  for the correct camera/frame references. CPU/H100 maximum absolute difference
+  is `2.98e-8` with `atol=1e-6`, `rtol=1e-5`. This tiny seeded convolution is a
+  real inference fixture, not a pretrained semantic-quality evaluation.
+- Cached encoder execution creates no new checkpoints. Holding one owned quality
+  artifact aside caused selective recomputation and a complete valid result in
+  0.590s; the held original is recoverable. Unit tests additionally cover corrupt
+  outputs, retries, incomplete coverage and interrupted materialization.
+- Real subtasks, plans, memory, paraphrases, interjections/speech and camera-specific
+  count/bounding-box VQA passed structural validation: three episodes, zero errors
+  and warnings. Annotation leaves native columns and video bytes unchanged.
+- The standard LeRobot reader loads the enriched three-episode sample. Partial
+  annotation now supplies typed empty language columns to untouched files, without
+  generating labels there or changing native values. Already consistent untouched
+  files are not rewritten.
+- HF CPU conversion was checksum-restored locally. The HF annotation release was
+  checksum-restored on the cluster and loads all 19,631 native frames/50 episodes;
+  only the selected three carry generated labels. Native arrays and source video
+  hashes match. Source videos are pinned references, not duplicate uploads.
+- Final HF resume retained identical file artifacts and source references, without
+  starting a model. Slurm resume also passed after its external H100 service stopped.
+
+Fresh A100 and H100 labels differ. A fixed seed/temperature is not a promise of
+bitwise VLM determinism. Structural validation does not measure grounding or accuracy:
+colour descriptions vary, subtask boundaries are approximate, and generated speech
+is not a human recording. The A100 run also logged a truncated describe-pass JSON
+reply after retry; segmentation still produced validated subtasks. Inspect these
+outputs before treating them as training ground truth.
+
+## Pins and retained evidence
+
+Source: [lerobot/svla_so100_pickplace](https://huggingface.co/datasets/lerobot/svla_so100_pickplace/tree/728583b5eaf9e739a7f119e2def466fa1d552402),
+revision `728583b5eaf9e739a7f119e2def466fa1d552402`, Apache-2.0 in its card.
+Model: [Qwen/Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct/tree/ebb281ec70b05090aa6165b016eac8ec08e71b17),
+revision `ebb281ec70b05090aa6165b016eac8ec08e71b17`; vLLM 0.17.0, temperature 0,
+1,024 new tokens, max model length 16,384, eager mode, client concurrency 2.
+The H100 endpoint was authenticated; tokens are not stored in configs or this report.
+
+Main comparison: `b9cb121cb7d4e3e26ec5c906d08dda68d151ba52`.
+Initial live fixes/model runs: `e9c886f231a7b1724595ad75b3a31cb249fb4c22`.
+Final functional code and resume checks: `622ed9e600b636c6deba36fc7dc7049330daba68`.
+Subsequent documentation-only changes do not alter those tested functions.
+
+Official images:
+
+```text
+CPU huggingface/lerobot-cpu@sha256:32eff7329d15e95e041021a0830455c0eaea021dcc6a5bddac6a68d2065763a9
+GPU huggingface/lerobot-gpu@sha256:4e30a928c1fa58f98c8bf91758ead5864c17dc4d67f5b5da548e92dc6f1e426d
+Raw fixture archive SHA256: 3dcfce051978bc5afe6d1c975efbe73d5bb64cd57d56493117b47f5db44e57a1
+```
+
+Live HF Jobs, all in the personal `pepijn223` namespace:
+
+- [CPU conversion](https://huggingface.co/jobs/pepijn223/6ac89eb2095c578089303c2b).
+- [Self-contained A100 annotation](https://huggingface.co/jobs/pepijn223/6ac8a384095c578089303e27).
+- [Final-code cached resume](https://huggingface.co/jobs/pepijn223/6ac8a5f7fee2c90070175f9e).
+
+Private three-episode inspection sample:
+[pepijn223/finerobotics-runtime-inspection](https://huggingface.co/datasets/pepijn223/finerobotics-runtime-inspection/tree/b744ded7e4abd72e8f0f9ee786178e4c688434d7).
+It includes an HTML two-camera review page and the original source card. Access is
+restricted to the owner; it is not a public FineRobotics release. Logs/reports and
+bucket releases remain available to the requester. The full annotation release is
+`gpu-annotation-3/releases/6a281d40b1cadabe0cf59e60c4b9968f34a8b0ca21973fa54fbe315fc4169d03.json`
+under that account's private `finerobotics-runtime-acceptance` bucket.
+
+Science controller jobs: CPU 138705, H100 encoder 138707, language 138783,
+final-code resume 138833, final tests/restoration 138840. H100 service 138735 was
+deliberately stopped after inference. Slurm accounting for 48 owned job/array rows,
+including controllers, finalizers, failed launches and service idle time, totals
+7.716 allocated CPU-hours and 0.503 allocated H100-hours. These are resource-time,
+not utilization or a billing calculation; no unrelated jobs were changed.
+
+HF job running-time × quoted flavor rates estimates about $0.55 compute, not an
+invoice-confirmed charge. Conservative hard-timeout reservations total $8.155,
+plus a $2 storage reserve: **$10.155 maximum reserved**, below the authorized $50.
+Failed attempts remain counted. Paid jobs are terminal; no recurring job was created.
+
+## Failures that improved the implementation
+
+The first HF CPU job failed because the official uv-created Python environment has
+no pip. Installation now uses `uv pip` against the active interpreter, with pip
+fallback. A subsequent real CPU job passed. The GPU image lacks the annotation
+OpenAI client; acceptance supplies explicit small-package pins without replacing
+CUDA dependencies. Its uv installation lacks the `uvx` convenience executable;
+the service command uses `uv tool run --from vllm==0.17.0` instead. Two failed GPU
+attempts are accounted for; one was canceled promptly after detecting the issue.
+
+Two H100 service starts failed on home-directory cache quota. Explicit task-storage
+paths for vLLM, FlashInfer, Triton and Torch caches fixed startup. No existing user
+files or environments were deleted.
+
+Real annotations exposed zero-padded time badges copied as invalid JSON numbers
+such as `002.52`. Badges now use `2.52`, and JSON retries explicitly describe valid
+numeric formatting. The parser remains strict; module versions invalidate old
+outputs. A second live finding was partial annotation breaking the ordinary reader
+when other files lack nested JSON language columns; schema-only padding fixes this.
+The focused regression fails with the old functional implementation and passes with
+the fix. Existing source cards/notices are now preserved by the v3 source adapter.
+
+## Remaining limits
+
+No 1,024-CPU or 32-H100 throughput run, no 500–1,000× claim, no full repository
+all-extras/GPU/E2E run, and no benchmark of hand/value/SLAM or human-to-robot generation.
+Generic multi-pod groups and public dataset promotion have simulated integration
+coverage, not live acceptance. Pair-link validation is tested but does not generate
+physically aligned examples. The shipped new-source recipes are v3 LeRobot and
+NPY/video archives, not every MCAP/HDF5/raw source in the proposal.
+
+Before scale-out, measure image spooling, serial assembly, full-video hashing/decoding,
+model-service utilization and small-object upload latency. Batch/checkpoint granularity
+and persistent warm environments matter: this one-item-per-batch acceptance deliberately
+favors failure isolation over throughput. Cached cloud jobs still pay source/bootstrap,
+verification, materialization and retention overhead. Human annotation-quality review
+and an independent maintainer architecture review remain necessary before a main merge.
