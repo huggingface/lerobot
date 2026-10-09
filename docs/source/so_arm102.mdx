@@ -90,14 +90,14 @@ Set IDs **before installing the servos in the arms**. Each arm has its own bus, 
 
 | ID  | LeRobot joint name             | Follower servo                     | Leader servo                  |
 | --- | ------------------------------ | ---------------------------------- | ----------------------------- |
-| 1   | `shoulder_pan` / base rotation | ST-3235-C001 (STS3235)             | ST-3215-C044 (STS3215), 1:191 |
-| 2   | `shoulder_lift`                | ST-3250-C001 (STS3250)             | ST-3215-C044 (STS3215), 1:191 |
-| 3   | `elbow_flex`                   | ST-3250-C001 (STS3250)             | ST-3215-C044 (STS3215), 1:191 |
-| 4   | `wrist_flex`                   | ST-3235-C001 (STS3235)             | ST-3215-C044 (STS3215), 1:191 |
-| 5   | `wrist_roll`                   | ST-3215-C018 (STS3215), 1:345      | ST-3215-C044 (STS3215), 1:191 |
-| 6   | `gripper` / leader trigger     | STS3215, 1:191; full SKU pending\* | ST-3215-C044 (STS3215), 1:191 |
+| 1   | `shoulder_pan` / base rotation | ST-3235-C001 (STS3235)             | ST-3215-C049 (STS3215), 1:191 |
+| 2   | `shoulder_lift`                | ST-3250-C001 (STS3250)             | ST-3215-C049 (STS3215), 1:191 |
+| 3   | `elbow_flex`                   | ST-3250-C001 (STS3250)             | ST-3215-C049 (STS3215), 1:191 |
+| 4   | `wrist_flex`                   | ST-3235-C001 (STS3235)             | ST-3215-C049 (STS3215), 1:191 |
+| 5   | `wrist_roll`                   | ST-3215-C018 (STS3215), 1:345      | ST-3215-C049 (STS3215), 1:191 |
+| 6   | `gripper` / leader trigger     | STS3215, 1:191; full SKU pending\* | ST-3215-C049 (STS3215), 1:191 |
 
-Full manufacturer designations: [ST-3235-C001](https://www.feetechrc.com/12v-30kg-metal-shell-metal-tooth-iron-core-motor-magnetic-coding-double-shaft-ttl-series-steering-gear), [ST-3250-C001](https://www.feetechrc.com/562636), [ST-3215-C018, 12 V, 1:345 datasheet](https://www.feetechrc.com/Data/feetechrc/upload/file/20240507/6385067068652648096680943.pdf), and [ST-3215-C044, 1:191 datasheet](https://files.seeedstudio.com/products/Feetech/101090141_Feetech_ST-3215-C044_Datasheet.pdf). All six leader motors use 1:191 gearing; do not substitute the SO-101 leader's mixed gear-ratio layout.
+Full manufacturer designations: [ST-3235-C001](https://www.feetechrc.com/12v-30kg-metal-shell-metal-tooth-iron-core-motor-magnetic-coding-double-shaft-ttl-series-steering-gear), [ST-3250-C001](https://www.feetechrc.com/562636), [ST-3215-C018, 12 V, 1:345 datasheet](https://www.feetechrc.com/Data/feetechrc/upload/file/20240507/6385067068652648096680943.pdf), and [ST-3215-C044, 1:191 datasheet](https://files.seeedstudio.com/products/Feetech/101090141_Feetech_ST-3215-C044_Datasheet.pdf). Robonine specifies **ST-3215-C049, 1:191** for all six leader motors; the linked C044 datasheet is a catalog comparison for the unconfirmed gripper variant, not the leader specification. All six leader motors use 1:191 gearing; do not substitute the SO-101 leader's mixed gear-ratio layout.
 
 \*The follower gripper is specified as STS3215 with 1:191 gearing. The standard catalog variant with that ratio is **ST-3215-C044**, rated for **5–8.4 V**, not the follower's 12 V bus. The exact full SKU and power arrangement of the kit's gripper are not yet confirmed. A 12 V motor fitted with a different gearbox must be identified as a modified variant; do not label it C044 solely from its gear ratio or substitute C018's 1:345 gearing in this table.
 
