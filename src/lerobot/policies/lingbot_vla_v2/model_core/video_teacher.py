@@ -1,11 +1,27 @@
+# Copyright 2026 HuggingFace Inc. and the Robbyant Team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Frozen DINO-Video teacher for the dual-query distillation (current / future frame patch targets). Training only.
 
-Adapted from Robbyant/lingbot-vla-v2 ``lingbotvla/models/vla/vision_models/dino_video/`` (``teacher.py``,
-``lumos_dinov3/models/{unified_video_vision_transformer,navit_video_vision_transformer}.py``,
-``lumos_dinov3/models/inference/causal_eval.py``, ``lumos_dinov3/layers/rope_position_encoding.py``), whose
-DINOv3-derived parts are under the DINOv3 License Agreement (Meta); the teacher weights are DINOv3-derived too.
-The ViT blocks are transformers' ``DINOv3ViTLayer``; kept here: the per-frame [cls, storage, patches] token
-layout, the 3D (time-interleaved) RoPE and the frame-causal attention mask.
+Reimplements the teacher of Robbyant/lingbot-vla-v2 ``lingbotvla/models/vla/vision_models/dino_video/`` on top of
+transformers' ``DINOv3ViTLayer`` (Apache License 2.0). Only the per-frame [cls, storage, patches] token layout, the
+3D (time-interleaved) RoPE and the frame-causal attention mask are written here, as new code that reproduces
+upstream's outputs; no source file of upstream's ``lumos_dinov3`` package (Meta, DINOv3 License) is copied.
+
+The teacher weights (``robbyant/lingbot-vla-v2-6b``, ``dino_video/``) are derived from DINOv3 and are subject to
+the DINOv3 License (https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md). They are downloaded on the
+first distillation training step and are not distributed with LeRobot.
 """
 
 import math
