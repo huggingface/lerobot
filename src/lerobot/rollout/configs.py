@@ -222,8 +222,8 @@ class DAggerStrategyConfig(RolloutStrategyConfig):
     When ``record_autonomous=False`` (default) only human-correction windows
     are recorded — each correction becomes its own episode.  Set to ``True``
     to record both autonomous and correction frames with size-based episode
-    rotation (same as Sentry) and background uploading.  ``push_to_hub`` is
-    blocked while a correction is in progress.
+    rotation (same as Sentry), up to ``num_episodes`` episodes, and background
+    uploading.  ``push_to_hub`` is blocked while a correction is in progress.
     """
 
     # TODO(Steven): DAgger shouldn't require a dataset (user may want to just rollout+intervene
