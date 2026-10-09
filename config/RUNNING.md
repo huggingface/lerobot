@@ -21,7 +21,8 @@ and the video originates on the cart, not the Pi.
 ## 1. Mac — the viewer (only if you want video)
 
 ```bash
-./config/viewer.sh
+cd ~/GitHub/Robots/lerobot          # the Mac's checkout; elroy and rosie
+./config/viewer.sh                  # use ~/GitHub/lerobot
 ```
 
 That reads the version out of `uv.lock` and launches it. Don't type the
