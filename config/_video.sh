@@ -13,9 +13,15 @@
 #                      listening means the launch fails rather than
 #                      carrying on without video.
 #
+#                        ./config/viewer.sh      # on the Mac
+#
+#                      which reads the version out of uv.lock, because the
+#                      viewer and the SDK here are two halves of one rerun
+#                      release. By hand it is
+#
 #                        uvx --from rerun-sdk==<version> rerun
 #
-#                      With NO other arguments. That one process both opens
+#                      with NO other arguments. That one process both opens
 #                      the window and listens on 0.0.0.0:9876 for the cart -
 #                      it is not a viewer that needs a server put in front
 #                      of it. `--port 9876` is the default and adds nothing.
@@ -95,16 +101,18 @@ parse_watch() {
                     --display_compressed_images=true)
       local rv; rv="$(rerun_version 2>/dev/null || echo unknown)"
       echo "video   : pushing to the rerun viewer at $WATCH_HOST:$WATCH_PORT"
-      echo "          this machine has rerun-sdk $rv - the viewer must match:"
-      echo "            uvx --from rerun-sdk==$rv rerun"
-      echo "          No other arguments: that one command is both the window"
-      echo "          and the listener. START IT FIRST. With nothing there,"
+      echo "          this machine has rerun-sdk $rv - the viewer must match."
+      echo "          On the Mac:  ./config/viewer.sh   (reads uv.lock)"
+      echo "          By hand:     uvx --from rerun-sdk==$rv rerun"
+      echo "          Never bare 'uvx --from rerun-sdk rerun' - that is"
+      echo "          PyPI latest, which is not what this machine sends."
+      echo "          START IT FIRST. With nothing there,"
       echo "          rerun does not just fail - it back-pressures into the"
       echo "          control loop and costs you several Hz."
       if command -v nc >/dev/null 2>&1 && ! nc -z -w2 "$WATCH_HOST" "$WATCH_PORT" 2>/dev/null; then
         echo
         echo "  WARNING: nothing answering on $WATCH_HOST:$WATCH_PORT." >&2
-        echo "           Start the viewer:  uvx --from rerun-sdk==$rv rerun" >&2
+        echo "           Start it on the Mac:  ./config/viewer.sh" >&2
         echo "           Already running? Then it is reachability, not rerun:" >&2
         echo "           on macOS, System Settings > Network > Firewall blocks" >&2
         echo "           incoming connections to new binaries by default." >&2

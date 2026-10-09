@@ -9,7 +9,7 @@ you do every session.
 
 | where | what | why first |
 |---|---|---|
-| **Mac** | `rerun` viewer | the cart connects *out* to it; nothing listening means it back-pressures into the control loop |
+| **Mac** | `./config/viewer.sh` | the cart connects *out* to it; nothing listening means it back-pressures into the control loop |
 | **rosie** | `./config/operator-leader-host.sh` | the cart waits 10 s for the first action and gives up |
 | **elroy** | `./config/cart-teleop.sh` or `cart-record.sh` | needs both of the above |
 
@@ -21,7 +21,21 @@ and the video originates on the cart, not the Pi.
 ## 1. Mac — the viewer (only if you want video)
 
 ```bash
-uvx --from rerun-sdk==0.33.1 rerun
+./config/viewer.sh
+```
+
+That reads the version out of `uv.lock` and launches it. Don't type the
+version yourself and don't leave it off: `uvx --from rerun-sdk rerun` means
+"PyPI's latest today", elroy means "whatever the lock says", and those are
+currently five minor releases apart. A viewer and an SDK are two halves of
+one rerun release — mismatch them and the window opens, sits on the welcome
+screen, and never tells you why.
+
+<details>
+<summary>the equivalent by hand</summary>
+
+```bash
+uvx --from rerun-sdk==0.33.1 rerun     # version must match uv.lock
 ```
 
 **No flags.** That one process is both the window and the listener — it
@@ -32,10 +46,7 @@ which is a server with *no* window and answers with "Connect by running
 `rerun --connect ...`". You can make a working three-process setup out of
 it, but there is no reason to.)
 
-Pin the version. The SDK on elroy comes from `lerobot[viz]`; the viewer
-here comes from PyPI's latest unless told otherwise, and the two halves of
-one rerun release have to match. `cart-teleop.sh --watch` prints the exact
-command with the right number in it.
+</details>
 
 **If the window opens but stays on the welcome screen**, the stream is not
 arriving. Prove the link on its own, from elroy, with no robot in the way:
@@ -46,9 +57,10 @@ arriving. Prove the link on its own, from elroy, with no robot in the way:
 
 Nothing appears? Then it is the link, in this order:
 
-1. the viewer is running as plain `rerun`, not `--serve-grpc`
-2. `nc -z -v 192.168.1.52 9876` from elroy answers
-3. the Mac's firewall — System Settings → Network → Firewall. It blocks
+1. the viewer's version matches `uv.lock` — use `./config/viewer.sh`
+2. the viewer is running as plain `rerun`, not `--serve-grpc`
+3. `nc -z -v 192.168.1.52 9876` from elroy answers
+4. the Mac's firewall — System Settings → Network → Firewall. It blocks
    incoming connections to unknown binaries by default, and a
    `uvx`-launched rerun looks like a new binary whenever the cache moves.
    Either allow it when macOS asks, or turn the firewall off long enough
@@ -189,6 +201,7 @@ pixel-bound.
 | `./config/leader-tap.sh` | the leader stream with no robot attached. Says which keys ever changed. |
 | `./config/scan-motors.sh` | which motor ids answer, at which baud rate |
 | `./config/power-check.sh` | voltage, temperature and load per servo, with torque applied one at a time |
+| `./config/viewer.sh` | the rerun viewer, at the version uv.lock says. Run it on the Mac. |
 | `./config/video-test.sh` | a synthetic camera feed to the viewer, no robot. Separates the video link from everything else. |
 | `./config/sync.sh` | sync with the right extras for this machine |
 
