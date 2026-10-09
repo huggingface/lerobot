@@ -14,6 +14,8 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
+warn_if_cpu_torch
+
 # The robot config lives in a YAML because the host's individual flags cannot
 # express cameras. Set HOST_CONFIG= to override, or NO_CAMERAS=1 to fall back
 # to the bare flags (joint state only - useful to isolate a camera problem).

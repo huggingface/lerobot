@@ -103,9 +103,27 @@ cd ~/GitHub/XLeRobot
 uv sync --extra jetson
 ```
 
-**Use that extra every time you sync on this machine.** `uv sync` makes the
-environment match the lock, so a plain sync silently replaces CUDA torch
-with the CPU build and says nothing about it.
+**Use `./config/sync.sh` instead of `uv sync`.** It detects a Jetson and
+adds the extra for you, so the question stops existing:
+
+```bash
+./config/sync.sh
+```
+
+`uv sync` makes the environment match the lock, so a bare sync on this
+machine silently replaces CUDA torch with the CPU build — no error, nothing
+downstream fails, and you find out weeks later when inference is slow.
+
+That cannot be prevented in configuration. uv has no environment variable
+for extras (`UV_NO_DEFAULT_GROUPS` exists; `UV_EXTRA` does not), and
+`tool.uv.default-groups` lives in `pyproject.toml`, which rosie shares — and
+the cu132 source marker is `linux aarch64`, which matches rosie too, so
+making it a default would push CUDA torch onto the Pi.
+
+So instead: one command that is always right, plus a check in `_common.sh`
+that every cart script runs. If a bare `uv sync` ever does happen, the next
+`cart-teleop.sh`, `cart-record.sh` or `cart-selftest.sh` says so in a banner
+rather than carrying on quietly.
 
 Why an extra rather than a platform marker: rosie is `aarch64 linux` too.
 No environment marker distinguishes a Jetson from a Raspberry Pi, so nothing

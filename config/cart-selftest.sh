@@ -13,6 +13,8 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
+warn_if_cpu_torch
+
 CONFIG="${CONFIG:-$REPO/config/cart.yaml}"
 PORT1="${PORT1:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00}"
 PORT2="${PORT2:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00}"

@@ -42,3 +42,55 @@ require_dev() {
     exit 1
   fi
 }
+
+# --------------------------------------------------------------- torch
+#
+# On a Jetson, a bare `uv sync` quietly swaps CUDA torch for the CPU build:
+# the environment is made to match the lock, the jetson extra is not in it,
+# and nothing anywhere reports a problem. Every script that runs real work
+# calls this so the swap is noticed the same day rather than months later.
+#
+# The check is a filename glob, not a python import - it has to be free
+# enough to run on every script start.
+
+is_jetson() { [[ -r /etc/nv_tegra_release ]]; }
+
+# Echoes the installed torch version, e.g. 2.12.1+cu132 or 2.11.0
+torch_version() {
+  local d
+  for d in "$XLEROBOT"/.venv/lib/python3*/site-packages/torch-*.dist-info; do
+    [[ -d "$d" ]] || continue
+    basename "$d" | sed -E 's/^torch-(.*)\.dist-info$/\1/'
+    return 0
+  done
+  return 1
+}
+
+torch_is_cuda() { [[ "$(torch_version 2>/dev/null)" == *+cu* ]]; }
+
+torch_report() {
+  local v
+  v="$(torch_version 2>/dev/null)" || { echo "torch   : not installed"; return; }
+  if torch_is_cuda; then
+    echo "torch   : $v  (GPU)"
+  else
+    echo "torch   : $v  (CPU)"
+  fi
+}
+
+# Loud, but not fatal - a CPU build still teleoperates and still records.
+warn_if_cpu_torch() {
+  is_jetson || return 0
+  torch_is_cuda && return 0
+  local v; v="$(torch_version 2>/dev/null || echo '(none)')"
+  echo                                                                      >&2
+  echo "  ============================================================"     >&2
+  echo "  CPU TORCH ON A JETSON: $v"                                        >&2
+  echo "  ============================================================"     >&2
+  echo "  A bare 'uv sync' replaced the CUDA build. Nothing here will"      >&2
+  echo "  fail because of it - teleoperation and recording do not touch"    >&2
+  echo "  CUDA - but any policy will run on the CPU and only look slow."    >&2
+  echo                                                                      >&2
+  echo "    ./config/sync.sh        # always right for this machine"        >&2
+  echo                                                                      >&2
+}

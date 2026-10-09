@@ -14,6 +14,8 @@
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/_video.sh"
 
+warn_if_cpu_torch
+
 CONFIG="$REPO/config/cart-remote-arms.yaml"
 if [[ "${1:-}" == "--full" ]]; then
   shift
