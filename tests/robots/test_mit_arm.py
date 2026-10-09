@@ -122,20 +122,15 @@ def test_joint_conversion_round_trips_signs_offsets_and_gripper():
     np.testing.assert_allclose(mit_arm.joint_to_motor(joints, arm), raw)
     with pytest.raises(ValueError, match="calibrated stroke"):
         mit_arm.motor_to_joint(np.array([0.0, 0.0, 3.5]), arm)
-    with pytest.raises(ConnectionError, match="Non-finite"):
-        mit_arm.motor_to_joint(np.array([np.nan, 0.0, 2.0]), arm)
 
 
-def test_position_validation_and_clipping_are_pure():
+def test_position_clipping_is_pure():
     limits = np.array([[-1.0, 1.0], [0.0, 2.0]])
     values = np.array([-1.02, 0.5, 1.2])
-    mit_arm.validate_positions(np.r_[values[:2], 0.5], limits, joint_tolerance_rad=0.03)
     clipped = mit_arm.clip_to_limits(values, limits)
     assert values[0] == -1.02
     assert clipped[0] == -1.0
     assert clipped[2] == 1.0
-    with pytest.raises(ValueError, match="outside"):
-        mit_arm.validate_positions(np.r_[values[:2], 0.5], limits, joint_tolerance_rad=0.0)
 
 
 def test_control_step_slews_tracks_clips_and_adds_gravity():
@@ -216,6 +211,14 @@ def test_joint_state_maps_rates_and_torques_to_the_joint_frame():
     np.testing.assert_allclose(state.position, [0.2, 0.5, 0.5])
     np.testing.assert_allclose(state.velocity, [0.5, -0.5, -0.5])  # 1 rad/s over a -2 rad stroke
     np.testing.assert_allclose(state.torque, [2.0, -2.0, -0.3])
+
+
+@pytest.mark.parametrize("field", ["position", "velocity", "torque"])
+def test_joint_state_rejects_non_finite_feedback(field):
+    bus = FakeBus()
+    getattr(bus.states, field)[0] = np.nan
+    with pytest.raises(ConnectionError, match="finite motor"):
+        mit_arm.read_joint_state(bus, params())
 
 
 def test_servo_holds_then_sends_one_command_per_motor():

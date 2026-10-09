@@ -85,12 +85,15 @@ class CalibratedGripper:
 
     @property
     def stroke(self) -> float:
+        """Return signed raw motor travel from closed to open."""
         return self.open - self.closed
 
     def to_normalized(self, raw: float) -> float:
+        """Convert a raw motor position to an opening from zero to one."""
         return (raw - self.closed) / self.stroke
 
     def to_raw(self, normalized: float) -> float:
+        """Convert a normalized opening to a raw motor position."""
         return self.closed + normalized * self.stroke
 
 
@@ -174,6 +177,7 @@ class MitArmParams:
 
     @property
     def num_joints(self) -> int:
+        """Return the number of arm joints, excluding the gripper."""
         return len(self.kp)
 
 
@@ -200,8 +204,7 @@ class ServoSettings(Protocol):
 
 
 def motor_to_joint(raw: np.ndarray, params: MitArmParams) -> np.ndarray:
-    if not np.isfinite(raw).all():
-        raise ConnectionError("Non-finite motor feedback")
+    """Convert raw motor positions to calibrated joint and gripper positions."""
     n = params.num_joints
     joints = raw[:n] * params.joint_signs + params.joint_offsets
     gripper = params.gripper.to_normalized(raw[n])
@@ -211,19 +214,10 @@ def motor_to_joint(raw: np.ndarray, params: MitArmParams) -> np.ndarray:
 
 
 def joint_to_motor(positions: np.ndarray, params: MitArmParams) -> np.ndarray:
+    """Convert calibrated joint and gripper positions to raw motor positions."""
     n = params.num_joints
     raw = (positions[:n] - params.joint_offsets) / params.joint_signs
     return np.r_[raw, params.gripper.to_raw(float(positions[n]))]
-
-
-def validate_positions(values: np.ndarray, joint_limits: np.ndarray, *, joint_tolerance_rad: float) -> None:
-    n = len(joint_limits)
-    if values.shape != (n + 1,) or not np.isfinite(values).all():
-        raise ValueError(f"Expected {n} finite joint radians and one normalized gripper position")
-    for i, (value, (lower, upper)) in enumerate(zip(values, (*joint_limits, (0, 1)), strict=True)):
-        tolerance = joint_tolerance_rad if i < n else 0.0
-        if not lower - tolerance <= value <= upper + tolerance:
-            raise ValueError(f"Joint/gripper {i} target {value} outside [{lower}, {upper}]")
 
 
 def clip_to_limits(values: np.ndarray, joint_limits: np.ndarray) -> np.ndarray:
@@ -243,20 +237,7 @@ def control_step(
     gravity: np.ndarray,
     dt: float,
 ) -> tuple[np.ndarray, dict[str, MitCommand]]:
-    """Advance the commanded pose one servo cycle and build the MIT command for each motor.
-
-    Args:
-        params (`MitArmParams`): Arm control settings (gains, limits, speed limits, gripper).
-        position (`ndarray`): Measured pose (joint radians and a normalized gripper).
-        target (`ndarray`): Pose requested by the latest action; it is clipped to the limits.
-        command (`ndarray`): Pose commanded on the previous cycle.
-        gravity (`ndarray`): Model gravity torques of the arm joints for `position`, in Nm.
-        dt (`float`): Time since the previous cycle, in seconds.
-
-    Returns:
-        The new commanded pose (joints and gripper) and the MIT command of each arm joint; the
-        gripper is commanded by a ``GripperForceLimiter``.
-    """
+    """Advance the speed- and tracking-limited pose and build the arm-joint commands."""
     n = params.num_joints
     # Move toward the target, inside the limits, no faster than the configured speeds.
     speeds = np.r_[np.full(n, params.max_joint_speed), params.gripper.max_speed]
@@ -304,9 +285,18 @@ def float_commands(params: MitArmParams, state: JointState, gravity: np.ndarray)
 def read_joint_state(bus: MitArmBus, params: MitArmParams) -> JointState:
     """Read fresh feedback and return the validated joint state in internal units."""
     raw = bus.read_states()
+    n = params.num_joints
+    expected_shape = (n + 1,)
+    if any(
+        values.shape != expected_shape or not np.isfinite(values).all()
+        for values in (raw.position, raw.velocity, raw.torque)
+    ):
+        raise ConnectionError(f"Expected {n + 1} finite motor positions, velocities and torques")
     position = motor_to_joint(raw.position, params)
-    validate_positions(position, params.joint_limits, joint_tolerance_rad=FEEDBACK_LIMIT_TOLERANCE_RAD)
-    n, gripper = params.num_joints, params.gripper
+    for i, (value, (lower, upper)) in enumerate(zip(position[:n], params.joint_limits, strict=True)):
+        if not lower - FEEDBACK_LIMIT_TOLERANCE_RAD <= value <= upper + FEEDBACK_LIMIT_TOLERANCE_RAD:
+            raise ValueError(f"Joint {i} feedback {value} outside [{lower}, {upper}]")
+    gripper = params.gripper
     velocity = np.r_[raw.velocity[:n] * params.joint_signs, raw.velocity[n] / gripper.stroke]
     torque = np.r_[raw.torque[:n] * params.joint_signs, raw.torque[n] * np.sign(gripper.stroke)]
     return JointState(position=position, velocity=velocity, torque=torque)
@@ -371,6 +361,7 @@ class MitServo:
         return not self.has_target or self.command_timed_out
 
     def start(self) -> None:
+        """Start the background servo thread."""
         if self.active or self._thread is not None:
             raise RuntimeError(f"{self.name} servo is already running")
         if self.params is None:
@@ -385,6 +376,7 @@ class MitServo:
         self.active = True
 
     def stop(self, timeout_s: float = 2.0) -> None:
+        """Stop the servo thread and disable the motors."""
         self.stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout_s)
@@ -415,6 +407,7 @@ class MitServo:
             self.has_target = True
 
     def check_healthy(self) -> None:
+        """Raise when the servo has stopped or its feedback is stale."""
         with self._lock:
             self._check_healthy()
 
