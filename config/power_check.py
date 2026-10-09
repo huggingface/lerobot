@@ -18,7 +18,11 @@ If the voltage falls as motors are added, and falls furthest at the end of
 a chain, the supply or the wiring is the problem. If it stays flat and one
 motor simply stops answering, it is that motor or its connector.
 
-Torque is left DISABLED at the end, so the arms will be limp - support them.
+Torque is left DISABLED at the end, and verified by reading the register
+back. The arms will probably still hold their pose anyway - an STS3215 gear
+train has enough static friction that a de-torqued arm does not flop - so
+support them regardless rather than inferring anything from whether it
+sagged.
 """
 
 from __future__ import annotations
@@ -51,6 +55,9 @@ P2 = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00"
 # documented consistently, so it is shown unconverted and used only to
 # compare motors with each other.
 def volts(raw): return raw / 10.0
+
+
+BUS_RETRY = 3
 
 
 def read1(bus, name, reg):
@@ -149,10 +156,30 @@ def run(port, motors, label):
     worst = progressive(bus, motors, "2. progressive")
     held = table(bus, motors, "3. all holding")
 
+    # Verify rather than assert. The cleanup used to be wrapped in a bare
+    # except/pass, so a failed disable looked exactly like a successful one.
+    # And a de-torqued STS3215 arm usually does NOT flop - the gear train
+    # has enough static friction to hold a pose - so "it did not go limp"
+    # is not evidence either way. Read the register back instead.
     try:
-        bus.disable_torque(num_retry=2)
-    except Exception:
-        pass
+        bus.disable_torque(num_retry=BUS_RETRY)
+    except Exception as e:
+        print(f"\n  WARNING: could not disable torque: {e}")
+
+    still_on = []
+    for name in motors:
+        v = read1(bus, name, "Torque_Enable")
+        if v:
+            still_on.append(name)
+        elif v is None:
+            still_on.append(f"{name}(no answer)")
+    if still_on:
+        print(f"\n  STILL ENERGISED: {', '.join(still_on)}")
+        print("  Power them down before working on the arm.")
+    else:
+        print("\n  torque confirmed off on every motor "
+              "(they may still hold their pose - the gearing is stiff)")
+
     bus.disconnect()
     return rest, worst, held
 
