@@ -69,7 +69,12 @@ for a in "$@"; do
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 guard_arms_config "$CONFIG"
-parse_watch_all "$@"; set -- "${REMAINING[@]+"${REMAINING[@]}"}"
+# `|| :` is load-bearing. parse_watch_all returns 1 when there is no
+# --watch flag, and under `set -e` a bare non-zero statement exits the
+# script - silently, right after printing the header, which looks
+# exactly like a program that started and stopped.
+parse_watch_all "$@" || :
+set -- "${REMAINING[@]+"${REMAINING[@]}"}"
 CONFIG="${CONFIG_OVERRIDE:-$CONFIG}"
 
 if [[ $# -lt 2 ]]; then
