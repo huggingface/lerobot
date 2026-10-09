@@ -26,7 +26,7 @@ import math
 import time
 from collections import OrderedDict, deque
 from concurrent.futures import Future
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
 from typing import Any
@@ -36,6 +36,7 @@ import numpy as np
 import torch
 
 from lerobot.inference import ExecutionMode, FeatureSpec, ObservationSnapshot, PolicyRunner, QueryKind
+from lerobot.transport.wire.features import NonFiniteArrayError, feature_mismatch, validate_array
 from lerobot.transport.zenoh import (
     BoundedQueryable,
     BoundedSubscriber,
@@ -429,7 +430,14 @@ class SessionWorker:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Policy action interval differs")
         features = tuple(FeatureSpec(**value) for value in body["features"])
         action = FeatureSpec(**body["action_feature"])
-        if features != caps.features or action != caps.action_feature:
+        if (
+            len(features) != len(caps.features)
+            or any(
+                feature_mismatch(actual, expected)
+                for actual, expected in zip(features, caps.features, strict=True)
+            )
+            or feature_mismatch(action, caps.action_feature)
+        ):
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Ordered feature schema or semantics differ")
         if body.get("encoding") not in {"raw", "jpeg"}:
             raise ProtocolError(ErrorCode.UNSUPPORTED, "Unsupported image encoding")
@@ -453,15 +461,12 @@ class SessionWorker:
         if not isinstance(supplied, dict) or set(supplied) != {f.name for f in caps.features}:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Observation feature keys differ")
         for feature in caps.features:
-            value = supplied[feature.name]
-            if (
-                not isinstance(value, np.ndarray)
-                or value.shape != feature.shape
-                or value.dtype.name != feature.dtype
-            ):
-                raise ProtocolError(ErrorCode.INCOMPATIBLE, f"Invalid feature {feature.name}")
-            if not np.isfinite(value).all():
-                raise ProtocolError(ErrorCode.MALFORMED, "Non-finite observation values")
+            try:
+                validate_array(supplied[feature.name], feature)
+            except NonFiniteArrayError as exc:
+                raise ProtocolError(ErrorCode.MALFORMED, "Non-finite observation values") from exc
+            except ValueError as exc:
+                raise ProtocolError(ErrorCode.INCOMPATIBLE, f"Invalid feature {feature.name}") from exc
         if message.message_type is MessageType.LANGUAGE_REQUEST:
             if not caps.language:
                 raise ProtocolError(ErrorCode.UNSUPPORTED, "Deployment has no text capability")
@@ -491,15 +496,18 @@ class SessionWorker:
                     if name == "model_continuation"
                     else caps.action_feature.shape[0]
                 )
-                if value is not None and (
-                    not isinstance(value, np.ndarray)
-                    or value.ndim != 2
-                    or value.shape[1:] != (width,)
-                    or value.dtype.name != caps.action_feature.dtype
-                    or len(value) > caps.prediction_steps
-                    or not np.isfinite(value).all()
-                ):
-                    raise ProtocolError(ErrorCode.MALFORMED, "Invalid continuation")
+                if value is not None:
+                    try:
+                        if (
+                            not isinstance(value, np.ndarray)
+                            or value.ndim != 2
+                            or len(value) > caps.prediction_steps
+                        ):
+                            raise ValueError("Invalid continuation horizon")
+                        feature = replace(caps.action_feature, shape=(width,), names=())
+                        validate_array(value, feature, leading_shape=(len(value),))
+                    except ValueError as exc:
+                        raise ProtocolError(ErrorCode.MALFORMED, "Invalid continuation") from exc
             model, canonical = body.get("model_continuation"), body.get("canonical_continuation")
             if model is not None and canonical is not None and len(model) != len(canonical):
                 raise ProtocolError(ErrorCode.MALFORMED, "Continuation spaces must cover identical steps")

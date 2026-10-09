@@ -33,7 +33,6 @@ from .constants import (
     REWARD,
 )
 from .decorators import check_if_already_connected, check_if_not_connected
-from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
 from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from .import_utils import is_package_available, require_package
 
@@ -63,3 +62,11 @@ __all__ = [
     "DeviceAlreadyConnectedError",
     "DeviceNotConnectedError",
 ]
+
+
+def __getattr__(name: str):
+    if name in {"auto_select_torch_device", "get_safe_torch_device", "is_torch_device_available"}:
+        from . import device_utils
+
+        return getattr(device_utils, name)
+    raise AttributeError(name)
