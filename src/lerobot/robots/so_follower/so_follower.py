@@ -80,6 +80,7 @@ class SOFollower(Robot):
                 "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
+            allow_mixed_models=True,
         )
         self.cameras = make_cameras_from_configs(config.cameras)
 
