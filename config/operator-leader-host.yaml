@@ -88,6 +88,19 @@ axis_head_tilt: 4         # right stick Y
 invert_base_forward: true
 invert_head_tilt: false
 
-button_head_modifier: 4   # L1
+# --- head on the D-pad ------------------------------------------------
+#
+# The head gets its own control, the right stick stays on turn, and nothing
+# has to be held. The probe reported hats=1 on this pad.
+#
+# Discrete rather than proportional, but the head integrates a rate into a
+# target - holding a direction sweeps it, same as the stick did.
+#
+# Set hat_head: -1 to go back to holding L1 and sharing the right stick.
+hat_head: 0
+invert_hat_pan: false
+invert_hat_tilt: true     # hat says +1 for up; head_motor_2 decreases to raise
+
+button_head_modifier: 4   # L1 - unused while hat_head >= 0
 button_speed_up: 5        # R1
 button_speed_down: 6      # L2 - a button on this pad, not an axis
