@@ -42,6 +42,21 @@ WATCH_PORT="${WATCH_PORT:-9876}"
 
 DISPLAY_ARGS=()
 
+# Scans ALL arguments and removes the one it consumes, so --watch can sit
+# anywhere. Sets DISPLAY_ARGS and rewrites the caller's positional
+# parameters via REMAINING.
+parse_watch_all() {
+  REMAINING=()
+  local a found=1
+  for a in "$@"; do
+    case "$a" in
+      --watch|--watch=web|--watch=local) parse_watch "$a" && found=0 ;;
+      *) REMAINING+=("$a") ;;
+    esac
+  done
+  return $found
+}
+
 parse_watch() {
   case "${1:-}" in
     --watch)

@@ -6,10 +6,10 @@
 #   ./config/cart-record.sh --watch carlkesselman/xlerobot-pick "Pick the block, drop it in the box"
 #   ./config/cart-record.sh --full --watch me/ds "task"
 #
-# Flags, in this order, before the repo id:
-#   --full      arms + head + base (needs those motors; default is arms only)
-#   --watch     video to the operator station - see config/_video.sh for
+# Flags, in any order, before the repo id:
+#   --watch     video to a rerun viewer - see config/_video.sh for
 #               --watch=web and --watch=local
+#   --arms      arms only instead of the full robot (the default)
 #
 # Everything else passes through:
 #   ./config/cart-record.sh me/ds "task" --dataset.num_episodes=10
@@ -50,12 +50,26 @@ source "$(dirname "${BASH_SOURCE[0]}")/_video.sh"
 
 warn_if_cpu_torch
 
-CONFIG="$REPO/config/cart-remote-arms.yaml"
-if [[ "${1:-}" == "--full" ]]; then
-  shift
-  CONFIG="$REPO/config/cart-remote.yaml"
-fi
-parse_watch "${1:-}" && shift
+# --full and --watch in any order. The old code tested $1 for --full, then
+# $1 for --watch, so `--watch --full` silently fell through to the ARMS
+# config - which on elroy means bi_so_follower, no calibration, and a fresh
+# one started over the top of the robot's. An argument order that destroys
+# a calibration is not an argument order.
+#
+# The full robot is also now the DEFAULT. --arms is the opt-in, because the
+# dangerous choice should be the one you have to ask for.
+CONFIG="$REPO/config/cart-remote.yaml"
+ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --full)  CONFIG="$REPO/config/cart-remote.yaml" ;;
+    --arms)  CONFIG="$REPO/config/cart-remote-arms.yaml" ;;
+    *)       ARGS+=("$a") ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+guard_arms_config "$CONFIG"
+parse_watch_all "$@"; set -- "${REMAINING[@]+"${REMAINING[@]}"}"
 CONFIG="${CONFIG_OVERRIDE:-$CONFIG}"
 
 if [[ $# -lt 2 ]]; then

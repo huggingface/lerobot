@@ -94,3 +94,42 @@ warn_if_cpu_torch() {
   echo "    ./config/sync.sh        # always right for this machine"        >&2
   echo                                                                      >&2
 }
+
+# -------------------------------------------------------- calibration
+#
+# bi_so_follower and xlerobot keep DIFFERENT calibration files with
+# DIFFERENT motor names. Pointing bi_so_follower at a machine calibrated as
+# xlerobot does not fail - lerobot starts a fresh calibration and overwrites
+# the homing offsets stored IN THE MOTORS, destroying the xlerobot
+# calibration. The only warning is one INFO line about a mismatch, several
+# screens up, before it starts asking you to move joints.
+#
+# Twice now that has nearly cost an afternoon's calibration, so it is a
+# refusal rather than a warning.
+guard_arms_config() {
+  local cfg="$1"
+  [[ "$cfg" == *cart-remote-arms.yaml ]] || return 0
+
+  local cal="${HF_LEROBOT_CALIBRATION:-$HOME/.cache/huggingface/lerobot/calibration}"
+  [[ -f "$cal/robots/xlerobot/xlerobot.json" ]] || return 0
+  [[ -f "$cal/robots/so_follower/xlerobot_arms_left.json" ]] && return 0
+
+  echo                                                                     >&2
+  echo "  ============================================================"    >&2
+  echo "  REFUSING: the arms-only config would recalibrate this robot"     >&2
+  echo "  ============================================================"    >&2
+  echo "  $cfg uses bi_so_follower, which wants"                           >&2
+  echo "    $cal/robots/so_follower/xlerobot_arms_{left,right}.json"       >&2
+  echo "  and this machine has none. lerobot would not stop - it would"    >&2
+  echo "  run a fresh calibration and overwrite the homing offsets in"     >&2
+  echo "  the motors, destroying"                                          >&2
+  echo "    $cal/robots/xlerobot/xlerobot.json"                            >&2
+  echo                                                                     >&2
+  echo "  Use the full robot (the default):"                               >&2
+  echo "    ./config/cart-teleop.sh"                                       >&2
+  echo                                                                     >&2
+  echo "  If you really do want bi_so_follower here, calibrate it first,"  >&2
+  echo "  deliberately, with lerobot-calibrate."                           >&2
+  echo                                                                     >&2
+  exit 1
+}
