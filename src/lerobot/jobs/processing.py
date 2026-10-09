@@ -37,12 +37,16 @@ def require_persistent_remote(store):
         raise ValueError("HF Jobs requires a persistent remote runtime.run_uri, not local/memory storage")
 
 
-def build_pod_command(run_uri, bundle_key, digest, code_revision):
+def build_pod_command(
+    run_uri, bundle_key, digest, code_revision, code_repository="https://github.com/huggingface/lerobot.git"
+):
     if not re.fullmatch(r"[0-9a-f]{40}", code_revision or ""):
         raise ValueError("HF Jobs code_revision must be an immutable 40-character Git commit SHA")
     # The pinned image owns model/source dependencies, and the pinned code owns
     # LeRobot. --no-deps avoids replacing an image's deliberate CUDA/vLLM pins.
-    spec = f"lerobot @ git+https://github.com/huggingface/lerobot.git@{code_revision}"
+    if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", code_repository):
+        raise ValueError("code_repository must be a public HTTPS GitHub repository URL without credentials")
+    spec = f"lerobot @ git+{code_repository}@{code_revision}"
     install = shlex.join(["python", "-m", "pip", "install", "--no-deps", spec])
     driver = shlex.join(
         [
@@ -101,6 +105,8 @@ def dispatch_bundle(
     flavor,
     code_revision,
     timeout,
+    code_repository="https://github.com/huggingface/lerobot.git",
+    namespace=None,
     secret_env=(),
     labels=None,
     resources=Resources(),
@@ -110,12 +116,19 @@ def dispatch_bundle(
         raise ValueError("Choose an immutable image@sha256:digest before HF Jobs dispatch")
     if not flavor or flavor == "local":
         raise ValueError("An HF Jobs hardware flavor is required")
-    command = build_pod_command(store.uri, key, digest, code_revision)
+    command = build_pod_command(store.uri, key, digest, code_revision, code_repository)
     validate_hardware(flavor, resources)
     # Refuse to duplicate an active job for this exact bundle on resume.
     for path in store.list(f"submissions/hf/{digest}/*.json"):
         previous = store.read_json(path)
-        info = inspect_job(previous["job_id"])
+        info = inspect_job(
+            previous["job_id"],
+            **(
+                {"namespace": previous.get("namespace") or namespace}
+                if previous.get("namespace") or namespace
+                else {}
+            ),
+        )
         stage = getattr(info.status.stage, "value", info.status.stage)
         if stage not in {"COMPLETED", "CANCELED", "ERROR", "DELETED"}:
             raise RuntimeError(f"HF Job {info.id} is still active; wait or cancel it before resuming")
@@ -127,9 +140,17 @@ def dispatch_bundle(
         secrets=_secrets(secret_env),
         labels={"lerobot": "true", **(labels or {})},
         env={"OMP_NUM_THREADS": str(resources.cpus), "MKL_NUM_THREADS": str(resources.cpus)},
+        namespace=namespace,
     )
     try:
-        store.put_json(f"submissions/hf/{digest}/{uuid.uuid4().hex}.json", {"job_id": job.id, "bundle": key})
+        store.put_json(
+            f"submissions/hf/{digest}/{uuid.uuid4().hex}.json",
+            {
+                "job_id": job.id,
+                "bundle": key,
+                "namespace": getattr(getattr(job, "owner", None), "name", namespace),
+            },
+        )
     except Exception as exc:
         raise RuntimeError(
             f"HF Job {job.id} was submitted but could not be recorded; inspect it explicitly"
@@ -144,7 +165,8 @@ def follow_processing_job(job, *, detach=False):
         return False
     from .hf import follow_job
 
-    return follow_job(job.id, detach=False)
+    namespace = getattr(getattr(job, "owner", None), "name", None)
+    return follow_job(job.id, detach=False, **({"namespace": namespace} if namespace else {}))
 
 
 def run_hf_stage(store, plan, runtime):
@@ -195,6 +217,8 @@ def run_hf_stage(store, plan, runtime):
                     flavor=flavor,
                     code_revision=cfg.code_revision,
                     timeout=cfg.timeout,
+                    code_repository=cfg.code_repository,
+                    namespace=cfg.namespace,
                     secret_env=cfg.secret_env,
                     resources=resources,
                 )
@@ -239,6 +263,8 @@ def submit_convert_to_hf(cfg):
         flavor=jobs.cpu_flavor,
         code_revision=jobs.code_revision,
         timeout=jobs.timeout,
+        code_repository=jobs.code_repository,
+        namespace=jobs.namespace,
         secret_env=jobs.secret_env,
         resources=Resources(cpus=cfg.runtime.workers * cfg.encoder_threads),
     )

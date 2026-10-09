@@ -54,6 +54,8 @@ def submit_annotate_to_hf(cfg):
         flavor=cfg.job.target if cfg.job.is_remote else cfg.runtime.hf_jobs.gpu_flavor,
         code_revision=code,
         timeout=cfg.job.timeout,
+        code_repository=cfg.runtime.hf_jobs.code_repository,
+        namespace=cfg.runtime.hf_jobs.namespace,
         secret_env=names,
         labels=dict.fromkeys(cfg.job.tags, "true"),
         resources=Resources(

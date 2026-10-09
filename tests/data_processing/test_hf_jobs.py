@@ -14,6 +14,20 @@ from tests.data_processing.test_runtime import make_plan  # noqa: E402
 SHA = "a" * 40
 
 
+def test_pod_command_pins_fork_without_credentials():
+    command = processing.build_pod_command(
+        "hf://buckets/me/run", "bundles/x", "b" * 64, SHA, "https://github.com/pkooij/lerobot.git"
+    )
+    assert f"git+https://github.com/pkooij/lerobot.git@{SHA}" in command[2]
+    for repository in (
+        "https://token@github.com/a/b",
+        "https://github.com/a/b?token=secret",
+        "file:///tmp/code",
+    ):
+        with pytest.raises(ValueError, match="code_repository"):
+            processing.build_pod_command("hf://buckets/me/run", "bundles/x", "b" * 64, SHA, repository)
+
+
 def test_bounded_jobs_real_workers_and_completed_resume(tmp_path, monkeypatch):
     store = ArtifactStore(tmp_path / "remote-simulation")
     plan = make_plan(store, size=7, shard_size=1)

@@ -37,6 +37,8 @@ class HFJobsConfig:
     cpu_flavor: str = "cpu-upgrade"
     gpu_flavor: str | None = None
     code_revision: str | None = None
+    code_repository: str = "https://github.com/huggingface/lerobot.git"
+    namespace: str | None = None
     timeout: str = "2h"
     max_parallel: int = 4
     detach: bool = False

@@ -12,9 +12,16 @@ from ..types import DatasetRef, InputItem, fingerprint
 
 
 class LeRobotSource:
-    def __init__(self, root, repo_id="processing/input"):
+    def __init__(self, root, repo_id="processing/input", episode_indices=None):
         self.root = Path(root).resolve()
         self.repo_id = repo_id
+        if episode_indices is not None and (
+            not episode_indices
+            or any(type(index) is not int or index < 0 for index in episode_indices)
+            or len(set(episode_indices)) != len(episode_indices)
+        ):
+            raise ValueError("episode_indices must be nonempty, unique nonnegative integers")
+        self.episode_indices = set(episode_indices) if episode_indices is not None else None
 
     def open(self):
         self.info = json.loads((self.root / "meta/info.json").read_text())
@@ -53,6 +60,10 @@ class LeRobotSource:
         self.episodes.sort(key=lambda ep: ep["episode_index"])
         if not self.episodes or len({ep["episode_index"] for ep in self.episodes}) != len(self.episodes):
             raise ValueError("Missing or duplicated episode metadata")
+        if self.episode_indices is not None:
+            if self.episode_indices - {ep["episode_index"] for ep in self.episodes}:
+                raise ValueError("Requested source episodes are absent")
+            self.episodes = [ep for ep in self.episodes if ep["episode_index"] in self.episode_indices]
 
     def discover(self, stage, store, upstream):
         for episode in self.episodes:
