@@ -157,12 +157,17 @@ uv run python -m lerobot.data_processing.endpoint_limits \
 ```
 
 Acquisition/release are idempotent. Admission fails closed if the coordinator cannot
-be reached. A killed worker or ambiguous inference timeout leaves a permit held:
+be reached. A killed worker, transport timeout or HTTP 504 gateway timeout leaves a permit held:
 there is deliberately no lease timeout that could admit new work while old inference
 still runs. Drain/cancel inference before restarting the coordinator to recover
 such permits. Do not start multiple coordinators for the same endpoint. This is a
 small single-authority admission service, not a highly available distributed database;
 nonparticipating clients are outside its limit.
+
+A gateway timeout does not confirm upstream cancellation
+([HTTP semantics](https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout)).
+It remains a retryable service error, but each retry needs a new permit: repeated
+ambiguous timeouts can exhaust capacity until an operator drains the endpoint.
 
 `StageConfig.when="quality.usable"` reads an explicitly boolean source-item field
 derived from declared upstream quality results. False produces `Outcome.MASKED`

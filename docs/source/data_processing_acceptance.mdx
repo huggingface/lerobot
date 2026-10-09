@@ -11,9 +11,14 @@ Concurrency, shared endpoint admission, exact-clock overlap, quality masks and
 classified retries were merged into `codex/finerobotics`, not main. Functional
 code tested below: `ae4f068b1c76165af56fa7574cf6abc2cedfc830` (integration
 [4893](https://github.com/huggingface/lerobot/pull/4893) and
-[4894](https://github.com/huggingface/lerobot/pull/4894)). The final reporting
-change adds a test dependency guard and a visualization-only CI tier; it changes
-no processing/inference code. Older baseline numbers below are labelled separately.
+[4894](https://github.com/huggingface/lerobot/pull/4894)). A later reporting change
+adds a test dependency guard and a visualization-only CI tier. Final review also
+corrected HTTP 504 admission: gateway timeouts now retain their permit because
+upstream inference may still run. Both HTTP and SDK-status regression cases failed
+before this correction; ordinary 429/503 release cases already passed. It changes
+only this failure path, not successful conversion/annotation or model settings;
+live timings below remain measurements of `ae4f068`, not the timeout correction.
+Older baseline numbers below are labelled separately.
 
 | Workload                                               | Result                                                                                              | Wall/job time                                   |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------- | ----------------------------------------------- |

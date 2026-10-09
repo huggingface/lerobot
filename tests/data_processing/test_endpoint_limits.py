@@ -89,6 +89,25 @@ def test_authentication_idempotency_and_ambiguous_inference(coordinator):
     assert len(server.active) == 1  # The terminal error released only its own permit.
 
 
+@pytest.mark.parametrize("status", [429, 503, 504])
+@pytest.mark.parametrize("sdk_error", [False, True])
+def test_gateway_timeout_preserves_inference_permit(coordinator, status, sdk_error):
+    server, url = coordinator
+    limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN")
+    if sdk_error:
+        # OpenAI-compatible SDKs expose the response status independently of urllib.
+        class ServiceError(Exception):
+            status_code = status
+
+        error = ServiceError("Model service response")
+    else:
+        error = HTTPError("http://model.invalid", status, "Model service response", {}, None)
+    with pytest.raises(type(error)), limit.permit():
+        raise error
+    # A proxy timeout does not confirm that upstream inference has stopped.
+    assert len(server.active) == (1 if status == 504 else 0)
+
+
 def test_vlm_clients_share_one_limit(coordinator, monkeypatch):
     pytest.importorskip("datasets")
     import sys
