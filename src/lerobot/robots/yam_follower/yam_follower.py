@@ -159,6 +159,7 @@ class _YamBus:
         self._last_status: dict[int, int] = {}
 
     def open(self) -> None:
+        """Open the SocketCAN monitor and MotorBridge devices."""
         if self._disable_failed:
             raise RuntimeError(
                 "Previous YAM torque-disable command failed; use the hardware e-stop before reconnecting"
@@ -188,6 +189,7 @@ class _YamBus:
         )
 
     def set_mit_mode(self) -> None:
+        """Put every motor into MIT control mode."""
         assert self.controller is not None
         self.controller.disable_all()
         for motor in self.motors.values():
@@ -209,6 +211,7 @@ class _YamBus:
         self._enabled_at = time.monotonic()
 
     def send_mit(self, motor: str, command: MitCommand) -> None:
+        """Send one MIT command to a motor."""
         self.motors[motor].send_mit(*command)
 
     def disable(self) -> None:
@@ -224,6 +227,7 @@ class _YamBus:
             logger.exception("Could not disable YAM torque; use the hardware e-stop")
 
     def close(self) -> None:
+        """Disable torque and close all CAN resources."""
         self.disable()
         for name, motor in self.motors.items():
             try:
@@ -498,6 +502,7 @@ class YamFollower(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
+        """Return the latest motor state and camera frames."""
         if not self.servo.active:
             raise RuntimeError("Reconnect after calibration before reading policy observations")
         state = self.servo.latest()
@@ -517,6 +522,7 @@ class YamFollower(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
+        """Validate and submit a joint-position target."""
         if self.config.read_only or not self.servo.active:
             raise RuntimeError("YAM read-only/calibration connection forbids motor commands")
         target = action_to_target(action, self.config.use_degrees)
@@ -526,6 +532,7 @@ class YamFollower(Robot):
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        """Stop control and release all hardware resources."""
         self._close()
         logger.info(f"{self} disconnected.")
 
