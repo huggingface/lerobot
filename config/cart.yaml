@@ -14,18 +14,31 @@ robot:
   port2: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00 # right arm + base
 
   cameras:
+    # fourcc and warmup are both load-bearing; this file was missing them.
+    #
+    # Without MJPG, OpenCV picks YUYV: 640x480x2 bytes x 30fps is 18.4 MB/s
+    # PER CAMERA, and two of them is 37 MB/s on a USB 2.0 bus that manages
+    # about 35. Both streams starve and deliver black frames - not an error,
+    # just nothing. MJPG is roughly a tenth of that.
+    #
+    # Without warmup_s the first frames after open are black on these
+    # cameras, which looks identical to the bandwidth problem.
     left_wrist:
       type: opencv
       index_or_path: /dev/cam_left
       width: 640
       height: 480
       fps: 30
+      fourcc: MJPG
+      warmup_s: 1
     right_wrist:
       type: opencv
       index_or_path: /dev/cam_right
       width: 640
       height: 480
       fps: 30
+      fourcc: MJPG
+      warmup_s: 1
     head:
       type: intelrealsense
       serial_number_or_name: "836112060112"

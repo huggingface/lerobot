@@ -93,18 +93,23 @@ def test_state(robot: XLerobot, n: int = 30) -> dict:
     for k in ("x.vel", "y.vel", "theta.vel"):
         print(f"      {k:<34}{last[k]:8.3f}")
 
-    # A dead servo often reads an exact constant while its neighbours jitter.
+    # Constancy is NOT evidence of a fault here. connect() leaves torque on,
+    # so a healthy servo holding position reports the same number every
+    # read - that is what holding position means. The useful discriminator
+    # is whether a joint MOVES when commanded, which is what --arms and
+    # --head do. So this only reports, it does not judge.
     frozen = [
         k for k in last
         if k.endswith(".pos") and len({round(s[k], 4) for s in samples}) == 1
     ]
-    if len(frozen) == 14:
-        record(WARN, "every joint perfectly constant",
-               "plausible if nothing moved; move an arm by hand and re-run")
+    n_pos = sum(1 for k in last if k.endswith(".pos"))
+    if len(frozen) == n_pos:
+        record(PASS, "all joints steady", "expected: torque is on and nothing is moving")
     elif frozen:
-        record(WARN, "constant joints", ", ".join(frozen))
+        record(PASS, f"{n_pos - len(frozen)}/{n_pos} joints show encoder jitter",
+               "the rest are steady, which is normal under torque")
     else:
-        record(PASS, "joint values vary between reads")
+        record(PASS, "all joints show encoder jitter")
 
     return last
 
