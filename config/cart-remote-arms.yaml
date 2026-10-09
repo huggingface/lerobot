@@ -15,9 +15,24 @@
 # and will later run the policy, the dataset is captured through exactly
 # the pipeline inference will see.
 #
-# Use config/cart-remote.yaml instead once the head and base exist. The
-# teleop end must agree: see emit_head/emit_base in
-# config/operator-leader-host.yaml.
+# SUPERSEDED ON elroy - use config/cart-remote.yaml.
+#
+# This was the stepping stone for hardware that did not exist yet. The head
+# servos and the base do exist now and are calibrated, as one
+# robots/xlerobot/xlerobot.json covering all 17 motors.
+#
+# Worse than redundant: bi_so_follower looks for
+# so_follower/xlerobot_arms_{left,right}.json, which live on ROSIE from when
+# the Pi was the cart. On elroy there is no such file, so connecting with
+# this config starts a FRESH CALIBRATION that overwrites the homing offsets
+# stored in the motors and invalidates the xlerobot calibration. Running it
+# costs you the afternoon's calibration, and the only warning is one INFO
+# line - "Mismatch between calibration values in the motor and the
+# calibration file" - before it starts asking you to move joints.
+#
+# Kept because it is still the right config for a machine that genuinely
+# has only two arms. If you use it, calibrate bi_so_follower on that
+# machine first, deliberately.
 
 robot:
   type: bi_so_follower

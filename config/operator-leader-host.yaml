@@ -20,31 +20,40 @@ right_arm_config:
 
 # --- which robot is on the other end ----------------------------------
 #
-# false  -> keys stay as BiSOLeader emits them (left_shoulder_pan.pos),
-#           which is what bi_so_follower wants: its send_action does
-#           key.removeprefix("left_").   Use with cart-remote-arms.yaml.
-# true   -> keys become left_arm_shoulder_pan.pos, which is what xlerobot
-#           wants: it filters with startswith("left_arm_").
-#           Use with cart-remote.yaml.
+# SET FOR THE FULL xlerobot, which is what elroy actually has: arms, head
+# servos at bus1 7-8, and the 3-omni base at bus2 7-9, all calibrated
+# together as robots/xlerobot/xlerobot.json.
+#
+# remap_arm_prefix
+#   true   -> left_arm_shoulder_pan.pos, which XLerobot filters for with
+#             startswith("left_arm_").            Use with cart-remote.yaml.
+#   false  -> left_shoulder_pan.pos, BiSOLeader's native naming, which
+#             bi_so_follower wants because its send_action does
+#             key.removeprefix("left_").     Use with cart-remote-arms.yaml.
 #
 # Getting this wrong is SILENT. The link comes up, the loop runs at the
 # right rate, and the arms never move.
-remap_arm_prefix: false
+#
+# THE ARMS-ONLY PATH NEEDS ITS OWN CALIBRATION. bi_so_follower looks for
+# so_follower/xlerobot_arms_{left,right}.json, which exist on rosie from
+# when the Pi was the cart - not on elroy. Pointing elroy at it triggers a
+# fresh calibration that OVERWRITES the homing offsets in the motors and
+# invalidates the xlerobot calibration. Do not go back to it casually.
+remap_arm_prefix: true
 
 # --- which parts of the robot this speaks for -------------------------
 #
-# TODAY: arms only. The head servos (IDs 7-8 on bus1) and the base wheels
-# are not built yet, and sending a bi_so_follower keys it has no motors for
-# is not harmless - it would also put columns in a recorded dataset that the
-# robot cannot reproduce.
-#
-# Flip both to true once the head and base exist, and switch the cart to
-# config/cart-remote.yaml at the same time. The two must agree.
-emit_head: false
-emit_base: false
+# All of them, now that they exist. Set both false, with
+# remap_arm_prefix: false, only if you deliberately return to
+# cart-remote-arms.yaml - and read the warning above first.
+emit_head: true
+emit_base: true
 
-# Differential drive cannot strafe, so no y.vel when the base does arrive.
-emit_y_vel: false
+# The base on the cart today is the 3-OMNI one, which can strafe - so y.vel
+# is real and the left stick's X axis drives it. Set false when the 2-wheel
+# differential base replaces it; a differential drive cannot translate
+# sideways and the key would be a column the robot cannot reproduce.
+emit_y_vel: true
 
 # --- gamepad ----------------------------------------------------------
 #
