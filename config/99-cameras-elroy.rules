@@ -1,0 +1,37 @@
+# Wrist camera names for elroy (the Orin). Install as:
+#   sudo cp config/99-cameras-elroy.rules /etc/udev/rules.d/99-cameras.rules
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -l /dev/cam_*
+#
+# WHY POSITIONAL. Both Innomaker U20CAM-1080p-S1 report serial SN0001, so
+# /dev/v4l/by-id collides and only one entry is ever created. Nothing in the
+# cameras' identity distinguishes them; where they are plugged in is the
+# only thing that does.
+#
+# WHY THE CAPABILITY FILTER. Each camera creates TWO video nodes sharing one
+# ID_PATH - a capture node and a metadata node. Without
+# ID_V4L_CAPABILITIES the symlink lands on whichever udev handles last, and
+# roughly half the time you get a camera that opens fine and never delivers
+# a frame.
+#
+# WHY ID_PATH AND NOT KERNELS. On the Pi a KERNELS rule stopped working
+# after a camera changed ports and would not come back even once the value
+# was corrected - udevadm test showed the right value in the device chain
+# and created no symlink. Never explained. ID_PATH has not done it.
+#
+# MEASURED 2026-10-09 on elroy, with both cameras on the external hub:
+#
+#   platform-3610000.usb   the Tegra xHCI controller (stable across boots)
+#   usb-0:2.3.3            root port 2 -> internal hub port 3 -> hub port 3
+#   usb-0:2.3.4            root port 2 -> internal hub port 3 -> hub port 4
+#
+# These encode YOUR HUB'S PORTS. Move a camera to a different hub port, or
+# the hub to a different Type-A port, and the path changes and the rule
+# silently stops matching. Check `ls -l /dev/cam_*` after any replug.
+
+SUBSYSTEM=="video4linux", ENV{ID_PATH}=="platform-3610000.usb-usb-0:2.3.3:1.0", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", GROUP="video", MODE="0660", SYMLINK+="cam_left"
+SUBSYSTEM=="video4linux", ENV{ID_PATH}=="platform-3610000.usb-usb-0:2.3.4:1.0", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", GROUP="video", MODE="0660", SYMLINK+="cam_right"
+
+# The head RealSense needs no rule here: it is addressed by serial number
+# (836112060112), not a device path, so it can move ports freely. It may
+# still need librealsense's own permissions rules - see ORIN-SETUP.md.

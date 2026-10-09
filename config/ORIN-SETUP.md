@@ -130,37 +130,52 @@ move to the Pi:
 The configs use `/dev/cam_left` and `/dev/cam_right`, so the physical port
 lives in one udev rule instead of three config files.
 
-Both wrist cameras are the same model and **both report serial `SN0001`**,
-so `/dev/v4l/by-id` collides and no serial-based rule can tell them apart.
-Naming is necessarily positional. Find the Orin's real paths:
+**Measured on elroy, 2026-10-09** — both wrist cameras on the external hub:
+
+| | ID_PATH | node |
+|---|---|---|
+| left wrist | `platform-3610000.usb-usb-0:2.3.3:1.0` | video6 |
+| right wrist | `platform-3610000.usb-usb-0:2.3.4:1.0` | video8 |
+| head RealSense | `platform-3610000.usb-usb-0:1.1:1.0` and `:1.3` | video0–5 |
+
+`config/99-cameras-elroy.rules` has those baked in:
 
 ```bash
-for d in /dev/video*; do
-  echo "$d  $(udevadm info -q property $d | grep '^ID_PATH=')"
-done
-```
-
-Then, in `/etc/udev/rules.d/99-cameras.rules`, **each rule on one line**:
-
-```
-SUBSYSTEM=="video4linux", ENV{ID_PATH}=="<left camera's ID_PATH>", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", GROUP="video", MODE="0660", SYMLINK+="cam_left"
-SUBSYSTEM=="video4linux", ENV{ID_PATH}=="<right camera's ID_PATH>", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", GROUP="video", MODE="0660", SYMLINK+="cam_right"
-```
-
-```bash
+sudo cp config/99-cameras-elroy.rules /etc/udev/rules.d/99-cameras.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ls -l /dev/cam_*
 ```
 
-Use `ENV{ID_PATH}`, not `KERNELS`. On the Pi a `KERNELS` rule stopped
-working after a camera changed ports and would not come back even with the
-value corrected — `udevadm test` showed the right value in the chain and
-created no symlink anyway. Never explained; `ID_PATH` just works.
+You should see `cam_left -> ../video6` and `cam_right -> ../video8`.
 
-Moving a camera to another port changes its `ID_PATH` and silently breaks
-the rule. Check `ls -l /dev/cam_*` after any replug.
+If you ever need to redo this mapping — a new machine, a moved hub — the
+reliable method is positional, because both Innomakers report serial
+`SN0001` and nothing in their identity tells them apart. Unplug both, plug
+in only the left one, and record which capture node appears:
 
-Then confirm the formats, because the default one is a trap:
+```bash
+for d in /dev/video*; do
+  echo "$d  $(udevadm info -q property $d | grep -E '^(ID_PATH|ID_V4L_CAPABILITIES)=' | tr '\n' ' ')"
+done
+```
+
+Two details that are easy to get wrong:
+
+- **Each camera makes two nodes sharing one `ID_PATH`** — a capture node and
+  a metadata node. Only the capture one has `:capture:` in
+  `ID_V4L_CAPABILITIES`. Without that filter in the rule, the symlink lands
+  on whichever node udev handles last, and you get a camera that opens fine
+  and never delivers a frame.
+- **Use `ENV{ID_PATH}`, not `KERNELS`.** On the Pi a `KERNELS` rule stopped
+  working after a camera changed ports and would not come back even once the
+  value was corrected — `udevadm test` showed the right value in the device
+  chain and created no symlink. Never explained; `ID_PATH` has not done it.
+
+The paths encode the *hub's* ports. Move a camera to a different hub port,
+or the hub to a different Type-A port, and the rule silently stops matching.
+Check `ls -l /dev/cam_*` after any replug.
+
+### Formats
 
 ```bash
 v4l2-ctl --device=/dev/cam_left --list-formats-ext
@@ -174,6 +189,20 @@ YUYV  1280x720  10.000 fps    <- what OpenCV picks by default
 Uncompressed 720p30 is ~55 MB/s, past USB 2.0. The configs set
 `fourcc: MJPG` for this reason; without it you get
 `failed to set fps=30 (actual_fps=10.0)`.
+
+### RealSense permissions
+
+The RealSense is addressed by serial number, so it needs no naming rule —
+but libusb access may need librealsense's own permissions rules. Test first:
+
+```bash
+uv run --project ../XLeRobot lerobot-find-cameras realsense
+```
+
+If it reports no device while `lsusb` clearly shows it, that is a
+permissions problem, not a wiring one. Install librealsense's
+`99-realsense-libusb.rules` and make sure your user is in the `video` and
+`plugdev` groups (`id -nG`), then re-plug the camera.
 
 Headless check of all three at once:
 
