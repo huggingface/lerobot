@@ -599,6 +599,12 @@ class PlanSubtasksMemoryModule:
             spans = self._subtasks_for_window(
                 record, task, window.frames[0].timestamp, window.frames[-1].timestamp
             )
+            # Apply the existing persistent-subtask coverage policy WITHIN a
+            # successfully labelled context before clipping owned output. Idle
+            # tails continue the last subtask; an empty window stays an error.
+            spans = self._stitch_full_coverage(
+                spans, record, bounds=(window.frames[0].timestamp, window.frames[-1].timestamp)
+            )
             owned_spans = reconcile_spans(window, spans, record.frame_timestamps)
             if not owned_spans:
                 raise ValueError(
@@ -675,7 +681,10 @@ class PlanSubtasksMemoryModule:
         return cleaned
 
     def _stitch_full_coverage(
-        self, spans: list[dict[str, Any]], record: EpisodeRecord
+        self,
+        spans: list[dict[str, Any]],
+        record: EpisodeRecord,
+        bounds: tuple[float, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Make subtask spans tile the full episode with no gaps.
 
@@ -694,8 +703,11 @@ class PlanSubtasksMemoryModule:
         """
         if not spans or not record.frame_timestamps:
             return spans
-        t0 = float(record.frame_timestamps[0])
-        t_last = float(record.frame_timestamps[-1])
+        t0, t_last = (
+            bounds
+            if bounds is not None
+            else (float(record.frame_timestamps[0]), float(record.frame_timestamps[-1]))
+        )
         spans = sorted(spans, key=lambda s: float(s["start"]))
         spans[0]["start"] = t0
         for i in range(len(spans) - 1):
