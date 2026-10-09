@@ -444,6 +444,55 @@ leader.disconnect()
 </hfoption>
 </hfoptions>
 
+#### Automatic calibration
+
+Instead of moving the arm by hand, you can let a leader or a follower calibrate itself: each joint is driven slowly into its two mechanical end stops at a limited torque, and the ranges are taken from where the joints stall. The result goes to the same calibration file and servo registers as a manual calibration.
+
+> [!WARNING]
+> The arm moves on its own. It stretches out forwards, turns its base about 100° to each side (a leader up to 120°) and folds back at the end. Keep the space around it clear and stay at the arm: `Ctrl+C` stops the run, and the arm then goes limp and drops.
+
+Put the arm in the start pose before you start: folded up as it is packed away, upper arm tilted back, forearm folded down onto it, and the gripper closed and hanging down in front of the base, or on the leader the handle hanging down the same way (not pointing up: the folded arm would leave the wrist too little room).
+
+```bash
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431551 \
+    --robot.id=my_awesome_follower_arm \
+    --auto=true
+```
+
+For the leader, use `--teleop.type=so101_leader`, `--teleop.port` and `--teleop.id` instead. From Python, call `follower.auto_calibrate()` or `leader.auto_calibrate()` where the examples above call `calibrate()`.
+
+What happens:
+
+1. The wrist, the upper arm and the forearm unfold a little from the start pose. A joint that cannot stops the run.
+2. Upper arm and forearm fold back to their stops, then stretch out forwards to the other ones.
+3. With the forearm raised, the wrist roll, the gripper and the wrist flex turn from stop to stop. A wrist roll without a stopper turns a full turn and back.
+4. With the arm folded again and the gripper pointing forwards, the base turns from stop to stop.
+5. The arm returns to the start pose, torque goes off, and the calibration is written and saved.
+
+The run stops without writing anything, and restores every servo register it changed, when a joint finds no end stop in time or cannot unfold, on `Ctrl+C` or any error, and when a joint seems to have stopped against something other than its own end stop:
+
+- its range comes out more than about 10° off what an SO-101 measures (for example because a clamp stopped it early; the error says how to accept an unusual arm's ranges),
+- or a joint that holds still feels the contact, as when a stretched-out arm presses on the table.
+
+An obstacle that stops a joint just a few degrees before its own end stop can still go unnoticed, so keep the space around the arm clear.
+
+Calibrate the leader and the follower the same way, both automatically or both by hand. The automatic calibration takes the wrist roll's range from its stopper and puts its zero midway between the stopper's two sides, the manual one gives the wrist roll the full turn with its zero at the pose you chose as the middle, so mixing the two turns the follower's wrist against the leader's.
+
+Options, all under `--auto_calibration.` (e.g. `--auto_calibration.velocity=150`):
+
+| Option               | Default         | Description                                                                                                                                                                                                       |
+| -------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `velocity`           | 200             | Speed of the end-stop search and of every move, in encoder steps per second (4096 per turn).                                                                                                                      |
+| `torque_limit`       | 500, leader 800 | Torque limit during the run, in 0.1 % of the servo's maximum torque (never above `Max_Torque_Limit`). The leader's servos are geared to be moved by hand and need more of their torque to hold the stretched arm. |
+| `stall_lag_deg`      | 4               | A joint that lags its goal by more than this and hardly moves rests against an end stop, or is blocked on its way (a goal never runs more than three times this far ahead).                                       |
+| `p_coefficient`      | servo's         | P gain of the position loop during the run.                                                                                                                                                                       |
+| `contact_check`      | `abort`         | What to do when a joint seems to stop against something other than its own end stop: `abort`, `warn` or `off`.                                                                                                    |
+| `contact_load_delta` | 150             | Load change on a joint that holds still, in 0.1 %, that counts as such a contact.                                                                                                                                 |
+| `check_ranges`       | `true`          | Refuse ranges more than about 10° off what each joint of an SO-101 measures.                                                                                                                                      |
+| `move_tolerance_deg` | 5               | A move that ends closer than this to its goal is done; one that sagged under the arm's weight at a low load is done too.                                                                                          |
+
 Congrats 🎉, your robot is all set to learn a task on its own. Start training it by following this tutorial: [Getting started with real-world robots](./il_robots)
 
 > [!TIP]
