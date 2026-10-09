@@ -100,6 +100,17 @@ def test_orders_are_a_pure_block_swap():
     assert [i for i, n in enumerate(CKPT_ORDER) if "gripper" in n] == [7, 15]
 
 
+def test_policy_action_features_support_non_joint_policy_space():
+    from lerobot.rollout.context import _policy_action_features
+
+    cartesian = ["x", "y", "z", *[f"r6d_{i}" for i in range(6)], "strategy", "closure"]
+
+    assert list(_policy_action_features(dict.fromkeys(HW_ORDER, float), CKPT_ORDER)) == CKPT_ORDER
+    assert _policy_action_features(dict.fromkeys(HW_ORDER, float), cartesian) == dict.fromkeys(
+        cartesian, float
+    )
+
+
 # ---------------------------------------------------------------------------
 # Stubs
 # ---------------------------------------------------------------------------
