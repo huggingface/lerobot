@@ -59,8 +59,24 @@ keywords = ["lerobot", "huggingface", "robotics",  "machine learning", "artifici
 
 dependencies = [
     # Core ML
-    "torch>=2.7,<2.12.0",
-    "torchvision>=0.22.0,<0.27.0",
+    #
+    # FORK-LOCAL: the ARM ceiling is raised one minor version. JetPack 7
+    # lets a Jetson use the stock upstream CUDA wheels, and the cu132 index
+    # starts at torch 2.12.0 / torchvision 0.27.0 for aarch64 cp312 - with
+    # nothing older published - so upstream's <2.12.0 / <0.27.0 excludes
+    # every GPU build that exists for this platform by exactly one notch.
+    #
+    # These WIDEN rather than shift: 2.7 through 2.12 all remain legal on
+    # ARM, so a Raspberry Pi resolving from PyPI is unaffected and keeps
+    # whatever it had. Only the Jetson, syncing with the workspace's
+    # `jetson` extra, is pushed to 2.12 - because that is cu132's floor.
+    #
+    # x86_64 keeps upstream's pins untouched: cu128 is its index and this
+    # argument does not apply there.
+    "torch>=2.7,<2.12.0 ; not (sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64'))",
+    "torchvision>=0.22.0,<0.27.0 ; not (sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64'))",
+    "torch>=2.7,<2.13 ; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
+    "torchvision>=0.22.0,<0.28 ; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
     "numpy>=2.0.0,<2.3.0", # NOTE: Explicitly listing numpy helps the resolver converge faster. Upper bound imposed by opencv-python-headless.
     "opencv-python-headless>=4.9.0,<4.14.0",
     "Pillow>=10.0.0,<13.0.0",
@@ -122,7 +138,12 @@ dataset = [
     # Other torch/torchcodec pairings (informational): 0.8.1 = ffmpeg>=8 support, 0.10 = system-wide ffmpeg support, 0.12 needs torch==2.12.
     "torchcodec>=0.3.0,<0.12.0; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
     "torchcodec>=0.7.0,<0.12.0; sys_platform == 'win32'",
-    "torchcodec>=0.11.0,<0.12.0; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
+    # FORK-LOCAL: ceiling raised to admit 0.12, which the note above says
+    # needs torch==2.12 - the version the Jetson is now on. Without this,
+    # --extra dataset cannot resolve on ARM at all once torch is 2.12, and
+    # --extra dataset is what writes datasets. Still a range, so a Pi on an
+    # older torch keeps 0.11.
+    "torchcodec>=0.11.0,<0.13; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
     "jsonlines>=4.0.0,<5.0.0",
 ]
 training = [

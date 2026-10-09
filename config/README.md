@@ -131,6 +131,19 @@ upstream stay cheap:
 - `pyrealsense2` may go to >=2.57.7 on ARM linux. Upstream pins <2.57.0, but
   the first aarch64 **cp312** wheels appear in 2.57.7, and lerobot requires
   Python >=3.12.
+- **ARM ceilings raised one minor version** for `torch` (<2.13),
+  `torchvision` (<0.28) and `torchcodec` (<0.13). The cu132 index starts at
+  torch 2.12.0 / torchvision 0.27.0 for aarch64 cp312 and publishes nothing
+  older, so upstream's caps exclude every GPU build that exists for the
+  Jetson — by exactly one notch each. torchcodec follows because upstream's
+  own note says 0.12 needs torch 2.12, and `--extra dataset` cannot resolve
+  on ARM otherwise.
+
+  These **widen rather than shift**: 2.7 through 2.12 all stay legal on ARM,
+  so rosie resolving from PyPI is unaffected. x86_64 keeps upstream's pins
+  verbatim. The cost is that the Jetson now runs torch/torchcodec pairings
+  lerobot has not tested — if dataset writing misbehaves, this is the first
+  thing to suspect.
 - `ipython` in dependencies, `[tool.uv] package = true` and
   `python-preference = "managed"`.
 
