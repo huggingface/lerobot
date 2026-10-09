@@ -687,6 +687,29 @@ def test_compute_episode_stats_string_features_skipped():
     assert "q01" in stats["action"]
 
 
+def test_compute_episode_stats_multidimensional_features():
+    """Per-frame features with more than one dimension (e.g. shape (2, 3)) get element-wise stats
+    of the feature's shape, not stats that mix the rows of each frame together."""
+    rng = np.random.default_rng(0)
+    data = rng.normal(0, 1, (100, 2, 3)) + np.array([[0.0, 10.0, 20.0], [30.0, 40.0, 50.0]])
+    features = {"keypoints": {"dtype": "float32", "shape": (2, 3)}}
+
+    stats = compute_episode_stats({"keypoints": data}, features)["keypoints"]
+
+    for key in ["min", "max", "mean", "std", "q01", "q50", "q99"]:
+        assert stats[key].shape == (2, 3), key
+    np.testing.assert_allclose(stats["min"], data.min(axis=0))
+    np.testing.assert_allclose(stats["max"], data.max(axis=0))
+    np.testing.assert_allclose(stats["mean"], data.mean(axis=0), atol=1e-6)
+    np.testing.assert_allclose(stats["std"], data.std(axis=0), atol=1e-6)
+    np.testing.assert_allclose(stats["q50"], np.quantile(data, 0.5, axis=0), atol=0.05)
+    np.testing.assert_equal(stats["count"], np.array([100]))
+
+    aggregated = aggregate_stats([{"keypoints": stats}, {"keypoints": stats}])["keypoints"]
+    assert aggregated["mean"].shape == (2, 3)
+    np.testing.assert_allclose(aggregated["mean"], data.mean(axis=0), atol=1e-6)
+
+
 def test_aggregate_feature_stats_with_quantiles():
     """Test aggregating feature stats that include quantiles uses conservative bounds."""
     stats_ft_list = [
