@@ -484,6 +484,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         consumer_episodes = share.episodes
         self._resume_offset = 0
         consumer_frame_count = sum(self._episode_frame_count(episode) for episode in consumer_episodes)
+        if not self.repeat and resume_offset >= consumer_frame_count:
+            return  # this worker already gave all its frames; without repeat there is no next epoch
         if consumer_frame_count:
             worker_epoch_delta, resume_offset = divmod(resume_offset, consumer_frame_count)
         else:

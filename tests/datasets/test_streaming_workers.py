@@ -133,7 +133,7 @@ def test_workers_resume_from_a_step_count(root: Path, num_workers: int, resume_b
     assert _batches(resumed, num_workers, batch_size, count=more) == full[resume_batches:]
 
 
-@pytest.mark.parametrize("resume_batches", [2, 6])  # before and after the first worker ends its epoch
+@pytest.mark.parametrize("resume_batches", [2, 6, 14, 15])  # before and after workers end; 15 is the end
 def test_workers_resume_within_one_epoch_without_repeat(root: Path, resume_batches: int) -> None:
     batch_size, num_workers = 4, 3
     full = _batches(_dataset(root), num_workers, batch_size)
