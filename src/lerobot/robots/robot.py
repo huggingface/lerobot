@@ -45,7 +45,12 @@ class Robot(abc.ABC):
     # Opt-in for retaining the last applied position targets (including gripper).
     # Before the first command, a finite measured pose establishes the targets.
     # Mixed velocity/torque robots require their own stop implementation.
+    supports_command_hold: bool = False
     supports_position_hold: bool = False
+
+    def hold(self) -> None:
+        """Retain a safe controller command when command hold is explicitly supported."""
+        raise NotImplementedError(f"{self.name} does not implement command hold")
 
     def __init__(self, config: RobotConfig):
         self.robot_type = self.name

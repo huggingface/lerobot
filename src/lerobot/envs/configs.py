@@ -17,7 +17,7 @@ from __future__ import annotations
 import abc
 import importlib
 from dataclasses import dataclass, field, fields
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import draccus
@@ -727,7 +727,7 @@ class IsaaclabArenaEnv(HubEnvConfig):
         )
 
 
-class G1EndEffector(str, Enum):
+class G1EndEffector(StrEnum):
     """What the G1's arms carry, by hardware name.
 
     Shared with UnitreeG1Config, which owns the robot-level flag.
@@ -955,3 +955,66 @@ class RoboMMEEnv(EnvConfig):
             wrist_camera_name=self.wrist_camera_name,
             env_cls=env_cls,
         )
+
+
+@EnvConfig.register_subclass("sim")
+@dataclass
+class SimEnvConfig(EnvConfig):
+    endpoint: str = "tcp/127.0.0.1:7448"
+    deployment: str = "default"
+    timeout_s: float = 120
+    profile: str | None = None
+    task_ids: list[int] | None = None
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {}
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from lerobot.env_server.client import EnvClient
+        from lerobot.env_server.profiles import EvalProfile
+
+        from .sim_client import SimVectorEnv
+
+        if self.max_parallel_tasks != 1:
+            raise ValueError("Use one task at a time per simulator deployment")
+        client = EnvClient(self.endpoint, self.deployment, self.timeout_s)
+        try:
+            descriptor = client.describe()
+        finally:
+            client.close()
+        profile = EvalProfile.load(self.profile) if self.profile else None
+        if profile:
+            profile.validate_descriptor(descriptor)
+        self.descriptor = descriptor
+        self.fps = int(descriptor.fps)
+        self.features = {
+            f.name: PolicyFeature(
+                type=FeatureType.VISUAL if f.kind == "rgb" else FeatureType.STATE, shape=f.shape
+            )
+            for f in descriptor.features
+        }
+        self.features["action"] = PolicyFeature(
+            type=FeatureType.ACTION, shape=descriptor.action_feature.shape
+        )
+        self.features_map = {
+            name: profile.feature_mapping.get(name, name) if profile else name for name in self.features
+        }
+        groups = self.task.split(",") if self.task else list(descriptor.tasks)
+        result = {}
+        for group in groups:
+            if group not in descriptor.tasks:
+                raise ValueError(f"Unknown simulator task group: {group}")
+            ids = self.task_ids if self.task_ids is not None else [int(i) for i in descriptor.tasks[group]]
+            if any(str(i) not in descriptor.tasks[group] for i in ids):
+                raise ValueError("Unknown simulator task index")
+            result[group] = {
+                i: SimVectorEnv(
+                    self.endpoint, self.deployment, n_envs, group, i, self.timeout_s, descriptor, profile
+                )
+                for i in ids
+            }
+        return result
+
+    def get_env_processors(self):
+        return PolicyProcessorPipeline(steps=[]), PolicyProcessorPipeline(steps=[])
