@@ -43,7 +43,17 @@ class FakeGripperClient:
         self._closed.wait()
 
 
+class FakeGraspProjection:
+    def encode(self, proximal: float, distal: float) -> tuple[float, float]:
+        return distal / 3.0, proximal / 2.0
+
+    def decode(self, strategy: float, closure: float) -> tuple[float, float]:
+        return closure * 2.0, strategy * 3.0
+
+
 # The real gripette package is a git-only dependency; tests never talk to a Gripette server.
 sys.modules.setdefault("gripette", types.ModuleType("gripette"))
 sys.modules.setdefault("gripette.client", types.ModuleType("gripette.client"))
+sys.modules.setdefault("gripette.grasp_projection", types.ModuleType("gripette.grasp_projection"))
 sys.modules["gripette.client"].GripperClient = FakeGripperClient  # type: ignore[attr-defined]
+sys.modules["gripette.grasp_projection"].GraspProjection = FakeGraspProjection  # type: ignore[attr-defined]
