@@ -146,6 +146,30 @@ def _start_worker() -> None:
     _worker.start()
 
 
+def _strip_images(observation):
+    """The observation without its camera frames.
+
+    Decimation has to happen HERE, before the queue, not on the worker. A
+    queued observation keeps its arrays alive: three 640x480x3 frames is
+    ~2.7 MB that cannot be collected while it waits. Skipping only the
+    rr.log call on the far side still queues and retains every frame, so
+    the image-rate knob changes the bytes on the wire and nothing else -
+    which is exactly how it behaved, and why dropping 30 Hz to 10 Hz made
+    no difference at all to the thing we were chasing.
+
+    Short-lived objects die in gen0; ones held long enough to be promoted
+    are collected by a gen2 pass, which stops every Python thread in the
+    process - including the one receiving leader actions.
+    """
+    if not observation:
+        return observation
+    return {
+        k: v
+        for k, v in observation.items()
+        if not (isinstance(v, np.ndarray) and v.ndim >= 2)
+    }
+
+
 def _enqueue(observation, action, compress_images: bool) -> None:
     global _dropped, _sent
     assert _queue is not None
@@ -337,6 +361,10 @@ def log_rerun_data(
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")
 
+    # Decided once, on the caller's side, so a skipped frame is never queued.
+    if not _images_due():
+        observation = _strip_images(observation)
+
     if _async_enabled():
         if _worker is None or not _worker.is_alive():
             _start_worker()
@@ -357,10 +385,6 @@ def _log_now(
     observation_paths: set[str] = set()
     action_paths: set[str] = set()
     image_paths: set[str] = set()
-
-    # Decided once per pass, not per camera: otherwise only the first camera
-    # of a set would ever clear the interval and the rest would starve.
-    send_images = _images_due()
 
     if observation:
         for k, v in observation.items():
@@ -406,10 +430,7 @@ def _log_now(
                     #
                     # It arrived with this file in #3902 and was carried
                     # through #3899; no commit gives a reason for it.
-                    if send_images:
-                        rr.log(key, entity=img_entity)
-                    # Added either way: the blueprint needs to know the view
-                    # exists even on a pass whose frames were skipped.
+                    rr.log(key, entity=img_entity)
                     image_paths.add(key)
 
     if action:
