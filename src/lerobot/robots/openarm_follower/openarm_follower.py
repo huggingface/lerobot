@@ -17,7 +17,7 @@
 import logging
 import time
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
@@ -25,6 +25,9 @@ from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.damiao import DamiaoMotorsBus
 from lerobot.motors.motors_bus import NameOrID
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+
+if TYPE_CHECKING:
+    from lerobot.model import RobotKinematics
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -120,6 +123,33 @@ class OpenArmFollower(Robot):
     def action_features(self) -> dict[str, type]:
         """Action features."""
         return self._motors_ft
+
+    @property
+    def arm_motor_names(self) -> list[str]:
+        """Arm joints forming the kinematic chain to the end-effector (excludes the gripper)."""
+        return [motor for motor in self.bus.motors if motor != "gripper"]
+
+    def make_kinematics(self) -> "RobotKinematics":
+        """Build a solver for end-effector forward/inverse kinematics.
+
+        Requires ``config.urdf_path`` (path to the OpenArm URDF) and
+        ``config.target_frame_name`` (the end-effector link in that URDF). Pair the returned
+        solver with the shared FK/IK processor steps in
+        ``lerobot.robots.so_follower.robot_kinematic_processor`` to record or command the arm
+        in end-effector (Cartesian) space instead of raw joint angles.
+        """
+        from lerobot.model import RobotKinematics
+
+        if self.config.urdf_path is None or self.config.target_frame_name is None:
+            raise ValueError(
+                "OpenArm end-effector kinematics require config.urdf_path and "
+                "config.target_frame_name (the OpenArm URDF and its end-effector link)."
+            )
+        return RobotKinematics(
+            urdf_path=self.config.urdf_path,
+            target_frame_name=self.config.target_frame_name,
+            joint_names=self.arm_motor_names,
+        )
 
     @property
     def is_connected(self) -> bool:
