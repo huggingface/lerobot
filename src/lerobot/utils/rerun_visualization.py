@@ -172,7 +172,23 @@ def log_rerun_data(
                         )
                     else:
                         img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
-                    rr.log(key, entity=img_entity, static=True)
+                    # NOT static. A static entity has no position on any
+                    # timeline: it is for things that do not change, like a
+                    # calibration or a fixed mesh. Camera frames are the
+                    # opposite, and logging them static wedges the rerun
+                    # viewer outright - reproduced on 0.33.1 with a single
+                    # 160x120 frame logged once a second, which rules out
+                    # throughput, JPEG decode and frame size. The same run
+                    # with this one argument removed is fine.
+                    #
+                    # It also costs memory that nothing can reclaim. The
+                    # viewer evicts oldest-BY-TIME, so entities with no time
+                    # are never eviction candidates however long a session
+                    # runs. On the timeline they are.
+                    #
+                    # It arrived with this file in #3902 and was carried
+                    # through #3899; no commit gives a reason for it.
+                    rr.log(key, entity=img_entity)
                     image_paths.add(key)
 
     if action:

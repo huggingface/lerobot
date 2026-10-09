@@ -22,7 +22,10 @@ decode - and these take them away one at a time:
     --size 160           160x120 instead of 640x480
     --fps 1              one frame a second
     --no-compress        send raw instead of JPEG
-    --no-static          images on the timeline instead of static=True
+    --no-static          bypass lerobot's logger for the images. This was the
+                         control that identified static=True as the wedge;
+                         lerobot no longer logs images static, so it should
+                         now behave the same either way.
 
 Start with everything turned down and walk back up until it breaks.
 
@@ -76,7 +79,7 @@ def main() -> int:
     ap.add_argument(
         "--no-static",
         action="store_true",
-        help="log images on the timeline instead of static=True (bypasses lerobot's logger)",
+        help="bypass lerobot's logger and log images directly (was the static=True repro)",
     )
     args = ap.parse_args()
 
@@ -155,7 +158,7 @@ def main() -> int:
     print("  --size 160                pixels, not frames.")
     print("  --fps 1                   frames, not pixels.")
     print("  --no-compress             the viewer's JPEG decode.")
-    print("  --no-static               images on the timeline, not static=True.")
+    print("  --no-static               bypass lerobot's image logging entirely.")
     print("Then walk back up until it breaks; that is your answer.")
     return 0
 
