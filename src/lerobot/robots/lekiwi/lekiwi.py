@@ -118,16 +118,21 @@ class LeKiwi(Robot):
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         self.bus.connect()
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+        try:
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+                )
+                self.calibrate()
 
-        for cam in self.cameras.values():
-            cam.connect()
+            for cam in self.cameras.values():
+                cam.connect()
 
-        self.configure()
+            self.configure()
+        except BaseException:
+            self._release_after_failed_connect()
+            raise
+
         logger.info(f"{self} connected.")
 
     @property

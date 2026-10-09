@@ -150,6 +150,40 @@ def test_dm_joint_limits_match_leader_ranges():
     assert follower.joint_limits == {joint: tuple(limits) for joint, limits in leader.joint_ranges.items()}
 
 
+def test_connect_releases_bus_and_cameras_when_a_camera_fails():
+    # A camera failure used to leave the CAN controller and any earlier camera open, so they
+    # were only torn down at interpreter shutdown rather than when connect() failed (see #4550).
+    bus_mock = _make_bus_mock()
+
+    good_cam = MagicMock(name="good_cam")
+    good_cam.is_connected = False
+    good_cam.connect.side_effect = lambda *a, **kw: setattr(good_cam, "is_connected", True)
+    good_cam.disconnect.side_effect = lambda: setattr(good_cam, "is_connected", False)
+
+    bad_cam = MagicMock(name="bad_cam")
+    bad_cam.is_connected = False
+    bad_cam.connect.side_effect = ConnectionError("Failed to open bad_cam.")
+
+    with (
+        patch(f"{_MODULE}.require_package", lambda *a, **kw: None),
+        patch(f"{_MODULE}.MotorBridgeController") as controller_cls,
+        patch(f"{_MODULE}.MotorBridgeMode", MagicMock()),
+    ):
+        controller_cls.from_dm_serial.return_value = bus_mock
+        robot = RebotB601Follower(RebotB601FollowerRobotConfig(port="/dev/null"))
+        robot.cameras = {"front": good_cam, "arm": bad_cam}
+
+        with pytest.raises(ConnectionError, match="bad_cam"):
+            robot.connect(calibrate=False)
+
+    good_cam.disconnect.assert_called_once_with()
+    assert not good_cam.is_connected
+    bus_mock.close.assert_called_once_with()
+    assert robot.bus is None
+    assert robot.motors == {}
+    assert not robot.is_connected
+
+
 def test_scalar_joint_tuning_applies_to_every_joint():
     config = RebotB601FollowerRobotConfig(
         port="/dev/null",

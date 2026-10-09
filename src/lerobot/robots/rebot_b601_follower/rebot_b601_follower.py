@@ -154,27 +154,57 @@ class RebotB601Follower(Robot):
                 f"Unsupported can_adapter '{self.config.can_adapter}'. Use 'damiao' or 'socketcan'."
             )
 
-        add_motor = (
-            self.bus.add_damiao_motor
-            if self.config.motor_family is MotorFamily.DM
-            else self.bus.add_robstride_motor
-        )
-        for motor_name, (send_id, recv_id) in self._motor_can_ids.items():
-            self.motors[motor_name] = add_motor(send_id, recv_id, self.profile.motor_models[motor_name])
+        try:
+            add_motor = (
+                self.bus.add_damiao_motor
+                if self.config.motor_family is MotorFamily.DM
+                else self.bus.add_robstride_motor
+            )
+            for motor_name, (send_id, recv_id) in self._motor_can_ids.items():
+                self.motors[motor_name] = add_motor(send_id, recv_id, self.profile.motor_models[motor_name])
 
+            self._reset_gripper_impedance_state()
+
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+                )
+                self.calibrate()
+
+            for cam in self.cameras.values():
+                cam.connect()
+
+            self.configure()
+        except BaseException:
+            self._release_after_failed_connect()
+            raise
+
+        logger.info(f"{self} connected.")
+
+    def _release_motors_and_bus(self) -> None:
+        """Tears down the motors and the CAN controller, which is closed rather than disconnected.
+
+        Undecorated so the failed-connect path can reuse it: `is_connected` is False while
+        `connect()` is unwinding, which would trip `disconnect()`'s `@check_if_not_connected`.
+        """
+        for motor in self.motors.values():
+            if self.config.disable_torque_on_disconnect:
+                motor.disable()
+            motor.clear_error()
+            motor.close()
+
+        if self.bus is not None:
+            self.bus.close()
+
+        self.bus = None
+        self.motors = {}
         self._reset_gripper_impedance_state()
 
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
-
-        for cam in self.cameras.values():
-            cam.connect()
-
-        self.configure()
-        logger.info(f"{self} connected.")
+    def _release_bus_after_failed_connect(self) -> None:
+        try:
+            self._release_motors_and_bus()
+        except Exception:
+            logger.exception(f"Failed to release the motors and bus after {self} failed to connect.")
 
     @property
     def is_calibrated(self) -> bool:
@@ -445,18 +475,10 @@ class RebotB601Follower(Robot):
         """Disconnect motors and cameras from the robot."""
         if self.bus is None:
             raise DeviceNotConnectedError(f"{self} motor bus is not initialized")
-        for motor in self.motors.values():
-            if self.config.disable_torque_on_disconnect:
-                motor.disable()
-            motor.clear_error()
-            motor.close()
 
-        self.bus.close()
-        self.bus = None
-        self.motors = {}
+        self._release_motors_and_bus()
 
         for cam in self.cameras.values():
             cam.disconnect()
 
-        self._reset_gripper_impedance_state()
         logger.info(f"{self} disconnected.")

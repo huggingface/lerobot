@@ -14,7 +14,9 @@
 
 import abc
 import builtins
+import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import draccus
 
@@ -23,6 +25,11 @@ from lerobot.motors import MotorCalibration
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
 from .config import RobotConfig
+
+if TYPE_CHECKING:
+    from lerobot.cameras import Camera
+
+logger = logging.getLogger(__name__)
 
 
 # TODO(aliberts): action/obs typing such as Generic[ObsType, ActType] similar to gym.Env ?
@@ -42,6 +49,13 @@ class Robot(abc.ABC):
     # Set these in ALL subclasses
     config_class: builtins.type[RobotConfig]
     name: str
+
+    # Declared here so the shared failed-connect cleanup can resolve them. Subclasses narrow
+    # `config` to their own config type, and `bus` covers transports as different as serial
+    # motor buses, CAN controllers and SDK handles, so both stay loosely typed. A robot that
+    # owns no bus simply leaves it unset.
+    config: Any
+    bus: Any = None
 
     def __init__(self, config: RobotConfig):
         self.robot_type = self.name
@@ -72,6 +86,44 @@ class Robot(abc.ABC):
         Automatically disconnects, ensuring resources are released even on error.
         """
         self.disconnect()
+
+    def _release_after_failed_connect(self) -> None:
+        """Releases whatever was already acquired when connect() fails partway through.
+
+        A camera left connected keeps its background read thread and its native
+        pipeline alive with no owner. Those are only torn down at interpreter
+        shutdown, which is too late for backends that must be stopped explicitly
+        and can abort the process instead of surfacing the original error.
+
+        Failures here are logged rather than raised so they cannot mask it.
+        """
+        # Read through getattr: UnitreeG1 exposes `cameras` as a read-only property, which
+        # mypy refuses to reconcile with a writeable attribute declared on this base class.
+        cameras: dict[str, Camera] = getattr(self, "cameras", {})
+        for cam in cameras.values():
+            try:
+                if cam.is_connected:
+                    cam.disconnect()
+            except Exception:
+                logger.exception(f"Failed to disconnect {cam} after {self} failed to connect.")
+
+        self._release_bus_after_failed_connect()
+
+    def _release_bus_after_failed_connect(self) -> None:
+        """Releases the motors bus after a failed connect().
+
+        Override this when the bus does not follow the ``disconnect(disable_torque)``
+        shape, as is the case for CAN-backed robots that hold a controller handle.
+        """
+        bus = self.bus
+        if bus is None:
+            return
+
+        try:
+            if bus.is_connected:
+                bus.disconnect(self.config.disable_torque_on_disconnect)
+        except Exception:
+            logger.exception(f"Failed to disconnect the bus after {self} failed to connect.")
 
     def __del__(self) -> None:
         """
