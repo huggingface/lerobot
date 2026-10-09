@@ -75,21 +75,59 @@ print('xlerobot plugin OK')"
 
 ---
 
-## 2. JetPack torch
+## 2. GPU torch
 
-`uv sync` gives you PyPI's aarch64 **CPU** torch. That is wrong for the
-machine whose entire reason for being on the cart is the GPU — it will run
-policies, slowly, on the CPU and nothing will tell you.
+A plain `uv sync` installs PyPI's aarch64 **CPU** torch. That is wrong for
+the machine whose entire reason for being on the cart is the GPU, and
+nothing will tell you — teleoperation and recording do not care, inference
+does.
 
-Install NVIDIA's JetPack wheels for your JetPack version into the same
-environment, after `uv sync`, and confirm:
+**On JetPack 7 the Orin uses the stock upstream CUDA wheels.** NVIDIA
+confirmed Orin can take the SBSA package, so the old ritual of hunting
+NVIDIA forum wheels is over. Note also that the `jetson-ai-lab.io/jp6/cu126`
+index does **not** work on JetPack 7 — people try it and get
+"from versions: none".
+
+Check what CUDA you actually have, because the index name has to match:
 
 ```bash
-uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+/usr/local/cuda/bin/nvcc --version | tail -2     # nvcc is not on PATH by default
+nvidia-smi | head -4
 ```
 
-`False` here means inference will be useless later. Teleoperation and
-recording do not care, so this can wait — but do not forget it.
+On elroy that reads CUDA **13.2**, driver 595.78 — hence `cu132`. The
+XLeRobot workspace declares that as the `jetson` extra, so:
+
+```bash
+cd ~/GitHub/XLeRobot
+uv sync --extra jetson
+```
+
+**Use that extra every time you sync on this machine.** `uv sync` makes the
+environment match the lock, so a plain sync silently replaces CUDA torch
+with the CPU build and says nothing about it.
+
+Why an extra rather than a platform marker: rosie is `aarch64 linux` too.
+No environment marker distinguishes a Jetson from a Raspberry Pi, so nothing
+uv can evaluate on its own will do it. The extra is the only lever.
+
+Verify:
+
+```bash
+uv run python -c "
+import torch
+print(torch.__version__)
+print('cuda available:', torch.cuda.is_available())
+print('device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else '-')
+x = torch.randn(1000, 1000, device='cuda') @ torch.randn(1000, 1000, device='cuda')
+print('matmul on', x.device, 'ok')"
+```
+
+`+cu132` in the version and `cuda available: True`. If it says `True` but the
+version has no `+cu`, you are on a CPU build that found a GPU it cannot use.
+
+You may see a compute-capability warning; NVIDIA says the PyTorch team is
+removing it.
 
 ---
 

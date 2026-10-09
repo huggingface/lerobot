@@ -110,8 +110,15 @@ Deliberately almost nothing. Only `pyproject.toml`, so that merges from
 upstream stay cheap:
 
 - torch is routed to the CUDA wheel index only on `x86_64` linux. Upstream
-  routes all linux there, and that index has no aarch64 wheels, so a Pi or
+  routes all linux there, and `cu128` has no aarch64 wheels, so a Pi or
   Jetson cannot resolve torch at all.
+
+  This only bites if you sync from *this* repo, which you should not — the
+  XLeRobot workspace root drives resolution and `tool.uv.sources` is not
+  read from dependencies. GPU torch for the Jetson is the `jetson` extra
+  there (`uv sync --extra jetson`), which routes to `cu132`. Note that
+  newer CUDA indexes **do** publish aarch64 wheels now, so the premise
+  above is specific to `cu128`, not a permanent fact about ARM.
 - `pyrealsense2` may go to >=2.57.7 on ARM linux. Upstream pins <2.57.0, but
   the first aarch64 **cp312** wheels appear in 2.57.7, and lerobot requires
   Python >=3.12.
