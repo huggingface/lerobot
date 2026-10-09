@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
-from ..yam_follower.config_yam_follower import YamFollowerConfigBase, motor_feature_names
+from ..yam_follower.config_yam_follower import YamFollowerConfig, motor_feature_names
 
 
 @RobotConfig.register_subclass("bi_yam_follower")
@@ -35,8 +35,8 @@ class BiYamFollowerConfig(RobotConfig):
 
     id: str | None = "bi_yam_follower"
 
-    left_arm_config: YamFollowerConfigBase
-    right_arm_config: YamFollowerConfigBase
+    left_arm_config: YamFollowerConfig
+    right_arm_config: YamFollowerConfig
 
     # Top-level cameras not attached to a specific side. Keys are kept as-is in
     # observations (no `left_`/`right_` prefix). Per-arm cameras (declared on

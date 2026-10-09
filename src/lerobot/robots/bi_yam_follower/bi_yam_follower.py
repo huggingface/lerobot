@@ -29,7 +29,7 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..robot import Robot
-from ..yam_follower import YamFollower, YamFollowerConfig, YamFollowerConfigBase
+from ..yam_follower import YamFollower, YamFollowerConfig, YamFollowerRobotConfig
 from ..yam_follower.yam_follower import action_to_target
 from .config_bi_yam_follower import BiYamFollowerConfig
 
@@ -71,13 +71,13 @@ class BiYamFollower(BimanualMixin, Robot):
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}
 
     def _arm_robot_config(
-        self, side: str, arm_config: YamFollowerConfigBase, cameras: dict[str, CameraConfig]
-    ) -> YamFollowerConfig:
+        self, side: str, arm_config: YamFollowerConfig, cameras: dict[str, CameraConfig]
+    ) -> YamFollowerRobotConfig:
         values = {
-            field.name: deepcopy(getattr(arm_config, field.name)) for field in fields(YamFollowerConfigBase)
+            field.name: deepcopy(getattr(arm_config, field.name)) for field in fields(YamFollowerConfig)
         }
         values["cameras"] = deepcopy(cameras)
-        return YamFollowerConfig(
+        return YamFollowerRobotConfig(
             id=f"{self.config.id}_{side}" if self.config.id else None,
             calibration_dir=self.config.calibration_dir,
             **values,

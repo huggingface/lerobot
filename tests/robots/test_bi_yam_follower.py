@@ -24,14 +24,14 @@ import pytest
 from lerobot.robots.bi_yam_follower import BiYamFollower, BiYamFollowerConfig
 from lerobot.robots.yam_follower import (
     YamFollower,
-    YamFollowerConfigBase,
+    YamFollowerConfig,
     mit_arm,
     yam_follower as yam_module,
 )
 
 
 def arm_config(port="can0", **kwargs):
-    return YamFollowerConfigBase(
+    return YamFollowerConfig(
         port=port,
         gripper_closed_deg=math.degrees(0.1),
         gripper_open_deg=math.degrees(6.1),
@@ -294,8 +294,8 @@ def test_installed_optional_dependencies_allow_construction(tmp_path):
         BiYamFollowerConfig(
             id="imports",
             calibration_dir=tmp_path,
-            left_arm_config=YamFollowerConfigBase(port="can0"),
-            right_arm_config=YamFollowerConfigBase(port="can1"),
+            left_arm_config=YamFollowerConfig(port="can0"),
+            right_arm_config=YamFollowerConfig(port="can1"),
         )
     )
     assert not bot.is_connected
