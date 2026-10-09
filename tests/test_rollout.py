@@ -1409,6 +1409,9 @@ def _relative_pre_post():
     class _Pre:
         steps = [relative_step]
 
+        def get_steps(self, step_type):
+            return [s for s in self.steps if isinstance(s, step_type)]
+
         def __call__(self, observation):
             # Run the relative step so it caches the anchor, then pass the batch through.
             transition = create_transition(observation={OBS_STATE: observation[OBS_STATE]})
@@ -1526,9 +1529,9 @@ def test_sync_relative_holds_anchor_across_chunk():
 
 def test_sync_engine_without_a_relative_step_binds_nothing():
     """A pipeline with no enabled relative step has nothing to bind, and the engine still runs."""
-    from lerobot.processor import bind_relative_anchor
+    from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
 
     policy = MagicMock()
     policy.config.use_amp = False
-    assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
+    assert bind_relative_anchor(policy, PolicyProcessorPipeline(steps=[])) is None
     _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise
