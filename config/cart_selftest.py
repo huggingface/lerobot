@@ -152,7 +152,14 @@ def test_cameras(robot: XLerobot, outdir: Path) -> None:
             saved = f"(not saved: {e})"
 
         if mean < 2.0:
-            record(FAIL, f"{name}: black frame", f"mean {mean:.1f}  {saved}")
+            # Lens cap first: it is the commonest cause by a distance, and
+            # it looks exactly like a camera delivering nothing. The two are
+            # told apart by the inter-frame delta - a capped camera is still
+            # streaming, so its frames differ slightly from sensor noise,
+            # while a starved one repeats the same empty buffer.
+            why = "lens cap?" if moved > 0.05 else "no valid frame arriving"
+            record(FAIL, f"{name}: black frame",
+                   f"mean {mean:.1f}, delta {moved:.2f} - {why}  {saved}")
         elif moved < 0.25:
             record(WARN, f"{name}: frames identical 0.4s apart",
                    f"lens cap, or a stalled stream  {saved}")
