@@ -13,11 +13,28 @@
 #                      listening means the launch fails rather than
 #                      carrying on without video.
 #
-#                        uvx --from rerun-sdk rerun --port 9876
+#                        uvx --from rerun-sdk==<version> rerun
 #
-#                      Override with WATCH_HOST=<ip>. If the cart cannot
-#                      connect, the viewer may be bound to localhost only -
-#                      check `rerun --help` for a bind option.
+#                      With NO other arguments. That one process both opens
+#                      the window and listens on 0.0.0.0:9876 for the cart -
+#                      it is not a viewer that needs a server put in front
+#                      of it. `--port 9876` is the default and adds nothing.
+#
+#                      Do not use `--serve-grpc`. That is the other thing: a
+#                      server with no window, which is why it answers with
+#                      "Connect by running `rerun --connect ...`". You can
+#                      build a working three-process setup out of it, but
+#                      there is no reason to.
+#
+#                      Override the host with WATCH_HOST=<ip>. If the cart
+#                      cannot reach it, suspect the viewer machine's
+#                      firewall before anything else - rerun already binds
+#                      0.0.0.0, but macOS blocks incoming connections to new
+#                      binaries by default and a uvx-launched rerun is a new
+#                      binary every time the cache moves.
+#
+#                      To test the link with no robot in the way:
+#                        ./config/video-test.sh
 #
 #   --watch=web        serve Foxglove from the cart on :8765 and open a
 #                      browser on the Pi. No viewer install needed, but it
@@ -79,14 +96,19 @@ parse_watch() {
       local rv; rv="$(rerun_version 2>/dev/null || echo unknown)"
       echo "video   : pushing to the rerun viewer at $WATCH_HOST:$WATCH_PORT"
       echo "          this machine has rerun-sdk $rv - the viewer must match:"
-      echo "            uvx --from rerun-sdk==$rv rerun --port $WATCH_PORT"
-      echo "          START THE VIEWER FIRST. With nothing listening, rerun"
-      echo "          does not just fail - it back-pressures into the control"
-      echo "          loop and costs you several Hz."
+      echo "            uvx --from rerun-sdk==$rv rerun"
+      echo "          No other arguments: that one command is both the window"
+      echo "          and the listener. START IT FIRST. With nothing there,"
+      echo "          rerun does not just fail - it back-pressures into the"
+      echo "          control loop and costs you several Hz."
       if command -v nc >/dev/null 2>&1 && ! nc -z -w2 "$WATCH_HOST" "$WATCH_PORT" 2>/dev/null; then
         echo
-        echo "  WARNING: nothing is listening on $WATCH_HOST:$WATCH_PORT." >&2
-        echo "           Start it with:  uvx --from rerun-sdk rerun --port $WATCH_PORT" >&2
+        echo "  WARNING: nothing answering on $WATCH_HOST:$WATCH_PORT." >&2
+        echo "           Start the viewer:  uvx --from rerun-sdk==$rv rerun" >&2
+        echo "           Already running? Then it is reachability, not rerun:" >&2
+        echo "           on macOS, System Settings > Network > Firewall blocks" >&2
+        echo "           incoming connections to new binaries by default." >&2
+        echo "           Isolate it with:   ./config/video-test.sh" >&2
         echo "           Or run without --watch." >&2
         echo
       fi

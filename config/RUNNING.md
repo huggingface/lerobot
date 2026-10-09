@@ -24,14 +24,35 @@ and the video originates on the cart, not the Pi.
 uvx --from rerun-sdk==0.33.1 rerun
 ```
 
-**No flags.** `--port` puts it into server-only mode: it accepts the stream
-and never opens a window, so you get the cost of video with none of the
-picture. You want a window.
+**No flags.** That one process is both the window and the listener — it
+opens the viewer *and* serves gRPC on `0.0.0.0:9876`, which is what elroy
+connects out to. There is no separate server to start. (`--port 9876` is
+the default and changes nothing; the thing to avoid is `--serve-grpc`,
+which is a server with *no* window and answers with "Connect by running
+`rerun --connect ...`". You can make a working three-process setup out of
+it, but there is no reason to.)
 
 Pin the version. The SDK on elroy comes from `lerobot[viz]`; the viewer
 here comes from PyPI's latest unless told otherwise, and the two halves of
 one rerun release have to match. `cart-teleop.sh --watch` prints the exact
 command with the right number in it.
+
+**If the window opens but stays on the welcome screen**, the stream is not
+arriving. Prove the link on its own, from elroy, with no robot in the way:
+
+```bash
+./config/video-test.sh          # moving test pattern, 3 fake cameras
+```
+
+Nothing appears? Then it is the link, in this order:
+
+1. the viewer is running as plain `rerun`, not `--serve-grpc`
+2. `nc -z -v 192.168.1.52 9876` from elroy answers
+3. the Mac's firewall — System Settings → Network → Firewall. It blocks
+   incoming connections to unknown binaries by default, and a
+   `uvx`-launched rerun looks like a new binary whenever the cache moves.
+   Either allow it when macOS asks, or turn the firewall off long enough
+   to find out whether that is the answer.
 
 Skip this whole step if you don't need to see what the robot sees.
 
@@ -168,6 +189,7 @@ pixel-bound.
 | `./config/leader-tap.sh` | the leader stream with no robot attached. Says which keys ever changed. |
 | `./config/scan-motors.sh` | which motor ids answer, at which baud rate |
 | `./config/power-check.sh` | voltage, temperature and load per servo, with torque applied one at a time |
+| `./config/video-test.sh` | a synthetic camera feed to the viewer, no robot. Separates the video link from everything else. |
 | `./config/sync.sh` | sync with the right extras for this machine |
 
 ---
