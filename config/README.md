@@ -1,5 +1,11 @@
 # Hardware configs for Carl's XLeRobot
 
+| doc | when |
+|---|---|
+| **`RUNNING.md`** | **every session — what to start, on which machine, in what order** |
+| `ORIN-SETUP.md` | one-time bring-up of a cart machine |
+| this file | what the fork changes and why |
+
 Configs for the two SO-101 arms, their leaders, and the head RealSense.
 Run them with stock lerobot CLIs:
 
