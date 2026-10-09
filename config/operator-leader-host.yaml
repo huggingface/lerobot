@@ -81,10 +81,12 @@ axis_base_turn: 3         # right stick X
 axis_head_pan: 3          #   shared with turn; hold the modifier to aim the head
 axis_head_tilt: 4         # right stick Y
 
-# Measured from the sign when pushing UP, not assumed: both sticks report
-# negative upward, so both need inverting for up to mean forward/raise.
+# The probe measured the STICK's sign - both report negative upward - but it
+# cannot know which way a servo is mounted. invert_head_tilt was therefore
+# only half-derived, and it was wrong: head up and down came out backwards
+# on the hardware. Flipped by observation, 2026-10-09.
 invert_base_forward: true
-invert_head_tilt: true
+invert_head_tilt: false
 
 button_head_modifier: 4   # L1
 button_speed_up: 5        # R1
