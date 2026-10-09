@@ -157,6 +157,7 @@ def test_hardware_admission_uses_current_inventory(monkeypatch):
 
 
 def test_convert_bundle_rewrites_host_paths_and_selects_cpu(tmp_path, monkeypatch):
+    pytest.importorskip("datasets")
     from lerobot.data_processing.conversion import ConvertConfig
 
     cfg = ConvertConfig(
