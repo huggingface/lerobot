@@ -200,6 +200,9 @@ pixel-bound.
 | **Script prints the header and exits silently** | `set -e` on a non-zero return. Shout about it; it is a bug. |
 | **A fresh calibration starts** | you are on the arms-only config without one. It should refuse now — if it does not, Ctrl-C before the range-recording phase or you lose `robots/xlerobot/xlerobot.json`. |
 | **CPU torch on elroy** | a bare `uv sync`. Use `./config/sync.sh`, which picks the right extras per machine. |
+| **`Leader link stalled ... base stopped, arms holding` about once a second, only with `--watch`** | the cart's TCP ACKs to rosie queued behind video on the wifi uplink. Both sockets now set `TOS 0xC0` (voice queue) — see `link.py`. If it persists: `iperf3 -c 192.168.1.52` from elroy for the real uplink goodput, and cap the send buffer so back-pressure reaches rerun instead of the kernel: `sudo sysctl -w net.ipv4.tcp_wmem='4096 16384 262144'` (not persistent; put it in `/etc/sysctl.d/` if it helps). The stall line now prints sequence gaps, and recovery prints apparent one-way delay. |
+| **Picture seconds behind, loop healthy** | same queue as the row above. Frames are now stamped with capture time, so the lag shows as an offset in the viewer's timeline rather than looking fresh. `LEROBOT_RERUN_JPEG_QUALITY` (default 70) and `LEROBOT_RERUN_IMAGE_FPS` (default 10) are the two levers; `tcp_wmem` above is the third. |
+| **Head jerky, arms smooth** | `head_goal_velocity` / `head_acceleration` in the robot config give the head servos a motion profile; defaults 600 / 40. Lower acceleration = smoother, slower to start. |
 | **Viewer draws the grid, then stops responding as soon as frames arrive** | `rerun_visualization.py` logging images with `static=True`. Fixed here — but it is upstream's file, so a merge from upstream will bring it back. One 160x120 frame a second is enough to trigger it, so do not read it as a bandwidth problem. `./config/video-test.sh --no-static` is the control. |
 
 ---

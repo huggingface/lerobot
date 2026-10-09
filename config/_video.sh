@@ -99,14 +99,17 @@ parse_watch() {
     --watch)
       # The operator view does not run at the control rate, and should not.
       #
-      # At the full 30 Hz the cart pushes three 640x480 JPEGs a frame - a few
-      # MB/s up the radio, plus the encoding - and that starves the thread
-      # receiving leader actions on the same machine. Measured: with --watch
-      # the link stalled for ~320 ms about once a second, base stopping and
-      # arms holding each time; without --watch, not once in the same run.
+      # Every byte of video goes up the cart's wifi, and the leader actions'
+      # TCP acknowledgements have to come back up the same radio. When the
+      # uplink is busy those ACKs queue behind the video and the operator's
+      # kernel stops sending until one gets through: with --watch the link
+      # stalled ~300 ms about once a second, without it never. (An earlier
+      # version of this comment blamed CPU starvation on the cart. It was
+      # not - the loop held 29.5 Hz through the stalls. See link.py in the
+      # xlerobot_leader_remote teleoperator for the fix on the socket side.)
       #
-      # 10 Hz is unmistakably live to drive by and leaves the actions alone.
-      # Raise it if your link is better than ours; 0 sends scalars only.
+      # Fewer frames is fewer bytes in that queue. 10 Hz is unmistakably live
+      # to drive by. Raise it if your link is better; 0 sends scalars only.
       export LEROBOT_RERUN_IMAGE_FPS="${LEROBOT_RERUN_IMAGE_FPS:-10}"
       DISPLAY_ARGS=(--display_data=true --display_mode=rerun
                     --display_ip="$WATCH_HOST" --display_port="$WATCH_PORT"
