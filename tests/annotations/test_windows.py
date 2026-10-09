@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("datasets")
+
 from lerobot.annotations.steerable_pipeline.config import PlanConfig
 from lerobot.annotations.steerable_pipeline.modules.plan_subtasks_memory import (
     PlanSubtasksMemoryModule,

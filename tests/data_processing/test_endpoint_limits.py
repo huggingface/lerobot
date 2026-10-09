@@ -90,6 +90,7 @@ def test_authentication_idempotency_and_ambiguous_inference(coordinator):
 
 
 def test_vlm_clients_share_one_limit(coordinator, monkeypatch):
+    pytest.importorskip("datasets")
     import sys
     from types import SimpleNamespace
 
