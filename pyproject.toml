@@ -73,8 +73,13 @@ dependencies = [
     #
     # x86_64 keeps upstream's pins untouched: cu128 is its index and this
     # argument does not apply there.
-    "torch>=2.7,<2.12.0 ; not (sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64'))",
-    "torchvision>=0.22.0,<0.27.0 ; not (sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64'))",
+    #
+    # The non-ARM marker is spelled out with != rather than `not (...)`:
+    # PEP 508's marker grammar has `and`, `or` and parentheses and NO `not`,
+    # so setuptools rejects the whole file with
+    #   configuration error: `project.dependencies[0]` must be pep508
+    "torch>=2.7,<2.12.0 ; sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64')",
+    "torchvision>=0.22.0,<0.27.0 ; sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64')",
     "torch>=2.7,<2.13 ; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
     "torchvision>=0.22.0,<0.28 ; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'arm64')",
     "numpy>=2.0.0,<2.3.0", # NOTE: Explicitly listing numpy helps the resolver converge faster. Upper bound imposed by opencv-python-headless.
