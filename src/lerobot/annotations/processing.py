@@ -372,7 +372,7 @@ class LanguageModule:
         self.config = draccus.decode(AnnotationPipelineConfig, annotation_config)
         self.client_factory = client_factory
         outputs = {"atoms": ATOM_SCHEMA, **({"windows": WINDOW_SCHEMA} if phase == "plan" else {})}
-        self.spec = ModuleSpec(f"language_{phase}", "3", "episode", outputs)
+        self.spec = ModuleSpec(f"language_{phase}", "4" if phase == "plan" else "3", "episode", outputs)
 
     def setup(self, context):
         cfg = self.config

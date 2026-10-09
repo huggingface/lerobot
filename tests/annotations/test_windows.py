@@ -35,6 +35,17 @@ def test_long_episode_reconciles_continuations_and_fails_empty_windows(monkeypat
     assert len(calls) == len(windows) > 1
     assert calls[1][0] < calls[0][1]  # Context actually overlaps.
     assert all(lo in record.frame_timestamps and hi in record.frame_timestamps for lo, hi in calls)
+    # A grounded action can finish in context before the owned tail becomes idle.
+    # Persistent subtask semantics extend it to the context end, not reject valid
+    # input or copy labels from a different/empty inference window.
+    monkeypatch.setattr(
+        module,
+        "_subtasks_for_window",
+        lambda record, task, lo, hi: [
+            {"text": "hold cup", "start": lo, "end": min(lo + 0.1, hi)},
+        ],
+    )
+    assert module._generate_subtasks(record) == [{"text": "hold cup", "start": 3.0, "end": 23.0}]
     monkeypatch.setattr(module, "_subtasks_for_window", lambda *args: [])
     with pytest.raises(ValueError, match="no owned spans"):
         module._generate_subtasks(record)

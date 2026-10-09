@@ -186,6 +186,9 @@ output ranges tile the episode once. Frame predictors discard context-only outpu
 and reject altered/duplicate references. Span predictors clip to owned ranges,
 snap to the source clock and merge identical continuations at window boundaries.
 Conflicting overlap labels are resolved by output ownership, not by averaging labels.
+Within a successfully labelled context, persistent-subtask coverage extends the first
+and last valid labels over approach/idle time before clipping to owned output; an
+entirely unlabelled window still fails rather than borrowing another window's labels.
 Language subtasks use this contract; windows and ownership are persisted in
 `meta/annotations/windows/*.parquet`. The model frame budget includes overlap.
 Stateful memory remains an ordered episode-level reduction after segmentation.
