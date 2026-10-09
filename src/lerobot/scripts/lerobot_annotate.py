@@ -139,7 +139,12 @@ def _changed_paths(root, summary):
     ]
     return list(
         dict.fromkeys(
-            [*summary.written_paths, root / "meta/info.json", *(path for path in owners if path.exists())]
+            [
+                *summary.written_paths,
+                *getattr(summary, "metadata_paths", []),
+                root / "meta/info.json",
+                *(path for path in owners if path.exists()),
+            ]
         )
     )
 

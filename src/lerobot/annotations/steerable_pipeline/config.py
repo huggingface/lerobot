@@ -77,6 +77,8 @@ class PlanConfig:
     # per-window spans are merged + stitched into one contiguous cover. So an
     # episode of any length is always covered at the full sampling density.
     max_frames_per_prompt: int = 60
+    # Context on each side of the owned output window for long episodes.
+    window_overlap_seconds: float = 1.0
     contact_sheet_columns: int = 5
     contact_sheet_frames_per_sheet: int = 20
     contact_sheet_frame_width: int = 224
@@ -189,6 +191,11 @@ class VlmConfig:
     parallel_servers: int = 1
     num_gpus: int = 0
     client_concurrency: int = 16
+    # All clients of this endpoint/model must share one coordinator and key.
+    endpoint_limit_url: str | None = None
+    endpoint_limit_key: str | None = None
+    endpoint_limit_token_env: str = "LEROBOT_ENDPOINT_LIMIT_TOKEN"
+    endpoint_limit_timeout_s: float = 300
     serve_ready_timeout_s: float = 600.0
 
     max_new_tokens: int = 512
@@ -217,6 +224,24 @@ class ExecutorConfig:
 
 
 @dataclass
+class QualityConfig:
+    """Optional sampled quality gate for the default annotation camera."""
+
+    enabled: bool = False
+    sample_frames: int = 32
+    black_threshold: float = 5.0
+    max_black_fraction: float = 0.9
+
+    def __post_init__(self):
+        if (
+            self.sample_frames < 1
+            or not 0 <= self.black_threshold <= 255
+            or not 0 <= self.max_black_fraction <= 1
+        ):
+            raise ValueError("Invalid episode quality thresholds")
+
+
+@dataclass
 class AnnotationPipelineConfig:
     """Top-level config for ``lerobot-annotate`` (rewrites data shards in place)."""
 
@@ -240,6 +265,7 @@ class AnnotationPipelineConfig:
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
+    quality: QualityConfig = field(default_factory=QualityConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
     # Where the annotation runs: omitted / "local" annotates on this machine, any

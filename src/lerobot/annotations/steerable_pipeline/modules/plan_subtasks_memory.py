@@ -22,6 +22,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from lerobot.data_processing.windows import EpisodeWindow, SourceFrame, reconcile_spans, time_windows
+
 from ..config import PlanConfig
 from ..frames import (
     FrameProvider,
@@ -36,6 +38,28 @@ from ..vlm_client import VlmClient
 logger = logging.getLogger(__name__)
 
 
+def subtask_windows(record: EpisodeRecord, config: PlanConfig) -> list[EpisodeWindow]:
+    """The exact contract used both for inference and persisted provenance."""
+    if not record.frame_timestamps:
+        return []
+    if config.frames_per_second <= 0 or config.max_frames_per_prompt < 2:
+        raise ValueError("Subtask window sampling requires positive FPS and a frame budget >= 2")
+    duration = record.frame_timestamps[-1] - record.frame_timestamps[0]
+    if int(round(duration * config.frames_per_second)) + 1 <= config.max_frames_per_prompt:
+        frames = tuple(
+            SourceFrame(record.episode_index, i, t)
+            for i, t in zip(record.frame_indices, record.frame_timestamps, strict=True)
+        )
+        return [EpisodeWindow(0, 0, len(frames), 0, len(frames), frames)]
+    return time_windows(
+        record.episode_index,
+        record.frame_indices,
+        record.frame_timestamps,
+        context_seconds=(config.max_frames_per_prompt - 1) / config.frames_per_second,
+        overlap_seconds=config.window_overlap_seconds,
+    )
+
+
 # Prepended to every describe / segment prompt so the VLM knows the images are
 # timestamped contact-sheet grids, not a single video, and reads the burned-in
 # per-tile timestamp when choosing boundaries.
@@ -45,7 +69,7 @@ def _contact_sheet_preamble(columns: int) -> str:
         f"- Each image is a grid of sampled video frames, {columns} per row, "
         "with time running left-to-right then top-to-bottom (row-major).\n"
         "- Each frame has its timestamp burned into the top-left corner, e.g. "
-        '"012.50s". Use that printed timestamp (not the tile position) when you '
+        '"12.50s". Use that printed timestamp (not the tile position) when you '
         "choose start/end times; boundaries should land on or near a printed "
         "timestamp.\n"
         "- Frames continue across grids: an action may span the end of one sheet "
@@ -364,6 +388,7 @@ class PlanSubtasksMemoryModule:
             else:
                 step = dur / (n - 1)
                 timestamps = [w0 + i * step for i in range(n)]
+            timestamps = sorted({snap_to_frame(ts, record.frame_timestamps) for ts in timestamps})
             frames = self.frame_provider.frames_at(record, timestamps)
             rel = [ts - w0 for ts in timestamps[: len(frames)]]
             return self._contact_sheet_blocks(frames, rel)
@@ -371,6 +396,7 @@ class PlanSubtasksMemoryModule:
         n = max(1, int(round(episode_duration * self.config.frames_per_second)) + 1)
         n = min(n, self.config.max_frames_per_prompt)
         timestamps = self._uniform_episode_timestamps(record, n)
+        timestamps = sorted({snap_to_frame(ts, record.frame_timestamps) for ts in timestamps})
         frames = self.frame_provider.frames_at(record, timestamps)
         return self._contact_sheet_blocks(frames, timestamps[: len(frames)])
 
@@ -471,7 +497,7 @@ class PlanSubtasksMemoryModule:
         fps = max(1e-6, float(self.config.frames_per_second))
         n_whole = int(round(episode_duration * fps)) + 1
         if n_whole > self.config.max_frames_per_prompt:
-            window_s = self.config.max_frames_per_prompt / fps
+            window_s = (self.config.max_frames_per_prompt - 1) / fps
             return self._generate_subtasks_windowed(record, effective_task, window_s)
 
         # ---- Pass 1 (optional): grounding description ----------------
@@ -567,20 +593,30 @@ class PlanSubtasksMemoryModule:
         each window's spans back to absolute episode time, then merges +
         stitches into a contiguous whole-episode cover.
         """
-        t0 = float(record.frame_timestamps[0])
-        t_last = float(record.frame_timestamps[-1])
         all_spans: list[dict[str, Any]] = []
-        w0 = t0
-        n_windows = 0
-        while w0 < t_last - 1e-6:
-            w1 = min(w0 + window_s, t_last)
-            all_spans.extend(self._subtasks_for_window(record, task, w0, w1))
-            n_windows += 1
-            w0 = w1
+        windows = subtask_windows(record, self.config)
+        for window in windows:
+            spans = self._subtasks_for_window(
+                record, task, window.frames[0].timestamp, window.frames[-1].timestamp
+            )
+            owned_spans = reconcile_spans(window, spans, record.frame_timestamps)
+            if not owned_spans:
+                raise ValueError(
+                    f"Subtask window {window.index} returned no owned spans; refusing silent missing coverage"
+                )
+            for span in owned_spans:
+                if (
+                    all_spans
+                    and all_spans[-1]["text"] == span["text"]
+                    and all_spans[-1]["end"] == span["start"]
+                ):
+                    all_spans[-1]["end"] = span["end"]
+                else:
+                    all_spans.append(span)
         logger.info(
             "episode %d: windowed subtask gen over %d window(s) of %.1fs -> %d raw spans",
             record.episode_index,
-            n_windows,
+            len(windows),
             window_s,
             len(all_spans),
         )

@@ -45,6 +45,7 @@ import time
 import urllib.request
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -285,7 +286,21 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
             api_bases = [api_base]
             print(f"[lerobot-annotate] server ready at {api_base}", flush=True)
 
-    clients = [OpenAI(base_url=base, api_key=api_key) for base in api_bases]
+    # Worker retry classification owns transport retries, rather than multiplying
+    # SDK retries with shard retries. Every retry reacquires global admission.
+    shared_limit = None
+    if config.endpoint_limit_url:
+        from lerobot.data_processing.endpoint_limits import SharedEndpointLimit
+
+        if not config.endpoint_limit_key:
+            raise ValueError("A shared endpoint limit requires endpoint_limit_key")
+        shared_limit = SharedEndpointLimit(
+            config.endpoint_limit_url,
+            config.endpoint_limit_key,
+            config.endpoint_limit_token_env,
+            config.endpoint_limit_timeout_s,
+        )
+    clients = [OpenAI(base_url=base, api_key=api_key, max_retries=0) for base in api_bases]
     # round-robin counter for parallel mode
     rr_counter = {"i": 0}
 
@@ -317,7 +332,7 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
         with rr_lock:
             chosen = clients[rr_counter["i"] % len(clients)]
             rr_counter["i"] += 1
-        with request_limit:
+        with request_limit, shared_limit.permit() if shared_limit else nullcontext():
             response = chosen.chat.completions.create(**kwargs)
         # Some OpenAI-compatible servers can return a choice with no message
         # (safety filter, or a "thinking" model that spends the whole budget

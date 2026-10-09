@@ -109,6 +109,97 @@ Files already carrying both language columns need no schema-only rewrite.
 A recoverable local journal rolls forward interrupted commits. It is not an atomic
 snapshot for simultaneous readers: process a separate version while training.
 
+## Parallel stages, endpoint limits and quality decisions
+
+These controls adapt the dependency, endpoint-limit and window ideas in the
+[Editframe pipeline documentation](https://editframe.com/docs/api/pipelines);
+LeRobot does not depend on that service.
+
+Sequential execution remains the default. Set `max_parallel_stages` and an explicit
+`resource_budget` to dispatch ready stages concurrently. Hands, subtasks and value
+modules can depend on quality without depending on each other; a merge stage depends
+on all three. The existing language recipe can run plan and VQA concurrently while
+interjections still wait for plan, and materialization waits for every required stage.
+
+```text
+                           ┌─ hands ──────┐
+convert → quality gate ────┼─ subtasks ───┼─ validate → materialize
+                           └─ value ──────┘
+```
+
+The controller reserves `workers × Resources` per admitted stage across CPU, GPU
+and memory, conservatively counting every planned worker even if a scheduler queues
+some. Reservations last through finalization. Local GPU stages receive disjoint
+device IDs and concurrent local stages always use spawned workers. Discovery and
+service-start hooks remain serialized on the controller. This budget covers pipeline
+workers, not an external model service or small scheduler finalizers. Slurm/HF Jobs
+retain their own per-stage allocation limits. One controller still owns a run.
+
+```python
+cfg.runtime.max_parallel_stages = 3
+cfg.runtime.resource_budget = Resources(cpus=6, gpus=0, memory_gb=24)
+cfg.runtime.workers = 2
+cfg.quality.enabled = True
+cfg.vlm.endpoint_limit_url = "http://model-coordinator.internal:8090"
+cfg.vlm.endpoint_limit_key = "qwen-annotation"
+```
+
+A process semaphore remains useful but cannot limit a shared service across nodes.
+Run one authenticated coordinator for that endpoint/model, and point **all** clients
+at it, including clients from other runs. The limit is coordinator-owned, not
+multiplied by worker count. Its token is an environment reference, forwarded as an
+HF Jobs secret; use TLS termination or a private trusted network.
+
+```bash
+uv run python -m lerobot.data_processing.endpoint_limits \
+  --host 0.0.0.0 --port 8090 --key qwen-annotation --limit 8 \
+  --token-env LEROBOT_ENDPOINT_LIMIT_TOKEN
+```
+
+Acquisition/release are idempotent. Admission fails closed if the coordinator cannot
+be reached. A killed worker or ambiguous inference timeout leaves a permit held:
+there is deliberately no lease timeout that could admit new work while old inference
+still runs. Drain/cancel inference before restarting the coordinator to recover
+such permits. Do not start multiple coordinators for the same endpoint. This is a
+small single-authority admission service, not a highly available distributed database;
+nonparticipating clients are outside its limit.
+
+`StageConfig.when="quality.usable"` reads an explicitly boolean source-item field
+derived from declared upstream quality results. False produces `Outcome.MASKED`
+with a reason; missing/nonboolean fields fail instead of silently skipping. Masks
+are sealed into the plan, change item identity, remain in the accepted Parquet index,
+and count toward complete coverage. An entirely masked batch starts no model.
+
+For `lerobot-annotate`, `quality.enabled=true` samples the default annotation camera
+and checks missing/black frames before inference. Thresholds are configurable; this
+is a sampled episode gate, not proof that every frame/view is usable. Decisions and
+exact sampled source references are saved in `meta/annotations/quality/*.parquet`.
+Native rows, videos and previous/source-owned annotations are retained; users must
+honour these masks when training. Temporal/camera-specific quality modules can supply
+finer-grained gates through the same contract.
+
+### Long episodes and retries
+
+`EpisodeWindow` defines half-open **source-position** context/output ranges, plus
+exact `(episode_index, frame_index, timestamp)` references. Context can overlap;
+output ranges tile the episode once. Frame predictors discard context-only outputs
+and reject altered/duplicate references. Span predictors clip to owned ranges,
+snap to the source clock and merge identical continuations at window boundaries.
+Conflicting overlap labels are resolved by output ownership, not by averaging labels.
+Language subtasks use this contract; windows and ownership are persisted in
+`meta/annotations/windows/*.parquet`. The model frame budget includes overlap.
+Stateful memory remains an ordered episode-level reduction after segmentation.
+New hand/value modules can reuse the contract rather than invent their own clocks.
+
+Workers retry identified network/timeout failures and service HTTP 408/429/5xx,
+with bounded exponential backoff (1, 2, 4…30 seconds), up to `max_retries`.
+Schema errors, explicit permanently undecodable inputs, other HTTP failures and
+unclassified bugs fail immediately. A failed partial setup is torn down before a
+retry. Valid committed batches are reused; uncommitted work can repeat. Attempt
+records include category, exception type and delay, never credentials or arbitrary
+exception contents. SDK transport retries are disabled so they do not multiply
+worker retry limits; one JSON correction prompt remains an annotation-domain step.
+
 ## Backend behavior
 
 ### Laptop
