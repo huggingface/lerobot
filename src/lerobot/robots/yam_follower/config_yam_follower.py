@@ -48,7 +48,7 @@ def motor_feature_names(use_velocity_and_torque: bool = False) -> tuple[str, ...
 
 
 @dataclass
-class YamFollowerConfigBase:
+class YamFollowerConfig:
     """Settings of one YAM follower arm, shared by the single-arm and bimanual robots."""
 
     port: str
@@ -99,6 +99,7 @@ class YamFollowerConfigBase:
     # Leave classic CAN bandwidth for both refresh and MIT command feedback.
     control_frequency: float = 100.0
     feedback_timeout_s: float = 0.2
+    # Time without actions before entering the configured idle mode.
     command_timeout_s: float = 1.0
 
     def __post_init__(self) -> None:
@@ -176,50 +177,9 @@ class YamFollowerConfigBase:
 
 @RobotConfig.register_subclass("yam_follower")
 @dataclass
-class YamFollowerConfig(RobotConfig, YamFollowerConfigBase):
-    """Configuration of a single YAM v1 follower arm on Linux SocketCAN.
-
-    Run `lerobot-calibrate` once per arm to measure its gripper stops; connecting for control
-    requires that calibration.
-
-    Args:
-        port (`str`): SocketCAN interface of the arm, e.g. `can0`.
-        expected_adapter_serial (`str | None`, *optional*): USB serial of the CAN adapter. When set, connecting fails if `port` belongs to another adapter, so a `can0`/`can1` enumeration swap cannot swap arms.
-        gripper_closed_deg (`float | None`, *optional*): Raw motor angle in degrees at the closed gripper stop. Normally loaded from the calibration file; set it only to override.
-        gripper_open_deg (`float | None`, *optional*): Raw motor angle in degrees at the open gripper stop. Normally loaded from the calibration file; set it only to override.
-        joint_signs (`list`, *optional*): Sign (+1 or -1) mapping each of the six motor directions to the joint frame.
-        joint_offsets_deg (`list`, *optional*): Offset in degrees added to each of the six joints after the sign.
-        initial_position_deg (`list[float] | None`, *optional*): Joint pose in degrees the arm must be in before torque is enabled. It is a check, not a motion command; the default zeros are the folded reference pose, and `None` accepts any valid pose.
-        initial_tolerance_deg (`float`, *optional*, defaults to 11.5): Allowed per-joint deviation from `initial_position_deg`, in degrees.
-        initial_gripper_position (`float | None`, *optional*): Gripper opening (0 closed, 100 open) required before torque is enabled; `None` skips the check.
-        initial_gripper_tolerance (`float`, *optional*, defaults to 10.0): Allowed deviation from `initial_gripper_position`, on the same 0-100 scale.
-        kp (`list`, *optional*): MIT position gains of the six joints.
-        kd (`list`, *optional*): MIT damping gains of the six joints.
-        gripper_kp (`float`, *optional*, defaults to 20.0): MIT position gain of the gripper (I2RT's value).
-        gripper_kd (`float`, *optional*, defaults to 0.5): MIT damping gain of the gripper (I2RT's value).
-        gripper_force_limit_n (`float`, *optional*, defaults to 50.0): Finger force applied once the gripper is blocked on an object, as in I2RT's gripper force limiter. The gripper moves freely until then.
-        gripper_stroke_m (`float`, *optional*, defaults to 0.096): Finger travel between the two gripper stops, in m, used to convert `gripper_force_limit_n` into motor torque.
-        max_joint_speed_deg_s (`float`, *optional*, defaults to 17.0): Fastest the commanded joint positions move toward a new target, in degrees per second.
-        max_gripper_speed_s (`float`, *optional*, defaults to 12.0): Fastest the commanded gripper opening moves, in full strokes per second.
-        max_tracking_error_deg (`float`, *optional*, defaults to 8.5): Furthest a commanded joint may lead its measured position, in degrees, which limits force when the arm is blocked or pushed.
-        gravity_compensation (`bool`, *optional*, defaults to `True`): Add gravity feed-forward torques from the bundled model of the standard arm with a linear gripper. Payloads or added cameras need revalidation.
-        gravity_factors (`list`, *optional*): Per-joint scale applied to the model gravity torques.
-        idle_mode (`str`, *optional*, defaults to `"hold"`): What the arm does before the first action and after `command_timeout_s`: `"hold"` keeps the measured pose stiffly, `"float"` lets it be moved by hand while gravity is compensated (the gripper keeps holding). Float needs `gravity_compensation`.
-        float_kd (`list`, *optional*): Damping of the six joints in float mode, with zero stiffness. The defaults are I2RT's values for the standard arm.
-        friction_compensation (`bool`, *optional*, defaults to `False`): Add Coulomb friction compensation in float mode, in the direction each joint moves.
-        coulomb_friction (`list`, *optional*): Coulomb friction of the six joints in Nm, used when `friction_compensation` is on. The defaults are I2RT's values for the standard arm.
-        cameras (`dict`, *optional*): Cameras read with each observation, keyed by name.
-        read_only (`bool`, *optional*, defaults to `True`): Read feedback without ever enabling torque; `send_action` raises. Disable only after checking the CAN port, encoder frame and gripper calibration.
-        require_motor_can_timeout (`bool`, *optional*, defaults to `True`): Refuse to enable torque unless every motor's CAN loss-of-communication timeout is enabled and at most 400 ms. Set it to `False` to only warn.
-        use_degrees (`bool`, *optional*, defaults to `True`): Report and accept joints in degrees and the gripper from 0 to 100. Set it to `False` for radians and a 0-1 gripper, the units of I2RT and MolmoAct2 data.
-        use_velocity_and_torque (`bool`, *optional*, defaults to `False`): Add `.vel` and `.torque` features for each motor to observations.
-        control_frequency (`float`, *optional*, defaults to 100.0): Rate of the background servo loop in Hz, between 20 and 250.
-        feedback_timeout_s (`float`, *optional*, defaults to 0.2): Maximum age of each motor reply. The foreground check allows two such intervals plus one servo period; long Python scheduling stalls can still stop the servo.
-        command_timeout_s (`float`, *optional*, defaults to 1.0): When no action arrives for this long, the arm holds its current pose.
-        id (`str | None`, *optional*): Name of this arm; it selects the calibration file.
-        calibration_dir (`pathlib.Path | None`, *optional*): Directory of calibration files. Each file stores the raw motor angles of the gripper stops in whole degrees; calibration never changes joint zeros.
-    """
+class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
+    """Configuration for a single YAM follower."""
 
     def __post_init__(self) -> None:
         RobotConfig.__post_init__(self)
-        YamFollowerConfigBase.__post_init__(self)
+        YamFollowerConfig.__post_init__(self)

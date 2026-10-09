@@ -46,7 +46,7 @@ from .config_yam_follower import (
     MOTOR_NAMES,
     YAM_FEATURE_NAMES,
     YamFollowerConfig,
-    YamFollowerConfigBase,
+    YamFollowerRobotConfig,
     motor_feature_names,
 )
 from .mit_arm import (
@@ -80,7 +80,7 @@ _CAN_TIMEOUT_TICK_US = 50
 _MAX_CAN_TIMEOUT_TICKS = 8000  # I2RT's 400 ms YAM timeout.
 
 
-def yam_arm_params(config: YamFollowerConfigBase) -> MitArmParams:
+def yam_arm_params(config: YamFollowerConfig) -> MitArmParams:
     """Build the internal control settings of a calibrated YAM arm from its config."""
     if config.gripper_closed_deg is None or config.gripper_open_deg is None:
         raise ValueError("Run lerobot-calibrate with this robot.id to measure the gripper endpoints")
@@ -317,10 +317,10 @@ class _YamBus:
 class YamFollower(Robot):
     """A YAM arm exposing six joint positions and a gripper opening."""
 
-    config_class = YamFollowerConfig
+    config_class = YamFollowerRobotConfig
     name = "yam_follower"
 
-    def __init__(self, config: YamFollowerConfig, stop_event: threading.Event | None = None) -> None:
+    def __init__(self, config: YamFollowerRobotConfig, stop_event: threading.Event | None = None) -> None:
         require_package("motorbridge", extra="yam")
         require_package("python-can", extra="yam", import_name="can")
         super().__init__(config)

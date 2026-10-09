@@ -25,7 +25,7 @@ import pytest
 
 from lerobot.robots.yam_follower import (
     YamFollower,
-    YamFollowerConfig,
+    YamFollowerRobotConfig,
     mit_arm,
     yam_follower as robot_module,
 )
@@ -50,7 +50,7 @@ def make_robot(tmp_path, **overrides):
         "max_tracking_error_deg": math.degrees(0.15),
         **overrides,
     }
-    return YamFollower(YamFollowerConfig(**config))
+    return YamFollower(YamFollowerRobotConfig(**config))
 
 
 @pytest.fixture
@@ -445,9 +445,9 @@ def test_bus_reads_the_can_timeout_register():
 
 def test_float_mode_requires_gravity_compensation(tmp_path):
     with pytest.raises(ValueError, match="needs gravity_compensation"):
-        YamFollowerConfig(port="can0", idle_mode="float", gravity_compensation=False)
+        YamFollowerRobotConfig(port="can0", idle_mode="float", gravity_compensation=False)
     with pytest.raises(ValueError, match="idle_mode"):
-        YamFollowerConfig(port="can0", idle_mode="limp")
+        YamFollowerRobotConfig(port="can0", idle_mode="limp")
 
 
 @pytest.mark.parametrize("friction_compensation", [False, True])
