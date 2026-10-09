@@ -22,6 +22,7 @@ decode - and these take them away one at a time:
     --size 160           160x120 instead of 640x480
     --fps 1              one frame a second
     --no-compress        send raw instead of JPEG
+    --no-static          images on the timeline instead of static=True
 
 Start with everything turned down and walk back up until it breaks.
 
@@ -72,6 +73,11 @@ def main() -> int:
     ap.add_argument("--cameras", type=int, default=3, help="how many image panels (0-3)")
     ap.add_argument("--size", type=int, default=640, help="frame width; height is 3/4 of it")
     ap.add_argument("--scalars", action="store_true", help="scalars only, no images")
+    ap.add_argument(
+        "--no-static",
+        action="store_true",
+        help="log images on the timeline instead of static=True (bypasses lerobot's logger)",
+    )
     args = ap.parse_args()
 
     try:
@@ -109,12 +115,32 @@ def main() -> int:
     n = 0
     try:
         while (t := time.perf_counter() - t0) < args.seconds:
-            obs = {n: frame(t, phases[i], W, H) for i, n in enumerate(names)}
-            obs["left_arm_shoulder_pan.pos"] = 50.0 * math.sin(t)
+            imgs = {n: frame(t, phases[i], W, H) for i, n in enumerate(names)}
             act = {"left_arm_shoulder_pan.pos": 50.0 * math.sin(t + 0.2)}
-            log_rerun_data(
-                observation=obs, action=act, compress_images=not args.no_compress
-            )
+
+            if args.no_static:
+                # Mirror what lerobot does, with one difference: the images go
+                # on the timeline rather than being logged static. Everything
+                # else - entity paths, compression, the scalars - is the same,
+                # so a change in behaviour here is attributable to that alone.
+                import rerun as rr
+
+                for k, arr in imgs.items():
+                    ent = rr.Image(arr)
+                    if not args.no_compress:
+                        ent = ent.compress()
+                    rr.log(f"observation.{k}", ent)          # static=False
+                log_rerun_data(
+                    observation={"left_arm_shoulder_pan.pos": 50.0 * math.sin(t)},
+                    action=act,
+                    compress_images=not args.no_compress,
+                )
+            else:
+                obs = dict(imgs)
+                obs["left_arm_shoulder_pan.pos"] = 50.0 * math.sin(t)
+                log_rerun_data(
+                    observation=obs, action=act, compress_images=not args.no_compress
+                )
             n += 1
             if n % int(max(args.fps, 1)) == 0:
                 print(f"  {n:5d} frames  {n / t:5.1f} Hz", flush=True)
@@ -129,6 +155,7 @@ def main() -> int:
     print("  --size 160                pixels, not frames.")
     print("  --fps 1                   frames, not pixels.")
     print("  --no-compress             the viewer's JPEG decode.")
+    print("  --no-static               images on the timeline, not static=True.")
     print("Then walk back up until it breaks; that is your answer.")
     return 0
 
