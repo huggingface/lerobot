@@ -220,13 +220,13 @@ On Linux, the install path determines which CUDA wheel you get. macOS and Window
 
 **Source install via `uv` (`uv sync` or `uv pip install -e .`)**
 
-`torch` and `torchvision` are pinned by the project to the **CUDA 12.8** PyTorch index (`https://download.pytorch.org/whl/cu128`, driver floor **570.86**) — covers Ampere/Ada/Hopper/Blackwell GPUs. No action needed for typical NVIDIA setups.
+`torch` and `torchvision` are pinned by the project to the **CUDA 13.0** PyTorch index (`https://download.pytorch.org/whl/cu130`, driver floor **580.65**) — covers Turing/Ampere/Ada/Hopper/Blackwell GPUs. No action needed for typical NVIDIA setups.
 
 To override for a different CUDA variant:
 
 ```bash
 uv pip install --force-reinstall torch torchvision \
-    --index-url https://download.pytorch.org/whl/cu126   # older drivers; or cu130 for Blackwell on driver ≥ 580
+    --index-url https://download.pytorch.org/whl/cu126   # older drivers (< 580) or pre-Turing GPUs
 ```
 
 </hfoption>
