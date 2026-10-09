@@ -1,0 +1,47 @@
+deployment: robotwin
+sim:
+  type: robotwin
+  task: beat_block_hammer,click_bell,handover_block,stack_blocks_two,click_alarmclock,open_microwave,adjust_bottle,lift_pot,stamp_seal,turn_switch
+  fps: 25
+  control: position
+  semantics: robotwin-position-v1
+  kwargs:
+    camera_names:
+    - head_camera
+    - left_camera
+    - right_camera
+    observation_height: 240
+    observation_width: 320
+    episode_length: 1200
+    action_mode: joint
+  state_names:
+  - command_0.pos
+  - command_1.pos
+  - command_2.pos
+  - command_3.pos
+  - command_4.pos
+  - command_5.pos
+  - command_6.pos
+  - command_7.pos
+  - command_8.pos
+  - command_9.pos
+  - command_10.pos
+  - command_11.pos
+  - command_12.pos
+  - command_13.pos
+  action_names:
+  - command_0.pos
+  - command_1.pos
+  - command_2.pos
+  - command_3.pos
+  - command_4.pos
+  - command_5.pos
+  - command_6.pos
+  - command_7.pos
+  - command_8.pos
+  - command_9.pos
+  - command_10.pos
+  - command_11.pos
+  - command_12.pos
+  - command_13.pos
+  gripper_indices: []

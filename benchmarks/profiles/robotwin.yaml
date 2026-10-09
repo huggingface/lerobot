@@ -1,0 +1,37 @@
+semantics: robotwin-position-v1
+control: position
+feature_mapping:
+  observation.images.head_camera: observation.images.camera1
+  observation.images.left_camera: observation.images.camera2
+  observation.images.right_camera: observation.images.camera3
+state_names:
+- command_0.pos
+- command_1.pos
+- command_2.pos
+- command_3.pos
+- command_4.pos
+- command_5.pos
+- command_6.pos
+- command_7.pos
+- command_8.pos
+- command_9.pos
+- command_10.pos
+- command_11.pos
+- command_12.pos
+- command_13.pos
+action_names:
+- command_0.pos
+- command_1.pos
+- command_2.pos
+- command_3.pos
+- command_4.pos
+- command_5.pos
+- command_6.pos
+- command_7.pos
+- command_8.pos
+- command_9.pos
+- command_10.pos
+- command_11.pos
+- command_12.pos
+- command_13.pos
+empty_cameras: 0

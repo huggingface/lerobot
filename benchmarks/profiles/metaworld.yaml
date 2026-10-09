@@ -1,0 +1,15 @@
+semantics: metaworld-delta-v1
+control: delta
+feature_mapping:
+  observation.image: observation.images.camera1
+state_names:
+- eef.x
+- eef.y
+- eef.z
+- gripper.opening
+action_names:
+- eef.delta.x
+- eef.delta.y
+- eef.delta.z
+- gripper.command
+empty_cameras: 2

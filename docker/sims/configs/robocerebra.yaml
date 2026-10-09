@@ -1,0 +1,42 @@
+deployment: robocerebra
+sim:
+  type: robocerebra
+  task: libero_10
+  fps: 20
+  control: delta
+  semantics: robocerebra-delta-v1
+  kwargs:
+    gym_kwargs:
+      obs_type: pixels_agent_pos
+      render_mode: rgb_array
+      observation_height: 256
+      observation_width: 256
+      control_freq: 20
+      hard_reset: true
+    camera_name: agentview_image,robot0_eye_in_hand_image
+    init_states: true
+    control_mode: relative
+    episode_length: null
+    camera_name_mapping:
+      agentview_image: image
+      robot0_eye_in_hand_image: wrist_image
+    is_libero_plus: false
+  state_names:
+  - eef.x
+  - eef.y
+  - eef.z
+  - eef.axis_angle.x
+  - eef.axis_angle.y
+  - eef.axis_angle.z
+  - gripper.left.pos
+  - gripper.right.pos
+  action_names:
+  - eef.delta.x
+  - eef.delta.y
+  - eef.delta.z
+  - eef.delta.axis_angle.x
+  - eef.delta.axis_angle.y
+  - eef.delta.axis_angle.z
+  - gripper.command
+  gripper_indices:
+  - 6

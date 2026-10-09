@@ -1,0 +1,21 @@
+semantics: libero_plus-delta-v1
+control: delta
+feature_mapping: {}
+state_names:
+- eef.x
+- eef.y
+- eef.z
+- eef.axis_angle.x
+- eef.axis_angle.y
+- eef.axis_angle.z
+- gripper.left.pos
+- gripper.right.pos
+action_names:
+- eef.delta.x
+- eef.delta.y
+- eef.delta.z
+- eef.delta.axis_angle.x
+- eef.delta.axis_angle.y
+- eef.delta.axis_angle.z
+- gripper.command
+empty_cameras: 1

@@ -1,5 +1,7 @@
 # Adding a New Benchmark
 
+> New benchmark integrations use isolated simulator servers. See [Simulator servers](./simulator_server) for the supported architecture. The in-process APIs below remain a compatibility path.
+
 This guide walks you through adding a new simulation benchmark to LeRobot. Follow the steps in order and use the existing benchmarks as templates.
 
 A benchmark in LeRobot is a set of [Gymnasium](https://gymnasium.farama.org/) environments that wrap a third-party simulator (like LIBERO or Meta-World) behind a standard `gym.Env` interface. The `lerobot-eval` CLI then runs evaluation uniformly across all benchmarks.

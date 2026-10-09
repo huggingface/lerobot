@@ -1,0 +1,24 @@
+# Policy-independent server. scripts/run_sim.py selects the image from the YAML.
+services:
+  sim:
+    image: lerobot-sim-${SIM:?Select a backend}:${SIM_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.sim.${SIM}
+    command: [lerobot-env-server, --config=/config/sim.yaml]
+    volumes:
+      - ${SIM_CONFIG:?Select a simulator YAML}:/config/sim.yaml:ro
+    ports:
+      - 127.0.0.1:${SIM_PORT:-7448}:7448
+    gpus: all
+    shm_size: 4gb
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import yaml; from lerobot.env_server.client import EnvClient; d=yaml.safe_load(open('/config/sim.yaml')); c=EnvClient('tcp/127.0.0.1:7448', d.get('deployment', 'default'), 5); c.describe(); c.close()"
+      interval: 5s
+      timeout: 10s
+      start_period: 60s
+      retries: 12

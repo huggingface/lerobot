@@ -1,0 +1,23 @@
+deployment: metaworld
+sim:
+  type: metaworld
+  task: metaworld-push-v3
+  fps: 80
+  control: delta
+  semantics: metaworld-delta-v1
+  kwargs:
+    gym_kwargs:
+      obs_type: pixels_agent_pos
+      render_mode: rgb_array
+  state_names:
+  - eef.x
+  - eef.y
+  - eef.z
+  - gripper.opening
+  action_names:
+  - eef.delta.x
+  - eef.delta.y
+  - eef.delta.z
+  - gripper.command
+  gripper_indices:
+  - 3

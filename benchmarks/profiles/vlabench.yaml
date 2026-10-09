@@ -1,0 +1,23 @@
+semantics: vlabench-eef-pose-v1
+control: eef_pose
+feature_mapping:
+  observation.images.image: observation.images.camera1
+  observation.images.second_image: observation.images.camera2
+  observation.images.wrist_image: observation.images.camera3
+state_names:
+- eef.x
+- eef.y
+- eef.z
+- eef.euler.x
+- eef.euler.y
+- eef.euler.z
+- gripper.opening
+action_names:
+- eef.x
+- eef.y
+- eef.z
+- eef.euler.x
+- eef.euler.y
+- eef.euler.z
+- gripper.opening
+empty_cameras: 0
