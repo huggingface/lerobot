@@ -400,7 +400,8 @@ class LeKiwi(Robot):
 
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
-        if self.config.max_relative_target is not None:
+        max_relative_target = self.config.max_relative_target
+        if max_relative_target is not None:
             present_pos = self.bus.sync_read(
                 "Present_Position", self.arm_motors, num_retry=self.config.num_read_retries
             )
@@ -408,8 +409,9 @@ class LeKiwi(Robot):
             goal_present_pos = {
                 key: (g_pos, present_pos[key.removesuffix(".pos")]) for key, g_pos in arm_goal_pos.items()
             }
-            arm_safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
-            arm_goal_pos = arm_safe_goal_pos
+            if isinstance(max_relative_target, dict):
+                max_relative_target = {f"{motor}.pos": limit for motor, limit in max_relative_target.items()}
+            arm_goal_pos = ensure_safe_goal_position(goal_present_pos, max_relative_target)
 
         # Send goal position to the actuators
         arm_goal_pos_raw = {k.replace(".pos", ""): v for k, v in arm_goal_pos.items()}
