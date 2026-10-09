@@ -537,3 +537,71 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     mock_sleep.assert_called_once_with(0.02)
     assert mins == expected_mins
     assert maxes == expected_maxes
+
+
+@pytest.mark.parametrize("numbers", [(777, 777, 777), (2057, 2825, 11272)])
+def test_mixed_models_handshake(dummy_motors, numbers):
+    bus = FeetechMotorsBus("unused", dummy_motors, allow_mixed_models=True)
+    with (
+        patch.object(bus, "ping", side_effect=numbers),
+        patch.object(bus, "_read_firmware_version", return_value=dict.fromkeys(bus.ids, "3.1")),
+    ):
+        bus._handshake()
+    assert bus.models == ["sts3215"] * 3
+    assert [motor.norm_mode for motor in bus.motors.values()] == [MotorNormMode.RANGE_M100_100] * 3
+    for table in (
+        bus.model_ctrl_table,
+        bus.model_encoding_table,
+        bus.model_resolution_table,
+        bus.model_baudrate_table,
+    ):
+        assert all(table[bus._model_nb_to_model(number)] == table["sts3215"] for number in numbers)
+
+
+@pytest.mark.parametrize("number", [None, 9999, 1284])
+def test_mixed_models_rejects_missing_unknown_or_incompatible_models(dummy_motors, number):
+    bus = FeetechMotorsBus("unused", dummy_motors, allow_mixed_models=True)
+    with patch.object(bus, "ping", side_effect=[2057, 2825, number]), pytest.raises(RuntimeError):
+        bus._handshake()
+    assert bus.models == ["sts3215"] * 3
+
+
+@pytest.mark.parametrize("first_model", ["sts3215", "sts3250"])
+def test_firmware_must_match_across_models(dummy_motors, first_model):
+    dummy_motors["dummy_1"].model = first_model
+    bus = FeetechMotorsBus("unused", dummy_motors)
+    with (
+        patch.object(bus, "_read_firmware_version", return_value={1: "3.2", 2: "3.1", 3: "3.1"}),
+        pytest.raises(RuntimeError, match="different firmware versions"),
+    ):
+        bus._assert_same_firmware()
+
+
+def test_mixed_models_are_opt_in(dummy_motors):
+    bus = FeetechMotorsBus("unused", dummy_motors)
+    with patch.object(bus, "ping", return_value=2057), pytest.raises(RuntimeError, match="incorrect model"):
+        bus._handshake()
+
+
+@pytest.mark.parametrize("number", [2057, 9999, 1284])
+def test_setup_accepts_compatible_models(dummy_motors, number):
+    bus = FeetechMotorsBus("unused", dummy_motors, allow_mixed_models=True)
+    bus.port_handler.is_open = True
+    try:
+        with (
+            patch.object(bus, "set_baudrate"),
+            patch.object(bus, "broadcast_ping", return_value={42: number}),
+            patch.object(bus, "_disable_torque") as disable,
+            patch.object(bus, "_write") as write,
+        ):
+            if number == 2057:
+                bus.setup_motor("dummy_1", initial_baudrate=57600)
+                disable.assert_called_once_with(42, "sts3215")
+                assert [call.args for call in write.call_args_list] == [(5, 1, 42, 1), (6, 1, 1, 0)]
+            else:
+                with pytest.raises(RuntimeError):
+                    bus.setup_motor("dummy_1", initial_baudrate=57600)
+                disable.assert_not_called()
+                write.assert_not_called()
+    finally:
+        bus.port_handler.is_open = False

@@ -462,6 +462,9 @@ class SerialMotorsBus(MotorsBusBase):
     def _is_error(self, error: int) -> bool:
         return error != self._no_error
 
+    def _model_numbers_match(self, expected: int, found: int) -> bool:
+        return expected == found
+
     def _assert_motors_exist(self) -> None:
         expected_models = {m.id: self.model_number_table[m.model] for m in self.motors.values()}
 
@@ -475,7 +478,7 @@ class SerialMotorsBus(MotorsBusBase):
         wrong_models = {
             id_: (expected_models[id_], found_models[id_])
             for id_ in found_models
-            if expected_models.get(id_) != found_models[id_]
+            if not self._model_numbers_match(expected_models[id_], found_models[id_])
         }
 
         if missing_ids or wrong_models:

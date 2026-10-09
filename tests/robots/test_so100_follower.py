@@ -53,6 +53,7 @@ def follower(tmp_path):
     bus_mock = _make_bus_mock()
 
     def _bus_side_effect(*_args, **kwargs):
+        assert kwargs["allow_mixed_models"] is True
         bus_mock.motors = kwargs["motors"]
         motors_order: list[str] = list(bus_mock.motors)
 

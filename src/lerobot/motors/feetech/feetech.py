@@ -90,6 +90,9 @@ class FeetechMotorsBus(SerialMotorsBus):
     """
     The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on the
     python feetech sdk to communicate with the motors, which is itself based on the dynamixel sdk.
+
+    Set `allow_mixed_models=True` to accept registered models on the same protocol using the configured
+    motor tables. By default, reported model numbers must match the configured models exactly.
     """
 
     apply_drive_mode = True
@@ -109,10 +112,12 @@ class FeetechMotorsBus(SerialMotorsBus):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
         protocol_version: int = DEFAULT_PROTOCOL_VERSION,
+        allow_mixed_models: bool = False,
     ):
         require_package("feetech-servo-sdk", extra="feetech", import_name="scservo_sdk")
         super().__init__(port, motors, calibration)
         self.protocol_version = protocol_version
+        self.allow_mixed_models = allow_mixed_models
         self._assert_same_protocol()
         self.port_handler = scs.PortHandler(self.port)
         # HACK: monkeypatch
@@ -152,6 +157,12 @@ class FeetechMotorsBus(SerialMotorsBus):
                 "Visit https://www.feetechrc.com/software."
             )
 
+    def _model_numbers_match(self, expected: int, found: int) -> bool:
+        if not self.allow_mixed_models:
+            return expected == found
+        model = self._model_nb_to_model_dict.get(found)
+        return model is not None and MODEL_PROTOCOL[model] == self.protocol_version
+
     def _handshake(self) -> None:
         self._assert_motors_exist()
         self._assert_same_firmware()
@@ -174,7 +185,7 @@ class FeetechMotorsBus(SerialMotorsBus):
             id_model = self.broadcast_ping()
             if id_model:
                 found_id, found_model = next(iter(id_model.items()))
-                if found_model != expected_model_nb:
+                if not self._model_numbers_match(expected_model_nb, found_model):
                     raise RuntimeError(
                         f"Found one motor on {baudrate=} with id={found_id} but it has a "
                         f"model number '{found_model}' different than the one expected: '{expected_model_nb}'. "
@@ -196,7 +207,7 @@ class FeetechMotorsBus(SerialMotorsBus):
             for id_ in range(scs.MAX_ID + 1):
                 found_model = self.ping(id_)
                 if found_model is not None:
-                    if found_model != expected_model_nb:
+                    if not self._model_numbers_match(expected_model_nb, found_model):
                         raise RuntimeError(
                             f"Found one motor on {baudrate=} with id={id_} but it has a "
                             f"model number '{found_model}' different than the one expected: '{expected_model_nb}'. "
