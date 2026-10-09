@@ -426,7 +426,6 @@ class PaliGemmaWithExpertModel(
 
         self.precision = precision
         self.to_bfloat16_for_selected_params(precision)
-        self._set_requires_grad()
 
     def to_bfloat16_for_selected_params(self, precision: torch.dtype = torch.bfloat16):
         if precision == torch.bfloat16:
@@ -450,23 +449,6 @@ class PaliGemmaWithExpertModel(
         for name, param in self.named_parameters():
             if any(selector in name for selector in params_to_keep_float32):
                 param.data = param.data.to(dtype=torch.float32)
-
-    def _set_requires_grad(self):
-        if self.freeze_vision_encoder:
-            self.paligemma.model.vision_tower.eval()
-            for param in self.paligemma.model.vision_tower.parameters():
-                param.requires_grad = False
-        if self.train_expert_only:
-            self.paligemma.eval()
-            for param in self.paligemma.parameters():
-                param.requires_grad = False
-
-    def train(self, mode: bool = True):
-        super().train(mode)
-        if self.freeze_vision_encoder:
-            self.paligemma.model.vision_tower.eval()
-        if self.train_expert_only:
-            self.paligemma.eval()
 
     def embed_image(
         self,
@@ -1096,6 +1078,9 @@ class PI05Policy(PreTrainedPolicy):
 
         self.model.to(config.device)
 
+        # Declared by `get_frozen_modules()`, enforced here once every submodule exists.
+        self.apply_freezing()
+
         self.reset()
 
     @classmethod
@@ -1314,6 +1299,22 @@ class PI05Policy(PreTrainedPolicy):
 
     def get_optim_params(self) -> dict:
         return self.parameters()
+
+    def get_frozen_modules(self) -> dict[str, nn.Module]:
+        """Submodules frozen by `freeze_vision_encoder` and `train_expert_only`.
+
+        Returns:
+            `dict[str, nn.Module]`: Frozen submodules, keyed by the dotted path used by
+            `torch.nn.Module.get_submodule`.
+        """
+        frozen: dict[str, nn.Module] = {}
+        if self.config.freeze_vision_encoder:
+            path = "model.paligemma_with_expert.paligemma.model.vision_tower"
+            frozen[path] = self.get_submodule(path)
+        if self.config.train_expert_only:
+            path = "model.paligemma_with_expert.paligemma"
+            frozen[path] = self.get_submodule(path)
+        return frozen
 
     def reset(self):
         """Reset internal state at the shared boundary of a batched rollout.
