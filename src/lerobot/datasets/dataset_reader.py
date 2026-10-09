@@ -18,6 +18,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import datasets
@@ -224,7 +225,7 @@ class DatasetReader(BaseDatasetReader):
         features = get_hf_features_from_features(self._meta.features)
         self._validate_language_columns_declared(features)
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
-        hf_dataset.set_transform(hf_transform_to_torch)
+        hf_dataset.set_transform(partial(hf_transform_to_torch, features=self._meta.features))
         return hf_dataset
 
     def _validate_language_columns_declared(self, features: datasets.Features) -> None:

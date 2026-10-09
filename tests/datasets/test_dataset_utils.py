@@ -17,6 +17,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 import torch
 from packaging.version import Version
@@ -27,6 +28,7 @@ from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
 
 import lerobot.datasets.utils as dataset_utils
+from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.utils import (
     create_lerobot_dataset_card,
@@ -123,6 +125,47 @@ def test_calculate_episode_data_index():
     episode_data_index = calculate_episode_data_index(dataset)
     assert torch.equal(episode_data_index["from"], torch.tensor([0, 2, 3]))
     assert torch.equal(episode_data_index["to"], torch.tensor([2, 3, 6]))
+
+
+@pytest.mark.parametrize("dtype", ["float32", "float64", "int64"])
+def test_zero_width_hf_feature_preserves_numeric_dtype(dtype: str) -> None:
+    features = {"empty": {"dtype": dtype, "shape": (0,), "names": None}}
+    dataset = Dataset.from_dict({"empty": [[], []]}, features=get_hf_features_from_features(features))
+
+    assert dataset.column_names == ["empty"]
+    assert dataset.features["empty"].feature.dtype == dtype
+    assert dataset[:]["empty"] == [[], []]
+
+
+@pytest.mark.parametrize("dtype", ["float32", "float64", "int64"])
+@pytest.mark.parametrize("shape", [(0,), (0, 3), (5, 0), (2, 0, 3), (2, 0, 3, 1), (1, 2, 0, 3, 1)])
+def test_hf_transform_zero_width_preserves_declared_dtype_and_shape(
+    dtype: str, shape: tuple[int, ...]
+) -> None:
+    """Metadata recovers dimensions and dtype that empty Python lists cannot encode."""
+    features = {"empty": {"dtype": dtype, "shape": shape, "names": None}}
+    items = {
+        "empty": [np.empty(shape, dtype=dtype).tolist() for _ in range(2)],
+        "action": [[1.0, 2.0], [3.0, 4.0]],
+        "description": ["pick", "place"],
+    }
+    result = hf_transform_to_torch(items, features=features)
+
+    assert len(result["empty"]) == 2
+    for value in result["empty"]:
+        assert value.dtype == getattr(torch, dtype)
+        assert tuple(value.shape) == shape
+        assert value.numel() == 0
+    assert result["description"] == ["pick", "place"]
+    torch.testing.assert_close(result["action"][0], torch.tensor([1.0, 2.0]))
+    torch.testing.assert_close(result["action"][1], torch.tensor([3.0, 4.0]))
+
+
+@pytest.mark.parametrize("dtype", ["float32", "float64", "int64"])
+def test_hf_transform_zero_width_rejects_nonempty_value(dtype: str) -> None:
+    features = {"empty": {"dtype": dtype, "shape": (0,), "names": None}}
+    with pytest.raises(ValueError, match="empty.*nonempty"):
+        hf_transform_to_torch({"empty": [[1]]}, features=features)
 
 
 def test_merge_simple_vectors():
