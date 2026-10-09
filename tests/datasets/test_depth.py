@@ -32,7 +32,10 @@ from lerobot.configs.video import (
 )
 from lerobot.datasets.depth_utils import dequantize_depth, quantize_depth
 from lerobot.datasets.image_writer import image_array_to_pil_image, write_image
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.utils.constants import DEFAULT_FEATURES
+from lerobot.utils.feature_utils import hw_to_dataset_features
 from tests.fixtures.constants import (
     DEFAULT_FPS,
     DUMMY_CAMERA_FEATURES,
@@ -176,14 +179,10 @@ class TestHwToDatasetFeaturesDepth:
 
     @pytest.mark.parametrize("channels,is_depth", [(1, True), (3, False)])
     def test_depth_marker_by_channels(self, channels, is_depth):
-        from lerobot.utils.feature_utils import hw_to_dataset_features
-
         features = hw_to_dataset_features({"cam": (480, 640, channels)}, prefix="observation")
         assert features["observation.images.cam"]["info"]["is_depth_map"] is is_depth
 
     def test_invalid_channel_count_raises(self):
-        from lerobot.utils.feature_utils import hw_to_dataset_features
-
         with pytest.raises(ValueError, match="Expected a 3-tuple"):
             hw_to_dataset_features({"cam": (480, 640, 2)}, prefix="observation")
 
@@ -203,8 +202,6 @@ class TestFeatureFileRouting:
 
     def test_image_mode_depth_tiff_rgb_png(self, tmp_path, features_factory):
         """Without video encoding: depth → .tiff, RGB → .png."""
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
         features = features_factory(camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH, use_videos=False)
         dataset = LeRobotDataset.create(
             repo_id=DUMMY_REPO_ID,
@@ -225,8 +222,6 @@ class TestFeatureFileRouting:
 
     def test_video_mode_depth_uses_depth_encoder(self, tmp_path, features_factory):
         """With streaming video encoding: depth → DepthEncoderConfig, RGB does not."""
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
         features = features_factory(camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH, use_videos=True)
         dataset = LeRobotDataset.create(
             repo_id=DUMMY_REPO_ID,
@@ -254,8 +249,6 @@ class TestDepthUnitMetadata:
     NUM_FRAMES = 4
 
     def _record(self, root, features_factory, depth_dtype, value, use_videos):
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
         features = features_factory(camera_features=DUMMY_CAMERA_FEATURES_WITH_DEPTH, use_videos=use_videos)
         dataset = LeRobotDataset.create(
             repo_id=DUMMY_REPO_ID,
@@ -288,8 +281,6 @@ class TestDepthUnitMetadata:
         self, tmp_path, features_factory, use_videos, depth_dtype, value, expected_unit
     ):
         """Unit is inferred from the first frame's dtype, drives stats (raw, never canonicalized), and survives a reload."""
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
         dataset = self._record(tmp_path / "ds", features_factory, depth_dtype, value, use_videos)
         assert dataset.meta.features[DEPTH_KEY]["info"]["depth_unit"] == expected_unit
         dataset.save_episode()
@@ -309,8 +300,6 @@ class TestDepthUnitMetadata:
         self, tmp_path, features_factory, use_videos, output_unit, expected
     ):
         """Reloading with a ``depth_output_unit`` converts metre frames (image mode) and rescales stats while preserving count."""
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
         dataset = self._record(tmp_path / "ds", features_factory, np.float32, 2.0, use_videos=use_videos)
         dataset.save_episode()
         count = float(np.asarray(dataset.meta.stats[DEPTH_KEY]["count"]).reshape(-1)[0])
@@ -322,8 +311,6 @@ class TestDepthUnitMetadata:
         stats = read_dataset.meta.stats[DEPTH_KEY]
         np.testing.assert_allclose(float(np.asarray(stats["mean"]).reshape(-1)[0]), expected, rtol=0.05)
         np.testing.assert_allclose(float(np.asarray(stats["count"]).reshape(-1)[0]), count)
-
-        from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 
         stream_dataset = StreamingLeRobotDataset(
             repo_id=DUMMY_REPO_ID, root=tmp_path / "ds", depth_output_unit=output_unit

@@ -14,121 +14,21 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 from filelock import FileLock, Timeout
 
-from lerobot.streaming.location import StorageLocation
-from lerobot.streaming.manifest import EpisodeVideoManifest
-from lerobot.streaming.sidecar_utils import install_sidecar
-
-SIDECAR_SCHEMA_VERSION = 3
+from .manifest import EpisodeVideoManifest
+from .sidecar_utils import (  # re-export; defined there to avoid a cycle
+    SidecarSpec as SidecarSpec,
+    install_sidecar,
+)
 
 
 class SidecarLockTimeoutError(TimeoutError):
     """Raised when another process does not finish a sidecar build in time."""
-
-
-@dataclass(frozen=True)
-class SidecarSpec:
-    """Identity and source-file contract for an MP4 index sidecar."""
-
-    repo_id: str
-    revision: str
-    data_root: str
-    source_files: tuple[tuple[str, int | None], ...]
-    schema_version: int = SIDECAR_SCHEMA_VERSION
-    source_fingerprints: tuple[tuple[str, str], ...] = ()
-
-    def __post_init__(self) -> None:
-        """Validate and normalize the immutable source-file list."""
-        if not self.repo_id:
-            raise ValueError("repo_id must not be empty")
-        if not self.revision:
-            raise ValueError("revision must not be empty")
-        normalized = tuple(
-            sorted((str(path), None if size is None else int(size)) for path, size in self.source_files)
-        )
-        if any(not path or size is not None and size < 0 for path, size in normalized):
-            raise ValueError("source file paths must be non-empty and sizes must be non-negative")
-        object.__setattr__(self, "source_files", normalized)
-        fingerprints = tuple(sorted(self.source_fingerprints))
-        if fingerprints and {path for path, _value in fingerprints} != {path for path, _ in normalized}:
-            raise ValueError("Source fingerprints must cover every source file")
-        if any(not value for _path, value in fingerprints):
-            raise ValueError("Source fingerprints must not be empty")
-        object.__setattr__(self, "source_fingerprints", fingerprints)
-
-    def to_dict(self) -> dict[str, object]:
-        """Serialize the sidecar specification."""
-        return {
-            "schema_version": self.schema_version,
-            "repo_id": self.repo_id,
-            "revision": self.revision,
-            "data_root": self.data_root,
-            "source_files": [{"path": path, "size": size} for path, size in self.source_files],
-            "source_fingerprints": dict(self.source_fingerprints),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> SidecarSpec:
-        """Parse and validate a serialized sidecar specification."""
-        source_files = data.get("source_files")
-        if not isinstance(source_files, list):
-            raise ValueError("MP4 sidecar source_files must be a list")
-        parsed_files: list[tuple[str, int | None]] = []
-        fingerprints = data.get("source_fingerprints", {})
-        if not isinstance(fingerprints, dict) or any(
-            not isinstance(path, str) or not isinstance(value, str) for path, value in fingerprints.items()
-        ):
-            raise ValueError("Invalid MP4 source fingerprints")
-        for item in source_files:
-            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
-                raise ValueError("Invalid MP4 sidecar source file entry")
-            size = item.get("size")
-            parsed_files.append((item["path"], None if size is None else int(size)))
-        return cls(
-            schema_version=int(data["schema_version"]),
-            repo_id=str(data["repo_id"]),
-            revision=str(data["revision"]),
-            data_root=str(data["data_root"]),
-            source_files=tuple(parsed_files),
-            source_fingerprints=tuple(fingerprints.items()),
-        )
-
-    def with_source_files(self, source_files: tuple[tuple[str, int], ...]) -> SidecarSpec:
-        """Return a copy with resolved source sizes."""
-        return SidecarSpec(
-            repo_id=self.repo_id,
-            revision=self.revision,
-            data_root=self.data_root,
-            source_files=source_files,
-            schema_version=self.schema_version,
-            source_fingerprints=self.source_fingerprints,
-        )
-
-    def matches(self, candidate: SidecarSpec) -> bool:
-        """Return whether a candidate satisfies this expected specification."""
-        # Tags/branches may name the same immutable payload snapshot. Other roots still
-        # require the metadata revision to match; source paths/sizes/fingerprints always do.
-        pinned_repository = StorageLocation.parse(self.data_root).pinned_commit is not None
-        if (
-            self.schema_version != candidate.schema_version
-            or self.repo_id != candidate.repo_id
-            or (self.revision != candidate.revision and not pinned_repository)
-            or self.data_root != candidate.data_root
-            or self.source_fingerprints != candidate.source_fingerprints
-        ):
-            return False
-        expected = dict(self.source_files)
-        actual = dict(candidate.source_files)
-        if expected.keys() != actual.keys():
-            return False
-        return all(size is None or actual[path] == size for path, size in expected.items())
 
 
 SidecarBuilder = Callable[[Path, SidecarSpec], None]

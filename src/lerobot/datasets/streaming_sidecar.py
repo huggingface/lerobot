@@ -19,11 +19,12 @@ from uuid import uuid4
 import fsspec
 from huggingface_hub import HfApi
 
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.streaming.location import LocationKind, StorageLocation, hf_dataset_uri
 from lerobot.streaming.manifest import EpisodeVideoManifest, video_file_groups
 from lerobot.streaming.sidecar import SidecarSpec, ensure_mp4_sidecar, sidecar_cache_path
 from lerobot.utils.constants import HF_LEROBOT_HOME
+
+from .dataset_metadata import LeRobotDatasetMetadata
 
 DEFAULT_SIDECAR_CACHE = HF_LEROBOT_HOME / "streaming-sidecars"
 SIDECAR_REPO_BRANCH = "lerobot-sidecars"

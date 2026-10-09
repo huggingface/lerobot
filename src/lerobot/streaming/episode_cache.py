@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING, BinaryIO, TypedDict
 
 import torch
 
-from lerobot.streaming.manifest import EpisodeVideoManifest
-from lerobot.streaming.mp4 import Mp4SampleSlice, synthesize_mp4
-from lerobot.streaming.range_fetch import make_range_fetcher
+from .manifest import EpisodeVideoManifest
+from .mp4 import Mp4SampleSlice, synthesize_mp4
+from .range_fetch import make_range_fetcher
 
 if TYPE_CHECKING:
     from torchcodec.decoders import VideoDecoder
@@ -450,6 +450,8 @@ class _PyAVVideoDecoder:
 
     def __init__(self, file_like_or_bytesio: BinaryIO) -> None:
         """Open a seekable in-memory video and initialize decoder lifetime accounting."""
+        # Imported at use: lerobot.streaming stays importable without lerobot.utils' optional-dependency
+        # probes (see tests/test_streaming_core_imports.py), so the _av_available guard does not apply here.
         import av
 
         self._source = file_like_or_bytesio
@@ -587,6 +589,7 @@ def open_video_decoder(
         return _PyAVVideoDecoder(file_like_or_bytesio)
     if backend != "torchcodec":
         raise ValueError(f"Unsupported video backend: {backend}")
+    # Imported here, like video_utils: torchcodec can be installed yet fail to load its FFmpeg libraries.
     from torchcodec.decoders import VideoDecoder
 
     return VideoDecoder(file_like_or_bytesio, seek_mode="approximate")

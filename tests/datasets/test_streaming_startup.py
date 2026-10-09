@@ -17,6 +17,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from datasets import Dataset
 
 from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.datasets.streaming_sidecar import make_sidecar_spec
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import (
     Mp4Index,
@@ -73,8 +74,6 @@ def test_manifest_finishes_each_file_before_touching_the_next(monkeypatch: pytes
 
 
 def test_sidecar_spec_does_not_materialize_full_episode_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    from lerobot.datasets.streaming_sidecar import make_sidecar_spec
-
     def unexpected(*args, **kwargs):
         pytest.fail("Path discovery must project columns instead of materializing every episode row")
 
