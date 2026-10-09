@@ -200,6 +200,7 @@ pixel-bound.
 | **Script prints the header and exits silently** | `set -e` on a non-zero return. Shout about it; it is a bug. |
 | **A fresh calibration starts** | you are on the arms-only config without one. It should refuse now — if it does not, Ctrl-C before the range-recording phase or you lose `robots/xlerobot/xlerobot.json`. |
 | **CPU torch on elroy** | a bare `uv sync`. Use `./config/sync.sh`, which picks the right extras per machine. |
+| **Viewer draws the grid, then stops responding as soon as frames arrive** | `rerun_visualization.py` logging images with `static=True`. Fixed here — but it is upstream's file, so a merge from upstream will bring it back. One 160x120 frame a second is enough to trigger it, so do not read it as a bandwidth problem. `./config/video-test.sh --no-static` is the control. |
 
 ---
 
