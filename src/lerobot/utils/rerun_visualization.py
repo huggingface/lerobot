@@ -115,33 +115,70 @@ def _images_due() -> bool:
 #   LEROBOT_RERUN_ASYNC=0    log inline instead (the old behaviour)
 
 _queue: queue.Queue | None = None
+# Frames get their own latest-wins slot, separate from the scalar queue. With
+# one shared queue, a burst of scalar-only items could evict the one item that
+# carried the images, and under back-pressure the image rate quietly fell
+# below the knob. Now a frame set is replaced only by a newer frame set.
+_image_slot: tuple | None = None
+_slot_lock = threading.Lock()
 _worker: threading.Thread | None = None
 _dropped = 0
 _sent = 0
+_worker_errors = 0
 
 
 def _async_enabled() -> bool:
     return os.getenv("LEROBOT_RERUN_ASYNC", "1") not in ("0", "false", "False", "")
 
 
+def _take_image_item():
+    global _image_slot
+    with _slot_lock:
+        item, _image_slot = _image_slot, None
+    return item
+
+
 def _worker_loop() -> None:
     while True:
-        item = _queue.get()  # type: ignore[union-attr]
+        # Frames first: they are the expensive, latest-wins thing. Then one
+        # scalar item, with a short timeout so we come back round for frames.
+        item = _take_image_item()
         if item is None:
+            try:
+                item = _queue.get(timeout=0.02)  # type: ignore[union-attr]
+            except queue.Empty:
+                continue
+        if item is None:
+            # Stop sentinel. Flush a frame set that arrived after we last
+            # looked, so the final picture is not thrown away.
+            item = _take_image_item()
+            if item is None:
+                return
+            observation, action, compress_images, captured_at = item
+            try:
+                _log_now(observation, action, compress_images, captured_at)
+            except Exception:  # noqa: BLE001
+                pass
             return
-        observation, action, compress_images = item
+        observation, action, compress_images, captured_at = item
         try:
-            _log_now(observation, action, compress_images)
-        except Exception:
-            # A display failure must never take the robot down with it.
-            pass
+            _log_now(observation, action, compress_images, captured_at)
+        except Exception as e:  # noqa: BLE001
+            # A display failure must never take the robot down with it - but
+            # a silent one leaves a blank viewer with no clue, so say so once.
+            global _worker_errors
+            _worker_errors += 1
+            if _worker_errors <= 3:
+                print(f"rerun: logging failed ({type(e).__name__}: {e})", flush=True)
 
 
 def _start_worker() -> None:
-    global _queue, _worker
+    global _queue, _worker, _image_slot
     if _worker is not None and _worker.is_alive():
         return
     _queue = queue.Queue(maxsize=2)
+    with _slot_lock:
+        _image_slot = None
     _worker = threading.Thread(target=_worker_loop, name="rerun-log", daemon=True)
     _worker.start()
 
@@ -149,17 +186,16 @@ def _start_worker() -> None:
 def _strip_images(observation):
     """The observation without its camera frames.
 
-    Decimation has to happen HERE, before the queue, not on the worker. A
-    queued observation keeps its arrays alive: three 640x480x3 frames is
-    ~2.7 MB that cannot be collected while it waits. Skipping only the
-    rr.log call on the far side still queues and retains every frame, so
-    the image-rate knob changes the bytes on the wire and nothing else -
-    which is exactly how it behaved, and why dropping 30 Hz to 10 Hz made
-    no difference at all to the thing we were chasing.
+    Decimation happens here, before the queue, so a skipped frame is never
+    retained: a queued observation keeps its arrays alive, ~2.7 MB for
+    three 640x480x3 frames.
 
-    Short-lived objects die in gen0; ones held long enough to be promoted
-    are collected by a gen2 pass, which stops every Python thread in the
-    process - including the one receiving leader actions.
+    (An earlier version of this comment blamed GC pauses from those retained
+    frames for ~300 ms stalls in the leader link. That was wrong - the
+    control loop held 29.5 Hz through the stalls, which no GIL or GC pause
+    can do - and the stalls turned out to be TCP delivery on the wifi,
+    with the cart's ACKs queued behind the video. See link.py in the
+    xlerobot_leader_remote teleoperator.)
     """
     if not observation:
         return observation
@@ -170,11 +206,27 @@ def _strip_images(observation):
     }
 
 
-def _enqueue(observation, action, compress_images: bool) -> None:
-    global _dropped, _sent
+def _has_images(observation) -> bool:
+    return bool(observation) and any(
+        isinstance(v, np.ndarray) and v.ndim >= 2 for v in observation.values()
+    )
+
+
+def _enqueue(observation, action, compress_images: bool, captured_at: float) -> None:
+    global _dropped, _sent, _image_slot
     assert _queue is not None
+    item = (observation, action, compress_images, captured_at)
+
+    if _has_images(observation):
+        with _slot_lock:
+            if _image_slot is not None:
+                _dropped += 1
+            _image_slot = item
+        _sent += 1
+        return
+
     try:
-        _queue.put_nowait((observation, action, compress_images))
+        _queue.put_nowait(item)
     except queue.Full:
         # Drop the oldest, keep the newest: a live view wants current, not complete.
         try:
@@ -183,7 +235,7 @@ def _enqueue(observation, action, compress_images: bool) -> None:
         except queue.Empty:
             pass
         try:
-            _queue.put_nowait((observation, action, compress_images))
+            _queue.put_nowait(item)
         except queue.Full:
             _dropped += 1
             return
@@ -207,10 +259,12 @@ def init_rerun(
 
     # Reset the blueprint cache for the new session.
     log_rerun_data.blueprint = None  # type: ignore[attr-defined]
-    global _last_image_log, _dropped, _sent
+    global _last_image_log, _dropped, _sent, _worker_errors, _known_paths
     _last_image_log = 0.0
     _dropped = 0
     _sent = 0
+    _worker_errors = 0
+    _known_paths = (set(), set(), set())
 
     batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
     os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
@@ -315,18 +369,37 @@ def _build_blueprint(observation_paths: set[str], action_paths: set[str], image_
     return rrb.Blueprint(rrb.Grid(*scalar_views))
 
 
-def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str]) -> None:
-    """Build and send the blueprint once, from the first observation and action data."""
-    if getattr(log_rerun_data, "blueprint", None) is not None:
-        return
+_known_paths: tuple[set[str], set[str], set[str]] = (set(), set(), set())
 
+
+def _ensure_blueprint(observation_paths: set[str], action_paths: set[str], image_paths: set[str]) -> None:
+    """Send a blueprint whenever the set of entities grows.
+
+    Not "once, from the first item": with an explicit blueprint, any entity
+    it does not list is simply not shown, and the first item the worker
+    sees is not guaranteed to have everything - a camera can return None
+    once, the image-bearing item can be the one the queue dropped, or the
+    image rate can be set so the first item is scalars-only. Any of those
+    used to mean a camera panel that never appeared, with no error.
+
+    So accumulate, and resend when something new turns up. That is a few
+    sends in the first second and then none.
+    """
     if not (observation_paths or action_paths or image_paths):
         return
+
+    known_obs, known_act, known_img = _known_paths
+    if observation_paths <= known_obs and action_paths <= known_act and image_paths <= known_img:
+        return
+
+    known_obs |= observation_paths
+    known_act |= action_paths
+    known_img |= image_paths
 
     # Safe + zero-overhead: `log_rerun_data` already ran the `require_package` guard and imported rerun.
     import rerun as rr
 
-    blueprint = _build_blueprint(observation_paths, action_paths, image_paths)
+    blueprint = _build_blueprint(known_obs, known_act, known_img)
     log_rerun_data.blueprint = blueprint  # type: ignore[attr-defined]
     rr.send_blueprint(blueprint)
 
@@ -361,6 +434,13 @@ def log_rerun_data(
 
     require_package("rerun-sdk", extra="viz", import_name="rerun")
 
+    # Stamped HERE, on the control thread, at the moment the data was
+    # current. Without it rerun stamps each row with the wall clock at the
+    # moment rr.log runs - on the worker, after the queue, after whatever
+    # back-pressure the sink is under - so a backlog looks perfectly fresh
+    # in the viewer instead of late. With it, lag is an offset you can see.
+    captured_at = time.time()
+
     # Decided once, on the caller's side, so a skipped frame is never queued.
     if not _images_due():
         observation = _strip_images(observation)
@@ -368,19 +448,55 @@ def log_rerun_data(
     if _async_enabled():
         if _worker is None or not _worker.is_alive():
             _start_worker()
-        _enqueue(observation, action, compress_images)
+        _enqueue(observation, action, compress_images, captured_at)
         return
 
-    _log_now(observation, action, compress_images)
+    _log_now(observation, action, compress_images, captured_at)
+
+
+def _encode_jpeg(arr: np.ndarray, quality: int):
+    """JPEG via OpenCV if present, else rerun's own (Pillow, q95) path.
+
+    rerun's Image.compress() is Pillow at quality 95 - two to three times
+    the bytes of q70 for an operator view that nobody is pixel-peeping,
+    and the bytes are what the wifi uplink is short of. libjpeg-turbo in
+    cv2 is also faster and releases the GIL. cv2 wants BGR; lerobot's
+    observations are RGB.
+    """
+    import rerun as rr
+
+    try:
+        import cv2
+    except ImportError:
+        return rr.Image(arr).compress(jpeg_quality=quality)
+    if arr.ndim == 3 and arr.shape[-1] == 3:
+        arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+    ok, buf = cv2.imencode(".jpg", arr, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
+    if not ok:
+        return rr.Image(arr).compress(jpeg_quality=quality)
+    return rr.EncodedImage(contents=buf.tobytes(), media_type="image/jpeg")
+
+
+def _jpeg_quality() -> int:
+    raw = os.getenv("LEROBOT_RERUN_JPEG_QUALITY", "70")
+    try:
+        return max(10, min(100, int(raw)))
+    except ValueError:
+        return 70
 
 
 def _log_now(
     observation: RobotObservation | None,
     action: RobotAction | None,
     compress_images: bool,
+    captured_at: float | None = None,
 ) -> None:
     """The actual logging. Runs on the worker thread unless async is off."""
     import rerun as rr
+
+    if captured_at is not None:
+        # One timeline, one stamp per observation, for every row below.
+        rr.set_time("capture", timestamp=captured_at)
 
     observation_paths: set[str] = set()
     action_paths: set[str] = set()
@@ -413,7 +529,9 @@ def _log_now(
                             colormap=rr.components.Colormap.Viridis,
                         )
                     else:
-                        img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
+                        img_entity = (
+                            _encode_jpeg(arr, _jpeg_quality()) if compress_images else rr.Image(arr)
+                        )
                     # NOT static. A static entity has no position on any
                     # timeline: it is for things that do not change, like a
                     # calibration or a fixed mesh. Camera frames are the
