@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 
 def make_robot_from_config(config: RobotConfig) -> Robot:
     # TODO(Steven): Consider just using the make_device_from_device_class for all types
-    if config.type == "koch_follower":
+    if config.type == "remote":
+        from .remote import RemoteRobot
+
+        return RemoteRobot(config)
+    elif config.type == "koch_follower":
         from .koch_follower import KochFollower
 
         return KochFollower(config)

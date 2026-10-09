@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from threading import Event
 from typing import TYPE_CHECKING
 
@@ -58,7 +58,10 @@ from lerobot.processor import (
 )
 from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
 from lerobot.robots import Robot, make_robot_from_config
+from lerobot.robots.remote import RemoteRobot
+from lerobot.robots.remote.world import get_world
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
+from lerobot.transport.wire.features import feature_mismatch
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
@@ -311,13 +314,18 @@ def _disconnect_setup_hardware(robot: Robot, teleop: Teleoperator | None) -> Non
     """Release each connected device without masking the original setup failure."""
     for name, resource in (("teleoperator", teleop), ("robot", robot)):
         try:
-            if resource is not None and resource.is_connected:
+            if resource is not None and (resource.is_connected or isinstance(resource, RemoteRobot)):
                 resource.disconnect()
         except Exception:
             logger.exception("Could not close %s after rollout setup failed", name)
 
 
-def _connect_rollout_hardware(cfg: RolloutConfig, *, require_hold: bool = False) -> HardwareContext:
+def _connect_rollout_hardware(
+    cfg: RolloutConfig,
+    *,
+    require_hold: bool = False,
+    simulator_admission: Callable[[RemoteRobot], None] | None = None,
+) -> HardwareContext:
     """Connect devices and capture the initial pose after policy/descriptor validation."""
     if cfg.robot is None:
         raise ValueError("--robot.type is required for rollout")
@@ -325,8 +333,27 @@ def _connect_rollout_hardware(cfg: RolloutConfig, *, require_hold: bool = False)
     wrapper = ThreadSafeRobot(robot)
     teleop = None
     try:
+        if isinstance(robot, RemoteRobot):
+            if simulator_admission is not None:
+                simulator_admission(robot)
+            elif cfg.policy is not None:
+                from lerobot.env_server.profiles import EvalProfile
+
+                profile = robot.profile or EvalProfile(
+                    robot.descriptor.semantics,
+                    control=robot.descriptor.control,
+                    empty_cameras=getattr(cfg.policy, "empty_cameras", 0),
+                )
+                mapping = {
+                    f.name: cfg.rename_map.get(
+                        profile.feature_mapping.get(f.name, f.name),
+                        profile.feature_mapping.get(f.name, f.name),
+                    )
+                    for f in robot.descriptor.features
+                }
+                replace(profile, feature_mapping=mapping).validate_policy(robot.descriptor, cfg.policy)
         if require_hold:
-            wrapper.configure_position_hold()
+            wrapper.configure_hold()
         logger.info("Connecting robot (%s)...", cfg.robot.type)
         robot.connect()
         logger.info("Robot connected: %s", robot.name)
@@ -369,6 +396,11 @@ def _aggregate_rollout_features(
 def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: dict) -> LeRobotDataset | None:
     """Create the local recording destination independently of policy placement."""
     dataset = None
+    camera_count = (
+        sum(feature.kind == "rgb" for feature in robot.descriptor.features)
+        if isinstance(robot, RemoteRobot)
+        else len(getattr(robot, "cameras", []))
+    )
     if cfg.dataset is not None:
         logger.info("Setting up dataset (repo_id=%s)...", cfg.dataset.repo_id)
         # Strategy-owned columns join the robot/policy features above the resume/create
@@ -385,8 +417,7 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
                 encoder_threads=cfg.dataset.encoder_threads,
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
-                * len(robot.cameras if hasattr(robot, "cameras") else []),
+                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * camera_count,
             )
         else:
             repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
@@ -405,8 +436,7 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
                 features=dataset_features,
                 use_videos=cfg.dataset.video,
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera
-                * len(robot.cameras if hasattr(robot, "cameras") else []),
+                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * camera_count,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 rgb_encoder=cfg.dataset.rgb_encoder,
                 depth_encoder=cfg.dataset.depth_encoder,
@@ -508,14 +538,19 @@ def build_rollout_context(
         observation_features_hw: dict[str, type | tuple] = {
             k: v
             for k, v in all_obs_features.items()
-            if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
+            if isinstance(v, tuple)
+            or (v is float and (isinstance(robot, RemoteRobot) or k.endswith((".pos", ".vel"))))
         }
         policy_action_names = getattr(policy_config, "action_feature_names", None)
         checkpoint_order = list(policy_action_names) if policy_action_names else None
         observation_features_hw = _align_to_checkpoint_order(
             observation_features_hw, checkpoint_order, what="state"
         )
-        action_features_hw = {k: v for k, v in robot.action_features.items() if k.endswith((".pos", ".vel"))}
+        action_features_hw = {
+            k: v
+            for k, v in robot.action_features.items()
+            if isinstance(robot, RemoteRobot) or k.endswith((".pos", ".vel"))
+        }
         action_features_hw = _align_to_checkpoint_order(action_features_hw, checkpoint_order, what="action")
 
         dataset_features = _aggregate_rollout_features(
@@ -579,7 +614,12 @@ def build_rollout_context(
             "Creating inference engine (type=%s)...",
             cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
         )
-        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
+        world = get_world(robot)
+        task_str = (
+            world.task_description
+            if world is not None
+            else (cfg.dataset.single_task if cfg.dataset else cfg.task)
+        )
         inference_strategy = create_inference_engine(
             cfg.inference,
             policy=policy,
@@ -664,9 +704,33 @@ def build_remote_rollout_context(
         processors = _resolve_robot_processors(
             teleop_action_processor, robot_action_processor, robot_observation_processor
         )
-        hardware = _connect_rollout_hardware(cfg, require_hold=True)
+
+        def validate_simulator(robot: RemoteRobot) -> None:
+            if config.semantics != robot.descriptor.semantics:
+                raise ValueError("Remote deployment semantics differ from simulator semantics")
+            if feature_mismatch(
+                action, replace(robot.descriptor.action_feature, names=robot.policy_action_names)
+            ):
+                raise ValueError("Remote action declaration differs from simulator declaration")
+            mapping = robot.profile.feature_mapping if robot.profile else {}
+            declared = {
+                cfg.rename_map.get(mapping.get(f.name, f.name), mapping.get(f.name, f.name)): f
+                for f in robot.descriptor.features
+            }
+            for feature in expected:
+                source_name = next((name for name in declared if name == feature.name), None)
+                if source_name is None:
+                    raise ValueError("Remote observation declaration missing from simulator")
+                actual = declared[source_name]
+                if feature_mismatch(replace(actual, name=feature.name), feature):
+                    raise ValueError("Remote observation declaration differs from simulator declaration")
+
+        hardware = _connect_rollout_hardware(cfg, require_hold=True, simulator_admission=validate_simulator)
         wrapper = hardware.robot_wrapper
         robot = wrapper.inner
+        world = get_world(robot)
+        if world is not None:
+            task = world.task_description
 
         observation_hw: dict[str, type | tuple] = {
             key: value

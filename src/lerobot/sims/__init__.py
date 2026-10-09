@@ -1,4 +1,4 @@
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,14 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compatibility import for the shared robotwin native wrapper."""
-
-import sys
-from typing import TYPE_CHECKING
-
-from lerobot.sims.native import robotwin as _native
-
-if TYPE_CHECKING:
-    from lerobot.sims.native.robotwin import *  # noqa: F403
-
-sys.modules[__name__] = _native
+"""Simulator backends; native dependencies are imported only when selected."""
