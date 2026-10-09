@@ -1,0 +1,37 @@
+semantics: robocasa-delta-v1
+control: delta
+feature_mapping:
+  observation.images.robot0_agentview_left: observation.images.camera1
+  observation.images.robot0_eye_in_hand: observation.images.camera2
+  observation.images.robot0_agentview_right: observation.images.camera3
+state_names:
+- base.position.x
+- base.position.y
+- base.position.z
+- base.quaternion.x
+- base.quaternion.y
+- base.quaternion.z
+- base.quaternion.w
+- eef.position.x
+- eef.position.y
+- eef.position.z
+- eef.quaternion.x
+- eef.quaternion.y
+- eef.quaternion.z
+- eef.quaternion.w
+- gripper.left.pos
+- gripper.right.pos
+action_names:
+- base.motion.x
+- base.motion.y
+- base.motion.z
+- base.motion.yaw
+- controller.mode
+- eef.delta.x
+- eef.delta.y
+- eef.delta.z
+- eef.delta.rotation.x
+- eef.delta.rotation.y
+- eef.delta.rotation.z
+- gripper.command
+empty_cameras: 0

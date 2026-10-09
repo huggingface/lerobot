@@ -1,0 +1,51 @@
+deployment: libero_plus
+sim:
+  type: libero_plus
+  task: libero_spatial
+  fps: 20
+  control: delta
+  semantics: libero_plus-delta-v1
+  kwargs:
+    gym_kwargs:
+      obs_type: pixels_agent_pos
+      render_mode: rgb_array
+      observation_height: 360
+      observation_width: 360
+      control_freq: 20
+      hard_reset: true
+      task_ids:
+      - 0
+      - 100
+      - 260
+      - 500
+      - 1000
+      - 1500
+      - 2000
+      - 2400
+    camera_name: agentview_image,robot0_eye_in_hand_image
+    init_states: true
+    control_mode: relative
+    episode_length: null
+    camera_name_mapping:
+      agentview_image: camera1
+      robot0_eye_in_hand_image: camera2
+    is_libero_plus: true
+  state_names:
+  - eef.x
+  - eef.y
+  - eef.z
+  - eef.axis_angle.x
+  - eef.axis_angle.y
+  - eef.axis_angle.z
+  - gripper.left.pos
+  - gripper.right.pos
+  action_names:
+  - eef.delta.x
+  - eef.delta.y
+  - eef.delta.z
+  - eef.delta.axis_angle.x
+  - eef.delta.axis_angle.y
+  - eef.delta.axis_angle.z
+  - gripper.command
+  gripper_indices:
+  - 6

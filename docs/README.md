@@ -16,6 +16,8 @@ limitations under the License.
 
 # Generating the documentation
 
+For the simulator and remote-inference design, see the [architecture map and diagrams](SIM_ARCHITECTURE.md).
+
 To generate the documentation, you first have to build it. Several packages are necessary to build the doc,
 you can install them with the following command, at the root of the code repository:
 
