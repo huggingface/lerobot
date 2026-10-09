@@ -181,6 +181,35 @@ def test_clock_failure_retries_do_not_publish_partial_dataset(tmp_path):
     assert not cfg.output.exists()
 
 
+def test_lerobot_source_episode_selection_preserves_native_identity(tmp_path):
+    from lerobot.data_processing.sources.lerobot import LeRobotSource
+
+    root = tmp_path / "native-selection"
+    dataset = LeRobotDataset.create(
+        "publisher/native",
+        fps=6,
+        root=root,
+        features={"action": {"dtype": "float32", "shape": (2,), "names": None}},
+        use_videos=False,
+    )
+    for episode in range(3):
+        for frame in range(2):
+            dataset.add_frame({"action": np.array([episode, frame], np.float32), "task": "move"})
+        dataset.save_episode()
+    dataset.finalize()
+    source = LeRobotSource(root, episode_indices=[2, 0])
+    source.acquire()
+    items = list(source.discover(None, None, None))
+    assert [item.key for item in items] == ["0", "2"]
+    assert [item.payload["dataset_from_index"] for item in items] == [0, 4]
+    np.testing.assert_array_equal(list(source.frames(items[1].payload))[0]["action"], [2, 0])
+    with pytest.raises(ValueError, match="absent"):
+        LeRobotSource(root, episode_indices=[3]).acquire()
+    for selection in ([], [0, 0], [-1], [True]):
+        with pytest.raises(ValueError, match="episode_indices"):
+            LeRobotSource(root, episode_indices=selection)
+
+
 def test_fresh_worker_counts_preserve_part_hashes(tmp_path):
     manifest = raw_source(tmp_path)
     hashes = []

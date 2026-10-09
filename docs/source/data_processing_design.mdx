@@ -1,0 +1,203 @@
+# FineRobotics processing runtime: design
+
+## Executive summary
+
+Use one processing engine underneath `lerobot-convert` and `lerobot-annotate`.
+Keep the dataset recipe and scientific outputs independent of where work runs:
+one laptop process, persistent local workers, Slurm CPU/GPU arrays, or HF Jobs.
+Dataset conversion, language annotation and model-based extensions share planning,
+checkpoints, validation and metrics. They do not share a mandatory VLM dependency.
+
+The output is an ordinary LeRobot v3 dataset. Original datasets stay with their
+publishers; processed releases can be published separately with attribution and
+explicit permission. Later annotations enrich the same processed dataset's Parquet
+files without copying its videos into another annotation-only dataset. Publication
+is an explicit step, not a side effect of processing.
+
+```text
+Source recipe ── metadata discovery ── sealed Parquet work plan
+                                          │
+                         ┌────────────────┼─────────────────┐
+                         │                │                 │
+                   Local workers    Slurm arrays       HF Jobs
+                         └────────────────┼─────────────────┘
+                                          │
+                              Checked, durable artifacts
+                                          │
+                             Complete-stage finalization
+                                          │
+                          Next stage / ordinary LeRobot dataset
+```
+
+This is an experimental, working vertical slice, not a claim that all FineRobotics
+sources or augmentation models are already implemented. The initial source recipes
+cover NPY/video archives and existing v3 LeRobot data. Hand estimation, value models,
+camera odometry and generation of human/robot demonstrations need their own modules.
+
+## The interfaces
+
+| Component     | Responsibility                                                               | Must not do                                        |
+| ------------- | ---------------------------------------------------------------------------- | -------------------------------------------------- |
+| Source recipe | Acquire pinned input, safely unpack, discover episodes, read native frames   | Invent missing actions or silently change clocks   |
+| Planner       | Seal bounded work records and stable identities                              | Decode all videos or initialize models             |
+| Module        | Declare scope, version, resources and Arrow schemas; process bounded batches | Start a service per item or overwrite source files |
+| Worker        | Initialize once, validate outputs, commit checkpoints                        | Treat an incomplete upload as success              |
+| Backend       | Allocate and dispatch the same worker contract                               | Change the scientific meaning of the recipe        |
+| Finalizer     | Require complete coverage; publish a checked index                           | Hide failures by dropping episodes                 |
+| Sink          | Materialize declared columns or a complete converted release                 | Implicitly publish or erase original labels        |
+
+Factories are trusted Python code, not an untrusted plugin sandbox. Exported PyTorch
+models additionally require an explicit trust assertion and a verified checksum.
+Code commits, source/model revisions and image digests must be pinned for acceptance.
+
+### A new source in one file
+
+Implement acquisition/unpacking, metadata discovery and native frame reading in a
+source recipe. The shared conversion pipeline handles resizing, encoding, isolated
+episode output, validation, deterministic assembly and optional publication.
+
+```python
+from pathlib import Path
+from lerobot.data_processing.conversion import ConvertConfig, convert_dataset
+
+cfg = ConvertConfig(
+    source_factory="lerobot.data_processing.sources.lerobot:LeRobotSource",
+    source={"root": "/data/original", "repo_id": "owner/source", "episode_indices": [0, 1, 2]},
+    output=Path("/data/processed"),
+    size=512,
+)
+cfg.runtime.workers = 2
+convert_dataset(cfg)
+```
+
+Preserve native action/state values and existing language/subtask labels. Keep
+native FPS unless explicitly requesting a lower rate. Letterbox RGB to 512×512,
+record its exact spatial transform and use current LeRobot encoding parameters
+with MP4 faststart. Reject unsupported depth, ambiguous asynchronous clocks and
+view-dependent labels that need reprojection. Do action alignment and semantic
+camera naming in explicit later stages.
+
+Conversion currently spools images, writes isolated episode archives and assembles
+metadata serially. This trades simplicity and correctness for temporary storage
+and assembly cost. Measure those costs before replacing the writer or claiming
+thousand-worker scaling.
+
+## Execution and recovery
+
+Scientific item identities and seeds exclude worker count and shard packing.
+Packing, local paths and resource allocation are operational details; modules can
+separate stable content identity from artifact bindings. Model/config changes and
+changed upstream artifact content invalidate dependent work. A module version must
+change when its behavior changes; a seed is not a GPU determinism guarantee.
+
+Each worker writes to a unique attempt directory. Files are closed and hashed,
+then a checkpoint manifest is written last. Resuming verifies artifacts and reuses
+valid items; corrupt or incomplete attempts are ignored and recomputed. Finalization
+requires every planned item to have a validated outcome. Rejections and masks carry
+reasons; conversion does not silently discard them.
+
+One controller owns a plan. Local controllers use a file lock; remote deployments
+need one owner rather than relying on a nonexistent distributed lock service.
+Remote stores need neither atomic rename nor a directory transaction. A worker can
+repeat work performed before its last committed batch.
+
+Materialization preserves source-owned atoms and native columns. Generated families
+have Parquet ownership records, so reprocessing replaces only the families it owns.
+A recoverable local journal rolls forward interrupted commits. It is not an atomic
+snapshot for simultaneous readers: process a separate version while training.
+
+## Backend behavior
+
+### Laptop
+
+Use bounded CPU admission and persistent spawn workers. GPU assignments preserve
+the scheduler/operator's device IDs and reject oversubscription. A single GPU worker
+also runs in a fresh process. Heavy VLM inference can stay on a remote endpoint;
+the laptop only decodes the selected videos and runs annotation clients.
+
+### Slurm
+
+The controller must have `sbatch`/`squeue` and shared source, code, environment and
+run-store paths. Module resource declarations determine CPU, memory and GPU requests;
+Slurm is not CPU-only. Each stage uses a bounded array followed by an `afterok`
+CPU finalizer. Downstream discovery happens after real upstream finalization.
+Persisted job IDs prevent duplicate active submissions on resume. Interrupting the
+controller does not cancel its submitted jobs.
+
+Language workers use a separately owned, reachable model endpoint with
+`vlm.auto_serve=false`. A controller's localhost is not another node's localhost.
+Use authenticated endpoints and pass credentials through environment references.
+Direct model modules run inside their allocated GPU workers.
+
+Put model/kernel caches on writable shared or node-local storage. Setting only
+`HF_HOME` is insufficient: vLLM, FlashInfer, Triton and Torch extensions have
+separate caches. Cluster quota and cache placement are deployment checks, not
+scientific parameters.
+
+### HF Jobs
+
+Choose an explicit account/namespace, immutable code SHA, public HTTPS code
+repository and image digest. The image owns dependency versions; the launcher
+installs pinned LeRobot code without resolving replacement CUDA/model dependencies.
+Use `uv pip` for uv-created environments without pip, with pip as the fallback.
+
+Conversion and annotation compatibility bundles run a single-node controller with
+local workers. Configuration is serialized, not reconstructed by replaying argv.
+Host-local data is not silently uploaded. Conversion requires a remotely acquirable,
+checksum-pinned archive; annotation resolves the immutable source Hub revision.
+
+Generic remote stages use bounded worker groups only when a module explicitly
+declares remote-readable inputs. Do not mark a module compatible merely because
+its code imports successfully. Local filesystem paths do not exist on other pods.
+
+Store attempts and retained releases in persistent remote storage. Release indices
+reference content-addressed files. Unchanged annotation videos can reference the
+pinned original Hub videos instead of uploading them again. Restore verifies every
+file. Tokens travel as secrets; stored configuration contains environment names.
+Check current hardware before paid submission, cap concurrency and set hard timeouts.
+
+## Language and extensions
+
+The annotation recipe runs plan/subtasks, interjections, VQA, plan refresh,
+validation and materialization in dependency order. It retains canonical LeRobot
+language columns and native `subtask_index`. All final annotations are Parquet;
+internal JSON control/debug files are not the dataset annotation format.
+
+A local controller owns one model service across stages, or clients use an external
+service. Persistent workers have bounded client concurrency. Plan-only and fully
+cached runs do not initialize an unnecessary VLM. Use a pinned model revision and
+verify that external endpoints actually serve it.
+
+The exported encoder example exercises real bounded CPU/CUDA inference and produces
+typed embeddings. It is not a hand/reward estimator. The pair-link reducer validates
+typed references, frame ranges, fixed splits, robot-action availability and simulation
+validation records. It does not generate demonstrations or prove semantic alignment.
+Weak semantic pairs never receive direct action loss; strong pair supervision needs
+explicit alignment evidence.
+
+## Measurement and release gates
+
+Record total wall time separately from stage timers, queue time, environment/model
+startup and teardown. Report physical video hours and camera-stream hours separately.
+Missing decode/inference instrumentation remains null. Cached runs are resume timing,
+not processing throughput. Requested worker core/GPU-hours are not billed hours and
+exclude controller and model-service allocations.
+
+The live acceptance harness is `benchmarks/acceptance_processing.py`. It uses tiny
+controlled clips for exact invariants and a pinned real pick-and-place source for
+annotation inspection. Compare worker counts within the same environment; codec
+outputs need not be byte-identical across operating systems or encoder versions.
+Compare CPU/CUDA embeddings numerically rather than asserting bitwise equality.
+
+Before marking acceptance ready, require actual laptop, Slurm CPU/H100 and personal
+HF Jobs executions; native-value/video integrity; real VLM annotations; checked
+retention/restoration; checkpoint resume/failure coverage; and an inspectable sample.
+Separate structural annotation validation from human judgments about label quality.
+Small smoke runs do not establish the FineRobotics goal of 500–1,000× realtime on
+32 H100s, nor full-corpus annotation accuracy. Those need representative large runs.
+
+For company contributions, provide a pinned source recipe, licence/attribution,
+native action/state conventions, camera/clock documentation and a small acceptance
+sample. Then reuse the same processing recipe and backend controls to produce a
+versioned, ordinary LeRobot dataset. Large staged Hub publication remains follow-up
+work; the current bounded publisher refuses releases beyond its configured limits.
