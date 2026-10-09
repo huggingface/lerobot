@@ -22,6 +22,14 @@ decode - and these take them away one at a time:
     --size 160           160x120 instead of 640x480
     --fps 1              one frame a second
     --no-compress        send raw instead of JPEG
+    --no-overlay         do not burn the frame number into the picture
+
+Each frame carries its own number and elapsed time. Read the number on
+screen, compare it with the "sent frame" line in the terminal, and the
+difference divided by the frame rate is the end-to-end lag. If the gap
+holds steady the pipeline has a fixed buffer somewhere; if it widens, it
+is being fed faster than it drains.
+
     --no-static          bypass lerobot's logger for the images. This was the
                          control that identified static=True as the wedge;
                          lerobot no longer logs images static, so it should
@@ -46,7 +54,32 @@ import time
 
 import numpy as np
 
+try:
+    import cv2
+except ImportError:  # the overlay is a convenience, not a requirement
+    cv2 = None
+
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+
+def stamp(img: np.ndarray, n: int, t: float) -> np.ndarray:
+    """Burn the frame number and elapsed time into the picture.
+
+    This is what makes lag a number instead of an impression. The terminal
+    prints the frame it has just SENT; the viewer shows the frame it has
+    just DRAWN. The difference between the two, divided by the frame rate,
+    is the end-to-end latency - and it tells you whether that latency is
+    fixed or growing, which fixed buffers and runaway queues do differently.
+    """
+    if cv2 is None:
+        return img
+    H = img.shape[0]
+    scale = max(0.6, H / 240.0)
+    text = f"{n}  {t:5.1f}s"
+    pos = (8, H - 12)
+    cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), int(6 * scale))
+    cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), int(2 * scale))
+    return img
+
 
 def frame(t: float, phase: float, W: int, H: int) -> np.ndarray:
     """A moving bar on a colour gradient, with a frame counter block.
@@ -76,6 +109,7 @@ def main() -> int:
     ap.add_argument("--cameras", type=int, default=3, help="how many image panels (0-3)")
     ap.add_argument("--size", type=int, default=640, help="frame width; height is 3/4 of it")
     ap.add_argument("--scalars", action="store_true", help="scalars only, no images")
+    ap.add_argument("--no-overlay", action="store_true", help="no frame number on the picture")
     ap.add_argument(
         "--no-static",
         action="store_true",
@@ -118,7 +152,14 @@ def main() -> int:
     n = 0
     try:
         while (t := time.perf_counter() - t0) < args.seconds:
-            imgs = {n: frame(t, phases[i], W, H) for i, n in enumerate(names)}
+            imgs = {
+                nm: (
+                    frame(t, phases[i], W, H)
+                    if args.no_overlay
+                    else stamp(frame(t, phases[i], W, H), n, t)
+                )
+                for i, nm in enumerate(names)
+            }
             act = {"left_arm_shoulder_pan.pos": 50.0 * math.sin(t + 0.2)}
 
             if args.no_static:
@@ -146,7 +187,11 @@ def main() -> int:
                 )
             n += 1
             if n % int(max(args.fps, 1)) == 0:
-                print(f"  {n:5d} frames  {n / t:5.1f} Hz", flush=True)
+                print(
+                    f"  sent frame {n:5d} at {t:5.1f}s  ({n / t:4.1f} Hz)"
+                    f"   <- compare with the number on screen",
+                    flush=True,
+                )
             time.sleep(max(0.0, period - ((time.perf_counter() - t0) - t)))
     except KeyboardInterrupt:
         print()
