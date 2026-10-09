@@ -122,6 +122,12 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     # Fail fast with a friendly error if the optional ``hilserl`` extra is missing.
     require_package("grpcio", extra="hilserl", import_name="grpc")
     cfg.validate()
+    # validate() resolves a resume checkpoint from --config_path, which for the
+    # actor is just the shared config file (its parent dir holds no weights) and
+    # would crash make_policy. The actor's local policy is scaffolding: real
+    # weights arrive from the learner via RPC (act_with_policy pulls the initial
+    # push before the first action).
+    cfg.policy.pretrained_path = None
     display_pid = False
     if not use_threads(cfg):
         ensure_multiprocessing_start_method(cfg.policy.concurrency.multiprocessing_context)
@@ -297,6 +303,19 @@ def act_with_policy(
     episode_total_steps = 0
 
     policy_timer = TimerManager("Policy inference", log=False)
+
+    # Pull the learner's initial parameter push before acting, so the first
+    # episode runs the learner's current (possibly resumed) policy instead of
+    # this process's freshly initialised scaffolding weights.
+    initial_bytes = get_last_item_from_queue(parameters_queue, block=True, timeout=60.0)
+    if initial_bytes is not None:
+        logging.info("[ACTOR] Loaded initial parameters from Learner before first action.")
+        algorithm.load_weights(bytes_to_state_dict(initial_bytes), device=device)
+    else:
+        logging.warning(
+            "[ACTOR] No parameters received from Learner within 60 s; "
+            "first episode will use the locally initialised policy."
+        )
 
     for interaction_step in range(cfg.policy.online_steps):
         start_time = time.perf_counter()
