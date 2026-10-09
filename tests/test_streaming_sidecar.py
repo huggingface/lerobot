@@ -560,6 +560,50 @@ def test_resolved_sidecar_decompresses_each_array_once(
     assert len(list((tmp_path / "cache-home").glob("**/*.bin"))) == 1
 
 
+def test_install_closes_source_before_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source, destination = tmp_path / "source.npz", tmp_path / "installed.npz"
+    _write_valid(source, _spec())
+    handles = []
+    original_open = Path.open
+    original_replace = os.replace
+
+    def tracked_open(path: Path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        if path == source:
+            handles.append(handle)
+        return handle
+
+    def checked_replace(src, dst):
+        if Path(src) == source:
+            assert handles and all(handle.closed for handle in handles)
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(Path, "open", tracked_open)
+    monkeypatch.setattr(os, "replace", checked_replace)
+    sidecar_utils.install_sidecar(source, destination)
+    assert not source.exists()
+    assert EpisodeVideoManifest.validate_file_sidecar(destination, _spec())
+
+
+def test_install_rejects_source_replaced_during_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, destination = tmp_path / "source.npz", tmp_path / "installed.npz"
+    replacement = tmp_path / "replacement.npz"
+    _write_valid(source, _spec())
+    _write_valid(replacement, _spec("different"))
+    original_replace = os.replace
+
+    def replace_different_file(src, dst):
+        if Path(src) == source:
+            return original_replace(replacement, dst)
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", replace_different_file)
+    with pytest.raises(OSError, match="changed during installation"):
+        sidecar_utils.install_sidecar(source, destination)
+
+
 def test_invalid_build_preserves_previous_source_and_mapped_generation(tmp_path: Path) -> None:
     spec = _spec()
     path = sidecar_cache_path(tmp_path, spec)
