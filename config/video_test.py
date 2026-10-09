@@ -13,6 +13,18 @@ anything still missing during a run is lerobot's arguments and nothing else.
     ./config/video-test.sh 192.168.1.52    # somewhere else
     ./config/video-test.sh --local         # this machine's own desktop
 
+It is also a bisection tool. A viewer that wedges has several possible
+causes tangled together - frame rate, pixel count, how many streams, JPEG
+decode - and these take them away one at a time:
+
+    --scalars            no images at all
+    --cameras 1          one stream instead of three
+    --size 160           160x120 instead of 640x480
+    --fps 1              one frame a second
+    --no-compress        send raw instead of JPEG
+
+Start with everything turned down and walk back up until it breaks.
+
 Start the viewer first, on the machine that has the screen:
 
     uvx --from rerun-sdk==<version printed below> rerun
@@ -32,10 +44,7 @@ import numpy as np
 
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
-W, H = 640, 480
-
-
-def frame(t: float, phase: float) -> np.ndarray:
+def frame(t: float, phase: float, W: int, H: int) -> np.ndarray:
     """A moving bar on a colour gradient, with a frame counter block.
 
     Movement matters: a still image cannot tell a live stream apart from one
@@ -60,6 +69,9 @@ def main() -> int:
     ap.add_argument("--fps", type=float, default=30.0)
     ap.add_argument("--seconds", type=float, default=60.0)
     ap.add_argument("--no-compress", action="store_true")
+    ap.add_argument("--cameras", type=int, default=3, help="how many image panels (0-3)")
+    ap.add_argument("--size", type=int, default=640, help="frame width; height is 3/4 of it")
+    ap.add_argument("--scalars", action="store_true", help="scalars only, no images")
     args = ap.parse_args()
 
     try:
@@ -81,20 +93,24 @@ def main() -> int:
         print(f"    uvx --from rerun-sdk=={ver} rerun")
         init_rerun(session_name="video_test", ip=args.host, port=args.port)
 
-    print(f"{args.fps:g} fps for {args.seconds:g}s - ctrl-c to stop")
-    print("expect three moving panels and two scalars that sweep.")
+    ncam = 0 if args.scalars else max(0, min(3, args.cameras))
+    W = args.size
+    H = args.size * 3 // 4
+    print(
+        f"{args.fps:g} fps for {args.seconds:g}s, {ncam} camera(s) at {W}x{H}, "
+        f"compress={not args.no_compress} - ctrl-c to stop"
+    )
+    print(f"expect {ncam} moving panel(s) and two scalars that sweep.")
 
+    names = ["cam_head", "cam_left", "cam_right"][:ncam]
+    phases = [0.0, 2.1, 4.2]
     period = 1.0 / args.fps
     t0 = time.perf_counter()
     n = 0
     try:
         while (t := time.perf_counter() - t0) < args.seconds:
-            obs = {
-                "cam_head": frame(t, 0.0),
-                "cam_left": frame(t, 2.1),
-                "cam_right": frame(t, 4.2),
-                "left_arm_shoulder_pan.pos": 50.0 * math.sin(t),
-            }
+            obs = {n: frame(t, phases[i], W, H) for i, n in enumerate(names)}
+            obs["left_arm_shoulder_pan.pos"] = 50.0 * math.sin(t)
             act = {"left_arm_shoulder_pan.pos": 50.0 * math.sin(t + 0.2)}
             log_rerun_data(
                 observation=obs, action=act, compress_images=not args.no_compress
@@ -107,10 +123,13 @@ def main() -> int:
         print()
 
     print(f"sent {n} frames.")
-    print("Nothing on the viewer? Then it is the link, not lerobot:")
-    print("  - viewer started as plain `rerun`, not `--serve-grpc`")
-    print("  - same rerun version both ends")
-    print("  - the viewer host's firewall allows incoming connections")
+    print("Still wrong? Bisect it - each step removes one suspect:")
+    print("  --scalars                 no images at all. Wedges here = not video.")
+    print("  --cameras 1 --fps 1       one small slow stream.")
+    print("  --size 160                pixels, not frames.")
+    print("  --fps 1                   frames, not pixels.")
+    print("  --no-compress             the viewer's JPEG decode.")
+    print("Then walk back up until it breaks; that is your answer.")
     return 0
 
 

@@ -27,6 +27,24 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCK="$REPO/uv.lock"
 PORT="${WATCH_PORT:-9876}"
+# Cap what the viewer will hold. This is NOT optional for a long run.
+#
+# lerobot computes a memory limit in init_rerun and then uses it only on the
+# path where it spawns the viewer itself:
+#
+#     memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
+#     if ip and port:
+#         rr.connect_grpc(url=...)        # <- limit never applied
+#     else:
+#         rr.spawn(memory_limit=memory_limit)
+#
+# We are the ip-and-port case, so nothing on the cart can cap this process.
+# It has to be set here. And it matters more than it looks: camera frames
+# are logged with static=True (rerun_visualization.py:175), static entities
+# are not on the timeline, and the viewer evicts oldest-BY-TIME - so static
+# data is never a candidate for eviction. Three cameras at 30 Hz is ninety
+# such logs a second.
+MEM="${VIEWER_MEMORY:-25%}"
 
 if [[ ! -f "$LOCK" ]]; then
   echo "error: no uv.lock at $LOCK" >&2
@@ -53,6 +71,7 @@ fi
 cat <<TXT
 viewer  : rerun $VER  (from uv.lock - the same version elroy sends)
 port    : $PORT on all interfaces
+memory  : $MEM  (set VIEWER_MEMORY to change)
 
 A window will open and stay on the welcome screen until the cart connects.
 That is correct; start the cart afterwards.
@@ -79,4 +98,4 @@ TXT
 # 0.0.0.0:$PORT - there is no separate server to put in front of it, and
 # --port is only here because it may have been overridden above. The mode
 # to avoid is --serve-grpc, which is a server with no window.
-exec uvx --from "rerun-sdk==$VER" rerun --port "$PORT"
+exec uvx --from "rerun-sdk==$VER" rerun --port "$PORT" --memory-limit "$MEM"
