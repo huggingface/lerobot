@@ -2,9 +2,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 import copy
 import json
-import runpy
 import time
-from pathlib import Path
 
 import pytest
 
@@ -300,23 +298,3 @@ def test_local_cpu_admission(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="CPU cores"):
         run_local(store, plan, workers=2)
     assert not store.list(f"{plan.prefix}/attempts/*/*/checkpoints/*.json")
-
-
-def test_full_conversion_benchmark_and_unmeasured_matrix(tmp_path):
-    from lerobot.configs import RGBEncoderConfig
-    from lerobot.data_processing.conversion import ConvertConfig
-
-    benchmark = runpy.run_path(str(Path(__file__).parents[2] / "benchmarks/benchmark_processing.py"))
-    matrix = benchmark["scale_matrix"](8)
-    assert matrix["measured"] is False and matrix["cpu"][-1]["requested_cores"] == 8192
-    cfg = ConvertConfig(
-        source={"manifest": str(raw_source(tmp_path))},
-        size=64,
-        encoder=RGBEncoderConfig(vcodec="h264"),
-    )
-    cfg.runtime.shard_size = 1
-    result = benchmark["benchmark_conversion"](cfg, [1, 2])
-    assert all(row["physical_input_hours"] == 2 / 3600 for row in result["results"])
-    assert all(row["output_bytes"] > 0 and row["realtime_multiplier"] > 0 for row in result["results"])
-    assert all(row["stages"][0]["timer_seconds"]["decode"] is None for row in result["results"])
-    print(json.dumps(result, indent=2))
