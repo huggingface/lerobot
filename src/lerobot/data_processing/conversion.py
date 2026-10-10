@@ -27,7 +27,7 @@ from .pipeline import run_pipeline
 from .sources import load_source
 from .sources.acquisition import unpack_tar
 from .types import ItemResult, ModuleSpec, Outcome, Resources, canonical_json
-from .worker import accepted_in_shard
+from .worker import accepted_items
 
 GEOMETRY = pa.schema(
     [
@@ -271,30 +271,21 @@ def convert_dataset(cfg: ConvertConfig):
         directory = Path(temporary_dir)
         roots: list[Path] = []
         lineage, geometry_rows = [], []
-        for shard in range(plan.shards):
-            accepted = accepted_in_shard(store, plan, shard)
-            for item in plan.read_shard(store, shard):
-                result = accepted[item.item_id]
-                if result.outcome != Outcome.COMPLETED:
-                    raise ValueError("This conversion recipe does not define dropping/masking episodes")
-                archive = directory / "part.tar"
-                part = directory / "parts" / item.item_id
-                for artifact in result.artifacts:
-                    if artifact.name == "dataset":
-                        with store.open(artifact.path) as input_stream, archive.open("wb") as output_stream:
-                            shutil.copyfileobj(input_stream, output_stream)
-                        from .artifacts import file_checksum
-
-                        if file_checksum(archive) != (artifact.sha256, artifact.size):
-                            raise ValueError("Accepted conversion part changed during assembly")
-                        unpack_tar(archive, part)
-                    else:
-                        with store.open(artifact.path) as stream:
-                            geometry_rows.extend(pq.read_table(stream).to_pylist())
-                lineage.append(
-                    {"source_episode_id": item.key, "episode_index": len(roots), "item_id": item.item_id}
-                )
-                roots.append(part)
+        for item, result in accepted_items(store, plan):
+            if result.outcome != Outcome.COMPLETED:
+                raise ValueError("This conversion recipe does not define dropping/masking episodes")
+            archive = directory / "part.tar"
+            part = directory / "parts" / item.item_id
+            for artifact in result.artifacts:
+                if artifact.name == "dataset":
+                    unpack_tar(store.download(artifact, archive), part)
+                else:
+                    with store.open(artifact.path) as stream:
+                        geometry_rows.extend(pq.read_table(stream).to_pylist())
+            lineage.append(
+                {"source_episode_id": item.key, "episode_index": len(roots), "item_id": item.item_id}
+            )
+            roots.append(part)
         release = directory / "release"
         aggregate_datasets(
             ["processing/episode"] * len(roots),

@@ -252,3 +252,34 @@ and persistent warm environments matter: this one-item-per-batch acceptance deli
 favors failure isolation over throughput. Cached cloud jobs still pay source/bootstrap,
 verification, materialization and retention overhead. Human annotation-quality review
 and an independent maintainer architecture review remain necessary before a main merge.
+
+## Refactoring follow-up
+
+The annotation adapter's 901 lines are separated into modules (484), source
+discovery (189) and orchestration/publication (213). Across production Python
+files, the net reduction is 18 lines, including the new files and their imports.
+This is a modest size reduction; the main benefit is clearer responsibilities,
+shared verified transfers/replay, and removing unused materialization I/O.
+
+Against integration baseline `6879e986b49c0899e8c51a69c9e83917588c3e18`, a
+two-episode comparison executes the original annotation implementation from Git,
+then the refactored implementation on the same restored input/path. It uses a
+deterministic stub VLM and synthetic front/wrist frames, all language families,
+quality gating, publisher-owned labels and the real Parquet publication path.
+All ten published files are byte-identical and phase counts match. Unused
+materializer staging writes fall from six to zero. Single-trial times are 0.179s
+before and 0.195s after; this is parity evidence, not a throughput speedup claim.
+
+Fresh laptop acceptance converts four episodes/96 frames/eight AV1 streams in
+1.784s. Native arrays, 512px letterboxing, faststart and ordinary reader checks pass.
+Quality plus the tiny CPU encoder takes 0.531s; cached resume takes 0.027s. These
+small fixtures are not representative throughput benchmarks. The refactored
+download path also restores the retained HF CPU release and loads all 96 frames.
+
+New regression tests cover one-pass download, corrupt-download cleanup and
+preserving a prior destination, complete/shard-bounded ordered replay, no unused
+annotation restaging, and shared CPU versus isolated GPU spawn pools. Applicable
+hooks pass, including mypy over 618 source files. This follow-up does not rerun
+paid GPU inference or HF Jobs: previous live results above retain their original
+pins. A new Slurm run could not start because the science-cluster SSH hostname
+does not resolve from the laptop; current Linux CI is reported separately in the PR.

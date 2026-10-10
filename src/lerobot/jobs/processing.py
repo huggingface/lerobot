@@ -358,14 +358,7 @@ def _restore_release_into(store, key, destination):
         relative = entry["path"]
         ArtifactStore(destination).path(relative)  # validate before writing
         artifact = Artifact(**entry["artifact"])
-        if not store.verify(artifact):
-            raise ValueError("Retained release checksum mismatch")
-        target = destination / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with store.open(artifact.path) as source, target.open("wb") as output:
-            import shutil
-
-            shutil.copyfileobj(source, output)
+        store.download(artifact, destination / relative)
     if release.get("source_files"):
         import shutil
 
