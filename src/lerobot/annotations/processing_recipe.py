@@ -22,7 +22,7 @@ from lerobot.data_processing.types import canonical_json
 from lerobot.data_processing.worker import accepted_in_shard, accepted_items
 from lerobot.datasets.language import language_feature_info
 
-from .processing_source import LeRobotEpisodeSource, _ownership_path
+from .processing_source import LeRobotEpisodeSource, _load_v3_info, _ownership_path
 from .steerable_pipeline.config import AnnotationPipelineConfig
 from .steerable_pipeline.executor import PhaseResult, PipelineRunSummary
 from .steerable_pipeline.validator import ValidationReport
@@ -32,6 +32,7 @@ from .steerable_pipeline.vlm_client import make_vlm_client
 def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client_factory=None):
     """Build a language recipe; current flags remain compatible, execution is shared."""
     root = root.resolve()
+    _load_v3_info(root)
     if (
         cfg.runtime.backend == "slurm"
         and cfg.vlm.auto_serve

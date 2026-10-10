@@ -9,7 +9,7 @@ does not infer physical correctness from semantic similarity or invent robot act
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ..sources.acquisition import acquire_file
+from ..artifacts import acquire_file
 from ..types import DatasetRef, ItemResult, ModuleSpec, Outcome, fingerprint
 
 INVENTORY = pa.schema(

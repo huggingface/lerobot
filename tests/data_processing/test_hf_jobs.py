@@ -156,31 +156,10 @@ def test_hardware_admission_uses_current_inventory(monkeypatch):
             processing.validate_hardware("cpu-upgrade", resource)
 
 
-def test_convert_bundle_rewrites_host_paths_and_selects_cpu(tmp_path, monkeypatch):
-    pytest.importorskip("datasets")
-    from lerobot.data_processing.conversion import ConvertConfig
-
-    cfg = ConvertConfig(
-        source={
-            "manifest": "/host/raw/manifest.json",
-            "archive_uri": "https://host/archive.tar",
-            "archive_sha256": "c" * 64,
-        }
-    )
-    cfg.runtime.backend = "hf_jobs"
-    cfg.runtime.run_uri = str(tmp_path / "simulation")
-    cfg.runtime.hf_jobs.code_revision = SHA
-    cfg.runtime.hf_jobs.cpu_image = "cpu@sha256:" + "b" * 64
-    cfg.runtime.hf_jobs.detach = True
-    captured = []
-    monkeypatch.setattr(processing, "require_persistent_remote", lambda *args: None)
-    monkeypatch.setattr(
-        processing, "dispatch_bundle", lambda *a, **k: captured.append(k) or SimpleNamespace(id="job-1")
-    )
-    processing.submit_convert_to_hf(cfg)
-    store = ArtifactStore(cfg.runtime.run_uri)
-    bundle = store.read_json(store.list("bundles/*.json")[0])
-    assert bundle["config"]["runtime"]["backend"] == "local"
-    assert bundle["config"]["source"]["manifest"].startswith("inputs/")
-    assert captured[0]["image"] == cfg.runtime.hf_jobs.cpu_image
-    assert captured[0]["resources"].gpus == 0
+@pytest.mark.parametrize("action", ["convert", "unknown"])
+def test_unsupported_bundle_actions_fail_before_annotation(tmp_path, monkeypatch, action):
+    store = ArtifactStore(tmp_path / "store")
+    key, digest = processing.write_bundle(store, action, {}, SHA)
+    monkeypatch.setenv("LEROBOT_PROCESSING_CODE_REVISION", SHA)
+    with pytest.raises(ValueError, match=f"Unknown processing bundle action: {action}"):
+        processing.execute_bundle(store, key, digest)

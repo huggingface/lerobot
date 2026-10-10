@@ -50,9 +50,9 @@
   - local: annotation_pipeline
     title: Annotation Pipeline
   - local: data_processing_runtime
-    title: Experimental Processing Runtime
+    title: Scalable Annotation and Enrichment
   - local: data_processing_design
-    title: FineRobotics Processing Design
+    title: FineRobotics Enrichment Design
   - local: video_encoding_parameters
     title: Video encoding parameters
   - local: streaming_video_encoding
