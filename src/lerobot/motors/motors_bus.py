@@ -545,21 +545,51 @@ class SerialMotorsBus(MotorsBusBase):
 
     @check_if_not_connected
     def disconnect(self, disable_torque: bool = True) -> None:
-        """Close the serial port (optionally disabling torque first).
+        """Close the serial port, optionally disabling torque on each motor first.
+
+        If disabling torque raises an `Exception` for one motor, the remaining motors are still attempted.
+        Port closure is always attempted. If closure succeeds, the first motor exception is re-raised. If closure fails,
+        the port-close exception takes precedence, with the first motor exception chained as its cause.
+        Interrupts stop further motor attempts; port closure is still attempted.
 
         Args:
-            disable_torque (bool, optional): If `True` (default) torque is disabled on every motor before
-                closing the port. This can prevent damaging motors if they are left applying resisting torque
-                after disconnect.
+            disable_torque (`bool`, *optional*, defaults to `True`):
+                Attempt to disable torque on every motor before closing the port. This can prevent motor
+                damage from continued resisting torque after disconnect.
+
+        Raises:
+            DeviceNotConnectedError: The serial port is not open.
+            ConnectionError: A motor did not answer while torque was being disabled. The first motor
+                exception is re-raised if port closure succeeds.
+            RuntimeError: A motor reported an error while torque was being disabled. The first motor
+                exception is re-raised if port closure succeeds.
+            Exception: Port closure failed. If a motor also failed, its first exception is chained as the cause.
         """
 
-        if disable_torque:
-            self.port_handler.clearPort()
-            self.port_handler.is_using = False
-            self.disable_torque(num_retry=5)
+        first_exception: Exception | None = None
+        try:
+            if disable_torque:
+                self.port_handler.clearPort()
+                self.port_handler.is_using = False
+                for motor in self.motors:
+                    try:
+                        self.disable_torque(motor, num_retry=5)
+                    except Exception as e:
+                        logger.error(f"Failed to disable torque on motor '{motor}' during disconnect: {e}")
+                        if first_exception is None:
+                            first_exception = e
+        finally:
+            try:
+                self.port_handler.closePort()
+            except Exception as close_error:
+                if first_exception is not None:
+                    raise close_error from first_exception
+                raise
 
-        self.port_handler.closePort()
-        logger.debug(f"{self.__class__.__name__} disconnected.")
+        logger.debug(f"{self.__class__.__name__} serial port closed.")
+
+        if first_exception is not None:
+            raise first_exception
 
     @classmethod
     def scan_port(cls, port: str, *args, **kwargs) -> dict[int, list[int]]:
