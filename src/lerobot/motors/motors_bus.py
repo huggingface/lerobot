@@ -547,13 +547,23 @@ class SerialMotorsBus(MotorsBusBase):
     def disconnect(self, disable_torque: bool = True) -> None:
         """Close the serial port, optionally disabling torque on each motor first.
 
-        Args:
-            disable_torque (bool, optional): If `True` (default) torque is disabled on every motor before
-                closing the port. This can prevent damaging motors if they are left applying resisting torque
-                after disconnect.
+        If disabling torque raises an `Exception` for one motor, the remaining motors are still attempted.
+        Port closure is always attempted. If closure succeeds, the first motor exception is re-raised. If closure fails,
+        the port-close exception takes precedence, with the first motor exception chained as its cause.
+        Interrupts stop further motor attempts; port closure is still attempted.
 
-        If disabling torque fails for one motor, the remaining motors are still attempted. The first exception
-        is re-raised after the serial port has been closed.
+        Args:
+            disable_torque (`bool`, *optional*, defaults to `True`):
+                Attempt to disable torque on every motor before closing the port. This can prevent motor
+                damage from continued resisting torque after disconnect.
+
+        Raises:
+            DeviceNotConnectedError: The serial port is not open.
+            ConnectionError: A motor did not answer while torque was being disabled. The first motor
+                exception is re-raised if port closure succeeds.
+            RuntimeError: A motor reported an error while torque was being disabled. The first motor
+                exception is re-raised if port closure succeeds.
+            Exception: Port closure failed. If a motor also failed, its first exception is chained as the cause.
         """
 
         first_exception: Exception | None = None
@@ -569,9 +579,14 @@ class SerialMotorsBus(MotorsBusBase):
                         if first_exception is None:
                             first_exception = e
         finally:
-            self.port_handler.closePort()
+            try:
+                self.port_handler.closePort()
+            except Exception as close_error:
+                if first_exception is not None:
+                    raise close_error from first_exception
+                raise
 
-        logger.debug(f"{self.__class__.__name__} disconnected.")
+        logger.debug(f"{self.__class__.__name__} serial port closed.")
 
         if first_exception is not None:
             raise first_exception
