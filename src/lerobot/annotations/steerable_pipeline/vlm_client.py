@@ -45,6 +45,7 @@ import time
 import urllib.request
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -147,6 +148,13 @@ class _GenericTextClient:
 
     generate_text: Callable[[Sequence[Sequence[dict[str, Any]]], int, float], list[str]]
     config: VlmConfig
+    close_callback: Callable[[], None] | None = None
+    api_bases: tuple[str, ...] = ()
+
+    def close(self):
+        if self.close_callback:
+            self.close_callback()
+            self.close_callback = None
 
     def generate_json(
         self,
@@ -171,7 +179,8 @@ class _GenericTextClient:
                     "role": "user",
                     "content": (
                         "Your previous reply was not valid JSON. "
-                        "Reply with strictly valid JSON, no prose, no fences."
+                        "Reply with strictly valid JSON, no prose, no fences. "
+                        "Numeric timestamps must not have leading zeroes: use 2.52, not 002.52."
                     ),
                 },
             ]
@@ -222,12 +231,22 @@ def make_vlm_client(config: VlmConfig) -> VlmClient:
 
 
 def _make_openai_client(config: VlmConfig) -> VlmClient:
+    shutdowns: list[Callable[[], None]] = []
+    try:
+        return _build_openai_client(config, shutdowns)
+    except BaseException:
+        for shutdown in shutdowns:
+            shutdown()
+        raise
+
+
+def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
     """Backend that talks to any OpenAI-compatible server.
 
     Compatible with ``vllm serve``, ``transformers serve``,
     ``ktransformers serve``, and hosted endpoints. By default the server
     is expected to be already running. Set ``auto_serve=True`` to have
-    this client spawn one (default: ``transformers serve``), wait until
+    this client spawn one (default: ``vllm serve``), wait until
     it's ready, and tear it down on process exit.
 
     Image blocks ``{"type":"image", "image":<PIL.Image>}`` are
@@ -245,7 +264,7 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
     api_base = config.api_base
     api_key = config.api_key
     auto_serve = config.auto_serve
-    api_bases: list[str] = [api_base]
+    api_bases: list[str] = list(config.api_bases) or [api_base]
 
     print(
         f"[lerobot-annotate] backend=openai model={config.model_id} "
@@ -258,16 +277,30 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
                 f"[lerobot-annotate] spawning {config.parallel_servers} parallel servers",
                 flush=True,
             )
-            api_bases = _spawn_parallel_inference_servers(config)
+            api_bases = _spawn_parallel_inference_servers(config, shutdowns=shutdowns)
         elif _server_is_up(api_base):
             print(f"[lerobot-annotate] reusing server already up at {api_base}", flush=True)
         else:
             print("[lerobot-annotate] no server reachable; spawning one", flush=True)
-            api_base = _spawn_inference_server(config)
+            api_base = _spawn_inference_server(config, shutdowns=shutdowns)
             api_bases = [api_base]
             print(f"[lerobot-annotate] server ready at {api_base}", flush=True)
 
-    clients = [OpenAI(base_url=base, api_key=api_key) for base in api_bases]
+    # Worker retry classification owns transport retries, rather than multiplying
+    # SDK retries with shard retries. Every retry reacquires global admission.
+    shared_limit = None
+    if config.endpoint_limit_url:
+        from lerobot.data_processing.endpoint_limits import SharedEndpointLimit
+
+        if not config.endpoint_limit_key:
+            raise ValueError("A shared endpoint limit requires endpoint_limit_key")
+        shared_limit = SharedEndpointLimit(
+            config.endpoint_limit_url,
+            config.endpoint_limit_key,
+            config.endpoint_limit_token_env,
+            config.endpoint_limit_timeout_s,
+        )
+    clients = [OpenAI(base_url=base, api_key=api_key, max_retries=0) for base in api_bases]
     # round-robin counter for parallel mode
     rr_counter = {"i": 0}
 
@@ -277,6 +310,7 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
     send_mm_kwargs = os.environ.get("LEROBOT_OPENAI_SEND_MM_KWARGS", "").lower() in {"1", "true", "yes"}
 
     rr_lock = threading.Lock()
+    request_limit = threading.BoundedSemaphore(max(1, config.client_concurrency))
 
     def _one_call(messages: Sequence[dict[str, Any]], max_tok: int, temp: float) -> str:
         api_messages, mm_kwargs = _to_openai_messages(messages)
@@ -298,7 +332,8 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
         with rr_lock:
             chosen = clients[rr_counter["i"] % len(clients)]
             rr_counter["i"] += 1
-        response = chosen.chat.completions.create(**kwargs)
+        with request_limit, shared_limit.permit() if shared_limit else nullcontext():
+            response = chosen.chat.completions.create(**kwargs)
         # Some OpenAI-compatible servers can return a choice with no message
         # (safety filter, or a "thinking" model that spends the whole budget
         # before emitting content). Treat that as an empty reply so the
@@ -316,7 +351,13 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             futures = [pool.submit(_one_call, messages, max_tok, temp) for messages in batch]
             return [f.result() for f in futures]
 
-    return _GenericTextClient(_gen, config)
+    def close():
+        for client in clients:
+            client.close()
+        for shutdown in shutdowns:
+            shutdown()
+
+    return _GenericTextClient(_gen, config, close, tuple(api_bases))
 
 
 def _bind_serve_port(cmd: str, port: int) -> str:
@@ -332,7 +373,39 @@ def _bind_serve_port(cmd: str, port: int) -> str:
     return cmd
 
 
-def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
+def _replica_gpu_ids(config):
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    count = config.num_gpus or config.parallel_servers
+    devices = (
+        [entry.strip() for entry in visible.split(",") if entry.strip() and entry.strip() != "-1"]
+        if visible is not None
+        else [str(index) for index in range(count)]
+    )
+    if count > len(devices) or config.parallel_servers > count:
+        raise ValueError("Inference replicas exceed assigned GPUs; do not share model replicas on one GPU")
+    return devices[: config.parallel_servers]
+
+
+def _bind_model_revision(command, revision):
+    if not revision:
+        return command
+    if "{revision}" in command:
+        return command.replace("{revision}", shlex.quote(revision))
+    tokens = shlex.split(command)
+    for index, argument in enumerate(tokens):
+        if argument == "--revision" or argument.startswith("--revision="):
+            if argument == "--revision" and index + 1 == len(tokens):
+                raise ValueError("serve_command --revision requires a value")
+            actual = argument.split("=", 1)[1] if "=" in argument else tokens[index + 1]
+            if actual != revision:
+                raise ValueError("serve_command revision does not match expected model_revision")
+            return command
+    if tokens[:2] == ["vllm", "serve"]:
+        return command + " --revision " + shlex.quote(revision)
+    raise ValueError("Custom serve_command must bind the expected model_revision with {revision}")
+
+
+def _spawn_parallel_inference_servers(config: VlmConfig, *, shutdowns=None) -> list[str]:
     """Spawn ``config.parallel_servers`` independent vllm replicas.
 
     Each replica:
@@ -344,9 +417,28 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
     across.
     """
     n = config.parallel_servers
+    gpu_ids = _replica_gpu_ids(config)
+    if config.serve_command and "--port" in config.serve_command and "{port}" not in config.serve_command:
+        raise ValueError("Parallel serve_command must omit --port or use {port}")
     api_bases: list[str] = []
     procs: list[subprocess.Popen] = []
     ready_events: list[threading.Event] = []
+
+    def _shutdown() -> None:
+        for i, p in enumerate(procs):
+            if p.poll() is None:
+                print(f"[server-{i}] stopping pid={p.pid}", flush=True)
+                p.send_signal(signal.SIGINT)
+        for p in procs:
+            try:
+                p.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=5)
+
+    atexit.register(_shutdown)
+    if shutdowns is not None:
+        shutdowns.append(_shutdown)
     # Multiple readiness signals — uvicorn's own banner is suppressed at
     # ``--uvicorn-log-level warning``, so we also accept vllm's own
     # "Starting vLLM API server" line and the route-listing line. The
@@ -367,11 +459,10 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
         f"--max-model-len {config.max_model_len or 32768} "
         f"--uvicorn-log-level warning"
     )
-
-    num_gpus = config.num_gpus if config.num_gpus > 0 else n
+    base_cmd = _bind_model_revision(base_cmd, config.model_revision)
     for i in range(n):
         port = config.serve_port + i
-        gpu = i % num_gpus
+        gpu = gpu_ids[i]
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
         cmd = _bind_serve_port(base_cmd, port)
@@ -415,20 +506,6 @@ def _spawn_parallel_inference_servers(config: VlmConfig) -> list[str]:
 
         threading.Thread(target=_probe, args=(i, api_base, ready, proc), daemon=True).start()
 
-    def _shutdown() -> None:
-        for i, p in enumerate(procs):
-            if p.poll() is None:
-                print(f"[server-{i}] stopping pid={p.pid}", flush=True)
-                p.send_signal(signal.SIGINT)
-        for p in procs:
-            try:
-                p.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                p.kill()
-                p.wait(timeout=5)
-
-    atexit.register(_shutdown)
-
     deadline = time.monotonic() + config.serve_ready_timeout_s
     while any(not ev.is_set() for ev in ready_events) and time.monotonic() < deadline:
         for i, p in enumerate(procs):
@@ -457,8 +534,8 @@ def _server_is_up(api_base: str) -> bool:
         return False
 
 
-def _spawn_inference_server(config: VlmConfig) -> str:
-    """Spawn ``transformers serve`` (or ``serve_command``), wait until it
+def _spawn_inference_server(config: VlmConfig, *, shutdowns=None) -> str:
+    """Spawn ``vllm serve`` (or ``serve_command``), wait until it
     accepts ``/v1/models``, and register a shutdown hook.
 
     Streams the server's stdout/stderr to the parent terminal in
@@ -470,14 +547,15 @@ def _spawn_inference_server(config: VlmConfig) -> str:
     cmd = config.serve_command
     if not cmd:
         cmd = (
-            f"transformers serve {shlex.quote(config.model_id)} "
-            f"--port {config.serve_port} --continuous-batching"
+            f"vllm serve {shlex.quote(config.model_id)} "
+            f"--port {config.serve_port} --max-model-len {config.max_model_len or 32768} "
+            f"--tensor-parallel-size {config.num_gpus or 1}"
         )
     # Bind the single server to ``serve_port`` (what ``api_base`` below
     # targets): substitute a literal ``{port}`` placeholder, else append
     # ``--port``. Without this a serve_command carrying ``{port}`` would
     # reach the server unsubstituted and fail to parse.
-    cmd = _bind_serve_port(cmd, config.serve_port)
+    cmd = _bind_serve_port(_bind_model_revision(cmd, config.model_revision), config.serve_port)
     api_base = f"http://localhost:{config.serve_port}/v1"
     print(f"[server] launching: {cmd}", flush=True)
     proc = subprocess.Popen(
@@ -550,6 +628,8 @@ def _spawn_inference_server(config: VlmConfig) -> str:
                 proc.wait(timeout=5)
 
     atexit.register(_shutdown)
+    if shutdowns is not None:
+        shutdowns.append(_shutdown)
 
     deadline = time.monotonic() + config.serve_ready_timeout_s
     while time.monotonic() < deadline:

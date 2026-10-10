@@ -1,0 +1,296 @@
+# Scalable annotation and enrichment
+
+This experimental runtime annotates and enriches **existing LeRobot v3 datasets**.
+Language and non-VLM modules share resumable workers on a laptop, Slurm or HF Jobs.
+Raw conversion, format upgrades, resizing and re-encoding stay in standalone scripts.
+
+## Slurm CPU and GPU workers
+
+Set `--runtime.backend=slurm`. `--runtime.mode=plan` writes inspectable worker/finalizer
+scripts but submits nothing. Configure the cluster-visible Python environment, source
+paths, working directory and script directory under `runtime.slurm`; the controller
+must run where `sbatch`/`squeue` and those shared paths are available. `runtime.workers`
+controls persistent array groups; `slurm.max_concurrent` caps simultaneous allocations.
+Request at least as many work shards as worker groups. Choose concurrency to fit
+the cluster's allocations and shared-storage bandwidth.
+
+Worker CPU, memory and GPU requests come from the module's declared `Resources`.
+GPU modules request GPU allocations just like CPU modules request cores. Stage finalizers
+use CPU-only jobs and run only after the array succeeds. The controller advances the
+pipeline after real finalization, when downstream discovery has valid inputs. Failed
+dependencies are cancelled rather than left waiting forever; see the official
+[sbatch dependency/wait options](https://slurm.schedmd.com/sbatch.html).
+
+Job IDs and accepted artifacts persist. Restarted runs refuse to duplicate a still-active
+array and skip fully accepted stages. Interrupting a controller does not automatically
+cancel its cluster jobs. `SBATCH_*` environment defaults are not forwarded into submissions:
+typed configuration and module resources determine requests. Other environment credentials
+remain deployment-owned; they are not written into work plans.
+
+Language clients on cluster nodes need reachable VLM endpoints and `vlm.auto_serve=false`;
+a controller's localhost server is not reachable as localhost on other nodes. Local model
+modules instead use their scheduler-provided GPU allocation.
+
+## Existing dataset inputs
+
+Install the dataset extra and supply a writable local v3 dataset or a pinned Hub
+repository revision. Unsupported format versions fail before planning or inference.
+Use the existing format-upgrade and dataset-specific porting scripts to prepare inputs.
+If FineRobotics needs 512px images or common encoding, do that preparation separately;
+being in LeRobot format does not imply those settings.
+
+Enrichment preserves source videos, FPS, camera names, actions/state and native labels.
+Modules read exact source references and write declared Parquet outputs. They do not
+implicitly resize videos, invent missing actions or change clocks. Hand, value and
+action/state enrichment can be added as explicit domain modules, not new converters.
+
+## Language annotation
+
+`lerobot-annotate` now builds an ordered processing recipe: plan, interjections, VQA,
+plan refresh, validation, and file materialization. Existing annotation flags remain;
+`--runtime.workers=4 --runtime.batch_size=8` controls local execution. Use
+`--runtime.mode=plan` to seal independent stages without initializing a model. Dependent
+stages are planned only after their real upstream artifacts exist. A persistent
+`--runtime.run_uri=/path/to/run` holds resumable work and accepted Parquet artifacts.
+
+Original language atoms, native actions and `subtask_index` are preserved. Generated
+families have ownership records in `meta/annotations/ownership/*.parquet`; reruns replace
+only families they generated, leaving disabled families and unselected episodes intact.
+Unknown/source-owned atoms are never inferred to be generated. Videos are unchanged.
+Dataset files are prepared and validated before a recoverable local commit. Interrupted
+commits roll forward before the next run. This is not an atomic snapshot for simultaneous
+readers: use a separate version directory while training or reading a live dataset.
+
+Hub inputs get a persistent writable working copy; immutable snapshot caches are not
+modified. Credentials use `--vlm.api_key_env=VARIABLE`, not plaintext in stored plans.
+Local services are owned by the controller, reused across stages, and closed at the end;
+workers do not spawn replacement servers. Use `runtime.max_parallel_stages` with an
+explicit CPU/GPU/memory `resource_budget` for dependency-aware parallel stages.
+For a shared model service, configure `vlm.endpoint_limit_url` and
+`vlm.endpoint_limit_key` to enforce one authenticated limit across workers/runs;
+per-client concurrency alone is not a global limit. See the
+[parallelism and recovery design](data_processing_design).
+
+Optional `quality.enabled=true` records sampled quality decisions and masks unusable
+episodes before inference. Long subtasks use overlapping context with nonoverlapping
+output ownership and exact source clocks; provenance is stored in Parquet alongside
+the annotations. Workers retry classified temporary failures, not schema/input bugs.
+
+A source supplies a pinned `DatasetRef` and a stable stream of `InputItem` metadata. A
+module supplies its version, scope, resources and Arrow output schemas. `seal_plan` writes
+bounded Parquet row groups; `run_local` runs the same module in persistent spawn workers.
+Workers initialize a model once, write isolated artifacts, and commit validated batches.
+Failed runs reuse valid batches. `finalize_stage` requires complete coverage and returns an
+immutable accepted index. A rejected or masked item must carry a reason.
+
+```python
+from lerobot.data_processing.artifacts import ArtifactStore
+from lerobot.data_processing.planner import seal_plan
+from lerobot.data_processing.runtime import run_local
+from lerobot.data_processing.types import DatasetRef, InputItem
+
+store = ArtifactStore("./runs/quality")
+plan = seal_plan(
+    store,
+    DatasetRef("./source", input_manifest_sha256),
+    "lerobot.data_processing.modules.video_quality:VideoQuality",
+    {"sample_every": 30},
+    [InputItem("front", {"video_path": "./source/front.mp4", "expected_frames": 300})],
+)
+summary = run_local(store, plan, workers=1)
+print(summary.accepted_path)
+```
+
+Install `lerobot[dataset]` for Arrow and filesystem dependencies. CPU stages neither import
+Torch nor construct a VLM. Sources are responsible for verifying that dataset inputs
+still match the pinned manifest; arbitrary external files are not made immutable by
+writing a digest into `DatasetRef`.
+
+## Reliability boundaries
+
+- One controller owns a plan. Concurrent controllers for the same plan are not supported.
+- Each worker has unique attempt paths. Remote publication uses manifest-last writes and
+  checksum validation, not atomic remote directory renames.
+- Checkpoints pack a batch of results; work completed inside an uncommitted batch can repeat.
+- An incomplete or corrupt output is recomputed. Repaired accepted indexes receive new
+  content-addressed paths so downstream stages can invalidate their inputs.
+- Item identities and seeds exclude worker count and shard packing. Module code must bump
+  its declared version when behavior changes; pin the code environment externally.
+- CPU determinism is module-specific. Seeds alone cannot promise bitwise GPU/VLM equality.
+- Local spawn workers can share local/shared storage. An in-memory filesystem is only useful
+  for single-process testing, not distributed workers.
+
+`patch_table` replaces declared columns at explicit frame identities. It preserves other
+rows, columns and source metadata, rejects duplicate/unknown identities, and does not
+interpret missing patches as deletion. `materialize_patch` writes a separate file, never
+overwriting an input dataset or immutable Hub cache. The annotation recipe adds the
+family-aware language merge; publication remains a separate explicit action.
+
+## HF Jobs and retained releases
+
+Remote annotation keeps `--job.target=<flavor>` and also supports
+`--runtime.backend=hf_jobs`. Resolved dataclass configuration is serialized, so
+`--config_path` works remotely. Host-local roots are never silently uploaded.
+Choose a code commit SHA and an image digest before dispatch:
+
+```bash
+lerobot-annotate --repo_id=owner/source --revision=<source_sha> \
+  --runtime.run_uri=hf://buckets/your-org/processing/example \
+  --runtime.hf_jobs.code_revision=<git_sha> \
+  --job.target=h200 --job.image=your-runtime@sha256:<image_digest> \
+  --job.detach=true --config_path=annotation.json
+```
+
+Images must supply Python 3.12+, git, ffmpeg and compatible LeRobot source/model
+dependencies. Images need vLLM only when owning a vLLM service; non-VLM stages do
+not require it. The launcher installs the pinned LeRobot code
+without changing the image's dependency versions. HF hardware admission checks
+declared CPU/GPU/memory needs against the current hardware inventory. Actual model
+memory/scratch acceptance still requires a smoke run on the chosen image/flavor.
+
+Tokens and model/API credentials travel as job secrets, not persisted configuration.
+Use `vlm.api_key_env` and `runtime.hf_jobs.secret_env` for environment names. Run
+storage must be remotely writable from jobs, e.g. HF buckets or an appropriately
+configured S3 store. Plan mode persists a bundle but submits no paid job.
+
+Annotation compatibility jobs run a **single-node** controller with its
+local worker pool. The controller advances the stage graph after the client
+detaches. Generic stages with remote-readable payloads can instead use bounded HF
+worker groups via `runtime.hf_jobs.cpu_image/cpu_flavor` or `gpu_image/gpu_flavor`.
+`max_parallel` caps outstanding groups. Modules must explicitly declare
+`ModuleSpec.hf_jobs_compatible=True` after ensuring their inputs are readable remotely;
+local-only modules fail before paid dispatch. It does not distribute local source paths
+or a controller's localhost VLM across nodes; use Slurm/shared inputs or an explicit
+external service for that workflow. Factories must exist in the pinned code/image.
+
+Annotation resolves the existing dataset's immutable Hub revision in the job.
+Retained enriched outputs survive job termination:
+
+```python
+from pathlib import Path
+from lerobot.data_processing.artifacts import ArtifactStore
+from lerobot.jobs.processing import restore_release
+
+store = ArtifactStore("hf://buckets/your-org/processing/example")
+restore_release(store, "releases/<digest>.json", Path("restored"))
+```
+
+Release indices reference validated, content-addressed Parquet/metadata files.
+Unchanged annotation videos reference the immutable source Hub revision, rather
+than being copied to the processing bucket. Restoring checks their hashes. Failed
+jobs retain accepted attempts; a new submission reuses valid work. Active exact
+bundle submissions cannot be blindly duplicated. Remote stores require a single
+controller owner; there is no distributed lock service in this launcher.
+
+### Explicit publication
+
+Processing and publication are separate. `--push_to_hub=true` additionally requires
+an explicit `--new_repo_id`, source `--revision`, `--release_tag=finerobotics-v0`,
+and `--redistribution_permission=<reviewed terms or permission record>`.
+This is a human permission assertion, not automatic legal approval.
+
+New targets receive the complete dataset. Later annotation must start from that
+processed target's pinned revision, provide the matching
+`--expected_target_revision`, and use a new release tag. Only changed data/ownership
+Parquet, metadata, card and lineage are committed; videos are not re-uploaded.
+Original licence/attribution and upstream lineage are retained, including a
+missing licence remaining missing. `parent_commit` detects concurrent target
+updates; immutable release tags are never deleted/moved. Existing format tags
+are left intact; load a specific processing release with `revision=...`.
+
+The publisher refuses releases exceeding bounded single-commit file/byte limits.
+Large dataset publication through a staged branch with guarded promotion remains
+a separate integration task; it is not silently split into partially public
+uploads. Retained bucket releases remain usable without Hub publication.
+For account setup and job management, see the
+[official Jobs guide](https://huggingface.co/docs/huggingface_hub/guides/jobs).
+
+## Model extensions and pairs
+
+`VideoEmbeddings` is a working optional model extension, not a hand/value model.
+Supply a trusted SHA-256-pinned PyTorch exported `.pt2` encoder accepting dynamic
+`[N, 3, H, W]` RGB float32 images in `[0, 1]` and returning finite `[N, embedding_dim]`
+features. Its example transform resizes to a square; use the model owner's transform
+for a production encoder. Setup loads once per persistent worker; requests are bounded
+by `max_batch_frames` and outputs are typed Parquet.
+Set `trusted_checkpoint=true` only for a model you trust: exported objects may execute
+code when loaded. A checksum identifies a file; it does not establish trust.
+
+```python
+plan = seal_plan(
+    store, DatasetRef("./source", input_manifest_sha256),
+    "lerobot.data_processing.modules.video_embeddings:VideoEmbeddings",
+    {"checkpoint_uri": "./encoder.pt2", "checkpoint_sha256": model_sha256,
+     "embedding_dim": 768, "trusted_checkpoint": True, "device": "cuda", "max_batch_frames": 128},
+    [InputItem("episode-0/front", {
+        "video_path": "./source/front.mp4", "video_sha256": video_sha256,
+        "episode_index": 0, "camera": "front", "frame_indices": [0, 30, 60],
+        "video_from_frame": 0,
+    }, physical_seconds=3, camera_seconds=3)],
+)
+summary = run_local(store, plan, workers=1, batch_size=1)
+```
+
+Frame indices are episode-relative; `video_from_frame` handles packed-video offsets.
+This baseline decodes sequentially through the last selected frame and hashes input
+video per item. Sparse access to long packed videos can therefore incur substantial
+decode work. Local CUDA workers use separate spawned processes
+and preserve scheduler-assigned `CUDA_VISIBLE_DEVICES` IDs. Admission rejects requests
+exceeding visible GPUs or available CPU cores. Memory remains a declared request, not
+a measured guarantee; budget model threads, decoding and scratch per worker separately.
+
+For language annotation, owned servers default to vLLM. Set `vlm.model_revision` to a
+commit SHA and pin `serve_command` through `{revision}` when overriding it. A single
+server can use `num_gpus` for tensor parallelism; independent replicas use one assigned
+GPU each. Existing external servers are not restarted: operators must verify their
+actual model revision. `client_concurrency` limits requests **per worker/client**, not
+across an entire cluster. See the [vLLM serve options](https://docs.vllm.ai/en/latest/cli/serve/).
+
+### Reference-only ICL pair reduction
+
+`PairLinks` consumes a SHA-pinned inventory with the `INVENTORY` Arrow schema in
+`modules/pair_links.py`. Each episode specifies a pinned dataset revision, camera list,
+frame count, fixed split, actions flag and real/ego/UMI/sim kind. Optional
+`origin_group` keeps known generated relatives together; it is not a near-duplicate
+detector. Pair inputs have this shape:
+
+```python
+InputItem("ego-to-robot-0", {
+    "pair_type": "ego_to_robot",
+    "source": {"dataset_uri": "hf://datasets/owner/ego", "revision": ego_sha,
+               "episode_id": "12", "camera": "ego", "start": 0, "end": 300},
+    "target": {"dataset_uri": "hf://datasets/owner/robot", "revision": robot_sha,
+               "episode_id": "8", "camera": "front", "start": 30, "end": 330},
+    "alignment_validated": True,
+    "alignment_evidence": "reviewed procedure/order/outcome match",
+})
+```
+
+Ranges are `[start, end)` frame indices. Unresolved references, invalid ranges,
+cross-split pairs, targets without robot actions and unvalidated simulated targets
+are rejected with reasons. Outputs contain references, not duplicated videos or
+invented actions. Direct action loss is off unless alignment and evidence are
+explicitly supplied; `weak_semantic` pairs always keep it off. The reducer verifies
+metadata, not physical alignment. Retrieval, Zero-WAM/ego-to-robot generation and
+simulation validation are separate domain modules. This baseline holds its inventory
+in RAM; large-scale retrieval/indexing is a subsequent optimization.
+
+### Operational telemetry and cache accounting
+
+Worker telemetry is Parquet under `metrics/<plan_id>/workers/`; stage summaries are
+JSON control records. Reports include physical/camera input hours (declared by sources),
+wall time, setup/read/decode/inference/write/validation/checkpoint/teardown timers,
+retries and bytes written. Uninstrumented timers are `null`, not zero; reports also
+count instrumented worker attempts. Timers overlap and concurrent durations accumulate;
+do not sum them as a wall-time decomposition. CPU/GPU hours estimate declared worker
+resources × worker wall time, excluding controllers, external services, queues and
+billing. Unknown duration or cached/partly reused runs report no realtime multiplier.
+
+Logical IDs use upstream content hashes, not temporary attempt paths. Sources can
+separate immutable content identity from execution bindings using `identity_payload`;
+modules can define `scientific_config()` excluding genuinely execution-only knobs.
+Changing model/prompt/owned-family configuration invalidates the affected stage;
+unrelated disabled-family options do not. Cache reuse is within a sealed plan, not a
+global per-item cache across changed corpus revisions or shard packing. Dataset revision
+and upstream digest invalidation is deliberately coarse. Accepted GPU/VLM outputs are
+reused; fresh inference is not promised bitwise deterministic.

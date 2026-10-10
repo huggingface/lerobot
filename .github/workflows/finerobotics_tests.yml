@@ -1,0 +1,45 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License").
+name: FineRobotics Tests
+
+on:
+  pull_request:
+    branches: [main, codex/finerobotics]
+  push:
+    branches: [codex/finerobotics]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finerobotics-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  processing:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tier: [base, dataset, viz]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
+        with:
+          version: "0.11.30"
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install base test dependencies
+        run: uv sync --locked --extra test --extra dev
+      - name: Install dataset dependencies
+        if: matrix.tier == 'dataset'
+        run: uv sync --locked --extra test --extra dev --extra dataset
+      - name: Install visualization dependencies without dataset
+        if: matrix.tier == 'viz'
+        run: uv sync --locked --extra test --extra dev --extra viz
+      - name: Focused processing and compatibility tests
+        run: uv run --no-sync pytest tests/data_processing tests/annotations tests/jobs tests/scripts/test_lerobot_annotate.py -q
+      - name: Lint processing code
+        run: uv run --no-sync ruff check src/lerobot/data_processing tests/data_processing

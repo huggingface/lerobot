@@ -1,0 +1,308 @@
+# FineRobotics annotation and enrichment: design
+
+## Executive summary
+
+Use one processing engine beneath `lerobot-annotate` and non-VLM enrichment modules.
+Inputs are existing LeRobot v3 datasets; raw conversion, format upgrades, resizing
+and re-encoding stay in standalone preparation scripts. Keep enrichment recipes and
+scientific outputs independent of where work runs:
+one laptop process, persistent local workers, Slurm CPU/GPU arrays, or HF Jobs.
+Language annotation, quality checks and model-based extensions share planning,
+checkpoints, validation and metrics. They do not share a mandatory VLM dependency.
+
+The output is an ordinary LeRobot v3 dataset. Original datasets stay with their
+publishers; processed releases can be published separately with attribution and
+explicit permission. Later annotations enrich the same processed dataset's Parquet
+files without copying its videos into another annotation-only dataset. Publication
+is an explicit step, not a side effect of processing.
+
+```text
+LeRobot v3 ── episode/reference discovery ── sealed Parquet work plan
+                                          │
+                         ┌────────────────┼─────────────────┐
+                         │                │                 │
+                   Local workers    Slurm arrays       HF Jobs
+                         └────────────────┼─────────────────┘
+                                          │
+                              Checked, durable artifacts
+                                          │
+                             Complete-stage finalization
+                                          │
+                          Next stage / ordinary LeRobot dataset
+```
+
+This is an experimental, working vertical slice, not a claim that all FineRobotics
+augmentation models are already implemented. Unsupported dataset versions fail before
+planning or inference. Hand estimation, value models,
+camera odometry and generation of human/robot demonstrations need their own modules.
+
+## The interfaces
+
+| Component      | Responsibility                                                               | Must not do                                        |
+| -------------- | ---------------------------------------------------------------------------- | -------------------------------------------------- |
+| Dataset source | Discover pinned v3 episodes, camera references and native clocks             | Convert raw formats or silently change clocks      |
+| Planner        | Seal bounded work records and stable identities                              | Decode all videos or initialize models             |
+| Module         | Declare scope, version, resources and Arrow schemas; process bounded batches | Start a service per item or overwrite source files |
+| Worker         | Initialize once, validate outputs, commit checkpoints                        | Treat an incomplete upload as success              |
+| Backend        | Allocate and dispatch the same worker contract                               | Change the scientific meaning of the recipe        |
+| Finalizer      | Require complete coverage; publish a checked index                           | Hide failures by dropping episodes                 |
+| Sink           | Materialize declared enrichment columns and retain a checked release         | Implicitly publish or erase original labels        |
+
+Factories are trusted Python code, not an untrusted plugin sandbox. Exported PyTorch
+models additionally require an explicit trust assertion and a verified checksum.
+Code commits, source/model revisions and image digests must be pinned for acceptance.
+
+### Existing datasets and new enrichment stages
+
+Prepare inputs with the existing dataset-specific porting/format-upgrade scripts.
+Annotation does not standardize resolution or encoding. It preserves native videos,
+FPS, camera names, actions/state and existing language/subtask labels.
+
+```python
+from pathlib import Path
+from lerobot.annotations.processing import run_annotation_pipeline
+from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
+
+cfg = AnnotationPipelineConfig()
+cfg.runtime.run_uri = "/data/runs/enrichment"
+cfg.runtime.workers = 2
+cfg.vlm.auto_serve = False
+cfg.vlm.api_base = "http://model-service.internal:8000/v1"
+run_annotation_pipeline(cfg, Path("/data/lerobot-v3"))
+```
+
+An enrichment module declares resources, version and Arrow schemas, reads bounded
+episode/window references and writes checked outputs. The runtime owns dispatch,
+checkpointing and validation; the module owns model and label semantics. New hand,
+value or action/state modules can reuse these contracts without requiring a VLM.
+
+## Execution and recovery
+
+Scientific item identities and seeds exclude worker count and shard packing.
+Packing, local paths and resource allocation are operational details; modules can
+separate stable content identity from artifact bindings. Model/config changes and
+changed upstream artifact content invalidate dependent work. A module version must
+change when its behavior changes; a seed is not a GPU determinism guarantee.
+
+Each worker writes to a unique attempt directory. Files are closed and hashed,
+then a checkpoint manifest is written last. Resuming verifies artifacts and reuses
+valid items; corrupt or incomplete attempts are ignored and recomputed. Finalization
+requires every planned item to have a validated outcome. Rejections and masks carry
+reasons; enrichment does not silently discard source records.
+
+One controller owns a plan. Local controllers use a file lock; remote deployments
+need one owner rather than relying on a nonexistent distributed lock service.
+Remote stores need neither atomic rename nor a directory transaction. A worker can
+repeat work performed before its last committed batch.
+
+Materialization preserves source-owned atoms and native columns. Generated families
+have Parquet ownership records, so reprocessing replaces only the families it owns.
+Partial annotation adds typed empty language columns to unselected files that lack
+them, keeping the dataset-wide schema readable without generating labels there.
+Files already carrying both language columns need no schema-only rewrite.
+A recoverable local journal rolls forward interrupted commits. It is not an atomic
+snapshot for simultaneous readers: process a separate version while training.
+
+## Parallel stages, endpoint limits and quality decisions
+
+These controls adapt the dependency, endpoint-limit and window ideas in the
+[Editframe pipeline documentation](https://editframe.com/docs/api/pipelines);
+LeRobot does not depend on that service.
+
+Sequential execution remains the default. Set `max_parallel_stages` and an explicit
+`resource_budget` to dispatch ready stages concurrently. Hands, subtasks and value
+modules can depend on quality without depending on each other; a merge stage depends
+on all three. The existing language recipe can run plan and VQA concurrently while
+interjections still wait for plan, and materialization waits for every required stage.
+
+```text
+                         ┌─ hands ──────┐
+v3 input → quality gate ──┼─ subtasks ───┼─ validate → materialize
+                         └─ value ──────┘
+```
+
+The controller reserves `workers × Resources` per admitted stage across CPU, GPU
+and memory, conservatively counting every planned worker even if a scheduler queues
+some. Reservations last through finalization. Local GPU stages receive disjoint
+device IDs and concurrent local stages always use spawned workers. Discovery and
+service-start hooks remain serialized on the controller. This budget covers pipeline
+workers, not an external model service or small scheduler finalizers. Slurm/HF Jobs
+retain their own per-stage allocation limits. One controller still owns a run.
+
+```python
+from lerobot.data_processing.types import Resources
+
+cfg.runtime.max_parallel_stages = 3
+cfg.runtime.resource_budget = Resources(cpus=6, gpus=0, memory_gb=24)
+cfg.runtime.workers = 2
+cfg.quality.enabled = True
+cfg.vlm.endpoint_limit_url = "http://model-coordinator.internal:8090"
+cfg.vlm.endpoint_limit_key = "qwen-annotation"
+```
+
+A process semaphore remains useful but cannot limit a shared service across nodes.
+Run one authenticated coordinator for that endpoint/model, and point **all** clients
+at it, including clients from other runs. The limit is coordinator-owned, not
+multiplied by worker count. Its token is an environment reference, forwarded as an
+HF Jobs secret; use TLS termination or a private trusted network.
+
+```bash
+uv run python -m lerobot.data_processing.endpoint_limits \
+  --host 0.0.0.0 --port 8090 --key qwen-annotation --limit 8 \
+  --token-env LEROBOT_ENDPOINT_LIMIT_TOKEN
+```
+
+Acquisition/release are idempotent. Admission fails closed if the coordinator cannot
+be reached. A killed worker, transport timeout or HTTP 504 gateway timeout leaves a permit held:
+there is deliberately no lease timeout that could admit new work while old inference
+still runs. Drain/cancel inference before restarting the coordinator to recover
+such permits. Do not start multiple coordinators for the same endpoint. This is a
+small single-authority admission service, not a highly available distributed database;
+nonparticipating clients are outside its limit.
+
+A gateway timeout does not confirm upstream cancellation
+([HTTP semantics](https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout)).
+It remains a retryable service error, but each retry needs a new permit: repeated
+ambiguous timeouts can exhaust capacity until an operator drains the endpoint.
+
+`StageConfig.when="quality.usable"` reads an explicitly boolean source-item field
+derived from declared upstream quality results. False produces `Outcome.MASKED`
+with a reason; missing/nonboolean fields fail instead of silently skipping. Masks
+are sealed into the plan, change item identity, remain in the accepted Parquet index,
+and count toward complete coverage. An entirely masked batch starts no model.
+
+For `lerobot-annotate`, `quality.enabled=true` samples the default annotation camera
+and checks missing/black frames before inference. Thresholds are configurable; this
+is a sampled episode gate, not proof that every frame/view is usable. Decisions and
+exact sampled source references are saved in `meta/annotations/quality/*.parquet`.
+Native rows, videos and previous/source-owned annotations are retained; users must
+honour these masks when training. Temporal/camera-specific quality modules can supply
+finer-grained gates through the same contract.
+
+### Long episodes and retries
+
+`EpisodeWindow` defines half-open **source-position** context/output ranges, plus
+exact `(episode_index, frame_index, timestamp)` references. Context can overlap;
+output ranges tile the episode once. Frame predictors discard context-only outputs
+and reject altered/duplicate references. Span predictors clip to owned ranges,
+snap to the source clock and merge identical continuations at window boundaries.
+Conflicting overlap labels are resolved by output ownership, not by averaging labels.
+Within a successfully labelled context, persistent-subtask coverage extends the first
+and last valid labels over approach/idle time before clipping to owned output; an
+entirely unlabelled window still fails rather than borrowing another window's labels.
+Language subtasks use this contract; windows and ownership are persisted in
+`meta/annotations/windows/*.parquet`. The model frame budget includes overlap.
+Stateful memory remains an ordered episode-level reduction after segmentation.
+New hand/value modules can reuse the contract rather than invent their own clocks.
+
+Workers retry identified network/timeout failures and service HTTP 408/429/5xx,
+with bounded exponential backoff (1, 2, 4…30 seconds), up to `max_retries`.
+Schema errors, explicit permanently undecodable inputs, other HTTP failures and
+unclassified bugs fail immediately. A failed partial setup is torn down before a
+retry. Valid committed batches are reused; uncommitted work can repeat. Attempt
+records include category, exception type and delay, never credentials or arbitrary
+exception contents. SDK transport retries are disabled so they do not multiply
+worker retry limits; one JSON correction prompt remains an annotation-domain step.
+
+## Backend behavior
+
+### Laptop
+
+Use bounded CPU admission and persistent spawn workers. GPU assignments preserve
+the scheduler/operator's device IDs and reject oversubscription. A single GPU worker
+also runs in a fresh process. Heavy VLM inference can stay on a remote endpoint;
+the laptop only decodes the selected videos and runs annotation clients.
+
+### Slurm
+
+The controller must have `sbatch`/`squeue` and shared source, code, environment and
+run-store paths. Module resource declarations determine CPU, memory and GPU requests;
+Slurm is not CPU-only. Each stage uses a bounded array followed by an `afterok`
+CPU finalizer. Downstream discovery happens after real upstream finalization.
+Persisted job IDs prevent duplicate active submissions on resume. Interrupting the
+controller does not cancel its submitted jobs.
+
+Language workers use a separately owned, reachable model endpoint with
+`vlm.auto_serve=false`. A controller's localhost is not another node's localhost.
+Use authenticated endpoints and pass credentials through environment references.
+Direct model modules run inside their allocated GPU workers.
+
+Put model/kernel caches on writable shared or node-local storage. Setting only
+`HF_HOME` is insufficient: vLLM, FlashInfer, Triton and Torch extensions have
+separate caches. Cluster quota and cache placement are deployment checks, not
+scientific parameters.
+
+### HF Jobs
+
+Choose an explicit account/namespace, immutable code SHA, public HTTPS code
+repository and image digest. The image owns dependency versions; the launcher
+installs pinned LeRobot code without resolving replacement CUDA/model dependencies.
+Use `uv pip` for uv-created environments without pip, with pip as the fallback.
+For missing small dependencies, operators may supply exact `bootstrap_packages`
+pins, also installed with `--no-deps`. Include their required dependencies explicitly;
+this is not an automatic environment resolver. Prefer baking production environments
+into a pinned image. The standard GPU training image does not include every annotation
+extra; verify the OpenAI client as well as the separately owned vLLM service.
+
+Annotation compatibility bundles run a single-node controller with
+local workers. Configuration is serialized, not reconstructed by replaying argv.
+Host-local data is not silently uploaded; annotation resolves the immutable source
+Hub revision.
+
+Generic remote stages use bounded worker groups only when a module explicitly
+declares remote-readable inputs. Do not mark a module compatible merely because
+its code imports successfully. Local filesystem paths do not exist on other pods.
+
+Store attempts and retained releases in persistent remote storage. Release indices
+reference content-addressed files. Unchanged annotation videos can reference the
+pinned original Hub videos instead of uploading them again. Restore verifies every
+file. Tokens travel as secrets; stored configuration contains environment names.
+Check current hardware before paid submission, cap concurrency and set hard timeouts.
+
+## Language and extensions
+
+The annotation recipe runs plan/subtasks, interjections, VQA, plan refresh,
+validation and materialization in dependency order. It retains canonical LeRobot
+language columns and native `subtask_index`. All final annotations are Parquet;
+internal JSON control/debug files are not the dataset annotation format.
+
+A local controller owns one model service across stages, or clients use an external
+service. Persistent workers have bounded client concurrency. Plan-only and fully
+cached runs do not initialize an unnecessary VLM. Use a pinned model revision and
+verify that external endpoints actually serve it.
+
+The exported encoder example exercises real bounded CPU/CUDA inference and produces
+typed embeddings. It is not a hand/reward estimator. The pair-link reducer validates
+typed references, frame ranges, fixed splits, robot-action availability and simulation
+validation records. It does not generate demonstrations or prove semantic alignment.
+Weak semantic pairs never receive direct action loss; strong pair supervision needs
+explicit alignment evidence.
+
+## Validation and release
+
+Validate native action/state values and source-clock references, ordinary dataset
+loading, retained-release restoration and interrupted-run recovery before publishing.
+Structural annotation validation does not establish label accuracy; inspect a sample
+with human reviewers as well. Codec outputs can differ across operating systems or
+encoder versions, and GPU/model outputs need numerical rather than bitwise checks.
+
+For company contributions, provide a pinned v3 dataset, licence/attribution,
+native action/state conventions, camera/clock documentation and a small acceptance
+sample. Then reuse the same processing recipe and backend controls to produce a
+versioned, ordinary LeRobot dataset. Large staged Hub publication remains follow-up
+work; the current bounded publisher refuses releases beyond its configured limits.
+
+## Smaller domain boundaries
+
+Source discovery (`annotations/processing_source.py`) owns native clocks, selection
+and lineage. Annotation modules (`annotations/processing.py`) own generation,
+cross-family validation and label ownership. The recipe
+(`annotations/processing_recipe.py`) owns dependencies, service lifetime and
+transactional publication. These are plain modules, not new framework base classes.
+Existing factory strings and the public annotation entry point remain compatible.
+
+Shared mechanics stay in the runtime: `accepted_items` replays complete results in
+source order, one shard at a time; `ArtifactStore.download` hashes while copying
+and replaces the destination only after verification. Materialization reads
+validated atoms directly instead of writing unused temporary staging files.
+CPU and GPU groups use one dispatch path; GPUs still have dedicated spawn pools.

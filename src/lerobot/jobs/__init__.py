@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.utils.import_utils import require_package
-
-# LeRobotDataset (imported at module top in dataset.py) pulls in heavy dataset deps;
-# guard the optional dependency here so importing this package fails loudly if it's missing.
-require_package("datasets", extra="dataset")
-
-from .annotate import submit_annotate_to_hf
-from .hf import submit_to_hf
+import importlib
 
 __all__ = ["submit_annotate_to_hf", "submit_to_hf"]
+
+
+def __getattr__(name):
+    """CPU processing jobs need neither training nor VLM imports."""
+    modules = {"submit_annotate_to_hf": "annotate", "submit_to_hf": "hf"}
+    if name not in modules:
+        raise AttributeError(name)
+    from lerobot.utils.import_utils import require_package
+
+    require_package("datasets", extra="dataset")
+    return getattr(importlib.import_module(f"lerobot.jobs.{modules[name]}"), name)
