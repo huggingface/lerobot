@@ -342,7 +342,10 @@ class NativeHTTPRangeFetcher:
             if response.status_code in (401, 403) or response.status_code in self._RETRYABLE_STATUS_CODES:
                 return b"", response.status_code
             hf_raise_for_status(response)
-            return response.read(), response.status_code
+            # Response.read() caches the body in HTTPX's response/stream cycle,
+            # retaining a second video copy until cyclic GC runs. Consume the
+            # chunks without populating that cache; context exit still closes it.
+            return b"".join(response.iter_bytes()), response.status_code
 
     def close(self) -> None:
         """Close the HTTP client and subrange executor."""
