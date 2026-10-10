@@ -308,3 +308,18 @@ native action/state conventions, camera/clock documentation and a small acceptan
 sample. Then reuse the same processing recipe and backend controls to produce a
 versioned, ordinary LeRobot dataset. Large staged Hub publication remains follow-up
 work; the current bounded publisher refuses releases beyond its configured limits.
+
+## Smaller domain boundaries
+
+Source discovery (`annotations/processing_source.py`) owns native clocks, selection
+and lineage. Annotation modules (`annotations/processing.py`) own generation,
+cross-family validation and label ownership. The recipe
+(`annotations/processing_recipe.py`) owns dependencies, service lifetime and
+transactional publication. These are plain modules, not new framework base classes.
+Existing factory strings and the public annotation entry point remain compatible.
+
+Shared mechanics stay in the runtime: `accepted_items` replays complete results in
+source order, one shard at a time; `ArtifactStore.download` hashes while copying
+and replaces the destination only after verification. Materialization reads
+validated atoms directly instead of writing unused temporary staging files.
+CPU and GPU groups use one dispatch path; GPUs still have dedicated spawn pools.

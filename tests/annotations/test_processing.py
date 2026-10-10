@@ -135,6 +135,25 @@ def test_all_language_families_roundtrip(single_episode_root):
     assert any(atoms for atoms in table["language_events"].to_pylist())
 
 
+def test_materialization_does_not_restage_generated_atoms(single_episode_root, monkeypatch):
+    from lerobot.annotations import processing
+
+    original = processing.LanguageMaterializer.process_batch
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Materialization wrote unused staging files")
+
+    def materialize(self, items, context):
+        with monkeypatch.context() as patch:
+            patch.setattr(processing, "EpisodeStaging", forbidden)
+            return original(self, items, context)
+
+    monkeypatch.setattr(processing.LanguageMaterializer, "process_batch", materialize)
+    result = run_annotation_pipeline(config(), single_episode_root, client_factory=FACTORY)
+    assert result.validation_report.ok
+    assert pq.read_table(result.written_paths[0])["language_persistent"].to_pylist()[0]
+
+
 def test_plan_mode_does_not_construct_models(single_episode_root):
     cfg = config()
     cfg.runtime.mode = "plan"
@@ -189,7 +208,7 @@ def test_window_provenance_keeps_exact_source_references(single_episode_root):
 def test_masked_episodes_never_auto_start_model(single_episode_root, monkeypatch):
     import torch
 
-    from lerobot.annotations import processing
+    from lerobot.annotations import processing, processing_recipe
 
     class BlackFrames:
         def frames_at(self, record, timestamps):
@@ -200,7 +219,7 @@ def test_masked_episodes_never_auto_start_model(single_episode_root, monkeypatch
     def forbidden(*args, **kwargs):
         raise AssertionError("Masked episode started inference service")
 
-    monkeypatch.setattr(processing, "make_vlm_client", forbidden)
+    monkeypatch.setattr(processing_recipe, "make_vlm_client", forbidden)
     cfg = config()
     cfg.vlm.auto_serve = True
     cfg.quality.enabled = True
