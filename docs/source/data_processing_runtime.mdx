@@ -11,8 +11,8 @@ scripts but submits nothing. Configure the cluster-visible Python environment, s
 paths, working directory and script directory under `runtime.slurm`; the controller
 must run where `sbatch`/`squeue` and those shared paths are available. `runtime.workers`
 controls persistent array groups; `slurm.max_concurrent` caps simultaneous allocations.
-For 1,024 groups, request at least 1,024 work shards; this is job generation, not a
-measured 1,024-CPU benchmark.
+Request at least as many work shards as worker groups. Choose concurrency to fit
+the cluster's allocations and shared-storage bandwidth.
 
 Worker CPU, memory and GPU requests come from the module's declared `Resources`.
 GPU modules request GPU allocations just like CPU modules request cores. Stage finalizers
@@ -29,9 +29,7 @@ remain deployment-owned; they are not written into work plans.
 
 Language clients on cluster nodes need reachable VLM endpoints and `vlm.auto_serve=false`;
 a controller's localhost server is not reachable as localhost on other nodes. Local model
-modules instead use their scheduler-provided GPU allocation. Bounded live CPU arrays,
-an H100 encoder and external-service language workers passed science-cluster acceptance;
-see the [results and limits](data_processing_acceptance).
+modules instead use their scheduler-provided GPU allocation.
 
 ## Conversion
 
@@ -61,8 +59,8 @@ repeating encoding. Conversion defaults to one episode per checkpoint.
 
 This initial vertical slice uses the existing image spool before encoding, temporary
 episode archives, and a serial metadata/part assembly pass. Budget extra temporary
-storage and input/output bandwidth. No 1,024-worker scaling result is claimed; replacing
-the spool/assembly bottlenecks should be driven by the maintained benchmarks.
+storage and input/output bandwidth. Account for these costs when choosing worker
+counts; adding workers does not parallelize the final assembly pass.
 
 ## Language annotation
 
@@ -153,10 +151,7 @@ family-aware language merge; publication remains a separate explicit action.
 3. Conversion CLI, raw source recipes, encoding and deterministic dataset assembly.
 4. Slurm CPU/GPU launchers, dependency handling and worker entry point.
 5. HF Jobs, serialized run packages, persistent outputs and guarded publication.
-6. Extension examples, reducers, metrics, failure tests and scaling benchmarks.
-
-Cluster acceptance and measured throughput require actual cluster resources. Generated
-scripts and local tests do not establish 1,024-worker or 500–1,000× realtime performance.
+6. Extension examples, reducers, metrics and failure tests.
 
 ## HF Jobs and retained releases
 
@@ -235,13 +230,10 @@ The publisher refuses releases exceeding bounded single-commit file/byte limits.
 Large conversion publication through a staged branch with guarded promotion remains
 a separate integration task; it is not silently split into partially public
 uploads. Retained bucket releases remain usable without Hub publication.
-Live personal-account CPU conversion and A100 annotation jobs passed retention/restore
-and cached-resume checks; generic multi-pod worker groups and public release promotion
-still have simulated integration coverage rather than live acceptance. See the
-[acceptance report](data_processing_acceptance) and the
+For account setup and job management, see the
 [official Jobs guide](https://huggingface.co/docs/huggingface_hub/guides/jobs).
 
-## Model extensions, pairs and measurements
+## Model extensions and pairs
 
 `VideoEmbeddings` is a working optional model extension, not a hand/value model.
 Supply a trusted SHA-256-pinned PyTorch exported `.pt2` encoder accepting dynamic
@@ -269,9 +261,8 @@ summary = run_local(store, plan, workers=1, batch_size=1)
 
 Frame indices are episode-relative; `video_from_frame` handles packed-video offsets.
 This baseline decodes sequentially through the last selected frame and hashes input
-video per item. Sparse access to long packed videos needs further benchmarking and
-decoder optimization. CPU execution is tested with real videos; CUDA execution still
-needs acceptance on actual hardware. Local CUDA workers use separate spawned processes
+video per item. Sparse access to long packed videos can therefore incur substantial
+decode work. Local CUDA workers use separate spawned processes
 and preserve scheduler-assigned `CUDA_VISIBLE_DEVICES` IDs. Admission rejects requests
 exceeding visible GPUs or available CPU cores. Memory remains a declared request, not
 a measured guarantee; budget workers × encoder threads, decoding and scratch separately.
@@ -312,7 +303,7 @@ metadata, not physical alignment. Retrieval, Zero-WAM/ego-to-robot generation an
 simulation validation are separate domain modules. This baseline holds its inventory
 in RAM; large-scale retrieval/indexing is a subsequent optimization.
 
-### Honest throughput and cache accounting
+### Operational telemetry and cache accounting
 
 Worker telemetry is Parquet under `metrics/<plan_id>/workers/`; stage summaries are
 JSON control records. Reports include physical/camera input hours (declared by sources),
@@ -323,17 +314,6 @@ the process timer, not individually timed. Timers overlap and concurrent duratio
 do not sum them as a wall-time decomposition. CPU/GPU hours estimate declared worker
 resources × worker wall time, excluding controllers, external services, queues and
 billing. Unknown duration or cached/partly reused runs report no realtime multiplier.
-
-```bash
-uv run benchmarks/benchmark_processing.py --config source.json --workers 1 2
-uv run benchmarks/benchmark_processing.py --plan-matrix --encoder-threads 8
-```
-
-The maintained local benchmark times the entire conversion call, including acquisition,
-planning, setup, decoding/encoding, validation, retries, upload and assembly. Repeat in
-reverse order and verify output parity. The CPU 1/16/128/1024 and GPU 1/4/16/32 matrix
-is **unmeasured resource arithmetic**. Peak memory, scratch, actual GPU utilization,
-production-scale cluster utilization and the 500–1,000× target remain to be measured.
 
 Logical IDs use upstream content hashes, not temporary attempt paths. Sources can
 separate immutable content identity from execution bindings using `identity_payload`;
