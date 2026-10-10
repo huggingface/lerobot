@@ -76,6 +76,9 @@ from .lance_utils import (  # noqa: F401
 from .utils import resolve_episode_indices
 from .video_utils import FrameTimestampError, decode_video_frames_pyav
 
+# Per-call limits for multi-sample RGB decoding within each DataLoader worker.
+# Concurrent file decodes have independent budgets; final sample outputs,
+# scatter copies, and decoder-internal memory are excluded from the byte estimate.
 _RGB_DECODE_MAX_FRAMES = 64
 _RGB_DECODE_MAX_BYTES = 64 << 20
 

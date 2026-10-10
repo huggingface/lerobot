@@ -95,6 +95,20 @@ def assert_items_equal(actual: dict, expected: dict) -> None:
             torch.testing.assert_close(actual[key], expected_val, rtol=0, atol=0, msg=key)
 
 
+class _FakeRGBDecoder:
+    metadata = SimpleNamespace(average_fps=10.0)
+
+    def __init__(self):
+        self.calls = []
+
+    def get_frames_at(self, indices):
+        self.calls.append(indices)
+        return SimpleNamespace(
+            data=torch.stack([torch.full((3, 2, 2), index, dtype=torch.uint8) for index in indices]),
+            pts_seconds=torch.tensor(indices, dtype=torch.float64) / self.metadata.average_fps,
+        )
+
+
 def test_tabular_parity(dataset_roots):
     src_root, lance_root = dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
@@ -235,20 +249,7 @@ def test_rgb_batch_decode_deduplicates_overlapping_frames():
         (2, [0.3]),
     ]
 
-    class Decoder:
-        metadata = SimpleNamespace(average_fps=10.0)
-
-        def __init__(self):
-            self.calls = []
-
-        def get_frames_at(self, indices):
-            self.calls.append(indices)
-            return SimpleNamespace(
-                data=torch.stack([torch.full((3, 2, 2), index, dtype=torch.uint8) for index in indices]),
-                pts_seconds=torch.tensor(indices, dtype=torch.float64) / self.metadata.average_fps,
-            )
-
-    decoder = Decoder()
+    decoder = _FakeRGBDecoder()
     reader = LanceDatasetReader.__new__(LanceDatasetReader)
     reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
     reader.return_uint8 = True
@@ -264,26 +265,25 @@ def test_rgb_batch_decode_deduplicates_overlapping_frames():
     assert decoded[2][file_key[0]][0, 0, 0].item() == 3
 
 
-def test_rgb_batch_decode_limits_frames_per_call():
+def test_rgb_batch_decode_limits_and_releases_chunks():
     file_key = ("observation.images.camera", 0, 0)
     max_frames = lance_backend._RGB_DECODE_MAX_FRAMES
     file_requests = [
         (0, [index / 10 for index in range(max_frames)]),
-        (1, [index / 10 for index in range(max_frames, max_frames + 5)]),
+        (1, [index / 10 for index in range(max_frames, 2 * max_frames + 5)]),
     ]
 
-    class Decoder:
-        metadata = SimpleNamespace(average_fps=10.0)
-
+    class Decoder(_FakeRGBDecoder):
         def __init__(self):
-            self.calls = []
+            super().__init__()
+            self.previous_data = None
 
         def get_frames_at(self, indices):
-            self.calls.append(indices)
-            return SimpleNamespace(
-                data=torch.stack([torch.full((3, 2, 2), index, dtype=torch.uint8) for index in indices]),
-                pts_seconds=torch.tensor(indices, dtype=torch.float64) / self.metadata.average_fps,
-            )
+            if self.previous_data is not None:
+                assert self.previous_data() is None
+            batch = super().get_frames_at(indices)
+            self.previous_data = weakref.ref(batch.data)
+            return batch
 
     decoder = Decoder()
     reader = LanceDatasetReader.__new__(LanceDatasetReader)
@@ -295,43 +295,13 @@ def test_rgb_batch_decode_limits_frames_per_call():
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
         decoded = reader._decode_videos([{}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
 
-    assert decoder.calls == [list(range(max_frames)), list(range(max_frames, max_frames + 5))]
+    assert decoder.calls == [
+        list(range(max_frames)),
+        list(range(max_frames, 2 * max_frames)),
+        list(range(2 * max_frames, 2 * max_frames + 5)),
+    ]
     assert decoded[0][file_key[0]][:, 0, 0, 0].tolist() == list(range(max_frames))
-    assert decoded[1][file_key[0]][:, 0, 0, 0].tolist() == list(range(max_frames, max_frames + 5))
-
-
-def test_rgb_batch_decode_releases_chunk_before_next_decode(monkeypatch):
-    file_key = ("observation.images.camera", 0, 0)
-    file_requests = [(index, [index / 10]) for index in range(3)]
-    monkeypatch.setattr(lance_backend, "_RGB_DECODE_MAX_FRAMES", 1)
-
-    class Decoder:
-        metadata = SimpleNamespace(average_fps=10.0)
-
-        def __init__(self):
-            self.previous_data = None
-
-        def get_frames_at(self, indices):
-            if self.previous_data is not None:
-                assert self.previous_data() is None
-            data = torch.full((1, 3, 2, 2), indices[0], dtype=torch.uint8)
-            self.previous_data = weakref.ref(data)
-            return SimpleNamespace(
-                data=data,
-                pts_seconds=torch.tensor(indices, dtype=torch.float64) / self.metadata.average_fps,
-            )
-
-    decoder = Decoder()
-    reader = LanceDatasetReader.__new__(LanceDatasetReader)
-    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
-    reader.return_uint8 = True
-    reader.tolerance_s = 1e-4
-    reader._build_video_requests = lambda *args: {file_key: file_requests}
-
-    with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
-        decoded = reader._decode_videos([{}, {}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
-
-    assert [frames[file_key[0]][0, 0, 0].item() for frames in decoded] == [0, 1, 2]
+    assert decoded[1][file_key[0]][:, 0, 0, 0].tolist() == list(range(max_frames, 2 * max_frames + 5))
 
 
 def test_rgb_batch_decode_rejects_bad_pts_after_chunk_scatter():
@@ -342,21 +312,12 @@ def test_rgb_batch_decode_rejects_bad_pts_after_chunk_scatter():
         (1, [index / 10 for index in range(max_frames, max_frames + 5)]),
     ]
 
-    class Decoder:
-        metadata = SimpleNamespace(average_fps=10.0)
-
-        def __init__(self):
-            self.calls = []
-
+    class Decoder(_FakeRGBDecoder):
         def get_frames_at(self, indices):
-            self.calls.append(indices)
-            pts_seconds = torch.tensor(indices, dtype=torch.float64) / self.metadata.average_fps
+            batch = super().get_frames_at(indices)
             if indices[0] >= max_frames:
-                pts_seconds[-1] += 2e-4
-            return SimpleNamespace(
-                data=torch.stack([torch.full((3, 2, 2), index, dtype=torch.uint8) for index in indices]),
-                pts_seconds=pts_seconds,
-            )
+                batch.pts_seconds[-1] += 2e-4
+            return batch
 
     decoder = Decoder()
     reader = LanceDatasetReader.__new__(LanceDatasetReader)
@@ -381,20 +342,7 @@ def test_rgb_batch_decode_respects_byte_limit_for_float_output():
         (1, [index / 10 for index in range(3, 7)]),
     ]
 
-    class Decoder:
-        metadata = SimpleNamespace(average_fps=10.0)
-
-        def __init__(self):
-            self.calls = []
-
-        def get_frames_at(self, indices):
-            self.calls.append(indices)
-            return SimpleNamespace(
-                data=torch.stack([torch.full((3, 2, 2), index, dtype=torch.uint8) for index in indices]),
-                pts_seconds=torch.tensor(indices, dtype=torch.float64) / self.metadata.average_fps,
-            )
-
-    decoder = Decoder()
+    decoder = _FakeRGBDecoder()
     reader = LanceDatasetReader.__new__(LanceDatasetReader)
     reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (1024, 1024, 3)}})
     reader.return_uint8 = False
