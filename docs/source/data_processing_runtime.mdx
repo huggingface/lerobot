@@ -281,8 +281,7 @@ Worker telemetry is Parquet under `metrics/<plan_id>/workers/`; stage summaries 
 JSON control records. Reports include physical/camera input hours (declared by sources),
 wall time, setup/read/decode/inference/write/validation/checkpoint/teardown timers,
 retries and bytes written. Uninstrumented timers are `null`, not zero; reports also
-count instrumented worker attempts. Conversion's current source read/decode is within
-the process timer, not individually timed. Timers overlap and concurrent durations accumulate;
+count instrumented worker attempts. Timers overlap and concurrent durations accumulate;
 do not sum them as a wall-time decomposition. CPU/GPU hours estimate declared worker
 resources × worker wall time, excluding controllers, external services, queues and
 billing. Unknown duration or cached/partly reused runs report no realtime multiplier.
