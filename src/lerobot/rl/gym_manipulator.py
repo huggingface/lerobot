@@ -374,6 +374,11 @@ def make_processors(
     terminate_on_success = (
         cfg.processor.reset.terminate_on_success if cfg.processor.reset is not None else True
     )
+    image_device = (
+        cfg.processor.image_preprocessing.image_device
+        if cfg.processor.image_preprocessing is not None
+        else "cpu"
+    )
 
     if cfg.name == "gym_hil":
         action_pipeline_steps = [
@@ -384,7 +389,7 @@ def make_processors(
         env_pipeline_steps = [
             GymHILAdapterProcessorStep(),
             Numpy2TorchActionProcessorStep(),
-            VanillaObservationProcessorStep(),
+            VanillaObservationProcessorStep(image_device=image_device),
         ]
 
         # Add time limit processor if reset config exists
@@ -419,7 +424,7 @@ def make_processors(
             joint_names=motor_names,
         )
 
-    env_pipeline_steps = [VanillaObservationProcessorStep()]
+    env_pipeline_steps = [VanillaObservationProcessorStep(image_device=image_device)]
 
     if cfg.processor.observation is not None:
         if cfg.processor.observation.add_joint_velocity_to_observation:
