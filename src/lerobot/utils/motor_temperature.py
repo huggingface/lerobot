@@ -32,6 +32,7 @@ STAGES = (
     (55, "Overheating"),
     (65, "Excessive heating: pause safely and cool down before continuing"),
 )
+MAX_VALID_TEMPERATURE_C = 100
 
 
 def _desktop_notification(message: str) -> None:
@@ -66,6 +67,7 @@ class MotorTemperatureMonitor:
         self.bus = bus
         self.next_poll = 0.0
         self.warned: dict[str, int] = {}
+        self.pending_stage: dict[str, tuple[int, int]] = {}
         self.unavailable = False
         self.notifications = ThreadPoolExecutor(max_workers=1, thread_name_prefix="motor-temperature")
 
@@ -82,7 +84,8 @@ class MotorTemperatureMonitor:
         try:
             readings = self.bus.sync_read("Present_Temperature", normalize=False)
             if set(readings) != set(self.bus.motors) or any(
-                not math.isfinite(value) or not 0 <= value <= 150 for value in readings.values()
+                not math.isfinite(value) or not 0 <= value <= MAX_VALID_TEMPERATURE_C
+                for value in readings.values()
             ):
                 raise ValueError("Missing or invalid temperature telemetry")
         except (ConnectionError, OSError, RuntimeError, ValueError) as exc:
@@ -96,9 +99,21 @@ class MotorTemperatureMonitor:
             stage = sum(value >= threshold for threshold, _ in STAGES)
             if stage == 0:
                 self.warned.pop(name, None)
-            elif stage > self.warned.get(name, 0):
+                self.pending_stage.pop(name, None)
+                continue
+            if stage <= self.warned.get(name, 0):
+                self.pending_stage.pop(name, None)
+                continue
+            pending_stage, pending_count = self.pending_stage.get(name, (stage, 0))
+            if pending_stage != stage:
+                pending_count = 0
+            pending_count += 1
+            if pending_count >= 2:
                 alerts.append(f"{name}={value:g} C — {STAGES[stage - 1][1]}")
                 self.warned[name] = stage
+                self.pending_stage.pop(name, None)
+            else:
+                self.pending_stage[name] = (stage, pending_count)
         if alerts:
             self._warn("; ".join(alerts))
         logger.info(

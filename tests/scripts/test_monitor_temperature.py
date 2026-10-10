@@ -39,7 +39,7 @@ def setup(monkeypatch):
 
 def test_stages_once_per_motor_and_rearm_after_cooling(setup):
     monitor, bus, clock = setup
-    for second, value in enumerate((49, 50, 54.9, 55, 64.9, 65, 70, 55, 65, 49, 50)):
+    for second, value in enumerate((49, 50, 50, 54.9, 55, 55, 64.9, 65, 65, 70, 55, 55, 65, 65, 49, 50, 50)):
         clock[0] = second
         bus.sync_read.return_value = {**dict.fromkeys(NAMES, 30), "shoulder_pan": value}
         assert len(monitor.poll()) == 6
@@ -56,14 +56,33 @@ def test_stages_once_per_motor_and_rearm_after_cooling(setup):
 
 def test_new_hot_motor_and_direct_jump_to_critical(setup):
     monitor, bus, clock = setup
-    bus.sync_read.return_value = {**dict.fromkeys(NAMES, 30), "shoulder_pan": 50}
+    bus.sync_read.return_value = dict.fromkeys(NAMES, 30)
     monitor.poll()
     clock[0] = 1
     bus.sync_read.return_value = {**bus.sync_read.return_value, "gripper": 65}
     monitor.poll()
-    assert monitor._warn.call_count == 2
+    assert monitor._warn.call_count == 0
+    clock[0] = 2
+    monitor.poll()
+    assert monitor._warn.call_count == 1
     assert "gripper=65" in monitor._warn.call_args.args[0]
     assert "cool down" in monitor._warn.call_args.args[0]
+
+
+def test_impossible_temperature_is_rejected_as_unavailable(setup):
+    monitor, bus, clock = setup
+    bus.sync_read.return_value = {**dict.fromkeys(NAMES, 30), "shoulder_pan": 128}
+
+    assert monitor.poll() == {}
+    assert monitor.unavailable
+    assert monitor._warn.call_count == 1
+    assert "UNAVAILABLE" in monitor._warn.call_args.args[0]
+    assert monitor.warned == {}
+
+    clock[0] = 1
+    bus.sync_read.return_value = dict.fromkeys(NAMES, 30)
+    assert len(monitor.poll()) == 6
+    assert not monitor.unavailable
 
 
 @pytest.mark.parametrize("failure", [ConnectionError("No reply"), {}, dict.fromkeys(NAMES, float("nan"))])
@@ -102,10 +121,12 @@ def test_slow_desktop_notification_does_not_block_sensor_reads(setup, monkeypatc
     try:
         bus.sync_read.return_value = dict.fromkeys(NAMES, 50)
         monitor.poll()
-        assert started.wait(1)
         clock[0] = 1
+        monitor.poll()
+        assert started.wait(1)
+        clock[0] = 2
         assert len(monitor.poll()) == 6
-        assert bus.sync_read.call_count == 2
+        assert bus.sync_read.call_count == 3
     finally:
         release.set()
 
@@ -194,7 +215,7 @@ def test_control_loops_share_bus_and_keep_temperature_out_of_dataset(
         ]
         assert len(temperature_frames) == 3
         assert all(len(frame) == (7 if display else 6) for frame in temperature_frames)
-        assert monitor._warn.call_count == 3
+        assert monitor._warn.call_count == 0
     bus.connect.assert_not_called()
     bus.write.assert_not_called()
 
