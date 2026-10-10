@@ -152,56 +152,45 @@ def _run_local_owned(store, plan, workers, batch_size, max_retries, force_spawn=
     capacity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
     if workers * resources.cpus > capacity:
         raise ValueError(f"Requested {workers * resources.cpus} CPU cores, but this process has {capacity}")
-    if resources.gpus:
-        devices = device_groups if device_groups is not None else gpu_assignments(workers, resources.gpus)
-        if len(devices) != workers or any(len(group) != resources.gpus for group in devices):
-            raise ValueError("GPU assignments do not match worker resource requests")
-        if len({device for group in devices for device in group}) != workers * resources.gpus:
-            raise ValueError("GPU assignments must not overlap")
-        # One pool per GPU group guarantees a fresh process will never switch
-        # CUDA visibility after it has initialized the CUDA runtime.
-        with ExitStack() as stack:
+    if not resources.gpus and workers == 1 and not force_spawn:
+        run_worker_group(store.uri, plan.plan_id, groups[0], batch_size, max_retries, store.storage_options)
+        return finalize_stage(store, plan)
+    with ExitStack() as stack:
+        devices = None
+        if resources.gpus:
+            devices = device_groups if device_groups is not None else gpu_assignments(workers, resources.gpus)
+            if len(devices) != workers or any(len(group) != resources.gpus for group in devices):
+                raise ValueError("GPU assignments do not match worker resource requests")
+            if len({device for group in devices for device in group}) != workers * resources.gpus:
+                raise ValueError("GPU assignments must not overlap")
+            # A dedicated pool per GPU group never switches CUDA visibility
+            # after initialization. CPU groups can share one bounded pool.
             pools = [
                 stack.enter_context(
                     ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
                 )
                 for _ in groups
             ]
-            futures = [
-                pool.submit(
-                    run_worker_group,
-                    store.uri,
-                    plan.plan_id,
-                    group,
-                    batch_size,
-                    max_retries,
-                    store.storage_options,
-                    devices[index],
-                )
-                for index, (pool, group) in enumerate(zip(pools, groups, strict=True))
-            ]
-            for future in futures:
-                future.result()
-    elif workers == 1 and not force_spawn:
-        run_worker_group(store.uri, plan.plan_id, groups[0], batch_size, max_retries, store.storage_options)
-    else:
-        with ProcessPoolExecutor(
-            max_workers=workers, mp_context=multiprocessing.get_context("spawn")
-        ) as executor:
-            futures = [
-                executor.submit(
-                    run_worker_group,
-                    store.uri,
-                    plan.plan_id,
-                    group,
-                    batch_size,
-                    max_retries,
-                    store.storage_options,
-                )
-                for group in groups
-            ]
-            for future in futures:
-                future.result()
+        else:
+            pool = stack.enter_context(
+                ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
+            )
+            pools = [pool] * workers
+        futures = [
+            pool.submit(
+                run_worker_group,
+                store.uri,
+                plan.plan_id,
+                group,
+                batch_size,
+                max_retries,
+                store.storage_options,
+                devices[index] if devices is not None else None,
+            )
+            for index, (pool, group) in enumerate(zip(pools, groups, strict=True))
+        ]
+        for future in futures:
+            future.result()
     return finalize_stage(store, plan)
 
 

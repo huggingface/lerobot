@@ -89,13 +89,19 @@ class ArtifactStore:
             return self.put_file(relative, source)
 
     def checksum(self, relative: str) -> tuple[str, int]:
-        digest = hashlib.sha256()
-        size = 0
         with self.open(relative) as stream:
-            while block := stream.read(1024 * 1024):
-                digest.update(block)
-                size += len(block)
-        return digest.hexdigest(), size
+            return _stream_checksum(stream)
+
+    def download(self, artifact: Artifact, destination: Path) -> Path:
+        """Copy and hash in one pass; never expose a partial or corrupt destination."""
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".processing-download-", dir=destination.parent) as directory:
+            temporary = Path(directory) / "artifact"
+            with self.open(artifact.path) as source, temporary.open("wb") as output:
+                if _stream_checksum(source, output) != (artifact.sha256, artifact.size):
+                    raise ValueError("Artifact download checksum mismatch")
+            temporary.replace(destination)
+        return destination
 
     def verify(self, artifact: Artifact) -> bool:
         try:
@@ -109,10 +115,16 @@ class ArtifactStore:
 
 
 def file_checksum(path: Path) -> tuple[str, int]:
+    with path.open("rb") as stream:
+        return _stream_checksum(stream)
+
+
+def _stream_checksum(stream: BinaryIO, output: BinaryIO | None = None) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0
-    with path.open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-            size += len(block)
+    while block := stream.read(1024 * 1024):
+        digest.update(block)
+        size += len(block)
+        if output is not None:
+            output.write(block)
     return digest.hexdigest(), size

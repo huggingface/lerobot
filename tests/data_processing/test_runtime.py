@@ -4,7 +4,9 @@
 import subprocess
 import sys
 import uuid
+from concurrent.futures import Future
 from pathlib import Path
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -14,7 +16,7 @@ from lerobot.data_processing.artifacts import ArtifactStore
 from lerobot.data_processing.planner import StagePlan, seal_plan
 from lerobot.data_processing.runtime import finalize_stage, run_local
 from lerobot.data_processing.types import DatasetRef, InputItem, ItemResult, Outcome, Resources
-from lerobot.data_processing.worker import accepted_in_shard
+from lerobot.data_processing.worker import accepted_in_shard, accepted_items
 
 pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
@@ -154,6 +156,100 @@ def test_artifact_paths_and_immutable_keys(tmp_path):
     for path in ("../escape", "/escape", "x/../../escape", "x\\escape"):
         with pytest.raises(ValueError, match="Unsafe"):
             store.path(path)
+
+
+@pytest.mark.parametrize("remote", [False, True])
+def test_verified_download_is_single_pass_and_does_not_publish_corruption(tmp_path, monkeypatch, remote):
+    store = ArtifactStore(f"memory://download-{uuid.uuid4().hex}" if remote else tmp_path / "store")
+    source = tmp_path / "source"
+    source.write_bytes(b"x" * (2 * 1024 * 1024 + 7))
+    artifact = store.put_file("source", source)
+    destination = tmp_path / "release" / "result"
+    opened = []
+    original = store.open
+
+    def counted_open(path):
+        opened.append(path)
+        return original(path)
+
+    monkeypatch.setattr(store, "open", counted_open)
+    assert store.download(artifact, destination) == destination
+    assert destination.read_bytes() == source.read_bytes()
+    assert opened == [artifact.path]
+    with store.fs.open(store.path(artifact.path), "wb") as stream:
+        stream.write(b"corrupt")
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        store.download(artifact, destination)
+    assert destination.read_bytes() == source.read_bytes()
+    assert sorted(destination.parent.iterdir()) == [destination]
+    missing = tmp_path / "missing-result"
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        store.download(artifact, missing)
+    assert not missing.exists()
+
+
+def test_accepted_items_are_ordered_complete_and_shard_bounded(tmp_path, monkeypatch):
+    store = ArtifactStore(tmp_path)
+    plan = make_plan(store, size=5, shard_size=2)
+    run_local(store, plan)
+    visited = []
+    original = StagePlan.read_shard
+
+    def read_shard(self, store, shard):
+        visited.append(shard)
+        return original(self, store, shard)
+
+    monkeypatch.setattr(StagePlan, "read_shard", read_shard)
+    results = accepted_items(store, plan)
+    first, result = next(results)
+    assert first.key == "0" and result.item_id == first.item_id
+    assert set(visited) == {0}  # No eager scan of later shards.
+    assert [item.key for item, _ in results] == ["1", "2", "3", "4"]
+    assert set(visited) == {0, 1, 2}
+    Path(store.path(result.artifacts[0].path)).unlink()
+    with pytest.raises(RuntimeError, match="Stage incomplete"):
+        list(accepted_items(store, plan))
+
+
+@pytest.mark.parametrize("gpus", [0, 1])
+def test_spawn_dispatch_shares_cpu_pool_but_isolates_gpu_groups(tmp_path, monkeypatch, gpus):
+    from lerobot.data_processing import runtime
+
+    pools, calls = [], []
+
+    class Pool:
+        def __init__(self, *, max_workers, mp_context):
+            assert mp_context.get_start_method() == "spawn"
+            pools.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def submit(self, function, *args):
+            calls.append((self, function, args))
+            future = Future()
+            future.set_result(None)
+            return future
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-a,GPU-b")
+    monkeypatch.setattr(runtime, "ProcessPoolExecutor", Pool)
+    monkeypatch.setattr(
+        runtime,
+        "load_module",
+        lambda *a: SimpleNamespace(spec=SimpleNamespace(resources=Resources(gpus=gpus))),
+    )
+    monkeypatch.setattr(runtime, "finalize_stage", lambda *a: "finalized")
+    store = ArtifactStore(tmp_path)
+    plan = make_plan(store)
+    assert run_local(store, plan, workers=2) == "finalized"
+    assert pools == ([1, 1] if gpus else [2])
+    assert (calls[0][0] is calls[1][0]) == (not gpus)
+    assert [args[2] for _, _, args in calls] == [[0, 2], [1]]
+    expected_devices = [("GPU-a",), ("GPU-b",)] if gpus else [None, None]
+    assert [args[-1] for _, _, args in calls] == expected_devices
 
 
 def test_object_store_without_rename(tmp_path, monkeypatch):

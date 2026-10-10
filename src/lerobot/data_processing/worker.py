@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -137,6 +138,17 @@ def accepted_in_shard(store: ArtifactStore, plan: StagePlan, shard: int) -> dict
             # An incomplete, stale or corrupt checkpoint is not completion evidence.
             continue
     return accepted
+
+
+def accepted_items(store: ArtifactStore, plan: StagePlan) -> Iterator[tuple[WorkItem, ItemResult]]:
+    """Replay complete results in source order, retaining at most one shard at a time."""
+    for shard in range(plan.shards):
+        items = plan.read_shard(store, shard)
+        accepted = accepted_in_shard(store, plan, shard)
+        if len(accepted) != len(items):
+            raise RuntimeError(f"Stage incomplete: shard {shard}, {len(accepted)}/{len(items)} accepted")
+        for item in items:
+            yield item, accepted[item.item_id]
 
 
 def run_worker_group(
