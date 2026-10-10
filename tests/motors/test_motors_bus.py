@@ -250,6 +250,7 @@ def test_disconnect_closes_port_on_interrupt(error_type, dummy_motors):
 def test_disconnect_reraises_port_close_failure(disable_torque, dummy_motors, caplog):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
     bus.connect(handshake=False)
+    caplog.clear()
     close_failure = OSError("closePort failed")
 
     with (
@@ -277,6 +278,7 @@ def test_disconnect_chains_first_motor_failure_when_port_close_fails(
 ):
     bus = MockMotorsBus("/dev/dummy-port", dummy_motors)
     bus.connect(handshake=False)
+    caplog.clear()
     first_failure = error_type("dummy_1 failed")
     second_failure = RuntimeError("dummy_3 failed")
     close_failure = OSError("closePort failed")
