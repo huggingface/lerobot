@@ -18,7 +18,6 @@
 import io
 import json
 import logging
-import pickle  # nosec B403: Safe usage for internal serialization only
 from multiprocessing.synchronize import Event as MpEvent
 from queue import Queue
 from typing import Any
@@ -126,15 +125,24 @@ def bytes_to_state_dict(buffer: bytes) -> dict[str, torch.Tensor]:
 
 
 def python_object_to_bytes(python_object: Any) -> bytes:
-    return pickle.dumps(python_object)
+    """Serialize a JSON-safe object to bytes.
+
+    Uses JSON instead of pickle to prevent arbitrary code execution when
+    deserializing data received over unauthenticated gRPC channels (CVE-2026-25874).
+    The RL actor sends plain dicts of numeric stats (reward, step count, rates)
+    which are fully JSON-serializable.
+    """
+    return json.dumps(python_object).encode("utf-8")
 
 
 def bytes_to_python_object(buffer: bytes) -> Any:
-    bytes_buffer = io.BytesIO(buffer)
-    bytes_buffer.seek(0)
-    obj = pickle.load(bytes_buffer)  # nosec B301: Safe usage of pickle.load
-    # Add validation checks here
-    return obj
+    """Deserialize bytes produced by ``python_object_to_bytes``.
+
+    Uses JSON instead of pickle so that malicious payloads received over
+    unauthenticated gRPC (LearnerService.SendInteractions) cannot trigger
+    arbitrary code execution (CVE-2026-25874).
+    """
+    return json.loads(buffer.decode("utf-8"))
 
 
 def bytes_to_transitions(buffer: bytes) -> list[Transition]:

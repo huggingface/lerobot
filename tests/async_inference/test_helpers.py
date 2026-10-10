@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import math
-import pickle
 import time
 
 import pytest
@@ -129,24 +128,32 @@ def test_timed_observation_getters():
 
 
 def test_timed_data_deserialization_data_getters():
-    """TimedAction / TimedObservation survive a round-trip through ``pickle``.
+    """TimedAction / TimedObservation survive a round-trip through safe serialization.
 
-    The async-inference stack uses ``pickle.dumps`` to move these objects across
-    the gRPC boundary (see RobotClient.send_observation and PolicyServer.StreamActions).
-    This test ensures that the payload keeps its content intact after
-    the (de)serialization round-trip.
+    The async-inference stack uses safetensors+JSON (via safe_serialization.py) to
+    move these objects across the gRPC boundary (see RobotClient.send_observation and
+    PolicyServer.StreamActions). Pickle is no longer used over gRPC (CVE-2026-25874).
+    This test ensures that the payload keeps its content intact after the round-trip.
     """
+    pytest.importorskip("safetensors")
+    from lerobot.async_inference.safe_serialization import (
+        deserialize_actions,
+        deserialize_observation,
+        serialize_actions,
+        serialize_observation,
+    )
+
     ts = time.time()
 
     # ------------------------------------------------------------------
-    # TimedAction
+    # TimedAction — uses serialize_actions / deserialize_actions
     # ------------------------------------------------------------------
     original_action = torch.randn(6)
     ta_in = TimedAction(timestamp=ts, action=original_action, timestep=13)
 
-    # Serialize → bytes → deserialize
-    ta_bytes = pickle.dumps(ta_in)  # nosec
-    ta_out: TimedAction = pickle.loads(ta_bytes)  # nosec B301
+    # Serialize → bytes → deserialize using the safe serialization layer
+    ta_bytes = serialize_actions(ta_in)
+    ta_out: TimedAction = deserialize_actions(ta_bytes)
 
     # Identity & content checks
     assert math.isclose(ta_out.get_timestamp(), ts, rel_tol=0, abs_tol=1e-6)
@@ -154,13 +161,13 @@ def test_timed_data_deserialization_data_getters():
     torch.testing.assert_close(ta_out.get_action(), original_action)
 
     # ------------------------------------------------------------------
-    # TimedObservation
+    # TimedObservation — uses serialize_observation / deserialize_observation
     # ------------------------------------------------------------------
     obs_dict = {OBS_STATE: torch.arange(4).float()}
     to_in = TimedObservation(timestamp=ts, observation=obs_dict, timestep=7, must_go=True)
 
-    to_bytes = pickle.dumps(to_in)  # nosec
-    to_out: TimedObservation = pickle.loads(to_bytes)  # nosec B301
+    to_bytes = serialize_observation(to_in)
+    to_out: TimedObservation = deserialize_observation(to_bytes)
 
     assert math.isclose(to_out.get_timestamp(), ts, rel_tol=0, abs_tol=1e-6)
     assert to_out.get_timestep() == 7
