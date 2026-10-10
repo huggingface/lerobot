@@ -106,6 +106,21 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
     return migrated_config
 
 
+def _get_override_value(overrides: list[str] | None, name: str) -> str | None:
+    """Return the value of `--<name>=<value>` in a de-nested override list, or None if absent.
+
+    The list is the one produced by `parser.get_cli_overrides`, whose entries have already had
+    their `--<field>.` prefix stripped.
+    """
+    if not overrides:
+        return None
+    prefix = f"--{name}="
+    for override in overrides:
+        if override.startswith(prefix):
+            return override.removeprefix(prefix)
+    return None
+
+
 @dataclass
 class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
@@ -208,8 +223,13 @@ class TrainPipelineConfig(HubMixin):
 
         if reward_model_path:
             cli_overrides = parser.get_cli_overrides("reward_model")
+            # `pretrained_revision` has to be passed explicitly: draccus only applies
+            # `cli_overrides` once the config has already been downloaded, so relying on
+            # them alone would always resolve the Hub default branch.
             self.reward_model = RewardModelConfig.from_pretrained(
-                reward_model_path, cli_overrides=cli_overrides
+                reward_model_path,
+                revision=_get_override_value(cli_overrides, "pretrained_revision"),
+                cli_overrides=cli_overrides,
             )
             self.reward_model.pretrained_path = str(Path(reward_model_path))
         elif policy_path:
