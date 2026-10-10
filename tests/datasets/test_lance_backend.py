@@ -18,8 +18,11 @@ items as over the default parquet/mp4 layout, through the same public class."""
 
 import json
 import pickle
+import weakref
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -48,6 +51,7 @@ from lerobot.datasets.language import (
 )
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.storage import localize_remote_root
+from lerobot.datasets.video_utils import FrameTimestampError
 from lerobot.policies.factory import make_policy_config
 from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 from tests.fixtures.constants import (
@@ -89,6 +93,20 @@ def assert_items_equal(actual: dict, expected: dict) -> None:
             assert actual[key].dtype == expected_val.dtype, key
             assert actual[key].shape == expected_val.shape, key
             torch.testing.assert_close(actual[key], expected_val, rtol=0, atol=0, msg=key)
+
+
+class _FakeRGBDecoder:
+    metadata = SimpleNamespace(average_fps=10.0)
+
+    def __init__(self):
+        self.calls = []
+
+    def get_frames_at(self, indices):
+        self.calls.append(indices)
+        return SimpleNamespace(
+            data=torch.stack([torch.full((3, 2, 2), index, dtype=torch.uint8) for index in indices]),
+            pts_seconds=torch.tensor(indices, dtype=torch.float64) / self.metadata.average_fps,
+        )
 
 
 def test_tabular_parity(dataset_roots):
@@ -215,6 +233,157 @@ def test_video_parity(video_dataset_roots):
     lance_u8 = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, return_uint8=True)
     item = lance_u8[0]
     assert item[video_key].dtype == torch.uint8
+
+    # A real TorchCodec batch must remain byte-identical to individual reads,
+    # including duplicate and adjacent sample indices.
+    indices = [3, 3, 17, 18]
+    for idx, item in zip(indices, lance_u8.__getitems__(indices), strict=True):
+        assert_items_equal(item, lance_u8[idx])
+
+
+def test_rgb_batch_decode_deduplicates_overlapping_frames():
+    file_key = ("observation.images.camera", 0, 0)
+    file_requests = [
+        (0, [0.1, 0.2, 0.2]),
+        (1, [0.2, 0.3]),
+        (2, [0.3]),
+    ]
+
+    decoder = _FakeRGBDecoder()
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
+    reader.return_uint8 = True
+    reader.tolerance_s = 1e-4
+    reader._build_video_requests = lambda *args: {file_key: file_requests}
+
+    with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
+        decoded = reader._decode_videos([{}, {}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
+
+    assert decoder.calls == [[1, 2, 3]]
+    assert decoded[0][file_key[0]][:, 0, 0, 0].tolist() == [1, 2, 2]
+    assert decoded[1][file_key[0]][:, 0, 0, 0].tolist() == [2, 3]
+    assert decoded[2][file_key[0]][0, 0, 0].item() == 3
+
+
+def test_rgb_batch_decode_limits_and_releases_chunks():
+    file_key = ("observation.images.camera", 0, 0)
+    max_frames = lance_backend._RGB_DECODE_MAX_FRAMES
+    file_requests = [
+        (0, [index / 10 for index in range(max_frames)]),
+        (1, [index / 10 for index in range(max_frames, 2 * max_frames + 5)]),
+    ]
+
+    class Decoder(_FakeRGBDecoder):
+        def __init__(self):
+            super().__init__()
+            self.previous_data = None
+
+        def get_frames_at(self, indices):
+            if self.previous_data is not None:
+                assert self.previous_data() is None
+            batch = super().get_frames_at(indices)
+            self.previous_data = weakref.ref(batch.data)
+            return batch
+
+    decoder = Decoder()
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
+    reader.return_uint8 = True
+    reader.tolerance_s = 1e-4
+    reader._build_video_requests = lambda *args: {file_key: file_requests}
+
+    with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
+        decoded = reader._decode_videos([{}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
+
+    assert decoder.calls == [
+        list(range(max_frames)),
+        list(range(max_frames, 2 * max_frames)),
+        list(range(2 * max_frames, 2 * max_frames + 5)),
+    ]
+    assert decoded[0][file_key[0]][:, 0, 0, 0].tolist() == list(range(max_frames))
+    assert decoded[1][file_key[0]][:, 0, 0, 0].tolist() == list(range(max_frames, 2 * max_frames + 5))
+
+
+def test_rgb_batch_decode_rejects_bad_pts_after_chunk_scatter():
+    file_key = ("observation.images.camera", 0, 0)
+    max_frames = lance_backend._RGB_DECODE_MAX_FRAMES
+    file_requests = [
+        (0, [index / 10 for index in range(max_frames)]),
+        (1, [index / 10 for index in range(max_frames, max_frames + 5)]),
+    ]
+
+    class Decoder(_FakeRGBDecoder):
+        def get_frames_at(self, indices):
+            batch = super().get_frames_at(indices)
+            if indices[0] >= max_frames:
+                batch.pts_seconds[-1] += 2e-4
+            return batch
+
+    decoder = Decoder()
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
+    reader.return_uint8 = True
+    reader.tolerance_s = 1e-4
+    reader._build_video_requests = lambda *args: {file_key: file_requests}
+
+    with (
+        ThreadPoolExecutor(max_workers=1) as reader._decode_pool,
+        pytest.raises(FrameTimestampError, match="chunk 0, file 0"),
+    ):
+        reader._decode_videos([{}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
+
+    assert decoder.calls == [list(range(max_frames)), list(range(max_frames, max_frames + 5))]
+
+
+def test_rgb_batch_decode_respects_byte_limit_for_float_output():
+    file_key = ("observation.images.camera", 0, 0)
+    file_requests = [
+        (0, [index / 10 for index in range(4)]),
+        (1, [index / 10 for index in range(3, 7)]),
+    ]
+
+    decoder = _FakeRGBDecoder()
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (1024, 1024, 3)}})
+    reader.return_uint8 = False
+    reader.tolerance_s = 1e-4
+    reader._build_video_requests = lambda *args: {file_key: file_requests}
+
+    with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
+        decoded = reader._decode_videos([{}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
+
+    # At 1024x1024, each normalized frame temporarily occupies 3 MiB of decoder
+    # uint8 storage plus 12 MiB of float32 output, so the 64 MiB budget permits four.
+    assert decoder.calls == [list(range(4)), list(range(4, 7))]
+    torch.testing.assert_close(
+        decoded[0][file_key[0]][:, 0, 0, 0], torch.arange(4, dtype=torch.float32) / 255
+    )
+    torch.testing.assert_close(
+        decoded[1][file_key[0]][:, 0, 0, 0], torch.arange(3, 7, dtype=torch.float32) / 255
+    )
+
+
+def test_rgb_single_request_keeps_direct_decode_result():
+    file_key = ("observation.images.camera", 0, 0)
+    batch_data = torch.arange(24, dtype=torch.uint8).reshape(2, 3, 2, 2)
+
+    class Decoder:
+        metadata = SimpleNamespace(average_fps=10.0)
+
+        def get_frames_at(self, indices):
+            assert indices == [1, 2]
+            return SimpleNamespace(data=batch_data, pts_seconds=torch.tensor([0.1, 0.2]))
+
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
+    reader.return_uint8 = True
+    reader.tolerance_s = 1e-4
+    reader._build_video_requests = lambda *args: {file_key: [(0, [0.1, 0.2])]}
+
+    with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
+        decoded = reader._decode_videos([{}], {"timestamp": []}, {}, {file_key: (Decoder(), None)})
+
+    assert decoded[0][file_key[0]].data_ptr() == batch_data.data_ptr()
 
 
 def test_reader_reopens_after_failed_open(video_dataset_roots, monkeypatch):
