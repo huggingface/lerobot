@@ -32,12 +32,11 @@ from lerobot.utils.import_utils import _unitree_sdk_available, require_package
 
 from ..robot import Robot
 from .config_unitree_g1 import UnitreeG1Config
+from .g1_embodiments import get_g1_embodiment
 from .g1_kinematics import G1_29_ArmIK
 from .g1_utils import (
     NUM_MOTORS,
     REMOTE_AXES,
-    G1_29_JointArmIndex,
-    G1_29_JointIndex,
     default_remote_input,
 )
 
@@ -141,11 +140,16 @@ class IMUState:
 
 # g1 observation class
 @dataclass
-class G1_29_LowState:  # noqa: N801
-    motor_state: list[MotorState] = field(default_factory=lambda: [MotorState() for _ in G1_29_JointIndex])
+class G1LowState:
+    # Keep transport indexing even when some joints are absent from the embodiment.
+    motor_state: list[MotorState] = field(default_factory=lambda: [MotorState() for _ in range(NUM_MOTORS)])
     imu_state: IMUState = field(default_factory=IMUState)
     wireless_remote: bytes | None = None  # Raw wireless remote data
     mode_machine: int = 0  # Robot mode
+
+
+# Preserve imports used by existing G1-29 controllers and downstream integrations.
+G1_29_LowState = G1LowState
 
 
 class UnitreeG1(Robot):
@@ -159,6 +163,9 @@ class UnitreeG1(Robot):
         logger.info("Initialize UnitreeG1...")
 
         self.config = config
+        self.embodiment = get_g1_embodiment(config.embodiment)
+        self.joint_index = self.embodiment.joint_index
+        self.arm_index = self.embodiment.arm_index
         self.control_dt = config.control_dt
 
         # Initialize cameras config (ZMQ-based) - actual connection in connect()
@@ -217,14 +224,15 @@ class UnitreeG1(Robot):
 
             msg = self.lowstate_subscriber.Read()
             if msg is not None:
-                lowstate = G1_29_LowState()
+                lowstate = G1LowState()
 
-                # Capture motor states using jointindex
-                for joint in G1_29_JointIndex:
-                    lowstate.motor_state[joint].q = msg.motor_state[joint].q
-                    lowstate.motor_state[joint].dq = msg.motor_state[joint].dq
-                    lowstate.motor_state[joint].tau_est = msg.motor_state[joint].tau_est
-                    lowstate.motor_state[joint].temperature = msg.motor_state[joint].temperature
+                # Controllers consume the complete 29-slot transport state even when the
+                # selected embodiment exposes only a subset as robot features.
+                for index in range(NUM_MOTORS):
+                    lowstate.motor_state[index].q = msg.motor_state[index].q
+                    lowstate.motor_state[index].dq = msg.motor_state[index].dq
+                    lowstate.motor_state[index].tau_est = msg.motor_state[index].tau_est
+                    lowstate.motor_state[index].temperature = msg.motor_state[index].temperature
 
                 # Capture IMU state
                 lowstate.imu_state.quaternion = list(msg.imu_state.quaternion)
@@ -255,7 +263,7 @@ class UnitreeG1(Robot):
         tau: np.ndarray | list[float] | None = None,
     ) -> None:  # writes robot command whenever requested
         with self._lowcmd_lock:
-            for motor in G1_29_JointIndex:
+            for motor in self.joint_index:
                 key = f"{motor.name}.q"
                 if key in action:
                     self.msg.motor_cmd[motor.value].q = action[key]
@@ -267,6 +275,13 @@ class UnitreeG1(Robot):
                         kd[motor.value] if kd is not None else self.kd[motor.value]
                     )
                     self.msg.motor_cmd[motor.value].tau = tau[motor.value] if tau is not None else 0.0
+
+            if len(self.joint_index) < NUM_MOTORS:
+                active = {joint.value for joint in self.joint_index}
+                for index, command in enumerate(self.msg.motor_cmd):
+                    if index not in active:
+                        command.mode = 0
+                        command.q = command.dq = command.kp = command.kd = command.tau = 0.0
 
             self.msg.crc = self.crc.Crc(self.msg)
             self.lowcmd_publisher.Write(self.msg)
@@ -293,9 +308,9 @@ class UnitreeG1(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        # No controller configured at all: raw 29-DoF joint teleop.
+        # No controller configured: joint targets for the selected embodiment.
         if self.controller is None:
-            return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+            return {f"{motor.name}.q": float for motor in self.joint_index}
 
         # Whole-body controllers (SONIC): 64-D latent token.
         controller_ft = getattr(self.controller, "action_ft", None)
@@ -305,7 +320,7 @@ class UnitreeG1(Robot):
         # Locomotion controllers (GR00T / Holosoma): arm joint targets + joystick axes.
         # TODO: have GR00T/Holosoma advertise their own action_features too, so every
         # controller declares its action space and this fallthrough can be dropped.
-        arm_features = {f"{G1_29_JointArmIndex(motor).name}.q": float for motor in G1_29_JointArmIndex}
+        arm_features = {f"{motor.name}.q": float for motor in self.arm_index}
         remote_features = dict.fromkeys(REMOTE_AXES, float)
         return {**arm_features, **remote_features}
 
@@ -361,6 +376,9 @@ class UnitreeG1(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
+        if self.config.is_simulation and not self.embodiment.supports_simulation:
+            raise NotImplementedError(f"Simulation is not implemented for {self.embodiment.name}")
+
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
             from lerobot.envs import make_env
@@ -417,7 +435,7 @@ class UnitreeG1(Robot):
             self.kp = np.array(self.config.kp, dtype=np.float32)
             self.kd = np.array(self.config.kd, dtype=np.float32)
 
-        for joint in G1_29_JointIndex:
+        for joint in self.joint_index:
             self.msg.motor_cmd[joint].mode = 1
             self.msg.motor_cmd[joint].kp = self.kp[joint.value]
             self.msg.motor_cmd[joint].kd = self.kd[joint.value]
@@ -442,8 +460,8 @@ class UnitreeG1(Robot):
                 lowstate = self._lowstate
             if lowstate is None:
                 return
-            action = {f"{motor.name}.q": lowstate.motor_state[motor.value].q for motor in G1_29_JointIndex}
-            zero_gains = np.zeros(29, dtype=np.float32)
+            action = {f"{motor.name}.q": lowstate.motor_state[motor.value].q for motor in self.joint_index}
+            zero_gains = np.zeros(NUM_MOTORS, dtype=np.float32)
             self.publish_lowcmd(action, kp=zero_gains, kd=zero_gains, tau=zero_gains)
             logger.info("Sent zero-torque command for safe shutdown")
         except Exception as e:
@@ -505,7 +523,7 @@ class UnitreeG1(Robot):
         obs = {}
 
         # Motors - q, dq, tau for all joints
-        for motor in G1_29_JointIndex:
+        for motor in self.joint_index:
             name = motor.name
             idx = motor.value
             obs[f"{name}.q"] = lowstate.motor_state[idx].q
@@ -561,7 +579,7 @@ class UnitreeG1(Robot):
             # Controller thread owns legs/waist. Here we only update joystick inputs
             # and publish arm targets from the teleoperator.
             self._update_controller_action(action)
-            arm_prefixes = tuple(j.name for j in G1_29_JointArmIndex)
+            arm_prefixes = tuple(j.name for j in self.arm_index)
             action_to_publish = {
                 key: value
                 for key, value in action.items()
@@ -575,18 +593,16 @@ class UnitreeG1(Robot):
 
         tau: np.ndarray | None = None
         if self.config.gravity_compensation and self.arm_ik is not None:
-            tau = np.zeros(29, dtype=np.float32)
+            tau = np.zeros(NUM_MOTORS, dtype=np.float32)
             action_np = np.array(
                 [
                     action_to_publish.get(f"{joint.name}.q", self.msg.motor_cmd[joint.value].q)
-                    for joint in G1_29_JointArmIndex
+                    for joint in self.arm_index
                 ],
                 dtype=np.float32,
             )
             arm_tau = self.arm_ik.solve_tau(action_np)
-            arm_start_idx = G1_29_JointArmIndex.kLeftShoulderPitch.value
-            for joint in G1_29_JointArmIndex:
-                local_idx = joint.value - arm_start_idx
+            for local_idx, joint in enumerate(self.arm_index):
                 tau[joint.value] = arm_tau[local_idx]
 
         self.publish_lowcmd(action_to_publish, tau=tau)
@@ -611,8 +627,8 @@ class UnitreeG1(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        """Joint positions for all 29 joints."""
-        return {f"{G1_29_JointIndex(motor).name}.q": float for motor in G1_29_JointIndex}
+        """Joint positions for the active joints of the selected embodiment."""
+        return {f"{motor.name}.q": float for motor in self.joint_index}
 
     @property
     def cameras(self) -> dict:
@@ -639,7 +655,7 @@ class UnitreeG1(Robot):
             if self.config.is_simulation and self.sim_env is not None:
                 self.sim_env.reset()
                 self.publish_lowcmd(
-                    {f"{motor.name}.q": float(default_positions[motor.value]) for motor in G1_29_JointIndex}
+                    {f"{motor.name}.q": float(default_positions[motor.value]) for motor in self.joint_index}
                 )
             else:
                 total_time = 3.0
@@ -650,7 +666,7 @@ class UnitreeG1(Robot):
 
                 # record current positions
                 init_dof_pos: np.ndarray = np.zeros(NUM_MOTORS, dtype=np.float32)
-                for motor in G1_29_JointIndex:
+                for motor in self.joint_index:
                     init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
 
                 # Interpolate to default position
@@ -659,7 +675,7 @@ class UnitreeG1(Robot):
 
                     alpha = step / num_steps
                     action_dict = {}
-                    for motor in G1_29_JointIndex:
+                    for motor in self.joint_index:
                         target_pos = default_positions[motor.value]
                         interp_pos = init_dof_pos[motor.value] * (1 - alpha) + target_pos * alpha
                         action_dict[f"{motor.name}.q"] = float(interp_pos)
