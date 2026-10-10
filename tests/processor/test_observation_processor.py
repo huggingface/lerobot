@@ -14,14 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+
 import numpy as np
 import pytest
 import torch
 
 from lerobot.configs.types import FeatureType, PipelineFeatureType
 from lerobot.lerobot_types import TransitionKey
-from lerobot.processor import VanillaObservationProcessorStep
-from lerobot.processor.converters import create_transition
+from lerobot.processor import DataProcessorPipeline, VanillaObservationProcessorStep
+from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE
 from tests.conftest import assert_contract_is_typed
 
@@ -92,9 +94,10 @@ def test_process_batched_image():
     assert processed_obs[OBS_IMAGE].shape == (2, 3, 64, 64)
 
 
-def test_invalid_image_format():
+@pytest.mark.parametrize("image_device", ["cpu", "cuda"])
+def test_invalid_image_format(image_device):
     """Test error handling for invalid image formats."""
-    processor = VanillaObservationProcessorStep()
+    processor = VanillaObservationProcessorStep(image_device=image_device)
 
     # Test wrong channel order (channels first)
     image = np.random.randint(0, 256, size=(3, 64, 64), dtype=np.uint8)
@@ -105,9 +108,10 @@ def test_invalid_image_format():
         processor(transition)
 
 
-def test_invalid_image_dtype():
+@pytest.mark.parametrize("image_device", ["cpu", "cuda"])
+def test_invalid_image_dtype(image_device):
     """Test error handling for invalid image dtype."""
-    processor = VanillaObservationProcessorStep()
+    processor = VanillaObservationProcessorStep(image_device=image_device)
 
     # Test wrong dtype
     image = np.random.rand(64, 64, 3).astype(np.float32)
@@ -160,6 +164,96 @@ def test_serialization_methods():
 
     # Test reset (should not raise)
     processor.reset()
+
+
+@pytest.mark.parametrize("image_device", ["cpu", "cuda:1"])
+def test_image_device_pipeline_roundtrip(tmp_path, image_device):
+    pipeline = DataProcessorPipeline(
+        steps=[VanillaObservationProcessorStep(image_device=image_device)],
+        to_transition=identity_transition,
+        to_output=identity_transition,
+    )
+    pipeline.save_pretrained(tmp_path, config_filename="processor.json")
+
+    restored = DataProcessorPipeline.from_pretrained(
+        tmp_path,
+        config_filename="processor.json",
+        to_transition=identity_transition,
+        to_output=identity_transition,
+    )
+    assert restored.steps[0].get_config() == {"image_device": image_device}
+
+
+def test_legacy_image_processor_config_defaults_to_cpu(tmp_path):
+    config = {
+        "name": "legacy_observation_processor",
+        "steps": [{"registry_name": "observation_processor", "config": {}}],
+    }
+    (tmp_path / "processor.json").write_text(json.dumps(config))
+    restored = DataProcessorPipeline.from_pretrained(
+        tmp_path,
+        config_filename="processor.json",
+        to_transition=identity_transition,
+        to_output=identity_transition,
+    )
+
+    image = np.arange(8 * 12 * 3, dtype=np.uint8).reshape(8, 12, 3)
+    result = restored(create_transition(observation={"pixels": image}))
+    assert restored.steps[0].get_config() == {"image_device": "cpu"}
+    assert result[TransitionKey.OBSERVATION][OBS_IMAGE].device.type == "cpu"
+
+
+@pytest.mark.parametrize("batched", [False, True])
+def test_default_image_processing_preserves_legacy_values(batched):
+    from lerobot.envs.utils import preprocess_observation
+
+    shape = (2, 8, 12, 3) if batched else (8, 12, 3)
+    image = np.arange(np.prod(shape), dtype=np.uint8).reshape(shape)
+    original_image = image.copy()
+    observation = {"pixels": image, "agent_pos": np.array([0.5, -0.5], dtype=np.float32)}
+    expected = preprocess_observation(observation)
+    actual = VanillaObservationProcessorStep()(create_transition(observation=observation))[
+        TransitionKey.OBSERVATION
+    ]
+
+    assert actual.keys() == expected.keys()
+    for key in expected:
+        assert actual[key].device.type == "cpu"
+        torch.testing.assert_close(actual[key], expected[key], rtol=0, atol=0)
+    assert actual[OBS_IMAGE].is_contiguous()
+    np.testing.assert_array_equal(image, original_image)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+@pytest.mark.parametrize("batched", [False, True])
+def test_cuda_images_preserve_cpu_states_and_values(batched):
+    from lerobot.envs.utils import preprocess_observation
+
+    shape = (2, 8, 12, 3) if batched else (8, 12, 3)
+    image = np.arange(np.prod(shape), dtype=np.uint8).reshape(shape)
+    original_image = image.copy()
+    observation = {
+        "pixels": {"front": image, "wrist": image.copy()},
+        "agent_pos": np.array([0.5, -0.5], dtype=np.float32),
+        "environment_state": np.array([1.0, 2.0, 3.0], dtype=np.float32),
+    }
+    expected = preprocess_observation(observation)
+    actual = VanillaObservationProcessorStep(image_device="cuda")(create_transition(observation=observation))[
+        TransitionKey.OBSERVATION
+    ]
+
+    for name in ("front", "wrist"):
+        key = f"{OBS_IMAGES}.{name}"
+        assert actual[key].device.type == "cuda"
+        assert actual[key].dtype == torch.float32
+        assert actual[key].is_contiguous()
+        torch.testing.assert_close(actual[key].cpu(), expected[key], rtol=1e-6, atol=1e-7)
+    for key in (OBS_STATE, OBS_ENV_STATE):
+        assert actual[key].device.type == "cpu"
+        torch.testing.assert_close(actual[key], expected[key], rtol=0, atol=0)
+    np.testing.assert_array_equal(image, original_image)
+    image.fill(0)
+    torch.testing.assert_close(actual[f"{OBS_IMAGES}.front"].cpu(), expected[f"{OBS_IMAGES}.front"])
 
 
 def test_process_environment_state():
