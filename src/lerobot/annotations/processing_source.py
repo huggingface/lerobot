@@ -30,6 +30,17 @@ from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 from .steerable_pipeline.reader import EpisodeRecord, _load_tasks_lookup
 
 
+def _load_v3_info(root: Path) -> dict[str, Any]:
+    info = json.loads((root / "meta/info.json").read_text())
+    version = info.get("codebase_version") if isinstance(info, dict) else None
+    if not isinstance(version, str) or not version.startswith("v3."):
+        raise ValueError(
+            "Scalable annotation requires a LeRobot v3 dataset; "
+            "use the standalone conversion/format-upgrade scripts first"
+        )
+    return info
+
+
 def _load_record(root, payload):
     tables = []
     for relative in payload["paths"]:
@@ -59,6 +70,7 @@ class LeRobotEpisodeSource:
 
     def __init__(self, root: Path, only_episodes=None):
         self.root = root
+        info = _load_v3_info(root)
         self.episodes: dict[int, dict[str, Any]] = {}
         tasks = _load_tasks_lookup(root)
         manifest: list[dict[str, Any]] = []
@@ -96,7 +108,6 @@ class LeRobotEpisodeSource:
                     if relative not in value["paths"]:
                         value["paths"].append(relative)
                     value["rows"] += 1
-        info = json.loads((root / "meta/info.json").read_text())
         self.fps = info["fps"]
         self.cameras = sum(
             feature["dtype"] in {"image", "video"} for feature in info.get("features", {}).values()

@@ -14,9 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """``lerobot-annotate`` — populate ``language_persistent`` and
-``language_events`` columns on a LeRobot dataset.
+``language_events`` columns on an existing LeRobot v3 dataset.
 
 Annotations live directly in ``data/chunk-*/file-*.parquet``.
+Raw conversion, resizing and re-encoding stay in standalone preparation scripts.
 
 Example:
 

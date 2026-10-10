@@ -1,7 +1,6 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License").
 import copy
-import json
 import time
 
 import pytest
@@ -10,14 +9,13 @@ pytest.importorskip("datasets")
 import pyarrow as pa  # noqa: E402
 import pyarrow.parquet as pq  # noqa: E402
 
-from lerobot.data_processing.artifacts import ArtifactStore, file_checksum  # noqa: E402
+from lerobot.data_processing.artifacts import ArtifactStore, acquire_file, file_checksum  # noqa: E402
 from lerobot.data_processing.metrics import report_stage  # noqa: E402
 from lerobot.data_processing.modules.pair_links import INVENTORY  # noqa: E402
 from lerobot.data_processing.planner import seal_plan  # noqa: E402
 from lerobot.data_processing.runtime import gpu_assignments, run_local  # noqa: E402
 from lerobot.data_processing.types import DatasetRef, InputItem, artifact_identities  # noqa: E402
 from lerobot.data_processing.worker import accepted_in_shard  # noqa: E402
-from tests.data_processing.test_conversion import raw_source  # noqa: E402
 
 REF = DatasetRef("fixture/input", "a" * 40)
 
@@ -33,7 +31,29 @@ def test_model_batch_real_decode_embedding_and_metrics(tmp_path):
     import numpy as np
     import torch
 
-    manifest = raw_source(tmp_path)
+    from lerobot.configs import RGBEncoderConfig
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    camera = "observation.images.front"
+    root = tmp_path / "dataset"
+    dataset = LeRobotDataset.create(
+        "fixture/video",
+        fps=6,
+        root=root,
+        features={camera: {"dtype": "video", "shape": (64, 96, 3), "names": None}},
+        rgb_encoder=RGBEncoderConfig(vcodec="h264"),
+        encoder_threads=1,
+    )
+    for episode in range(2):
+        for index in range(6):
+            dataset.add_frame(
+                {camera: np.full((64, 96, 3), 40 + 20 * episode + 2 * index, np.uint8), "task": "move"}
+            )
+        dataset.save_episode(parallel_encoding=False)
+    dataset.finalize()
+    dataset = LeRobotDataset("fixture/video", root=root, video_backend="pyav")
+    assert "action" not in dataset.features  # human/video-only datasets are valid enrichment inputs
+    before = {path: file_checksum(path) for path in (root / "videos").rglob("*.mp4")}
 
     class Mean(torch.nn.Module):
         def forward(self, image):
@@ -58,7 +78,7 @@ def test_model_batch_real_decode_embedding_and_metrics(tmp_path):
         store = ArtifactStore(tmp_path / f"run-{batch_size}")
         items = []
         for episode in range(2):
-            video = manifest.parent / f"{episode}.mp4"
+            video = root / dataset.meta.get_video_file_path(episode, camera)
             items.append(
                 InputItem(
                     str(episode),
@@ -68,6 +88,9 @@ def test_model_batch_real_decode_embedding_and_metrics(tmp_path):
                         "episode_index": episode,
                         "camera": "front",
                         "frame_indices": [0, 3, 5],
+                        "video_from_frame": round(
+                            dataset.meta.episodes[episode][f"videos/{camera}/from_timestamp"] * dataset.fps
+                        ),
                     },
                     physical_seconds=1,
                     camera_seconds=1,
@@ -90,6 +113,7 @@ def test_model_batch_real_decode_embedding_and_metrics(tmp_path):
                 rows.extend(pq.read_table(stream).to_pylist())
         assert [row["frame_index"] for row in rows] == [0, 3, 5, 0, 3, 5]
         assert len(rows) == 6 and np.isfinite([row["embedding"] for row in rows]).all()
+        assert np.mean(rows[3]["embedding"]) > np.mean(rows[0]["embedding"]) + 0.05
         results.append(rows)
         report = report_stage(store, plan, summary, wall_seconds=time.perf_counter() - start)
         assert report["timer_seconds"]["inference"] > 0 and report["timer_seconds"]["decode"] > 0
@@ -107,6 +131,30 @@ def test_model_batch_real_decode_embedding_and_metrics(tmp_path):
         )
         assert resumed["realtime_multiplier"] is None  # caching is not processing throughput
     assert results[0] == results[1]
+    assert {path: file_checksum(path) for path in before} == before
+
+
+def test_pinned_asset_acquisition_cache_and_failed_download(tmp_path):
+    import hashlib
+
+    source = tmp_path / "model"
+    source.write_bytes(b"pinned model asset")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    destination = tmp_path / "cache/model"
+    assert acquire_file(str(source), digest, destination).read_bytes() == source.read_bytes()
+    failed = tmp_path / "cache/failed"
+    with pytest.raises(ValueError, match="checksum"):
+        acquire_file(str(source), "a" * 64, failed)
+    assert not failed.exists()
+    assert not list(destination.parent.glob(".processing-acquire-*"))
+    with pytest.raises(ValueError, match="expected SHA256"):
+        acquire_file(str(source), "invalid", failed)
+    source.unlink()
+    assert acquire_file(str(source), digest, destination) == destination  # verified cache needs no download
+    destination.write_bytes(b"corrupt cached model")
+    with pytest.raises(ValueError, match="pinned checksum"):
+        acquire_file(str(source), digest, destination)
+    assert destination.read_bytes() == b"corrupt cached model"
 
 
 def test_gpu_assignment_preserves_scheduler_ids_and_rejects_oversubscription(monkeypatch):
@@ -202,23 +250,6 @@ def test_pair_reducer_validated_links_weak_pairs_and_bad_ranges(tmp_path):
                 outputs.extend(pq.read_table(stream).to_pylist())
     assert [row["action_loss"] for row in outputs] == [True, False, False]
     assert all(artifact.name == "pairs" for result in accepted.values() for artifact in result.artifacts)
-
-
-def test_video_only_ego_conversion(tmp_path):
-    from lerobot.data_processing.conversion import ConvertConfig, convert_dataset
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-    manifest = raw_source(tmp_path)
-    value = json.loads(manifest.read_text())
-    value["features"] = {}
-    for episode in value["episodes"]:
-        episode["arrays"], episode["frames"] = {}, 6
-    manifest.write_text(json.dumps(value))
-    root = convert_dataset(
-        ConvertConfig(source={"manifest": str(manifest)}, output=tmp_path / "converted-ego", size=64)
-    )
-    dataset = LeRobotDataset("processing/ego", root=root, video_backend="pyav")
-    assert len(dataset) == 12 and "action" not in dataset.features
 
 
 def test_remote_store_without_rename_or_immediate_listing(monkeypatch):

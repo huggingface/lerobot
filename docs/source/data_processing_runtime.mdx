@@ -1,8 +1,8 @@
-# Offline data-processing runtime
+# Scalable annotation and enrichment
 
-This experimental runtime is shared infrastructure for conversion and annotation. It is
-developed on the FineRobotics integration branch, not yet a replacement for every public
-dataset workflow.
+This experimental runtime annotates and enriches **existing LeRobot v3 datasets**.
+Language and non-VLM modules share resumable workers on a laptop, Slurm or HF Jobs.
+Raw conversion, format upgrades, resizing and re-encoding stay in standalone scripts.
 
 ## Slurm CPU and GPU workers
 
@@ -31,36 +31,18 @@ Language clients on cluster nodes need reachable VLM endpoints and `vlm.auto_ser
 a controller's localhost server is not reachable as localhost on other nodes. Local model
 modules instead use their scheduler-provided GPU allocation.
 
-## Conversion
+## Existing dataset inputs
 
-Install the dataset extra, then run `lerobot-convert --config_path=convert.yaml`.
-The NPY/video example source file owns acquisition, safe unpacking, metadata discovery
-and raw reading. A new source replaces those methods, not the runtime. The built-in
-`lerobot.data_processing.sources.lerobot:LeRobotSource` also normalizes v3 inputs,
-preserving native action/state values, subtask IDs and canonical language annotations.
-Pre-v3 inputs need the existing official format-upgrade recipe first. Asynchronous
-clocks, depth and missing-camera policies must be handled explicitly by their source
-recipe, rather than silently treated as synchronous RGB.
-View-dependent native language labels require source-specific reprojection when image
-geometry changes; conversion refuses to silently associate old pixel labels with new views.
+Install the dataset extra and supply a writable local v3 dataset or a pinned Hub
+repository revision. Unsupported format versions fail before planning or inference.
+Use the existing format-upgrade and dataset-specific porting scripts to prepare inputs.
+If FineRobotics needs 512px images or common encoding, do that preparation separately;
+being in LeRobot format does not imply those settings.
 
-Each worker writes a complete isolated episode using LeRobot's current writer and
-encoding parameters. RGB becomes an aspect-ratio-preserving square (512 by default);
-exact rounded scale/padding is recorded in `meta/camera_geometry.parquet`. Source IDs
-and selected frame indices remain available. Native FPS is kept unless a lower FPS
-is explicitly selected; upsampling never invents actions. Cameras keep their source
-names; semantic view mapping and action alignment are later processing stages.
-
-Validated parts are assembled in source-ID order without concatenating/re-encoding
-videos. `meta/processing.json` records the input hash, recipe and parameters. The final
-directory is published only after ordinary LeRobot loading succeeds; existing outputs
-are not overwritten. An accepted run can be assembled into another release without
-repeating encoding. Conversion defaults to one episode per checkpoint.
-
-This initial vertical slice uses the existing image spool before encoding, temporary
-episode archives, and a serial metadata/part assembly pass. Budget extra temporary
-storage and input/output bandwidth. Account for these costs when choosing worker
-counts; adding workers does not parallelize the final assembly pass.
+Enrichment preserves source videos, FPS, camera names, actions/state and native labels.
+Modules read exact source references and write declared Parquet outputs. They do not
+implicitly resize videos, invent missing actions or change clocks. Hand, value and
+action/state enrichment can be added as explicit domain modules, not new converters.
 
 ## Language annotation
 
@@ -120,8 +102,8 @@ print(summary.accepted_path)
 ```
 
 Install `lerobot[dataset]` for Arrow and filesystem dependencies. CPU stages neither import
-Torch nor construct a VLM. Source adapters are responsible for verifying that their raw
-inputs still match the pinned manifest; arbitrary external files are not made immutable by
+Torch nor construct a VLM. Sources are responsible for verifying that dataset inputs
+still match the pinned manifest; arbitrary external files are not made immutable by
 writing a digest into `DatasetRef`.
 
 ## Reliability boundaries
@@ -144,18 +126,9 @@ interpret missing patches as deletion. `materialize_patch` writes a separate fil
 overwriting an input dataset or immutable Hub cache. The annotation recipe adds the
 family-aware language merge; publication remains a separate explicit action.
 
-## FineRobotics implementation sequence
-
-1. Contracts, local workers, checkpoints, safe dense patches and CPU quality module.
-2. Existing annotation migration, canonical language ownership and compatibility.
-3. Conversion CLI, raw source recipes, encoding and deterministic dataset assembly.
-4. Slurm CPU/GPU launchers, dependency handling and worker entry point.
-5. HF Jobs, serialized run packages, persistent outputs and guarded publication.
-6. Extension examples, reducers, metrics and failure tests.
-
 ## HF Jobs and retained releases
 
-Remote annotation keeps `--job.target=<flavor>`; conversion uses
+Remote annotation keeps `--job.target=<flavor>` and also supports
 `--runtime.backend=hf_jobs`. Resolved dataclass configuration is serialized, so
 `--config_path` works remotely. Host-local roots are never silently uploaded.
 Choose a code commit SHA and an image digest before dispatch:
@@ -169,8 +142,8 @@ lerobot-annotate --repo_id=owner/source --revision=<source_sha> \
 ```
 
 Images must supply Python 3.12+, git, ffmpeg and compatible LeRobot source/model
-dependencies. CPU conversion images do not need vLLM; annotation images need it
-only when owning a vLLM service. The launcher installs the pinned LeRobot code
+dependencies. Images need vLLM only when owning a vLLM service; non-VLM stages do
+not require it. The launcher installs the pinned LeRobot code
 without changing the image's dependency versions. HF hardware admission checks
 declared CPU/GPU/memory needs against the current hardware inventory. Actual model
 memory/scratch acceptance still requires a smoke run on the chosen image/flavor.
@@ -180,7 +153,7 @@ Use `vlm.api_key_env` and `runtime.hf_jobs.secret_env` for environment names. Ru
 storage must be remotely writable from jobs, e.g. HF buckets or an appropriately
 configured S3 store. Plan mode persists a bundle but submits no paid job.
 
-Annotation/conversion compatibility jobs run a **single-node** controller with its
+Annotation compatibility jobs run a **single-node** controller with its
 local worker pool. The controller advances the stage graph after the client
 detaches. Generic stages with remote-readable payloads can instead use bounded HF
 worker groups via `runtime.hf_jobs.cpu_image/cpu_flavor` or `gpu_image/gpu_flavor`.
@@ -190,9 +163,8 @@ local-only modules fail before paid dispatch. It does not distribute local sourc
 or a controller's localhost VLM across nodes; use Slurm/shared inputs or an explicit
 external service for that workflow. Factories must exist in the pinned code/image.
 
-Remote conversion initially supports recipes with a pinned `archive_uri`,
-`archive_sha256`, and a top-level manifest filename. Host output/cache paths are
-replaced with pod-local scratch. Retained outputs survive job termination:
+Annotation resolves the existing dataset's immutable Hub revision in the job.
+Retained enriched outputs survive job termination:
 
 ```python
 from pathlib import Path
@@ -227,7 +199,7 @@ updates; immutable release tags are never deleted/moved. Existing format tags
 are left intact; load a specific processing release with `revision=...`.
 
 The publisher refuses releases exceeding bounded single-commit file/byte limits.
-Large conversion publication through a staged branch with guarded promotion remains
+Large dataset publication through a staged branch with guarded promotion remains
 a separate integration task; it is not silently split into partially public
 uploads. Retained bucket releases remain usable without Hub publication.
 For account setup and job management, see the
@@ -265,7 +237,7 @@ video per item. Sparse access to long packed videos can therefore incur substant
 decode work. Local CUDA workers use separate spawned processes
 and preserve scheduler-assigned `CUDA_VISIBLE_DEVICES` IDs. Admission rejects requests
 exceeding visible GPUs or available CPU cores. Memory remains a declared request, not
-a measured guarantee; budget workers × encoder threads, decoding and scratch separately.
+a measured guarantee; budget model threads, decoding and scratch per worker separately.
 
 For language annotation, owned servers default to vLLM. Set `vlm.model_revision` to a
 commit SHA and pin `serve_command` through `{revision}` when overriding it. A single
@@ -309,8 +281,7 @@ Worker telemetry is Parquet under `metrics/<plan_id>/workers/`; stage summaries 
 JSON control records. Reports include physical/camera input hours (declared by sources),
 wall time, setup/read/decode/inference/write/validation/checkpoint/teardown timers,
 retries and bytes written. Uninstrumented timers are `null`, not zero; reports also
-count instrumented worker attempts. Conversion's current source read/decode is within
-the process timer, not individually timed. Timers overlap and concurrent durations accumulate;
+count instrumented worker attempts. Timers overlap and concurrent durations accumulate;
 do not sum them as a wall-time decomposition. CPU/GPU hours estimate declared worker
 resources × worker wall time, excluding controllers, external services, queues and
 billing. Unknown duration or cached/partly reused runs report no realtime multiplier.

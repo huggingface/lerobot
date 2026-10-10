@@ -119,6 +119,7 @@ def test_vlm_clients_share_one_limit(coordinator, monkeypatch):
     server, url = coordinator
     active, maximum = 0, 0
     lock = threading.Lock()
+    overlap = threading.Barrier(2)
 
     class Client:
         def __init__(self, **kwargs):
@@ -130,10 +131,14 @@ def test_vlm_clients_share_one_limit(coordinator, monkeypatch):
             with lock:
                 active += 1
                 maximum = max(maximum, active)
-            time.sleep(0.02)
-            with lock:
-                active -= 1
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))])
+            try:
+                overlap.wait(timeout=10)
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))]
+                )
+            finally:
+                with lock:
+                    active -= 1
 
         def close(self):
             pass

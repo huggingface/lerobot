@@ -18,7 +18,7 @@ LINEAGE = "meta/processing_release.json"
 
 
 def publish_annotation(root, cfg, *, changed_paths):
-    """Publish after validation. Large conversion releases need a staging workflow.
+    """Publish after validation. Large releases need a staging workflow.
 
     An existing processed repo requires an expected parent and matching remote
     lineage. A new target gets a complete dataset; updates upload only supplied
