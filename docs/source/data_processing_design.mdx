@@ -282,26 +282,13 @@ validation records. It does not generate demonstrations or prove semantic alignm
 Weak semantic pairs never receive direct action loss; strong pair supervision needs
 explicit alignment evidence.
 
-## Measurement and release gates
+## Validation and release
 
-Record total wall time separately from stage timers, queue time, environment/model
-startup and teardown. Report physical video hours and camera-stream hours separately.
-Missing decode/inference instrumentation remains null. Cached runs are resume timing,
-not processing throughput. Requested worker core/GPU-hours are not billed hours and
-exclude controller and model-service allocations.
-
-The live acceptance harness is `benchmarks/acceptance_processing.py`. It uses tiny
-controlled clips for exact invariants and a pinned real pick-and-place source for
-annotation inspection. Compare worker counts within the same environment; codec
-outputs need not be byte-identical across operating systems or encoder versions.
-Compare CPU/CUDA embeddings numerically rather than asserting bitwise equality.
-
-Before marking acceptance ready, require actual laptop, Slurm CPU/H100 and personal
-HF Jobs executions; native-value/video integrity; real VLM annotations; checked
-retention/restoration; checkpoint resume/failure coverage; and an inspectable sample.
-Separate structural annotation validation from human judgments about label quality.
-Small smoke runs do not establish the FineRobotics goal of 500–1,000× realtime on
-32 H100s, nor full-corpus annotation accuracy. Those need representative large runs.
+Validate native action/state values and source-clock references, ordinary dataset
+loading, retained-release restoration and interrupted-run recovery before publishing.
+Structural annotation validation does not establish label accuracy; inspect a sample
+with human reviewers as well. Codec outputs can differ across operating systems or
+encoder versions, and GPU/model outputs need numerical rather than bitwise checks.
 
 For company contributions, provide a pinned source recipe, licence/attribution,
 native action/state conventions, camera/clock documentation and a small acceptance
