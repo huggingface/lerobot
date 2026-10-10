@@ -10,8 +10,7 @@ from pathlib import Path
 
 import pyarrow as pa
 
-from ..artifacts import file_checksum
-from ..sources.acquisition import acquire_file
+from ..artifacts import acquire_file, file_checksum
 from ..types import ItemResult, ModuleSpec, Outcome, Resources
 
 

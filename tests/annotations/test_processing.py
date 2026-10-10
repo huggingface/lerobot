@@ -52,6 +52,30 @@ def config():
     return cfg
 
 
+@pytest.mark.parametrize("version", ["v2.1", "v4.0", None, 3])
+@pytest.mark.parametrize("mode", ["plan", "run"])
+def test_runtime_rejects_non_v3_before_planning_or_inference(single_episode_root, version, mode):
+    import json
+
+    root = single_episode_root
+    info_path = root / "meta/info.json"
+    info = json.loads(info_path.read_text())
+    if version is None:
+        info.pop("codebase_version")
+    else:
+        info["codebase_version"] = version
+    info_path.write_text(json.dumps(info))
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    cfg = config()
+    cfg.runtime.mode = mode
+    CLIENTS.clear()
+    with pytest.raises(ValueError, match="LeRobot v3"):
+        run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert not CLIENTS
+    assert not list(root.rglob("plan.json"))
+    assert {path: path.read_bytes() for path in root.rglob("*") if path.is_file()} == before
+
+
 def test_runtime_preserves_source_labels_and_resumes(single_episode_root):
     root = single_episode_root
     path = root / "data/chunk-000/file-000.parquet"

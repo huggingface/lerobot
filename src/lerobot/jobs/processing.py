@@ -192,7 +192,7 @@ def run_hf_stage(store, plan, runtime):
     """A controller waits for bounded groups, then verifies actual durable outputs.
 
     Payloads/factories must address remote-readable inputs. Local source paths are
-    not automatically uploaded. Annotation/conversion compatibility jobs instead
+    not automatically uploaded. Annotation compatibility jobs instead
     use a single-node controller and its local persistent worker pool.
     """
     require_persistent_remote(store)
@@ -246,51 +246,6 @@ def run_hf_stage(store, plan, runtime):
         for job in jobs:
             follow_processing_job(job)
     return finalize_stage(store, plan)
-
-
-def submit_convert_to_hf(cfg):
-    """Single-node CPU conversion from a pinned remotely-acquirable source archive.
-
-    Source factories must already be in the pinned code/image. This initial
-    launcher deliberately rejects local-only sources instead of uploading them.
-    """
-    if not cfg.runtime.run_uri:
-        raise ValueError("Remote conversion requires persistent runtime.run_uri")
-    store = ArtifactStore(cfg.runtime.run_uri)
-    require_persistent_remote(store)
-    if (
-        not cfg.source.get("archive_uri")
-        or not cfg.source.get("archive_sha256")
-        or not cfg.source.get("manifest")
-    ):
-        raise ValueError("Remote conversion requires a pinned archive_uri/archive_sha256 and manifest recipe")
-    raw = ArtifactStore(cfg.source["archive_uri"])
-    require_persistent_remote(raw)
-    remote = copy.deepcopy(cfg)
-    identifier = fingerprint({"factory": cfg.source_factory, "source": cfg.source})
-    remote.source["manifest"] = f"inputs/{identifier}/raw/{Path(cfg.source['manifest']).name}"
-    remote.output = Path(f"outputs/{fingerprint(draccus.encode(cfg))}/converted")
-    remote.runtime.backend = "local"
-    jobs = cfg.runtime.hf_jobs
-    key, digest = write_bundle(store, "convert", draccus.encode(remote), jobs.code_revision)
-    if cfg.runtime.mode == "plan":
-        return key
-    job = dispatch_bundle(
-        store,
-        key,
-        digest,
-        image=jobs.cpu_image,
-        flavor=jobs.cpu_flavor,
-        code_revision=jobs.code_revision,
-        timeout=jobs.timeout,
-        code_repository=jobs.code_repository,
-        namespace=jobs.namespace,
-        bootstrap_packages=jobs.bootstrap_packages,
-        secret_env=jobs.secret_env,
-        resources=Resources(cpus=cfg.runtime.workers * cfg.encoder_threads),
-    )
-    follow_processing_job(job, detach=jobs.detach)
-    return job
 
 
 def retain_release(store, root: Path, *, source=None, config=None):
@@ -403,30 +358,18 @@ def execute_bundle(store, key, digest):
             store.uri, plan.plan_id, config["shards"], config["batch_size"], config["max_retries"]
         )
         return None
-    if action == "annotate":
-        from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
-        from lerobot.scripts.lerobot_annotate import _resolve_root, _run_annotation
-
-        cfg = draccus.decode(AnnotationPipelineConfig, config)
-        root = _resolve_root(cfg)
-        summary = _run_annotation(cfg, root)
-        source = {"repo_id": cfg.repo_id, "revision": cfg.revision}
-    elif action == "convert":
-        from lerobot.data_processing.conversion import ConvertConfig, convert_dataset
-
-        cfg = draccus.decode(ConvertConfig, config)
-        from lerobot.utils.constants import HF_LEROBOT_HOME
-
-        scratch = HF_LEROBOT_HOME / "processing"
-        cfg.source["manifest"] = str(scratch / cfg.source["manifest"])
-        cfg.output = scratch / cfg.output
-        convert_dataset(cfg)
-        root, source = cfg.output, cfg.source
-    else:
+    if action != "annotate":
         raise ValueError(f"Unknown processing bundle action: {action}")
+    from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
+    from lerobot.scripts.lerobot_annotate import _resolve_root, _run_annotation
+
+    cfg = draccus.decode(AnnotationPipelineConfig, config)
+    root = _resolve_root(cfg)
+    summary = _run_annotation(cfg, root)
+    source = {"repo_id": cfg.repo_id, "revision": cfg.revision}
     release = retain_release(store, root, source=source, config=config)
     print(f"Persistent release: {store.uri}/{release}")
-    if action == "annotate" and cfg.push_to_hub and cfg.runtime.mode != "plan":
+    if cfg.push_to_hub and cfg.runtime.mode != "plan":
         from lerobot.scripts.lerobot_annotate import _changed_paths, _push_to_hub
 
         _push_to_hub(root, cfg, changed_paths=_changed_paths(root, summary))

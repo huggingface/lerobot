@@ -1,11 +1,13 @@
-# FineRobotics processing runtime: design
+# FineRobotics annotation and enrichment: design
 
 ## Executive summary
 
-Use one processing engine underneath `lerobot-convert` and `lerobot-annotate`.
-Keep the dataset recipe and scientific outputs independent of where work runs:
+Use one processing engine beneath `lerobot-annotate` and non-VLM enrichment modules.
+Inputs are existing LeRobot v3 datasets; raw conversion, format upgrades, resizing
+and re-encoding stay in standalone preparation scripts. Keep enrichment recipes and
+scientific outputs independent of where work runs:
 one laptop process, persistent local workers, Slurm CPU/GPU arrays, or HF Jobs.
-Dataset conversion, language annotation and model-based extensions share planning,
+Language annotation, quality checks and model-based extensions share planning,
 checkpoints, validation and metrics. They do not share a mandatory VLM dependency.
 
 The output is an ordinary LeRobot v3 dataset. Original datasets stay with their
@@ -15,7 +17,7 @@ files without copying its videos into another annotation-only dataset. Publicati
 is an explicit step, not a side effect of processing.
 
 ```text
-Source recipe ── metadata discovery ── sealed Parquet work plan
+LeRobot v3 ── episode/reference discovery ── sealed Parquet work plan
                                           │
                          ┌────────────────┼─────────────────┐
                          │                │                 │
@@ -30,57 +32,49 @@ Source recipe ── metadata discovery ── sealed Parquet work plan
 ```
 
 This is an experimental, working vertical slice, not a claim that all FineRobotics
-sources or augmentation models are already implemented. The initial source recipes
-cover NPY/video archives and existing v3 LeRobot data. Hand estimation, value models,
+augmentation models are already implemented. Unsupported dataset versions fail before
+planning or inference. Hand estimation, value models,
 camera odometry and generation of human/robot demonstrations need their own modules.
 
 ## The interfaces
 
-| Component     | Responsibility                                                               | Must not do                                        |
-| ------------- | ---------------------------------------------------------------------------- | -------------------------------------------------- |
-| Source recipe | Acquire pinned input, safely unpack, discover episodes, read native frames   | Invent missing actions or silently change clocks   |
-| Planner       | Seal bounded work records and stable identities                              | Decode all videos or initialize models             |
-| Module        | Declare scope, version, resources and Arrow schemas; process bounded batches | Start a service per item or overwrite source files |
-| Worker        | Initialize once, validate outputs, commit checkpoints                        | Treat an incomplete upload as success              |
-| Backend       | Allocate and dispatch the same worker contract                               | Change the scientific meaning of the recipe        |
-| Finalizer     | Require complete coverage; publish a checked index                           | Hide failures by dropping episodes                 |
-| Sink          | Materialize declared columns or a complete converted release                 | Implicitly publish or erase original labels        |
+| Component      | Responsibility                                                               | Must not do                                        |
+| -------------- | ---------------------------------------------------------------------------- | -------------------------------------------------- |
+| Dataset source | Discover pinned v3 episodes, camera references and native clocks             | Convert raw formats or silently change clocks      |
+| Planner        | Seal bounded work records and stable identities                              | Decode all videos or initialize models             |
+| Module         | Declare scope, version, resources and Arrow schemas; process bounded batches | Start a service per item or overwrite source files |
+| Worker         | Initialize once, validate outputs, commit checkpoints                        | Treat an incomplete upload as success              |
+| Backend        | Allocate and dispatch the same worker contract                               | Change the scientific meaning of the recipe        |
+| Finalizer      | Require complete coverage; publish a checked index                           | Hide failures by dropping episodes                 |
+| Sink           | Materialize declared enrichment columns and retain a checked release         | Implicitly publish or erase original labels        |
 
 Factories are trusted Python code, not an untrusted plugin sandbox. Exported PyTorch
 models additionally require an explicit trust assertion and a verified checksum.
 Code commits, source/model revisions and image digests must be pinned for acceptance.
 
-### A new source in one file
+### Existing datasets and new enrichment stages
 
-Implement acquisition/unpacking, metadata discovery and native frame reading in a
-source recipe. The shared conversion pipeline handles resizing, encoding, isolated
-episode output, validation, deterministic assembly and optional publication.
+Prepare inputs with the existing dataset-specific porting/format-upgrade scripts.
+Annotation does not standardize resolution or encoding. It preserves native videos,
+FPS, camera names, actions/state and existing language/subtask labels.
 
 ```python
 from pathlib import Path
-from lerobot.data_processing.conversion import ConvertConfig, convert_dataset
+from lerobot.annotations.processing import run_annotation_pipeline
+from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
 
-cfg = ConvertConfig(
-    source_factory="lerobot.data_processing.sources.lerobot:LeRobotSource",
-    source={"root": "/data/original", "repo_id": "owner/source", "episode_indices": [0, 1, 2]},
-    output=Path("/data/processed"),
-    size=512,
-)
+cfg = AnnotationPipelineConfig()
+cfg.runtime.run_uri = "/data/runs/enrichment"
 cfg.runtime.workers = 2
-convert_dataset(cfg)
+cfg.vlm.auto_serve = False
+cfg.vlm.api_base = "http://model-service.internal:8000/v1"
+run_annotation_pipeline(cfg, Path("/data/lerobot-v3"))
 ```
 
-Preserve native action/state values and existing language/subtask labels. Keep
-native FPS unless explicitly requesting a lower rate. Letterbox RGB to 512×512,
-record its exact spatial transform and use current LeRobot encoding parameters
-with MP4 faststart. Reject unsupported depth, ambiguous asynchronous clocks and
-view-dependent labels that need reprojection. Do action alignment and semantic
-camera naming in explicit later stages.
-
-Conversion currently spools images, writes isolated episode archives and assembles
-metadata serially. This trades simplicity and correctness for temporary storage
-and assembly cost. Measure those costs before replacing the writer or claiming
-thousand-worker scaling.
+An enrichment module declares resources, version and Arrow schemas, reads bounded
+episode/window references and writes checked outputs. The runtime owns dispatch,
+checkpointing and validation; the module owns model and label semantics. New hand,
+value or action/state modules can reuse these contracts without requiring a VLM.
 
 ## Execution and recovery
 
@@ -94,7 +88,7 @@ Each worker writes to a unique attempt directory. Files are closed and hashed,
 then a checkpoint manifest is written last. Resuming verifies artifacts and reuses
 valid items; corrupt or incomplete attempts are ignored and recomputed. Finalization
 requires every planned item to have a validated outcome. Rejections and masks carry
-reasons; conversion does not silently discard them.
+reasons; enrichment does not silently discard source records.
 
 One controller owns a plan. Local controllers use a file lock; remote deployments
 need one owner rather than relying on a nonexistent distributed lock service.
@@ -122,9 +116,9 @@ on all three. The existing language recipe can run plan and VQA concurrently whi
 interjections still wait for plan, and materialization waits for every required stage.
 
 ```text
-                           ┌─ hands ──────┐
-convert → quality gate ────┼─ subtasks ───┼─ validate → materialize
-                           └─ value ──────┘
+                         ┌─ hands ──────┐
+v3 input → quality gate ──┼─ subtasks ───┼─ validate → materialize
+                         └─ value ──────┘
 ```
 
 The controller reserves `workers × Resources` per admitted stage across CPU, GPU
@@ -136,6 +130,8 @@ workers, not an external model service or small scheduler finalizers. Slurm/HF J
 retain their own per-stage allocation limits. One controller still owns a run.
 
 ```python
+from lerobot.data_processing.types import Resources
+
 cfg.runtime.max_parallel_stages = 3
 cfg.runtime.resource_budget = Resources(cpus=6, gpus=0, memory_gb=24)
 cfg.runtime.workers = 2
@@ -248,10 +244,10 @@ this is not an automatic environment resolver. Prefer baking production environm
 into a pinned image. The standard GPU training image does not include every annotation
 extra; verify the OpenAI client as well as the separately owned vLLM service.
 
-Conversion and annotation compatibility bundles run a single-node controller with
+Annotation compatibility bundles run a single-node controller with
 local workers. Configuration is serialized, not reconstructed by replaying argv.
-Host-local data is not silently uploaded. Conversion requires a remotely acquirable,
-checksum-pinned archive; annotation resolves the immutable source Hub revision.
+Host-local data is not silently uploaded; annotation resolves the immutable source
+Hub revision.
 
 Generic remote stages use bounded worker groups only when a module explicitly
 declares remote-readable inputs. Do not mark a module compatible merely because
@@ -290,7 +286,7 @@ Structural annotation validation does not establish label accuracy; inspect a sa
 with human reviewers as well. Codec outputs can differ across operating systems or
 encoder versions, and GPU/model outputs need numerical rather than bitwise checks.
 
-For company contributions, provide a pinned source recipe, licence/attribution,
+For company contributions, provide a pinned v3 dataset, licence/attribution,
 native action/state conventions, camera/clock documentation and a small acceptance
 sample. Then reuse the same processing recipe and backend controls to produce a
 versioned, ordinary LeRobot dataset. Large staged Hub publication remains follow-up
