@@ -86,6 +86,21 @@ def patch_setPacketTimeout(self, packet_length):  # noqa: N802
     self.packet_timeout = (self.tx_time_per_byte * packet_length) + (self.tx_time_per_byte * 3.0) + 50
 
 
+def patch_clearPort(self):  # noqa: N802
+    """
+    HACK: This patches the PortHandler behavior to discard the bytes already received before each instruction.
+
+    The SDK calls `clearPort()` before it writes each instruction packet, so that a status packet still waiting
+    in the input buffer (for example the late reply of a read that timed out and was retried) is not taken for
+    the reply to the new instruction. But the SDK `clearPort()` only calls `ser.flush()`, which waits for the
+    output to be written (`tcdrain`) and leaves the input buffer untouched. Status packets carry no register
+    address, so any buffered packet with the right motor id and a valid checksum was accepted as the answer,
+    whatever register it came from.
+    """
+    self.ser.flush()
+    self.ser.reset_input_buffer()
+
+
 class FeetechMotorsBus(SerialMotorsBus):
     """
     The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on the
@@ -117,6 +132,9 @@ class FeetechMotorsBus(SerialMotorsBus):
         self.port_handler = scs.PortHandler(self.port)
         # HACK: monkeypatch
         self.port_handler.setPacketTimeout = patch_setPacketTimeout.__get__(  # type: ignore[method-assign]
+            self.port_handler, scs.PortHandler
+        )
+        self.port_handler.clearPort = patch_clearPort.__get__(  # type: ignore[method-assign]
             self.port_handler, scs.PortHandler
         )
         self.packet_handler = scs.PacketHandler(protocol_version)

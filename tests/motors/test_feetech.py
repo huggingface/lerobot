@@ -16,6 +16,7 @@
 
 import re
 import sys
+import time
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
@@ -322,6 +323,90 @@ def test__sync_read_comm(raise_on_error, mock_motors, dummy_motors):
         assert read_comm == scs.COMM_RX_TIMEOUT
 
     assert mock_motors.stubs[stub].called
+
+
+def _leave_reply_in_input_buffer(bus: FeetechMotorsBus, addr: int, length: int, ids: list[int]) -> None:
+    """Send a sync read request and never read its reply.
+
+    A host that gave up waiting (timeout) does the same. The motors still answer, and the reply waits in the
+    input buffer of the serial port until the next transaction.
+    """
+    bus._setup_sync_reader(ids, addr, length)
+    assert bus.sync_reader.txPacket() == scs.COMM_SUCCESS
+    bus.port_handler.is_using = False  # a timed out receive releases the port in the same way
+    reply_bytes = len(ids) * (6 + length)  # header(2) id length error params checksum, for each motor
+    deadline = time.perf_counter() + 2.0
+    while bus.port_handler.getBytesAvailable() < reply_bytes:
+        assert time.perf_counter() < deadline, "the mock motors did not answer"
+        time.sleep(0.001)
+
+
+def test_clear_port_discards_pending_input(mock_motors, dummy_motors):
+    addr, length = STS_SMS_SERIES_CONTROL_TABLE["Present_Load"]
+    ids_values = {1: 30, 2: 0}
+    mock_motors.build_sync_read_stub(addr, length, ids_values)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+    _leave_reply_in_input_buffer(bus, addr, length, list(ids_values))
+    assert bus.port_handler.getBytesAvailable() > 0
+
+    bus.port_handler.clearPort()
+
+    assert bus.port_handler.getBytesAvailable() == 0
+
+
+def test__sync_read_ignores_reply_left_in_input_buffer(mock_motors, dummy_motors):
+    # Same length, same ids, different register: a Present_Load reply that arrives after its reader gave up
+    # must not be taken for the answer to a later Present_Position read.
+    load_addr, load_length = STS_SMS_SERIES_CONTROL_TABLE["Present_Load"]
+    pos_addr, pos_length = STS_SMS_SERIES_CONTROL_TABLE["Present_Position"]
+    loads = {1: 30, 2: 0, 3: 1068}
+    positions = {1: 2200, 2: 1296, 3: 2151}
+    mock_motors.build_sync_read_stub(load_addr, load_length, loads)
+    mock_motors.build_sync_read_stub(pos_addr, pos_length, positions)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+    _leave_reply_in_input_buffer(bus, load_addr, load_length, list(loads))
+
+    read_positions, _ = bus._sync_read(pos_addr, pos_length, list(positions))
+    read_loads, _ = bus._sync_read(load_addr, load_length, list(loads))
+
+    assert read_positions == positions
+    # The stream stays aligned: no read answers with the reply of the previous one.
+    assert read_loads == loads
+
+
+def test__sync_read_ignores_older_reply_of_same_register(mock_motors, dummy_motors):
+    # The reply that a retried read leaves behind is a valid reply of the same register. It must not be taken
+    # for the answer to the next read either: its values are older.
+    addr, length = STS_SMS_SERIES_CONTROL_TABLE["Present_Position"]
+    older = [2200, 1296, 2151]
+    newer = [2210, 1301, 2160]
+    ids = [1, 2, 3]
+    mock_motors.build_sequential_sync_read_stub(
+        addr, length, {id_: [o, n] for id_, o, n in zip(ids, older, newer, strict=True)}
+    )
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+    _leave_reply_in_input_buffer(bus, addr, length, ids)  # the first reply of the stub: the older values
+
+    read_values, _ = bus._sync_read(addr, length, ids)
+
+    assert list(read_values.values()) == newer
+
+
+def test__read_ignores_reply_left_in_input_buffer(mock_motors, dummy_motors):
+    load_addr, load_length = STS_SMS_SERIES_CONTROL_TABLE["Present_Load"]
+    pos_addr, pos_length = STS_SMS_SERIES_CONTROL_TABLE["Present_Position"]
+    mock_motors.build_sync_read_stub(load_addr, load_length, {1: 30})
+    mock_motors.build_read_stub(pos_addr, pos_length, 1, 2200)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+    _leave_reply_in_input_buffer(bus, load_addr, load_length, [1])
+
+    read_value, _, _ = bus._read(pos_addr, pos_length, 1)
+
+    assert read_value == 2200
 
 
 @pytest.mark.parametrize(
