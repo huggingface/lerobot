@@ -274,6 +274,25 @@ def test__write_comm(raise_on_error, mock_motors, dummy_motors):
     assert mock_motors.stubs[stub].called
 
 
+def test_read_write_acceleration_multiplier_by_name(mock_motors, dummy_motors):
+    """Register 86 can be read and written by its name `Acceleration_Multiplier`."""
+    motor_name, motor = next(iter(dummy_motors.items()))
+    read_stub = mock_motors.build_read_stub(86, 1, motor.id, 7)
+    write_stub = mock_motors.build_write_stub(86, 1, motor.id, 9)
+    bus = FeetechMotorsBus(
+        port=mock_motors.port,
+        motors=dummy_motors,
+    )
+    bus.connect(handshake=False)
+
+    read_value = bus.read("Acceleration_Multiplier", motor_name)
+    bus.write("Acceleration_Multiplier", motor_name, 9)
+
+    assert read_value == 7
+    assert mock_motors.stubs[read_stub].called
+    assert mock_motors.stubs[write_stub].wait_called()
+
+
 @pytest.mark.parametrize(
     "addr, length, ids_values",
     [
