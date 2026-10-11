@@ -395,8 +395,10 @@ def check_version_compatibility(
         enforce_breaking_major (bool): If True, raise an error on major version mismatch.
 
     Raises:
-        BackwardCompatibilityError: If the dataset version is from a newer, incompatible
-            major version of the codebase.
+        BackwardCompatibilityError: If the dataset version is from an older, incompatible
+            major version of the codebase (only when ``enforce_breaking_major`` is True).
+        ForwardCompatibilityError: If the dataset version is from a newer major version
+            of the codebase (only when ``enforce_breaking_major`` is True).
     """
     v_check = (
         packaging.version.parse(version_to_check)
@@ -408,9 +410,13 @@ def check_version_compatibility(
         if not isinstance(current_version, packaging.version.Version)
         else current_version
     )
-    if v_check.major < v_current.major and enforce_breaking_major:
-        raise BackwardCompatibilityError(repo_id, v_check)
-    elif v_check.minor < v_current.minor:
+    if v_check.major != v_current.major:
+        if enforce_breaking_major:
+            if v_check.major > v_current.major:
+                raise ForwardCompatibilityError(repo_id, v_check)
+            else:
+                raise BackwardCompatibilityError(repo_id, v_check)
+    elif v_check.minor > v_current.minor:
         logger.warning(FUTURE_MESSAGE.format(repo_id=repo_id, version=v_check))
 
 

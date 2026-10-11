@@ -29,6 +29,9 @@ from huggingface_hub import DatasetCard
 import lerobot.datasets.utils as dataset_utils
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.utils import (
+    BackwardCompatibilityError,
+    ForwardCompatibilityError,
+    check_version_compatibility,
     create_lerobot_dataset_card,
     get_repo_versions,
     get_safe_version,
@@ -241,3 +244,43 @@ def test_shift_timestamps_and_task_name():
     assert dataset_utils.shift_timestamps([0.0, 0.5], 10.0) == [10.0, 10.5]
     tasks = pd.DataFrame({"task_index": [0, 1]}, index=["pick", "place"])
     assert dataset_utils.task_name(tasks, torch.tensor(1)) == "place"
+
+
+def test_check_version_compatibility_same_version_is_silent(caplog):
+    with caplog.at_level("WARNING", logger="lerobot.datasets.utils"):
+        check_version_compatibility("user/ds", "v3.0", "v3.0")
+    assert caplog.records == []
+
+
+def test_check_version_compatibility_older_minor_dataset_is_silent(caplog):
+    """Older dataset minors must not suggest updating lerobot (see #4851)."""
+    with caplog.at_level("WARNING", logger="lerobot.datasets.utils"):
+        check_version_compatibility("user/ds", "v3.0", "v3.1")
+    assert caplog.records == []
+
+
+def test_check_version_compatibility_newer_minor_dataset_warns(caplog):
+    with caplog.at_level("WARNING", logger="lerobot.datasets.utils"):
+        check_version_compatibility("user/ds", "v3.1", "v3.0")
+    assert len(caplog.records) == 1
+    assert "please update your current version of lerobot" in caplog.records[0].message
+
+
+def test_check_version_compatibility_newer_major_dataset_raises():
+    with pytest.raises(ForwardCompatibilityError):
+        check_version_compatibility("user/ds", "v4.0", "v3.0")
+
+
+def test_check_version_compatibility_newer_major_no_raise_when_not_enforced(caplog):
+    with caplog.at_level("WARNING", logger="lerobot.datasets.utils"):
+        check_version_compatibility("user/ds", "v4.1", "v3.0", enforce_breaking_major=False)
+    assert caplog.records == []
+
+
+def test_check_version_compatibility_older_major_dataset_raises():
+    with pytest.raises(BackwardCompatibilityError):
+        check_version_compatibility("user/ds", "v2.1", "v3.0")
+
+
+def test_check_version_compatibility_older_major_no_raise_when_not_enforced():
+    check_version_compatibility("user/ds", "v2.1", "v3.0", enforce_breaking_major=False)
