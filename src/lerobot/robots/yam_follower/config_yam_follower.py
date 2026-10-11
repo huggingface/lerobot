@@ -179,7 +179,80 @@ class YamFollowerConfig:
 @RobotConfig.register_subclass("yam_follower")
 @dataclass
 class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
-    """Configuration for a single YAM follower."""
+    """Configuration for a single YAM follower.
+
+    Args:
+        port (`str`):
+            Linux SocketCAN interface used by the arm, for example `can0`.
+        expected_adapter_serial (`str | None`, *optional*):
+            USB adapter serial used to detect swapped CAN interfaces.
+        gripper_closed_deg (`float | None`, *optional*):
+            Raw gripper motor angle at the closed stop, normally loaded from calibration.
+        gripper_open_deg (`float | None`, *optional*):
+            Raw gripper motor angle at the open stop, normally loaded from calibration.
+        joint_signs (`list`, *optional*):
+            Direction multiplier, `-1` or `1`, for each arm joint.
+        joint_offsets_deg (`list`, *optional*):
+            Joint-frame offset in degrees for each arm joint.
+        initial_position_deg (`list[float] | None`, *optional*):
+            Expected supported startup pose in degrees; `None` accepts any valid pose.
+        initial_tolerance_deg (`float`, *optional*, defaults to 11.5):
+            Allowed difference from `initial_position_deg` before torque is enabled.
+        initial_gripper_position (`float | None`, *optional*):
+            Expected startup opening from 0 to 100; `None` skips this check.
+        initial_gripper_tolerance (`float`, *optional*, defaults to 10.0):
+            Allowed difference from `initial_gripper_position`.
+        kp (`list`, *optional*):
+            MIT position gains for the six arm joints.
+        kd (`list`, *optional*):
+            MIT damping gains for the six arm joints.
+        gripper_kp (`float`, *optional*, defaults to 20.0):
+            MIT position gain for the gripper.
+        gripper_kd (`float`, *optional*, defaults to 0.5):
+            MIT damping gain for the gripper.
+        gripper_force_limit_n (`float`, *optional*, defaults to 50.0):
+            Maximum finger force after the gripper is blocked.
+        gripper_stroke_m (`float`, *optional*, defaults to 0.096):
+            Finger travel used to convert motor torque to finger force.
+        max_joint_speed_deg_s (`float`, *optional*, defaults to 17.0):
+            Maximum commanded arm-joint speed.
+        max_gripper_speed_s (`float`, *optional*, defaults to 12.0):
+            Maximum commanded gripper travel per second, in normalized strokes.
+        max_tracking_error_deg (`float`, *optional*, defaults to 8.5):
+            Maximum difference between the measured and commanded joint positions.
+        gravity_compensation (`bool`, *optional*, defaults to `True`):
+            Whether to add gravity feed-forward from the bundled YAM model.
+        gravity_factors (`list`, *optional*):
+            Per-joint multipliers applied to gravity feed-forward.
+        idle_mode (`str`, *optional*, defaults to `"hold"`):
+            Behavior before the first action and after the command timeout: `hold` or `float`.
+        float_kd (`list`, *optional*):
+            Per-joint damping gains used in float mode.
+        friction_compensation (`bool`, *optional*, defaults to `False`):
+            Whether float mode compensates estimated Coulomb friction.
+        coulomb_friction (`list`, *optional*):
+            Per-joint Coulomb friction estimates used in float mode.
+        cameras (`dict`, *optional*):
+            Cameras attached to this arm.
+        read_only (`bool`, *optional*, defaults to `True`):
+            Whether to read feedback without enabling or commanding torque.
+        require_motor_can_timeout (`bool`, *optional*, defaults to `True`):
+            Whether powered control requires a firmware CAN timeout of at most 400 ms.
+        use_degrees (`bool`, *optional*, defaults to `True`):
+            Whether public joints use degrees and the gripper uses 0 to 100 instead of radians and 0 to 1.
+        use_velocity_and_torque (`bool`, *optional*, defaults to `False`):
+            Whether observations include motor velocity and torque.
+        control_frequency (`float`, *optional*, defaults to 100.0):
+            Background servo-loop frequency in hertz.
+        feedback_timeout_s (`float`, *optional*, defaults to 0.2):
+            Maximum time to wait for fresh feedback.
+        command_timeout_s (`float`, *optional*, defaults to 1.0):
+            Time without actions before entering the configured idle mode.
+        id (`str | None`, *optional*):
+            Robot identifier used to name the saved gripper calibration.
+        calibration_dir (`pathlib.Path | None`, *optional*):
+            Directory containing the gripper calibration file.
+    """
 
     def __post_init__(self) -> None:
         RobotConfig.__post_init__(self)
