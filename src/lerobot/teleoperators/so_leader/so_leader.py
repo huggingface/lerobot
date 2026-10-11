@@ -64,18 +64,19 @@ class SOLeader(Teleoperator):
         self.bus = FeetechMotorsBus(
             port=self.config.port,
             motors={
-                # 假设这是你最底部的关节，根据你的实际顺序分配 1-6 的 ID
-                "base": Motor(1, "sts3215", norm_mode_body), 
+                # 官方原有的底座关节
+                "shoulder_pan": Motor(1, "sts3215", norm_mode_body), 
                 
-                # ▼▼▼ 这是你新增的带减速箱的关节 (名字可以根据实际改) ▼▼▼
+                # ▼▼▼ 这是你单独新增的 1:147 减速比关节 ▼▼▼
                 "heavy_joint": Motor(2, "sts3215", norm_mode_body), 
                 
+                # 官方原有的其余关节（名字保持原样不变）
                 "shoulder_lift": Motor(3, "sts3215", norm_mode_body),
                 "elbow_flex": Motor(4, "sts3215", norm_mode_body),
                 "wrist_flex": Motor(5, "sts3215", norm_mode_body),
                 "wrist_roll": Motor(6, "sts3215", norm_mode_body),
                 
-                # 你的夹爪，固定 ID 为 7
+                # 你的夹爪，指定 ID 为 7
                 "gripper": Motor(7, "sts3215", MotorNormMode.RANGE_0_100),
             },
             calibration=self.calibration,
