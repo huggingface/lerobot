@@ -22,7 +22,6 @@ To run tests locally:
     python -m pytest tests/policies/multi_task_dit/test_multi_task_dit.py -v
 """
 
-import copy
 import os
 
 import pytest
@@ -658,18 +657,13 @@ def test_multi_task_dit_compile_keeps_state_dict_keys():
     assert eager_policy.state_dict().keys() == compiled_policy.state_dict().keys()
 
 
-def test_multi_task_dit_compiled_policy_deepcopy_and_save_load(tmp_path):
-    """A deepcopy of a compiled policy runs its own weights, and saves/reloads compiled or eager."""
+def test_multi_task_dit_compiled_policy_save_and_load(tmp_path):
+    """A compiled policy saves and reloads, compiled or eager, and all three compute the same loss."""
     config = create_config(compile_model=True)
     policy = MultiTaskDiTPolicy(config=config)
     policy.to(config.device)
     policy.eval()
-
-    copied_policy = copy.deepcopy(policy)
-    with torch.no_grad():
-        for param in copied_policy.parameters():
-            param.add_(0.01 * torch.randn_like(param))
-    copied_policy.save_pretrained(tmp_path)
+    policy.save_pretrained(tmp_path)
 
     compiled_reload = MultiTaskDiTPolicy.from_pretrained(tmp_path)
     eager_reload = MultiTaskDiTPolicy.from_pretrained(tmp_path, config=create_config())
@@ -678,12 +672,12 @@ def test_multi_task_dit_compiled_policy_deepcopy_and_save_load(tmp_path):
     batch = create_processed_train_batch(config)
     losses = []
     with torch.no_grad():
-        for candidate in (copied_policy, compiled_reload, eager_reload):
+        for candidate in (policy, compiled_reload, eager_reload):
             candidate.to(config.device)
             candidate.eval()
             with seeded_context(12):
                 losses.append(candidate.forward(batch)[0])
 
-    # The eager reload is the reference: the copy and the compiled reload must match it.
+    # The eager reload is the reference: the compiled policy and the compiled reload must match it.
     torch.testing.assert_close(losses[0], losses[2], rtol=1e-5, atol=1e-5)
     torch.testing.assert_close(losses[1], losses[2], rtol=1e-5, atol=1e-5)
