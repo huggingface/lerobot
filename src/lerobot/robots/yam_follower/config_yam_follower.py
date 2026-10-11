@@ -156,13 +156,19 @@ class YamFollowerConfig:
             for value, (lower, upper) in zip(self.initial_position_deg, JOINT_LIMITS_DEG, strict=True):
                 if not lower <= value <= upper:
                     raise ValueError("initial_position_deg is outside YAM joint limits")
-        ends = (self.gripper_closed_deg, self.gripper_open_deg)
-        if any(x is not None for x in ends):
+        closed = self.gripper_closed_deg
+        opened = self.gripper_open_deg
+        if closed is not None or opened is not None:
             motor_limit_deg = math.degrees(DM_MIT_POSITION_LIMIT_RAD)
-            if any(x is None or not math.isfinite(x) or abs(x) > motor_limit_deg for x in ends):
+            if (
+                closed is None
+                or opened is None
+                or not math.isfinite(closed)
+                or not math.isfinite(opened)
+                or abs(closed) > motor_limit_deg
+                or abs(opened) > motor_limit_deg
+            ):
                 raise ValueError("Provide both finite raw gripper endpoints within motor limits")
-            closed, opened = ends
-            assert closed is not None and opened is not None
             low, high = GRIPPER_STROKE_RANGE_DEG
             if not low <= abs(opened - closed) <= high:
                 raise ValueError(f"Gripper stroke must be between {low:.0f} and {high:.0f} raw motor degrees")

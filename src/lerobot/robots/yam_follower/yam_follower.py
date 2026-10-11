@@ -188,8 +188,10 @@ class _YamBus:
 
     def set_mit_mode(self) -> None:
         """Put every motor into MIT control mode."""
-        assert self.controller is not None
-        self.controller.disable_all()
+        controller = self.controller
+        if controller is None:
+            raise RuntimeError(f"{self.port} bus is not open")
+        controller.disable_all()
         for motor in self.motors.values():
             motor.ensure_mode(Mode.MIT)
 
@@ -201,11 +203,13 @@ class _YamBus:
 
     def enable(self, hold: np.ndarray) -> None:
         """Enable torque after sending zero-gain setpoints at the ``hold`` raw positions."""
-        assert self.controller is not None
+        controller = self.controller
+        if controller is None:
+            raise RuntimeError(f"{self.port} bus is not open")
         for name, value in zip(MOTOR_NAMES, hold, strict=True):
             self.motors[name].send_mit(float(value), 0.0, 0.0, 0.0, 0.0)
         self.enabled = True
-        self.controller.enable_all()
+        controller.enable_all()
         self._enabled_at = time.monotonic()
 
     def send_mit(self, motor: str, command: MitCommand) -> None:
@@ -265,13 +269,15 @@ class _YamBus:
         raise ValueError(f"Cannot verify USB serial for {self.port}; check the adapter connection")
 
     def _wait_for_fresh_states(self, wait: bool) -> dict[str, Any]:
-        assert self.controller is not None and self.monitor is not None
+        if self.controller is None or self.monitor is None:
+            raise RuntimeError(f"{self.port} bus is not open")
+        monitor = self.monitor
         for motor in self.motors.values():
             motor.request_feedback()
         deadline = time.monotonic() + self.feedback_timeout_s if wait else time.monotonic()
         while True:
             for _ in range(256):
-                msg = self.monitor.recv(timeout=0)
+                msg = monitor.recv(timeout=0)
                 if msg is None:
                     break
                 if (

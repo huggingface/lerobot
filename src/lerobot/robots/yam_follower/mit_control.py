@@ -427,7 +427,8 @@ class MitServo:
         max_cycle_gap = 0.0
         try:
             params = self.params
-            assert params is not None
+            if params is None:
+                raise RuntimeError(f"{self.name} servo has no calibrated arm parameters")
             while not self.stop_event.is_set():
                 started = time.monotonic()
                 max_cycle_gap = max(max_cycle_gap, started - previous)
