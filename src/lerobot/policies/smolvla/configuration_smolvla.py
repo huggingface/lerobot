@@ -14,14 +14,11 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import (
-    CosineDecayWithWarmupSchedulerConfig,
-)
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES
+
+from ..rtc.configuration_rtc import RTCConfig
 
 
 @PreTrainedConfig.register_subclass("smolvla")
@@ -55,7 +52,7 @@ class SmolVLAConfig(PreTrainedConfig):
     # the space used by the pi internal runtime which was used to train the base model.
     adapt_to_pi_aloha: bool = False
 
-    # Converts joint dimensions to deltas with respect to the current state before passing to the model.
+    # Converts joint dimensions to relative values with respect to the current state before passing to the model.
     # Gripper dimensions will remain in absolute values.
     use_delta_joint_actions_aloha: bool = False
 
@@ -85,7 +82,7 @@ class SmolVLAConfig(PreTrainedConfig):
     scheduler_decay_lr: float = 2.5e-6
 
     vlm_model_name: str = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"  # Select the VLM backbone.
-    load_vlm_weights: bool = False  # Set to True in case of training the expert from scratch. True when init from pretrained SmolVLA weights
+    load_vlm_weights: bool = False  # Set to False in case of training the expert from scratch. True when init from pretrained SmolVLA weights
 
     add_image_special_tokens: bool = False  # Whether to use special image tokens around image features.
 
@@ -106,6 +103,9 @@ class SmolVLAConfig(PreTrainedConfig):
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
 
+    compile_model: bool = False  # Whether to use torch.compile for model optimization
+    compile_mode: str = "max-autotune"  # Torch compile mode
+
     def __post_init__(self):
         super().__post_init__()
 
@@ -121,6 +121,8 @@ class SmolVLAConfig(PreTrainedConfig):
             )
 
     def validate_features(self) -> None:
+        if self.input_features is None:
+            raise ValueError("`input_features` must be resolved before `validate_features()` is called.")
         for i in range(self.empty_cameras):
             key = f"{OBS_IMAGES}.empty_camera_{i}"
             empty_camera = PolicyFeature(

@@ -21,6 +21,8 @@ from lerobot.utils.import_utils import make_device_from_device_class
 from .config import RobotConfig
 from .robot import Robot
 
+logger = logging.getLogger(__name__)
+
 
 def make_robot_from_config(config: RobotConfig) -> Robot:
     # TODO(Steven): Consider just using the make_device_from_device_class for all types
@@ -28,12 +30,16 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .koch_follower import KochFollower
 
         return KochFollower(config)
+    elif config.type == "omx_follower":
+        from .omx_follower import OmxFollower
+
+        return OmxFollower(config)
     elif config.type == "so100_follower":
-        from .so100_follower import SO100Follower
+        from .so_follower import SO100Follower
 
         return SO100Follower(config)
     elif config.type == "so101_follower":
-        from .so101_follower import SO101Follower
+        from .so_follower import SO101Follower
 
         return SO101Follower(config)
     elif config.type == "lekiwi":
@@ -48,14 +54,30 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .hope_jr import HopeJrArm
 
         return HopeJrArm(config)
-    elif config.type == "bi_so100_follower":
-        from .bi_so100_follower import BiSO100Follower
+    elif config.type == "bi_so_follower":
+        from .bi_so_follower import BiSOFollower
 
-        return BiSO100Follower(config)
+        return BiSOFollower(config)
     elif config.type == "reachy2":
         from .reachy2 import Reachy2Robot
 
         return Reachy2Robot(config)
+    elif config.type == "openarm_follower":
+        from .openarm_follower import OpenArmFollower
+
+        return OpenArmFollower(config)
+    elif config.type == "bi_openarm_follower":
+        from .bi_openarm_follower import BiOpenArmFollower
+
+        return BiOpenArmFollower(config)
+    elif config.type == "rebot_b601_follower":
+        from .rebot_b601_follower import RebotB601Follower
+
+        return RebotB601Follower(config)
+    elif config.type == "bi_rebot_b601_follower":
+        from .bi_rebot_b601_follower import BiRebotB601Follower
+
+        return BiRebotB601Follower(config)
     elif config.type == "widow_ai_follower":
         from .widow_ai_follower import WidowAIFollower
 
@@ -102,7 +124,7 @@ def ensure_safe_goal_position(
             }
 
     if warnings_dict:
-        logging.warning(
+        logger.warning(
             "Relative goal position magnitude had to be clamped to be safe.\n"
             f"{pformat(warnings_dict, indent=4)}"
         )

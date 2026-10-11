@@ -14,17 +14,24 @@
 
 # TODO(aliberts, Steven, Pepijn): use gRPC calls instead of zmq?
 
-import base64
 import json
 import logging
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.import_utils import _zmq_available, require_package
+
+if TYPE_CHECKING or _zmq_available:
+    import zmq
+else:
+    zmq = None
 
 from ..robot import Robot
 from .config_lekiwi import LeKiwiClientConfig
@@ -34,14 +41,20 @@ class LeKiwiClient(Robot):
     config_class = LeKiwiClientConfig
     name = "lekiwi_client"
 
-    def __init__(self, config: LeKiwiClientConfig):
-        import zmq
-
+    def __init__(self, config: LeKiwiClientConfig) -> None:
+        require_package("pyzmq", extra="lekiwi", import_name="zmq")
         self._zmq = zmq
         super().__init__(config)
         self.config = config
         self.id = config.id
         self.robot_type = config.type
+
+        depth_cameras = [name for name, cfg in config.cameras.items() if getattr(cfg, "use_depth", False)]
+        if depth_cameras:
+            raise NotImplementedError(
+                f"Depth cameras are not supported on LeKiwi (got depth-enabled cameras: {depth_cameras}). "
+                "The host/client transport only carries color frames."
+            )
 
         self.remote_ip = config.remote_ip
         self.port_zmq_cmd = config.port_zmq_cmd
@@ -52,13 +65,13 @@ class LeKiwiClient(Robot):
         self.polling_timeout_ms = config.polling_timeout_ms
         self.connect_timeout_s = config.connect_timeout_s
 
-        self.zmq_context = None
-        self.zmq_cmd_socket = None
-        self.zmq_observation_socket = None
+        self.zmq_context: zmq.Context | None = None
+        self.zmq_cmd_socket: zmq.Socket | None = None
+        self.zmq_observation_socket: zmq.Socket | None = None
 
-        self.last_frames = {}
+        self.last_frames: dict[str, np.ndarray] = {}
 
-        self.last_remote_state = {}
+        self.last_remote_state: RobotObservation = {}
 
         # Define three speed levels and a current index
         self.speed_levels = [
@@ -69,7 +82,7 @@ class LeKiwiClient(Robot):
         self.speed_index = 0  # Start at slow
 
         self._is_connected = False
-        self.logs = {}
+        self.logs: dict[str, float] = {}
 
     @cached_property
     def _state_ft(self) -> dict[str, type]:
@@ -93,7 +106,7 @@ class LeKiwiClient(Robot):
         return tuple(self._state_ft.keys())
 
     @cached_property
-    def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
+    def _cameras_ft(self) -> dict[str, tuple]:
         return {name: (cfg.height, cfg.width, 3) for name, cfg in self.config.cameras.items()}
 
     @cached_property
@@ -110,15 +123,12 @@ class LeKiwiClient(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        # Calibration lives on the host; the client has nothing to calibrate.
+        return True
 
+    @check_if_already_connected
     def connect(self) -> None:
         """Establishes ZMQ sockets with the remote mobile robot"""
-
-        if self._is_connected:
-            raise DeviceAlreadyConnectedError(
-                "LeKiwi Daemon is already connected. Do not run `robot.connect()` twice."
-            )
 
         zmq = self._zmq
         self.zmq_context = zmq.Context()
@@ -130,7 +140,9 @@ class LeKiwiClient(Robot):
         self.zmq_observation_socket = self.zmq_context.socket(zmq.PULL)
         zmq_observations_locator = f"tcp://{self.remote_ip}:{self.port_zmq_observations}"
         self.zmq_observation_socket.connect(zmq_observations_locator)
-        self.zmq_observation_socket.setsockopt(zmq.CONFLATE, 1)
+        # CONFLATE does not support multipart messages; a small receive queue plus
+        # the existing drain-to-latest loop keeps newest-only semantics.
+        self.zmq_observation_socket.setsockopt(zmq.RCVHWM, 2)
 
         poller = zmq.Poller()
         poller.register(self.zmq_observation_socket, zmq.POLLIN)
@@ -143,8 +155,11 @@ class LeKiwiClient(Robot):
     def calibrate(self) -> None:
         pass
 
-    def _poll_and_get_latest_message(self) -> str | None:
-        """Polls the ZMQ socket for a limited time and returns the latest message string."""
+    def _poll_and_get_latest_message(self) -> list[bytes] | None:
+        """Polls the ZMQ socket for a limited time and returns the latest message's frames."""
+        if self.zmq_observation_socket is None:
+            raise DeviceNotConnectedError(f"{self} observation socket is not initialized")
+
         zmq = self._zmq
         poller = zmq.Poller()
         poller.register(self.zmq_observation_socket, zmq.POLLIN)
@@ -162,7 +177,7 @@ class LeKiwiClient(Robot):
         last_msg = None
         while True:
             try:
-                msg = self.zmq_observation_socket.recv_string(zmq.NOBLOCK)
+                msg = self.zmq_observation_socket.recv_multipart(zmq.NOBLOCK)
                 last_msg = msg
             except zmq.Again:
                 break
@@ -172,52 +187,51 @@ class LeKiwiClient(Robot):
 
         return last_msg
 
-    def _parse_observation_json(self, obs_string: str) -> dict[str, Any] | None:
-        """Parses the JSON observation string."""
+    def _parse_observation(self, frames: list[bytes]) -> RobotObservation | None:
+        """Parses a multipart observation: JSON header + one raw JPEG frame per camera."""
         try:
-            return json.loads(obs_string)
-        except json.JSONDecodeError as e:
-            logging.error(f"Error decoding JSON observation: {e}")
+            header = json.loads(frames[0])
+            cam_names = header.pop("_cams")
+            observation: RobotObservation = header
+            for cam_name, jpeg in zip(cam_names, frames[1:], strict=True):
+                observation[cam_name] = jpeg
+            return observation
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logging.error(f"Error decoding observation: {e}")
             return None
 
-    def _decode_image_from_b64(self, image_b64: str) -> np.ndarray | None:
-        """Decodes a base64 encoded image string to an OpenCV image."""
-        if not image_b64:
+    def _decode_image(self, jpeg: bytes) -> np.ndarray | None:
+        """Decodes a raw JPEG buffer to an OpenCV image."""
+        if not jpeg:
             return None
-        try:
-            jpg_data = base64.b64decode(image_b64)
-            np_arr = np.frombuffer(jpg_data, dtype=np.uint8)
-            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            if frame is None:
-                logging.warning("cv2.imdecode returned None for an image.")
-            return frame
-        except (TypeError, ValueError) as e:
-            logging.error(f"Error decoding base64 image data: {e}")
-            return None
+        frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            logging.warning("cv2.imdecode returned None for an image.")
+        return frame
 
     def _remote_state_from_obs(
-        self, observation: dict[str, Any]
-    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+        self, observation: RobotObservation
+    ) -> tuple[dict[str, np.ndarray], RobotObservation]:
         """Extracts frames, and state from the parsed observation."""
 
         flat_state = {key: observation.get(key, 0.0) for key in self._state_order}
 
         state_vec = np.array([flat_state[key] for key in self._state_order], dtype=np.float32)
 
-        obs_dict: dict[str, Any] = {**flat_state, OBS_STATE: state_vec}
+        obs_dict: RobotObservation = {**flat_state, OBS_STATE: state_vec}
 
         # Decode images
         current_frames: dict[str, np.ndarray] = {}
-        for cam_name, image_b64 in observation.items():
+        for cam_name, jpeg in observation.items():
             if cam_name not in self._cameras_ft:
                 continue
-            frame = self._decode_image_from_b64(image_b64)
+            frame = self._decode_image(jpeg)
             if frame is not None:
                 current_frames[cam_name] = frame
 
         return current_frames, obs_dict
 
-    def _get_data(self) -> tuple[dict[str, np.ndarray], dict[str, Any], dict[str, Any]]:
+    def _get_data(self) -> tuple[dict[str, np.ndarray], RobotObservation]:
         """
         Polls the video socket for the latest observation data.
 
@@ -226,15 +240,15 @@ class LeKiwiClient(Robot):
         If no new data arrives or decoding fails, returns the last known values.
         """
 
-        # 1. Get the latest message string from the socket
-        latest_message_str = self._poll_and_get_latest_message()
+        # 1. Get the latest message's frames from the socket
+        latest_frames = self._poll_and_get_latest_message()
 
         # 2. If no message, return cached data
-        if latest_message_str is None:
+        if latest_frames is None:
             return self.last_frames, self.last_remote_state
 
-        # 3. Parse the JSON message
-        observation = self._parse_observation_json(latest_message_str)
+        # 3. Parse the multipart message
+        observation = self._parse_observation(latest_frames)
 
         # 4. If JSON parsing failed, return cached data
         if observation is None:
@@ -252,14 +266,13 @@ class LeKiwiClient(Robot):
 
         return new_frames, new_state
 
-    def get_observation(self) -> dict[str, Any]:
+    @check_if_not_connected
+    def get_observation(self) -> RobotObservation:
         """
         Capture observations from the remote robot: current follower arm positions,
         present wheel speeds (converted to body-frame velocities: x, y, theta),
         and a camera frame. Receives over ZMQ, translate to body-frame vel
         """
-        if not self._is_connected:
-            raise DeviceNotConnectedError("LeKiwiClient is not connected. You need to run `robot.connect()`.")
 
         frames, obs_dict = self._get_data()
 
@@ -304,26 +317,28 @@ class LeKiwiClient(Robot):
             "theta.vel": theta_cmd,
         }
 
-    def configure(self):
+    def configure(self) -> None:
         pass
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    @check_if_not_connected
+    def send_action(self, action: RobotAction) -> RobotAction:
         """Command lekiwi to move to a target joint configuration. Translates to motor space + sends over ZMQ
 
         Args:
-            action (np.ndarray): array containing the goal positions for the motors.
-
+            action (RobotAction): array containing the goal positions for the motors.
         Raises:
             RobotDeviceNotConnectedError: if robot is not connected.
 
         Returns:
             np.ndarray: the action sent to the motors, potentially clipped.
         """
-        if not self._is_connected:
-            raise DeviceNotConnectedError(
-                "ManipulatorRobot is not connected. You need to run `robot.connect()`."
-            )
 
+        # Action values may be torch tensors (e.g. replayed from a dataset) or numpy
+        # scalars; json.dumps only serializes Python primitives, so coerce each value to a
+        # plain float before sending.
+        action = {key: float(value) for key, value in action.items()}
+        if self.zmq_cmd_socket is None:
+            raise DeviceNotConnectedError(f"{self} command socket is not initialized")
         self.zmq_cmd_socket.send_string(json.dumps(action))  # action is in motor space
 
         # TODO(Steven): Remove the np conversion when it is possible to record a non-numpy array value
@@ -333,13 +348,12 @@ class LeKiwiClient(Robot):
         action_sent[ACTION] = actions
         return action_sent
 
-    def disconnect(self):
+    @check_if_not_connected
+    def disconnect(self) -> None:
         """Cleans ZMQ comms"""
 
-        if not self._is_connected:
-            raise DeviceNotConnectedError(
-                "LeKiwi is not connected. You need to run `robot.connect()` before disconnecting."
-            )
+        if self.zmq_observation_socket is None or self.zmq_cmd_socket is None or self.zmq_context is None:
+            raise DeviceNotConnectedError(f"{self} ZMQ sockets are not initialized")
         self.zmq_observation_socket.close()
         self.zmq_cmd_socket.close()
         self.zmq_context.term()

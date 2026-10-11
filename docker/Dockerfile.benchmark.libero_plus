@@ -1,0 +1,84 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Benchmark image for LIBERO-plus integration tests.
+# Extends the nightly GPU image (which has lerobot[all]) with the LIBERO-plus
+# fork source + its 6.4 GB perturbation assets.
+#
+# Build:  docker build -f docker/Dockerfile.benchmark.libero_plus -t lerobot-benchmark-libero-plus .
+# Run:    docker run --gpus all --rm lerobot-benchmark-libero-plus lerobot-eval ...
+
+FROM huggingface/lerobot-gpu:latest
+ENV MUJOCO_GL=egl
+
+# unzip for the 6.4 GB assets.zip; the rest are LIBERO-plus build-time extras
+# (wand / ImageMagick / fontconfig) not in the nightly base.
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         unzip libexpat1 libfontconfig1-dev libmagickwand-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+USER user_lerobot
+
+# robosuite==1.4.1 is mandatory (the fork uses `single_arm_env` removed in
+# v1.5+). The rest are LIBERO-plus runtime deps pulled from its setup.py.
+# We install these explicitly instead of via the [libero_plus] extra because
+# the extra's `libero @ git+...` dep installs as a namespace package and then
+# clone and PYTHONPATH-override it below.
+RUN uv pip install --no-cache \
+        "robosuite==1.4.1" \
+        "bddl==1.0.1" \
+        "easydict==1.13" \
+        "mujoco==3.7.0" \
+        "matplotlib==3.10.8" \
+        "Wand==0.6.13" \
+        "scikit-image==0.25.2" \
+        "gym==0.26.2"
+
+# Clone LIBERO-plus and make it importable as `libero`. The nightly base has
+# hf-libero (10 tasks) preinstalled via lerobot[libero]; uninstall it so
+# Python resolves `import libero` to the 2402-task LIBERO-plus module instead.
+# Pinned to the current upstream main SHA so benchmark builds stay reproducible.
+ARG LIBERO_PLUS_SHA=4976dc3
+ENV LIBERO_PLUS_ROOT=/home/user_lerobot/libero-plus/libero/libero
+RUN git clone https://github.com/sylvestf/LIBERO-plus.git /home/user_lerobot/libero-plus \
+    && git -C /home/user_lerobot/libero-plus checkout ${LIBERO_PLUS_SHA} \
+    && cd /home/user_lerobot/libero-plus && uv pip install --no-cache --no-deps -e "." \
+    && (uv pip uninstall hf-libero 2>/dev/null || true)
+ENV PYTHONPATH="/home/user_lerobot/libero-plus:${PYTHONPATH}"
+
+# Perturbation textures/scenes: bddl_base_domain.py resolves XMLs via
+# DIR_PATH/../assets (package-relative, ignoring ~/.libero/config.yaml). All
+# 2402 tasks reference files that ship only in Sylvest/LIBERO-plus's
+# assets.zip (6.4 GB) under a deep author-internal prefix — extract and
+# flatten it under ${LIBERO_PLUS_ROOT}/assets.
+RUN python -c "\
+from huggingface_hub import hf_hub_download; \
+hf_hub_download(repo_id='Sylvest/LIBERO-plus', repo_type='dataset', \
+                filename='assets.zip', local_dir='/tmp/libero-plus-dl')" \
+    && unzip -q /tmp/libero-plus-dl/assets.zip -d /tmp/libero-plus-dl/extract \
+    && ASSETS_DIR=$(find /tmp/libero-plus-dl/extract -type d -name assets | head -1) \
+    && mv "${ASSETS_DIR}" ${LIBERO_PLUS_ROOT}/assets \
+    && rm -rf /tmp/libero-plus-dl
+
+# Point ~/.libero/config.yaml at the clone so LIBERO-plus's imports are
+# non-interactive (it calls input() when the config is missing).
+RUN mkdir -p /home/user_lerobot/.libero \
+    && printf "assets: ${LIBERO_PLUS_ROOT}/assets\nbddl_files: ${LIBERO_PLUS_ROOT}/bddl_files\ndatasets: ${LIBERO_PLUS_ROOT}/../datasets\ninit_states: ${LIBERO_PLUS_ROOT}/init_files\n" \
+       > /home/user_lerobot/.libero/config.yaml
+
+# Overlay the PR's source code on top of the nightly image.
+COPY --chown=user_lerobot:user_lerobot . .
+
+CMD ["/bin/bash"]

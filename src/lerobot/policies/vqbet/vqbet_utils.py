@@ -27,10 +27,10 @@ import torch.distributed as distributed
 import torch.nn.functional as F  # noqa: N812
 from einops import pack, rearrange, reduce, repeat, unpack
 from torch import einsum, nn
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from torch.optim import Optimizer
 
-from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
+from .configuration_vqbet import VQBeTConfig
 
 # ruff: noqa: N806
 
@@ -570,9 +570,8 @@ class VectorQuantize(nn.Module):
         sync_affine_param=False,
         ema_update=True,
         learnable_codebook=False,
-        in_place_codebook_optimizer: Callable[
-            ..., Optimizer
-        ] = None,  # Optimizer used to update the codebook embedding if using learnable_codebook
+        in_place_codebook_optimizer: Callable[..., Optimizer]
+        | None = None,  # Optimizer used to update the codebook embedding if using learnable_codebook
         affine_param=False,
         affine_param_batch_decay=0.99,
         affine_param_codebook_decay=0.9,
@@ -1370,7 +1369,7 @@ class EuclideanCodebook(nn.Module):
         batch_samples = rearrange(batch_samples, "h ... d -> h (...) d")
         self.replace(batch_samples, batch_mask=expired_codes)
 
-    @autocast(enabled=False)
+    @autocast("cuda", enabled=False)
     def forward(self, x, sample_codebook_temp=None, mask=None, freeze_codebook=False):
         needs_codebook_dim = x.ndim < 4
         sample_codebook_temp = (

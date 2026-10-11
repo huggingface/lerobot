@@ -16,22 +16,25 @@
 
 import logging
 from collections import deque
-from typing import Any
 
 import numpy as np
 import torch
 from torch import nn
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.datasets.utils import build_dataset_frame
-from lerobot.processor import PolicyAction, RobotAction, RobotObservation
+from lerobot.configs import FeatureType, PolicyFeature, PreTrainedConfig
+from lerobot.lerobot_types import PolicyAction, RobotAction, RobotObservation
 from lerobot.utils.constants import ACTION, OBS_STR
+from lerobot.utils.feature_utils import build_dataset_frame
 
 
 def populate_queues(
     queues: dict[str, deque], batch: dict[str, torch.Tensor], exclude_keys: list[str] | None = None
 ):
+    """Append the batch's values to their per-key deques (filling them on first use).
+
+    Policies using this helper hold the dict as ``self._queues``, one of the names
+    ``PreTrainedPolicy._action_queue_attrs`` knows how to clear.
+    """
     if exclude_keys is None:
         exclude_keys = []
     for key in batch:
@@ -107,10 +110,14 @@ def prepare_observation_for_inference(
     This function takes a dictionary of NumPy arrays, performs necessary
     preprocessing, and prepares it for model inference. The steps include:
     1. Converting NumPy arrays to PyTorch tensors.
-    2. Normalizing and permuting image data (if any).
-    3. Adding a batch dimension to each tensor.
-    4. Moving all tensors to the specified compute device.
+    2. Moving each tensor to the specified compute device.
+    3. Normalizing and permuting image data (if any) on that device.
+    4. Adding a batch dimension to each tensor.
     5. Adding task and robot type information to the dictionary.
+
+    Images travel to the device as compact ``uint8`` frames — a 4× smaller
+    copy than their float32 counterpart — and the ``/255`` + permute run on
+    the device, keeping the per-tick CPU cost of the control loop low.
 
     Args:
         observation: A dictionary mapping observation names (str) to NumPy
@@ -126,12 +133,12 @@ def prepare_observation_for_inference(
         to (C, H, W) and normalized to a [0, 1] range.
     """
     for name in observation:
-        observation[name] = torch.from_numpy(observation[name])
+        tensor = torch.from_numpy(observation[name]).to(device)
         if "image" in name:
-            observation[name] = observation[name].type(torch.float32) / 255
-            observation[name] = observation[name].permute(2, 0, 1).contiguous()
-        observation[name] = observation[name].unsqueeze(0)
-        observation[name] = observation[name].to(device)
+            if tensor.dtype == torch.uint8:
+                tensor = tensor.type(torch.float32) / 255
+            tensor = tensor.permute(2, 0, 1).contiguous()
+        observation[name] = tensor.unsqueeze(0)
 
     observation["task"] = task if task else ""
     observation["robot_type"] = robot_type if robot_type else ""
@@ -140,7 +147,7 @@ def prepare_observation_for_inference(
 
 
 def build_inference_frame(
-    observation: dict[str, Any],
+    observation: RobotObservation,
     device: torch.device,
     ds_features: dict[str, dict],
     task: str | None = None,
@@ -231,11 +238,22 @@ def validate_visual_features_consistency(
     """
     Validates visual feature consistency between a policy config and provided dataset/environment features.
 
+    Validation passes if EITHER:
+    - Policy's expected visuals are a subset of dataset (policy uses some cameras, dataset has more)
+    - Dataset's provided visuals are a subset of policy (policy declares extras for flexibility)
+
     Args:
         cfg (PreTrainedConfig): The model or policy configuration containing input_features and type.
         features (Dict[str, PolicyFeature]): A mapping of feature names to PolicyFeature objects.
     """
+    if cfg.input_features is None:
+        raise ValueError("`cfg.input_features` must be resolved before validating visual features.")
     expected_visuals = {k for k, v in cfg.input_features.items() if v.type == FeatureType.VISUAL}
     provided_visuals = {k for k, v in features.items() if v.type == FeatureType.VISUAL}
-    if not provided_visuals.issubset(expected_visuals):
+
+    # Accept if either direction is a subset
+    policy_subset_of_dataset = expected_visuals.issubset(provided_visuals)
+    dataset_subset_of_policy = provided_visuals.issubset(expected_visuals)
+
+    if not (policy_subset_of_dataset or dataset_subset_of_policy):
         raise_feature_mismatch_error(provided_visuals, expected_visuals)

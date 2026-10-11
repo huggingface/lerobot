@@ -27,8 +27,8 @@ measuring consistency and ground truth alignment.
 Usage:
     # Basic usage with smolvla policy
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
-        --dataset.repo_id=helper2424/check_rtc \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
+        --dataset.repo_id=<USER>/check_rtc \
         --rtc.execution_horizon=8 \
         --device=mps \
         --rtc.max_guidance_weight=10.0 \
@@ -58,16 +58,16 @@ Usage:
         --device=cuda
 
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=lipsop/reuben_pi0 \
-        --dataset.repo_id=ReubenLim/so101_cube_in_cup \
+        --policy.path=<USER>/reuben_pi0 \
+        --dataset.repo_id=<USER>/so101_cube_in_cup \
         --rtc.execution_horizon=8 \
         --device=cuda
 
     # With torch.compile for faster inference (PyTorch 2.0+)
     # Note: CUDA graphs disabled by default due to in-place ops in denoising loop
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
-        --dataset.repo_id=helper2424/check_rtc \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
+        --dataset.repo_id=<USER>/check_rtc \
         --rtc.execution_horizon=8 \
         --device=mps \
         --use_torch_compile=true \
@@ -75,8 +75,8 @@ Usage:
 
     # With torch.compile on CUDA (CUDA graphs disabled by default)
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
-        --dataset.repo_id=helper2424/check_rtc \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
+        --dataset.repo_id=<USER>/check_rtc \
         --rtc.execution_horizon=8 \
         --device=cuda \
         --use_torch_compile=true \
@@ -84,8 +84,8 @@ Usage:
 
     # Enable CUDA graphs (advanced - may cause tensor aliasing errors)
     uv run python examples/rtc/eval_dataset.py \
-        --policy.path=helper2424/smolvla_check_rtc_last3 \
-        --dataset.repo_id=helper2424/check_rtc \
+        --policy.path=<USER>/smolvla_check_rtc_last3 \
+        --dataset.repo_id=<USER>/check_rtc \
         --use_torch_compile=true \
         --torch_compile_backend=inductor \
         --torch_compile_mode=max-autotune \
@@ -109,14 +109,10 @@ except ImportError:
     MATPLOTLIB_AVAILABLE = False
     plt = None
 
-from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.datasets.factory import resolve_delta_timestamps
-from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.configs import DatasetConfig, PreTrainedConfig, RTCAttentionSchedule, parser
+from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata, resolve_delta_timestamps
+from lerobot.policies import get_policy_class, make_pre_post_processors
+from lerobot.policies.rtc import RTCConfig
 from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.utils import init_logging
@@ -310,6 +306,7 @@ class RTCEvaluator:
         # Configure RTC
         rtc_config = RTCConfig(
             enabled=rtc_enabled,
+            mode=self.cfg.rtc.mode,
             execution_horizon=self.cfg.rtc.execution_horizon,
             max_guidance_weight=self.cfg.rtc.max_guidance_weight,
             prefix_attention_schedule=self.cfg.rtc.prefix_attention_schedule,
@@ -421,7 +418,7 @@ class RTCEvaluator:
     def run_evaluation(self):
         """Run evaluation on two random dataset samples using three separate policies.
 
-        Note: Policies are deinitalized after each step to free memory. Large models
+        Note: Policies are deinitialized after each step to free memory. Large models
         (e.g., VLA models with billions of parameters) cannot fit three instances in
         memory simultaneously. By deleting and garbage collecting after each step,
         we ensure only one policy is loaded at a time.

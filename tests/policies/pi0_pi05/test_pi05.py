@@ -14,20 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test script to verify PI0.5 (pi05) support in PI0 policy, only meant to be run locally!"""
-
-import os
+"""Test script to verify PI0.5 (pi05) support in PI0 policy"""
 
 import pytest
 import torch
 
-from lerobot.utils.random_utils import set_seed
-
-# Skip this entire module in CI
-pytestmark = pytest.mark.skipif(
-    os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true",
-    reason="This test requires local OpenPI installation and is not meant for CI",
-)
+pytest.importorskip("transformers")
 
 from lerobot.policies.factory import make_policy_config  # noqa: E402
 from lerobot.policies.pi05 import (  # noqa: E402
@@ -35,14 +27,16 @@ from lerobot.policies.pi05 import (  # noqa: E402
     PI05Policy,
     make_pi05_pre_post_processors,  # noqa: E402
 )
-from tests.utils import require_cuda  # noqa: E402
+from lerobot.utils.random_utils import set_seed
+from tests.utils import require_cuda, require_hf_token  # noqa: E402
 
 
 @require_cuda
+@require_hf_token
 def test_policy_instantiation():
     # Create config
     set_seed(42)
-    config = PI05Config(max_action_dim=7, max_state_dim=14, dtype="float32")
+    config = PI05Config(max_action_dim=7, max_state_dim=14, dtype=torch.float32)
 
     # Set up input_features and output_features in the config
     from lerobot.configs.types import FeatureType, PolicyFeature
@@ -151,6 +145,7 @@ def test_policy_instantiation():
 
 
 @require_cuda
+@require_hf_token
 def test_config_creation():
     """Test policy config creation through factory."""
     try:
@@ -166,3 +161,32 @@ def test_config_creation():
     except Exception as e:
         print(f"Config creation failed: {e}")
         raise
+
+
+def test_default_peft_targets_match_model_module_names():
+    """Default PEFT targets must match the actual module names of PI05Pytorch.
+
+    Regression test: `time_mlp_in`/`time_mlp_out` were previously written with an
+    `action_` prefix inherited from pi0, but PI05Pytorch names them without it, so
+    the LoRA adapter never targeted these projections.
+    """
+    import re
+    from types import SimpleNamespace
+
+    policy = object.__new__(PI05Policy)
+    policy.config = SimpleNamespace(use_proprioceptive_memory=False)
+
+    pattern = re.compile(policy._get_default_peft_targets()["target_modules"])
+
+    # Projections that exist in PI05Pytorch and must be targeted by default.
+    for module in (
+        "model.action_in_proj",
+        "model.action_out_proj",
+        "model.time_mlp_in",
+        "model.time_mlp_out",
+    ):
+        assert pattern.fullmatch(module), f"PEFT target regex should match {module}"
+
+    # pi0-style names do not exist in PI05Pytorch and must not be targeted.
+    for module in ("model.action_time_mlp_in", "model.action_time_mlp_out"):
+        assert not pattern.fullmatch(module), f"PEFT target regex should not match {module}"

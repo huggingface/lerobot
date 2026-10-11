@@ -22,13 +22,14 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.cameras import make_cameras_from_configs
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -71,6 +72,12 @@ class LeKiwi(Robot):
         )
         self.arm_motors = [motor for motor in self.bus.motors if motor.startswith("arm")]
         self.base_motors = [motor for motor in self.bus.motors if motor.startswith("base")]
+        depth_cameras = [name for name, cfg in config.cameras.items() if getattr(cfg, "use_depth", False)]
+        if depth_cameras:
+            raise NotImplementedError(
+                f"Depth cameras are not supported on LeKiwi (got depth-enabled cameras: {depth_cameras}). "
+                "The host/client transport only carries color frames."
+            )
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
@@ -108,10 +115,8 @@ class LeKiwi(Robot):
     def is_connected(self) -> bool:
         return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         self.bus.connect()
         if not self.is_calibrated and calibrate:
             logger.info(
@@ -171,9 +176,9 @@ class LeKiwi(Robot):
             self.calibration[name] = MotorCalibration(
                 id=motor.id,
                 drive_mode=0,
-                homing_offset=homing_offsets[name],
-                range_min=range_mins[name],
-                range_max=range_maxes[name],
+                homing_offset=int(homing_offsets[name]),
+                range_min=int(range_mins[name]),
+                range_max=int(range_maxes[name]),
             )
 
         self.bus.write_calibration(self.calibration)
@@ -338,14 +343,16 @@ class LeKiwi(Robot):
             "theta.vel": theta,
         }  # m/s and deg/s
 
-    def get_observation(self) -> dict[str, Any]:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
+    @check_if_not_connected
+    def get_observation(self) -> RobotObservation:
         # Read actuators position for arm and vel for base
         start = time.perf_counter()
-        arm_pos = self.bus.sync_read("Present_Position", self.arm_motors)
-        base_wheel_vel = self.bus.sync_read("Present_Velocity", self.base_motors)
+        arm_pos = self.bus.sync_read(
+            "Present_Position", self.arm_motors, num_retry=self.config.num_read_retries
+        )
+        base_wheel_vel = self.bus.sync_read(
+            "Present_Velocity", self.base_motors, num_retry=self.config.num_read_retries
+        )
 
         base_vel = self._wheel_raw_to_body(
             base_wheel_vel["base_left_wheel"],
@@ -363,13 +370,14 @@ class LeKiwi(Robot):
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
+            obs_dict[cam_key] = cam.read_latest()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
         return obs_dict
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    @check_if_not_connected
+    def send_action(self, action: RobotAction) -> RobotAction:
         """Command lekiwi to move to a target joint configuration.
 
         The relative action magnitude may be clipped depending on the configuration parameter
@@ -380,10 +388,8 @@ class LeKiwi(Robot):
             RobotDeviceNotConnectedError: if robot is not connected.
 
         Returns:
-            np.ndarray: the action sent to the motors, potentially clipped.
+            RobotAction: the action sent to the motors, potentially clipped.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
 
         arm_goal_pos = {k: v for k, v in action.items() if k.endswith(".pos")}
         base_goal_vel = {k: v for k, v in action.items() if k.endswith(".vel")}
@@ -395,8 +401,13 @@ class LeKiwi(Robot):
         # Cap goal position when too far away from present position.
         # /!\ Slower fps expected due to reading from the follower.
         if self.config.max_relative_target is not None:
-            present_pos = self.bus.sync_read("Present_Position", self.arm_motors)
-            goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in arm_goal_pos.items()}
+            present_pos = self.bus.sync_read(
+                "Present_Position", self.arm_motors, num_retry=self.config.num_read_retries
+            )
+            # `arm_goal_pos` is keyed with the ".pos" suffix, `present_pos` with bare motor names.
+            goal_present_pos = {
+                key: (g_pos, present_pos[key.removesuffix(".pos")]) for key, g_pos in arm_goal_pos.items()
+            }
             arm_safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
             arm_goal_pos = arm_safe_goal_pos
 
@@ -411,10 +422,8 @@ class LeKiwi(Robot):
         self.bus.sync_write("Goal_Velocity", dict.fromkeys(self.base_motors, 0), num_retry=5)
         logger.info("Base motors stopped")
 
+    @check_if_not_connected
     def disconnect(self):
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
         self.stop_base()
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():

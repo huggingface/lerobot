@@ -16,10 +16,14 @@
 
 from dataclasses import dataclass
 
-from lerobot.configs.types import PipelineFeatureType, PolicyFeature
+import numpy as np
+import torch
+
+from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvAction, EnvTransition, PolicyAction, TransitionKey
 
 from .converters import to_tensor
-from .core import EnvAction, EnvTransition, PolicyAction
+from .hil_processor import TELEOP_ACTION_KEY
 from .pipeline import ActionProcessorStep, ProcessorStep, ProcessorStepRegistry
 
 
@@ -41,7 +45,7 @@ class Torch2NumpyActionProcessorStep(ActionProcessorStep):
     squeeze_batch_dim: bool = True
 
     def action(self, action: PolicyAction) -> EnvAction:
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise TypeError(
                 f"Expected PolicyAction or None, got {type(action).__name__}. "
                 "Use appropriate processor for non-tensor actions."
@@ -74,20 +78,27 @@ class Numpy2TorchActionProcessorStep(ProcessorStep):
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Converts numpy action to torch tensor if action exists, otherwise passes through."""
-        from .core import TransitionKey
-
         self._current_transition = transition.copy()
         new_transition = self._current_transition
 
         action = new_transition.get(TransitionKey.ACTION)
         if action is not None:
-            if not isinstance(action, EnvAction):
+            if not isinstance(action, np.ndarray):
                 raise TypeError(
                     f"Expected np.ndarray or None, got {type(action).__name__}. "
                     "Use appropriate processor for non-tensor actions."
                 )
             torch_action = to_tensor(action, dtype=None)  # Preserve original dtype
             new_transition[TransitionKey.ACTION] = torch_action
+
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            complementary_data = {}
+        if TELEOP_ACTION_KEY in complementary_data:
+            teleop_action = complementary_data[TELEOP_ACTION_KEY]
+            if isinstance(teleop_action, np.ndarray):
+                complementary_data[TELEOP_ACTION_KEY] = to_tensor(teleop_action)
+            new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
 
         return new_transition
 

@@ -12,85 +12,68 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numbers
-import os
-from typing import Any
+"""Backend-agnostic visualization dispatch.
 
-import numpy as np
-import rerun as rr
+Selects a visualization backend at runtime via a display-mode string (e.g. a ``--display_mode`` CLI
+flag) so callers never branch on the backend. The concrete implementations live in
+:mod:`lerobot.utils.rerun_visualization` and :mod:`lerobot.utils.foxglove_visualization`; importing
+this module does not import ``rerun`` or ``foxglove`` (each backend imports its SDK lazily behind a
+``require_package`` guard).
+"""
 
-from .constants import OBS_PREFIX, OBS_STR
+from lerobot.lerobot_types import RobotAction, RobotObservation
 
+from .foxglove_visualization import init_foxglove, log_foxglove_data, shutdown_foxglove
+from .rerun_visualization import init_rerun, log_rerun_data, shutdown_rerun
 
-def init_rerun(session_name: str = "lerobot_control_loop") -> None:
-    """Initializes the Rerun SDK for visualizing the control loop."""
-    batch_size = os.getenv("RERUN_FLUSH_NUM_BYTES", "8000")
-    os.environ["RERUN_FLUSH_NUM_BYTES"] = batch_size
-    rr.init(session_name)
-    memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
-    rr.spawn(memory_limit=memory_limit)
-
-
-def _is_scalar(x):
-    return isinstance(x, (float | numbers.Real | np.integer | np.floating)) or (
-        isinstance(x, np.ndarray) and x.ndim == 0
-    )
+# Visualization backends selectable at runtime via a display-mode string (e.g. a --display_mode flag).
+VISUALIZATION_MODES = ("rerun", "foxglove")
 
 
-def log_rerun_data(
-    observation: dict[str, Any] | None = None,
-    action: dict[str, Any] | None = None,
+def init_visualization(
+    display_mode: str,
+    *,
+    session_name: str = "lerobot_control_loop",
+    ip: str | None = None,
+    port: int | None = None,
 ) -> None:
+    """Initializes the visualization backend selected by ``display_mode``.
+
+    For ``"rerun"``, ``ip``/``port`` point at an optional remote Rerun server. For ``"foxglove"``,
+    ``ip`` is the interface to bind the WebSocket server to (``127.0.0.1`` for local only, ``0.0.0.0``
+    for all interfaces) and ``port`` is its port.
     """
-    Logs observation and action data to Rerun for real-time visualization.
 
-    This function iterates through the provided observation and action dictionaries and sends their contents
-    to the Rerun viewer. It handles different data types appropriately:
-    - Scalars values (floats, ints) are logged as `rr.Scalars`.
-    - 3D NumPy arrays that resemble images (e.g., with 1, 3, or 4 channels first) are transposed
-      from CHW to HWC format and logged as `rr.Image`.
-    - 1D NumPy arrays are logged as a series of individual scalars, with each element indexed.
-    - Other multi-dimensional arrays are flattened and logged as individual scalars.
+    if display_mode == "rerun":
+        init_rerun(session_name=session_name, ip=ip, port=port)
+    elif display_mode == "foxglove":
+        init_foxglove(host=ip or "127.0.0.1", port=port)
+    else:
+        raise ValueError(f"Unknown display_mode '{display_mode}'. Expected one of {VISUALIZATION_MODES}.")
 
-    Keys are automatically namespaced with "observation." or "action." if not already present.
 
-    Args:
-        observation: An optional dictionary containing observation data to log.
-        action: An optional dictionary containing action data to log.
-    """
-    if observation:
-        for k, v in observation.items():
-            if v is None:
-                continue
-            key = k if str(k).startswith(OBS_PREFIX) else f"{OBS_STR}.{k}"
+def log_visualization_data(
+    display_mode: str,
+    observation: RobotObservation | None = None,
+    action: RobotAction | None = None,
+    compress_images: bool = False,
+) -> None:
+    """Logs observation/action data to the backend selected by ``display_mode``."""
 
-            if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
-            elif isinstance(v, np.ndarray):
-                arr = v
-                # Convert CHW -> HWC when needed
-                if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
-                    arr = np.transpose(arr, (1, 2, 0))
-                if arr.ndim == 1:
-                    for i, vi in enumerate(arr):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
-                else:
-                    rr.log(key, rr.Image(arr), static=True)
+    if display_mode == "rerun":
+        log_rerun_data(observation=observation, action=action, compress_images=compress_images)
+    elif display_mode == "foxglove":
+        log_foxglove_data(observation=observation, action=action, compress_images=compress_images)
+    else:
+        raise ValueError(f"Unknown display_mode '{display_mode}'. Expected one of {VISUALIZATION_MODES}.")
 
-    if action:
-        for k, v in action.items():
-            if v is None:
-                continue
-            key = k if str(k).startswith("action.") else f"action.{k}"
 
-            if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
-            elif isinstance(v, np.ndarray):
-                if v.ndim == 1:
-                    for i, vi in enumerate(v):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
-                else:
-                    # Fall back to flattening higher-dimensional arrays
-                    flat = v.flatten()
-                    for i, vi in enumerate(flat):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+def shutdown_visualization(display_mode: str) -> None:
+    """Shuts down the backend selected by ``display_mode``."""
+
+    if display_mode == "rerun":
+        shutdown_rerun()
+    elif display_mode == "foxglove":
+        shutdown_foxglove()
+    else:
+        raise ValueError(f"Unknown display_mode '{display_mode}'. Expected one of {VISUALIZATION_MODES}.")

@@ -15,6 +15,8 @@
 """
 Replays the actions of an episode from a dataset on a robot.
 
+Requires: pip install 'lerobot[core_scripts]'  (includes dataset + hardware + viz extras)
+
 Examples:
 
 ```shell
@@ -22,14 +24,14 @@ lerobot-replay \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58760431541 \
     --robot.id=black \
-    --dataset.repo_id=aliberts/record-test \
+    --dataset.repo_id=<USER>/record-test \
     --dataset.episode=0
 ```
 
 Example replay with bimanual so100:
 ```shell
 lerobot-replay \
-  --robot.type=bi_so100_follower \
+  --robot.type=bi_so_follower \
   --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
   --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
   --robot.id=bimanual_follower \
@@ -40,30 +42,36 @@ lerobot-replay \
 """
 
 import logging
-import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from pprint import pformat
 
 from lerobot.configs import parser
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.processor import (
     make_default_robot_action_processor,
 )
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-    bi_so100_follower,
+    bi_openarm_follower,
+    bi_rebot_b601_follower,
+    bi_so_follower,
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
+    lekiwi,
     make_robot_from_config,
-    so100_follower,
-    so101_follower,
+    omx_follower,
+    openarm_follower,
+    reachy2,
+    rebot_b601_follower,
+    so_follower,
+    unitree_g1,
 )
 from lerobot.utils.constants import ACTION
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import (
     init_logging,
     log_say,
@@ -76,7 +84,7 @@ class DatasetReplayConfig:
     repo_id: str
     # Episode to replay.
     episode: int
-    # Root directory where the dataset will be stored (e.g. 'dataset/path').
+    # Root directory where the dataset will be stored (e.g. 'dataset/path'). If None, defaults to $HF_LEROBOT_HOME/repo_id.
     root: str | Path | None = None
     # Limit the frames per second. By default, uses the policy fps.
     fps: int = 30
@@ -100,31 +108,37 @@ def replay(cfg: ReplayConfig):
     robot = make_robot_from_config(cfg.robot)
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
 
-    # Filter dataset to only include frames from the specified episode since episodes are chunked in dataset V3.0
-    episode_frames = dataset.hf_dataset.filter(lambda x: x["episode_index"] == cfg.dataset.episode)
-    actions = episode_frames.select_columns(ACTION)
+    actions = dataset.select_columns(ACTION)
 
     robot.connect()
 
-    log_say("Replaying episode", cfg.play_sounds, blocking=True)
-    for idx in range(len(episode_frames)):
-        start_episode_t = time.perf_counter()
+    # Replay must hit the dataset's own frame rate, or the trajectory plays back at the
+    # wrong speed.  It writes nothing, so a missed deadline is a control-stability
+    # problem only.
+    timer = CycleTimer(dataset.fps, records_data=False)
 
-        action_array = actions[idx][ACTION]
-        action = {}
-        for i, name in enumerate(dataset.features[ACTION]["names"]):
-            action[name] = action_array[i]
+    try:
+        log_say("Replaying episode", cfg.play_sounds, blocking=True)
+        for idx in range(dataset.num_frames):
+            timer.tick()
 
-        robot_obs = robot.get_observation()
+            with timer.section("read_frame"):
+                action_array = actions[idx][ACTION]
+                action = {}
+                for i, name in enumerate(dataset.features[ACTION]["names"]):
+                    action[name] = action_array[i]
 
-        processed_action = robot_action_processor((action, robot_obs))
+            with timer.section("observe"):
+                robot_obs = robot.get_observation()
 
-        _ = robot.send_action(processed_action)
+            with timer.section("send"):
+                processed_action = robot_action_processor((action, robot_obs))
+                _ = robot.send_action(processed_action)
 
-        dt_s = time.perf_counter() - start_episode_t
-        precise_sleep(1 / dataset.fps - dt_s)
-
-    robot.disconnect()
+            timer.wait()
+    finally:
+        timer.log_run_summary()
+        robot.disconnect()
 
 
 def main():

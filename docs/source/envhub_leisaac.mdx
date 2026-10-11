@@ -74,7 +74,7 @@ EnvHub exposes every LeIsaac-supported task in a uniform interface. The examples
 # envhub_random_action.py
 
 import torch
-from lerobot.envs.factory import make_env
+from lerobot.envs import make_env
 
 # Load from the hub
 envs_dict = make_env("LightwheelAI/leisaac_env:envs/so101_pick_orange.py", n_envs=1, trust_remote_code=True)
@@ -137,11 +137,12 @@ from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     make_teleoperator_from_config,
-    so101_leader,
+    so_leader,
+    bi_so_leader,
 )
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging
-from lerobot.envs.factory import make_env
+from lerobot.envs import make_env
 
 
 @dataclass
@@ -196,7 +197,7 @@ def teleop_loop(teleop: Teleoperator, env: gym.Env, fps: int):
             obs, info = env.reset()
 
         dt_s = time.perf_counter() - loop_start
-        precise_sleep(1 / fps - dt_s)
+        precise_sleep(max(1 / fps - dt_s, 0.0))
         loop_s = time.perf_counter() - loop_start
         print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
@@ -222,7 +223,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
 def main():
     teleoperate(TeleoperateConfig(
-        teleop=so101_leader.SO101LeaderConfig(
+        teleop=so_leader.SO101LeaderConfig(
             port="/dev/ttyACM0",
             id='leader',
             use_degrees=False,
@@ -281,7 +282,7 @@ Note: when working with `bi_so101_fold_cloth`, call `initialize()` immediately a
 
 ```python
 import torch
-from lerobot.envs.factory import make_env
+from lerobot.envs import make_env
 
 # Load from the hub
 envs_dict = make_env("LightwheelAI/leisaac_env:envs/bi_so101_fold_cloth.py", n_envs=1, trust_remote_code=True)

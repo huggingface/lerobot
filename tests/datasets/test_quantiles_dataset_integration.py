@@ -19,6 +19,8 @@
 import numpy as np
 import pytest
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 

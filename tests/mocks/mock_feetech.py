@@ -21,9 +21,25 @@ import scservo_sdk as scs
 import serial
 from mock_serial import MockSerial
 
-from lerobot.motors.feetech.feetech import _split_into_byte_chunks, patch_setPacketTimeout
+from lerobot.motors.feetech.feetech import patch_setPacketTimeout
 
 from .mock_serial_patch import WaitableStub
+
+
+def _split_into_byte_chunks(value: int, length: int) -> list[int]:
+    """Split an integer into a list of byte-sized integers (little-endian)."""
+    if length == 1:
+        data = [value]
+    elif length == 2:
+        data = [scs.SCS_LOBYTE(value), scs.SCS_HIBYTE(value)]
+    elif length == 4:
+        data = [
+            scs.SCS_LOBYTE(scs.SCS_LOWORD(value)),
+            scs.SCS_HIBYTE(scs.SCS_LOWORD(value)),
+            scs.SCS_LOBYTE(scs.SCS_HIWORD(value)),
+            scs.SCS_HIBYTE(scs.SCS_HIWORD(value)),
+        ]
+    return data
 
 
 class MockFeetechPacket(abc.ABC):

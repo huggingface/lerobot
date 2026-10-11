@@ -16,11 +16,15 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+import torch
+
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
+from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+
+from ..rtc.configuration_rtc import RTCConfig
+
+DEFAULT_IMAGE_SIZE = 224
 
 
 @PreTrainedConfig.register_subclass("pi05")
@@ -28,11 +32,26 @@ from lerobot.policies.rtc.configuration_rtc import RTCConfig
 class PI05Config(PreTrainedConfig):
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
-    dtype: str = "float32"  # Options: "bfloat16", "float32"
+    dtype: torch.dtype | None = torch.float32
 
     n_obs_steps: int = 1
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 50  # Number of action steps to execute
+
+    # MEM short-horizon observation memory (https://arxiv.org/abs/2603.03596).
+    # Historical image tokens are fused inside SigLIP and dropped before the
+    # language backbone. Historical proprioceptive states become one continuous
+    # backbone token per frame. Both paths are opt-in and independent.
+    #
+    # MEM pre-trains on six observations spaced one second apart. `memory_stride` is
+    # counted in dataset frames, so the default matches that spacing only at 30 fps,
+    # the usual LeRobot recording rate. Scale it with the dataset: a 10 fps dataset
+    # such as `lerobot/robomme` needs `memory_stride=10` for the same one second.
+    use_visual_memory: bool = False
+    use_proprioceptive_memory: bool = False
+    memory_frames: int = 6
+    memory_stride: int = 30
+    memory_temporal_attention_every: int = 4
 
     # Shorter state and action vectors will be padded to these dimensions
     max_state_dim: int = 32
@@ -47,15 +66,28 @@ class PI05Config(PreTrainedConfig):
     min_period: float = 4e-3
     max_period: float = 4.0
 
+    # Relative actions: converts absolute actions to relative (relative to state).
+    use_relative_actions: bool = False
+    # Joint names to exclude from relative (kept absolute). Empty list = all dims relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by make_policy.
+    action_feature_names: list[str] | None = None
+
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
+    # Maximum clean action-prefix length sampled during training. Zero disables trained RTC.
+    rtc_training_max_delay: int = 0
 
-    image_resolution: tuple[int, int] = (224, 224)  # see openpi `preprocessing_pytorch.py`
+    image_resolution: tuple[int, int] = (
+        DEFAULT_IMAGE_SIZE,
+        DEFAULT_IMAGE_SIZE,
+    )  # see openpi `preprocessing_pytorch.py`
 
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
 
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
+    text_tokenizer_name: str = "google/paligemma-3b-pt-224"
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -71,6 +103,10 @@ class PI05Config(PreTrainedConfig):
     compile_mode: str = "max-autotune"  # Torch compile mode
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
+    # Finetuning settings
+    freeze_vision_encoder: bool = False  # Freeze only the vision encoder
+    train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
+
     # Optimizer settings: see openpi `AdamW`
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
@@ -85,8 +121,6 @@ class PI05Config(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    tokenizer_max_length: int = 200  # see openpi `__post_init__`
-
     def __post_init__(self):
         super().__post_init__()
 
@@ -95,6 +129,11 @@ class PI05Config(PreTrainedConfig):
             raise ValueError(
                 f"n_action_steps ({self.n_action_steps}) cannot be greater than chunk_size ({self.chunk_size})"
             )
+        if not 0 <= self.rtc_training_max_delay < self.chunk_size:
+            raise ValueError(
+                "rtc_training_max_delay must satisfy "
+                f"0 <= delay < chunk_size ({self.chunk_size}), got {self.rtc_training_max_delay}"
+            )
 
         if self.paligemma_variant not in ["gemma_300m", "gemma_2b"]:
             raise ValueError(f"Invalid paligemma_variant: {self.paligemma_variant}")
@@ -102,32 +141,44 @@ class PI05Config(PreTrainedConfig):
         if self.action_expert_variant not in ["gemma_300m", "gemma_2b"]:
             raise ValueError(f"Invalid action_expert_variant: {self.action_expert_variant}")
 
-        if self.dtype not in ["bfloat16", "float32"]:
+        if self.dtype not in [torch.bfloat16, torch.float32]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        if self.memory_frames < 1:
+            raise ValueError("memory_frames must be at least 1")
+        if self.memory_stride < 1:
+            raise ValueError("memory_stride must be at least 1")
+        if self.memory_temporal_attention_every < 1:
+            raise ValueError("memory_temporal_attention_every must be at least 1")
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "input_features and output_features must be resolved (e.g. from the dataset) "
+                "before calling validate_features()"
+            )
         for i in range(self.empty_cameras):
-            key = f"observation.images.empty_camera_{i}"
+            key = OBS_IMAGES + f".empty_camera_{i}"
             empty_camera = PolicyFeature(
                 type=FeatureType.VISUAL,
                 shape=(3, *self.image_resolution),  # Use configured image resolution
             )
             self.input_features[key] = empty_camera
 
-        if "observation.state" not in self.input_features:
+        if OBS_STATE not in self.input_features:
             state_feature = PolicyFeature(
                 type=FeatureType.STATE,
                 shape=(self.max_state_dim,),  # Padded to max_state_dim
             )
-            self.input_features["observation.state"] = state_feature
+            self.input_features[OBS_STATE] = state_feature
 
-        if "action" not in self.output_features:
+        if ACTION not in self.output_features:
             action_feature = PolicyFeature(
                 type=FeatureType.ACTION,
                 shape=(self.max_action_dim,),  # Padded to max_action_dim
             )
-            self.output_features["action"] = action_feature
+            self.output_features[ACTION] = action_feature
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(
@@ -149,6 +200,20 @@ class PI05Config(PreTrainedConfig):
     @property
     def observation_delta_indices(self) -> None:
         return None
+
+    @property
+    def image_observation_delta_indices(self) -> list[int] | None:
+        if not self.use_visual_memory:
+            return None
+        horizon = (self.memory_frames - 1) * self.memory_stride
+        return list(range(-horizon, 1, self.memory_stride))
+
+    @property
+    def state_observation_delta_indices(self) -> list[int] | None:
+        if not self.use_proprioceptive_memory:
+            return None
+        horizon = (self.memory_frames - 1) * self.memory_stride
+        return list(range(-horizon, 1, self.memory_stride))
 
     @property
     def action_delta_indices(self) -> list:

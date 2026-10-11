@@ -17,18 +17,24 @@
 import logging
 import threading
 from collections import deque
+from collections.abc import Mapping
 from pprint import pformat
-
-import serial
+from typing import TYPE_CHECKING
 
 from lerobot.motors import MotorCalibration
 from lerobot.motors.motors_bus import MotorNormMode
-from lerobot.teleoperators.homunculus.joints_translation import homunculus_glove_to_hope_jr_hand
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.import_utils import _serial_available, require_package
+
+if TYPE_CHECKING or _serial_available:
+    import serial
+else:
+    serial = None  # type: ignore[assignment]
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 from ..teleoperator import Teleoperator
 from .config_homunculus import HomunculusGloveConfig
+from .joints_translation import homunculus_glove_to_hope_jr_hand
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +72,7 @@ class HomunculusGlove(Teleoperator):
     name = "homunculus_glove"
 
     def __init__(self, config: HomunculusGloveConfig):
+        require_package("pyserial", extra="pyserial-dep", import_name="serial")
         super().__init__(config)
         self.config = config
         self.serial = serial.Serial(config.port, config.baud_rate, timeout=1)
@@ -100,7 +107,8 @@ class HomunculusGlove(Teleoperator):
         # running EMA value per joint – lazily initialised on first read
         self._ema: dict[str, float | None] = dict.fromkeys(self._buffers)
 
-        self._state: dict[str, float] | None = None
+        # latest raw joint positions produced by `_read_loop`
+        self._state: dict[str, int] | None = None
         self.new_state_event = threading.Event()
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._read_loop, daemon=True, name=f"{self} _read_loop")
@@ -119,10 +127,8 @@ class HomunculusGlove(Teleoperator):
         with self.serial_lock:
             return self.serial.is_open and self.thread.is_alive()
 
+    @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
-
         if not self.serial.is_open:
             self.serial.open()
         self.thread.start()
@@ -193,8 +199,8 @@ class HomunculusGlove(Teleoperator):
         display_len = max(len(key) for key in joints)
 
         start_positions = self._read(joints, normalize=False)
-        mins = start_positions.copy()
-        maxes = start_positions.copy()
+        mins = {joint: int(pos) for joint, pos in start_positions.items()}
+        maxes = mins.copy()
 
         user_pressed_enter = False
         while not user_pressed_enter:
@@ -255,21 +261,22 @@ class HomunculusGlove(Teleoperator):
             self._buffers[joint].append(value)
 
             # initialise on first run
-            if self._ema[joint] is None:
-                self._ema[joint] = float(value)
-            else:
-                self._ema[joint] = self.alpha * value + (1 - self.alpha) * self._ema[joint]
+            prev = self._ema[joint]
+            ema = float(value) if prev is None else self.alpha * value + (1 - self.alpha) * prev
+            self._ema[joint] = ema
 
             # Convert back to int for compatibility with normalization
-            smoothed[joint] = int(round(self._ema[joint]))
+            smoothed[joint] = int(round(ema))
         return smoothed
 
     def _read(
         self, joints: list[str] | None = None, normalize: bool = True, timeout: float = 1
-    ) -> dict[str, int | float]:
+    ) -> Mapping[str, float]:
         """
         Return the most recent (single) values from self.last_d,
         optionally applying calibration.
+
+        Values are the EMA-smoothed integers when `normalize=False` and floats otherwise.
         """
         if not self.new_state_event.wait(timeout=timeout):
             raise TimeoutError(f"{self}: Timed out waiting for state after {timeout}s.")
@@ -286,13 +293,10 @@ class HomunculusGlove(Teleoperator):
             state = {k: v for k, v in state.items() if k in joints}
 
         # Apply EMA smoothing to raw values first
-        state = self._apply_ema(state)
+        smoothed = self._apply_ema(state)
 
         # Then normalize if requested
-        if normalize:
-            state = self._normalize(state)
-
-        return state
+        return self._normalize(smoothed) if normalize else smoothed
 
     def _read_loop(self):
         """
@@ -325,6 +329,7 @@ class HomunculusGlove(Teleoperator):
             except Exception as e:
                 logger.debug(f"Error reading frame in background thread for {self}: {e}")
 
+    @check_if_not_connected
     def get_action(self) -> dict[str, float]:
         joint_positions = self._read()
         return homunculus_glove_to_hope_jr_hand(
@@ -334,10 +339,8 @@ class HomunculusGlove(Teleoperator):
     def send_feedback(self, feedback: dict[str, float]) -> None:
         raise NotImplementedError
 
+    @check_if_not_connected
     def disconnect(self) -> None:
-        if not self.is_connected:
-            DeviceNotConnectedError(f"{self} is not connected.")
-
         self.stop_event.set()
         self.thread.join(timeout=1)
         self.serial.close()

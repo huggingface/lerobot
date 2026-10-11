@@ -15,13 +15,14 @@
 # limitations under the License.
 
 import logging
-import os
-import sys
 import time
 from queue import Queue
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.lerobot_types import RobotAction
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.import_utils import _pynput_available, require_package
+from lerobot.utils.keyboard_input import pynput_can_capture
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
@@ -31,20 +32,17 @@ from .configuration_keyboard import (
     KeyboardTeleopConfig,
 )
 
-PYNPUT_AVAILABLE = True
-try:
-    if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
-        logging.info("No DISPLAY set. Skipping pynput import.")
-        raise ImportError("pynput blocked intentionally due to no display.")
-
+PYNPUT_AVAILABLE = _pynput_available
+if TYPE_CHECKING:
     from pynput import keyboard
-except ImportError:
+else:
     keyboard = None
-    PYNPUT_AVAILABLE = False
-except Exception as e:
-    keyboard = None
-    PYNPUT_AVAILABLE = False
-    logging.info(f"Could not import pynput: {e}")
+    if PYNPUT_AVAILABLE:
+        try:
+            from pynput import keyboard
+        except Exception as e:  # installed but not importable here, e.g. no reachable X display
+            PYNPUT_AVAILABLE = False
+            logging.info("Could not import pynput keyboard backend: %s", e)
 
 
 class KeyboardTeleop(Teleoperator):
@@ -56,22 +54,21 @@ class KeyboardTeleop(Teleoperator):
     name = "keyboard"
 
     def __init__(self, config: KeyboardTeleopConfig):
+        require_package("pynput", extra="pynput-dep")
         super().__init__(config)
         self.config = config
         self.robot_type = config.type
 
-        self.event_queue = Queue()
-        self.current_pressed = {}
-        self.listener = None
-        self.logs = {}
+        # Key events are `(key, is_pressed)`; `key` is a character, a `keyboard.Key` member or `None` if unmapped.
+        self.event_queue: Queue[tuple[str | keyboard.Key | None, bool]] = Queue()
+        self.current_pressed: dict[str | keyboard.Key | None, bool] = {}
+        self.listener: keyboard.Listener | None = None
+        self.logs: dict[str, float] = {}
 
     @property
     def action_features(self) -> dict:
-        return {
-            "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
-        }
+        # Pressed keys have no static feature layout; subclasses with a fixed action space override this.
+        raise NotImplementedError(f"{self.__class__.__name__} exposes no static action features.")
 
     @property
     def feedback_features(self) -> dict:
@@ -83,15 +80,12 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        # Keyboard input needs no calibration.
+        return True
 
-    def connect(self) -> None:
-        if self.is_connected:
-            raise DeviceAlreadyConnectedError(
-                "Keyboard is already connected. Do not run `robot.connect()` twice."
-            )
-
-        if PYNPUT_AVAILABLE:
+    @check_if_already_connected
+    def connect(self, calibrate: bool = True) -> None:
+        if PYNPUT_AVAILABLE and pynput_can_capture():
             logging.info("pynput is available - enabling local keyboard listener.")
             self.listener = keyboard.Listener(
                 on_press=self._on_press,
@@ -99,7 +93,13 @@ class KeyboardTeleop(Teleoperator):
             )
             self.listener.start()
         else:
-            logging.info("pynput not available - skipping local keyboard listener.")
+            logging.warning(
+                "Keyboard teleoperation is unavailable in this environment. pynput can only "
+                "capture key events on an X11 session (Linux), a Windows desktop, or macOS with "
+                "Accessibility / Input Monitoring granted - not on Wayland or headless machines. "
+                "This keyboard teleoperator will produce no actions; use an X11 session, a "
+                "gamepad, or a leader-arm teleoperator instead."
+            )
             self.listener = None
 
     def calibrate(self) -> None:
@@ -107,11 +107,14 @@ class KeyboardTeleop(Teleoperator):
 
     def _on_press(self, key):
         if hasattr(key, "char"):
-            self.event_queue.put((key.char, True))
+            key = key.char
+        self.event_queue.put((key, True))
 
     def _on_release(self, key):
         if hasattr(key, "char"):
-            self.event_queue.put((key.char, False))
+            key = key.char
+        self.event_queue.put((key, False))
+
         if key == keyboard.Key.esc:
             logging.info("ESC pressed, disconnecting.")
             self.disconnect()
@@ -124,13 +127,9 @@ class KeyboardTeleop(Teleoperator):
     def configure(self):
         pass
 
-    def get_action(self) -> dict[str, Any]:
+    @check_if_not_connected
+    def get_action(self) -> RobotAction:
         before_read_t = time.perf_counter()
-
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
-            )
 
         self._drain_pressed_keys()
 
@@ -138,16 +137,13 @@ class KeyboardTeleop(Teleoperator):
         action = {key for key, val in self.current_pressed.items() if val}
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
-        return dict.fromkeys(action, None)
+        return cast(RobotAction, dict.fromkeys(action, None))
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         pass
 
+    @check_if_not_connected
     def disconnect(self) -> None:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "KeyboardTeleop is not connected. You need to run `robot.connect()` before `disconnect()`."
-            )
         if self.listener is not None:
             self.listener.stop()
 
@@ -164,7 +160,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
     def __init__(self, config: KeyboardEndEffectorTeleopConfig):
         super().__init__(config)
         self.config = config
-        self.misc_keys_queue = Queue()
+        self.misc_keys_queue: Queue[str | keyboard.Key | None] = Queue()
 
     @property
     def action_features(self) -> dict:
@@ -181,12 +177,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
             }
 
-    def get_action(self) -> dict[str, Any]:
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
-            )
-
+    @check_if_not_connected
+    def get_action(self) -> RobotAction:
         self._drain_pressed_keys()
         delta_x = 0.0
         delta_y = 0.0
@@ -218,8 +210,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 # this is useful for retrieving other events like interventions for RL, episode success, etc.
                 self.misc_keys_queue.put(key)
 
-        self.current_pressed.clear()
-
         action_dict = {
             "delta_x": delta_x,
             "delta_y": delta_y,
@@ -231,7 +221,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
         return action_dict
 
-    def get_teleop_events(self) -> dict[str, Any]:
+    def get_teleop_events(self) -> dict[TeleopEvents, bool]:
         """
         Get extra control events from the keyboard such as intervention status,
         episode termination, success indicators, etc.
@@ -269,6 +259,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             keyboard.Key.ctrl_l,
         ]
         is_intervention = any(self.current_pressed.get(key, False) for key in movement_keys)
+
+        self.current_pressed.clear()
 
         # Check for episode control commands from misc_keys_queue
         terminate_episode = False
@@ -355,8 +347,8 @@ class KeyboardRoverTeleop(KeyboardTeleop):
     def action_features(self) -> dict:
         """Return action format for rover (linear and angular velocities)."""
         return {
-            "linear.vel": float,
-            "angular.vel": float,
+            "linear_velocity": float,
+            "angular_velocity": float,
         }
 
     @property
@@ -374,19 +366,15 @@ class KeyboardRoverTeleop(KeyboardTeleop):
                 # Only remove key if it's being released
                 self.current_pressed.pop(key_char, None)
 
-    def get_action(self) -> dict[str, Any]:
+    @check_if_not_connected
+    def get_action(self) -> RobotAction:
         """
         Get the current action based on pressed keys.
 
         Returns:
-            dict with 'linear.vel' and 'angular.vel' keys
+            RobotAction with 'linear_velocity' and 'angular_velocity' keys.
         """
         before_read_t = time.perf_counter()
-
-        if not self.is_connected:
-            raise DeviceNotConnectedError(
-                "KeyboardRoverTeleop is not connected. You need to run `connect()` before `get_action()`."
-            )
 
         self._drain_pressed_keys()
 
@@ -445,6 +433,6 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
         return {
-            "linear.vel": linear_velocity,
-            "angular.vel": angular_velocity,
+            "linear_velocity": linear_velocity,
+            "angular_velocity": angular_velocity,
         }

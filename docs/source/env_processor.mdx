@@ -90,11 +90,17 @@ The same policy can work with different environment processors, and the same env
 
 ```python
 # Use SmolVLA policy with LIBERO environment
-libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(libero_cfg)
+libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
+    env_cfg=libero_cfg,
+    policy_cfg=smolvla_cfg,
+)
 smolvla_preprocessor, smolvla_postprocessor = make_pre_post_processors(smolvla_cfg)
 
 # Or use ACT policy with the same LIBERO environment
-libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(libero_cfg)
+libero_preprocessor, libero_postprocessor = make_env_pre_post_processors(
+    env_cfg=libero_cfg,
+    policy_cfg=act_cfg,
+)
 act_preprocessor, act_postprocessor = make_pre_post_processors(act_cfg)
 ```
 
@@ -154,8 +160,8 @@ observation = {
 The `make_env_pre_post_processors` function follows the same pattern as `make_pre_post_processors` for policies:
 
 ```python
-from lerobot.envs.factory import make_env_pre_post_processors
-from lerobot.envs.configs import LiberoEnv, PushtEnv
+from lerobot.envs import make_env_pre_post_processors, PushtEnv
+from lerobot.envs.configs import LiberoEnv
 
 # For LIBERO: Returns LiberoProcessorStep in preprocessor
 libero_cfg = LiberoEnv(task="libero_spatial", camera_name=["agentview"])
@@ -238,7 +244,7 @@ def eval_main(cfg: EvalPipelineConfig):
 The `LiberoProcessorStep` demonstrates a real-world environment processor:
 
 ```python
-from lerobot.processor.pipeline import ObservationProcessorStep
+from lerobot.processor import ObservationProcessorStep
 
 @dataclass
 @ProcessorStepRegistry.register(name="libero_processor")
@@ -323,7 +329,7 @@ class MyEnvProcessorStep(ObservationProcessorStep):
         return processed
 ```
 
-### 2. Update the Factory
+### 2. Update Your `EnvConfig` Subclass
 
 ```python
 # In src/lerobot/envs/factory.py
