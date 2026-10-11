@@ -125,6 +125,10 @@ class VQBeTPolicy(PreTrainedPolicy):
         over `n_obs_steps`. Batches that already have a time dimension are kept as
         provided. This method does not update the observation or action queues.
 
+        Queued history takes precedence over `batch`, including its batch size
+        and temporal observations. Call `reset()` before switching from
+        `select_action` to direct chunk inference with independent observations.
+
         Args:
             batch (`dict[str, Tensor]`):
                 Robot state and configured camera observations. With empty queues,

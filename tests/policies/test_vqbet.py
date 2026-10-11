@@ -209,3 +209,37 @@ def test_vqbet_policy_server_truncates_time_axis(vqbet_policy, batch_size, actio
         assert all(not queue for queue in policy._queues.values())
     policy.reset()
     assert server._get_action_chunk(batch).shape == chunk.shape
+
+
+@pytest.mark.parametrize("temporal_input", [False, True])
+def test_vqbet_predict_action_chunk_uses_history_until_reset(vqbet_policy, temporal_input):
+    policy = vqbet_policy
+    warm_batch = make_observation(batch_size=1, step=1)
+    with pytest.warns(UserWarning, match="pretrained Residual VQ"):
+        policy.select_action(warm_batch)
+    queued_batch = {
+        OBS_STATE: torch.stack([warm_batch[OBS_STATE]] * policy.config.n_obs_steps, dim=1),
+        OBS_IMAGES: torch.stack([warm_batch[CAMERA]] * policy.config.n_obs_steps, dim=1).unsqueeze(2),
+    }
+    expected_queued = model_actions(policy, queued_batch)
+
+    batch = make_observation(batch_size=2, step=9)
+    expected_supplied = {
+        OBS_STATE: torch.stack([batch[OBS_STATE]] * policy.config.n_obs_steps, dim=1),
+        OBS_IMAGES: torch.stack([batch[CAMERA]] * policy.config.n_obs_steps, dim=1).unsqueeze(2),
+    }
+    if temporal_input:
+        batch = {key: torch.stack([value] * policy.config.n_obs_steps, dim=1) for key, value in batch.items()}
+
+    # This preserves the existing queue-first synchronous contract: a new batch
+    # (even a different batch size or explicit history) does not replace it.
+    actions = predict_actions(policy, batch)
+    assert actions.shape == (1, policy.config.action_chunk_size, 6)
+    torch.testing.assert_close(actions, expected_queued)
+    assert all(frame[0, 0].item() == 1 for frame in policy._queues[OBS_STATE])
+
+    policy.reset()
+    actions = predict_actions(policy, batch)
+    assert actions.shape == (2, policy.config.action_chunk_size, 6)
+    torch.testing.assert_close(actions, model_actions(policy, expected_supplied))
+    assert all(not queue for queue in policy._queues.values())
