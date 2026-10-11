@@ -10,7 +10,7 @@ from ..config import TeleoperatorConfig
 class WidowAILeaderConfig(TeleoperatorConfig):
     # Port to connect to the arm (IP address for Trossen arms)
     port: str
-    
+
     # Trossen arm model to use
     model: str = "V0_LEADER"
 

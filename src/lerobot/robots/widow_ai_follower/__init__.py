@@ -1,2 +1,4 @@
 from .config_widow_ai_follower import WidowAIFollowerConfig
 from .widow_ai_follower import WidowAIFollower
+
+__all__ = ["WidowAIFollower", "WidowAIFollowerConfig"]

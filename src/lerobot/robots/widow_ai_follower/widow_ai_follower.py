@@ -6,8 +6,8 @@ from functools import cached_property
 from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors.trossen import TrossenArmDriver
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -23,15 +23,23 @@ class WidowAIFollower(Robot):
     def __init__(self, config: WidowAIFollowerConfig):
         super().__init__(config)
         self.config = config
-        
+
         self.bus = TrossenArmDriver(
             port=self.config.port,
             model=self.config.model,
             velocity_limit_scale=self.config.velocity_limit_scale,
         )
-        
-        self.motor_names = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_1", "wrist_2", "wrist_3", "gripper"]
-        
+
+        self.motor_names = [
+            "shoulder_pan",
+            "shoulder_lift",
+            "elbow_flex",
+            "wrist_1",
+            "wrist_2",
+            "wrist_3",
+            "gripper",
+        ]
+
         self.cameras = make_cameras_from_configs(config.cameras)
 
     @property
@@ -68,7 +76,7 @@ class WidowAIFollower(Robot):
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
         self.bus.connect()
-        
+
         for cam in self.cameras.values():
             cam.connect()
 
@@ -95,7 +103,7 @@ class WidowAIFollower(Robot):
 
         start = time.perf_counter()
         positions = self.bus.read("Present_Position")
-        
+
         # Convert numpy array to dict with motor names
         obs_dict = {}
         for i, motor in enumerate(self.motor_names):
@@ -103,7 +111,7 @@ class WidowAIFollower(Robot):
                 obs_dict[f"{motor}.pos"] = float(positions[i])
             else:
                 obs_dict[f"{motor}.pos"] = 0.0
-                
+
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
@@ -146,8 +154,6 @@ class WidowAIFollower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        start = time.perf_counter()
-        
         # Extract goal positions from action dict
         goal_pos = []
         for motor in self.motor_names:
@@ -160,17 +166,19 @@ class WidowAIFollower(Robot):
         # Cap goal position when too far away from present position.
         if self.config.max_relative_target is not None:
             present_pos = self.bus.read("Present_Position")
-            present_dict = {motor: float(present_pos[i]) for i, motor in enumerate(self.motor_names) if i < len(present_pos)}
+            present_dict = {
+                motor: float(present_pos[i])
+                for i, motor in enumerate(self.motor_names)
+                if i < len(present_pos)
+            }
             goal_dict = {motor: goal_pos[i] for i, motor in enumerate(self.motor_names)}
             goal_present_pos = {key: (goal_dict[key], present_dict.get(key, 0.0)) for key in goal_dict}
             safe_goal_dict = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
             goal_pos = [safe_goal_dict.get(motor, 0.0) for motor in self.motor_names]
 
         self.bus.write("Goal_Position", goal_pos)
-        
-        dt_ms = (time.perf_counter() - start) * 1e3
-        
-        return {f"{motor}.pos": val for motor, val in zip(self.motor_names, goal_pos)}
+
+        return {f"{motor}.pos": val for motor, val in zip(self.motor_names, goal_pos, strict=True)}
 
     def disconnect(self):
         if not self.is_connected:

@@ -12,7 +12,7 @@ from ..config import RobotConfig
 class WidowAIFollowerConfig(RobotConfig):
     # Port to connect to the arm (IP address for Trossen arms)
     port: str
-    
+
     # Trossen arm model to use
     model: str = "V0_FOLLOWER"  # Options: "V0_LEADER", "V0_FOLLOWER"
 
@@ -27,6 +27,6 @@ class WidowAIFollowerConfig(RobotConfig):
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
-    
+
     # Enable effort sensing to include effort measurements in observations
     effort_sensing: bool = False

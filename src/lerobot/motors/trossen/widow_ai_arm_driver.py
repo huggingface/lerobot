@@ -1,9 +1,13 @@
 import logging
 import traceback
-from typing import List, Union
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import trossen_arm as trossen
+
+from lerobot.utils.import_utils import _trossen_arm_available, require_package
+
+if TYPE_CHECKING or _trossen_arm_available:
+    import trossen_arm as trossen
 
 
 class TrossenArmDriver:
@@ -13,10 +17,12 @@ class TrossenArmDriver:
         model: str = "V0_LEADER",
         velocity_limit_scale: float | None = None,
     ):
+        require_package("trossen-arm", extra="trossen_arm", import_name="trossen_arm")
         self.port = port
         self.model = model
         self.velocity_limit_scale = velocity_limit_scale
-        self.driver = None
+        # trossen_arm ships no type information, so its driver handle is typed as Any.
+        self.driver: Any = None
         self.is_connected = False
 
         self.MIN_TIME_TO_MOVE = 0.1  # seconds
@@ -34,7 +40,7 @@ class TrossenArmDriver:
             "V0_LEADER": [trossen.Model.wxai_v0, trossen.StandardEndEffector.wxai_v0_leader],
             "V0_FOLLOWER": [trossen.Model.wxai_v0, trossen.StandardEndEffector.wxai_v0_follower],
         }
-        
+
         try:
             return trossen_arm_models[self.model]
         except KeyError as e:
@@ -48,7 +54,9 @@ class TrossenArmDriver:
         for i in range(len(joint_limits)):
             original_velocity = joint_limits[i].velocity_max
             joint_limits[i].velocity_max *= scale
-            logging.debug(f"  Joint {i}: velocity_max scaled from {original_velocity:.3f} to {joint_limits[i].velocity_max:.3f}")
+            logging.debug(
+                f"  Joint {i}: velocity_max scaled from {original_velocity:.3f} to {joint_limits[i].velocity_max:.3f}"
+            )
 
         self.driver.set_joint_limits(joint_limits)
         logging.debug(f"{self.model} arm velocity limits successfully scaled.")
@@ -86,7 +94,9 @@ class TrossenArmDriver:
 
     def read(self, data_name: str) -> np.ndarray:
         if not self.is_connected:
-            raise RuntimeError(f"TrossenArmDriver({self.port}) is not connected. You need to run `connect()`.")
+            raise RuntimeError(
+                f"TrossenArmDriver({self.port}) is not connected. You need to run `connect()`."
+            )
 
         if data_name == "Present_Position":
             values = self.driver.get_all_positions()
@@ -97,9 +107,11 @@ class TrossenArmDriver:
 
         return np.array(values, dtype=np.float32)
 
-    def write(self, data_name: str, values: Union[float, List[float], np.ndarray]) -> None:
+    def write(self, data_name: str, values: float | list[float] | np.ndarray) -> None:
         if not self.is_connected:
-            raise RuntimeError(f"TrossenArmDriver({self.port}) is not connected. You need to run `connect()`.")
+            raise RuntimeError(
+                f"TrossenArmDriver({self.port}) is not connected. You need to run `connect()`."
+            )
 
         if data_name == "Goal_Position":
             values = np.array(values, dtype=np.float32)

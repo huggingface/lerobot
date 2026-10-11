@@ -3,8 +3,8 @@
 import logging
 import time
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors.trossen import TrossenArmDriver
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
 from .config_widow_ai_leader import WidowAILeaderConfig
@@ -19,15 +19,23 @@ class WidowAILeader(Teleoperator):
     def __init__(self, config: WidowAILeaderConfig):
         super().__init__(config)
         self.config = config
-        
+
         self.bus = TrossenArmDriver(
             port=self.config.port,
             model=self.config.model,
             velocity_limit_scale=self.config.velocity_limit_scale,
         )
-        
+
         # Define motor names for compatibility
-        self.motor_names = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_1", "wrist_2", "wrist_3", "gripper"]
+        self.motor_names = [
+            "shoulder_pan",
+            "shoulder_lift",
+            "elbow_flex",
+            "wrist_1",
+            "wrist_2",
+            "wrist_3",
+            "gripper",
+        ]
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -65,7 +73,7 @@ class WidowAILeader(Teleoperator):
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
         positions = self.bus.read("Present_Position")
-        
+
         # Convert numpy array to dict with motor names
         action = {}
         for i, motor in enumerate(self.motor_names):
@@ -73,7 +81,7 @@ class WidowAILeader(Teleoperator):
                 action[f"{motor}.pos"] = float(positions[i])
             else:
                 action[f"{motor}.pos"] = 0.0
-                
+
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action
