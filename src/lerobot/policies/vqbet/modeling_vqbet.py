@@ -119,7 +119,30 @@ class VQBeTPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
-        batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+        """Predict an action chunk using queued history or the supplied observations.
+
+        With empty queues (e.g. async inference), repeat single-frame observations
+        over `n_obs_steps`. Batches that already have a time dimension are kept as
+        provided. This method does not update the observation or action queues.
+
+        Args:
+            batch (`dict[str, Tensor]`):
+                Robot state and configured camera observations. With empty queues,
+                tensors may contain a single frame or `n_obs_steps` frames per batch item.
+
+        Returns:
+            `Tensor`: Actions of shape `(batch_size, action_chunk_size, action_dim)`.
+        """
+        if self._queues[OBS_STATE]:
+            batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in (OBS_STATE, OBS_IMAGES)}
+        else:
+            batch = dict(batch)
+            if batch[OBS_STATE].ndim == 2:
+                batch[OBS_STATE] = batch[OBS_STATE].unsqueeze(1).expand(-1, self.config.n_obs_steps, -1)
+            for key in self.config.image_features:
+                if batch[key].ndim == 4:
+                    batch[key] = batch[key].unsqueeze(1).expand(-1, self.config.n_obs_steps, -1, -1, -1)
+            batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
         actions = self.vqbet(batch, rollout=True)[:, : self.config.action_chunk_size]
         return actions
 
