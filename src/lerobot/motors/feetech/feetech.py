@@ -88,14 +88,8 @@ def patch_setPacketTimeout(self, packet_length):  # noqa: N802
 
 def patch_clearPort(self):  # noqa: N802
     """
-    HACK: This patches the PortHandler behavior to discard the bytes already received before each instruction.
-
-    The SDK calls `clearPort()` before it writes each instruction packet, so that a status packet still waiting
-    in the input buffer (for example the late reply of a read that timed out and was retried) is not taken for
-    the reply to the new instruction. But the SDK `clearPort()` only calls `ser.flush()`, which waits for the
-    output to be written (`tcdrain`) and leaves the input buffer untouched. Status packets carry no register
-    address, so any buffered packet with the right motor id and a valid checksum was accepted as the answer,
-    whatever register it came from.
+    Also discard unread input before each instruction. The SDK version only flushes the output, so a late
+    status packet (for example after a retried read) was taken as the answer to the next read.
     """
     self.ser.flush()
     self.ser.reset_input_buffer()
