@@ -213,6 +213,9 @@ pixel-bound.
 |---|---|
 | `./config/cart-selftest.sh` | the cart alone: rate, 17 joint values, a frame per camera. `--head --arms --base` to move things. |
 | `./config/leader-tap.sh` | the leader stream with no robot attached. Says which keys ever changed. |
+| `./config/leader-soak.sh` | the leader link for N minutes, graded: stalls, lost messages, gap histogram. Run quiet, then with `video-test.sh` going; both must PASS. |
+| `./config/odrive-check.sh` | the ODESC: config vs the cart's bus limits, `--apply` to write them, `--watch` for the XH-M609 relay-drop test. No motors needed. |
+| `./config/cam-probe.sh` | how many stale frames a camera hands back after a pause; `--buffersize 1` is the fix if it is more than one |
 | `./config/scan-motors.sh` | which motor ids answer, at which baud rate |
 | `./config/power-check.sh` | voltage, temperature and load per servo, with torque applied one at a time |
 | `./config/viewer.sh` | the rerun viewer, at the version uv.lock says. Run it on the Mac. |
