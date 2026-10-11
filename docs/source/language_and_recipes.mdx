@@ -30,7 +30,7 @@ This page describes each layer in turn.
 The two optional columns live next to frame data in
 `data/chunk-*/file-*.parquet`:
 
-- `language_persistent`: a list of rows broadcast across every frame in an episode for state that remains active, such as `subtask`, `plan`, and `memory`.
+- `language_persistent`: a list of rows broadcast across every frame in an episode for state that remains active, such as `subtask`, `plan`, `memory`, and `ecot`.
 - `language_events`: a list of rows only on the exact frame where an event was emitted, such as `interjection`, `vqa`, and speech tool calls.
 
 Both columns share the same row shape (event rows omit `timestamp` because the
