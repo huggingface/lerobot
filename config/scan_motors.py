@@ -153,38 +153,41 @@ def main() -> int:
     args = ap.parse_args()
 
     ids1, baud1 = scan(args.port1, BUS1, "BUS 1   left arm (1-6) + head (7-8)")
-    ids2, baud2 = scan(args.port2, BUS2, "BUS 2   right arm (1-6) + base wheels (7-9)")
+    ids2, baud2 = scan(args.port2, BUS2, "BUS 2   right arm (1-6) [+ omniwheels 7-9 if that base]")
 
     arms = {1, 2, 3, 4, 5, 6}
     head = {7, 8}
-    base = {7, 8, 9}
+    wheels = {7, 8, 9}
 
     have_arms = arms <= ids1 and arms <= ids2
     have_head = head <= ids1
-    have_base = base <= ids2
+    have_servo_wheels = wheels <= ids2
 
     print(f"\n{'=' * 68}\nWHAT YOU CAN RUN\n{'=' * 68}")
-    print(f"  both arms  {'yes' if have_arms else 'no'}")
-    print(f"  head       {'yes' if have_head else 'no'}")
-    print(f"  base       {'yes' if have_base else 'no'}")
+    print(f"  both arms      {'yes' if have_arms else 'no'}")
+    print(f"  head           {'yes' if have_head else 'no'}")
+    print(f"  servo wheels   {'yes' if have_servo_wheels else 'no  (expected with the ODrive base)'}")
     print()
 
-    if have_arms and have_head and have_base:
-        print("  Full xlerobot. Calibrate it:")
-        print("    lerobot-calibrate --robot.type=xlerobot --robot.id=xlerobot \\")
+    if have_arms and have_head:
+        if have_servo_wheels:
+            print("  Full xlerobot with the 3-omni servo base:")
+            print("    --robot.type=xlerobot")
+        else:
+            print("  Arms and head complete; no servo wheels on bus 2. That is the")
+            print("  layout for the ODrive base:")
+            print("    --robot.type=xlerobot_2wheels_odrive")
+            print("  The ODrive is found over USB, not scanned here - lsusb should")
+            print("  show 1209:0d32 (ODrive / ODESC).")
+        print("\n  Calibrate (same calibration file either way; the wheels are not in it):")
+        print(f"    lerobot-calibrate --robot.type=<type above> --robot.id=xlerobot \\")
         print(f"      --robot.port1={args.port1} \\")
         print(f"      --robot.port2={args.port2}")
         print("\n  Then: ./config/cart-selftest.sh")
     elif have_arms:
-        missing = []
-        if not have_head:
-            missing.append(f"head (bus1 ids {sorted(head - ids1)})")
-        if not have_base:
-            missing.append(f"base (bus2 ids {sorted(base - ids2)})")
-        print(f"  Arms only - {', '.join(missing)} not responding.")
-        print("  --robot.type=xlerobot will fail on connect: it reads every")
-        print("  motor unconditionally, including base velocity.")
-        print("\n  Use the arms-only path until those are wired:")
+        print(f"  Arms only - head (bus1 ids {sorted(head - ids1)}) not responding.")
+        print("  Both robot types read the head unconditionally and will fail on connect.")
+        print("\n  Use the arms-only path until it is wired:")
         print("    config/bi-arms.yaml")
         print("\n  To bring a new servo onto a bus, set its id first:")
         print("    lerobot-setup-motors --robot.type=xlerobot --robot.port1=... --robot.port2=...")

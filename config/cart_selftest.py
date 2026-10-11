@@ -41,18 +41,38 @@ def record(status: str, label: str, detail: str = "") -> None:
     print(f"  {status}  {label}{('  ' + detail) if detail else ''}")
 
 
-def load_config(path: Path) -> XLerobotConfig:
-    """Accept either a top-level XLerobotConfig or a teleoperate-style file
-    with the robot nested under `robot:`. cart.yaml is the latter."""
+def _odrive_classes():
+    # Imported lazily: the odrive package is only present when that base is.
+    from lerobot_robot_xlerobot_2wheels_odrive import (
+        XLerobot2WheelsODrive,
+        XLerobot2WheelsODriveConfig,
+    )
+
+    return XLerobot2WheelsODriveConfig, XLerobot2WheelsODrive
+
+
+ROBOTS = {
+    # type in the yaml -> (config class, robot class). Both robots are
+    # XLerobot or a subclass of it, so every test below works on either.
+    "xlerobot": lambda: (XLerobotConfig, XLerobot),
+    "xlerobot_2wheels_odrive": _odrive_classes,
+}
+
+
+def load_config(path: Path):
+    """Accept either a top-level robot config or a teleoperate-style file with
+    the robot nested under `robot:`. Returns (config, robot_class)."""
     raw = yaml.safe_load(path.read_text())
     inner = raw.get("robot", raw)
-    if inner.get("type") not in (None, "xlerobot"):
-        sys.exit(f"error: {path} describes a '{inner['type']}', not an xlerobot.")
+    rtype = inner.get("type") or "xlerobot"
+    if rtype not in ROBOTS:
+        sys.exit(f"error: {path} describes a '{rtype}'; this test knows {sorted(ROBOTS)}.")
+    config_cls, robot_cls = ROBOTS[rtype]()
     inner = {k: v for k, v in inner.items() if k != "type"}
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
         yaml.safe_dump(inner, f)
         tmp = f.name
-    return draccus.parse(config_class=XLerobotConfig, args=["--config_path", tmp])
+    return draccus.parse(config_class=config_cls, args=["--config_path", tmp]), robot_cls
 
 
 def ask(prompt: str) -> bool:
@@ -282,12 +302,17 @@ def test_base(robot: XLerobot, speed: float = 0.08, turn: float = 25.0) -> None:
             record(PASS, f"base {label}", f"{key} {got:.3f} vs {want:.3f} commanded")
 
     print("\n      Watch the wheels as well as the numbers. The body velocity is")
-    print("      derived from all three, so two correct wheels can mask a third")
+    print("      derived from all wheels together, so correct ones can mask one")
     print("      that is spinning the wrong way.")
     print()
-    print("      Geometry is hardcoded in _body_to_wheel_raw: wheel_radius 0.05 m,")
-    print("      base_radius 0.125 m. If x.vel reads consistently high or low by")
-    print("      the same factor, measure yours - it is a scale error, not a fault.")
+    if robot.name == "xlerobot_2wheels_odrive":
+        print(f"      Geometry comes from the config: wheel_radius {robot.config.wheel_radius} m,")
+        print(f"      wheelbase {robot.config.wheelbase} m. If x.vel reads consistently high")
+        print("      or low by the same factor, measure yours - a scale error, not a fault.")
+    else:
+        print("      Geometry is hardcoded in _body_to_wheel_raw: wheel_radius 0.05 m,")
+        print("      base_radius 0.125 m. If x.vel reads consistently high or low by")
+        print("      the same factor, measure yours - it is a scale error, not a fault.")
 
 
 # ----------------------------------------------------------------- main
@@ -303,17 +328,18 @@ def main() -> int:
     ap.add_argument("--no-cameras", action="store_true", help="isolate the servos from a camera fault")
     args = ap.parse_args()
 
-    cfg = load_config(Path(args.config_path))
+    cfg, robot_cls = load_config(Path(args.config_path))
     if args.no_cameras:
         cfg.cameras = {}
 
     print(f"config : {args.config_path}")
+    print(f"robot  : {robot_cls.name}")
     print(f"id     : {cfg.id}")
     print(f"port1  : {cfg.port1}")
     print(f"port2  : {cfg.port2}")
     print(f"cameras: {', '.join(cfg.cameras) or '(none)'}")
 
-    robot = XLerobot(cfg)
+    robot = robot_cls(cfg)
     print("\nconnecting...")
     robot.connect(calibrate=False)
     record(PASS, "connected", "both buses and every camera opened")

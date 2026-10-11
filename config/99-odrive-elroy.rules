@@ -1,0 +1,13 @@
+# ODrive / ODESC motor controller over USB, for the XLeRobot base.
+#
+# The odrive python package talks to the board with libusb directly - there
+# is no /dev/tty for it - and libusb needs read/write on the raw USB device
+# node, which is root-only by default. Without this rule, odrive.find_any()
+# times out as if no board were attached. Official ODrive rule; ODESC boards
+# ship with ODrive's vendor id.
+#
+#   sudo cp config/99-odrive-elroy.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger --action=add --subsystem-match=usb
+#
+# Check with `lsusb`: the board shows as  1209:0d32  (or 0d31 in DFU mode).
+SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0d[0-9][0-9]", MODE="0666"

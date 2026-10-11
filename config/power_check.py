@@ -131,6 +131,25 @@ def progressive(bus, motors, label):
     return worst
 
 
+def any_answer(port, motors) -> bool:
+    """True if at least one of these motors pings. Opens and closes the port."""
+    bus = FeetechMotorsBus(port, {n: Motor(i, "sts3215", M) for n, i in motors.items()})
+    try:
+        bus.connect(handshake=False)
+    except Exception:
+        return False
+    try:
+        for name in motors:
+            if read1(bus, name, "Present_Voltage") is not None:
+                return True
+        return False
+    finally:
+        try:
+            bus.disconnect(disable_torque=False)
+        except Exception:
+            pass
+
+
 def run(port, motors, label):
     bus = FeetechMotorsBus(port, {n: Motor(i, "sts3215", M) for n, i in motors.items()})
     print(f"\n{'=' * 64}\n{label}\n  {port}\n{'=' * 64}")
@@ -199,7 +218,16 @@ def main() -> int:
         return 1
 
     r1 = run(args.port1, BUS1, "BUS 1   left arm 1-6 + head 7-8")
-    r2 = run(args.port2, BUS2, "BUS 2   right arm 1-6 + base wheels 7-9")
+    # Bus 2 carries the omniwheels (ids 7-9) only with the servo base. With
+    # the ODrive base they are simply absent; probe first so the survey does
+    # not print three rows of "no answer" and call it a fault.
+    bus2 = dict(BUS2)
+    wheel_names = [n for n in bus2 if n.startswith("base_")]
+    if wheel_names and not any_answer(args.port2, {n: bus2[n] for n in wheel_names}):
+        print(f"\n  (no servo wheels on bus 2 - expected with the ODrive base; surveying the arm only)")
+        for n in wheel_names:
+            bus2.pop(n)
+    r2 = run(args.port2, bus2, "BUS 2   right arm 1-6" + (" + base wheels 7-9" if wheel_names and len(bus2) > 6 else ""))
 
     print(f"\n{'=' * 64}\nREADING THIS\n{'=' * 64}")
     for label, r in (("bus1", r1), ("bus2", r2)):

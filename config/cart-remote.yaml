@@ -1,13 +1,14 @@
 # The cart, driven by leaders at the operator station. FULL ROBOT - arms,
 # head and base. Runs ON THE CART (elroy, the Orin):
 #
-#   ./config/cart-teleop.sh --full
-#   ./config/cart-record.sh --full <repo_id> "<task>"
+#   ./config/cart-teleop.sh
+#   ./config/cart-record.sh <repo_id> "<task>"
 #
-# NOT USABLE YET: xlerobot requires the head servos at IDs 7-8 on bus1 and
-# the base wheels at 7-9 on bus2. Until those exist, use
-# Missing motors fail with "no status packet"
-# naming the id.
+# BASE: two brushless wheels on an ODESC/ODrive over USB
+# (type: xlerobot_2wheels_odrive). Bus 2 therefore carries the right arm
+# only, ids 1-6. The three-omniwheel robot is `type: xlerobot`, with the
+# wheels as servos 7-9 on bus 2; switch the type and the operator's
+# emit_y_vel together - a differential drive has no y.vel.
 #
 # Everything the robot has is LOCAL to this machine; only the leaders are
 # remote. Camera frames go straight from USB to the dataset at full rate -
@@ -30,11 +31,24 @@
 fps: 30
 
 robot:
-  type: xlerobot
+  type: xlerobot_2wheels_odrive
   id: xlerobot
 
   port1: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00   # left arm + head
-  port2: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00   # right arm + base
+  port2: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00   # right arm only
+
+  # --- the ODrive base -------------------------------------------------
+  # Geometry: MEASURE THESE. x.vel in m/s and theta.vel in deg/s - in the
+  # dataset and on the operator's screen - are only as true as these two
+  # numbers. wheel_radius is half the tyre's outside diameter under load;
+  # wheelbase is centre-to-centre between the two tyres' contact patches.
+  wheel_radius: 0.0825      # 165 mm wheel
+  wheelbase: 0.25
+  # If forward drives the robot in a circle, one of these is wrong.
+  invert_left_wheel: true
+  invert_right_wheel: false
+  # Per-wheel clamp, m/s. Keep it low until the directions are proven.
+  max_linear_mps: 0.5
 
   disable_torque_on_disconnect: true
 

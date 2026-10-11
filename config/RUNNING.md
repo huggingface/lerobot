@@ -150,7 +150,7 @@ to stay local.
 |---|---|
 | leader arms | the follower arms |
 | D-pad | head pan / tilt |
-| left stick | base forward/back, strafe |
+| left stick Y | base forward/back (no strafe: the ODrive base is a differential drive) |
 | right stick X | base turn |
 | R1 / L2 | base speed up / down |
 

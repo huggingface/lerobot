@@ -5,14 +5,21 @@
 # For split teleoperation use cart-remote.yaml, with the leaders published
 # from the operator station by operator-leader-host.sh.
 #
-# Needs the full motor layout: bus1 = left arm 1-6 + head 7-8,
-# bus2 = right arm 1-6 + base wheels 7-9.
+# Motor layout: bus1 = left arm 1-6 + head 7-8, bus2 = right arm 1-6.
+# The base is two brushless wheels on an ODESC/ODrive over USB.
 
 robot:
   id: xlerobot
-  type: xlerobot
+  type: xlerobot_2wheels_odrive
   port1: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00 # left arm + head
-  port2: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00 # right arm + base
+  port2: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00 # right arm only
+
+  # Keep in step with cart-remote.yaml.
+  wheel_radius: 0.0825
+  wheelbase: 0.25
+  invert_left_wheel: true
+  invert_right_wheel: false
+  max_linear_mps: 0.5
 
   cameras:
     # fourcc and warmup are both load-bearing; this file was missing them.

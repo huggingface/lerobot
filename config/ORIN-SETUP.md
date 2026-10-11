@@ -257,6 +257,36 @@ Uncompressed 720p30 is ~55 MB/s, past USB 2.0. The configs set
 `fourcc: MJPG` for this reason; without it you get
 `failed to set fps=30 (actual_fps=10.0)`.
 
+### The ODrive base (USB)
+
+The two brushless wheels hang off an ODESC/ODrive board on USB. It is not a
+serial port: the `odrive` python package drives it through libusb, and
+libusb needs the raw USB node to be writable, which it is not by default.
+The symptom of a missing rule is `odrive.find_any()` timing out as if no
+board were plugged in.
+
+```bash
+lsusb | grep -i 1209          # expect 1209:0d32  (0d31 = DFU mode, wrong)
+sudo cp config/99-odrive-elroy.rules /etc/udev/rules.d/99-odrive.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --action=add --subsystem-match=usb
+```
+
+Then, once, from the robot's own environment, confirm it answers and read
+the bus voltage — this is also the first thing to run if the base ever
+stops responding:
+
+```bash
+uv run --project ~/GitHub/XLeRobot python -c "import odrive; o=odrive.find_any(timeout=10); print(o.serial_number, o.vbus_voltage, 'V')"
+```
+
+The robot type is `xlerobot_2wheels_odrive` (a subclass of `xlerobot`; same
+calibration file, since the wheels are not in it). Bus 2 carries the right
+arm only. The operator's `emit_y_vel` must be `false` — a differential
+drive has no sideways axis. `odrive_base.py` assumes 0.5.x firmware with
+`axis0` = left and `axis1` = right; if forward drives a circle, flip
+`invert_left_wheel` / `invert_right_wheel` in the yaml.
+
 ### RealSense permissions
 
 The RealSense is addressed by serial number, so it needs no naming rule —

@@ -42,11 +42,12 @@ remap_arm_prefix: true
 emit_head: true
 emit_base: true
 
-# The base on the cart today is the 3-OMNI one, which can strafe - so y.vel
-# is real and the left stick's X axis drives it. Set false when the 2-wheel
-# differential base replaces it; a differential drive cannot translate
-# sideways and the key would be a column the robot cannot reproduce.
-emit_y_vel: true
+# The base on the cart is the 2-WHEEL differential drive on the ODrive
+# (since 2026-10-11). It cannot translate sideways, so no y.vel: the robot
+# has no feature for it, and a dataset column it cannot reproduce is worse
+# than none. The left stick's X axis does nothing now. Set true only with
+# the 3-omni base (type: xlerobot), which can strafe.
+emit_y_vel: false
 
 # --- gamepad ----------------------------------------------------------
 #
