@@ -67,7 +67,7 @@ class SOLeader(Teleoperator):
                 # 官方原有的底座关节
                 "shoulder_pan": Motor(1, "sts3215", norm_mode_body), 
                 
-                # ▼▼▼ 这是你单独新增的 1:147 减速比关节 ▼▼▼
+                # ▼▼▼ 这是你单独新增的关节 ▼▼▼
                 "heavy_joint": Motor(2, "sts3215", norm_mode_body), 
                 
                 # 官方原有的其余关节（名字保持原样不变）
