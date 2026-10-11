@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -122,17 +120,16 @@ class YamFollowerConfig:
         for name, maximum in (("kp", 500), ("kd", 5)):
             if any(not 0 < x <= maximum for x in getattr(self, name)):
                 raise ValueError(f"{name} outside MIT gain limits")
+        if not 0 < self.gripper_kp <= 500 or not 0 < self.gripper_kd <= 5:
+            raise ValueError("Gripper gains outside MIT limits")
         for name in (
             "initial_tolerance_deg",
             "initial_gripper_tolerance",
-            "gripper_kp",
-            "gripper_kd",
             "gripper_force_limit_n",
             "gripper_stroke_m",
             "max_joint_speed_deg_s",
             "max_gripper_speed_s",
             "max_tracking_error_deg",
-            "control_frequency",
             "feedback_timeout_s",
             "command_timeout_s",
         ):
@@ -147,8 +144,6 @@ class YamFollowerConfig:
             raise ValueError('idle_mode must be "hold" or "float"')
         if self.idle_mode == "float" and not self.gravity_compensation:
             raise ValueError("idle_mode='float' needs gravity_compensation, or the arm would fall")
-        if self.gripper_kp > 500 or self.gripper_kd > 5:
-            raise ValueError("Gripper gains exceed the MIT limits")
         if not 20 <= self.control_frequency <= 250:
             raise ValueError("control_frequency must be between 20 and 250 Hz")
         if self.initial_gripper_position is not None and not 0 <= self.initial_gripper_position <= 100:

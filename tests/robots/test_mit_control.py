@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests of the robot-independent MIT arm control, on a made-up two-joint arm."""
+"""Tests of the robot-independent MIT control loop, on a made-up two-joint arm."""
 
 import threading
 import time
@@ -23,11 +23,11 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from lerobot.robots.yam_follower import mit_arm
+from lerobot.robots.yam_follower import mit_control
 
 
 def gripper(closed=1.0, opened=3.0):
-    return mit_arm.CalibratedGripper(
+    return mit_control.CalibratedGripper(
         closed=closed, open=opened, kp=4.0, kd=0.1, max_speed=1.0, force_limit_n=10.0, finger_stroke_m=0.1
     )
 
@@ -49,11 +49,11 @@ def params(**overrides):
         "coulomb_friction": np.array([0.5, 0.2]),
         **overrides,
     }
-    return mit_arm.MitArmParams(**values)
+    return mit_control.MitArmParams(**values)
 
 
 def motor_states(position, velocity=(0.0, 0.0, 0.0), torque=(0.0, 0.0, 0.0)):
-    return mit_arm.MotorStates(
+    return mit_control.MotorStates(
         position=np.asarray(position, dtype=float),
         velocity=np.asarray(velocity, dtype=float),
         torque=np.asarray(torque, dtype=float),
@@ -75,11 +75,11 @@ class FakeBus:
         self.enabled = False
         self.states = motor_states(position)
         self.error: Exception | None = None
-        self.sent: list[tuple[str, mit_arm.MitCommand]] = []
+        self.sent: list[tuple[str, mit_control.MitCommand]] = []
         self.disable_calls = 0
         self.reads = 0
         self.stop_after = stop_after
-        self.servo: mit_arm.MitServo | None = None
+        self.servo: mit_control.MitServo | None = None
 
     def read_states(self):
         self.reads += 1
@@ -99,7 +99,7 @@ class FakeBus:
 
 def make_servo(bus=None, settings=None, gravity=(0.0, 0.0)):
     bus = bus or FakeBus()
-    servo = mit_arm.MitServo(
+    servo = mit_control.MitServo(
         "arm", bus, settings or Settings(), lambda _: np.asarray(gravity), threading.Event()
     )
     servo.params = params()
@@ -117,17 +117,17 @@ def wait_for(condition, timeout_s=2.0):
 def test_joint_conversion_round_trips_signs_offsets_and_gripper():
     arm = params(joint_offsets=np.array([0.1, 0.2]))
     raw = np.array([0.3, -0.5, 2.5])
-    joints = mit_arm.motor_to_joint(raw, arm)
+    joints = mit_control.motor_to_joint(raw, arm)
     np.testing.assert_allclose(joints, [0.4, 0.7, 0.75])
-    np.testing.assert_allclose(mit_arm.joint_to_motor(joints, arm), raw)
+    np.testing.assert_allclose(mit_control.joint_to_motor(joints, arm), raw)
     with pytest.raises(ValueError, match="calibrated stroke"):
-        mit_arm.motor_to_joint(np.array([0.0, 0.0, 3.5]), arm)
+        mit_control.motor_to_joint(np.array([0.0, 0.0, 3.5]), arm)
 
 
 def test_position_clipping_is_pure():
     limits = np.array([[-1.0, 1.0], [0.0, 2.0]])
     values = np.array([-1.02, 0.5, 1.2])
-    clipped = mit_arm.clip_to_limits(values, limits)
+    clipped = mit_control.clip_to_limits(values, limits)
     assert values[0] == -1.02
     assert clipped[0] == -1.0
     assert clipped[2] == 1.0
@@ -137,7 +137,9 @@ def test_control_step_slews_tracks_clips_and_adds_gravity():
     position = np.array([0.2, 0.02, 0.5])
     previous = np.array([0.6, 0.02, 0.5])
     target = np.array([0.6, -0.5, 1.0])
-    command, packet = mit_arm.control_step(params(), position, target, previous, np.array([8.0, 1.5]), dt=0.1)
+    command, packet = mit_control.control_step(
+        params(), position, target, previous, np.array([8.0, 1.5]), dt=0.1
+    )
     # shoulder: tracking band; elbow: slew then lower limit; gripper: slew (0.1 stroke per 0.1 s).
     np.testing.assert_allclose(command, [0.3, 0.0, 0.6])
     np.testing.assert_allclose(previous, [0.6, 0.02, 0.5])  # inputs are not mutated
@@ -148,17 +150,23 @@ def test_control_step_slews_tracks_clips_and_adds_gravity():
 
 def test_control_step_returns_from_past_a_limit_without_jumping():
     position = np.array([0.2, -0.1, 0.5])  # elbow past its 0 lower limit
-    command, _ = mit_arm.control_step(params(), position, position, position.copy(), np.zeros(2), dt=0.01)
+    command, _ = mit_control.control_step(params(), position, position, position.copy(), np.zeros(2), dt=0.01)
     np.testing.assert_allclose(command, [0.2, -0.095, 0.5])  # back toward 0 at 0.5 rad/s
     # A command further out than the measured pose is pulled back to it, never beyond.
     previous = np.array([0.2, -0.3, 0.5])
-    command, _ = mit_arm.control_step(params(), position, position, previous, np.zeros(2), dt=0.01)
+    command, _ = mit_control.control_step(params(), position, position, previous, np.zeros(2), dt=0.01)
     assert command[1] == pytest.approx(-0.1)
+
+
+@pytest.mark.parametrize("gravity", [np.array([np.nan, 0.0]), np.zeros(1)])
+def test_gravity_feedforward_rejects_invalid_torques(gravity):
+    with pytest.raises(ValueError, match="2 finite torques"):
+        mit_control.gravity_feedforward(params(), gravity)
 
 
 @pytest.mark.parametrize("closed,opened", [(1.0, 3.0), (3.0, 1.0)])
 def test_free_gripper_goes_straight_to_its_target(closed, opened):
-    limiter = mit_arm.GripperForceLimiter(gripper(closed, opened))
+    limiter = mit_control.GripperForceLimiter(gripper(closed, opened))
     command = limiter.command(measured=0.5, velocity=1.0, torque=0.1, commanded=0.0, now=0.0)
     assert command == pytest.approx((closed, 0, 4, 0.1, 0))
     assert not limiter.blocked
@@ -166,7 +174,7 @@ def test_free_gripper_goes_straight_to_its_target(closed, opened):
 
 def blocked_limiter(torque):
     """A closing gripper stopped by an object at mid-stroke (raw 2.0), pressing with ``torque``."""
-    limiter = mit_arm.GripperForceLimiter(gripper())
+    limiter = mit_control.GripperForceLimiter(gripper())
     command = limiter.command(measured=0.5, velocity=0.0, torque=torque, commanded=0.0, now=0.0)
     assert limiter.blocked
     return limiter, command
@@ -198,7 +206,7 @@ def test_blocked_gripper_releases_once_its_torque_drops():
 
 
 def test_moving_gripper_is_not_considered_blocked():
-    limiter = mit_arm.GripperForceLimiter(gripper())
+    limiter = mit_control.GripperForceLimiter(gripper())
     limiter.command(measured=0.5, velocity=0.5, torque=2.0, commanded=0.0, now=0.0)  # 1 rad/s raw
     assert not limiter.blocked
 
@@ -207,7 +215,7 @@ def test_joint_state_maps_rates_and_torques_to_the_joint_frame():
     arm = params(gripper=gripper(closed=3.0, opened=1.0))
     bus = FakeBus()
     bus.states = motor_states([0.2, -0.5, 2.0], velocity=[0.5, 0.5, 1.0], torque=[2.0, 2.0, 0.3])
-    state = mit_arm.read_joint_state(bus, arm)
+    state = mit_control.read_joint_state(bus, arm)
     np.testing.assert_allclose(state.position, [0.2, 0.5, 0.5])
     np.testing.assert_allclose(state.velocity, [0.5, -0.5, -0.5])  # 1 rad/s over a -2 rad stroke
     np.testing.assert_allclose(state.torque, [2.0, -2.0, -0.3])
@@ -218,14 +226,14 @@ def test_joint_state_rejects_non_finite_feedback(field):
     bus = FakeBus()
     getattr(bus.states, field)[0] = np.nan
     with pytest.raises(ConnectionError, match="finite motor"):
-        mit_arm.read_joint_state(bus, params())
+        mit_control.read_joint_state(bus, params())
 
 
 def test_servo_holds_then_sends_one_command_per_motor():
     bus = FakeBus(stop_after=3)
     bus.enabled = True
     servo = make_servo(bus)
-    servo.seed(mit_arm.read_joint_state(bus, servo.params))
+    servo.seed(mit_control.read_joint_state(bus, servo.params))
     bus.reads = 0
     servo._run()
     assert servo.failure is None
@@ -238,7 +246,7 @@ def test_servo_holds_then_sends_one_command_per_motor():
 def test_servo_holds_the_measured_pose_once_commands_expire():
     bus = FakeBus()
     servo = make_servo(bus, Settings(command_timeout_s=0.01))
-    servo.seed(mit_arm.read_joint_state(bus, servo.params))
+    servo.seed(mit_control.read_joint_state(bus, servo.params))
     bus.stop_after, bus.reads = 1, 0  # run exactly one servo cycle
     servo.set_target(np.array([0.5, 0.5, 1.0]))
     servo.commanded_at -= 1
@@ -247,11 +255,20 @@ def test_servo_holds_the_measured_pose_once_commands_expire():
     np.testing.assert_allclose(servo.target, servo.state.position)
 
 
+def test_servo_copies_submitted_target():
+    servo = make_servo()
+    servo.seed(mit_control.read_joint_state(servo.bus, servo.params))
+    target = np.array([0.5, 0.5, 1.0])
+    servo.set_target(target)
+    target[0] = -0.5
+    assert servo.target[0] == 0.5
+
+
 def test_float_commands_compensate_gravity_and_friction_without_stiffness():
-    state = mit_arm.JointState(
+    state = mit_control.JointState(
         position=np.array([0.2, 0.5, 0.5]), velocity=np.array([1.0, 1.0, 0.0]), torque=np.zeros(3)
     )
-    commands = mit_arm.float_commands(params(), state, np.array([8.0, 1.5]))
+    commands = mit_control.float_commands(params(), state, np.array([8.0, 1.5]))
     # Gravity 8 clipped to 5 Nm, plus friction 0.5 in the direction of motion.
     assert commands["shoulder"] == pytest.approx((0.2, 0, 0, 0.2, 5.5))
     # Gravity -3 Nm and friction -0.2 Nm in the reversed elbow's motor frame.
@@ -276,7 +293,7 @@ def joint_stiffness(bus):
 def test_float_mode_floats_until_the_first_target_then_tracks_from_the_measured_pose():
     bus = FakeBus()
     servo = make_servo(bus, Settings(idle_mode="float"))
-    servo.seed(mit_arm.read_joint_state(bus, servo.params))
+    servo.seed(mit_control.read_joint_state(bus, servo.params))
     bus.enabled = True
     run_cycles(servo, 2)
     assert joint_stiffness(bus) and set(joint_stiffness(bus)) == {0.0}
@@ -292,7 +309,7 @@ def test_float_mode_floats_until_the_first_target_then_tracks_from_the_measured_
 def test_float_mode_floats_again_after_the_command_timeout():
     bus = FakeBus()
     servo = make_servo(bus, Settings(idle_mode="float", command_timeout_s=0.01))
-    servo.seed(mit_arm.read_joint_state(bus, servo.params))
+    servo.seed(mit_control.read_joint_state(bus, servo.params))
     bus.enabled = True
     servo.set_target(servo.state.position)
     servo.commanded_at -= 1
@@ -306,7 +323,7 @@ def test_servo_starts_past_a_limit_without_jumping(idle_mode):
     # Raw elbow 0.1 is joint -0.1 (sign -1): past its 0 lower limit, within the feedback tolerance.
     bus = FakeBus(position=(0.2, 0.1, 2.0))
     servo = make_servo(bus, Settings(idle_mode=idle_mode))
-    servo.seed(mit_arm.read_joint_state(bus, servo.params))
+    servo.seed(mit_control.read_joint_state(bus, servo.params))
     servo.set_target(np.array([0.2, 0.5, 0.5]))
     run_cycles(servo, 2)
     elbow_goals = [-command[0] for name, command in bus.sent if name == "elbow"]
@@ -316,14 +333,14 @@ def test_servo_starts_past_a_limit_without_jumping(idle_mode):
 def test_hold_mode_keeps_stiffness_while_idle():
     bus = FakeBus()
     servo = make_servo(bus)
-    servo.seed(mit_arm.read_joint_state(bus, servo.params))
+    servo.seed(mit_control.read_joint_state(bus, servo.params))
     bus.enabled = True
     run_cycles(servo, 2)
     assert set(joint_stiffness(bus)) == {50.0, 20.0}
 
 
 def start_enabled(servo):
-    servo.seed(mit_arm.read_joint_state(servo.bus, servo.params))
+    servo.seed(mit_control.read_joint_state(servo.bus, servo.params))
     servo.bus.enabled = True
     servo.start()
 
@@ -375,7 +392,7 @@ def test_servo_error_stops_commands_until_disconnect():
 
 def test_servo_start_refuses_a_second_thread():
     servo = make_servo()
-    servo.seed(mit_arm.read_joint_state(servo.bus, servo.params))
+    servo.seed(mit_control.read_joint_state(servo.bus, servo.params))
     servo.start()
     thread = servo._thread
     with pytest.raises(RuntimeError, match="already running"):

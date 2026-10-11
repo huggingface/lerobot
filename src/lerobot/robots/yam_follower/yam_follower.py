@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,7 +47,7 @@ from .config_yam_follower import (
     YamFollowerRobotConfig,
     motor_feature_names,
 )
-from .mit_arm import (
+from .mit_control import (
     CalibratedGripper,
     MitArmParams,
     MitCommand,
@@ -409,7 +407,7 @@ class YamFollower(Robot):
     @check_if_not_connected
     def start(self) -> None:
         """Enable torque at the seeded pose (unless read-only), then start the servo."""
-        if self.servo.active or self.servo._thread is not None:
+        if self.servo.active:
             raise RuntimeError("YAM servo is already running")
         if not self.config.read_only:
             self.bus.enable(joint_to_motor(self.servo.state.position, self._require_params()))

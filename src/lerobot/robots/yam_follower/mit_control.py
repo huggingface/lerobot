@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Control loop for arms whose motors run in MIT (impedance) mode with gravity feed-forward.
+"""MIT control loop for arms whose motors run in impedance mode with gravity feed-forward.
 
-Nothing here is specific to one robot. A robot provides its joint names, limits and gains
-(``MitArmParams``), its gripper (``CalibratedGripper``), a bus implementing ``MitArmBus`` and
-a gravity model; ``MitServo`` then holds and moves the arm from a background thread.
+This module contains the hardware-independent part of the control stack. The robot supplies its
+motor order, calibration, limits and gains through ``MitArmParams``, implements ``MitArmBus`` to
+communicate with the motors, and provides a gravity-torque function. ``MitServo`` combines these
+pieces in a background control loop.
 
 Internal units: joints in radians, the gripper from 0 (closed) to 1 (open).
 """
@@ -262,6 +261,8 @@ def control_step(
 
 def gravity_feedforward(params: MitArmParams, gravity: np.ndarray) -> np.ndarray:
     """Return the clipped feed-forward torque of each arm joint for model gravity torques."""
+    if gravity.shape != (params.num_joints,) or not np.isfinite(gravity).all():
+        raise ValueError(f"Gravity compensation must return {params.num_joints} finite torques")
     torque = gravity * params.gravity_factors * params.joint_signs
     return np.clip(torque, -params.max_gravity_torque, params.max_gravity_torque)
 
@@ -396,12 +397,13 @@ class MitServo:
         )
 
     def set_target(self, target: np.ndarray) -> None:
+        """Submit the latest validated joint target."""
         with self._lock:
             self._check_healthy()
             if self.idle and self.config.idle_mode == "float":
                 # Resume tracking from wherever the arm was moved by hand.
                 self.command = self.state.position.copy()
-            self.target = target
+            self.target = target.copy()
             self.commanded_at = time.monotonic()
             self.command_timed_out = False
             self.has_target = True

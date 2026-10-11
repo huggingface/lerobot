@@ -26,7 +26,7 @@ import pytest
 from lerobot.robots.yam_follower import (
     YamFollower,
     YamFollowerRobotConfig,
-    mit_arm,
+    mit_control,
     yam_follower as robot_module,
 )
 from lerobot.robots.yam_follower.config_yam_follower import (
@@ -65,12 +65,12 @@ def params(robot):
 
 def raw_states(gripper=0.1):
     position = np.array([0, 0, 0, 0, 0, 0, gripper], dtype=float)
-    return mit_arm.MotorStates(position=position, velocity=np.zeros(7), torque=np.zeros(7))
+    return mit_control.MotorStates(position=position, velocity=np.zeros(7), torque=np.zeros(7))
 
 
 def joint_state(position=None):
     position = np.zeros(7) if position is None else np.asarray(position, dtype=float)
-    return mit_arm.JointState(position=position, velocity=np.zeros(7), torque=np.zeros(7))
+    return mit_control.JointState(position=position, velocity=np.zeros(7), torque=np.zeros(7))
 
 
 def mock_bus(states=None):
@@ -105,9 +105,9 @@ def test_units_order_and_gripper_polarity(robot, opened):
     raw = [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, (0.1 + opened) / 2]
     robot.config.joint_signs[0] = -1
     robot.config.joint_offsets_deg[0] = math.degrees(0.2)
-    decoded = mit_arm.motor_to_joint(np.asarray(raw), params(robot))
+    decoded = mit_control.motor_to_joint(np.asarray(raw), params(robot))
     np.testing.assert_allclose(decoded, [0.1, 0.2, 0.3, -0.4, 0.5, -0.6, 0.5])
-    np.testing.assert_allclose(mit_arm.joint_to_motor(decoded, params(robot)), raw)
+    np.testing.assert_allclose(mit_control.joint_to_motor(decoded, params(robot)), raw)
 
 
 def test_public_units_are_degrees_and_percent_or_internal_units():
@@ -136,7 +136,7 @@ def test_measured_pose_has_wider_margin_than_action(robot):
     states = raw_states(gripper=6.4)
     states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.08
     bus = attach_bus(robot, mock_bus(states))
-    measured = mit_arm.read_joint_state(bus, params(robot)).position
+    measured = mit_control.read_joint_state(bus, params(robot)).position
     assert measured[0] == pytest.approx(states.position[0])
     assert measured[6] == 1.0
     # Actions are clipped to the model limits instead of being rejected.
@@ -144,7 +144,7 @@ def test_measured_pose_has_wider_margin_than_action(robot):
     assert robot_module.action_to_target(action, use_degrees=True)[0] == JOINT_LIMITS_RAD[0][0]
     states.position[0] = JOINT_LIMITS_RAD[0][0] - 0.2
     with pytest.raises(ValueError, match="outside"):
-        mit_arm.read_joint_state(bus, params(robot))
+        mit_control.read_joint_state(bus, params(robot))
 
 
 def test_joint_state_maps_velocity_and_torque_to_joint_frame(robot):
@@ -152,7 +152,7 @@ def test_joint_state_maps_velocity_and_torque_to_joint_frame(robot):
     states = raw_states(gripper=3.1)
     states.velocity[:] = [0.5, 0, 0, 0, 0, 0, 3.0]
     states.torque[:] = [2.0, 0, 0, 0, 0, 0, 0.2]
-    state = mit_arm.read_joint_state(mock_bus(states), params(robot))
+    state = mit_control.read_joint_state(mock_bus(states), params(robot))
     assert state.velocity[0] == pytest.approx(-0.5)
     assert state.torque[0] == pytest.approx(-2.0)
     assert state.velocity[6] == pytest.approx(0.5)  # 3 rad/s over a 6 rad stroke
@@ -275,7 +275,7 @@ def test_disabled_motor_is_allowed_before_enable():
 def test_slew_gripper_torque_and_gravity_feedforward(robot):
     robot.config.max_gripper_speed_s = 2
     position = np.array([0, 0.5, 0.5, 0, 0, 0, 0.5])
-    command, packet = mit_arm.control_step(
+    command, packet = mit_control.control_step(
         params(robot), position, position + 0.1, position, gravity=np.ones(6), dt=0.01
     )
     assert packet["joint_1"] == pytest.approx((0.003, 0, 80, 5, 1))
@@ -289,16 +289,16 @@ def test_gripper_uses_i2rt_gains_and_force_limit(robot, polarity):
     robot.config.gripper_open_deg = robot.config.gripper_closed_deg + polarity * math.degrees(6.0)
     grip = params(robot).gripper
     assert (grip.kp, grip.kd, grip.force_limit_n, grip.finger_stroke_m) == (20.0, 0.5, 50.0, 0.096)
-    limiter = mit_arm.GripperForceLimiter(grip)
+    limiter = mit_control.GripperForceLimiter(grip)
     # Free motion goes straight to the target, without a torque cap.
     command = limiter.command(measured=0.5, velocity=1.0, torque=0.1, commanded=1.0, now=0.0)
     assert command == pytest.approx((grip.to_raw(1.0), 0, 20, 0.5, 0))
     # Blocked while closing; the limit is 50 N * 0.096 m / 6 rad + 0.3 Nm = 1.1 Nm at the motor.
-    at_limit = mit_arm.GripperForceLimiter(grip)
+    at_limit = mit_control.GripperForceLimiter(grip)
     command = at_limit.command(measured=0.5, velocity=0.0, torque=1.1, commanded=0.0, now=0.0)
     assert at_limit.blocked
     assert command[0] == pytest.approx(grip.to_raw(0.5))  # pressing with the limit: hold
-    harder = mit_arm.GripperForceLimiter(grip)
+    harder = mit_control.GripperForceLimiter(grip)
     command = harder.command(measured=0.5, velocity=0.0, torque=2.1, commanded=0.0, now=0.0)
     # 1 Nm too much: back off 1 Nm / kp 20 = 0.05 rad toward open.
     assert command[0] == pytest.approx(grip.to_raw(0.5) + polarity * 0.05)
@@ -311,7 +311,7 @@ def test_control_step_clamps_tracking_limits_and_gravity(robot):
     previous = np.array([0.9, 0.0, 1.0, 0, 0, 0, 0.5])
     target = np.array([0.9, -0.2, 1.5, 0, 0, 0, 1.0])
     gravity = np.array([20.0, 2, 1, 1, 1, 1])
-    command, packet = mit_arm.control_step(params(robot), position, target, previous, gravity, dt=0.05)
+    command, packet = mit_control.control_step(params(robot), position, target, previous, gravity, dt=0.05)
     # joint_1 tracking band, joint_2 lower limit, joint_3 slew; the gripper slews freely.
     np.testing.assert_allclose(command, [0.65, 0.0, 1.015, 0, 0, 0, 1.0])
     np.testing.assert_allclose(previous, [0.9, 0.0, 1.0, 0, 0, 0, 0.5])  # inputs are not mutated
@@ -352,7 +352,7 @@ def test_observation_uses_public_units(tmp_path, monkeypatch, use_degrees):
     monkeypatch.setattr(robot_module, "require_package", lambda *a, **kw: None)
     robot = make_robot(tmp_path, use_degrees=use_degrees, use_velocity_and_torque=True)
     ready(robot)
-    robot.servo.state = mit_arm.JointState(
+    robot.servo.state = mit_control.JointState(
         position=np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.5]),
         velocity=np.array([1.0, 0, 0, 0, 0, 0, 0.25]),
         torque=np.array([2.0, 0, 0, 0, 0, 0, 0.3]),
