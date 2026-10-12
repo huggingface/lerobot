@@ -22,15 +22,17 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch import Tensor, nn
 
+from lerobot.configs import FeatureType
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import (
     _diffusers_available,
     _transformers_available,
     require_package,
 )
 
+from ..chunk import ChunkPolicySpec, FeatureSpec
 from .configuration_lawam import LaWAMConfig
 
 _lawam_deps_available = _transformers_available and _diffusers_available
@@ -215,6 +217,48 @@ class LaWAMPolicy(PreTrainedPolicy):
     def reset(self) -> None:
         """Clear the queued action chunk used by step-wise inference."""
         self._queues: dict[str, deque[Tensor]] = {ACTION: deque(maxlen=self.config.n_action_steps)}
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Serve current observations and the wrapper's already-cropped action horizon.
+
+        Future image indices are training targets for the LAM teacher. Inference
+        predicts the future representation from the current images instead.
+        """
+        if self.config.n_obs_steps != 1:
+            raise ValueError("LaWAM chunk serving requires n_obs_steps=1.")
+        return ChunkPolicySpec(
+            prediction_steps=self.config.action_horizon,
+            execution_steps=self.config.n_action_steps,
+        )
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Preserve canonical camera resizing and optional unused robot state."""
+        self.config.validate_features()
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        required = set(expected)
+        allowed = set(expected)
+        if not self.config.flow_use_state:
+            # Robot rollout includes measured joints even for vision-only policies;
+            # LaWAMPrepareBatchProcessorStep deliberately ignores them in this mode.
+            required.discard(OBS_STATE)
+            allowed.add(OBS_STATE)
+        elif OBS_STATE not in expected:
+            raise ValueError("State-conditioned LaWAM requires a checkpoint state feature.")
+        if not required <= supplied.keys() or not supplied.keys() <= allowed:
+            raise ValueError("LaWAM requires all configured inputs and only known features.")
+        for name, feature in supplied.items():
+            if name == OBS_STATE and not self.config.flow_use_state:
+                if feature.kind != "tensor" or len(feature.shape) != 1:
+                    raise ValueError("Unused LaWAM robot state must be a tensor vector.")
+                continue
+            policy_feature = expected[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                # LaWAMResizeImagesProcessorStep resizes every configured view.
+                if len(policy_feature.shape) != 3 or policy_feature.shape[0] != 3 or feature.kind != "rgb":
+                    raise ValueError(f"LaWAM requires RGB camera inputs: {name}.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
     def get_optim_params(self) -> dict:
         """Return model parameters exposed to the LeRobot optimizer factory."""

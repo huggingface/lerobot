@@ -271,7 +271,8 @@ lawam = [
 ]
 
 # Features
-async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
+# Remote inference: supported binding range validated by direct transport tests.
+remote = ["eclipse-zenoh>=1.9.0,<1.11.0", "msgpack>=1.1.0,<2.0.0"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
 # Annotation pipeline (lerobot-annotate). The only backend is ``openai``,
@@ -358,7 +359,7 @@ all = [
     "lerobot[vla_jepa]",
     "lerobot[lingbot_va]",
     "lerobot[lawam]",
-    "lerobot[async]",
+    "lerobot[remote]",
     "lerobot[dev]",
     "lerobot[test]",
     "lerobot[video_benchmark]",
@@ -395,6 +396,7 @@ lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
+lerobot-policy-server="lerobot.scripts.lerobot_policy_server:main"
 
 # ---------------- Tool Configurations ----------------
 
@@ -468,7 +470,6 @@ ignore = [
 "src/lerobot/policies/molmoact2/molmoact2_hf_model/**" = ["D"]
 # Awaiting conversion, one PR per module.
 "src/lerobot/annotations/**" = ["D"]
-"src/lerobot/async_inference/**" = ["D"]
 "src/lerobot/cameras/**" = ["D"]
 "src/lerobot/common/**" = ["D"]
 "src/lerobot/configs/**" = ["D"]

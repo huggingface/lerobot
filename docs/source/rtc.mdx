@@ -97,11 +97,21 @@ for step in range(num_steps):
 - `guided` (default) applies the original Jacobian guidance during denoising and works with ordinary flow-matching checkpoints.
 - `trained` hard-inpaints the previous chunk's prefix with per-action flow timesteps. It currently requires a Pi05 checkpoint trained with `policy.rtc_training_max_delay > 0` and avoids the guidance backward pass.
 
-For trained mode, both `execution_horizon` and the rollout backend's
-`inference.queue_threshold` must be at least the checkpoint's
-`rtc_training_max_delay`, and `execution_horizon` must not exceed
-`chunk_size - rtc_training_max_delay` (the `d <= s <= H - d` bound from the RTC
-paper); rollout validates this before connecting the robot.
+Local rollout and the policy server apply the same conservative trained-mode
+admission rule: `rtc_training_max_delay <= execution_horizon <= prediction_steps - rtc_training_max_delay`.
+For Pi05, `prediction_steps` is the checkpoint's `chunk_size`. This preserves the
+existing local limit: the configured prefix covers the maximum trained delay and
+leaves at least that many predicted steps outside it. Local rollout additionally
+requires `inference.queue_threshold >= rtc_training_max_delay` before connecting
+the robot; remote request timing uses its own refill settings.
+
+Here `execution_horizon` is supplied prefix capacity, not the amount of playback
+between requests. Pi05 hard-conditions only the `inference_delay` prefix. The
+admission rule is not a latency guarantee or a claim that larger capacities must
+fail at runtime; measured overlap, remaining actions and freshness checks still
+determine whether a returned chunk can execute. A previously accepted remote-only
+configuration above the upper bound must now shorten its prefix to match local
+admission. Plain chunks and guided RTC are unaffected by this trained-only rule.
 
 **`execution_horizon`**: How many timesteps from the previous chunk to maintain consistency with. Higher values mean smoother transitions but potentially less reactivity.
 
@@ -185,18 +195,22 @@ lerobot-rollout \
     --device=cuda
 ```
 
-## How It Differs from the Async Inference in LeRobot
+## How RTC relates to remote inference
 
-Both RTC and [async inference](./async) improve real-time robot control, but they solve different problems.
+`--inference.type=rtc` is local RTC: inference runs in a background thread in the rollout process and uses no transport. Running a policy server and a robot client as separate processes on the same machine uses the remote backend instead.
 
-| Aspect        | Async Inference                                                            | RTC                                                 |
-| ------------- | -------------------------------------------------------------------------- | --------------------------------------------------- |
-| **Problem**   | Idle frames while waiting for inference                                    | Discontinuities between action chunks               |
-| **Solution**  | Decouple prediction from execution                                         | Guide new chunks to continue smoothly from previous |
-| **Benefit**   | No waiting, continuous action                                              | Smooth transitions, natural motion                  |
-| **Best Used** | Async inference is best used with large models with high inference latency | Flow-matching based policies                        |
+Both asynchronous backends use the same [bounded waiting and shutdown behavior](./remote_inference#what-the-robot-does-while-waiting-or-stopping) on supported robots. See [local RTC budgets](./inference#inference-backends) for its timeout defaults. Waiting does not relax RTC's prefix, delay or freshness checks.
 
-**Use both together** for maximum smoothness and reactivity!
+Both RTC and [asynchronous remote inference](./remote_inference) improve real-time robot control, but they solve different problems.
+
+| Aspect           | Remote inference                                              | RTC                                                   |
+| ---------------- | ------------------------------------------------------------- | ----------------------------------------------------- |
+| **Purpose**      | Run inference in another process or on another computer       | Condition predictions on the remaining trajectory     |
+| **Execution**    | Local buffered playback, optional alignment and blending      | Guided or trained continuation for supported policies |
+| **Relationship** | Can serve plain chunks or RTC                                 | Can execute locally or through the remote backend     |
+| **Limits**       | Latency, freshness and buffer coverage still constrain motion | Requires the policy's declared RTC contract           |
+
+Remote inference can use RTC when the checkpoint supports the negotiated RTC mode. Plain chunks also support optional cursor alignment and blending; see the [remote inference guide](./remote_inference) for modes, compatibility and tuning.
 
 ## Advanced: Debug Tracking
 

@@ -22,7 +22,9 @@ handling action merging and leftover tracking.
 """
 
 import logging
+from dataclasses import dataclass
 from threading import Lock
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -30,6 +32,22 @@ from torch import Tensor
 from .configuration_rtc import RTCConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class QueueSnapshot:
+    """One coherent continuation. A pop commits an endpoint to interpolation.
+
+    ``cursor`` counts commits since clear, independently of queue replacement;
+    ``index`` is retained for the existing local RTC merge API.
+    """
+
+    generation: int
+    cursor: int
+    index: int
+    model_actions: Tensor | None
+    canonical_actions: Tensor | None
+    provenance: tuple[Any, ...]
 
 
 class ActionQueue:
@@ -64,6 +82,9 @@ class ActionQueue:
         self.queue: Tensor | None = None  # Processed actions for robot rollout
         self.original_queue: Tensor | None = None  # Original actions for RTC
         self._task_queue: list[str | None] | None = None
+        self._provenance_queue: list[Any] = []
+        self._generation = 0
+        self._cursor = 0
         self.lock = Lock()
         self.last_index = 0
         self.cfg = cfg
@@ -80,10 +101,17 @@ class ActionQueue:
 
     def get_with_task(self) -> tuple[Tensor, str | None] | None:
         """Get the next action together with the task that generated its chunk."""
+        item = self.get_with_provenance()
+        return None if item is None else (item[0], item[1])
+
+    def get_with_provenance(self) -> tuple[Tensor, str | None, Any] | None:
+        """Commit one action, returning its original request provenance atomically."""
         with self.lock:
             if self.queue is None or self.last_index >= len(self.queue):
                 return None
 
+            if self._provenance_queue and len(self._provenance_queue) != len(self.queue):
+                raise RuntimeError("ActionQueue provenance is out of sync with actions")
             if self._task_queue is not None and len(self._task_queue) != len(self.queue):
                 # A mismatch means some mutation broke the action/task lockstep.
                 raise RuntimeError(
@@ -93,8 +121,24 @@ class ActionQueue:
                 )
             action = self.queue[self.last_index]
             task = None if self._task_queue is None else self._task_queue[self.last_index]
+            provenance = self._provenance_queue[self.last_index] if self._provenance_queue else None
             self.last_index += 1
-            return action.clone(), task
+            self._cursor += 1
+            return action.clone(), task, provenance
+
+    def snapshot(self) -> QueueSnapshot:
+        """Copy cursor, both continuations and their provenance under one lock."""
+        with self.lock:
+            return QueueSnapshot(
+                generation=self._generation,
+                cursor=self._cursor,
+                index=self.last_index,
+                model_actions=None
+                if self.original_queue is None
+                else self.original_queue[self.last_index :].clone(),
+                canonical_actions=None if self.queue is None else self.queue[self.last_index :].clone(),
+                provenance=tuple(self._provenance_queue[self.last_index :]),
+            )
 
     def clear(self) -> None:
         """Clear queued actions and reset consumption index."""
@@ -102,7 +146,34 @@ class ActionQueue:
             self.queue = None
             self.original_queue = None
             self._task_queue = None
+            self._provenance_queue = []
             self.last_index = 0
+            self._cursor = 0
+            self._generation += 1
+
+    def replace_future(
+        self,
+        actions: Tensor,
+        provenance: list[Any],
+        *,
+        snapshot: QueueSnapshot,
+    ) -> bool:
+        """Replace only the uncommitted future if its atomic cursor is unchanged.
+
+        Plain aligned playback has no model-space continuation. Keeping the same
+        values in both queues preserves existing snapshot shape invariants.
+        """
+        if len(actions) != len(provenance):
+            raise ValueError("Every replacement action requires provenance")
+        with self.lock:
+            if snapshot.generation != self._generation or snapshot.cursor != self._cursor:
+                return False
+            self.queue = actions.clone()
+            self.original_queue = actions.clone()
+            self._provenance_queue = list(provenance)
+            self._task_queue = [source.task for source in provenance]
+            self.last_index = 0
+            return True
 
     def qsize(self) -> int:
         """Get the number of remaining actions in the queue.
@@ -170,7 +241,9 @@ class ActionQueue:
         action_index_before_inference: int | None = None,
         *,
         task: str | None = None,
-    ):
+        provenance: Any = None,
+        snapshot: QueueSnapshot | None = None,
+    ) -> bool:
         """Merge new actions into the queue.
 
         This method operates differently based on RTC mode:
@@ -185,13 +258,21 @@ class ActionQueue:
             task: Instruction used to generate the incoming action chunk.
         """
         with self.lock:
+            if snapshot is not None and snapshot.generation != self._generation:
+                return False
             delay = self._check_and_resolve_delays(real_delay, action_index_before_inference)
+            if snapshot is not None:
+                delay = min(max(0, real_delay), max(0, self._cursor - snapshot.cursor))
 
             if self.cfg.enabled:
-                self._replace_actions_queue(original_actions, processed_actions, delay, task)
-                return
+                queue = self._replace_actions_queue(original_actions, processed_actions, delay, task)
+                self._provenance_queue = [provenance] * len(queue)
+                return True
 
+            remaining_provenance = self._provenance_queue[self.last_index :]
             self._append_actions_queue(original_actions, processed_actions, task)
+            self._provenance_queue = remaining_provenance + [provenance] * len(processed_actions)
+            return True
 
     def _replace_actions_queue(
         self,
@@ -199,7 +280,7 @@ class ActionQueue:
         processed_actions: Tensor,
         real_delay: int,
         task: str | None,
-    ):
+    ) -> Tensor:
         """Replace the queue with new actions (RTC mode).
 
         Discards the first `real_delay` actions since they correspond to the time
@@ -221,8 +302,11 @@ class ActionQueue:
         logger.debug(f"real_delay: {real_delay}, clamped_delay: {clamped_delay}")
 
         self.last_index = 0
+        return self.queue
 
-    def _append_actions_queue(self, original_actions: Tensor, processed_actions: Tensor, task: str | None):
+    def _append_actions_queue(
+        self, original_actions: Tensor, processed_actions: Tensor, task: str | None
+    ) -> None:
         """Append new actions to the queue (non-RTC mode).
 
         Removes already-consumed actions and appends new ones, maintaining
@@ -239,6 +323,8 @@ class ActionQueue:
             self._task_queue = [task] * len(self.queue)
             return
 
+        if self.original_queue is None:
+            raise RuntimeError("Canonical action queue exists without its matching model-space queue")
         existing_tasks = self._task_queue or [None] * len(self.queue)
         self.original_queue = torch.cat([self.original_queue, original_actions.clone()])
         self.original_queue = self.original_queue[self.last_index :]

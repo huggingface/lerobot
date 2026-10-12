@@ -23,9 +23,9 @@ recording, upload, and human-in-the-loop variants, see ``lerobot-rollout``.
 """
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.inference import SyncInferenceConfig
 from lerobot.robots.lekiwi import LeKiwiClientConfig
 from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
-from lerobot.rollout.inference import SyncInferenceConfig
 from lerobot.rollout.strategies import BaseStrategy
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.utils import init_logging
