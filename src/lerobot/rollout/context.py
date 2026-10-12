@@ -87,7 +87,7 @@ def _wrap_predict_action_chunk_with_torch_compile(
         return False
 
     try:
-        policy.predict_action_chunk = torch.compile(
+        policy.predict_action_chunk = torch.compile(  # type: ignore[method-assign]
             policy.predict_action_chunk,
             backend=backend,
             mode=mode,
@@ -226,7 +226,7 @@ class HardwareContext:
 
     robot_wrapper: ThreadSafeRobot
     teleop: Teleoperator | None
-    initial_position: dict | None = None
+    initial_position: dict[str, float] | None = None
 
 
 @dataclass
@@ -279,20 +279,22 @@ class RolloutContext:
 
 def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy:
     """Load policy weights, keeping adapter and base-model revisions independent."""
+    pretrained_path = policy_config.pretrained_path
+    if pretrained_path is None:
+        raise ValueError("--policy.path is required for rollout")
     pretrained_revision = policy_config.pretrained_revision
     policy_class = get_policy_class(policy_config.type)
 
     if not policy_config.use_peft:
         return policy_class.from_pretrained(
-            policy_config.pretrained_path,
+            pretrained_path,
             config=policy_config,
             revision=pretrained_revision,
         )
 
     require_package("peft", extra="peft")
 
-    peft_path = policy_config.pretrained_path
-    peft_config = PeftConfig.from_pretrained(peft_path, revision=pretrained_revision)
+    peft_config = PeftConfig.from_pretrained(pretrained_path, revision=pretrained_revision)
     policy = policy_class.from_pretrained(
         pretrained_name_or_path=peft_config.base_model_name_or_path,
         config=policy_config,
@@ -300,7 +302,7 @@ def _load_pretrained_policy(policy_config: PreTrainedConfig) -> PreTrainedPolicy
     )
     return PeftModel.from_pretrained(
         policy,
-        peft_path,
+        pretrained_path,
         config=peft_config,
         revision=pretrained_revision,
     )
@@ -384,8 +386,11 @@ def build_rollout_context(
         robot_observation_processor = robot_observation_processor or _o
 
     # --- 3. Hardware (heaviest side-effect, deferred) -----------------
-    logger.info("Connecting robot (%s)...", cfg.robot.type if cfg.robot else "?")
-    robot = make_robot_from_config(cfg.robot)
+    robot_config = cfg.robot
+    if robot_config is None:
+        raise ValueError("--robot.type is required for rollout")
+    logger.info("Connecting robot (%s)...", robot_config.type)
+    robot = make_robot_from_config(robot_config)
     robot.connect()
     logger.info("Robot connected: %s", robot.name)
 
@@ -398,7 +403,7 @@ def build_rollout_context(
 
     teleop = None
     if cfg.teleop is not None:
-        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type if cfg.teleop else "?")
+        logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
         teleop = make_teleoperator_from_config(cfg.teleop)
         teleop.connect()
         logger.info("Teleoperator connected")
@@ -432,7 +437,7 @@ def build_rollout_context(
     # x/y/theta.vel) and the policy was trained/normalized on all 9; the old .pos-only
     # filter fed a 6-dim state into a 9-dim normalizer → RuntimeError (size 6 vs 9).
     # Pure-arm robots have no .vel state keys, so this is a no-op for them.
-    observation_features_hw = {
+    observation_features_hw: dict[str, type | tuple] = {
         k: v
         for k, v in all_obs_features.items()
         if isinstance(v, tuple) or (v is float and k.endswith((".pos", ".vel")))
@@ -473,7 +478,7 @@ def build_rollout_context(
     rename_map = cfg.rename_map
     if not rename_map:
         expected_visuals = {
-            k for k, v in policy_config.input_features.items() if v.type == FeatureType.VISUAL
+            k for k, v in (policy_config.input_features or {}).items() if v.type == FeatureType.VISUAL
         }
         provided_visuals = {
             f"observation.images.{k}" for k, v in robot.observation_features.items() if isinstance(v, tuple)

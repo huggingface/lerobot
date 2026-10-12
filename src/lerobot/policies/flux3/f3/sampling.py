@@ -125,6 +125,12 @@ def _bh_coefficients(h: Tensor, rks: list[Tensor], order: int, *, device, dtype,
     return h_phi_1, b_h, rhos
 
 
+def _require_history(entry: Samples | None) -> Samples:
+    if entry is None:
+        raise RuntimeError("UniPC solver history is shorter than the requested order")
+    return entry
+
+
 def cosmos_unipc_order2(
     samples: Samples,
     predict_velocity: Callable[[Samples, Tensor], Samples],
@@ -161,9 +167,9 @@ def cosmos_unipc_order2(
             _, sig_s0 = alpha_sigma(sigma_s0)
             h = lam(sigma_t) - lam(sigma_s0)
             rks, hist = [], []
-            prev_x0 = model_outputs[-1]
+            prev_x0 = _require_history(model_outputs[-1])
             for i in range(1, order_c):
-                older = model_outputs[-(i + 1)]
+                older = _require_history(model_outputs[-(i + 1)])
                 rk = (lam(sigmas[step - (i + 1)]) - lam(sigma_s0)) / h
                 rks.append(rk)
                 hist.append({k: (older[k] - prev_x0[k]) / rk for k in keys})
@@ -192,9 +198,9 @@ def cosmos_unipc_order2(
         _, sig_s0 = alpha_sigma(sigma_s0)
         h = lam(sigma_t) - lam(sigma_s0)
         rks, hist = [], []
-        latest = model_outputs[-1]
+        latest = _require_history(model_outputs[-1])
         for i in range(1, this_order):
-            older = model_outputs[-(i + 1)]
+            older = _require_history(model_outputs[-(i + 1)])
             rk = (lam(sigmas[step - i]) - lam(sigma_s0)) / h
             rks.append(rk)
             hist.append({k: (older[k] - latest[k]) / rk for k in keys})

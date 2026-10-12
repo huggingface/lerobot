@@ -25,6 +25,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+import torch
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.optim.optimizers import AdamWConfig
@@ -144,7 +146,7 @@ class Flux3Config(PreTrainedConfig):
     text_encoder_id: str = DEFAULT_TEXT_ENCODER_ID
     dit_config: dict[str, Any] | None = None
     attn_mode: str = "torch"
-    dtype: str = "bfloat16"  # Options: "bfloat16", "float32"
+    dtype: torch.dtype | None = torch.bfloat16
     compile_model: bool = False
 
     # --- sampling ---
@@ -177,10 +179,16 @@ class Flux3Config(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.dtype not in {torch.float32, torch.bfloat16}:
+            raise ValueError(f"Unsupported dtype={self.dtype!r}. Expected torch.float32 or torch.bfloat16.")
         if not self.text_encoder_id or not self.text_encoder_id.strip():
             raise ValueError("text_encoder_id must be a non-empty Hub ID or local path")
-        self.canvas_hw = tuple(int(v) for v in self.canvas_hw)
-        self.optimizer_betas = tuple(float(v) for v in self.optimizer_betas)
+        if len(self.canvas_hw) != 2:
+            raise ValueError(f"canvas_hw must be (height, width), got {self.canvas_hw!r}")
+        self.canvas_hw = (int(self.canvas_hw[0]), int(self.canvas_hw[1]))
+        if len(self.optimizer_betas) != 2:
+            raise ValueError(f"optimizer_betas must be (beta1, beta2), got {self.optimizer_betas!r}")
+        self.optimizer_betas = (float(self.optimizer_betas[0]), float(self.optimizer_betas[1]))
         if self.camera_layout not in CAMERA_LAYOUTS:
             raise ValueError(f"camera_layout must be one of {CAMERA_LAYOUTS}, got {self.camera_layout!r}")
         if self.sampler not in SAMPLERS:
@@ -251,6 +259,8 @@ class Flux3Config(PreTrainedConfig):
     # ---- derived ----
     @property
     def action_dim(self) -> int:
+        if self.action_feature is None:
+            raise ValueError(f"flux3 needs the action feature {ACTION!r}")
         return int(self.action_feature.shape[0])
 
     @property
@@ -290,6 +300,8 @@ class Flux3Config(PreTrainedConfig):
 
     # ---- lerobot contract ----
     def validate_features(self) -> None:
+        if self.input_features is None:
+            raise ValueError("`input_features` must be resolved before `validate_features()` is called.")
         if not self.image_features:
             raise ValueError(
                 "flux3 needs at least one camera feature, named observation.images.<camera> (the singular "

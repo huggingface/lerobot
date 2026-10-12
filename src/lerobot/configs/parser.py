@@ -26,7 +26,7 @@ from types import ModuleType
 from typing import Any, TypeVar, cast
 
 import draccus
-import yaml  # type: ignore[import-untyped]
+import yaml
 from draccus.help_formatter import SimpleHelpFormatter
 from draccus.utils import DecodingError
 from draccus.wrappers import DataclassWrapper

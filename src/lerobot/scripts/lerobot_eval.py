@@ -72,7 +72,7 @@ from termcolor import colored
 from torch import Tensor, nn
 from tqdm import trange
 
-from lerobot.configs import FeatureType, parser
+from lerobot.configs import FeatureType, PolicyFeature, parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.envs import (
@@ -106,9 +106,9 @@ else:
 logger = logging.getLogger(__name__)
 
 
-def _env_features_to_dataset_features(env_features: dict) -> dict:
+def _env_features_to_dataset_features(env_features: dict[str, PolicyFeature]) -> dict[str, dict[str, Any]]:
     """Convert EnvConfig.features to the dict format expected by LeRobotDataset.create()."""
-    features = {}
+    features: dict[str, dict[str, Any]] = {}
     for key, ft in env_features.items():
         shape = tuple(ft.shape)
         if ft.type is FeatureType.VISUAL:
@@ -493,7 +493,7 @@ def eval_policy(
     sum_rewards = []
     max_rewards = []
     all_successes = []
-    all_seeds = []
+    all_seeds: list[int | None] = []
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
 
@@ -613,6 +613,8 @@ def eval_policy(
             ):
                 if n_episodes_rendered >= max_episodes_rendered:
                     break
+                if videos_dir is None:  # already validated above
+                    raise ValueError("If max_episodes_rendered > 0, videos_dir must be provided.")
 
                 videos_dir.mkdir(parents=True, exist_ok=True)
                 video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
@@ -643,6 +645,8 @@ def eval_policy(
             predicted_video = decoder(predicted_latent)
             if hasattr(predicted_video, "detach"):
                 predicted_video = predicted_video.detach().to("cpu").numpy()
+            if videos_dir is None:  # already validated above
+                raise ValueError("If save_predicted_video is True, videos_dir must be provided.")
             videos_dir.mkdir(parents=True, exist_ok=True)
             predicted_video_path = videos_dir / f"pred_episode_{n_predicted_rendered}.mp4"
             predicted_video_paths.append(str(predicted_video_path))
@@ -668,7 +672,7 @@ def eval_policy(
 
     # Compile eval info.
     success_stats = success_summary(all_successes[:n_episodes])
-    info = {
+    info: dict[str, Any] = {
         "per_episode": [
             {
                 "episode_ix": i,
@@ -759,8 +763,19 @@ def _compile_episode_data(
 
 
 @parser.wrap()
-def eval_main(cfg: EvalPipelineConfig):
+def eval_main(cfg: EvalPipelineConfig) -> None:
     logging.info(pformat(asdict(cfg)))
+
+    if cfg.policy is None:
+        raise ValueError(
+            "Evaluation requires a policy: pass --policy.path=<pretrained_dir> or --policy.type=<name>."
+        )
+    if cfg.policy.device is None:
+        # PreTrainedConfig.__post_init__ always resolves the device, so reaching this is a programming error.
+        raise ValueError("Policy config has no device set.")
+    if cfg.output_dir is None:
+        # EvalPipelineConfig.__post_init__ always assigns a default output_dir.
+        raise ValueError("EvalPipelineConfig.output_dir is not set.")
 
     # Check device is available
     device = get_safe_torch_device(cfg.policy.device, log=True)

@@ -29,6 +29,7 @@ from huggingface_hub import snapshot_download, sync_bucket
 from huggingface_hub.utils import WeakFileLock
 
 from lerobot.configs import DEPTH_METER_UNIT, VideoEncoderConfig, is_depth_map
+from lerobot.streaming.location import hf_bucket_uri
 from lerobot.utils.constants import DEFAULT_FEATURES, HF_LEROBOT_HOME, HF_LEROBOT_HUB_CACHE
 from lerobot.utils.feature_utils import _validate_feature_names
 from lerobot.utils.utils import flatten_dict
@@ -47,7 +48,7 @@ from .io_utils import (
     write_tasks,
 )
 from .language import DEFAULT_TOOLS, LANGUAGE_COLUMNS
-from .storage import DEFAULT_STORAGE_FORMAT
+from .storage import DEFAULT_STORAGE_FORMAT, dataset_location
 from .utils import (
     DEFAULT_EPISODES_PATH,
     check_version_compatibility,
@@ -57,6 +58,8 @@ from .utils import (
     update_chunk_file_indices,
 )
 from .video_utils import get_video_info
+
+logger = logging.getLogger(__name__)
 
 CODEBASE_VERSION = "v3.0"
 
@@ -262,7 +265,7 @@ class LeRobotDatasetMetadata:
         if self.repo_type == "bucket":
             self.root.mkdir(parents=True, exist_ok=True)
             sync_bucket(
-                f"hf://buckets/{self.repo_id}/meta",
+                hf_bucket_uri(self.repo_id, "meta"),
                 str(self.root / "meta"),
                 delete=True,
                 quiet=True,
@@ -299,9 +302,7 @@ class LeRobotDatasetMetadata:
     @property
     def url_root(self) -> str:
         """Hugging Face Hub URL root for this dataset."""
-        if self.repo_type == "bucket":
-            return f"hf://buckets/{self.repo_id}"
-        return f"hf://datasets/{self.repo_id}"
+        return dataset_location(self.repo_id, repo_type=self.repo_type).uri
 
     @property
     def _version(self) -> packaging.version.Version:
@@ -424,7 +425,7 @@ class LeRobotDatasetMetadata:
             key for key in self.depth_keys if (self.features[key].get("info") or {}).get("depth_unit") is None
         ]
         if missing_unit_keys:
-            logging.warning(
+            logger.warning(
                 f"Depth feature(s) {missing_unit_keys} have no recorded 'depth_unit' in their info. "
                 f"Depth maps and stats for these keys will be returned AS IS, with no unit conversion "
                 f"to the requested output unit {output_unit!r}. Re-record the dataset or set 'depth_unit' "
@@ -733,7 +734,7 @@ class LeRobotDatasetMetadata:
             )
             canonicalize_depth_marker(feature)
             if had_legacy:
-                logging.warning(f"Migrated legacy depth marker to 'is_depth_map' for feature {key!r}.")
+                logger.warning(f"Migrated legacy depth marker to 'is_depth_map' for feature {key!r}.")
 
     def update_chunk_settings(
         self,

@@ -180,7 +180,7 @@ jobs:
       - name: Run end-to-end tests
         run: make test-end-to-end
 
-  # This job runs multi-GPU training tests with 4 GPUs
+  # This job runs the multi-GPU training tests (the suite needs 2+ GPUs)
   multi-gpu-tests:
     permissions: {}
     name: Multi-GPU Tests
@@ -192,7 +192,6 @@ jobs:
       HF_LEROBOT_HOME: /home/user_lerobot/.cache/huggingface/lerobot
       TORCH_HOME: /home/user_lerobot/.cache/torch
       TRITON_CACHE_DIR: /home/user_lerobot/.cache/triton
-      CUDA_VISIBLE_DEVICES: "0,1,2,3"
       HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
     container:
       image: ${{ needs.build-docker-gpu.outputs.image_tag }} # zizmor: ignore[unpinned-images]

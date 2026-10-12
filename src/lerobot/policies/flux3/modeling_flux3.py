@@ -34,7 +34,7 @@ import logging
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, cast
 
 import torch
 from safetensors import safe_open
@@ -135,7 +135,7 @@ class Flux3Policy(PreTrainedPolicy):
         self.config = config
         self.dataset_stats = dataset_stats
         self.modality = config.action_modality
-        self.dtype_ = getattr(torch, config.dtype)
+        self.dtype_ = cast(torch.dtype, config.dtype)
         self.packer = packing.build_packer(config)
         self.dit_params = self._dit_params(config)
         # A full policy (including a deferred distributed restore) already owns its trunk.
@@ -224,7 +224,8 @@ class Flux3Policy(PreTrainedPolicy):
     def get_optim_params(self) -> list[dict[str, Any]]:
         """Two groups: the trunk (and LoRA adapters), and the fresh embodiment heads at their own rate."""
         head_prefixes = tuple(f"{n}." for n in fresh_module_names(self.modality))
-        trunk, heads = [], []
+        trunk: list[nn.Parameter] = []
+        heads: list[nn.Parameter] = []
         for name, p in self.named_parameters():
             if not p.requires_grad:
                 continue
@@ -292,7 +293,7 @@ class Flux3Policy(PreTrainedPolicy):
             logger.info(
                 "flux3: ignoring %d tensors of content streams this policy is built without: %s",
                 len(foreign),
-                sorted({stream_of_key(k) for k in foreign}),
+                sorted(filter(None, {stream_of_key(k) for k in foreign})),
             )
         missing = [k for k in expected.keys() - state.keys() if (strict or not k.startswith(head_prefixes))]
         if missing:

@@ -21,7 +21,11 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING
 
+from lerobot.configs.dataset import DatasetRecordConfig
+from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.lerobot_types import RobotObservation
+from lerobot.teleoperators import Teleoperator
 from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -32,8 +36,14 @@ from lerobot.utils.visualization_utils import log_visualization_data
 from ..inference import InferenceEngine
 
 if TYPE_CHECKING:
-    from ..configs import RolloutStrategyConfig
-    from ..context import HardwareContext, ProcessorContext, RolloutContext, RuntimeContext
+    from ..configs import RolloutConfig, RolloutStrategyConfig
+    from ..context import (
+        DatasetContext,
+        HardwareContext,
+        ProcessorContext,
+        RolloutContext,
+        RuntimeContext,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +81,7 @@ class RolloutStrategy(abc.ABC):
         self._engine: InferenceEngine | None = None
         self._interpolator: ActionInterpolator | None = None
         self._warmup_flushed: bool = False
-        self._cached_obs_processed: dict | None = None
+        self._cached_obs_processed: RobotObservation | None = None
 
     def _init_engine(self, ctx: RolloutContext) -> None:
         """Attach the inference engine and action interpolator, then start the backend.
@@ -89,6 +99,45 @@ class RolloutStrategy(abc.ABC):
         self._warmup_flushed = False
         logger.info("Inference engine started")
 
+    def _require_engine(self) -> InferenceEngine:
+        """The inference engine attached by :meth:`_init_engine`."""
+        if self._engine is None:
+            raise RuntimeError(f"{type(self).__name__}: inference engine not attached; call setup() first")
+        return self._engine
+
+    def _require_interpolator(self) -> ActionInterpolator:
+        """The action interpolator created by :meth:`_init_engine`."""
+        if self._interpolator is None:
+            raise RuntimeError(f"{type(self).__name__}: action interpolator not attached; call setup() first")
+        return self._interpolator
+
+    def _require_dataset_cfg(self, cfg: RolloutConfig) -> DatasetRecordConfig:
+        """The ``--dataset.*`` config a recording strategy records with; ``RolloutConfig`` enforces ``dataset_mode = "required"``."""
+        if cfg.dataset is None:
+            raise RuntimeError(
+                f"{type(self).__name__}: no dataset config; a recording strategy must declare "
+                'dataset_mode = "required" on its config'
+            )
+        return cfg.dataset
+
+    def _require_dataset(self, data: DatasetContext) -> LeRobotDataset:
+        """The dataset a recording strategy writes to (built from :meth:`_require_dataset_cfg`)."""
+        if data.dataset is None:
+            raise RuntimeError(
+                f"{type(self).__name__}: no dataset in the rollout context; a recording strategy "
+                'must declare dataset_mode = "required" on its config'
+            )
+        return data.dataset
+
+    def _require_teleop(self, hw: HardwareContext) -> Teleoperator:
+        """The connected teleoperator; ``RolloutConfig`` enforces it via ``requires_teleop``."""
+        if hw.teleop is None:
+            raise RuntimeError(
+                f"{type(self).__name__}: no teleoperator in the rollout context; a strategy that "
+                "reads the teleop must declare requires_teleop = True on its config"
+            )
+        return hw.teleop
+
     def reset_control_state(self) -> None:
         """Clear episode-scoped control state so a paused session can restart cleanly.
 
@@ -105,7 +154,9 @@ class RolloutStrategy(abc.ABC):
             self._interpolator.reset()
         self._cached_obs_processed = None
 
-    def _process_observation_and_notify(self, processors: ProcessorContext, obs_raw: dict) -> dict:
+    def _process_observation_and_notify(
+        self, processors: ProcessorContext, obs_raw: RobotObservation
+    ) -> RobotObservation:
         """Run the observation processor and notify the engine — throttled to policy ticks.
 
         Callers are responsible for calling ``robot.get_observation()`` every loop
@@ -122,9 +173,9 @@ class RolloutStrategy(abc.ABC):
         called (warmup completion, DAgger phase transitions back to AUTONOMOUS),
         because reset makes ``needs_new_action()`` return True on the next call.
         """
-        if self._cached_obs_processed is None or self._interpolator.needs_new_action():
+        if self._cached_obs_processed is None or self._require_interpolator().needs_new_action():
             obs_processed = processors.robot_observation_processor(obs_raw)
-            self._engine.notify_observation(obs_processed)
+            self._require_engine().notify_observation(obs_processed)
             self._cached_obs_processed = obs_processed
         return self._cached_obs_processed
 
@@ -136,10 +187,10 @@ class RolloutStrategy(abc.ABC):
         stays anchored.  On the first post-warmup iteration the engine and
         interpolator are reset so stale warmup state is discarded.
         """
-        engine = self._engine
-        interpolator = self._interpolator
         if not use_torch_compile:
             return False
+        engine = self._require_engine()
+        interpolator = self._require_interpolator()
         if not engine.ready:
             timer.wait()
             return True
@@ -183,6 +234,9 @@ class RolloutStrategy(abc.ABC):
         """
         robot = hw.robot_wrapper
         target = hw.initial_position
+        if target is None:
+            logger.warning("Could not return to initial position: none was captured at connect time")
+            return False
         try:
             current_obs = robot.get_observation()
             current_pos = {k: v for k, v in current_obs.items() if k in target}

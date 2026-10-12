@@ -16,10 +16,12 @@ from lerobot.utils.action_interpolator import ActionInterpolator as ActionInterp
 
 from .act.configuration_act import ACTConfig as ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
+from .dm05.configuration_dm05 import DM05Config as DM05Config
 from .eo1.configuration_eo1 import EO1Config as EO1Config
 from .evo1.configuration_evo1 import Evo1Config as Evo1Config
 from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
 from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
+from .fineart_vla.configuration_fineart_vla import FineARTVLAConfig as FineARTVLAConfig
 from .flux3.configuration_flux3 import Flux3Config as Flux3Config
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig
@@ -47,8 +49,10 @@ __all__ = [
     # Configuration classes
     "ACTConfig",
     "DiffusionConfig",
+    "DM05Config",
     "EO1Config",
     "FastWAMConfig",
+    "FineARTVLAConfig",
     "Flux3Config",
     "GaussianActorConfig",
     "Evo1Config",

@@ -27,12 +27,14 @@ from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderConfig
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
+from lerobot.utils.import_utils import get_safe_default_video_backend
 
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader, DatasetReader
 from .dataset_writer import DatasetWriter
 from .storage import (
     DEFAULT_STORAGE_FORMAT,
+    dataset_location,
     is_remote_uri,
     localize_remote_root,
     make_dataset_reader,
@@ -42,10 +44,7 @@ from .utils import (
     get_safe_version,
     is_valid_version,
 )
-from .video_utils import (
-    StreamingVideoEncoder,
-    get_safe_default_video_backend,
-)
+from .video_utils import StreamingVideoEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +233,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if repo_type not in ("dataset", "bucket"):
             raise ValueError(f"repo_type must be 'dataset' or 'bucket', got {repo_type!r}")
         if root is None and repo_type == "bucket":
-            root = f"hf://buckets/{repo_id}"
+            root = dataset_location(repo_id, repo_type=repo_type).uri
         # Datasets can live at an object-store root (e.g. ``hf://datasets/...``): a
         # non-default reader reads the data in place and only ``meta/`` is localized.
         self._storage_root = root if root is not None and is_remote_uri(root) else None

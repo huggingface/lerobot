@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
-from lerobot.cameras import make_cameras_from_configs
+from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.import_utils import _unitree_sdk_available, require_package
 
@@ -61,6 +61,9 @@ else:
     hg_LowCmd = None
     hg_LowState = None
     CRC = None
+
+if TYPE_CHECKING:
+    import gymnasium as gym
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +152,7 @@ class UnitreeG1(Robot):
     config_class = UnitreeG1Config
     name = "unitree_g1"
 
-    def __init__(self, config: UnitreeG1Config):
+    def __init__(self, config: UnitreeG1Config) -> None:
         require_package("unitree-sdk2py", extra="unitree_g1", import_name="unitree_sdk2py")
         super().__init__(config)
 
@@ -179,7 +182,7 @@ class UnitreeG1(Robot):
 
         # Initialize state variables
         self.sim_env = None
-        self._env_wrapper = None
+        self._env_wrapper: dict[str, dict[int, gym.vector.VectorEnv]] | None = None
         self._lowstate = None
         self._lowstate_lock = threading.Lock()
         # Guards the shared lowcmd message: the controller thread, send_action(), reset() and
@@ -189,17 +192,20 @@ class UnitreeG1(Robot):
         # reset sweep. Coarser than _lowcmd_lock, which only makes a single command atomic.
         self._control_lock = threading.Lock()
         self._shutdown_event = threading.Event()
-        self.subscribe_thread = None
+        self.subscribe_thread: threading.Thread | None = None
 
         self.arm_ik = G1_29_ArmIK() if config.gravity_compensation else None
 
         # Controller loaded dynamically
         self.controller: RobotController | None = make_robot_controller(config.controller)
         # Controller thread state
-        self._controller_thread = None
+        self._controller_thread: threading.Thread | None = None
         self._controller_action_lock = threading.Lock()
         self.controller_input = default_remote_input()
-        self.controller_output = {}
+        self.controller_output: RobotAction = {}
+        # PD gains, resolved in connect() from the controller when it provides them, else from the config.
+        self.kp: np.ndarray
+        self.kd: np.ndarray
 
     def _subscribe_lowstate(self):  # polls robot state @ 250Hz
         while not self._shutdown_event.is_set():
@@ -544,7 +550,7 @@ class UnitreeG1(Robot):
         for cam_name, cam in self._cameras.items():
             if getattr(cam, "use_rgb", True):
                 obs[cam_name] = cam.read_latest()
-            if getattr(cam, "use_depth", False):
+            if isinstance(cam, DepthCamera) and cam.use_depth:
                 obs[f"{cam_name}_depth"] = cam.read_latest_depth()
 
         return obs
@@ -567,7 +573,7 @@ class UnitreeG1(Robot):
                 # controller's. Token-only actions (a SONIC policy) hit this on every step.
                 return action
 
-        tau = None
+        tau: np.ndarray | None = None
         if self.config.gravity_compensation and self.arm_ik is not None:
             tau = np.zeros(29, dtype=np.float32)
             action_np = np.array(
@@ -643,7 +649,7 @@ class UnitreeG1(Robot):
                 obs = self.get_observation()
 
                 # record current positions
-                init_dof_pos = np.zeros(NUM_MOTORS, dtype=np.float32)
+                init_dof_pos: np.ndarray = np.zeros(NUM_MOTORS, dtype=np.float32)
                 for motor in G1_29_JointIndex:
                     init_dof_pos[motor.value] = obs[f"{motor.name}.q"]
 

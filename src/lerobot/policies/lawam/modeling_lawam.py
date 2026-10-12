@@ -214,7 +214,7 @@ class LaWAMPolicy(PreTrainedPolicy):
 
     def reset(self) -> None:
         """Clear the queued action chunk used by step-wise inference."""
-        self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
+        self._queues: dict[str, deque[Tensor]] = {ACTION: deque(maxlen=self.config.n_action_steps)}
 
     def get_optim_params(self) -> dict:
         """Return model parameters exposed to the LeRobot optimizer factory."""
@@ -257,7 +257,10 @@ class LaWAMPolicy(PreTrainedPolicy):
         actions_tensor = torch.as_tensor(actions, device=self.config.device, dtype=torch.float32)
         if actions_tensor.ndim == 2:
             actions_tensor = actions_tensor.unsqueeze(0)
-        action_dim = int(self.config.action_feature.shape[0])
+        action_feature = self.config.action_feature
+        if action_feature is None:
+            raise ValueError("LaWAM requires an action output feature.")
+        action_dim = int(action_feature.shape[0])
         if actions_tensor.shape[-1] < action_dim:
             raise ValueError(
                 f"LaWAM produced {actions_tensor.shape[-1]} action dims, but LeRobot expects {action_dim}."

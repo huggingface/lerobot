@@ -123,6 +123,8 @@ def preprocesser_call(
         video_grid_thw = None
 
     # Ensure text input is in list format
+    if text is None:
+        raise ValueError("WALL-X preprocessing needs at least one prompt.")
     if not isinstance(text, list):
         text = [text]
 
@@ -135,30 +137,27 @@ def preprocesser_call(
         prompt: str,
         placeholder: str,
         token_count: int,
-        spans: list[tuple[int, int]] | None,
-    ) -> tuple[str, list[tuple[int, int]] | None]:
+        spans: list[tuple[int, int]],
+    ) -> tuple[str, list[tuple[int, int]]]:
         position = prompt.find(placeholder)
         if position < 0:
             return prompt, spans
         replacement = "<|placeholder|>" * token_count
         placeholder_end = position + len(placeholder)
-        if spans is not None:
-            for start, end in spans:
-                if start < placeholder_end and end > position:
-                    raise ValueError(
-                        "WALL-X text-supervision spans cannot contain image or video placeholders."
-                    )
-            # The tokenizer receives the final prompt after each temporary
-            # ``<|placeholder|>`` is restored to ``placeholder``. Shift spans
-            # by that final length change, not by the temporary expansion.
-            delta = len(placeholder) * (token_count - 1)
-            spans = [
-                (
-                    start + (delta if start >= placeholder_end else 0),
-                    end + (delta if end >= placeholder_end else 0),
-                )
-                for start, end in spans
-            ]
+        for start, end in spans:
+            if start < placeholder_end and end > position:
+                raise ValueError("WALL-X text-supervision spans cannot contain image or video placeholders.")
+        # The tokenizer receives the final prompt after each temporary
+        # ``<|placeholder|>`` is restored to ``placeholder``. Shift spans
+        # by that final length change, not by the temporary expansion.
+        delta = len(placeholder) * (token_count - 1)
+        spans = [
+            (
+                start + (delta if start >= placeholder_end else 0),
+                end + (delta if end >= placeholder_end else 0),
+            )
+            for start, end in spans
+        ]
         return prompt.replace(placeholder, replacement, 1), spans
 
     # Process image placeholder tokens in text.
@@ -181,7 +180,7 @@ def preprocesser_call(
                     text[i],
                     "<|image_pad|>",
                     token_count,
-                    target_spans[i] if target_spans is not None else None,
+                    target_spans[i] if target_spans is not None else [],
                 )
                 text[i] = updated_text
                 if target_spans is not None:
@@ -201,7 +200,7 @@ def preprocesser_call(
                     text[i],
                     "<|video_pad|>",
                     token_count,
-                    target_spans[i] if target_spans is not None else None,
+                    target_spans[i] if target_spans is not None else [],
                 )
                 text[i] = updated_text
                 if target_spans is not None:
@@ -458,6 +457,8 @@ def get_frame_instruction(
 
     for key, value in instruction_info.items():
         if isinstance(value, dict):
+            if frame_idx is None:
+                raise ValueError("frame_idx is required to select frame-range instructions.")
             # Handle frame-range specific instructions
             for frame_range, frame_instruction in value.items():
                 start_frame, end_frame = map(int, frame_range.split(" "))
@@ -686,6 +687,8 @@ def replace_action_token(
         List of text strings with action tokens replaced
     """
     if action_tokenizer is not None and norm_action is not None:
+        if dof_masks is None:
+            raise ValueError("dof_masks are required to tokenize actions.")
         # Extract actions based on chunk sizes and DOF masks
         norm_action = [action[:32, dof_masks[i, 0].bool()] for i, action in enumerate(norm_action)]
 

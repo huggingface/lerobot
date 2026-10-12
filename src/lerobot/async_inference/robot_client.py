@@ -41,7 +41,6 @@ from collections.abc import Callable
 from dataclasses import asdict
 from pprint import pformat
 from queue import Queue
-from typing import Any
 
 import draccus
 import grpc
@@ -61,6 +60,7 @@ except ImportError as e:
 else:
     from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -71,19 +71,13 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1,
 )
-from lerobot.transport import (
-    services_pb2,  # type: ignore
-    services_pb2_grpc,  # type: ignore
-)
+from lerobot.transport import services_pb2, services_pb2_grpc
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 from lerobot.utils.import_utils import register_third_party_plugins
 
 from .configs import RobotClientConfig
 from .helpers import (
-    Action,
     FPSTracker,
-    Observation,
-    RawObservation,
     RemotePolicyConfig,
     TimedAction,
     TimedObservation,
@@ -97,7 +91,7 @@ class RobotClient:
     prefix = "robot_client"
     logger = get_logger(prefix)
 
-    def __init__(self, config: RobotClientConfig):
+    def __init__(self, config: RobotClientConfig) -> None:
         """Initialize RobotClient with unified configuration.
 
         Args:
@@ -135,9 +129,9 @@ class RobotClient:
 
         self._chunk_size_threshold = config.chunk_size_threshold
 
-        self.action_queue = Queue()
+        self.action_queue: Queue[TimedAction] = Queue()
         self.action_queue_lock = threading.Lock()  # Protect queue operations
-        self.action_queue_size = []
+        self.action_queue_size: list[int] = []
         self.start_barrier = threading.Barrier(2)  # 2 threads: action receiver, control loop
 
         # FPS measurement
@@ -238,14 +232,14 @@ class RobotClient:
         self,
         incoming_actions: list[TimedAction],
         aggregate_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
-    ):
+    ) -> None:
         """Finds the same timestep actions in the queue and aggregates them using the aggregate_fn"""
         if aggregate_fn is None:
             # default aggregate function: take the latest action
-            def aggregate_fn(x1, x2):
+            def aggregate_fn(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
                 return x2
 
-        future_action_queue = Queue()
+        future_action_queue: Queue[TimedAction] = Queue()
         with self.action_queue_lock:
             internal_queue = self.action_queue.queue
 
@@ -279,7 +273,7 @@ class RobotClient:
         with self.action_queue_lock:
             self.action_queue = future_action_queue
 
-    def receive_actions(self, verbose: bool = False):
+    def receive_actions(self, verbose: bool = False) -> None:
         """Receive actions from the policy server"""
         # Wait at barrier for synchronized start
         self.start_barrier.wait()
@@ -380,7 +374,7 @@ class RobotClient:
         action = {key: action_tensor[i].item() for i, key in enumerate(self.robot.action_features)}
         return action
 
-    def control_loop_action(self, verbose: bool = False) -> dict[str, Any]:
+    def control_loop_action(self, verbose: bool = False) -> RobotAction:
         """Reading and performing actions in local queue"""
 
         # Lock only for queue operations
@@ -418,12 +412,12 @@ class RobotClient:
         with self.action_queue_lock:
             return self.action_queue.qsize() / self.action_chunk_size <= self._chunk_size_threshold
 
-    def control_loop_observation(self, task: str, verbose: bool = False) -> RawObservation:
+    def control_loop_observation(self, task: str, verbose: bool = False) -> RobotObservation | None:
         try:
             # Get serialized observation bytes from the function
             start_time = time.perf_counter()
 
-            raw_observation: RawObservation = self.robot.get_observation()
+            raw_observation: RobotObservation = self.robot.get_observation()
             raw_observation["task"] = task
 
             with self.latest_action_lock:
@@ -467,8 +461,11 @@ class RobotClient:
 
         except Exception as e:
             self.logger.error(f"Error in observation sender: {e}")
+            return None
 
-    def control_loop(self, task: str, verbose: bool = False) -> tuple[Observation, Action]:
+    def control_loop(
+        self, task: str, verbose: bool = False
+    ) -> tuple[RobotObservation | None, RobotAction | None]:
         """Combined function for executing actions and streaming observations"""
         # Wait at barrier for synchronized start
         self.start_barrier.wait()

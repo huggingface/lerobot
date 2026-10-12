@@ -36,7 +36,7 @@ from tests.utils import require_cuda, require_hf_token  # noqa: E402
 def test_policy_instantiation():
     # Create config
     set_seed(42)
-    config = PI05Config(max_action_dim=7, max_state_dim=14, dtype="float32")
+    config = PI05Config(max_action_dim=7, max_state_dim=14, dtype=torch.float32)
 
     # Set up input_features and output_features in the config
     from lerobot.configs.types import FeatureType, PolicyFeature
