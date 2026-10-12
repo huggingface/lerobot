@@ -2,8 +2,8 @@ semantics: robocasa-delta-v1
 control: delta
 feature_mapping:
   observation.images.robot0_agentview_left: observation.images.camera1
-  observation.images.robot0_eye_in_hand: observation.images.camera2
-  observation.images.robot0_agentview_right: observation.images.camera3
+  observation.images.robot0_eye_in_hand: observation.images.camera3
+  observation.images.robot0_agentview_right: observation.images.camera2
 state_names:
 - base.position.x
 - base.position.y

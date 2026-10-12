@@ -94,7 +94,18 @@ class EvalProfile:
             shape = (
                 (actual.shape[2], actual.shape[0], actual.shape[1]) if actual.kind == "rgb" else actual.shape
             )
-            if tuple(expected.shape) != shape:
+            resize = getattr(config, "resize_imgs_with_padding", None)
+            resizes_rgb = (
+                actual.kind == "rgb"
+                and getattr(config, "type", None) == "smolvla"
+                and len(expected.shape) == 3
+                and expected.shape[0] == shape[0]
+                and isinstance(resize, (tuple, list))
+                and len(resize) == 2
+                and all(type(size) is int and size > 0 for size in resize)
+            )
+            # SmolVLA explicitly resizes RGB on the policy side; raw H/W need not match.
+            if tuple(expected.shape) != shape and not resizes_rgb:
                 raise ValueError(
                     f"Checkpoint feature shape mismatch for {name}: expected {expected.shape}, got {shape}"
                 )

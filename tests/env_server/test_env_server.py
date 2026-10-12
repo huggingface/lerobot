@@ -300,6 +300,20 @@ def test_eval_profile_admission(server):
         output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
     )
     profile.validate_policy(descriptor, config)
+    # Only SmolVLA's explicit resize permits different raw RGB spatial dimensions.
+    config.type = "smolvla"
+    config.resize_imgs_with_padding = (512, 512)
+    config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (3, 256, 256))
+    profile.validate_policy(descriptor, config)
+    for policy_type, resize in (("smolvla", None), ("smolvla", (0, 512)), ("act", (512, 512))):
+        config.type, config.resize_imgs_with_padding = policy_type, resize
+        with pytest.raises(ValueError, match="shape mismatch"):
+            profile.validate_policy(descriptor, config)
+    config.type, config.resize_imgs_with_padding = "smolvla", (512, 512)
+    config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (4, 256, 256))
+    with pytest.raises(ValueError, match="shape mismatch"):
+        profile.validate_policy(descriptor, config)
+    config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (3, 8, 8))
     with pytest.raises(ValueError, match="semantics"):
         replace(profile, semantics="wrong").validate_policy(descriptor, config)
     with pytest.raises(ValueError, match="component order"):
