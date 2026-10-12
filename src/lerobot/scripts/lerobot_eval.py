@@ -290,7 +290,7 @@ def rollout(
         while not np.all(done) and step < max_steps:
             # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
             observation = preprocess_observation(observation)
-            if return_observations:
+            if return_observations and step == 0:
                 all_observations.append(deepcopy(observation))
 
             # Infer "task" from sub-environments (prefer natural language description).
@@ -323,6 +323,19 @@ def rollout(
 
             # Apply the next action.
             observation, reward, terminated, truncated, info = env.step(action_numpy)
+            if return_observations:
+                # SAME_STEP returns the reset observation for live inference. Record the
+                # completed episode's terminal observation without changing that input.
+                recorded_next = observation
+                if "final_obs" in info:
+                    space = env.single_observation_space
+                    rows = list(gym.vector.utils.iterate(space, observation))
+                    for env_idx in np.flatnonzero(terminated | truncated):
+                        rows[env_idx] = info["final_obs"][env_idx]
+                    recorded_next = gym.vector.utils.concatenate(
+                        space, rows, gym.vector.utils.create_empty_array(space, n=env.num_envs)
+                    )
+                all_observations.append(deepcopy(preprocess_observation(recorded_next)))
             if render_callback is not None:
                 render_callback(env)
 
@@ -404,11 +417,6 @@ def rollout(
                         ds.push_to_hub(private=recording_private)
                     else:
                         logging.warning("No episodes recorded for %s — skipping push to hub.", ds.repo_id)
-
-    # Track the final observation.
-    if return_observations:
-        observation = preprocess_observation(observation)
-        all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
     ret = {
