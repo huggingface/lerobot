@@ -33,7 +33,6 @@ Inference backends
 ------------------
     --inference.type=sync      One policy call per control tick (default)
     --inference.type=rtc       Real-Time Chunking for slow VLA models
-    --inference.type=remote    Policy served by lerobot-policy-server (see remote inference docs)
 
 Usage examples
 --------------
@@ -166,8 +165,6 @@ Usage examples
 
 import logging
 import threading
-from collections.abc import Callable
-from typing import cast
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
@@ -225,7 +222,7 @@ logger = logging.getLogger(__name__)
 @parser.wrap()
 def rollout(cfg: RolloutConfig):
     """Main entry point for policy deployment."""
-    init_logging(console_level=cfg.inference.log_level)
+    init_logging()
 
     if cfg.display_data:
         logger.info(
@@ -257,13 +254,11 @@ def rollout(cfg: RolloutConfig):
         f"{cfg.duration}s" if cfg.duration > 0 else "infinite",
     )
 
-    session: InteractiveSession | None = None
     try:
         strategy.setup(ctx)
         if cfg.interactive:
             logger.info("Rollout setup complete — starting interactive session (robot idle until /start)")
-            session = InteractiveSession(strategy, ctx)
-            session.run()
+            InteractiveSession(strategy, ctx).run()
         else:
             logger.info("Rollout setup complete, starting rollout...")
             strategy.run(ctx)
@@ -274,17 +269,13 @@ def rollout(cfg: RolloutConfig):
         if cfg.display_data:
             shutdown_visualization(cfg.display_mode)
 
-    failure = session.controller if session is not None else ctx.policy.inference
-    if failure.failed:
-        logger.error("Rollout ended by a terminal fault: %s", failure.failure_traceback)
-        raise SystemExit(1)
     logger.info("Rollout finished")
 
 
-def main() -> None:
+def main():
     """CLI entry point for ``lerobot-rollout``."""
     register_third_party_plugins()
-    cast(Callable[[], None], rollout)()
+    rollout()
 
 
 if __name__ == "__main__":
