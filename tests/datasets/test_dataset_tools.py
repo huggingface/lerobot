@@ -28,6 +28,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
     _fractions_to_episode_indices,
+    _load_episode_with_stats,
     _try_keep_episodes_from_video_by_stream_copy,
     add_features,
     convert_image_to_video_dataset,
@@ -38,6 +39,7 @@ from lerobot.datasets.dataset_tools import (
     reencode_dataset,
     remove_feature,
     split_dataset,
+    trim_episodes,
 )
 from lerobot.datasets.io_utils import load_episodes, load_info
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
@@ -1115,6 +1117,131 @@ def test_stream_copy_declines_when_boundaries_are_not_gop_aligned(sample_video_d
         src_video_path, output_path, [(3, 10)], sample_video_dataset.meta.fps
     )
     assert not output_path.exists(), "declining must not leave a partial file behind"
+
+
+@require_h264
+@pytest.mark.parametrize("stream_copy", [True, False])
+def test_trim_episodes_video_ranges(sample_video_dataset, tmp_path, stream_copy):
+    import av
+
+    source = sample_video_dataset
+    key = source.meta.video_keys[0]
+    ranges = [(1, 5), (7, 9)]
+    if stream_copy:
+        with av.open(str(source.root / source.meta.get_video_file_path(1, key))) as container:
+            boundaries = [
+                i - 10
+                for i, packet in enumerate(p for p in container.demux(video=0) if p.size)
+                if packet.is_keyframe and 10 < i < 20
+            ]
+        assert boundaries, "fixture needs a keyframe inside episode 1"
+        ranges = [(0, boundaries[0])]
+    results = []
+
+    def copy_and_record(*args, **kwargs):
+        result = _try_keep_episodes_from_video_by_stream_copy(*args, **kwargs)
+        results.append(result)
+        return result
+
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
+        patch("lerobot.datasets.dataset_metadata.snapshot_download", return_value=str(tmp_path / "trimmed")),
+        patch(
+            "lerobot.datasets.dataset_tools._try_keep_episodes_from_video_by_stream_copy",
+            side_effect=copy_and_record,
+        ) as copy_video,
+    ):
+        edited = trim_episodes(source, {1: ranges}, output_dir=tmp_path / "trimmed")
+    copy_video.assert_called_once()
+    assert results == [stream_copy]
+    selected = (
+        list(range(10)) + [10 + i for start, end in ranges for i in range(start, end)] + list(range(20, 50))
+    )
+    assert edited.meta.total_frames == len(selected)
+    assert edited.meta.total_episodes == 5
+    kept_length = sum(end - start for start, end in ranges)
+    assert edited.meta.episodes[1]["length"] == kept_length
+    key = source.meta.video_keys[0]
+    source_images = torch.stack([source[i][key] for i in range(50)])
+    for new_index, old_index in enumerate(selected):
+        actual, expected = edited[new_index], source[old_index]
+        assert torch.equal(actual["action"], expected["action"])
+        if stream_copy:
+            assert torch.equal(actual[key], expected[key])
+        else:
+            errors = (source_images - actual[key]).abs().mean(dim=(1, 2, 3))
+            assert errors.argmin().item() == old_index
+    for episode in edited.meta.episodes:
+        start, end = episode["dataset_from_index"], episode["dataset_to_index"]
+        assert list(edited.hf_dataset[start:end]["frame_index"]) == list(range(end - start))
+        np.testing.assert_allclose(
+            edited.hf_dataset[start:end]["timestamp"], np.arange(end - start) / edited.fps, atol=1e-6
+        )
+    stats = _load_episode_with_stats(edited, 1)
+    assert stats["stats/action/count"] == [kept_length]
+    expected_actions = np.stack([source[i]["action"].numpy() for i in selected[10 : 10 + kept_length]])
+    np.testing.assert_allclose(stats["stats/action/mean"], expected_actions.mean(axis=0), rtol=1e-5)
+    assert source.meta.total_frames == 50
+
+
+@pytest.mark.parametrize(
+    "ranges",
+    [{}, {99: [(0, 1)]}, {0: []}, {0: [(-1, 2)]}, {0: [(1, 1)]}, {0: [(0, 999)]}, {0: [(0, 3), (2, 4)]}],
+)
+def test_trim_episodes_invalid_ranges(sample_dataset, tmp_path, ranges):
+    output = tmp_path / "invalid"
+    with pytest.raises(ValueError):
+        trim_episodes(sample_dataset, ranges, output_dir=output)
+    assert not output.exists()
+
+
+def test_trim_episodes_images_and_existing_output(sample_dataset, tmp_path):
+    output = tmp_path / "trimmed"
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
+        patch("lerobot.datasets.dataset_metadata.snapshot_download", return_value=str(output)),
+    ):
+        edited = trim_episodes(sample_dataset, {0: [(7, 9), (1, 3)]}, output_dir=output)
+    assert edited.meta.total_frames == 44
+    for i, old_i in enumerate([1, 2, 7, 8]):
+        assert torch.equal(
+            edited[i]["observation.images.top"], sample_dataset[old_i]["observation.images.top"]
+        )
+        assert torch.equal(edited[i]["observation.state"], sample_dataset[old_i]["observation.state"])
+    assert edited.meta.stats["action"]["count"] == [44]
+    with pytest.raises(FileExistsError):
+        trim_episodes(sample_dataset, {0: [(0, 1)]}, output_dir=output)
+
+
+@require_h264
+def test_trim_episodes_multiple_cameras(tmp_path, empty_lerobot_dataset_factory):
+    features = {
+        "action": {"dtype": "float32", "shape": (6,), "names": None},
+        **{
+            f"observation.images.{camera}": {"dtype": "video", "shape": (64, 64, 3), "names": None}
+            for camera in ("top", "wrist")
+        },
+    }
+    source = empty_lerobot_dataset_factory(
+        root=tmp_path / "source",
+        features=features,
+        use_videos=True,
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", g=1),
+    )
+    add_frames(source, 10)
+    source.save_episode()
+    source.finalize()
+    source.meta.episodes = load_episodes(source.meta.root)
+    output = tmp_path / "trimmed"
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
+        patch("lerobot.datasets.dataset_metadata.snapshot_download", return_value=str(output)),
+    ):
+        edited = trim_episodes(source, {0: [(2, 4), (7, 10)]}, output_dir=output)
+    for key in source.meta.video_keys:
+        for i, old_i in enumerate([2, 3, 7, 8, 9]):
+            assert torch.equal(edited[i][key], source[old_i][key])
+        assert edited.meta.episodes[0][f"videos/{key}/to_timestamp"] == pytest.approx(5 / source.fps)
 
 
 @require_h264

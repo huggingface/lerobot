@@ -127,6 +127,39 @@ lerobot-edit-dataset \
     --operation.episode_indices "[0, 2, 5]"
 ```
 
+#### Trim Frames Within Episodes
+
+Keep frame ranges within an episode, or remove a section from its middle:
+
+```bash
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --new_repo_id your-name/pusht_trimmed \
+    --operation.type trim_episodes \
+    --operation.frame_ranges '{"0": [[10, 30], [40, 50]]}'
+```
+
+This retains frames 10–29 and 40–49 from episode 0 as one 30-frame episode.
+All other episodes remain intact. Ranges are episode-local and half-open, sorted
+chronologically, and must be nonempty, non-overlapping, and within the episode.
+To remove an entire episode, use `delete_episodes` instead.
+
+The operation always writes a new dataset. Supply `--new_root` for a local output
+directory, or `--new_repo_id` for the default cache location. Existing directories
+are rejected. Videos use stream copy at safe cut points and otherwise re-encode
+the retained portions of the affected file with the source encoder settings.
+Every camera, action, and observation uses the same frame selection. Frame indices
+and timestamps become consecutive; task lists and statistics are refreshed.
+Computing visual statistics still decodes sampled frames even when copying video.
+
+The Python API is also available:
+
+```python
+from lerobot.datasets.dataset_tools import trim_episodes
+
+edited = trim_episodes(dataset, {0: [(10, 30), (40, 50)]}, output_dir="/path/to/new_dataset")
+```
+
 #### Split Dataset
 
 Divide a dataset into multiple subsets.

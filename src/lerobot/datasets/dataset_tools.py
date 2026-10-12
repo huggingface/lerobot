@@ -44,6 +44,7 @@ from lerobot.configs import (
     VideoEncoderConfig,
     depth_encoder_defaults,
     encoder_config_from_video_info,
+    is_depth_map,
     rgb_encoder_defaults,
 )
 from lerobot.configs.video import DEPTH_ENCODER_INFO_FIELD_NAMES
@@ -55,6 +56,8 @@ from .compute_stats import (
     aggregate_stats,
     compute_episode_stats,
     compute_relative_action_stats,
+    get_feature_stats,
+    sample_indices,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
 from .image_writer import write_image
@@ -78,6 +81,7 @@ from .utils import (
     update_chunk_file_indices,
 )
 from .video_utils import (
+    decode_video_frames,
     encode_video_frames,
     reencode_video,
 )
@@ -173,6 +177,155 @@ def delete_episodes(
 
     logger.info(f"Created new dataset with {len(episodes_to_keep)} episodes")
     return new_dataset
+
+
+def trim_episodes(
+    dataset: LeRobotDataset,
+    frame_ranges: dict[int, list[tuple[int, int]]],
+    output_dir: str | Path | None = None,
+    repo_id: str | None = None,
+) -> LeRobotDataset:
+    """Keep selected frame ranges within episodes, leaving other episodes intact.
+
+    Ranges use episode-local, half-open frame indices and are kept in chronological
+    order. For example, ``{0: [(10, 30), (40, 50)]}`` keeps 30 frames in episode 0.
+    Each edited episode remains one episode, with consecutive indices and timestamps.
+    Video cuts use stream copy when safe and otherwise re-encode using source settings.
+    Statistics are recomputed, including sampled visual statistics, so even stream-copy
+    edits decode a sample of frames. The source is never modified.
+
+    Args:
+        dataset: Complete source dataset (not an episode-filtered view).
+        frame_ranges: Episode indices mapped to nonempty, non-overlapping ranges to retain.
+        output_dir: New dataset directory; must not exist.
+        repo_id: Output identifier, defaulting to the source identifier plus ``_trimmed``.
+    """
+    if not frame_ranges:
+        raise ValueError("No frame ranges supplied")
+    if dataset.episodes is not None:
+        raise ValueError("Trimming requires the complete source dataset")
+    if dataset.meta.episodes is None:
+        dataset.meta.episodes = load_episodes(dataset.meta.root)
+    normalized: dict[int, list[tuple[int, int]]] = {}
+    for episode_index, ranges in frame_ranges.items():
+        if type(episode_index) is not int or not 0 <= episode_index < dataset.meta.total_episodes:
+            raise ValueError(f"Invalid episode index: {episode_index}")
+        length = dataset.meta.episodes[episode_index]["length"]
+        if not ranges or any(
+            len(pair) != 2
+            or any(type(value) is not int for value in pair)
+            or not 0 <= pair[0] < pair[1] <= length
+            for pair in ranges
+        ):
+            raise ValueError(f"Invalid frame ranges for episode {episode_index}: {ranges}")
+        ranges = sorted(ranges)
+        if any(end > start for (_, end), (start, _) in zip(ranges, ranges[1:], strict=False)):
+            raise ValueError(f"Overlapping frame ranges for episode {episode_index}")
+        normalized[episode_index] = ranges
+
+    repo_id = repo_id or f"{dataset.repo_id}_trimmed"
+    output_dir = Path(output_dir) if output_dir is not None else HF_LEROBOT_HOME / repo_id
+    if output_dir.exists():
+        raise FileExistsError(f"Output directory already exists: {output_dir}")
+    new_meta = LeRobotDatasetMetadata.create(
+        repo_id=repo_id,
+        fps=dataset.meta.fps,
+        features=deepcopy(dataset.meta.features),
+        robot_type=dataset.meta.robot_type,
+        root=output_dir,
+        use_videos=bool(dataset.meta.video_keys),
+    )
+    # Preserve task indices; per-episode task lists below reflect only retained frames.
+    new_meta.save_episode_tasks(dataset.meta.tasks.index.tolist())
+    episode_mapping = {i: i for i in range(dataset.meta.total_episodes)}
+    video_metadata = (
+        _copy_and_reindex_videos(dataset, new_meta, episode_mapping, normalized)
+        if dataset.meta.video_keys
+        else {}
+    )
+    all_stats = []
+    global_index = 0
+    source = dataset.hf_dataset.with_format(None)
+    for episode_index in episode_mapping:
+        episode = dataset.meta.episodes[episode_index]
+        ranges = normalized.get(episode_index, [(0, episode["length"])])
+        indices = [episode["dataset_from_index"] + i for start, end in ranges for i in range(start, end)]
+        selected = source.select(indices)
+        df = selected.to_pandas()
+        length = len(df)
+        df["index"] = np.arange(global_index, global_index + length)
+        df["frame_index"] = np.arange(length)
+        df["timestamp"] = np.arange(length) / dataset.fps
+        chunk_index, file_index = divmod(episode_index, DEFAULT_CHUNK_SIZE)
+        path = output_dir / DEFAULT_DATA_PATH.format(chunk_index=chunk_index, file_index=file_index)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_parquet(df, path, new_meta)
+
+        numeric_data = {
+            key: np.stack(df[key].to_numpy())
+            for key, feature in new_meta.features.items()
+            if feature["dtype"] not in {"video", "image", "string", "language"}
+        }
+        stats = compute_episode_stats(numeric_data, new_meta.features)
+        for key in new_meta.camera_keys:
+            sampled = sample_indices(length)
+            if new_meta.features[key]["dtype"] == "video":
+                video = video_metadata[episode_index]
+                assert new_meta.video_path is not None
+                video_path = output_dir / new_meta.video_path.format(
+                    video_key=key,
+                    chunk_index=video[f"videos/{key}/chunk_index"],
+                    file_index=video[f"videos/{key}/file_index"],
+                )
+                images = decode_video_frames(
+                    video_path,
+                    [video[f"videos/{key}/from_timestamp"] + i / dataset.fps for i in sampled],
+                    dataset.tolerance_s,
+                    backend="pyav",
+                    is_depth=is_depth_map(new_meta.features[key]),
+                ).numpy()
+            else:
+                images = []
+                for i in sampled:
+                    image = np.asarray(selected[i][key])
+                    image = image[None] if image.ndim == 2 else image.transpose(2, 0, 1)
+                    images.append(image)
+                images = np.stack(images)
+                if not is_depth_map(new_meta.features[key]):
+                    images = images / 255
+            visual_stats = get_feature_stats(images, axis=(0, 2, 3), keepdims=True)
+            stats[key] = {
+                name: value if name == "count" else value.squeeze(0) for name, value in visual_stats.items()
+            }
+        all_stats.append(stats)
+        new_meta._save_episode_metadata(
+            {
+                "episode_index": episode_index,
+                "tasks": [dataset.meta.tasks.iloc[i].name for i in sorted(df["task_index"].unique())],
+                "length": length,
+                "data/chunk_index": chunk_index,
+                "data/file_index": file_index,
+                "dataset_from_index": global_index,
+                "dataset_to_index": global_index + length,
+                **video_metadata.get(episode_index, {}),
+                **flatten_dict({"stats": stats}),
+            }
+        )
+        global_index += length
+    new_meta.finalize()
+    new_meta.info.total_episodes = len(episode_mapping)
+    new_meta.info.total_frames = global_index
+    new_meta.info.total_tasks = len(new_meta.tasks)
+    new_meta.info.splits = {"train": f"0:{len(episode_mapping)}"}
+    write_info(new_meta.info, output_dir)
+    write_stats(aggregate_stats(all_stats), output_dir)
+    return LeRobotDataset(
+        repo_id=repo_id,
+        root=output_dir,
+        image_transforms=dataset.image_transforms,
+        delta_timestamps=dataset.delta_timestamps,
+        tolerance_s=dataset.tolerance_s,
+    )
 
 
 def split_dataset(
@@ -858,12 +1011,13 @@ def _copy_and_reindex_videos(
     src_dataset: LeRobotDataset,
     dst_meta: LeRobotDatasetMetadata,
     episode_mapping: dict[int, int],
+    frame_ranges: dict[int, list[tuple[int, int]]] | None = None,
 ) -> dict[int, dict]:
-    """Copy and filter video files, only re-encoding files with deleted episodes.
+    """Copy video files or filter their retained episode/frame ranges.
 
     For video files that only contain kept episodes, we copy them directly.
-    For files with mixed kept/deleted episodes, we use PyAV filters to efficiently
-    re-encode only the desired segments. The encoder used for re-encoding is
+    For files with deleted episodes or trimmed frames, stream copy safe ranges or
+    re-encode the desired segments. The encoder used for re-encoding is
     derived per video key from the source dataset's ``meta/info.json`` so the
     destination metadata keeps describing the videos accurately.
 
@@ -871,6 +1025,7 @@ def _copy_and_reindex_videos(
         src_dataset: Source dataset to copy from
         dst_meta: Destination metadata object
         episode_mapping: Mapping from old episode indices to new indices
+        frame_ranges: Optional episode-local half-open ranges to retain within edited episodes.
 
     Returns:
         dict mapping episode index to its video metadata (chunk_index, file_index, timestamps)
@@ -912,7 +1067,9 @@ def _copy_and_reindex_videos(
             episodes_to_keep_set = set(episodes_in_file)
             all_in_file_set = set(all_episodes_in_file)
 
-            if all_in_file_set == episodes_to_keep_set:
+            if all_in_file_set == episodes_to_keep_set and not any(
+                idx in (frame_ranges or {}) for idx in episodes_in_file
+            ):
                 assert src_dataset.meta.video_path is not None
                 src_video_path = src_dataset.root / src_dataset.meta.video_path.format(
                     video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
@@ -945,7 +1102,10 @@ def _copy_and_reindex_videos(
                     assert src_ep["length"] == to_frame - from_frame, (
                         f"Episode length mismatch: {src_ep['length']} vs {to_frame - from_frame}"
                     )
-                    episodes_to_keep_ranges.append((from_frame, to_frame))
+                    ranges = (frame_ranges or {}).get(old_idx, [(0, src_ep["length"])])
+                    episodes_to_keep_ranges.extend(
+                        (from_frame + start, from_frame + end) for start, end in ranges
+                    )
 
                 # Keep the desired segments using stream copy or re-encoding.
                 assert src_dataset.meta.video_path is not None
@@ -970,6 +1130,8 @@ def _copy_and_reindex_videos(
                     new_idx = episode_mapping[old_idx]
                     src_ep = src_dataset.meta.episodes[old_idx]
                     ep_length = src_ep["length"]
+                    if frame_ranges and old_idx in frame_ranges:
+                        ep_length = sum(end - start for start, end in frame_ranges[old_idx])
                     ep_duration = ep_length / src_dataset.meta.fps
 
                     episodes_video_metadata[new_idx][f"videos/{video_key}/chunk_index"] = src_chunk_idx
