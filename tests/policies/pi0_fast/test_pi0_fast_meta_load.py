@@ -32,10 +32,12 @@ from lerobot.utils import import_utils  # noqa: E402
 from tests.policies.pi0_pi05.utils.meta_load import (  # noqa: E402
     DOWNLOAD_ARGUMENTS,
     EMBED_TOKENS,
+    assert_embedding_stored_first,
     assert_same,
     drop_projector_bias,
     load,
     save_checkpoint,
+    store_embedding,
     use_tiny_backbone,
 )
 from tests.utils import require_cuda  # noqa: E402
@@ -88,6 +90,15 @@ def test_subclass_with_its_own_constructor(config, tmp_path, monkeypatch):
     model, used_meta = load(Subclass, path, config, monkeypatch, extra=1)
     expected, _ = load(PI0FastPolicy, path, config, monkeypatch, regular=True)
     assert used_meta and type(model) is Subclass and model.extra == 1
+    assert_same(model, expected)
+
+
+def test_stored_embedding_next_to_lm_head_matches_regular_load(config, tmp_path, monkeypatch):
+    path = save_checkpoint(PI0FastPolicy, config, tmp_path / "ckpt", edit=store_embedding)
+    assert_embedding_stored_first(path)
+    model, used_meta = load(PI0FastPolicy, path, config, monkeypatch)
+    expected, _ = load(PI0FastPolicy, path, config, monkeypatch, regular=True)
+    assert used_meta
     assert_same(model, expected)
 
 

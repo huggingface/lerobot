@@ -31,10 +31,12 @@ from lerobot.utils import import_utils  # noqa: E402
 from tests.policies.pi0_pi05.utils.meta_load import (  # noqa: E402
     DOWNLOAD_ARGUMENTS,
     add_unknown_weights,
+    assert_embedding_stored_first,
     assert_same,
     drop_projector_bias,
     load,
     save_checkpoint,
+    store_embedding,
     use_tiny_backbone,
 )
 from tests.utils import require_cuda  # noqa: E402
@@ -66,6 +68,15 @@ def test_skips_weights_the_policy_does_not_have(config, tmp_path, monkeypatch, c
     path = save_checkpoint(PI05Policy, config, tmp_path / "ckpt", RENAMES, add_unknown_weights)
     model, used_meta = load(PI05Policy, path, config, monkeypatch)
     assert "Unexpected keys when loading state dict: 2 keys" in capsys.readouterr().out
+    expected, _ = load(PI05Policy, path, config, monkeypatch, regular=True)
+    assert used_meta
+    assert_same(model, expected)
+
+
+def test_stored_embedding_next_to_lm_head_matches_regular_load(config, tmp_path, monkeypatch):
+    path = save_checkpoint(PI05Policy, config, tmp_path / "ckpt", RENAMES, store_embedding)
+    assert_embedding_stored_first(path)
+    model, used_meta = load(PI05Policy, path, config, monkeypatch)
     expected, _ = load(PI05Policy, path, config, monkeypatch, regular=True)
     assert used_meta
     assert_same(model, expected)

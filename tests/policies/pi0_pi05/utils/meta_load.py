@@ -16,6 +16,7 @@
 
 """Helpers for the tests that load pi0, pi05 and pi0_fast with their parameters on the meta device."""
 
+import json
 import sys
 
 import torch
@@ -25,6 +26,7 @@ from transformers import PaliGemmaConfig
 from lerobot.policies.common import openpi_checkpoint
 
 EMBED_TOKENS = "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+LM_HEAD = "paligemma_with_expert.paligemma.lm_head.weight"
 
 # Every download option of `from_pretrained`, none at its default value.
 DOWNLOAD_ARGUMENTS = {
@@ -67,6 +69,24 @@ def add_unknown_weights(state_dict):
     """Add weights the policy does not have, as a checkpoint trained by a variant with an extra layer holds."""
     state_dict["state_mlp_in.weight"] = torch.ones(4, 8)
     state_dict["state_mlp_in.bias"] = torch.ones(4)
+
+
+def store_embedding(state_dict):
+    """Store the embedding next to the lm_head that also fills it, in another dtype, as some fine-tunes do.
+
+    `save_file` puts float32 tensors before bfloat16 ones, so the file holds the embedding first, the opposite
+    of their sorted names. The last one read wins, so this catches a loader that reads in sorted order.
+    """
+    state_dict[EMBED_TOKENS.removeprefix("model.")] = torch.full_like(state_dict[LM_HEAD], 0.5)
+    state_dict[LM_HEAD] = state_dict[LM_HEAD].bfloat16()
+
+
+def assert_embedding_stored_first(path):
+    with open(path / "model.safetensors", "rb") as file:
+        header = json.loads(file.read(int.from_bytes(file.read(8), "little")))
+    header.pop("__metadata__", None)
+    stored = sorted(header, key=lambda key: header[key]["data_offsets"][0])
+    assert stored.index(EMBED_TOKENS.removeprefix("model.")) < stored.index(LM_HEAD)
 
 
 def save_checkpoint(policy_cls, config, path, renames=None, edit=None):

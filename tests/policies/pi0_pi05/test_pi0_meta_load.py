@@ -32,10 +32,12 @@ from lerobot.utils import import_utils  # noqa: E402
 from tests.policies.pi0_pi05.utils.meta_load import (  # noqa: E402
     DOWNLOAD_ARGUMENTS,
     EMBED_TOKENS,
+    assert_embedding_stored_first,
     assert_same,
     drop_projector_bias,
     load,
     save_checkpoint,
+    store_embedding,
     use_tiny_backbone,
 )
 from tests.utils import require_cuda  # noqa: E402
@@ -68,6 +70,15 @@ def test_matches_regular_load(config, tmp_path, monkeypatch):
     lm_head = model.model.paligemma_with_expert.paligemma.lm_head.weight
     embed_tokens = model.get_parameter(EMBED_TOKENS)
     assert torch.equal(lm_head, embed_tokens) and lm_head.data_ptr() != embed_tokens.data_ptr()
+
+
+def test_stored_embedding_next_to_lm_head_matches_regular_load(config, tmp_path, monkeypatch):
+    path = save(config, tmp_path / "ckpt", store_embedding)
+    assert_embedding_stored_first(path)
+    model, used_meta = load(PI0Policy, path, config, monkeypatch)
+    expected, _ = load(PI0Policy, path, config, monkeypatch, regular=True)
+    assert used_meta
+    assert_same(model, expected)
 
 
 @require_cuda
