@@ -122,6 +122,7 @@ class EpisodicStrategy(RolloutStrategy):
         episode_time_s = dataset_cfg.episode_time_s
         reset_time_s = dataset_cfg.reset_time_s
         num_episodes = dataset_cfg.num_episodes
+        single_task = dataset_cfg.single_task or cfg.task
         play_sounds = cfg.play_sounds
 
         display_compressed = (
@@ -159,6 +160,7 @@ class EpisodicStrategy(RolloutStrategy):
                         timer=timer,
                         control_time_s=episode_time_s,
                         dataset=dataset,
+                        single_task=single_task,
                     )
 
                     # Reset phase, skip after the last episode (but run when re-recording)
@@ -243,6 +245,7 @@ class EpisodicStrategy(RolloutStrategy):
         timer: CycleTimer,
         control_time_s: float,
         dataset: LeRobotDataset,
+        single_task: str,
     ) -> None:
         """Policy-driven recording loop for a single episode.
 
@@ -284,11 +287,8 @@ class EpisodicStrategy(RolloutStrategy):
                     with timer.section("record"):
                         obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                         action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                        dataset.add_frame(
-                            {**obs_frame, **action_frame, "task": self._require_engine().dispatched_task}
-                        )
+                        dataset.add_frame({**obs_frame, **action_frame, "task": single_task})
 
-            self._require_engine().pump_query(obs_processed)
             timer.wait()
             timestamp = time.perf_counter() - start_t
 

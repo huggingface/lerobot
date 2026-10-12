@@ -15,7 +15,6 @@
 from lerobot.utils.action_interpolator import ActionInterpolator as ActionInterpolator
 
 from .act.configuration_act import ACTConfig as ACTConfig
-from .chunk import ChunkPolicySpec, ExecutionMode, FeatureSpec
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
 from .dm05.configuration_dm05 import DM05Config as DM05Config
 from .eo1.configuration_eo1 import EO1Config as EO1Config
@@ -71,10 +70,6 @@ __all__ = [
     "VQBeTConfig",
     "WallXConfig",
     "XVLAConfig",
-    # Chunk execution contracts
-    "ChunkPolicySpec",
-    "ExecutionMode",
-    "FeatureSpec",
     # Base class
     "PreTrainedPolicy",
     # RTC utilities
