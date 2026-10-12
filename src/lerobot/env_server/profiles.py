@@ -77,16 +77,26 @@ class EvalProfile:
         return mapped
 
     def validate_policy(self, descriptor: EnvDescriptor, config):
-        """Check simulator features against the authoritative checkpoint declaration."""
+        """Check feature mappings, channels, and tensor dimensions against the checkpoint.
+
+        RGB spatial dimensions describe camera acquisition on the environment side
+        and training inputs on the checkpoint side. Policy preprocessing owns any
+        resizing or resolution restrictions; profile admission does not infer them.
+        """
         self.validate_descriptor(descriptor)
         if getattr(config, "empty_cameras", 0) != self.empty_cameras:
             raise ValueError("Checkpoint empty-camera configuration differs from the profile")
         available = {self.feature_mapping.get(f.name, f.name): f for f in descriptor.features}
-        empty = {f"observation.images.empty_camera_{i}" for i in range(self.empty_cameras)}
+        # Saved declarations can contain more generated placeholders than the
+        # runtime budget. Their values and shapes belong to policy preparation.
+        empty_prefix = "observation.images.empty_camera_"
+        empty = {
+            name
+            for name in config.input_features
+            if name.startswith(empty_prefix) and name.removeprefix(empty_prefix).isdigit()
+        }
         for name, expected in config.input_features.items():
             if name in empty:
-                if tuple(expected.shape) != (3, 480, 640):
-                    raise ValueError("Checkpoint empty-camera shape is invalid")
                 continue
             if name not in available:
                 raise ValueError(f"Checkpoint feature missing from simulator/profile: {name}")
@@ -94,18 +104,15 @@ class EvalProfile:
             shape = (
                 (actual.shape[2], actual.shape[0], actual.shape[1]) if actual.kind == "rgb" else actual.shape
             )
-            resize = getattr(config, "resize_imgs_with_padding", None)
-            resizes_rgb = (
-                actual.kind == "rgb"
-                and getattr(config, "type", None) == "smolvla"
-                and len(expected.shape) == 3
-                and expected.shape[0] == shape[0]
-                and isinstance(resize, (tuple, list))
-                and len(resize) == 2
-                and all(type(size) is int and size > 0 for size in resize)
-            )
-            # SmolVLA explicitly resizes RGB on the policy side; raw H/W need not match.
-            if tuple(expected.shape) != shape and not resizes_rgb:
+            if actual.kind == "rgb":
+                compatible_shape = (
+                    len(expected.shape) == 3
+                    and expected.shape[0] == shape[0]
+                    and all(size > 0 for size in expected.shape)
+                )
+            else:
+                compatible_shape = tuple(expected.shape) == shape
+            if not compatible_shape:
                 raise ValueError(
                     f"Checkpoint feature shape mismatch for {name}: expected {expected.shape}, got {shape}"
                 )

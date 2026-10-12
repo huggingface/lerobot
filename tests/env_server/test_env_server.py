@@ -300,20 +300,35 @@ def test_eval_profile_admission(server):
         output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
     )
     profile.validate_policy(descriptor, config)
-    # Only SmolVLA's explicit resize permits different raw RGB spatial dimensions.
-    config.type = "smolvla"
-    config.resize_imgs_with_padding = (512, 512)
+    # Acquisition resolution is independent of policy-side image preparation.
+    # Admission requires no policy type or resize configuration.
     config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (3, 256, 256))
     profile.validate_policy(descriptor, config)
-    for policy_type, resize in (("smolvla", None), ("smolvla", (0, 512)), ("act", (512, 512))):
-        config.type, config.resize_imgs_with_padding = policy_type, resize
+    config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (3, 480, 640))
+    profile.validate_policy(descriptor, config)
+    for shape in ((4, 256, 256), (256, 256), (3, 0, 256), (3, 256, -1)):
+        config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, shape)
         with pytest.raises(ValueError, match="shape mismatch"):
             profile.validate_policy(descriptor, config)
-    config.type, config.resize_imgs_with_padding = "smolvla", (512, 512)
-    config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (4, 256, 256))
-    with pytest.raises(ValueError, match="shape mismatch"):
-        profile.validate_policy(descriptor, config)
     config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (3, 8, 8))
+    # Serialized placeholders survive a smaller runtime empty-camera budget.
+    config.empty_cameras = 1
+    config.input_features["observation.images.empty_camera_0"] = PolicyFeature(
+        FeatureType.VISUAL, (3, 480, 640)
+    )
+    config.input_features["observation.images.empty_camera_1"] = PolicyFeature(
+        FeatureType.VISUAL, (3, 480, 640)
+    )
+    replace(profile, empty_cameras=1).validate_policy(descriptor, config)
+    with pytest.raises(ValueError, match="empty-camera configuration"):
+        profile.validate_policy(descriptor, config)
+    config.input_features["observation.images.empty_camera_1"] = PolicyFeature(
+        FeatureType.VISUAL, (3, 256, 256)
+    )
+    replace(profile, empty_cameras=1).validate_policy(descriptor, config)
+    del config.input_features["observation.images.empty_camera_0"]
+    del config.input_features["observation.images.empty_camera_1"]
+    del config.empty_cameras
     with pytest.raises(ValueError, match="semantics"):
         replace(profile, semantics="wrong").validate_policy(descriptor, config)
     with pytest.raises(ValueError, match="component order"):
