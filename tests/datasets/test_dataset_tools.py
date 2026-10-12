@@ -27,6 +27,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
     _fractions_to_episode_indices,
+    _keep_episodes_from_video_with_av,
     _try_keep_episodes_from_video_by_stream_copy,
     add_features,
     convert_image_to_video_dataset,
@@ -1043,30 +1044,39 @@ def test_delete_first_and_last_episodes(sample_dataset, tmp_path):
 
 
 @require_h264
-def test_delete_episodes_stream_copies_packed_videos(tmp_path, empty_lerobot_dataset_factory):
-    """Episodes packed into one video file are dropped without re-encoding.
-
-    Patching the re-encode path to raise asserts it is never reached, and copied frames must
-    decode identically to the source on both sides of every cut.
-    """
+@pytest.mark.parametrize("stream_copy", [True, False], ids=["stream-copy", "reencode"])
+def test_delete_episodes_packed_videos(stream_copy, tmp_path, empty_lerobot_dataset_factory):
+    """Both video paths retain the selected episodes and a continuous output timeline."""
     import av
 
     src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory, "h264")
     output_dir = tmp_path / "filtered"
     video_key = src_dataset.meta.video_keys[0]
 
-    def _fail_reencode(*args, **kwargs):
-        raise AssertionError("stream copy should have handled this GOP-aligned file")
-
     with (
         patch("lerobot.datasets.dataset_metadata.get_safe_version") as mock_get_safe_version,
         patch("lerobot.datasets.dataset_metadata.snapshot_download") as mock_snapshot_download,
-        patch("lerobot.datasets.dataset_tools._keep_episodes_from_video_with_av", _fail_reencode),
+        patch(
+            "lerobot.datasets.dataset_tools._try_keep_episodes_from_video_by_stream_copy",
+            wraps=_try_keep_episodes_from_video_by_stream_copy,
+        ) as mock_stream_copy,
+        patch(
+            "lerobot.datasets.dataset_tools._keep_episodes_from_video_with_av",
+            wraps=_keep_episodes_from_video_with_av,
+        ) as mock_reencode,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
+        if not stream_copy:
+            mock_stream_copy.return_value = False
 
         new_dataset = delete_episodes(src_dataset, [1, 3], output_dir=output_dir)
+
+    mock_stream_copy.assert_called_once()
+    if stream_copy:
+        mock_reencode.assert_not_called()
+    else:
+        mock_reencode.assert_called_once()
 
     assert new_dataset.meta.total_episodes == 3
     assert new_dataset.meta.total_frames == 30
@@ -1078,10 +1088,18 @@ def test_delete_episodes_stream_copies_packed_videos(tmp_path, empty_lerobot_dat
     assert len(pts) == 30
     assert [p - pts[0] for p in pts] == [i * ticks_per_frame for i in range(30)]
 
+    source_frames = torch.stack([src_dataset[i][video_key] for i in range(src_dataset.meta.total_frames)])
     for new_ep, old_ep in enumerate([0, 2, 4]):
         for offset in range(10):
-            expected = src_dataset[old_ep * 10 + offset][video_key]
-            assert torch.equal(new_dataset[new_ep * 10 + offset][video_key], expected)
+            source_index = old_ep * 10 + offset
+            expected = source_frames[source_index]
+            actual = new_dataset[new_ep * 10 + offset][video_key]
+            if stream_copy:
+                assert torch.equal(actual, expected)
+            else:
+                # Allow lossy pixel changes, but require the correct source frame, in order.
+                errors = (source_frames - actual).abs().mean(dim=(1, 2, 3))
+                assert errors.argmin().item() == source_index
 
 
 @require_h264
