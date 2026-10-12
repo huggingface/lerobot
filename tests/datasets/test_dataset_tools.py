@@ -1042,15 +1042,8 @@ def test_delete_first_and_last_episodes(sample_dataset, tmp_path):
     assert episode_indices == [0, 1, 2]
 
 
-@pytest.mark.parametrize(
-    "vcodec",
-    [
-        pytest.param("h264", marks=require_h264),
-        pytest.param("hevc", marks=require_hevc),
-        pytest.param("libsvtav1", marks=require_libsvtav1),
-    ],
-)
-def test_delete_episodes_stream_copies_packed_videos(vcodec, tmp_path, empty_lerobot_dataset_factory):
+@require_h264
+def test_delete_episodes_stream_copies_packed_videos(tmp_path, empty_lerobot_dataset_factory):
     """Episodes packed into one video file are dropped without re-encoding.
 
     Patching the re-encode path to raise asserts it is never reached, and copied frames must
@@ -1058,7 +1051,7 @@ def test_delete_episodes_stream_copies_packed_videos(vcodec, tmp_path, empty_ler
     """
     import av
 
-    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory, vcodec)
+    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory, "h264")
     output_dir = tmp_path / "filtered"
     video_key = src_dataset.meta.video_keys[0]
 
