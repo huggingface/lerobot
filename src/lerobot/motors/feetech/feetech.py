@@ -279,12 +279,21 @@ class FeetechMotorsBus(SerialMotorsBus):
         """
         On Feetech Motors:
         Present_Position = Actual_Position - Homing_Offset
+
+        Homing_Offset is sign-magnitude, so on a 12-bit encoder it spans [-2047, 2047] while
+        `pos - 2047` reaches 2048 at position 4095. That one offset is clamped, which leaves the
+        motor one step off the exact half turn instead of failing the write.
         """
         half_turn_homings: dict[NameOrID, Value] = {}
         for motor, pos in positions.items():
             model = self._get_motor_model(motor)
             max_res = self.model_resolution_table[model] - 1
-            half_turn_homings[motor] = pos - int(max_res / 2)
+            offset = pos - int(max_res / 2)
+            sign_bit = self.model_encoding_table.get(model, {}).get("Homing_Offset")
+            if sign_bit is not None:
+                max_magnitude = (1 << sign_bit) - 1
+                offset = max(-max_magnitude, min(max_magnitude, offset))
+            half_turn_homings[motor] = offset
 
         return half_turn_homings
 
