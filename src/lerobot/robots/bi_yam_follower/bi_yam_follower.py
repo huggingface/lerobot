@@ -151,8 +151,8 @@ class BiYamFollower(BimanualMixin, Robot):
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
         """Validate both arm targets before submitting either one."""
-        if any(arm.config.read_only or not arm.servo.active for arm in self.arms.values()):
-            raise RuntimeError("YAM commands require both servos active and neither arm read-only")
+        if any(not arm.servo.active for arm in self.arms.values()):
+            raise RuntimeError("YAM commands require both servos active")
         if set(action) != set(self.action_features):
             raise ValueError("YAM requires all 14 absolute joint/gripper targets; Cartesian actions need IK")
         arm_actions = {

@@ -177,9 +177,9 @@ class _YamBus:
         self._last_feedback.clear()
         self._last_status.clear()
 
-    def read_states(self, wait: bool = True) -> MotorStates:
+    def read_states(self) -> MotorStates:
         """Return the raw states of the seven motors, once every motor has fresh feedback."""
-        states = self._wait_for_fresh_states(wait)
+        states = self._wait_for_fresh_states()
         return MotorStates(
             position=np.asarray([states[name].pos for name in MOTOR_NAMES], dtype=float),
             velocity=np.asarray([states[name].vel for name in MOTOR_NAMES], dtype=float),
@@ -268,13 +268,13 @@ class _YamBus:
                 return
         raise ValueError(f"Cannot verify USB serial for {self.port}; check the adapter connection")
 
-    def _wait_for_fresh_states(self, wait: bool) -> dict[str, Any]:
+    def _wait_for_fresh_states(self) -> dict[str, Any]:
         if self.controller is None or self.monitor is None:
             raise RuntimeError(f"{self.port} bus is not open")
         monitor = self.monitor
         for motor in self.motors.values():
             motor.request_feedback()
-        deadline = time.monotonic() + self.feedback_timeout_s if wait else time.monotonic()
+        deadline = time.monotonic() + self.feedback_timeout_s
         while True:
             for _ in range(256):
                 msg = monitor.recv(timeout=0)
@@ -402,8 +402,7 @@ class YamFollower(Robot):
             for camera in self.cameras.values():
                 camera.connect()
             state = read_joint_state(self.bus, params)
-            if not self.config.read_only:
-                self._check_start_pose(state.position)
+            self._check_start_pose(state.position)
             self.servo.seed(state)
             self._connected = True
         except BaseException:
@@ -412,11 +411,10 @@ class YamFollower(Robot):
 
     @check_if_not_connected
     def start(self) -> None:
-        """Enable torque at the seeded pose (unless read-only), then start the servo."""
+        """Enable torque at the seeded pose, then start the servo."""
         if self.servo.active:
             raise RuntimeError("YAM servo is already running")
-        if not self.config.read_only:
-            self.bus.enable(joint_to_motor(self.servo.state.position, self._require_params()))
+        self.bus.enable(joint_to_motor(self.servo.state.position, self._require_params()))
         self.servo.start()
 
     @check_if_not_connected
@@ -477,8 +475,6 @@ class YamFollower(Robot):
         if self.servo.active:
             # Changing modes disables torque, which would drop an arm the servo is holding.
             raise RuntimeError("Configure YAM motors before the servo starts, not while it runs")
-        if self.config.read_only:
-            return
         self.bus.set_mit_mode()
         self._check_can_timeouts()
         self.servo.seed(read_joint_state(self.bus, self._require_params()))
@@ -496,13 +492,10 @@ class YamFollower(Robot):
             f"{name}=off" if value == 0 else f"{name}={value * _CAN_TIMEOUT_TICK_US / 1000:g} ms"
             for name, value in unsafe.items()
         )
-        message = (
+        raise ValueError(
             f"{self}: unsafe motor CAN timeout ({details}); configure every motor to at most 400 ms "
             "with the Damiao/I2RT motor tools"
         )
-        if self.config.require_motor_can_timeout:
-            raise ValueError(f"{message}, or set require_motor_can_timeout=false.")
-        logger.warning(message)
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
@@ -527,8 +520,8 @@ class YamFollower(Robot):
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
         """Validate and submit a joint-position target."""
-        if self.config.read_only or not self.servo.active:
-            raise RuntimeError("YAM read-only/calibration connection forbids motor commands")
+        if not self.servo.active:
+            raise RuntimeError("YAM commands require an active servo")
         target = action_to_target(action, self.config.use_degrees)
         self.servo.set_target(target)
         sent = to_public(target, self.config.use_degrees)
@@ -557,7 +550,7 @@ class YamFollower(Robot):
         return self.gravity_model.torques(positions[:6], dict.fromkeys(_MODEL_GRIPPER_JOINTS, opening))
 
     def _load_control_model(self) -> None:
-        if self.config.read_only or not self.config.gravity_compensation or self.gravity_model is not None:
+        if not self.config.gravity_compensation or self.gravity_model is not None:
             return
         self.gravity_model = GravityCompensation(
             _GRAVITY_MODEL_PATH, _MODEL_ARM_JOINTS, base_frame="base", mjcf=True
@@ -574,16 +567,11 @@ class YamFollower(Robot):
             raise
 
     def _check_start_pose(self, position: np.ndarray) -> None:
-        cfg = self.config
-        if cfg.initial_position_deg is not None and np.any(
-            np.abs(np.rad2deg(position[:6]) - cfg.initial_position_deg) > cfg.initial_tolerance_deg
+        if self.config.initial_position_deg is not None and np.any(
+            np.abs(np.rad2deg(position[:6]) - self.config.initial_position_deg)
+            > self.config.initial_tolerance_deg
         ):
             raise ValueError("YAM arm is outside the configured initial pose tolerance")
-        if (
-            cfg.initial_gripper_position is not None
-            and abs(position[6] * 100.0 - cfg.initial_gripper_position) > cfg.initial_gripper_tolerance
-        ):
-            raise ValueError("YAM gripper is outside the initial pose tolerance")
 
     def _close(self) -> None:
         stop_error: RuntimeError | None = None

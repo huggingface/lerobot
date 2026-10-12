@@ -347,7 +347,7 @@ class MitServo:
         self._gripper: GripperForceLimiter | None = None
 
     def seed(self, state: JointState) -> None:
-        """Start from a measured state: hold its pose until the first target arrives."""
+        """Seed the target and command from the measured state before the first action."""
         self.state = state
         self.target = state.position.copy()
         self.command = state.position.copy()

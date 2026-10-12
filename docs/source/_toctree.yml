@@ -176,7 +176,7 @@
   - local: rebot_b601
     title: reBot B601
   - local: yam
-    title: Bimanual YAM
+    title: YAM
   - local: third_party_robots
     title: Third-Party Robots & Teleoperators
   title: "Robots"
