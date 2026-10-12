@@ -74,7 +74,7 @@ def sample_dataset(tmp_path, empty_lerobot_dataset_factory):
 
 
 def _make_packed_video_dataset(root, dataset_factory, vcodec):
-    """Create a video-backed dataset whose episodes share one video file."""
+    """Encode episodes separately, then pack them into one video file."""
     features = {
         "action": {"dtype": "float32", "shape": (6,), "names": None},
         "observation.images.top": {"dtype": "video", "shape": (64, 64, 3), "names": None},
