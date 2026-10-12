@@ -74,7 +74,7 @@ class KeyboardMicroDuckTeleopConfig(TeleoperatorConfig):
     """Configuration for the Microduck keyboard teleoperator.
 
     Held keys command a body twist; head keys move the head target at ``head_rate`` while held.
-    Arrow keys and ESC are left free for ``lerobot-record``'s episode controls.
+    Arrow keys, ESC and N / R / Q are left free for ``lerobot-record``'s episode controls.
 
     Attributes:
         vx: Forward/backward speed at full scale, m/s
