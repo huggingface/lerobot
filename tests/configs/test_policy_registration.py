@@ -111,8 +111,9 @@ print("POLICY_CLASS", get_policy_class("act").__name__)
 
 UNKNOWN_NAMES = """
 import json, sys, tempfile
-# As in a minimal install: no lookup here may need transformers.
+# As in a minimal install: no lookup here may need transformers, or peft, which imports it.
 sys.modules["transformers"] = None
+sys.modules["peft"] = None
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class, make_policy_config
 
