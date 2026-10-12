@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import logging
+import os
 import sys
 import threading
 import time
@@ -1566,7 +1567,9 @@ def test_status_line_redraws_in_place_and_steps_aside_for_log_records():
     from lerobot.rollout.status_line import StatusLine
 
     robot = SimpleNamespace(observation_times=deque())
-    engine = SimpleNamespace(inference_times=deque([(time.perf_counter(), 0.020), (time.perf_counter(), 0.030)]))
+    engine = SimpleNamespace(
+        inference_times=deque([(time.perf_counter(), 0.020), (time.perf_counter(), 0.030)])
+    )
     terminal = _FakeTerminal()
     handler = logging.StreamHandler(terminal)
     root = logging.getLogger()
@@ -1592,17 +1595,23 @@ def test_status_line_redraws_in_place_and_steps_aside_for_log_records():
     assert output.endswith("\n")
 
 
-def test_status_line_stays_silent_off_a_terminal():
+def test_status_line_fits_the_terminal_width():
+    """A wrapped line would leave a row behind on every redraw, since clearing only reaches the last row."""
     from lerobot.rollout.status_line import StatusLine
 
-    stream = io.StringIO()
-    robot = SimpleNamespace(observation_times=deque([0.0, 1.0]))
+    terminal = _FakeTerminal()
+    engine = SimpleNamespace(inference_times=deque([(time.perf_counter(), 0.020)]))
     with (
         patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
-        StatusLine(robot, SimpleNamespace(inference_times=deque([(time.perf_counter(), 0.1)])), 30, stream=stream),
+        patch(
+            "lerobot.rollout.status_line.shutil.get_terminal_size", return_value=os.terminal_size((20, 24))
+        ),
+        StatusLine(SimpleNamespace(observation_times=deque()), engine, 30, stream=terminal),
     ):
         time.sleep(0.05)
-    assert stream.getvalue() == ""
+    lines = [line for line in terminal.getvalue().split("\r\033[2K") if line.strip()]
+    assert lines
+    assert all(len(line.rstrip("\n")) <= 19 for line in lines)
 
 
 def test_status_line_hides_inference_times_that_are_too_old():
@@ -1617,6 +1626,55 @@ def test_status_line_hides_inference_times_that_are_too_old():
     engine.inference_times.popleft()
     engine.inference_times[0] = (now - INFERENCE_WINDOW_S - 1, 0.02)
     assert "infer" not in line._format()
+
+
+def test_status_line_measures_the_stream_it_draws_on():
+    """With stdout redirected, the width must still come from the terminal the line is drawn on."""
+    import fcntl
+    import pty
+    import struct
+    import termios
+
+    from lerobot.rollout.status_line import StatusLine
+
+    leader, follower = pty.openpty()
+    fcntl.ioctl(follower, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 30, 0, 0))
+    with (
+        os.fdopen(follower, "w", closefd=True) as terminal,
+        patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
+        patch(
+            "lerobot.rollout.status_line.shutil.get_terminal_size", return_value=os.terminal_size((200, 24))
+        ),
+        StatusLine(
+            SimpleNamespace(observation_times=deque()),
+            SimpleNamespace(inference_times=deque([(time.perf_counter(), 0.02)])),
+            30,
+            stream=terminal,
+        ),
+    ):
+        time.sleep(0.05)
+        # Read before the terminal closes: on macOS, closing it drops what was not read yet.
+        os.set_blocking(leader, False)
+        output = os.read(leader, 65536).decode()
+    os.close(leader)
+    lines = [line for line in output.split("\r\033[2K") if line.strip()]
+    assert lines
+    assert all(len(line.rstrip("\r\n")) <= 29 for line in lines)
+
+
+def test_status_line_stays_silent_off_a_terminal():
+    from lerobot.rollout.status_line import StatusLine
+
+    stream = io.StringIO()
+    robot = SimpleNamespace(observation_times=deque([0.0, 1.0]))
+    with (
+        patch("lerobot.rollout.status_line.REFRESH_S", 0.01),
+        StatusLine(
+            robot, SimpleNamespace(inference_times=deque([(time.perf_counter(), 0.1)])), 30, stream=stream
+        ),
+    ):
+        time.sleep(0.05)
+    assert stream.getvalue() == ""
 
 
 def _log_while_a_signal_arrives() -> None:
