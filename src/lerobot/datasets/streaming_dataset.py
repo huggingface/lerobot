@@ -126,12 +126,53 @@ def _balanced_episode_shards(
     return shards
 
 
+@dataclass(frozen=True)
+class _WorkerShare:
+    """One DataLoader worker's part of a rank: its episodes and its share of the rank limits."""
+
+    worker_id: int
+    num_workers: int
+    episodes: list[int]
+    pool_size: int
+    byte_budget: int
+
+
+def _batches_per_worker(num_batches: int, batch_limits: list[int | None]) -> tuple[list[int], int]:
+    """Replay the DataLoader turns for ``num_batches`` batches of a rank.
+
+    An in-order DataLoader takes batches from its active workers in turn, and a worker leaves the
+    turn after its last batch. ``None`` marks a worker that never ends (``repeat=True``).
+
+    Returns:
+        `tuple[list[int], int]`: The batches each worker produced, and the worker of the next batch.
+    """
+    counts = [0] * len(batch_limits)
+    if all(limit is None for limit in batch_limits):
+        full_turns, extra = divmod(num_batches, len(batch_limits))
+        return [full_turns + (1 if worker < extra else 0) for worker in range(len(batch_limits))], extra
+    active = [worker for worker, limit in enumerate(batch_limits) if limit is None or limit > 0]
+    turn = 0
+    for _ in range(num_batches):
+        if not active:
+            break
+        worker = active[turn]
+        counts[worker] += 1
+        limit = batch_limits[worker]
+        if limit is not None and counts[worker] >= limit:
+            active.pop(turn)
+        else:
+            turn += 1
+        turn = turn % len(active) if active else 0
+    return counts, active[turn] if active else 0
+
+
 class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
     """Episode-scoped streaming reader for LeRobot datasets.
 
     Metadata is cached locally, while each rank reads only the Parquet rows and MP4 byte ranges
-    needed for the complete episodes it owns. One DataLoader worker per rank owns the logical pool;
-    its bounded result queue provides decoded-batch prefetch without creating independent samplers.
+    needed for the complete episodes it owns. With N DataLoader workers, each worker owns a disjoint,
+    frame-balanced part of the rank's episodes, with its own episode pool and 1/N of the byte budget.
+    Each process has its own Python GIL, so N workers decode and assemble samples in parallel.
     Episode ownership is disjoint and every selected frame is yielded exactly once per iteration.
     MP4 sidecars are resolved automatically and built in a revision-keyed local cache when absent.
 
@@ -159,6 +200,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 break
         ```
     """
+
+    # Set in __init__; class defaults keep partially built instances (tests) on the one-worker path.
+    _worker_pool_size: int | None = None
+    _explicit_decoder_cache_size: int | None = None
+    # Logical worker offset of DataLoader worker 0 for the current iterator (see `_worker_share`).
+    _worker_rotation = 0
 
     def __init__(
         self,
@@ -220,8 +267,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             buffer_size (`int`, *optional*, defaults to `1000`):
                 Legacy setting used to derive the pool size when episode_pool_size is omitted.
             max_num_shards (`int`, *optional*, defaults to `16`):
-                Maximum internal episode-fetch concurrency, not DataLoader process count.
-                ``lerobot-train`` sets it from ``--num_workers``.
+                Maximum episode-fetch concurrency of one DataLoader worker (or of the training process
+                without workers). ``lerobot-train`` sets it from ``--num_workers``.
             seed (`int`, *optional*, defaults to `42`):
                 Seed for deterministic episode admission and anchor sampling. ``lerobot-train``
                 passes ``--seed``, or ``DEFAULT_STREAMING_SEED`` when ``--seed`` is null.
@@ -239,11 +286,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             data_root (`str | Path | None`, *optional*):
                 Payload root override for direct Python use; accepts local paths and fsspec URLs.
             episode_pool_size (`int | None`, *optional*):
-                Maximum active episodes per rank, also limited by the compressed-byte budget.
+                Maximum active episodes of each DataLoader worker, also limited by the compressed-byte
+                budget. None mixes ``min(buffer_size, 32)`` episodes for the rank and gives each of the
+                N workers 1/N of them. A larger pool mixes more episodes in each batch, but uses more
+                memory and fetches more data before the first sample.
             prefetch_episodes (`int`, *optional*, defaults to `8`):
-                Pending episodes eligible for speculative prefetch beyond the active pool.
+                Pending episodes eligible for speculative prefetch beyond the active pool, for each
+                DataLoader worker.
             byte_budget_gb (`float`, *optional*, defaults to `8.0`):
-                Per-rank reservation limit in GiB for synthesized video bytes, not total RAM.
+                Per-rank reservation limit in GiB for synthesized video bytes, not total RAM. Each of the
+                N DataLoader workers of a rank gets 1/N of it.
             repeat (`bool`, *optional*, defaults to `False`):
                 Repeat rank-local coverage epochs, allowing batches to span epoch boundaries.
             repo_type (`Literal["dataset", "bucket"]`, *optional*, defaults to `"dataset"`):
@@ -255,7 +307,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             decoded_queue_size (`int`, *optional*, defaults to `8`):
                 Maximum samples prepared ahead, delivered in planner order.
             video_decoder_cache_size (`int | None`, *optional*):
-                Open video decoder cap per rank; None allows one per active episode-camera pair.
+                Open video decoder cap per rank, divided between the DataLoader workers; None allows one
+                per active episode-camera pair of each worker.
             native_http_connections (`int | None`, *optional*):
                 Per-rank HTTP connection limit; None derives it from fetch concurrency.
             native_http_subranges (`int`, *optional*, defaults to `1`):
@@ -309,6 +362,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             raise ValueError(f"Unsupported video backend: {self._video_backend}")
         self.sampling_strategy = StreamingSamplingStrategy(sampling_strategy)
         self.episode_pool_size = episode_pool_size or min(buffer_size, 32)
+        # An explicit pool size is the pool of each DataLoader worker; the default is split between them.
+        self._worker_pool_size = episode_pool_size
         self.prefetch_episodes = prefetch_episodes
         self.byte_budget = int(byte_budget_gb * 1024**3)
         self.decode_threads = decode_threads
@@ -345,6 +400,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             if video_decoder_cache_size is not None
             else max(1, self.episode_pool_size * len(self.meta.video_keys))
         )
+        self._explicit_decoder_cache_size = video_decoder_cache_size
 
         self._depth_encoder_configs = depth_encoder_configs(self.meta)
         self._image_depth_units = image_depth_units(self.meta)
@@ -405,6 +461,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
         """Yield rank-local samples for one coverage epoch, or repeat when configured."""
+        # A new DataLoader iterator starts its worker turns at worker 0; a resume offset sets it again.
+        self._worker_rotation = 0
         if self.repeat:
             return self._repeat_iterator()
         return self._iter_once()
@@ -425,16 +483,13 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         epoch = self._next_epoch if self.shuffle else 0
         self._active_epoch = epoch
 
-        worker = torch.utils.data.get_worker_info()
-        if worker is not None and worker.num_workers > 1:
-            raise RuntimeError(
-                "StreamingLeRobotDataset uses one rank-level sampling pool and supports at most "
-                "one DataLoader worker per rank"
-            )
-        resume_offset = self._resume_offset
+        rank_episodes, _rank, _world_size = self._rank_episodes()
+        share, resume_offset = self._worker_share(rank_episodes, self._resume_offset)
+        consumer_episodes = share.episodes
         self._resume_offset = 0
-        consumer_episodes, _rank, _world_size = self._rank_episodes()
         consumer_frame_count = sum(self._episode_frame_count(episode) for episode in consumer_episodes)
+        if not self.repeat and resume_offset >= consumer_frame_count:
+            return  # this worker already gave all its frames; without repeat there is no next epoch
         if consumer_frame_count:
             worker_epoch_delta, resume_offset = divmod(resume_offset, consumer_frame_count)
         else:
@@ -446,9 +501,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         if self.shuffle:
             self._next_epoch = epoch + 1
 
-        max_workers = min(self.max_num_shards, max(1, self.episode_pool_size + self.prefetch_episodes))
+        max_workers = min(self.max_num_shards, max(1, share.pool_size + self.prefetch_episodes))
         with ExitStack() as resources:
-            video_cache = self._make_video_cache(consumer_episodes, max_workers)
+            video_cache = self._make_video_cache(consumer_episodes, max_workers, share)
             if video_cache is not None:
                 resources.callback(video_cache.close)
             episode_byte_sizes = (
@@ -458,12 +513,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             )
             planner = ExactCoveragePool(
                 [(episode, self._episode_frame_count(episode)) for episode in consumer_episodes],
-                pool_size=self.episode_pool_size,
+                pool_size=share.pool_size,
                 sampling_strategy=self.sampling_strategy,
                 seed=self.seed,
                 epoch=epoch,
                 episode_byte_sizes=episode_byte_sizes,
-                byte_budget=self.byte_budget if episode_byte_sizes is not None else None,
+                byte_budget=share.byte_budget if episode_byte_sizes is not None else None,
             )
             for _ in range(resume_offset):
                 try:
@@ -608,6 +663,60 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         shards = _balanced_episode_shards(self._selected_episodes, counts, world_size=world_size)
         return shards[rank], rank, world_size
 
+    def _worker_share(self, rank_episodes: list[int], rank_offset: int = 0) -> tuple[_WorkerShare, int]:
+        """Give the current DataLoader worker its episodes, limits and resume offset.
+
+        Each worker owns a frame-balanced part of the rank's episodes. On resume, the rank offset
+        counts ``step * batch_size`` samples. The DataLoader took those batches from its workers in
+        turn, but a new DataLoader starts its turns at worker 0. So DataLoader worker ``p`` takes
+        the part of logical worker ``(p + r) % N``, where ``r`` is the worker of the next batch.
+
+        Returns:
+            `tuple[_WorkerShare, int]`: The worker's share, and its own resume offset in samples.
+        """
+        worker = torch.utils.data.get_worker_info()
+        worker_id, num_workers = (worker.id, worker.num_workers) if worker is not None else (0, 1)
+        if num_workers > 1 and len(rank_episodes) < num_workers:
+            raise ValueError(
+                f"This rank owns {len(rank_episodes)} streaming episodes, fewer than its {num_workers} "
+                "DataLoader workers. Reduce --num_workers."
+            )
+        episodes, offset = rank_episodes, rank_offset
+        if num_workers > 1:
+            counts = {episode: self._episode_frame_count(episode) for episode in rank_episodes}
+            shards = _balanced_episode_shards(rank_episodes, counts, world_size=num_workers)
+            # Repeat epochs of one iterator keep the rotation that the resume of its first epoch set.
+            batches, next_worker = [0] * num_workers, self._worker_rotation
+            if rank_offset:
+                batch_size = self._resume_batch_size
+                if rank_offset % batch_size:
+                    raise ValueError(
+                        f"A resume offset of {rank_offset} samples is not a whole number of batches of "
+                        f"{batch_size}; resuming with {num_workers} DataLoader workers needs whole batches."
+                    )
+                frames = [sum(counts[episode] for episode in shard) for shard in shards]
+                # With repeat, a worker never ends unless it has no frames; without it, after its last batch.
+                limits: list[int | None] = [
+                    0 if not total else None if self.repeat else -(-total // batch_size) for total in frames
+                ]
+                batches, next_worker = _batches_per_worker(rank_offset // batch_size, limits)
+                batches = [count * batch_size for count in batches]
+            self._worker_rotation = next_worker
+            worker_id = (worker_id + next_worker) % num_workers
+            episodes, offset = shards[worker_id], batches[worker_id]
+        if self._worker_pool_size is not None:
+            pool_size = self._worker_pool_size
+        else:
+            pool_size = max(1, round(self.episode_pool_size / num_workers))
+        share = _WorkerShare(
+            worker_id=worker_id,
+            num_workers=num_workers,
+            episodes=episodes,
+            pool_size=pool_size,
+            byte_budget=max(1, self.byte_budget // num_workers),
+        )
+        return share, offset
+
     @cached_property
     def _episode_frame_counts(self) -> np.ndarray:
         """Read only episode boundaries once for rank balancing and coverage planning."""
@@ -626,11 +735,21 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         """Return frames owned by one training rank under balanced whole-episode sharding."""
         if world_size <= 0 or rank < 0 or rank >= world_size:
             raise ValueError(f"Invalid distributed rank/world size: rank={rank}, world_size={world_size}")
-        if num_workers > 1:
-            raise ValueError("Rank-level streaming supports at most one DataLoader worker per rank")
         counts = {episode: self._episode_frame_count(episode) for episode in self._selected_episodes}
         shards = _balanced_episode_shards(self._selected_episodes, counts, world_size=world_size)
+        if num_workers > 1 and len(shards[rank]) < num_workers:
+            raise ValueError(
+                f"Rank {rank} owns {len(shards[rank])} streaming episodes, fewer than its {num_workers} "
+                "DataLoader workers. Reduce --num_workers."
+            )
         return sum(counts[episode] for episode in shards[rank])
+
+    def num_episodes_for_rank(self, rank: int, world_size: int) -> int:
+        """Return the number of whole episodes one training rank owns."""
+        if world_size <= 0 or rank < 0 or rank >= world_size:
+            raise ValueError(f"Invalid distributed rank/world size: rank={rank}, world_size={world_size}")
+        counts = {episode: self._episode_frame_count(episode) for episode in self._selected_episodes}
+        return len(_balanced_episode_shards(self._selected_episodes, counts, world_size=world_size)[rank])
 
     def _load_episode_dataset(
         self,
@@ -698,8 +817,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         self,
         episode_indices: list[int],
         workers: int,
+        share: _WorkerShare,
     ) -> EpisodeByteCache | None:
-        """Build the rank-local video manifest and its bounded byte cache."""
+        """Build the worker-local video manifest and its bounded byte cache."""
         if self._sidecar_path is None or not episode_indices:
             return None
         range_backend = StorageLocation.parse(self._data_root).range_backend
@@ -715,12 +835,16 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         return EpisodeByteCache(
             manifest,
             self._data_root,
-            byte_budget=self.byte_budget,
+            byte_budget=share.byte_budget,
             workers=workers,
             range_backend=range_backend,
             native_http_connections=self.native_http_connections,
             native_http_subranges=self.native_http_subranges,
-            max_open_decoders=self.video_decoder_cache_size,
+            max_open_decoders=(
+                max(1, self._explicit_decoder_cache_size // share.num_workers)
+                if self._explicit_decoder_cache_size is not None
+                else max(1, share.pool_size * len(self.meta.video_keys))
+            ),
             video_backend=self._video_backend,
             tolerance_s=self.tolerance_s,
             token=self._streaming_io_token,
@@ -809,7 +933,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
 
         Note:
             With DataLoader prefetch, yielded samples may not yet have been consumed by training.
-            The training pipeline restores its position from completed steps instead.
+            The training pipeline restores its position from completed steps instead. With several
+            DataLoader workers, each worker process holds only its own position.
         """
         return {
             "epoch": self._active_epoch,
@@ -828,8 +953,11 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             ValueError: If the epoch or offset is negative, or the batch size is not positive.
 
         Note:
-            Reproducing anchor order requires the same dataset, seed, sampler, pool settings and
-            distributed topology. Random image transforms are not restored by this method.
+            Reproducing anchor order requires the same dataset, seed, sampler, pool settings,
+            distributed topology and number of DataLoader workers. With several workers, the offset
+            is the rank's offset in whole batches of ``batch_size``; each worker derives its own part,
+            because the DataLoader takes batches from its workers in turn. Random image transforms
+            are not restored by this method.
         """
         epoch = int(state.get("epoch", 0))
         offset = int(state.get("offset", 0))
