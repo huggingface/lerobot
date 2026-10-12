@@ -14,350 +14,354 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Depth-only ball dodging on the Unitree G1: frozen SONIC + decoder LoRAs + a Theia percept.
+"""DepthDodgeController driver: MuJoCo G1 by default, the real G1 with --real.
 
-The policy (https://huggingface.co/nepyope/g1_depth_dodge) is a frozen SONIC whole-body controller
-whose decoder carries seven rank-16 LoRAs, conditioned on a 128-D percept of the last 16 head-camera
-depth frames. It runs as three ONNX graphs:
+Onboard (--real) everything runs on the robot's Jetson: joint commands go straight to DDS
+rt/lowcmd through the Unitree SDK (no bridge) and perception comes from a RealSense writer
+subprocess (``src/lerobot/cameras/depth_shm.py``) through shared memory (no ZMQ, no sockets).
 
-- ``theia_image.onnx``  uint8 depth image ``[1,224,224]`` -> frozen Theia-Tiny tokens ``[1,197,192]``
-- ``perception.onnx``   16-slot token ring ``[1,16,197,192]`` -> ``percept[1,128]``
-- ``actor.onnx``        ``tokenizer[640]``, ``policy[930]``, ``conditioning[768]`` -> ``actions[29]``
+Fast path (default with --real): the writer runs on the GPU and publishes *Theia tokens*
+(197x192) plus the 64x96 policy depth per camera frame; this process only reads them,
+samples at 25 Hz and runs perception+actor at 50 Hz on the CPU (~1 ms).
 
-Theia runs at camera rate (25 Hz) on the camera thread; the perception + actor pair runs at 50 Hz on
-the robot's controller thread. The reference is a held stand, so the controller takes no action input
-and needs no policy server: it stands, and steps out of the way of balls it sees.
+    conda activate lerobot && cd ~/lerobot_dodge
+    PYTHONPATH=src python examples/unitree_g1/depth_dodge.py --real --ball_only                      # ball-only depth, GPU Theia
+    PYTHONPATH=src python examples/unitree_g1/depth_dodge.py --real --ball_only --writer_args "--ball-max-range 2.8 --trace"
+    PYTHONPATH=src python examples/unitree_g1/depth_dodge.py --real --cpu_theia                      # old path: raw depth, CPU Theia
+    PYTHONPATH=src python examples/unitree_g1/depth_dodge.py --camera zmq://<robot_ip>:5555          # sim on the laptop
+    PYTHONPATH=src python examples/unitree_g1/depth_dodge.py --onscreen                              # sim, black depth (ablation)
 
-Everything runs on the G1's Jetson Orin, on the CPU: the head D435i is read directly with
-pyrealsense2, and joint commands go through ``run_g1_server.py`` on the same machine, so nothing in
-the control loop crosses the network. With ``--camera none`` the ring holds all-black frames: the
-policy stands and never dodges.
-
-Setup on the robot (see docs/source/unitree_g1.mdx for networking and unitree_sdk2_python):
-
-```bash
-ssh unitree@192.168.123.164
-cd lerobot && pip install -e ".[unitree_g1,intelrealsense]"
-
-# Terminal 1: DDS <-> ZMQ bridge. No --camera: this example opens the head RealSense itself.
-python src/lerobot/robots/unitree_g1/run_g1_server.py
-
-# Terminal 2, with the robot hanging on its gantry
-python examples/unitree_g1/depth_dodge.py --real --camera realsense
-```
-
-The weights download from the Hub on first run; on a robot without internet, run the script once
-elsewhere and copy the Hugging Face cache over. The camera stream is cropped to the policy's 45 deg
-vertical FOV at 0 deg pitch, so the D435i must be mounted level. Throws should come from the front,
-1.8-2.8 m away. Keep the robot on the gantry until it stands steadily, and stop with Ctrl+C.
-
-To try it without a robot, in the MuJoCo simulation (no camera, so it only stands):
-
-```bash
-python examples/unitree_g1/depth_dodge.py --camera none --onscreen
-```
-
-Theia-Tiny is released for non-commercial research use only; see the model card before deploying.
+SPACE toggles sonic <-> dodge, q quits. Live camera view (with --ball_only): http://<robot-ip>:8080
 """
 
 import argparse
-import json
 import logging
 import math
+import os
+import shlex
+import subprocess
+import sys
 import threading
 import time
-from collections import deque
+from pathlib import Path
 
 import cv2
 import numpy as np
-import onnx
-import onnxruntime as ort
-import torch
-from huggingface_hub import hf_hub_download
-from torch.nn.functional import interpolate
 
-from lerobot.robots.unitree_g1 import UnitreeG1, UnitreeG1Config
-from lerobot.robots.unitree_g1.g1_utils import (
-    NUM_MOTORS,
-    G1_29_JointIndex,
-    get_gravity_orientation,
-    make_ort_session_options,
+from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
+from lerobot.robots.unitree_g1.controllers.depth_dodge import DEFAULT_REPO_ID, DEPTH_SHAPE, FILES
+from lerobot.robots.unitree_g1.g1_utils import G1_29_JointIndex
+from lerobot.robots.unitree_g1.unitree_g1 import UnitreeG1
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+ap = argparse.ArgumentParser()
+ap.add_argument("--seconds", type=float, default=600.0)
+ap.add_argument("--real", action="store_true", help="run onboard: direct DDS lowcmd/lowstate, shm perception")
+ap.add_argument("--network_interface", default=None, help="DDS interface for --real (default: auto)")
+ap.add_argument("--onscreen", action="store_true")
+ap.add_argument("--end_effector", default="dummy", choices=["dummy", "dex1", "dex3"])
+ap.add_argument("--band_seconds", type=float, default=1.0, help="sim: keep the elastic band on this long")
+ap.add_argument(
+    "--camera",
+    default=None,
+    help="'shm' (default with --real), 'zmq://host:port' for the sim on a laptop, or 'none' for all-black",
 )
+ap.add_argument(
+    "--rs_python",
+    default=os.path.expanduser("~/rs_pub_venv/bin/python"),
+    help="interpreter with pyrealsense2 (+ onnxruntime-gpu for the fast path); spawns the shm writer",
+)
+ap.add_argument("--rs_res", default="480x270x60", help="RealSense depth WxHxFPS for the writer")
+ap.add_argument(
+    "--camera_hz", type=float, default=25.0, help="policy camera rate (train 25); writer frames are sampled"
+)
+ap.add_argument(
+    "--mode", default="sonic", choices=["sonic", "dodge"], help="starting mode; SPACE toggles, q quits"
+)
+ap.add_argument(
+    "--cpu_theia",
+    action="store_true",
+    help="run Theia in this process on the CPU (~40 ms) instead of in the writer on the GPU (~8 ms)",
+)
+ap.add_argument(
+    "--ball_only",
+    action="store_true",
+    help="writer detects the orange ball in colour and publishes only its depth pixels (rest = far)",
+)
+ap.add_argument(
+    "--view_port",
+    type=int,
+    default=8080,
+    help="with --ball_only: live MJPEG of colour+detection / published depth / mask / Theia input; 0 = off",
+)
+ap.add_argument(
+    "--writer_args",
+    default="",
+    help='extra args for depth_shm.py, e.g. "--ball-max-range 2.8 --min-circularity 0.3 --trace"',
+)
+args = ap.parse_args()
+if args.camera is None:
+    args.camera = "shm" if args.real else "none"
+# Tokens from the writer (GPU Theia) only make sense with the shm writer.
+use_percept = args.camera == "shm" and not args.cpu_theia
 
-logger = logging.getLogger(__name__)
 
-DODGE_REPO_ID = "nepyope/g1_depth_dodge"
-DODGE_REVISION = "10e207cb734a6c3edf792d4995ca59ae4641bf29"
-SONIC_REPO_ID = "lerobot/sonic_decoder"
-SONIC_REVISION = "15e87db84e7f6df8b8440f1fdbd0a5d17f89d531"  # the decoder the LoRAs were trained on
+def keyboard_loop(controller, stop: threading.Event):
+    """SPACE toggles sonic <-> dodge, q quits. Raw tty so it works over ssh."""
+    import select
+    import termios
+    import tty
 
-CONTROL_DT = 0.02  # 50 Hz
-HISTORY_LEN = 10  # proprioception frames in ``policy``
-FUTURE_STEPS = 10  # reference frames in ``tokenizer``
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        while not stop.is_set():
+            if select.select([sys.stdin], [], [], 0.1)[0]:
+                ch = sys.stdin.read(1)
+                if ch == " ":
+                    controller.mode = "dodge" if controller.mode == "sonic" else "sonic"
+                    print(f"\n>>> MODE: {controller.mode.upper()}\n", flush=True)
+                elif ch in ("q", "\x03"):
+                    stop.set()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
-CAMERA_HZ = 25.0
-DEPTH_HISTORY = 16  # token ring slots, 0.64 s at 25 Hz
-DEPTH_SHAPE = (64, 96)  # optical-Z metres, 45 deg vertical FOV
+
+# Policy camera contract: 64x96 pinhole, 45 deg vertical FOV, 0 deg pitch.
 POLICY_VFOV = math.radians(45.0)
-THEIA_SIZE = 224
-DEPTH_NEAR_M, DEPTH_FAR_M = 0.2, 6.0
+POLICY_HFOV = 2 * math.atan(DEPTH_SHAPE[1] / DEPTH_SHAPE[0] * math.tan(POLICY_VFOV / 2))  # ~63.7 deg
 
 
-def depth_to_theia_image(depth_m: np.ndarray) -> np.ndarray:
-    """``(64, 96)`` metres -> uint8 ``(224, 224)``: 255 near, 1 far, 0 invalid, bilinearly resized.
-
-    Depth and tokens are fp16-rounded because the training simulator rendered and cached them in fp16.
-    """
-    depth = torch.as_tensor(depth_m, dtype=torch.float32).half().float()
-    valid = torch.isfinite(depth) & (depth >= DEPTH_NEAR_M) & (depth <= DEPTH_FAR_M)
-    value = (1.0 + 254.0 * (DEPTH_FAR_M - depth) / (DEPTH_FAR_M - DEPTH_NEAR_M)).clamp(1.0, 255.0).round()
-    gray = torch.where(valid, value, torch.zeros_like(value))
-    image = interpolate(gray[None, None], size=(THEIA_SIZE, THEIA_SIZE), mode="bilinear", align_corners=False)
-    return image.round().clamp(0, 255).to(torch.uint8)[0, 0].numpy()
-
-
-def quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    w1, x1, y1, z1 = a
-    w2, x2, y2, z2 = b
-    return np.array(
-        [
-            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-        ],
-        dtype=np.float32,
-    )
-
-
-def quat_to_matrix(q: np.ndarray) -> np.ndarray:
-    w, x, y, z = q
-    return np.array(
-        [
-            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
-            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
-            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
-        ],
-        dtype=np.float32,
-    )
-
-
-def yaw_quat(q: np.ndarray) -> np.ndarray:
-    w, x, y, z = q
-    yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-    return np.array([np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)], dtype=np.float32)
-
-
-class DepthDodgeController:
-    """``RobotController`` for ``UnitreeG1``'s 50 Hz controller thread.
-
-    Joint order: the policy was trained in mjlab, whose joint order is the Unitree SDK order
-    (``G1_29_JointIndex``), and the SONIC deploy constants are stored in that order too, so no
-    permutation is applied anywhere.
-    """
-
-    control_dt = CONTROL_DT
-
-    def __init__(self):
-        sonic_path = hf_hub_download(SONIC_REPO_ID, "model_decoder.onnx", revision=SONIC_REVISION)
-        metadata = {p.key: p.value for p in onnx.load(sonic_path, load_external_data=False).metadata_props}
-        constants = {
-            k: np.array(json.loads(metadata[k]), dtype=np.float32)
-            for k in ("kp", "kd", "default_angles", "action_scale")
-        }
-        self.kp, self.kd = constants["kp"], constants["kd"]
-        self.default_angles, self.action_scale = constants["default_angles"], constants["action_scale"]
-
-        def session(filename: str, threads: int) -> ort.InferenceSession:
-            path = hf_hub_download(DODGE_REPO_ID, filename, revision=DODGE_REVISION)
-            options = make_ort_session_options(intra_op_num_threads=threads, inter_op_num_threads=1)
-            return ort.InferenceSession(path, sess_options=options, providers=["CPUExecutionProvider"])
-
-        # Theia is the heavy graph (~36 ms on a Jetson Orin CPU with 4 threads) and runs off the control thread.
-        self.theia = session("theia_image.onnx", 4)
-        self.perception = session("perception.onnx", 2)
-        self.actor = session("actor.onnx", 2)
-
-        self.black_tokens = self._tokenize(np.zeros(DEPTH_SHAPE, np.float32))
-        self.action_ft: dict[str, type] = {}  # autonomous: takes over the action space with nothing
-        self._ring_lock = threading.Lock()
-        self.reset()
-
-    def reset(self) -> None:
-        self.last_action = np.zeros(NUM_MOTORS, np.float32)
-        self.history = [deque(maxlen=HISTORY_LEN) for _ in range(5)]  # ang vel, q, dq, last action, gravity
-        with self._ring_lock:
-            self.ring = deque([self.black_tokens] * DEPTH_HISTORY, maxlen=DEPTH_HISTORY)
-            self._ring_version = 0
-        self._percept_version = -1
-        self._percept = None
-        self._ref_quat = None
-
-    def _tokenize(self, depth_m: np.ndarray) -> np.ndarray:
-        tokens = self.theia.run(None, {"image": depth_to_theia_image(depth_m)[None]})[0][0]
-        return tokens.astype(np.float16).astype(np.float32)
-
-    def observe_depth(self, depth_m: np.ndarray) -> None:
-        """Push one ``(64, 96)`` depth frame in metres (0 = no return). Call at 25 Hz."""
-        tokens = self._tokenize(depth_m)
-        with self._ring_lock:
-            ring = self.ring.copy()
-            ring.append(tokens)
-            self.ring = ring
-            self._ring_version += 1
-
-    def _get_percept(self) -> np.ndarray:
-        with self._ring_lock:
-            version = self._ring_version
-            ring = np.stack(self.ring)[None] if version != self._percept_version else None
-        if ring is not None:
-            self._percept = self.perception.run(None, {"depth_tokens": ring})[0][0]
-            self._percept_version = version
-        return self._percept
-
-    def _tokenizer(self, quat: np.ndarray) -> np.ndarray:
-        """Held-stand reference: 5 frames of default pose then 5 of zero velocity, each followed by
-        the 6-D body-frame reference orientation, anchored to the heading at reset."""
-        if self._ref_quat is None:
-            self._ref_quat = yaw_quat(quat)
-        rel = quat_mul(np.array([quat[0], -quat[1], -quat[2], -quat[3]], np.float32), self._ref_quat)
-        orientation = quat_to_matrix(rel / (np.linalg.norm(rel) + 1e-8))[:, :2].reshape(-1)
-        rows = np.concatenate(
-            [np.tile(self.default_angles, FUTURE_STEPS), np.zeros(FUTURE_STEPS * NUM_MOTORS, np.float32)]
-        ).reshape(FUTURE_STEPS, 2 * NUM_MOTORS)
-        return np.concatenate([rows, np.tile(orientation, (FUTURE_STEPS, 1))], axis=1).reshape(-1)
-
-    def run_step(self, action: dict, lowstate) -> dict:
-        q = np.array([lowstate.motor_state[j.value].q for j in G1_29_JointIndex], np.float32)
-        dq = np.array([lowstate.motor_state[j.value].dq for j in G1_29_JointIndex], np.float32)
-        quat = np.array(lowstate.imu_state.quaternion, np.float32)
-        quat /= np.linalg.norm(quat) + 1e-8
-        gyro = np.array(lowstate.imu_state.gyroscope, np.float32)
-
-        frames = (gyro, q - self.default_angles, dq, self.last_action, get_gravity_orientation(quat))
-        for hist, frame in zip(self.history, frames, strict=True):
-            hist.extend([frame] * (HISTORY_LEN if not hist else 1))  # training fills history on reset
-
-        tokenizer = self._tokenizer(quat)
-        policy = np.concatenate([np.concatenate(list(h)) for h in self.history])
-        conditioning = np.concatenate([tokenizer, self._get_percept()])
-        residual = self.actor.run(
-            None,
-            {
-                "tokenizer": tokenizer[None].astype(np.float32),
-                "policy": policy[None].astype(np.float32),
-                "conditioning": conditioning[None].astype(np.float32),
-            },
-        )[0][0].astype(np.float32)
-        if not np.isfinite(residual).all():
-            raise FloatingPointError("Non-finite dodge action")
-        self.last_action = residual
-        target = self.default_angles + self.action_scale * residual
-        return {f"{j.name}.q": float(target[j.value]) for j in G1_29_JointIndex}
-
-
-def make_depth_crop(height: int, width: int, vfov_deg: float):
-    """Crop a wider depth image to the policy's 45 deg FOV and downsample to ``(64, 96)`` metres.
-
-    Nearest-neighbour keeps holes as holes (0 = no return), like the simulator's rendered depth.
-    """
-    f = (height / 2) / math.tan(math.radians(vfov_deg) / 2)
-    half_h = f * math.tan(POLICY_VFOV / 2)
-    half_w = half_h * DEPTH_SHAPE[1] / DEPTH_SHAPE[0]
-    y0, y1 = max(round(height / 2 - half_h), 0), min(round(height / 2 + half_h), height)
-    x0, x1 = max(round(width / 2 - half_w), 0), min(round(width / 2 + half_w), width)
+def make_cropper(info: dict | None, h: int, w: int):
+    """Return f(depth_mm uint16 HxW) -> (64,96) float32 metres, matching the policy's FOV."""
+    if info:
+        fx, fy, cx, cy = info["fx"], info["fy"], info["cx"], info["cy"]
+    else:  # D435i nominal (58 deg vFOV)
+        fy = fx = (h / 2) / math.tan(math.radians(58.0) / 2)
+        cx, cy = w / 2, h / 2
+    half_h = fy * math.tan(POLICY_VFOV / 2)
+    half_w = fx * math.tan(POLICY_HFOV / 2)
+    y0, y1 = int(round(cy - half_h)), int(round(cy + half_h))
+    x0, x1 = int(round(cx - half_w)), int(round(cx + half_w))
+    y0, x0 = max(y0, 0), max(x0, 0)
+    y1, x1 = min(y1, h), min(x1, w)
+    print(f"depth crop rows {y0}:{y1} cols {x0}:{x1} of {h}x{w} -> {DEPTH_SHAPE}", flush=True)
 
     def crop(depth_mm: np.ndarray) -> np.ndarray:
-        roi = np.squeeze(depth_mm)[y0:y1, x0:x1]
+        roi = depth_mm[y0:y1, x0:x1]
+        # Nearest keeps holes as holes (0 = no return), like the sim's rendered depth.
         small = cv2.resize(roi, (DEPTH_SHAPE[1], DEPTH_SHAPE[0]), interpolation=cv2.INTER_NEAREST)
         return small.astype(np.float32) * 1e-3
 
     return crop
 
 
-def camera_loop(controller: DepthDodgeController, args, stop: threading.Event) -> None:
-    from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
+stats = {"cam_hz": 0.0, "valid": 0.0, "near": 0.0, "frames": 0, "theia_ms": 0.0, "lat_ms": 0.0, "stalls": 0}
 
-    camera = RealSenseCamera(
-        RealSenseCameraConfig(
-            serial_number_or_name=args.camera_serial,
-            fps=60,
-            width=480,
-            height=270,
+
+def open_camera():
+    """Raw depth. Return (read() -> (depth_mm HxW uint16, capture_time|None), intrinsics|None, close())."""
+    if args.camera == "shm":
+        from lerobot.cameras.depth_shm import DepthShmReader
+
+        reader = DepthShmReader(wait_s=15.0)
+
+        def read():
+            depth, meta = reader.read(timeout_s=2.0)
+            return depth, meta["t_capture"]
+
+        return read, reader.intrinsics, reader.close
+
+    host, _, port = args.camera.removeprefix("zmq://").partition(":")
+    from lerobot.cameras.zmq import ZMQCamera, ZMQCameraConfig
+
+    cam = ZMQCamera(
+        ZMQCameraConfig(
+            server_address=host,
+            port=int(port or 5555),
+            camera_name="head_camera",
             use_rgb=False,
             use_depth=True,
+            warmup_s=3,
         )
     )
-    camera.connect()
-    crop = make_depth_crop(270, 480, args.camera_vfov)
-    next_t = time.monotonic()
+    cam.connect()
+
+    def read():
+        return cam.async_read_depth(timeout_ms=2000)[:, :, 0], cam.latest_server_timestamp
+
+    return read, cam.depth_info, cam.disconnect
+
+
+def open_percept():
+    """Tokens from the writer. Return (read() -> (tokens, depth_m, t_capture, theia_ms), close())."""
+    from lerobot.cameras.depth_shm import PerceptShmReader
+
+    reader = PerceptShmReader(wait_s=30.0)  # the writer warms up CUDA first
+
+    def read():
+        tokens, depth_m, meta = reader.read(timeout_s=2.0)
+        return tokens, depth_m, meta["t_capture"], meta["theia_ms"]
+
+    return read, reader.close
+
+
+class Cadence:
+    """Pick frames at a fixed rate from a faster stream, by capture time (not arrival time), so the
+    ring covers 16/25 s like in training even though the writer runs at 60 Hz."""
+
+    def __init__(self, hz: float):
+        self.period = 1.0 / hz
+        self.next: float | None = None
+
+    def take(self, t_capture: float) -> bool:
+        if self.next is None:
+            self.next = t_capture + self.period
+            return True
+        if t_capture + 1e-4 < self.next:
+            return False
+        # Advance to the slot containing this frame; skip slots if we fell behind (stall).
+        self.next += self.period * max(1, math.floor((t_capture - self.next) / self.period) + 1)
+        return True
+
+
+def camera_loop(controller, stop: threading.Event):
+    cadence = Cadence(args.camera_hz)
+    if use_percept:
+        read_percept, close = open_percept()
+        tokens, depth_m, t_capture, _ = read_percept()
+        print("camera connected: tokens from the writer (Theia onboard GPU)", flush=True)
+        crop = None
+    else:
+        read, intrinsics, close = open_camera()
+        first, _ = read()
+        crop = make_cropper(intrinsics, *first.shape)
+        print(f"camera connected: {first.shape}, intrinsics {intrinsics}", flush=True)
+    last = time.monotonic()
     try:
         while not stop.is_set():
-            depth_mm = camera.async_read_depth(timeout_ms=1000)
-            # Sample the 60 Hz stream at the 25 Hz the ring was trained on.
-            now = time.monotonic()
-            if now < next_t:
+            try:
+                if use_percept:
+                    tokens, depth_m, t_capture, theia_ms = read_percept()
+                else:
+                    depth_mm, t_capture = read()
+            except TimeoutError as e:
+                # Camera stalled (USB hiccup / writer restarting its pipeline). Don't act on stale
+                # tokens: show the policy an empty scene until frames come back.
+                stats["stalls"] += 1
+                print(
+                    f"\n!!! camera stall #{stats['stalls']}: {e}; feeding black frames until it recovers\n",
+                    flush=True,
+                )
+                for _ in range(controller.depth_ring.maxlen):
+                    controller.observe_tokens(controller.black_tokens)
+                cadence.next = None
                 continue
-            next_t = max(next_t + 1.0 / CAMERA_HZ, now)
-            controller.observe_depth(crop(depth_mm))
+            if t_capture is None:
+                t_capture = time.time()
+            if not cadence.take(t_capture):
+                continue
+            now = time.monotonic()
+            if use_percept:
+                controller.observe_tokens(tokens)
+                stats["theia_ms"] = theia_ms
+            else:
+                depth_m = crop(depth_mm)
+                t_theia = time.perf_counter()
+                controller.observe_depth(depth_m)
+                stats["theia_ms"] = 0.8 * stats["theia_ms"] + 0.2 * (time.perf_counter() - t_theia) * 1e3
+            # capture (sensor global time) -> tokens in the ring; same clock onboard
+            stats["lat_ms"] = 0.8 * stats["lat_ms"] + 0.2 * (time.time() - t_capture) * 1e3
+            stats["cam_hz"] = 0.9 * stats["cam_hz"] + 0.1 / max(now - last, 1e-6)
+            last = now
+            valid = depth_m > 0
+            stats["valid"] = valid.mean()
+            stats["near"] = float(depth_m[valid].min()) if valid.any() else float("nan")
+            stats["frames"] += 1
     finally:
-        camera.disconnect()
+        close()
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument("--real", action="store_true", help="drive the real robot instead of the MuJoCo sim")
-    parser.add_argument("--robot_ip", default="127.0.0.1", help="run_g1_server.py host; local on the Jetson")
-    parser.add_argument("--camera", default="realsense", choices=["realsense", "none"])
-    parser.add_argument(
-        "--camera_serial", default="", help="RealSense serial number or name; empty = first found"
-    )
-    parser.add_argument(
-        "--camera_vfov", type=float, default=58.0, help="depth stream vertical FOV (D435i: 58)"
-    )
-    parser.add_argument("--onscreen", action="store_true", help="show the MuJoCo viewer (sim only)")
-    parser.add_argument("--seconds", type=float, default=120.0)
-    args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO)
+writer_proc = None
+if args.camera == "shm":
+    w, h, fps = args.rs_res.split("x")
+    script = str(Path(__file__).resolve().parents[2] / "src/lerobot/cameras/depth_shm.py")
+    subprocess.run(["pkill", "-f", "depth_shm.py --width"], check=False)
+    writer_cmd = [args.rs_python, script, "--width", w, "--height", h, "--fps", fps]
+    if args.ball_only:
+        writer_cmd += ["--ball-only"]
+        if args.view_port:
+            writer_cmd += ["--view-port", str(args.view_port)]
+    if use_percept:
+        from huggingface_hub import hf_hub_download
 
-    config = UnitreeG1Config(
-        is_simulation=not args.real,
-        robot_ip=args.robot_ip,
-        end_effector="dummy",
-        sim_publish_images=False,
-        sim_onscreen=args.onscreen if not args.real else None,
-    )
-    robot = UnitreeG1(config)
-    controller = DepthDodgeController()
-    robot.controller = controller  # not in UnitreeG1's name registry, so attach it before connect()
+        writer_cmd += ["--theia", hf_hub_download(DEFAULT_REPO_ID, FILES["theia"])]
+    writer_cmd += shlex.split(args.writer_args)
+    writer_proc = subprocess.Popen(writer_cmd, stdin=subprocess.DEVNULL)
+    print(f"spawned depth writer pid {writer_proc.pid}: {' '.join(writer_cmd)}", flush=True)
 
-    stop = threading.Event()
-    camera_thread = None
-    try:
-        robot.connect()
-        if args.camera == "realsense":
-            camera_thread = threading.Thread(target=camera_loop, args=(controller, args, stop), daemon=True)
-            camera_thread.start()
+cfg = UnitreeG1Config(
+    is_simulation=not args.real,
+    onboard=args.real,
+    network_interface=args.network_interface,
+    controller="DepthDodgeController",
+    sim_onscreen=args.onscreen if not args.real else None,
+    sim_publish_images=False,
+    end_effector=args.end_effector,
+)
+robot = UnitreeG1(cfg)
+robot.controller.mode = args.mode
+robot.connect()
 
-        # The sim holds the robot up on an elastic band; release it once the stand has settled.
-        sim = getattr(robot.sim_env, "simulator", None)
-        band = getattr(getattr(sim, "sim_env", None), "elastic_band", None)
-        start = time.monotonic()
-        while time.monotonic() - start < args.seconds:
-            if band is not None and time.monotonic() - start > 1.0:
-                band.enable = False
-                band = None
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        stop.set()
-        if camera_thread is not None:
-            camera_thread.join(timeout=2.0)
-        robot.disconnect()
+stop = threading.Event()
+if sys.stdin.isatty():
+    threading.Thread(target=keyboard_loop, args=(robot.controller, stop), daemon=True).start()
+print(f"\n>>> MODE: {robot.controller.mode.upper()}   (SPACE toggles sonic/dodge, q quits)\n", flush=True)
+has_camera = args.camera != "none"
+if has_camera:
+    threading.Thread(target=camera_loop, args=(robot.controller, stop), daemon=True).start()
 
-
-if __name__ == "__main__":
-    main()
+default = robot.controller.default_angles
+names = [m.name[1:] for m in G1_29_JointIndex]
+band = getattr(getattr(robot.sim_env, "sim_env", None), "elastic_band", None)
+t0 = time.time()
+released = band is None
+try:
+    while time.time() - t0 < args.seconds and not stop.is_set():
+        time.sleep(1.0)
+        if not released and time.time() - t0 >= args.band_seconds:
+            band.enable = False
+            released = True
+            print("elastic band released", flush=True)
+        if writer_proc is not None and writer_proc.poll() is not None:
+            print(f"depth writer exited with {writer_proc.returncode}", flush=True)
+            writer_proc = None
+        obs = robot.get_observation()
+        q = np.array([obs[f"{m.name}.q"] for m in G1_29_JointIndex])
+        dev = np.abs(q - default)
+        top = ", ".join(f"{names[i]} {dev[i]:.2f}" for i in np.argsort(dev)[::-1][:3])
+        c = robot.controller
+        tm = c.timing
+        line = (
+            f"[{c.mode:5s}] t={time.time() - t0:5.1f}s  "
+            f"tick {1e3 / max(tm['period_ms'], 1e-3):4.1f}Hz (train 50) compute {tm['tick_ms']:4.1f}ms (budget 20) | "
+        )
+        if has_camera:
+            line += (
+                f"cam {stats['cam_hz']:4.1f}Hz (train 25) theia {stats['theia_ms']:4.1f}ms "
+                f"ring {c.ring_span_s * 1e3:4.0f}ms (train 640) lat {stats['lat_ms']:3.0f}ms (train 0-40) "
+                f"valid {stats['valid'] * 100:3.0f}% near {stats['near']:.2f}m | "
+            )
+        else:
+            line += "cam none (black) | "
+        line += (
+            f"|q-def| {dev.max():.2f}rad |res| {np.abs(c.last_action).max():.1f} "
+            f"quat=({obs['imu.quat.w']:.2f},{obs['imu.quat.x']:.2f},{obs['imu.quat.y']:.2f},{obs['imu.quat.z']:.2f}) top: {top}"
+        )
+        print(line, flush=True)
+finally:
+    stop.set()
+    robot.disconnect()
+    if writer_proc is not None:
+        writer_proc.terminate()

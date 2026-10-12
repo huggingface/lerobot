@@ -108,6 +108,7 @@ def make_robot_controller(name: str | None) -> RobotController | None:
         "GrootLocomotionController": "lerobot.robots.unitree_g1.controllers.gr00t_locomotion",
         "HolosomaLocomotionController": "lerobot.robots.unitree_g1.controllers.holosoma_locomotion",
         "SonicWholeBodyController": "lerobot.robots.unitree_g1.controllers.sonic_whole_body",
+        "DepthDodgeController": "lerobot.robots.unitree_g1.controllers.depth_dodge",
     }
     module_path = controllers.get(name)
     if module_path is None:
@@ -164,8 +165,8 @@ class UnitreeG1(Robot):
         # Initialize cameras config (ZMQ-based) - actual connection in connect()
         self._cameras = make_cameras_from_configs(config.cameras)
 
-        # Import channel classes based on mode
-        if config.is_simulation:
+        # Use SDK DDS channels in simulation and onboard; remote machines use the ZMQ bridge.
+        if config.is_simulation or config.onboard:
             self._ChannelFactoryInitialize = _SDKChannelFactoryInitialize
             self._ChannelPublisher = _SDKChannelPublisher
             self._ChannelSubscriber = _SDKChannelSubscriber
@@ -360,6 +361,23 @@ class UnitreeG1(Robot):
     def configure(self) -> None:
         pass
 
+    @staticmethod
+    def _release_builtin_motion_controller() -> None:
+        """Stop Unitree's motion service so it cannot compete with direct rt/lowcmd commands."""
+        from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (  # noqa: PLC0415
+            MotionSwitcherClient,
+        )
+
+        motion_switcher = MotionSwitcherClient()
+        motion_switcher.SetTimeout(5.0)
+        motion_switcher.Init()
+        _, result = motion_switcher.CheckMode()
+        while result is not None and result.get("name"):
+            logger.info("[UnitreeG1] Releasing builtin motion mode %r", result["name"])
+            motion_switcher.ReleaseMode()
+            _, result = motion_switcher.CheckMode()
+            time.sleep(1.0)
+
     def connect(self, calibrate: bool = True) -> None:  # connect to DDS
         # Initialize DDS channel and simulation environment
         if self.config.is_simulation:
@@ -369,6 +387,12 @@ class UnitreeG1(Robot):
             self._env_wrapper = make_env(self.config.sim_env, trust_remote_code=True)
             # Extract the actual gym env from the dict structure
             self.sim_env = self._env_wrapper["hub_env"][0].envs[0]
+        elif self.config.onboard:
+            if self.config.network_interface:
+                self._ChannelFactoryInitialize(0, self.config.network_interface)
+            else:
+                self._ChannelFactoryInitialize(0)
+            self._release_builtin_motion_controller()
         else:
             self._ChannelFactoryInitialize(0, config=self.config)
 
