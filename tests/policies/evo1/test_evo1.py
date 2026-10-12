@@ -661,6 +661,18 @@ def test_evo1_predict_action_chunk_uses_given_noise(monkeypatch):
     assert not torch.allclose(actions_1, other_actions)
 
 
+def test_evo1_select_action_passes_given_noise_on(monkeypatch):
+    monkeypatch.setattr(evo1_model, "InternVL3Embedder", FixedTokenEmbedder)
+    policy = modeling_evo1.Evo1Policy(make_config())
+    batch = make_batch(include_action=False)
+    noise = torch.rand(2, CHUNK_SIZE, MAX_ACTION_DIM) * 2 - 1
+
+    chunk = policy.predict_action_chunk(batch, noise=noise)
+    policy.reset()
+
+    assert torch.equal(policy.select_action(batch, noise=noise), chunk[:, 0])
+
+
 def test_evo1_predict_action_chunk_default_noise_unchanged(monkeypatch):
     monkeypatch.setattr(evo1_model, "InternVL3Embedder", FixedTokenEmbedder)
     policy = modeling_evo1.Evo1Policy(make_config())

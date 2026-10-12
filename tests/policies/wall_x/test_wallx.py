@@ -326,6 +326,16 @@ def test_predict_action_chunk_uses_given_noise(monkeypatch):
     assert not torch.allclose(actions_1, other_actions)
 
 
+def test_select_action_passes_given_noise_on(monkeypatch):
+    policy, batch = _make_diffusion_policy(monkeypatch)
+    noise = torch.randn(2, DIFFUSION_CHUNK, 3)
+
+    chunk = policy.predict_action_chunk(batch, noise=noise)
+    policy.reset()
+
+    assert torch.equal(policy.select_action(batch, noise=noise), chunk[:, 0])
+
+
 def test_predict_action_chunk_default_noise_unchanged(monkeypatch):
     policy, batch = _make_diffusion_policy(monkeypatch)
 
