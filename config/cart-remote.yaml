@@ -60,6 +60,7 @@ robot:
       height: 480
       fps: 30
       fourcc: MJPG           # YUYV caps 1280x720 at 10fps on these Innomakers
+      buffer_size: 2         # cam-probe.sh: 4 = 133 ms stale under load, 1 = 15 fps, 2 = 30 fps and <= 1 frame
       warmup_s: 1
 
     right_wrist:
@@ -69,6 +70,7 @@ robot:
       height: 480
       fps: 30
       fourcc: MJPG
+      buffer_size: 2         # cam-probe.sh: 4 = 133 ms stale under load, 1 = 15 fps, 2 = 30 fps and <= 1 frame
       warmup_s: 1
 
     head:

@@ -51,6 +51,11 @@ class OpenCVCameraConfig(CameraConfig):
         warmup_s: Time reading frames before returning from connect (in seconds)
         fourcc: FOURCC code for video format (e.g., "MJPG", "YUYV", "I420"). Defaults to None (auto-detect).
         backend: OpenCV backend identifier (https://docs.opencv.org/3.4/d4/d15/group__videoio__flags__base.html). Defaults to ANY.
+        buffer_size: Number of driver frame buffers (CAP_PROP_BUFFERSIZE). Defaults to None (driver default,
+                     4 on V4L2). Each buffer is one frame of hidden latency when the reader falls behind:
+                     4 buffers at 30 fps can hand back a frame 133 ms old. 2 keeps the full rate with the
+                     staleness capped at one frame; 1 halves the rate on UVC cameras (nowhere to put the
+                     next frame while one is being decoded). Measure with config/cam-probe.sh.
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.
@@ -64,11 +69,15 @@ class OpenCVCameraConfig(CameraConfig):
     warmup_s: int = 1
     fourcc: str | None = None
     backend: Cv2Backends = Cv2Backends.ANY
+    buffer_size: int | None = None
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
         self.rotation = Cv2Rotation(self.rotation)
         self.backend = Cv2Backends(self.backend)
+
+        if self.buffer_size is not None and (not isinstance(self.buffer_size, int) or self.buffer_size < 1):
+            raise ValueError(f"`buffer_size` must be a positive integer, but '{self.buffer_size}' is provided.")
 
         if self.fourcc is not None and (not isinstance(self.fourcc, str) or len(self.fourcc) != 4):
             raise ValueError(
