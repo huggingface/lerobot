@@ -16,6 +16,7 @@
 
 import json
 import logging
+from collections.abc import Iterable
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -40,6 +41,8 @@ from .config_lekiwi import LeKiwiClientConfig
 class LeKiwiClient(Robot):
     config_class = LeKiwiClientConfig
     name = "lekiwi_client"
+    # Leader arm actions are sent as `arm_<joint>.pos`.
+    arm_action_prefix = "arm_"
 
     def __init__(self, config: LeKiwiClientConfig) -> None:
         require_package("pyzmq", extra="lekiwi", import_name="zmq")
@@ -285,7 +288,10 @@ class LeKiwiClient(Robot):
 
         return obs_dict
 
-    def _from_keyboard_to_base_action(self, pressed_keys: np.ndarray):
+    def from_keyboard_to_base_action(
+        self, pressed_keys: Iterable[str], observation: RobotObservation | None = None
+    ) -> RobotAction:
+        """Maps the keys pressed on a plain ``keyboard`` teleoperator to a base velocity command."""
         # Speed control
         if self.teleop_keys["speed_up"] in pressed_keys:
             self.speed_index = min(self.speed_index + 1, 2)
@@ -316,6 +322,9 @@ class LeKiwiClient(Robot):
             "y.vel": y_cmd,
             "theta.vel": theta_cmd,
         }
+
+    # Kept for scripts written against the former private name.
+    _from_keyboard_to_base_action = from_keyboard_to_base_action
 
     def configure(self) -> None:
         pass
