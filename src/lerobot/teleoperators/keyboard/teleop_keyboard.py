@@ -450,14 +450,14 @@ class KeyboardMicroDuckTeleop(KeyboardTeleop):
         Body (held):
             - W / S: Walk forward / backward
             - A / D: Strafe left / right
-            - Q / E: Turn left / right
+            - Z / X: Turn left / right
             - Space: Stop
         Head (held):
             - I / K: Pitch down / up
             - J / L: Yaw left / right
             - U / O: Roll left / right
             - Y / H: Neck pitch down / up
-            - R: Recenter the head
+            - C: Recenter the head
         Speed:
             - + / -: Next / previous speed preset
     """
@@ -522,11 +522,11 @@ class KeyboardMicroDuckTeleop(KeyboardTeleop):
         scale = self.config.speed_scales[self.speed_index]
         vx = self.config.vx * scale * (("w" in pressed) - ("s" in pressed))
         vy = self.config.vy * scale * (("a" in pressed) - ("d" in pressed))
-        vyaw = self.config.vyaw * scale * (("q" in pressed) - ("e" in pressed))
+        vyaw = self.config.vyaw * scale * (("z" in pressed) - ("x" in pressed))
         if keyboard is not None and keyboard.Key.space in pressed:
             vx = vy = vyaw = 0.0
 
-        if "r" in pressed:
+        if "c" in pressed:
             self.head = dict.fromkeys(self.head, 0.0)
         for key, (joint, direction) in self.HEAD_KEYS.items():
             if key in pressed:
