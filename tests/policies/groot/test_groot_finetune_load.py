@@ -264,6 +264,28 @@ def test_mismatched_checkpoint_loads_the_regular_way(tmp_path, monkeypatch, capl
     assert "keys or shapes differ" in caplog.text
 
 
+@pytest.mark.parametrize("strict", [True, False])
+def test_checkpoint_with_both_tied_names_loads_the_regular_way(tmp_path, monkeypatch, caplog, strict):
+    base, finetune = _save_finetune(tmp_path)
+    from safetensors.torch import load_file, save_file
+
+    weights = load_file(finetune / "model.safetensors")
+    lm_head = weights["_groot_model.backbone.model.lm_head.weight"].clone()
+    weights["_groot_model.backbone.model.model.language_model.embed_tokens.weight"] = lm_head + 1
+    save_file(weights, finetune / "model.safetensors")
+    built = _record_builds(monkeypatch)
+
+    with caplog.at_level(logging.INFO):
+        if strict:
+            with pytest.raises(RuntimeError, match="Unexpected key"):
+                GrootPolicy.from_pretrained(finetune)
+        else:
+            policy = GrootPolicy.from_pretrained(finetune, strict=False)
+            assert torch.equal(policy.get_parameter("_groot_model.backbone.model.lm_head.weight"), lm_head)
+    assert built == [str(base)]
+    assert "both tied weight names" in caplog.text
+
+
 def test_bfloat16_parts_of_the_base_keep_an_fp32_checkpoint_exact(tmp_path, monkeypatch, caplog):
     base, finetune = _save_finetune(tmp_path, tune_backbone=False)
     expected = _tensors(_load_regular(finetune, monkeypatch))

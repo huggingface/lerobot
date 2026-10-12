@@ -163,8 +163,13 @@ class GrootPolicy(PreTrainedPolicy):
             # tensor at a time, instead of the whole checkpoint being copied first.
             state_dict = {key.removeprefix(prefix): checkpoint.get_tensor(key) for key in keys}
             lm_head, embedding = _TIED_WEIGHT_NAMES
+            if lm_head in state_dict and embedding in state_dict:
+                # A save keeps one name of a tied pair. With both, the regular load reports the embedding as
+                # unexpected (strict=False keeps lm_head), while the tie below would keep the embedding.
+                logger.info("Checkpoint holds both tied weight names; loading the base weights first.")
+                return None
             if lm_head in state_dict:
-                state_dict.setdefault(embedding, state_dict[lm_head])
+                state_dict[embedding] = state_dict[lm_head]
             elif embedding in state_dict:
                 state_dict[lm_head] = state_dict[embedding]
 
