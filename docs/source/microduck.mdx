@@ -1,0 +1,109 @@
+# Microduck
+
+[Microduck](https://github.com/pollen-robotics/microduck) is a small biped duck robot by Pollen Robotics. It walks with an onboard RL policy, and LeRobot drives it the way its gamepad does: by sending **intents** (a body twist and a head pose) to the robot's control daemon, `robotd`. LeRobot never writes joint targets. The onboard policy decides how the legs move.
+
+With this integration you can:
+
+- teleoperate the duck from your laptop keyboard,
+- record LeRobot datasets (head camera + proprioception + commanded intents) for imitation learning,
+- load onboard RL policies from the Hugging Face Hub.
+
+## How It Works
+
+| Data          | Source on the robot                                  | How LeRobot reaches it               |
+| ------------- | ---------------------------------------------------- | ------------------------------------ |
+| Commands      | `robotd`, JSON-RPC over `/run/robotd.sock`           | ssh-forwarded Unix socket            |
+| State (50 Hz) | `robotd` `robot.state` stream                        | same socket, second connection       |
+| Camera        | `mediad`, `GET http://<ip>:8080/frame` (upright PNG) | HTTP over the LAN                    |
+| Hub policies  | `updaterd`, JSON-RPC over `/run/updaterd.sock`       | ssh-forwarded Unix socket (optional) |
+
+`robotd` zeroes the twist if no command arrives for 500 ms, so the duck stops if LeRobot stops or the connection drops.
+
+## Setup
+
+1. Find the robot's IP with `duckctl ip` (mDNS hostnames are not reliable on these boards).
+2. Stop the onboard gamepad daemon so the two don't fight over the commands:
+
+   ```bash
+   ssh microduck@<ip> sudo systemctl stop padd
+   ```
+
+3. Forward `robotd`'s socket (and `updaterd`'s, to load Hub policies). Leave this terminal open:
+
+   ```bash
+   ssh -N -L /tmp/robotd.sock:/run/robotd.sock -L /tmp/updaterd.sock:/run/updaterd.sock microduck@<ip>
+   ```
+
+4. Install LeRobot with keyboard support: `pip install 'lerobot[pynput-dep]'`.
+
+## Teleoperate
+
+```bash
+lerobot-teleoperate \
+    --robot.type=microduck \
+    --robot.remote_ip=<ip> \
+    --teleop.type=keyboard_microduck \
+    --fps=30 \
+    --display_data=true
+```
+
+On connect, LeRobot asks the onboard policy to drive (`robot.enable`). The duck goes through its homing ramp (about 2 s) before it responds.
+
+### Keyboard Controls
+
+| Keys  | Action                       |
+| ----- | ---------------------------- |
+| W / S | Walk forward / backward      |
+| A / D | Strafe left / right          |
+| Q / E | Turn left / right            |
+| Space | Stop                         |
+| I / K | Head pitch down / up         |
+| J / L | Head yaw left / right        |
+| U / O | Head roll left / right       |
+| Y / H | Neck pitch down / up         |
+| R     | Recenter the head            |
+| + / - | Next / previous speed preset |
+
+The arrow keys and ESC are free for `lerobot-record`'s episode controls.
+
+## Record a Dataset
+
+```bash
+lerobot-record \
+    --robot.type=microduck \
+    --robot.remote_ip=<ip> \
+    --teleop.type=keyboard_microduck \
+    --dataset.repo_id=<hf_username>/microduck_dataset \
+    --dataset.num_episodes=10 \
+    --dataset.fps=15 \
+    --dataset.single_task="Walk to the red ball" \
+    --display_data=true
+```
+
+The camera is read from PNG snapshots, which reach about 10 to 20 fps depending on the network and the robot's camera quality setting. Record at 15 fps or below so that every frame is fresh.
+
+### What Gets Saved
+
+- `observation.images.front`: head camera, resized to `camera_height x camera_width` (640 x 360 by default)
+- `observation.state`:
+  - the 15 measured joint angles (`<joint>.pos`, rad),
+  - trunk gyro (`gyro.{x,y,z}`, rad/s) and projected gravity (`gravity.{x,y,z}`),
+  - contact odometry (`odom.{x,y,yaw}`),
+  - the twist the robot actually applied after its safety limits (`{vx,vy,vyaw}.applied`).
+- `action`: the commanded intents, `vx`, `vy` (m/s), `vyaw` (rad/s), and `{neck_pitch,head_pitch,head_yaw,head_roll}.pos` (rad).
+
+Set `--robot.use_camera=false` to record state only.
+
+## Load an RL Policy from the Hub
+
+The duck runs its locomotion and skill policies onboard as ONNX files. `MicroDuck.load_policy` asks `updaterd` to download a policy from the Hub onto the robot, then loads it into a slot (`walk`, `stand`, `sitstand`, `ground_pick`, `kick_left`, `kick_right`, `roulade`):
+
+```bash
+python examples/microduck/rollout_hub_policy.py --ip <ip> --policy RemiFabre/microduck-flamingo-cycle
+```
+
+Have the robot on its stand the first time you try a policy: nothing published on the Hub is verified by anybody. On the robot, `sudo robotctl policy reset walk` restores the stock policy.
+
+## Configuration
+
+See `MicroDuckConfig` in `src/lerobot/robots/microduck/config_microduck.py` for all options, including the twist and head limits, `robotd_address` (a Unix socket path or a TCP `host:port`), `relax_on_disconnect`, and the camera size.

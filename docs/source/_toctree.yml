@@ -169,6 +169,8 @@
     title: Unitree G1
   - local: earthrover_mini_plus
     title: Earth Rover Mini
+  - local: microduck
+    title: Microduck
   - local: omx
     title: OMX
   - local: openarm
