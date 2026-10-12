@@ -25,6 +25,8 @@ import gymnasium as gym
 from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs import FeatureType, PolicyFeature
+from lerobot.env_server.client import EnvClient
+from lerobot.env_server.profiles import EvalProfile
 from lerobot.processor import IsaaclabArenaProcessorStep, LiberoProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
@@ -44,6 +46,8 @@ from lerobot.utils.constants import (
     OBS_IMAGES,
     OBS_STATE,
 )
+
+from .sim_client import SimVectorEnv
 
 
 def _make_vec_env_cls(use_async: bool, n_envs: int):
@@ -971,11 +975,6 @@ class SimEnvConfig(EnvConfig):
         return {}
 
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
-        from lerobot.env_server.client import EnvClient
-        from lerobot.env_server.profiles import EvalProfile
-
-        from .sim_client import SimVectorEnv
-
         if self.max_parallel_tasks != 1:
             raise ValueError("Use one task at a time per simulator deployment")
         client = EnvClient(self.endpoint, self.deployment, self.timeout_s)

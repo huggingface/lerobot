@@ -22,6 +22,7 @@ from threading import Lock
 from typing import Any
 
 from lerobot.robots import Robot
+from lerobot.robots.remote.world import get_world
 
 
 class ThreadSafeRobot:
@@ -114,8 +115,6 @@ class ThreadSafeRobot:
             self.configure_position_hold()
 
     def reset_world(self, task=None, seed=None) -> None:
-        from lerobot.robots.remote.world import get_world
-
         with self._lock:
             world = get_world(self._robot)
             if world is None:

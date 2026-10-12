@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 
 from lerobot.transport.wire.features import FeatureSpec, validate_array
+from lerobot.transport.wire.protocol import validate_segment
 
 
 @dataclass(frozen=True)
@@ -147,8 +148,6 @@ class ExecutionFeedback:
 
     def validate(self, descriptor: EnvDescriptor, num_envs: int) -> None:
         """Validate execution identity, applied commands, and their paired observation."""
-        from lerobot.transport.wire.protocol import validate_segment
-
         validate_segment(self.request_id, "execution request ID")
         if any(
             type(value) is not int or not 0 <= value < 2**63 for value in (self.generation, self.sequence)

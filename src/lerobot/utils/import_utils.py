@@ -165,6 +165,7 @@ _datasets_available = is_package_available("datasets")
 _pandas_available = is_package_available("pandas")
 _faker_available = is_package_available("faker")
 _msgpack_available = is_package_available("msgpack")
+_pyyaml_available = is_package_available("PyYAML", import_name="yaml")
 _zenoh_available = is_package_available("eclipse-zenoh", import_name="zenoh")
 
 # Video encoding / decoding

@@ -16,12 +16,15 @@
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-
-import yaml
+from typing import TYPE_CHECKING
 
 from lerobot.transport.wire.features import feature_mismatch
+from lerobot.utils.import_utils import _pyyaml_available, require_package
 
 from .contracts import EnvDescriptor
+
+if TYPE_CHECKING or _pyyaml_available:
+    import yaml
 
 
 @dataclass
@@ -39,6 +42,7 @@ class EvalProfile:
     @classmethod
     def load(cls, path: str):
         """Read a declarative evaluation profile from YAML."""
+        require_package("PyYAML", "sim-server", import_name="yaml")
         return cls(**yaml.safe_load(Path(path).read_text()))
 
     def validate_descriptor(self, descriptor: EnvDescriptor):
