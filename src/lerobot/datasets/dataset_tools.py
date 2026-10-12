@@ -663,8 +663,7 @@ def _try_keep_episodes_from_video_by_stream_copy(
 
     frame_ranges = sorted(episodes_to_keep)
     if any(
-        prev_end > start
-        for (_, prev_end), (start, _) in zip(frame_ranges, frame_ranges[1:], strict=False)
+        prev_end > start for (_, prev_end), (start, _) in zip(frame_ranges, frame_ranges[1:], strict=False)
     ):
         return False
 
