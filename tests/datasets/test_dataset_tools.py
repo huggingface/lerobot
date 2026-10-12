@@ -98,15 +98,6 @@ def _make_packed_video_dataset(root, dataset_factory, vcodec):
     return dataset
 
 
-def _video_file_path(dataset, video_key):
-    episode = dataset.meta.episodes[0]
-    return dataset.root / dataset.meta.video_path.format(
-        video_key=video_key,
-        chunk_index=episode[f"videos/{video_key}/chunk_index"],
-        file_index=episode[f"videos/{video_key}/file_index"],
-    )
-
-
 @pytest.fixture
 def sample_video_dataset(tmp_path, empty_lerobot_dataset_factory):
     """Create a sample H.264 video-backed dataset whose episodes share one video file."""
@@ -1087,7 +1078,8 @@ def test_delete_episodes_stream_copies_packed_videos(vcodec, tmp_path, empty_ler
     assert new_dataset.meta.total_episodes == 3
     assert new_dataset.meta.total_frames == 30
 
-    with av.open(str(_video_file_path(new_dataset, video_key))) as container:
+    video_path = new_dataset.root / new_dataset.meta.get_video_file_path(0, video_key)
+    with av.open(str(video_path)) as container:
         pts = [frame.pts for frame in container.decode(video=0)]
         ticks_per_frame = round(1 / (src_dataset.meta.fps * container.streams.video[0].time_base))
     assert len(pts) == 30
@@ -1103,7 +1095,7 @@ def test_delete_episodes_stream_copies_packed_videos(vcodec, tmp_path, empty_ler
 def test_stream_copy_declines_when_boundaries_are_not_gop_aligned(sample_video_dataset, tmp_path):
     """A range starting mid-GOP is refused so the caller can re-encode instead."""
     video_key = sample_video_dataset.meta.video_keys[0]
-    src_video_path = _video_file_path(sample_video_dataset, video_key)
+    src_video_path = sample_video_dataset.root / sample_video_dataset.meta.get_video_file_path(0, video_key)
     output_path = tmp_path / "declined.mp4"
 
     # Frame 3 sits inside the first episode's GOP rather than on its boundary.
