@@ -70,6 +70,25 @@ def test_matches_regular_load(config, tmp_path, monkeypatch):
     assert torch.equal(lm_head, embed_tokens) and lm_head.data_ptr() != embed_tokens.data_ptr()
 
 
+def test_stored_embedding_next_to_lm_head_matches_regular_load(config, tmp_path, monkeypatch):
+    """Both fill the embedding and the last one read wins, as in fine-tunes that store both in different dtypes.
+
+    `save_file` puts float32 tensors before bfloat16 ones, so this file stores the embedding before the lm_head,
+    the opposite of their sorted names.
+    """
+
+    def store_embedding(state_dict):
+        lm_head = "paligemma_with_expert.paligemma.lm_head.weight"
+        state_dict[EMBED_TOKENS.removeprefix("model.")] = torch.full_like(state_dict[lm_head], 0.5)
+        state_dict[lm_head] = state_dict[lm_head].bfloat16()
+
+    path = save(config, tmp_path / "ckpt", store_embedding)
+    model, used_meta = load(PI0Policy, path, config, monkeypatch)
+    expected, _ = load(PI0Policy, path, config, monkeypatch, regular=True)
+    assert used_meta
+    assert_same(model, expected)
+
+
 @require_cuda
 def test_matches_regular_load_on_cuda(config, tmp_path, monkeypatch):
     path = save(config, tmp_path / "ckpt")

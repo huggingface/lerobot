@@ -62,8 +62,11 @@ def load_complete_checkpoint(
             fixed = policy._fix_pytorch_state_dict_keys({key: torch.empty(shape, device="meta")}, config)
             return {k if k.startswith("model.") else f"model.{k}": v.shape for k, v in fixed.items()}
 
-        # A file key gives zero, one or two model names: the fixes drop some keys and copy lm_head.
-        names = {key: remap(key, checkpoint.get_slice(key).get_shape()) for key in checkpoint.keys()}  # noqa: SIM118
+        # A file key gives zero, one or two model names: the fixes drop some keys and copy lm_head. Read the
+        # keys in the order `load_file` returns them, offset order since safetensors 0.6, so that when two keys
+        # fill one weight, such as a stored embedding and the lm_head copied into it, the same one is kept.
+        keys = checkpoint.offset_keys() if hasattr(checkpoint, "offset_keys") else checkpoint.keys()
+        names = {key: remap(key, checkpoint.get_slice(key).get_shape()) for key in keys}
         expected = {name: tensor.shape for name, tensor in policy.state_dict().items()}
         unexpected = sorted(name for fixed in names.values() for name in fixed if name not in expected)
         names = {key: {n: s for n, s in fixed.items() if n in expected} for key, fixed in names.items()}
