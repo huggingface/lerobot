@@ -1378,7 +1378,7 @@ class Qwen2_5_VLMoEForAction(Qwen2_5_VLForConditionalGeneration):  # noqa: N801
             # Initialize with random noise
             if noise is None:
                 noise = sample_noise((batch_size, pred_horizon, action_dim), inputs_embeds.device)
-            noisy_action = noise
+            noisy_action = noise.to(device=inputs_embeds.device, dtype=torch.float32)
             dof_mask = dof_mask.to(inputs_embeds.device).to(torch.float32)
 
             def step(noisy_action, timestep):

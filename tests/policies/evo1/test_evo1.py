@@ -675,6 +675,8 @@ def test_evo1_predict_action_chunk_default_noise_unchanged(monkeypatch):
     # A noise in another layout with the same number of values is an error, not a silent reshape.
     with pytest.raises(ValueError, match="noise must have shape"):
         policy.predict_action_chunk(batch, noise=noise.transpose(1, 2).contiguous())
+    # A given noise is moved to the dtype of the draw it replaces.
+    assert torch.equal(default_actions, policy.predict_action_chunk(batch, noise=noise.double()))
 
 
 def test_flowmatching_rtc_guidance_pulls_prefix_toward_previous_chunk():

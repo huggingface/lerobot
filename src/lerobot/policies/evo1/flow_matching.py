@@ -430,6 +430,7 @@ class FlowmatchingActionHead(nn.Module):
             raise ValueError(
                 f"noise must have shape {(batch_size, self.horizon, per_action_dim)}, got {tuple(noise.shape)}."
             )
+        noise = noise.to(device=device, dtype=context_tokens.dtype)
         action_seq = noise.reshape(batch_size, self.horizon, per_action_dim)
         action_mask = self._expand_action_mask(
             action_mask,

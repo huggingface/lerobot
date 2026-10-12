@@ -335,6 +335,8 @@ def test_predict_action_chunk_default_noise_unchanged(monkeypatch):
     noise = torch.randn(size=(2, DIFFUSION_CHUNK, 3), dtype=torch.float32, device=torch.device("cpu"))
 
     assert torch.equal(default_actions, policy.predict_action_chunk(batch, noise=noise))
+    # A given noise is moved to the dtype of the draw it replaces.
+    assert torch.equal(default_actions, policy.predict_action_chunk(batch, noise=noise.double()))
 
 
 def test_generation_preparation_synthesizes_cache_positions():
