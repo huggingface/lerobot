@@ -428,6 +428,7 @@ class DAggerStrategy(RolloutStrategy):
                         with timer.section("process_obs"):
                             obs_processed = ctx.processors.robot_observation_processor(obs)
                         with timer.section("teleop"):
+                            teleop.on_observation(obs)
                             teleop_action = teleop.get_action()
                             processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                             robot_action_to_send = ctx.processors.robot_action_processor(
@@ -645,6 +646,7 @@ class DAggerStrategy(RolloutStrategy):
                         with timer.section("process_obs"):
                             obs_processed = ctx.processors.robot_observation_processor(obs)
                         with timer.section("teleop"):
+                            teleop.on_observation(obs)
                             teleop_action = teleop.get_action()
                             processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                             robot_action_to_send = ctx.processors.robot_action_processor(
@@ -772,6 +774,7 @@ class DAggerStrategy(RolloutStrategy):
             ):
                 logger.info("Smooth handover: sliding follower to teleop position")
                 obs = robot.get_observation()
+                teleop.on_observation(obs)
                 teleop_action = teleop.get_action()
                 processed = ctx.processors.teleop_action_processor((teleop_action, obs))
                 target = ctx.processors.robot_action_processor((processed, obs))
