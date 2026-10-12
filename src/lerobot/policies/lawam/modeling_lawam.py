@@ -290,7 +290,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         return loss, logs
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Predict a normalized action chunk for each observation in the batch.
 
         `noise` is the starting sample of the flow, shaped `(batch_size, chunk_size, flow_action_dim)`.
@@ -316,7 +316,7 @@ class LaWAMPolicy(PreTrainedPolicy):
         return actions_tensor[:, : self.config.action_horizon]
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Return the next action, refilling the action queue when necessary."""
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])

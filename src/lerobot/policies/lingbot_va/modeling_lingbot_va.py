@@ -399,7 +399,9 @@ class LingBotVAPolicy(PreTrainedPolicy):
         return torch.cat(per_cam, dim=-1).to(self.config.device)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def select_action(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, video_noise: Tensor | None = None
+    ) -> Tensor:
         """Return one action, refilling the chunk (and feeding back observed keyframes) as needed.
 
         Mirrors the upstream LIBERO client loop (``evaluation/libero/client.py``): the first obs is
@@ -414,7 +416,8 @@ class LingBotVAPolicy(PreTrainedPolicy):
         if not self._started:
             # First call: this observation conditions the first chunk (it is *not* a keyframe).
             self._started = True
-            actions = self.predict_action_chunk(batch)  # [B, chunk_size, n_used]
+            # [B, chunk_size, n_used]
+            actions = self.predict_action_chunk(batch, noise=noise, video_noise=video_noise)
             self._action_queue.extend(actions.transpose(0, 1))  # [chunk_size, B, n_used]
             self._obs_buffer = []
             self._exec_step = 0
@@ -426,7 +429,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
             if len(self._action_queue) == 0:
                 # All actions for the current chunk have been executed; feed the observed
                 # keyframes + executed actions back and predict the next chunk.
-                actions = self.predict_action_chunk(None)
+                actions = self.predict_action_chunk(None, noise=noise, video_noise=video_noise)
                 self._action_queue.extend(actions.transpose(0, 1))
                 self._exec_step = 0
 

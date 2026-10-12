@@ -545,7 +545,7 @@ class GrootPolicy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Select single action from action queue."""
         if getattr(self.config, "use_relative_actions", False):
             raise NotImplementedError(
@@ -558,6 +558,6 @@ class GrootPolicy(PreTrainedPolicy):
         self.eval()
 
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)
+            actions = self.predict_action_chunk(batch, noise=noise)
             self._action_queue.extend(actions[:, : self._action_queue_steps].transpose(0, 1))
         return self._action_queue.popleft()

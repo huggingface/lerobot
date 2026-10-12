@@ -645,7 +645,14 @@ class Flux3Policy(PreTrainedPolicy):
         return self._flip(torch.stack(chunks)).float()
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Any], **kwargs: Any) -> Tensor:
+    def select_action(
+        self,
+        batch: dict[str, Any],
+        *,
+        noise: Tensor | None = None,
+        video_noise: Tensor | None = None,
+        **kwargs: Any,
+    ) -> Tensor:
         if self.config.use_relative_actions:
             raise NotImplementedError(
                 "flux3 relative-action execution requires RTC, which is not implemented yet. "
@@ -655,6 +662,8 @@ class Flux3Policy(PreTrainedPolicy):
             raise NotImplementedError("flux3 does not implement RTC inference arguments yet")
         self.eval()
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, noise=noise, video_noise=video_noise)[
+                :, : self.config.n_action_steps
+            ]
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()

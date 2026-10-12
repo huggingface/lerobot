@@ -1493,7 +1493,7 @@ class PI05Policy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Select a single action given environment observations."""
         assert not self._rtc_enabled(), (
             "RTC is not supported for select_action, use it with predict_action_chunk"
@@ -1505,7 +1505,7 @@ class PI05Policy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
             # Transpose to get shape (n_action_steps, batch_size, action_dim)
             self._action_queue.extend(actions.transpose(0, 1))
 

@@ -243,10 +243,10 @@ class FastWAMPolicy(PreTrainedPolicy):
         return action.to(device=batch_device(batch), dtype=torch.float32)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         self.eval()
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
