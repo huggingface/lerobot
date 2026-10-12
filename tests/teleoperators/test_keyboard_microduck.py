@@ -50,13 +50,13 @@ def test_idle_keyboard_commands_nothing(teleop):
 
 
 def test_held_keys_drive_the_twist(teleop):
-    press(teleop, "w", "a", "e")
+    press(teleop, "w", "a", "x")
     action = teleop.get_action()
     assert action["vx"] == pytest.approx(0.3)
     assert action["vy"] == pytest.approx(0.3)
     assert action["vyaw"] == pytest.approx(-1.5)
 
-    release(teleop, "w", "a", "e")
+    release(teleop, "w", "a", "x")
     assert teleop.get_action()["vx"] == 0.0
 
 
@@ -79,5 +79,5 @@ def test_head_keys_integrate_and_clamp(teleop):
         teleop.get_action()
     assert teleop.get_action()["head_yaw.pos"] == pytest.approx(0.8)
 
-    press(teleop, "r")
+    press(teleop, "c")
     assert teleop.get_action()["head_yaw.pos"] == pytest.approx(0.0, abs=0.1)
