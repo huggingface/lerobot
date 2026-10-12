@@ -265,6 +265,7 @@ from lerobot.datasets import (
     reencode_dataset,
     remove_feature,
     split_dataset,
+    trim_episodes,
 )
 from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.utils.utils import init_logging
@@ -287,6 +288,12 @@ class DeleteEpisodesConfig(OperationConfig):
 @dataclass
 class SplitConfig(OperationConfig):
     splits: dict[str, float | list[int]] | None = None
+
+
+@OperationConfig.register_subclass("trim_episodes")
+@dataclass
+class TrimEpisodesConfig(OperationConfig):
+    frame_ranges: dict[int, list[tuple[int, int]]] | None = None
 
 
 @OperationConfig.register_subclass("merge")
@@ -466,6 +473,24 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
     if cfg.push_to_hub:
         logging.info(f"Pushing to hub as {output_repo_id}")
         LeRobotDataset(output_repo_id, root=output_dir).push_to_hub()
+
+
+def handle_trim_episodes(cfg: EditDatasetConfig) -> None:
+    if not isinstance(cfg.operation, TrimEpisodesConfig) or not cfg.operation.frame_ranges:
+        raise ValueError("frame_ranges must be specified for trim_episodes")
+    # Trimming always writes a new dataset; it does not rename or overwrite the source.
+    if cfg.new_root is None and cfg.new_repo_id is None:
+        raise ValueError("trim_episodes requires new_root or new_repo_id")
+    dataset = LeRobotDataset(_require_repo_id(cfg), root=cfg.root)
+    edited = trim_episodes(
+        dataset,
+        cfg.operation.frame_ranges,
+        output_dir=cfg.new_root,
+        repo_id=cfg.new_repo_id,
+    )
+    logging.info(f"Dataset saved to {edited.root}")
+    if cfg.push_to_hub:
+        edited.push_to_hub()
 
 
 def handle_split(cfg: EditDatasetConfig) -> None:
@@ -870,6 +895,8 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
 
     if operation_type == "delete_episodes":
         handle_delete_episodes(cfg)
+    elif operation_type == "trim_episodes":
+        handle_trim_episodes(cfg)
     elif operation_type == "split":
         handle_split(cfg)
     elif operation_type == "merge":
