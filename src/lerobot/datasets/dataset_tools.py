@@ -729,10 +729,11 @@ def _try_keep_episodes_from_video_by_stream_copy(
             if segment_idx == len(frame_ranges):
                 break
             if packet_idx >= frame_ranges[segment_idx][0]:
-                # Rebase onto the output timeline; dts is left for the muxer to derive so that
-                # B-frame reorder delay is handled per container rather than by hand.
-                packet.pts += pts_offsets[segment_idx]
-                packet.dts = None
+                # Shift both timestamps to preserve the decode/presentation delay for B-frames.
+                offset = pts_offsets[segment_idx]
+                packet.pts += offset
+                if packet.dts is not None:
+                    packet.dts += offset
                 packet.stream = v_out
                 out_container.mux(packet)
             packet_idx += 1
