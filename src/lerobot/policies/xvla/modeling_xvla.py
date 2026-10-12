@@ -444,7 +444,7 @@ class XVLAPolicy(PreTrainedPolicy):
         return actions
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions.
 
         `noise` is the starting sample of the flow, shaped `(batch_size, chunk_size, model.dim_action)`.
@@ -455,7 +455,7 @@ class XVLAPolicy(PreTrainedPolicy):
         return self._get_action_chunk(batch, noise=noise)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 

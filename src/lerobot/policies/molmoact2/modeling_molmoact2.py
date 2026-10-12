@@ -2055,13 +2055,13 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return actions[:, : self.config.n_action_steps, :action_dim].to(dtype=torch.float32)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None, **kwargs) -> Tensor:
         """Pop one action step from the queue, regenerating the chunk when empty."""
         if self._rtc_enabled():
             raise AssertionError("RTC is not supported for select_action, use it with predict_action_chunk")
         self.eval()
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, noise=noise, **kwargs)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
