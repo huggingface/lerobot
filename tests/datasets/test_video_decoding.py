@@ -44,5 +44,6 @@ def test_decode_video_frames_torchcodec():
     expected_uint8 = decode_video_frames(
         video_path, timestamps, tolerance_s=1e-4, backend="pyav", return_uint8=True
     )
-    # Allow one intensity level for FFmpeg color-conversion rounding.
-    torch.testing.assert_close(frames_uint8, expected_uint8, atol=1, rtol=0)
+    # The two backends can use different FFmpeg builds, and their SIMD color conversions round differently,
+    # by up to 3 levels. A wrong frame differs by far more.
+    torch.testing.assert_close(frames_uint8, expected_uint8, atol=3, rtol=0)
