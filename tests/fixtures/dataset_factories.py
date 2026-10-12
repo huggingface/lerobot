@@ -26,7 +26,7 @@ import pytest
 import torch
 from datasets import Dataset
 
-from lerobot.configs.video import encoder_config_from_video_info, infer_depth_unit
+from lerobot.configs.video import infer_depth_unit
 from lerobot.datasets.dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from lerobot.datasets.feature_utils import get_hf_features_from_features
 from lerobot.datasets.io_utils import flatten_dict, hf_transform_to_torch
@@ -353,10 +353,10 @@ def create_videos(info_factory, img_array_factory):
     def _create_video_directory(
         root: Path,
         info: dict | None = None,
-        episodes: datasets.Dataset | None = None,
         total_episodes: int = 3,
         total_frames: int = 150,
         total_tasks: int = 1,
+        episodes: datasets.Dataset | None = None,
     ):
         if info is None:
             info = info_factory(
@@ -370,7 +370,6 @@ def create_videos(info_factory, img_array_factory):
             else [(0, info.total_frames)]
         )
         for key, ft in video_feats.items():
-            video_encoder = encoder_config_from_video_info(ft.get("info"))
             tmp_root = root / "tmp_videos" / key.replace("/", "_")
             episode_video_paths = []
             for episode_index, (start, end) in enumerate(episode_ranges):
@@ -386,7 +385,7 @@ def create_videos(info_factory, img_array_factory):
                     pil_img.save(path)
 
                 episode_video_path = tmp_root / f"episode-{episode_index:06d}.mp4"
-                encode_video_frames(frames_dir, episode_video_path, fps=info.fps, video_encoder=video_encoder)
+                encode_video_frames(frames_dir, episode_video_path, fps=info.fps)
                 episode_video_paths.append(episode_video_path)
 
             video_path = root / DEFAULT_VIDEO_PATH.format(video_key=key, chunk_index=0, file_index=0)

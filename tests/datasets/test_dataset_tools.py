@@ -38,9 +38,9 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.io_utils import load_episodes, load_info
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
-from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY, DUMMY_VIDEO_INFO
+from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
 from tests.fixtures.dataset_factories import add_frames
 
 
@@ -73,23 +73,35 @@ def sample_dataset(tmp_path, empty_lerobot_dataset_factory):
     return dataset
 
 
-@pytest.fixture
-def sample_video_dataset(tmp_path, lerobot_dataset_factory):
-    """Create a sample H.264 video-backed dataset whose episodes share one video file."""
-    camera_features = {
-        "top": {
-            "shape": (64, 64, 3),
-            "names": ["height", "width", "channels"],
-            "info": {**DUMMY_VIDEO_INFO, "video.codec": "h264", "video.g": 6, "video.preset": None},
-        }
+def _make_packed_video_dataset(root, dataset_factory, vcodec):
+    """Encode episodes separately, then pack them into one video file."""
+    features = {
+        "action": {"dtype": "float32", "shape": (6,), "names": None},
+        "observation.images.top": {"dtype": "video", "shape": (64, 64, 3), "names": None},
     }
-    return lerobot_dataset_factory(
-        root=tmp_path / "test_video_dataset",
-        total_episodes=5,
-        total_frames=50,
+
+    dataset = dataset_factory(
+        root=root,
+        features=features,
         use_videos=True,
-        camera_features=camera_features,
+        # A short GOP puts several keyframes inside each episode, so a mid-GOP boundary is
+        # reachable for the negative case.
+        rgb_encoder=RGBEncoderConfig(vcodec=vcodec, pix_fmt="yuv420p", g=6, crf=30),
     )
+
+    for _ in range(5):
+        add_frames(dataset, 10)
+        dataset.save_episode()
+
+    dataset.finalize()
+    dataset.meta.episodes = load_episodes(dataset.meta.root)
+    return dataset
+
+
+@pytest.fixture
+def sample_video_dataset(tmp_path, empty_lerobot_dataset_factory):
+    """Create a sample H.264 video-backed dataset whose episodes share one video file."""
+    return _make_packed_video_dataset(tmp_path / "test_video_dataset", empty_lerobot_dataset_factory, "h264")
 
 
 def test_delete_single_episode(sample_dataset, tmp_path):
@@ -1038,7 +1050,7 @@ def test_delete_first_and_last_episodes(sample_dataset, tmp_path):
         pytest.param("libsvtav1", marks=require_libsvtav1),
     ],
 )
-def test_delete_episodes_stream_copies_packed_videos(vcodec, tmp_path, lerobot_dataset_factory):
+def test_delete_episodes_stream_copies_packed_videos(vcodec, tmp_path, empty_lerobot_dataset_factory):
     """Episodes packed into one video file are dropped without re-encoding.
 
     Patching the re-encode path to raise asserts it is never reached, and copied frames must
@@ -1046,25 +1058,7 @@ def test_delete_episodes_stream_copies_packed_videos(vcodec, tmp_path, lerobot_d
     """
     import av
 
-    camera_features = {
-        "top": {
-            "shape": (64, 64, 3),
-            "names": ["height", "width", "channels"],
-            "info": {
-                **DUMMY_VIDEO_INFO,
-                "video.codec": vcodec,
-                "video.g": 6,
-                "video.preset": 12 if vcodec == "libsvtav1" else None,
-            },
-        }
-    }
-    src_dataset = lerobot_dataset_factory(
-        root=tmp_path / "src",
-        total_episodes=5,
-        total_frames=50,
-        use_videos=True,
-        camera_features=camera_features,
-    )
+    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory, vcodec)
     output_dir = tmp_path / "filtered"
     video_key = src_dataset.meta.video_keys[0]
 
@@ -1081,26 +1075,20 @@ def test_delete_episodes_stream_copies_packed_videos(vcodec, tmp_path, lerobot_d
 
         new_dataset = delete_episodes(src_dataset, [1, 3], output_dir=output_dir)
 
-    kept_episodes = [0, 2, 4]
-    expected_frames = sum(src_dataset.meta.episodes[ep]["length"] for ep in kept_episodes)
-    assert new_dataset.meta.total_episodes == len(kept_episodes)
-    assert new_dataset.meta.total_frames == expected_frames
+    assert new_dataset.meta.total_episodes == 3
+    assert new_dataset.meta.total_frames == 30
 
     video_path = new_dataset.root / new_dataset.meta.get_video_file_path(0, video_key)
     with av.open(str(video_path)) as container:
         pts = [frame.pts for frame in container.decode(video=0)]
         ticks_per_frame = round(1 / (src_dataset.meta.fps * container.streams.video[0].time_base))
-    assert len(pts) == expected_frames
-    assert [p - pts[0] for p in pts] == [i * ticks_per_frame for i in range(expected_frames)]
+    assert len(pts) == 30
+    assert [p - pts[0] for p in pts] == [i * ticks_per_frame for i in range(30)]
 
-    new_frame_index = 0
-    for old_ep in kept_episodes:
-        old_episode = src_dataset.meta.episodes[old_ep]
-        for old_frame_index in range(old_episode["dataset_from_index"], old_episode["dataset_to_index"]):
-            assert torch.equal(
-                new_dataset[new_frame_index][video_key], src_dataset[old_frame_index][video_key]
-            )
-            new_frame_index += 1
+    for new_ep, old_ep in enumerate([0, 2, 4]):
+        for offset in range(10):
+            expected = src_dataset[old_ep * 10 + offset][video_key]
+            assert torch.equal(new_dataset[new_ep * 10 + offset][video_key], expected)
 
 
 @require_h264
