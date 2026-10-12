@@ -253,7 +253,7 @@ torchcodec = [{ index = "pytorch-cu126", marker = "sys_platform == 'linux'" }]
 
 On **x86_64** with `cu129`, redirect `torch` and `torchvision` but leave `torchcodec` on PyPI. That index jumps from 0.11.1 to 0.15.0 with nothing in between, so a redirect lands on 0.11.1, which was built for torch 2.11 and needs an NVIDIA Performance Primitives library (`libnppicc`) that neither the lock nor these commands install. PyPI TorchCodec 0.13.0 on x86_64 has no CUDA library dependency.
 
-This advice does **not** apply to **aarch64**: PyPI TorchCodec 0.13.0 requires `libcudart.so.13` and `libnvrtc.so.13`, which a CUDA 12 torch does not supply. Prefer the `cu126` mapping above for all three packages when it supports your GPU. Ordinary dataset loading can fall back to `pyav` if TorchCodec cannot load, but RGB video in streaming or Lance datasets requires a working TorchCodec installation.
+This advice does **not** apply to **aarch64**: PyPI TorchCodec 0.13.0 requires `libcudart.so.13` and `libnvrtc.so.13`, which a CUDA 12 torch does not supply. Prefer the `cu126` mapping above for all three packages when it supports your GPU. Ordinary and streaming dataset loading can fall back to `pyav` if TorchCodec cannot load, but RGB video in Lance datasets requires a working TorchCodec installation.
 
 `uv sync` has no `--torch-backend` flag, and it reinstalls exactly what `uv.lock` pins, so a one-off `uv pip install --force-reinstall` is reverted by the next sync. The index has to be declared in the project for the choice to stick.
 
