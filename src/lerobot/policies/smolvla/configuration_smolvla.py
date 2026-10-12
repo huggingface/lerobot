@@ -88,6 +88,8 @@ class SmolVLAConfig(PreTrainedConfig):
 
     attention_mode: str = "cross_attn"
 
+    attention_backend: str = "eager"
+
     prefix_length: int = -1
 
     pad_language_to: str = "longest"  # "max_length"
@@ -110,6 +112,8 @@ class SmolVLAConfig(PreTrainedConfig):
         super().__post_init__()
 
         """Input validation (not exhaustive)."""
+        if self.attention_backend not in ("eager", "sdpa"):
+            raise ValueError(f"`attention_backend` must be 'eager' or 'sdpa', got {self.attention_backend}.")
         if self.n_action_steps > self.chunk_size:
             raise ValueError(
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
