@@ -651,7 +651,9 @@ def _try_keep_episodes_from_video_by_stream_copy(
     Args:
         input_path: Source video file path.
         output_path: Destination video file path.
-        episodes_to_keep: Sorted, non-overlapping half-open (start_frame, end_frame) ranges to keep.
+        episodes_to_keep: List of (start_frame, end_frame) tuples for episodes to keep.
+            Ranges are half-open intervals: [start_frame, end_frame), where start_frame
+            is inclusive and end_frame is exclusive.
         fps: Frame rate of the video.
 
     Returns:
@@ -659,9 +661,10 @@ def _try_keep_episodes_from_video_by_stream_copy(
     """
     import av
 
-    if episodes_to_keep != sorted(episodes_to_keep) or any(
+    frame_ranges = sorted(episodes_to_keep)
+    if any(
         prev_end > start
-        for (_, prev_end), (start, _) in zip(episodes_to_keep, episodes_to_keep[1:], strict=False)
+        for (_, prev_end), (start, _) in zip(frame_ranges, frame_ranges[1:], strict=False)
     ):
         return False
 
@@ -702,12 +705,12 @@ def _try_keep_episodes_from_video_by_stream_copy(
             return True
         return 0 <= i < num_packets and is_keyframe[i] and prefix_max[i] < pts[i] == suffix_min[i]
 
-    if any(not (is_clean_cut(start) and is_clean_cut(end)) for start, end in episodes_to_keep):
+    if any(not (is_clean_cut(start) and is_clean_cut(end)) for start, end in frame_ranges):
         return False
 
     pts_offsets = []
     out_start = 0
-    for start, end in episodes_to_keep:
+    for start, end in frame_ranges:
         pts_offsets.append(out_start - pts[start])
         out_start += (end - start) * ticks_per_frame
 
@@ -722,11 +725,11 @@ def _try_keep_episodes_from_video_by_stream_copy(
         for packet in in_container.demux(v_in):
             if packet.size == 0:
                 continue
-            while segment_idx < len(episodes_to_keep) and packet_idx >= episodes_to_keep[segment_idx][1]:
+            while segment_idx < len(frame_ranges) and packet_idx >= frame_ranges[segment_idx][1]:
                 segment_idx += 1
-            if segment_idx == len(episodes_to_keep):
+            if segment_idx == len(frame_ranges):
                 break
-            if packet_idx >= episodes_to_keep[segment_idx][0]:
+            if packet_idx >= frame_ranges[segment_idx][0]:
                 # Rebase onto the output timeline; dts is left for the muxer to derive so that
                 # B-frame reorder delay is handled per container rather than by hand.
                 packet.pts += pts_offsets[segment_idx]
