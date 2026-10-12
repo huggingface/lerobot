@@ -15,6 +15,7 @@
 # limitations under the License.
 """Tests for dataset tools utilities."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -1123,30 +1124,11 @@ def test_stream_copy_declines_open_gop_keyframes(tmp_path):
     In an open GOP the pictures after a keyframe in decode order can be presented before it and
     reference the previous GOP, so the keyframe's packet index is not its frame index.
     """
-    from fractions import Fraction
-
     import av
 
     fps = 30
-    src_video_path = tmp_path / "open_gop.mp4"
-    with av.open(str(src_video_path), mode="w") as container:
-        stream = container.add_stream(
-            "libx264",
-            rate=fps,
-            options={"x264-params": "keyint=16:min-keyint=16:open-gop=1:bframes=3:b-adapt=0:scenecut=0"},
-        )
-        stream.width = stream.height = 64
-        stream.pix_fmt = "yuv420p"
-        stream.time_base = Fraction(1, fps)
-        y, x = np.mgrid[0:64, 0:64]
-        for t in range(64):
-            image = np.stack([(x * 4 + t * 3) % 256, (y * 4 + t * 5) % 256, (x + y + t * 7) % 256], -1)
-            frame = av.VideoFrame.from_ndarray(image.astype(np.uint8), format="rgb24")
-            frame.pts = t
-            for packet in stream.encode(frame):
-                container.mux(packet)
-        for packet in stream.encode():
-            container.mux(packet)
+    # 64 frames, 64x64, x264: keyint=16:min-keyint=16:open-gop=1:bframes=3:b-adapt=0:scenecut=0.
+    src_video_path = Path(__file__).parent.parent / "artifacts" / "encoded_videos" / "open_gop_h264.mp4"
 
     with av.open(str(src_video_path)) as container:
         keyframe_indices = [
