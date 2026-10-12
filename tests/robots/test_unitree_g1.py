@@ -51,7 +51,7 @@ class TokenController:
 
     def __init__(self, dim: int = TOKEN_DIM):
         self.action_ft = {f"motion_token.{i}.pos": float for i in range(dim)}
-        self.observation_ft = {f"motion_token_state.{i}.pos": float for i in range(dim)}
+        self.observation_ft = {f"motion_token.{i}.pos": float for i in range(dim)}
         self.kp = np.full(NUM_MOTORS, 100.0, np.float32)
         self.kd = np.full(NUM_MOTORS, 2.0, np.float32)
         self.default_angles = np.zeros(NUM_MOTORS, np.float32)

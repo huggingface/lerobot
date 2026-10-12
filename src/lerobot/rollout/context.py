@@ -331,7 +331,13 @@ def _connect_rollout_hardware(cfg: RolloutConfig, *, require_hold: bool = False)
         robot.connect()
         logger.info("Robot connected: %s", robot.name)
         initial_obs = wrapper.get_observation()
-        initial_position = {key: value for key, value in initial_obs.items() if key.endswith(".pos")}
+        # Only keys the robot also accepts as commands can be replayed for homing; observed
+        # state outside the action space (e.g. a latent-token echo) is not a target.
+        initial_position = {
+            key: value
+            for key, value in initial_obs.items()
+            if key.endswith(".pos") and key in wrapper.action_features
+        }
         logger.info("Captured initial robot position (%d keys)", len(initial_position))
         if cfg.teleop is not None:
             logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)

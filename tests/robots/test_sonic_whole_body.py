@@ -162,10 +162,10 @@ class TestFeatureSchemas:
             f"{swb.TOKEN_STATE_PREFIX}.{i}.pos" for i in range(swb.TOKEN_DIM)
         }
 
-    def test_action_obs_keys_disjoint(self, make_controller):
-        """A shared prefix would make the action token and its echo collide in a dataset frame."""
+    def test_echo_uses_action_keys(self, make_controller):
+        """Rollout holds and homes to observed values only under keys it can send back."""
         controller, _ = make_controller()
-        assert not set(controller.action_ft) & set(controller.observation_ft)
+        assert set(controller.observation_ft) == set(controller.action_ft)
 
     def test_gains_and_home_pose_are_exposed(self, make_controller):
         """UnitreeG1.connect() reads these off the controller."""
@@ -256,11 +256,11 @@ class TestTokenHandling:
         )
         np.testing.assert_allclose(echoed, token, atol=1e-6)
 
-    def test_state_zeros_before_first_tick(self, make_controller):
+    def test_state_neutral_before_first_tick(self, make_controller):
         controller, _ = make_controller()
         state = controller.observation_state()
-        assert len(state) == swb.TOKEN_DIM
-        assert all(v == 0.0 for v in state.values())
+        echoed = [state[f"{swb.TOKEN_STATE_PREFIX}.{i}.pos"] for i in range(swb.TOKEN_DIM)]
+        np.testing.assert_allclose(echoed, NEUTRAL_TOKEN)
 
 
 class TestDecoderInputAssembly:

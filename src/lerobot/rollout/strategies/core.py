@@ -324,7 +324,7 @@ class RolloutStrategy(abc.ABC):
             )
             return False
         target = hw.initial_position
-        if target is None:
+        if not target:
             logger.warning("Could not return to initial position: none was captured at connect time")
             return False
         try:
