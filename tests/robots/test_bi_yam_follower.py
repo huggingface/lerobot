@@ -75,13 +75,7 @@ def mock_hardware(robot, monkeypatch):
         monkeypatch.setattr(arm.servo, "start", MagicMock())
 
 
-def make_writable(robot):
-    for arm in robot.arms.values():
-        arm.config.read_only = False
-
-
 def ready(robot):
-    make_writable(robot)
     for arm in robot.arms.values():
         arm._connected = True
         arm.servo.active = True
@@ -104,13 +98,6 @@ def test_default_id_gives_each_arm_its_own_calibration_file(tmp_path, monkeypatc
     )
     assert robot.left_arm.calibration_fpath.name == "bi_yam_follower_left.json"
     assert robot.right_arm.calibration_fpath.name == "bi_yam_follower_right.json"
-
-
-def test_both_arms_must_share_read_only():
-    with pytest.raises(ValueError, match="same read_only"):
-        BiYamFollowerConfig(
-            left_arm_config=arm_config("can0"), right_arm_config=arm_config("can1", read_only=False)
-        )
 
 
 def test_per_arm_and_top_level_cameras_follow_bimanual_conventions(tmp_path, monkeypatch):
@@ -169,13 +156,6 @@ def test_stale_feedback_refuses_both_targets(robot):
     assert all(np.all(arm.servo.target == 0) for arm in robot.arms.values())
 
 
-def test_readonly_rejects_actions(robot):
-    for arm in robot.arms.values():
-        arm._connected = True
-    with pytest.raises(RuntimeError, match="read-only"):
-        robot.send_action(dict.fromkeys(robot.action_features, 0))
-
-
 def test_inactive_arm_rejects_action_atomically(robot):
     action = ready(robot)
     robot.right_arm.servo.active = False
@@ -186,7 +166,6 @@ def test_inactive_arm_rejects_action_atomically(robot):
 
 def test_calibration_connect_never_enables_motors(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
-    make_writable(robot)
     robot.connect(calibrate=False)
     for arm in robot.arms.values():
         arm.bus.set_mit_mode.assert_not_called()
@@ -196,7 +175,6 @@ def test_calibration_connect_never_enables_motors(robot, monkeypatch):
 
 def test_each_arm_loads_its_model_before_its_can_interface(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
-    make_writable(robot)
     events = []
     for side, arm in robot.arms.items():
         arm.config.gravity_compensation = True
@@ -215,7 +193,6 @@ def test_each_arm_loads_its_model_before_its_can_interface(robot, monkeypatch):
 
 def test_bad_second_arm_pose_never_enables_first(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
-    make_writable(robot)
     robot.right_arm.bus.read_states.return_value.position[1] = 1
     with pytest.raises(ValueError, match="initial pose"):
         robot.connect()
@@ -226,7 +203,6 @@ def test_bad_second_arm_pose_never_enables_first(robot, monkeypatch):
 
 def test_both_arms_configure_before_either_is_enabled(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
-    make_writable(robot)
     events = []
     for side, arm in robot.arms.items():
         arm.bus.set_mit_mode.side_effect = lambda side=side: events.append(f"{side}:configure")

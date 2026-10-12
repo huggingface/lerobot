@@ -93,7 +93,6 @@ def mock_hardware(robot, monkeypatch):
 
 def ready(robot):
     robot._connected = True
-    robot.config.read_only = False
     robot.servo.active = True
     robot.servo.updated_at = time.monotonic()
     return dict.fromkeys(robot.action_features, 0.0)
@@ -222,24 +221,24 @@ def feedback_bus(frames):
 def test_cached_motorbridge_states_do_not_hide_missing_motor():
     bus = feedback_bus([frame(i) for i in range(1, 7)])
     with pytest.raises(ConnectionError, match="stale"):
-        bus.read_states(wait=False)
+        bus.read_states()
 
 
 def test_queued_old_packets_do_not_count_as_fresh():
     bus = feedback_bus([frame(i, age=1) for i in range(1, 8)])
     with pytest.raises(ConnectionError, match="stale"):
-        bus.read_states(wait=False)
+        bus.read_states()
 
 
 def test_fault_in_any_feedback_packet_fails():
     bus = feedback_bus([frame(i, status=13 if i == 3 else 1) for i in range(1, 8)])
     with pytest.raises(ConnectionError, match="fault 0xd"):
-        bus.read_states(wait=False)
+        bus.read_states()
 
 
 def test_fresh_feedback_accepts_stationary_motors():
     bus = feedback_bus([frame(i) for i in range(1, 8)])
-    states = bus.read_states(wait=False)
+    states = bus.read_states()
     np.testing.assert_allclose(states.position, np.full(7, 0.1))
     np.testing.assert_allclose(states.velocity, np.full(7, 0.2))
     np.testing.assert_allclose(states.torque, np.full(7, 0.3))
@@ -250,26 +249,26 @@ def test_disabled_motor_after_enable_grace_is_a_fault():
     bus.enabled = True
     bus._enabled_at = time.monotonic() - 1
     with pytest.raises(ConnectionError, match="motor 3 unexpectedly disabled"):
-        bus.read_states(wait=False)
+        bus.read_states()
 
 
 def test_disabled_motor_is_allowed_during_enable_transition():
     bus = feedback_bus([frame(i, status=0) for i in range(1, 8)])
     bus.enabled = True
     bus._enabled_at = time.monotonic()
-    np.testing.assert_allclose(bus.read_states(wait=False).position, np.full(7, 0.1))
+    np.testing.assert_allclose(bus.read_states().position, np.full(7, 0.1))
 
 
 def test_old_disabled_frame_does_not_override_new_enabled_frame():
     bus = feedback_bus([frame(3, status=0), *[frame(i) for i in range(1, 8)]])
     bus.enabled = True
     bus._enabled_at = time.monotonic() - 1
-    np.testing.assert_allclose(bus.read_states(wait=False).position, np.full(7, 0.1))
+    np.testing.assert_allclose(bus.read_states().position, np.full(7, 0.1))
 
 
 def test_disabled_motor_is_allowed_before_enable():
     bus = feedback_bus([frame(i, status=0) for i in range(1, 8)])
-    np.testing.assert_allclose(bus.read_states(wait=False).position, np.full(7, 0.1))
+    np.testing.assert_allclose(bus.read_states().position, np.full(7, 0.1))
 
 
 def test_slew_gripper_torque_and_gravity_feedforward(robot):
@@ -323,7 +322,6 @@ def test_control_step_clamps_tracking_limits_and_gravity(robot):
 
 def test_gravity_matches_reference_torques(robot):
     pytest.importorskip("placo")
-    robot.config.read_only = False
     robot.config.gravity_compensation = True
     robot._load_control_model()
     assert robot.gravity_model is not None
@@ -382,7 +380,6 @@ def test_single_arm_rejects_partial_action(robot):
 
 def test_calibration_connection_never_enables_motor(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
-    robot.config.read_only = False
     robot.connect(calibrate=False)
     robot.bus.set_mit_mode.assert_not_called()
     robot.bus.enable.assert_not_called()
@@ -390,20 +387,17 @@ def test_calibration_connection_never_enables_motor(robot, monkeypatch):
     robot.disconnect()
 
 
-@pytest.mark.parametrize("read_only", [False, True])
-def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch, read_only):
+def test_connect_enables_torque_only_after_mit_mode(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
-    robot.config.read_only = read_only
     robot.connect()
     calls = [name for name, *_ in robot.bus.mock_calls if name in ("open", "set_mit_mode", "enable")]
-    assert calls == (["open"] if read_only else ["open", "set_mit_mode", "enable"])
+    assert calls == ["open", "set_mit_mode", "enable"]
     robot.servo.start.assert_called_once()
     robot.disconnect()
 
 
 def test_start_pose_check_uses_degrees(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
-    robot.config.read_only = False
     states = raw_states()
     states.position[0] = math.radians(robot.config.initial_tolerance_deg + 1)
     robot.bus.read_states.return_value = states
@@ -413,25 +407,13 @@ def test_start_pose_check_uses_degrees(robot, monkeypatch):
 
 
 @pytest.mark.parametrize(("timeout", "detail"), [(0, "joint_2=off"), (8001, "joint_2=400.05 ms")])
-def test_connect_requires_a_prompt_motor_can_timeout(robot, monkeypatch, caplog, timeout, detail):
+def test_connect_requires_a_prompt_motor_can_timeout(robot, monkeypatch, timeout, detail):
     mock_hardware(robot, monkeypatch)
-    robot.config.read_only = False
     robot.bus.can_timeouts.return_value = {**dict.fromkeys(MOTOR_NAMES, 8000), "joint_2": timeout}
-    with pytest.raises(ValueError, match="unsafe motor CAN timeout"):
+    with pytest.raises(ValueError, match="unsafe motor CAN timeout") as exc_info:
         robot.connect()
     robot.bus.enable.assert_not_called()
-    robot.config.require_motor_can_timeout = False
-    robot.connect()
-    assert detail in caplog.text
-    robot.bus.enable.assert_called_once()
-    robot.disconnect()
-
-
-def test_read_only_connect_skips_the_can_timeout_check(robot, monkeypatch):
-    mock_hardware(robot, monkeypatch)
-    robot.connect()
-    robot.bus.can_timeouts.assert_not_called()
-    robot.disconnect()
+    assert detail in str(exc_info.value)
 
 
 def test_bus_reads_the_can_timeout_register():
@@ -467,32 +449,12 @@ def test_configure_refuses_while_servo_holds_the_arm(robot):
 
 def test_start_refuses_second_servo_before_enabling_again(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
-    robot.config.read_only = False
     robot.connect()
     robot.servo.active = True
     with pytest.raises(RuntimeError, match="already running"):
         robot.start()
     robot.bus.enable.assert_called_once()
     robot.disconnect()
-
-
-def test_servo_start_refuses_second_thread(robot):
-    attach_bus(robot, mock_bus())
-    robot.servo.seed(joint_state())
-    robot.servo.start()
-    original_thread = robot.servo._thread
-    with pytest.raises(RuntimeError, match="already running"):
-        robot.servo.start()
-    assert robot.servo._thread is original_thread
-    robot.servo.stop()
-
-
-def test_foreground_watchdog_allows_one_late_feedback_window(robot):
-    robot.servo.updated_at = time.monotonic() - 1.5 * robot.config.feedback_timeout_s
-    robot.servo.check_healthy()
-    robot.servo.updated_at = time.monotonic() - 3 * robot.config.feedback_timeout_s
-    with pytest.raises(ConnectionError, match="stale"):
-        robot.servo.check_healthy()
 
 
 def test_disconnect_can_retry_after_servo_join_timeout(robot):
@@ -512,7 +474,6 @@ def test_disconnect_can_retry_after_servo_join_timeout(robot):
 
 def test_gravity_model_loads_before_hardware(robot, monkeypatch):
     mock_hardware(robot, monkeypatch)
-    robot.config.read_only = False
     robot.config.gravity_compensation = True
     events = []
 

@@ -62,9 +62,6 @@ class YamFollowerConfig:
     # control. Zero is the manufacturer's folded reference pose; None accepts any valid pose.
     initial_position_deg: list[float] | None = field(default_factory=lambda: [0.0] * 6)
     initial_tolerance_deg: float = 11.5
-    # Gripper opening from 0 (closed) to 100 (open); None skips the check.
-    initial_gripper_position: float | None = None
-    initial_gripper_tolerance: float = 10.0
     kp: list[float] = field(default_factory=lambda: [80.0, 80.0, 80.0, 10.0, 10.0, 10.0])
     kd: list[float] = field(default_factory=lambda: [5.0, 5.0, 5.0, 1.5, 1.5, 1.5])
     # I2RT's gains for the linear DM4310 gripper.
@@ -87,10 +84,6 @@ class YamFollowerConfig:
     friction_compensation: bool = False
     coulomb_friction: list[float] = field(default_factory=lambda: [0.3, 0.3, 0.3, 0.06, 0.06, 0.06])
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
-    # Opt in only after verifying the CAN port, encoder frame and gripper calibration.
-    read_only: bool = True
-    # Refuse torque unless every motor has a CAN timeout of at most 400 ms.
-    require_motor_can_timeout: bool = True
     # Degrees and a 0-100 gripper; False gives radians and a 0-1 gripper (I2RT and MolmoAct2 data).
     use_degrees: bool = True
     use_velocity_and_torque: bool = False
@@ -124,7 +117,6 @@ class YamFollowerConfig:
             raise ValueError("Gripper gains outside MIT limits")
         for name in (
             "initial_tolerance_deg",
-            "initial_gripper_tolerance",
             "gripper_force_limit_n",
             "gripper_stroke_m",
             "max_joint_speed_deg_s",
@@ -146,8 +138,6 @@ class YamFollowerConfig:
             raise ValueError("idle_mode='float' needs gravity_compensation, or the arm would fall")
         if not 20 <= self.control_frequency <= 250:
             raise ValueError("control_frequency must be between 20 and 250 Hz")
-        if self.initial_gripper_position is not None and not 0 <= self.initial_gripper_position <= 100:
-            raise ValueError("initial_gripper_position must be between 0 closed and 100 open")
         if self.initial_position_deg is not None:
             if len(self.initial_position_deg) != 6 or not all(
                 math.isfinite(v) for v in self.initial_position_deg
@@ -198,10 +188,6 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
             Expected supported startup pose in degrees; `None` accepts any valid pose.
         initial_tolerance_deg (`float`, *optional*, defaults to 11.5):
             Allowed difference from `initial_position_deg` before torque is enabled.
-        initial_gripper_position (`float | None`, *optional*):
-            Expected startup opening from 0 to 100; `None` skips this check.
-        initial_gripper_tolerance (`float`, *optional*, defaults to 10.0):
-            Allowed difference from `initial_gripper_position`.
         kp (`list`, *optional*):
             MIT position gains for the six arm joints.
         kd (`list`, *optional*):
@@ -234,10 +220,6 @@ class YamFollowerRobotConfig(RobotConfig, YamFollowerConfig):
             Per-joint Coulomb friction estimates used in float mode.
         cameras (`dict`, *optional*):
             Cameras attached to this arm.
-        read_only (`bool`, *optional*, defaults to `True`):
-            Whether to read feedback without enabling or commanding torque.
-        require_motor_can_timeout (`bool`, *optional*, defaults to `True`):
-            Whether powered control requires a firmware CAN timeout of at most 400 ms.
         use_degrees (`bool`, *optional*, defaults to `True`):
             Whether public joints use degrees and the gripper uses 0 to 100 instead of radians and 0 to 1.
         use_velocity_and_torque (`bool`, *optional*, defaults to `False`):
