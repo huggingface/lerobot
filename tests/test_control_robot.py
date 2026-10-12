@@ -69,6 +69,56 @@ def test_teleoperate(cadence_log):
         assert step in summary, step
 
 
+def _spy_on_observation():
+    """Patches MockTeleop so each tick records whether `on_observation` ran before `get_action`."""
+    from tests.mocks.mock_teleop import MockTeleop
+
+    calls: list[str] = []
+    get_action = MockTeleop.get_action
+
+    def on_observation(self, observation):
+        assert observation and all(key.endswith(".pos") for key in observation)
+        calls.append("on_observation")
+
+    def spy_get_action(self):
+        calls.append("get_action")
+        return get_action(self)
+
+    return calls, patch.multiple(MockTeleop, on_observation=on_observation, get_action=spy_get_action)
+
+
+def _observed_before_every_action(calls: list[str]) -> bool:
+    pairs = list(zip(calls[::2], calls[1::2], strict=False))
+    return bool(pairs) and all(pair == ("on_observation", "get_action") for pair in pairs)
+
+
+def test_teleoperate_hands_the_observation_to_the_teleop():
+    calls, spy = _spy_on_observation()
+    cfg = TeleoperateConfig(robot=MockRobotConfig(), teleop=MockTeleopConfig(), fps=30, teleop_time_s=0.1)
+    with spy:
+        teleoperate(cfg)
+    assert _observed_before_every_action(calls)
+
+
+def test_record_hands_the_observation_to_the_teleop(tmp_path):
+    calls, spy = _spy_on_observation()
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "record_observed",
+        num_episodes=1,
+        episode_time_s=0.1,
+        reset_time_s=0,
+        push_to_hub=False,
+    )
+    cfg = RecordConfig(
+        robot=MockRobotConfig(), dataset=dataset_cfg, teleop=MockTeleopConfig(), play_sounds=False
+    )
+    with spy:
+        record(cfg)
+    assert _observed_before_every_action(calls)
+
+
 def test_record_and_resume(tmp_path):
     robot_cfg = MockRobotConfig()
     teleop_cfg = MockTeleopConfig()
