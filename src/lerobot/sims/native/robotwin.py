@@ -15,6 +15,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import contextlib
 import importlib
 import logging
 import os
@@ -248,8 +249,6 @@ def _load_robotwin_setup_kwargs(task_name: str) -> dict[str, Any]:
     """
     if task_name in _ROBOTWIN_SETUP_CACHE:
         return dict(_ROBOTWIN_SETUP_CACHE[task_name])
-
-    import os
 
     import yaml
     from envs import CONFIGS_PATH
@@ -543,8 +542,6 @@ class RoboTwinEnv(gym.Env):
     def close(self) -> None:
         if self._env is not None:
             if hasattr(self._env, "close_env"):
-                import contextlib
-
                 with contextlib.suppress(TypeError):
                     self._env.close_env()
             self._env = None

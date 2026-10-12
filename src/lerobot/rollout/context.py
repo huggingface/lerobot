@@ -36,6 +36,7 @@ from lerobot.datasets import (
     aggregate_pipeline_dataset_features,
     create_initial_features,
 )
+from lerobot.env_server.profiles import EvalProfile
 from lerobot.inference import (
     FeatureSpec,
     InferenceEngine,
@@ -341,8 +342,6 @@ def _connect_rollout_hardware(
             if simulator_admission is not None:
                 simulator_admission(robot)
             elif cfg.policy is not None:
-                from lerobot.env_server.profiles import EvalProfile
-
                 profile = robot.profile or EvalProfile(
                     robot.descriptor.semantics,
                     control=robot.descriptor.control,
