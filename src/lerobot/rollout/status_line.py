@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import statistics
 import sys
 import threading
@@ -113,11 +114,21 @@ class StatusLine:
 
     def _draw_loop(self) -> None:
         while not self._stop.wait(REFRESH_S):
-            line = self._format()
+            # A line wider than the terminal wraps, and clearing the last row would leave the rest behind.
+            line = self._format()[: self._columns() - 1]
             with self._lock:
                 self._stream.write(CLEAR_LINE + line)
                 self._stream.flush()
                 self._shown = True
+
+    def _columns(self) -> int:
+        # Measure the stream the line is drawn on: stdout may be redirected while this one is a terminal.
+        try:
+            columns = os.get_terminal_size(self._stream.fileno()).columns
+        except (AttributeError, OSError, ValueError):
+            columns = 0
+        # Some consoles, such as a serial port, report a width of 0.
+        return columns or shutil.get_terminal_size().columns
 
     def _format(self) -> str:
         parts = []
