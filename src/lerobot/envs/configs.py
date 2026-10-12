@@ -109,6 +109,11 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                 )
 
         def _make_one():
+            # AsyncVectorEnv workers start from a fresh interpreter (forkserver), so the import
+            # above did not register the env there. Check `gym.registry`, not `gym_registry`: this
+            # closure is pickled by value, which would give the workers a copy of this registry.
+            if self.gym_id not in gym.registry:
+                importlib.import_module(self.package_name)
             return gym.make(self.gym_id, disable_env_checker=self.disable_env_checker, **self.gym_kwargs)
 
         extra_kwargs: dict = {}
