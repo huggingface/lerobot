@@ -154,6 +154,8 @@ _pyrealsense2_available = is_package_available("pyrealsense2") or is_package_ava
     "pyrealsense2-macosx", import_name="pyrealsense2"
 )
 _zmq_available = is_package_available("pyzmq", import_name="zmq")
+_sounddevice_available = is_package_available("sounddevice")
+_soundfile_available = is_package_available("soundfile")
 _hebi_available = is_package_available("hebi-py", import_name="hebi")
 _teleop_available = is_package_available("teleop")
 _placo_available = is_package_available("placo")
@@ -248,12 +250,13 @@ def register_third_party_plugins() -> None:
 
     This function uses `importlib.metadata` to find packages installed in the environment
     (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
-    'lerobot_teleoperator_', 'lerobot_policy_', 'lerobot_env_' or 'lerobot_strategy_' and
-    imports them.
+    'lerobot_microphone_', 'lerobot_teleoperator_', 'lerobot_policy_', 'lerobot_env_' or
+    'lerobot_strategy_' and imports them.
     """
     prefixes = (
         "lerobot_robot_",
         "lerobot_camera_",
+        "lerobot_microphone_",
         "lerobot_teleoperator_",
         "lerobot_policy_",
         "lerobot_env_",
