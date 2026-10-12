@@ -1,5 +1,13 @@
 # RoboTwin 2.0
 
+<Tip>
+  For isolated simulator execution, start `docker/sims/configs/robotwin.yaml`
+  and use `lerobot-eval --env.type=sim` or `lerobot-rollout
+  --robot.type=remote`. See [Simulator servers](./simulator_server) for
+  configuration, checkpoint profiles, and commands. The direct simulator
+  installation and in-process commands below describe the compatibility path.
+</Tip>
+
 RoboTwin 2.0 is a **large-scale dual-arm manipulation benchmark** built on the SAPIEN physics engine. It provides a standardized evaluation protocol for bimanual robotic policies across 50 tasks (as of upstream `main`) with strong domain randomization (clutter, lighting, background, tabletop height, and language instructions).
 
 - Paper: [RoboTwin 2.0: A Scalable Data Generator and Benchmark with Strong Domain Randomization for Robust Bimanual Robotic Manipulation](https://arxiv.org/abs/2506.18088)
