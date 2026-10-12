@@ -21,14 +21,17 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import datasets
 import numpy as np
 import packaging.version
 import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
 
 from lerobot.utils.utils import flatten_dict, unflatten_dict
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 V30_MESSAGE = """
 The dataset you requested ({repo_id}) is in {version} format.
@@ -140,6 +143,33 @@ def resolve_episode_indices(
     return [episode for episode in candidates if episode not in excluded]
 
 
+def delta_window(
+    anchor: int, deltas: Sequence[int] | np.ndarray, start: int, end: int
+) -> tuple[list[int], torch.Tensor]:
+    """Clamp an anchor's temporal window to the episode rows ``[start, end)``.
+
+    Returns the clamped row indices and a boolean mask marking the positions that fell outside
+    the episode and were padded with its first or last row. Works with absolute dataset indices
+    (map-style) and episode-local indices (streaming) alike.
+
+    Uses NumPy rather than small torch ops: those release the GIL and must take it back, which
+    waits behind the other streaming decode threads.
+    """
+    positions = anchor + np.asarray(deltas, dtype=np.int64)
+    padding = (positions < start) | (positions >= end)
+    return np.clip(positions, start, end - 1).tolist(), torch.from_numpy(padding)
+
+
+def shift_timestamps(timestamps: Sequence[float], offset: float) -> list[float]:
+    """Move episode-relative timestamps onto a source video's timeline (``from_timestamp`` offset)."""
+    return [offset + timestamp for timestamp in timestamps]
+
+
+def task_name(tasks: "pd.DataFrame", task_index: int | torch.Tensor) -> str:
+    """Look up a task string from the metadata tasks table by its integer ``task_index``."""
+    return tasks.iloc[int(task_index)].name
+
+
 DEPTH_FILE_PATTERN = "frame-{frame_index:06d}.tiff"
 DEFAULT_TASKS_PATH = "meta/tasks.parquet"
 DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
@@ -181,6 +211,11 @@ class DatasetInfo:
     data_path: str = field(default=DEFAULT_DATA_PATH)
     video_path: str | None = field(default=DEFAULT_VIDEO_PATH)
 
+    # Format holding the underlying data files. ``None`` means the built-in
+    # parquet/mp4 layout; any other value (e.g. "lance") routes LeRobotDataset's
+    # data access through the storage backend registered for that format.
+    storage_format: str | None = None
+
     # Optional metadata
     robot_type: str | None = None
     splits: dict[str, str] = field(default_factory=dict)
@@ -208,8 +243,8 @@ class DatasetInfo:
         """Return a JSON-serialisable dict.
 
         Converts tuple shapes back to lists so ``json.dump`` can handle them.
-        Drops ``tools`` when unset so existing datasets keep a clean
-        ``info.json``.
+        Drops ``tools`` and ``storage_format`` when unset so existing datasets
+        keep a clean ``info.json``.
         """
         d = dataclasses.asdict(self)
         for ft in d["features"].values():
@@ -217,6 +252,8 @@ class DatasetInfo:
                 ft["shape"] = list(ft["shape"])
         if d.get("tools") is None:
             d.pop("tools", None)
+        if d.get("storage_format") is None:
+            d.pop("storage_format", None)
         return d
 
     @classmethod
@@ -374,7 +411,7 @@ def check_version_compatibility(
     if v_check.major < v_current.major and enforce_breaking_major:
         raise BackwardCompatibilityError(repo_id, v_check)
     elif v_check.minor < v_current.minor:
-        logging.warning(FUTURE_MESSAGE.format(repo_id=repo_id, version=v_check))
+        logger.warning(FUTURE_MESSAGE.format(repo_id=repo_id, version=v_check))
 
 
 def get_repo_versions(repo_id: str, *, token: str | bool | None = None) -> list[packaging.version.Version]:
@@ -441,7 +478,7 @@ def get_safe_version(
     if compatibles:
         return_version = max(compatibles)
         if return_version < target_version:
-            logging.warning(f"Revision {version} for {repo_id} not found, using version v{return_version}")
+            logger.warning(f"Revision {version} for {repo_id} not found, using version v{return_version}")
         return f"v{return_version}"
 
     lower_major = [v for v in hub_versions if v.major < target_version.major]
@@ -521,23 +558,3 @@ def create_lerobot_dataset_card(
         template_str=card_template,
         **kwargs,
     )
-
-
-def is_float_in_list(target, float_list, threshold=1e-6):
-    return any(abs(target - x) <= threshold for x in float_list)
-
-
-def find_float_index(target, float_list, threshold=1e-6):
-    for i, x in enumerate(float_list):
-        if abs(target - x) <= threshold:
-            return i
-    return -1
-
-
-def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -> datasets.Dataset:
-    """
-    Safe shards the dataset.
-    """
-    shard_idx = min(dataset.num_shards, index + 1) - 1
-
-    return dataset.shard(num_shards, index=shard_idx)

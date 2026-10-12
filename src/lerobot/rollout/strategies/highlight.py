@@ -22,14 +22,14 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event as ThreadingEvent, Lock
 
-from lerobot.datasets import VideoEncodingManager
+from lerobot.datasets import LeRobotDataset, VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.keyboard_input import create_key_listener
 from lerobot.utils.utils import log_say
 
-from ..configs import HighlightStrategyConfig
+from ..configs import HighlightStrategyConfig, RolloutConfig
 from ..context import RolloutContext
 from ..ring_buffer import RolloutRingBuffer
 from .core import RolloutStrategy, safe_push_to_hub, send_next_action
@@ -54,7 +54,7 @@ class HighlightStrategy(RolloutStrategy):
 
     config: HighlightStrategyConfig
 
-    def __init__(self, config: HighlightStrategyConfig):
+    def __init__(self, config: HighlightStrategyConfig) -> None:
         super().__init__(config)
         self._ring: RolloutRingBuffer | None = None
         self._listener = None
@@ -62,7 +62,7 @@ class HighlightStrategy(RolloutStrategy):
         self._recording_live = ThreadingEvent()
         self._push_requested = ThreadingEvent()
         self._push_executor: ThreadPoolExecutor | None = None
-        self._pending_push: Future | None = None
+        self._pending_push: Future[None] | None = None
         self._episode_lock = Lock()
 
     def setup(self, ctx: RolloutContext) -> None:
@@ -91,12 +91,14 @@ class HighlightStrategy(RolloutStrategy):
 
     def run(self, ctx: RolloutContext) -> None:
         """Run the autonomous loop, buffering frames and recording on demand."""
-        engine = self._engine
+        engine = self._require_engine()
+        interpolator = self._require_interpolator()
+        ring = self._ring
+        if ring is None:
+            raise RuntimeError(f"{type(self).__name__}: ring buffer not attached; call setup() first")
         cfg = ctx.runtime.cfg
         robot = ctx.hardware.robot_wrapper
-        dataset = ctx.data.dataset
-        ring = self._ring
-        interpolator = self._interpolator
+        dataset = self._require_dataset(ctx.data)
         features = ctx.data.dataset_features
 
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
@@ -259,7 +261,7 @@ class HighlightStrategy(RolloutStrategy):
             dispatch, controls_help=f"save='{save_key}', push='{push_key}', ESC=stop"
         )
 
-    def _background_push(self, dataset, cfg) -> None:
+    def _background_push(self, dataset: LeRobotDataset, cfg: RolloutConfig) -> None:
         """Queue a Hub push on the single-worker executor."""
         if self._push_executor is None:
             return
@@ -267,7 +269,7 @@ class HighlightStrategy(RolloutStrategy):
         if self._pending_push is not None and not self._pending_push.done():
             logger.info("Previous push still in progress; queueing next")
 
-        def _push():
+        def _push() -> None:
             try:
                 with self._episode_lock:
                     if safe_push_to_hub(

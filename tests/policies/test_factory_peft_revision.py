@@ -15,6 +15,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 
 import lerobot.policies.factory as policy_factory
@@ -85,7 +86,23 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
     )
 
 
-def test_make_policy_reads_action_names_through_rename_map(monkeypatch):
+@pytest.mark.parametrize("action_key", [ACTION, "actions"])
+@pytest.mark.parametrize(
+    ("raw_names", "expected_names"),
+    [
+        (["shoulder", "elbow", "gripper"], ["shoulder", "elbow", "gripper"]),
+        (("shoulder", "elbow", "gripper"), ["shoulder", "elbow", "gripper"]),
+        ({"motors": ["shoulder", "elbow", "gripper"]}, ["shoulder", "elbow", "gripper"]),
+        ({"right": ["shoulder", "elbow"], "left": ["gripper"]}, ["shoulder", "elbow", "gripper"]),
+        ({"right": ("shoulder", "elbow"), "left": ("gripper",)}, ["shoulder", "elbow", "gripper"]),
+        ({"unused": [], "motors": ["shoulder", "elbow", "gripper"]}, ["shoulder", "elbow", "gripper"]),
+        ({"shoulder": 0, "elbow": 1, "gripper": 2}, ["shoulder", "elbow", "gripper"]),
+        ([], []),
+        ({}, []),
+        (None, None),
+    ],
+)
+def test_make_policy_reads_action_names(monkeypatch, action_key, raw_names, expected_names):
     cfg = SimpleNamespace(
         type="mock",
         device="cpu",
@@ -95,13 +112,12 @@ def test_make_policy_reads_action_names_through_rename_map(monkeypatch):
         output_features={},
         action_feature_names=None,
     )
-    action_names = ["shoulder", "elbow", "gripper"]
     dataset_meta = SimpleNamespace(
         features={
-            "actions": {
+            action_key: {
                 "dtype": "float32",
-                "shape": (len(action_names),),
-                "names": action_names,
+                "shape": (3,),
+                "names": raw_names,
             }
         },
         stats={},
@@ -114,9 +130,48 @@ def test_make_policy_reads_action_names_through_rename_map(monkeypatch):
     result = policy_factory.make_policy(
         cfg,
         ds_meta=dataset_meta,
-        rename_map={"actions": ACTION},
+        rename_map={action_key: ACTION} if action_key != ACTION else None,
     )
 
     assert result is policy
-    assert cfg.action_feature_names == action_names
+    assert cfg.action_feature_names == expected_names
+    assert dataset_meta.features[action_key]["names"] == raw_names
     assert cfg.output_features[ACTION].type is FeatureType.ACTION
+
+
+def test_make_policy_loads_resume_weights_and_keeps_the_parent(monkeypatch):
+    """A resume loads the checkpoint, while `pretrained_path` keeps naming the fine-tuned-from model."""
+    cfg = SimpleNamespace(
+        type="mock",
+        device="cpu",
+        pretrained_path="user/base-policy",
+        pretrained_revision=None,
+        use_peft=False,
+        input_features={},
+        output_features={},
+    )
+    seen_while_building = []
+
+    def from_pretrained(**kwargs):
+        seen_while_building.append(cfg.pretrained_path)
+        policy = torch.nn.Linear(1, 1)
+        policy.config = cfg
+        # Like FLUX3, which records its load source on the config.
+        cfg.pretrained_path = str(kwargs["pretrained_name_or_path"])
+        return policy
+
+    monkeypatch.setattr(
+        policy_factory, "get_policy_class", lambda _: SimpleNamespace(from_pretrained=from_pretrained)
+    )
+    monkeypatch.setattr(policy_factory, "dataset_to_policy_features", lambda _: {})
+    monkeypatch.setattr(policy_factory, "validate_visual_features_consistency", lambda *args: None)
+
+    policy = policy_factory.make_policy(
+        cfg,
+        ds_meta=SimpleNamespace(features={}, stats={}),
+        pretrained_path="run/checkpoints/000002/pretrained_model",
+    )
+
+    assert [str(path) for path in seen_while_building] == ["run/checkpoints/000002/pretrained_model"]
+    assert cfg.pretrained_path == "user/base-policy"
+    assert policy.config.pretrained_path == "user/base-policy"

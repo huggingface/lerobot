@@ -16,42 +16,43 @@
 
 from __future__ import annotations
 
-from enum import Enum
-from typing import Any, TypedDict
+from typing import Any, Final, Literal, TypeAlias, TypedDict, final
 
 import numpy as np
 import torch
 
 
-class TransitionKey(str, Enum):
-    """Keys for accessing EnvTransition dictionary components."""
+@final
+class TransitionKey:
+    """Keys for accessing `EnvTransition` dictionary components (plain string constants, not an Enum)."""
 
-    # TODO(Steven): Use consts
-    OBSERVATION = "observation"
-    ACTION = "action"
-    REWARD = "reward"
-    DONE = "done"
-    TRUNCATED = "truncated"
-    INFO = "info"
-    COMPLEMENTARY_DATA = "complementary_data"
+    OBSERVATION: Final[Literal["observation"]] = "observation"
+    ACTION: Final[Literal["action"]] = "action"
+    REWARD: Final[Literal["reward"]] = "reward"
+    DONE: Final[Literal["done"]] = "done"
+    TRUNCATED: Final[Literal["truncated"]] = "truncated"
+    INFO: Final[Literal["info"]] = "info"
+    COMPLEMENTARY_DATA: Final[Literal["complementary_data"]] = "complementary_data"
 
 
-PolicyAction = torch.Tensor
+# Kept as `TypeAlias` (not PEP 695 `type`): both are used in `isinstance()` checks.
+PolicyAction: TypeAlias = torch.Tensor  # noqa: UP040
 RobotAction = dict[str, Any]
-EnvAction = np.ndarray
+EnvAction: TypeAlias = np.ndarray  # noqa: UP040
 RobotObservation = dict[str, Any]
 BatchType = dict[str, Any]
 
 
-EnvTransition = TypedDict(
-    "EnvTransition",
-    {
-        TransitionKey.OBSERVATION.value: RobotObservation | None,
-        TransitionKey.ACTION.value: PolicyAction | RobotAction | EnvAction | None,
-        TransitionKey.REWARD.value: float | torch.Tensor | None,
-        TransitionKey.DONE.value: bool | torch.Tensor | None,
-        TransitionKey.TRUNCATED.value: bool | torch.Tensor | None,
-        TransitionKey.INFO.value: dict[str, Any] | None,
-        TransitionKey.COMPLEMENTARY_DATA.value: dict[str, Any] | None,
-    },
-)
+class EnvTransition(TypedDict):
+    """A single environment transition, keyed by the `TransitionKey` constants.
+
+    All keys are required; build transitions with `create_transition`.
+    """
+
+    observation: RobotObservation | None
+    action: PolicyAction | RobotAction | EnvAction | None
+    reward: float | torch.Tensor | None
+    done: bool | torch.Tensor | None
+    truncated: bool | torch.Tensor | None
+    info: dict[str, Any] | None
+    complementary_data: dict[str, Any] | None

@@ -21,8 +21,9 @@ from typing import Any
 from torch.utils.data._utils.collate import default_collate
 
 from lerobot.datasets.language import LANGUAGE_COLUMNS
+from lerobot.utils.constants import MESSAGES_RENDERED
 
-_PYTHON_LIST_KEYS = {"messages", "message_streams", "target_message_indices", *LANGUAGE_COLUMNS}
+_PYTHON_LIST_KEYS = {MESSAGES_RENDERED, "message_streams", "target_message_indices", *LANGUAGE_COLUMNS}
 
 
 def lerobot_collate_fn(batch: list[dict[str, Any] | None]) -> dict[str, Any] | None:
@@ -32,33 +33,33 @@ def lerobot_collate_fn(batch: list[dict[str, Any] | None]) -> dict[str, Any] | N
     rendered-message and language fields as plain Python lists, and delegates
     every other key to PyTorch's ``default_collate``.
     """
-    batch = [sample for sample in batch if sample is not None]
-    if not batch:
+    samples = [sample for sample in batch if sample is not None]
+    if not samples:
         return None
 
     # All-or-nothing per key: a partial-presence batch (e.g. half the samples
-    # carry `messages` and half don't) is a real bug in the upstream
+    # carry `messages_rendered` and half don't) is a real bug in the upstream
     # rendering step — silently filtering would hand downstream consumers a
     # preserved list shorter than the tensor batch. Raise instead so the
     # mismatch surfaces at the boundary.
     preserved: dict[str, list[Any]] = {}
     for key in _PYTHON_LIST_KEYS:
-        presence = [key in sample for sample in batch]
+        presence = [key in sample for sample in samples]
         if not any(presence):
             continue
         if not all(presence):
             raise ValueError(
-                f"Inconsistent batch: {sum(presence)}/{len(batch)} samples carry {key!r}; "
+                f"Inconsistent batch: {sum(presence)}/{len(samples)} samples carry {key!r}; "
                 f"every sample in a batch must agree."
             )
-        preserved[key] = [sample[key] for sample in batch]
+        preserved[key] = [sample[key] for sample in samples]
     tensorizable = [
         {
             key: value
             for key, value in sample.items()
             if key not in _PYTHON_LIST_KEYS and key not in LANGUAGE_COLUMNS
         }
-        for sample in batch
+        for sample in samples
     ]
     collated = default_collate(tensorizable)
     collated.update(preserved)

@@ -44,6 +44,7 @@ from ..g1_utils import (
     NUM_MOTORS,
     G1_29_JointIndex,
     get_gravity_orientation,
+    make_ort_session_options,
 )
 from ..unitree_g1 import RobotController
 
@@ -91,7 +92,11 @@ def load_policy(
     logger.info(f"Loading {policy_type.upper()} SONIC decoder from: {repo_id}/{filename}")
     decoder_path = hf_hub_download(repo_id=repo_id, filename=filename)
 
-    decoder = ort.InferenceSession(decoder_path)
+    # Capped thread pool, same reasoning as GR00T: the decoder is stepped at 50 Hz from a
+    # background thread next to the torch VLA, and an ORT pool spanning every core
+    # starves both. One thread is lowest-latency for a model this size.
+    so = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
+    decoder = ort.InferenceSession(decoder_path, sess_options=so)
     logger.info(f"Decoder loaded: {decoder.get_inputs()[0].shape} → {decoder.get_outputs()[0].shape}")
 
     # Extract deploy constants from ONNX metadata

@@ -22,13 +22,14 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event, Lock
 
+from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.utils import log_say
 
-from ..configs import SentryStrategyConfig
+from ..configs import RolloutConfig, SentryStrategyConfig
 from ..context import RolloutContext
 from .core import (
     RolloutStrategy,
@@ -67,10 +68,10 @@ class SentryStrategy(RolloutStrategy):
 
     config: SentryStrategyConfig
 
-    def __init__(self, config: SentryStrategyConfig):
+    def __init__(self, config: SentryStrategyConfig) -> None:
         super().__init__(config)
         self._push_executor: ThreadPoolExecutor | None = None
-        self._pending_push: Future | None = None
+        self._pending_push: Future[None] | None = None
         self._needs_push = Event()
         self._episode_lock = Lock()
         # Instance state, not run()-local, so the upload cadence survives segments.
@@ -101,11 +102,11 @@ class SentryStrategy(RolloutStrategy):
                 "Refusing to start a new segment: a previous save_episode failed mid-write, so "
                 "the dataset on disk may be partially committed. Inspect it before recording more."
             )
-        engine = self._engine
+        engine = self._require_engine()
+        interpolator = self._require_interpolator()
         cfg = ctx.runtime.cfg
         robot = ctx.hardware.robot_wrapper
-        dataset = ctx.data.dataset
-        interpolator = self._interpolator
+        dataset = self._require_dataset(ctx.data)
         features = ctx.data.dataset_features
 
         # Per-segment timer, never hoisted onto the instance (see ``RolloutStrategy.run``).
@@ -194,7 +195,7 @@ class SentryStrategy(RolloutStrategy):
             timer.log_run_summary()
             self._save_tail_episode(dataset, cfg)
 
-    def _checked_save_episode(self, dataset) -> None:
+    def _checked_save_episode(self, dataset: LeRobotDataset) -> None:
         """``save_episode`` under the push lock; a failure poisons the dataset and re-raises.
 
         A failed ``save_episode`` is *not* recoverable by discarding the buffer:
@@ -212,7 +213,7 @@ class SentryStrategy(RolloutStrategy):
                 dataset.clear_episode_buffer(delete_images=False)
             raise
 
-    def _save_tail_episode(self, dataset, cfg) -> None:
+    def _save_tail_episode(self, dataset: LeRobotDataset, cfg: RolloutConfig) -> None:
         """Commit the segment's partial tail episode; fail loudly on real errors.
 
         Runs in ``run()``'s ``finally``.  Returns early on an already-poisoned
@@ -228,7 +229,7 @@ class SentryStrategy(RolloutStrategy):
         self._checked_save_episode(dataset)
         self._register_saved_episode(dataset, cfg)
 
-    def _register_saved_episode(self, dataset, cfg) -> None:
+    def _register_saved_episode(self, dataset: LeRobotDataset, cfg: RolloutConfig) -> None:
         """Post-save bookkeeping, shared by the rotation and tail-save sites.
 
         Tail episodes must count toward ``upload_every_n_episodes`` too, or a session
@@ -294,7 +295,7 @@ class SentryStrategy(RolloutStrategy):
         )
         logger.info("Sentry strategy teardown complete")
 
-    def _background_push(self, dataset, cfg) -> None:
+    def _background_push(self, dataset: LeRobotDataset, cfg: RolloutConfig) -> None:
         """Queue a Hub push on the single-worker executor.
 
         The executor's max_workers=1 guarantees at most one push runs at
@@ -309,7 +310,7 @@ class SentryStrategy(RolloutStrategy):
         if self._pending_push is not None and not self._pending_push.done():
             logger.info("Previous push still in progress; queueing next")
 
-        def _push():
+        def _push() -> None:
             try:
                 with self._episode_lock:
                     if self._dataset_poisoned:
