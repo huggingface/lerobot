@@ -613,17 +613,10 @@ def _try_keep_episodes_from_video_by_stream_copy(
     episodes_to_keep: list[tuple[int, int]],
     fps: float,
 ) -> bool:
-    """Keep only specified episodes from a video file by copying the encoded bitstream.
+    """Keep specified episodes by copying encoded packets without re-encoding.
 
-    `DatasetWriter` encodes one video per episode and `concatenate_video_files` joins them with
-    ffmpeg's concat demuxer in stream-copy mode, so every episode in a packed file starts on a
-    keyframe. Dropping episodes is then pure packet selection and the pixels never need decoding.
-
-    Alignment is verified rather than assumed: if any boundary is not a clean cut point, nothing is
-    written and the caller re-encodes instead.
-
-    The input is demuxed twice (once to validate boundaries, once to copy), so memory stays bounded
-    by packet metadata rather than by the size of the video file.
+    Validate cut points before writing; return False if re-encoding is needed.
+    Two demux passes avoid holding encoded payloads in memory.
 
     Args:
         input_path: Source video file path.
