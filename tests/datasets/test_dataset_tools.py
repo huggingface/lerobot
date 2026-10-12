@@ -28,7 +28,6 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
 from lerobot.datasets.dataset_tools import (
     _fractions_to_episode_indices,
-    _keep_episodes_from_video_with_av,
     _try_keep_episodes_from_video_by_stream_copy,
     add_features,
     convert_image_to_video_dataset,
@@ -1061,10 +1060,12 @@ def test_delete_episodes_packed_videos(stream_copy, tmp_path, empty_lerobot_data
             "lerobot.datasets.dataset_tools._try_keep_episodes_from_video_by_stream_copy",
             wraps=_try_keep_episodes_from_video_by_stream_copy,
         ) as mock_stream_copy,
-        patch(
-            "lerobot.datasets.dataset_tools._keep_episodes_from_video_with_av",
-            wraps=_keep_episodes_from_video_with_av,
-        ) as mock_reencode,
+        patch.object(
+            RGBEncoderConfig,
+            "get_codec_options",
+            autospec=True,
+            side_effect=RGBEncoderConfig.get_codec_options,
+        ) as mock_encoder_options,
     ):
         mock_get_safe_version.return_value = "v3.0"
         mock_snapshot_download.return_value = str(output_dir)
@@ -1074,10 +1075,9 @@ def test_delete_episodes_packed_videos(stream_copy, tmp_path, empty_lerobot_data
         new_dataset = delete_episodes(src_dataset, [1, 3], output_dir=output_dir)
 
     mock_stream_copy.assert_called_once()
-    if stream_copy:
-        mock_reencode.assert_not_called()
-    else:
-        mock_reencode.assert_called_once()
+    # Config validation also reads options; only the re-encode path requests string values for PyAV.
+    encoding_calls = [call for call in mock_encoder_options.call_args_list if call.kwargs.get("as_strings")]
+    assert len(encoding_calls) == (0 if stream_copy else 1)
 
     assert new_dataset.meta.total_episodes == 3
     assert new_dataset.meta.total_frames == 30

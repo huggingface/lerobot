@@ -749,8 +749,8 @@ def _keep_episodes_from_video_with_av(
 ) -> None:
     """Keep only specified episodes from a video file using PyAV.
 
-    This function decodes frames from specified frame ranges and re-encodes them with
-    properly reset timestamps to ensure monotonic progression.
+    Copy encoded packets when cut points are safe; otherwise re-encode the selected
+    frames. Both paths reset timestamps onto a continuous output timeline.
 
     Args:
         input_path: Source video file path.
@@ -768,6 +768,10 @@ def _keep_episodes_from_video_with_av(
     if not episodes_to_keep:
         raise ValueError("No episodes to keep")
 
+    if _try_keep_episodes_from_video_by_stream_copy(input_path, output_path, episodes_to_keep, fps):
+        return
+
+    logger.info(f"Re-encoding {input_path} with {len(episodes_to_keep)} episodes")
     in_container = av.open(str(input_path))
 
     # Check if video stream exists.
@@ -942,7 +946,7 @@ def _copy_and_reindex_videos(
                     )
                     episodes_to_keep_ranges.append((from_frame, to_frame))
 
-                # Use PyAV filters to efficiently re-encode only the desired segments.
+                # Keep the desired segments using stream copy or re-encoding.
                 assert src_dataset.meta.video_path is not None
                 src_video_path = src_dataset.root / src_dataset.meta.video_path.format(
                     video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
@@ -952,20 +956,13 @@ def _copy_and_reindex_videos(
                 )
                 dst_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-                if not _try_keep_episodes_from_video_by_stream_copy(
-                    src_video_path, dst_video_path, episodes_to_keep_ranges, src_dataset.meta.fps
-                ):
-                    logger.info(
-                        f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx}) "
-                        f"with {len(episodes_to_keep_ranges)} episodes"
-                    )
-                    _keep_episodes_from_video_with_av(
-                        src_video_path,
-                        dst_video_path,
-                        episodes_to_keep_ranges,
-                        src_dataset.meta.fps,
-                        video_encoder,
-                    )
+                _keep_episodes_from_video_with_av(
+                    src_video_path,
+                    dst_video_path,
+                    episodes_to_keep_ranges,
+                    src_dataset.meta.fps,
+                    video_encoder,
+                )
 
                 cumulative_ts = 0.0
                 for old_idx in sorted_keep_episodes:
