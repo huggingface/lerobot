@@ -99,6 +99,9 @@ class RolloutEvent(Enum):
     SEGMENT_ENDED = "segment_ended"
     """The segment returned on its own (e.g. ``--duration`` elapsed); the robot is holding."""
 
+    SEGMENT_PAUSED = "segment_paused"
+    """The operator paused the segment; the robot is holding and the session remains live."""
+
     RESET_STARTED = "reset_started"
     """A reset is being executed: inference paused, robot about to move home."""
 
@@ -128,7 +131,7 @@ class RolloutEvent(Enum):
 
 
 class RolloutController:
-    """Drive a rollout strategy through thread-safe start/reset/stop/set_task calls.
+    """Drive a rollout strategy through thread-safe start/pause/reset/stop/set_task calls.
 
     The robot is idle until :meth:`start`; each run *segment* executes ``strategy.run(ctx)`` on the
     thread that called :meth:`serve`, while ``strategy.setup``/``teardown`` stay with the caller.
@@ -178,6 +181,7 @@ class RolloutController:
 
         # Written by control methods (any thread), consumed by the serve loop.
         self._start_requested = Event()
+        self._pause_requested = Event()
         self._reset_requested = Event()
         self._stop_requested = Event()
         self._wake = Event()
@@ -239,6 +243,8 @@ class RolloutController:
                 return False
             if self._running.is_set():
                 return False
+            # Last command wins when /start follows /stop while the serve loop is idle.
+            self._pause_requested.clear()
             self._start_requested.set()
             self._wake.set()
             return True
@@ -265,6 +271,25 @@ class RolloutController:
             self._segment_stop.set()
             self._wake.set()
             return restored
+
+    def pause(self) -> bool:
+        """End the current segment and remain idle with hardware and policy connected.
+
+        Inference is paused and the strategy applies its normal segment-end hold.  Unlike
+        :meth:`reset`, this does not move to the startup position or restore the launch task;
+        unlike :meth:`stop`, it does not end :meth:`serve`.  Call :meth:`start` to run again.
+        Returns ``False`` only when the controller is already stopping or stopped.
+        """
+        with self._control_lock:
+            if self._stopped.is_set() or self._stop_requested.is_set():
+                return False
+            self._start_requested.clear()
+            self._ctx.policy.inference.stop_autosteer()
+            self._pause_requested.set()
+            self._ctx.policy.inference.pause()
+            self._segment_stop.set()
+            self._wake.set()
+            return True
 
     def stop(self) -> None:
         """End :meth:`serve` so the caller can run ``strategy.teardown(ctx)``.  Idempotent."""
@@ -379,6 +404,10 @@ class RolloutController:
                     self._reset_requested.clear()
                     self._reset_robot()
                     continue
+                if self._pause_requested.is_set():
+                    self._pause_requested.clear()
+                    self._emit(RolloutEvent.SEGMENT_PAUSED)
+                    continue
                 if self._start_requested.is_set():
                     # Consume the request and mark the segment running in one atomic step, so a
                     # concurrent start() cannot re-arm the flag behind the running segment.
@@ -409,11 +438,12 @@ class RolloutController:
         engine = self._ctx.policy.inference
         try:
             # Clear the local flag *before* checking the request flags: control methods set their flag
-            # first and the event second, so a racing reset()/stop() is either seen here or ends the
+            # first and the event second, so a racing pause()/reset()/stop() is either seen here or ends the
             # fresh loop at once.  The clear also absorbs a dying engine's signal: hence engine.failed.
             self._segment_stop.clear()
             if (
                 self._stop_requested.is_set()
+                or self._pause_requested.is_set()
                 or self._reset_requested.is_set()
                 or self._global_shutdown.is_set()
                 or engine.failed
@@ -449,13 +479,16 @@ class RolloutController:
                 # Else the idle pump would announce a subtask after the sequencer ended; VQA stays.
                 engine.drop_ready_subtask_answers()
                 engine.report_cancelled_query()
-            # Deliver before a terminal /stop leaves the serve loop, including a
+            # Deliver before a terminal stop leaves the serve loop, including a
             # claimed VQA whose model call has not returned yet.
             engine.pump_query()
         if engine.failed or self._strategy_failure_traceback is not None:
             return  # the serve loop emits the failure event and shuts down
         if not (
-            self._stop_requested.is_set() or self._reset_requested.is_set() or self._global_shutdown.is_set()
+            self._stop_requested.is_set()
+            or self._pause_requested.is_set()
+            or self._reset_requested.is_set()
+            or self._global_shutdown.is_set()
         ):
             self._emit(RolloutEvent.SEGMENT_ENDED)
 

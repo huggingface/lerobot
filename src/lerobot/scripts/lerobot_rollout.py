@@ -241,7 +241,7 @@ def rollout(cfg: RolloutConfig):
     if not isinstance(shutdown_event, threading.Event):
         raise RuntimeError("ProcessSignalHandler(use_threads=True) must hand out a threading.Event")
     if cfg.interactive:
-        # /reset and /stop end the control loop via the local flag; process signals still
+        # /reset and /stop end a segment via the local flag; process signals still
         # propagate through the parent event.
         shutdown_event = LinkedEvent(shutdown_event)
 

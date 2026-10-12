@@ -389,7 +389,7 @@ lerobot-rollout \
 | `/vqa <text>`       | Ask the policy a question about what it currently sees. Only while a run is in progress, and only for policies with a text head                                                                                       |
 | `/autosteer <goal>` | Hand the policy a high-level goal and let it choose its own subtasks. `/autosteer off` hands control back; no argument reports the current goal                                                                       |
 | `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                                                         |
-| `/stop`             | End the session and run the normal shutdown routines                                                                                                                                                                  |
+| `/stop`             | End the current run and remain idle, holding the current target with hardware and policy connected; `/start` runs again                                                                                               |
 | `/help`             | List the commands                                                                                                                                                                                                     |
 
 ```text
@@ -406,11 +406,12 @@ Task restored to 'pick up the cube'
 Resetting — returning the robot to its initial position...
 Robot reset — holding at initial position. /start to run.
 > /stop
+Robot idle — holding the current target. /start to run again; Ctrl-C to shut down.
 ```
 
 Lines starting with `>` are what you type; the session renders no prompt of its own.
 
-`Ctrl-C` still shuts down as usual, and closing stdin (`Ctrl-D`, or the end of a piped script) ends the session — so a piped script must keep stdin open for the intended duration:
+`Ctrl-C` shuts down as usual, and closing stdin (`Ctrl-D`, or the end of a piped script) ends the session. `/stop` only idles the current run. A piped script therefore ends when its pipe reaches EOF:
 
 ```bash
 (printf '/start\n'; sleep 60; printf '/stop\n') | lerobot-rollout ... --interactive=true

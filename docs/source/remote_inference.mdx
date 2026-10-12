@@ -95,7 +95,7 @@ uv run --no-sync lerobot-rollout \
   --interactive=true
 ```
 
-After admission, type `/start`. `/stop` ends the run; see shutdown behavior below. Keep teleoperation/recording options from your working rollout. Do not pass `--policy.path`, local model-device overrides or compilation flags to the remote client.
+After admission, type `/start`. `/stop` ends the current run but keeps the session connected and idle; type `/start` to run again or Ctrl-C to shut down. See shutdown behavior below. Keep teleoperation/recording options from your working rollout. Do not pass `--policy.path`, local model-device overrides or compilation flags to the remote client.
 
 `deployment` selects the server; `semantics` describes the validated action units/order. These must agree with the server. The example uses body-joint degrees and a calibrated 0–100 gripper range. Supported robots automatically retain their last applied position target while waiting; the driver must declare that capability.
 
@@ -214,7 +214,8 @@ During a supported wait, the client refreshes the **last target actually applied
 | Instruction change during inference                                 | Discard the old prediction, pause and obtain fresh actions for the new instruction. Changes between requests may preserve accepted motion. |
 | Recording save or operator pause                                    | Retain the target, or hand control to teleoperation. Blocking recording work resumes with fresh inference when appropriate.                |
 | Deadline, stale action, malformed reply or expired starvation grace | Terminal fault: revoke policy motion and follow configured shutdown.                                                                       |
-| `/stop` or normal Ctrl+C                                            | End policy motion and honor configured return/disconnect behavior.                                                                         |
+| `/stop`                                                             | End the current segment, retain the current target, and stay connected; `/start` runs again.                                                |
+| Normal Ctrl+C                                                       | End policy motion and honor configured return/disconnect behavior.                                                                         |
 
 Starvation recovery includes draining an old in-flight prediction and obtaining a fresh prediction from a capture after the wait began. Old results cannot restart motion. Packets and unusable results do not renew grace. Frequent waits indicate insufficient playback/latency coverage.
 

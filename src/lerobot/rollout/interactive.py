@@ -108,7 +108,8 @@ class InteractiveSession:
     tests and embedders: the stdin listener parses lines into commands that call the controller's
     thread-safe methods, and controller events are rendered back as terminal output.
 
-    Commands are last-write-wins: ``/reset`` and ``/stop`` cancel a pending ``/start``.  EOF on the
+    Commands are last-write-wins: ``/reset`` and ``/stop`` cancel a pending ``/start``.  ``/stop``
+    ends only the current segment and leaves the session idle; Ctrl-C or EOF ends the session. EOF on the
     command stream stops the session (nothing is left to command the robot with), so piped scripts
     must keep stdin open for the intended duration, e.g.
     ``(printf '/start\\n'; sleep 60; printf '/stop\\n') | lerobot-rollout ... --interactive=true``.
@@ -136,7 +137,7 @@ class InteractiveSession:
                 "let the policy pick its own subtasks toward a high-level goal",
             ),
             "reset": (self._cmd_reset, "", "stop movement, return to initial position, restore the task"),
-            "stop": (self._cmd_stop, "", "end the session and shut down"),
+            "stop": (self._cmd_stop, "", "stop policy motion and remain idle and connected"),
             "help": (self._cmd_help, "", "show this help"),
         }
 
@@ -154,7 +155,7 @@ class InteractiveSession:
             self._runtime.cadence_report = previous
 
     def run(self) -> None:
-        """Run the session until ``/stop``, EOF, engine failure, or a shutdown signal."""
+        """Run the session until EOF, engine failure, or a shutdown signal."""
         try:
             with _mute_system_output(), self._route_cadence_reports():
                 self._print(self._render_banner())
@@ -178,13 +179,15 @@ class InteractiveSession:
             log_say("Starting rollout", self._play_sounds)
             self._print(
                 f"Rollout running — task {_format_task(self.controller.task)}. "
-                "/subtask <text> to change it, /reset to return to initial position, /stop to shut down."
+                "/subtask <text> to change it, /stop to idle, /reset to return to initial position."
             )
         elif event is RolloutEvent.SEGMENT_ENDED:
             self._print(
                 "Rollout run ended on its own (duration reached). Robot is holding position — "
-                "/start to run again, /reset to return to initial position, /stop to shut down."
+                "/start to run again or Ctrl-C to shut down."
             )
+        elif event is RolloutEvent.SEGMENT_PAUSED:
+            self._print("Robot idle — holding the current target. /start to run again; Ctrl-C to shut down.")
         elif event is RolloutEvent.RESET_STARTED:
             log_say("Resetting robot to initial position", self._play_sounds)
             self._print("Resetting — returning the robot to its initial position...")
@@ -252,7 +255,7 @@ class InteractiveSession:
             return
         # start() also refuses while stopping or after a failure — don't mislabel an idle robot.
         if self.controller.running:
-            self._print("Already running — /reset to pause first, or /stop to shut down.")
+            self._print("Already running — use /stop to idle or /reset to return to the initial position.")
         else:
             self._print("Can't start — the session is stopping or has failed.")
 
@@ -350,7 +353,8 @@ class InteractiveSession:
             self._print("Can't reset — the session has stopped.")
 
     def _cmd_stop(self, cmd: InteractiveCommand) -> None:
-        self.controller.stop()
+        if not self.controller.pause():
+            self._print("Can't stop the run — the session is stopping or has stopped.")
 
     def _cmd_help(self, cmd: InteractiveCommand) -> None:
         self._print(self._render_help())

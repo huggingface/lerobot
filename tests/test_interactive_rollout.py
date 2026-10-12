@@ -324,7 +324,18 @@ def test_controller_start_reset_stop_flow_and_events():
 
 
 def test_controller_last_command_wins_over_a_pending_start():
-    """Robot safety: a queued start must never fire after a later reset or stop."""
+    """Robot safety: a queued start must never fire after a later pause, reset, or stop."""
+    controller, events, strategy, _engine, _parent, _run_started = _make_controller()
+    assert controller.start() is True
+    assert controller.pause() is True
+    thread = _serve_thread(controller)
+    assert _wait_for(lambda: RolloutEvent.SEGMENT_PAUSED in events)
+    time.sleep(0.05)
+    strategy.run.assert_not_called()
+    assert thread.is_alive()
+    controller.stop()
+    _join_session(thread)
+
     controller, _events, strategy, _engine, _parent, _run_started = _make_controller()
     assert controller.start() is True  # queued; no serve thread has consumed it yet
     controller.reset()
@@ -360,6 +371,7 @@ def test_controller_is_one_shot_and_refuses_commands_after_stop():
 
     initial = engine.task
     assert controller.start() is False
+    assert controller.pause() is False
     assert controller.reset() is False
     assert controller.set_task("fold the towel") is False
     assert engine.task == initial  # the refused set_task touched nothing
@@ -517,7 +529,7 @@ def _start_session_thread(session) -> Thread:
 
 
 def test_session_flow_over_the_command_stream():
-    """/start, /reset, /start, /stop through the pipe and the stdin listener thread."""
+    """/stop idles a segment, /start restarts it, and EOF ends the session."""
     with _pipe_stream() as (reader, writer):
         session, strategy, engine, _parent, run_started = _make_session(reader)
         thread = _start_session_thread(session)
@@ -545,8 +557,18 @@ def test_session_flow_over_the_command_stream():
         assert strategy.run.call_count == 2
         assert strategy.reset_control_state.call_count == 2
 
-        # /stop ends the session; teardown stays with the caller (the CLI script).
+        # /stop ends only the current segment and keeps the warm session alive.
         send("/stop")
+        assert _wait_for(lambda: not session.controller.running)
+        assert thread.is_alive()
+
+        run_started.clear()
+        send("/start")
+        assert _wait_for(run_started.is_set)
+        assert strategy.run.call_count == 3
+
+        # Closing stdin is terminal; teardown stays with the caller (the CLI script).
+        writer.close()
         _join_session(thread)
         strategy.teardown.assert_not_called()
 
@@ -566,7 +588,7 @@ def test_session_unknown_input_does_not_start(capsys):
         assert "/frobnicate" in out
         assert "commands start with '/'" in out
 
-        session._handle_line("/stop")
+        session.controller.stop()
         _join_session(thread)
 
 
@@ -603,7 +625,7 @@ def test_session_mutes_logs_below_error_and_restores_on_exit():
             lib_logger.warning("muted-warning")
             lib_logger.error("visible-error")  # errors must surface mid-session
 
-            session._handle_line("/stop")
+            session.controller.stop()
             _join_session(thread)
 
         output = lib_stream.getvalue()
@@ -666,6 +688,9 @@ def test_session_drives_real_base_strategy_and_answers_vqa(capsys):
         assert _wait_for(lambda: engine.resume.call_count >= 2)
 
         session._handle_line("/stop")
+        assert _wait_for(lambda: not session.controller.running)
+        assert thread.is_alive()
+        session.controller.stop()
         _join_session(thread)
 
     assert ctx.runtime.cadence_report is None  # the sink is scoped to the session
@@ -692,7 +717,7 @@ def test_session_subtask_sets_and_reports_task(capsys):
         session._handle_line('/subtask "fold the towel"')  # quotes are stripped
         assert engine.task == "fold the towel"
 
-        session._handle_line("/stop")
+        session.controller.stop()
         _join_session(thread)
 
 
@@ -1365,7 +1390,7 @@ def test_session_autosteer_reports_status_and_hands_control_back(capsys):
         time.sleep(0.05)
         assert session.controller.task == steady
 
-        session._handle_line("/stop")
+        session.controller.stop()
         _join_session(thread)
 
 

@@ -300,8 +300,8 @@ class RolloutConfig:
     duration: float = 0.0
     # Control the rollout from stdin with chat-style commands (/start, /subtask,
     # /vqa, /autosteer, /reset, /stop) while hardware and policy stay warm.  The
-    # robot does not move until /start, and logs below ERROR are muted for the
-    # session's duration.
+    # robot does not move until /start, /stop returns to idle, Ctrl-C exits, and
+    # logs below ERROR are muted for the session's duration.
     interactive: bool = False
     # /autosteer: seconds of robot motion between two "what is the next subtask?"
     # queries, measured from the moment a subtask is applied.  Lower values

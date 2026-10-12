@@ -385,8 +385,9 @@ lerobot-rollout \
 Type `/start` only after the G1 is clear to move. SONIC declares waiting support because re-sending the last complete token keeps the onboard decoder balancing. Before the first policy result, rollout sends the decoder's neutral token. If the action buffer runs dry, it repeats the last applied token for at most `action_starvation_grace_s` (one second above); if no fresh prediction arrives, rollout faults and follows its configured shutdown/disconnect path. G1 locomotion controllers remain unsupported because their joystick velocities cannot be retained this way.
 
 The recipe disables return-to-initial-position: interpolating through SONIC's latent-token space is
-not a validated physical homing trajectory. `/stop` still closes the remote session and disconnects
-the robot through the normal controller shutdown path.
+not a validated physical homing trajectory. `/stop` ends the current segment and leaves the live
+session holding its current token; `/start` resumes with fresh inference. Use Ctrl-C to close the
+remote session and disconnect through the normal controller shutdown path.
 
 With `SonicWholeBodyController`, the observation state is the 64-D token echo rather than the 29 joint positions, so a compatible checkpoint must be trained against that state. On connect, the robot eases joints to the decoder's `default_angles` before the controller takes over.
 
