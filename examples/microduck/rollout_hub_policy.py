@@ -67,7 +67,7 @@ def main():
     print(f"Loading {args.policy} into slot '{args.slot}'...")
     print(robot.load_policy(args.policy, slot=args.slot))
 
-    print("Driving: W/S forward/back, A/D strafe, Q/E turn, I/J/K/L head, +/- speed. Ctrl+C to stop.")
+    print("Driving: W/S forward/back, A/D strafe, Z/X turn, I/J/K/L head, +/- speed. Ctrl+C to stop.")
     try:
         while True:
             t0 = time.perf_counter()
