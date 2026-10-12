@@ -1,5 +1,13 @@
 # LIBERO
 
+<Tip>
+  For isolated simulator execution, start `docker/sims/configs/libero.yaml` and
+  use `lerobot-eval --env.type=sim` or `lerobot-rollout --robot.type=remote`.
+  See [Simulator servers](./simulator_server) for configuration, checkpoint
+  profiles, and commands. The direct simulator installation and in-process
+  commands below describe the compatibility path.
+</Tip>
+
 LIBERO is a benchmark designed to study **lifelong robot learning** — the idea that robots need to keep learning and adapting with their users over time, not just be pretrained once. It provides a set of standardized manipulation tasks that focus on **knowledge transfer**: how well a robot can apply what it has already learned to new situations. By evaluating on LIBERO, different algorithms can be compared fairly and researchers can build on each other's work.
 
 - Paper: [Benchmarking Knowledge Transfer for Lifelong Robot Learning](https://arxiv.org/abs/2306.03310)
@@ -39,7 +47,7 @@ export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
 
 ## Evaluation
 
-### Default evaluation (recommended)
+### Default in-process evaluation
 
 Evaluate across the four standard suites (10 episodes per task):
 

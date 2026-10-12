@@ -1,7 +1,7 @@
 deployment: libero
 model:
   repo_or_path: lerobot/smolvla_libero
-  revision: 31d453f7edd78c839a8bbc39744a292686daf0de
+  revision: a24f1f380461b665158d52acd140152c79e8b36d
   device: cuda
 execution:
   action_fps: 20

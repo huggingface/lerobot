@@ -1,5 +1,13 @@
 # LIBERO-plus
 
+<Tip>
+  For isolated simulator execution, start `docker/sims/configs/libero_plus.yaml`
+  and use `lerobot-eval --env.type=sim` or `lerobot-rollout
+  --robot.type=remote`. See [Simulator servers](./simulator_server) for
+  configuration, checkpoint profiles, and commands. The direct simulator
+  installation and in-process commands below describe the compatibility path.
+</Tip>
+
 LIBERO-plus is a **robustness benchmark** for Vision-Language-Action (VLA) models built on top of [LIBERO](./libero). It systematically stress-tests policies by applying **seven independent perturbation dimensions** to the original LIBERO task set, exposing failure modes that standard benchmarks miss.
 
 - Paper: [In-depth Robustness Analysis of Vision-Language-Action Models](https://arxiv.org/abs/2510.13626)
@@ -81,7 +89,7 @@ python -c "import libero; print(libero.__file__)"
 
 ## Evaluation
 
-### Default evaluation (recommended)
+### Default in-process evaluation
 
 Evaluate across the four standard suites (10 episodes per task):
 

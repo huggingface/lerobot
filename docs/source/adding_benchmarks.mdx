@@ -1,6 +1,58 @@
-# Adding a New Benchmark
+# Adding a Benchmark
 
-This guide walks you through adding a new simulation benchmark to LeRobot. Follow the steps in order and use the existing benchmarks as templates.
+Simulator benchmarks use an [EnvServer](./simulator_server), with native dependencies and assets isolated from the policy environment. `lerobot-eval --env.type=sim` connects through `SimVectorEnv`; realtime `lerobot-rollout --robot.type=remote` connects through `RemoteRobot`. Both use `EnvClient` and the same canonical backend adapter. In-process evaluation is available as a compatibility path.
+
+## Server integration
+
+Start from `docker/sims/configs/libero.yaml` or `metaworld.yaml` and their native implementations under `src/lerobot/sims/native/`.
+
+| Component            | Location                                 | What to add                                                                                                     |
+| -------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Native environments  | `src/lerobot/sims/native/<benchmark>.py` | Task factories, reset/step, rendering, episode limits, task descriptions, and success reporting                 |
+| Canonical adapter    | `src/lerobot/sims/adapters.py`           | Native observations to dataset-style keys, HWC uint8 RGB, and float32 state; controller conversion where needed |
+| Backend selection    | `src/lerobot/sims/backend.py`            | Register factory selection if the existing naming convention is insufficient                                    |
+| Server configuration | `docker/sims/configs/<benchmark>.yaml`   | Factory kwargs, tasks, FPS, ordered components, controller semantics, and hold retention                        |
+| Simulator image      | `docker/Dockerfile.sim.<benchmark>`      | Pinned native dependencies, asset revisions, and minimal server dependencies                                    |
+| Evaluation profile   | `benchmarks/profiles/<benchmark>.yaml`   | Checkpoint camera aliases, ordered state/action declarations, semantics, and required empty-camera count        |
+| CI manifest          | `benchmarks/benchmarks.yaml`             | Checkpoint/revision, tasks, episodes, batch size, image, profile, policy extras, and build arguments            |
+
+The shared backend serializes session operations, supports lockstep and realtime execution, and freezes completed worlds until explicit reset. Each session owns its environment batch. Native factories must release resources on close.
+
+The server path uses this data flow:
+
+```text
+native simulator → canonical NumPy observations → EnvServer → EnvClient
+  → SimVectorEnv → one-time image/tensor preparation → saved policy preprocessing
+  → policy → saved action postprocessing → EnvClient → EnvServer → native simulator
+```
+
+Do not apply in-process observation-key conversion or environment processors again to canonical server observations. Put image orientation, quaternion conversion, state ordering, and controller conventions in the shared backend adapter so evaluation and rollout agree.
+
+### Checkpoint admission
+
+Profiles alias simulator camera keys to the checkpoint's trained keys without changing view identity or component order. Checkpoint state/action dimensions must be correct; profiles cannot repair them. Persist actual trained camera declarations and keep camera mappings specific to a deployment in its profile.
+
+RGB channel count and layout are checked at admission. Acquisition height/width may differ from training metadata; resizing and resolution restrictions belong to policy preprocessing. Choose matching server dimensions when the policy requires them. Wire arrays must match the server's declared shape and dtype exactly.
+
+### Verification and CI
+
+1. Check canonical adapter parity against native preprocessing, especially camera orientation, state order, and applied actions.
+2. Compare seeded reset/step sequences through native and server execution. Check batched terminal freezing, success, episode length, rendering, and resource cleanup.
+3. Run torch-disabled import guards for shared/server code and backend imports. Explicitly document simulators requiring their own torch runtime, such as RoboTwin and RoboMME.
+4. Run `lerobot-eval --env.type=sim` with a compatible checkpoint/profile and inspect task descriptions and rendered camera views. See [the usage guide](./simulator_server) for commands.
+5. Run the generated benchmark job on the GPU runner. Preserve the LIBERO training smoke when changing shared evaluation/training integration.
+
+`benchmarks/benchmarks.yaml` generates the matrix through `scripts/ci/benchmark_matrix.py`; `.github/workflows/benchmark_run.yml` runs each entry. Add entries to the manifest rather than copying CI jobs. The policy image uses the tested checkout, dependency lock, and selected extras. Simulator images have separate pins and content tags with persistent BuildKit caches.
+
+`scripts/ci/parse_eval_metrics.py` rejects missing, malformed, or invalid required metrics. Valid 0% success is accepted for pipeline smoke testing; it does not establish policy quality. Evaluation failure must remain a job failure even when extracting artifacts succeeds. Publishing checkpoint corrections also requires updating the manifest's immutable revision pins.
+
+Validate checkpoint metadata before pinning a revision in the manifest. Changes affecting shared benchmark execution require all eight benchmark jobs and the LIBERO training smoke to pass; local sanity runs do not replace those checks.
+
+## In-process integration (compatibility path)
+
+The following sections describe direct Gymnasium integration. Simulator implementations live under `sims/native/`; `envs/<benchmark>.py` delegates to them for in-process callers. This path installs native simulator dependencies alongside the policy.
+
+This guide walks you through adding a simulation benchmark to LeRobot. Follow the steps in order and use the existing benchmarks as templates.
 
 A benchmark in LeRobot is a set of [Gymnasium](https://gymnasium.farama.org/) environments that wrap a third-party simulator (like LIBERO or Meta-World) behind a standard `gym.Env` interface. The `lerobot-eval` CLI then runs evaluation uniformly across all benchmarks.
 

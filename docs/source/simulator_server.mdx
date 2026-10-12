@@ -1,0 +1,107 @@
+# Simulator servers
+
+Simulator servers keep physics, assets, rendering, native controllers, and their dependency pins in a separate process. The policy environment runs inference, saved processors, evaluation, and rollout. Both clients use the same canonical observations and actions.
+
+`lerobot-eval` supports the simulator server through `--env.type=sim`. In-process environment types are available for compatibility. Use the server path for benchmark integrations.
+
+## Start a simulator with Docker
+
+Run from the repository root:
+
+```bash
+uv run scripts/run_sim.py docker/sims/configs/libero.yaml
+```
+
+The launcher uses `docker/sims/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Swap the YAML to select another backend.
+
+Overrides accept existing dotted keys, parse values as YAML, and leave the source file unchanged. The launcher retains the effective configuration in a temporary cache for container restarts; rerun it after a host reboot. Switching configuration recreates the server and ends active sessions. Add `--no-build` to reuse an image or `--stop` to shut down the server.
+
+For example, select camera acquisition dimensions without editing the YAML:
+
+```bash
+uv run scripts/run_sim.py docker/sims/configs/libero.yaml \
+  --set sim.kwargs.gym_kwargs.observation_height=256 \
+  --set sim.kwargs.gym_kwargs.observation_width=256
+```
+
+The simulator container requires Docker GPU access for EGL rendering.
+
+## Evaluate a checkpoint
+
+Connect evaluation to the server with a compatible checkpoint and profile:
+
+```bash
+uv run --no-sync python -m lerobot.scripts.lerobot_eval \
+  --policy.path=lerobot/smolvla_libero \
+  --policy.pretrained_revision=a24f1f380461b665158d52acd140152c79e8b36d \
+  --policy.device=cuda \
+  --env.type=sim --env.endpoint=tcp/127.0.0.1:7448 --env.deployment=libero \
+  --env.task=libero_spatial --env.task_ids='[0]' \
+  --eval.profile=benchmarks/profiles/libero.yaml \
+  --eval.n_episodes=1 --eval.batch_size=1 \
+  --output_dir=outputs/eval_libero
+```
+
+Profiles declare camera mappings, state/action component order, controller semantics, and explicit empty-camera configuration. Use `benchmarks/profiles/libero.yaml` with a compatible LIBERO checkpoint, or copy it and adjust its declarations for another policy. The checkpoint must declare its actual state/action dimensions and trained camera names. A profile maps simulator camera names to those names; it does not repair checkpoint metadata.
+
+RGB admission checks channel count and layout independently of image height/width. Policy preprocessing owns resizing and resolution restrictions. A checkpoint requiring a fixed input resolution needs a matching server configuration or policy-side resize processor. Admission strictly checks state/action dimensions and declared component order. Simulator images are HWC uint8 on the wire; generic image/tensor preparation happens once on the policy side, followed by saved policy preprocessing.
+
+Use `feature_mapping` to rename simulator observation keys to the keys expected by the policy:
+
+```yaml
+feature_mapping:
+  observation.images.front: observation.images.camera1
+  observation.images.wrist: observation.images.camera2
+```
+
+Use the keys from the server descriptor and preserve trained camera identity, even when several cameras have identical shapes. For server-backed evaluation, the profile supplies the camera rename mapping; it replaces rather than merges `--rename_map`.
+
+The gym client advances the simulator in lockstep. Completed worlds retain their terminal transition until the next explicit reset; stepping another world in the batch cannot restart them. RPC mutations are never retried. After an ambiguous timeout, close the client and create a new session.
+
+## Run a policy through the Robot API
+
+`RemoteRobot` opens a one-world realtime session. For local policy inference:
+
+```bash
+uv run --no-sync python -m lerobot.scripts.lerobot_rollout \
+  --robot.type=remote --robot.endpoint=tcp/127.0.0.1:7448 \
+  --robot.deployment=libero --robot.profile=benchmarks/profiles/libero.yaml \
+  --robot.task=libero_spatial --robot.task_id=0 \
+  --policy.path=lerobot/smolvla_libero \
+  --policy.pretrained_revision=a24f1f380461b665158d52acd140152c79e8b36d \
+  --policy.empty_cameras=1 \
+  --device=cuda --fps=20 --inference.type=sync \
+  --display_data=true --display_mode=rerun \
+  --return_to_initial_position=false --play_sounds=false
+```
+
+The episodic rollout strategy resets the world between episodes and stops on simulator success or termination. Recordings use the world's task description.
+
+For remote inference, keep the same `--robot.*` options and replace the local policy/inference options with:
+
+```bash
+--inference.type=remote \
+--inference.endpoint=tcp/127.0.0.1:7447 \
+--inference.deployment=libero \
+--inference.semantics=libero-delta-v1
+```
+
+Start the policy server separately using [remote inference setup](./remote_inference). Its schema must match the observations exposed by `RemoteRobot`, including profile camera aliases. `docker/sims/policy_libero.yaml` provides the LIBERO policy-server configuration. Omit `--policy.path` from the rollout command because the policy server loads the checkpoint.
+
+For local RTC, use `--inference.type=rtc` with the policy's RTC settings.
+
+Rollout uses wall-clock timing. Actions return after backend execution. Delta-controller hold sends zero motion while retaining the gripper command; position hold retains applied targets. Simulator failures propagate to rollout shutdown.
+
+## Start a server outside Docker
+
+Install the simulator's native dependencies in an isolated environment, install LeRobot with `--no-deps`, and install `docker/sims/requirements.txt`. Then run:
+
+```bash
+lerobot-env-server --config=docker/sims/configs/metaworld.yaml
+```
+
+LIBERO runtime images use converted NumPy initial-state files. The image build converts trusted upstream assets with `scripts/ci/convert_sim_assets.py`; the server rejects missing converted files. RoboTwin and RoboMME require their own torch for native planning and ManiSkill, respectively. Their torch installations are isolated from the policy environment.
+
+## Add a benchmark
+
+See [Adding a benchmark](./adding_benchmarks) for backend adapters, simulator images, profiles, and CI integration.
