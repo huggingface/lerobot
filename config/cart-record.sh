@@ -4,11 +4,13 @@
 #
 #   ./config/cart-record.sh <repo_id> "<task description>"
 #   ./config/cart-record.sh --watch carlkesselman/xlerobot-pick "Pick the block, drop it in the box"
-#   ./config/cart-record.sh --full --watch me/ds "task"
+#   BASE=none ./config/cart-record.sh me/ds "task"      arms and head only
 #
 # Flags, in any order, before the repo id:
 #   --watch     video to a rerun viewer - see config/_video.sh for
 #               --watch=web and --watch=local
+#   BASE=       none | omniwheels | odrive - which base the dataset will
+#               have; its features follow (no .vel columns with none)
 #
 # Everything else passes through:
 #   ./config/cart-record.sh me/ds "task" --dataset.num_episodes=10
@@ -81,6 +83,7 @@ if ! ping -c1 -W2 "$OPERATOR" >/dev/null 2>&1; then
 fi
 
 echo "config  : $CONFIG"
+base_report "$CONFIG"
 echo "leaders : $OPERATOR:5557"
 echo "dataset : $REPO_ID"
 echo "task    : $TASK"
@@ -89,6 +92,7 @@ echo
 
 exec "${RUN[@]}" lerobot-record \
   --config_path="$CONFIG" \
+  "${BASE_ARGS[@]+"${BASE_ARGS[@]}"}" \
   --dataset.repo_id="$REPO_ID" \
   --dataset.single_task="$TASK" \
   --dataset.fps="$FPS" \

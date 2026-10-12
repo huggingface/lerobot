@@ -5,6 +5,9 @@
 #   ./config/cart-teleop.sh                 the full robot, headless
 #   ./config/cart-teleop.sh --watch         + video to a rerun viewer
 #   ./config/cart-teleop.sh --watch=web     + video as Foxglove, any browser
+#   BASE=none ./config/cart-teleop.sh       arms and head only (no wheels)
+#   BASE=omniwheels ...                     the three servo wheels on bus 2
+#   BASE=odrive ...                         the two brushless wheels (default)
 
 #
 # Start ./config/operator-leader-host.sh on the Pi FIRST.
@@ -25,6 +28,7 @@ require_dev "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00" "righ
 
 OPERATOR="$(awk -F'[ #]+' '/remote_ip:/ {print $3; exit}' "$CONFIG")"
 echo "config  : $CONFIG"
+base_report "$CONFIG"
 echo "leaders : $OPERATOR:5557"
 if ! ping -c1 -W2 "$OPERATOR" >/dev/null 2>&1; then
   echo "warning: $OPERATOR does not answer ping - is operator-leader-host.sh running?" >&2
@@ -39,4 +43,5 @@ set -- "${REMAINING[@]+"${REMAINING[@]}"}"
 echo
 
 exec "${RUN[@]}" lerobot-teleoperate --config_path="$CONFIG" \
+  "${BASE_ARGS[@]+"${BASE_ARGS[@]}"}" \
   "${DISPLAY_ARGS[@]+"${DISPLAY_ARGS[@]}"}" "$@"

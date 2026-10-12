@@ -113,3 +113,32 @@ rerun_version() {
   done
   return 1
 }
+
+
+# ----------------------------------------------------------------- base
+#
+# The cart runs in three configurations, chosen by one field in the robot
+# config: base: odrive | omniwheels | none. The yaml carries the default;
+# BASE=<which> on any cart script overrides it for that run, so switching
+# the base is not a yaml edit:
+#
+#   BASE=none ./config/cart-teleop.sh         arms and head only
+#   BASE=omniwheels ./config/cart-selftest.sh --base
+#
+# Echoed in each script's header. BASE_ARGS expands to nothing when unset.
+BASE_ARGS=()
+if [[ -n "${BASE:-}" ]]; then
+  case "$BASE" in
+    odrive|omniwheels|none) BASE_ARGS=(--robot.base="$BASE") ;;
+    *) echo "error: BASE must be odrive, omniwheels or none (got '$BASE')" >&2; exit 2 ;;
+  esac
+fi
+base_report() {
+  local cfg="$1" yaml_base
+  yaml_base="$(awk -F'[ #]+' '/^ *base:/ {print $3; exit}' "$cfg")"
+  if [[ -n "${BASE:-}" ]]; then
+    echo "base    : $BASE  (BASE override; yaml says ${yaml_base:-odrive})"
+  else
+    echo "base    : ${yaml_base:-odrive}  (from the yaml; BASE=none|omniwheels|odrive overrides)"
+  fi
+}

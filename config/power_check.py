@@ -224,7 +224,7 @@ def main() -> int:
     bus2 = dict(BUS2)
     wheel_names = [n for n in bus2 if n.startswith("base_")]
     if wheel_names and not any_answer(args.port2, {n: bus2[n] for n in wheel_names}):
-        print(f"\n  (no servo wheels on bus 2 - expected with the ODrive base; surveying the arm only)")
+        print(f"\n  (no servo wheels on bus 2 - expected with base: odrive or none; surveying the arm only)")
         for n in wheel_names:
             bus2.pop(n)
     r2 = run(args.port2, bus2, "BUS 2   right arm 1-6" + (" + base wheels 7-9" if wheel_names and len(bus2) > 6 else ""))

@@ -11,6 +11,7 @@
 robot:
   id: xlerobot
   type: xlerobot_2wheels_odrive
+  base: odrive            # odrive | omniwheels | none - or BASE=<which> on the scripts
   port1: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00 # left arm + head
   port2: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00 # right arm only
 

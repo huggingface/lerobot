@@ -125,6 +125,27 @@ start.** The first action moves the followers to meet them.
 
 **Cart on blocks** unless you mean it — the base is live.
 
+### Which base
+
+The cart runs in three configurations. One field in the robot config picks
+it, and `BASE=` on any cart script overrides it for a run — no yaml edit:
+
+| | `BASE=` | what it means |
+|---|---|---|
+| two brushless wheels on the ODESC (default) | `odrive` | wheels over USB; bus 2 is the right arm only; features `x.vel`, `theta.vel` |
+| the stock three servo omniwheels | `omniwheels` | ids 7–9 on bus 2; features `x.vel`, `y.vel`, `theta.vel` |
+| arms and head only | `none` | no wheel ids, no `.vel` features; base commands from the operator are ignored (one warning) |
+
+```bash
+BASE=none ./config/cart-teleop.sh                # arms and head, cart parked
+BASE=omniwheels ./config/cart-selftest.sh --base
+```
+
+The dataset's columns follow the choice, so episodes recorded under
+different bases are different datasets. On the operator side `emit_y_vel`
+should be true only with `omniwheels`; the others drop a `y.vel` with one
+warning rather than fail.
+
 ### Recording
 
 ```bash

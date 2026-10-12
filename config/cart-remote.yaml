@@ -4,11 +4,15 @@
 #   ./config/cart-teleop.sh
 #   ./config/cart-record.sh <repo_id> "<task>"
 #
-# BASE: two brushless wheels on an ODESC/ODrive over USB
-# (type: xlerobot_2wheels_odrive). Bus 2 therefore carries the right arm
-# only, ids 1-6. The three-omniwheel robot is `type: xlerobot`, with the
-# wheels as servos 7-9 on bus 2; switch the type and the operator's
-# emit_y_vel together - a differential drive has no y.vel.
+# BASE: one field, `base:`, picks the configuration; the type stays
+# xlerobot_2wheels_odrive for all three.
+#   odrive       two brushless wheels on an ODESC/ODrive over USB (default);
+#                bus 2 is the right arm only, ids 1-6; no y.vel
+#   omniwheels   the stock three servo wheels, ids 7-9 on bus 2; has y.vel
+#   none         arms and head only; no .vel features at all
+# BASE=<which> on cart-teleop.sh / cart-record.sh / cart-selftest.sh
+# overrides it for one run. The operator's emit_y_vel should be true only
+# with omniwheels; with the others a y.vel is ignored with one warning.
 #
 # Everything the robot has is LOCAL to this machine; only the leaders are
 # remote. Camera frames go straight from USB to the dataset at full rate -
@@ -32,6 +36,7 @@ fps: 30
 
 robot:
   type: xlerobot_2wheels_odrive
+  base: odrive            # odrive | omniwheels | none - or BASE=<which> on the scripts
   id: xlerobot
 
   port1: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00   # left arm + head

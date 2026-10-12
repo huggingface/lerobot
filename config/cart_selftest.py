@@ -59,9 +59,12 @@ ROBOTS = {
 }
 
 
-def load_config(path: Path):
+def load_config(path: Path, base_kind: str | None = None):
     """Accept either a top-level robot config or a teleoperate-style file with
-    the robot nested under `robot:`. Returns (config, robot_class)."""
+    the robot nested under `robot:`. Returns (config, robot_class).
+
+    base_kind overrides the yaml's `base:` (odrive | omniwheels | none) -
+    the same switch the cart scripts expose as BASE=."""
     raw = yaml.safe_load(path.read_text())
     inner = raw.get("robot", raw)
     rtype = inner.get("type") or "xlerobot"
@@ -69,6 +72,8 @@ def load_config(path: Path):
         sys.exit(f"error: {path} describes a '{rtype}'; this test knows {sorted(ROBOTS)}.")
     config_cls, robot_cls = ROBOTS[rtype]()
     inner = {k: v for k, v in inner.items() if k != "type"}
+    if base_kind:
+        inner["base"] = base_kind
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
         yaml.safe_dump(inner, f)
         tmp = f.name
@@ -270,6 +275,9 @@ def test_arms(robot: XLerobot, base: dict, span: float = 5.0) -> None:
 
 def test_base(robot: XLerobot, speed: float = 0.08, turn: float = 25.0) -> None:
     print(f"\n--- base " + "-" * 51)
+    if not robot._base_state_keys:
+        record(WARN, "base test skipped", "base: none - this configuration has no wheels")
+        return
     print("      The wheels will turn. PUT THE CART ON BLOCKS or hold it clear")
     print("      of the floor - it will drive away otherwise.")
     if not ask("Wheels are off the ground. Drive them?"):
@@ -305,7 +313,7 @@ def test_base(robot: XLerobot, speed: float = 0.08, turn: float = 25.0) -> None:
     print("      derived from all wheels together, so correct ones can mask one")
     print("      that is spinning the wrong way.")
     print()
-    if robot.name == "xlerobot_2wheels_odrive":
+    if robot.config.base == "odrive":
         print(f"      Geometry comes from the config: wheel_radius {robot.config.wheel_radius} m,")
         print(f"      wheelbase {robot.config.wheelbase} m. If x.vel reads consistently high")
         print("      or low by the same factor, measure yours - a scale error, not a fault.")
@@ -326,14 +334,17 @@ def main() -> int:
     ap.add_argument("--arms", action="store_true")
     ap.add_argument("--base", action="store_true")
     ap.add_argument("--no-cameras", action="store_true", help="isolate the servos from a camera fault")
+    ap.add_argument("--base-kind", choices=("odrive", "omniwheels", "none"), default=None,
+                    help="override the yaml's base: field for this run")
     args = ap.parse_args()
 
-    cfg, robot_cls = load_config(Path(args.config_path))
+    cfg, robot_cls = load_config(Path(args.config_path), args.base_kind)
     if args.no_cameras:
         cfg.cameras = {}
 
     print(f"config : {args.config_path}")
     print(f"robot  : {robot_cls.name}")
+    print(f"base   : {cfg.base}")
     print(f"id     : {cfg.id}")
     print(f"port1  : {cfg.port1}")
     print(f"port2  : {cfg.port2}")

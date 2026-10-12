@@ -7,6 +7,8 @@
 #   ./config/cart-selftest.sh --base             + drive the wheels (ON BLOCKS)
 #   ./config/cart-selftest.sh --arms --head --base
 #   ./config/cart-selftest.sh --no-cameras       isolate the servos
+#   BASE=none ./config/cart-selftest.sh          arms and head only
+#   BASE=omniwheels ./config/cart-selftest.sh --base   the servo wheels
 #
 # Camera frames land in ./selftest-frames/. Look at them - a camera can be
 # live, correctly sized and pointed at the wrong thing.
@@ -30,4 +32,7 @@ for dev in /dev/cam_left /dev/cam_right; do
   fi
 done
 
-exec "${RUN[@]}" python "$REPO/config/cart_selftest.py" --config_path="$CONFIG" "$@"
+echo "config  : $CONFIG"
+base_report "$CONFIG"
+exec "${RUN[@]}" python "$REPO/config/cart_selftest.py" --config_path="$CONFIG" \
+  ${BASE:+--base-kind "$BASE"} "$@"

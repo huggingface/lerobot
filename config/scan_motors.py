@@ -166,7 +166,7 @@ def main() -> int:
     print(f"\n{'=' * 68}\nWHAT YOU CAN RUN\n{'=' * 68}")
     print(f"  both arms      {'yes' if have_arms else 'no'}")
     print(f"  head           {'yes' if have_head else 'no'}")
-    print(f"  servo wheels   {'yes' if have_servo_wheels else 'no  (expected with the ODrive base)'}")
+    print(f"  servo wheels   {'yes' if have_servo_wheels else 'no  (expected with base: odrive or none)'}")
     print()
 
     if have_arms and have_head:
@@ -175,8 +175,8 @@ def main() -> int:
             print("    --robot.type=xlerobot")
         else:
             print("  Arms and head complete; no servo wheels on bus 2. That is the")
-            print("  layout for the ODrive base:")
-            print("    --robot.type=xlerobot_2wheels_odrive")
+            print("  layout for a cart without servo wheels:")
+            print("    --robot.type=xlerobot_2wheels_odrive  with base: odrive (wheels on USB) or none")
             print("  The ODrive is found over USB, not scanned here - lsusb should")
             print("  show 1209:0d32 (ODrive / ODESC).")
         print("\n  Calibrate (same calibration file either way; the wheels are not in it):")
