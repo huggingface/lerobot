@@ -31,7 +31,7 @@ from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, re
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
-from tests.mocks.mock_teleop import MockTeleopConfig
+from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
 
 def _ticks(summary: str) -> int:
@@ -67,6 +67,122 @@ def test_teleoperate(cadence_log):
     assert summary.startswith("Cadence summary — whole run · target 30 Hz (33.3 ms budget per tick):")
     for step in ("observe", "teleop", "send"):
         assert step in summary, step
+
+
+def test_teleoperate_with_a_base_teleop_alone():
+    cfg = TeleoperateConfig(
+        robot=MockRobotConfig(),
+        base_teleop=MockTeleopConfig(n_motors=1),
+        fps=30,
+        teleop_time_s=0.1,
+    )
+    teleoperate(cfg)
+
+
+def test_record_with_a_base_teleop_alone_holds_the_other_actions(tmp_path):
+    # The base teleop commands motor_1; with no arm teleop, motor_2 and motor_3 hold their first reading.
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "record_base",
+        num_episodes=1,
+        episode_time_s=0.2,
+        reset_time_s=0,
+        push_to_hub=False,
+    )
+    cfg = RecordConfig(
+        robot=MockRobotConfig(),
+        dataset=dataset_cfg,
+        base_teleop=MockTeleopConfig(n_motors=1),
+        play_sounds=False,
+    )
+
+    dataset = record(cfg)
+
+    actions = dataset.hf_dataset["action"]
+    assert len(actions) > 1
+    assert all(list(a[1:]) == list(actions[0][1:]) for a in actions)
+    assert len({float(a[0]) for a in actions}) > 1
+
+
+def test_record_requires_a_teleop():
+    dataset_cfg = DatasetRecordConfig(repo_id=DUMMY_REPO_ID, single_task="Dummy task", push_to_hub=False)
+    with pytest.raises(ValueError, match="base_teleop"):
+        RecordConfig(robot=MockRobotConfig(), dataset=dataset_cfg)
+
+
+@pytest.mark.parametrize("with_arm", [False, True])
+@pytest.mark.parametrize("recording", [False, True])
+def test_mobile_control_delivers_fresh_observations_to_each_device(
+    tmp_path, monkeypatch, with_arm, recording
+):
+    pending = {}
+    action_counts = {}
+
+    def on_observation(self, observation):
+        assert pending.get(self) is None
+        pending[self] = observation
+
+    def get_action(self):
+        observation = pending.pop(self)
+        assert observation
+        action_counts[self] = action_counts.get(self, 0) + 1
+        return {key: observation[key] for key in self.action_features}
+
+    monkeypatch.setattr(MockTeleop, "on_observation", on_observation)
+    monkeypatch.setattr(MockTeleop, "get_action", get_action)
+    kwargs = {
+        "robot": MockRobotConfig(),
+        "base_teleop": MockTeleopConfig(n_motors=1),
+        "teleop": MockTeleopConfig() if with_arm else None,
+    }
+    if recording:
+        dataset_cfg = DatasetRecordConfig(
+            repo_id=DUMMY_REPO_ID,
+            single_task="Dummy task",
+            root=tmp_path / "mobile_observed",
+            num_episodes=1,
+            episode_time_s=0.1,
+            reset_time_s=0,
+            push_to_hub=False,
+        )
+        record(RecordConfig(**kwargs, dataset=dataset_cfg, play_sounds=False))
+    else:
+        teleoperate(TeleoperateConfig(**kwargs, fps=30, teleop_time_s=0.1))
+    assert not pending
+    assert len(action_counts) == (2 if with_arm else 1)
+    assert all(count > 0 for count in action_counts.values())
+
+
+def test_record_disconnects_arm_after_base_disconnects(tmp_path):
+    arm_cfg, base_cfg = MockTeleopConfig(), MockTeleopConfig(n_motors=1)
+    arm, base = MockTeleop(arm_cfg), MockTeleop(base_cfg)
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "disconnected_base",
+        num_episodes=1,
+        episode_time_s=0.1,
+        reset_time_s=0,
+        push_to_hub=False,
+    )
+    cfg = RecordConfig(
+        robot=MockRobotConfig(), dataset=dataset_cfg, teleop=arm_cfg, base_teleop=base_cfg, play_sounds=False
+    )
+    get_action = base.get_action
+
+    def disconnect_after_action():
+        action = get_action()
+        base.disconnect()
+        return action
+
+    with (
+        patch("lerobot.scripts.lerobot_record.make_teleoperator_from_config", side_effect=[arm, base]),
+        patch.object(base, "get_action", side_effect=disconnect_after_action),
+    ):
+        record(cfg)
+    assert not base.is_connected
+    assert not arm.is_connected
 
 
 def _spy_on_observation():

@@ -266,6 +266,22 @@ You should see on your laptop something like this: `[INFO] Connected to remote r
 > [!TIP]
 > If you use a different keyboard, you can change the keys for each command in the [`LeKiwiClientConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/lekiwi/config_lekiwi.py).
 
+### From the command line
+
+`lerobot-teleoperate` drives LeKiwi too: `--teleop` takes the leader arm and `--base_teleop` the keyboard that drives the base. Leave out `--teleop` to drive the base from the keyboard alone; the arm then holds the position it had when teleoperation started.
+
+```bash
+lerobot-teleoperate \
+    --robot.type=lekiwi_client \
+    --robot.remote_ip=172.18.134.136 \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem585A0077581 \
+    --teleop.id=my_awesome_leader_arm \
+    --base_teleop.type=keyboard
+```
+
+The same `--teleop` / `--base_teleop` flags work with `lerobot-record`.
+
 ### Wired version
 
 If you have the **wired** LeKiwi version, please run all commands on your laptop.
