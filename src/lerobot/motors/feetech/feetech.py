@@ -289,11 +289,8 @@ class FeetechMotorsBus(SerialMotorsBus):
             model = self._get_motor_model(motor)
             max_res = self.model_resolution_table[model] - 1
             offset = pos - int(max_res / 2)
-            sign_bit = self.model_encoding_table.get(model, {}).get("Homing_Offset")
-            if sign_bit is not None:
-                max_magnitude = (1 << sign_bit) - 1
-                offset = max(-max_magnitude, min(max_magnitude, offset))
-            half_turn_homings[motor] = offset
+            max_magnitude = (1 << self.model_encoding_table[model]["Homing_Offset"]) - 1
+            half_turn_homings[motor] = max(-max_magnitude, min(max_magnitude, offset))
 
         return half_turn_homings
 
