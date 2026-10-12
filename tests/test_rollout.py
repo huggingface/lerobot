@@ -98,7 +98,7 @@ def test_dagger_config_defaults():
 
 
 def test_inference_config_types():
-    from lerobot.rollout import RTCInferenceConfig, SyncInferenceConfig
+    from lerobot.inference import RTCInferenceConfig, SyncInferenceConfig
 
     assert SyncInferenceConfig().type == "sync"
 
@@ -633,7 +633,7 @@ def test_setup_defaults_to_starting_the_engine():
 
 
 def test_create_inference_engine_sync():
-    from lerobot.rollout import SyncInferenceConfig, SyncInferenceEngine, create_inference_engine
+    from lerobot.inference import SyncInferenceConfig, SyncInferenceEngine, create_inference_engine
 
     engine = create_inference_engine(
         SyncInferenceConfig(),
@@ -651,8 +651,7 @@ def test_create_inference_engine_sync():
 
 
 def test_create_inference_engine_remote_explains_session_construction():
-    from lerobot.inference import RemoteInferenceConfig
-    from lerobot.rollout import create_inference_engine
+    from lerobot.inference import RemoteInferenceConfig, create_inference_engine
 
     config = RemoteInferenceConfig(deployment="test", semantics="radians-v1")
     with pytest.raises(ValueError, match="connected RemoteClient; use build_rollout_context"):
@@ -1454,8 +1453,8 @@ def _build_sync_engine(policy, pre, post):
     The engine itself knows nothing about relative actions; the anchor hold lives in
     ``RelativeActionsProcessorStep`` and is armed once, here, by ``bind_relative_anchor``.
     """
+    from lerobot.inference import SyncInferenceEngine
     from lerobot.processor import bind_relative_anchor
-    from lerobot.rollout import SyncInferenceEngine
 
     bind_relative_anchor(policy, pre)
     return SyncInferenceEngine(

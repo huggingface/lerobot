@@ -21,8 +21,6 @@ motor tick, including ticks without a queue pop. All clocks here are client-loca
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 import time
 from collections import deque
@@ -35,7 +33,7 @@ import torch
 
 from lerobot.policies.rtc import ActionQueue, QueueSnapshot, RTCConfig
 
-from .contracts import ActionChunk, ActionProvenance, ActionSource, ExecutionMode, ObservationSnapshot
+from .contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
 
 
 @dataclass(frozen=True)
@@ -50,6 +48,65 @@ class ChunkRequest:
     delay: int
     submitted_at: float
     playback_at_submission: float = 0.0
+
+
+@dataclass
+class HoldState:
+    """Hold acknowledgment and anchored deadline, protected by the engine's lock.
+
+    Engines own motion invalidation, worker ordering and fresh captures. This
+    state only coordinates the wait; it never issues hardware commands.
+    """
+
+    reason: str | None = None
+    started_at: float = 0.0
+    deadline: float | None = None
+    acknowledged: bool = False
+
+    @property
+    def requested(self) -> bool:
+        """Whether a hold is awaiting acknowledgment or completion."""
+        return self.reason is not None
+
+    @property
+    def ready(self) -> bool:
+        """Whether the control thread has acknowledged the requested hold."""
+        return self.requested and self.acknowledged
+
+    def request(self, reason: str, now: float, timeout_s: float | None, *, upgrade: bool = False) -> bool:
+        """Start once; an upgrade keeps the acknowledgment and time anchor and widens the budget once.
+
+        Re-requesting the current reason is a no-op, so per-tick checks never renew a deadline.
+        """
+        if self.requested:
+            if upgrade and reason != self.reason:
+                self.reason = reason
+                if timeout_s is not None:
+                    deadline = self.started_at + timeout_s
+                    self.deadline = max(self.deadline, deadline) if self.deadline is not None else deadline
+            return False
+        self.reason, self.started_at = reason, now
+        self.deadline = None if timeout_s is None else now + timeout_s
+        self.acknowledged = False
+        return True
+
+    def acknowledge(self) -> bool:
+        """Return true only on the first acknowledgment of the current hold."""
+        if not self.requested or self.acknowledged:
+            return False
+        self.acknowledged = True
+        return True
+
+    def expired(self, now: float) -> bool:
+        """Whether the planned wait expired; starvation has its own runtime deadline."""
+        return self.deadline is not None and now > self.deadline
+
+    def clear(self) -> None:
+        """Clear a completed or superseded wait without changing runtime permission."""
+        self.reason = None
+        self.started_at = 0.0
+        self.deadline = None
+        self.acknowledged = False
 
 
 def estimate_delay(
@@ -141,9 +198,6 @@ class ChunkRuntime:
         self._initial_turnaround = 0.0
         self._completed = 0
         self._last_anchor: tuple[int, float, int] | None = None
-        self._last_action: torch.Tensor | None = None
-        self._last_dispatch_request = ""
-        self.dispatch_events: deque[dict] = deque(maxlen=128)
         self.wait_events: deque[dict] = deque(maxlen=128)
         self.last_accept: dict = {}
 
@@ -188,8 +242,6 @@ class ChunkRuntime:
             self.held = held
             self.has_executed = False
             self._last_anchor = None
-            self._last_action = None
-            self._last_dispatch_request = ""
             self.started_at = self.clock()
             self.starvation_deadline = waiting_deadline
             self._starvation_request_deadline = pending_deadline
@@ -416,22 +468,9 @@ class ChunkRuntime:
                 observation_id=request.observation.observation_id,
             )
             self.last_accept.update(
-                turnaround_s=elapsed,
-                playback_at_submission_s=request.playback_at_submission,
-                timing_margin_s=request.playback_at_submission - elapsed if self.has_executed else None,
-                cursor_advance=progress,
                 trimmed_actions=trim,
                 overlap_steps=0,
                 blended_steps=0,
-                source_age_at_acceptance_s=now - provenance.capture_time,
-                remaining_old_playback_s=self.queue.qsize() * self.interval,
-                estimated_first_dispatch_source_age_s=now
-                - provenance.capture_time
-                + (
-                    self.queue.qsize() * self.interval
-                    if self.chunk_merge == "append" and self.mode is ExecutionMode.CHUNK
-                    else 0
-                ),
             )
             if self.chunk_merge == "aligned":
                 accepted = self._accept_aligned(request, actions, provenance, now)
@@ -468,26 +507,6 @@ class ChunkRuntime:
             )
         )
 
-    @staticmethod
-    def _blended_provenance(old: ActionProvenance, new: ActionProvenance) -> ActionProvenance:
-        """Summarize all contributing history in constant storage, without refreshing age."""
-        oldest = old.oldest_contributor or ActionSource(old.capture_time, old.observation_id, old.request_id)
-        if new.capture_time < oldest.capture_time:
-            oldest = ActionSource(new.capture_time, new.observation_id, new.request_id)
-        digest = hashlib.sha256(
-            json.dumps(
-                [old.contributor_digest, old.request_id, old.capture_time, new.request_id, new.capture_time],
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
-        return replace(
-            new,
-            capture_time=oldest.capture_time,
-            oldest_contributor=oldest,
-            contributor_count=min(old.contributor_count + 1, 2**63 - 1),
-            contributor_digest=digest,
-        )
-
     def _accept_aligned(
         self, request: ChunkRequest, actions: torch.Tensor, provenance: ActionProvenance, now: float
     ) -> bool:
@@ -522,17 +541,14 @@ class ChunkRuntime:
                 future[index, coordinates] = (1 - self.blend_weight) * previous[
                     index, coordinates
                 ] + self.blend_weight * future[index, coordinates]
-                sources[index] = self._blended_provenance(old, provenance)
+                sources[index] = replace(
+                    provenance, capture_time=min(old.capture_time, provenance.capture_time)
+                )
                 self.last_accept["blended_steps"] += 1
-        if self._last_action is not None:
-            self.last_accept["transition_delta"] = (future[0] - self._last_action).tolist()
-        if overlap and previous is not None:
-            self.last_accept["replacement_delta"] = (future[0] - previous[0]).tolist()
         accepted = self.queue.replace_future(future, sources, snapshot=snapshot)
         self.last_accept.update(
             accepted=accepted,
             usable_actions=len(future),
-            estimated_first_dispatch_source_age_s=now - sources[0].capture_time,
         )
         return accepted
 
@@ -547,7 +563,7 @@ class ChunkRuntime:
                 return False
             return self.current is not None or not self.queue.empty()
 
-    def pop(self, *, control_tick: int | None = None) -> tuple[torch.Tensor, ActionProvenance] | None:
+    def pop(self) -> tuple[torch.Tensor, ActionProvenance] | None:
         """Commit an endpoint to interpolation; its provenance remains age-checked."""
         with self.lock:
             if not self.dispatch_allowed():
@@ -565,21 +581,4 @@ class ChunkRuntime:
             self.has_executed = True
             if not self.dispatch_allowed():
                 return None
-            if provenance.request_id != self._last_dispatch_request:
-                self._last_dispatch_request = provenance.request_id
-                self.dispatch_events.append(
-                    {
-                        "time": self.clock(),
-                        "generation": provenance.generation,
-                        **({"control_tick": control_tick} if control_tick is not None else {}),
-                        "request_id": provenance.request_id,
-                        "source_age_s": self.clock() - provenance.capture_time,
-                        "contributor_count": provenance.contributor_count,
-                        "action_cursor": self.queue.snapshot().cursor,
-                        "transition_delta": None
-                        if self._last_action is None
-                        else (action - self._last_action).tolist(),
-                    }
-                )
-            self._last_action = action.clone()
             return action, provenance

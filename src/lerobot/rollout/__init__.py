@@ -24,18 +24,6 @@ from lerobot.utils.import_utils import require_package
 
 require_package("datasets", extra="dataset")
 
-from lerobot.inference import (
-    InferenceEngine,
-    InferenceEngineConfig,
-    QueryAnswer,
-    QueryKind,
-    RTCInferenceConfig,
-    RTCInferenceEngine,
-    SyncInferenceConfig,
-    SyncInferenceEngine,
-    create_inference_engine,
-)
-
 from .configs import (
     BaseStrategyConfig,
     DAggerKeyboardConfig,
@@ -87,16 +75,10 @@ __all__ = [
     "HardwareContext",
     "HighlightStrategy",
     "HighlightStrategyConfig",
-    "InferenceEngine",
-    "InferenceEngineConfig",
     "InteractiveSession",
     "LinkedEvent",
     "PolicyContext",
     "ProcessorContext",
-    "QueryAnswer",
-    "QueryKind",
-    "RTCInferenceConfig",
-    "RTCInferenceEngine",
     "RolloutConfig",
     "RolloutContext",
     "RolloutController",
@@ -106,9 +88,6 @@ __all__ = [
     "RuntimeContext",
     "SentryStrategy",
     "SentryStrategyConfig",
-    "SyncInferenceConfig",
-    "SyncInferenceEngine",
     "build_rollout_context",
-    "create_inference_engine",
     "create_strategy",
 ]

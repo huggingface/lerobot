@@ -186,8 +186,8 @@ def test_task_change_during_compile_warmup_needs_no_hold_acknowledgment():
         assert not engine.ready
         assert engine._runtime.pending is not None
         assert engine.set_task("new task")
-        assert not engine._hold_requested
-        assert engine._language_deadline is None
+        assert not engine._hold.requested
+        assert engine._hold.deadline is None
         # The control thread only waits for readiness here; it does not acknowledge holds.
         engine._policy.release.release(3)
         assert wait_for(lambda: engine.ready)
@@ -229,16 +229,16 @@ def test_instruction_hold_language_upgrade_preserves_ack_and_bounded_budget(
         engine.pump_query({})
     else:
         assert engine.ask("what?")
-    assert engine._hold_reason == "Language request"
-    assert engine._hold_acknowledged.is_set() == acknowledge_first
+    assert engine._hold.reason == "Language request"
+    assert engine._hold.acknowledged == acknowledge_first
     assert engine._runtime.generation == generation
     deadline = started + max(action_timeout, language_timeout)
-    assert engine._language_deadline == deadline
+    assert engine._hold.deadline == deadline
     now[0] = deadline - 0.1
     for _ in range(3):
         assert not engine.dispatch_allowed()
         engine.acknowledge_hold()
-        assert engine._language_deadline == deadline
+        assert engine._hold.deadline == deadline
     assert not engine.failed
     now[0] = deadline + 0.1
     assert not engine.dispatch_allowed()
@@ -276,7 +276,7 @@ def test_upgraded_language_hold_requires_fresh_query_and_action_observations():
         assert engine.action_queue.empty(), "old-task inference cannot restore motion"
         torch.testing.assert_close(text_observations[0], torch.full((1, 2), 2.0))
         finish.set()
-        assert wait_for(lambda: not engine._hold_requested)
+        assert wait_for(lambda: not engine._hold.requested)
         assert len(engine._policy.calls) == 1, "actions need a post-query capture"
         observe(engine, 3)
         # The worker clones the observation after publishing its call metadata.

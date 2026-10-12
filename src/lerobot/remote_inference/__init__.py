@@ -14,7 +14,6 @@
 
 """Exclusive asynchronous policy serving over Zenoh."""
 
-from .build_info import SOFTWARE_BUILD
 from .chunk_contract import chunk_settings
 from .client import RemoteClient, RequestCancelled
 from .configs import ExecutionConfig, LanguageConfig, ModelConfig, ServerConfig
@@ -25,7 +24,6 @@ from .server import PolicyServer, SessionWorker
 
 __all__ = [
     "PROTOCOL_VERSION",
-    "SOFTWARE_BUILD",
     "AdmissionDeniedError",
     "ErrorCode",
     "ExecutionConfig",

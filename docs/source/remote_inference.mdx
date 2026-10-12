@@ -263,7 +263,7 @@ When saving logs, use `2>&1 | tee -i server.log` (or `client.log`). The `-i` kee
 | `BUSY` after a client restart              | Wait for absent-client cleanup and running work. Rejected reconnects do not renew ownership grace.                     |
 | Contract mismatch                          | Compare schemas, modes and startup software metadata; restart/update the incompatible process.                         |
 
-DEBUG includes `request_spacing_s`, committed actions since the previous request, trimmed/usable steps and overlap. These describe commanded progress, not measured physical execution.
+DEBUG includes each request's playback at submission, observation age and cursor progress, plus trimmed/usable steps and overlap per result. These describe commanded progress, not measured physical execution.
 
 ## Configuration and networking
 

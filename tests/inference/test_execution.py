@@ -3,7 +3,14 @@
 import numpy as np
 import torch
 
-from lerobot.inference import ActionChunk, ActionProvenance, ChunkRuntime, ExecutionMode, ObservationSnapshot
+from lerobot.inference import (
+    ActionChunk,
+    ActionProvenance,
+    ChunkRuntime,
+    ExecutionMode,
+    HoldState,
+    ObservationSnapshot,
+)
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
@@ -207,3 +214,30 @@ def test_replace_future_requires_current_cursor_and_generation():
         assert provenance == expected_source
     assert queue.empty()
     assert queue.snapshot().cursor == fresh.cursor + 2
+
+
+def test_hold_state_upgrades_once_without_renewing_per_tick():
+    hold = HoldState()
+    assert hold.request("instruction", 10.0, 3.0)
+    assert hold.requested and not hold.ready and hold.deadline == 13.0
+    assert not hold.request("instruction", 11.0, 3.0)
+    assert (hold.started_at, hold.deadline) == (10.0, 13.0)
+    assert hold.acknowledge() and not hold.acknowledge()
+    # Upgrading keeps the anchor and acknowledgment and widens the budget once.
+    assert not hold.request("language", 12.0, 5.0, upgrade=True)
+    assert hold.reason == "language" and hold.ready and hold.deadline == 15.0
+    # Re-requesting the current reason, as every motor tick does, never renews the deadline.
+    hold.deadline = 11.5
+    assert not hold.request("language", 12.0, 5.0, upgrade=True)
+    assert hold.deadline == 11.5 and hold.expired(12.0)
+    hold.clear()
+    assert not hold.requested and hold.deadline is None and not hold.acknowledged
+    # A shorter upgrade cannot shrink an existing budget; starvation has no planned deadline.
+    assert hold.request("instruction", 20.0, 3.0)
+    assert not hold.request("language", 21.0, 1.0, upgrade=True)
+    assert hold.deadline == 23.0
+    hold.clear()
+    assert hold.request("starvation", 30.0, None)
+    assert not hold.expired(1e9)
+    assert not hold.request("language", 31.0, 2.0, upgrade=True)
+    assert hold.deadline == 32.0

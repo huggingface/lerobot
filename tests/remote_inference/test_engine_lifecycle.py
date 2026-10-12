@@ -149,12 +149,7 @@ def test_planned_hold_deadline_faults_and_cannot_release_motion(session):
     engine._global_shutdown = shutdown
     engine.resume()
     assert engine.ask("A query that cannot start")
-    engine._hold_started -= (
-        engine.config.language_timeout_s
-        + engine.config.action_timeout_s
-        + engine.config.handshake_timeout_s
-        + 1
-    )
+    engine._hold.deadline = engine.runtime.clock() - 1
     assert not engine.dispatch_allowed()
     assert engine.failed
     assert "hold deadline" in engine.failure_traceback

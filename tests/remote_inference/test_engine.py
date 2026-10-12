@@ -213,7 +213,7 @@ def test_upgraded_language_hold_requires_fresh_query_and_action_observations(ses
     engine.resume()
     assert engine.runtime.held, "idempotent resume must preserve an acknowledged language hold"
     client.text_release.set()
-    assert wait_for(lambda: not engine._hold_requested)
+    assert wait_for(lambda: not engine._hold.requested)
     assert len(client.requests) == 1, "actions need a post-query capture"
     client.action_started.clear()
     capture(engine)

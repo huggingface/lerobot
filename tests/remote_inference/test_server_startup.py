@@ -66,7 +66,7 @@ def _language_deployment(tmp_path, monkeypatch, *, recipe_kind="none"):
     post.save_pretrained(tmp_path)
     server = ServerConfig(
         deployment="test",
-        model=ModelConfig(str(tmp_path)),
+        model=ModelConfig(str(tmp_path), device="cpu"),
         execution=ExecutionConfig(action_fps=30, warmup_calls=1),
         language=LanguageConfig(enabled=True),
         zenoh=ZenohConfig(listen_endpoints=["tcp/127.0.0.1:7447"]),
@@ -157,7 +157,7 @@ from tests.inference.test_policy_runner import ConformingPolicy, runner_for, tin
 runner = runner_for(ConformingPolicy(tiny_config()))
 entry.load_deployment = lambda cfg: (runner, "test-artifact")
 cfg = ServerConfig(
-    deployment="signal-test", model=ModelConfig("unused"), semantics="radians-v1",
+    deployment="signal-test", model=ModelConfig("unused", device="cpu"), semantics="radians-v1",
     features=list(runner.capabilities.features), action_feature=runner.capabilities.action_feature,
     zenoh=ZenohConfig(listen_endpoints=["tcp/127.0.0.1:0"]),
 )

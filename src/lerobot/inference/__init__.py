@@ -19,7 +19,6 @@ from .chunk_settings import chunk_settings
 from .contracts import (
     ActionChunk,
     ActionProvenance,
-    ActionSource,
     ChunkPolicySpec,
     ExecutionMode,
     FeatureSpec,
@@ -27,7 +26,7 @@ from .contracts import (
     PolicyCapabilities,
     QueryKind,
 )
-from .execution import ChunkRequest, ChunkRuntime, estimate_delay, trained_overlap_valid
+from .execution import ChunkRequest, ChunkRuntime, HoldState, estimate_delay, trained_overlap_valid
 from .factory import (
     InferenceEngineConfig,
     RemoteInferenceConfig,
@@ -43,13 +42,13 @@ from .sync import SyncInferenceEngine
 __all__ = [
     "ActionChunk",
     "ActionProvenance",
-    "ActionSource",
     "ChunkPolicySpec",
     "ChunkPrediction",
     "ChunkRequest",
     "ChunkRuntime",
     "ExecutionMode",
     "FeatureSpec",
+    "HoldState",
     "InferenceEngine",
     "InferenceEngineConfig",
     "InferenceRobot",

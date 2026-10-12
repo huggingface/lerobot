@@ -33,7 +33,7 @@ def test_oversized_generated_subtask_stops_sequencer_without_fault_and_resumes_f
     capture(engine)
     assert client.text_started.wait(2)
     client.text_release.set()
-    assert wait_for(lambda: not engine._hold_requested)
+    assert wait_for(lambda: not engine._hold.requested)
 
     assert not engine.failed
     assert engine.autosteer_goal is None

@@ -190,7 +190,7 @@ blended = q_t + b_w * (i_t - q_t)
 
 `q_t` is the queued target and `i_t` the incoming target for the same future slot. `b_w` (`blend_weight`) weights the **incoming** prediction. One means replacement. `blend_steps=0` disables blending. Other coordinates take the incoming values; gripper channels must not be selected merely because they are numeric. Relative-to-absolute processing occurs before blending.
 
-A future endpoint may be blended again before it is committed. Provenance retains a bounded summary, including the oldest contributor's capture time, count and digest. Repeated blending cannot make old data fresh. Contributors from incompatible context or beyond source-age bounds are excluded.
+A future endpoint may be blended again before it is committed. Provenance retains the oldest contributor's capture time, so repeated blending cannot make old data fresh. Contributors from incompatible context or beyond source-age bounds are excluded.
 
 ### RTC
 

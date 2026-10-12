@@ -30,7 +30,7 @@ def deployment(tmp_path_factory):
     post.save_pretrained(checkpoint)
     return ServerConfig(
         deployment="test",
-        model=ModelConfig(str(checkpoint)),
+        model=ModelConfig(str(checkpoint), device="cpu"),
         execution=ExecutionConfig(warmup_calls=1),
         zenoh=ZenohConfig(listen_endpoints=["tcp/127.0.0.1:7447"]),
         semantics="radians",

@@ -28,6 +28,7 @@ from uuid import uuid4
 import numpy as np
 import torch
 
+from lerobot import __version__
 from lerobot.inference import (
     ActionChunk,
     ActionProvenance,
@@ -45,7 +46,6 @@ from lerobot.transport.zenoh import (
     ZenohTransport,
 )
 
-from .build_info import SOFTWARE_BUILD
 from .chunk_contract import (
     RTC_MODEL_SPACE,
     chunk_settings,
@@ -128,7 +128,7 @@ class RemoteClient:
     @classmethod
     def connect(cls, config: RemoteInferenceConfig) -> RemoteClient:
         """Discover exactly one ready deployment within the handshake deadline."""
-        logger.info("Remote client software=%s protocol=%s", asdict(SOFTWARE_BUILD), PROTOCOL_VERSION)
+        logger.info("Remote client lerobot_version=%s protocol=%s", __version__, PROTOCOL_VERSION)
         transport = ZenohTransport(
             ZenohConfig(
                 mode=config.zenoh_mode,

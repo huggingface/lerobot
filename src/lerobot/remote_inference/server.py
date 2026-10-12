@@ -35,6 +35,7 @@ from uuid import uuid4
 import numpy as np
 import torch
 
+from lerobot import __version__
 from lerobot.inference import ExecutionMode, FeatureSpec, ObservationSnapshot, PolicyRunner, QueryKind
 from lerobot.transport.zenoh import (
     BoundedQueryable,
@@ -44,7 +45,6 @@ from lerobot.transport.zenoh import (
     ZenohTransport,
 )
 
-from .build_info import SOFTWARE_BUILD
 from .chunk_contract import (
     CHUNK_ALIGNMENT,
     RTC_MODEL_SPACE,
@@ -227,7 +227,7 @@ class SessionWorker:
             "deployment": self.deployment,
             "instance_id": self.instance_id,
             "artifact_identity": self.artifact_identity,
-            "software": asdict(SOFTWARE_BUILD),
+            "software": {"lerobot_version": __version__},
             "semantics": self.semantics,
             "capabilities": capabilities,
             "execution_contracts": list(self.execution_contracts),

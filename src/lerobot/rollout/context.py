@@ -46,7 +46,7 @@ from lerobot.inference import (
     validate_local_chunk_policy,
 )
 from lerobot.policies import PreTrainedPolicy, get_policy_class, make_pre_post_processors
-from lerobot.policies.rtc.configuration_rtc import validate_trained_rtc_horizon
+from lerobot.policies.rtc import validate_trained_rtc_horizon
 from lerobot.processor import (
     PolicyProcessorPipeline,
     RobotAction,

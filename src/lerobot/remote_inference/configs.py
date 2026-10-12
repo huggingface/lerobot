@@ -31,7 +31,7 @@ class ModelConfig:
 
     repo_or_path: str = ""
     revision: str | None = None
-    device: str = "cpu"
+    device: str = "cuda"
 
 
 @dataclass

@@ -38,7 +38,7 @@ from lerobot.utils.feature_utils import build_dataset_frame
 
 from .base import InferenceEngine, InferenceRobot, PolicyQuery, QueryKind
 from .contracts import ActionChunk, ActionProvenance, ChunkPolicySpec, ExecutionMode, ObservationSnapshot
-from .execution import ChunkRuntime
+from .execution import ChunkRuntime, HoldState
 from .prediction import chunk_inference_context, predict_chunk
 
 logger = logging.getLogger(__name__)
@@ -167,11 +167,7 @@ class RTCInferenceEngine(InferenceEngine):
         )
         self._runtime.queue.cfg = rtc_config
         self._reset_pending = False
-        self._hold_requested = False
-        self._hold_acknowledged = Event()
-        self._hold_started = 0.0
-        self._language_deadline: float | None = None
-        self._hold_reason = "Language request"
+        self._hold = HoldState()
         self._active_query_generation = 0
         self._language_preprocessor, self._language_postprocessor = deepcopy((preprocessor, postprocessor))
         if getattr(robot_wrapper, "supports_position_hold", False):
@@ -293,15 +289,13 @@ class RTCInferenceEngine(InferenceEngine):
         with self._obs_lock:
             self._reset_epoch += 1
             self._obs_holder["obs"] = None
-            self._hold_requested = False
-            self._hold_acknowledged.clear()
-            self._language_deadline = None
+            self._hold.clear()
 
     def resume(self) -> None:
         """Resume the RTC background thread."""
         logger.info("Resuming RTC inference thread")
         with self._obs_lock:
-            if self._runtime.activate(held=self._hold_requested):
+            if self._runtime.activate(held=self._hold.requested):
                 self._policy_active.set()
 
     def set_task(self, task: str) -> bool:
@@ -351,9 +345,7 @@ class RTCInferenceEngine(InferenceEngine):
             self._obs_holder["obs"] = None
             self._reset_epoch += 1
             self._reset_pending = True
-            self._hold_requested = False
-            self._hold_acknowledged.clear()
-            self._language_deadline = None
+            self._hold.clear()
         # The queue is empty, so a pending task change has nothing stale to blend against.
         self._discard_task_change()
 
@@ -387,18 +379,17 @@ class RTCInferenceEngine(InferenceEngine):
         if self.has_pending_query and self._policy_active.is_set():
             self._request_language_hold()
         with self._obs_lock:
-            if self._language_deadline is not None and self._runtime.clock() > self._language_deadline:
-                self._runtime.fault(f"{self._hold_reason} deadline exceeded; restart the inference session")
+            if self._hold.expired(self._runtime.clock()):
+                self._runtime.fault(f"{self._hold.reason} deadline exceeded; restart the inference session")
         permitted = self._runtime.dispatch_allowed()
-        return permitted and self.ready and not self._hold_requested
+        return permitted and self.ready and not self._hold.requested
 
     def acknowledge_hold(self) -> None:
         """Let the worker submit text only after the control thread held the robot."""
         with self._obs_lock:
-            if self._hold_requested and not self._hold_acknowledged.is_set():
+            if self._hold.acknowledge():
                 self._obs_holder["obs"] = None
                 self._runtime.acknowledge_starvation_hold()
-                self._hold_acknowledged.set()
         if self.failed and self._global_shutdown_event is not None:
             self._global_shutdown_event.set()
 
@@ -407,25 +398,15 @@ class RTCInferenceEngine(InferenceEngine):
 
     def _request_hold(self, reason: str, timeout_s: float) -> None:
         with self._obs_lock:
-            if self._hold_requested:
-                if (
-                    self._hold_reason in {"Instruction change", "Action starvation"}
-                    and reason == "Language request"
-                ):
-                    # This is still the same physical hold and invalidated generation.
-                    # Widen its budget once, without renewing it on every motor tick.
-                    self._language_deadline = self._hold_started + max(self._action_timeout_s, timeout_s)
-                    self._hold_reason = reason
+            if not self._hold.request(
+                reason,
+                self._runtime.clock(),
+                None if reason == "Action starvation" else timeout_s,
+                upgrade=reason == "Language request",
+            ):
                 return
             if reason != "Action starvation":
                 self._runtime.invalidate(held=True, preserve_starvation=True)
-            self._hold_requested = True
-            self._hold_acknowledged.clear()
-            self._hold_started = self._runtime.clock()
-            self._language_deadline = (
-                None if reason == "Action starvation" else self._hold_started + timeout_s
-            )
-            self._hold_reason = reason
 
     # ------------------------------------------------------------------
     # Text queries
@@ -542,8 +523,8 @@ class RTCInferenceEngine(InferenceEngine):
                     continue
                 if self.has_pending_query:
                     self._request_language_hold()
-                if self._hold_requested:
-                    if not self._hold_acknowledged.is_set():
+                if self._hold.requested:
+                    if not self._hold.acknowledged:
                         time.sleep(_RTC_IDLE_SLEEP_S)
                         continue
                     with self._obs_lock:
@@ -551,16 +532,14 @@ class RTCInferenceEngine(InferenceEngine):
                         generation = self._runtime.generation
                         self._active_query_generation = generation
                         self._runtime.complete_starvation_invalidation(generation)
-                        starvation = self._hold_reason == "Action starvation"
+                        starvation = self._hold.reason == "Action starvation"
                     if starvation:
                         self._policy.drop_queued_actions()
                         with self._obs_lock:
-                            if self._hold_reason == "Action starvation" and self._runtime.release_hold(
+                            if self._hold.reason == "Action starvation" and self._runtime.release_hold(
                                 generation
                             ):
-                                self._hold_requested = False
-                                self._hold_acknowledged.clear()
-                                self._language_deadline = None
+                                self._hold.clear()
                                 self._obs_holder["obs"] = None
                         continue
                     if obs is None:
@@ -572,9 +551,7 @@ class RTCInferenceEngine(InferenceEngine):
                         # Pause/reset/fault during text never grants permission to
                         # resume. A healthy active run must obtain fresh actions.
                         if self._runtime.release_hold(generation):
-                            self._hold_requested = False
-                            self._hold_acknowledged.clear()
-                            self._language_deadline = None
+                            self._hold.clear()
                             self._obs_holder["obs"] = None
                     continue
                 if self._rtc_queue_threshold < 0 or not self._runtime.should_request():

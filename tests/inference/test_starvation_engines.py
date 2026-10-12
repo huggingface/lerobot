@@ -128,7 +128,7 @@ def test_starvation_discards_old_result_and_pre_ack_capture_then_resumes_fresh(
     engine.acknowledge_hold()
     backend.release()
     assert wait_for(lambda: runtime._starvation_request_deadline is None)
-    assert wait_for(lambda: not engine._hold_requested)
+    assert wait_for(lambda: not engine._hold.requested)
     assert backend.count() == 2
     assert runtime.queue.empty()
     assert engine.get_action(None) is None
@@ -159,7 +159,7 @@ def test_fresh_recovery_result_arriving_after_grace_cannot_restore_motion(backen
     exhaust_with_old_inference_pending(backend)
     engine.acknowledge_hold()
     backend.release()
-    assert wait_for(lambda: not engine._hold_requested)
+    assert wait_for(lambda: not engine._hold.requested)
     if not backend.local:
         backend.worker.action_release.clear()
     backend.capture(9.0)

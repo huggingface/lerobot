@@ -493,8 +493,8 @@ def send_next_action(
     sync and async backends — the rollout strategy never needs to branch.
 
     Call once per autonomous motor tick, including interpolation and held ticks.
-    This is the strategy's dispatch boundary: it starts the diagnostic tick,
-    checks permission before pulling and sending, clears interpolation on a
+    This is the strategy's dispatch boundary: it checks permission before
+    pulling and sending, clears interpolation on a
     denial, performs a supported local hold, acknowledges it, and records the
     dispatched command. A direct ``get_action`` call does not replace it.
 
@@ -511,7 +511,6 @@ def send_next_action(
     that no command was sent: a supported hold may have been applied instead.
     """
     engine = ctx.policy.inference
-    engine.begin_control_tick()
     features = ctx.data.dataset_features
     ordered_keys = ctx.data.ordered_action_keys
     # ``nullcontext`` accepts (and ignores) the section name, so it stands in for
@@ -553,8 +552,6 @@ def send_next_action(
         processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
         if not dispatch_permitted():
             return None
-        dispatched = ctx.hardware.robot_wrapper.send_action(processed)
-        engine.record_dispatch(
-            action_dict, dispatched if isinstance(dispatched, dict) else processed, obs_raw
-        )
+        ctx.hardware.robot_wrapper.send_action(processed)
+        engine.record_dispatch()
     return action_dict

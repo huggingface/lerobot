@@ -33,16 +33,19 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 # Front-end and engine internals, imported from their defining modules.
-from lerobot.inference import PolicyQuery, SyncInferenceConfig  # noqa: E402
+from lerobot.inference import (  # noqa: E402
+    InferenceEngine,
+    PolicyQuery,
+    QueryAnswer,
+    QueryKind,
+    SyncInferenceConfig,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.rollout import (  # noqa: E402
     AskResult,
     BaseStrategyConfig,
-    InferenceEngine,
     InteractiveSession,
     LinkedEvent,
-    QueryAnswer,
-    QueryKind,
     RolloutController,
     RolloutEvent,
     RolloutStrategy,
@@ -741,6 +744,37 @@ def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     assert policy.drop_queued_actions.call_count == 1
 
 
+def test_sync_engine_vqa_drops_precomputed_actions():
+    """Inline text generation stales any queued chunk by its duration, so a VQA flushes it."""
+    from lerobot.inference import SyncInferenceEngine
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    policy.supports_text_generation.return_value = True
+    policy.generate_text.return_value = "a red cube"
+
+    engine = SyncInferenceEngine(
+        policy=policy,
+        preprocessor=lambda obs: obs,
+        postprocessor=lambda action: action,
+        dataset_features={
+            "action": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
+        },
+        ordered_action_keys=["j1.pos", "j2.pos"],
+        task="pick up the cube",
+        device="cpu",
+        robot_type="mock",
+    )
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    assert engine.ask("what do you see?")
+    assert engine.pump_query({"observation.state": np.zeros(1, dtype=np.float32)})
+    assert policy.drop_queued_actions.call_count == 1
+    assert policy.reset.call_count == 0
+    assert [answer.answer for answer in delivered] == ["a red cube"]
+
+
 def test_drop_queued_actions_clears_the_queues_dict_convention():
     """The /subtask fast switch relies on the smolvla-style ``_queues`` dict too, not only
     on act/pi0's ``_action_queue`` (covered against a real policy in the policy tests)."""
@@ -1202,7 +1236,7 @@ def test_engine_autosteer_interval_is_measured_from_when_a_subtask_lands(engine_
     # The first subtask is requested on the very next tick, not an interval later.
     engine.pump_query({"joint.pos": 0.0})
     assert engine.task == "subtask 1 of tidy the table"
-    engine.record_dispatch({}, {}, {})
+    engine.record_dispatch()
 
     # The clock started when the subtask landed, so the next query is not due.
     engine_clock.advance(9.9)
@@ -1257,7 +1291,7 @@ def test_engine_autosteer_does_not_double_queue_while_generation_is_in_flight():
     engine._publish_answer(QueryAnswer(question=claimed.text, answer="subtask", kind=claimed.kind))
     engine.pump_query({"joint.pos": 0.0})
     assert not engine.has_pending_query
-    engine.record_dispatch({}, {}, {})
+    engine.record_dispatch()
     engine.pump_query({"joint.pos": 0.0})
     assert engine.has_pending_query
 
@@ -1503,7 +1537,7 @@ def test_rtc_engine_dispatched_task_tracks_chunk_provenance_across_set_task(supp
 
         policy.allow_one_inference()  # the in-flight chunk (still task A) lands
         if supports_hold:
-            assert _wait_for(lambda: not engine._hold_requested)
+            assert _wait_for(lambda: not engine._hold.requested)
             engine.notify_observation(dict(_RTC_OBS))
         policy.allow_one_inference()  # the next chunk is conditioned on task B
         assert _wait_for(lambda: len(policy.predicted_tasks) == 3)

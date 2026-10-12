@@ -97,15 +97,28 @@ class QueryAnswer:
 
 
 class InferenceEngine(abc.ABC):
-    """Rollout backend with thread-safe task/query submission and exclusive policy ownership.
+    """Action-production interface with shared task and language-query coordination.
 
-    Async backends receive captures through ``notify_observation``; sync uses
-    ``get_action(obs_frame)``. Serve queries on the policy owner and deliver answers
-    through ``pump_query`` on the control thread. Subclasses must call ``super``.
+    Lifecycle: ``start``/``stop`` own backend resources; ``reset`` clears episode
+    state. Async ``pause`` revokes motion, while ``resume`` permits fresh work.
+    The default pause/resume hooks are no-ops for inline inference.
 
-    ``get_action`` alone does not authorize motor dispatch. Strategies must use
-    ``send_next_action`` or preserve its per-tick permission, interpolation
-    invalidation, local hold/acknowledgment and applied-command notification.
+    Actions: sync computes in ``get_action(obs_frame)`` on the control thread.
+    Async engines receive owned captures through ``notify_observation`` and
+    return buffered actions without waiting for their worker. A returned action
+    is not dispatch permission: use rollout's ``send_next_action`` to check
+    eligibility, invalidate interpolation and acknowledge supported holds.
+
+    Tasks and queries: submission is thread-safe and never calls the policy.
+    One owner serializes policy/processor work. ``pump_query`` runs on the control
+    thread: it serves sync queries inline, or delivers async worker answers.
+    The base also sequences autosteer and prevents superseded answers applying.
+    Plain VQA discards buffered continuation everywhere: sync drops queued actions
+    inline, async engines hold and invalidate first; subtasks can change the task.
+
+    Subclasses must call ``super().__init__`` and implement resource ownership,
+    action production and query execution. Async implementations additionally
+    enforce their deadlines, context validity and dispatch permission.
     """
 
     def __init__(self, task: str = "") -> None:
@@ -538,43 +551,52 @@ class InferenceEngine(abc.ABC):
 
     @abc.abstractmethod
     def start(self) -> None:
-        """Initialise the backend."""
+        """Prepare resources on the control thread; async backends launch their owner worker."""
 
     @abc.abstractmethod
     def stop(self) -> None:
-        """Tear the backend down."""
+        """Revoke execution and release resources; async worker joins must be bounded."""
 
     @abc.abstractmethod
     def reset(self) -> None:
-        """Clear episode-scoped state."""
+        """Clear episode state; async backends invalidate motion before queuing worker resets."""
 
     @abc.abstractmethod
     def get_action(self, obs_frame: dict | None) -> torch.Tensor | None:
-        """Return the next action tensor, or ``None`` if unavailable."""
+        """Return a canonical action on the control thread, or ``None`` when unavailable.
+
+        Sync may block on inference; async only consumes buffered work. Check
+        ``dispatch_allowed`` again before sending, including interpolation ticks.
+        """
 
     def notify_observation(self, obs: dict) -> None:  # noqa: B027
-        """Publish the latest processed observation.  Default: no-op."""
+        """Publish a control-thread capture; async engines copy it before returning. Default: no-op."""
 
     def pause(self) -> None:  # noqa: B027
-        """Pause background inference.  Default: no-op."""
+        """Revoke async motion without waiting for the worker; caller clears interpolation. Default: no-op."""
 
     def resume(self) -> None:  # noqa: B027
-        """Resume background inference.  Default: no-op."""
+        """Permit fresh async work in a healthy session; never clear a terminal fault. Default: no-op."""
 
     def dispatch_allowed(self) -> bool:
-        """Control-thread gate, checked on every motor tick, including interpolation."""
+        """Check eligibility/deadlines without waiting for inference on every motor tick.
+
+        False requires clearing interpolation and applying/acknowledging a
+        supported local hold. The synchronous default permits dispatch.
+        """
         return True
 
     def acknowledge_hold(self) -> None:  # noqa: B027
-        """Confirm that the control thread invalidated interpolation and applied a local hold."""
+        """Confirm successful control-thread hold application after clearing interpolation.
 
-    def record_dispatch(self, canonical: dict, command: dict, measured: dict) -> None:
-        """Observe an actual robot command and allow the next due autosteer turn."""
+        Async workers may then proceed or await a fresh capture. This never clears
+        a fault or proves physical stillness. Default: no-op.
+        """
+
+    def record_dispatch(self) -> None:
+        """Notify a successful policy-command send so the next autosteer turn may proceed."""
         with self._query_lock:
             self._autosteer_waiting_for_motion = False
-
-    def begin_control_tick(self) -> None:  # noqa: B027
-        """Advance optional provenance for a motor tick, including held ticks."""
 
     @property
     def ready(self) -> bool:

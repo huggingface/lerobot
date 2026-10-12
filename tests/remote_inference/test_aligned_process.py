@@ -203,8 +203,6 @@ def test_aligned_relative_chunks_between_processes(process_server):
         expected = new_actions[1].clone()
         expected[:2] = old_actions[2, :2] * 0.75 + new_actions[1, :2] * 0.25
         assert source.capture_time == first_source.capture_time
-        assert source.oldest_contributor.observation_id == first_source.observation_id
-        assert source.contributor_count == 2
         torch.testing.assert_close(action, expected)
         assert action[2] == new_actions[1, 2]  # gripper is always the incoming target
         assert source.request_id == request.request_id
@@ -212,7 +210,6 @@ def test_aligned_relative_chunks_between_processes(process_server):
         action, source = runtime.pop()
         torch.testing.assert_close(action, new_actions[2])
         assert source.capture_time == next_source.capture_time
-        assert source.contributor_count == 1
         assert runtime.failure is None
     finally:
         release.set()

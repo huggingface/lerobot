@@ -19,13 +19,12 @@
 import logging
 import signal
 from collections.abc import Callable
-from dataclasses import asdict
 from typing import cast
 
+from lerobot import __version__
 from lerobot.configs import parser
 from lerobot.remote_inference import (
     PROTOCOL_VERSION,
-    SOFTWARE_BUILD,
     PolicyServer,
     ServerConfig,
     SessionWorker,
@@ -42,7 +41,7 @@ logger = logging.getLogger(__name__)
 def serve(cfg: ServerConfig) -> None:
     """Serve the configured deployment until an operator terminates the process."""
     init_logging(console_level=cfg.log_level)
-    logger.info("Policy server software=%s protocol=%s", asdict(SOFTWARE_BUILD), PROTOCOL_VERSION)
+    logger.info("Policy server lerobot_version=%s protocol=%s", __version__, PROTOCOL_VERSION)
     logger.info(
         "Loading deployment=%s model=%s revision=%s device=%s; readiness follows model warmup",
         cfg.deployment,

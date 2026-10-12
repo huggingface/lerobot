@@ -109,17 +109,8 @@ class ObservationSnapshot:
 
 
 @dataclass(frozen=True)
-class ActionSource:
-    """One original contributor identity, without recursive blend history."""
-
-    capture_time: float
-    observation_id: str
-    request_id: str
-
-
-@dataclass(frozen=True)
 class ActionProvenance:
-    """Source identity carried by every queued action, including across merges."""
+    """Incoming source identity, with the oldest contributing capture time after blending."""
 
     capture_time: float
     task: str
@@ -130,11 +121,6 @@ class ActionProvenance:
     session_id: str = ""
     server_instance_id: str = ""
     artifact_identity: str = ""
-    # The primary IDs identify the incoming prediction. capture_time is the
-    # conservative age bound; this summary retains the oldest original source.
-    oldest_contributor: ActionSource | None = None
-    contributor_count: int = 1
-    contributor_digest: str = ""
 
 
 @dataclass(frozen=True)
