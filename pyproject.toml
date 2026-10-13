@@ -271,6 +271,7 @@ lawam = [
 ]
 
 # Features
+audio = ["sounddevice>=0.5.1,<0.6.0", "soundfile>=0.13.1,<0.15.0"]
 async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
@@ -359,6 +360,7 @@ all = [
     "lerobot[lingbot_va]",
     "lerobot[lawam]",
     "lerobot[async]",
+    "lerobot[audio]",
     "lerobot[dev]",
     "lerobot[test]",
     "lerobot[video_benchmark]",
@@ -378,6 +380,7 @@ all = [
 lerobot-build-mp4-sidecar="lerobot.scripts.lerobot_build_mp4_sidecar:main"
 lerobot-calibrate="lerobot.scripts.lerobot_calibrate:main"
 lerobot-find-cameras="lerobot.scripts.lerobot_find_cameras:main"
+lerobot-find-microphones="lerobot.scripts.lerobot_find_microphones:main"
 lerobot-find-port="lerobot.scripts.lerobot_find_port:main"
 lerobot-record="lerobot.scripts.lerobot_record:main"
 lerobot-replay="lerobot.scripts.lerobot_replay:main"
