@@ -14,8 +14,10 @@
 
 """Worker/control-thread boundaries independent of network and model latency."""
 
+import time
 from threading import Event, Thread
 
+import numpy as np
 import pytest
 
 from lerobot.remote_inference.protocol import ErrorCode, ProtocolError
@@ -319,3 +321,19 @@ def test_slow_console_does_not_block_local_motion_permission(session, monkeypatc
     finally:
         release.set()
     assert client.action_started.wait(2)
+
+
+@pytest.mark.parametrize("session", [("aligned", 0), ("append", 0)], indirect=True)
+def test_submit_observation_publishes_canonical_features_with_the_current_instruction(session):
+    """Control loops outside rollout publish checkpoint-named arrays directly."""
+    engine, _ = session
+    engine.submit_observation({"observation.state": np.zeros(2, dtype=np.float32)}, 12.5)
+    snapshot = engine._observation
+    assert (snapshot.task, snapshot.task_version, snapshot.capture_time) == ("initial task", 0, 12.5)
+    assert snapshot.action_cursor == (0 if engine.config.chunk_merge == "aligned" else None)
+    assert engine.set_task("new task")
+    before = time.monotonic()
+    engine.submit_observation({"observation.state": np.ones(2, dtype=np.float32)})
+    snapshot = engine._observation
+    assert (snapshot.task, snapshot.task_version) == ("new task", 1)
+    assert snapshot.capture_time >= before

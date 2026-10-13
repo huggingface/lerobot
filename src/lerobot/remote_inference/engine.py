@@ -20,11 +20,13 @@ import logging
 import time
 import traceback
 from collections import Counter, deque
+from collections.abc import Mapping
 from dataclasses import replace
 from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread
 from uuid import uuid4
 
+import numpy as np
 import torch
 
 from lerobot.inference import (
@@ -60,10 +62,10 @@ class RemoteInferenceEngine(InferenceEngine):
         self,
         client: RemoteClient,
         config: RemoteInferenceConfig,
-        dataset_features: dict,
-        rename_map: dict[str, str],
-        robot_wrapper: InferenceRobot,
-        task: str,
+        dataset_features: dict | None = None,
+        rename_map: dict[str, str] | None = None,
+        robot_wrapper: InferenceRobot | None = None,
+        task: str = "",
         shutdown_event: Event | None = None,
     ) -> None:
         """Bind an admitted client and hold-capable robot without starting work.
@@ -71,7 +73,8 @@ class RemoteInferenceEngine(InferenceEngine):
         Args:
             client: Admitted session whose lifetime transfers to the worker.
             config: Validated scheduling, deadlines and motion settings.
-            dataset_features: Local recording schema used to construct observations.
+            dataset_features: Local recording schema used by :meth:`notify_observation`;
+                control loops publishing through :meth:`submit_observation` omit it.
             rename_map: Mapping from local observation names to checkpoint names.
             robot_wrapper: Serialized hardware access with configured position hold.
             task: Initial instruction shared by policy conditioning and action labels.
@@ -81,7 +84,7 @@ class RemoteInferenceEngine(InferenceEngine):
         self.client = client
         self.config = config
         self._features = dataset_features
-        self._rename_map = rename_map
+        self._rename_map = rename_map or {}
         self._robot = robot_wrapper
         self._global_shutdown = shutdown_event
         self.runtime = ChunkRuntime(
@@ -486,9 +489,9 @@ class RemoteInferenceEngine(InferenceEngine):
         Uses the robot wrapper's acquisition time, filters recording-only fields,
         and anchors aligned playback before the next policy endpoint is committed.
         """
-        sampled = self._robot.observation_time
-        if sampled is None:
-            sampled = time.monotonic()
+        if self._features is None:
+            raise RuntimeError("notify_observation needs dataset_features; use submit_observation")
+        sampled = None if self._robot is None else self._robot.observation_time
         frame = build_dataset_frame(self._features, obs, prefix="observation")
         mapped = {self._rename_map.get(key, key): value for key, value in frame.items()}
         if len(mapped) != len(frame):
@@ -497,9 +500,24 @@ class RemoteInferenceEngine(InferenceEngine):
         expected = {feature.name for feature in self.client.capabilities.features}
         mapped = {key: value for key, value in mapped.items() if key in expected}
         # Mapping is applied once here; server processors require an empty rename map.
+        self.submit_observation(mapped, sampled)
+
+    def submit_observation(
+        self, features: Mapping[str, np.ndarray], capture_time: float | None = None
+    ) -> None:
+        """Publish one canonical capture keyed by checkpoint feature names.
+
+        Control loops outside ``lerobot-rollout`` call this on their control thread
+        instead of :meth:`notify_observation`; the server validates the features
+        against the admitted contract. ``capture_time`` is the client monotonic time
+        taken before the hardware read, so camera waits count as source age; it
+        defaults to now.
+        """
+        if capture_time is None:
+            capture_time = time.monotonic()
         with self._task_lock:
             task, version = self._task, self._task_version
-        snapshot = ObservationSnapshot(mapped, sampled, task, version, uuid4().hex)
+        snapshot = ObservationSnapshot(features, capture_time, task, version, uuid4().hex)
         with self._lock:
             # Sampling and endpoint commits both belong to this control thread;
             # no pop occurs between the hardware read and this anchor. Workers

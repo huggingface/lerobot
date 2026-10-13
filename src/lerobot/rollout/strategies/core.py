@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from lerobot.configs import DatasetRecordConfig
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
-from lerobot.inference import InferenceEngine
+from lerobot.inference import InferenceEngine, commit_action, next_interpolated_action
 from lerobot.lerobot_types import RobotObservation
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils import OBS_STR, ActionInterpolator
@@ -501,38 +501,26 @@ def send_next_action(
     while waiting or faulted. A supported hold command may still have been sent.
     """
     engine = ctx.policy.inference
-    features = ctx.data.dataset_features
+    wrapper = ctx.hardware.robot_wrapper
     ordered_keys = ctx.data.ordered_action_keys
     # ``nullcontext`` accepts (and ignores) the section name, so it stands in for
     # ``timer.section`` verbatim when no timer was passed.
     section = timer.section if timer is not None else contextlib.nullcontext
 
-    def dispatch_permitted() -> bool:
-        if engine.dispatch_allowed():
-            return True
-        interpolator.reset()
-        if ctx.hardware.robot_wrapper.supports_hold:
-            ctx.hardware.robot_wrapper.hold()
-        engine.acknowledge_hold()
-        return False
+    def hold() -> None:
+        if wrapper.supports_hold:
+            wrapper.hold()
 
-    if not dispatch_permitted():
-        return None
-
-    if interpolator.needs_new_action():
-        with section("infer"):
-            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-            action_tensor = engine.get_action(obs_frame)
-        if action_tensor is not None:
-            interpolator.add(action_tensor.cpu())
-
-    if not dispatch_permitted():
-        return None
-
-    interp = interpolator.get()
+    # The gate/hold/acknowledge order is shared with other control loops through
+    # ``lerobot.inference``; this helper adds the frame, processor and cadence stats.
+    interp = next_interpolated_action(
+        engine,
+        interpolator,
+        lambda: build_dataset_frame(ctx.data.dataset_features, obs_processed, prefix=OBS_STR),
+        hold=hold,
+        timer=timer,
+    )
     if interp is None:
-        if timer is not None:
-            timer.note_starved_tick()
         return None
 
     if len(interp) != len(ordered_keys):
@@ -540,8 +528,6 @@ def send_next_action(
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
     with section("send"):
         processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
-        if not dispatch_permitted():
+        if not commit_action(engine, interpolator, lambda: wrapper.send_action(processed), hold=hold):
             return None
-        ctx.hardware.robot_wrapper.send_action(processed)
-        engine.record_dispatch()
     return action_dict

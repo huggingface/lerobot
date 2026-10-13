@@ -28,6 +28,7 @@ from .contracts import (
     PolicyCapabilities,
     QueryKind,
 )
+from .dispatch import commit_action, dispatch_permitted, dispatch_tick, next_interpolated_action
 from .execution import ChunkRequest, ChunkRuntime, HoldState, estimate_delay, trained_overlap_valid
 from .factory import (
     InferenceEngineConfig,
@@ -69,8 +70,12 @@ __all__ = [
     "SyncInferenceEngine",
     "chunk_inference_context",
     "chunk_settings",
+    "commit_action",
     "create_inference_engine",
+    "dispatch_permitted",
+    "dispatch_tick",
     "estimate_delay",
+    "next_interpolated_action",
     "predict_chunk",
     "supports_rtc_inference",
     "trained_overlap_valid",
