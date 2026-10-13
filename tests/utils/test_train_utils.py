@@ -233,3 +233,37 @@ def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
         expected[:max_eval_samples] if max_eval_samples else expected
     )
     assert torch.equal(rng, torch.get_rng_state())
+
+
+@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+@pytest.mark.parametrize(("num_workers", "expected"), [(0, 0), (1, 1), (4, 4), (16, 8)])
+def test_streaming_dataloader_uses_num_workers_capped_by_rank_episodes(num_workers, expected):
+    class Dataset(torch.utils.data.IterableDataset):
+        meta = SimpleNamespace(has_language_columns=False)
+
+        def num_episodes_for_rank(self, rank, world_size):
+            return 8
+
+        def num_frames_for_rank(self, rank, world_size, num_workers):
+            assert num_workers <= 8
+            return 80
+
+        def __iter__(self):
+            return iter(())
+
+    cfg = SimpleNamespace(
+        trainable_config=None,
+        dataset=SimpleNamespace(streaming=True),
+        resume=False,
+        seed=42,
+        num_workers=num_workers,
+        batch_size=2,
+        prefetch_factor=2,
+        persistent_workers=False,
+        dataloader_multiprocessing_context=None,
+        max_eval_samples=0,
+    )
+    parallel_dims = SimpleNamespace(device_type="cpu", dp_rank=0, dp_world_size=1)
+    train, _ = make_dataloaders(cfg, Dataset(), None, 0, parallel_dims)
+
+    assert train.num_workers == expected
