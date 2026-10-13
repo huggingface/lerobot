@@ -331,6 +331,29 @@ def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
 ```
 <!-- prettier-ignore-end -->
 
+### Waiting between predictions
+
+Ordinary local RTC remains usable without a new robot capability. Remote rollout, planned asynchronous language pauses and recoverable action starvation require a position-target waiting contract. Opt in with `supports_position_hold = True` only when all action fields are actual position targets and refreshing them through `send_action()` is suitable for the controller. Torque enable or a `.pos` suffix alone does not establish this: a velocity/effort controller or a decoder consuming latent motion tokens needs different semantics.
+
+The shared rollout implementation refreshes the last complete finite action returned by `send_action()`, including the gripper and any driver clipping. Return the target actually applied, not the original request, when your driver modifies it. Subsequent observation updates do not replace that target. Before any command has been applied, a validated measured position snapshot initializes it. The robot may settle toward its retained target; this contract stops trajectory advancement rather than guaranteeing an instantaneous physical stop. Validate load support, grip and command-refresh behavior on hardware for each deployment.
+
+When holding is enabled, custom action processors and teleoperation corrections must preserve a complete position command, including the gripper. The driver must return every action component with finite applied values. An incomplete/invalid return is a contract failure after command application: rollout stops and suppresses homing instead of reusing an older target. Command failures also suppress homing in synchronous rollout.
+
+Remote rollout checks this driver capability automatically; no additional hold-mode CLI flag is needed. Generic observation failures use the normal rollout cleanup path. Returning to the initial position still needs a complete observation, and may fail if a camera remains unavailable.
+
+| Robot implementation                                    | Position-target waiting support                                                                                                                                                                                                                                            |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SO followers (SO-100/SO-101), OMX, Koch                 | Supported.                                                                                                                                                                                                                                                                 |
+| HopeJr arm and hand                                     | Supported.                                                                                                                                                                                                                                                                 |
+| Rebot B601                                              | Supported across the existing absolute-position arm/gripper modes.                                                                                                                                                                                                         |
+| OpenArm                                                 | Supported with `use_velocity_and_torque=false`; mixed action schemas are excluded.                                                                                                                                                                                         |
+| BiSO, BiOpenArm, BiRebot B601                           | Supported when both underlying arms support it; their applied targets retain the left/right prefixes.                                                                                                                                                                      |
+| Reachy2                                                 | Supported only with `with_mobile_base=false`, `use_external_commands=false` and `max_relative_target=null`. Mobile-base commands are velocities, external mode does not transmit targets, and the clipping path currently returns the original rather than applied values. |
+| LeKiwi (including network client), EarthRover Mini Plus | Unsupported: actions include mobile-base velocities, which cannot be retained as position targets.                                                                                                                                                                         |
+| Unitree G1                                              | Unsupported: controller-specific/latent commands and raw `.q` joint control require separate integration with rollout waiting and balance behavior.                                                                                                                        |
+
+These declarations reflect the driver command contract, not physical validation of every embodiment or controller configuration. The generic `Robot` default remains false. Capability checks do not establish checkpoint compatibility, controller tuning, load support or hardware health.
+
 ## Adding a Teleoperator
 
 For implementing teleoperation devices, we also provide a [`Teleoperator`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/teleoperators/teleoperator.py) base class. This class is very similar to the `Robot` base class and also doesn't assume anything on form factor.

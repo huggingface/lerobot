@@ -105,8 +105,8 @@
 - sections:
   - local: inference
     title: Policy Deployment (lerobot-rollout)
-  - local: async
-    title: Use Async Inference
+  - local: remote_inference
+    title: Asynchronous Remote Inference
   - local: rtc
     title: Real-Time Chunking (RTC)
   title: "Inference"

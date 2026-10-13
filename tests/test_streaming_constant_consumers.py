@@ -9,10 +9,12 @@
 import struct
 import tracemalloc
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import (
     _ctts,
     _has_nonzero,
@@ -21,6 +23,7 @@ from lerobot.streaming.mp4 import (
     synthesize_mp4,
     synthesized_mp4_size,
 )
+from lerobot.streaming.sidecar import SidecarSpec
 from tests.datasets.test_episode_video_streaming import _minimal_mp4
 
 UINT32_MAX = 2**32 - 1
@@ -99,7 +102,10 @@ def test_constant_table_rejects_unsigned_value_above_uint32_maximum(table: str) 
 
 
 @pytest.mark.parametrize("composition_offset", [0, 2, -2])
-def test_constant_composition_offsets_preserve_synthesized_bytes_and_size(composition_offset: int) -> None:
+def test_constant_composition_offsets_preserve_synthesized_bytes_and_size(
+    composition_offset: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "cache"))
     index = parse_mp4_index("constant.mp4", _minimal_mp4([10000, 10050, 10025]))
     count = len(index.sample_pts)
     index = replace(
@@ -112,12 +118,22 @@ def test_constant_composition_offsets_preserve_synthesized_bytes_and_size(compos
         sample_durations=np.full(count, 1000, dtype=np.int64),
         sample_composition_offsets=np.full(count, composition_offset, dtype=np.int64),
     )
-    span = index.sample_slice(0, 2, keyframe_pad_s=0, keyframe_pad_fraction=0)
+    spec = SidecarSpec("test/constant", "rev", str(tmp_path), ((index.file_path, index.file_size),))
+    path = tmp_path / "constant.npz"
+    EpisodeVideoManifest.save_file_sidecar(
+        path, [VideoFileRecord(index.file_path, index.file_size, index)], spec=spec
+    )
+    mapped = EpisodeVideoManifest.load_file_sidecar(path)[index.file_path].mp4
+    assert mapped.sample_durations.strides == (0,)
+    assert mapped.sample_composition_offsets.strides == (0,)
+    assert mapped._has_composition_offsets is (composition_offset != 0)
+
+    span = mapped.sample_slice(0, 2, keyframe_pad_s=0, keyframe_pad_fraction=0)
     dense_span = dense.sample_slice(0, 2, keyframe_pad_s=0, keyframe_pad_fraction=0)
     payload = b"x" * span.byte_length
 
-    mini = synthesize_mp4(index, span, payload)
+    mini = synthesize_mp4(mapped, span, payload)
     dense_mini = synthesize_mp4(dense, dense_span, payload)
-    assert synthesized_mp4_size(index, span) == len(mini)
+    assert synthesized_mp4_size(mapped, span) == len(mini)
     assert synthesized_mp4_size(dense, dense_span) == len(dense_mini)
     assert mini == dense_mini

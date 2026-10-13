@@ -908,18 +908,23 @@ def _dinf() -> bytes:
     return _box(b"dinf", dref)
 
 
+def _timing_runs(values: IntegerArray) -> list[list[int]]:
+    """Encode repeated timing values without expanding constant views."""
+    constant = _constant_integer_value(values)
+    if constant is not None:
+        return [[len(values), constant]]
+    runs: list[list[int]] = []
+    for value in values.tolist():
+        if runs and runs[-1][1] == value:
+            runs[-1][0] += 1
+        else:
+            runs.append([1, value])
+    return runs
+
+
 def _stts(durations: IntegerArray) -> bytes:
     """Run-length encode sample durations into a decode-time table."""
-    constant = _constant_integer_value(durations)
-    if constant is not None:
-        runs = [[len(durations), constant]]
-    else:
-        runs = []
-        for duration in durations.tolist():
-            if runs and runs[-1][1] == int(duration):
-                runs[-1][0] += 1
-            else:
-                runs.append([1, int(duration)])
+    runs = _timing_runs(durations)
     payload = struct.pack(">I", len(runs)) + b"".join(
         struct.pack(">II", count, delta) for count, delta in runs
     )
@@ -929,17 +934,8 @@ def _stts(durations: IntegerArray) -> bytes:
 def _ctts(offsets: IntegerArray) -> bytes:
     """Run-length encode composition offsets, using signed entries when needed."""
     constant = _constant_integer_value(offsets)
-    if constant is not None:
-        runs = [[len(offsets), constant]]
-        signed = constant < 0
-    else:
-        runs = []
-        for offset in offsets.tolist():
-            if runs and runs[-1][1] == offset:
-                runs[-1][0] += 1
-            else:
-                runs.append([1, offset])
-        signed = bool(np.any(offsets < 0))
+    signed = constant < 0 if constant is not None else bool(np.any(offsets < 0))
+    runs = _timing_runs(offsets)
     payload = struct.pack(">I", len(runs)) + b"".join(
         struct.pack(">Ii" if signed else ">II", count, offset) for count, offset in runs
     )

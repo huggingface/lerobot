@@ -69,12 +69,13 @@ The `lerobot-rollout --strategy.type=dagger` mode requires **teleoperators with 
 
 ## Script
 
-Use `lerobot-rollout` with `--strategy.type=dagger` for HIL data collection. Select the inference backend with `--inference.type=sync|rtc`:
+Use `lerobot-rollout` with `--strategy.type=dagger` for HIL data collection. Select the inference backend with `--inference.type=sync|rtc|remote`:
 
-| Mode                     | Flag                   | Models                |
-| ------------------------ | ---------------------- | --------------------- |
-| Standard (default)       | _(no flag needed)_     | ACT, Diffusion Policy |
-| Real-Time Chunking (RTC) | `--inference.type=rtc` | Pi0, Pi0.5, SmolVLA   |
+| Mode                     | Flag                      | Models                                                                                                 |
+| ------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Standard (default)       | _(no flag needed)_        | ACT, Diffusion Policy                                                                                  |
+| Real-Time Chunking (RTC) | `--inference.type=rtc`    | Pi0, Pi0.5, SmolVLA                                                                                    |
+| Remote                   | `--inference.type=remote` | Checkpoint served by `lerobot-policy-server`; see [remote deployment requirements](./remote_inference) |
 
 ---
 
