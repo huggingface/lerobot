@@ -476,9 +476,9 @@ class ActionHistoryUnnormalizerProcessorStep(_HistoryQuantiles, ActionProcessorS
 
 
 def connect_history_processors(config, pre, post):
-    observations = [step for step in pre.steps if isinstance(step, ObservationHistoryNormalizerProcessorStep)]
-    actions = [step for step in pre.steps if isinstance(step, ActionTargetNormalizerProcessorStep)]
-    outputs = [step for step in post.steps if isinstance(step, ActionHistoryUnnormalizerProcessorStep)]
+    observations = pre.get_steps(ObservationHistoryNormalizerProcessorStep)
+    actions = pre.get_steps(ActionTargetNormalizerProcessorStep)
+    outputs = post.get_steps(ActionHistoryUnnormalizerProcessorStep)
     if len(observations) != 1 or len(actions) != 1 or len(outputs) != 1:
         raise ValueError("History checkpoint requires its saved pre/postprocessor steps")
     history, action, output = observations[0], actions[0], outputs[0]
@@ -513,11 +513,11 @@ def connect_flux3_processors(config, pre, post):
     if config.conditioning == "history":
         connect_history_processors(config, pre, post)
     else:
-        relative = next((step for step in pre.steps if isinstance(step, RelativeActionsProcessorStep)), None)
-        for step in post.steps:
-            if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
+        relative = pre.get_step(RelativeActionsProcessorStep)
+        for step in post.get_steps(AbsoluteActionsProcessorStep):
+            if step.relative_step is None:
                 step.relative_step = relative
-    resizers = [step for step in pre.steps if isinstance(step, CameraResizeProcessorStep)]
+    resizers = pre.get_steps(CameraResizeProcessorStep)
     if len(resizers) != 1:
         raise ValueError("FLUX3 requires its saved camera processor; re-export the model package")
     resizers[0].camera_keys = list(config.camera_order)

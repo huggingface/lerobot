@@ -439,11 +439,11 @@ def test_bind_relative_anchor_skips_disabled_and_missing_steps():
     enabled, disabled = _anchor_step(), RelativeActionsProcessorStep(enabled=False)
     policy = SimpleNamespace(count_queued_actions=lambda: 3)
 
-    assert bind_relative_anchor(policy, SimpleNamespace(steps=[disabled, enabled])) is enabled
+    assert bind_relative_anchor(policy, DataProcessorPipeline([disabled, enabled])) is enabled
     assert enabled._count_queued_actions == policy.count_queued_actions
-    assert bind_relative_anchor(policy, SimpleNamespace(steps=[disabled])) is None
+    assert bind_relative_anchor(policy, DataProcessorPipeline([disabled])) is None
     assert disabled._count_queued_actions is None
-    assert bind_relative_anchor(policy, SimpleNamespace()) is None
+    assert bind_relative_anchor(policy, DataProcessorPipeline([])) is None
 
 
 def test_bare_loop_holds_the_anchor_across_a_chunk():
@@ -463,7 +463,7 @@ def test_bare_loop_holds_the_anchor_across_a_chunk():
         return queue.pop(0)
 
     bind_relative_anchor(
-        SimpleNamespace(count_queued_actions=lambda: len(queue)), SimpleNamespace(steps=[relative_step])
+        SimpleNamespace(count_queued_actions=lambda: len(queue)), DataProcessorPipeline([relative_step])
     )
 
     anchor = torch.full((1, 4), 10.0)
