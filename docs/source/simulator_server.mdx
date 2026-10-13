@@ -37,12 +37,12 @@ uv run --no-sync python -m lerobot.scripts.lerobot_eval \
   --policy.device=cuda \
   --env.type=sim --env.endpoint=tcp/127.0.0.1:7448 --env.deployment=libero \
   --env.task=libero_spatial --env.task_ids='[0]' \
-  --eval.profile=benchmarks/profiles/libero.yaml \
+  --env.profile=benchmarks/profiles/libero.yaml \
   --eval.n_episodes=1 --eval.batch_size=1 \
   --output_dir=outputs/eval_libero
 ```
 
-Profiles declare camera mappings, state/action component order, controller semantics, and explicit empty-camera configuration. Use `benchmarks/profiles/libero.yaml` with a compatible LIBERO checkpoint, or copy it and adjust its declarations for another policy. The checkpoint must declare its actual state/action dimensions and trained camera names. A profile maps simulator camera names to those names; it does not repair checkpoint metadata.
+Profiles declare camera mappings, state/action component order, and controller semantics. Placeholder cameras (`empty_cameras`) are a policy setting saved with the checkpoint; override it with `--policy.empty_cameras` only when needed. Use `benchmarks/profiles/libero.yaml` with a compatible LIBERO checkpoint, or copy it and adjust its declarations for another policy. The checkpoint must declare its actual state/action dimensions and trained camera names. A profile maps simulator camera names to those names; it does not repair checkpoint metadata.
 
 RGB admission checks channel count and layout independently of image height/width. Policy preprocessing owns resizing and resolution restrictions. A checkpoint requiring a fixed input resolution needs a matching server configuration or policy-side resize processor. Admission strictly checks state/action dimensions and declared component order. Simulator images are HWC uint8 on the wire; generic image/tensor preparation happens once on the policy side, followed by saved policy preprocessing.
 
@@ -54,7 +54,7 @@ feature_mapping:
   observation.images.wrist: observation.images.camera2
 ```
 
-Use the keys from the server descriptor and preserve trained camera identity, even when several cameras have identical shapes. For server-backed evaluation, the profile supplies the camera rename mapping; it replaces rather than merges `--rename_map`.
+Use the keys from the server descriptor and preserve trained camera identity, even when several cameras have identical shapes. For server-backed evaluation, `--env.profile` supplies the camera rename mapping; a conflicting `--rename_map` is rejected.
 
 The gym client advances the simulator in lockstep. Completed worlds retain their terminal transition until the next explicit reset; stepping another world in the batch cannot restart them. RPC mutations are never retried. After an ambiguous timeout, close the client and create a new session.
 
@@ -69,7 +69,6 @@ uv run --no-sync python -m lerobot.scripts.lerobot_rollout \
   --robot.task=libero_spatial --robot.task_id=0 \
   --policy.path=lerobot/smolvla_libero \
   --policy.pretrained_revision=a24f1f380461b665158d52acd140152c79e8b36d \
-  --policy.empty_cameras=1 \
   --device=cuda --fps=20 --inference.type=sync \
   --display_data=true --display_mode=rerun \
   --return_to_initial_position=false --play_sounds=false

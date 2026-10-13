@@ -1,11 +1,9 @@
 # RoboMME
 
 <Tip>
-  For isolated simulator execution, start `docker/sims/configs/robomme.yaml` and
-  use `lerobot-eval --env.type=sim` or `lerobot-rollout --robot.type=remote`.
-  See [Simulator servers](./simulator_server) for configuration, checkpoint
-  profiles, and commands. The direct simulator installation and in-process
-  commands below describe the compatibility path.
+  Prefer the isolated [simulator server](./simulator_server) with
+  `docker/sims/configs/robomme.yaml`; the installation and commands below run
+  the simulator in-process.
 </Tip>
 
 [RoboMME](https://robomme.github.io) is a memory-augmented manipulation benchmark built on ManiSkill (SAPIEN). It evaluates a robot's ability to retain and use information across an episode — counting, object permanence, reference, and imitation.
