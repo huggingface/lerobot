@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -28,6 +30,7 @@ from huggingface_hub import DatasetCard
 
 import lerobot.datasets.utils as dataset_utils
 from lerobot.datasets.io_utils import hf_transform_to_torch
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import (
     create_lerobot_dataset_card,
     get_repo_versions,
@@ -109,6 +112,84 @@ def test_with_tags():
     tags = ["tag1", "tag2"]
     card = create_lerobot_dataset_card(tags=tags)
     assert card.data.tags == ["LeRobot", "tag1", "tag2"]
+
+
+def test_card_license_defaults_to_none():
+    card = create_lerobot_dataset_card()
+    assert card.data.license is None
+
+
+def test_card_license_explicit_value_is_kept():
+    card = create_lerobot_dataset_card(license="cc-by-4.0")
+    assert card.data.license == "cc-by-4.0"
+
+
+def test_card_source_datasets_defaults_to_none():
+    card = create_lerobot_dataset_card()
+    assert card.data.source_datasets is None
+
+
+def test_card_source_datasets_passthrough():
+    card = create_lerobot_dataset_card(source_datasets=["original/dataset"])
+    assert card.data.source_datasets == ["original/dataset"]
+
+
+def _make_push_to_hub_target(monkeypatch):
+    """Return a dataset stand-in plus the card factory mock, with all Hub I/O mocked out."""
+    from lerobot.datasets import lerobot_dataset as lerobot_dataset_module
+    from lerobot.datasets.storage import DEFAULT_STORAGE_FORMAT
+
+    dataset = Mock()
+    dataset.meta.storage_format = DEFAULT_STORAGE_FORMAT
+    dataset.repo_id = "user/dataset"
+    dataset.root = Path("dummy/root")
+    dataset.revision = "v3.0"
+
+    monkeypatch.setattr(lerobot_dataset_module, "HfApi", Mock(return_value=Mock()))
+    card_factory = Mock()
+    monkeypatch.setattr(lerobot_dataset_module, "create_lerobot_dataset_card", card_factory)
+    return dataset, card_factory
+
+
+def test_push_to_hub_without_license_warns_and_keeps_default(monkeypatch, caplog):
+    dataset, card_factory = _make_push_to_hub_target(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.lerobot_dataset"):
+        LeRobotDataset.push_to_hub(dataset)
+
+    # Backwards compatibility: the effective default license is unchanged.
+    assert card_factory.call_args.kwargs["license"] == "apache-2.0"
+    warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert any("apache-2.0" in record.getMessage() for record in warnings), caplog.text
+
+
+def test_push_to_hub_explicit_license_does_not_warn(monkeypatch, caplog):
+    dataset, card_factory = _make_push_to_hub_target(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.lerobot_dataset"):
+        LeRobotDataset.push_to_hub(dataset, license="cc-by-4.0")
+
+    assert card_factory.call_args.kwargs["license"] == "cc-by-4.0"
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+
+def test_push_to_hub_explicit_none_license_does_not_warn(monkeypatch, caplog):
+    dataset, card_factory = _make_push_to_hub_target(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.lerobot_dataset"):
+        LeRobotDataset.push_to_hub(dataset, license=None)
+
+    # Explicitly opting out of a license statement stays silent.
+    assert card_factory.call_args.kwargs["license"] is None
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+
+def test_push_to_hub_forwards_source_datasets(monkeypatch):
+    dataset, card_factory = _make_push_to_hub_target(monkeypatch)
+
+    LeRobotDataset.push_to_hub(dataset, source_datasets=["original/dataset"])
+
+    assert card_factory.call_args.kwargs["source_datasets"] == ["original/dataset"]
 
 
 def test_calculate_episode_data_index():
