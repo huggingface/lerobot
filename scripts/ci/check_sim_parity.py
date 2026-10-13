@@ -60,11 +60,12 @@ def check(config_path: Path, steps: int = 5):
                     try:
                         client.describe()
                         break
-                    except TimeoutError:
+                    except Exception:  # Connection refused before listen, or describe timeout.
+                        client.close()
                         if server.poll() is not None or time.monotonic() >= deadline:
                             log.seek(0)
                             raise RuntimeError("Simulator startup failed:\n" + log.read()) from None
-                client.timeout_s = 120
+                client.timeout_s = client.setup_timeout_s = 120
                 actual = [client.open(1, "lockstep", seeds=[123])]
                 actual.extend(
                     StepResult.from_dict(client.request("step", actions=action)["result"])

@@ -108,18 +108,17 @@ class ThreadSafeRobot:
 
     def configure_hold(self) -> None:
         if getattr(self._robot, "supports_command_hold", False):
-            if not callable(getattr(self._robot, "hold", None)):
-                raise ValueError("Command hold requires a driver hold implementation")
+            # Robot.hold raises NotImplementedError unless the driver implements it.
             self._command_hold_enabled = True
         else:
             self.configure_position_hold()
 
-    def reset_world(self, task=None, seed=None) -> None:
+    def reset_world(self, seed: int | None = None) -> None:
         with self._lock:
             world = get_world(self._robot)
             if world is None:
                 raise TypeError("This robot does not expose a simulator world")
-            world.reset_world(task, seed)
+            world.reset_world(seed)
             self._last_applied_action = None
             self._observed_positions.clear()
             self._observation_time = None

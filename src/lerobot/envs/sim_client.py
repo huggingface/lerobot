@@ -63,7 +63,9 @@ class SimVectorEnv(gym.vector.VectorEnv):
         self.latest: StepResult | None = None
         self.closed = False
 
-    def _ensure(self, seeds=None):
+    def _open_session(self, seeds=None):
+        # Not named `_ensure`: eval_policy_all prefetches envs exposing `_ensure`, and an
+        # unseeded prefetch open would reset the worlds before the seeded rollout reset.
         if not self.client.session:
             self.latest = self.client.open(self.num_envs, "lockstep", self.task_group, self.task_id, seeds)
             assert self.client.descriptor is not None
@@ -78,15 +80,17 @@ class SimVectorEnv(gym.vector.VectorEnv):
     def reset(self, *, seed=None, options=None):
         if isinstance(seed, int):
             seed = [seed + i for i in range(self.num_envs)]
-        result = self.latest if self._ensure(seed) else self._result(self.client.request("reset", seeds=seed))
+        result = (
+            self.latest
+            if self._open_session(seed)
+            else self._result(self.client.request("reset", seeds=seed))
+        )
         assert result is not None
         return result.obs, {"is_success": result.is_success}
 
     def step(self, actions):
-        self._ensure()
-        result = self._result(
-            self.client.request("step", actions=np.asarray(actions, dtype=np.float32), n_ticks=1)
-        )
+        self._open_session()
+        result = self._result(self.client.request("step", actions=np.asarray(actions, dtype=np.float32)))
         return (
             result.obs,
             result.reward,
@@ -100,7 +104,7 @@ class SimVectorEnv(gym.vector.VectorEnv):
             return (self.descriptor.max_episode_steps,) * self.num_envs
         if name == "task":
             return (self.task_group,) * self.num_envs
-        self._ensure()
+        self._open_session()
         if name == "task_description":
             assert self.latest is not None
             return self.latest.task

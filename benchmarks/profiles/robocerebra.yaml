@@ -20,4 +20,3 @@ action_names:
 - eef.delta.axis_angle.y
 - eef.delta.axis_angle.z
 - gripper.command
-empty_cameras: 1

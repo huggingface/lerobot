@@ -19,12 +19,12 @@ from typing import Any
 import numpy as np
 
 from lerobot.env_server.client import EnvClient
-from lerobot.env_server.contracts import ExecutionFeedback, StepResult
+from lerobot.env_server.contracts import StepResult
 from lerobot.env_server.profiles import EvalProfile
 from lerobot.robots.robot import Robot
 
 from .configuration_remote import RemoteRobotConfig
-from .world import EpisodeStatus, World
+from .world import EpisodeStatus
 
 
 class RemoteRobot(Robot):
@@ -34,13 +34,9 @@ class RemoteRobot(Robot):
     def __init__(self, config: RemoteRobotConfig):
         super().__init__(config)
         self.config = config
-        self.client = EnvClient(config.endpoint, config.deployment, config.timeout_s)
+        self.client = EnvClient(config.endpoint, config.deployment, config.timeout_s, config.setup_timeout_s)
         try:
             self.descriptor = self.client.describe()
-        except BaseException:
-            self.client.close()
-            raise
-        try:
             self.profile = EvalProfile.load(config.profile) if config.profile else None
             if self.profile:
                 self.profile.validate_descriptor(self.descriptor)
@@ -66,12 +62,15 @@ class RemoteRobot(Robot):
             raise
 
     @property
-    def world(self) -> World | None:
-        return self if {"reset", "snapshot"}.issubset(self.descriptor.operations) else None
+    def cameras(self) -> dict[str, str]:
+        """Simulator camera features keyed by descriptor name; sized like a real robot's cameras."""
+        return self._camera_keys
 
-    @property
-    def execution_feedback(self) -> ExecutionFeedback | None:
-        return self.client.execution
+    def feature_names(self, rename_map: dict[str, str]) -> dict[str, str]:
+        """Map each descriptor feature to its policy key: profile alias first, then ``rename_map``."""
+        mapping = self.profile.feature_mapping if self.profile else {}
+        aliased = {f.name: mapping.get(f.name, f.name) for f in self.descriptor.features}
+        return {name: rename_map.get(alias, alias) for name, alias in aliased.items()}
 
     @property
     def observation_features(self) -> dict[str, type | tuple[int, ...]]:
@@ -94,7 +93,8 @@ class RemoteRobot(Robot):
 
     @property
     def is_connected(self) -> bool:
-        return bool(self.client.session) and not self.client.failed
+        # A failed session is still owned: teardown must reach disconnect() to release it.
+        return bool(self.client.session)
 
     @property
     def is_calibrated(self) -> bool:
@@ -139,9 +139,7 @@ class RemoteRobot(Robot):
     def hold(self) -> None:
         self.client.request("hold")
 
-    def reset_world(self, task: str | None = None, seed: int | None = None) -> None:
-        if task is not None and task != (self.config.task or next(iter(self.descriptor.tasks))):
-            raise ValueError("Changing task requires opening a new robot session")
+    def reset_world(self, seed: int | None = None) -> None:
         self.latest = StepResult.from_dict(self.client.request("reset", seeds=[seed])["result"])
 
     @property
@@ -160,13 +158,6 @@ class RemoteRobot(Robot):
             int(result.step[0]),
             float(result.reward[0]),
         )
-
-    @property
-    def sim_time(self) -> float:
-        return self.latest.sim_time if self.latest is not None else 0.0
-
-    def render(self) -> np.ndarray:
-        return self.client.request("render")["frames"][0]
 
     def disconnect(self) -> None:
         self.client.close()

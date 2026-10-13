@@ -28,12 +28,10 @@ class EnvDescriptor:
     """Declare canonical observations, controller conventions, and available tasks."""
 
     sim_type: str
-    robot_type: str
     semantics: str
     features: tuple[FeatureSpec, ...]
     action_feature: FeatureSpec
     control: str
-    hold: str
     fps: float
     clocks: tuple[str, ...]
     tasks: dict[str, list[str]]
@@ -41,36 +39,22 @@ class EnvDescriptor:
     sim_build: dict[str, str]
     gripper_indices: tuple[int, ...] = ()
     command_retention_indices: tuple[int, ...] = ()
-    operations: tuple[str, ...] = (
-        "reset",
-        "step",
-        "apply",
-        "hold",
-        "snapshot",
-        "render",
-        "pause",
-        "resume",
-        "close",
-    )
+
+    @property
+    def hold(self) -> str:
+        """Position controllers retain targets; other controllers hold with a neutral command."""
+        return "position" if self.control == "position" else "command"
 
     def __post_init__(self) -> None:
         """Reject invalid declarations before creating simulator resources."""
         if self.control not in {"position", "delta", "eef_pose", "velocity"}:
             raise ValueError("Unknown controller convention")
-        if self.hold not in {"position", "command", "none"}:
-            raise ValueError("Unknown hold capability")
         if not np.isfinite(self.fps) or self.fps <= 0 or self.max_episode_steps <= 0:
             raise ValueError("FPS and episode limit must be positive")
         if len(self.action_feature.shape) != 1 or not self.action_feature.names:
             raise ValueError("Actions require ordered component names")
         if len({f.name for f in self.features}) != len(self.features):
             raise ValueError("Duplicate observation features")
-        if len(set(self.operations)) != len(self.operations) or any(
-            operation
-            not in {"reset", "step", "apply", "hold", "snapshot", "render", "pause", "resume", "close"}
-            for operation in self.operations
-        ):
-            raise ValueError("Invalid environment operations")
         if any(
             i < 0 or i >= self.action_feature.shape[0]
             for i in self.gripper_indices + self.command_retention_indices
@@ -90,8 +74,6 @@ class EnvDescriptor:
         data["clocks"] = tuple(data["clocks"])
         data["gripper_indices"] = tuple(data.get("gripper_indices", ()))
         data["command_retention_indices"] = tuple(data.get("command_retention_indices", ()))
-        if "operations" in data:
-            data["operations"] = tuple(data["operations"])
         return cls(**data)
 
 

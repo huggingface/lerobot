@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from .config import RobotConfig
-from .remote.configuration_remote import RemoteRobotConfig as RemoteRobotConfig
 from .robot import Robot
 from .utils import make_robot_from_config
 

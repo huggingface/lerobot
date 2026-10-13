@@ -30,11 +30,22 @@ from .protocol import deployment_prefix, instance_prefix, session_prefix
 class EnvClient:
     """Own one explicitly negotiated simulator session without replaying mutations."""
 
-    def __init__(self, endpoint: str, deployment: str = "default", timeout_s: float = 120):
-        """Initialize owned resources without advancing simulation time."""
+    def __init__(
+        self,
+        endpoint: str,
+        deployment: str = "default",
+        timeout_s: float = 120,
+        setup_timeout_s: float | None = None,
+    ):
+        """Initialize owned resources without advancing simulation time.
+
+        ``timeout_s`` bounds per-tick operations; ``setup_timeout_s`` (default: the same)
+        bounds describe/open/reset, which may build or rebuild native simulators.
+        """
         self.transport = ZenohTransport(ZenohConfig(connect_endpoints=[endpoint]))
         self.deployment = deployment
         self.timeout_s = timeout_s
+        self.setup_timeout_s = max(timeout_s, setup_timeout_s or timeout_s)
         self.instance = ""
         self.session = ""
         self.generation = 0
@@ -49,7 +60,12 @@ class EnvClient:
         """Discover the simulator boot and canonical schema without opening a world session."""
         with self.lock:
             self.transport.open()
-            body = self._query(deployment_prefix(self.deployment) + "/describe", MessageType.DESCRIBE, {})
+            body = self._query(
+                deployment_prefix(self.deployment) + "/describe",
+                MessageType.DESCRIBE,
+                {},
+                self.setup_timeout_s,
+            )
             self.instance = body["instance"]
             self.descriptor = EnvDescriptor.from_dict(body["descriptor"])
             return self.descriptor
@@ -85,6 +101,7 @@ class EnvClient:
                     "task_id": task_id,
                     "seeds": seeds,
                 },
+                self.setup_timeout_s,
             )
             assert self.descriptor is not None
             opened_descriptor = EnvDescriptor.from_dict(body["descriptor"])
@@ -121,11 +138,11 @@ class EnvClient:
             key = self.prefix + (f"/{operation}" if operation in {"reset", "step"} else "/control")
             if operation not in {"reset", "step"}:
                 body["operation"] = operation
-            if operation == "apply":
-                body["timeout_s"] = self.timeout_s
             try:
-                result = self._query(key, MessageType.CONTROL, body)
-                if "result" in result:
+                timeout = self.setup_timeout_s if operation == "reset" else self.timeout_s
+                result = self._query(key, MessageType.CONTROL, body, timeout)
+                # Execution feedback already validated its paired result in _query.
+                if "result" in result and "execution" not in result:
                     assert self.descriptor is not None
                     validate_result(StepResult.from_dict(result["result"]), self.descriptor, self.num_envs)
                 if "generation" in result:
@@ -136,15 +153,19 @@ class EnvClient:
                 self.failed = True
                 raise
 
-    def _query(self, key: str, kind: MessageType, body: dict[str, Any]) -> dict[str, Any]:
+    def _query(
+        self, key: str, kind: MessageType, body: dict[str, Any], timeout: float | None = None
+    ) -> dict[str, Any]:
         message = Envelope(kind, self.instance, self.session, self.generation, uuid.uuid4().hex, body)
         response = query_reply(
             self.transport,
             key,
             message,
-            self.timeout_s,
+            self.timeout_s if timeout is None else timeout,
             MessageType.ACK if message.session_id else MessageType.ACCEPTED,
             max_replies=1,
+            # Mutations are never retried, so a reply dropped under congestion is fatal: block instead.
+            congestion_control="block",
         )
         if "execution" in response.body:
             assert self.descriptor is not None

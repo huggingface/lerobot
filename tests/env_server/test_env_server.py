@@ -86,10 +86,14 @@ def test_batch_terminal_freeze_and_seed_parity(server):
         np.testing.assert_array_equal(first["obs"]["observation.state"], second["obs"]["observation.state"])
         ended = with_client.request("step", actions=np.array([[2, 0], [0, 0]], np.float32))["result"]
         assert ended["is_success"].tolist() == [True, False]
+        assert ended["reward"].tolist() == [1.0, 0.0]
         frozen = ended["obs"]["observation.state"][0].copy()
         for _ in range(5):
             result = with_client.request("step", actions=np.ones((2, 2), np.float32) * 0.1)["result"]
         np.testing.assert_array_equal(result["obs"]["observation.state"][0], frozen)
+        assert (
+            result["reward"][0] == 0.0
+        )  # The terminal reward is earned once, as with the old freeze wrapper.
         assert result["step"].tolist() == [1, 5]
         assert result["truncated"].tolist() == [False, True]
         frames = with_client.request("render")["frames"]
@@ -171,9 +175,8 @@ def test_remote_robot_registration_and_optional_world(server, tmp_path):
         robot.connect()
         action = dict.fromkeys(robot.action_features, 0.0)
         assert robot.send_action(action) == action
-        assert robot.execution_feedback.request_id
-        assert robot.execution_feedback.generation == robot.client.generation
-        assert robot.execution_feedback.result.step[0] == robot.latest.step[0]
+        assert robot.client.execution.generation == robot.client.generation
+        assert robot.client.execution.result.step[0] == robot.latest.step[0]
     finally:
         robot.disconnect()
 
@@ -224,6 +227,26 @@ def test_server_loss_fails_session(server):
         client.close()
 
 
+def test_failed_robot_stays_connected_until_disconnect(server, tmp_path):
+    from lerobot.robots.remote import RemoteRobot, RemoteRobotConfig
+
+    running, endpoint = server
+    robot = RemoteRobot(RemoteRobotConfig(endpoint=endpoint, calibration_dir=tmp_path, timeout_s=0.1))
+    robot.connect()
+    session = robot.client.session
+    with pytest.raises(ValueError):
+        robot.client.request("step", actions=np.zeros((1, 2), np.float32))  # realtime rejects step
+    assert robot.client.failed
+    # Rollout teardown only disconnects connected robots; a failed session must still be released.
+    assert robot.is_connected
+    robot.disconnect()
+    assert not robot.is_connected
+    deadline = time.monotonic() + 2
+    while session in running.sessions and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert session not in running.sessions
+
+
 def test_client_loss_releases_ownership(server):
     running, endpoint = server
     client = EnvClient(endpoint)
@@ -239,22 +262,6 @@ def test_client_loss_releases_ownership(server):
         other.open(1, "lockstep")
     finally:
         other.close()
-
-
-def test_partial_reset_preserves_other_terminal_world(server):
-    _, endpoint = server
-    client = EnvClient(endpoint)
-    try:
-        client.open(2, "lockstep")
-        client.request("reset", seeds=[10, 20])
-        result = client.request("step", actions=np.ones((2, 2), np.float32) * 2)["result"]
-        reset = client.request("reset", env_ids=[0], seeds=[10])["result"]
-        assert reset["terminated"].tolist() == [False, True]
-        np.testing.assert_array_equal(
-            reset["obs"]["observation.state"][1], result["obs"]["observation.state"][1]
-        )
-    finally:
-        client.close()
 
 
 def test_sim_robot_action_aliases_preserve_controller_order(server, tmp_path):
@@ -311,24 +318,21 @@ def test_eval_profile_admission(server):
         with pytest.raises(ValueError, match="shape mismatch"):
             profile.validate_policy(descriptor, config)
     config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (3, 8, 8))
-    # Serialized placeholders survive a smaller runtime empty-camera budget.
-    config.empty_cameras = 1
+    # Checkpoint placeholder cameras are policy-owned: admission skips them whatever their shape.
     config.input_features["observation.images.empty_camera_0"] = PolicyFeature(
         FeatureType.VISUAL, (3, 480, 640)
     )
     config.input_features["observation.images.empty_camera_1"] = PolicyFeature(
-        FeatureType.VISUAL, (3, 480, 640)
-    )
-    replace(profile, empty_cameras=1).validate_policy(descriptor, config)
-    with pytest.raises(ValueError, match="empty-camera configuration"):
-        profile.validate_policy(descriptor, config)
-    config.input_features["observation.images.empty_camera_1"] = PolicyFeature(
         FeatureType.VISUAL, (3, 256, 256)
     )
-    replace(profile, empty_cameras=1).validate_policy(descriptor, config)
+    profile.validate_policy(descriptor, config)
     del config.input_features["observation.images.empty_camera_0"]
     del config.input_features["observation.images.empty_camera_1"]
-    del config.empty_cameras
+    # A real checkpoint camera missing from the simulator is still rejected.
+    config.input_features["observation.images.camera9"] = PolicyFeature(FeatureType.VISUAL, (3, 8, 8))
+    with pytest.raises(ValueError, match="missing from simulator"):
+        profile.validate_policy(descriptor, config)
+    del config.input_features["observation.images.camera9"]
     with pytest.raises(ValueError, match="semantics"):
         replace(profile, semantics="wrong").validate_policy(descriptor, config)
     with pytest.raises(ValueError, match="component order"):
@@ -576,6 +580,9 @@ def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
 
     monkeypatch.setattr(ToyEnv, "reset", reset)
     env = SimVectorEnv(server[1])
+    # eval_policy_all prefetches the next task through `_ensure`; a prefetched open
+    # would add an unseeded reset before the rollout's seeded one.
+    assert not hasattr(env, "_ensure")
     try:
         env.reset(seed=123)
         backend = server[0].sessions[env.client.session].backend

@@ -12,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Simulator addressing over the shared version-one envelope.
+"""Simulator addressing over the shared wire envelope.
 
 Operation names live in query keys / CONTROL bodies. No inference message tags change.
+Keys carry the shared envelope version, so a wire bump moves both services together.
 """
 
-from lerobot.transport.wire.protocol import validate_segment
+from lerobot.transport.wire.protocol import PROTOCOL_VERSION, validate_segment
 
 
 def deployment_prefix(deployment: str) -> str:
     """Return a validated simulator deployment key."""
-    return f"lerobot/env/v1/deployments/{validate_segment(deployment)}"
+    return f"lerobot/env/v{PROTOCOL_VERSION}/deployments/{validate_segment(deployment)}"
 
 
 def instance_prefix(deployment: str, instance: str) -> str:

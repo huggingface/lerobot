@@ -109,7 +109,7 @@ def main():
             "--env.type=sim",
             "--env.endpoint=tcp/sim:7448",
             f"--env.deployment={entry['name']}",
-            f"--eval.profile={entry['profile']}",
+            f"--env.profile={entry['profile']}",
             f"--eval.n_episodes={entry['episodes']}",
             f"--eval.batch_size={entry['batch_size']}",
             "--eval.use_async_envs=false",

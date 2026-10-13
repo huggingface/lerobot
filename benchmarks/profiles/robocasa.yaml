@@ -34,4 +34,3 @@ action_names:
 - eef.delta.rotation.y
 - eef.delta.rotation.z
 - gripper.command
-empty_cameras: 0

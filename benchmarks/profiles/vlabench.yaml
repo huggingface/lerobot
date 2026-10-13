@@ -20,4 +20,3 @@ action_names:
 - eef.euler.y
 - eef.euler.z
 - gripper.opening
-empty_cameras: 0

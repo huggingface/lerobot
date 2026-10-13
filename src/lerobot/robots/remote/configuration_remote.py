@@ -24,5 +24,8 @@ class RemoteRobotConfig(RobotConfig):
     deployment: str = "default"
     task: str | None = None
     task_id: int = 0
-    timeout_s: float = 120
+    # Per-tick snapshot/apply/hold bound: a dead simulator must not stall the control loop.
+    timeout_s: float = 5.0
+    # Session open and world reset may build or rebuild native simulators.
+    setup_timeout_s: float = 120.0
     profile: str | None = None
