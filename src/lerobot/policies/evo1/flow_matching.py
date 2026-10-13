@@ -20,7 +20,13 @@ import math
 import torch
 import torch.nn as nn
 
-from ..common.flow_matching import sample_beta, sample_noise
+from ..common.flow_matching import (
+    FlowConvention,
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_beta,
+    sample_noise,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -366,8 +372,12 @@ class FlowmatchingActionHead(nn.Module):
             noise_seq = noise.view(batch_size, self.horizon, self.per_action_dim)
         else:
             noise_seq = noise if noise.dim() == 3 else noise.unsqueeze(1)
-        t_broadcast = t.view(batch_size, 1, 1)
-        action_intermediate_seq = (1 - t_broadcast) * noise_seq + t_broadcast * actions_gt_seq
+        # Only the interpolation is shared. `Evo1Policy.forward` builds the target itself in fp32;
+        # the helper's target would be in the action head's parameter dtype, which rounds
+        # differently once the head runs in bf16.
+        action_intermediate_seq, _, _ = make_flow_matching_inputs(
+            actions_gt_seq, noise_seq, t, convention=FlowConvention.NOISE_AT_ZERO
+        )
 
         action_tokens = self._project_actions(action_intermediate_seq, embodiment_id)
         target_dtype = self.dtype
@@ -429,7 +439,6 @@ class FlowmatchingActionHead(nn.Module):
         num_steps = int(self.num_inference_timesteps)
         if num_steps <= 0:
             raise ValueError(f"num_inference_timesteps must be positive, got {num_steps}")
-        dt = 1.0 / num_steps
 
         use_rtc = rtc_processor is not None and (
             inference_delay is not None or prev_chunk_left_over is not None
@@ -447,30 +456,26 @@ class FlowmatchingActionHead(nn.Module):
             pred = self.mlp_head(x_pooled, embodiment_id)
             return pred.view(batch_size, self.horizon, per_action_dim) * action_mask
 
-        for i in range(num_steps):
-            t = i / num_steps
-            time_index = min(int(t * 999), 999)
+        def denoise_step(seq: torch.Tensor, time_tensor: torch.Tensor, i: int) -> torch.Tensor:
+            # Index off the solver's step counter, not its float32 time: the lookup keeps landing
+            # on the exact `i / num_steps` bucket it always has, without a per-step device sync.
+            time_index = min(int((i / num_steps) * 999), 999)
             time_emb = self.time_pos_enc(1000)[:, time_index, :].to(device).squeeze(0).to(dtype=target_dtype)
             time_emb = time_emb.unsqueeze(0).repeat(batch_size, 1)
+            return predict_velocity(seq, time_emb)
 
-            if use_rtc:
-                # RTCProcessor assumes the pi0 flow convention: its `time` runs 1 -> 0 and the
-                # clean-action estimate is x1 = x_t - time * v. EVO1 integrates t: 0 -> 1 with
-                # velocity v = x1 - x0 (so x1 = x_t + (1 - t) * v); passing time = 1 - t and
-                # flipping the velocity sign in both directions maps one convention onto the other.
-                guided = rtc_processor.denoise_step(
-                    x_t=action_seq,
-                    prev_chunk_left_over=prev_chunk_left_over,
-                    inference_delay=inference_delay,
-                    time=1.0 - t,
-                    original_denoise_step_partial=lambda seq, emb=time_emb: -predict_velocity(seq, emb),
-                    execution_horizon=execution_horizon,
-                )
-                velocity = -guided
-            else:
-                velocity = predict_velocity(action_seq, time_emb)
-
-            action_seq = action_seq + dt * velocity
+        action_seq = euler_integrate(
+            denoise_step,
+            action_seq,
+            num_steps,
+            convention=FlowConvention.NOISE_AT_ZERO,
+            step_aware=True,
+            rtc_processor=rtc_processor if use_rtc else None,
+            rtc_enabled=use_rtc,
+            inference_delay=inference_delay,
+            prev_chunk_left_over=prev_chunk_left_over,
+            execution_horizon=execution_horizon,
+        )
 
         action_seq = action_seq * action_mask
         return action_seq.reshape(batch_size, -1)

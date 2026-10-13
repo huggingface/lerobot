@@ -35,10 +35,9 @@ from PIL import Image
 from lerobot.annotations.steerable_pipeline.config import VlmConfig
 from lerobot.annotations.steerable_pipeline.vlm_client import VlmClient, make_vlm_client
 from lerobot.datasets.utils import DEFAULT_TASKS_PATH
+from lerobot.inference import EXTERNAL_HISTORY_DEFAULT, PlannerReply, PolicyQuery, QueryKind
 from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT
-
-from .inference import EXTERNAL_HISTORY_DEFAULT, PlannerReply, PolicyQuery, QueryKind
 
 logger = logging.getLogger(__name__)
 
