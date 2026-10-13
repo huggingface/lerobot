@@ -28,7 +28,7 @@ import numpy as np
 import pytest
 from filelock import FileLock
 
-from lerobot.streaming import sidecar_utils
+from lerobot.streaming import manifest as manifest_module, sidecar_utils
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import Mp4Index
 from lerobot.streaming.sidecar import (
@@ -83,6 +83,204 @@ def _spec(revision: str = "rev-a", size: int = 128) -> SidecarSpec:
 
 def _write_valid(path: Path, spec: SidecarSpec) -> None:
     EpisodeVideoManifest.save_file_sidecar(path, [_record(size=spec.source_files[0][1])], spec=spec)
+
+
+@pytest.mark.parametrize("workers", [1, 4])
+def test_sidecar_builder_releases_arrays_before_more_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int
+) -> None:
+    """Blocked serialization must bound completed arrays as well as active parsing."""
+    refs: list[weakref.ReferenceType[np.ndarray]] = []
+    started: list[str] = []
+    lock = threading.Lock()
+    initial_parses = threading.Event()
+    writing = threading.Event()
+    continue_writing = threading.Event()
+    closed = threading.Event()
+    max_live = 0
+
+    class Fetcher:
+        def info_size(self, path: str) -> int:
+            return 128
+
+        def read_range(self, path: str, offset: int, length: int) -> bytes:
+            return b""
+
+        def close(self) -> None:
+            closed.set()
+
+    def parse(path: str, *_args: Any, **_kwargs: Any) -> Mp4Index:
+        nonlocal max_live
+        index = _record(path).mp4
+        with lock:
+            refs.append(weakref.ref(index.sample_pts))
+            started.append(path)
+            max_live = max(max_live, sum(ref() is not None for ref in refs))
+            if len(started) == workers:
+                initial_parses.set()
+        return index
+
+    original_write = np.lib.format.write_array
+
+    def write(*args: Any, **kwargs: Any) -> None:
+        if not writing.is_set():
+            writing.set()
+            assert continue_writing.wait(5)
+        original_write(*args, **kwargs)
+
+    monkeypatch.setattr(manifest_module, "make_range_fetcher", lambda *_args, **_kwargs: Fetcher())
+    monkeypatch.setattr(manifest_module, "fetch_mp4_index", parse)
+    monkeypatch.setattr(np.lib.format, "write_array", write)
+    paths = [f"file-{index:02d}.mp4" for index in range(12)]
+    try:
+        with ThreadPoolExecutor(max_workers=1) as runner:
+            result = runner.submit(
+                EpisodeVideoManifest.write_file_sidecar,
+                tmp_path / "bounded.npz",
+                paths,
+                tmp_path,
+                spec=_spec(),
+                workers=workers,
+            )
+            try:
+                assert writing.wait(5)
+                assert initial_parses.wait(5)
+                assert len(started) == workers
+                assert sum(ref() is not None for ref in refs) == workers
+            finally:
+                continue_writing.set()
+            result.result(timeout=10)
+    finally:
+        continue_writing.set()
+    assert set(started) == set(paths)
+    assert len(started) == len(paths)
+    assert max_live <= workers
+    assert all(ref() is None for ref in refs)
+    assert closed.is_set()
+
+
+def test_sidecar_builder_writes_ready_file_before_a_slow_first_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Completion order must not change file IDs or source metadata order."""
+    first_file = threading.Event()
+    original_write = np.lib.format.write_array
+
+    class Fetcher:
+        def info_size(self, path: str) -> int:
+            return 128
+
+        def read_range(self, path: str, offset: int, length: int) -> bytes:
+            return b""
+
+        def close(self) -> None:
+            pass
+
+    def parse(path: str, *_args: Any, **_kwargs: Any) -> Mp4Index:
+        if path == "a.mp4":
+            assert first_file.wait(5)
+        return _record(path).mp4
+
+    def write(*args: Any, **kwargs: Any) -> None:
+        original_write(*args, **kwargs)
+        first_file.set()
+
+    monkeypatch.setattr(manifest_module, "make_range_fetcher", lambda *_args, **_kwargs: Fetcher())
+    monkeypatch.setattr(manifest_module, "fetch_mp4_index", parse)
+    monkeypatch.setattr(np.lib.format, "write_array", write)
+    output = tmp_path / "ordered.npz"
+    EpisodeVideoManifest.write_file_sidecar(
+        output, ["b.mp4", "a.mp4", "b.mp4"], tmp_path, spec=_spec(), workers=2
+    )
+    with ZipFile(output) as archive:
+        assert archive.namelist()[0].startswith("1/")
+    with np.load(output, allow_pickle=False) as data:
+        payload = json.loads(bytes(data["manifest_json"]))
+        assert [item["file_path"] for item in payload["files"]] == ["a.mp4", "b.mp4"]
+        assert data["0/sample_pts"].dtype == np.float64
+        assert data["1/sample_pts"].shape == (1,)
+    loaded = EpisodeVideoManifest.load_file_sidecar(output)
+    assert list(loaded) == ["a.mp4", "b.mp4"]
+
+
+@pytest.mark.parametrize("failure", ["parse", "write"])
+def test_sidecar_builder_failure_waits_for_reads_and_preserves_previous_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    output = tmp_path / "existing.npz"
+    _write_valid(output, _spec())
+    previous = output.read_bytes()
+    closed = threading.Event()
+    active = 0
+    lock = threading.Lock()
+
+    class Fetcher:
+        def info_size(self, path: str) -> int:
+            return 128
+
+        def read_range(self, path: str, offset: int, length: int) -> bytes:
+            return b""
+
+        def close(self) -> None:
+            assert active == 0
+            closed.set()
+
+    def parse(path: str, *_args: Any, **_kwargs: Any) -> Mp4Index:
+        nonlocal active
+        with lock:
+            active += 1
+        try:
+            if failure == "parse" and path == "b.mp4":
+                raise ValueError("invalid source index")
+            return _record(path).mp4
+        finally:
+            with lock:
+                active -= 1
+
+    def fail_write(*_args: Any, **_kwargs: Any) -> None:
+        raise ValueError("archive write failed")
+
+    monkeypatch.setattr(manifest_module, "make_range_fetcher", lambda *_args, **_kwargs: Fetcher())
+    monkeypatch.setattr(manifest_module, "fetch_mp4_index", parse)
+    if failure == "write":
+        monkeypatch.setattr(np.lib.format, "write_array", fail_write)
+    with pytest.raises(ValueError, match="invalid source index|archive write failed"):
+        EpisodeVideoManifest.write_file_sidecar(
+            output, ["a.mp4", "b.mp4", "c.mp4"], tmp_path, spec=_spec(), workers=2
+        )
+    assert closed.is_set()
+    assert output.read_bytes() == previous
+    assert list(tmp_path.glob(".*.tmp.npz")) == []
+
+
+@pytest.mark.parametrize("workers", [0, -1])
+def test_sidecar_builder_rejects_invalid_workers_without_replacing_output(
+    tmp_path: Path, workers: int
+) -> None:
+    output = tmp_path / "existing.npz"
+    _write_valid(output, _spec())
+    previous = output.read_bytes()
+    with pytest.raises(ValueError, match="workers must be positive"):
+        EpisodeVideoManifest.write_file_sidecar(output, [], tmp_path, spec=_spec(), workers=workers)
+    assert output.read_bytes() == previous
+    assert list(tmp_path.glob(".*.tmp.npz")) == []
+
+
+def test_sidecar_writer_preserves_input_order_and_numpy_suffix(tmp_path: Path) -> None:
+    output = tmp_path / "without-suffix"
+    EpisodeVideoManifest.save_file_sidecar(output, [_record("b.mp4"), _record("a.mp4")], spec=_spec())
+    loaded = EpisodeVideoManifest.load_file_sidecar(output.with_suffix(".npz"))
+    assert list(loaded) == ["b.mp4", "a.mp4"]
+
+
+def test_sidecar_builder_accepts_an_empty_source_set(tmp_path: Path) -> None:
+    output = tmp_path / "empty.npz"
+    spec = replace(_spec(), data_root=str(tmp_path), source_files=())
+    EpisodeVideoManifest.write_file_sidecar(
+        output, [], tmp_path, spec=spec, range_backend="fsspec", workers=2
+    )
+    assert EpisodeVideoManifest.validate_file_sidecar(output, spec, prepare_cache=False)
+    assert EpisodeVideoManifest.load_file_sidecar(output) == {}
 
 
 def test_sidecar_cache_path_is_revision_keyed(tmp_path: Path) -> None:

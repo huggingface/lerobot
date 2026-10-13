@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import io
+import shutil
 import struct
 from fractions import Fraction
 from pathlib import Path
@@ -30,8 +31,50 @@ from lerobot.streaming.mp4 import (
     synthesized_mp4_size,
 )
 from lerobot.streaming.sidecar import SidecarSpec
+from lerobot.streaming.sidecar_utils import ARRAY_NAMES
 
 av = pytest.importorskip("av")
+
+
+def test_sidecar_construction_preserves_real_video_indices_and_pixels(
+    encoded_video: tuple[Path, dict[int, NDArray[np.uint8]]], tmp_path: Path
+) -> None:
+    """Parallel construction must preserve source arrays and decoded presentation frames."""
+    path, expected = encoded_video
+    copy = tmp_path / "copy.mp4"
+    shutil.copyfile(path, copy)
+    files = [(source.name, source.stat().st_size) for source in (path, copy)]
+    spec = SidecarSpec("test/dataset", "fixed-revision", str(tmp_path), tuple(files))
+    output = tmp_path / "built.npz"
+    EpisodeVideoManifest.write_file_sidecar(
+        output, [name for name, _size in files], tmp_path, spec=spec, range_backend="fsspec", workers=2
+    )
+    assert EpisodeVideoManifest.validate_file_sidecar(output, spec, prepare_cache=False)
+    records = EpisodeVideoManifest.load_file_sidecar(output)
+    origin = min(expected) / 30
+    for name, _size in files:
+        source = (tmp_path / name).read_bytes()
+        reference = parse_mp4_index(name, source)
+        index = records[name].mp4
+        assert index.to_dict() == reference.to_dict()
+        for field in ARRAY_NAMES:
+            np.testing.assert_array_equal(getattr(index, field), getattr(reference, field))
+        start, end = origin + 0.9, origin + 1.2
+        sample_slice = index.sample_slice(start, end, keyframe_pad_s=0, keyframe_pad_fraction=0)
+        mini = synthesize_mp4(
+            index,
+            sample_slice,
+            source[sample_slice.byte_offset : sample_slice.byte_offset + sample_slice.byte_length],
+        )
+        with av.open(io.BytesIO(mini)) as rebuilt:
+            actual = {
+                round(
+                    (float(frame.pts * frame.time_base) + sample_slice.source_start_pts) * 30
+                ): frame.to_ndarray(format="rgb24")
+                for frame in rebuilt.decode(video=0)
+            }
+        for frame_index in range(round(start * 30), int(end * 30) + 1):
+            np.testing.assert_array_equal(actual[frame_index], expected[frame_index])
 
 
 @pytest.fixture
