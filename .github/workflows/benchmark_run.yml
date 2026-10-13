@@ -4,6 +4,10 @@ on:
     secrets:
       LEROBOT_HF_USER:
         required: true
+      DOCKERHUB_LEROBOT_USERNAME:
+        required: false
+      DOCKERHUB_LEROBOT_PASSWORD:
+        required: false
     inputs:
       name:
         required: true
@@ -38,6 +42,16 @@ jobs:
         with:
           persist-credentials: false
           lfs: true
+      - name: Require benchmark credentials
+        run: test -n "$HF_TOKEN"
+      - name: Login to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
         with:
           cache-binary: false
@@ -92,8 +106,6 @@ jobs:
             rm -rf "/tmp/lerobot-buildkit/policy-cache-${BENCHMARK_NAME}"
             mv "/tmp/lerobot-buildkit/policy-cache-next-${BENCHMARK_NAME}" "/tmp/lerobot-buildkit/policy-cache-${BENCHMARK_NAME}"
           fi
-      - name: Require benchmark credentials
-        run: test -n "$HF_TOKEN"
       - name: Run evaluation and training smoke
         run: |
           python3 -m pip install 'PyYAML>=6,<7'

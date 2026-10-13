@@ -18,11 +18,16 @@ on:
       - "src/lerobot/robots/remote/**"
       - "src/lerobot/rollout/**"
       - "src/lerobot/inference/**"
+      - "src/lerobot/utils/**"
+      - "src/lerobot/configs/**"
+      - "src/lerobot/datasets/**"
       - "benchmarks/**"
       - "scripts/ci/**"
       - "docker/**"
       - ".github/workflows/benchmark*.yml"
       - "pyproject.toml"
+      - "setup.py"
+      - "MANIFEST.in"
       - "uv.lock"
   pull_request:
     branches: [main]
@@ -64,3 +69,5 @@ jobs:
       policy_extras: ${{ join(matrix.policy_extras, ' ') }}
     secrets:
       LEROBOT_HF_USER: ${{ secrets.LEROBOT_HF_USER }}
+      DOCKERHUB_LEROBOT_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+      DOCKERHUB_LEROBOT_PASSWORD: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}

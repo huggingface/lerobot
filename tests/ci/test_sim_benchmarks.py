@@ -84,3 +84,17 @@ def test_matrix_has_eight_benchmarks_and_training_coverage():
     assert all(len(e["sim_tag"]) == 24 for e in entries)
     assert all(len(e["revision"]) == 40 for e in entries)
     assert next(e for e in entries if e["name"] == "libero_plus")["task"] == "libero_spatial"
+
+
+def test_libero_policy_server_example_matches_simulator_config():
+    import draccus
+    import yaml
+
+    from lerobot.remote_inference.configs import ServerConfig
+
+    policy = draccus.parse(ServerConfig, config_path=str(ROOT / "docker/sims/policy_libero.yaml"), args=[])
+    sim = yaml.safe_load((ROOT / "docker/sims/configs/libero.yaml").read_text())["sim"]
+    assert policy.semantics == sim["semantics"]
+    assert list(policy.action_feature.names) == sim["action_names"]
+    state = next(f for f in policy.features if f.name == "observation.state")
+    assert list(state.names) == sim["state_names"]
