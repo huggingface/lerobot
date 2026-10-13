@@ -21,6 +21,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+pytest.importorskip("msgpack")
+
 from lerobot.env_server.client import EnvClient
 from lerobot.env_server.server import EnvServer, ServerConfig
 from lerobot.sims.backend import Backend

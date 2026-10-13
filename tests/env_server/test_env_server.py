@@ -30,6 +30,9 @@ from lerobot.transport.zenoh import ZenohConfig
 
 @pytest.fixture
 def server():
+    # Live-server tests need the `remote` extra; the base-dependency tier skips them.
+    pytest.importorskip("zenoh")
+    pytest.importorskip("msgpack")
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]

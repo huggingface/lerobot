@@ -183,6 +183,7 @@ def test_profile_aliases_match_remote_feature_contract():
 @pytest.mark.parametrize("service", ["sim", "inference"])
 @pytest.mark.parametrize("failure", [None, "request_id", "generation", "malformed_error", "wrong_type"])
 def test_both_clients_use_the_shared_reply_rules(service, failure):
+    pytest.importorskip("msgpack")
     from types import SimpleNamespace
 
     from lerobot.transport.wire.codec import decode_message, encode_message
