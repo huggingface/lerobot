@@ -69,7 +69,7 @@ uv run --no-sync python -m lerobot.scripts.lerobot_rollout \
   --return_to_initial_position=false --play_sounds=false
 ```
 
-`--fps` must equal the simulator's control rate; rollout refuses to start otherwise. The episodic rollout strategy resets the world between episodes and stops on simulator success or termination. Recordings use the world's task description.
+`--fps` must equal the simulator's control rate; rollout refuses to start otherwise. The episodic rollout strategy resets the world between episodes and stops on simulator success or termination. The policy follows, and recordings use, the world's task description. In interactive mode, an instruction set with `/subtask` survives the world reset of the next `/start`; `/reset` restores the world's task.
 
 For remote inference, keep the same `--robot.*` options and replace the local policy/inference options with:
 
