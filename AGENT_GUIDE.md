@@ -382,10 +382,10 @@ Benchmark simulators have native dependencies that conflict with LeRobot's. Each
 uv run scripts/run_sim.py docker/sims/configs/libero.yaml   # builds and starts the server on :7448
 lerobot-eval --policy.path=<your_policy> \
   --env.type=sim --env.deployment=libero --env.task=libero_spatial \
-  --env.profile=benchmarks/profiles/libero.yaml --eval.n_episodes=50
+  --eval.n_episodes=50
 ```
 
-See [`docs/source/simulator_server.mdx`](./docs/source/simulator_server.mdx) for profiles, rollout through the Robot API, and remote inference.
+See [`docs/source/simulator_server.mdx`](./docs/source/simulator_server.mdx) for camera renames, rollout through the Robot API, and remote inference.
 
 ### 8.3 Target success rates
 

@@ -267,33 +267,30 @@ def test_client_loss_releases_ownership(server):
         other.close()
 
 
-def test_sim_robot_action_aliases_preserve_controller_order(server, tmp_path):
+def test_sim_robot_actions_follow_controller_order(server, tmp_path):
     from lerobot.robots.remote import RemoteRobot, RemoteRobotConfig
 
-    profile = tmp_path / "profile.yaml"
-    profile.write_text(
-        "semantics: toy-delta-v1\ncontrol: delta\n"
-        "action_name_mapping:\n  command_0: action_0\n  command_1: action_1\n"
-    )
-    robot = RemoteRobot(RemoteRobotConfig(endpoint=server[1], profile=str(profile), calibration_dir=tmp_path))
+    robot = RemoteRobot(RemoteRobotConfig(endpoint=server[1], calibration_dir=tmp_path))
     try:
-        assert robot.descriptor.action_feature.names == ("command_0", "command_1")
-        assert tuple(robot.action_features) == ("action_0", "action_1")
+        assert (
+            tuple(robot.action_features)
+            == robot.descriptor.action_feature.names
+            == ("command_0", "command_1")
+        )
         robot.connect()
-        assert robot.send_action({"action_1": 0.75, "action_0": 0.25}) == {
-            "action_0": 0.25,
-            "action_1": 0.75,
+        assert robot.send_action({"command_1": 0.75, "command_0": 0.25}) == {
+            "command_0": 0.25,
+            "command_1": 0.75,
         }
     finally:
         robot.disconnect()
 
 
-def test_eval_profile_admission(server):
-    from dataclasses import replace
+def test_checkpoint_admission(server):
     from types import SimpleNamespace
 
     from lerobot.configs.types import FeatureType, PolicyFeature
-    from lerobot.env_server.profiles import EvalProfile
+    from lerobot.env_server.admission import validate_checkpoint
 
     _, endpoint = server
     client = EnvClient(endpoint)
@@ -301,7 +298,6 @@ def test_eval_profile_admission(server):
         descriptor = client.describe()
     finally:
         client.close()
-    profile = EvalProfile(descriptor.semantics, control=descriptor.control)
     config = SimpleNamespace(
         input_features={
             "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
@@ -309,51 +305,33 @@ def test_eval_profile_admission(server):
         },
         output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
     )
-    profile.validate_policy(descriptor, config)
+    validate_checkpoint(descriptor, config, {})
     # Acquisition resolution is independent of policy-side image preparation.
-    # Admission requires no policy type or resize configuration.
-    config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (3, 256, 256))
-    profile.validate_policy(descriptor, config)
-    config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (3, 480, 640))
-    profile.validate_policy(descriptor, config)
-    for shape in ((4, 256, 256), (256, 256), (3, 0, 256), (3, 256, -1)):
+    for shape in ((3, 256, 256), (3, 480, 640)):
+        config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, shape)
+        validate_checkpoint(descriptor, config, {})
+    for shape in ((4, 256, 256), (256, 256)):
         config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, shape)
         with pytest.raises(ValueError, match="shape mismatch"):
-            profile.validate_policy(descriptor, config)
-    config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, (3, 8, 8))
+            validate_checkpoint(descriptor, config, {})
+    # A checkpoint camera named differently is admitted through --rename_map, as for any robot.
+    del config.input_features["observation.image"]
+    config.input_features["observation.images.front"] = PolicyFeature(FeatureType.VISUAL, (3, 8, 8))
+    with pytest.raises(ValueError, match="missing from the simulator"):
+        validate_checkpoint(descriptor, config, {})
+    validate_checkpoint(descriptor, config, {"observation.image": "observation.images.front"})
     # Checkpoint placeholder cameras are policy-owned: admission skips them whatever their shape.
     config.input_features["observation.images.empty_camera_0"] = PolicyFeature(
         FeatureType.VISUAL, (3, 480, 640)
     )
-    config.input_features["observation.images.empty_camera_1"] = PolicyFeature(
-        FeatureType.VISUAL, (3, 256, 256)
-    )
-    profile.validate_policy(descriptor, config)
-    del config.input_features["observation.images.empty_camera_0"]
-    del config.input_features["observation.images.empty_camera_1"]
-    # A real checkpoint camera missing from the simulator is still rejected.
-    config.input_features["observation.images.camera9"] = PolicyFeature(FeatureType.VISUAL, (3, 8, 8))
-    with pytest.raises(ValueError, match="missing from simulator"):
-        profile.validate_policy(descriptor, config)
-    del config.input_features["observation.images.camera9"]
-    with pytest.raises(ValueError, match="semantics"):
-        replace(profile, semantics="wrong").validate_policy(descriptor, config)
-    with pytest.raises(ValueError, match="component order"):
-        replace(profile, action_names=["command_1", "command_0"]).validate_policy(descriptor, config)
-    aliased = replace(profile, action_name_mapping={"command_0": "action_0", "command_1": "action_1"})
-    config.action_feature_names = ["action_0", "action_1"]
-    aliased.validate_policy(descriptor, config)
-    with pytest.raises(ValueError, match="component order"):
-        config.action_feature_names = ["action_1", "action_0"]
-        aliased.validate_policy(descriptor, config)
-    with pytest.raises(ValueError, match="absent"):
-        replace(profile, action_name_mapping={"unknown": "action_0"}).validate_descriptor(descriptor)
-    with pytest.raises(ValueError, match="one-to-one"):
-        replace(profile, action_name_mapping={"command_0": "command_1"}).validate_descriptor(descriptor)
-    del config.action_feature_names
+    validate_checkpoint(descriptor, config, {"observation.image": "observation.images.front"})
     config.input_features["observation.state"] = PolicyFeature(FeatureType.STATE, (3,))
     with pytest.raises(ValueError, match="shape mismatch"):
-        profile.validate_policy(descriptor, config)
+        validate_checkpoint(descriptor, config, {"observation.image": "observation.images.front"})
+    config.input_features["observation.state"] = PolicyFeature(FeatureType.STATE, (2,))
+    config.output_features["action"] = PolicyFeature(FeatureType.ACTION, (7,))
+    with pytest.raises(ValueError, match="action dimension"):
+        validate_checkpoint(descriptor, config, {"observation.image": "observation.images.front"})
 
 
 def test_eval_loop_accepts_canonical_observations(server):
@@ -413,12 +391,7 @@ def test_sim_robot_local_inference_engines(server, tmp_path, mode):
     from tests.inference.rtc_helpers import ControlledPolicy, Pipeline
     from tests.utils import wait_for
 
-    profile = tmp_path / "aliases.yaml"
-    profile.write_text(
-        "semantics: toy-delta-v1\ncontrol: delta\n"
-        "action_name_mapping:\n  command_0: action_0\n  command_1: action_1\n"
-    )
-    robot = RemoteRobot(RemoteRobotConfig(endpoint=server[1], profile=str(profile), calibration_dir=tmp_path))
+    robot = RemoteRobot(RemoteRobotConfig(endpoint=server[1], calibration_dir=tmp_path))
     wrapper = ThreadSafeRobot(robot)
     names = list(robot.action_features)
     state_names = list(robot._state.names)
@@ -610,12 +583,17 @@ def test_rollout_rejects_checkpoint_schema_before_opening_world(server, tmp_path
         robot=robot.config,
         teleop=None,
         rename_map={},
+        fps=robot.descriptor.fps,
         policy=SimpleNamespace(
             input_features={"observation.state": PolicyFeature(type=FeatureType.STATE, shape=(6,))},
             output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
         ),
     )
     with pytest.raises(ValueError, match="shape mismatch"):
+        context._connect_rollout_hardware(cfg)
+    # A control rate other than the simulator's would replay actions too fast or too slow.
+    cfg.fps = robot.descriptor.fps * 2
+    with pytest.raises(ValueError, match="control rate"):
         context._connect_rollout_hardware(cfg)
     assert not server[0].sessions
     assert robot.client.descriptor is None

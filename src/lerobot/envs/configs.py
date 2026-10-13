@@ -26,7 +26,6 @@ from gymnasium.envs.registration import registry as gym_registry
 
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.env_server.client import EnvClient
-from lerobot.env_server.profiles import EvalProfile
 from lerobot.processor import IsaaclabArenaProcessorStep, LiberoProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
@@ -967,7 +966,6 @@ class SimEnvConfig(EnvConfig):
     endpoint: str = "tcp/127.0.0.1:7448"
     deployment: str = "default"
     timeout_s: float = 120
-    profile: str | None = None
     task_ids: list[int] | None = None
 
     @property
@@ -982,9 +980,6 @@ class SimEnvConfig(EnvConfig):
             descriptor = client.describe()
         finally:
             client.close()
-        profile = EvalProfile.load(self.profile) if self.profile else None
-        if profile:
-            profile.validate_descriptor(descriptor)
         self.descriptor = descriptor
         self.fps = int(descriptor.fps)
         self.features = {
@@ -996,9 +991,8 @@ class SimEnvConfig(EnvConfig):
         self.features["action"] = PolicyFeature(
             type=FeatureType.ACTION, shape=descriptor.action_feature.shape
         )
-        self.features_map = {
-            name: profile.feature_mapping.get(name, name) if profile else name for name in self.features
-        }
+        # Simulator keys reach the policy unchanged; --rename_map aliases them like any env.
+        self.features_map = {name: name for name in self.features}
         groups = self.task.split(",") if self.task else list(descriptor.tasks)
         result = {}
         for group in groups:
@@ -1008,9 +1002,7 @@ class SimEnvConfig(EnvConfig):
             if any(str(i) not in descriptor.tasks[group] for i in ids):
                 raise ValueError("Unknown simulator task index")
             result[group] = {
-                i: SimVectorEnv(
-                    self.endpoint, self.deployment, n_envs, group, i, self.timeout_s, descriptor, profile
-                )
+                i: SimVectorEnv(self.endpoint, self.deployment, n_envs, group, i, self.timeout_s, descriptor)
                 for i in ids
             }
         return result

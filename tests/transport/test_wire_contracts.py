@@ -131,55 +131,6 @@ def test_array_validation_checks_batch_dtype_and_finiteness(value):
         validate_array(value, feature, leading_shape=(3,))
 
 
-def test_profile_aliases_match_remote_feature_contract():
-    from types import SimpleNamespace
-
-    from lerobot.env_server.contracts import EnvDescriptor
-    from lerobot.env_server.profiles import EvalProfile
-    from lerobot.remote_inference.client import _compare_feature
-
-    camera = FeatureSpec("observation.images.native", (2, 2, 3), "uint8", kind="rgb", semantics="delta-v1")
-    action = FeatureSpec("action", (2,), "float32", names=("dx", "dy"), semantics="delta-v1")
-    descriptor = EnvDescriptor(
-        "toy",
-        "delta-v1",
-        (camera,),
-        action,
-        "delta",
-        20,
-        ("lockstep",),
-        {"reach": ["0"]},
-        10,
-        {},
-    )
-    profile = EvalProfile(
-        "delta-v1",
-        feature_mapping={camera.name: "observation.images.image"},
-        action_name_mapping={"dx": "action_0", "dy": "action_1"},
-    )
-    checkpoint = SimpleNamespace(
-        input_features={"observation.images.image": SimpleNamespace(shape=(3, 2, 2))},
-        output_features={"action": SimpleNamespace(shape=(2,))},
-        action_feature_names=["action_0", "action_1"],
-    )
-    profile.validate_policy(descriptor, checkpoint)
-    expected_camera = replace(camera, name="observation.images.image")
-    expected_action = replace(action, names=("action_0", "action_1"))
-    with pytest.raises(ProtocolError) as exc:
-        _compare_feature(camera, expected_camera)
-    assert exc.value.code is ErrorCode.INCOMPATIBLE
-    _compare_feature(replace(camera, name=profile.feature_mapping[camera.name]), expected_camera)
-    _compare_feature(replace(action, names=profile.policy_action_names(descriptor)), expected_action)
-    checkpoint.action_feature_names.reverse()
-    with pytest.raises(ValueError, match="component order"):
-        profile.validate_policy(descriptor, checkpoint)
-    with pytest.raises(ProtocolError) as exc:
-        _compare_feature(
-            replace(expected_action, names=tuple(checkpoint.action_feature_names)), expected_action
-        )
-    assert exc.value.code is ErrorCode.INCOMPATIBLE
-
-
 @pytest.mark.parametrize("service", ["sim", "inference"])
 @pytest.mark.parametrize("failure", [None, "request_id", "generation", "malformed_error", "wrong_type"])
 def test_both_clients_use_the_shared_reply_rules(service, failure):

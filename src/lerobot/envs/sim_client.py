@@ -35,16 +35,12 @@ class SimVectorEnv(gym.vector.VectorEnv):
         task_id=0,
         timeout_s=120,
         descriptor=None,
-        profile=None,
     ):
         self.client = EnvClient(endpoint, deployment, timeout_s)
         self.descriptor = descriptor or self.client.describe()
         self.num_envs = num_envs
         self.task_group = task_group or next(iter(self.descriptor.tasks))
         self.task_id = task_id
-        self.profile = profile
-        if profile is not None:
-            profile.validate_descriptor(self.descriptor)
         self.metadata = {"render_fps": self.descriptor.fps, "autoreset_mode": "Disabled"}
         self.render_mode = "rgb_array"
         self.single_observation_space = gym.spaces.Dict(

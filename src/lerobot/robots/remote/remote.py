@@ -20,7 +20,6 @@ import numpy as np
 
 from lerobot.env_server.client import EnvClient
 from lerobot.env_server.contracts import StepResult
-from lerobot.env_server.profiles import EvalProfile
 from lerobot.robots.robot import Robot
 
 from .configuration_remote import RemoteRobotConfig
@@ -37,9 +36,6 @@ class RemoteRobot(Robot):
         self.client = EnvClient(config.endpoint, config.deployment, config.timeout_s, config.setup_timeout_s)
         try:
             self.descriptor = self.client.describe()
-            self.profile = EvalProfile.load(config.profile) if config.profile else None
-            if self.profile:
-                self.profile.validate_descriptor(self.descriptor)
             self.supports_position_hold = self.descriptor.hold == "position"
             self.supports_command_hold = self.descriptor.hold == "command"
             self.latest: StepResult | None = None
@@ -47,16 +43,11 @@ class RemoteRobot(Robot):
             if state is None or not state.names:
                 raise ValueError("Robot face requires explicit state component names")
             self._state = state
-            self._camera_keys: dict[str, str] = {}
-            for feature in self.descriptor.features:
-                if feature.kind == "rgb":
-                    canonical = (
-                        self.profile.feature_mapping.get(feature.name, feature.name)
-                        if self.profile
-                        else feature.name
-                    )
-                    camera = canonical.removeprefix("observation.images.").removeprefix("observation.")
-                    self._camera_keys[feature.name] = camera
+            self._camera_keys = {
+                f.name: f.name.removeprefix("observation.images.").removeprefix("observation.")
+                for f in self.descriptor.features
+                if f.kind == "rgb"
+            }
         except BaseException:
             self.client.close()
             raise
@@ -67,10 +58,8 @@ class RemoteRobot(Robot):
         return self._camera_keys
 
     def feature_names(self, rename_map: dict[str, str]) -> dict[str, str]:
-        """Map each descriptor feature to its policy key: profile alias first, then ``rename_map``."""
-        mapping = self.profile.feature_mapping if self.profile else {}
-        aliased = {f.name: mapping.get(f.name, f.name) for f in self.descriptor.features}
-        return {name: rename_map.get(alias, alias) for name, alias in aliased.items()}
+        """Map each descriptor feature to its policy key with ``rename_map``, as for any robot."""
+        return {f.name: rename_map.get(f.name, f.name) for f in self.descriptor.features}
 
     @property
     def observation_features(self) -> dict[str, type | tuple[int, ...]]:
@@ -81,15 +70,7 @@ class RemoteRobot(Robot):
 
     @property
     def action_features(self) -> dict[str, type]:
-        return dict.fromkeys(self.policy_action_names, float)
-
-    @property
-    def policy_action_names(self) -> tuple[str, ...]:
-        return (
-            self.profile.policy_action_names(self.descriptor)
-            if self.profile
-            else self.descriptor.action_feature.names
-        )
+        return dict.fromkeys(self.descriptor.action_feature.names, float)
 
     @property
     def is_connected(self) -> bool:
@@ -126,7 +107,7 @@ class RemoteRobot(Robot):
         }
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
-        names = self.policy_action_names
+        names = self.descriptor.action_feature.names
         if set(action) != set(names):
             raise ValueError("Remote action must contain exactly the declared components")
         values = np.asarray([[action[name] for name in names]], dtype=np.float32)

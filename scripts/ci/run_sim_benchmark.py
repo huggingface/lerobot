@@ -15,6 +15,7 @@
 """Run the same simulator sidecar and driver locally and in benchmark CI."""
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -122,7 +123,7 @@ def main():
             "--env.type=sim",
             "--env.endpoint=tcp/sim:7448",
             f"--env.deployment={entry['name']}",
-            f"--env.profile={entry['profile']}",
+            f"--rename_map={json.dumps(entry['rename_map'])}",
             f"--eval.n_episodes={entry['episodes']}",
             f"--eval.batch_size={entry['batch_size']}",
             "--eval.use_async_envs=false",
@@ -150,9 +151,7 @@ def main():
         )
         if entry["train_smoke"]:
             if entry["name"] != "libero":
-                raise ValueError(
-                    "train_smoke uses the LIBERO dataset and profile; only the libero entry may set it"
-                )
+                raise ValueError("train_smoke uses the LIBERO dataset; only the libero entry may set it")
             train_command = [
                 "lerobot-train",
                 "--policy.path=lerobot/smolvla_base",
@@ -166,7 +165,6 @@ def main():
                 "--env.type=sim",
                 "--env.endpoint=tcp/sim:7448",
                 "--env.deployment=libero",
-                "--env.profile=benchmarks/profiles/libero.yaml",
                 "--policy.empty_cameras=1",
                 "--output_dir=/tmp/train-smoke",
                 "--steps=1",

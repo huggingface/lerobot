@@ -22,6 +22,7 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass, field, replace
@@ -36,7 +37,7 @@ from lerobot.datasets import (
     aggregate_pipeline_dataset_features,
     create_initial_features,
 )
-from lerobot.env_server.profiles import EvalProfile
+from lerobot.env_server.admission import validate_checkpoint
 from lerobot.inference import (
     FeatureSpec,
     InferenceEngine,
@@ -339,15 +340,15 @@ def _connect_rollout_hardware(
     teleop = None
     try:
         if isinstance(robot, RemoteRobot):
+            # The simulator ticks at its own rate; a different control rate replays actions too fast or slow.
+            if not math.isclose(cfg.fps, robot.descriptor.fps):
+                raise ValueError(
+                    f"--fps={cfg.fps} differs from the simulator control rate ({robot.descriptor.fps} Hz)"
+                )
             if simulator_admission is not None:
                 simulator_admission(robot)
             elif cfg.policy is not None:
-                profile = robot.profile or EvalProfile(
-                    robot.descriptor.semantics,
-                    control=robot.descriptor.control,
-                )
-                mapping = robot.feature_names(cfg.rename_map)
-                replace(profile, feature_mapping=mapping).validate_policy(robot.descriptor, cfg.policy)
+                validate_checkpoint(robot.descriptor, cfg.policy, cfg.rename_map)
         if require_hold:
             wrapper.configure_hold()
         logger.info("Connecting robot (%s)...", cfg.robot.type)
@@ -699,9 +700,7 @@ def build_remote_rollout_context(
         def validate_simulator(robot: RemoteRobot) -> None:
             if config.semantics != robot.descriptor.semantics:
                 raise ValueError("Remote deployment semantics differ from simulator semantics")
-            if feature_mismatch(
-                action, replace(robot.descriptor.action_feature, names=robot.policy_action_names)
-            ):
+            if feature_mismatch(action, robot.descriptor.action_feature):
                 raise ValueError("Remote action declaration differs from simulator declaration")
             names = robot.feature_names(cfg.rename_map)
             declared = {names[f.name]: f for f in robot.descriptor.features}

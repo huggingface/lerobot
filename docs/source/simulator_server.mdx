@@ -28,7 +28,7 @@ The simulator container requires Docker GPU access for EGL rendering.
 
 ## Evaluate a checkpoint
 
-Connect evaluation to the server with a compatible checkpoint and profile:
+Connect evaluation to the server with a compatible checkpoint:
 
 ```bash
 uv run --no-sync python -m lerobot.scripts.lerobot_eval \
@@ -37,24 +37,19 @@ uv run --no-sync python -m lerobot.scripts.lerobot_eval \
   --policy.device=cuda \
   --env.type=sim --env.endpoint=tcp/127.0.0.1:7448 --env.deployment=libero \
   --env.task=libero_spatial --env.task_ids='[0]' \
-  --env.profile=benchmarks/profiles/libero.yaml \
   --eval.n_episodes=1 --eval.batch_size=1 \
   --output_dir=outputs/eval_libero
 ```
 
-Profiles declare camera mappings, state/action component order, and controller semantics. Placeholder cameras (`empty_cameras`) are a policy setting saved with the checkpoint; override it with `--policy.empty_cameras` only when needed. Use `benchmarks/profiles/libero.yaml` with a compatible LIBERO checkpoint, or copy it and adjust its declarations for another policy. The checkpoint must declare its actual state/action dimensions and trained camera names. A profile maps simulator camera names to those names; it does not repair checkpoint metadata.
+When the checkpoint was trained with other camera names, rename the simulator keys with `--rename_map`, as for any environment or robot:
 
-RGB admission checks channel count and layout independently of image height/width. Policy preprocessing owns resizing and resolution restrictions. A checkpoint requiring a fixed input resolution needs a matching server configuration or policy-side resize processor. Admission strictly checks state/action dimensions and declared component order. Simulator images are HWC uint8 on the wire; generic image/tensor preparation happens once on the policy side, followed by saved policy preprocessing.
-
-Use `feature_mapping` to rename simulator observation keys to the keys expected by the policy:
-
-```yaml
-feature_mapping:
-  observation.images.front: observation.images.camera1
-  observation.images.wrist: observation.images.camera2
+```bash
+--rename_map='{"observation.images.camera1": "observation.images.image", "observation.images.camera2": "observation.images.image2"}'
 ```
 
-Use the keys from the server descriptor and preserve trained camera identity, even when several cameras have identical shapes. For server-backed evaluation, `--env.profile` supplies the camera rename mapping; a conflicting `--rename_map` is rejected.
+Use the keys from the server descriptor and preserve trained camera identity, even when several cameras have identical shapes. Placeholder cameras (`empty_cameras`) are a policy setting saved with the checkpoint; override it with `--policy.empty_cameras` only when needed.
+
+Before the first step, every checkpoint input must exist in the simulator after renaming, with matching state and action dimensions and RGB channel count. Image height/width may differ: policy preprocessing owns resizing, so a checkpoint requiring a fixed input resolution needs a matching server configuration or a policy-side resize processor. Controller conventions (delta vs absolute actions, rotation format) are not checked; use a checkpoint trained on the simulator's convention. Simulator images are HWC uint8 on the wire; generic image/tensor preparation happens once on the policy side, followed by saved policy preprocessing.
 
 The gym client advances the simulator in lockstep. Completed worlds retain their terminal transition until the next explicit reset; stepping another world in the batch cannot restart them. RPC mutations are never retried. After an ambiguous timeout, close the client and create a new session.
 
@@ -65,7 +60,7 @@ The gym client advances the simulator in lockstep. Completed worlds retain their
 ```bash
 uv run --no-sync python -m lerobot.scripts.lerobot_rollout \
   --robot.type=remote --robot.endpoint=tcp/127.0.0.1:7448 \
-  --robot.deployment=libero --robot.profile=benchmarks/profiles/libero.yaml \
+  --robot.deployment=libero \
   --robot.task=libero_spatial --robot.task_id=0 \
   --policy.path=lerobot/smolvla_libero \
   --policy.pretrained_revision=a24f1f380461b665158d52acd140152c79e8b36d \
@@ -74,7 +69,7 @@ uv run --no-sync python -m lerobot.scripts.lerobot_rollout \
   --return_to_initial_position=false --play_sounds=false
 ```
 
-The episodic rollout strategy resets the world between episodes and stops on simulator success or termination. Recordings use the world's task description.
+`--fps` must equal the simulator's control rate; rollout refuses to start otherwise. The episodic rollout strategy resets the world between episodes and stops on simulator success or termination. Recordings use the world's task description.
 
 For remote inference, keep the same `--robot.*` options and replace the local policy/inference options with:
 
@@ -85,7 +80,7 @@ For remote inference, keep the same `--robot.*` options and replace the local po
 --inference.semantics=libero-delta-v1
 ```
 
-Start the policy server separately using [remote inference setup](./remote_inference). Its schema must match the observations exposed by `RemoteRobot`, including profile camera aliases. `docker/sims/policy_libero.yaml` provides the LIBERO policy-server configuration. Omit `--policy.path` from the rollout command because the policy server loads the checkpoint.
+Start the policy server separately using [remote inference setup](./remote_inference). Its schema must match the observations exposed by `RemoteRobot` after `--rename_map`. `docker/sims/policy_libero.yaml` provides the LIBERO policy-server configuration. Omit `--policy.path` from the rollout command because the policy server loads the checkpoint.
 
 For local RTC, use `--inference.type=rtc` with the policy's RTC settings.
 
@@ -103,4 +98,4 @@ LIBERO runtime images use converted NumPy initial-state files. The image build c
 
 ## Add a benchmark
 
-See [Adding a benchmark](./adding_benchmarks) for backend adapters, simulator images, profiles, and CI integration.
+See [Adding a benchmark](./adding_benchmarks) for backend adapters, simulator images, and CI integration.

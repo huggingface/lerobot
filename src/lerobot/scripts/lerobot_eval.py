@@ -805,14 +805,9 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     )
 
     if cfg.env.type == "sim":
-        from lerobot.env_server.profiles import EvalProfile
+        from lerobot.env_server.admission import validate_checkpoint
 
-        profile = (
-            EvalProfile.load(cfg.env.profile)
-            if cfg.env.profile
-            else EvalProfile(cfg.env.descriptor.semantics, control=cfg.env.descriptor.control)
-        )
-        profile.validate_policy(cfg.env.descriptor, cfg.policy)
+        validate_checkpoint(cfg.env.descriptor, cfg.policy, cfg.rename_map)
 
     logging.info("Making policy.")
     policy = make_policy(

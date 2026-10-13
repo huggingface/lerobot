@@ -6,15 +6,14 @@ Simulator benchmarks use an [EnvServer](./simulator_server), with native depende
 
 Start from `docker/sims/configs/libero.yaml` or `metaworld.yaml` and their native implementations under `src/lerobot/sims/native/`.
 
-| Component            | Location                                 | What to add                                                                                                     |
-| -------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Native environments  | `src/lerobot/sims/native/<benchmark>.py` | Task factories, reset/step, rendering, episode limits, task descriptions, and success reporting                 |
-| Canonical adapter    | `src/lerobot/sims/adapters.py`           | Native observations to dataset-style keys, HWC uint8 RGB, and float32 state; controller conversion where needed |
-| Backend selection    | `src/lerobot/sims/backend.py`            | Register factory selection if the existing naming convention is insufficient                                    |
-| Server configuration | `docker/sims/configs/<benchmark>.yaml`   | Factory kwargs, tasks, FPS, ordered components, controller semantics, and hold retention                        |
-| Simulator image      | `docker/Dockerfile.sim`                  | A `<benchmark>_native` stage: pinned native dependencies and asset revisions; the final stage adds the server   |
-| Evaluation profile   | `benchmarks/profiles/<benchmark>.yaml`   | Checkpoint camera aliases, ordered state/action declarations, and semantics                                     |
-| CI manifest          | `benchmarks/benchmarks.yaml`             | Name, tasks and checkpoint revision; policy, image, config, profile and extras default from the name            |
+| Component            | Location                                 | What to add                                                                                                      |
+| -------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Native environments  | `src/lerobot/sims/native/<benchmark>.py` | Task factories, reset/step, rendering, episode limits, task descriptions, and success reporting                  |
+| Canonical adapter    | `src/lerobot/sims/adapters.py`           | Native observations to dataset-style keys, HWC uint8 RGB, and float32 state; controller conversion where needed  |
+| Backend selection    | `src/lerobot/sims/backend.py`            | Register factory selection if the existing naming convention is insufficient                                     |
+| Server configuration | `docker/sims/configs/<benchmark>.yaml`   | Factory kwargs, tasks, FPS, ordered components, controller semantics, and hold retention                         |
+| Simulator image      | `docker/Dockerfile.sim`                  | A `<benchmark>_native` stage: pinned native dependencies and asset revisions; the final stage adds the server    |
+| CI manifest          | `benchmarks/benchmarks.yaml`             | Name, tasks, checkpoint revision and camera `rename_map`; policy, image, config and extras default from the name |
 
 The shared backend serializes session operations, supports lockstep and realtime execution, and freezes completed worlds until explicit reset. Each session owns its environment batch. Native factories must release resources on close.
 
@@ -30,7 +29,7 @@ Do not apply in-process observation-key conversion or environment processors aga
 
 ### Checkpoint admission
 
-Profiles alias simulator camera keys to the checkpoint's trained keys without changing view identity or component order. Checkpoint state/action dimensions must be correct; profiles cannot repair them. Persist actual trained camera declarations and keep camera mappings specific to a deployment in its profile.
+`--rename_map` aliases simulator camera keys to the checkpoint's trained keys, as for any robot; in CI it comes from the entry's `rename_map` in `benchmarks/benchmarks.yaml`. Checkpoint inputs must exist after renaming, and state/action dimensions must match; renaming cannot repair checkpoint metadata.
 
 RGB channel count and layout are checked at admission. Acquisition height/width may differ from training metadata; resizing and resolution restrictions belong to policy preprocessing. Choose matching server dimensions when the policy requires them. Wire arrays must match the server's declared shape and dtype exactly.
 
@@ -39,7 +38,7 @@ RGB channel count and layout are checked at admission. Acquisition height/width 
 1. Check canonical adapter parity against native preprocessing, especially camera orientation, state order, and applied actions.
 2. Compare seeded reset/step sequences through native and server execution. Check batched terminal freezing, success, episode length, rendering, and resource cleanup.
 3. Run torch-disabled import guards for shared/server code and backend imports. Explicitly document simulators requiring their own torch runtime, such as RoboTwin and RoboMME.
-4. Run `lerobot-eval --env.type=sim` with a compatible checkpoint/profile and inspect task descriptions and rendered camera views. See [the usage guide](./simulator_server) for commands.
+4. Run `lerobot-eval --env.type=sim` with a compatible checkpoint and inspect task descriptions and rendered camera views. See [the usage guide](./simulator_server) for commands.
 5. Run the generated benchmark job on the GPU runner. Preserve the LIBERO training smoke when changing shared evaluation/training integration.
 
 `benchmarks/benchmarks.yaml` generates the matrix through `scripts/ci/benchmark_matrix.py`; `.github/workflows/benchmark_run.yml` runs each entry. Add entries to the manifest rather than copying CI jobs. The policy image uses the tested checkout, dependency lock, and selected extras. Simulator images have separate pins and content tags; BuildKit caches only persist on persistent runners.

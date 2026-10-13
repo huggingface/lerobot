@@ -61,7 +61,8 @@ def with_defaults(entry: dict) -> dict:
     defaults = {
         "policy": f"lerobot/smolvla_{name}",
         "sim_config": f"docker/sims/configs/{name}.yaml",
-        "profile": f"benchmarks/profiles/{name}.yaml",
+        # Simulator camera key -> checkpoint camera key, as for any robot.
+        "rename_map": {},
         "dockerfile": "docker/Dockerfile.sim",
         "policy_extras": ["remote", "evaluation", "smolvla", "training", "hardware"],
         "episodes": 1,

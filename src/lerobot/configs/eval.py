@@ -61,17 +61,6 @@ class EvalPipelineConfig:
                 "No pretrained path was provided, evaluated policy will be built from scratch (random weights)."
             )
 
-        if getattr(self.env, "profile", None):
-            from lerobot.env_server.profiles import EvalProfile
-
-            # The profile is the single source of simulator-to-checkpoint camera aliases.
-            mapping = EvalProfile.load(self.env.profile).feature_mapping
-            if self.rename_map and self.rename_map != mapping:
-                raise ValueError(
-                    "--rename_map conflicts with env.profile feature_mapping; declare aliases in the profile"
-                )
-            self.rename_map = mapping
-
         if not self.job_name:
             if self.env is None:
                 self.job_name = f"{self.policy.type if self.policy is not None else 'scratch'}"
