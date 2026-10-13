@@ -1,3 +1,17 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Local and remote trained RTC apply the same conservative prefix bounds."""
 
 import pytest
@@ -8,7 +22,7 @@ pytest.importorskip("datasets")
 from lerobot.inference import ExecutionMode, RTCInferenceConfig
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.rollout.context import _validate_trained_rtc_rollout_config
-from tests.inference.test_policy_runner import ConformingPolicy, observation, runner_for, tiny_config
+from tests.inference.policy_helpers import ConformingPolicy, observation, runner_for, tiny_config
 
 
 @pytest.mark.parametrize(

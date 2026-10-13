@@ -16,7 +16,7 @@
 
 from typing import Any
 
-from lerobot.inference import ExecutionMode, PolicyCapabilities, chunk_settings as chunk_settings
+from lerobot.inference import ExecutionMode, PolicyCapabilities, chunk_settings
 
 CHUNK_ALIGNMENT = "chunk_alignment_v2"
 RTC_MODEL_SPACE = "rtc_model_space_v1"

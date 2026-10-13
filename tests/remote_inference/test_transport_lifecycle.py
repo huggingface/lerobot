@@ -1,11 +1,21 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Real loopback regressions for reply-handle ownership across session boundaries."""
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
-from time import monotonic
 from uuid import uuid4
 
 import pytest
@@ -24,10 +34,8 @@ from lerobot.remote_inference.protocol import (
     session_prefix,
 )
 from lerobot.transport.zenoh import ZenohConfig, ZenohTransport
-from tests.remote_inference.test_remote_path import remote_server as _remote_server
-from tests.remote_inference.test_session import control_request, open_request
-
-remote_server = _remote_server
+from tests.remote_inference.helpers import control_request, open_request
+from tests.utils import wait_for
 
 
 def exchange(transport, key, request):
@@ -43,29 +51,23 @@ def test_transport_loss_cleans_up_and_readmits_without_restarting_server(remote_
     key = instance_prefix(config.deployment, worker.instance_id) + "/open"
     disconnected = ZenohTransport(ZenohConfig(connect_endpoints=[config.endpoint])).open()
 
-    def wait_for(predicate):
-        deadline = monotonic() + 3
-        while not predicate():
-            assert monotonic() < deadline, "server did not observe the lifecycle transition"
-            Event().wait(0.01)
-
     try:
         first = exchange(disconnected, key, open_request(worker))
         assert first.message_type is MessageType.ACCEPTED
         disconnected.declare_token(
             session_prefix(config.deployment, worker.instance_id, first.session_id) + "/alive"
         )
-        wait_for(lambda: worker.descriptor["session"]["client_present"] is True)
+        assert wait_for(lambda: worker.descriptor["session"]["client_present"] is True)
         # Close only the transport, as after a crashed process: no session CLOSE operation.
         disconnected.close()
-        wait_for(lambda: worker.descriptor["session"]["client_present"] is False)
+        assert wait_for(lambda: worker.descriptor["session"]["client_present"] is False)
         with ZenohTransport(ZenohConfig(connect_endpoints=[config.endpoint])) as replacement:
             rejected = exchange(replacement, key, open_request(worker))
             assert rejected.message_type is MessageType.ERROR
             assert rejected.body["code"] == ErrorCode.BUSY
             # The exact 10-second boundary is covered with a controlled clock in test_session.
             worker.idle_timeout_s = 0.02
-            wait_for(lambda: worker.descriptor["available"])
+            assert wait_for(lambda: worker.descriptor["available"])
             worker.idle_timeout_s = 10.0
             accepted = exchange(replacement, key, open_request(worker))
             assert accepted.message_type is MessageType.ACCEPTED

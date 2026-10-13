@@ -1,3 +1,17 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Deployment warmup and server lifecycle without model downloads."""
 
 import signal
@@ -18,8 +32,8 @@ from lerobot.remote_inference.protocol import ErrorCode, MessageType
 from lerobot.remote_inference.server import SessionWorker
 from lerobot.transport.zenoh import ZenohConfig
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND
-from tests.inference.test_policy_runner import ConformingPolicy, observation, processors, tiny_config
-from tests.remote_inference.test_session import action_request, admit
+from tests.inference.policy_helpers import ConformingPolicy, observation, processors, tiny_config
+from tests.remote_inference.helpers import action_request, admit_session
 
 
 def test_content_identity_changes_with_processor_statistics_and_effective_settings(tmp_path):
@@ -123,7 +137,7 @@ def test_unsupported_runtime_subtask_returns_bounded_error_and_preserves_session
     runner, identity = load_deployment(server)
     worker = SessionWorker(runner, deployment="test", artifact_identity=identity, semantics="radians-v1")
     try:
-        session = admit(worker)
+        session = admit_session(worker)
         vqa = replace(action_request(worker, session), message_type=MessageType.LANGUAGE_REQUEST)
         vqa.body.update(kind="vqa", text="Private scene question", intent_generation=0)
         assert worker.submit(vqa).result(2).message_type is MessageType.LANGUAGE_RESULT
@@ -152,7 +166,7 @@ import signal
 from lerobot.remote_inference import ModelConfig, ServerConfig
 from lerobot.scripts import lerobot_policy_server as entry
 from lerobot.transport.zenoh import ZenohConfig
-from tests.inference.test_policy_runner import ConformingPolicy, runner_for, tiny_config
+from tests.inference.policy_helpers import ConformingPolicy, runner_for, tiny_config
 
 runner = runner_for(ConformingPolicy(tiny_config()))
 entry.load_deployment = lambda cfg: (runner, "test-artifact")

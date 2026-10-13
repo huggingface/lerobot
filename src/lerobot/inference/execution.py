@@ -31,7 +31,7 @@ from uuid import uuid4
 
 import torch
 
-from lerobot.policies.rtc import ActionQueue, QueueSnapshot, RTCConfig
+from lerobot.policies import ActionQueue, QueueSnapshot, RTCConfig
 
 from .contracts import ActionChunk, ActionProvenance, ExecutionMode, ObservationSnapshot
 
@@ -299,6 +299,13 @@ class ChunkRuntime:
             self.started_at = self.clock()
             self.held = False
             return True
+
+    def drain_wait_events(self) -> list[dict]:
+        """Atomically take waiting/recovery notices for backend logging."""
+        with self.lock:
+            events = list(self.wait_events)
+            self.wait_events.clear()
+            return events
 
     def fault(self, reason: str) -> None:
         """Latch a terminal fault; invalidate does not clear this latch."""

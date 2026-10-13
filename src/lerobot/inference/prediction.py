@@ -24,8 +24,7 @@ from typing import Any, Protocol, cast
 
 import torch
 
-from lerobot.policies import PreTrainedPolicy
-from lerobot.policies.rtc import reanchor_relative_rtc_prefix
+from lerobot.policies import PreTrainedPolicy, reanchor_relative_rtc_prefix
 from lerobot.processor import NormalizerProcessorStep, PolicyProcessorPipeline, RelativeActionsProcessorStep
 
 from .contracts import ChunkPolicySpec, ExecutionMode

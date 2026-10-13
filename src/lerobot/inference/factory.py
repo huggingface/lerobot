@@ -31,8 +31,7 @@ from typing import Literal
 
 import draccus
 
-from lerobot.policies import PreTrainedPolicy
-from lerobot.policies.rtc import RTCConfig
+from lerobot.policies import PreTrainedPolicy, RTCConfig
 from lerobot.processor import PolicyProcessorPipeline
 
 from .base import InferenceEngine, InferenceRobot

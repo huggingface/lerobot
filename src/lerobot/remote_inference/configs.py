@@ -18,9 +18,14 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal
 
-from lerobot.inference import ExecutionMode, FeatureSpec
-from lerobot.policies.rtc import RTCConfig
-from lerobot.transport.zenoh import ZenohConfig
+from lerobot.inference import (
+    DEFAULT_MAX_TEXT_INPUT_CHARS,
+    DEFAULT_MAX_TEXT_OUTPUT_CHARS,
+    ExecutionMode,
+    FeatureSpec,
+)
+from lerobot.policies import RTCConfig
+from lerobot.transport import ZenohConfig
 
 from .protocol import validate_segment
 
@@ -54,8 +59,8 @@ class LanguageConfig:
 
     enabled: bool = False
     deadline_s: float = 60.0
-    max_input_chars: int = 4096
-    max_output_chars: int = 8192
+    max_input_chars: int = DEFAULT_MAX_TEXT_INPUT_CHARS
+    max_output_chars: int = DEFAULT_MAX_TEXT_OUTPUT_CHARS
 
 
 @dataclass

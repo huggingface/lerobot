@@ -14,7 +14,6 @@
 
 """Exclusive asynchronous policy serving over Zenoh."""
 
-from .chunk_contract import chunk_settings
 from .client import RemoteClient, RequestCancelled
 from .configs import ExecutionConfig, LanguageConfig, ModelConfig, ServerConfig
 from .deployment import artifact_identity, load_deployment
@@ -37,6 +36,5 @@ __all__ = [
     "ServerConfig",
     "SessionWorker",
     "artifact_identity",
-    "chunk_settings",
     "load_deployment",
 ]

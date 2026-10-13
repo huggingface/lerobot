@@ -23,7 +23,6 @@ from collections import Counter, deque
 from dataclasses import replace
 from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import torch
@@ -38,14 +37,12 @@ from lerobot.inference import (
     PolicyQuery,
     QueryAnswer,
     QueryKind,
+    RemoteInferenceConfig,
 )
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from .client import RemoteClient, RequestCancelled
 from .protocol import ErrorCode, ProtocolError
-
-if TYPE_CHECKING:
-    from lerobot.inference import RemoteInferenceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -661,10 +658,7 @@ class RemoteInferenceEngine(InferenceEngine):
         try:
             while not self._stop_event.is_set() and not self.failed:
                 self._drain_log_events()
-                with self.runtime.lock:
-                    wait_events = list(self.runtime.wait_events)
-                    self.runtime.wait_events.clear()
-                for event in wait_events:
+                for event in self.runtime.drain_wait_events():
                     self._event(
                         event["event"], **{key: value for key, value in event.items() if key != "event"}
                     )

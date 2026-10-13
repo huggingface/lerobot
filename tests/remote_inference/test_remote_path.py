@@ -1,12 +1,22 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """A complete direct-Zenoh path with real canonical processor pipelines."""
 
-import socket
 import time
 from dataclasses import replace
-from threading import Event, Thread
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -16,107 +26,21 @@ pytest.importorskip("zenoh")
 pytest.importorskip("datasets")
 pytest.importorskip("msgpack")
 
-from lerobot.inference import ChunkRuntime, ExecutionMode, FeatureSpec, PolicyRunner, RemoteInferenceConfig
 from lerobot.remote_inference.client import RemoteClient, RequestCancelled
 from lerobot.remote_inference.codec import encode_message
 from lerobot.remote_inference.protocol import AdmissionDeniedError
-from lerobot.remote_inference.server import PolicyServer, SessionWorker
 from lerobot.rollout.configs import RolloutConfig
 from lerobot.rollout.context import build_rollout_context
 from lerobot.rollout.strategies.core import send_next_action
-from lerobot.transport.zenoh import ZenohConfig, ZenohTransport
 from lerobot.utils.action_interpolator import ActionInterpolator
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
-from tests.inference.test_policy_runner import (
+from tests.inference.policy_helpers import (
     ConformingPolicy,
     observation,
-    processors,
     runner_for,
     tiny_config,
 )
-
-
-@pytest.fixture
-def remote_server(request):
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        endpoint = f"tcp/127.0.0.1:{sock.getsockname()[1]}"
-    if getattr(request, "param", None) == "robot":
-        config = tiny_config()
-        del config.input_features[OBS_ENV_STATE]
-        policy = ConformingPolicy(config)
-        names = tuple(f"joint_{index}.pos" for index in range(3))
-        runner = PolicyRunner(
-            policy,
-            *processors(config),
-            action_interval=1 / 30,
-            features=(FeatureSpec(OBS_STATE, (3,), "float32", names=names, semantics="radians-v1"),),
-            action_feature=FeatureSpec(ACTION, (3,), "float32", names=names, semantics="radians-v1"),
-        )
-    else:
-        runner = runner_for(ConformingPolicy(tiny_config()))
-    worker = SessionWorker(
-        runner,
-        deployment="loopback",
-        artifact_identity="processor-test",
-        semantics="radians-v1",
-    )
-    transport = ZenohTransport(ZenohConfig(listen_endpoints=[endpoint]))
-    server = PolicyServer(worker, transport)
-    ready = Event()
-    original_token = transport.declare_token
-
-    def declare_token(key):
-        token = original_token(key)
-        ready.set()
-        return token
-
-    transport.declare_token = declare_token
-    thread = Thread(target=server.serve, daemon=True)
-    try:
-        thread.start()
-        assert ready.wait(10), "server did not advertise readiness"
-        config = RemoteInferenceConfig(
-            endpoint=endpoint,
-            deployment="loopback",
-            semantics="radians-v1",
-            chunk_merge="aligned" if getattr(request, "param", None) == "robot" else "append",
-            handshake_timeout_s=2,
-            action_timeout_s=2,
-        )
-        yield worker, config
-    finally:
-        server.stop()
-        if thread.ident is not None:
-            thread.join(10)
-        assert not thread.is_alive()
-        # serve() may fail before entering its resource-management block.
-        transport.close()
-        worker.close()
-
-
-def admit(client):
-    caps = client.capabilities
-    client.admit(
-        features=caps.features,
-        action_feature=caps.action_feature,
-        semantics="radians-v1",
-        action_interval=caps.action_interval,
-        mode="chunk",
-    )
-
-
-def runtime_for(client):
-    runtime = ChunkRuntime(
-        mode=ExecutionMode.CHUNK,
-        action_interval=client.capabilities.action_interval,
-        refill_seconds=0.2,
-        max_observation_age_s=5,
-        action_timeout_s=2,
-        startup_timeout_s=3,
-    )
-    runtime.active = True
-    return runtime
+from tests.remote_inference.helpers import admit
+from tests.remote_inference.network_helpers import runtime_for
 
 
 def test_direct_remote_actions_match_local_pipeline_after_queue_drains(remote_server):

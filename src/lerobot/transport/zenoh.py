@@ -274,7 +274,7 @@ class BoundedQueryable(BoundedSubscriber[PendingQuery]):
         ``queue.Empty`` if no live query arrives within that wait."""
         # The server worker polls even while idle, reclaiming expired reply handles.
         for pending in tuple(self._pending):
-            if time.monotonic() > pending.deadline:
+            if pending.expired:
                 pending.drop()
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:

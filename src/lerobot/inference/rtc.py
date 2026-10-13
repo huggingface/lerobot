@@ -27,8 +27,7 @@ from typing import Any
 
 import torch
 
-from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
-from lerobot.policies.rtc import ActionQueue, RTCConfig
+from lerobot.policies import ActionQueue, PreTrainedPolicy, RTCConfig, prepare_observation_for_inference
 from lerobot.processor import (
     NormalizerProcessorStep,
     PolicyProcessorPipeline,
@@ -36,8 +35,16 @@ from lerobot.processor import (
 )
 from lerobot.utils.feature_utils import build_dataset_frame
 
-from .base import InferenceEngine, InferenceRobot, PolicyQuery, QueryKind
-from .contracts import ActionChunk, ActionProvenance, ChunkPolicySpec, ExecutionMode, ObservationSnapshot
+from .base import InferenceEngine, InferenceRobot, PolicyQuery
+from .contracts import (
+    DEFAULT_MAX_TEXT_OUTPUT_CHARS,
+    ActionChunk,
+    ActionProvenance,
+    ChunkPolicySpec,
+    ExecutionMode,
+    ObservationSnapshot,
+    QueryKind,
+)
 from .execution import ChunkRuntime, HoldState
 from .prediction import chunk_inference_context, predict_chunk
 
@@ -169,7 +176,7 @@ class RTCInferenceEngine(InferenceEngine):
         self._reset_pending = False
         self._hold = HoldState()
         self._active_query_generation = 0
-        self._language_preprocessor, self._language_postprocessor = deepcopy((preprocessor, postprocessor))
+        self._language_preprocessor = deepcopy(preprocessor)
         if getattr(robot_wrapper, "supports_position_hold", False):
             robot_wrapper.configure_position_hold()
         if not getattr(robot_wrapper, "supports_hold", False):
@@ -465,7 +472,7 @@ class RTCInferenceEngine(InferenceEngine):
             result = self._policy.generate_text(preprocessed)
         if self.failed or generation != self._runtime.generation:
             raise RuntimeError("Language result belongs to an invalidated execution generation")
-        if isinstance(result, str) and len(result) > 8192:
+        if isinstance(result, str) and len(result) > DEFAULT_MAX_TEXT_OUTPUT_CHARS:
             raise ValueError("Language result exceeds the configured output bound")
         return result
 
@@ -496,10 +503,7 @@ class RTCInferenceEngine(InferenceEngine):
             warmup_previous: tuple[torch.Tensor, torch.Tensor] | None = None
             consecutive_discards = 0
             while not self._shutdown_event.is_set() and not self.failed:
-                with self._runtime.lock:
-                    wait_events = list(self._runtime.wait_events)
-                    self._runtime.wait_events.clear()
-                for event in wait_events:
+                for event in self._runtime.drain_wait_events():
                     if event["event"] == "waiting":
                         logger.warning(
                             "RTC actions exhausted; retaining last target for up to %.3fs", event["grace_s"]
@@ -517,7 +521,6 @@ class RTCInferenceEngine(InferenceEngine):
                     self._preprocessor.reset()
                     self._postprocessor.reset()
                     self._language_preprocessor.reset()
-                    self._language_postprocessor.reset()
                 if not self._policy_active.is_set():
                     time.sleep(_RTC_IDLE_SLEEP_S)
                     continue

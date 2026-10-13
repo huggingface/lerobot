@@ -25,7 +25,7 @@ from torch import Tensor, nn
 from lerobot.configs import FeatureType
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import populate_queues
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils import ACTION, OBS_STATE
 from lerobot.utils.import_utils import (
     _diffusers_available,
     _transformers_available,

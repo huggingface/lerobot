@@ -23,7 +23,7 @@ import torch.nn.functional as F  # noqa: N812
 from safetensors.torch import load_file
 from torch import Tensor, nn
 
-from lerobot.configs.types import FeatureType
+from lerobot.configs import FeatureType
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE

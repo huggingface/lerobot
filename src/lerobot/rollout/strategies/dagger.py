@@ -745,10 +745,7 @@ class DAggerStrategy(RolloutStrategy):
         if old_phase == DAggerPhase.AUTONOMOUS and new_phase == DAggerPhase.PAUSED:
             logger.info("Pausing engine - robot holds position")
             engine.pause()
-            interpolator.reset()
-            if robot.supports_hold:
-                robot.hold()
-                engine.acknowledge_hold()
+            self.hold_control_state(ctx.hardware)
 
             if self.config.smooth_handover and teleop_supports_feedback(teleop) and prev_action is not None:
                 # TODO(Maxime): prev_action is in robot action key space (output of robot_action_processor).

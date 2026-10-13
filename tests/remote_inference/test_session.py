@@ -1,9 +1,19 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Exclusive admission and ordered policy-worker lifecycle, without network timing."""
 
-from dataclasses import asdict
 from threading import Event
 from types import SimpleNamespace
 from uuid import uuid4
@@ -12,7 +22,15 @@ import pytest
 
 from lerobot.remote_inference.protocol import Envelope, ErrorCode, MessageType
 from lerobot.remote_inference.server import SessionWorker
-from tests.inference.test_policy_runner import ConformingPolicy, observation, runner_for, tiny_config
+from tests.inference.policy_helpers import ConformingPolicy, runner_for, tiny_config
+from tests.remote_inference.helpers import (
+    action_request,
+    admit_session,
+    assert_error,
+    block_predict,
+    control_request,
+    open_request,
+)
 
 
 @pytest.fixture
@@ -29,79 +47,8 @@ def worker():
     instance.close()
 
 
-def open_request(worker, request_id=None):
-    caps = worker.runner.capabilities
-    return Envelope(
-        MessageType.OPEN,
-        worker.instance_id,
-        request_id=request_id or uuid4().hex,
-        body={
-            "expected_artifact": worker.artifact_identity,
-            "semantics": worker.semantics,
-            "features": [asdict(feature) for feature in caps.features],
-            "action_feature": asdict(caps.action_feature),
-            "mode": "chunk",
-            "action_interval": caps.action_interval,
-            "encoding": "raw",
-        },
-    )
-
-
-def admit(worker):
-    accepted = worker.submit(open_request(worker)).result(2)
-    assert accepted.message_type is MessageType.ACCEPTED
-    return accepted.session_id
-
-
-def action_request(worker, session, generation=0, request_id=None):
-    source = observation()
-    sequence = getattr(worker, "_test_sequence", 0) + 1
-    worker._test_sequence = sequence
-    return Envelope(
-        MessageType.OBSERVATION,
-        worker.instance_id,
-        session,
-        generation,
-        request_id or uuid4().hex,
-        {
-            "artifact_identity": worker.artifact_identity,
-            "features": dict(source.features),
-            "task": source.task,
-            "task_version": source.task_version,
-            "observation_id": source.observation_id,
-            "capture_time": source.capture_time,
-            "delay": 0,
-            "sequence": sequence,
-        },
-    )
-
-
-def control_request(worker, session, generation, operation):
-    return Envelope(
-        MessageType.CONTROL, worker.instance_id, session, generation, uuid4().hex, {"operation": operation}
-    )
-
-
-def block_predict(worker):
-    entered, release = Event(), Event()
-    original = worker.runner.policy.predict_action_chunk
-
-    def predict(batch, **kwargs):
-        entered.set()
-        assert release.wait(5), "test did not release the policy worker"
-        return original(batch, **kwargs)
-
-    worker.runner.policy.predict_action_chunk = predict
-    return entered, release
-
-
-def assert_error(response, code):
-    assert response.message_type is MessageType.ERROR
-    assert response.body["code"] == code
-
-
 def test_worker_shutdown_is_bounded_without_promising_to_drain_cleanup(worker):
-    session = admit(worker)
+    session = admit_session(worker)
     entered, release = block_predict(worker)
     try:
         action = worker.submit(action_request(worker, session))
@@ -134,7 +81,7 @@ def test_open_is_idempotent_and_a_second_client_cannot_replace_session(worker):
 
 
 def test_evicted_request_identity_cannot_be_replayed(worker):
-    session = admit(worker)
+    session = admit_session(worker)
     first = action_request(worker, session)
     assert worker.submit(first).result(2).message_type is MessageType.ACTION
     assert_error(worker.submit(first).result(2), ErrorCode.STALE)
@@ -145,18 +92,18 @@ def test_evicted_request_identity_cannot_be_replayed(worker):
 
 
 def test_close_operation_remains_idempotent_after_session_release(worker):
-    session = admit(worker)
+    session = admit_session(worker)
     close = control_request(worker, session, 0, "close")
     first = worker.submit(close)
     assert first.result(2).message_type is MessageType.ACK
     assert worker.submit(close) is first
-    new_session = admit(worker)
+    new_session = admit_session(worker)
     assert worker.submit(close) is first
     assert worker.session_id == new_session
 
 
 def test_reset_acknowledges_only_after_current_model_call_and_reset(worker):
-    session = admit(worker)
+    session = admit_session(worker)
     entered, release = block_predict(worker)
     try:
         action = worker.submit(action_request(worker, session))
@@ -181,7 +128,7 @@ def test_reset_acknowledges_only_after_current_model_call_and_reset(worker):
 
 
 def test_queued_controls_cannot_roll_back_a_newer_generation(worker):
-    session = admit(worker)
+    session = admit_session(worker)
     entered, release = block_predict(worker)
     try:
         action = worker.submit(action_request(worker, session))
@@ -201,7 +148,7 @@ def test_queued_controls_cannot_roll_back_a_newer_generation(worker):
 
 
 def test_close_during_blocked_call_keeps_ownership_until_worker_finishes(worker):
-    session = admit(worker)
+    session = admit_session(worker)
     entered, release = block_predict(worker)
     try:
         action = worker.submit(action_request(worker, session))
@@ -214,7 +161,7 @@ def test_close_during_blocked_call_keeps_ownership_until_worker_finishes(worker)
         release.set()
         action.result(2)
         assert close.result(2).message_type is MessageType.ACK
-        assert admit(worker) != session
+        assert admit_session(worker) != session
     finally:
         release.set()
 
@@ -228,7 +175,7 @@ def cleanup_clock(monkeypatch):
 
 @pytest.mark.parametrize("established", [False, True], ids=["incomplete-handshake", "disconnected"])
 def test_absent_owner_expires_without_admission_retries_extending_grace(worker, cleanup_clock, established):
-    session = admit(worker)
+    session = admit_session(worker)
     if established:
         worker.expire(present=True)
     worker.expire(present=False)
@@ -248,7 +195,7 @@ def test_absent_owner_expires_without_admission_retries_extending_grace(worker, 
     # This control either queues after cleanup or observes its completion.
     assert_error(worker.submit(control_request(worker, session, 0, "status")).result(2), ErrorCode.STALE)
     assert worker.descriptor["available"]
-    assert admit(worker) != session
+    assert admit_session(worker) != session
     assert worker.runner.policy.resets == 4  # constructor, first open, close, new open
 
 
@@ -256,7 +203,7 @@ def test_present_paused_client_never_expires_and_restored_presence_restarts_grac
     worker, cleanup_clock, caplog
 ):
     caplog.set_level("INFO", logger="lerobot.remote_inference.server")
-    session = admit(worker)
+    session = admit_session(worker)
     worker.expire(present=True)
     cleanup_clock[0] += 300
     worker.expire(present=True)
@@ -277,7 +224,7 @@ def test_present_paused_client_never_expires_and_restored_presence_restarts_grac
 
 
 def test_absence_cleanup_never_reuses_a_blocked_model_after_grace(worker, cleanup_clock):
-    session = admit(worker)
+    session = admit_session(worker)
     worker.expire(present=True)
     entered, release = block_predict(worker)
     try:
@@ -302,13 +249,13 @@ def test_absence_cleanup_never_reuses_a_blocked_model_after_grace(worker, cleanu
         release.set()
         assert_error(action.result(2), ErrorCode.TIMEOUT)
         assert_error(after_cleanup.result(2), ErrorCode.STALE)
-        assert admit(worker) != session
+        assert admit_session(worker) != session
     finally:
         release.set()
 
 
 def test_old_queued_control_cannot_mutate_new_session(worker):
-    session = admit(worker)
+    session = admit_session(worker)
     entered, release = block_predict(worker)
     new_open = []
     try:
@@ -331,7 +278,7 @@ def test_old_queued_control_cannot_mutate_new_session(worker):
 
 
 def test_language_exception_after_deadline_faults_session(worker, monkeypatch):
-    session = admit(worker)
+    session = admit_session(worker)
     clock = [100.0]
     monkeypatch.setattr("lerobot.remote_inference.server.time", SimpleNamespace(monotonic=lambda: clock[0]))
 
@@ -355,12 +302,12 @@ def test_invalid_feature_metadata_is_rejected_without_owning_session(worker, fea
     assert_error(worker.submit(request).result(2), ErrorCode.MALFORMED)
     assert worker.session_id is None
     assert worker._thread.is_alive()
-    assert admit(worker)
+    assert admit_session(worker)
 
 
 @pytest.mark.parametrize("operation", ["open", "close", "reset", "invalidate"])
 def test_reset_failure_requires_restart_without_running_more_policy_work(worker, operation, monkeypatch):
-    session = None if operation == "open" else admit(worker)
+    session = None if operation == "open" else admit_session(worker)
     reset_calls = []
 
     def failed_reset(*, full):
@@ -391,7 +338,7 @@ def test_reset_failure_requires_restart_without_running_more_policy_work(worker,
 
 
 def test_commands_queued_behind_a_failed_reset_do_not_reenter_policy(worker, monkeypatch):
-    session = admit(worker)
+    session = admit_session(worker)
     entered, release = Event(), Event()
     resets = []
 

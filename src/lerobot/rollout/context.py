@@ -45,8 +45,12 @@ from lerobot.inference import (
     supports_rtc_inference,
     validate_local_chunk_policy,
 )
-from lerobot.policies import PreTrainedPolicy, get_policy_class, make_pre_post_processors
-from lerobot.policies.rtc import validate_trained_rtc_horizon
+from lerobot.policies import (
+    PreTrainedPolicy,
+    get_policy_class,
+    make_pre_post_processors,
+    validate_trained_rtc_horizon,
+)
 from lerobot.processor import (
     PolicyProcessorPipeline,
     RobotAction,
@@ -655,9 +659,8 @@ def build_remote_rollout_context(
         task = cfg.dataset.single_task if cfg.dataset else cfg.task
         if len(task) > descriptor["limits"]["max_input_chars"]:
             raise ValueError("Initial instruction exceeds the deployed text limit")
-        capabilities = descriptor["capabilities"]
-        expected = tuple(FeatureSpec(**feature) for feature in capabilities["features"])
-        action = FeatureSpec(**capabilities["action_feature"])
+        expected = client.capabilities.features
+        action = client.capabilities.action_feature
         if not action.names:
             raise ValueError("Remote rollout requires explicit ordered canonical action component names")
 

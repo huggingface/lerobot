@@ -22,7 +22,7 @@ caller's responsibility, before an asynchronous encoder accesses reused sensor b
 import io
 import math
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -269,8 +269,6 @@ def _decode_record(record: dict[str, Any], budget: _Budget) -> np.ndarray:
 def _decode_value(value: Any, budget: _Budget, depth: int = 0) -> Any:
     budget.visit(depth)
     if isinstance(value, dict):
-        if any(not isinstance(key, str) for key in value):
-            raise _malformed("Map keys must be strings")
         if _MARKER in value:
             return _decode_record(value, budget)
         return {key: _decode_value(item, budget, depth + 1) for key, item in value.items()}
@@ -397,12 +395,4 @@ def decode_message(payload: bytes, limits: CodecLimits = CodecLimits()) -> Envel
     envelope, body = _unpack_envelope(payload, limits)
     if not isinstance(body, dict):
         raise _malformed("Message body must be a map")
-    return Envelope(
-        envelope.message_type,
-        envelope.instance_id,
-        envelope.session_id,
-        envelope.generation,
-        envelope.request_id,
-        _decode_value(body, _Budget(limits)),
-        envelope.version,
-    )
+    return replace(envelope, body=_decode_value(body, _Budget(limits)))

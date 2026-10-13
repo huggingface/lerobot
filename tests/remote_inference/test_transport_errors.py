@@ -1,6 +1,17 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Reply capacity is released after failure; overflow cannot become valid motion."""
 
 import time
@@ -23,10 +34,9 @@ from lerobot.transport.zenoh import (
     PendingQuery,
     TransportError,
 )
-from tests.inference.test_policy_runner import observation
-from tests.remote_inference import test_remote_path as helpers
-
-remote_server = helpers.remote_server
+from tests.inference.policy_helpers import observation
+from tests.remote_inference.helpers import admit
+from tests.remote_inference.network_helpers import runtime_for
 
 
 @pytest.mark.parametrize("failure", ["oversized", "reply", "drop"])
@@ -80,7 +90,7 @@ def test_unencodable_control_reply_releases_handle_and_pump_keeps_serving(remote
     assert any(key.endswith("/describe") for key in dropped)
     replacement = RemoteClient.connect(config)
     try:
-        helpers.admit(replacement)
+        admit(replacement)
         assert replacement.session_id
     finally:
         replacement.close()
@@ -90,7 +100,7 @@ def test_action_reply_overflow_is_malformed_before_acceptance(remote_server):
     _, config = remote_server
     client = RemoteClient.connect(config)
     try:
-        helpers.admit(client)
+        admit(client)
         stale = encode_message(
             Envelope(MessageType.ACTION, client.instance_id, client.session_id, request_id="obsolete")
         )
@@ -98,7 +108,7 @@ def test_action_reply_overflow_is_malformed_before_acceptance(remote_server):
             assert client._actions._offer(stale)
         assert not client._actions._offer(stale)
         assert client._actions.dropped == 1
-        runtime = helpers.runtime_for(client)
+        runtime = runtime_for(client)
         source = replace(observation(), capture_time=time.monotonic())
         request = runtime.begin(source)
         assert request is not None

@@ -1,12 +1,21 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Actual loopback cancellation and abrupt server-process loss, without hardware."""
 
 from __future__ import annotations
 
-import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from queue import Empty
@@ -29,23 +38,10 @@ from lerobot.remote_inference import RemoteInferenceEngine
 from lerobot.remote_inference.client import RemoteClient, RequestCancelled
 from lerobot.remote_inference.protocol import MessageType, instance_prefix, session_prefix
 from lerobot.transport.zenoh import QueryCancelled
-from tests.inference.test_policy_runner import observation
-from tests.remote_inference.test_aligned_process import ACTION_NAMES, process_server as _process_server
-from tests.remote_inference.test_remote_path import admit, remote_server as _remote_server
-from tests.remote_inference.test_zenoh import transports as _transports
-
-remote_server = _remote_server
-transports = _transports
-process_server = _process_server
-
-
-def wait_for(predicate, timeout=3):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        Event().wait(0.005)
-    return False
+from tests.inference.policy_helpers import observation
+from tests.remote_inference.helpers import admit
+from tests.remote_inference.network_helpers import ACTION_NAMES
+from tests.utils import wait_for
 
 
 def test_cancelled_matching_query_is_not_published(transports):

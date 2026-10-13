@@ -17,6 +17,8 @@
 from .base import InferenceEngine, InferenceRobot, PolicyQuery, QueryAnswer
 from .chunk_settings import chunk_settings
 from .contracts import (
+    DEFAULT_MAX_TEXT_INPUT_CHARS,
+    DEFAULT_MAX_TEXT_OUTPUT_CHARS,
     ActionChunk,
     ActionProvenance,
     ChunkPolicySpec,
@@ -40,6 +42,8 @@ from .rtc import RTCInferenceEngine, supports_rtc_inference, validate_local_chun
 from .sync import SyncInferenceEngine
 
 __all__ = [
+    "DEFAULT_MAX_TEXT_INPUT_CHARS",
+    "DEFAULT_MAX_TEXT_OUTPUT_CHARS",
     "ActionChunk",
     "ActionProvenance",
     "ChunkPolicySpec",

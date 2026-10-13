@@ -36,6 +36,9 @@ from lerobot.policies import (
     FeatureSpec as FeatureSpec,
 )
 
+DEFAULT_MAX_TEXT_INPUT_CHARS = 4096
+DEFAULT_MAX_TEXT_OUTPUT_CHARS = 8192
+
 
 class QueryKind(Enum):
     """What the policy's text head is being asked for."""

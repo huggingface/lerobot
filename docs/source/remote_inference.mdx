@@ -33,7 +33,7 @@ Refill controls when to request. It is not the time between requests.
 
 **Local RTC** (`--inference.type=rtc`) uses a background thread in the rollout process, without transport. **Same-host remote inference** still uses two processes and `--inference.type=remote`. It offers the same alignment/blending options as LAN, including for policies without RTC.
 
-Specific ACT, SmolVLA, XVLA, EVO1 and LaWAM checkpoints have physical action/task evidence. OMX/XVLA also has pause/resume, starvation recovery/expiry and recording acceptance across all four recording strategies; OMX/SmolVLA has local guided RTC recovery/expiry acceptance. FineART has functional action/text integration evidence, but useful language and task continuity remain unvalidated. See the [policy support table](https://github.com/huggingface/lerobot/blob/main/src/lerobot/remote_inference/REMOTE_INFERENCE_DESIGN.md#policy-support) for limits. Routed robot operation and JPEG remain separate follow-ups.
+Specific ACT, SmolVLA, XVLA, EVO1 and LaWAM checkpoints have physical action/task evidence. OMX/XVLA also has pause/resume, starvation recovery/expiry and recording acceptance across all four recording strategies; OMX/SmolVLA has local guided RTC recovery/expiry acceptance. FineART has functional action/text integration evidence, but useful language and task continuity remain unvalidated. See the [policy support table](https://github.com/huggingface/lerobot/blob/main/src/lerobot/remote_inference/README.md#policy-support) for limits. Routed robot operation and JPEG remain separate follow-ups.
 
 ## Start from a working rollout
 
@@ -369,6 +369,4 @@ The retired `lerobot[async]` extra and `lerobot.async_inference` commands are re
 
 Python integrations should import shared engines/configuration from `lerobot.inference` and remote execution/serving from `lerobot.remote_inference`; the old `lerobot.rollout.inference` location is removed. Local RTC now uses bounded starvation waiting on compatible robots and faults immediately on exhaustion when that capability is unavailable. Remote execution requires the driver's position-hold declaration; there is no `hold_mode` option.
 
-When upgrading an earlier development version, update both peers for the current alignment contract and remove server `execution.blendable_components`. Set blending only through client `inference.blend_*` options. Recheck any `expected_artifact` pin after changing deployment configuration.
-
-For architecture, execution contracts and planned extensions, see the [engineering design reference](https://github.com/huggingface/lerobot/blob/main/src/lerobot/remote_inference/REMOTE_INFERENCE_DESIGN.md).
+For architecture, execution contracts and planned extensions, see the [engineering design reference](https://github.com/huggingface/lerobot/blob/main/src/lerobot/remote_inference/README.md).

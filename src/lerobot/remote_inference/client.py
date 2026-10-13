@@ -22,7 +22,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, fields
 from queue import Empty
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
 import numpy as np
@@ -37,8 +37,10 @@ from lerobot.inference import (
     FeatureSpec,
     ObservationSnapshot,
     PolicyCapabilities,
+    RemoteInferenceConfig,
+    chunk_settings,
 )
-from lerobot.transport.zenoh import (
+from lerobot.transport import (
     BoundedSubscriber,
     PresenceToken,
     QueryCancelled,
@@ -48,10 +50,8 @@ from lerobot.transport.zenoh import (
 
 from .chunk_contract import (
     RTC_MODEL_SPACE,
-    chunk_settings,
     required_chunk_capabilities,
     validate_blend_settings,
-    validate_chunk_contract,
 )
 from .codec import RGBImage, decode_message, encode_message, peek_envelope
 from .protocol import (
@@ -66,9 +66,6 @@ from .protocol import (
     instance_prefix,
     session_prefix,
 )
-
-if TYPE_CHECKING:
-    from lerobot.inference import RemoteInferenceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -216,11 +213,7 @@ class RemoteClient:
         cancelled: Callable[[], bool] | None = None,
     ) -> Envelope:
         try:
-            replies = (
-                self.transport.query(key, encode_message(request), timeout)
-                if cancelled is None
-                else self.transport.query(key, encode_message(request), timeout, cancelled=cancelled)
-            )
+            replies = self.transport.query(key, encode_message(request), timeout, cancelled=cancelled)
         except QueryCancelled as exc:
             if not self.present:
                 raise ConnectionError("Server presence was lost during control acknowledgement") from exc
@@ -346,16 +339,6 @@ class RemoteClient:
             if exc.code is not ErrorCode.BUSY:
                 raise
             raise AdmissionDeniedError(self.config.deployment, str(exc), details=exc.details) from exc
-        if aligned:
-            try:
-                accepted_settings = accepted.body.get("chunk_settings")
-                if not isinstance(accepted_settings, dict):
-                    raise ValueError("Missing accepted chunk settings")
-                validate_chunk_contract(accepted_settings, caps)
-            except ValueError as exc:
-                raise ProtocolError(
-                    ErrorCode.INCOMPATIBLE, "Admission changed the advertised contract"
-                ) from exc
         if (
             accepted.body.get("artifact_identity") != self.artifact_identity
             or parse_capabilities(accepted.body["capabilities"]) != caps
@@ -535,7 +518,6 @@ class RemoteClient:
             not isinstance(actions, np.ndarray)
             or actions.shape != (steps, *caps.action_feature.shape)
             or actions.dtype.name != "float32"
-            or not np.isfinite(actions).all()
             or response.body.get("execution_steps") != steps
         ):
             raise ProtocolError(ErrorCode.MALFORMED, "Invalid canonical action chunk")
@@ -543,7 +525,6 @@ class RemoteClient:
             not isinstance(model, np.ndarray)
             or model.shape != (steps, caps.model_action_dim or caps.action_feature.shape[0])
             or model.dtype.name != "float32"
-            or not np.isfinite(model).all()
         ):
             raise ProtocolError(ErrorCode.MALFORMED, "Missing or invalid RTC model continuation")
         provenance = ActionProvenance(

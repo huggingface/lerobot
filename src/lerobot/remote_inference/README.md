@@ -1,8 +1,8 @@
 # Asynchronous inference: implementation and design reference
 
-This is the engineering reference for asynchronous inference in LeRobot: its behavior, ownership boundaries, data contracts and design tradeoffs. The [future work](#14-future-work) section is the maintained checklist for remaining validation and potential extensions; it does not describe implemented behavior.
+This is the engineering reference for asynchronous inference in LeRobot: its behavior, ownership boundaries, data contracts and design tradeoffs. The [future work](#13-future-work) section is the maintained checklist for remaining validation and potential extensions; it does not describe implemented behavior.
 
-For installation, commands and tuning, start with the [user guide](../../../docs/source/remote_inference.mdx). For implementation details, follow the source links in each section. Software coverage, real-model execution and physical acceptance are distinct; see [validation](#13-validation-and-current-limits).
+For installation, commands and tuning, start with the [user guide](../../../docs/source/remote_inference.mdx). For implementation details, follow the source links in each section. Software coverage, real-model execution and physical acceptance are distinct; see [policy support](#policy-support) and [follow-ups](#follow-ups-after-landing).
 
 ## 1. Product contract
 

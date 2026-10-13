@@ -109,9 +109,8 @@ Here `execution_horizon` is supplied prefix capacity, not the amount of playback
 between requests. Pi05 hard-conditions only the `inference_delay` prefix. The
 admission rule is not a latency guarantee or a claim that larger capacities must
 fail at runtime; measured overlap, remaining actions and freshness checks still
-determine whether a returned chunk can execute. A previously accepted remote-only
-configuration above the upper bound must now shorten its prefix to match local
-admission. Plain chunks and guided RTC are unaffected by this trained-only rule.
+determine whether a returned chunk can execute. Plain chunks and guided RTC are
+unaffected by this trained-only rule.
 
 **`execution_horizon`**: How many timesteps from the previous chunk to maintain consistency with. Higher values mean smoother transitions but potentially less reactivity.
 

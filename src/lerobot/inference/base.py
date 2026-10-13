@@ -27,9 +27,9 @@ from typing import Any, Protocol
 
 import torch
 
-from lerobot.utils.constants import QUERY_KIND, QUERY_TEXT
+from lerobot.utils import QUERY_KIND, QUERY_TEXT
 
-from .contracts import QueryKind as QueryKind
+from .contracts import DEFAULT_MAX_TEXT_INPUT_CHARS, QueryKind
 
 logger = logging.getLogger(__name__)
 
@@ -244,9 +244,7 @@ class InferenceEngine(abc.ABC):
         """Queue one operator VQA from any thread; reject invalid input or a busy channel."""
         if self.text_input_error(question) is not None:
             return False
-        return self._queue_query(
-            PolicyQuery(kind=QueryKind.VQA, text=question, task_version=self.task_version)
-        )
+        return self._queue_query(PolicyQuery(kind=QueryKind.VQA, text=question))
 
     def text_input_error(self, text: str, *, instruction: bool = False) -> str | None:
         """Validate without mutation: local queries allow 1–4096 characters.
@@ -256,8 +254,11 @@ class InferenceEngine(abc.ABC):
         if not instruction:
             if not text.strip():
                 return "Enter a non-empty question or goal."
-            if len(text) > 4096:
-                return f"Text contains {len(text)} characters; the limit is 4096. Shorten it and try again."
+            if len(text) > DEFAULT_MAX_TEXT_INPUT_CHARS:
+                return (
+                    f"Text contains {len(text)} characters; the limit is {DEFAULT_MAX_TEXT_INPUT_CHARS}. "
+                    "Shorten it and try again."
+                )
         return None
 
     def start_autosteer(self, goal: str, interval_s: float) -> None:
@@ -448,6 +449,14 @@ class InferenceEngine(abc.ABC):
         """
         return True
 
+    def _autosteer_turn_is_current(self, query: PolicyQuery) -> bool:
+        """Check sequencer identity while the caller holds ``_query_lock``."""
+        return (
+            self._autosteer_goal == query.text
+            and self._autosteer_generation == query.intent_generation
+            and self.task_version == query.task_version
+        )
+
     def _fail_subtask(self, query: PolicyQuery) -> bool:
         """Stop the sequencer after a failed turn — unless it stopped or retargeted meanwhile.
 
@@ -456,11 +465,7 @@ class InferenceEngine(abc.ABC):
         ``True`` when the failure answer should be published.
         """
         with self._query_lock:
-            live = (
-                self._autosteer_goal == query.text
-                and self._autosteer_generation == query.intent_generation
-                and self.task_version == query.task_version
-            )
+            live = self._autosteer_turn_is_current(query)
             if live:
                 self._autosteer_goal = None
             else:
@@ -484,11 +489,7 @@ class InferenceEngine(abc.ABC):
         stale plan could overwrite a newer instruction.  Returns ``True`` when applied.
         """
         with self._query_lock:
-            live = (
-                self._autosteer_goal == query.text
-                and self._autosteer_generation == query.intent_generation
-                and self.task_version == query.task_version
-            )
+            live = self._autosteer_turn_is_current(query)
             if live:
                 self.set_task(subtask)
                 # Armed only now, so the interval measures motion between subtasks.

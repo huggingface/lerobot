@@ -30,9 +30,8 @@ from lerobot.remote_inference import (
     SessionWorker,
     load_deployment,
 )
-from lerobot.transport.zenoh import ZenohTransport
-from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.utils import init_logging
+from lerobot.transport import ZenohTransport
+from lerobot.utils import init_logging, register_third_party_plugins
 
 logger = logging.getLogger(__name__)
 

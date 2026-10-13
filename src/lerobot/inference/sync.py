@@ -24,7 +24,7 @@ import torch
 
 from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
-from lerobot.utils.constants import OBS_STR
+from lerobot.utils import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from .base import InferenceEngine, PolicyQuery

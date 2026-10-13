@@ -1,7 +1,16 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Backend worker/hold races around bounded action-starvation recovery."""
 
@@ -16,8 +25,9 @@ pytest.importorskip("datasets")
 
 from lerobot.inference import RemoteInferenceConfig
 from lerobot.remote_inference import RemoteInferenceEngine
-from tests.inference.test_local_rtc_regressions import make_engine, wait_for
-from tests.remote_inference.test_engine import ControlledClient
+from tests.inference.rtc_helpers import make_engine
+from tests.remote_inference.helpers import ControlledClient
+from tests.utils import wait_for
 
 
 @pytest.fixture(params=["local_rtc", "blended"])
