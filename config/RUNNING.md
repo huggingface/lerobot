@@ -241,6 +241,7 @@ pixel-bound.
 | `./config/power-check.sh` | voltage, temperature and load per servo, with torque applied one at a time |
 | `./config/viewer.sh` | the rerun viewer, at the version uv.lock says. Run it on the Mac. |
 | `./config/video-test.sh` | a synthetic camera feed to the viewer, no robot. Separates the video link from everything else. |
+| `./config/cam-view.sh` | the real cameras to the viewer, no motor bus touched (arms may be off). Loop rate and display cost, PASS/FAIL; `--help` for the glass-to-glass lag test with `ms_clock.py` on the Mac. |
 | `./config/sync.sh` | sync with the right extras for this machine |
 
 ---
