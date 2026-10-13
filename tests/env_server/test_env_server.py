@@ -657,3 +657,44 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
         if dataset is not None:
             dataset.finalize()
         robot.disconnect()
+
+
+def test_world_reset_keeps_operator_instruction():
+    from types import SimpleNamespace
+
+    from lerobot.robots.remote.world import EpisodeStatus
+    from lerobot.rollout.strategies.core import RolloutStrategy
+
+    class World:
+        task_description = "put the bowl on the plate"
+        episode_status = EpisodeStatus(False, False, False, 0, 0.0)
+
+        def reset_world(self, seed=None):
+            pass
+
+    class Engine:
+        task = "put the bowl on the plate"
+
+        def set_task(self, task):
+            self.task = task
+
+        def pause(self):
+            pass
+
+        def reset(self):
+            pass
+
+    world, engine = World(), Engine()
+    wrapper = SimpleNamespace(inner=world, reset_world=world.reset_world)
+    strategy = SimpleNamespace(
+        _require_engine=lambda: engine, _require_interpolator=lambda: SimpleNamespace(reset=lambda: None)
+    )
+    ctx = SimpleNamespace(hardware=SimpleNamespace(robot_wrapper=wrapper))
+    # Unchanged instruction: the policy follows the world's task.
+    world.task_description = "put the bowl on the stove"
+    engine.task = "put the bowl on the stove"
+    assert RolloutStrategy._reset_sim_world(strategy, ctx) == "put the bowl on the stove"
+    # An operator /subtask survives /start's world reset.
+    engine.task = "pick up the ketchup"
+    assert RolloutStrategy._reset_sim_world(strategy, ctx) == "pick up the ketchup"
+    assert engine.task == "pick up the ketchup"

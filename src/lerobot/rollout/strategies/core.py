@@ -368,18 +368,24 @@ class RolloutStrategy(abc.ABC):
         )
 
     def _reset_sim_world(self, ctx: RolloutContext) -> str | None:
-        """Start a new world, discard previous inference, and return the world's task (None on hardware)."""
+        """Start a new world, discard previous inference, and return the task followed (None on hardware).
+
+        The policy follows the world's task unless the operator chose another instruction
+        (interactive ``/subtask``), which a world reset must not overwrite.
+        """
         robot = ctx.hardware.robot_wrapper
         world = get_world(robot.inner)
         if world is None:
             return None
         engine = self._require_engine()
+        previous_world_task = world.task_description
         engine.pause()
         robot.reset_world()
         engine.reset()
         self._require_interpolator().reset()
-        engine.set_task(world.task_description)
-        return world.task_description
+        if engine.task in ("", previous_world_task):
+            engine.set_task(world.task_description)
+        return engine.task
 
     def setup(self, ctx: RolloutContext) -> None:
         """Strategy-specific initialisation (keyboard listeners, buffers, etc.).
