@@ -22,6 +22,7 @@
 import argparse
 import hashlib
 import os
+import re
 import runpy
 import subprocess
 import tempfile
@@ -45,9 +46,9 @@ def main() -> None:
     reader = runpy.run_path(str(root / "src/lerobot/env_server/configuration.py"))
     data = reader["load_config"](config, args.set)
     backend = data["sim"]["type"]
-    supported = {
-        path.name.removeprefix("Dockerfile.sim.") for path in (root / "docker").glob("Dockerfile.sim.*")
-    }
+    # Each backend is a `<sim>_native` stage of docker/Dockerfile.sim.
+    dockerfile = (root / "docker/Dockerfile.sim").read_text()
+    supported = set(re.findall(r"^FROM \S+ AS (\w+)_native$", dockerfile, flags=re.MULTILINE))
     if backend not in supported:
         parser.error(f"Unsupported backend {backend!r}; choose from {sorted(supported)}")
     if args.set:

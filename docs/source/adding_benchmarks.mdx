@@ -12,7 +12,7 @@ Start from `docker/sims/configs/libero.yaml` or `metaworld.yaml` and their nativ
 | Canonical adapter    | `src/lerobot/sims/adapters.py`           | Native observations to dataset-style keys, HWC uint8 RGB, and float32 state; controller conversion where needed |
 | Backend selection    | `src/lerobot/sims/backend.py`            | Register factory selection if the existing naming convention is insufficient                                    |
 | Server configuration | `docker/sims/configs/<benchmark>.yaml`   | Factory kwargs, tasks, FPS, ordered components, controller semantics, and hold retention                        |
-| Simulator image      | `docker/Dockerfile.sim.<benchmark>`      | Pinned native dependencies, asset revisions, and minimal server dependencies                                    |
+| Simulator image      | `docker/Dockerfile.sim`                  | A `<benchmark>_native` stage: pinned native dependencies and asset revisions; the final stage adds the server   |
 | Evaluation profile   | `benchmarks/profiles/<benchmark>.yaml`   | Checkpoint camera aliases, ordered state/action declarations, and semantics                                     |
 | CI manifest          | `benchmarks/benchmarks.yaml`             | Name, tasks and checkpoint revision; policy, image, config, profile and extras default from the name            |
 

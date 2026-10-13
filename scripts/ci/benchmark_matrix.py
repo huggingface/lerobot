@@ -26,7 +26,6 @@ def image_hash(root: Path, entry: dict) -> str:
     digest = hashlib.sha256()
     paths = [
         root / entry["dockerfile"],
-        root / "docker/Dockerfile.sim-base",
         root / "docker/sims/requirements.txt",
         root / entry["sim_config"],
         root / "scripts/ci/convert_sim_assets.py",
@@ -63,14 +62,16 @@ def with_defaults(entry: dict) -> dict:
         "policy": f"lerobot/smolvla_{name}",
         "sim_config": f"docker/sims/configs/{name}.yaml",
         "profile": f"benchmarks/profiles/{name}.yaml",
-        "dockerfile": f"docker/Dockerfile.sim.{name}",
+        "dockerfile": "docker/Dockerfile.sim",
         "policy_extras": ["remote", "evaluation", "smolvla", "training", "hardware"],
         "episodes": 1,
         "batch_size": 1,
         "train_smoke": False,
-        "build_args": {},
     }
-    return {**defaults, **entry}
+    merged = {**defaults, **entry}
+    # The shared multi-stage Dockerfile selects the backend stage with SIM.
+    merged["build_args"] = {"SIM": name, **entry.get("build_args", {})}
+    return merged
 
 
 def load_entries(root: Path) -> list[dict]:

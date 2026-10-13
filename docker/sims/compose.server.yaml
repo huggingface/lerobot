@@ -4,7 +4,9 @@ services:
     image: lerobot-sim-${SIM:?Select a backend}:${SIM_TAG:-local}
     build:
       context: ../..
-      dockerfile: docker/Dockerfile.sim.${SIM}
+      dockerfile: docker/Dockerfile.sim
+      args:
+        SIM: ${SIM}
     command: [lerobot-env-server, --config=/config/sim.yaml]
     volumes:
       - ${SIM_CONFIG:?Select a simulator YAML}:/config/sim.yaml:ro
