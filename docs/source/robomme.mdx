@@ -40,12 +40,13 @@ pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
 
 ### Docker (recommended)
 
+Run RoboMME in its own simulator image, so its `numpy`/`gymnasium` pins never meet LeRobot's:
+
 ```bash
-# Build the RoboMME evaluation image from the repo root
-docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-benchmark-robomme .
+uv run scripts/run_sim.py docker/sims/configs/robomme.yaml
 ```
 
-The benchmark Dockerfile extends the published `huggingface/lerobot-gpu:latest` image, then overrides `gymnasium==0.29.1` and `numpy==1.26.4`. Both versions are runtime-safe for lerobot's actual API usage.
+Then evaluate with `--env.type=sim --env.deployment=robomme` (see [Simulator servers](./simulator_server)).
 
 ## Running Evaluation
 

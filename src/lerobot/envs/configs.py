@@ -790,7 +790,7 @@ class LiberoPlusEnv(LiberoEnv):
     The gym interface is identical to LIBERO so this class reuses ``LiberoEnv``
     entirely — only the registered name and default task suite differ.
 
-    Install: see docker/Dockerfile.benchmark.libero_plus — LIBERO-plus ships
+    Install: see the libero_plus_native stage of docker/Dockerfile.sim — LIBERO-plus ships
     as a namespace package from a git fork and must be cloned + PYTHONPATH'd
     rather than installed as a pyproject extra.
 
@@ -905,7 +905,7 @@ class RoboMMEEnv(EnvConfig):
     Benchmark: https://github.com/RoboMME/robomme_benchmark
 
     Requires the `robomme` git package installed separately (Linux only);
-    see docker/Dockerfile.benchmark.robomme for the canonical install.
+    see the robomme_native stage of docker/Dockerfile.sim for the canonical install.
     """
 
     task: str = "PickXtimes"
