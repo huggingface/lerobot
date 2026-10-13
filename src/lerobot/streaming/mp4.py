@@ -822,34 +822,47 @@ def _box(typ: bytes, payload: bytes) -> bytes:
 
 def _mvhd(timescale: int, duration: int, next_track_id: int) -> bytes:
     """Encode the movie header using the supplied timescale and duration."""
+    version = _duration_header_version(duration)
     matrix = struct.pack(">9I", 0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000)
     payload = (
-        struct.pack(">IIII", 0, 0, timescale, duration)
+        struct.pack(">QQIQ" if version else ">IIII", 0, 0, timescale, duration)
         + struct.pack(">IHH", 0x00010000, 0x0100, 0)
         + b"\0" * 8
         + matrix
         + b"\0" * 24
         + struct.pack(">I", next_track_id)
     )
-    return _full_box(b"mvhd", 0, 0, payload)
+    return _full_box(b"mvhd", version, 0, payload)
 
 
 def _tkhd(track_id: int, duration: int, width: int, height: int) -> bytes:
     """Encode an enabled video track header with fixed-point pixel dimensions."""
+    version = _duration_header_version(duration)
     matrix = struct.pack(">9I", 0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000)
     payload = (
-        struct.pack(">IIIII", 0, 0, track_id, 0, duration)
+        struct.pack(">QQIIQ" if version else ">IIIII", 0, 0, track_id, 0, duration)
         + b"\0" * 8
         + struct.pack(">hhhh", 0, 0, 0, 0)
         + matrix
         + struct.pack(">II", width << 16, height << 16)
     )
-    return _full_box(b"tkhd", 0, 7, payload)
+    return _full_box(b"tkhd", version, 7, payload)
 
 
 def _mdhd(timescale: int, duration: int) -> bytes:
     """Encode the media header with its timescale and duration."""
-    return _full_box(b"mdhd", 0, 0, struct.pack(">IIIIH", 0, 0, timescale, duration, 0x55C4) + b"\0\0")
+    version = _duration_header_version(duration)
+    layout = ">QQIQH" if version else ">IIIIH"
+    return _full_box(b"mdhd", version, 0, struct.pack(layout, 0, 0, timescale, duration, 0x55C4) + b"\0\0")
+
+
+def _duration_header_version(duration: int) -> int:
+    """Select a duration-header version that can encode the duration."""
+    if 0 <= duration <= 0xFFFFFFFF:
+        return 0
+    if 0 <= duration <= 0xFFFFFFFFFFFFFFFF:
+        return 1
+    raise ValueError(f"MP4 duration is outside the version-0 and version-1 limits: {duration}")
 
 
 def _hdlr() -> bytes:

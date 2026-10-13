@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import io
+import shutil
 import struct
+import subprocess
 from fractions import Fraction
 from pathlib import Path
 
@@ -23,8 +25,18 @@ from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import (
     _box,
+    _duration_header_version,
+    _find_child,
+    _find_descendant,
     _full_box,
+    _mdhd,
+    _mvhd,
     _parse_edit_offset,
+    _parse_mdhd,
+    _parse_mvhd,
+    _parse_tkhd,
+    _tkhd,
+    fetch_mp4_index,
     parse_mp4_index,
     synthesize_mp4,
     synthesized_mp4_size,
@@ -32,6 +44,112 @@ from lerobot.streaming.mp4 import (
 from lerobot.streaming.sidecar import SidecarSpec
 
 av = pytest.importorskip("av")
+
+
+@pytest.mark.parametrize("duration,version", [(0xFFFFFFFF, 0), (0x100000000, 1)])
+def test_duration_headers_select_version_for_duration_range(duration: int, version: int) -> None:
+    assert _duration_header_version(duration) == version
+    mvhd, tkhd, mdhd = _mvhd(1000, duration, 2), _tkhd(1, duration, 64, 48), _mdhd(1000, duration)
+    assert mvhd[8] == tkhd[8] == mdhd[8] == version
+    assert _parse_mvhd(mvhd[8:]) == (1000, duration)
+    assert _parse_tkhd(tkhd[8:])["duration"] == duration
+    assert _parse_mdhd(mdhd[8:]) == (1000, duration)
+
+
+def test_duration_headers_reject_values_outside_version_one_range() -> None:
+    with pytest.raises(ValueError, match="outside.*version-1"):
+        _duration_header_version(0x10000000000000000)
+
+
+def test_long_duration_mp4_synthesis_decodes_source_frames(tmp_path: Path) -> None:
+    """Synthesize and decode a real VFR MP4 whose valid sample durations exceed uint32 in total."""
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        pytest.skip("ffmpeg is required to build the long-duration MP4 fixture")
+    source_path = tmp_path / "long-duration.mp4"
+    subprocess.run(
+        [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=32x32:r=1:d=4",
+            "-vf",
+            "settb=expr=1/1000,setpts=N*1500000000",
+            "-fps_mode",
+            "passthrough",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "zerolatency",
+            "-g",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+            "-video_track_timescale",
+            "1000",
+            "-use_editlist",
+            "0",
+            "-y",
+            str(source_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    source_data = source_path.read_bytes()
+
+    def read_range(_path: str, offset: int, length: int) -> bytes:
+        return source_data[offset : offset + length]
+
+    index = fetch_mp4_index(source_path.name, read_range, file_size=len(source_data))
+    assert index.sample_durations.tolist() == [1_500_000_000] * 3 + [1000]
+    duration = int(index.sample_durations.sum())
+    assert duration > 0xFFFFFFFF
+    assert np.all(index.sample_durations <= 0xFFFFFFFF)
+
+    sample_slice = index.sample_slice(
+        0,
+        float(index.sample_pts[-1]),
+        keyframe_pad_s=0,
+        keyframe_pad_fraction=0,
+        file_size=len(source_data),
+    )
+    payload = read_range(
+        source_path.name,
+        sample_slice.byte_offset,
+        sample_slice.byte_length,
+    )
+    mini = synthesize_mp4(index, sample_slice, payload)
+    assert synthesized_mp4_size(index, sample_slice) == len(mini)
+
+    moov = _find_child(mini, b"moov")
+    moov_payload = mini[moov.payload_start : moov.end]
+    mvhd = _find_child(moov_payload, b"mvhd")
+    mvhd_payload = moov_payload[mvhd.payload_start : mvhd.end]
+    trak = _find_child(moov_payload, b"trak")
+    trak_payload = moov_payload[trak.payload_start : trak.end]
+    tkhd = _find_child(trak_payload, b"tkhd")
+    tkhd_payload = trak_payload[tkhd.payload_start : tkhd.end]
+    mdhd_payload = _find_descendant(trak_payload, [b"mdia", b"mdhd"])
+    assert mvhd_payload[0] == tkhd_payload[0] == mdhd_payload[0] == 1
+    assert _parse_mvhd(mvhd_payload) == (index.timescale, duration)
+    assert _parse_tkhd(tkhd_payload)["duration"] == duration
+    assert _parse_mdhd(mdhd_payload) == (index.timescale, duration)
+    assert parse_mp4_index("mini.mp4", mini).duration == duration
+
+    with av.open(io.BytesIO(source_data)) as source:
+        source_frames = [frame.to_ndarray(format="rgb24") for frame in source.decode(video=0)]
+    with av.open(io.BytesIO(mini)) as rebuilt:
+        rebuilt_frames = [frame.to_ndarray(format="rgb24") for frame in rebuilt.decode(video=0)]
+    assert len(source_frames) == len(rebuilt_frames) == 4
+    for source_frame, rebuilt_frame in zip(source_frames, rebuilt_frames, strict=True):
+        np.testing.assert_array_equal(rebuilt_frame, source_frame)
 
 
 @pytest.fixture
