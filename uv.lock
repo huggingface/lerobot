@@ -2018,7 +2018,7 @@ wheels = [
 
 [[package]]
 name = "gym-aloha"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dm-control" },
@@ -2026,9 +2026,9 @@ dependencies = [
     { name = "imageio", extra = ["ffmpeg"] },
     { name = "mujoco" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4a/c5/a5b8bdbddfcadec0b52b50e6d1a70325e09e6b594e5f55929d67d9122e2c/gym_aloha-0.1.4.tar.gz", hash = "sha256:0dc4e645045aeb3e74e3c320872d28df6dc93a8751d6ab2f266a2ca11323131f", size = 443466, upload-time = "2026-06-10T09:13:25.525Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/16/8465d3acbb70294ec086193bbf008f60c4a925e4588ad48eb1a4f0f5d9df/gym_aloha-0.1.5.tar.gz", hash = "sha256:96648c0c49992476e90dec64cf19a78b7a468c0c25902d4e8c58b5b11d3a110d", size = 443496, upload-time = "2026-10-12T13:03:44.863Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/e3/3afd0e517a503aabe255bf65f5136490acb79c43189e8d56a3aa63081a10/gym_aloha-0.1.4-py3-none-any.whl", hash = "sha256:d9044290fbccddf0be4246b5287cf0eb6b9ddee545a3d222ce8d78c93ce7125e", size = 447908, upload-time = "2026-06-10T09:13:23.868Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/8a/1c6ce361b4a8c36458bb83efc528aa5f06e74ab2a311510c9f1d56e9aacc/gym_aloha-0.1.5-py3-none-any.whl", hash = "sha256:1794dd9a1146268a9b56f4a4931bcba69ca27714c2ac9ac146e471801bf0c7b3", size = 447936, upload-time = "2026-10-12T13:03:43.33Z" },
 ]
 
 [[package]]
@@ -2050,19 +2050,18 @@ wheels = [
 
 [[package]]
 name = "gym-pusht"
-version = "0.1.6"
+version = "0.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "gymnasium" },
     { name = "opencv-python" },
     { name = "pygame" },
     { name = "pymunk" },
-    { name = "scikit-image" },
     { name = "shapely" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/f1/e856b105ec298bd22235362d6cf3b3ccf355ac1e6f6a7df9c20d1a5127da/gym_pusht-0.1.6.tar.gz", hash = "sha256:b748dc5282c41b504df16359df26d3c2184e194edd20cde691fcda9fdc277005", size = 15796, upload-time = "2025-10-13T09:06:15.273Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/b1/76499ac1b1aca359b8f5e690905fd59faca25dcd5a4fee2464e847d1c742/gym_pusht-0.1.8.tar.gz", hash = "sha256:cd7ac4d1330b24a9e64faed22ca0ad36a0419b846554f67cd03da2274c4ed39a", size = 15807, upload-time = "2026-10-12T11:19:00.748Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/b3/330dc180fc32d0a7f99d9ac6caec0413771882665ea1da17899e248e577a/gym_pusht-0.1.6-py3-none-any.whl", hash = "sha256:c0785a29795f17c97c58b00ffaed9e45be5996dbc864d863a39a857403010206", size = 16906, upload-time = "2025-10-13T09:06:14.067Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/1e/c5ad2a356ad5039e85294852a0c0152c333792ebd9442094f5e413a09783/gym_pusht-0.1.8-py3-none-any.whl", hash = "sha256:1dfbbee8ecf03914f5c0ea8e03f8cfe366f46ab3ff7ce3fa428b1459d76bb05d", size = 16921, upload-time = "2026-10-12T11:18:59.633Z" },
 ]
 
 [[package]]
@@ -3225,7 +3224,6 @@ all = [
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pygame" },
-    { name = "pymunk" },
     { name = "pynput" },
     { name = "pyrealsense2", marker = "sys_platform != 'darwin'" },
     { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin'" },
@@ -3539,7 +3537,6 @@ pusht = [
     { name = "jsonlines" },
     { name = "pandas" },
     { name = "pyarrow" },
-    { name = "pymunk" },
     { name = "torchcodec", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
 ]
 pygame-dep = [
@@ -3682,9 +3679,9 @@ requires-dist = [
     { name = "grpcio", marker = "extra == 'grpcio-dep'", specifier = ">=1.73.1,<2.0.0" },
     { name = "grpcio", marker = "extra == 'reachy2'", specifier = "<=1.73.1" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.73.1,<2.0.0" },
-    { name = "gym-aloha", marker = "extra == 'aloha'", specifier = ">=0.1.4,<0.2.0" },
+    { name = "gym-aloha", marker = "extra == 'aloha'", specifier = ">=0.1.5,<0.2.0" },
     { name = "gym-hil", marker = "extra == 'hilserl'", specifier = ">=0.1.14,<0.2.0" },
-    { name = "gym-pusht", marker = "extra == 'pusht'", specifier = ">=0.1.5,<0.2.0" },
+    { name = "gym-pusht", marker = "extra == 'pusht'", specifier = ">=0.1.8,<0.2.0" },
     { name = "gymnasium", specifier = ">=1.1.1,<2.0.0" },
     { name = "hebi-py", marker = "extra == 'phone'", specifier = ">=2.8.0,<2.12.0" },
     { name = "hf-libero", marker = "sys_platform == 'linux' and extra == 'libero'", specifier = ">=0.1.4,<0.2.0" },
@@ -3868,7 +3865,6 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'dataset'", specifier = ">=21.0.0,<30.0.0" },
     { name = "pydantic", marker = "extra == 'sarm'", specifier = ">=2.0.0,<3.0.0" },
     { name = "pygame", marker = "extra == 'pygame-dep'", specifier = ">=2.5.1,<2.7.0" },
-    { name = "pymunk", marker = "extra == 'pusht'", specifier = ">=6.6.0,<7.0.0" },
     { name = "pynput", marker = "extra == 'pynput-dep'", specifier = ">=1.7.8,<1.9.0" },
     { name = "pyrealsense2", marker = "sys_platform != 'darwin' and extra == 'intelrealsense'", specifier = ">=2.55.1.6486,<2.57.0" },
     { name = "pyrealsense2-macosx", marker = "sys_platform == 'darwin' and extra == 'intelrealsense'", specifier = ">=2.54,<2.57.0" },
