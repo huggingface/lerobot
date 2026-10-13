@@ -17,7 +17,9 @@
 import json
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parents[2] / "src" / "lerobot" / "envs" / "metaworld_config.json"
+CONFIG_PATH = (
+    Path(__file__).resolve().parents[2] / "src" / "lerobot" / "sims" / "native" / "metaworld_config.json"
+)
 
 
 def test_metaworld_task_descriptions_are_complete_and_unique() -> None:
