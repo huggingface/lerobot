@@ -14,6 +14,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
+from lerobot.transforms import ImageTransformsConfig
 
 
 def test_language_rollout_loads_checkpoint_processors_even_when_dataset_stats_are_present(monkeypatch):
@@ -85,7 +86,10 @@ def _run_training_until_processors(monkeypatch, cfg, stats, *, main_process=Fals
     cfg.cudnn_deterministic = False
     cfg.checkpoint_format = SimpleNamespace(wants_dcp=False)
     cfg.peft = None
-    accelerator = SimpleNamespace(num_processes=1, device=torch.device("cpu"), wait_for_everyone=lambda: None)
+    cfg.dataset = SimpleNamespace(image_transforms=ImageTransformsConfig())
+    accelerator = SimpleNamespace(
+        num_processes=1, process_index=0, device=torch.device("cpu"), wait_for_everyone=lambda: None
+    )
     monkeypatch.setattr(trainer, "make_accelerator", lambda _: accelerator)
     monkeypatch.setattr(trainer.ParallelDims, "from_config", lambda *args: None)
     monkeypatch.setattr(trainer, "init_logging", lambda **kwargs: None)

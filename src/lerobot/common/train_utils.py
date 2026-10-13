@@ -837,6 +837,7 @@ def generate_model_card(
         model_name=model_type,
         datasets=cfg.dataset.repo_id if cfg is not None else None,
         base_model=base_model,
+        base_model_relation="adapter" if base_model and getattr(model_cfg, "use_peft", False) else None,
     )
     card = ModelCard.from_template(card_data, template_str=template_card, **context)
     card.validate()
