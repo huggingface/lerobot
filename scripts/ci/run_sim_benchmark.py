@@ -15,9 +15,11 @@
 """Run the same simulator sidecar and driver locally and in benchmark CI."""
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 from benchmark_matrix import load_entries
@@ -40,7 +42,9 @@ def main():
     args = parser.parse_args()
     entry = next(e for e in load_entries(Path(".")) if e["name"] == args.name)
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    network = f"sim-benchmark-{args.name}"
+    # Unique per run: concurrent jobs or leftovers on a persistent runner must not collide.
+    run_id = os.environ.get("GITHUB_RUN_ID", "local") + "-" + uuid.uuid4().hex[:8]
+    network = f"sim-benchmark-{args.name}-{run_id}"
     simulator = f"{network}-server"
     driver = f"{network}-driver"
     training = f"{network}-training"
@@ -64,10 +68,19 @@ def main():
             ]
         )
         # Describe is a bounded readiness check; the session is opened only by evaluation.
+        # Retry: the connect itself fails until the simulator process listens.
         probe = (
-            "from lerobot.env_server.client import EnvClient; c=EnvClient('tcp/sim:7448', '"
-            + entry["name"]
-            + "', 300); c.describe(); c.close()"
+            "import time; from lerobot.env_server.client import EnvClient\n"
+            "deadline = time.monotonic() + 300\n"
+            "while True:\n"
+            f"    c = EnvClient('tcp/sim:7448', {entry['name']!r}, 30)\n"
+            "    try:\n"
+            "        c.describe(); break\n"
+            "    except Exception:\n"
+            "        if time.monotonic() > deadline: raise\n"
+            "        time.sleep(2)\n"
+            "    finally:\n"
+            "        c.close()\n"
         )
         common = [
             DOCKER,
@@ -136,6 +149,10 @@ def main():
             ]
         )
         if entry["train_smoke"]:
+            if entry["name"] != "libero":
+                raise ValueError(
+                    "train_smoke uses the LIBERO dataset and profile; only the libero entry may set it"
+                )
             train_command = [
                 "lerobot-train",
                 "--policy.path=lerobot/smolvla_base",

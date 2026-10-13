@@ -56,8 +56,28 @@ def image_hash(root: Path, entry: dict) -> str:
     return digest.hexdigest()[:24]
 
 
+def with_defaults(entry: dict) -> dict:
+    """Fill fields that follow the per-benchmark naming convention unless the manifest overrides them."""
+    name = entry["name"]
+    defaults = {
+        "policy": f"lerobot/smolvla_{name}",
+        "sim_config": f"docker/sims/configs/{name}.yaml",
+        "profile": f"benchmarks/profiles/{name}.yaml",
+        "dockerfile": f"docker/Dockerfile.sim.{name}",
+        "policy_extras": ["remote", "evaluation", "smolvla", "training", "hardware"],
+        "episodes": 1,
+        "batch_size": 1,
+        "train_smoke": False,
+        "build_args": {},
+    }
+    return {**defaults, **entry}
+
+
 def load_entries(root: Path) -> list[dict]:
-    entries = yaml.safe_load((root / "benchmarks/benchmarks.yaml").read_text())["benchmarks"]
+    entries = [
+        with_defaults(entry)
+        for entry in yaml.safe_load((root / "benchmarks/benchmarks.yaml").read_text())["benchmarks"]
+    ]
     if len({e["name"] for e in entries}) != len(entries):
         raise ValueError("Duplicate benchmark name")
     return [{**entry, "sim_tag": image_hash(root, entry)} for entry in entries]
@@ -70,7 +90,10 @@ def main():
     args = parser.parse_args()
     entries = load_entries(args.root)
     if args.name:
-        print(json.dumps(next(e for e in entries if e["name"] == args.name)))
+        matches = [e for e in entries if e["name"] == args.name]
+        if not matches:
+            raise SystemExit(f"Unknown benchmark: {args.name}")
+        print(json.dumps(matches[0]))
     else:
         print(json.dumps({"include": entries}))
 
