@@ -340,8 +340,29 @@ class LiberoEnv(gym.Env):
         self._ensure_env()
         super().reset(seed=seed)
         self._env.seed(seed)
+        # A supplied seed must determine which initial state is loaded. Without
+        # this, `init_state_id` advances purely as a per-reset counter, so
+        # `reset(seed=s)` returns a different scene depending on how many resets
+        # happened earlier in the process -- making individual trials
+        # irreproducible and causing a resumed or reordered evaluation to sample
+        # a different set of initial states than a single-pass one. When no seed
+        # is given the existing round-robin behaviour is preserved.
+        #
+        # This moves one invariant to the caller: `init_state_id = episode_index`
+        # plus `+= _reset_stride` partitions the initial states so that no two
+        # sub-envs of a vectorised env share a scene, and a seeded reset
+        # overwrites that. The partition now holds only while the caller passes a
+        # distinct seed per sub-env, as `lerobot_eval` does
+        # (`start_seed + batch_ix * num_envs + i`); passing one seed to the whole
+        # vectorised env would put every sub-env on the same initial state.
+        if seed is not None:
+            self.init_state_id = seed
         raw_obs = self._env.reset()
         if self.init_states and self._init_states is not None:
+            # Periodic in len(self._init_states), which is 50 for the stock LIBERO
+            # suites: ids that far apart select the same initial state and differ
+            # only by simulator jitter. A sweep over more seeds than that revisits
+            # scenes rather than covering new ones.
             raw_obs = self._env.set_init_state(self._init_states[self.init_state_id % len(self._init_states)])
             self.init_state_id += self._reset_stride  # Change init_state_id when reset
 
