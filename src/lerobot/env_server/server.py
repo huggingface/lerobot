@@ -419,7 +419,9 @@ class EnvServer:
                         )
                     ),
                 )
-                session.next_tick = time.monotonic() + 1 / self.config.sim.fps
+                # Physics, rendering and reply serialization count toward the tick budget.
+                # When execution overruns, resume without replaying missed ticks.
+                session.next_tick = max(started + 1 / self.config.sim.fps, time.monotonic())
             except Exception as exc:
                 session.fault = f"Environment execution failed: {exc}"
                 if command is not None and command.pending is not None:

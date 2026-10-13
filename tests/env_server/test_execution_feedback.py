@@ -100,6 +100,31 @@ def test_confirmation_pairs_applied_action_with_following_observation(executor):
     assert "result" not in feedback  # Images are serialized once.
 
 
+@pytest.mark.parametrize("step_duration", [0.02, 0.08])
+def test_realtime_period_includes_backend_work_without_catchup(executor, monkeypatch, step_duration):
+    server, _, session = executor
+    clock = SimpleNamespace(now=100.0)
+    step = session.backend.step
+
+    def timed_step(actions):
+        result = step(actions)
+        clock.now += step_duration
+        return result
+
+    monkeypatch.setattr(time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(session.backend, "step", timed_step)
+    tick(executor)
+    period = 1 / server.config.sim.fps
+    assert session.next_tick == pytest.approx(100.0 + max(period, step_duration))
+    # A delayed worker starts one tick and schedules from its actual start,
+    # rather than replaying a backlog of ticks from the old deadline.
+    clock.now = 101.0
+    before = session.sequence
+    server._tick()
+    assert session.sequence == before + 1
+    assert session.next_tick == pytest.approx(101.0 + max(period, step_duration))
+
+
 @pytest.mark.parametrize("operation", ["step", "apply"])
 @pytest.mark.parametrize(
     "actions",
