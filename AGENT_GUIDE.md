@@ -374,32 +374,18 @@ lerobot-eval \
 - Available envs live in `src/lerobot/envs/`. See [`docs/source/libero.mdx`](./docs/source/libero.mdx), [`metaworld.mdx`](./docs/source/metaworld.mdx), [`robocasa.mdx`](./docs/source/robocasa.mdx), [`vlabench.mdx`](./docs/source/vlabench.mdx) for specific benchmarks.
 - To add a new benchmark, see [`docs/source/adding_benchmarks.mdx`](./docs/source/adding_benchmarks.mdx) and [`envhub.mdx`](./docs/source/envhub.mdx).
 
-### 8.2b Dockerfiles for benchmark eval
+### 8.2b Simulator servers for benchmark eval
 
-Benchmark envs have native dependencies that are painful to install locally. The repo ships **pre-baked Dockerfiles** for each supported benchmark — use these to run `lerobot-eval` in a reproducible environment:
-
-| Benchmark   | Dockerfile                                                                             |
-| ----------- | -------------------------------------------------------------------------------------- |
-| LIBERO      | [`docker/Dockerfile.benchmark.libero`](./docker/Dockerfile.benchmark.libero)           |
-| LIBERO+     | [`docker/Dockerfile.benchmark.libero_plus`](./docker/Dockerfile.benchmark.libero_plus) |
-| MetaWorld   | [`docker/Dockerfile.benchmark.metaworld`](./docker/Dockerfile.benchmark.metaworld)     |
-| RoboCasa    | [`docker/Dockerfile.benchmark.robocasa`](./docker/Dockerfile.benchmark.robocasa)       |
-| RoboCerebra | [`docker/Dockerfile.benchmark.robocerebra`](./docker/Dockerfile.benchmark.robocerebra) |
-| RoboMME     | [`docker/Dockerfile.benchmark.robomme`](./docker/Dockerfile.benchmark.robomme)         |
-| RoboTwin    | [`docker/Dockerfile.benchmark.robotwin`](./docker/Dockerfile.benchmark.robotwin)       |
-| VLABench    | [`docker/Dockerfile.benchmark.vlabench`](./docker/Dockerfile.benchmark.vlabench)       |
-
-Build and run (adapt to your benchmark):
+Benchmark simulators have native dependencies that conflict with LeRobot's. Each one runs in its own image built from [`docker/Dockerfile.sim`](./docker/Dockerfile.sim) (one `<benchmark>_native` stage per simulator: LIBERO, LIBERO+, MetaWorld, RoboCasa, RoboCerebra, RoboMME, RoboTwin, VLABench), and `lerobot-eval` connects to it:
 
 ```bash
-docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-bench-robomme .
-docker run --gpus all --rm -it \
-  -v $HOME/.cache/huggingface:/root/.cache/huggingface \
-  lerobot-bench-robomme \
-  lerobot-eval --policy.path=<your_policy> --env.type=<env> --eval.n_episodes=50
+uv run scripts/run_sim.py docker/sims/configs/libero.yaml   # builds and starts the server on :7448
+lerobot-eval --policy.path=<your_policy> \
+  --env.type=sim --env.deployment=libero --env.task=libero_spatial \
+  --env.profile=benchmarks/profiles/libero.yaml --eval.n_episodes=50
 ```
 
-See [`docker/README.md`](./docker/README.md) for base-image details.
+See [`docs/source/simulator_server.mdx`](./docs/source/simulator_server.mdx) for profiles, rollout through the Robot API, and remote inference.
 
 ### 8.3 Target success rates
 

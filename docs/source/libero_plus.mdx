@@ -64,7 +64,7 @@ cd LIBERO-plus && pip install --no-deps -e .
 pip uninstall -y hf-libero  # so `import libero` resolves to the fork
 ```
 
-LIBERO-plus is installed from its GitHub fork rather than a pyproject extra — the fork ships as a namespace package that pip can't handle, so it must be cloned and added to `PYTHONPATH`. See `docker/Dockerfile.benchmark.libero_plus` for the canonical install. MuJoCo is required, so only Linux is supported.
+LIBERO-plus is installed from its GitHub fork rather than a pyproject extra — the fork ships as a namespace package that pip can't handle, so it must be cloned and added to `PYTHONPATH`. See the `libero_plus_native` stage of `docker/Dockerfile.sim` for the canonical install. MuJoCo is required, so only Linux is supported.
 
 <Tip>
 Set the MuJoCo rendering backend before running evaluation:
