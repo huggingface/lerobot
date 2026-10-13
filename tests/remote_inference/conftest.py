@@ -12,18 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Package-version diagnostics; protocol and execution contracts decide compatibility."""
+"""Shared asynchronous client and loopback server fixtures."""
 
-from dataclasses import dataclass
-
-from lerobot import __version__
-
-
-@dataclass(frozen=True)
-class SoftwareBuild:
-    """The package version loaded by this process, without inspecting its checkout."""
-
-    lerobot_version: str
-
-
-SOFTWARE_BUILD = SoftwareBuild(__version__)
+from tests.remote_inference.helpers import chunk_worker, session  # noqa: F401
+from tests.remote_inference.network_helpers import process_server, remote_server, transports  # noqa: F401

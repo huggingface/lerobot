@@ -30,11 +30,14 @@ from .constants import (
     OBS_IMAGES,
     OBS_STATE,
     OBS_STR,
+    QUERY_KIND,
+    QUERY_TEXT,
     REWARD,
 )
 from .decorators import check_if_already_connected, check_if_not_connected
 from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from .import_utils import is_package_available, require_package
+from .import_utils import is_package_available, register_third_party_plugins, require_package
+from .utils import init_logging
 
 __all__ = [
     # Constants
@@ -47,6 +50,8 @@ __all__ = [
     "OBS_IMAGES",
     "OBS_STATE",
     "OBS_STR",
+    "QUERY_KIND",
+    "QUERY_TEXT",
     "REWARD",
     # Device utilities
     "auto_select_torch_device",
@@ -54,7 +59,11 @@ __all__ = [
     "is_torch_device_available",
     # Import guards
     "is_package_available",
+    "register_third_party_plugins",
     "require_package",
+    # General utilities
+    "ActionInterpolator",
+    "init_logging",
     # Decorators
     "check_if_already_connected",
     "check_if_not_connected",
@@ -65,6 +74,11 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    # Torch-backed helpers load on first use so torch-free images (simulator servers) can import utils.
+    if name == "ActionInterpolator":
+        from .action_interpolator import ActionInterpolator
+
+        return ActionInterpolator
     if name in {"auto_select_torch_device", "get_safe_torch_device", "is_torch_device_available"}:
         from . import device_utils
 

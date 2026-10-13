@@ -1,14 +1,22 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Aligned plain chunks across real, separately spawned client/server processes."""
 
-import multiprocessing
-import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from threading import Thread
 
 import pytest
 import torch
@@ -17,106 +25,13 @@ pytest.importorskip("zenoh")
 pytest.importorskip("msgpack")
 pytest.importorskip("datasets")
 
-from lerobot.inference import ChunkRuntime, ExecutionMode, FeatureSpec, PolicyRunner, RemoteInferenceConfig
+from lerobot.inference import ChunkRuntime, ExecutionMode, RemoteInferenceConfig
 from lerobot.remote_inference.client import RemoteClient
-from lerobot.remote_inference.server import PolicyServer, SessionWorker
-from lerobot.transport.zenoh import ZenohConfig, ZenohTransport
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
-from tests.inference.test_policy_runner import ConformingPolicy, observation, processors, tiny_config
+from tests.inference.policy_helpers import observation
+from tests.remote_inference.helpers import admit
 
 ACTION_NAMES = ("shoulder.pos", "elbow.pos", "gripper.pos")
 BLEND_COMPONENTS = ACTION_NAMES[:2]
-
-
-class GatedConformingPolicy(ConformingPolicy):
-    """Keep the second real inference outstanding while the client commits an endpoint."""
-
-    def __init__(self, config, entered, release):
-        super().__init__(config)
-        self.calls = 0
-        self.entered = entered
-        self.release = release
-
-    def predict_action_chunk(self, batch, **kwargs):
-        self.calls += 1
-        if self.calls == 2:
-            self.entered.set()
-            assert self.release.wait(5), "client did not release the second policy call"
-        return super().predict_action_chunk(batch, **kwargs)
-
-
-def serve_in_child(endpoint, ready, stopped, entered, release):
-    """Build the model and both processor pipelines entirely inside the spawned server."""
-    config = tiny_config()
-    runner = PolicyRunner(
-        GatedConformingPolicy(config, entered, release),
-        *processors(config, relative=True),
-        action_interval=1 / 30,
-        features=tuple(
-            FeatureSpec(key, (3,), "float32", names=ACTION_NAMES, semantics="radians-v1")
-            for key in (OBS_STATE, OBS_ENV_STATE)
-        ),
-        action_feature=FeatureSpec(ACTION, (3,), "float32", names=ACTION_NAMES, semantics="radians-v1"),
-    )
-    worker = SessionWorker(
-        runner,
-        deployment="aligned-process",
-        artifact_identity="relative-conformance",
-        semantics="radians-v1",
-        action_deadline_s=5,
-        language_deadline_s=5,
-    )
-    transport = ZenohTransport(ZenohConfig(listen_endpoints=[endpoint]))
-    server = PolicyServer(worker, transport)
-    original_token = transport.declare_token
-
-    def declare_token(key):
-        token = original_token(key)
-        ready.set()
-        return token
-
-    transport.declare_token = declare_token
-
-    def stop_server():
-        stopped.wait(30)
-        server.stop()
-
-    Thread(target=stop_server, daemon=True).start()
-    server.serve()
-
-
-@pytest.fixture
-def process_server():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        endpoint = f"tcp/127.0.0.1:{sock.getsockname()[1]}"
-    # Spawn creates an independent model/runtime and avoids inheriting Zenoh threads.
-    context = multiprocessing.get_context("spawn")
-    ready, stopped, entered, release = (context.Event() for _ in range(4))
-    process = context.Process(target=serve_in_child, args=(endpoint, ready, stopped, entered, release))
-    process.start()
-    try:
-        # Spawn imports torch and the policy stack afresh; allow cold/loaded CI runners.
-        assert ready.wait(60), f"server did not start; exitcode={process.exitcode}"
-        assert process.is_alive()
-        yield process, endpoint, entered, release
-    finally:
-        # A killed child may hold an Event lock; only touch its events while alive.
-        graceful = process.is_alive()
-        if graceful:
-            release.set()
-            stopped.set()
-        process.join(10)
-        if process.is_alive():
-            process.terminate()
-            process.join(2)
-        if process.is_alive():
-            process.kill()
-            process.join(2)
-        assert not process.is_alive(), "server process could not be stopped"
-        if graceful:
-            assert process.exitcode == 0, f"server exited abnormally: {process.exitcode}"
-        process.close()
 
 
 def test_aligned_relative_chunks_between_processes(process_server):
@@ -134,13 +49,7 @@ def test_aligned_relative_chunks_between_processes(process_server):
     client = RemoteClient.connect(config)
     try:
         caps = client.capabilities
-        client.admit(
-            features=caps.features,
-            action_feature=caps.action_feature,
-            semantics=config.semantics,
-            action_interval=caps.action_interval,
-            mode="chunk",
-        )
+        admit(client)
         assert client.chunk_settings["chunk_merge"] == "aligned"
         assert client.blend_indices == (0, 1)
         runtime = ChunkRuntime(
@@ -203,8 +112,6 @@ def test_aligned_relative_chunks_between_processes(process_server):
         expected = new_actions[1].clone()
         expected[:2] = old_actions[2, :2] * 0.75 + new_actions[1, :2] * 0.25
         assert source.capture_time == first_source.capture_time
-        assert source.oldest_contributor.observation_id == first_source.observation_id
-        assert source.contributor_count == 2
         torch.testing.assert_close(action, expected)
         assert action[2] == new_actions[1, 2]  # gripper is always the incoming target
         assert source.request_id == request.request_id
@@ -212,7 +119,6 @@ def test_aligned_relative_chunks_between_processes(process_server):
         action, source = runtime.pop()
         torch.testing.assert_close(action, new_actions[2])
         assert source.capture_time == next_source.capture_time
-        assert source.contributor_count == 1
         assert runtime.failure is None
     finally:
         release.set()

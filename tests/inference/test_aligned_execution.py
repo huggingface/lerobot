@@ -1,14 +1,28 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Plain alignment, canonical blending and conservative contributor age."""
 
-from dataclasses import asdict, replace
+from dataclasses import replace
 
 import numpy as np
 import pytest
 import torch
 
 from lerobot.inference import ActionChunk, ActionProvenance, ChunkRuntime, ExecutionMode, ObservationSnapshot
-from tests.inference.test_execution import Clock
-from tests.inference.test_policy_runner import ConformingPolicy, observation, runner_for, tiny_config
+from tests.inference.execution_helpers import Clock
+from tests.inference.policy_helpers import ConformingPolicy, observation, runner_for, tiny_config
 
 
 def runtime(*, refill_seconds=0.6, **kwargs):
@@ -204,10 +218,7 @@ def test_weighted_blend_matches_future_steps_and_keeps_gripper_incoming():
     assert rt.queue.qsize() == 6  # remaining old horizon does not accumulate
     sources = rt.queue.snapshot().provenance
     assert sources[0].capture_time == 10
-    assert sources[0].contributor_count == 2
-    assert sources[0].oldest_contributor.request_id
     assert sources[2].capture_time == 10.1
-    assert sources[2].contributor_count == 1
 
 
 @pytest.mark.parametrize("changed", ["task", "session", "expired"])
@@ -232,7 +243,7 @@ def test_ineligible_old_targets_are_replaced_without_blending(changed):
         assert rt.failure == "Dispatched action source observation is too old"
 
 
-def test_repeated_blends_keep_bounded_history_and_oldest_age():
+def test_repeated_blends_keep_oldest_source_age():
     rt, clock = runtime(blend_steps=6, blend_weight=0.5, blend_indices=(0,))
     initial(rt, clock)
     # Replacements extend the horizon but every next endpoint retains original
@@ -244,9 +255,6 @@ def test_repeated_blends_keep_bounded_history_and_oldest_age():
         assert rt.accept(request, result(request, index * 10), task_version=0)
         provenance = rt.queue.snapshot().provenance[0]
         assert provenance.capture_time == 10
-        assert provenance.contributor_count == index + 1
-        assert len(provenance.contributor_digest) == 64
-        assert not any(isinstance(value, (list, tuple)) for value in asdict(provenance).values())
     rt.max_age = 0.45
     rt.pop()
     clock.now += 0.1

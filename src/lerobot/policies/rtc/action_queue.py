@@ -260,9 +260,10 @@ class ActionQueue:
         with self.lock:
             if snapshot is not None and snapshot.generation != self._generation:
                 return False
-            delay = self._check_and_resolve_delays(real_delay, action_index_before_inference)
             if snapshot is not None:
                 delay = min(max(0, real_delay), max(0, self._cursor - snapshot.cursor))
+            else:
+                delay = self._check_and_resolve_delays(real_delay, action_index_before_inference)
 
             if self.cfg.enabled:
                 queue = self._replace_actions_queue(original_actions, processed_actions, delay, task)

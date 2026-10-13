@@ -23,15 +23,14 @@ import math
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
-from lerobot.configs.dataset import DatasetRecordConfig
+from lerobot.configs import DatasetRecordConfig
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine
 from lerobot.lerobot_types import RobotObservation
 from lerobot.robots.remote.world import get_world
 from lerobot.teleoperators import Teleoperator
-from lerobot.utils.action_interpolator import ActionInterpolator
-from lerobot.utils.constants import OBS_STR
+from lerobot.utils import OBS_STR, ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.robot_utils import precise_sleep
@@ -87,11 +86,7 @@ class RolloutStrategy(abc.ABC):
     free to finalize on ``run()`` exit, e.g. via ``VideoEncodingManager``.
 
     Every autonomous motor tick must use :func:`send_next_action`, including
-    ticks spent holding or interpolating. It enforces dispatch permission,
-    invalidates interpolation when permission is revoked, acknowledges the
-    supported local hold, and records dispatch provenance. Calling only
-    ``engine.get_action()`` bypasses these asynchronous lifecycle guarantees.
-    Custom dispatch implementations must honor the same per-tick protocol.
+    ticks spent holding or interpolating; see its dispatch contract below.
     """
 
     def __init__(self, config: RolloutStrategyConfig) -> None:
@@ -406,9 +401,7 @@ class RolloutStrategy(abc.ABC):
 
         Publish each captured observation with ``engine.notify_observation``
         and dispatch through :func:`send_next_action` on every autonomous motor
-        tick, even when no new action is expected. Do not skip the dispatch
-        gate on interpolation or held ticks: hold acknowledgments unblock
-        planned language work and propagate terminal faults to shutdown.
+        tick, even when no new action is expected.
 
         Each ``run()`` call builds its own ``CycleTimer`` and reports it through
         ``timer.log_run_summary()`` from its ``finally``: a fresh timer's start-up
@@ -517,10 +510,10 @@ def send_next_action(
     sync and async backends — the rollout strategy never needs to branch.
 
     Call once per autonomous motor tick, including interpolation and held ticks.
-    This is the strategy's dispatch boundary: it starts the diagnostic tick,
-    checks permission before pulling and sending, clears interpolation on a
-    denial, performs a supported local hold, acknowledges it, and records the
-    dispatched command. A direct ``get_action`` call does not replace it.
+    This is the strategy's dispatch boundary: it checks permission before
+    pulling and sending, clears interpolation on a
+    denial, performs a supported local hold, acknowledges it, and notifies the
+    engine after dispatch. A direct ``get_action`` call does not replace it.
 
     When *timer* is given, the engine pull and the robot send are timed as the
     ``infer`` and ``send`` steps of its cadence summary, and a tick with no action
@@ -529,13 +522,9 @@ def send_next_action(
     ticks rather than as loop-body time.
 
     Returns the canonical action dict for a dispatched policy action, or ``None``
-    during startup, a planned pause, or bounded asynchronous waiting. An empty
-    active buffer starts the engine's starvation handling; grace expiry (or no
-    supported hold) faults the engine and ends the rollout. ``None`` does not mean
-    that no command was sent: a supported hold may have been applied instead.
+    while waiting or faulted. A supported hold command may still have been sent.
     """
     engine = ctx.policy.inference
-    engine.begin_control_tick()
     features = ctx.data.dataset_features
     ordered_keys = ctx.data.ordered_action_keys
     # ``nullcontext`` accepts (and ignores) the section name, so it stands in for
@@ -577,8 +566,6 @@ def send_next_action(
         processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
         if not dispatch_permitted():
             return None
-        dispatched = ctx.hardware.robot_wrapper.send_action(processed)
-        engine.record_dispatch(
-            action_dict, dispatched if isinstance(dispatched, dict) else processed, obs_raw
-        )
+        ctx.hardware.robot_wrapper.send_action(processed)
+        engine.record_dispatch()
     return action_dict

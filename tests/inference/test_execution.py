@@ -1,45 +1,29 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Deterministic timing/continuation tests shared by local and remote execution."""
 
-import numpy as np
 import torch
 
-from lerobot.inference import ActionChunk, ActionProvenance, ChunkRuntime, ExecutionMode, ObservationSnapshot
+from lerobot.inference import (
+    ActionProvenance,
+    ExecutionMode,
+    HoldState,
+)
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-
-
-class Clock:
-    now = 10.0
-
-    def __call__(self):
-        return self.now
-
-
-def runtime(mode=ExecutionMode.CHUNK, max_age=10, training_max_delay=2):
-    clock = Clock()
-    runtime = ChunkRuntime(
-        mode=mode,
-        action_interval=0.1,
-        refill_seconds=0.3,
-        max_observation_age_s=max_age,
-        action_timeout_s=3,
-        startup_timeout_s=5,
-        training_max_delay=training_max_delay,
-        clock=clock,
-    )
-    runtime.active = True
-    return runtime, clock
-
-
-def observation(clock, task="a", version=0):
-    return ObservationSnapshot({"state": np.zeros(1, dtype=np.float32)}, clock(), task, version, task)
-
-
-def chunk(request, offset=0, length=4):
-    actions = torch.arange(offset, offset + length, dtype=torch.float32).reshape(-1, 1)
-    return ActionChunk(
-        actions, actions, ActionProvenance(request.observation.capture_time, request.observation.task), length
-    )
+from tests.inference.execution_helpers import chunk, observation, runtime
 
 
 def test_atomic_queue_snapshot_copies_both_spaces_and_provenance():
@@ -207,3 +191,30 @@ def test_replace_future_requires_current_cursor_and_generation():
         assert provenance == expected_source
     assert queue.empty()
     assert queue.snapshot().cursor == fresh.cursor + 2
+
+
+def test_hold_state_upgrades_once_without_renewing_per_tick():
+    hold = HoldState()
+    assert hold.request("instruction", 10.0, 3.0)
+    assert hold.requested and not hold.ready and hold.deadline == 13.0
+    assert not hold.request("instruction", 11.0, 3.0)
+    assert (hold.started_at, hold.deadline) == (10.0, 13.0)
+    assert hold.acknowledge() and not hold.acknowledge()
+    # Upgrading keeps the anchor and acknowledgment and widens the budget once.
+    assert not hold.request("language", 12.0, 5.0, upgrade=True)
+    assert hold.reason == "language" and hold.ready and hold.deadline == 15.0
+    # Re-requesting the current reason, as every motor tick does, never renews the deadline.
+    hold.deadline = 11.5
+    assert not hold.request("language", 12.0, 5.0, upgrade=True)
+    assert hold.deadline == 11.5 and hold.expired(12.0)
+    hold.clear()
+    assert not hold.requested and hold.deadline is None and not hold.acknowledged
+    # A shorter upgrade cannot shrink an existing budget; starvation has no planned deadline.
+    assert hold.request("instruction", 20.0, 3.0)
+    assert not hold.request("language", 21.0, 1.0, upgrade=True)
+    assert hold.deadline == 23.0
+    hold.clear()
+    assert hold.request("starvation", 30.0, None)
+    assert not hold.expired(1e9)
+    assert not hold.request("language", 31.0, 2.0, upgrade=True)
+    assert hold.deadline == 32.0

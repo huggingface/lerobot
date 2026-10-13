@@ -24,7 +24,7 @@ import torch
 
 from lerobot.policies import PreTrainedPolicy, prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
-from lerobot.utils.constants import OBS_STR
+from lerobot.utils import OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from .base import InferenceEngine, PolicyQuery
@@ -140,6 +140,10 @@ class SyncInferenceEngine(InferenceEngine):
         )
         # Live task, read without consuming the task-changed edge (the action path needs it).
         task = self.task
+        # Generation blocks the control thread, so any precomputed chunk is stale by its
+        # full duration afterwards. Drop it and resume from fresh inference, matching the
+        # hold-and-invalidate rule of the asynchronous backends.
+        self._policy.drop_queued_actions()
         with torch.inference_mode(), autocast_ctx:
             observation = prepare_observation_for_inference(obs_frame, self._device, task, self._robot_type)
             observation = self._mark_query(observation, query)

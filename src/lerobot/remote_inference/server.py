@@ -35,8 +35,17 @@ from uuid import uuid4
 import numpy as np
 import torch
 
-from lerobot.inference import ExecutionMode, FeatureSpec, ObservationSnapshot, PolicyRunner, QueryKind
-from lerobot.transport.zenoh import (
+from lerobot import __version__
+from lerobot.inference import (
+    DEFAULT_MAX_TEXT_INPUT_CHARS,
+    DEFAULT_MAX_TEXT_OUTPUT_CHARS,
+    ExecutionMode,
+    FeatureSpec,
+    ObservationSnapshot,
+    PolicyRunner,
+    QueryKind,
+)
+from lerobot.transport import (
     BoundedQueryable,
     BoundedSubscriber,
     PendingQuery,
@@ -44,7 +53,6 @@ from lerobot.transport.zenoh import (
     ZenohTransport,
 )
 
-from .build_info import SOFTWARE_BUILD
 from .chunk_contract import (
     CHUNK_ALIGNMENT,
     RTC_MODEL_SPACE,
@@ -129,8 +137,8 @@ class SessionWorker:
         action_deadline_s: float = 5.0,
         language_deadline_s: float = 60.0,
         idle_timeout_s: float = 10.0,
-        max_input_chars: int = 4096,
-        max_output_chars: int = 8192,
+        max_input_chars: int = DEFAULT_MAX_TEXT_INPUT_CHARS,
+        max_output_chars: int = DEFAULT_MAX_TEXT_OUTPUT_CHARS,
     ) -> None:
         """Start the single policy worker with bounded command and identity bookkeeping."""
         self.runner = runner
@@ -160,15 +168,19 @@ class SessionWorker:
         self._controls: OrderedDict[str, Future[Envelope]] = OrderedDict()
         self._closed_controls: OrderedDict[tuple[str, str], Future[Envelope]] = OrderedDict()
         self._recent_operations: deque[tuple[float, float]] = deque(maxlen=100)
-        self._last_summary_at = time.monotonic()
-        self._actions_since_summary = self._language_since_summary = 0
-        self._errors_since_summary = self._stale_since_summary = 0
-        self._invalidations_since_summary = self._resets_since_summary = 0
-        self._control_wait_max = 0.0
+        self._reset_summary(time.monotonic())
         self._active_operation: str | None = None
         self._stopping = Event()
         self._thread = Thread(target=self._run, name="PolicyWorker", daemon=True)
         self._thread.start()
+
+    def _reset_summary(self, now: float) -> None:
+        """Start a new logging interval without discarding the rolling latency window."""
+        self._last_summary_at = now
+        self._actions_since_summary = self._language_since_summary = 0
+        self._errors_since_summary = self._stale_since_summary = 0
+        self._invalidations_since_summary = self._resets_since_summary = 0
+        self._control_wait_max = 0.0
 
     @property
     def descriptor(self) -> dict[str, Any]:
@@ -227,7 +239,7 @@ class SessionWorker:
             "deployment": self.deployment,
             "instance_id": self.instance_id,
             "artifact_identity": self.artifact_identity,
-            "software": asdict(SOFTWARE_BUILD),
+            "software": {"lerobot_version": __version__},
             "semantics": self.semantics,
             "capabilities": capabilities,
             "execution_contracts": list(self.execution_contracts),
@@ -527,11 +539,7 @@ class SessionWorker:
             self._reset_runner(full=True)
             session.ready = True
             self._recent_operations.clear()
-            self._actions_since_summary = self._language_since_summary = 0
-            self._errors_since_summary = self._stale_since_summary = 0
-            self._invalidations_since_summary = self._resets_since_summary = 0
-            self._control_wait_max = 0.0
-            self._last_summary_at = time.monotonic()
+            self._reset_summary(time.monotonic())
             logger.info("Session admitted instance=%s session=%s", self.instance_id, session.identity)
             return Envelope(
                 MessageType.ACCEPTED,
@@ -591,9 +599,6 @@ class SessionWorker:
             ):
                 raise ValueError("Policy returned an invalid or oversized text answer")
             elapsed = time.monotonic() - started
-            if elapsed > self.language_deadline_s:
-                session.faulted = True
-                return message.error(ErrorCode.TIMEOUT, "Language execution deadline exceeded")
             return message.reply(
                 MessageType.LANGUAGE_RESULT,
                 {
@@ -616,9 +621,6 @@ class SessionWorker:
             model_continuation=tensor("model_continuation"),
             canonical_continuation=tensor("canonical_continuation"),
         )
-        if time.monotonic() - started > self.action_deadline_s:
-            session.faulted = True
-            return message.error(ErrorCode.TIMEOUT, "Action execution deadline exceeded")
         return message.reply(
             MessageType.ACTION,
             {
@@ -743,11 +745,7 @@ class SessionWorker:
                         max(sample[1] for sample in self._recent_operations),
                         count,
                     )
-                    self._last_summary_at = finished
-                    self._actions_since_summary = self._language_since_summary = 0
-                    self._errors_since_summary = self._stale_since_summary = 0
-                    self._invalidations_since_summary = self._resets_since_summary = 0
-                    self._control_wait_max = 0.0
+                    self._reset_summary(finished)
                 if (
                     response.message_type is MessageType.ERROR
                     and response.body.get("code") != ErrorCode.STALE
@@ -762,10 +760,7 @@ class SessionWorker:
                     )
             with self._lock:
                 self._active_operation = None
-                if self._session is not None and message.message_type in {
-                    MessageType.OBSERVATION,
-                    MessageType.LANGUAGE_REQUEST,
-                }:
+                if self._session is not None and inference_operation:
                     self._session.busy = False
             future.set_result(response)
 
@@ -1023,18 +1018,12 @@ class PolicyServer:
         except KeyboardInterrupt:
             self.stop(reason="SIGINT")
         finally:
-            with worker._lock:
-                logger.info(
-                    "Policy server stopping: deployment=%s reason=%s session=%s "
-                    "active_operation=%s queued_operations=%d pending_replies=%d cleanup_pending=%s",
-                    worker.deployment,
-                    self._stop_reason,
-                    None if worker._session is None else worker._session.identity,
-                    worker._active_operation,
-                    worker._commands.qsize(),
-                    len(outbound),
-                    worker._session is not None and worker._session.closing,
-                )
+            logger.info(
+                "Policy server stopping: deployment=%s reason=%s pending_replies=%d",
+                worker.deployment,
+                self._stop_reason,
+                len(outbound),
+            )
             try:
                 # The transport owns every declared channel, including partial startup.
                 transport.close()

@@ -1,7 +1,16 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Backend worker/hold races around bounded action-starvation recovery."""
 
@@ -16,8 +25,9 @@ pytest.importorskip("datasets")
 
 from lerobot.inference import RemoteInferenceConfig
 from lerobot.remote_inference import RemoteInferenceEngine
-from tests.inference.test_local_rtc_regressions import make_engine, wait_for
-from tests.remote_inference.test_engine import ControlledClient
+from tests.inference.rtc_helpers import make_engine
+from tests.remote_inference.helpers import ControlledClient
+from tests.utils import wait_for
 
 
 @pytest.fixture(params=["local_rtc", "blended"])
@@ -128,7 +138,7 @@ def test_starvation_discards_old_result_and_pre_ack_capture_then_resumes_fresh(
     engine.acknowledge_hold()
     backend.release()
     assert wait_for(lambda: runtime._starvation_request_deadline is None)
-    assert wait_for(lambda: not engine._hold_requested)
+    assert wait_for(lambda: not engine._hold.requested)
     assert backend.count() == 2
     assert runtime.queue.empty()
     assert engine.get_action(None) is None
@@ -159,7 +169,7 @@ def test_fresh_recovery_result_arriving_after_grace_cannot_restore_motion(backen
     exhaust_with_old_inference_pending(backend)
     engine.acknowledge_hold()
     backend.release()
-    assert wait_for(lambda: not engine._hold_requested)
+    assert wait_for(lambda: not engine._hold.requested)
     if not backend.local:
         backend.worker.action_release.clear()
     backend.capture(9.0)

@@ -271,7 +271,7 @@ lawam = [
 ]
 
 # Features
-# Remote inference: supported binding range validated by direct transport tests.
+# Remote inference transport and serialization.
 remote = ["eclipse-zenoh>=1.9.0,<1.11.0", "msgpack>=1.1.0,<2.0.0"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 

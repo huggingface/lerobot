@@ -215,9 +215,8 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils import init_logging, register_third_party_plugins
 from lerobot.utils.process import ProcessSignalHandler
-from lerobot.utils.utils import init_logging
 from lerobot.utils.visualization_utils import init_visualization, shutdown_visualization
 
 logger = logging.getLogger(__name__)

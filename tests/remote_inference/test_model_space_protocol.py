@@ -1,6 +1,17 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Exercise separate model/canonical widths through the complete encoded RPC boundary."""
 
 import time
@@ -12,7 +23,6 @@ import numpy as np
 import pytest
 import torch
 
-pytest.importorskip("datasets")
 pytest.importorskip("msgpack")
 
 from lerobot.inference import ChunkRequest, ExecutionMode, RemoteInferenceConfig
@@ -24,9 +34,14 @@ from lerobot.remote_inference.codec import decode_message, encode_message
 from lerobot.remote_inference.protocol import ErrorCode, MessageType, ProtocolError
 from lerobot.remote_inference.server import SessionWorker
 from lerobot.transport.zenoh import BoundedSubscriber
-from tests.inference.test_policy_contracts import PaddedPolicy, make_runner
-from tests.inference.test_policy_runner import ConformingPolicy, observation, tiny_config
-from tests.remote_inference.test_session import assert_error, open_request
+from tests.inference.policy_helpers import (
+    ConformingPolicy,
+    PaddedPolicy,
+    make_runner,
+    observation,
+    tiny_config,
+)
+from tests.remote_inference.helpers import admit, assert_error, open_request
 
 
 class EncodedWorkerTransport:
@@ -93,17 +108,6 @@ def client_for(worker, *, descriptor=None, mode="rtc_guided", chunk_merge="auto"
     transport = EncodedWorkerTransport(worker)
     config = RemoteInferenceConfig(deployment="test", semantics="radians", mode=mode, chunk_merge=chunk_merge)
     return RemoteClient(transport, config, worker.descriptor if descriptor is None else descriptor)
-
-
-def admit(client):
-    caps = client.capabilities
-    client.admit(
-        features=caps.features,
-        action_feature=caps.action_feature,
-        semantics="radians",
-        action_interval=caps.action_interval,
-        mode=client.config.mode,
-    )
 
 
 def action_request(previous=None, *, mode=ExecutionMode.RTC_GUIDED):

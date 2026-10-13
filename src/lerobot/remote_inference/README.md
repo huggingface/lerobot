@@ -1,8 +1,8 @@
 # Asynchronous inference: implementation and design reference
 
-This is the engineering reference for asynchronous inference in LeRobot: its behavior, ownership boundaries, data contracts and design tradeoffs. The [future work](#14-future-work) section is the maintained checklist for remaining validation and potential extensions; it does not describe implemented behavior.
+This is the engineering reference for asynchronous inference in LeRobot: its behavior, ownership boundaries, data contracts and design tradeoffs. The [future work](#13-future-work) section is the maintained checklist for remaining validation and potential extensions; it does not describe implemented behavior.
 
-For installation, commands and tuning, start with the [user guide](../../../docs/source/remote_inference.mdx). For implementation details, follow the source links in each section. Software coverage, real-model execution and physical acceptance are distinct; see [validation](#13-validation-and-current-limits).
+For installation, commands and tuning, start with the [user guide](../../../docs/source/remote_inference.mdx). For implementation details, follow the source links in each section. Software coverage, real-model execution and physical acceptance are distinct; see [policy support](#policy-support) and [follow-ups](#follow-ups-after-landing).
 
 ## 1. Product contract
 
@@ -190,7 +190,7 @@ blended = q_t + b_w * (i_t - q_t)
 
 `q_t` is the queued target and `i_t` the incoming target for the same future slot. `b_w` (`blend_weight`) weights the **incoming** prediction. One means replacement. `blend_steps=0` disables blending. Other coordinates take the incoming values; gripper channels must not be selected merely because they are numeric. Relative-to-absolute processing occurs before blending.
 
-A future endpoint may be blended again before it is committed. Provenance retains a bounded summary, including the oldest contributor's capture time, count and digest. Repeated blending cannot make old data fresh. Contributors from incompatible context or beyond source-age bounds are excluded.
+A future endpoint may be blended again before it is committed. Provenance retains the oldest contributor's capture time, so repeated blending cannot make old data fresh. Contributors from incompatible context or beyond source-age bounds are excluded.
 
 ### RTC
 

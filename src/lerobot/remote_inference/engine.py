@@ -23,7 +23,6 @@ from collections import Counter, deque
 from dataclasses import replace
 from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import torch
@@ -31,20 +30,19 @@ import torch
 from lerobot.inference import (
     ChunkRuntime,
     ExecutionMode,
+    HoldState,
     InferenceEngine,
     InferenceRobot,
     ObservationSnapshot,
     PolicyQuery,
     QueryAnswer,
     QueryKind,
+    RemoteInferenceConfig,
 )
 from lerobot.utils.feature_utils import build_dataset_frame
 
 from .client import RemoteClient, RequestCancelled
 from .protocol import ErrorCode, ProtocolError
-
-if TYPE_CHECKING:
-    from lerobot.inference import RemoteInferenceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -103,21 +101,15 @@ class RemoteInferenceEngine(InferenceEngine):
         self._lock = RLock()
         self._observation: ObservationSnapshot | None = None
         self._control: tuple[str, int] | None = None
-        self._hold_requested = False
-        self._hold_acknowledged = False
-        self._hold_started = 0.0
-        self._hold_reason = "language"
+        self._hold = HoldState()
         self._query_observation: ObservationSnapshot | None = None
         self._query_generation = 0
         self._stop_event = Event()
         self._thread: Thread | None = None
         self._traceback: str | None = None
-        self._tick = 0
         self._fault_reported = False
         self._refill_horizon_warned = False
         self._age_budget_warned = False
-        # Bounded scalar history for cadence diagnostics; do not retain captures.
-        self._last_request: tuple[int, float, int, int] | None = None
         # Console handlers may block. Control-thread events only enter this bounded
         # handoff; the network worker formats and writes all console diagnostics.
         self._log_events: Queue[dict] = Queue(maxsize=128)
@@ -137,7 +129,6 @@ class RemoteInferenceEngine(InferenceEngine):
             "instance": self.client.instance_id,
             "session": self.client.session_id,
             "generation": self.runtime.generation,
-            "control_tick": self._tick,
             **values,
         }
         try:
@@ -367,7 +358,7 @@ class RemoteInferenceEngine(InferenceEngine):
             logger.warning(
                 "Aligned effective refill %.3fs (configured %.3fs, recent turnaround %.3fs) "
                 "covers the full execution horizon %.3fs; requests may follow every fresh advanced "
-                "observation. Inspect request_spacing_s and committed_actions_since_request; "
+                "observation. Compare consecutive request submission_cursor and playback_at_submission_s; "
                 "lower configured refill only within measured latency headroom, or use a supported "
                 "longer execution horizon. No setting was changed.",
                 self.runtime.effective_refill,
@@ -393,8 +384,7 @@ class RemoteInferenceEngine(InferenceEngine):
         with self._lock:
             generation = self.runtime.invalidate(held=True)
             self._observation = None
-            self._hold_requested = False
-            self._hold_acknowledged = False
+            self._hold.clear()
             # A later motion invalidation must not erase a pending full reset.
             if self._control is not None and self._control[0] == "reset":
                 operation = "reset"
@@ -417,7 +407,7 @@ class RemoteInferenceEngine(InferenceEngine):
         if self.failed or self._stop_event.is_set():
             raise RuntimeError("Faulted/closed remote sessions require a new rollout")
         with self._lock:
-            self.runtime.activate(held=self._control is not None or self._hold_requested)
+            self.runtime.activate(held=self._control is not None or self._hold.requested)
 
     def reset(self) -> None:
         """Invalidate local motion and request a full server policy/processor reset."""
@@ -527,15 +517,8 @@ class RemoteInferenceEngine(InferenceEngine):
         if self.has_pending_query:
             self._request_language_hold()
         with self._lock:
-            hold_timeout = self.config.action_timeout_s + self.config.handshake_timeout_s
-            if self._hold_reason == "language":
-                hold_timeout += self.config.language_timeout_s
-            if (
-                self._hold_requested
-                and self._hold_reason != "action starvation"
-                and self.runtime.clock() - self._hold_started > hold_timeout
-            ):
-                self._fault(f"Planned {self._hold_reason} hold deadline exceeded")
+            if self._hold.expired(self.runtime.clock()):
+                self._fault(f"Planned {self._hold.reason} hold deadline exceeded")
         allowed = self.runtime.dispatch_allowed()
         if self.runtime.failure is not None:
             self._fault(self.runtime.failure)
@@ -549,21 +532,21 @@ class RemoteInferenceEngine(InferenceEngine):
         with self._lock:
             if not self.runtime.active or self.failed:
                 return
-            if self._hold_requested:
-                if self._hold_reason in {"instruction change", "action starvation"} and reason == "language":
-                    # Keep the existing acknowledgment, freshness gate and time anchor;
-                    # repeated query checks must not renew the language hold budget.
-                    self._hold_reason = reason
+            timeout = self.config.action_timeout_s + self.config.handshake_timeout_s
+            if reason == "language":
+                timeout += self.config.language_timeout_s
+            if not self._hold.request(
+                reason,
+                self.runtime.clock(),
+                None if reason == "action starvation" else timeout,
+                upgrade=reason == "language",
+            ):
                 return
             generation = (
                 self.runtime.generation
                 if reason == "action starvation"
                 else self.runtime.invalidate(held=True, preserve_starvation=True)
             )
-            self._hold_requested = True
-            self._hold_acknowledged = False
-            self._hold_started = self.runtime.clock()
-            self._hold_reason = reason
             self._observation = None
             operation = "reset" if self._control is not None and self._control[0] == "reset" else "invalidate"
             self._control = (operation, generation)
@@ -576,8 +559,7 @@ class RemoteInferenceEngine(InferenceEngine):
         fault or promises that a previous command physically reached its target.
         """
         with self._lock:
-            if self._hold_requested and not self._hold_acknowledged:
-                self._hold_acknowledged = True
+            if self._hold.acknowledge():
                 self.runtime.acknowledge_starvation_hold()
                 self._observation = None  # require capture after the control-thread hold
         if self.failed and self._global_shutdown is not None:
@@ -588,7 +570,7 @@ class RemoteInferenceEngine(InferenceEngine):
 
         Returns None when unavailable. The caller must still check dispatch permission.
         """
-        item = self.runtime.pop(control_tick=self._tick)
+        item = self.runtime.pop()
         if self.runtime.starvation_deadline is not None and self.runtime.held:
             self._request_hold("action starvation")
         if item is None:
@@ -676,27 +658,18 @@ class RemoteInferenceEngine(InferenceEngine):
         try:
             while not self._stop_event.is_set() and not self.failed:
                 self._drain_log_events()
-                # Control-thread dispatch only queues bounded diagnostics. Log
-                # from this worker so first-dispatch reporting adds no motor I/O.
-                with self.runtime.lock:
-                    dispatch_events = list(self.runtime.dispatch_events)
-                    self.runtime.dispatch_events.clear()
-                    wait_events = list(self.runtime.wait_events)
-                    self.runtime.wait_events.clear()
-                for event in wait_events:
+                for event in self.runtime.drain_wait_events():
                     self._event(
                         event["event"], **{key: value for key, value in event.items() if key != "event"}
                     )
-                for event in dispatch_events:
-                    self._event("first_dispatch", **event)
                 with self._lock:
                     control = self._control
                     observation = self._observation
-                    hold_ready = self._hold_requested and self._hold_acknowledged
+                    hold_ready = self._hold.ready
                 if control is not None:
                     # Language invalidation must be acknowledged by the motor thread
                     # before submitting any server-side generation operation.
-                    if self._hold_requested and not hold_ready:
+                    if self._hold.requested and not hold_ready:
                         self._stop_event.wait(0.002)
                         continue
                     operation, generation = control
@@ -715,7 +688,7 @@ class RemoteInferenceEngine(InferenceEngine):
                         if self._control == control:
                             self._control = None
                             self.runtime.complete_starvation_invalidation(generation)
-                            if not self._hold_requested:
+                            if not self._hold.requested:
                                 self.runtime.release_hold(generation)
                                 self._observation = None
                     continue
@@ -723,13 +696,12 @@ class RemoteInferenceEngine(InferenceEngine):
                     with self._lock:
                         if (
                             self._control is None
-                            and self._hold_requested
-                            and self._hold_acknowledged
-                            and self._hold_reason == "action starvation"
+                            and self._hold.requested
+                            and self._hold.acknowledged
+                            and self._hold.reason == "action starvation"
                             and self.runtime.release_hold(self.runtime.generation)
                         ):
-                            self._hold_requested = False
-                            self._hold_acknowledged = False
+                            self._hold.clear()
                             self._observation = None
                             continue
                 if not self.runtime.active or observation is None:
@@ -744,10 +716,10 @@ class RemoteInferenceEngine(InferenceEngine):
                         eligible = (
                             self._control is None
                             and self.runtime.active
-                            and self._hold_requested
-                            and self._hold_acknowledged
+                            and self._hold.requested
+                            and self._hold.acknowledged
                             and observation is self._observation
-                            and observation.capture_time >= self._hold_started
+                            and observation.capture_time >= self._hold.started_at
                         )
                         generation = self.runtime.generation
                         if eligible:
@@ -758,8 +730,7 @@ class RemoteInferenceEngine(InferenceEngine):
                     self._service_query({})
                     with self._lock:
                         if self.runtime.release_hold(generation):
-                            self._hold_requested = False
-                            self._hold_acknowledged = False
+                            self._hold.clear()
                             self._observation = None  # action always gets a post-query capture
                     continue
                 if self.has_pending_query or not self.client.present:
@@ -773,7 +744,7 @@ class RemoteInferenceEngine(InferenceEngine):
                     if (
                         self._control is None
                         and observation is self._observation
-                        and not self._hold_requested
+                        and not self._hold.requested
                     ):
                         with self._task_lock:
                             if observation.task_version != self._task_version:
@@ -786,13 +757,6 @@ class RemoteInferenceEngine(InferenceEngine):
                 if request is None:
                     self._stop_event.wait(0.002)
                     continue
-                previous = self._last_request
-                request_spacing = committed_since_request = None
-                task_changed = False
-                if previous is not None and previous[0] == request.generation:
-                    request_spacing = request.submitted_at - previous[1]
-                    committed_since_request = request.continuation.cursor - previous[2]
-                    task_changed = observation.task_version != previous[3]
                 self._event(
                     "request",
                     request_id=request.request_id,
@@ -803,20 +767,11 @@ class RemoteInferenceEngine(InferenceEngine):
                     configured_refill_s=self.runtime.refill_seconds,
                     effective_refill_s=self.runtime.effective_refill,
                     scheduling="playback_threshold",
-                    request_spacing_s=request_spacing,
-                    committed_actions_since_request=committed_since_request,
-                    task_changed_since_request=task_changed,
                     recent_turnaround_s=self.runtime.turnaround,
                     playback_at_submission_s=request.playback_at_submission,
                     observation_age_at_submission_s=request.submitted_at - observation.capture_time,
                     observation_cursor=observation.action_cursor,
                     submission_cursor=request.continuation.cursor,
-                )
-                self._last_request = (
-                    request.generation,
-                    request.submitted_at,
-                    request.continuation.cursor,
-                    observation.task_version,
                 )
                 self._drain_log_events()
                 try:
@@ -889,7 +844,3 @@ class RemoteInferenceEngine(InferenceEngine):
                 logger.debug("Remote session close details", exc_info=True)
             except Exception:
                 logger.exception("Remote session close failed; presence/idle cleanup will release it")
-
-    def begin_control_tick(self) -> None:
-        """Count every motor tick, including holds, for console diagnostic context."""
-        self._tick += 1

@@ -15,13 +15,31 @@
 """
 Transport backends with independently optional dependencies.
 
-Available modules (import directly)::
-
-    from lerobot.transport.utils import ...
-    from lerobot.transport.zenoh import ZenohTransport
-
-The RL gRPC helpers require ``lerobot[grpcio-dep]``; Zenoh requires
-``lerobot[remote]``. Importing the namespace does not require either backend.
+Zenoh requires ``lerobot[remote]`` only when used. The RL gRPC helpers are
+imported separately from ``lerobot.transport.utils`` and require
+``lerobot[grpcio-dep]``. Importing this namespace requires neither backend.
 """
 
-__all__: list[str] = []
+from .zenoh import (
+    BoundedQueryable,
+    BoundedSubscriber,
+    PendingQuery,
+    PresenceEvent,
+    PresenceToken,
+    QueryCancelled,
+    TransportError,
+    ZenohConfig,
+    ZenohTransport,
+)
+
+__all__ = [
+    "BoundedQueryable",
+    "BoundedSubscriber",
+    "PendingQuery",
+    "PresenceEvent",
+    "PresenceToken",
+    "QueryCancelled",
+    "TransportError",
+    "ZenohConfig",
+    "ZenohTransport",
+]

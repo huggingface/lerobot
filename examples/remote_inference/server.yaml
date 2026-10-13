@@ -1,6 +1,7 @@
 # Generic schema example, not a tested checkpoint/robot profile.
 # Copy and adapt the checkpoint, calibration, camera names/views and units together.
 # Nested CLI flags override this file; see docs/source/remote_inference.mdx.
+# Default model/execution/language settings are shown explicitly for reference.
 deployment: manipulation
 model:
   repo_or_path: /absolute/path/to/checkpoint

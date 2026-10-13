@@ -1,122 +1,39 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Local asynchronous compatibility and worker/hold transition regressions."""
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from threading import Event, Semaphore
-from types import SimpleNamespace
+from threading import Event
 
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="rollout requires the dataset extra")
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.inference import ObservationSnapshot, RTCInferenceConfig, RTCInferenceEngine, rtc
+from lerobot.inference import ObservationSnapshot, RTCInferenceConfig, rtc
 from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.rollout import RolloutConfig, context
 from lerobot.rollout.robot_wrapper import ThreadSafeRobot
+from tests.inference.rtc_helpers import ControlledPolicy, make_engine, observe, stop
 from tests.mocks.mock_robot import MockRobot, MockRobotConfig
-
-
-class Pipeline:
-    steps: tuple = ()
-
-    def __init__(self, width: int | None = None):
-        self.width = width
-
-    def __call__(self, value):
-        return value if self.width is None else value[..., : self.width]
-
-    def reset(self):
-        pass
-
-
-class ControlledPolicy:
-    chunk_inference_spec = PreTrainedPolicy.chunk_inference_spec
-    drop_queued_actions = PreTrainedPolicy.drop_queued_actions
-    _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
-
-    def __init__(self, width: int = 2):
-        self.width = width
-        self.config = SimpleNamespace(
-            n_obs_steps=1,
-            chunk_size=20,
-            n_action_steps=20,
-            rtc_training_max_delay=4,
-            action_feature=PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
-        )
-        self.release = Semaphore(0)
-        self.calls: list[tuple[torch.Tensor | None, int]] = []
-        self.action_observations: list[torch.Tensor] = []
-        self.text_observations: list[torch.Tensor] = []
-
-    def predict_action_chunk(self, batch, *, inference_delay=0, prev_chunk_left_over=None):
-        self.calls.append((prev_chunk_left_over, inference_delay))
-        self.action_observations.append(batch["observation.state"].clone())
-        assert self.release.acquire(timeout=3), "test must release the model call"
-        return torch.ones(1, 20, self.width)
-
-    def generate_text(self, batch):
-        self.text_observations.append(batch["observation.state"].clone())
-        return "answer"
-
-    def reset(self):
-        pass
-
-    def supports_rtc(self):
-        return True
-
-    def supports_text_generation(self):
-        return True
-
-
-def make_engine(policy=None, robot=None, postprocessor=None, **kwargs):
-    policy = policy or ControlledPolicy()
-    robot = robot or SimpleNamespace(robot_type="mock", action_features={}, supports_hold=True)
-    return RTCInferenceEngine(
-        policy=policy,
-        preprocessor=Pipeline(),
-        postprocessor=postprocessor or Pipeline(width=2),
-        robot_wrapper=robot,
-        rtc_config=kwargs.pop("rtc_config", RTCConfig(enabled=True, execution_horizon=4)),
-        dataset_features={
-            "observation.state": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
-            "action": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
-        },
-        task="pick",
-        fps=30,
-        device="cpu",
-        **kwargs,
-    )
-
-
-def wait_for(predicate: Callable[[], bool]) -> bool:
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.005)
-    return False
-
-
-def observe(engine, value=0.0):
-    engine.notify_observation({"j1.pos": value, "j2.pos": value})
-
-
-def stop(engine):
-    engine._policy.release.release(20)
-    engine.stop()
+from tests.utils import wait_for
 
 
 @pytest.mark.parametrize("temporal_contract", [False, True])
@@ -186,8 +103,8 @@ def test_task_change_during_compile_warmup_needs_no_hold_acknowledgment():
         assert not engine.ready
         assert engine._runtime.pending is not None
         assert engine.set_task("new task")
-        assert not engine._hold_requested
-        assert engine._language_deadline is None
+        assert not engine._hold.requested
+        assert engine._hold.deadline is None
         # The control thread only waits for readiness here; it does not acknowledge holds.
         engine._policy.release.release(3)
         assert wait_for(lambda: engine.ready)
@@ -229,16 +146,16 @@ def test_instruction_hold_language_upgrade_preserves_ack_and_bounded_budget(
         engine.pump_query({})
     else:
         assert engine.ask("what?")
-    assert engine._hold_reason == "Language request"
-    assert engine._hold_acknowledged.is_set() == acknowledge_first
+    assert engine._hold.reason == "Language request"
+    assert engine._hold.acknowledged == acknowledge_first
     assert engine._runtime.generation == generation
     deadline = started + max(action_timeout, language_timeout)
-    assert engine._language_deadline == deadline
+    assert engine._hold.deadline == deadline
     now[0] = deadline - 0.1
     for _ in range(3):
         assert not engine.dispatch_allowed()
         engine.acknowledge_hold()
-        assert engine._language_deadline == deadline
+        assert engine._hold.deadline == deadline
     assert not engine.failed
     now[0] = deadline + 0.1
     assert not engine.dispatch_allowed()
@@ -276,7 +193,7 @@ def test_upgraded_language_hold_requires_fresh_query_and_action_observations():
         assert engine.action_queue.empty(), "old-task inference cannot restore motion"
         torch.testing.assert_close(text_observations[0], torch.full((1, 2), 2.0))
         finish.set()
-        assert wait_for(lambda: not engine._hold_requested)
+        assert wait_for(lambda: not engine._hold.requested)
         assert len(engine._policy.calls) == 1, "actions need a post-query capture"
         observe(engine, 3)
         # The worker clones the observation after publishing its call metadata.

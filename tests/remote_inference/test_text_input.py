@@ -1,6 +1,17 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Invalid operator/generated text must not disturb an otherwise valid rollout."""
 
 import io
@@ -12,12 +23,10 @@ pytest.importorskip("datasets", reason="interactive rollout requires lerobot[dat
 
 from lerobot.inference import QueryKind
 from lerobot.rollout.interactive import InteractiveSession
-from tests import test_interactive_rollout as interactive_helpers
-from tests.remote_inference import test_engine as engine_helpers
-
-session = engine_helpers.session
-capture = engine_helpers.capture
-wait_for = engine_helpers.wait_for
+from tests import interactive_helpers
+from tests.remote_inference import helpers as engine_helpers
+from tests.remote_inference.helpers import capture
+from tests.utils import wait_for
 
 
 def test_oversized_generated_subtask_stops_sequencer_without_fault_and_resumes_fresh(session):
@@ -33,7 +42,7 @@ def test_oversized_generated_subtask_stops_sequencer_without_fault_and_resumes_f
     capture(engine)
     assert client.text_started.wait(2)
     client.text_release.set()
-    assert wait_for(lambda: not engine._hold_requested)
+    assert wait_for(lambda: not engine._hold.requested)
 
     assert not engine.failed
     assert engine.autosteer_goal is None

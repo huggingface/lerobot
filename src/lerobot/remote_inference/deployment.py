@@ -25,10 +25,9 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 from huggingface_hub import snapshot_download
 
-from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs import PreTrainedConfig
 from lerobot.inference import ExecutionMode, ObservationSnapshot, PolicyRunner
-from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.policies import PreTrainedPolicy, get_policy_class, make_pre_post_processors
 from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.utils.import_utils import _peft_available, require_package
 

@@ -1,6 +1,17 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Regression checks at the checkpoint/model/canonical action boundary."""
 
 from dataclasses import replace
@@ -8,31 +19,17 @@ from dataclasses import replace
 import pytest
 import torch
 
-from lerobot.inference import ExecutionMode, FeatureSpec, PolicyRunner
-from lerobot.policies.evo1.processor_evo1 import Evo1ActionProcessorStep
+from lerobot.inference import ExecutionMode
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_STATE
-from tests.inference.test_policy_runner import ConformingPolicy, observation, processors, tiny_config
+from tests.inference.policy_helpers import (
+    ConformingPolicy,
+    PaddedPolicy,
+    make_runner,
+    observation,
+    tiny_config,
+)
 
 NAMES = ("shoulder.pos", "elbow.pos", "gripper.pos")
-
-
-def make_runner(policy, *, state_names=NAMES, action_names=NAMES, padded=False, relative=False, **kwargs):
-    pre, post = processors(policy.config, relative=relative)
-    if padded:
-        post.steps.insert(0, Evo1ActionProcessorStep(action_dim=3))
-    return PolicyRunner(
-        policy,
-        pre,
-        post,
-        action_interval=1 / 30,
-        features=(
-            FeatureSpec(OBS_STATE, (3,), "float32", names=state_names, semantics="radians"),
-            FeatureSpec(OBS_ENV_STATE, (3,), "float32", semantics="radians"),
-        ),
-        action_feature=FeatureSpec(ACTION, (3,), "float32", names=action_names, semantics="radians"),
-        **kwargs,
-    )
 
 
 @pytest.mark.parametrize("names", [("elbow.pos", "shoulder.pos", "gripper.pos"), ()])
@@ -52,18 +49,6 @@ def test_checkpoint_order_accepts_matching_canonical_metadata():
     config = tiny_config()
     config.action_feature_names = list(NAMES)
     assert make_runner(ConformingPolicy(config)).predict(observation()).canonical_actions.shape == (3, 3)
-
-
-class PaddedPolicy(ConformingPolicy):
-    name = "padded_conformance"
-
-    def __init__(self, config):
-        super().__init__(config)
-        self.width = 6
-
-    def predict_action_chunk(self, batch, **kwargs):
-        self.last_kwargs = kwargs
-        return torch.arange(8 * self.width, dtype=torch.float32).reshape(1, 8, self.width)
 
 
 def test_padded_prediction_uses_real_evo1_crop_before_canonical_validation():

@@ -25,8 +25,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.policies import PreTrainedPolicy
-from lerobot.policies.rtc import validate_trained_rtc_horizon
+from lerobot.policies import PreTrainedPolicy, validate_trained_rtc_horizon
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     NormalizerProcessorStep,
@@ -34,9 +33,11 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
 )
-from lerobot.utils.constants import OBS_STATE, QUERY_KIND, QUERY_TEXT
+from lerobot.utils import OBS_STATE, QUERY_KIND, QUERY_TEXT
 
 from .contracts import (
+    DEFAULT_MAX_TEXT_INPUT_CHARS,
+    DEFAULT_MAX_TEXT_OUTPUT_CHARS,
     ActionChunk,
     ActionProvenance,
     ExecutionMode,
@@ -68,8 +69,8 @@ class PolicyRunner:
         modes: tuple[ExecutionMode, ...] = (ExecutionMode.CHUNK,),
         language_processors: tuple[PolicyProcessorPipeline, PolicyProcessorPipeline] | None = None,
         robot_type: str = "",
-        max_text_input: int = 4096,
-        max_text_output: int = 8192,
+        max_text_input: int = DEFAULT_MAX_TEXT_INPUT_CHARS,
+        max_text_output: int = DEFAULT_MAX_TEXT_OUTPUT_CHARS,
         language_enabled: bool | None = None,
     ) -> None:
         """Validate a deployment and own its canonical processor pairs."""

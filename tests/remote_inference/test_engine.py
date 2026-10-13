@@ -1,165 +1,26 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may obtain a copy at http://www.apache.org/licenses/LICENSE-2.0
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Worker/control-thread boundaries independent of network and model latency."""
 
-import time
-from contextlib import contextmanager
-from threading import Event, Lock, Thread
-from types import SimpleNamespace
+from threading import Event, Thread
 
 import pytest
-import torch
 
-pytest.importorskip("datasets")
-
-from lerobot.inference import (
-    ActionChunk,
-    ActionProvenance,
-    ExecutionMode,
-    FeatureSpec,
-    PolicyCapabilities,
-    RemoteInferenceConfig,
-)
-from lerobot.remote_inference import RemoteInferenceEngine
-from lerobot.remote_inference.client import RequestCancelled
 from lerobot.remote_inference.protocol import ErrorCode, ProtocolError
-
-
-class ControlledClient:
-    """Explicit completion gates expose races without a model or network sleep."""
-
-    def __init__(self):
-        feature = FeatureSpec(
-            "observation.state", (2,), "float32", names=("a.pos", "b.pos"), semantics="radians"
-        )
-        action = FeatureSpec("action", (2,), "float32", names=("a.pos", "b.pos"), semantics="radians")
-        self.capabilities = PolicyCapabilities(
-            (ExecutionMode.CHUNK,), 4, 4, 0.1, (feature,), action, language=True
-        )
-        self.descriptor = {"limits": {"max_input_chars": 4096}}
-        self.blend_indices = ()
-        self.instance_id = "instance"
-        self.session_id = "session"
-        self.action_started, self.text_started, self.control_started = Event(), Event(), Event()
-        self.action_release, self.text_release = Event(), Event()
-        self.action_release.set()
-        self.closed = Event()
-        self.calls = []
-        self.requests = []
-        self.query_error = None
-        self.text = "an answer"
-        self.on_presence = None
-        self._lock = Lock()
-        self.active_calls = 0
-        self.max_active_calls = 0
-
-    @property
-    def present(self):
-        if self.on_presence is not None:
-            callback, self.on_presence = self.on_presence, None
-            callback()
-        return True
-
-    @contextmanager
-    def call(self, name, context):
-        with self._lock:
-            self.calls.append((name, context))
-            self.active_calls += 1
-            self.max_active_calls = max(self.active_calls, self.max_active_calls)
-        try:
-            yield
-        finally:
-            with self._lock:
-                self.active_calls -= 1
-
-    def control(self, operation, generation, *, cancelled=None):
-        with self.call(operation, generation):
-            self.control_started.set()
-
-    def infer(self, request, *, cancelled):
-        with self.call("action", request.generation):
-            self.requests.append(request)
-            self.action_started.set()
-            assert self.action_release.wait(2), "test did not complete the action call"
-            if cancelled():
-                raise RequestCancelled()
-            actions = torch.ones(4, 2)
-            return ActionChunk(
-                None, actions, ActionProvenance(request.observation.capture_time, request.observation.task), 4
-            )
-
-    def query_language(self, observation, *, kind, text, intent_generation, generation, cancelled):
-        with self.call("language", generation):
-            self.text_started.set()
-            assert self.text_release.wait(2), "test did not complete the language call"
-            if self.query_error is not None:
-                raise self.query_error
-            # Deliberately return after cancellation, exercising the engine's
-            # context check independently of cooperative transport cancellation.
-            return self.text
-
-    def close(self):
-        self.closed.set()
-
-
-@pytest.fixture
-def session(request):
-    client = ControlledClient()
-    # Mode-independent lifecycle checks use the default; scheduling checks choose their variants.
-    merge, blend_steps = getattr(request, "param", ("aligned", 0))
-    config = RemoteInferenceConfig(
-        deployment="test",
-        semantics="radians",
-        max_observation_age_s=5,
-        refill_seconds=0.2,
-        chunk_merge=merge,
-        blend_steps=blend_steps,
-        blend_components=["a.pos"] if blend_steps else [],
-    )
-    client.blend_indices = tuple(
-        client.capabilities.action_feature.names.index(name) for name in config.blend_components
-    )
-    wrapper = SimpleNamespace(observation_time=None)
-    engine = RemoteInferenceEngine(
-        client,
-        config,
-        {"observation.state": {"dtype": "float32", "shape": (2,), "names": ["a.pos", "b.pos"]}},
-        {},
-        wrapper,
-        "initial task",
-    )
-    try:
-        yield engine, client
-    finally:
-        client.action_release.set()
-        client.text_release.set()
-        engine.stop()
-        assert engine._thread is None or not engine._thread.is_alive()
-
-
-def wait_for(condition):
-    until = time.monotonic() + 2
-    while time.monotonic() < until:
-        if condition():
-            return True
-        Event().wait(0.002)
-    return False
-
-
-def capture(engine):
-    engine._robot.observation_time = time.monotonic()
-    engine.notify_observation({"a.pos": 0.0, "b.pos": 0.0})
-
-
-def start_query(engine, client):
-    engine.resume()
-    assert engine.ask("What is visible?")
-    engine.start()
-    assert not engine.dispatch_allowed()
-    engine.acknowledge_hold()
-    capture(engine)
-    assert client.text_started.wait(2)
+from tests.remote_inference.helpers import capture, start_query
+from tests.utils import wait_for
 
 
 @pytest.mark.parametrize("session", [("append", 0), ("aligned", 2)], indirect=True)
@@ -213,7 +74,7 @@ def test_upgraded_language_hold_requires_fresh_query_and_action_observations(ses
     engine.resume()
     assert engine.runtime.held, "idempotent resume must preserve an acknowledged language hold"
     client.text_release.set()
-    assert wait_for(lambda: not engine._hold_requested)
+    assert wait_for(lambda: not engine._hold.requested)
     assert len(client.requests) == 1, "actions need a post-query capture"
     client.action_started.clear()
     capture(engine)

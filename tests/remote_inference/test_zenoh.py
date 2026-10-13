@@ -1,7 +1,17 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Real direct-TCP integration tests: require loopback sockets, no router/models."""
 
 import json
@@ -16,18 +26,7 @@ pytest.importorskip("zenoh")
 import zenoh
 
 from lerobot.transport.zenoh import BoundedSubscriber, TransportError, ZenohConfig, ZenohTransport
-
-
-@pytest.fixture
-def transports():
-    with socket.socket() as port:
-        port.bind(("127.0.0.1", 0))
-        endpoint = f"tcp/127.0.0.1:{port.getsockname()[1]}"
-    with (
-        ZenohTransport(ZenohConfig(listen_endpoints=[endpoint], max_payload_bytes=1024)) as server,
-        ZenohTransport(ZenohConfig(connect_endpoints=[endpoint], max_payload_bytes=1024)) as client,
-    ):
-        yield server, client
+from tests.remote_inference.network_helpers import free_port
 
 
 def test_explicit_config_and_disabled_discovery():
@@ -169,9 +168,7 @@ def tls_router(tmp_path):
             "-out",
             certs / f"{role}.pem",
         )
-    with socket.socket() as port:
-        port.bind(("127.0.0.1", 0))
-        port_number = port.getsockname()[1]
+    port_number = free_port()
     endpoint = f"tls/localhost:{port_number}"
     examples = Path(__file__).parents[2] / "examples/remote_inference/zenoh"
     for name in ("router", "server", "robot"):

@@ -24,7 +24,7 @@ import os
 import time
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -33,21 +33,23 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 # Front-end and engine internals, imported from their defining modules.
-from lerobot.inference import PolicyQuery, SyncInferenceConfig  # noqa: E402
+from lerobot.inference import (  # noqa: E402
+    InferenceEngine,
+    PolicyQuery,
+    QueryAnswer,
+    QueryKind,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.rollout import (  # noqa: E402
     AskResult,
     BaseStrategyConfig,
-    InferenceEngine,
     InteractiveSession,
     LinkedEvent,
-    QueryAnswer,
-    QueryKind,
     RolloutController,
     RolloutEvent,
-    RolloutStrategy,
 )
 from lerobot.rollout.interactive import InteractiveCommand, parse_command  # noqa: E402
+from tests.interactive_helpers import _FakeEngine, _loop_ctx, _make_ctx
 
 
 def _wait_for(predicate, timeout: float = 2.0) -> bool:
@@ -134,106 +136,6 @@ def test_linked_event_wait():
 
 
 # --- Shared fakes ---
-
-
-class _FakeEngine(InferenceEngine):
-    """Real task-holder and query-channel semantics with mocked lifecycle methods."""
-
-    failed = False
-    failure_traceback = None
-    # Plain attributes shadowing the base properties, so tests can flip them.
-    supports_text_queries = True
-    # Answer inline on the caller's thread like the sync backend, exercising pump_query.
-    control_thread_owns_policy = True
-
-    # Declared here to satisfy the ABC; the instances below shadow them.
-    def start(self) -> None: ...
-    def stop(self) -> None: ...
-    def reset(self) -> None: ...
-    def get_action(self, obs_frame=None): ...
-
-    def __init__(self, task: str = "pick up the cube") -> None:
-        super().__init__(task=task)
-        self.start = MagicMock()
-        self.stop = MagicMock()
-        self.reset = MagicMock()
-        self.pause = MagicMock()
-        self.resume = MagicMock()
-        self.notify_observation = MagicMock()
-        self.get_action = MagicMock(return_value=None)
-        self.text_error: Exception | None = None
-        self.seen_query_obs: list = []
-        self.seen_queries: list = []
-        self.subtasks_planned = 0
-
-    def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
-        self.seen_queries.append((query.kind, query.text))
-        self.seen_query_obs.append(obs_processed)
-        if self.text_error is not None:
-            raise self.text_error
-        if query.kind is QueryKind.NEXT_SUBTASK:
-            # A stand-in decomposer: one subtask per query, advancing.
-            self.subtasks_planned += 1
-            return f"subtask {self.subtasks_planned} of {query.text}"
-        return f"answer: {query.text}"
-
-
-def _loop_ctx(engine, robot=None, stop_event=None, **cfg_overrides):
-    """The rollout context a real control loop needs, with identity processors."""
-
-    def identity(x):
-        return x
-
-    cfg = {
-        "play_sounds": False,
-        "fps": 100.0,
-        "duration": 0.0,
-        "use_torch_compile": False,
-        "interpolation_multiplier": 1,
-        "display_data": False,
-        "autosteer_interval_s": 0.0,
-        "inference": SyncInferenceConfig(),
-    }
-    cfg.update(cfg_overrides)
-    return SimpleNamespace(
-        runtime=SimpleNamespace(
-            cfg=SimpleNamespace(**cfg),
-            shutdown_event=stop_event if stop_event is not None else LinkedEvent(Event()),
-            cadence_report=None,
-        ),
-        policy=SimpleNamespace(inference=engine),
-        hardware=SimpleNamespace(
-            robot_wrapper=robot if robot is not None else MagicMock(),
-            teleop=None,
-            initial_position={"joint.pos": 0.0},
-        ),
-        processors=SimpleNamespace(
-            teleop_action_processor=identity,
-            robot_action_processor=identity,
-            robot_observation_processor=identity,
-        ),
-        data=SimpleNamespace(dataset=None, dataset_features={}, hw_features={}, ordered_action_keys=[]),
-    )
-
-
-def _make_ctx(run_behavior=None):
-    """A mock strategy plus the fake context the controller needs."""
-    parent = Event()
-    engine = _FakeEngine()
-    ctx = _loop_ctx(engine, stop_event=LinkedEvent(parent))
-
-    # Autospec so a strategy signature drift fails here, not on real hardware during /reset.
-    strategy = create_autospec(RolloutStrategy, instance=True)
-    strategy.config = BaseStrategyConfig()  # the controller enforces supports_interactive on it
-    run_started = Event()
-
-    def default_run(c):
-        run_started.set()
-        while not c.runtime.shutdown_event.is_set():
-            time.sleep(0.005)
-
-    strategy.run.side_effect = run_behavior or default_run
-    return ctx, strategy, engine, parent, run_started
 
 
 # --- RolloutController (the programmatic API) ---
@@ -741,6 +643,37 @@ def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     assert policy.drop_queued_actions.call_count == 1
 
 
+def test_sync_engine_vqa_drops_precomputed_actions():
+    """Inline text generation stales any queued chunk by its duration, so a VQA flushes it."""
+    from lerobot.inference import SyncInferenceEngine
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    policy.supports_text_generation.return_value = True
+    policy.generate_text.return_value = "a red cube"
+
+    engine = SyncInferenceEngine(
+        policy=policy,
+        preprocessor=lambda obs: obs,
+        postprocessor=lambda action: action,
+        dataset_features={
+            "action": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
+        },
+        ordered_action_keys=["j1.pos", "j2.pos"],
+        task="pick up the cube",
+        device="cpu",
+        robot_type="mock",
+    )
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    assert engine.ask("what do you see?")
+    assert engine.pump_query({"observation.state": np.zeros(1, dtype=np.float32)})
+    assert policy.drop_queued_actions.call_count == 1
+    assert policy.reset.call_count == 0
+    assert [answer.answer for answer in delivered] == ["a red cube"]
+
+
 def test_drop_queued_actions_clears_the_queues_dict_convention():
     """The /subtask fast switch relies on the smolvla-style ``_queues`` dict too, not only
     on act/pi0's ``_action_queue`` (covered against a real policy in the policy tests)."""
@@ -1202,7 +1135,7 @@ def test_engine_autosteer_interval_is_measured_from_when_a_subtask_lands(engine_
     # The first subtask is requested on the very next tick, not an interval later.
     engine.pump_query({"joint.pos": 0.0})
     assert engine.task == "subtask 1 of tidy the table"
-    engine.record_dispatch({}, {}, {})
+    engine.record_dispatch()
 
     # The clock started when the subtask landed, so the next query is not due.
     engine_clock.advance(9.9)
@@ -1257,7 +1190,7 @@ def test_engine_autosteer_does_not_double_queue_while_generation_is_in_flight():
     engine._publish_answer(QueryAnswer(question=claimed.text, answer="subtask", kind=claimed.kind))
     engine.pump_query({"joint.pos": 0.0})
     assert not engine.has_pending_query
-    engine.record_dispatch({}, {}, {})
+    engine.record_dispatch()
     engine.pump_query({"joint.pos": 0.0})
     assert engine.has_pending_query
 
@@ -1503,7 +1436,7 @@ def test_rtc_engine_dispatched_task_tracks_chunk_provenance_across_set_task(supp
 
         policy.allow_one_inference()  # the in-flight chunk (still task A) lands
         if supports_hold:
-            assert _wait_for(lambda: not engine._hold_requested)
+            assert _wait_for(lambda: not engine._hold.requested)
             engine.notify_observation(dict(_RTC_OBS))
         policy.allow_one_inference()  # the next chunk is conditioned on task B
         assert _wait_for(lambda: len(policy.predicted_tasks) == 3)
