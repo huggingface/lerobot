@@ -928,14 +928,24 @@ def test_parallel_writer_releases_oversized_record_before_next_read(
     path = tmp_path / "index.npz"
     EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(3)], spec=_spec())
     original_read = sidecar_utils._read_arrays
+    original_compact = sidecar_utils._compact_integer_array
     original_iter = sidecar_utils._iter_arrays
-    references = []
+    source_references: list[weakref.ReferenceType[np.ndarray]] = []
+    compact_references: list[weakref.ReferenceType[np.ndarray]] = []
 
     def read(archive: ZipFile, index: int, item: dict[str, Any]) -> dict[str, np.ndarray]:
-        assert all(reference() is None for reference in references), "Previous oversized record retained"
+        assert all(reference() is None for reference in source_references), "Previous source arrays retained"
+        assert all(reference() is None for reference in compact_references), (
+            "Previous compact arrays retained"
+        )
         arrays = original_read(archive, index, item)
-        references.append(weakref.ref(arrays["sample_pts"]))
+        source_references.append(weakref.ref(arrays["sample_pts"]))
         return arrays
+
+    def compact(array: np.ndarray) -> np.ndarray:
+        result = original_compact(array)
+        compact_references.append(weakref.ref(result))
+        return result
 
     def small_budget(
         archive: ZipFile, files: list[dict[str, Any]], *, workers: int
@@ -943,9 +953,11 @@ def test_parallel_writer_releases_oversized_record_before_next_read(
         return original_iter(archive, files, workers=workers, max_pending_bytes=1)
 
     monkeypatch.setattr(sidecar_utils, "_read_arrays", read)
+    monkeypatch.setattr(sidecar_utils, "_compact_integer_array", compact)
     monkeypatch.setattr(sidecar_utils, "_iter_arrays", small_budget)
     sidecar_utils.mapped_sidecar(path, workers=4)
-    assert all(reference() is None for reference in references)
+    assert all(reference() is None for reference in source_references)
+    assert all(reference() is None for reference in compact_references)
 
 
 def test_parallel_write_failure_preserves_old_index_and_drains_workers(
