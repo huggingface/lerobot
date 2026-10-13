@@ -116,8 +116,7 @@ def _read_metadata(path: Path) -> dict[str, Any]:
             except (TypeError, ValueError) as error:
                 raise ValueError("Invalid mapped MP4 index array dtype") from error
             if (
-                dtype.kind not in "iuf"
-                or (name == "sample_pts" and (dtype.kind != "f" or dtype.itemsize != 8))
+                (name == "sample_pts" and (dtype.kind != "f" or dtype.itemsize != 8))
                 or (name != "sample_pts" and dtype.kind not in "iu")
                 or count < 0
                 or count > np.iinfo(np.intp).max // dtype.itemsize
@@ -292,7 +291,6 @@ def mapped_sidecar(path: Path, *, workers: int = 4) -> tuple[Path, dict[str, Any
                                     out.write(stored.tobytes())
                                     # Release this array before the next member.
                                     del stored, array
-                                del arrays
                         if _signature(os.fstat(source.fileno()), content) != signature:
                             raise OSError("MP4 sidecar changed during index conversion")
                         payload["cache_version"] = _CACHE_VERSION
