@@ -290,7 +290,6 @@ class UnitreeG1Teleoperator(Teleoperator):
             self._wireless_state = remote
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        # Kept for callers that pushed the observation through `send_feedback` before `on_observation`.
         self.on_observation(feedback)
 
     def disconnect(self) -> None:
