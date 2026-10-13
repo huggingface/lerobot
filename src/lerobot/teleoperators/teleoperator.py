@@ -188,21 +188,10 @@ class Teleoperator(abc.ABC):
         pass
 
     def on_observation(self, observation: RobotObservation) -> None:
-        """Receive the robot's latest observation, once per control tick, before :pymeth:`get_action`.
+        """Receive the latest raw robot observation before get_action().
 
-        The default does nothing. Override it when the action depends on the robot's measured state:
-        relative commands (e.g. a lift moved from its measured height), seeding a target on the first
-        tick, or reading robot-side inputs such as a remote controller carried in the observation.
-
-        Unlike :pymeth:`send_feedback`, which drives the device (e.g. force feedback on a leader arm)
-        and only gets :pymeth:`feedback_features`, this is a read-only notification of the full
-        observation, so every teleoperator can receive it safely.
-
-        Recording, teleoperation, DAgger corrections and episodic rollout resets deliver this
-        notification before requesting an action. Custom control loops should do the same.
-
-        Args:
-            observation: The latest raw robot observation. Implementations must not mutate it.
+        Override when actions depend on robot state. The default does nothing.
+        Implementations must not mutate the observation.
         """
         return None
 
