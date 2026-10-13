@@ -1,11 +1,9 @@
 # RoboCasa365
 
 <Tip>
-  For isolated simulator execution, start `docker/sims/configs/robocasa.yaml`
-  and use `lerobot-eval --env.type=sim` or `lerobot-rollout
-  --robot.type=remote`. See [Simulator servers](./simulator_server) for
-  configuration, checkpoint profiles, and commands. The direct simulator
-  installation and in-process commands below describe the compatibility path.
+  Prefer the isolated [simulator server](./simulator_server) with
+  `docker/sims/configs/robocasa.yaml`; the installation and commands below run
+  the simulator in-process.
 </Tip>
 
 [RoboCasa365](https://robocasa.ai) is a large-scale simulation framework for training and benchmarking **generalist robots** in everyday kitchen tasks. It ships 365 diverse manipulation tasks across 2,500 kitchen environments, 3,200+ object assets and 600+ hours of human demonstration data, on a PandaOmron 12-DOF mobile manipulator (Franka arm on a holonomic base).

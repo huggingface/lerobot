@@ -1,11 +1,9 @@
 # Meta-World
 
 <Tip>
-  For isolated simulator execution, start `docker/sims/configs/metaworld.yaml`
-  and use `lerobot-eval --env.type=sim` or `lerobot-rollout
-  --robot.type=remote`. See [Simulator servers](./simulator_server) for
-  configuration, checkpoint profiles, and commands. The direct simulator
-  installation and in-process commands below describe the compatibility path.
+  Prefer the isolated [simulator server](./simulator_server) with
+  `docker/sims/configs/metaworld.yaml`; the installation and commands below run
+  the simulator in-process.
 </Tip>
 
 Meta-World is an open-source simulation benchmark for **multi-task and meta reinforcement learning** in continuous-control robotic manipulation. It bundles 50 diverse manipulation tasks using everyday objects and a common tabletop Sawyer arm, providing a standardized playground to test whether algorithms can learn many different tasks and generalize quickly to new ones.

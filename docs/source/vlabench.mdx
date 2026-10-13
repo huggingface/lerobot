@@ -1,11 +1,9 @@
 # VLABench
 
 <Tip>
-  For isolated simulator execution, start `docker/sims/configs/vlabench.yaml`
-  and use `lerobot-eval --env.type=sim` or `lerobot-rollout
-  --robot.type=remote`. See [Simulator servers](./simulator_server) for
-  configuration, checkpoint profiles, and commands. The direct simulator
-  installation and in-process commands below describe the compatibility path.
+  Prefer the isolated [simulator server](./simulator_server) with
+  `docker/sims/configs/vlabench.yaml`; the installation and commands below run
+  the simulator in-process.
 </Tip>
 
 [VLABench](https://github.com/OpenMOSS/VLABench) is a large-scale benchmark for **language-conditioned robotic manipulation with long-horizon reasoning**. The upstream suite covers 100 task categories across 2,000+ objects and evaluates six dimensions of robot intelligence: mesh & texture understanding, spatial reasoning, world-knowledge transfer, semantic instruction comprehension, physical-law understanding, and long-horizon planning. Built on MuJoCo / dm_control with a Franka Panda 7-DOF arm. LeRobot exposes **43 of these tasks** through `--env.task` (21 primitives + 22 composites, see [Available tasks](#available-tasks) below).

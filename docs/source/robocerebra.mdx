@@ -1,11 +1,9 @@
 # RoboCerebra
 
 <Tip>
-  For isolated simulator execution, start `docker/sims/configs/robocerebra.yaml`
-  and use `lerobot-eval --env.type=sim` or `lerobot-rollout
-  --robot.type=remote`. See [Simulator servers](./simulator_server) for
-  configuration, checkpoint profiles, and commands. The direct simulator
-  installation and in-process commands below describe the compatibility path.
+  Prefer the isolated [simulator server](./simulator_server) with
+  `docker/sims/configs/robocerebra.yaml`; the installation and commands below
+  run the simulator in-process.
 </Tip>
 
 [RoboCerebra](https://robocerebra.github.io/) is a long-horizon manipulation benchmark that evaluates **high-level reasoning, planning, and memory** in VLAs. Episodes chain multiple sub-goals with language-grounded intermediate instructions, built on top of LIBERO's simulator stack (MuJoCo + robosuite, Franka Panda 7-DOF).
