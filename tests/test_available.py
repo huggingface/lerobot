@@ -57,6 +57,6 @@ def test_require_package_error_message_includes_uv():
         _require_package_cache.clear()
         try:
             with pytest.raises(ImportError, match=r"uv pip install"):
-                require_package("grpcio", extra="async", import_name="grpc")
+                require_package("grpcio", extra="grpcio-dep", import_name="grpc")
         finally:
             _require_package_cache.clear()

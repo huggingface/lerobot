@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 class HopeJrArm(Robot):
     config_class = HopeJrArmConfig
     name = "hope_jr_arm"
+    supports_position_hold = True
 
     def __init__(self, config: HopeJrArmConfig):
         super().__init__(config)
