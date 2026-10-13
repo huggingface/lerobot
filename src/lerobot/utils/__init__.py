@@ -20,7 +20,6 @@ to ``lerobot.common``. ``visualization_utils`` remains here but is
 intentionally NOT re-exported to avoid pulling in optional dependencies.
 """
 
-from .action_interpolator import ActionInterpolator
 from .constants import (
     ACTION,
     DEFAULT_FEATURES,
@@ -75,6 +74,11 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    # Torch-backed helpers load on first use so torch-free images (simulator servers) can import utils.
+    if name == "ActionInterpolator":
+        from .action_interpolator import ActionInterpolator
+
+        return ActionInterpolator
     if name in {"auto_select_torch_device", "get_safe_torch_device", "is_torch_device_available"}:
         from . import device_utils
 

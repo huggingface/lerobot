@@ -407,7 +407,8 @@ def test_sim_robot_local_inference_engines(server, tmp_path, mode):
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
     from lerobot.robots.remote import RemoteRobot, RemoteRobotConfig
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
-    from tests.inference.test_local_rtc_regressions import ControlledPolicy, Pipeline, wait_for
+    from tests.inference.rtc_helpers import ControlledPolicy, Pipeline
+    from tests.utils import wait_for
 
     profile = tmp_path / "aliases.yaml"
     profile.write_text(
@@ -481,8 +482,8 @@ def test_sim_robot_remote_inference_engine(server, tmp_path):
     from lerobot.robots.remote import RemoteRobot, RemoteRobotConfig
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
     from lerobot.transport.zenoh import ZenohTransport
-    from tests.inference.test_local_rtc_regressions import wait_for
     from tests.inference.test_policy_runner import ConformingPolicy, tiny_config
+    from tests.utils import wait_for
 
     robot = RemoteRobot(RemoteRobotConfig(endpoint=server[1], calibration_dir=tmp_path))
     wrapper = ThreadSafeRobot(robot)

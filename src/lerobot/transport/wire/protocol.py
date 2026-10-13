@@ -20,7 +20,6 @@ from enum import StrEnum
 from typing import Any
 
 PROTOCOL_VERSION = 1
-_MAX_IDENTIFIER = 128
 _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
 
@@ -94,7 +93,7 @@ class Envelope:
             raise ProtocolError(ErrorCode.MALFORMED, "Invalid execution generation")
         for label in ("instance_id", "session_id", "request_id"):
             value = getattr(self, label)
-            if not isinstance(value, str) or len(value) > _MAX_IDENTIFIER:
+            if not isinstance(value, str):
                 raise ProtocolError(ErrorCode.MALFORMED, f"Invalid {label}")
             if value:
                 validate_segment(value, label)
