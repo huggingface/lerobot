@@ -61,16 +61,16 @@ class EvalPipelineConfig:
                 "No pretrained path was provided, evaluated policy will be built from scratch (random weights)."
             )
 
-        if self.eval.profile:
-            if self.env.type != "sim":
-                raise ValueError("eval.profile requires env.type=sim")
+        if getattr(self.env, "profile", None):
             from lerobot.env_server.profiles import EvalProfile
 
-            profile = EvalProfile.load(self.eval.profile)
-            self.env.profile = self.eval.profile
-            self.rename_map = profile.feature_mapping
-            if self.policy is not None and hasattr(self.policy, "empty_cameras"):
-                self.policy.empty_cameras = profile.empty_cameras
+            # The profile is the single source of simulator-to-checkpoint camera aliases.
+            mapping = EvalProfile.load(self.env.profile).feature_mapping
+            if self.rename_map and self.rename_map != mapping:
+                raise ValueError(
+                    "--rename_map conflicts with env.profile feature_mapping; declare aliases in the profile"
+                )
+            self.rename_map = mapping
 
         if not self.job_name:
             if self.env is None:

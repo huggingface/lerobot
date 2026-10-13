@@ -12,4 +12,3 @@ action_names:
 - eef.delta.y
 - eef.delta.z
 - gripper.command
-empty_cameras: 2

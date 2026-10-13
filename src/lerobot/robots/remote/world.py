@@ -17,8 +17,6 @@
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-import numpy as np
-
 
 @dataclass(frozen=True)
 class EpisodeStatus:
@@ -31,17 +29,15 @@ class EpisodeStatus:
 
 @runtime_checkable
 class World(Protocol):
-    def reset_world(self, task: str | None = None, seed: int | None = None) -> None: ...
+    """What rollout strategies need from a simulated robot: episode reset, task and status."""
+
+    def reset_world(self, seed: int | None = None) -> None: ...
     @property
     def task_description(self) -> str: ...
     @property
     def episode_status(self) -> EpisodeStatus: ...
-    @property
-    def sim_time(self) -> float: ...
-    def render(self) -> np.ndarray: ...
 
 
 def get_world(robot: object) -> World | None:
     """Discover optional episode/world support without identifying a simulator driver."""
-    world = getattr(robot, "world", None)
-    return world if isinstance(world, World) else None
+    return robot if isinstance(robot, World) else None

@@ -367,17 +367,19 @@ class RolloutStrategy(abc.ABC):
             compress_images=cfg.display_compressed_images,
         )
 
-    def _reset_sim_world(self, ctx: RolloutContext) -> None:
-        """Start a new world and discard inference from the previous generation."""
+    def _reset_sim_world(self, ctx: RolloutContext) -> str | None:
+        """Start a new world, discard previous inference, and return the world's task (None on hardware)."""
         robot = ctx.hardware.robot_wrapper
         world = get_world(robot.inner)
-        if world is not None:
-            engine = self._require_engine()
-            engine.pause()
-            robot.reset_world()
-            engine.reset()
-            self._require_interpolator().reset()
-            engine.set_task(world.task_description)
+        if world is None:
+            return None
+        engine = self._require_engine()
+        engine.pause()
+        robot.reset_world()
+        engine.reset()
+        self._require_interpolator().reset()
+        engine.set_task(world.task_description)
+        return world.task_description
 
     def setup(self, ctx: RolloutContext) -> None:
         """Strategy-specific initialisation (keyboard listeners, buffers, etc.).

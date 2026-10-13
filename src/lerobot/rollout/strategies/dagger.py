@@ -368,7 +368,8 @@ class DAggerStrategy(RolloutStrategy):
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
-        self._reset_sim_world(ctx)
+        # Correction frames carry the simulated world's task, like the autonomous frames.
+        task_str = self._reset_sim_world(ctx) or task_str
         engine.reset()
         interpolator.reset()
         events.reset()
@@ -560,7 +561,8 @@ class DAggerStrategy(RolloutStrategy):
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
-        self._reset_sim_world(ctx)
+        # Correction frames carry the simulated world's task, like the autonomous frames.
+        task_str = self._reset_sim_world(ctx) or task_str
         engine.reset()
         interpolator.reset()
         events.reset()

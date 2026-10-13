@@ -16,15 +16,12 @@
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import yaml  # Always present: required by draccus and pinned in docker/sims/requirements.txt.
 
 from lerobot.transport.wire.features import feature_mismatch
-from lerobot.utils.import_utils import _pyyaml_available, require_package
 
 from .contracts import EnvDescriptor
-
-if TYPE_CHECKING or _pyyaml_available:
-    import yaml
 
 
 @dataclass
@@ -36,13 +33,11 @@ class EvalProfile:
     state_names: list[str] = field(default_factory=list)
     action_names: list[str] = field(default_factory=list)
     action_name_mapping: dict[str, str] = field(default_factory=dict)
-    empty_cameras: int = 0
     control: str = "delta"
 
     @classmethod
     def load(cls, path: str):
         """Read a declarative evaluation profile from YAML."""
-        require_package("PyYAML", "sim-server", import_name="yaml")
         return cls(**yaml.safe_load(Path(path).read_text()))
 
     def validate_descriptor(self, descriptor: EnvDescriptor):
@@ -84,11 +79,9 @@ class EvalProfile:
         resizing or resolution restrictions; profile admission does not infer them.
         """
         self.validate_descriptor(descriptor)
-        if getattr(config, "empty_cameras", 0) != self.empty_cameras:
-            raise ValueError("Checkpoint empty-camera configuration differs from the profile")
         available = {self.feature_mapping.get(f.name, f.name): f for f in descriptor.features}
-        # Saved declarations can contain more generated placeholders than the
-        # runtime budget. Their values and shapes belong to policy preparation.
+        # Placeholder cameras come from the checkpoint's own `empty_cameras` setting;
+        # their values and shapes belong to policy preparation, not the simulator.
         empty_prefix = "observation.images.empty_camera_"
         empty = {
             name

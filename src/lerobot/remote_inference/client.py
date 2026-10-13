@@ -20,11 +20,12 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from queue import Empty
 from typing import Any
 from uuid import uuid4
 
+import numpy as np
 import torch
 
 from lerobot import __version__
@@ -47,7 +48,7 @@ from lerobot.transport import (
     ZenohTransport,
 )
 from lerobot.transport.wire.client import decode_reply, query_reply
-from lerobot.transport.wire.features import feature_mismatch, validate_array
+from lerobot.transport.wire.features import feature_mismatch
 from lerobot.transport.wire.protocol import validate_reply
 
 from .chunk_contract import (
@@ -478,23 +479,19 @@ class RemoteClient:
         model = response.body.get("model_actions")
         caps = self.capabilities
         steps = caps.execution_steps if request.mode is ExecutionMode.CHUNK else caps.prediction_steps
-        try:
-            validate_array(actions, replace(caps.action_feature, dtype="float32"), leading_shape=(steps,))
-        except ValueError as exc:
-            raise ProtocolError(ErrorCode.MALFORMED, "Invalid canonical action chunk") from exc
-        if response.body.get("execution_steps") != steps:
+        if (
+            not isinstance(actions, np.ndarray)
+            or actions.shape != (steps, *caps.action_feature.shape)
+            or actions.dtype.name != "float32"
+            or response.body.get("execution_steps") != steps
+        ):
             raise ProtocolError(ErrorCode.MALFORMED, "Invalid canonical action chunk")
-        if request.mode is not ExecutionMode.CHUNK:
-            model_feature = replace(
-                caps.action_feature,
-                shape=(caps.model_action_dim or caps.action_feature.shape[0],),
-                dtype="float32",
-                names=(),
-            )
-            try:
-                validate_array(model, model_feature, leading_shape=(steps,))
-            except ValueError as exc:
-                raise ProtocolError(ErrorCode.MALFORMED, "Missing or invalid RTC model continuation") from exc
+        if request.mode is not ExecutionMode.CHUNK and (
+            not isinstance(model, np.ndarray)
+            or model.shape != (steps, caps.model_action_dim or caps.action_feature.shape[0])
+            or model.dtype.name != "float32"
+        ):
+            raise ProtocolError(ErrorCode.MALFORMED, "Missing or invalid RTC model continuation")
         provenance = ActionProvenance(
             request.observation.capture_time,
             request.observation.task,

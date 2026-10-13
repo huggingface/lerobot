@@ -345,15 +345,8 @@ def _connect_rollout_hardware(
                 profile = robot.profile or EvalProfile(
                     robot.descriptor.semantics,
                     control=robot.descriptor.control,
-                    empty_cameras=getattr(cfg.policy, "empty_cameras", 0),
                 )
-                mapping = {
-                    f.name: cfg.rename_map.get(
-                        profile.feature_mapping.get(f.name, f.name),
-                        profile.feature_mapping.get(f.name, f.name),
-                    )
-                    for f in robot.descriptor.features
-                }
+                mapping = robot.feature_names(cfg.rename_map)
                 replace(profile, feature_mapping=mapping).validate_policy(robot.descriptor, cfg.policy)
         if require_hold:
             wrapper.configure_hold()
@@ -399,11 +392,7 @@ def _aggregate_rollout_features(
 def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: dict) -> LeRobotDataset | None:
     """Create the local recording destination independently of policy placement."""
     dataset = None
-    camera_count = (
-        sum(feature.kind == "rgb" for feature in robot.descriptor.features)
-        if isinstance(robot, RemoteRobot)
-        else len(getattr(robot, "cameras", []))
-    )
+    camera_count = len(getattr(robot, "cameras", []))
     if cfg.dataset is not None:
         logger.info("Setting up dataset (repo_id=%s)...", cfg.dataset.repo_id)
         # Strategy-owned columns join the robot/policy features above the resume/create
@@ -714,16 +703,12 @@ def build_remote_rollout_context(
                 action, replace(robot.descriptor.action_feature, names=robot.policy_action_names)
             ):
                 raise ValueError("Remote action declaration differs from simulator declaration")
-            mapping = robot.profile.feature_mapping if robot.profile else {}
-            declared = {
-                cfg.rename_map.get(mapping.get(f.name, f.name), mapping.get(f.name, f.name)): f
-                for f in robot.descriptor.features
-            }
+            names = robot.feature_names(cfg.rename_map)
+            declared = {names[f.name]: f for f in robot.descriptor.features}
             for feature in expected:
-                source_name = next((name for name in declared if name == feature.name), None)
-                if source_name is None:
+                actual = declared.get(feature.name)
+                if actual is None:
                     raise ValueError("Remote observation declaration missing from simulator")
-                actual = declared[source_name]
                 if feature_mismatch(replace(actual, name=feature.name), feature):
                     raise ValueError("Remote observation declaration differs from simulator declaration")
 

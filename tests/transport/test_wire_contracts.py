@@ -142,12 +142,10 @@ def test_profile_aliases_match_remote_feature_contract():
     action = FeatureSpec("action", (2,), "float32", names=("dx", "dy"), semantics="delta-v1")
     descriptor = EnvDescriptor(
         "toy",
-        "robot",
         "delta-v1",
         (camera,),
         action,
         "delta",
-        "command",
         20,
         ("lockstep",),
         {"reach": ["0"]},

@@ -128,12 +128,10 @@ class Backend:
         action_names = self.config.action_names or tuple(f"command_{i}" for i in range(dim))
         return EnvDescriptor(
             self.config.type,
-            self.config.type,
             self.config.semantics,
             tuple(features),
             FeatureSpec("action", (dim,), "float32", names=action_names, semantics=self.config.semantics),
             self.config.control,
-            "position" if self.config.control == "position" else "command",
             self.config.fps,
             ("lockstep", "realtime"),
             self.tasks,
@@ -143,25 +141,18 @@ class Backend:
             self.config.command_retention_indices,
         )
 
-    def reset(self, seeds: list[int | None] | None = None, env_ids: list[int] | None = None) -> StepResult:
-        """Reset selected worlds with explicit seeds and clear terminal latches."""
+    def reset(self, seeds: list[int | None] | None = None) -> StepResult:
+        """Reset every world with explicit seeds and clear terminal latches."""
         self._ensure()
-        ids = list(range(self.num_envs)) if env_ids is None else env_ids
-        if len(set(ids)) != len(ids) or any(type(i) is not int or not 0 <= i < self.num_envs for i in ids):
-            raise ValueError("Invalid reset environment indices")
-        seeds = seeds if seeds is not None else [None] * len(ids)
-        if len(seeds) != len(ids):
-            raise ValueError("Seed count must match reset environment count")
-        if not self.last and len(ids) != self.num_envs:
-            raise ValueError("Initial reset must initialize the full batch")
-        if not self.last:
-            self.last = [None] * self.num_envs
-        for i, seed in zip(ids, seeds, strict=True):
-            obs, info = self.envs[i].reset(seed=seed)
-            self.last[i] = (canonical_observation(obs, self.config.type), 0.0, False, False, False)
-            self.steps[i] = 0
-        if len(ids) == self.num_envs:
-            self.sim_time = 0.0
+        seeds = seeds if seeds is not None else [None] * self.num_envs
+        if len(seeds) != self.num_envs:
+            raise ValueError("Seed count must match the batch size")
+        self.last = []
+        for env, seed in zip(self.envs, seeds, strict=True):
+            obs, _ = env.reset(seed=seed)
+            self.last.append((canonical_observation(obs, self.config.type), 0.0, False, False, False))
+        self.steps[:] = 0
+        self.sim_time = 0.0
         return self.snapshot()
 
     def step(self, actions: np.ndarray) -> StepResult:
@@ -175,6 +166,8 @@ class Backend:
             raise ValueError(f"Expected finite floating-point actions of shape {expected}")
         for i, env in enumerate(self.envs):
             if self.last[i][2] or self.last[i][3]:
+                # Absorbing terminal state: keep the observation and flags, earn no further reward.
+                self.last[i] = (self.last[i][0], 0.0, *self.last[i][2:])
                 continue
             obs, reward, terminated, truncated, info = env.step(actions[i])
             self.steps[i] += 1
