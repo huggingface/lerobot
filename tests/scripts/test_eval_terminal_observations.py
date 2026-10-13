@@ -15,6 +15,7 @@
 """Native CPU checks for saved episode boundaries and unchanged live inference."""
 
 from functools import partial
+from multiprocessing import get_all_start_methods
 
 import gymnasium as gym
 import numpy as np
@@ -145,7 +146,8 @@ def _processors():
 def _vector_env(vector, mode, truncated, images, lengths=(1, 3)):
     factories = [partial(_EpisodeEnv, length, truncated, images) for length in lengths]
     vector_cls = gym.vector.AsyncVectorEnv if vector == "async" else gym.vector.SyncVectorEnv
-    kwargs = {"context": "forkserver"} if vector == "async" else {}
+    context = "forkserver" if "forkserver" in get_all_start_methods() else "spawn"
+    kwargs = {"context": context} if vector == "async" else {}
     # Exercise reused observation buffers too: recording must own the retained bytes.
     return vector_cls(factories, autoreset_mode=gym.vector.AutoresetMode(mode), copy=False, **kwargs)
 
