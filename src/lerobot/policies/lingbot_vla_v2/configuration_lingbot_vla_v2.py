@@ -316,6 +316,20 @@ class LingbotVLAV2Config(PreTrainedConfig):
                     f"{key} has {feature.shape[-1]} dims but its slot mapping reads up to dim {end}; "
                     f"set --policy.{flag} to map the robot's dims onto the canonical slots."
                 )
+        # Inverse mapping must produce every raw command. An omitted action either
+        # shortens the output or becomes zero before unnormalization.
+        mapped = {
+            index
+            for spans in self.slot_spans(ACTION).values()
+            for start, end in spans
+            for index in range(start, end)
+        }
+        missing = sorted(set(range(self.output_features[ACTION].shape[-1])) - mapped)
+        if missing:
+            raise ValueError(
+                f"action_slots must map every raw action dimension; unmapped indices: {missing}. "
+                "Set --policy.action_slots to include these dimensions."
+            )
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

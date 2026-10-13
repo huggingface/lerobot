@@ -72,6 +72,40 @@ def _raw_batch(dim: int, device: str = "cpu", batch_size: int = 2) -> dict:
     return {**{k: v.to(device) for k, v in batch.items()}, "task": ["pick up the cube"] * batch_size}
 
 
+@pytest.mark.parametrize(
+    ("arm", "effector", "missing"),
+    [([[0, 5]], [], [5]), ([[0, 2], [3, 5]], [[5, 6]], [2]), ([], [], list(range(6)))],
+    ids=["trailing_omission", "internal_gap", "empty_mapping"],
+)
+def test_reject_incomplete_action_mapping(arm, effector, missing):
+    """Reject omitted commands before training or inference."""
+    cfg = LingbotVLAV2Config(
+        **_slot_kwargs(arm, effector),
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+            CAMERA: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 32, 32)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
+    )
+    with pytest.raises(ValueError, match="action_slots must map every raw action dimension") as error:
+        cfg.validate_features()
+    assert f"unmapped indices: {missing}" in str(error.value)
+
+
+def test_allow_partial_state_mapping():
+    """State subsets remain valid when the action mapping covers every command."""
+    cfg = LingbotVLAV2Config(
+        state_slots=_slots(OBS_STATE, [[0, 2]], []),
+        action_slots=_slots(ACTION, [[0, 5]], [[5, 6]]),
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+            CAMERA: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 32, 32)),
+        },
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(6,))},
+    )
+    cfg.validate_features()
+
+
 @pytest.fixture
 @skip_if_package_missing("transformers")
 def tiny_backbone(tmp_path, monkeypatch):
@@ -204,8 +238,12 @@ def test_align_query_tokens(tiny_backbone, monkeypatch):
 
 @pytest.mark.parametrize(
     ("arm", "effector"),
-    [([[0, 6]], [[6, 7]]), ([[0, 6], [7, 13]], [[6, 7], [13, 14]])],
-    ids=["single_arm", "robotwin"],
+    [
+        ([[0, 6]], [[6, 7]]),
+        ([[0, 6], [7, 13]], [[6, 7], [13, 14]]),
+        ([[3, 5], [0, 2]], [[5, 6], [2, 3]]),
+    ],
+    ids=["single_arm", "robotwin", "reordered_split_spans"],
 )
 def test_slot_mapping_round_trip(tiny_backbone, arm, effector):
     """Preprocessor (normalize + slot map) then postprocessor (inverse map + unnormalize) is the identity."""
@@ -216,6 +254,7 @@ def test_slot_mapping_round_trip(tiny_backbone, arm, effector):
         CAMERA: PolicyFeature(type=FeatureType.VISUAL, shape=(3, 32, 32)),
     }
     cfg.output_features = {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(dim,))}
+    cfg.validate_features()
     preprocessor, postprocessor = make_pre_post_processors(cfg, dataset_stats=_ds_meta(dim).stats)
 
     raw = _raw_batch(dim)
