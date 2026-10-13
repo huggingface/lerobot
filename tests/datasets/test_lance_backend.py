@@ -392,10 +392,10 @@ def test_rgb_single_request_keeps_direct_decode_result():
     assert decoded[0][file_key[0]].data_ptr() == batch_data.data_ptr()
 
 
-def test_depth_batch_decode_merges_nearby_windows():
+def test_depth_batch_decode_merges_nearby_windows() -> None:
     file_key = ("observation.images.depth", 0, 0)
     file_requests = [
-        (0, [0.0, 0.1, 0.2]),
+        (0, [0.2, 0.1, 0.2, 0.0]),
         (1, [0.1, 0.2, 0.3]),
         (2, [5.0]),
     ]
@@ -413,18 +413,21 @@ def test_depth_batch_decode_merges_nearby_windows():
     decoded = dict(reader._decode_depth_file_requests(None, file_requests, file_key))
 
     assert calls == [[0.0, 0.1, 0.2, 0.3], [5.0]]
-    torch.testing.assert_close(decoded[0][:, 0, 0, 0], torch.tensor([0.0, 0.1, 0.2]))
+    # The shared decode must preserve each window's original order and duplicates.
+    torch.testing.assert_close(decoded[0][:, 0, 0, 0], torch.tensor([0.2, 0.1, 0.2, 0.0]))
     torch.testing.assert_close(decoded[1][:, 0, 0, 0], torch.tensor([0.1, 0.2, 0.3]))
     assert decoded[2][0, 0, 0].item() == 5.0
 
 
-def test_depth_batch_decode_limits_merged_span():
+@pytest.mark.parametrize(
+    ("shape", "max_frames"),
+    [
+        pytest.param((720, 1280, 1), 9, id="byte-cap"),
+        pytest.param((2, 2, 1), 64, id="frame-cap"),
+    ],
+)
+def test_depth_batch_decode_limits_merged_span(shape: tuple[int, int, int], max_frames: int) -> None:
     file_key = ("observation.images.depth", 0, 0)
-    shape = (720, 1280, 1)
-    byte_limited_frames = lance_backend._DEPTH_DECODE_MAX_BYTES // (
-        shape[0] * shape[1] * shape[2] * lance_backend._DEPTH_DECODE_BYTES_PER_VALUE
-    )
-    max_frames = min(lance_backend._DEPTH_DECODE_MAX_SPAN_FRAMES, byte_limited_frames)
     file_requests = [(index, [index / 10]) for index in range(max_frames + 6)]
     calls = []
 
