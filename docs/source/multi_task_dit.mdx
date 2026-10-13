@@ -49,7 +49,7 @@ lerobot-train \
   --policy.type=multi_task_dit \
   --policy.device=cuda \
   --policy.repo_id="HF_USER/multitask-dit-your-robot" \
-  --wandb.enable=true
+  --trackio.enable=true
 ```
 
 ### Recommended Hyperparameters and Dataset Details (30Hz Control Frequency)
@@ -70,7 +70,7 @@ lerobot-train \
   --policy.noise_scheduler_type=DDPM \
   --policy.num_train_timesteps=100 \
   --policy.repo_id="HF_USER/multitask-dit-your-robot" \
-  --wandb.enable=true
+  --trackio.enable=true
 ```
 
 **Key Parameters:**
@@ -327,8 +327,8 @@ lerobot-train \
   --policy.image_resize_shape=[320,240] \
   --policy.image_crop_shape=[224,224] \
   --policy.repo_id="HF_USER/multitask-dit-your-robot" \
-  --wandb.enable=true \
-  --wandb.project=multitask_dit
+  --trackio.enable=true \
+  --trackio.project=multitask_dit
 ```
 
 ## Libero Results
@@ -340,8 +340,8 @@ python -m lerobot.scripts.lerobot_train \
   --policy.push_to_hub=false \
   --output_dir="./outputs/multitask_dit_libero" \
   --job_name="multitask-dit-libero" \
-  --wandb.enable=true \
-  --wandb.project=multitask_dit_libero \
+  --trackio.enable=true \
+  --trackio.project=multitask_dit_libero \
   --dataset.image_transforms.enable=true \
   --dataset.image_transforms.max_num_transforms=4 \
   --dataset.image_transforms.tfs='{"brightness":{"type":"ColorJitter","kwargs":{"brightness":[0.75,1.25]}},"contrast":{"type":"ColorJitter","kwargs":{"contrast":[0.6,1.4]}},"saturation":{"type":"ColorJitter","kwargs":{"saturation":[0.8,1.2]}},"hue":{"type":"ColorJitter","kwargs":{"hue":[-0.05,0.05]}},"sharpness":{"type":"SharpnessJitter","kwargs":{"sharpness":[0.6,1.4]}},"rotation":{"type":"RandomRotation","kwargs":{"degrees":[-5,5]}},"translation":{"type":"RandomAffine","kwargs":{"degrees":0,"translate":[0.1,0.1]}}}' \

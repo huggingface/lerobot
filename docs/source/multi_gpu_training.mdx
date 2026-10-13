@@ -29,7 +29,7 @@ torchrun --nproc-per-node=2 $(which lerobot-train) \
   --policy.repo_id=${HF_USER}/my_trained_policy \
   --output_dir=outputs/train/act_multi_gpu \
   --job_name=act_multi_gpu \
-  --wandb.enable=true
+  --trackio.enable=true
 ```
 
 With `accelerate launch` (as a plain launcher):
@@ -41,7 +41,7 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
   --policy.repo_id=${HF_USER}/my_trained_policy \
   --output_dir=outputs/train/act_multi_gpu \
   --job_name=act_multi_gpu \
-  --wandb.enable=true
+  --trackio.enable=true
 ```
 
 With no `--parallelism.*` flags, a multi-process launch runs plain DDP. Multi-node runs use the standard `torchrun --nnodes/--node-rank/--rdzv-endpoint` flags (or `accelerate launch --num_machines/--machine_rank/--main_process_ip`).

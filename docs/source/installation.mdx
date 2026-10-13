@@ -178,7 +178,7 @@ LeRobot provides **feature-scoped extras** that map to common workflows. If you 
 | Extra      | What it adds                                | Typical use case                    |
 | ---------- | ------------------------------------------- | ----------------------------------- |
 | `dataset`  | `datasets`, `av`, `torchcodec`, `jsonlines` | Loading & creating datasets         |
-| `training` | `dataset` + `accelerate`, `wandb`           | Training policies                   |
+| `training` | `dataset` + `accelerate`, `trackio`         | Training policies                   |
 | `hardware` | `pynput`, `pyserial`, `deepdiff`            | Connecting to real robots           |
 | `viz`      | `rerun-sdk`                                 | Visualization during recording/eval |
 
@@ -293,10 +293,12 @@ pip install -e ".[feetech]" # or "[dynamixel]" for example
 
 ### Experiment Tracking
 
-Weights and Biases is included in the `training` extra. To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with:
+[Trackio](https://huggingface.co/docs/trackio) is included in the `training` extra. Local runs need no account or login: they are stored in a local SQLite database under `~/.cache/huggingface/trackio`. Open the dashboard with:
 
 ```bash
-wandb login
+trackio show --project lerobot
 ```
+
+To sync runs to a Hugging Face Space (created if missing), run `hf auth login` and pass `--trackio.space_id=<user>/<space>`. Remote jobs (`--job.target`) with tracking enabled require `space_id`, because the pod's local database is lost when the job ends.
 
 You can now assemble your robot if it's not ready yet, look for your robot type on the left. Then follow the link below to use Lerobot with your robot.

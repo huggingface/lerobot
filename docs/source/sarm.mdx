@@ -277,8 +277,8 @@ lerobot-train \
   --output_dir=outputs/train/sarm_single \
   --batch_size=32 \
   --steps=5000 \
-  --wandb.enable=true \
-  --wandb.project=sarm \
+  --trackio.enable=true \
+  --trackio.project=sarm \
   --policy.repo_id=your-username/your-model-name
 ```
 
@@ -296,8 +296,8 @@ lerobot-train \
   --output_dir=outputs/train/sarm_dense \
   --batch_size=32 \
   --steps=5000 \
-  --wandb.enable=true \
-  --wandb.project=sarm \
+  --trackio.enable=true \
+  --trackio.project=sarm \
   --policy.repo_id=your-username/your-model-name
 ```
 
@@ -315,8 +315,8 @@ lerobot-train \
   --output_dir=outputs/train/sarm_dual \
   --batch_size=32 \
   --steps=5000 \
-  --wandb.enable=true \
-  --wandb.project=sarm \
+  --trackio.enable=true \
+  --trackio.project=sarm \
   --policy.repo_id=your-username/your-model-name
 ```
 
@@ -510,7 +510,7 @@ The `kappa` parameter is the threshold that determines which samples get full we
 
 **Diagnosing kappa issues:**
 
-Monitor these WandB metrics during training:
+Monitor these Trackio metrics during training:
 
 | Metric                        | Healthy Range | Problem Indicator         |
 | ----------------------------- | ------------- | ------------------------- |
