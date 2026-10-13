@@ -77,6 +77,12 @@ class HoldState:
         """Start once; an upgrade keeps the acknowledgment and time anchor and widens the budget once.
 
         Re-requesting the current reason is a no-op, so per-tick checks never renew a deadline.
+
+        Args:
+            reason: Wait identity; changing it permits a one-time upgrade.
+            now: Current monotonic time in seconds.
+            timeout_s: Budget from the original start, or None for an externally bounded wait.
+            upgrade: Allow a different reason to extend the existing budget without restarting it.
         """
         if self.requested:
             if upgrade and reason != self.reason:
@@ -112,7 +118,15 @@ class HoldState:
 def estimate_delay(
     turnaround: float, interval: float, mode: ExecutionMode, training_max_delay: int, available: int
 ) -> int:
-    """Estimate overlap from full turnaround, bounded by real trained-prefix capacity."""
+    """Estimate overlap in action steps, bounded by real trained-prefix capacity.
+
+    Args:
+        turnaround: Full request turnaround in seconds.
+        interval: Seconds per policy action.
+        mode: Chunk, guided RTC, or trained RTC execution.
+        training_max_delay: Maximum prefix steps supported by trained RTC.
+        available: Number of unconsumed continuation steps.
+    """
     delay = math.ceil(turnaround / interval) if turnaround else 0
     if mode is ExecutionMode.RTC_TRAINED:
         delay = min(delay or training_max_delay, training_max_delay, available)
