@@ -20,6 +20,7 @@ TODO(alexander-soare):
   - Remove reliance on diffusers for DDPMScheduler and LR scheduler.
 """
 
+import copy
 import math
 from collections import deque
 from collections.abc import Callable
@@ -34,7 +35,7 @@ from torch import Tensor, nn
 from torch.utils.checkpoint import checkpoint
 
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
-from lerobot.utils.import_utils import _diffusers_available, require_package
+from lerobot.utils.import_utils import _diffusers_available, _transformers_available, require_package
 
 if TYPE_CHECKING or _diffusers_available:
     from diffusers.schedulers.scheduling_ddim import DDIMScheduler
@@ -43,6 +44,25 @@ else:
     DDIMScheduler = None
     DDPMScheduler = None
 
+if TYPE_CHECKING or _transformers_available:
+    from transformers import (
+        AutoConfig,
+        ConvNextConfig,
+        ConvNextModel,
+        Dinov2Config,
+        Dinov2Model,
+        Dinov2WithRegistersConfig,
+        Dinov2WithRegistersModel,
+    )
+else:
+    AutoConfig = None
+    ConvNextConfig = None
+    ConvNextModel = None
+    Dinov2Config = None
+    Dinov2Model = None
+    Dinov2WithRegistersConfig = None
+    Dinov2WithRegistersModel = None
+
 from ..pretrained import PreTrainedPolicy
 from ..utils import (
     get_device_from_parameters,
@@ -50,7 +70,7 @@ from ..utils import (
     get_output_shape,
     populate_queues,
 )
-from .configuration_diffusion import DiffusionConfig
+from .configuration_diffusion import CONVNEXT_ARCHITECTURES, VIT_ARCHITECTURES, DiffusionConfig
 
 
 class DiffusionPolicy(PreTrainedPolicy):
@@ -498,22 +518,29 @@ class DiffusionRgbEncoder(nn.Module):
             self.do_crop = False
 
         # Set up backbone.
-        backbone_model = getattr(torchvision.models, config.vision_backbone)(
-            weights=config.pretrained_backbone_weights
-        )
-        # Note: This assumes that the layer4 feature map is children()[-3]
-        # TODO(alexander-soare): Use a safer alternative.
-        self.backbone = nn.Sequential(*(list(backbone_model.children())[:-2]))
-        if config.use_group_norm:
-            if config.pretrained_backbone_weights:
-                raise ValueError(
-                    "You can't replace BatchNorm in a pretrained model without ruining the weights!"
-                )
-            self.backbone = _replace_submodules(
-                root_module=self.backbone,
-                predicate=lambda x: isinstance(x, nn.BatchNorm2d),
-                func=lambda x: nn.GroupNorm(num_groups=x.num_features // 16, num_channels=x.num_features),
+        if config.is_vit_backbone:
+            self.backbone = ViTBackbone(config.vision_backbone, config.pretrained_backbone_weights)
+        elif config.is_convnext_backbone:
+            self.backbone = ConvNeXtBackbone(config.vision_backbone, config.pretrained_backbone_weights)
+        else:
+            backbone_model = getattr(torchvision.models, config.vision_backbone)(
+                weights=config.pretrained_backbone_weights
             )
+            # Note: This assumes that the layer4 feature map is children()[-3]
+            # TODO(alexander-soare): Use a safer alternative.
+            self.backbone = nn.Sequential(*(list(backbone_model.children())[:-2]))
+            if config.use_group_norm:
+                if config.pretrained_backbone_weights:
+                    raise ValueError(
+                        "You can't replace BatchNorm in a pretrained model without ruining the weights!"
+                    )
+                self.backbone = _replace_submodules(
+                    root_module=self.backbone,
+                    predicate=lambda x: isinstance(x, nn.BatchNorm2d),
+                    func=lambda x: nn.GroupNorm(num_groups=x.num_features // 16, num_channels=x.num_features),
+                )
+        if config.freeze_backbone:
+            self.backbone.requires_grad_(False)
 
         # Set up pooling and final layers.
         # Use a dry run to get the feature map shape.
@@ -557,6 +584,133 @@ class DiffusionRgbEncoder(nn.Module):
         # Final linear layer with non-linearity.
         x = self.relu(self.out(x))
         return x
+
+
+def _build_hf_vision_model(
+    arch: dict,
+    pretrained_name_or_path: str | None,
+    config_cls: type,
+    model_cls: type,
+    core_arch_keys: tuple[str, ...],
+) -> nn.Module:
+    """Build a Hugging Face vision model, randomly initialized or from a pretrained checkpoint.
+
+    Args:
+        arch: Architecture kwargs for `config_cls`, used for random initialization.
+        pretrained_name_or_path: Hugging Face Hub id or local path of a pretrained checkpoint. `None` means random
+            initialization from `arch` (no network access needed).
+        config_cls: The transformers config class (e.g. `Dinov2Config`).
+        model_cls: The transformers model class (e.g. `Dinov2Model`).
+        core_arch_keys: Config fields that must match between `arch` and the pretrained checkpoint's config (keys
+            missing from `arch` are skipped).
+    """
+    if pretrained_name_or_path is None:
+        return model_cls(config_cls(**copy.deepcopy(arch)))
+
+    # Validate the checkpoint config before downloading the weights.
+    ckpt_config = AutoConfig.from_pretrained(pretrained_name_or_path)
+    if ckpt_config.model_type != config_cls.model_type:
+        raise ValueError(
+            f"Expected a checkpoint with model_type='{config_cls.model_type}', got "
+            f"model_type='{ckpt_config.model_type}' for '{pretrained_name_or_path}'."
+        )
+    mismatches = {
+        key: {"expected": arch[key], "checkpoint": getattr(ckpt_config, key, None)}
+        for key in core_arch_keys
+        if key in arch and getattr(ckpt_config, key, None) != arch[key]
+    }
+    if mismatches:
+        raise ValueError(
+            f"Pretrained checkpoint '{pretrained_name_or_path}' does not match the requested `vision_backbone` "
+            f"architecture: {mismatches}."
+        )
+    return model_cls.from_pretrained(pretrained_name_or_path, dtype=torch.float32)
+
+
+class ViTBackbone(nn.Module):
+    """DINOv2 Vision Transformer backbone, usable as a drop-in replacement for the ResNet backbone.
+
+    Randomly initialized from `VIT_ARCHITECTURES[arch_name]`, or loaded from a pretrained DINOv2 checkpoint (e.g.
+    "facebook/dinov2-small" for "vit_small_patch14", "facebook/dinov2-with-registers-small" for
+    "vit_small_patch14_reg4"). DINOv2 code and weights are Apache 2.0 licensed.
+
+    The final-layer (layer-normed) patch tokens are reshaped into a (B, C, H/14, W/14) feature map; the CLS and
+    register tokens are discarded. The learned position embeddings are interpolated to the input resolution, so
+    arbitrary input sizes are supported; pixels beyond the last full patch are dropped by the patch embedding
+    convolution.
+
+    Note: DINOv2 expects ImageNet-normalized inputs, which matches LeRobot's default
+    `dataset.use_imagenet_stats=True`.
+    """
+
+    CORE_ARCH_KEYS = (
+        "patch_size",
+        "hidden_size",
+        "num_hidden_layers",
+        "num_attention_heads",
+        "use_swiglu_ffn",
+        "num_register_tokens",
+    )
+
+    def __init__(self, arch_name: str, pretrained_name_or_path: str | None = None):
+        super().__init__()
+        require_package("transformers", extra="transformers-dep")
+        arch = VIT_ARCHITECTURES[arch_name]
+        with_registers = arch.get("num_register_tokens", 0) > 0
+        self.model = _build_hf_vision_model(
+            arch,
+            pretrained_name_or_path,
+            config_cls=Dinov2WithRegistersConfig if with_registers else Dinov2Config,
+            model_cls=Dinov2WithRegistersModel if with_registers else Dinov2Model,
+            core_arch_keys=self.CORE_ARCH_KEYS,
+        )
+        model_config = self.model.config
+        self.stride = model_config.patch_size
+        # CLS + register tokens.
+        self.num_prefix_tokens = 1 + getattr(model_config, "num_register_tokens", 0)
+        self.out_channels = model_config.hidden_size
+
+    def forward(self, x: Tensor) -> Tensor:
+        tokens = self.model(pixel_values=x).last_hidden_state  # (B, prefix + h*w, C)
+        # Floor division matches the (unpadded) strided patch embedding convolution.
+        h, w = x.shape[-2] // self.stride, x.shape[-1] // self.stride
+        spatial_tokens = tokens[:, self.num_prefix_tokens :]
+        if spatial_tokens.shape[1] != h * w:
+            raise RuntimeError(
+                f"Unexpected number of patch tokens: got {spatial_tokens.shape[1]}, expected {h}*{w}={h * w}."
+            )
+        return einops.rearrange(spatial_tokens, "b (h w) c -> b c h w", h=h, w=w)
+
+
+class ConvNeXtBackbone(nn.Module):
+    """ConvNeXt backbone, usable as a drop-in replacement for the ResNet backbone.
+
+    Randomly initialized from `CONVNEXT_ARCHITECTURES[arch_name]`, or loaded from a pretrained Hugging Face ConvNeXt
+    checkpoint (e.g. the Apache 2.0 licensed ImageNet-1k checkpoint "facebook/convnext-tiny-224" for
+    "convnext_tiny"; the classification head is dropped).
+
+    The final-stage (B, C, H/32, W/32) feature map is used, i.e. the same stride as the ResNet `layer4` feature map.
+
+    Note: The ImageNet checkpoints expect ImageNet-normalized inputs, which matches LeRobot's default
+    `dataset.use_imagenet_stats=True`.
+    """
+
+    CORE_ARCH_KEYS = ("hidden_sizes", "depths")
+
+    def __init__(self, arch_name: str, pretrained_name_or_path: str | None = None):
+        super().__init__()
+        require_package("transformers", extra="transformers-dep")
+        self.model = _build_hf_vision_model(
+            CONVNEXT_ARCHITECTURES[arch_name],
+            pretrained_name_or_path,
+            config_cls=ConvNextConfig,
+            model_cls=ConvNextModel,
+            core_arch_keys=self.CORE_ARCH_KEYS,
+        )
+        self.out_channels = self.model.config.hidden_sizes[-1]
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.model(pixel_values=x).last_hidden_state  # (B, C, H/32, W/32)
 
 
 def _replace_submodules(

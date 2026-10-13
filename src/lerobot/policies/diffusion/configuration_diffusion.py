@@ -19,6 +19,69 @@ from dataclasses import dataclass, field
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamConfig, DiffuserSchedulerConfig
 
+# Architectures for the ViT / ConvNeXt vision backbones. Values are kwargs for `transformers.Dinov2Config` (or
+# `transformers.Dinov2WithRegistersConfig` if `num_register_tokens` is set) / `transformers.ConvNextConfig` and are
+# used to build randomly initialized backbones. When loading pretrained weights, the checkpoint's own config is used
+# instead, and its core architecture fields are checked against these entries.
+VIT_ARCHITECTURES: dict[str, dict] = {
+    # DINOv2 ViTs (https://huggingface.co/facebook/dinov2-small etc.).
+    "vit_small_patch14": {
+        "patch_size": 14, "image_size": 518, "hidden_size": 384, "num_hidden_layers": 12,
+        "num_attention_heads": 6, "use_swiglu_ffn": False,
+    },
+    "vit_base_patch14": {
+        "patch_size": 14, "image_size": 518, "hidden_size": 768, "num_hidden_layers": 12,
+        "num_attention_heads": 12, "use_swiglu_ffn": False,
+    },
+    "vit_large_patch14": {
+        "patch_size": 14, "image_size": 518, "hidden_size": 1024, "num_hidden_layers": 24,
+        "num_attention_heads": 16, "use_swiglu_ffn": False,
+    },
+    "vit_giant_patch14": {
+        "patch_size": 14, "image_size": 518, "hidden_size": 1536, "num_hidden_layers": 40,
+        "num_attention_heads": 24, "use_swiglu_ffn": True,
+    },
+    # DINOv2 ViTs with 4 register tokens (https://huggingface.co/facebook/dinov2-with-registers-small etc.).
+    "vit_small_patch14_reg4": {
+        "patch_size": 14, "image_size": 518, "hidden_size": 384, "num_hidden_layers": 12,
+        "num_attention_heads": 6, "use_swiglu_ffn": False, "num_register_tokens": 4,
+    },
+    "vit_base_patch14_reg4": {
+        "patch_size": 14, "image_size": 518, "hidden_size": 768, "num_hidden_layers": 12,
+        "num_attention_heads": 12, "use_swiglu_ffn": False, "num_register_tokens": 4,
+    },
+    "vit_large_patch14_reg4": {
+        "patch_size": 14, "image_size": 518, "hidden_size": 1024, "num_hidden_layers": 24,
+        "num_attention_heads": 16, "use_swiglu_ffn": False, "num_register_tokens": 4,
+    },
+    "vit_giant_patch14_reg4": {
+        "patch_size": 14, "image_size": 518, "hidden_size": 1536, "num_hidden_layers": 40,
+        "num_attention_heads": 24, "use_swiglu_ffn": True, "num_register_tokens": 4,
+    },
+}  # fmt: skip
+CONVNEXT_ARCHITECTURES: dict[str, dict] = {
+    "convnext_tiny": {"hidden_sizes": [96, 192, 384, 768], "depths": [3, 3, 9, 3]},
+    "convnext_small": {"hidden_sizes": [96, 192, 384, 768], "depths": [3, 3, 27, 3]},
+    "convnext_base": {"hidden_sizes": [128, 256, 512, 1024], "depths": [3, 3, 27, 3]},
+    "convnext_large": {"hidden_sizes": [192, 384, 768, 1536], "depths": [3, 3, 27, 3]},
+}
+# Pretrained checkpoints on the Hugging Face Hub for each architecture (all Apache 2.0 licensed), for reference /
+# error messages. ViTs: self-supervised DINOv2. ConvNeXts: ImageNet-1k supervised.
+DEFAULT_PRETRAINED_BACKBONE_WEIGHTS: dict[str, str] = {
+    "vit_small_patch14": "facebook/dinov2-small",
+    "vit_base_patch14": "facebook/dinov2-base",
+    "vit_large_patch14": "facebook/dinov2-large",
+    "vit_giant_patch14": "facebook/dinov2-giant",
+    "vit_small_patch14_reg4": "facebook/dinov2-with-registers-small",
+    "vit_base_patch14_reg4": "facebook/dinov2-with-registers-base",
+    "vit_large_patch14_reg4": "facebook/dinov2-with-registers-large",
+    "vit_giant_patch14_reg4": "facebook/dinov2-with-registers-giant",
+    "convnext_tiny": "facebook/convnext-tiny-224",
+    "convnext_small": "facebook/convnext-small-224",
+    "convnext_base": "facebook/convnext-base-224",
+    "convnext_large": "facebook/convnext-large-224",
+}
+
 
 @PreTrainedConfig.register_subclass("diffusion")
 @dataclass
@@ -52,7 +115,13 @@ class DiffusionConfig(PreTrainedConfig):
             the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
         normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
             a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
-        vision_backbone: Name of the torchvision resnet backbone to use for encoding images.
+        vision_backbone: Name of the backbone architecture to use for encoding images. One of:
+            - a torchvision ResNet (e.g. "resnet18"),
+            - a DINOv2 ViT from `VIT_ARCHITECTURES` (e.g. "vit_small_patch14", "vit_base_patch14_reg4"),
+            - a ConvNeXt from `CONVNEXT_ARCHITECTURES` (e.g. "convnext_tiny").
+            For ViT backbones, the final-layer patch tokens are reshaped into a (C, H/14, W/14) feature map. For
+            ConvNeXt backbones, the final-stage (C, H/32, W/32) feature map is used. Either is used in place of the
+            ResNet feature map before SpatialSoftmax pooling.
         resize_shape: (H, W) shape to resize images to as a preprocessing step for the vision
             backbone. If None, no resizing is done and the original image resolution is used.
         crop_ratio: Ratio in (0, 1] used to derive the crop size from resize_shape
@@ -63,10 +132,15 @@ class DiffusionConfig(PreTrainedConfig):
             crop-only (without resize). If None and no derivation applies, no cropping is done.
         crop_is_random: Whether the crop should be random at training time (it's always a center
             crop in eval mode).
-        pretrained_backbone_weights: Pretrained weights from torchvision to initialize the backbone.
-            `None` means no pretrained weights.
+        pretrained_backbone_weights: Pretrained weights to initialize the backbone with. `None` means no
+            pretrained weights (random init). For ResNet backbones: a torchvision weights enum name
+            (e.g. "ResNet18_Weights.IMAGENET1K_V1"). For ViT / ConvNeXt backbones: a Hugging Face checkpoint id or
+            local path matching the architecture (e.g. "facebook/dinov2-small" for "vit_small_patch14" or
+            "facebook/convnext-tiny-224" for "convnext_tiny"; see `DEFAULT_PRETRAINED_BACKBONE_WEIGHTS`).
         use_group_norm: Whether to replace batch normalization with group normalization in the backbone.
-            The group sizes are set to be about 16 (to be precise, feature_dim // 16).
+            The group sizes are set to be about 16 (to be precise, feature_dim // 16). Only applies to ResNet
+            backbones.
+        freeze_backbone: Whether to freeze the vision backbone's parameters (no gradient updates).
         spatial_softmax_num_keypoints: Number of keypoints for SpatialSoftmax.
         use_separate_rgb_encoder_per_camera: Whether to use a separate RGB encoder for each camera view.
         down_dims: Feature dimension for each stage of temporal downsampling in the diffusion modeling Unet.
@@ -126,6 +200,7 @@ class DiffusionConfig(PreTrainedConfig):
     crop_is_random: bool = True
     pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
     use_group_norm: bool = False
+    freeze_backbone: bool = False
     spatial_softmax_num_keypoints: int = 32
     use_separate_rgb_encoder_per_camera: bool = True
     # Unet.
@@ -167,10 +242,21 @@ class DiffusionConfig(PreTrainedConfig):
         super().__post_init__()
 
         """Input validation (not exhaustive)."""
-        if not self.vision_backbone.startswith("resnet"):
+        if not (self.is_resnet_backbone or self.is_vit_backbone or self.is_convnext_backbone):
             raise ValueError(
-                f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
+                "`vision_backbone` must be a torchvision ResNet variant (e.g. 'resnet18') or one of "
+                f"{list(VIT_ARCHITECTURES) + list(CONVNEXT_ARCHITECTURES)}. Got {self.vision_backbone}."
             )
+        if not self.is_resnet_backbone:
+            if self.use_group_norm:
+                raise ValueError("`use_group_norm` is only supported for ResNet backbones.")
+            if self.pretrained_backbone_weights is not None and "_Weights." in self.pretrained_backbone_weights:
+                raise ValueError(
+                    f"`pretrained_backbone_weights={self.pretrained_backbone_weights}` looks like torchvision "
+                    f"ResNet weights, which are incompatible with `vision_backbone={self.vision_backbone}`. Use a "
+                    "matching Hugging Face checkpoint (e.g. "
+                    f"'{DEFAULT_PRETRAINED_BACKBONE_WEIGHTS[self.vision_backbone]}') or `None` for random init."
+                )
 
         supported_prediction_types = ["epsilon", "sample"]
         if self.prediction_type not in supported_prediction_types:
@@ -225,6 +311,18 @@ class DiffusionConfig(PreTrainedConfig):
             name=self.scheduler_name,
             num_warmup_steps=self.scheduler_warmup_steps,
         )
+
+    @property
+    def is_resnet_backbone(self) -> bool:
+        return self.vision_backbone.startswith("resnet")
+
+    @property
+    def is_vit_backbone(self) -> bool:
+        return self.vision_backbone in VIT_ARCHITECTURES
+
+    @property
+    def is_convnext_backbone(self) -> bool:
+        return self.vision_backbone in CONVNEXT_ARCHITECTURES
 
     def validate_features(self) -> None:
         if len(self.image_features) == 0 and self.env_state_feature is None:
