@@ -40,6 +40,9 @@ from dataclasses import dataclass
 
 from lerobot.configs import parser
 from lerobot.robots import RobotConfig
+from lerobot.robots.rebot_b601_follower import (
+    RebotB601FollowerRobotConfig,  # noqa: F401  (registers rebot_b601_follower)
+)
 from lerobot.robots.so_follower import SOFollowerConfig  # noqa: F401  (registers so101_follower)
 from lerobot.utils.robot_utils import precise_sleep
 
