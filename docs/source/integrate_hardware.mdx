@@ -12,7 +12,7 @@ To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blo
 
 ## Choose your motors
 
-If you're using Feetech or Dynamixel motors, LeRobot provides a built-in bus interface, [`SerialMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py), which drives either family: each motor's model tells it which. Refer to it to learn about its API.
+If you're using Feetech or Dynamixel motors, LeRobot provides a built-in bus interface, [`SerialMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py), which drives either family: each motor's model tells it which. Refer to it to learn about its API. It needs the `serial-motors` extra, which installs rustypot: `pip install 'lerobot[serial-motors]'`, or `pip install -e ".[serial-motors]"` from a source checkout.
 For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/so_follower/so_follower.py)
 
 Use these if compatible. Otherwise, you'll need to find or write a Python interface (not covered in this tutorial):
@@ -30,7 +30,9 @@ For Feetech and Dynamixel, we currently support these servos:
 
 Models can share a bus, STS/SMS and SCS servos or XL430 and XL330: each motor is read and written through its own model's definition, byte order and sign encoding included. The differences between families come from the same definitions: which operating mode value means position control (`bus.set_operating_mode("position")`), whether the homing offset adds to the position or subtracts from it, which registers exist.
 
-If you are using Feetech or Dynamixel servos that are not in this list, add them to [rustypot](https://github.com/pollen-robotics/rustypot), which holds the control tables the buses read: a model sharing an existing control table only needs its model number registered, a new one needs a servo definition (see rustypot's `src/servo/README.md`).
+Supporting a model does not mean every calibration helper works on it: the Feetech SCS0009 has neither an operating mode nor a homing offset, so `set_operating_mode()` and `set_half_turn_homings()` refuse it. The calibration recipe below is for servos that have both, such as the STS; an SCS servo is calibrated by its range alone.
+
+If you are using Feetech or Dynamixel servos that are not in this list, add them to [rustypot](https://github.com/pollen-robotics/rustypot), which holds the control tables the buses read: a model sharing an existing control table only needs its model number registered, a new one needs a servo definition (see the [servo contribution guide](https://github.com/pollen-robotics/rustypot/blob/v1.11.0/src/servo/README.md)). LeRobot reads the models from the installed rustypot Python package, so it must include the new model: a rustypot release with it, or rustypot built from source.
 
 In the next sections, the examples use Feetech motors. Change the models and adapt to your motors if necessary.
 
@@ -54,7 +56,7 @@ from lerobot.robots import RobotConfig
 class MyCoolRobotConfig(RobotConfig):
     port: str
     cameras: dict[str, CameraConfig] = field(
-        default_factory={
+        default_factory=lambda: {
             "cam_1": OpenCVCameraConfig(
                 index_or_path=2,
                 fps=30,
@@ -74,8 +76,10 @@ Here we'll create a simple 5-DoF robot with one camera. It could be a simple arm
 
 <!-- prettier-ignore-start -->
 ```python
+from typing import Any
+
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.motors import Motor, MotorNormMode, SerialMotorsBus
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.robots import Robot
 
 class MyCoolRobot(Robot):
@@ -84,6 +88,7 @@ class MyCoolRobot(Robot):
 
     def __init__(self, config: MyCoolRobotConfig):
         super().__init__(config)
+        self.config = config
         self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
@@ -146,6 +151,7 @@ Here, we simply use the same joints proprioceptive features (`self._motors_ft`) 
 
 <!-- prettier-ignore-start -->
 ```python
+@property
 def action_features(self) -> dict:
     return self._motors_ft
 ```

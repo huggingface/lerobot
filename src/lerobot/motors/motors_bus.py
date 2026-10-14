@@ -19,15 +19,16 @@ from __future__ import annotations
 import abc
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from pprint import pformat
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _rustypot_available, require_package
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
@@ -155,13 +156,9 @@ class Motor:
 class SerialMotorsBus(MotorsBusBase):
     """Read and write a chain of servos daisy-chained on one serial port, Feetech or Dynamixel.
 
-    Each motor's model (`sts3215`, `xl330-m288`, ...) is looked up in rustypot, which gives
-    its model number, its control table and the facts around it: resolution, baud rates,
-    operating modes, whether its homing offset adds to or subtracts from the position, which
-    registers exist. The bus carries what is LeRobot's: normalisation, calibration and the
-    recommended settings. The wire, and the byte order and sign encoding of what goes over
-    it, belong to a rustypot `Bus` opened on connect with each motor's definition, so motors
-    of several models (STS and SCS, or XL430 and XL330) share the port.
+    rustypot handles each model's metadata (control table, resolution, baud rates, operating
+    modes) and the serial I/O; LeRobot handles normalisation, calibration and the recommended
+    settings. Motors of several models, such as STS and SCS or XL430 and XL330, share the port.
 
     To find the port, run:
     ```bash
@@ -193,27 +190,29 @@ class SerialMotorsBus(MotorsBusBase):
     """
 
     default_baudrate: int = 1_000_000
-    # Milliseconds per status packet: enough for a USB adapter's 16 ms latency timer, short
-    # enough that a lost reply costs a 30 Hz control loop one tick instead of stalling it.
+    # Milliseconds a status packet is waited for, per attempt: longer than the 16 ms latency
+    # timer of a USB adapter. Each retry waits again.
     default_timeout: int = 50
-    normalized_data: list[str] = ["Goal_Position", "Present_Position"]
+    # Register names are matched without case, as rustypot does.
+    normalized_data: frozenset[str] = frozenset({"goal_position", "present_position"})
 
     def __init__(
         self,
         port: str,
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
-    ):
+    ) -> None:
         super().__init__(port, motors, calibration)
 
-        self._models = {m.model: self._find_model(m.model) for m in self.motors.values()}
+        models = {m.model for m in self.motors.values()}
+        self._models = {model: self._find_model(model) for model in models}
         self._id_to_model_dict = {m.id: m.model for m in self.motors.values()}
         self._id_to_name_dict = {m.id: motor for motor, m in self.motors.items()}
 
         self._definitions: dict[int, rustypot.ServoDefinition] = {
             m.id: self._models[m.model][1] for m in self.motors.values()
         }
-        self._bus: Any = None  # the open rustypot.Bus, None while disconnected
+        self._bus: rustypot.Bus | None = None  # open while connected
 
         self._validate_motors()
 
@@ -246,10 +245,19 @@ class SerialMotorsBus(MotorsBusBase):
             raise ValueError(f"Unknown motor model '{model}': rustypot has no servo of that name.")
         return found
 
-    @staticmethod
-    def _bus_class() -> type[rustypot.Bus]:
-        """rustypot's `Bus`: a serial port, a protocol handler and each motor's definition."""
-        return rustypot.Bus
+    def _open_bus(self) -> rustypot.Bus:
+        """Open rustypot's `Bus` on the port at the default baud rate, with each motor's definition."""
+        # LeRobot counts timeouts in milliseconds, rustypot in seconds.
+        return rustypot.Bus(self.port, self.default_baudrate, self.default_timeout / 1000, self._definitions)
+
+    @property
+    def _connected_bus(self) -> rustypot.Bus:
+        """The open rustypot `Bus`."""
+        if self._bus is None:
+            raise DeviceNotConnectedError(
+                f"{self.__class__.__name__} is not connected. Run `.connect()` first."
+            )
+        return self._bus
 
     def _definition(self, motor: NameOrID) -> rustypot.ServoDefinition:
         return self._models[self._get_motor_model(motor)][1]
@@ -258,8 +266,21 @@ class SerialMotorsBus(MotorsBusBase):
         return self._definition(motor).register(data_name.lower()) is not None
 
     def resolution(self, model: str) -> int:
-        """Encoder steps per turn of `model`."""
-        return self._models[model][1].resolution
+        """Encoder steps per turn of a motor model.
+
+        Args:
+            model (`str`):
+                Model of one of the bus' motors, e.g. `"sts3215"`.
+
+        Returns:
+            `int`: The steps per turn, e.g. 4096 on a 12-bit encoder.
+
+        Raises:
+            ValueError: If the model does not count encoder steps.
+        """
+        if (resolution := self._models[model][1].resolution) is None:
+            raise ValueError(f"Motor model '{model}' does not count encoder steps.")
+        return resolution
 
     def _model_number(self, model: str) -> int:
         """The model number a motor of `model` answers with."""
@@ -350,16 +371,19 @@ class SerialMotorsBus(MotorsBusBase):
             raise RuntimeError("\n".join(error_lines))
 
     def _assert_same_firmware(self) -> None:
-        """Feetech servos of one bus must run the same firmware: they report it in two
-        registers that Dynamixel servos do not have."""
+        """Feetech servos of one definition must run the same firmware: they report it in two
+        registers that Dynamixel servos do not have. STS and SCS servos have firmware of their
+        own, so each definition is compared on its own."""
         majors = self._sync_read_where("Firmware_Major_Version")
         minors = self._sync_read_where("Firmware_Minor_Version")
-        firmware_versions = {motor: f"{majors[motor]}.{minors[motor]}" for motor in majors}
+        versions: dict[str, dict[str, str]] = {}
+        for motor in majors:
+            versions.setdefault(self._definition(motor).name, {})[motor] = f"{majors[motor]}.{minors[motor]}"
 
-        if len(set(firmware_versions.values())) > 1:
+        if mixed := {name: found for name, found in versions.items() if len(set(found.values())) > 1}:
             raise RuntimeError(
                 "Some Motors use different firmware versions:"
-                f"\n{pformat(firmware_versions)}\n"
+                f"\n{pformat(mixed)}\n"
                 "Update their firmware first using Feetech's software. "
                 "Visit https://www.feetechrc.com/software."
             )
@@ -371,16 +395,17 @@ class SerialMotorsBus(MotorsBusBase):
 
     @check_if_already_connected
     def connect(self, handshake: bool = True) -> None:
-        """Open the serial port and initialise communication.
+        """Open the serial port and check the motors.
 
         Args:
-            handshake (bool, optional): Checks that every expected motor answers with the
-                model number of its model, and that Feetech motors share one firmware.
-                Defaults to `True`.
+            handshake (`bool`, *optional*, defaults to `True`):
+                Whether to check that every motor answers with the model number of its model, and
+                that the Feetech motors of one definition run one firmware.
 
         Raises:
-            DeviceAlreadyConnectedError: The port is already open.
-            ConnectionError: The port could not be opened, or the handshake did not succeed.
+            DeviceAlreadyConnectedError: If the port is already open.
+            ConnectionError: If the port could not be opened.
+            RuntimeError: If the handshake fails; the port is closed again.
         """
 
         self._connect(handshake)
@@ -388,13 +413,7 @@ class SerialMotorsBus(MotorsBusBase):
 
     def _connect(self, handshake: bool = True) -> None:
         try:
-            self._bus = self._bus_class()(
-                self.port,
-                self.default_baudrate,
-                # LeRobot counts timeouts in milliseconds, rustypot in seconds.
-                self.default_timeout / 1000,
-                self._definitions,
-            )
+            self._bus = self._open_bus()
         except OSError as e:
             raise ConnectionError(
                 f"\nCould not connect on port '{self.port}'. Make sure you are using the correct port."
@@ -411,7 +430,7 @@ class SerialMotorsBus(MotorsBusBase):
             raise
 
     def _close(self) -> None:
-        self._bus.close()
+        self._connected_bus.close()
         self._bus = None
 
     def _handshake(self) -> None:
@@ -419,15 +438,15 @@ class SerialMotorsBus(MotorsBusBase):
         self._assert_same_firmware()
 
     def disconnect(self, disable_torque: bool = True) -> None:
-        """Close the serial port (optionally disabling torque first).
+        """Close the serial port, by default with the torque of every motor off.
 
-        Safe to call on a bus that is already disconnected, and the port is released
-        even if disabling torque fails.
+        Safe to call on a bus that is already disconnected, and the port is released even if
+        disabling the torque fails.
 
         Args:
-            disable_torque (bool, optional): If `True` (default) torque is disabled on every motor before
-                closing the port. This can prevent damaging motors if they are left applying resisting torque
-                after disconnect.
+            disable_torque (`bool`, *optional*, defaults to `True`):
+                Whether to disable the torque of every motor before closing the port, so that no
+                motor is left resisting.
         """
 
         if not self.is_connected:
@@ -446,27 +465,32 @@ class SerialMotorsBus(MotorsBusBase):
         ping when the servo answers one, which covers a USB adapter's latency once, else one
         read per id."""
         if definition.supports_broadcast_ping:
-            return self._bus.broadcast_scan(definition)
-        return self._bus.scan(definition)
+            return self._connected_bus.broadcast_scan(definition)
+        return self._connected_bus.scan(definition)
 
     def setup_motor(
         self, motor: str, initial_baudrate: int | None = None, initial_id: int | None = None
     ) -> None:
-        """Assign the correct ID and baud-rate to a single motor.
+        """Give a single motor its id and the bus' default baud rate.
 
-        This helper finds the motor at its current settings, then has rustypot turn its torque
-        off, open its EEPROM, write the desired ID and program the bus' default baud-rate.
+        The motor must be the only one on the bus. Unless both `initial_baudrate` and
+        `initial_id` are given, it is found first: at `initial_baudrate` when only that is
+        given, else across the baud rates of its model; an `initial_id` given alone is replaced
+        by the id found. rustypot then turns its torque off, opens its EEPROM, and writes the id
+        and the baud rate.
 
         Args:
-            motor (str): Key of the motor in :pyattr:`motors`.
-            initial_baudrate (int | None, optional): Current baud-rate (skips scanning when provided).
-                Defaults to None.
-            initial_id (int | None, optional): Current ID (skips scanning when provided). Defaults to None.
+            motor (`str`):
+                Name of the motor.
+            initial_baudrate (`int`, *optional*):
+                Baud rate the motor answers at now.
+            initial_id (`int`, *optional*):
+                Id the motor answers at now, used with `initial_baudrate`.
 
         Raises:
-            RuntimeError: The motor could not be found, its model number does not match the
-                expected one, or it does not answer as configured once set up.
-            ConnectionError: Communication with the motor failed.
+            RuntimeError: If the motor is not found, is not of its model, or does not answer as
+                configured once set up.
+            ConnectionError: If communication with the motor fails.
         """
         if not self.is_connected:
             self._connect(handshake=False)
@@ -485,11 +509,11 @@ class SerialMotorsBus(MotorsBusBase):
             try:
                 # The motor may answer at an id the bus does not have, or has for another
                 # motor: rustypot reaches it there through its definition.
-                self._bus.change_id(definition, initial_id, target_id)
-                self._bus.change_baudrate(definition, target_id, self.default_baudrate)
+                self._connected_bus.change_id(definition, initial_id, target_id)
+                self._connected_bus.change_baudrate(definition, target_id, self.default_baudrate)
             except _TRANSPORT_ERRORS as e:
                 raise ConnectionError(
-                    f"Failed to set up '{motor}' (id {initial_id} at {initial_baudrate}). {e}"
+                    f"Failed to set up '{motor}' (motor ID {initial_id} at {initial_baudrate} baud). {e}"
                 ) from e
         finally:
             self.set_baudrate(self.default_baudrate)
@@ -499,8 +523,8 @@ class SerialMotorsBus(MotorsBusBase):
         expected = self._model_number(self.motors[motor].model)
         if (found := self.ping(target_id)) != expected:
             raise RuntimeError(
-                f"'{motor}' does not answer at id {target_id} and {self.default_baudrate} baud with model "
-                f"number {expected} after its setup (got {found})."
+                f"'{motor}' does not answer as motor ID {target_id} at {self.default_baudrate} baud with "
+                f"model number {expected} after its setup (got {found})."
             )
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
@@ -524,9 +548,9 @@ class SerialMotorsBus(MotorsBusBase):
                 found_id, found_model = next(iter(id_model.items()))
                 if found_model != expected_model_nb:
                     raise RuntimeError(
-                        f"Found one motor on {baudrate=} with id={found_id} but it has a "
-                        f"model number '{found_model}' different than the one expected: {expected_model_nb}. "
-                        f"Make sure you are connected only connected to the '{motor}' motor (model '{model}')."
+                        f"Found a motor at {baudrate} baud with motor ID {found_id}, but its model number "
+                        f"{found_model} is different than the one expected: {expected_model_nb}. Make sure "
+                        f"only the intended motor, '{motor}' (model '{model}'), is connected."
                     )
                 return baudrate, found_id
 
@@ -538,12 +562,14 @@ class SerialMotorsBus(MotorsBusBase):
         """Write LeRobot's recommended settings to every motor.
 
         Args:
-            return_delay_time (int, optional): Delay before a motor answers, in units of 2 µs.
-                Defaults to `0`: the motors leave the factory at 250 (500 µs).
-            maximum_acceleration (int, optional): Acceleration ceiling, on the servos that have one
-                (Feetech STS). Defaults to `254`, to speed up acceleration and deceleration.
-            acceleration (int, optional): Acceleration, on the servos that have it (Feetech).
-                Defaults to `254`.
+            return_delay_time (`int`, *optional*, defaults to `0`):
+                Delay before a motor answers, in units of 2 µs; the motors leave the factory at
+                250 (500 µs).
+            maximum_acceleration (`int`, *optional*, defaults to `254`):
+                Acceleration ceiling, on the servos that have one (Feetech STS), high to speed up
+                acceleration and deceleration.
+            acceleration (`int`, *optional*, defaults to `254`):
+                Acceleration, on the servos that have it (Feetech).
         """
         for motor in self.motors:
             self.write("Return_Delay_Time", motor, return_delay_time)
@@ -552,45 +578,57 @@ class SerialMotorsBus(MotorsBusBase):
             if self._has_register(motor, "Acceleration"):
                 self.write("Acceleration", motor, acceleration)
 
-            # Clear bit 4 (0x10) of the Phase register (0x12) to set angle feedback mode to 0.
-            # This forces position readings to be in the range [0, resolution - 1] and prevents overflow or negative values.
-            # Only known to be necessary for the STS3215.
+            # STS3215: clear Phase bit 4 to keep positions within [0, resolution - 1].
             if self.motors[motor].model == "sts3215":
                 phase = self.read("Phase", motor, normalize=False)
                 if phase & 0x10:
                     self.write("Phase", motor, phase & ~0x10)
 
     def set_operating_mode(self, mode: str, motors: NameOrID | Sequence[NameOrID] | None = None) -> None:
-        """Put the selected motors in operating mode *mode*, given by name.
+        """Put the selected motors in an operating mode, given by name.
 
-        `position`, `velocity` and `pwm` exist on every family, at a different register value
-        on each; Dynamixel servos add `current`, `extended_position` and
-        `current_based_position`, Feetech servos `step`. Write it with the torque off.
+        The modes come from each motor's definition, so they depend on the model, not only on
+        the family: the Feetech SCS0009 has none. The mode must exist for every selected motor,
+        which is checked before any motor changes mode. Write it with the torque off.
+
+        - `position`: holds a goal position within one turn and the position limits.
+        - `velocity`: turns endlessly at a goal velocity, as a wheel.
+        - `pwm`: drives the motor voltage directly, open loop.
+        - `step` (Feetech): moves by the number of steps written as the goal position.
+        - `current` (Dynamixel): holds a goal current, that is a torque, whatever the position.
+        - `extended_position` (Dynamixel): holds a goal position over several turns. The
+          `Min_Position_Limit` and `Max_Position_Limit` registers are ignored in this mode.
+        - `current_based_position` (Dynamixel): holds a goal position over several turns with
+          the current capped by the goal current, as a gripper that must not crush what it holds.
 
         Args:
-            mode (str): Name of the operating mode.
-            motors (NameOrID | Sequence[NameOrID] | None, optional): Target motors. `None` (default)
-                selects every motor.
+            mode (`str`):
+                Name of the operating mode, e.g. `"position"`.
+            motors (`str | int | Sequence[str | int]`, *optional*):
+                Motors to set, by name or id. `None` selects every motor.
 
         Raises:
-            ValueError: A selected motor has no such mode.
+            ValueError: If a selected motor has no such mode; no motor has changed mode then.
         """
-        for motor in self._get_motors_list(motors):
+        motor_names = self._get_motors_list(motors)
+        for motor in motor_names:
             modes = self._definition(motor).operating_modes
             if mode not in modes:
                 raise ValueError(
                     f"Motor '{motor}' ({self.motors[motor].model}) has no '{mode}' operating mode: {sorted(modes)}."
                 )
-            self.write("Operating_Mode", motor, modes[mode])
+        for motor in motor_names:
+            self.write("Operating_Mode", motor, self._definition(motor).operating_modes[mode])
 
     def _set_torque(
         self, motors: NameOrID | Sequence[NameOrID] | None, enabled: bool, num_retry: int
     ) -> None:
         names = self._get_motors_list(motors)
-        failed = self._bus.set_torque([self.motors[motor].id for motor in names], enabled, retries=num_retry)
+        ids = [self._get_motor_id(motor) for motor in names]
+        failed = self._connected_bus.set_torque(ids, enabled, retries=num_retry)
         if failed:
             details = ", ".join(
-                f"'{self._id_to_name(id_)}' (id {id_}): {error}" for id_, error in failed.items()
+                f"'{self._id_to_name(id_)}' (motor ID {id_}): {error}" for id_, error in failed.items()
             )
             raise ConnectionError(
                 f"Failed to {'enable' if enabled else 'disable'} torque after {num_retry + 1} tries on {details}."
@@ -598,48 +636,54 @@ class SerialMotorsBus(MotorsBusBase):
 
     @check_if_not_connected
     def disable_torque(self, motors: NameOrID | Sequence[NameOrID] | None = None, num_retry: int = 0) -> None:
-        """Disable torque on selected motors.
+        """Disable the torque of the selected motors.
 
-        Disabling Torque allows to write to the motors' permanent memory area (EPROM/EEPROM),
-        and opens the lock of Feetech motors for it. Every motor is tried even when one fails,
-        so a motor that does not answer leaves no other one under torque.
+        With the torque off, a motor's EEPROM can be written, and a Feetech motor's lock opens
+        for it. Every selected motor is attempted; failures are reported, and unresponsive
+        motors may remain torque-enabled.
 
         Args:
-            motors (NameOrID | Sequence[NameOrID] | None, optional): Target motors. Accepts a motor name, an
-                ID, a list of names or `None` to affect every registered motor. Defaults to `None`.
-            num_retry (int, optional): Number of additional retry attempts on communication failure.
-                Defaults to 0.
+            motors (`str | int | Sequence[str | int]`, *optional*):
+                Motors to free, by name or id. `None` selects every motor.
+            num_retry (`int`, *optional*, defaults to `0`):
+                Additional attempts on each motor after a communication failure.
 
         Raises:
-            ConnectionError: Some motors could not be reached; the message lists them.
+            ConnectionError: If some motors could not be reached; the message names them.
         """
         self._set_torque(motors, False, num_retry)
 
     @check_if_not_connected
     def enable_torque(self, motors: NameOrID | Sequence[NameOrID] | None = None, num_retry: int = 0) -> None:
-        """Enable torque on selected motors, and close the lock of Feetech motors.
+        """Enable the torque of the selected motors, and close the lock of Feetech motors.
 
         Args:
-            motors (NameOrID | Sequence[NameOrID] | None, optional): Same semantics as
-                :pymeth:`disable_torque`. Defaults to `None`.
-            num_retry (int, optional): Number of additional retry attempts on communication failure.
-                Defaults to 0.
+            motors (`str | int | Sequence[str | int]`, *optional*):
+                Motors to hold, by name or id. `None` selects every motor.
+            num_retry (`int`, *optional*, defaults to `0`):
+                Additional attempts on each motor after a communication failure.
 
         Raises:
-            ConnectionError: Some motors could not be reached; the message lists them.
+            ConnectionError: If some motors could not be reached; the message names them.
         """
         self._set_torque(motors, True, num_retry)
 
     @contextmanager
-    def torque_disabled(self, motors: str | list[str] | None = None):
-        """Context-manager that guarantees torque is re-enabled.
+    def torque_disabled(self, motors: NameOrID | Sequence[NameOrID] | None = None) -> Iterator[None]:
+        """Disable the torque of the selected motors for the duration of a `with` block.
 
-        This helper is useful to temporarily disable torque when configuring motors.
+        The torque is enabled again on exit, even when the block raises, which suits configuring
+        motors.
 
-        Examples:
-            >>> with bus.torque_disabled():
-            ...     # Safe operations here
-            ...     pass
+        Args:
+            motors (`str | int | Sequence[str | int]`, *optional*):
+                Motors to free, by name or id. `None` selects every motor.
+
+        Example:
+            ```python
+            >>> with bus.torque_disabled():  # doctest: +SKIP
+            ...     bus.set_operating_mode("position")
+            ```
         """
         self.disable_torque(motors)
         try:
@@ -647,43 +691,51 @@ class SerialMotorsBus(MotorsBusBase):
         finally:
             self.enable_torque(motors)
 
+    @check_if_not_connected
     def set_baudrate(self, baudrate: int) -> None:
-        """Set a new UART baud-rate on the open port.
+        """Change the baud rate of the open port.
 
-        The port opens at :pyattr:`default_baudrate` on every connect.
+        The port opens at `default_baudrate` on every connect.
 
         Args:
-            baudrate (int): Desired baud-rate in bits / second.
+            baudrate (`int`):
+                Baud rate, in bits per second.
         """
-        self._bus.set_baudrate(baudrate)
+        self._connected_bus.set_baudrate(baudrate)
 
-    def _same_calibration(self, motor: str, read: MotorCalibration) -> bool:
-        """Whether *read* from the motor matches the cached calibration of *motor*. The
-        homing offset and the drive mode only count on motors with those registers: a
-        Feetech's drive mode lives in the calibration file alone."""
+    def _same_calibration(self, motor: str, actual: MotorCalibration) -> bool:
+        """Whether the `actual` calibration read from the motor matches the cached one of
+        `motor`. The homing offset and the drive mode only count on motors with those
+        registers: a Feetech's drive mode lives in the calibration file alone."""
         cached = self.calibration[motor]
         return (
-            (cached.range_min, cached.range_max) == (read.range_min, read.range_max)
-            and (cached.homing_offset == read.homing_offset or not self._has_register(motor, "Homing_Offset"))
-            and (cached.drive_mode == read.drive_mode or not self._has_register(motor, "Drive_Mode"))
+            (cached.range_min, cached.range_max) == (actual.range_min, actual.range_max)
+            and (
+                cached.homing_offset == actual.homing_offset or not self._has_register(motor, "Homing_Offset")
+            )
+            and (cached.drive_mode == actual.drive_mode or not self._has_register(motor, "Drive_Mode"))
         )
 
     @property
     def is_calibrated(self) -> bool:
-        """bool: ``True`` if the cached calibration matches the motors."""
+        """Whether the cached calibration matches the one in the motors.
+
+        Calibrations are matched by motor name: the ids they hold are not compared. The homing
+        offset and the drive mode count only on the motors with those registers.
+        """
         motors_calibration = self.read_calibration()
         if set(motors_calibration) != set(self.calibration):
             return False
         return all(self._same_calibration(motor, cal) for motor, cal in motors_calibration.items())
 
     def read_calibration(self) -> dict[str, MotorCalibration]:
-        """Read calibration parameters from the motors.
+        """Read the calibration of every motor.
 
         A motor without a homing offset register (Feetech SCS) reports 0, and one without a
         `Drive_Mode` register (Feetech) reports drive mode 0.
 
         Returns:
-            dict[str, MotorCalibration]: Mapping *motor name → calibration*.
+            `dict[str, MotorCalibration]`: The calibration of each motor, by name.
         """
         mins = self.sync_read("Min_Position_Limit", normalize=False)
         maxes = self.sync_read("Max_Position_Limit", normalize=False)
@@ -707,12 +759,20 @@ class SerialMotorsBus(MotorsBusBase):
         return self.sync_read(data_name, motors, normalize=False) if motors else {}
 
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
-        """Write calibration parameters to the motors and optionally cache them.
+        """Write a calibration to the motors, and by default cache it.
+
+        The position limits are written to every motor, and the homing offset to the motors
+        that have one. Neither the id nor the drive mode is written: a Feetech's drive mode is
+        applied in software when normalising, and a Dynamixel's `Drive_Mode` register is set on
+        its own.
 
         Args:
-            calibration_dict (dict[str, MotorCalibration]): Calibration obtained from
-                :pymeth:`read_calibration` or crafted by the user.
-            cache (bool, optional): Save the calibration to :pyattr:`calibration`. Defaults to True.
+            calibration_dict (`dict[str, MotorCalibration]`):
+                Calibration of each motor, by name, as [`~SerialMotorsBus.read_calibration`]
+                returns it.
+            cache (`bool`, *optional*, defaults to `True`):
+                Whether to keep the calibration as the bus' `calibration`, which normalises the
+                positions.
         """
         for motor, calibration in calibration_dict.items():
             if self._has_register(motor, "Homing_Offset"):
@@ -724,14 +784,14 @@ class SerialMotorsBus(MotorsBusBase):
             self.calibration = calibration_dict
 
     def reset_calibration(self, motors: NameOrID | Sequence[NameOrID] | None = None) -> None:
-        """Restore factory calibration for the selected motors.
+        """Restore the factory calibration of the selected motors.
 
-        Homing offset is set to ``0`` (on motors that have one) and min/max position limits are set to the
-        full usable range. The in-memory :pyattr:`calibration` is cleared.
+        The homing offset is set to 0 on the motors that have one, and the position limits span
+        the whole encoder. The cached `calibration` is cleared.
 
         Args:
-            motors (NameOrID | Sequence[NameOrID] | None, optional): Selection of motors. `None` (default)
-                resets every motor.
+            motors (`str | int | Sequence[str | int]`, *optional*):
+                Motors to reset, by name or id. `None` selects every motor.
         """
         motor_names = self._get_motors_list(motors)
 
@@ -744,60 +804,71 @@ class SerialMotorsBus(MotorsBusBase):
 
         self.calibration = {}
 
-    def set_half_turn_homings(
-        self, motors: NameOrID | Sequence[NameOrID] | None = None
-    ) -> dict[NameOrID, Value]:
-        """Centre each motor range around its current position.
+    def set_half_turn_homings(self, motors: NameOrID | Sequence[NameOrID] | None = None) -> dict[str, int]:
+        """Make the present position of each selected motor a half turn.
 
-        The function computes and writes a homing offset such that the present position becomes exactly one
-        half-turn (e.g. `2047` on a 12-bit encoder).
+        The calibration of the motors is reset, then each gets the homing offset that brings its
+        present position to half its encoder, e.g. 2047 on a 12-bit one. Every selected motor
+        must have a homing offset, which is checked before any register is written.
 
         Args:
-            motors (NameOrID | list[NameOrID] | None, optional): Motors to adjust. Defaults to all motors (`None`).
+            motors (`str | int | Sequence[str | int]`, *optional*):
+                Motors to home, by name or id. `None` selects every motor.
 
         Returns:
-            dict[str, Value]: Mapping *motor name → written homing offset*.
+            `dict[str, int]`: The homing offset written to each motor, by name.
+
+        Raises:
+            ValueError: If a selected motor has no homing offset, as the Feetech SCS.
         """
         motor_names = self._get_motors_list(motors)
+        signs = {
+            motor: sign
+            for motor in motor_names
+            if (sign := self._definition(motor).homing_offset_sign) is not None
+        }
+        if without := [motor for motor in motor_names if motor not in signs]:
+            raise ValueError(f"Motors {without} have no homing offset.")
 
         self.reset_calibration(motor_names)
-        actual_positions = self.sync_read("Present_Position", motor_names, normalize=False)
-        homing_offsets = self._get_half_turn_homings(actual_positions)
+        positions = self.sync_read("Present_Position", motor_names, normalize=False)
+        homing_offsets = self._get_half_turn_homings(positions, signs)
         for motor, offset in homing_offsets.items():
             self.write("Homing_Offset", motor, offset)
 
         return homing_offsets
 
-    def _get_half_turn_homings(self, positions: dict[NameOrID, Value]) -> dict[NameOrID, Value]:
+    def _get_half_turn_homings(
+        self, positions: Mapping[str, Value], signs: Mapping[str, int]
+    ) -> dict[str, int]:
         """The homing offsets that bring each position to a half turn. The offset adds to the
         position the motor reports on Dynamixel servos and subtracts from it on Feetech ones:
         `present = actual + sign * offset`, the sign coming from the motor's definition."""
-        half_turn_homings: dict[NameOrID, Value] = {}
-        for motor, pos in positions.items():
-            sign = self._definition(motor).homing_offset_sign
-            if sign is None:
-                raise ValueError(f"Motor '{motor}' has no homing offset.")
-            max_res = self.resolution(self._get_motor_model(motor)) - 1
-            half_turn_homings[motor] = sign * (int(max_res / 2) - pos)
-
-        return half_turn_homings
+        return {
+            motor: signs[motor] * ((self.resolution(self.motors[motor].model) - 1) // 2 - int(position))
+            for motor, position in positions.items()
+        }
 
     def record_ranges_of_motion(
         self, motors: NameOrID | Sequence[NameOrID] | None = None, display_values: bool = True
     ) -> tuple[dict[str, Value], dict[str, Value]]:
-        """Interactively record the min/max encoder values of each motor.
+        """Record the range each selected motor is moved through by hand, until ENTER.
 
-        Move the joints by hand (with torque disabled) while the method streams live positions. Press
-        :kbd:`Enter` to finish.
+        The joints are moved by hand, with the torque off, while a live table shows the
+        positions.
 
         Args:
-            motors (NameOrID | list[NameOrID] | None, optional): Motors to record.
-                Defaults to every motor (`None`).
-            display_values (bool, optional): When `True` (default) a live table is printed to the console.
+            motors (`str | int | Sequence[str | int]`, *optional*):
+                Motors to record, by name or id. `None` selects every motor.
+            display_values (`bool`, *optional*, defaults to `True`):
+                Whether to print the live table.
 
         Returns:
-            tuple[dict[str, Value], dict[str, Value]]: Two dictionaries *mins* and *maxes* with the
-                extreme values observed for each motor.
+            `tuple[dict[str, int | float], dict[str, int | float]]`: The lowest and the highest
+            raw position of each motor, by name.
+
+        Raises:
+            ValueError: If a motor did not move: its lowest and highest positions are equal.
         """
         motor_names = self._get_motors_list(motors)
 
@@ -892,18 +963,21 @@ class SerialMotorsBus(MotorsBusBase):
 
         return unnormalized_values
 
+    @check_if_not_connected
     def ping(self, motor: NameOrID, num_retry: int = 0) -> int | None:
-        """Ping a single motor of the bus and return its model number.
+        """The model number a motor answers with.
 
-        Reads Model_Number rather than sending a ping: presence and identity then
-        cost one round trip instead of two.
+        Reads `Model_Number` rather than sending a ping: presence and identity then cost one
+        round trip instead of two.
 
         Args:
-            motor (NameOrID): Target motor (name or ID), one of :pyattr:`motors`.
-            num_retry (int, optional): Extra attempts before giving up. Defaults to `0`.
+            motor (`str | int`):
+                Motor, by name or id, one of the bus' motors.
+            num_retry (`int`, *optional*, defaults to `0`):
+                Additional attempts after a communication failure.
 
         Returns:
-            int | None: Motor model number, or `None` when the motor does not answer or reports an error.
+            `int | None`: The model number, `None` when the motor does not answer or reports an error.
         """
         try:
             return self._read("Model_Number", self._get_motor_id(motor), num_retry)
@@ -919,37 +993,49 @@ class SerialMotorsBus(MotorsBusBase):
         normalize: bool = True,
         num_retry: int = 0,
     ) -> Value:
-        """Read a register from a motor.
+        """Read a register of one motor.
 
         Args:
-            data_name (str): Control-table key (e.g. `"Present_Position"`).
-            motor (str): Motor name.
-            normalize (bool, optional): When `True` (default) scale the value to a user-friendly range as
-                defined by the calibration.
-            num_retry (int, optional): Retry attempts.  Defaults to `0`.
+            data_name (`str`):
+                Register name, e.g. `"Present_Position"`; the case does not matter.
+            motor (`str`):
+                Motor name.
+            normalize (`bool`, *optional*, defaults to `True`):
+                Whether to scale a position to the range its calibration and norm mode define.
+            num_retry (`int`, *optional*, defaults to `0`):
+                Additional attempts after a communication failure.
 
         Returns:
-            Value: Raw or normalised value depending on *normalize*.
+            `int | float`: The raw value, or the normalised one.
+
+        Raises:
+            ConnectionError: If the motor does not answer.
+            RuntimeError: If the motor reports an error in its status.
         """
 
         id_ = self.motors[motor].id
         value = self._read(data_name, id_, num_retry)
 
-        if normalize and data_name in self.normalized_data:
+        if normalize and data_name.lower() in self.normalized_data:
             return self._normalize({id_: value})[id_]
 
         return value
 
     def _read(self, data_name: str, motor_id: int, num_retry: int) -> int:
         """Read one register of a motor by id: `read` takes a name, `ping` any id."""
-        err_msg = f"Failed to read '{data_name}' on id_={motor_id} after {num_retry + 1} tries."
         try:
-            value, status = self._bus.read_register_with_error(motor_id, data_name.lower(), retries=num_retry)
+            value, status = self._connected_bus.read_register_with_error(
+                motor_id, data_name.lower(), retries=num_retry
+            )
         except _TRANSPORT_ERRORS as e:
-            raise ConnectionError(f"{err_msg} {e}") from e
+            raise ConnectionError(
+                f"Failed to read '{data_name}' from motor ID {motor_id} after {num_retry + 1} tries. {e}"
+            ) from e
 
         if status:
-            raise RuntimeError(f"{err_msg} Motor {motor_id} returned error status 0x{status:02x}.")
+            raise RuntimeError(
+                f"Failed to read '{data_name}': motor ID {motor_id} returned error status 0x{status:02x}."
+            )
 
         return value
 
@@ -957,35 +1043,46 @@ class SerialMotorsBus(MotorsBusBase):
     def write(
         self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
     ) -> None:
-        """Write a value to a single motor's register.
+        """Write a register of one motor, and wait for its answer.
 
-        Contrary to :pymeth:`sync_write`, this expects a response status packet emitted by the motor, which
-        provides a guarantee that the value was written to the register successfully. In consequence, it is
-        slower than :pymeth:`sync_write` but it is more reliable. It should typically be used when configuring
-        motors.
+        Unlike [`~SerialMotorsBus.sync_write`], the motor acknowledges the write, so a failure is
+        reported: slower, but suited to configuring motors.
 
         Args:
-            data_name (str): Register name.
-            motor (str): Motor name.
-            value (Value): Value to write.  If *normalize* is `True` the value is first converted to raw
-                units.
-            normalize (bool, optional): Enable or disable normalisation. Defaults to `True`.
-            num_retry (int, optional): Retry attempts.  Defaults to `0`.
+            data_name (`str`):
+                Register name, e.g. `"Goal_Position"`; the case does not matter.
+            motor (`str`):
+                Motor name.
+            value (`int | float`):
+                Value to write, normalised or raw as `normalize` says.
+            normalize (`bool`, *optional*, defaults to `True`):
+                Whether a position is given in the range its calibration and norm mode define.
+            num_retry (`int`, *optional*, defaults to `0`):
+                Additional attempts after a communication failure.
+
+        Raises:
+            ConnectionError: If the motor does not answer.
+            RuntimeError: If the motor reports an error in its status.
         """
 
         id_ = self.motors[motor].id
         int_value = int(value)
-        if normalize and data_name in self.normalized_data:
+        if normalize and data_name.lower() in self.normalized_data:
             int_value = self._unnormalize({id_: value})[id_]
 
-        err_msg = f"Failed to write '{data_name}' on {id_=} with '{int_value}' after {num_retry + 1} tries."
         try:
-            status = self._bus.write_register_with_error(id_, data_name.lower(), int_value, retries=num_retry)
+            status = self._connected_bus.write_register_with_error(
+                id_, data_name.lower(), int_value, retries=num_retry
+            )
         except _TRANSPORT_ERRORS as e:
-            raise ConnectionError(f"{err_msg} {e}") from e
+            raise ConnectionError(
+                f"Failed to write {int_value} to '{data_name}' of motor ID {id_} after {num_retry + 1} tries. {e}"
+            ) from e
 
         if status:
-            raise RuntimeError(f"{err_msg} Motor {id_} returned error status 0x{status:02x}.")
+            raise RuntimeError(
+                f"Failed to write {int_value} to '{data_name}': motor ID {id_} returned error status 0x{status:02x}."
+            )
 
     @check_if_not_connected
     def sync_read(
@@ -996,30 +1093,52 @@ class SerialMotorsBus(MotorsBusBase):
         normalize: bool = True,
         num_retry: int = 0,
     ) -> dict[str, Value]:
-        """Read the same register from several motors at once.
+        """Read a register of several motors.
+
+        rustypot sends one Sync Read per group of motors sharing a protocol and the register's
+        address and size, and reads the motors of a servo without Sync Read, as the Feetech SCS,
+        one after the other. The values are therefore not one simultaneous snapshot.
 
         Args:
-            data_name (str): Register name.
-            motors (NameOrID | Sequence[NameOrID] | None, optional): Motors to query. `None` (default) reads every motor.
-            normalize (bool, optional): Normalisation flag.  Defaults to `True`.
-            num_retry (int, optional): Retry attempts.  Defaults to `0`.
+            data_name (`str`):
+                Register name, e.g. `"Present_Position"`; the case does not matter.
+            motors (`str | int | Sequence[str | int]`, *optional*):
+                Motors to read, by name or id. `None` reads every motor.
+            normalize (`bool`, *optional*, defaults to `True`):
+                Whether to scale positions to the range their calibration and norm mode define.
+            num_retry (`int`, *optional*, defaults to `0`):
+                Additional attempts after a communication failure. A retry sends every group
+                again, those that had succeeded included; an unknown motor or register is never
+                retried.
 
         Returns:
-            dict[str, Value]: Mapping *motor name → value*.
+            `dict[str, int | float]`: The value of each motor, by name.
+
+        Raises:
+            ConnectionError: If a motor does not answer.
+            RuntimeError: If a motor reports an error in its status.
         """
 
         names = self._get_motors_list(motors)
-        ids = [self.motors[motor].id for motor in names]
+        ids = [self._get_motor_id(motor) for motor in names]
 
         try:
-            values = self._bus.sync_read_register(ids, data_name.lower(), retries=num_retry)
+            read = self._connected_bus.sync_read_register_with_error(
+                ids, data_name.lower(), retries=num_retry
+            )
         except _TRANSPORT_ERRORS as e:
             raise ConnectionError(
-                f"Failed to sync read '{data_name}' on {ids=} after {num_retry + 1} tries. {e}"
+                f"Failed to sync read '{data_name}' from motor IDs {ids} after {num_retry + 1} tries. {e}"
             ) from e
-        ids_values = dict(zip(ids, values, strict=True))
+        if errors := [
+            f"motor ID {id_} returned error status 0x{status:02x}"
+            for id_, (_, status) in zip(ids, read, strict=True)
+            if status
+        ]:
+            raise RuntimeError(f"Failed to sync read '{data_name}': {', '.join(errors)}.")
+        ids_values = {id_: value for id_, (value, _) in zip(ids, read, strict=True)}
 
-        if normalize and data_name in self.normalized_data:
+        if normalize and data_name.lower() in self.normalized_data:
             return {self._id_to_name(id_): value for id_, value in self._normalize(ids_values).items()}
 
         return {self._id_to_name(id_): value for id_, value in ids_values.items()}
@@ -1033,30 +1152,37 @@ class SerialMotorsBus(MotorsBusBase):
         normalize: bool = True,
         num_retry: int = 0,
     ) -> None:
-        """Write the same register on multiple motors.
+        """Write a register of several motors, without waiting for an answer.
 
-        Contrary to :pymeth:`write`, this *does not* expects a response status packet emitted by the motor, which
-        can allow for lost packets. It is faster than :pymeth:`write` and should typically be used when
-        frequency matters and losing some packets is acceptable (e.g. teleoperation loops).
+        Unlike [`~SerialMotorsBus.write`], no motor answers a sync write: faster, suited to
+        control loops, but a lost packet goes unnoticed. rustypot sends one Sync Write per group
+        of motors sharing a protocol and the register's address and size.
 
         Args:
-            data_name (str): Register name.
-            values (Value | dict[str, Value]): Either a single value (applied to every motor) or a mapping
-                *motor name → value*.
-            normalize (bool, optional): If `True` (default) convert values from the user range to raw units.
-            num_retry (int, optional): Retry attempts.  Defaults to `0`.
+            data_name (`str`):
+                Register name, e.g. `"Goal_Position"`; the case does not matter.
+            values (`int | float | dict[str, int | float]`):
+                One value for every motor, or a value per motor name.
+            normalize (`bool`, *optional*, defaults to `True`):
+                Whether positions are given in the range their calibration and norm mode define.
+            num_retry (`int`, *optional*, defaults to `0`):
+                Additional attempts after a failure of the port. A retry sends every group again.
+
+        Raises:
+            ConnectionError: If the port fails.
         """
 
         raw_ids_values = self._get_ids_values_dict(values)
         int_ids_values = {id_: int(val) for id_, val in raw_ids_values.items()}
-        if normalize and data_name in self.normalized_data:
+        if normalize and data_name.lower() in self.normalized_data:
             int_ids_values = self._unnormalize(raw_ids_values)
 
         try:
-            self._bus.sync_write_register(
+            self._connected_bus.sync_write_register(
                 list(int_ids_values), data_name.lower(), list(int_ids_values.values()), retries=num_retry
             )
         except _TRANSPORT_ERRORS as e:
             raise ConnectionError(
-                f"Failed to sync write '{data_name}' with ids_values={int_ids_values} after {num_retry + 1} tries. {e}"
+                f"Failed to sync write '{data_name}' to motor IDs {list(int_ids_values)} after "
+                f"{num_retry + 1} tries. {e}"
             ) from e
