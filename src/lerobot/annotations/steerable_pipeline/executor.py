@@ -29,11 +29,9 @@ Phase 3 is why the ``plan`` module must be re-entered after the
 ``interjections`` module — to refresh ``plan`` rows at interjection
 timestamps.
 
-Distributed execution is provided by Hugging Face Jobs (see
-``lerobot.jobs.annotate``, reached via ``--job.target=<flavor>``); the pod
-inside the job invokes ``lerobot-annotate`` which uses this in-process executor.
-Episode-level concurrency is controlled by
-``ExecutorConfig.episode_parallelism``.
+This compatibility API supports callers that supply module instances directly.
+The ``lerobot-annotate`` CLI uses ``annotations.processing_recipe`` and the shared
+runtime for local/Slurm/HF execution. Do not add another recipe here.
 """
 
 from __future__ import annotations

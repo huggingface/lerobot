@@ -70,30 +70,14 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
     config["vlm"]["api_key"] = "EMPTY"
 
     stages = []
-    if cfg.quality.enabled:
-        stages.append(
-            StageConfig(
-                "quality",
-                "lerobot.annotations.processing:EpisodeQuality",
-                {
-                    "root": str(root),
-                    "quality_config": draccus.encode(cfg.quality),
-                    "camera_key": cfg.vlm.camera_key,
-                    "video_backend": cfg.video_backend,
-                },
-            )
-        )
     phase_dependencies: dict[str, tuple[str, ...]] = {
         name: ("plan",) if name == "interjections" and "plan" in enabled else () for name in enabled
     }
     if "plan" in enabled and "interjections" in enabled:
         phase_dependencies["plan_update"] = ("plan", "interjections")
     shared = {key: value for key, value in config.items() if key not in {"plan", "interjections", "vqa"}}
-    quality = ("quality",) if cfg.quality.enabled else ()
     for name, parents in phase_dependencies.items():
         family = "plan" if name == "plan_update" else name
-        # Preserve the sealed dependency ordering used by existing checkpoints.
-        dependencies = parents + quality if name == "plan_update" else quality + parents
         stages.append(
             StageConfig(
                 name,
@@ -104,8 +88,7 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
                     "annotation_config": {**shared, family: config[family]},
                     "client_factory": client_factory,
                 },
-                dependencies,
-                when="quality.usable" if cfg.quality.enabled else None,
+                parents,
             )
         )
     for name, module in (("validate", "LanguageValidator"), ("materialize", "LanguageMaterializer")):
@@ -169,15 +152,13 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
         info = json.loads((root / "meta/info.json").read_text())
         # Small provenance tables live beside the enriched data, not only in the
         # runtime cache. Keep native videos untouched and publication explicit.
-        for stage_name, output_name in (("quality", "quality"), ("plan", "windows")):
-            if stage_name not in completed:
-                continue
-            provenance_plan, _ = completed[stage_name]
+        if "plan" in completed:
+            provenance_plan, _ = completed["plan"]
             for item, result in accepted_items(store, provenance_plan):
                 for artifact in result.artifacts:
-                    if artifact.name != output_name:
+                    if artifact.name != "windows":
                         continue
-                    relative = f"meta/annotations/{output_name}/episode-{item.key}.parquet"
+                    relative = f"meta/annotations/windows/episode-{item.key}.parquet"
                     expected[relative] = (
                         file_checksum(root / relative) if (root / relative).exists() else None
                     )

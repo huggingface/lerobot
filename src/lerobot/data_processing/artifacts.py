@@ -14,8 +14,6 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO
 
-from filelock import FileLock
-
 from lerobot.streaming.location import StorageLocation
 from lerobot.utils.import_utils import _fsspec_available, require_package
 
@@ -118,26 +116,6 @@ class ArtifactStore:
             self.fs.invalidate_cache()
         prefix = self.root.rstrip("/") + "/"
         return sorted(path.removeprefix(prefix) for path in self.fs.glob(self.path(pattern)))
-
-
-def acquire_file(uri: str, sha256: str, destination: Path) -> Path:
-    """Acquire a pinned model/index asset; publish only a checksum-verified file."""
-    require_package("fsspec", "dataset")
-    if len(sha256) != 64 or any(c not in "0123456789abcdef" for c in sha256):
-        raise ValueError("Acquisition requires the expected SHA256")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with FileLock(str(destination) + ".lock"):
-        if destination.exists():
-            if file_checksum(destination)[0] != sha256:
-                raise ValueError("Existing asset does not match its pinned checksum")
-            return destination
-        with tempfile.TemporaryDirectory(prefix=".processing-acquire-", dir=destination.parent) as directory:
-            temporary = Path(directory) / "asset"
-            with fsspec.open(uri, "rb") as source, temporary.open("wb") as output:
-                if _stream_checksum(source, output)[0] != sha256:
-                    raise ValueError("Downloaded asset checksum mismatch")
-            temporary.replace(destination)
-    return destination
 
 
 def file_checksum(path: Path) -> tuple[str, int]:

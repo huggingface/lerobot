@@ -187,38 +187,6 @@ def test_plan_mode_does_not_construct_models(single_episode_root):
     assert list(single_episode_root.rglob("plan.json"))
 
 
-def test_quality_mask_skips_inference_and_preserves_native_rows(single_episode_root, monkeypatch):
-    import torch
-
-    from lerobot.annotations import processing
-
-    class BlackFrames:
-        def frames_at(self, record, timestamps):
-            return [torch.zeros(3, 16, 16, dtype=torch.uint8) for _ in timestamps]
-
-    monkeypatch.setattr(processing, "make_frame_provider", lambda *args, **kwargs: BlackFrames())
-    cfg = config()
-    cfg.quality.enabled = True
-    cfg.interjections.enabled = True
-    cfg.vqa.enabled = True
-    CLIENTS.clear()
-    path = single_episode_root / "data/chunk-000/file-000.parquet"
-    before = pq.read_table(path)
-    result = run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
-    assert not CLIENTS
-    after = pq.read_table(path)
-    assert after.select(before.column_names).equals(before)
-    assert after["language_persistent"].to_pylist() == [[]] * len(before)
-    quality = pq.read_table(single_episode_root / "meta/annotations/quality/episode-0.parquet").to_pylist()[0]
-    assert not quality["usable"] and quality["reason"] == "black_frame_fraction"
-    assert quality["timestamps"] == before["timestamp"].to_pylist()
-    assert all(
-        phase.episodes_skipped == 1
-        for phase in result.phases
-        if phase.name in {"plan", "vqa", "interjections", "plan_update"}
-    )
-
-
 def test_window_provenance_keeps_exact_source_references(single_episode_root):
     cfg = config()
     run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
@@ -227,27 +195,6 @@ def test_window_provenance_keeps_exact_source_references(single_episode_root):
     owned = [row for row in rows if row["owned"]]
     assert [row["frame_index"] for row in owned] == native["frame_index"].to_pylist()
     assert [row["timestamp"] for row in owned] == native["timestamp"].to_pylist()
-
-
-def test_masked_episodes_never_auto_start_model(single_episode_root, monkeypatch):
-    import torch
-
-    from lerobot.annotations import processing, processing_recipe
-
-    class BlackFrames:
-        def frames_at(self, record, timestamps):
-            return [torch.zeros(3, 8, 8, dtype=torch.uint8) for _ in timestamps]
-
-    monkeypatch.setattr(processing, "make_frame_provider", lambda *args, **kwargs: BlackFrames())
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Masked episode started inference service")
-
-    monkeypatch.setattr(processing_recipe, "make_vlm_client", forbidden)
-    cfg = config()
-    cfg.vlm.auto_serve = True
-    cfg.quality.enabled = True
-    assert run_annotation_pipeline(cfg, single_episode_root).validation_report.ok
 
 
 def test_split_episode_and_hf_reader(single_episode_root):
@@ -345,3 +292,38 @@ def test_model_revision_invalidates_subtask_inference(single_episode_root):
     cfg.vlm.model_revision = "a" * 40
     run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
     assert len(CLIENTS) > count
+
+
+@pytest.mark.parametrize(
+    "enabled,expected",
+    [
+        (
+            ("plan", "interjections", "vqa"),
+            ("plan", "interjections", "vqa", "plan_update", "validate", "materialize"),
+        ),
+        (("plan",), ("plan", "validate", "materialize")),
+        (("vqa",), ("vqa", "validate", "materialize")),
+    ],
+)
+def test_recipe_keeps_only_existing_main_workflows(single_episode_root, monkeypatch, enabled, expected):
+    from lerobot.annotations import processing_recipe
+
+    captured = []
+
+    def plan(source, stages, runtime, **kwargs):
+        captured.extend(stages)
+        return None, {}
+
+    monkeypatch.setattr(processing_recipe, "run_pipeline", plan)
+    cfg = config()
+    cfg.runtime.mode = "plan"
+    assert not hasattr(cfg, "quality")
+    for name in ("plan", "interjections", "vqa"):
+        getattr(cfg, name).enabled = name in enabled
+    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    assert tuple(stage.id for stage in captured) == expected
+    assert {stage.factory for stage in captured} <= {
+        "lerobot.annotations.processing:LanguageModule",
+        "lerobot.annotations.processing:LanguageValidator",
+        "lerobot.annotations.processing:LanguageMaterializer",
+    }
