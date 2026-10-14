@@ -1,55 +1,51 @@
-# Asynchronous remote inference
+# Remote Inference
 
-Run the policy on a GPU server while the robot computer keeps control of cameras, motors, teleoperation and recording. Inference runs in the background: the robot executes buffered actions while the next prediction is prepared, so there is no pause between predictions, and you choose how often the robot changes its plan.
+Large policies need a GPU, and with a synchronous rollout the robot stops moving every time the policy computes its next chunk of actions. Remote inference splits the job in two: a **policy server** runs the checkpoint on a GPU, and the **robot computer** keeps control of cameras, motors, teleoperation and recording. The robot keeps executing the actions it already has while the server computes the next ones, so motion no longer pauses for inference.
 
-That choice is a balance between **freshness** and **continuity**. Fresher plans react sooner; following more of an existing plan preserves useful task progress.
+Use it when:
+
+- the computer wired to the robot has no GPU, or one too small for the policy: a laptop or single-board computer next to the arm and a GPU workstation across the lab;
+- inference takes a noticeable fraction of each action chunk and you want continuous motion;
+- you want to decide how often the robot replans without touching the checkpoint.
+
+The one tradeoff you tune is **freshness versus continuity**. Asking for a new plan sooner lets the robot react to what it sees; following more of the current plan preserves task progress.
 
 ## How it works
 
 ```mermaid
 flowchart LR
   %% The server subgraph is declared first so that the layout keeps the robot computer on the left.
-  subgraph server["Policy server: lerobot-policy-server"]
-    direction TB
-    SW["Session worker"] --> M["Checkpoint + saved processors"]
-    M --> SW
+  subgraph server["Policy server (GPU)"]
+    P["Policy checkpoint"]
   end
-  subgraph robot["Robot computer: lerobot-rollout --inference.type=remote"]
+  subgraph robot["Robot computer"]
     direction TB
-    HW["Cameras and motors"] -->|observation| CT["Control thread"]
-    CT -->|interpolated targets| HW
-    CT <-->|pop next action| Q[("Local action buffer")]
-    W["Remote worker"] -->|align / blend| Q
-    OP["Operator input and recording"] --- CT
+    B[("Action buffer")] -->|next action, every tick| R["Cameras and motors<br/>teleoperation, recording"]
   end
-  W -->|observation + task| SW
-  SW -.->|action chunk| W
+  R -->|observation + instruction| P
+  P -.->|chunk of upcoming actions| B
 ```
 
-One server loads one checkpoint and admits one client at a time. The control thread on the robot computer never waits for the network: it keeps popping targets from the local buffer while the remote worker exchanges observations and chunks with the server. Operator input, intervention and recording stay on the robot computer.
+The robot computer keeps a buffer of upcoming actions. When the buffer runs low it sends a fresh observation, keeps moving from the buffer while the server computes, and splices the new chunk into the part of the plan that has not been executed yet.
 
 ```mermaid
 sequenceDiagram
-  participant R as Control thread
-  participant B as Action buffer
-  participant S as Policy server
-  loop every control tick
-    R->>B: pop next target, interpolate, send
-  end
-  Note over R,B: remaining playback reaches the refill threshold
-  R->>S: observation + task
+  participant R as Robot computer
+  participant S as Policy server (GPU)
+  Note over R: executing actions from the buffer
+  Note over R: buffer runs low (refill threshold)
+  R->>S: observation + instruction
   rect rgb(235, 245, 255)
-    Note over R,B: buffered motion continues
-    S->>S: preprocess, predict, postprocess
+    Note over R: keeps moving from the buffer
+    S->>S: predict the next chunk
   end
-  S-->>R: action chunk
-  R->>B: trim steps already played, replace the future
-  Note over R,S: turnaround = encode + network + inference + decode
+  S-->>R: chunk of upcoming actions
+  Note over R: new plan replaces the part of the buffer not yet executed
 ```
 
-The client requests a new prediction when the remaining playback in its buffer drops to the **refill** threshold. Refill controls _when to ask_, not the time between requests; the effective threshold is at least the recent maximum turnaround plus one action interval, so a slow server automatically requests earlier. When the chunk arrives, steps that have already been played are trimmed and only the future part of the buffer is replaced.
+Three client settings shape this behavior. `refill_seconds` decides how early to ask for the next plan, `chunk_merge` decides how the new plan is spliced into the old one, and blending smooths the seam between them. The server only needs the checkpoint and a description of the robot it was trained for. The sections below start from a working setup and then build intuition for each setting.
 
-**Local RTC** (`--inference.type=rtc`) runs inference in a background thread of the rollout process without any transport. **Same-host remote inference** still uses two processes and `--inference.type=remote`; it offers the same alignment and blending options as a LAN deployment, including for policies without RTC. See [how RTC relates to remote inference](./rtc#how-rtc-relates-to-remote-inference).
+**Local RTC** (`--inference.type=rtc`) is the other asynchronous option: inference runs in a background thread of the rollout process, on the same machine, without a server. Remote inference on the same host still uses two processes and `--inference.type=remote`, and offers alignment and blending for policies without RTC. See [how RTC relates to remote inference](./rtc#how-rtc-relates-to-remote-inference).
 
 ### Supported policies and robots
 
@@ -138,6 +134,8 @@ Binding a specific interface limits exposure but does not authenticate peers. Us
 </details>
 
 ## Choose how to continue the motion
+
+By the time a new chunk arrives, the observation it was computed from is already a little old, and the robot has moved on. The merge mode decides what to do about that: play the new chunk after the old one, drop the steps the robot has already passed, or smooth the join.
 
 | Choice               | Client settings                                          | Useful starting point                                                                                                     |
 | -------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |

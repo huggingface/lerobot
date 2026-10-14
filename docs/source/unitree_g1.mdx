@@ -335,7 +335,7 @@ lerobot-rollout \
 
 ### Run on the Physical Robot
 
-The previous remote deployment recipe used the retired gRPC async client. The replacement [asynchronous remote inference](./remote_inference) currently requires an explicitly supported local position-hold contract and canonical actuator actions. SONIC's 64-D motion tokens are decoder inputs, not joint-position targets, even though their feature names end in `.pos`; they must not be treated as a position-hold interface.
+The previous remote deployment recipe used the retired gRPC async client. The replacement [remote inference](./remote_inference) currently requires an explicitly supported local position-hold contract and canonical actuator actions. SONIC's 64-D motion tokens are decoder inputs, not joint-position targets, even though their feature names end in `.pos`; they must not be treated as a position-hold interface.
 
 A validated remote SONIC/Unitree deployment is therefore not provided by this replacement yet. The simulation example above remains available. Physical remote support needs a controller-aware action/hold contract that keeps the 50 Hz balance controller and hardware communication onboard; do not substitute the new remote CLI into the retired recipe or bypass its capability checks.
 
