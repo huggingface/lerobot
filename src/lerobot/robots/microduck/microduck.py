@@ -88,6 +88,7 @@ class MicroDuck(Robot):
 
         self._state_lock = threading.Lock()
         self._latest_state: dict[str, Any] | None = None
+        self._state_error: Exception | None = None
         self._state_ready = threading.Event()
 
         self._frame_lock = threading.Lock()
@@ -136,47 +137,68 @@ class MicroDuck(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        with self._state_lock:
+            self._latest_state = None
+            self._state_error = None
+        self._state_ready.clear()
         try:
-            self._cmd.open()
-            self._state_rpc.open()
-        except OSError as e:
-            self._cmd.close()
-            raise DeviceNotConnectedError(
-                f"Could not reach robotd at {self.config.robotd_address}. Forward its socket first: "
-                f"ssh -N -L {self.config.robotd_address}:/run/robotd.sock microduck@{self.config.remote_ip}"
-            ) from e
+            try:
+                self._cmd.open()
+                self._state_rpc.open()
+            except OSError as e:
+                raise DeviceNotConnectedError(
+                    f"Could not reach robotd at {self.config.robotd_address}. Forward its socket first: "
+                    f"ssh -N -L {self.config.robotd_address}:/run/robotd.sock microduck@{self.config.remote_ip}"
+                ) from e
 
-        hello = self._cmd.request("hello", {"api_version": API_VERSION})
-        if hello and hello.get("api_version") != API_VERSION:
-            logger.warning(
-                f"robotd speaks API v{hello.get('api_version')}, this client was written for v{API_VERSION}."
-            )
+            hello = self._cmd.request("hello", {"api_version": API_VERSION})
+            if hello and hello.get("api_version") != API_VERSION:
+                logger.warning(
+                    f"robotd speaks API v{hello.get('api_version')}, this client was written for v{API_VERSION}."
+                )
 
-        subscribed = self._state_rpc.request("robot.subscribe", {"hz": self.config.state_hz})
-        if subscribed and not subscribed.get("accepted", True):
-            raise DeviceNotConnectedError(f"robotd refused the state subscription: {subscribed}")
+            subscribed = self._state_rpc.request("robot.subscribe", {"hz": self.config.state_hz})
+            if subscribed and not subscribed.get("accepted", True):
+                raise DeviceNotConnectedError(f"robotd refused the state subscription: {subscribed}")
 
-        self._stop_event.clear()
-        self._start_thread(self._state_loop, "microduck-state")
-        if self.config.use_camera:
-            self._start_thread(self._camera_loop, "microduck-camera")
+            self._stop_event.clear()
+            self._start_thread(self._state_loop, "microduck-state")
+            if self.config.use_camera:
+                self._start_thread(self._camera_loop, "microduck-camera")
 
-        if not self._state_ready.wait(timeout=self.config.rpc_timeout_s):
+            if not self._state_ready.wait(timeout=self.config.rpc_timeout_s):
+                raise DeviceNotConnectedError("No robot.state received from robotd.")
+            self._check_state_stream()
+            if self.config.use_camera and not self._frame_ready.wait(
+                timeout=self.config.camera_timeout_s * 3
+            ):
+                logger.warning(
+                    f"No camera frame from http://{self.config.remote_ip}:{self.config.camera_port}/frame yet; "
+                    "recording black frames until one arrives."
+                )
+            self._check_state_stream()
+
+            if self.config.enable_on_connect:
+                reply = self._cmd.request("robot.enable", {"on": True})
+                if reply and not reply.get("accepted", True):
+                    logger.warning(f"robot.enable was refused: {reply.get('reason')}")
+            self._check_state_stream()
+            self._is_connected = True
+        except BaseException:
             self._shutdown_threads()
-            raise DeviceNotConnectedError("No robot.state received from robotd.")
-        if self.config.use_camera and not self._frame_ready.wait(timeout=self.config.camera_timeout_s * 3):
-            logger.warning(
-                f"No camera frame from http://{self.config.remote_ip}:{self.config.camera_port}/frame yet; "
-                "recording black frames until one arrives."
-            )
-
-        if self.config.enable_on_connect:
-            reply = self._cmd.request("robot.enable", {"on": True})
-            if reply and not reply.get("accepted", True):
-                logger.warning(f"robot.enable was refused: {reply.get('reason')}")
-
-        self._is_connected = True
+            self._is_connected = False
+            raise
         logger.info(f"{self} connected.")
+
+    def _check_state_stream(self) -> dict[str, Any]:
+        """Return a state snapshot or raise if the stream failed."""
+        with self._state_lock:
+            error = self._state_error
+            if error is not None:
+                raise DeviceNotConnectedError(
+                    f"robot.state stream stopped: {error}. Disconnect and reconnect {self}."
+                ) from error
+            return self._latest_state or {}
 
     def _start_thread(self, target, name: str) -> None:
         thread = threading.Thread(target=target, name=name, daemon=True)
@@ -189,6 +211,10 @@ class MicroDuck(Robot):
                 message = self._state_rpc.read_message()
             except (OSError, ValueError, ConnectionError) as e:
                 if not self._stop_event.is_set():
+                    with self._state_lock:
+                        self._state_error = e
+                        self._latest_state = None
+                    self._state_ready.set()
                     logger.error(f"robot.state stream stopped: {e}")
                 return
             if message.get("method") != "robot.state":
@@ -243,8 +269,7 @@ class MicroDuck(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        with self._state_lock:
-            state = self._latest_state or {}
+        state = self._check_state_stream()
         obs = self._state_to_observation(state)
 
         if self.config.use_camera:
@@ -257,6 +282,7 @@ class MicroDuck(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
+        self._check_state_stream()
         cfg = self.config
         limits = {"vx": cfg.max_vx, "vy": cfg.max_vy, "vyaw": cfg.max_vyaw}
         sent: RobotAction = {}
