@@ -16,14 +16,14 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from lerobot.data_processing.artifacts import file_checksum
-from lerobot.data_processing.types import (
+from lerobot.annotations.runtime.artifacts import file_checksum
+from lerobot.annotations.runtime.types import (
     DatasetRef,
     InputItem,
     artifact_identities,
     fingerprint,
 )
-from lerobot.data_processing.worker import accepted_items
+from lerobot.annotations.runtime.worker import accepted_items
 from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 
 from .steerable_pipeline.reader import EpisodeRecord, _load_tasks_lookup

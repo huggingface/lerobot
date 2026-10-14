@@ -21,12 +21,12 @@ from pathlib import Path
 import draccus
 from huggingface_hub import get_token, inspect_job, list_jobs_hardware, run_job
 
-from lerobot.data_processing.artifacts import ArtifactStore
-from lerobot.data_processing.bundles import check_credentials, write_bundle
-from lerobot.data_processing.planner import StagePlan, load_module
-from lerobot.data_processing.runtime import finalize_stage
-from lerobot.data_processing.types import Artifact, Resources, fingerprint
-from lerobot.data_processing.worker import accepted_in_shard, run_worker_group
+from lerobot.annotations.runtime.artifacts import ArtifactStore
+from lerobot.annotations.runtime.bundles import check_credentials, write_bundle
+from lerobot.annotations.runtime.planner import StagePlan, load_module
+from lerobot.annotations.runtime.runtime import finalize_stage
+from lerobot.annotations.runtime.types import Artifact, Resources, fingerprint
+from lerobot.annotations.runtime.worker import accepted_in_shard, run_worker_group
 
 from .processing_worker import assigned_shards
 
@@ -267,7 +267,7 @@ def retain_release(store, root: Path, *, source=None, config=None):
         if (root / name).is_file():
             paths.append((name, root / name))
     for relative, path in sorted(paths):
-        from lerobot.data_processing.artifacts import file_checksum
+        from lerobot.annotations.runtime.artifacts import file_checksum
 
         digest, size = file_checksum(path)
         if (
@@ -319,7 +319,7 @@ def _restore_release_into(store, key, destination):
 
         from huggingface_hub import hf_hub_download
 
-        from lerobot.data_processing.artifacts import file_checksum
+        from lerobot.annotations.runtime.artifacts import file_checksum
 
         for entry in release["source_files"]:
             ArtifactStore(destination).path(entry["path"])

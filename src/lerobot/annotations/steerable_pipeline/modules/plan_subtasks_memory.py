@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from lerobot.data_processing.windows import EpisodeWindow, SourceFrame, reconcile_spans, time_windows
+from lerobot.annotations.runtime.windows import EpisodeWindow, SourceFrame, reconcile_spans, time_windows
 
 from ..config import PlanConfig
 from ..frames import (

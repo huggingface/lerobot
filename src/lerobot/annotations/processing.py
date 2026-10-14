@@ -17,8 +17,8 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from lerobot.data_processing.artifacts import file_checksum
-from lerobot.data_processing.types import (
+from lerobot.annotations.runtime.artifacts import file_checksum
+from lerobot.annotations.runtime.types import (
     Artifact,
     ItemResult,
     ModuleSpec,

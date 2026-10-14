@@ -11,8 +11,8 @@ import draccus
 from huggingface_hub import CommitOperationAdd, DatasetCard, HfApi, hf_hub_download
 from huggingface_hub.errors import RepositoryNotFoundError
 
-from ..bundles import check_credentials
-from ..types import canonical_json, checked_name
+from .runtime.bundles import check_credentials
+from .runtime.types import canonical_json, checked_name
 
 LINEAGE = "meta/processing_release.json"
 

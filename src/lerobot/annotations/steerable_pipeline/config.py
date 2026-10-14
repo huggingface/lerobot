@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lerobot.annotations.runtime.configs import RuntimeConfig
 from lerobot.configs.default import JobConfig
-from lerobot.data_processing.configs import RuntimeConfig
 
 # The annotation pipeline boots its own vLLM server, so the pod starts from the
 # official vLLM runtime rather than the prebuilt `lerobot-gpu` training image;

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pyarrow as pa
 
-from lerobot.data_processing.types import ItemResult, ModuleSpec, Outcome
+from lerobot.annotations.runtime.types import ItemResult, ModuleSpec, Outcome
 
 
 class Echo:

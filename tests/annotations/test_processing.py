@@ -245,7 +245,7 @@ def test_serialized_job_keeps_real_enriched_parquet(single_episode_root, tmp_pat
 
     import draccus
 
-    from lerobot.data_processing.artifacts import ArtifactStore
+    from lerobot.annotations.runtime.artifacts import ArtifactStore
     from lerobot.jobs import processing
     from lerobot.scripts import lerobot_annotate
 

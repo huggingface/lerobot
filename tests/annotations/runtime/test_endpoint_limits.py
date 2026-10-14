@@ -10,7 +10,7 @@ from urllib.error import HTTPError
 
 import pytest
 
-from lerobot.data_processing.endpoint_limits import EndpointLimitServer, SharedEndpointLimit
+from lerobot.annotations.runtime.endpoint_limits import EndpointLimitServer, SharedEndpointLimit
 
 
 @pytest.fixture

@@ -4,15 +4,20 @@
 
 import pytest
 
-from lerobot.data_processing.artifacts import ArtifactStore
-from lerobot.data_processing.configs import RuntimeConfig, StageConfig
-from lerobot.data_processing.errors import ErrorCategory, UndecodableInputError, classify_error, retry_delay
-from lerobot.data_processing.pipeline import run_pipeline
-from lerobot.data_processing.planner import seal_plan
-from lerobot.data_processing.runtime import run_local
-from lerobot.data_processing.types import DatasetRef, InputItem, Resources
-from lerobot.data_processing.windows import reconcile_frame_rows, reconcile_spans, time_windows
-from lerobot.data_processing.worker import accepted_in_shard
+from lerobot.annotations.runtime.artifacts import ArtifactStore
+from lerobot.annotations.runtime.configs import RuntimeConfig, StageConfig
+from lerobot.annotations.runtime.errors import (
+    ErrorCategory,
+    UndecodableInputError,
+    classify_error,
+    retry_delay,
+)
+from lerobot.annotations.runtime.pipeline import run_pipeline
+from lerobot.annotations.runtime.planner import seal_plan
+from lerobot.annotations.runtime.runtime import run_local
+from lerobot.annotations.runtime.types import DatasetRef, InputItem, Resources
+from lerobot.annotations.runtime.windows import reconcile_frame_rows, reconcile_spans, time_windows
+from lerobot.annotations.runtime.worker import accepted_in_shard
 
 pytest.importorskip("pyarrow")
 
@@ -28,7 +33,7 @@ def test_independent_stages_overlap_and_join_waits(tmp_path):
     stages = [
         StageConfig(
             name,
-            "tests.data_processing._modules:RendezvousEcho",
+            "tests.annotations.runtime._modules:RendezvousEcho",
             {
                 "signal": str(tmp_path / name),
                 "peer": str(tmp_path / peer),
@@ -36,7 +41,9 @@ def test_independent_stages_overlap_and_join_waits(tmp_path):
         )
         for name, peer in (("first", "second"), ("second", "first"))
     ]
-    stages.append(StageConfig("join", "tests.data_processing._modules:Echo", depends_on=("first", "second")))
+    stages.append(
+        StageConfig("join", "tests.annotations.runtime._modules:Echo", depends_on=("first", "second"))
+    )
     store, completed = run_pipeline(
         Source(),
         stages,
@@ -55,7 +62,7 @@ def test_budget_serializes_ready_stages_and_rejects_oversized_request(tmp_path, 
     import threading
     import time
 
-    from lerobot.data_processing import pipeline
+    from lerobot.annotations.runtime import pipeline
 
     original = pipeline.run_local
     active, maximum = 0, 0
@@ -73,7 +80,7 @@ def test_budget_serializes_ready_stages_and_rejects_oversized_request(tmp_path, 
         return result
 
     monkeypatch.setattr(pipeline, "run_local", execute)
-    stages = [StageConfig(name, "tests.data_processing._modules:Echo") for name in ("a", "b")]
+    stages = [StageConfig(name, "tests.annotations.runtime._modules:Echo") for name in ("a", "b")]
     runtime = RuntimeConfig(
         run_uri=str(tmp_path / "run"), max_parallel_stages=2, resource_budget=Resources(cpus=1, memory_gb=4)
     )
@@ -87,10 +94,10 @@ def test_budget_serializes_ready_stages_and_rejects_oversized_request(tmp_path, 
 def test_condition_masks_without_model_setup_and_missing_condition_errors(tmp_path):
     log = tmp_path / "calls"
     stages = [
-        StageConfig("quality", "tests.data_processing._modules:Echo"),
+        StageConfig("quality", "tests.annotations.runtime._modules:Echo"),
         StageConfig(
             "annotation",
-            "tests.data_processing._modules:Echo",
+            "tests.annotations.runtime._modules:Echo",
             {"log_path": str(log)},
             depends_on=("quality",),
             when="quality.usable",
@@ -109,7 +116,7 @@ def test_condition_masks_without_model_setup_and_missing_condition_errors(tmp_pa
 
 
 def test_transient_retry_and_permanent_fail_fast(tmp_path, monkeypatch):
-    from lerobot.data_processing import worker
+    from lerobot.annotations.runtime import worker
 
     delays = []
     monkeypatch.setattr(worker.time, "sleep", delays.append)
@@ -118,7 +125,7 @@ def test_transient_retry_and_permanent_fail_fast(tmp_path, monkeypatch):
         plan = seal_plan(
             store,
             Source.dataset_ref,
-            "tests.data_processing._modules:TemporaryEcho",
+            "tests.annotations.runtime._modules:TemporaryEcho",
             {"marker": str(tmp_path / "marker"), "permanent": permanent},
             [InputItem("0", {})],
         )

@@ -1,6 +1,6 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License").
-"""Recoverable compatibility commits for a user-owned local dataset (not a Hub cache)."""
+"""Recoverable annotation updates for a user-owned local dataset (not a Hub cache)."""
 
 import json
 import os
@@ -10,7 +10,7 @@ from pathlib import Path
 
 from filelock import FileLock
 
-from ..artifacts import file_checksum
+from .runtime.artifacts import file_checksum
 
 
 def atomic_json(path: Path, value) -> None:
@@ -57,7 +57,7 @@ def _recover_owned(root: Path) -> None:
 
 
 def recover_local_commit(root: Path) -> None:
-    """Finish a interrupted commit before fingerprinting or reading new inputs."""
+    """Finish an interrupted commit before fingerprinting or reading new inputs."""
     with FileLock(root / ".processing_commit.lock", timeout=0):
         _recover_owned(root)
 
