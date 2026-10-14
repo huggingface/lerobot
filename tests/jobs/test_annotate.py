@@ -121,7 +121,9 @@ def test_remote_requires_login(cloud, monkeypatch):
 def test_active_job_rejected_on_resume(cloud, monkeypatch):
     annotate.submit_annotate_to_hf(cloud)
     monkeypatch.setattr(
-        processing, "inspect_job", lambda id: SimpleNamespace(id=id, status=SimpleNamespace(stage="RUNNING"))
+        processing,
+        "inspect_job",
+        lambda *, job_id: SimpleNamespace(id=job_id, status=SimpleNamespace(stage="RUNNING")),
     )
     with pytest.raises(RuntimeError, match="still active"):
         annotate.submit_annotate_to_hf(cloud)
