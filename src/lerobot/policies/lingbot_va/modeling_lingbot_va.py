@@ -444,7 +444,6 @@ class LingBotVAPolicy(PreTrainedPolicy):
         *,
         noise: Tensor | None = None,
         video_noise: Tensor | None = None,
-        **kwargs,
     ) -> Tensor:
         """Run one autoregressive chunk and return actions ``[B, chunk_size, n_used]`` (normalized).
 
