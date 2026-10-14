@@ -78,6 +78,9 @@ class ACTConfig(PreTrainedConfig):
         dropout: Dropout to use in the transformer layers (see code for details).
         kl_weight: The weight to use for the KL-divergence component of the loss if the variational objective
             is enabled. Loss is then calculated as: `reconstruction_loss + kl_weight * kld_loss`.
+        gradient_checkpointing: Whether to use gradient checkpointing on the vision backbone and the
+            transformer encoder/decoder layers to trade compute for memory during training (recomputes
+            forward activations in the backward pass instead of storing them).
     """
 
     # Input / output structure.
@@ -121,6 +124,9 @@ class ACTConfig(PreTrainedConfig):
     # Training and loss computation.
     dropout: float = 0.1
     kl_weight: float = 10.0
+
+    # Optimization
+    gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
 
     # Training preset
     optimizer_lr: float = 1e-5
