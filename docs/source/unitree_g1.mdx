@@ -335,7 +335,7 @@ lerobot-rollout \
 
 ### Run on the Physical Robot
 
-Run the policy server on the GPU machine and keep the robot bridge, SONIC decoder and rollout client on the G1 Jetson. Only 64-D token chunks cross the network; the decoder and 50 Hz `rt/lowcmd` loop remain onboard.
+Run the [remote inference](./remote_inference) policy server on the GPU machine and keep the robot bridge, SONIC decoder and rollout client on the G1 Jetson. Only 64-D token chunks cross the network; the decoder and 50 Hz `rt/lowcmd` loop remain onboard.
 
 Install the remote extra on both machines. Keep the Unitree extra on the G1:
 
