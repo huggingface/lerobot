@@ -309,9 +309,10 @@ def restore_release(store, key, destination: Path):
 
 def _restore_release_into(store, key, destination):
     release = store.read_json(key)
+    destination_store = ArtifactStore(destination)
     for entry in release["files"]:
         relative = entry["path"]
-        ArtifactStore(destination).path(relative)  # validate before writing
+        destination_store.path(relative)  # validate before writing
         artifact = Artifact(**entry["artifact"])
         store.download(artifact, destination / relative)
     if release.get("source_files"):
@@ -322,7 +323,7 @@ def _restore_release_into(store, key, destination):
         from lerobot.annotations.runtime.artifacts import file_checksum
 
         for entry in release["source_files"]:
-            ArtifactStore(destination).path(entry["path"])
+            destination_store.path(entry["path"])
             source = release["source"]
             path = Path(
                 hf_hub_download(

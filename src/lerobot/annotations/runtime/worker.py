@@ -113,27 +113,29 @@ def accepted_in_shard(store: ArtifactStore, plan: StagePlan, shard: int) -> dict
     """Replay bounded manifests, accepting the first valid result per logical item."""
     items = {item.item_id: item for item in plan.read_shard(store, shard)}
     accepted: dict[str, ItemResult] = {}
+    context = None
     for path in store.list(f"{plan.prefix}/attempts/{shard:08d}/*/checkpoints/*.json"):
         try:
             checkpoint = store.read_json(path)
             if checkpoint["plan_id"] != plan.plan_id or checkpoint["shard"] != shard:
                 continue
-            attempt = path.split("/checkpoints/")[0]
-            with tempfile.TemporaryDirectory(prefix="lerobot-verify-") as directory:
-                context = WorkerContext(store, plan, attempt, Path(directory))
-                for value in checkpoint["results"]:
-                    result = ItemResult.from_dict(value)
-                    if (
-                        result.item_id in accepted
-                        or result.outcome == Outcome.FAILED
-                        or result.item_id not in items
-                    ):
-                        continue
-                    try:
-                        validate_result(result, items[result.item_id], context)
-                    except (OSError, ValueError, KeyError):
-                        continue
-                    accepted[result.item_id] = result
+            # Replay is read-only: decode schemas once, without creating scratch files.
+            if context is None:
+                context = WorkerContext(store, plan, "", Path())
+            context.attempt = path.split("/checkpoints/")[0]
+            for value in checkpoint["results"]:
+                result = ItemResult.from_dict(value)
+                if (
+                    result.item_id in accepted
+                    or result.outcome == Outcome.FAILED
+                    or result.item_id not in items
+                ):
+                    continue
+                try:
+                    validate_result(result, items[result.item_id], context)
+                except (OSError, ValueError, KeyError):
+                    continue
+                accepted[result.item_id] = result
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             # An incomplete, stale or corrupt checkpoint is not completion evidence.
             continue
@@ -213,21 +215,17 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
                                 setup_complete = True
                             with context.measure("process"):
                                 results = module.process_batch(active, context) if active else []
-                            results = [
-                                *results,
-                                *[
-                                    ItemResult(item.item_id, Outcome.MASKED, reason=item.mask_reason)
-                                    for item in batch
-                                    if item.mask_reason is not None
-                                ],
-                            ]
-                            context.metrics["batches"] = context.metrics.get("batches", 0) + 1
-                            context.metrics["items_computed"] = context.metrics.get(
-                                "items_computed", 0
-                            ) + len(active)
-                            if len(results) != len(batch) or len({r.item_id for r in results}) != len(batch):
-                                raise ValueError("Module must return exactly one result per input item")
+                            results = list(results)
+                            results.extend(
+                                ItemResult(item.item_id, Outcome.MASKED, reason=item.mask_reason)
+                                for item in batch
+                                if item.mask_reason is not None
+                            )
+                            context.add_metric("batches", 1)
+                            context.add_metric("items_computed", len(active))
                             by_id = {result.item_id: result for result in results}
+                            if len(results) != len(batch) or len(by_id) != len(batch):
+                                raise ValueError("Module must return exactly one result per input item")
                             with context.measure("validation"):
                                 for item in batch:
                                     validate_result(by_id[item.item_id], item, context)
@@ -266,7 +264,7 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
                             module.teardown()
                             initialized = False
                             module = load_module(plan.factory, plan.config)
-                        context.metrics["retries"] = context.metrics.get("retries", 0) + 1
+                        context.add_metric("retries", 1)
                         time.sleep(delay)
             status = "completed"
         finally:

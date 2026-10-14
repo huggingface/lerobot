@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from lerobot.annotations.runtime import worker
 from lerobot.annotations.runtime.artifacts import ArtifactStore
 from lerobot.annotations.runtime.planner import StagePlan, seal_plan
 from lerobot.annotations.runtime.runtime import finalize_stage, gpu_assignments, run_local
@@ -146,7 +147,7 @@ def test_interrupted_shard_resumes_only_uncommitted_batches(tmp_path):
 
 
 @pytest.mark.parametrize("batch_size", [1, 2])
-def test_corrupt_output_recomputed_without_repeating_valid_items(tmp_path, batch_size):
+def test_corrupt_output_recomputed_without_repeating_valid_items(tmp_path, monkeypatch, batch_size):
     store = ArtifactStore(tmp_path / "run")
     log = tmp_path / "calls"
     plan = make_plan(store, {"log_path": str(log)})
@@ -156,6 +157,18 @@ def test_corrupt_output_recomputed_without_repeating_valid_items(tmp_path, batch
     second = run_local(store, plan, batch_size=batch_size)
     assert second.completed == 6
     assert first.accepted_path != second.accepted_path
+    assert first.content_digest == second.content_digest
+    decode_schema = worker.pa.ipc.read_schema
+    decoded = []
+
+    def read_schema(*args, **kwargs):
+        decoded.append(True)
+        return decode_schema(*args, **kwargs)
+
+    monkeypatch.setattr(worker.pa.ipc, "read_schema", read_schema)
+    replay = accepted_in_shard(store, plan, 0)
+    assert replay[plan.read_shard(store, 0)[0].item_id].artifacts[0].path != result.artifacts[0].path
+    assert len(replay) == 2 and len(decoded) == 1  # Both attempts validated with one decoded schema.
     calls = log.read_text().splitlines()
     assert calls.count("0") == 2 and calls.count("1") == 1
 
