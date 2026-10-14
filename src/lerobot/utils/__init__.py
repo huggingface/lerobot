@@ -20,6 +20,7 @@ to ``lerobot.common``. ``visualization_utils`` remains here but is
 intentionally NOT re-exported to avoid pulling in optional dependencies.
 """
 
+import importlib
 from typing import TYPE_CHECKING
 
 from .constants import (
@@ -32,25 +33,33 @@ from .constants import (
     OBS_IMAGES,
     OBS_STATE,
     OBS_STR,
+    QUERY_KIND,
+    QUERY_TEXT,
     REWARD,
 )
 from .decorators import check_if_already_connected, check_if_not_connected
 from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from .import_utils import is_package_available, require_package
+from .import_utils import is_package_available, register_third_party_plugins, require_package
+from .utils import init_logging
 
 if TYPE_CHECKING:
+    from .action_interpolator import ActionInterpolator
     from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
 
 
 def __getattr__(name: str):
-    """Load device utilities only when requested, keeping CPU data imports lightweight."""
-    if name in {"auto_select_torch_device", "get_safe_torch_device", "is_torch_device_available"}:
-        from . import device_utils
-
-        value = getattr(device_utils, name)
-        globals()[name] = value
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    """Load Torch utilities on demand, keeping CPU annotation workers lightweight."""
+    modules = {
+        "ActionInterpolator": "action_interpolator",
+        "auto_select_torch_device": "device_utils",
+        "get_safe_torch_device": "device_utils",
+        "is_torch_device_available": "device_utils",
+    }
+    if name not in modules:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(importlib.import_module(f"{__name__}.{modules[name]}"), name)
+    globals()[name] = value
+    return value
 
 
 __all__ = [
@@ -64,6 +73,8 @@ __all__ = [
     "OBS_IMAGES",
     "OBS_STATE",
     "OBS_STR",
+    "QUERY_KIND",
+    "QUERY_TEXT",
     "REWARD",
     # Device utilities
     "auto_select_torch_device",
@@ -71,7 +82,11 @@ __all__ = [
     "is_torch_device_available",
     # Import guards
     "is_package_available",
+    "register_third_party_plugins",
     "require_package",
+    # General utilities
+    "ActionInterpolator",
+    "init_logging",
     # Decorators
     "check_if_already_connected",
     "check_if_not_connected",
