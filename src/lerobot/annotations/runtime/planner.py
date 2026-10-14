@@ -13,6 +13,7 @@ import json
 import tempfile
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
+from itertools import batched
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -139,53 +140,45 @@ def seal_plan(
     )
     selection = hashlib.sha256()
     seen: set[str] = set()
-    count = shards = 0
     shard_hashes = []
     with tempfile.TemporaryDirectory(prefix="lerobot-plan-") as directory:
         path = Path(directory) / "work.parquet"
         with pq.ParquetWriter(path, schema) as writer:
-            batch = []
-            for item in items:
-                if item.key in seen:
-                    raise ValueError(f"Duplicate source item key: {item.key}")
-                seen.add(item.key)
-                selection.update(canonical_json(asdict(item)) + b"\n")
-                item_id = fingerprint(
-                    {
-                        "stage": semantic_id,
-                        "key": item.key,
-                        "payload": item.identity_payload
-                        if item.identity_payload is not None
-                        else item.payload,
-                        **({"mask_reason": item.mask_reason} if item.mask_reason is not None else {}),
-                    }
-                )
-                batch.append(
-                    {
-                        "item_id": item_id,
-                        "key": item.key,
-                        "payload": canonical_json(item.payload).decode(),
-                        "cost": float(item.cost),
-                        "seed": int(item_id[:15], 16),
-                        "physical_seconds": float(item.physical_seconds)
-                        if item.physical_seconds is not None
-                        else None,
-                        "camera_seconds": float(item.camera_seconds)
-                        if item.camera_seconds is not None
-                        else None,
-                        "mask_reason": item.mask_reason,
-                    }
-                )
-                count += 1
-                if len(batch) == shard_size:
-                    shard_hashes.append(fingerprint(batch))
-                    writer.write_table(pa.Table.from_pylist(batch, schema=schema), row_group_size=shard_size)
-                    batch = []
-                    shards += 1
-            if batch:
+            for chunk in batched(items, shard_size):
+                batch = []
+                for item in chunk:
+                    if item.key in seen:
+                        raise ValueError(f"Duplicate source item key: {item.key}")
+                    seen.add(item.key)
+                    selection.update(canonical_json(asdict(item)) + b"\n")
+                    item_id = fingerprint(
+                        {
+                            "stage": semantic_id,
+                            "key": item.key,
+                            "payload": item.identity_payload
+                            if item.identity_payload is not None
+                            else item.payload,
+                            **({"mask_reason": item.mask_reason} if item.mask_reason is not None else {}),
+                        }
+                    )
+                    batch.append(
+                        {
+                            "item_id": item_id,
+                            "key": item.key,
+                            "payload": canonical_json(item.payload).decode(),
+                            "cost": float(item.cost),
+                            "seed": int(item_id[:15], 16),
+                            "physical_seconds": float(item.physical_seconds)
+                            if item.physical_seconds is not None
+                            else None,
+                            "camera_seconds": float(item.camera_seconds)
+                            if item.camera_seconds is not None
+                            else None,
+                            "mask_reason": item.mask_reason,
+                        }
+                    )
                 shard_hashes.append(fingerprint(batch))
                 writer.write_table(pa.Table.from_pylist(batch, schema=schema), row_group_size=shard_size)
-                shards += 1
         plan_id = fingerprint(
             {
                 "identity": identity,
@@ -207,7 +200,7 @@ def seal_plan(
             artifact = Artifact(work_path, digest, size)
         else:
             artifact = store.put_file(work_path, path)
-    plan = StagePlan(plan_id, factory, config, work_path, shards, count, schemas, shard_hashes)
+    plan = StagePlan(plan_id, factory, config, work_path, len(shard_hashes), len(seen), schemas, shard_hashes)
     store.put_json(
         manifest_path,
         {

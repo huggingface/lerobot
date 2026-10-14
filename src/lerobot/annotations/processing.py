@@ -257,12 +257,7 @@ def _canonical_atom(row, persistent):
         atom["timestamp"] = pa.scalar(atom["timestamp"], type=pa.float32()).as_py()
     calls = atom["tool_calls"]
     atom["tool_calls"] = (
-        [
-            canonical_json(call).decode()
-            if not isinstance(call, str)
-            else canonical_json(json.loads(call)).decode()
-            for call in calls
-        ]
+        [canonical_json(json.loads(call) if isinstance(call, str) else call).decode() for call in calls]
         if calls is not None
         else None
     )

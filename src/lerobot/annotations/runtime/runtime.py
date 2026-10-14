@@ -163,19 +163,19 @@ def _run_local_owned(store, plan, workers, batch_size, max_retries, force_spawn=
                 raise ValueError("GPU assignments do not match worker resource requests")
             if len({device for group in devices for device in group}) != workers * resources.gpus:
                 raise ValueError("GPU assignments must not overlap")
-            # A dedicated pool per GPU group never switches CUDA visibility
-            # after initialization. CPU groups can share one bounded pool.
-            pools = [
-                stack.enter_context(
-                    ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+        # A dedicated pool per GPU group never switches CUDA visibility after
+        # initialization. CPU groups share one bounded pool.
+        pools = [
+            stack.enter_context(
+                ProcessPoolExecutor(
+                    max_workers=1 if resources.gpus else workers,
+                    mp_context=multiprocessing.get_context("spawn"),
                 )
-                for _ in groups
-            ]
-        else:
-            pool = stack.enter_context(
-                ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
             )
-            pools = [pool] * workers
+            for _ in range(workers if resources.gpus else 1)
+        ]
+        if not resources.gpus:
+            pools *= workers
         futures = [
             pool.submit(
                 run_worker_group,

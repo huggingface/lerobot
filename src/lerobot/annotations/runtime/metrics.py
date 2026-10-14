@@ -68,11 +68,7 @@ def record_worker(store, plan_id, metrics, resources):
         "plan_id": plan_id,
         "worker_id": identifier,
         **{timer + "_seconds": None for timer in TIMERS},
-        "batches": 0,
-        "items_computed": 0,
-        "items_reused": 0,
-        "retries": 0,
-        "bytes_written": 0,
+        **dict.fromkeys(("batches", "items_computed", "items_reused", "retries", "bytes_written"), 0),
         **metrics,
         "requested_cpu_hours": metrics["wall_seconds"] * resources.cpus / 3600,
         "requested_gpu_hours": metrics["wall_seconds"] * resources.gpus / 3600,
@@ -107,6 +103,7 @@ def report_stage(store, plan, summary, *, wall_seconds, worker_paths=None):
     ):
         with store.open(path) as stream:
             records.extend(pq.read_table(stream).to_pylist())
+    instrumented = {timer: sum(row[timer + "_seconds"] is not None for row in records) for timer in TIMERS}
     return {
         "plan_id": plan.plan_id,
         "items": summary.items,
@@ -130,13 +127,9 @@ def report_stage(store, plan, summary, *, wall_seconds, worker_paths=None):
         "bytes_written": sum(row["bytes_written"] for row in records),
         "retries": sum(row["retries"] for row in records),
         "timer_seconds": {
-            timer: sum(row[timer + "_seconds"] or 0 for row in records)
-            if any(row[timer + "_seconds"] is not None for row in records)
-            else None
+            timer: sum(row[timer + "_seconds"] or 0 for row in records) if instrumented[timer] else None
             for timer in TIMERS
         },
-        "instrumented_worker_attempts": {
-            timer: sum(row[timer + "_seconds"] is not None for row in records) for timer in TIMERS
-        },
+        "instrumented_worker_attempts": instrumented,
         "resource_accounting": "declared worker resources only; controller/services/queue not measured",
     }
