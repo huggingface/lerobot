@@ -2,39 +2,40 @@
 
 ## Executive summary
 
-Use one processing engine beneath `lerobot-annotate` and non-VLM enrichment modules.
-Inputs are existing LeRobot v3 datasets; raw conversion, format upgrades, resizing
-and re-encoding stay in standalone preparation scripts. Keep enrichment recipes and
-scientific outputs independent of where work runs:
-one laptop process, persistent local workers, Slurm CPU/GPU arrays, or HF Jobs.
-Language annotation, quality checks and model-based extensions share planning,
-checkpoints, validation and metrics. They do not share a mandatory VLM dependency.
+Make `lerobot-annotate` a resumable annotation and enrichment workflow for **existing
+LeRobot v3 datasets**. Start with a valid dataset, plan bounded episodes/windows,
+run quality checks and annotation stages, then validate and write Parquet annotations.
+The same recipe can run on a laptop, Slurm CPU/GPU workers or HF Jobs without changing
+what its labels mean. Non-VLM modules reuse the runtime without a VLM dependency.
 
-The output is an ordinary LeRobot v3 dataset. Original datasets stay with their
-publishers; processed releases can be published separately with attribution and
-explicit permission. Later annotations enrich the same processed dataset's Parquet
-files without copying its videos into another annotation-only dataset. Publication
-is an explicit step, not a side effect of processing.
+This is not a conversion framework. Raw formats, v3 upgrades, image resizing, video
+re-encoding, camera renaming and action/state alignment stay outside this PR. Use
+the existing standalone preparation scripts when needed. Annotation preserves native
+videos, FPS, camera names, actions/state and publisher-owned labels.
 
 ```text
-LeRobot v3 ── episode/reference discovery ── sealed Parquet work plan
-                                          │
-                         ┌────────────────┼─────────────────┐
-                         │                │                 │
-                   Local workers    Slurm arrays       HF Jobs
-                         └────────────────┼─────────────────┘
-                                          │
-                              Checked, durable artifacts
-                                          │
-                             Complete-stage finalization
-                                          │
-                          Next stage / ordinary LeRobot dataset
+Existing v3 → Plan → Quality + annotation → Validate → Enriched v3
+                           │                    │
+               Local / Slurm / HF Jobs   Verified checkpoints
+                                             + resume
 ```
 
-This is an experimental, working vertical slice, not a claim that all FineRobotics
-augmentation models are already implemented. Unsupported dataset versions fail before
-planning or inference. Hand estimation, value models,
-camera odometry and generation of human/robot demonstrations need their own modules.
+Stages run sequentially by default or concurrently when dependencies and explicit
+CPU/GPU/memory budgets allow. Shared endpoint limits protect model services; overlapping
+windows keep exact source clocks; unusable inputs receive explicit masks and reasons.
+Checked checkpoints let interrupted runs reuse completed work instead of starting over.
+
+Each output remains an ordinary LeRobot dataset, not a merged FineRobotics dataset.
+Originals stay with their publishers. Enrich the processed dataset's Parquet files
+without creating another video copy; publishing requires explicit permission and
+attribution. `MultiLeRobotDataset` development is separate from this runtime.
+
+Language annotation, sampled video-quality checks, exported-model embeddings and
+reference-only ICL pair validation are implemented. Hand estimation, value labels,
+camera odometry and human↔robot pair generation need separate modules. This is an
+experimental runtime, not a claim of corpus-scale throughput or annotation accuracy.
+HF language jobs currently use one node with local workers; generic remote-readable
+modules can use multiple HF worker jobs.
 
 ## The interfaces
 
@@ -110,16 +111,18 @@ These controls adapt the dependency, endpoint-limit and window ideas in the
 LeRobot does not depend on that service.
 
 Sequential execution remains the default. Set `max_parallel_stages` and an explicit
-`resource_budget` to dispatch ready stages concurrently. Hands, subtasks and value
-modules can depend on quality without depending on each other; a merge stage depends
-on all three. The existing language recipe can run plan and VQA concurrently while
-interjections still wait for plan, and materialization waits for every required stage.
+`resource_budget` to dispatch ready stages concurrently. The existing language recipe
+can run plan/subtasks and VQA concurrently while interjections still wait for plan,
+and materialization waits for every required stage.
 
 ```text
-                         ┌─ hands ──────┐
-v3 input → quality gate ──┼─ subtasks ───┼─ validate → materialize
-                         └─ value ──────┘
+                         ┌─ plan/subtasks → interjections ─┐
+v3 input → quality gate ──┤                                 ├─ validate → materialize
+                         └─ VQA ───────────────────────────┘
 ```
+
+Future hand and value modules can likewise depend on quality without depending on
+each other; a merge stage would wait for their validated outputs.
 
 The controller reserves `workers × Resources` per admitted stage across CPU, GPU
 and memory, conservatively counting every planned worker even if a scheduler queues
