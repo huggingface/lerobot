@@ -206,9 +206,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         return loss, dict(metrics or {})
 
     @torch.no_grad()
-    def predict_action_chunk(
-        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, **_: Any
-    ) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions from the current FastWAM observation.
 
         Args:
