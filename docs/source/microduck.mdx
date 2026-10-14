@@ -19,6 +19,8 @@ With this integration you can:
 
 `robotd` zeroes the twist if no command arrives for 500 ms, so the duck stops if LeRobot stops or the connection drops.
 
+If the state stream stops, `get_observation` and `send_action` raise `DeviceNotConnectedError`. Disconnect, then reconnect before you continue.
+
 ## Setup
 
 1. Find the robot's IP with `duckctl ip` (mDNS hostnames are not reliable on these boards).
@@ -81,6 +83,8 @@ lerobot-record \
 ```
 
 The camera supplies its latest cached PNG image. Start with a dataset rate of 15 fps, then measure the camera update rate. If the recording loop runs faster than the camera, several dataset rows can use the same image.
+
+If a camera request fails, LeRobot keeps the cached image for that connection. A new connection clears the cache and supplies black images until the first valid image arrives.
 
 Dataset timestamps come from the frame index divided by the dataset rate. They describe the requested sample grid, not the camera capture time. The PNG endpoint supplies no capture timestamp, so the dataset rate and repeated pixels alone do not establish camera freshness.
 
