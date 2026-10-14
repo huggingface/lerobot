@@ -31,7 +31,7 @@ from .lerobot_dataset import LeRobotDataset
 from .multi_dataset import MultiLeRobotDataset
 from .storage import DEFAULT_STORAGE_FORMAT, is_bucket_root, load_dataset_metadata
 from .streaming_dataset import DEFAULT_STREAMING_SEED, StreamingLeRobotDataset
-from .utils import resolve_episode_indices
+from .utils import resolve_episode_indices, task_name
 
 logger = logging.getLogger(__name__)
 
@@ -239,10 +239,27 @@ def make_train_eval_datasets(
         full_dataset.episodes if full_dataset.episodes is not None else list(range(full_dataset.num_episodes))
     )
 
-    episode_tasks = full_dataset.meta.episodes["tasks"]
+    episode_tasks = (
+        full_dataset.meta.episodes["tasks"] if "tasks" in full_dataset.meta.episodes.column_names else None
+    )
+    if episode_tasks is None:
+        # Some v3 datasets (e.g. lerobot/libero) only store per-frame task_index; group by the first frame's task.
+        hf_dataset = full_dataset.hf_dataset
+        if "task_index" not in hf_dataset.column_names:
+            raise ValueError("eval_split requires episode 'tasks' or per-frame 'task_index'.")
+        task_frames = hf_dataset.select_columns("task_index")
+        index_mapping = full_dataset.absolute_to_relative_idx
+        episode_starts = full_dataset.meta.episodes["dataset_from_index"]
+
     task_to_episodes: dict[str, list[int]] = {}
     for ep_idx in base_episodes:
-        task_key = episode_tasks[ep_idx][0] if episode_tasks[ep_idx] else ""
+        if episode_tasks is not None:
+            task_key = episode_tasks[ep_idx][0] if episode_tasks[ep_idx] else ""
+        else:
+            frame_idx = episode_starts[ep_idx]
+            if index_mapping is not None:
+                frame_idx = index_mapping[frame_idx]
+            task_key = task_name(full_dataset.meta.tasks, task_frames[frame_idx]["task_index"])
         task_to_episodes.setdefault(task_key, []).append(ep_idx)
 
     train_episodes, eval_episodes = [], []
