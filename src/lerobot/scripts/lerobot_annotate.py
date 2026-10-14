@@ -151,7 +151,7 @@ def _changed_paths(root, summary):
 
 
 def _push_to_hub(root, cfg, *, changed_paths):
-    from lerobot.data_processing.sinks.hub import publish_annotation
+    from lerobot.annotations.hub import publish_annotation
 
     return publish_annotation(root, cfg, changed_paths=changed_paths)
 

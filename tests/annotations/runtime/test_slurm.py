@@ -8,16 +8,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from lerobot.data_processing.configs import RuntimeConfig
-from lerobot.data_processing.runtime import finalize_stage
-from lerobot.data_processing.types import Resources
-from lerobot.data_processing.worker import run_worker_group
+from lerobot.annotations.runtime.configs import RuntimeConfig
+from lerobot.annotations.runtime.runtime import finalize_stage
+from lerobot.annotations.runtime.types import Resources
+from lerobot.annotations.runtime.worker import run_worker_group
 from lerobot.jobs.processing_worker import assigned_shards, main
 from lerobot.jobs.slurm import render_slurm, run_slurm
 
 pytest.importorskip("pyarrow")
-from lerobot.data_processing.artifacts import ArtifactStore  # noqa: E402
-from tests.data_processing.test_runtime import make_plan  # noqa: E402
+from lerobot.annotations.runtime.artifacts import ArtifactStore  # noqa: E402
+from tests.annotations.runtime.test_runtime import make_plan  # noqa: E402
 
 
 def test_cpu_worker_package_imports_no_model():

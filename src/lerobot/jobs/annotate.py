@@ -7,9 +7,9 @@ import copy
 import draccus
 from huggingface_hub import HfApi, get_token
 
-from lerobot.data_processing.artifacts import ArtifactStore
-from lerobot.data_processing.bundles import write_bundle
-from lerobot.data_processing.types import Resources
+from lerobot.annotations.runtime.artifacts import ArtifactStore
+from lerobot.annotations.runtime.bundles import write_bundle
+from lerobot.annotations.runtime.types import Resources
 
 from .processing import (
     dispatch_bundle,

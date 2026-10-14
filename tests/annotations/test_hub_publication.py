@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("datasets")
+from lerobot.annotations import hub  # noqa: E402
 from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig  # noqa: E402
-from lerobot.data_processing.sinks import hub  # noqa: E402
 
 SHA = "a" * 40
 COMMIT = "b" * 40

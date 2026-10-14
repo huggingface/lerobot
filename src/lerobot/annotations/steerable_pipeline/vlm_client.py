@@ -290,7 +290,7 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
     # SDK retries with shard retries. Every retry reacquires global admission.
     shared_limit = None
     if config.endpoint_limit_url:
-        from lerobot.data_processing.endpoint_limits import SharedEndpointLimit
+        from lerobot.annotations.runtime.endpoint_limits import SharedEndpointLimit
 
         if not config.endpoint_limit_key:
             raise ValueError("A shared endpoint limit requires endpoint_limit_key")

@@ -6,10 +6,10 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("pyarrow")
-from lerobot.data_processing.artifacts import ArtifactStore  # noqa: E402
-from lerobot.data_processing.configs import RuntimeConfig  # noqa: E402
+from lerobot.annotations.runtime.artifacts import ArtifactStore  # noqa: E402
+from lerobot.annotations.runtime.configs import RuntimeConfig  # noqa: E402
 from lerobot.jobs import processing  # noqa: E402
-from tests.data_processing.test_runtime import make_plan  # noqa: E402
+from tests.annotations.runtime.test_runtime import make_plan  # noqa: E402
 
 SHA = "a" * 40
 
@@ -184,7 +184,7 @@ def test_persistent_credentials_rejected(tmp_path):
 
 
 def test_hardware_admission_uses_current_inventory(monkeypatch):
-    from lerobot.data_processing.types import Resources
+    from lerobot.annotations.runtime.types import Resources
 
     monkeypatch.setattr(
         processing,

@@ -14,11 +14,11 @@ from pathlib import Path
 
 from filelock import FileLock
 
-from lerobot.data_processing.configs import RuntimeConfig
-from lerobot.data_processing.planner import load_module
-from lerobot.data_processing.runtime import finalize_stage
-from lerobot.data_processing.types import Resources, fingerprint
-from lerobot.data_processing.worker import accepted_in_shard
+from lerobot.annotations.runtime.configs import RuntimeConfig
+from lerobot.annotations.runtime.planner import load_module
+from lerobot.annotations.runtime.runtime import finalize_stage
+from lerobot.annotations.runtime.types import Resources, fingerprint
+from lerobot.annotations.runtime.worker import accepted_in_shard
 
 logger = logging.getLogger(__name__)
 

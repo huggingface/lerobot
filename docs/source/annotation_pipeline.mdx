@@ -5,6 +5,10 @@ speech and visual Q&A to **existing LeRobot v3 datasets**. The same annotation
 modules run through a resumable engine locally, on Slurm or on Hugging Face Jobs.
 The engine also supports non-VLM steps; it does not add new annotation workflows.
 
+The engine lives in `lerobot.annotations.runtime`; `annotations/storage.py` handles
+recoverable dataset updates and `annotations/hub.py` handles explicit publication.
+Slurm and HF execution adapters remain in `lerobot.jobs`.
+
 Videos, FPS, cameras, actions/state and publisher-owned labels are preserved.
 Conversion, resizing, re-encoding and action-space changes belong in separate
 preparation scripts. Use a writable dataset copy, not an immutable Hub snapshot.
@@ -88,8 +92,8 @@ separately from an external/owned model service:
 
 ```python
 from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
-from lerobot.data_processing.configs import RuntimeConfig
-from lerobot.data_processing.types import Resources
+from lerobot.annotations.runtime.configs import RuntimeConfig
+from lerobot.annotations.runtime.types import Resources
 
 cfg = AnnotationPipelineConfig()
 cfg.runtime = RuntimeConfig(
@@ -104,7 +108,7 @@ For a shared model endpoint, run one authenticated coordinator and point **all**
 clients at `vlm.endpoint_limit_url` with the same `vlm.endpoint_limit_key`:
 
 ```bash
-uv run python -m lerobot.data_processing.endpoint_limits \
+uv run python -m lerobot.annotations.runtime.endpoint_limits \
     --host=0.0.0.0 --port=8090 --key=annotation --limit=8 \
     --token-env=ANNOTATION_LIMIT_TOKEN
 ```
@@ -168,7 +172,7 @@ restore it with its key relative to the run store:
 
 ```python
 from pathlib import Path
-from lerobot.data_processing.artifacts import ArtifactStore
+from lerobot.annotations.runtime.artifacts import ArtifactStore
 from lerobot.jobs.processing import restore_release
 
 store = ArtifactStore("hf://buckets/your-account/annotations/run-1")
@@ -204,7 +208,7 @@ logic to your application:
 
 ```python
 import pyarrow as pa
-from lerobot.data_processing.types import ItemResult, ModuleSpec, Outcome, Resources
+from lerobot.annotations.runtime.types import ItemResult, ModuleSpec, Outcome, Resources
 
 class MyStep:
     def __init__(self):
@@ -241,7 +245,7 @@ declare every output schema/resource requirement. Constructors must remain light
 planning inspects them without loading models. Return one result per item; masks and
 rejections need explicit reasons. Preserve source frame IDs/timestamps; window predictors
 can use `EpisodeWindow` and `reconcile_frame_rows`/`reconcile_spans` from
-`lerobot.data_processing.windows`. Bump the module version when semantics change.
+`lerobot.annotations.runtime.windows`. Bump the module version when semantics change.
 
 Wire the step into a Python recipe, not a new CLI. A source provides `dataset_ref`
 and `discover(stage, store, upstream)`, yielding bounded JSON `InputItem` references
@@ -249,8 +253,8 @@ and resolving verified upstream artifacts. It must verify pinned inputs; declari
 `DatasetRef` alone does not make local files immutable.
 
 ```python
-from lerobot.data_processing.configs import RuntimeConfig, StageConfig
-from lerobot.data_processing.pipeline import run_pipeline
+from lerobot.annotations.runtime.configs import RuntimeConfig, StageConfig
+from lerobot.annotations.runtime.pipeline import run_pipeline
 
 # source is your reference-only source; my_package.steps must exist on every worker.
 stages = [StageConfig("labels", "my_package.steps:MyStep")]

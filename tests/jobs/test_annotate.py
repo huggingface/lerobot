@@ -10,8 +10,8 @@ import draccus
 import pytest
 
 pytest.importorskip("datasets")
+from lerobot.annotations.runtime.artifacts import ArtifactStore  # noqa: E402
 from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig  # noqa: E402
-from lerobot.data_processing.artifacts import ArtifactStore  # noqa: E402
 from lerobot.jobs import annotate, processing  # noqa: E402
 
 SHA = "a" * 40
