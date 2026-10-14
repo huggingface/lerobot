@@ -10,10 +10,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from lerobot.data_processing.artifacts import ArtifactStore
-from lerobot.data_processing.planner import StagePlan, seal_plan
-from lerobot.data_processing.runtime import finalize_stage, gpu_assignments, run_local
-from lerobot.data_processing.types import (
+from lerobot.annotations.runtime.artifacts import ArtifactStore
+from lerobot.annotations.runtime.planner import StagePlan, seal_plan
+from lerobot.annotations.runtime.runtime import finalize_stage, gpu_assignments, run_local
+from lerobot.annotations.runtime.types import (
     DatasetRef,
     InputItem,
     ItemResult,
@@ -21,12 +21,12 @@ from lerobot.data_processing.types import (
     Resources,
     artifact_identities,
 )
-from lerobot.data_processing.worker import accepted_in_shard, accepted_items
+from lerobot.annotations.runtime.worker import accepted_in_shard, accepted_items
 
 pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
 
-FACTORY = "tests.data_processing._modules:Echo"
+FACTORY = "tests.annotations.runtime._modules:Echo"
 
 
 def make_plan(store, config=None, *, size=6, shard_size=2):
@@ -259,7 +259,7 @@ def test_accepted_items_are_ordered_complete_and_shard_bounded(tmp_path, monkeyp
 
 @pytest.mark.parametrize("gpus", [0, 1])
 def test_spawn_dispatch_shares_cpu_pool_but_isolates_gpu_groups(tmp_path, monkeypatch, gpus):
-    from lerobot.data_processing import runtime
+    from lerobot.annotations.runtime import runtime
 
     pools, calls = [], []
 
@@ -324,7 +324,7 @@ def test_plan_corruption_detected(tmp_path):
 
 
 def test_cpu_runtime_imports_no_vlm_or_torch():
-    script = "import sys; import lerobot.data_processing.runtime; assert not any(k == 'torch' or 'vlm_client' in k for k in sys.modules); from lerobot.utils import get_safe_torch_device; assert callable(get_safe_torch_device)"
+    script = "import sys; import lerobot.annotations.runtime.runtime; assert not any(k == 'torch' or 'vlm_client' in k for k in sys.modules); from lerobot.utils import get_safe_torch_device; assert callable(get_safe_torch_device)"
     subprocess.run([sys.executable, "-c", script], check=True)
 
 
@@ -389,7 +389,7 @@ def test_artifact_binding_identity_and_input_invalidation(tmp_path):
 
 
 def test_remote_store_without_rename_or_immediate_listing(monkeypatch):
-    from lerobot.data_processing.worker import run_worker_group
+    from lerobot.annotations.runtime.worker import run_worker_group
 
     store = ArtifactStore("memory://eventual-" + uuid.uuid4().hex)
     plan = make_plan(store, size=2)
@@ -405,7 +405,7 @@ def test_remote_store_without_rename_or_immediate_listing(monkeypatch):
 
 
 def test_local_cpu_admission(tmp_path, monkeypatch):
-    from lerobot.data_processing import runtime
+    from lerobot.annotations.runtime import runtime
 
     monkeypatch.setattr(runtime.os, "sched_getaffinity", lambda _: {0}, raising=False)
     store = ArtifactStore(tmp_path / "run")

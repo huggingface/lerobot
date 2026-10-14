@@ -7,10 +7,10 @@ import json
 import os
 from dataclasses import asdict
 
-from lerobot.data_processing.artifacts import ArtifactStore
-from lerobot.data_processing.planner import StagePlan
-from lerobot.data_processing.runtime import finalize_stage
-from lerobot.data_processing.worker import run_worker_group
+from lerobot.annotations.runtime.artifacts import ArtifactStore
+from lerobot.annotations.runtime.planner import StagePlan
+from lerobot.annotations.runtime.runtime import finalize_stage
+from lerobot.annotations.runtime.worker import run_worker_group
 
 
 def assigned_shards(shards: int, groups: int, index: int) -> list[int]:

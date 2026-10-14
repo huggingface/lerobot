@@ -14,12 +14,11 @@ from typing import Any
 
 import pyarrow.parquet as pq
 
-from lerobot.data_processing.artifacts import file_checksum
-from lerobot.data_processing.configs import StageConfig
-from lerobot.data_processing.pipeline import run_pipeline
-from lerobot.data_processing.sinks.local_commit import commit_local_files, recover_local_commit
-from lerobot.data_processing.types import canonical_json
-from lerobot.data_processing.worker import accepted_in_shard, accepted_items
+from lerobot.annotations.runtime.artifacts import file_checksum
+from lerobot.annotations.runtime.configs import StageConfig
+from lerobot.annotations.runtime.pipeline import run_pipeline
+from lerobot.annotations.runtime.types import canonical_json
+from lerobot.annotations.runtime.worker import accepted_in_shard, accepted_items
 from lerobot.datasets.language import language_feature_info
 
 from .processing_source import LeRobotEpisodeSource, _load_v3_info, _ownership_path
@@ -27,6 +26,7 @@ from .steerable_pipeline.config import AnnotationPipelineConfig
 from .steerable_pipeline.executor import PhaseResult, PipelineRunSummary
 from .steerable_pipeline.validator import ValidationReport
 from .steerable_pipeline.vlm_client import make_vlm_client
+from .storage import commit_local_files, recover_local_commit
 
 
 def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client_factory=None):
