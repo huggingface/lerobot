@@ -28,7 +28,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
 
-import pandas as pd  # noqa: E402
+import pyarrow as pa  # noqa: E402
 import pyarrow.parquet as pq  # noqa: E402
 
 from lerobot.annotations.steerable_pipeline.reader import iter_episodes  # noqa: E402
@@ -37,6 +37,9 @@ from lerobot.annotations.steerable_pipeline.writer import (  # noqa: E402
     LanguageColumnsWriter,
     speech_atom,
 )
+from tests.fixtures.dataset_factories import build_annotation_dataset  # noqa: E402
+
+from ._helpers import persistent_atom  # noqa: E402
 
 
 def _stage_episode(
@@ -63,27 +66,9 @@ def test_writer_persistence_identity(fixture_dataset_root: Path, tmp_path: Path)
         staging_dir,
         0,
         plan=[
-            {
-                "role": "assistant",
-                "content": "grasp the sponge",
-                "style": "subtask",
-                "timestamp": 0.0,
-                "tool_calls": None,
-            },
-            {
-                "role": "assistant",
-                "content": "1. wipe\n2. dry",
-                "style": "plan",
-                "timestamp": 0.0,
-                "tool_calls": None,
-            },
-            {
-                "role": "assistant",
-                "content": "wiped the counter",
-                "style": "memory",
-                "timestamp": 0.5,
-                "tool_calls": None,
-            },
+            persistent_atom("grasp the sponge"),
+            persistent_atom("1. wipe\n2. dry", "plan"),
+            persistent_atom("wiped the counter", "memory", 0.5),
         ],
     )
     records = list(iter_episodes(fixture_dataset_root))
@@ -136,27 +121,9 @@ def test_writer_column_routing(fixture_dataset_root: Path, tmp_path: Path) -> No
         staging_dir,
         0,
         plan=[
-            {
-                "role": "assistant",
-                "content": "do X",
-                "style": "subtask",
-                "timestamp": 0.0,
-                "tool_calls": None,
-            },
-            {
-                "role": "assistant",
-                "content": "1. do X",
-                "style": "plan",
-                "timestamp": 0.0,
-                "tool_calls": None,
-            },
-            {
-                "role": "assistant",
-                "content": "did X",
-                "style": "memory",
-                "timestamp": 0.3,
-                "tool_calls": None,
-            },
+            persistent_atom("do X"),
+            persistent_atom("1. do X", "plan"),
+            persistent_atom("did X", "memory", 0.3),
         ],
         interjections=[
             speech_atom(0.0, "OK"),
@@ -204,26 +171,16 @@ def test_writer_column_routing(fixture_dataset_root: Path, tmp_path: Path) -> No
     assert event_styles == {None, "interjection", "vqa"}
 
 
-def test_writer_drops_subtask_index_idempotent(fixture_dataset_root: Path, tmp_path: Path) -> None:
+def test_writer_drops_legacy_columns_idempotently(fixture_dataset_root: Path, tmp_path: Path) -> None:
+    path = fixture_dataset_root / "data/chunk-000/file-000.parquet"
+    native = pq.read_table(path)
+    pq.write_table(native.append_column("tools", pa.array(["legacy"] * len(native))), path)
     staging_dir = tmp_path / "stage"
-    _stage_episode(
-        staging_dir,
-        0,
-        plan=[
-            {
-                "role": "assistant",
-                "content": "do X",
-                "style": "subtask",
-                "timestamp": 0.0,
-                "tool_calls": None,
-            },
-        ],
-    )
+    _stage_episode(staging_dir, 0, plan=[persistent_atom("do X")])
     records = list(iter_episodes(fixture_dataset_root))
     writer = LanguageColumnsWriter()
     writer.write_all(records, staging_dir, fixture_dataset_root)
 
-    path = fixture_dataset_root / "data" / "chunk-000" / "file-000.parquet"
     table_a = pq.read_table(path)
     assert "subtask_index" not in table_a.column_names
     assert "language_persistent" in table_a.column_names
@@ -237,10 +194,7 @@ def test_writer_drops_subtask_index_idempotent(fixture_dataset_root: Path, tmp_p
     records_again = list(iter_episodes(fixture_dataset_root))
     writer.write_all(records_again, staging_dir, fixture_dataset_root)
     table_b = pq.read_table(path)
-    assert (
-        table_a.column("language_persistent").to_pylist() == table_b.column("language_persistent").to_pylist()
-    )
-    assert table_a.column("language_events").to_pylist() == table_b.column("language_events").to_pylist()
+    assert table_a.equals(table_b)
 
 
 def test_writer_normalize_rejects_misrouted_persistent_style() -> None:
@@ -277,24 +231,6 @@ def test_say_tool_schema_constant_is_well_formed() -> None:
     assert params["required"] == ["text"]
 
 
-def test_writer_does_not_add_tools_column(fixture_dataset_root: Path, tmp_path: Path) -> None:
-    """Re-running on a parquet that already has a legacy ``tools`` column
-    must drop it cleanly so reruns converge to the v3.1 schema.
-    """
-    staging_dir = tmp_path / "stage"
-    _stage_episode(
-        staging_dir,
-        0,
-        plan=[
-            {"role": "assistant", "content": "x", "style": "subtask", "timestamp": 0.0, "tool_calls": None}
-        ],
-    )
-    records = list(iter_episodes(fixture_dataset_root))
-    LanguageColumnsWriter().write_all(records, staging_dir, fixture_dataset_root)
-    table = pq.read_table(fixture_dataset_root / "data" / "chunk-000" / "file-000.parquet")
-    assert "tools" not in table.column_names
-
-
 def test_annotation_metadata_sync_allows_non_streaming_load(
     fixture_dataset_root: Path, tmp_path: Path
 ) -> None:
@@ -322,13 +258,7 @@ def test_annotation_metadata_sync_allows_non_streaming_load(
     info_path.write_text(json.dumps(info, indent=2))
 
     staging_dir = tmp_path / "stage"
-    _stage_episode(
-        staging_dir,
-        0,
-        plan=[
-            {"role": "assistant", "content": "do X", "style": "subtask", "timestamp": 0.0, "tool_calls": None}
-        ],
-    )
+    _stage_episode(staging_dir, 0, plan=[persistent_atom("do X")])
     records = list(iter_episodes(fixture_dataset_root))
     LanguageColumnsWriter().write_all(records, staging_dir, fixture_dataset_root)
 
@@ -336,9 +266,9 @@ def test_annotation_metadata_sync_allows_non_streaming_load(
 
     synced = load_info(fixture_dataset_root)
     for key, feature in language_feature_info().items():
-        assert synced["features"][key] == feature
+        assert synced.features[key] == feature
 
-    hf_features = get_hf_features_from_features(synced["features"])
+    hf_features = get_hf_features_from_features(synced.features)
     dataset = load_nested_dataset(fixture_dataset_root / "data", features=hf_features)
 
     assert LANGUAGE_PERSISTENT in dataset.column_names
@@ -349,35 +279,13 @@ def test_annotation_metadata_sync_allows_non_streaming_load(
 def _build_packed_dataset(root: Path, episode_lengths: list[int], *, fps: int = 10) -> Path:
     """Pack several episodes into a single shard (vs build_annotation_dataset's one-per-file),
     so the writer's rewrite must re-emit one row group per episode instead of collapsing them."""
-    from lerobot.datasets.io_utils import write_tasks
-    from lerobot.utils.io_utils import write_json
-
-    data_dir = root / "data" / "chunk-000"
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    episode_index, frame_index, timestamp, task_index, subtask_index = [], [], [], [], []
-    for ep, length in enumerate(episode_lengths):
-        episode_index += [ep] * length
-        frame_index += list(range(length))
-        timestamp += [round(i / fps, 6) for i in range(length)]
-        task_index += [0] * length
-        subtask_index += [0] * length  # legacy column the writer must drop
-    pd.DataFrame(
-        {
-            "episode_index": episode_index,
-            "frame_index": frame_index,
-            "timestamp": timestamp,
-            "task_index": task_index,
-            "subtask_index": subtask_index,
-        }
-    ).to_parquet(data_dir / "file-000.parquet", index=False)
-
-    tasks_df = pd.DataFrame({"task_index": [0]}, index=pd.Index(["do the thing"], name="task"))
-    write_tasks(tasks_df, root)
-    write_json(
-        {"codebase_version": "v3.1", "fps": fps, "features": {}, "total_episodes": len(episode_lengths)},
-        root / "meta" / "info.json",
+    build_annotation_dataset(
+        root, [(ep, length, "do the thing") for ep, length in enumerate(episode_lengths)], fps=fps
     )
+    shards = sorted((root / "data").rglob("*.parquet"))
+    pq.write_table(pa.concat_tables([pq.read_table(path) for path in shards]), shards[0])
+    for path in shards[1:]:
+        path.unlink()
     return root
 
 
@@ -391,19 +299,7 @@ def test_writer_one_row_group_per_episode(tmp_path: Path) -> None:
 
     staging_dir = tmp_path / "stage"
     for ep in range(len(episode_lengths)):
-        _stage_episode(
-            staging_dir,
-            ep,
-            plan=[
-                {
-                    "role": "assistant",
-                    "content": f"subtask for ep {ep}",
-                    "style": "subtask",
-                    "timestamp": 0.0,
-                    "tool_calls": None,
-                }
-            ],
-        )
+        _stage_episode(staging_dir, ep, plan=[persistent_atom(f"subtask for ep {ep}")])
 
     records = list(iter_episodes(root))
     LanguageColumnsWriter().write_all(records, staging_dir, root)
