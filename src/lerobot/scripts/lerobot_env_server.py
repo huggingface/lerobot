@@ -75,11 +75,20 @@ def main() -> None:
     if "zenoh" in data:
         data["zenoh"] = ZenohConfig(**data["zenoh"])
     server = EnvServer(ServerConfig(**data))
-    signal.signal(signal.SIGTERM, lambda *_: server.stop.set())
+    shutdown_requested = False
+
+    def request_shutdown(_signum: int, _frame: object) -> None:
+        # A signal can interrupt Event.wait while its non-reentrant lock is held.
+        nonlocal shutdown_requested
+        shutdown_requested = True
+
+    previous_handler = signal.signal(signal.SIGTERM, request_shutdown)
     try:
-        server.serve()
+        server.serve(should_stop=lambda: shutdown_requested)
     except KeyboardInterrupt:
         server.stop.set()
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
 
 
 if __name__ == "__main__":
