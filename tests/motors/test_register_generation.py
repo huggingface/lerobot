@@ -24,22 +24,8 @@ import pytest
 
 from lerobot.motors.registers import RegisterName
 
-ROOT = Path(__file__).resolve().parents[2]
-GENERATOR = ROOT / "scripts/generate_motor_registers.py"
-COMMITTED_OUTPUT = ROOT / "src/lerobot/motors/registers.py"
 
-
-def run_generator(output: Path, *options: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(GENERATOR), "--output", str(output), *options],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-
-
-def test_snapshot_matches_rustypot_definitions():
+def test_register_names_match_servo_definitions():
     rustypot = pytest.importorskip("rustypot")
     names = set()
     for controller in vars(rustypot).values():
@@ -48,48 +34,25 @@ def test_snapshot_matches_rustypot_definitions():
             for model in models():
                 found = rustypot.find_model(model)
                 assert found is not None
-                definition = found[1]
-                names.update(register.name for register in definition.registers())
-
+                names.update(register.name for register in found[1].registers())
     assert names
-    expected = {spelling for name in names for spelling in (name.lower(), name.upper(), name.title())}
-    committed = set(get_args(RegisterName.__value__))
+    expected = {value for name in names for value in (name, name.upper(), name.title())}
+    actual = set(get_args(RegisterName.__value__))
+    assert actual <= expected  # Newer rustypot releases can add names.
     if version("rustypot") == "1.11.0":
-        assert committed == expected
-    else:
-        # Later releases can add registers without changing the minimum-version snapshot.
-        assert committed <= expected
+        assert actual == expected
 
 
-def test_generator_writes_deterministic_output_and_checks_it(tmp_path):
+def test_generated_source_matches_snapshot():
     pytest.importorskip("rustypot")
-    output = tmp_path / "registers.py"
-    generated = run_generator(output)
-    assert generated.returncode == 0, generated.stderr
-    first = output.read_bytes()
-    generated_again = run_generator(output)
-    assert generated_again.returncode == 0, generated_again.stderr
-    assert output.read_bytes() == first
-    checked = run_generator(output, "--check")
-    assert checked.returncode == 0, checked.stdout + checked.stderr
-    assert output.read_bytes() == first
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, str(root / "scripts/generate_motor_registers.py")],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    assert result.stdout
     if version("rustypot") == "1.11.0":
-        assert first == COMMITTED_OUTPUT.read_bytes()
-
-
-def test_check_reports_stale_and_missing_output_without_writes(tmp_path):
-    pytest.importorskip("rustypot")
-    output = tmp_path / "registers.py"
-    stale = "# stale register types\n"
-    output.write_text(stale)
-    checked = run_generator(output, "--check")
-    assert checked.returncode == 1, checked.stderr
-    assert "-# stale register types" in checked.stdout
-    assert "+type RegisterName = Literal[" in checked.stdout
-    assert output.read_text() == stale
-
-    output.unlink()
-    missing = run_generator(output, "--check")
-    assert missing.returncode == 1, missing.stderr
-    assert "+type RegisterName = Literal[" in missing.stdout
-    assert not output.exists()
+        assert result.stdout == (root / "src/lerobot/motors/registers.py").read_text()

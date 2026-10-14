@@ -22,49 +22,29 @@ See [Bring Your Own Hardware](../integrate_hardware) for adding a new bus, and
 
 ## Register names
 
-`SerialMotorsBus.read`, `write`, `sync_read`, and `sync_write` use generated register-name types.
-A type checker such as mypy rejects misspelled names before you connect the robot:
-
-```python
-from lerobot.motors import SerialMotorsBus
-
-
-def read_position(bus: SerialMotorsBus) -> int | float:
-    return bus.read("Present_Position", "elbow_flex")
-    # "Unknown_Position" produces a type error.
-```
-
-`RegisterName` includes lowercase, uppercase, and title-case spellings from rustypot's servo definitions.
-The bus still matches names without case at runtime. The type lists names across all supported models;
-rustypot checks whether the selected motor supports the register.
-
-For a dynamic name, a custom register, or another case pattern, use `CustomRegister` explicitly:
+Mypy checks literal register names in `read`, `write`, `sync_read`, and `sync_write`:
 
 ```python
 from lerobot.motors import CustomRegister, SerialMotorsBus
 
 
-def read_register(bus: SerialMotorsBus, name: str) -> int | float:
-    return bus.read(CustomRegister(name), "elbow_flex", normalize=False)
+def configure(bus: SerialMotorsBus, name: str) -> None:
+    bus.write("Goal_Position", "joint", 100)  # Valid name.
+    bus.write("Unknown_Position", "joint", 100)  # Mypy rejects this name.
+    bus.read(CustomRegister(name), "joint")  # Explicit access for a dynamic name.
 ```
 
-`CustomRegister` leaves the string unchanged and bypasses the static name check. It does not add a register
-to a servo definition. Ordinary code should use literal names so the type checker can detect typos.
-Untyped callers keep the existing runtime behavior.
+`RegisterName` contains lowercase, uppercase, and title-case names from rustypot.
+`CustomRegister` bypasses the static name check for dynamic names, custom registers, or other case patterns.
+It leaves the string unchanged. rustypot still checks register support on the selected motor at runtime.
+CAN buses keep string register names. Custom bus classes can inherit from `MotorsBusBase[str]`.
 
-The generated file contains names only. It does not duplicate register addresses or control tables.
-The snapshot uses the minimum supported rustypot release. Reproduce it from the repository root:
+Regenerate the names from the minimum supported rustypot release:
 
 ```bash
-uv run --no-project --with rustypot==1.11.0 scripts/generate_motor_registers.py
-uv run --no-project --with rustypot==1.11.0 scripts/generate_motor_registers.py --check
+uv run --no-project --with rustypot==1.11.0 \
+  scripts/generate_motor_registers.py > src/lerobot/motors/registers.py
 ```
-
-If the minimum rustypot version changes, update the pinned command and regenerate the file.
-Use `CustomRegister` for names from newer definitions until the snapshot includes them.
-
-`MotorsBusBase` takes a register-name type parameter. A custom bus that accepts arbitrary strings can
-inherit from `MotorsBusBase[str]`, as the CAN buses do.
 
 ## SerialMotorsBus
 
