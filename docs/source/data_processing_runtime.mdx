@@ -1,7 +1,8 @@
 # Scalable annotation and enrichment
 
-This experimental runtime annotates and enriches **existing LeRobot v3 datasets**.
-Language and non-VLM modules share resumable workers on a laptop, Slurm or HF Jobs.
+This experimental runtime scales the existing `lerobot-annotate` workflows on
+**LeRobot v3 datasets**. It adds resumable workers on a laptop, Slurm or HF Jobs,
+not new annotation models. Non-VLM modules can reuse the same engine contract.
 Raw conversion, format upgrades, resizing and re-encoding stay in standalone scripts.
 
 ## Slurm CPU and GPU workers
@@ -42,7 +43,7 @@ being in LeRobot format does not imply those settings.
 Enrichment preserves source videos, FPS, camera names, actions/state and native labels.
 Modules read exact source references and write declared Parquet outputs. They do not
 implicitly resize videos, invent missing actions or change clocks. Hand, value and
-action/state enrichment can be added as explicit domain modules, not new converters.
+action/state enrichment belong in separate domain-module PRs, not this framework change.
 
 ## Language annotation
 
@@ -71,8 +72,8 @@ For a shared model service, configure `vlm.endpoint_limit_url` and
 per-client concurrency alone is not a global limit. See the
 [parallelism and recovery design](data_processing_design).
 
-Optional `quality.enabled=true` records sampled quality decisions and masks unusable
-episodes before inference. Long subtasks use overlapping context with nonoverlapping
+The engine supports conditional stages and explicit masks supplied by applications;
+it does not add a quality detector to the language recipe. Long subtasks use overlapping context with nonoverlapping
 output ownership and exact source clocks; provenance is stored in Parquet alongside
 the annotations. Workers retry classified temporary failures, not schema/input bugs.
 
@@ -84,21 +85,17 @@ Failed runs reuse valid batches. `finalize_stage` requires complete coverage and
 immutable accepted index. A rejected or masked item must carry a reason.
 
 ```python
-from lerobot.data_processing.artifacts import ArtifactStore
-from lerobot.data_processing.planner import seal_plan
-from lerobot.data_processing.runtime import run_local
-from lerobot.data_processing.types import DatasetRef, InputItem
+from pathlib import Path
+from lerobot.annotations.processing import run_annotation_pipeline
+from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
 
-store = ArtifactStore("./runs/quality")
-plan = seal_plan(
-    store,
-    DatasetRef("./source", input_manifest_sha256),
-    "lerobot.data_processing.modules.video_quality:VideoQuality",
-    {"sample_every": 30},
-    [InputItem("front", {"video_path": "./source/front.mp4", "expected_frames": 300})],
-)
-summary = run_local(store, plan, workers=1)
-print(summary.accepted_path)
+cfg = AnnotationPipelineConfig()
+cfg.runtime.run_uri = "./runs/annotation"
+cfg.runtime.workers = 2
+cfg.vlm.auto_serve = False
+cfg.vlm.api_base = "http://model-service.internal:8000/v1"
+summary = run_annotation_pipeline(cfg, Path("./lerobot-v3"))
+print(summary.written_paths)
 ```
 
 Install `lerobot[dataset]` for Arrow and filesystem dependencies. CPU stages neither import
@@ -120,11 +117,9 @@ writing a digest into `DatasetRef`.
 - Local spawn workers can share local/shared storage. An in-memory filesystem is only useful
   for single-process testing, not distributed workers.
 
-`patch_table` replaces declared columns at explicit frame identities. It preserves other
-rows, columns and source metadata, rejects duplicate/unknown identities, and does not
-interpret missing patches as deletion. `materialize_patch` writes a separate file, never
-overwriting an input dataset or immutable Hub cache. The annotation recipe adds the
-family-aware language merge; publication remains a separate explicit action.
+Language materialization preserves native rows, columns and source-owned labels.
+Only generated annotation families with matching ownership records are replaced;
+missing outputs are not interpreted as deletion. Publication remains explicit.
 
 ## HF Jobs and retained releases
 
@@ -205,36 +200,9 @@ uploads. Retained bucket releases remain usable without Hub publication.
 For account setup and job management, see the
 [official Jobs guide](https://huggingface.co/docs/huggingface_hub/guides/jobs).
 
-## Model extensions and pairs
+## Model services and resource admission
 
-`VideoEmbeddings` is a working optional model extension, not a hand/value model.
-Supply a trusted SHA-256-pinned PyTorch exported `.pt2` encoder accepting dynamic
-`[N, 3, H, W]` RGB float32 images in `[0, 1]` and returning finite `[N, embedding_dim]`
-features. Its example transform resizes to a square; use the model owner's transform
-for a production encoder. Setup loads once per persistent worker; requests are bounded
-by `max_batch_frames` and outputs are typed Parquet.
-Set `trusted_checkpoint=true` only for a model you trust: exported objects may execute
-code when loaded. A checksum identifies a file; it does not establish trust.
-
-```python
-plan = seal_plan(
-    store, DatasetRef("./source", input_manifest_sha256),
-    "lerobot.data_processing.modules.video_embeddings:VideoEmbeddings",
-    {"checkpoint_uri": "./encoder.pt2", "checkpoint_sha256": model_sha256,
-     "embedding_dim": 768, "trusted_checkpoint": True, "device": "cuda", "max_batch_frames": 128},
-    [InputItem("episode-0/front", {
-        "video_path": "./source/front.mp4", "video_sha256": video_sha256,
-        "episode_index": 0, "camera": "front", "frame_indices": [0, 30, 60],
-        "video_from_frame": 0,
-    }, physical_seconds=3, camera_seconds=3)],
-)
-summary = run_local(store, plan, workers=1, batch_size=1)
-```
-
-Frame indices are episode-relative; `video_from_frame` handles packed-video offsets.
-This baseline decodes sequentially through the last selected frame and hashes input
-video per item. Sparse access to long packed videos can therefore incur substantial
-decode work. Local CUDA workers use separate spawned processes
+Local CUDA workers use separate spawned processes
 and preserve scheduler-assigned `CUDA_VISIBLE_DEVICES` IDs. Admission rejects requests
 exceeding visible GPUs or available CPU cores. Memory remains a declared request, not
 a measured guarantee; budget model threads, decoding and scratch per worker separately.
@@ -245,35 +213,6 @@ server can use `num_gpus` for tensor parallelism; independent replicas use one a
 GPU each. Existing external servers are not restarted: operators must verify their
 actual model revision. `client_concurrency` limits requests **per worker/client**, not
 across an entire cluster. See the [vLLM serve options](https://docs.vllm.ai/en/latest/cli/serve/).
-
-### Reference-only ICL pair reduction
-
-`PairLinks` consumes a SHA-pinned inventory with the `INVENTORY` Arrow schema in
-`modules/pair_links.py`. Each episode specifies a pinned dataset revision, camera list,
-frame count, fixed split, actions flag and real/ego/UMI/sim kind. Optional
-`origin_group` keeps known generated relatives together; it is not a near-duplicate
-detector. Pair inputs have this shape:
-
-```python
-InputItem("ego-to-robot-0", {
-    "pair_type": "ego_to_robot",
-    "source": {"dataset_uri": "hf://datasets/owner/ego", "revision": ego_sha,
-               "episode_id": "12", "camera": "ego", "start": 0, "end": 300},
-    "target": {"dataset_uri": "hf://datasets/owner/robot", "revision": robot_sha,
-               "episode_id": "8", "camera": "front", "start": 30, "end": 330},
-    "alignment_validated": True,
-    "alignment_evidence": "reviewed procedure/order/outcome match",
-})
-```
-
-Ranges are `[start, end)` frame indices. Unresolved references, invalid ranges,
-cross-split pairs, targets without robot actions and unvalidated simulated targets
-are rejected with reasons. Outputs contain references, not duplicated videos or
-invented actions. Direct action loss is off unless alignment and evidence are
-explicitly supplied; `weak_semantic` pairs always keep it off. The reducer verifies
-metadata, not physical alignment. Retrieval, Zero-WAM/ego-to-robot generation and
-simulation validation are separate domain modules. This baseline holds its inventory
-in RAM; large-scale retrieval/indexing is a subsequent optimization.
 
 ### Operational telemetry and cache accounting
 

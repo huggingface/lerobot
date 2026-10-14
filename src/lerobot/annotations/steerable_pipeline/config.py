@@ -224,24 +224,6 @@ class ExecutorConfig:
 
 
 @dataclass
-class QualityConfig:
-    """Optional sampled quality gate for the default annotation camera."""
-
-    enabled: bool = False
-    sample_frames: int = 32
-    black_threshold: float = 5.0
-    max_black_fraction: float = 0.9
-
-    def __post_init__(self):
-        if (
-            self.sample_frames < 1
-            or not 0 <= self.black_threshold <= 255
-            or not 0 <= self.max_black_fraction <= 1
-        ):
-            raise ValueError("Invalid episode quality thresholds")
-
-
-@dataclass
 class AnnotationPipelineConfig:
     """Top-level config for ``lerobot-annotate`` (rewrites data shards in place)."""
 
@@ -265,7 +247,6 @@ class AnnotationPipelineConfig:
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
-    quality: QualityConfig = field(default_factory=QualityConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
     # Where the annotation runs: omitted / "local" annotates on this machine, any

@@ -8,14 +8,19 @@ from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 
-import cv2
-import numpy as np
 import pytest
 
 from lerobot.data_processing.artifacts import ArtifactStore
 from lerobot.data_processing.planner import StagePlan, seal_plan
-from lerobot.data_processing.runtime import finalize_stage, run_local
-from lerobot.data_processing.types import DatasetRef, InputItem, ItemResult, Outcome, Resources
+from lerobot.data_processing.runtime import finalize_stage, gpu_assignments, run_local
+from lerobot.data_processing.types import (
+    DatasetRef,
+    InputItem,
+    ItemResult,
+    Outcome,
+    Resources,
+    artifact_identities,
+)
 from lerobot.data_processing.worker import accepted_in_shard, accepted_items
 
 pa = pytest.importorskip("pyarrow")
@@ -350,24 +355,61 @@ def test_invalid_resources(kwargs):
         Resources(**kwargs)
 
 
-def test_real_video_quality_black_frame_counts(tmp_path):
-    video = tmp_path / "input.mp4"
-    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"mp4v"), 10, (32, 24))
-    assert writer.isOpened()
-    for value in [0, 0, 240, 240]:
-        writer.write(np.full((24, 32, 3), value, dtype=np.uint8))
-    writer.release()
+def test_gpu_assignment_preserves_scheduler_ids_and_rejects_oversubscription(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-a,GPU-b,GPU-c,GPU-d")
+    assert gpu_assignments(2, 2) == [("GPU-a", "GPU-b"), ("GPU-c", "GPU-d")]
+    with pytest.raises(ValueError, match="exceed"):
+        gpu_assignments(3, 2)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    with pytest.raises(ValueError):
+        gpu_assignments(1, 1)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,0")
+    with pytest.raises(ValueError, match="unique"):
+        gpu_assignments(2, 1)
+
+
+def test_artifact_binding_identity_and_input_invalidation(tmp_path):
     store = ArtifactStore(tmp_path / "run")
-    plan = seal_plan(
-        store,
-        DatasetRef(str(video), "c" * 64),
-        "lerobot.data_processing.modules.video_quality:VideoQuality",
-        {"sample_every": 1},
-        [InputItem("camera", {"video_path": str(video), "expected_frames": 4})],
-    )
-    run_local(store, plan)
-    result = next(iter(accepted_in_shard(store, plan, 0).values()))
-    with store.open(result.artifacts[0].path) as stream:
-        row = pq.read_table(stream).to_pylist()[0]
-    assert row["decoded_frames"] == row["sampled_frames"] == 4
-    assert row["black_frames"] == 2
+    ids = []
+    for path, digest in (
+        ("attempt-a/file", "a" * 64),
+        ("attempt-b/file", "a" * 64),
+        ("attempt-c/file", "b" * 64),
+    ):
+        payload = {"upstream": {"path": path, "sha256": digest, "size": 123, "name": "atoms", "rows": 1}}
+        plan = seal_plan(
+            store,
+            DatasetRef("fixture/input", "a" * 40),
+            FACTORY,
+            {},
+            [InputItem("one", payload, identity_payload=artifact_identities(payload))],
+        )
+        ids.append(plan.read_shard(store, 0)[0].item_id)
+    assert ids[0] == ids[1] and ids[2] != ids[1]
+
+
+def test_remote_store_without_rename_or_immediate_listing(monkeypatch):
+    from lerobot.data_processing.worker import run_worker_group
+
+    store = ArtifactStore("memory://eventual-" + uuid.uuid4().hex)
+    plan = make_plan(store, size=2)
+    monkeypatch.setattr(store.fs, "mv", lambda *a, **k: pytest.fail("remote rename was required"))
+    run_worker_group(store.uri, plan.plan_id, [0], 2, 0)
+    real_list = store.list
+    monkeypatch.setattr(store, "list", lambda pattern: [] if "checkpoints" in pattern else real_list(pattern))
+    with pytest.raises(RuntimeError, match="incomplete"):
+        finalize_stage(store, plan)
+    assert not store.list(f"{plan.prefix}/accepted/*.parquet")
+    monkeypatch.setattr(store, "list", real_list)
+    assert finalize_stage(store, plan).completed == 2
+
+
+def test_local_cpu_admission(tmp_path, monkeypatch):
+    from lerobot.data_processing import runtime
+
+    monkeypatch.setattr(runtime.os, "sched_getaffinity", lambda _: {0}, raising=False)
+    store = ArtifactStore(tmp_path / "run")
+    plan = make_plan(store, size=4)
+    with pytest.raises(ValueError, match="CPU cores"):
+        run_local(store, plan, workers=2)
+    assert not store.list(f"{plan.prefix}/attempts/*/*/checkpoints/*.json")

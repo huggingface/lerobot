@@ -57,13 +57,9 @@ def test_changed_paths_include_ownership_but_not_media(tmp_path):
         tmp_path / "meta/info.json",
         owner,
     ]
-    quality = tmp_path / "meta/annotations/quality/episode-0.parquet"
     windows = tmp_path / "meta/annotations/windows/episode-0.parquet"
-    assert _changed_paths(
-        tmp_path, SimpleNamespace(written_paths=[data], metadata_paths=[quality, windows])
-    ) == [
+    assert _changed_paths(tmp_path, SimpleNamespace(written_paths=[data], metadata_paths=[windows])) == [
         data,
-        quality,
         windows,
         tmp_path / "meta/info.json",
         owner,
