@@ -1010,8 +1010,7 @@ class SerialMotorsBus(MotorsBusBase[Register]):
 
         Args:
             data_name (`Register`):
-                Generated register name, for example `"Present_Position"`. Use `CustomRegister`
-                for dynamic names or other case patterns. Runtime lookup ignores case.
+                Register name, for example `"Present_Position"`. Runtime lookup ignores case.
             motor (`str`):
                 Motor name.
             normalize (`bool`, *optional*, defaults to `True`):
@@ -1065,8 +1064,7 @@ class SerialMotorsBus(MotorsBusBase[Register]):
 
         Args:
             data_name (`Register`):
-                Generated register name, for example `"Goal_Position"`. Use `CustomRegister`
-                for dynamic names or other case patterns. Runtime lookup ignores case.
+                Register name, for example `"Goal_Position"`. Runtime lookup ignores case.
             motor (`str`):
                 Motor name.
             value (`int | float`):
@@ -1119,8 +1117,7 @@ class SerialMotorsBus(MotorsBusBase[Register]):
 
         Args:
             data_name (`Register`):
-                Generated register name, for example `"Present_Position"`. Use `CustomRegister`
-                for dynamic names or other case patterns. Runtime lookup ignores case.
+                Register name, for example `"Present_Position"`. Runtime lookup ignores case.
             motors (`str | int | Sequence[str | int]`, *optional*):
                 Motors to read, by name or id. `None` reads every motor.
             normalize (`bool`, *optional*, defaults to `True`):
@@ -1180,8 +1177,7 @@ class SerialMotorsBus(MotorsBusBase[Register]):
 
         Args:
             data_name (`Register`):
-                Generated register name, for example `"Goal_Position"`. Use `CustomRegister`
-                for dynamic names or other case patterns. Runtime lookup ignores case.
+                Register name, for example `"Goal_Position"`. Runtime lookup ignores case.
             values (`int | float | dict[str, int | float]`):
                 One value for every motor, or a value per motor name.
             normalize (`bool`, *optional*, defaults to `True`):

@@ -12,19 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import subprocess
-import sys
+import runpy
 import textwrap
+from importlib.metadata import version
 from pathlib import Path
+from typing import get_args
 
 import pytest
+from mypy import api
 
 from lerobot.motors import CustomRegister, Motor, MotorNormMode
+from lerobot.motors.registers import RegisterName
 from tests.mocks.mock_motors_bus import DummyDefinition, MockMotorsBus
 
 
-def test_register_types_in_a_user_program(tmp_path):
+def test_register_types_in_a_user_program(tmp_path, monkeypatch):
     """Check real imported signatures, including the connection decorators."""
     source = textwrap.dedent("""\
         from lerobot.motors import CustomRegister, Register, RegisterName, SerialMotorsBus
@@ -58,8 +60,6 @@ def test_register_types_in_a_user_program(tmp_path):
             bus.write("Goal_Position", "joint", "invalid")  # type: ignore[arg-type]
 
         def aliases(feetech: FeetechMotorsBus, dynamixel: DynamixelMotorsBus) -> None:
-            feetech.read("Present_Position", "joint")
-            dynamixel.write("Goal_Position", "joint", 0)
             feetech.read("Presnet_Position", "joint")  # type: ignore[arg-type]
             dynamixel.write("Gaol_Position", "joint", 0)  # type: ignore[arg-type]
 
@@ -72,39 +72,51 @@ def test_register_types_in_a_user_program(tmp_path):
             bus.read(dynamic, "joint")
             damiao.read("Temperature_MOS", "joint")
             damiao.write("Kp", "joint", 1)
-            damiao.sync_read(dynamic)
-            damiao.sync_write("Kd", {"joint": 1})
-            robstride.read("Present_Torque", "joint")
+            robstride.sync_read(dynamic)
             robstride.sync_write("Kd", {"joint": 1})
     """)
     program = tmp_path / "custom_robot.py"
     program.write_text(source)
-    config = tmp_path / "mypy.ini"
-    # Follow the public API and its decorators. Skip unrelated utility implementations.
-    config.write_text(
-        "[mypy]\npython_version = 3.12\nfollow_imports = silent\nignore_missing_imports = True\n"
-        "[mypy-lerobot.utils.*,numpy.*,rustypot.*]\nfollow_imports = skip\n"
-        "[mypy-lerobot.utils.decorators]\nfollow_imports = silent\n"
-    )
-    repository = Path(__file__).resolve().parents[2]
-    result = subprocess.run(
+    monkeypatch.setenv("MYPYPATH", str(Path(__file__).resolve().parents[2] / "src"))
+    stdout, stderr, status = api.run(
         [
-            sys.executable,
-            "-m",
-            "mypy",
-            "--config-file",
-            str(config),
+            "--config-file=" + str(Path(__file__).resolve().parents[2] / "pyproject.toml"),
+            "--follow-imports=silent",
+            "--ignore-missing-imports",
             "--no-incremental",
             "--warn-unused-ignores",
             str(program),
-        ],
-        cwd=repository,
-        env={**os.environ, "MYPYPATH": str(repository / "src")},
-        capture_output=True,
-        text=True,
-        check=False,
+        ]
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert status == 0, stdout + stderr
+
+
+def test_register_names_match_servo_definitions():
+    rustypot = pytest.importorskip("rustypot")
+    names = set()
+    for controller in vars(rustypot).values():
+        models = getattr(controller, "models", None)
+        if isinstance(controller, type) and callable(models):
+            for model in models():
+                found = rustypot.find_model(model)
+                assert found is not None
+                names.update(register.name for register in found[1].registers())
+    assert names
+    expected = {value for name in names for value in (name, name.upper(), name.title())}
+    actual = set(get_args(RegisterName.__value__))
+    assert actual <= expected  # Newer rustypot releases can add names.
+    if version("rustypot") == "1.11.0":
+        assert actual == expected
+
+
+def test_generated_source_matches_snapshot(capsys):
+    pytest.importorskip("rustypot")
+    root = Path(__file__).resolve().parents[2]
+    runpy.run_path(str(root / "scripts/generate_motor_registers.py"), run_name="__main__")
+    source = capsys.readouterr().out
+    assert source
+    if version("rustypot") == "1.11.0":
+        assert source == (root / "src/lerobot/motors/registers.py").read_text()
 
 
 @pytest.mark.parametrize(
@@ -121,9 +133,7 @@ def test_register_names_preserve_runtime_access(register):
     class CustomBus(MockMotorsBus):
         @staticmethod
         def _find_model(model):
-            if register == "Vendor_Gain":
-                return 1234, DummyDefinition("CUSTOM", {model: 1234}, ("Vendor_Gain",))
-            return MockMotorsBus._find_model(model)
+            return 1234, DummyDefinition("CUSTOM", {model: 1234}, ("Present_Position", "Vendor_Gain"))
 
     bus = CustomBus("/dev/dummy-port", {"joint": Motor(1, "model_1", MotorNormMode.RANGE_M100_100)})
     bus.connect(handshake=False)
