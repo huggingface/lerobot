@@ -1,0 +1,117 @@
+# SmolVLA
+
+SmolVLA 是 Hugging Face 推出的轻量级机器人基础模型。专为在 LeRobot 数据集上轻松微调而设计，助你加速开发！
+
+<p align="center">
+  <img
+    src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png"
+    alt="SmolVLA 架构图。"
+    width="500"
+  />
+  <br />
+  <em>
+    图 1. SmolVLA 接收以下输入：(i) 多个摄像头视角，(ii) 机器人当前的
+    感觉运动状态，以及 (iii) 自然语言指令，这些输入被编码为上下文特征，
+    用于在生成动作块时约束动作专家。
+  </em>
+</p>
+
+## 环境配置
+
+1. 按照我们的[安装指南](./installation)安装 LeRobot。
+2. 运行以下命令安装 SmolVLA 依赖：
+
+   ```bash
+   pip install -e ".[smolvla]"
+   ```
+
+## 采集数据集
+
+SmolVLA 是一个基础模型，需要在自己的数据上进行微调才能在你的场景中获得最佳性能。
+我们建议从录制约 50 个 episode 的任务数据开始。按照我们的指南开始操作：[录制数据集](./il_robots)
+
+<Tip>
+
+在数据集中，确保你引入的每种变体（例如在桌面抓取放置任务中方块的位置）都有足够的演示。
+
+我们建议查看以下数据集作为参考，该数据集曾用于 [SmolVLA 论文](https://huggingface.co/papers/2506.01844)：
+
+🔗 [SVLA SO100 PickPlace](https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2Flerobot%2Fsvla_so100_pickplace%2Fepisode_0)
+
+在该数据集中，我们在 5 个不同方块位置各录制了 50 个 episode。每个位置采集了 10 个抓取放置交互的 episode。这种结构——对每种变体重复多次——有助于模型更好地泛化。我们尝试过类似的 25 个 episode 的数据集，效果不够好，导致性能较差。因此，数据质量和数量确实是关键。
+当你的数据集上传到 Hub 后，就可以使用我们的微调脚本来将 SmolVLA 适配到你的应用中了。
+
+</Tip>
+
+## 在你的数据上微调 SmolVLA
+
+使用 [`smolvla_base`](https://hf.co/lerobot/smolvla_base)——我们预训练的 450M 参数模型——在你的数据上进行微调。
+在单张 A100 GPU 上训练 20k 步大约需要 ~4 小时。你应该根据性能和实际场景调整训练步数。
+
+如果没有 GPU 设备，可以使用我们的 Google Colab 笔记本进行训练：[![Google Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb)
+
+通过 `--dataset.repo_id` 将数据集传递给训练脚本。如果想测试安装是否正确，运行以下命令，我们使用了为 [SmolVLA 论文](https://huggingface.co/papers/2506.01844)采集的数据集之一。
+
+```bash
+cd lerobot && lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=${HF_USER}/mydataset \
+  --batch_size=64 \
+  --steps=20000 \
+  --output_dir=outputs/train/my_smolvla \
+  --job_name=my_smolvla_training \
+  --policy.device=cuda \
+  --wandb.enable=true
+```
+
+<Tip>
+  你可以从较小的 batch size 开始，在 GPU 允许的情况下逐步增大，
+  只要数据加载时间保持较短即可。
+</Tip>
+
+微调是一门艺术。有关微调选项的完整概述，运行：
+
+```bash
+lerobot-train --help
+```
+
+<p align="center">
+  <img
+    src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/S-3vvVCulChREwHDkquoc.gif"
+    alt="SmolVLA 在不同任务变体上的对比。"
+    width="500"
+  />
+  <br />
+  <em>
+    图 2：SmolVLA 在不同任务变体上的对比。从左到右：
+    (1) 抓取放置方块计数，(2) 抓取放置方块计数，(3) 扰动条件下的抓取放置
+    方块计数，以及 (4) 在真实 SO101 上对乐高积木抓取放置的泛化。
+  </em>
+</p>
+
+## 评估微调模型并实时运行
+
+与录制 episode 时类似，建议你先登录 HuggingFace Hub。可以按照以下步骤操作：[录制数据集](./il_robots#record-a-dataset)。
+登录完成后，可以通过以下命令在你的环境中运行推理：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \ # <- 使用你的端口
+  --robot.id=my_blue_follower_arm \ # <- 使用你的机器人 ID
+  --robot.cameras="{ front: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}}" \ # <- 使用你的摄像头
+  --task="Grasp a lego block and put it in the bin." \ # <- 使用与数据集录制时相同的任务描述
+  # <- RTC 可选，在低性能硬件上运行时使用 \
+  # --inference.type=rtc \
+  # --inference.rtc.execution_horizon=10 \
+  # --inference.rtc.max_guidance_weight=10.0 \
+  # <- Teleop 可选，如果你想在 episode 之间进行遥操作 \
+  # --teleop.type=so100_leader \
+  # --teleop.port=/dev/ttyACM0 \
+  # --teleop.id=my_red_leader_arm \
+  # --display_data=true #可选，如果你想查看摄像头画面 \
+  --policy.path=HF_USER/FINETUNE_MODEL_NAME # <- 使用你的微调模型
+```
+
+根据你的评估环境，可以配置评估套件中录制的持续时间和 episode 数量。

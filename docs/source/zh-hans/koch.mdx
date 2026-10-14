@@ -1,0 +1,283 @@
+# Koch v1.1
+
+在以下步骤中，我们将介绍如何组装 Koch v1.1 机器人。
+
+## 订购和组装零件
+
+请按照此 [README](https://github.com/jess-moss/koch-v1-1) 中提供的采购和组装指南操作。这将引导你完成主臂（follower）和从臂（leader）的设置，如下图所示。
+
+有关组装过程的视频演示，可以参考[此视频教程](https://youtu.be/8nQIg9BwwTk)。
+
+> [!WARNING]
+> 自该视频制作以来，我们简化了配置阶段。因此，有两件事与视频中的说明不同：
+>
+> - 不要立即插上所有电机线缆，等到[配置电机](#configure-the-motors)部分再按指示操作。
+> - 不要立即将控制板（PCB）拧到底座上，等到[配置电机](#configure-the-motors)部分再按指示操作。
+
+## 安装 LeRobot 🤗
+
+要安装 LeRobot，请按照我们的[安装指南](./installation)操作。
+
+除了这些说明外，你还需要安装 Dynamixel SDK：
+
+```bash
+pip install -e ".[dynamixel]"
+```
+
+## 配置电机
+
+### 1. 查找每个机械臂对应的 USB 端口
+
+要查找每个总线舵机适配器的端口，运行以下脚本：
+
+```bash
+lerobot-find-port
+```
+
+<hfoptions id="example">
+<hfoption id="Mac">
+
+示例输出：
+
+```
+Finding all available ports for the MotorBus.
+['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+Remove the USB cable from your MotorsBus and press Enter when done.
+
+[...断开对应的主臂或从臂并按 Enter...]
+
+The port of this MotorsBus is /dev/tty.usbmodem575E0032081
+Reconnect the USB cable.
+```
+
+找到的端口为：`/dev/tty.usbmodem575E0032081`，对应你的主臂或从臂。
+
+</hfoption>
+<hfoption id="Linux">
+
+在 Linux 上，你可能需要通过运行以下命令来授予 USB 端口访问权限：
+
+```bash
+sudo chmod 666 /dev/ttyACM0
+sudo chmod 666 /dev/ttyACM1
+```
+
+示例输出：
+
+```
+Finding all available ports for the MotorBus.
+['/dev/ttyACM0', '/dev/ttyACM1']
+Remove the usb cable from your MotorsBus and press Enter when done.
+
+[...断开对应的主臂或从臂并按 Enter...]
+
+The port of this MotorsBus is /dev/ttyACM1
+Reconnect the USB cable.
+```
+
+找到的端口为：`/dev/ttyACM1`，对应你的主臂或从臂。
+
+</hfoption>
+</hfoptions>
+
+### 2. 设置电机 ID 和波特率
+
+每个电机在总线上通过唯一的 ID 标识。全新电机通常默认 ID 为 `1`。为了使电机和控制器之间的通信正常工作，我们首先需要为每个电机设置一个唯一且不同的 ID。此外，总线上传输数据的速度由波特率决定。为了互相通信，控制器和所有电机需要配置相同的波特率。
+
+为此，我们需要先逐个连接每个电机到控制器来设置这些参数。由于我们将把这些参数写入电机内部存储器（EEPROM）的非易失性区域，所以只需要做一次。
+
+如果你是从其他机器人上重新利用电机，你可能也需要执行此步骤，因为 ID 和波特率很可能不匹配。
+
+#### 从臂（Follower）
+
+将 USB 线缆从电脑连接到从臂的控制板，并接上 5V 电源。然后运行以下命令或使用上一步获取的端口运行 API 示例。你还需要通过 `id` 参数为你的从臂命名。
+
+有关如何设置电机 ID 的可视化参考，请查看[此视频](https://huggingface.co/docs/lerobot/en/so101#setup-motors-video)，其中演示了 SO101 机械臂的设置过程。
+
+<hfoptions id="setup_motors">
+<hfoption id="Command">
+
+```bash
+lerobot-setup-motors \
+    --robot.type=koch_follower \
+    --robot.port=/dev/tty.usbmodem575E0031751 # <- 粘贴上一步找到的端口
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.robots.koch_follower import KochFollower, KochFollowerConfig
+
+config = KochFollowerConfig(
+    port="/dev/tty.usbmodem575E0031751",
+    id="my_awesome_follower_arm",
+)
+follower = KochFollower(config)
+follower.setup_motors()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+你应该会看到以下提示：
+
+```
+Connect the controller board to the 'gripper' motor only and press enter.
+```
+
+按照提示，仅插入夹爪电机。确保它是唯一连接到控制板的电机，且该电机本身尚未与其他电机串联。当你按下 `[Enter]` 时，脚本会自动为该电机设置 ID 和波特率。
+
+<details>
+<summary>故障排除</summary>
+
+如果此时出现错误，请检查线缆并确保它们正确插入：
+
+<ul>
+  <li>电源</li>
+  <li>电脑和控制板之间的 USB 线缆</li>
+  <li>从控制板到电机的 3 针线缆</li>
+</ul>
+
+如果你使用的是 Waveshare 控制板，请确保两个跳线设置在 `B` 通道（USB）上。
+
+</details>
+
+然后你应该会看到以下消息：
+
+```
+'gripper' motor id set to 6
+```
+
+接着是下一个提示：
+
+```
+Connect the controller board to the 'wrist_roll' motor only and press enter.
+```
+
+你可以从控制板上断开 3 针线缆，但另一端可以保持连接在夹爪电机上，因为它已经在正确的位置。现在，将另一根 3 针线缆插入腕部旋转电机并连接到控制板。与之前的电机一样，确保它是唯一连接到控制板的电机，且该电机本身未与其他电机连接。
+
+按照提示对每个电机重复操作。
+
+> [!TIP]
+> 在每一步按 Enter 之前检查你的线缆连接。例如，当你操作控制板时，电源线可能会断开。
+
+完成后，脚本会自动结束，此时电机已可以使用。你现在可以将每个电机的 3 针线缆依次串联，并将第一个电机（'shoulder pan'，ID=1）的线缆连接到控制板，控制板现在可以固定到机械臂底座上。
+
+#### 主臂（Leader）
+
+对主臂执行相同的步骤，但相应地修改命令或脚本。
+
+<hfoptions id="setup_motors">
+<hfoption id="Command">
+
+```bash
+lerobot-setup-motors \
+    --teleop.type=koch_leader \
+    --teleop.port=/dev/tty.usbmodem575E0031751 \  # <- 粘贴上一步找到的端口
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.koch_leader import KochLeader, KochLeaderConfig
+
+config = KochLeaderConfig(
+    port="/dev/tty.usbmodem575E0031751",
+    id="my_awesome_leader_arm",
+)
+leader = KochLeader(config)
+leader.setup_motors()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+## 校准
+
+接下来，你需要校准机器人，以确保主臂和从臂在相同物理位置时具有相同的位置值。
+校准过程非常重要，因为它允许在一个机器人上训练的神经网络能够在另一个机器人上工作。
+
+#### 从臂（Follower）
+
+运行以下命令或 API 示例来校准从臂：
+
+<hfoptions id="calibrate_follower">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --robot.type=koch_follower \
+    --robot.port=/dev/tty.usbmodem58760431551 \ # <- 你的机器人端口
+    --robot.id=my_awesome_follower_arm  # <- 给机器人一个唯一名称
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.robots.koch_follower import KochFollowerConfig, KochFollower
+
+config = KochFollowerConfig(
+    port="/dev/tty.usbmodem585A0076891",
+    id="my_awesome_follower_arm",
+)
+
+follower = KochFollower(config)
+follower.connect(calibrate=False)
+follower.calibrate()
+follower.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+我们统一了大多数机器人的校准方法。因此，此 Koch 机械臂的校准步骤与 SO100 和 SO101 相同。首先，我们需要将机器人移动到每个关节处于其活动范围中间的位置，然后按 `Enter`。其次，我们将所有关节移动到其完整活动范围。可以参考 SO101 的相同过程视频[此处](https://huggingface.co/docs/lerobot/en/so101#calibration-video)。
+
+#### 主臂（Leader）
+
+对主臂执行相同的校准步骤，运行以下命令或 API 示例：
+
+<hfoptions id="calibrate_leader">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=koch_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 你的机器人端口
+    --teleop.id=my_awesome_leader_arm  # <- 给机器人一个唯一名称
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
+
+config = KochLeaderConfig(
+    port="/dev/tty.usbmodem575E0031751",
+    id="my_awesome_leader_arm",
+)
+
+leader = KochLeader(config)
+leader.connect(calibrate=False)
+leader.calibrate()
+leader.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+恭喜 🎉，你的机器人已准备就绪，可以开始自主学习任务了。按照此教程开始训练：[真实世界机器人入门](./il_robots)
+
+> [!TIP]
+> 如果你有任何问题或需要帮助，请在 [Discord](https://discord.com/invite/s3KuuzsPFb) 上联系我们。

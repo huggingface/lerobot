@@ -1,0 +1,103 @@
+# 重命名映射和空相机
+
+当您使用机器人策略进行训练、评估或录制时，您的**数据集**或**环境**在一组键下提供观测值（例如 `observation.images.front`、`observation.images.eagle`），而您的**策略**期望另一组键（例如 `observation.images.image`、`observation.images.image2`）。**重命名映射**弥合了这个差距，无需更改策略或数据源。
+
+> **范围：** 重命名映射仅重命名**观测**键（图像和状态）。动作键不受影响。
+
+## 为什么观测键并不总是匹配
+
+策略有一组固定的**输入特征名称**烘焙在其预训练配置中。例如：
+
+- [pi0fast-libero](https://huggingface.co/lerobot/pi0fast-libero) 期望 `observation.images.base_0_rgb` 和 `observation.images.left_wrist_0_rgb`。
+- [xvla-base](https://huggingface.co/lerobot/xvla-base) 期望 `observation.images.image`、`observation.images.image2` 和 `observation.images.image3`。
+
+您的数据集可能使用完全不同的名称（例如 `observation.images.front`、`observation.images.eagle`、`observation.images.glove`），您的评估环境可能使用另一组名称。您不需要编辑策略配置或重命名数据集中的列，而是传递一个**重命名映射**：一个 JSON 字典，将源键映射到策略期望的键。重命名发生在预处理器管道内部，因此策略始终看到其期望的键。
+
+## 使用重命名映射
+
+将映射作为 JSON 字符串在命令行上传递。约定始终是：
+
+```
+--rename_map='{"source_key": "policy_key", ...}'
+```
+
+其中 **source_key** 是数据集或环境提供的，**policy_key** 是策略期望的。
+
+只有列出的键被重命名；其他所有内容保持不变。条目的顺序无关紧要。
+
+支持的策略：**PI0**、**PI05**、**PI0Fast**、**SmolVLA** 和 **XVLA**。
+
+### 训练
+
+假设您在具有 `observation.images.front`、`observation.images.eagle` 和 `observation.images.glove` 图像的数据集上微调 [lerobot/xvla-base](https://huggingface.co/lerobot/xvla-base)。XVLA 期望 `observation.images.image`、`observation.images.image2` 和 `observation.images.image3`：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/xvla_training \
+  --job_name=xvla_training \
+  --policy.path="lerobot/xvla-base" \
+  --policy.repo_id="HF_USER/xvla-your-robot" \
+  --policy.dtype=bfloat16 \
+  --policy.action_mode=auto \
+  --steps=20000 \
+  --policy.device=cuda \
+  --policy.freeze_vision_encoder=false \
+  --policy.freeze_language_encoder=false \
+  --policy.train_policy_transformer=true \
+  --policy.train_soft_prompts=true \
+  --rename_map='{"observation.images.front": "observation.images.image", "observation.images.eagle": "observation.images.image2", "observation.images.glove": "observation.images.image3"}'
+```
+
+### 评估
+
+策略期望 `observation.images.base_0_rgb` 和 `observation.images.left_wrist_0_rgb`（例如 [pi0fast-libero](https://huggingface.co/lerobot/pi0fast-libero)），但 LIBERO 环境返回 `observation.images.image` 和 `observation.images.image2`：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/pi0fast-libero \
+  --env.type=libero \
+  ... \
+  --rename_map='{"observation.images.image": "observation.images.base_0_rgb", "observation.images.image2": "observation.images.left_wrist_0_rgb"}'
+```
+
+## 替代方案：直接编辑策略配置
+
+如果您始终使用相同的数据集或环境，您可以**编辑策略的 `config.json`**，使其观测键与您的数据源匹配。然后就不需要重命名映射。
+
+权衡：修改策略配置将其绑定到一个数据源。重命名映射使一个策略可以在许多数据集和环境中使用。
+
+## 空相机：比策略期望的更少视图
+
+某些策略是为固定数量的图像输入构建的。如果您的数据集具有更少的相机，您可以在策略配置中设置 **`empty_cameras`**，而不是修改模型架构。
+
+### 工作原理
+
+设置 `empty_cameras=N` 会向策略配置添加 N 个占位符图像特征，命名为：
+
+```
+observation.images.empty_camera_0
+observation.images.empty_camera_1
+...
+```
+
+在运行时，这些键在批次中没有对应的数据。策略用掩码虚拟张量填充它们（对于基于 SigLIP 的视觉编码器用 `-1` 填充，用零注意力掩码），因此在训练和推理期间额外图像槽被有效忽略。
+
+### 示例
+
+XVLA-base 有三个视觉输入，默认 `empty_cameras=0`。您的数据集只有两个相机：
+
+1. 设置 `--policy.empty_cameras=1`。
+2. 配置添加第三个键：`observation.images.empty_camera_0`。
+3. 像往常一样使用重命名映射处理您的两个真实相机。
+4. 第三个槽被掩码——您的数据集中不需要假图像。
+
+## 快速参考
+
+| 目标 | 要做什么 |
+| --------------------------------------- | --------------------------------------------------------------------------- |
+| 数据集键 ≠ 策略键 | `--rename_map='{"dataset_key": "policy_key", ...}'` |
+| 环境键 ≠ 策略键（评估） | `--rename_map='{"env_key": "policy_key", ...}'` |
+| 使用不同键的推理 | `--rename_map='{"source_key": "policy_key", ...}'`。 |
+| 比策略期望更少的相机 | `--policy.empty_cameras=N`（PI0、PI05、PI0Fast、SmolVLA、XVLA 支持） |
+| 避免传递重命名映射 | 编辑策略的 `config.json`，使其键与您的数据源匹配 |
