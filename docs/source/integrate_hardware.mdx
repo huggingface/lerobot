@@ -242,7 +242,13 @@ The goal of the calibration is twofold:
 - Know the physical range of motion of each motors in order to only send commands within this range.
 - Normalize raw motor positions to sensible continuous values (e.g. percentages, degrees) instead of arbitrary discrete values dependent on the specific motor used that will not replicate elsewhere.
 
-It should implement the logic for calibration (if relevant) and update the `self.calibration` dictionary. If you are using Feetech or Dynamixel motors, `SerialMotorsBus` already runs the calibration by hand: `record_calibration()` frees the motors, puts them in the operating mode you give, asks you to hold the joints in the middle of their range of motion (that pose becomes a half turn of each motor), then records the range of each joint as you move it. Joints that turn endlessly go in `full_turn_motors`: they get the whole encoder range instead. `_keep_calibration_file()` first offers to reuse the calibration file of this id, and writes it to the motors when you keep it.
+It should implement the logic for calibration (if relevant) and update the `self.calibration` dictionary. If you are using Feetech or Dynamixel motors, `SerialMotorsBus` already runs the calibration by hand:
+
+1. `_keep_calibration_file()` offers to reuse the calibration file of this id. If you keep it, it is written to the motors and the calibration ends there.
+2. `record_calibration()` frees the motors and puts them in the operating mode you give.
+3. It asks you to hold the joints in the middle of their range of motion: that pose becomes a half turn of each motor.
+4. It records the range of each joint as you move it, until you press ENTER. Joints that turn endlessly go in `full_turn_motors` and get the whole encoder range instead; our 5-DoF arm has none.
+5. `write_calibration()` writes the result to the motors, and `_save_calibration()` saves it to the calibration file.
 
 <!-- prettier-ignore-start -->
 ```python
@@ -250,7 +256,7 @@ def calibrate(self) -> None:
     if self._keep_calibration_file(self.bus):
         return
 
-    self.calibration = self.bus.record_calibration("position", full_turn_motors=["wrist_roll"])
+    self.calibration = self.bus.record_calibration("position", full_turn_motors=[])
     self.bus.write_calibration(self.calibration)
     self._save_calibration()
     print("Calibration saved to", self.calibration_fpath)
