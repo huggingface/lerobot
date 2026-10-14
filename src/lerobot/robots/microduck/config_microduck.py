@@ -25,6 +25,8 @@ class MicroDuckConfig(RobotConfig):
     The duck walks with an onboard RL policy, so LeRobot commands *intents* (a body twist and a head
     pose), never joint targets. Those intents go to ``robotd`` over its JSON-RPC socket, forwarded from
     the robot with ``ssh -N -L /tmp/robotd.sock:/run/robotd.sock microduck@<remote_ip>``.
+
+    The robot stores its calibration. LeRobot does not calibrate the motors.
     """
 
     # IP of the duck on the LAN (``duckctl ip`` prints it). Used for the camera snapshot endpoint.
