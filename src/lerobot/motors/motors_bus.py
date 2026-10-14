@@ -291,6 +291,14 @@ class SerialMotorsBus(MotorsBusBase):
         inverts itself through its `Drive_Mode` register; a Feetech has none."""
         return not self._has_register(motor, "Drive_Mode")
 
+    def _refuses(self, motor_id: int, status: int) -> bool:
+        """Whether `status`, the error field of a motor's answer, says it refused the access
+        rather than reporting an alarm while carrying it out. On protocol 2, bits 0-6 hold an
+        error number and bit 7 the alert of a latched hardware fault. The protocol-1 servos
+        LeRobot drives are Feetech ones, whose status only reports alarms: input voltage,
+        temperature, current, load."""
+        return self._definitions[motor_id].protocol == 2 and status & 0x7F != 0
+
     def _get_motor_id(self, motor: NameOrID) -> int:
         if isinstance(motor, str):
             return self.motors[motor].id
@@ -985,7 +993,7 @@ class SerialMotorsBus(MotorsBusBase):
                 Additional attempts after a communication failure.
 
         Returns:
-            `int | None`: The model number, `None` when the motor does not answer or reports an error.
+            `int | None`: The model number, `None` when the motor does not answer or refuses the read.
         """
         try:
             return self._read("Model_Number", self._get_motor_id(motor), num_retry)
@@ -1018,7 +1026,8 @@ class SerialMotorsBus(MotorsBusBase):
 
         Raises:
             ConnectionError: If the motor does not answer.
-            RuntimeError: If the motor reports an error in its status.
+            RuntimeError: If the motor refuses the read. An alarm in its status, as an
+                overload, does not raise.
         """
 
         id_ = self.motors[motor].id
@@ -1040,9 +1049,9 @@ class SerialMotorsBus(MotorsBusBase):
                 f"Failed to read '{data_name}' from motor ID {motor_id} after {num_retry + 1} tries. {e}"
             ) from e
 
-        if status:
+        if self._refuses(motor_id, status):
             raise RuntimeError(
-                f"Failed to read '{data_name}': motor ID {motor_id} returned error status 0x{status:02x}."
+                f"Failed to read '{data_name}': motor ID {motor_id} refused it with error status 0x{status:02x}."
             )
 
         return value
@@ -1070,7 +1079,8 @@ class SerialMotorsBus(MotorsBusBase):
 
         Raises:
             ConnectionError: If the motor does not answer.
-            RuntimeError: If the motor reports an error in its status.
+            RuntimeError: If the motor refuses the write. An alarm in its status, as an
+                overload, does not raise.
         """
 
         id_ = self.motors[motor].id
@@ -1087,9 +1097,10 @@ class SerialMotorsBus(MotorsBusBase):
                 f"Failed to write {int_value} to '{data_name}' of motor ID {id_} after {num_retry + 1} tries. {e}"
             ) from e
 
-        if status:
+        if self._refuses(id_, status):
             raise RuntimeError(
-                f"Failed to write {int_value} to '{data_name}': motor ID {id_} returned error status 0x{status:02x}."
+                f"Failed to write {int_value} to '{data_name}': motor ID {id_} refused it with error status "
+                f"0x{status:02x}."
             )
 
     @check_if_not_connected
@@ -1124,7 +1135,8 @@ class SerialMotorsBus(MotorsBusBase):
 
         Raises:
             ConnectionError: If a motor does not answer.
-            RuntimeError: If a motor reports an error in its status.
+            RuntimeError: If a motor refuses the read. An alarm in a status, as an overload,
+                does not raise.
         """
 
         names = self._get_motors_list(motors)
@@ -1139,9 +1151,9 @@ class SerialMotorsBus(MotorsBusBase):
                 f"Failed to sync read '{data_name}' from motor IDs {ids} after {num_retry + 1} tries. {e}"
             ) from e
         if errors := [
-            f"motor ID {id_} returned error status 0x{status:02x}"
+            f"motor ID {id_} refused it with error status 0x{status:02x}"
             for id_, (_, status) in zip(ids, read, strict=True)
-            if status
+            if self._refuses(id_, status)
         ]:
             raise RuntimeError(f"Failed to sync read '{data_name}': {', '.join(errors)}.")
         ids_values = {id_: value for id_, (value, _) in zip(ids, read, strict=True)}
