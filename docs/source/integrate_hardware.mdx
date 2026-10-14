@@ -32,7 +32,7 @@ Models can share a bus, STS/SMS and SCS servos or XL430 and XL330: each motor is
 
 Supporting a model does not mean every calibration helper works on it: the Feetech SCS0009 has neither an operating mode nor a homing offset, so `set_operating_mode()` and `set_half_turn_homings()` refuse it. The calibration recipe below is for servos that have both, such as the STS; an SCS servo is calibrated by its range alone.
 
-If you are using Feetech or Dynamixel servos that are not in this list, add them to [rustypot](https://github.com/pollen-robotics/rustypot), which holds the control tables the buses read: a model sharing an existing control table only needs its model number registered, a new one needs a servo definition (see the [servo contribution guide](https://github.com/pollen-robotics/rustypot/blob/v1.11.0/src/servo/README.md)). LeRobot reads the models from the installed rustypot Python package, so it must include the new model: a rustypot release with it, or rustypot built from source.
+If you are using Feetech or Dynamixel servos that are not in this list, add them to [rustypot](https://github.com/pollen-robotics/rustypot), which holds the control tables the buses read: a model sharing an existing control table only needs its model number registered, a new one needs a servo definition (see the [servo contribution guide](https://github.com/pollen-robotics/rustypot/blob/v1.13.1/src/servo/README.md)). LeRobot reads the models from the installed rustypot Python package, so it must include the new model: a rustypot release with it, or rustypot built from source.
 
 In the next sections, the examples use Feetech motors. Change the models and adapt to your motors if necessary.
 
