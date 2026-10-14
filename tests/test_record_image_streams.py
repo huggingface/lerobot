@@ -18,7 +18,11 @@ Sensor data and transport are synthetic. Dataset persistence and decoding use
 the real recording workflow.
 """
 
+import os
+import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -36,6 +40,7 @@ from lerobot.datasets.dataset_writer import DatasetWriter
 from lerobot.processor import ObservationProcessorStep, make_default_processors
 from lerobot.robots.microduck import MicroDuck, MicroDuckConfig
 from lerobot.scripts.lerobot_record import RecordConfig, record
+from lerobot.utils.errors import DeviceNotConnectedError
 from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
 IMAGE_SHAPE = (32, 32, 3)
@@ -155,3 +160,78 @@ def test_record_and_resume_image_streams(tmp_path, monkeypatch, video, camera, o
 
     expected_settings = [(0, 2 * len(image_keys))] * 2 if image_keys else []
     assert writer_settings == expected_settings
+
+
+def test_record_finalizes_empty_dataset_on_connection_failure(tmp_path, monkeypatch):
+    robot_cfg = MicroDuckConfig(calibration_dir=tmp_path / "calibration", robotd_address="127.0.0.1:0")
+    robot = MicroDuck(robot_cfg)
+    monkeypatch.setattr("lerobot.scripts.lerobot_record.make_robot_from_config", lambda cfg: robot)
+    datasets = []
+    image_writers = []
+    create_dataset = LeRobotDataset.create
+
+    def capture_dataset(*args, **kwargs):
+        dataset = create_dataset(*args, **kwargs)
+        datasets.append(dataset)
+        image_writers.append(dataset.writer.image_writer)
+        return dataset
+
+    monkeypatch.setattr(LeRobotDataset, "create", capture_dataset)
+    cfg = RecordConfig(
+        robot=robot_cfg,
+        teleop=MockTeleopConfig(calibration_dir=tmp_path / "teleop-calibration"),
+        dataset=DatasetRecordConfig(
+            repo_id="lerobot/microduck-connection-failure-test",
+            root=tmp_path / "dataset",
+            no_stamp=True,
+            push_to_hub=False,
+            num_image_writer_threads_per_camera=2,
+        ),
+        play_sounds=False,
+    )
+
+    with pytest.raises(DeviceNotConnectedError, match="Could not reach robotd"):
+        record(cfg)
+
+    (dataset,) = datasets
+    (image_writer,) = image_writers
+    assert dataset.num_frames == 0
+    assert dataset._is_finalized
+    assert dataset.writer.image_writer is None
+    assert image_writer is not None
+    assert image_writer._stopped
+    assert all(not thread.is_alive() for thread in image_writer.threads)
+    assert not robot.is_connected
+
+
+def test_microduck_record_cli_exits_on_connection_failure(tmp_path):
+    environment = os.environ.copy()
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    command = [
+        sys.executable,
+        "-B",
+        "-m",
+        "lerobot.scripts.lerobot_record",
+        "--robot.type=microduck",
+        "--robot.robotd_address=127.0.0.1:0",
+        f"--robot.calibration_dir={tmp_path / 'calibration'}",
+        "--robot.use_camera=true",
+        "--teleop.type=keyboard_microduck",
+        "--dataset.repo_id=lerobot/microduck-cli-connection-failure-test",
+        f"--dataset.root={tmp_path / 'dataset'}",
+        "--dataset.no_stamp=true",
+        "--dataset.push_to_hub=false",
+        "--display_data=false",
+        "--play_sounds=false",
+    ]
+    result = subprocess.run(
+        command,
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 1
+    assert "DeviceNotConnectedError: Could not reach robotd" in result.stderr
+    assert "AttributeError" not in result.stderr
