@@ -40,6 +40,7 @@ class DummyDefinition:
         homing_offset_sign: int | None = None,
         supports_broadcast_ping: bool = False,
         eeprom_lock: bool = False,
+        protocol: int = 2,
     ):
         self.name = name
         self.models = models
@@ -52,6 +53,7 @@ class DummyDefinition:
         self.homing_offset_sign = homing_offset_sign
         self.supports_broadcast_ping = supports_broadcast_ping
         self.eeprom_lock = eeprom_lock
+        self.protocol = protocol
 
     def register(self, name: str) -> str | None:
         return name if name in self._registers else None

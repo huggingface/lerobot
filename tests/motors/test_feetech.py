@@ -118,6 +118,23 @@ def test_the_firmware_is_compared_within_each_servo_family():
     bus._handshake()
 
 
+@pytest.mark.parametrize(
+    "access",
+    [
+        lambda bus: bus.read("Present_Position", "dummy_1", normalize=False),
+        lambda bus: bus.write("Goal_Position", "dummy_1", 1337, normalize=False),
+        lambda bus: bus.sync_read("Present_Position", normalize=False),
+    ],
+    ids=["read", "write", "sync_read"],
+)
+def test_an_alarm_does_not_fail_an_access(access, dummy_motors):
+    """A Feetech status only reports alarms: an overloaded motor still carries the access out."""
+    bus = make_bus(dummy_motors)
+    bus._bus.status[1] = 0x20
+
+    access(bus)
+
+
 def test_operating_modes_take_the_feetech_values(dummy_motors):
     bus = make_bus(dummy_motors)
 

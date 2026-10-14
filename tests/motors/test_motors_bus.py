@@ -108,7 +108,7 @@ def test_read(data_name, id_, value, normalized, bus):
     assert mock__normalize.call_args_list == ([call({id_: value})] if normalized else [])
 
 
-@pytest.mark.parametrize(
+ACCESSES = pytest.mark.parametrize(
     "access",
     [
         lambda bus: bus.read("Present_Position", "dummy_1", normalize=False),
@@ -117,11 +117,23 @@ def test_read(data_name, id_, value, normalized, bus):
     ],
     ids=["read", "write", "sync_read"],
 )
-def test_a_motor_reporting_an_error_fails_the_access(access, bus):
-    bus._bus.status[1] = 0x20
 
-    with pytest.raises(RuntimeError, match="motor ID 1 returned error status 0x20"):
+
+@ACCESSES
+def test_a_motor_refusing_the_access_fails_it(access, bus):
+    """On protocol 2, an error number in the status is a refusal: 7, an access error."""
+    bus._bus.status[1] = 0x87
+
+    with pytest.raises(RuntimeError, match="motor ID 1 refused it with error status 0x87"):
         access(bus)
+
+
+@ACCESSES
+def test_an_alarm_in_the_status_does_not_fail_the_access(access, bus):
+    """The alert bit alone reports a latched hardware fault, not a refused access."""
+    bus._bus.status[1] = 0x80
+
+    access(bus)
 
 
 @pytest.mark.parametrize(
