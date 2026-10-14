@@ -226,6 +226,11 @@ def test_slot_mapping_round_trip(tiny_backbone, arm, effector):
     assert canonical[..., effector_start : effector_start + len(effector)].abs().sum() > 0
     torch.testing.assert_close(postprocessor(canonical), raw[ACTION], atol=1e-5, rtol=1e-5)
 
+    # An action dim the slots leave out can't be produced by the inverse map, so it is rejected up front.
+    cfg.action_slots = _slots(ACTION, [[0, 5], *arm[1:]], effector)
+    with pytest.raises(ValueError, match=r"unmapped indices: \[5\]"):
+        cfg.validate_features()
+
 
 @pytest.mark.parametrize(
     "device",
