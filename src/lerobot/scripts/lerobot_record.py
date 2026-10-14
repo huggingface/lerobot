@@ -430,6 +430,9 @@ def record(
             use_videos=cfg.dataset.video,
         ),
     )
+    # Count saved image streams, including those from robots without Camera objects
+    # and those added or removed by observation processors.
+    num_image_streams = sum(ft["dtype"] in {"image", "video"} for ft in dataset_features.values())
 
     dataset = None
     listener = None
@@ -441,7 +444,6 @@ def record(
 
     try:
         if cfg.resume:
-            num_cameras = len(robot.cameras) if hasattr(robot, "cameras") else 0
             dataset = LeRobotDataset.resume(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
@@ -451,10 +453,8 @@ def record(
                 encoder_threads=cfg.dataset.encoder_threads,
                 streaming_encoding=cfg.dataset.streaming_encoding,
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
-                image_writer_processes=cfg.dataset.num_image_writer_processes if num_cameras > 0 else 0,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras
-                if num_cameras > 0
-                else 0,
+                image_writer_processes=cfg.dataset.num_image_writer_processes if num_image_streams > 0 else 0,
+                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_image_streams,
             )
             sanity_check_dataset_robot_compatibility(dataset, robot, cfg.dataset.fps, dataset_features)
         else:
@@ -466,7 +466,6 @@ def record(
                     "lerobot-record is for data collection only. Use lerobot-rollout for policy deployment."
                 )
             cfg.dataset.stamp_repo_id()
-            num_cameras = len(robot.cameras)  # type: ignore[attr-defined]
             dataset = LeRobotDataset.create(
                 cfg.dataset.repo_id,
                 cfg.dataset.fps,
@@ -474,8 +473,8 @@ def record(
                 robot_type=robot.name,
                 features=dataset_features,
                 use_videos=cfg.dataset.video,
-                image_writer_processes=cfg.dataset.num_image_writer_processes,
-                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_cameras,
+                image_writer_processes=cfg.dataset.num_image_writer_processes if num_image_streams > 0 else 0,
+                image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * num_image_streams,
                 batch_encoding_size=cfg.dataset.video_encoding_batch_size,
                 rgb_encoder=cfg.dataset.rgb_encoder,
                 depth_encoder=cfg.dataset.depth_encoder,
