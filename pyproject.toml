@@ -215,11 +215,8 @@ intelrealsense = [
 ]
 
 # NVIDIA Isaac Teleop (XR teleoperation).
-# TODO: lock to a final release tag. The bound below still admits only 1.5.x, which has no
-# viz.robot.PREVIEW_ARMS -- the robot twin therefore degrades to "unavailable" with a
-# warning rather than failing. Raise it to the first release carrying per-arm previews.
 isaac-teleop = [
-    "isaacteleop[cloudxr,retargeters-lite]>=1.5rc1,<1.6 ; sys_platform == 'linux'",
+    "isaacteleop[cloudxr,retargeters-lite]==1.5.175 ; sys_platform == 'linux'",
     "lerobot[kinematics]",
     "lerobot[scipy-dep]",
 ]
@@ -420,19 +417,9 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
-# TEMPORARY (revert me): the NVIDIA index exists only while isaacteleop 1.5 is a pre-release
-# whose manylinux wheels are published here rather than on public PyPI. Once 1.5 is released to
-# PyPI, revert this commit and re-pin `isaac-teleop` to a final version. `explicit = true` keeps
-# the index unused except by packages routed to it in [tool.uv.sources] below.
-[[tool.uv.index]]
-name = "nvidia"
-url = "https://pypi.nvidia.com"
-explicit = true
-
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
-isaacteleop = { index = "nvidia" }  # TEMPORARY: see the `nvidia` index note above
 
 [tool.setuptools.package-data]
 lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt", "configs/recipes/*.yaml"]

@@ -2535,16 +2535,16 @@ wheels = [
 [[package]]
 name = "isaacteleop"
 version = "1.5.175"
-source = { registry = "https://pypi.nvidia.com/" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "pyyaml" },
 ]
 wheels = [
-    { url = "https://pypi.nvidia.com/isaacteleop/isaacteleop-1.5.175-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:a6e93d224a3aced31a1e8e9986ca9dedf3219c331cdab2045630bd5f4616c5df" },
-    { url = "https://pypi.nvidia.com/isaacteleop/isaacteleop-1.5.175-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:483f555b0dc59e825ac440153190d38eea4b47d9e1eea3823eea59ad94622ed0" },
-    { url = "https://pypi.nvidia.com/isaacteleop/isaacteleop-1.5.175-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:8042d7836500955f3ef763f9634e004464ceb826644dc1982f29cba789927c04" },
-    { url = "https://pypi.nvidia.com/isaacteleop/isaacteleop-1.5.175-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:3d420b661dbdddacf7354e42011aaa840ab5a4abb6d3aeab2ea40b1776a7d017" },
+    { url = "https://files.pythonhosted.org/packages/fc/67/fc99c24d4522f2198ce0f4e6fb44882d6735a9dd4e8bb48b01efa19fde35/isaacteleop-1.5.175-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:a6e93d224a3aced31a1e8e9986ca9dedf3219c331cdab2045630bd5f4616c5df", size = 35815751, upload-time = "2026-10-14T04:29:10.161Z" },
+    { url = "https://files.pythonhosted.org/packages/37/6e/2d1273c3ee8e06c9b90270d34b42992d2694c91da57a7e9920cd8a3e7422/isaacteleop-1.5.175-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:483f555b0dc59e825ac440153190d38eea4b47d9e1eea3823eea59ad94622ed0", size = 31886508, upload-time = "2026-10-14T04:29:29.326Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/68/1eb604eed61a595b3e51a28fdca7c2e44c79f069b08a9f3b059c8e74178c/isaacteleop-1.5.175-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:8042d7836500955f3ef763f9634e004464ceb826644dc1982f29cba789927c04", size = 35814357, upload-time = "2026-10-14T04:29:52.624Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/11/a53c3dc549134148837380e90bb5f10980b42686fb330d76fec07c2ff570/isaacteleop-1.5.175-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:3d420b661dbdddacf7354e42011aaa840ab5a4abb6d3aeab2ea40b1776a7d017", size = 31886561, upload-time = "2026-10-14T04:30:17.248Z" },
 ]
 
 [package.optional-dependencies]
@@ -3796,7 +3796,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0,<1.0.0" },
     { name = "huggingface-hub", specifier = ">=1.6.0,<2.0.0" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=6.0.0,<7.0.0" },
-    { name = "isaacteleop", extras = ["cloudxr", "retargeters-lite"], marker = "sys_platform == 'linux' and extra == 'isaac-teleop'", specifier = ">=1.5rc1,<1.6", index = "https://pypi.nvidia.com/" },
+    { name = "isaacteleop", extras = ["cloudxr", "retargeters-lite"], marker = "sys_platform == 'linux' and extra == 'isaac-teleop'", specifier = "==1.5.175" },
     { name = "jsonlines", marker = "extra == 'dataset'", specifier = ">=4.0.0,<5.0.0" },
     { name = "jupyter", marker = "extra == 'notebook'", specifier = ">=1.0.0,<2.0.0" },
     { name = "kernels", marker = "extra == 'fineart-vla-kernels'", specifier = ">=0.14.1,<0.15.0" },
