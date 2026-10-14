@@ -21,6 +21,7 @@ from lerobot.annotations.runtime.types import (
     Outcome,
     Resources,
     artifact_identities,
+    canonical_json,
 )
 from lerobot.annotations.runtime.worker import accepted_in_shard, accepted_items
 
@@ -144,6 +145,41 @@ def test_interrupted_shard_resumes_only_uncommitted_batches(tmp_path):
     run_local(store, plan)
     assert log.read_text().splitlines().count("0") == 1
     assert output_values(store, plan)[-1]["key"] == "5"
+
+
+@pytest.mark.parametrize("malformed_field", ["results", "artifacts"])
+@pytest.mark.parametrize("replace_existing", [False, True], ids=["cached", "repair"])
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_resume_skips_malformed_checkpoints(tmp_path, malformed_field, replace_existing, batch_size):
+    store = ArtifactStore(tmp_path / "run")
+    log = tmp_path / "calls"
+    plan = make_plan(store, {"log_path": str(log)}, size=2)
+    first = run_local(store, plan, batch_size=batch_size)
+    before = log.read_bytes()
+    checkpoint_path = store.list(f"{plan.prefix}/attempts/00000000/*/checkpoints/*.json")[0]
+    checkpoint = store.read_json(checkpoint_path)
+    if malformed_field == "results":
+        checkpoint["results"] = None
+    else:
+        checkpoint["results"][0]["artifacts"] = None
+    if replace_existing:
+        Path(store.path(checkpoint_path)).write_bytes(canonical_json(checkpoint))
+    else:
+        store.put_json(
+            f"{plan.prefix}/attempts/00000000/00000000000000000000-invalid/checkpoints/00000000.json",
+            checkpoint,
+        )
+
+    second = run_local(store, plan, batch_size=batch_size)
+    assert second.completed == 2 and second.content_digest == first.content_digest
+    calls = log.read_text().splitlines()
+    assert calls.count("0") == (2 if replace_existing else 1)
+    # Null results invalidate the whole batch; a bad artifact invalidates only its item.
+    assert calls.count("1") == (
+        2 if replace_existing and malformed_field == "results" and batch_size == 2 else 1
+    )
+    if not replace_existing:
+        assert second == first and log.read_bytes() == before  # No model setup on cached resume.
 
 
 @pytest.mark.parametrize("batch_size", [1, 2])

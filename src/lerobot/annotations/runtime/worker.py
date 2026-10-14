@@ -124,19 +124,19 @@ def accepted_in_shard(store: ArtifactStore, plan: StagePlan, shard: int) -> dict
                 context = WorkerContext(store, plan, "", Path())
             context.attempt = path.split("/checkpoints/")[0]
             for value in checkpoint["results"]:
-                result = ItemResult.from_dict(value)
-                if (
-                    result.item_id in accepted
-                    or result.outcome == Outcome.FAILED
-                    or result.item_id not in items
-                ):
-                    continue
                 try:
+                    result = ItemResult.from_dict(value)
+                    if (
+                        result.item_id in accepted
+                        or result.outcome == Outcome.FAILED
+                        or result.item_id not in items
+                    ):
+                        continue
                     validate_result(result, items[result.item_id], context)
-                except (OSError, ValueError, KeyError):
+                except (OSError, ValueError, KeyError, TypeError):
                     continue
                 accepted[result.item_id] = result
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
             # An incomplete, stale or corrupt checkpoint is not completion evidence.
             continue
     return accepted
