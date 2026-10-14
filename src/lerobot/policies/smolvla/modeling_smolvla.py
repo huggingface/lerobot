@@ -789,6 +789,8 @@ class VLAFlowMatching(nn.Module):
         if noise is None:
             actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
             noise = self.sample_noise(actions_shape, device)
+        else:
+            noise = noise.to(device=device, dtype=torch.float32)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, state=state
