@@ -26,8 +26,12 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
+import cv2
+import numpy as np
 import pytest
+import requests
 
 from lerobot.robots.microduck import MicroDuck, MicroDuckConfig
 from lerobot.robots.microduck.microduck import JOINT_NAMES
@@ -249,3 +253,100 @@ def test_connect_error_closes_both_connections(robotd, tmp_path, monkeypatch, me
     assert not robot._cmd.is_open
     assert not robot._state_rpc.is_open
     assert robot._threads == []
+
+
+class SnapshotCamera:
+    """Synthetic HTTP responses, including one request held across disconnect."""
+
+    def __init__(self):
+        self.failed = False
+        self.delay = False
+        self.request_started = threading.Event()
+        self.release_request = threading.Event()
+        encoded, png = cv2.imencode(".png", np.full((16, 16, 3), (40, 80, 120), dtype=np.uint8))
+        assert encoded
+        self.response = SimpleNamespace(content=png.tobytes(), raise_for_status=lambda: None)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def get(self, url, timeout):
+        if self.failed:
+            raise requests.HTTPError("503 from the camera")
+        if self.delay:
+            self.request_started.set()
+            self.release_request.wait()
+        return self.response
+
+
+@pytest.mark.parametrize("delayed_response", [False, True], ids=["cached-frame", "late-response"])
+def test_camera_reconnect_discards_previous_session(robotd, tmp_path, monkeypatch, delayed_response):
+    camera = SnapshotCamera()
+    monkeypatch.setattr("lerobot.robots.microduck.microduck.requests.Session", lambda: camera)
+    robot = MicroDuck(
+        MicroDuckConfig(
+            robotd_address=robotd.path,
+            calibration_dir=tmp_path,
+            use_camera=True,
+            camera_width=16,
+            camera_height=16,
+            camera_timeout_s=0.01,
+        )
+    )
+    try:
+        robot.connect()
+        previous = robot.get_observation()["front"]
+        previous_worker = next(thread for thread in robot._threads if thread.name == "microduck-camera")
+        assert np.any(previous)
+        if delayed_response:
+            camera.delay = True
+            assert camera.request_started.wait(timeout=1)
+        camera.failed = True
+        robot.disconnect()
+        robot.connect()
+        reconnected = robot.get_observation()["front"]
+        assert reconnected is not previous
+        assert not np.any(reconnected)
+        assert not robot._frame_ready.is_set()
+        camera.release_request.set()
+        previous_worker.join(timeout=1)
+        assert not previous_worker.is_alive()
+        assert not np.any(robot.get_observation()["front"])
+        assert not robot._frame_ready.is_set()
+        camera.delay = False
+        camera.failed = False
+        assert robot._frame_ready.wait(timeout=1)
+        recovered = robot.get_observation()["front"]
+        assert recovered is not previous
+        assert np.any(recovered)
+    finally:
+        camera.release_request.set()
+        if robot.is_connected:
+            robot.disconnect()
+
+
+def test_camera_failure_keeps_current_session_frame(robotd, tmp_path, monkeypatch):
+    camera = SnapshotCamera()
+    monkeypatch.setattr("lerobot.robots.microduck.microduck.requests.Session", lambda: camera)
+    robot = MicroDuck(
+        MicroDuckConfig(robotd_address=robotd.path, calibration_dir=tmp_path, camera_timeout_s=0.01)
+    )
+    try:
+        robot.connect()
+        camera.failed = True
+        time.sleep(0.05)
+        previous = robot.get_observation()["front"]
+        time.sleep(0.25)
+        assert robot.get_observation()["front"] is previous
+        assert np.any(previous)
+        robot.send_action({})
+        camera.failed = False
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline and robot.get_observation()["front"] is previous:
+            time.sleep(0.01)
+        assert robot.get_observation()["front"] is not previous
+    finally:
+        robot.disconnect()
