@@ -80,7 +80,9 @@ lerobot-record \
     --display_data=true
 ```
 
-The camera is read from PNG snapshots, which reach about 10 to 20 fps depending on the network and the robot's camera quality setting. Record at 15 fps or below so that every frame is fresh.
+The camera supplies its latest cached PNG image. Start with a dataset rate of 15 fps, then measure the camera update rate. If the recording loop runs faster than the camera, several dataset rows can use the same image.
+
+Dataset timestamps come from the frame index divided by the dataset rate. They describe the requested sample grid, not the camera capture time. The PNG endpoint supplies no capture timestamp, so the dataset rate and repeated pixels alone do not establish camera freshness.
 
 ### What Gets Saved
 
