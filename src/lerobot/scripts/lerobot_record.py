@@ -565,7 +565,7 @@ def record(
 
         log_say("Stop recording", cfg.play_sounds, blocking=True)
 
-        if dataset:
+        if dataset is not None:
             dataset.finalize()
 
         if robot.is_connected:
