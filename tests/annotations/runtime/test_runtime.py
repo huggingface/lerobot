@@ -298,18 +298,6 @@ def test_spawn_dispatch_shares_cpu_pool_but_isolates_gpu_groups(tmp_path, monkey
     assert [args[-1] for _, _, args in calls] == expected_devices
 
 
-def test_object_store_without_rename(tmp_path, monkeypatch):
-    store = ArtifactStore(f"memory://processing-{uuid.uuid4().hex}")
-
-    def no_rename(*args, **kwargs):
-        raise AssertionError("Object storage must not depend on rename")
-
-    monkeypatch.setattr(store.fs, "mv", no_rename)
-    plan = make_plan(store, size=2)
-    assert run_local(store, plan).completed == 2
-    assert run_local(store, plan).completed == 2
-
-
 def test_plan_corruption_detected(tmp_path):
     store = ArtifactStore(tmp_path)
     plan = make_plan(store)
@@ -401,7 +389,9 @@ def test_remote_store_without_rename_or_immediate_listing(monkeypatch):
         finalize_stage(store, plan)
     assert not store.list(f"{plan.prefix}/accepted/*.parquet")
     monkeypatch.setattr(store, "list", real_list)
-    assert finalize_stage(store, plan).completed == 2
+    result = finalize_stage(store, plan)
+    assert result.completed == 2
+    assert run_local(store, plan) == result  # Cached resume also needs no remote rename.
 
 
 def test_local_cpu_admission(tmp_path, monkeypatch):

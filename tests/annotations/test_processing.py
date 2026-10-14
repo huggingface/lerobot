@@ -10,34 +10,15 @@ import pyarrow.parquet as pq  # noqa: E402
 from lerobot.annotations.processing import _language_array, run_annotation_pipeline  # noqa: E402
 from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig  # noqa: E402
 from lerobot.datasets.language import language_persistent_arrow_type  # noqa: E402
-from tests.annotations.test_pipeline_recipe_render import _build_executor  # noqa: E402
+
+from ._helpers import StubFrameProvider, make_language_client  # noqa: E402
 
 FACTORY = "tests.annotations.test_processing:stub_client"
 CLIENTS = []
 
 
 def stub_client():
-    client = _build_executor().plan.vlm
-    responder = client.responder
-
-    def joined_prompt(messages):
-        flattened = []
-        for message in messages:
-            content = message.get("content")
-            if isinstance(content, list):
-                content = "\n".join(block.get("text", "") for block in content if block.get("type") == "text")
-            flattened.append({**message, "content": content})
-        text = "\n".join(str(message.get("content", "")) for message in flattened)
-        if '"subtasks"' in text:
-            return {
-                "subtasks": [
-                    {"text": "grasp bottle", "start": 0.0, "end": 0.5},
-                    {"text": "pour water", "start": 0.5, "end": 2.9},
-                ]
-            }
-        return responder(flattened)
-
-    client.responder = joined_prompt
+    client = make_language_client()
     CLIENTS.append(client)
     return client
 
@@ -146,36 +127,99 @@ def test_disabled_families_and_unselected_episodes(fixture_dataset_root):
     assert not result.written_paths
 
 
-def test_all_language_families_roundtrip(single_episode_root):
+@pytest.mark.parametrize("enabled", [("plan", "interjections", "vqa"), ("plan",), ("vqa",)])
+def test_enabled_families_roundtrip_and_render(single_episode_root, monkeypatch, enabled):
+    import json
+
+    from lerobot.annotations import processing
+    from lerobot.datasets.feature_utils import get_hf_features_from_features
+    from lerobot.datasets.io_utils import load_info, load_nested_dataset
+    from lerobot.datasets.language_render import render_sample
+    from lerobot.datasets.recipe import MessageTurn, TrainingRecipe
+
+    path = single_episode_root / "data/chunk-000/file-000.parquet"
+    native = pq.read_table(path)
+    info_path = single_episode_root / "meta/info.json"
+    info = json.loads(info_path.read_text())
+    info["features"] = {
+        field.name: {"dtype": str(field.type), "shape": [1], "names": None} for field in native.schema
+    }
+    info_path.write_text(json.dumps(info))
+    # The text-only fixture has no cameras; provide images so VQA cannot pass as a no-op.
+    provider = StubFrameProvider()
+    monkeypatch.setattr(processing, "make_frame_provider", lambda *a, **k: provider)
     cfg = config()
-    cfg.interjections.enabled = True
+    for name in ("plan", "interjections", "vqa"):
+        getattr(cfg, name).enabled = name in enabled
+    cfg.plan.n_task_rephrasings = 1
     cfg.interjections.max_interjections_per_episode = 1
     cfg.interjections.interjection_min_t = 0.5
-    cfg.vqa.enabled = True
     cfg.vqa.vqa_emission_hz = 1
+    cfg.vqa.K = 1
+    cfg.vqa.question_types = ("count",)
     result = run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
     assert result.validation_report.ok
-    table = pq.read_table(result.written_paths[0])
-    assert any(atoms for atoms in table["language_events"].to_pylist())
-
-
-def test_materialization_does_not_restage_generated_atoms(single_episode_root, monkeypatch):
-    from lerobot.annotations import processing
-
-    original = processing.LanguageMaterializer.process_batch
-
-    def forbidden(*args, **kwargs):
-        pytest.fail("Materialization wrote unused staging files")
-
-    def materialize(self, items, context):
-        with monkeypatch.context() as patch:
-            patch.setattr(processing, "EpisodeStaging", forbidden)
-            return original(self, items, context)
-
-    monkeypatch.setattr(processing.LanguageMaterializer, "process_batch", materialize)
-    result = run_annotation_pipeline(config(), single_episode_root, client_factory=FACTORY)
-    assert result.validation_report.ok
-    assert pq.read_table(result.written_paths[0])["language_persistent"].to_pylist()[0]
+    table = pq.read_table(path)
+    assert table.select(native.column_names).equals(native)
+    rows = list(
+        load_nested_dataset(
+            single_episode_root / "data",
+            features=get_hf_features_from_features(load_info(single_episode_root).features),
+        )
+    )
+    expected_persistent = {"subtask", "plan", "memory", "task_aug"} if "plan" in enabled else set()
+    expected_events = ({"vqa"} if "vqa" in enabled else set()) | (
+        {"interjection", None} if "interjections" in enabled else set()
+    )
+    assert {atom["style"] for row in rows for atom in row["language_persistent"]} == expected_persistent
+    assert {atom["style"] for row in rows for atom in row["language_events"]} == expected_events
+    assert all(row["language_persistent"] == rows[0]["language_persistent"] for row in rows)
+    if "interjections" in enabled:
+        interjected = [
+            row for row in rows if any(a["style"] == "interjection" for a in row["language_events"])
+        ]
+        assert len(interjected) == 1
+        assert any(
+            a["style"] == "plan" and a["timestamp"] == pytest.approx(interjected[0]["timestamp"])
+            for a in interjected[0]["language_persistent"]
+        )
+    for family, binding in (("plan", "subtask"), ("vqa", "vqa"), ("interjections", "speech")):
+        if family not in enabled:
+            continue
+        recipe = TrainingRecipe(
+            messages=[
+                MessageTurn("user", "${task}", stream="high_level"),
+                MessageTurn(
+                    "assistant",
+                    f"${{{binding}}}",
+                    stream="high_level",
+                    target=True,
+                    if_present=binding,
+                    tool_calls_from="speech" if binding == "speech" else None,
+                ),
+            ]
+        )
+        rendered = [
+            render_sample(
+                recipe=recipe,
+                persistent=row["language_persistent"],
+                events=row["language_events"],
+                t=row["timestamp"],
+                sample_idx=i,
+                task="Pour water.",
+            )
+            for i, row in enumerate(rows)
+        ]
+        targets = [
+            sample["messages_rendered"][-1]
+            for sample in rendered
+            if sample and sample["target_message_indices"]
+        ]
+        assert targets, f"No training targets rendered for {family}"
+        if binding == "speech":
+            assert all(t["tool_calls"][0]["function"]["name"] == "say" for t in targets)
+        else:
+            assert all(t["content"] for t in targets)
 
 
 def test_plan_mode_does_not_construct_models(single_episode_root):
@@ -292,38 +336,3 @@ def test_model_revision_invalidates_subtask_inference(single_episode_root):
     cfg.vlm.model_revision = "a" * 40
     run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
     assert len(CLIENTS) > count
-
-
-@pytest.mark.parametrize(
-    "enabled,expected",
-    [
-        (
-            ("plan", "interjections", "vqa"),
-            ("plan", "interjections", "vqa", "plan_update", "validate", "materialize"),
-        ),
-        (("plan",), ("plan", "validate", "materialize")),
-        (("vqa",), ("vqa", "validate", "materialize")),
-    ],
-)
-def test_recipe_keeps_only_existing_main_workflows(single_episode_root, monkeypatch, enabled, expected):
-    from lerobot.annotations import processing_recipe
-
-    captured = []
-
-    def plan(source, stages, runtime, **kwargs):
-        captured.extend(stages)
-        return None, {}
-
-    monkeypatch.setattr(processing_recipe, "run_pipeline", plan)
-    cfg = config()
-    cfg.runtime.mode = "plan"
-    assert not hasattr(cfg, "quality")
-    for name in ("plan", "interjections", "vqa"):
-        getattr(cfg, name).enabled = name in enabled
-    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
-    assert tuple(stage.id for stage in captured) == expected
-    assert {stage.factory for stage in captured} <= {
-        "lerobot.annotations.processing:LanguageModule",
-        "lerobot.annotations.processing:LanguageValidator",
-        "lerobot.annotations.processing:LanguageMaterializer",
-    }

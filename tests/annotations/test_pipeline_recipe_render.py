@@ -46,19 +46,11 @@ from lerobot.annotations.steerable_pipeline.writer import LanguageColumnsWriter 
 from lerobot.datasets.language_render import render_sample  # noqa: E402
 from lerobot.datasets.recipe import MessageTurn, TrainingRecipe  # noqa: E402
 
-from ._helpers import make_canned_responder  # noqa: E402
+from ._helpers import make_language_client  # noqa: E402
 
 
 def _build_style_blend_recipe() -> TrainingRecipe:
-    """Inline blend recipe that consumes every style this pipeline produces.
-
-    The language schema/DSL work used to ship
-    ``src/lerobot/configs/recipes/pi05_hirobot.yaml`` as a canonical
-    example, but that file was dropped during review. The contract this
-    test guards is "the recipe DSL can render non-empty messages from
-    pipeline output", which doesn't require a specific YAML — so we build
-    the equivalent blend in code.
-    """
+    """Representative training recipe for the legacy executor contract."""
     return TrainingRecipe(
         blend={
             "low_level_execution": TrainingRecipe(
@@ -101,27 +93,7 @@ def _build_style_blend_recipe() -> TrainingRecipe:
 
 
 def _build_executor() -> Executor:
-    vlm = make_canned_responder(
-        {
-            "atomic subtasks": {
-                "subtasks": [
-                    {"text": "grasp the bottle", "start": 0.0, "end": 0.5},
-                    {"text": "pour into the cup", "start": 0.5, "end": 1.0},
-                    {"text": "place the bottle down", "start": 1.0, "end": 1.5},
-                ]
-            },
-            "compressed semantic memory": {"memory": "poured once"},
-            "acknowledgement the robot": {"text": "Sure."},
-            "compact interjection": {
-                "interjection": "use less water",
-                "speech": "Using less water.",
-            },
-            "frame-grounded visual question": {
-                "question": "How many cups?",
-                "answer": {"label": "cup", "count": 1},
-            },
-        },
-    )
+    vlm = make_language_client()
     config = AnnotationPipelineConfig(
         plan=PlanConfig(),
         interjections=InterjectionsConfig(max_interjections_per_episode=1, interjection_min_t=0.5),
