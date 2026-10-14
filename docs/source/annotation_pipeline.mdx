@@ -1,340 +1,271 @@
 # Annotation Pipeline
 
-`lerobot-annotate` watches each episode's video with a vision-language
-model (VLM) and writes natural-language annotations back into your
-dataset. It fills the two language columns from the
-[Language Columns and Recipes](./language_and_recipes) page —
-`language_persistent` and `language_events` — straight into
-`data/chunk-*/file-*.parquet`.
+`lerobot-annotate` adds subtasks, plans, memory, task rephrasings, interjections,
+speech and visual Q&A to **existing LeRobot v3 datasets**. The same annotation
+modules run through a resumable engine locally, on Slurm or on Hugging Face Jobs.
+The engine also supports non-VLM steps; it does not add new annotation workflows.
 
-In short: point it at a LeRobot dataset, and it adds subtasks, plans,
-memory, interjections, speech, and visual Q&A that a policy can be
-trained on.
+Videos, FPS, cameras, actions/state and publisher-owned labels are preserved.
+Conversion, resizing, re-encoding and action-space changes belong in separate
+preparation scripts. Use a writable dataset copy, not an immutable Hub snapshot.
 
-## How it fits together
+## Run a small annotation job
 
-```text
-  your dataset                  lerobot-annotate
-  (LeRobot v3.1)
-        │
-        ▼
-  ┌─────────────────────────────────────────────────────┐
-  │                    read episodes                     │
-  └──────────────────────────┬──────────────────────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        ▼                    ▼                     ▼
-  ┌──────────┐      ┌───────────────┐        ┌──────────┐       one shared Qwen-VL
-  │   plan   │      │ interjections │        │   vqa    │  ◀──   server (vLLM, OpenAI
-  └────┬─────┘      └───────┬───────┘        └────┬─────┘        API) drives all three
-       └────────────────────┼─────────────────────┘
-                            │   each module stages raw JSONL
-                            ▼   into .annotate_staging/
-                  ┌─────────────────┐
-                  │    validator    │  ◀──  checks everything
-                  └────────┬────────┘
-                           ▼
-                  ┌─────────────────┐
-                  │     writer      │
-                  └────────┬────────┘
-                           ▼
-              data/chunk-*/file-*.parquet
-              (+ meta/info.json tools)
-```
-
-Three modules (`plan`, `interjections`, `vqa`) all talk to **one** shared
-VLM. Each module stages its output to disk, a validator checks it, and a
-single writer rewrites the dataset shards in place.
-
-## What the pipeline produces
-
-Each module emits a few kinds of annotation ("styles"), routed to one of
-the two language columns:
-
-| Style / atom                                | Column                | Module          |
-| ------------------------------------------- | --------------------- | --------------- |
-| `subtask` (Pi0.7-style "how, not what")     | `language_persistent` | `plan`          |
-| `plan` (initial + refresh on interjection)  | `language_persistent` | `plan`          |
-| `memory` (MEM-style compression)            | `language_persistent` | `plan`          |
-| `task_aug` (rephrasings of the task)        | `language_persistent` | `plan`          |
-| `interjection`                              | `language_events`     | `interjections` |
-| speech tool-call atom (`style=null`, `say`) | `language_events`     | `interjections` |
-| `vqa` (user / assistant pair)               | `language_events`     | `vqa`           |
-
-### How subtasks are generated
-
-The `plan` module doesn't ask the VLM for subtasks in one shot. Instead
-it uses a two-step **describe → segment** flow:
-
-1. **Describe** — the VLM narrates only what it actually sees in the
-   chosen camera (no guessing about the task).
-2. **Segment** — that description is fed back in, and the VLM splits the
-   episode into consecutive atomic subtasks.
-
-Both passes see the episode as **timestamped contact sheets** — frames
-sampled at `frames_per_second` (0.5s by default) and packed into JPEG
-grids with each frame's time burned into its corner, so the VLM cites
-exact boundary times directly. This is far cheaper in vision tokens than
-one image per frame, so the sampling can stay dense; episodes longer than
-`max_frames_per_prompt` are split into windows at the same density and
-merged. Both prompts also carry a causal **event-boundary** definition (a
-new event starts when an object becomes held / is released / reaches a new
-location / a lid changes state / contents move) to sharpen where cuts land.
-
-Optionally, a third **seeded-relabel** pass (`--plan.subtask_seeded_relabel`)
-revisits each span with its previous/current/next segment contact sheets and
-minimally corrects the label, using the first label as a prior — it keeps the
-boundaries fixed and only sharpens wording, at the cost of one extra call per
-subtask.
-
-The resulting spans are then stitched into a gap-free, full-episode
-cover, so **every frame has exactly one active subtask**. See
-[Running on Hugging Face Jobs](#running-on-hugging-face-jobs) for the
-production settings (single camera, timestamped contact sheets,
-auto-windowed subtask generation).
-
-### Tools
-
-The writer does **not** add a `tools` column to the parquet. The tool
-catalog lives in `meta/info.json["tools"]` instead (see [Tools](./tools)).
-After every run, the pipeline makes sure the canonical `say` schema is in
-that list, keeping any tools you declared beforehand.
-
-Want to add your own tool? Edit `meta/info.json["tools"]` directly — the
-pipeline preserves whatever is already there. That makes the tool visible
-to the chat template, so the model can learn to _generate_ the call. The
-runtime layer that actually _executes_ a generated call (the `Tool`
-protocol / `TOOL_REGISTRY` under `src/lerobot/tools/`) is not part of
-this PR — the [Tools](./tools) doc marks those pieces as
-not-yet-implemented.
-
-## Running on Hugging Face Jobs
-
-Annotating a real dataset needs a GPU big enough to serve the VLM, so
-`lerobot-annotate` can dispatch itself to
-[Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs) — same as
-`lerobot-train`. Add `--job.target=<flavor>` to the exact command you'd
-run locally and it runs on that hardware instead:
+Install the `dataset` and `annotations` extras, then start with a few episodes.
+This example uses an already-running OpenAI-compatible model endpoint, so the
+laptop does not load the VLM. Set `model_id` to the model that endpoint serves.
 
 ```bash
-hf auth login   # once
-
+uv sync --extra dataset --extra annotations
 uv run lerobot-annotate \
-    --repo_id=user/my_dataset \
-    --new_repo_id=user/my_dataset_annotated \
-    --push_to_hub=true \
-    --vlm.model_id=Qwen/Qwen3.6-27B \
-    --vlm.num_gpus=1 \
-    --vlm.serve_command="vllm serve Qwen/Qwen3.6-27B --tensor-parallel-size 1 \
-        --max-model-len 32768 --gpu-memory-utilization 0.8 \
-        --uvicorn-log-level warning --port {port}" \
-    --vlm.serve_ready_timeout_s=1800 \
-    --vlm.chat_template_kwargs='{"enable_thinking": false}' \
-    --job.target=h200
+    --root=/data/my-lerobot-v3-copy \
+    --only_episodes='[0,1]' \
+    --vlm.model_id=Qwen/Qwen3-VL-4B-Instruct \
+    --vlm.auto_serve=false \
+    --vlm.api_base=http://model.internal:8000/v1 \
+    --runtime.run_uri=/data/runs/annotation \
+    --runtime.workers=2 --runtime.batch_size=2 \
+    --executor.episode_parallelism=1
 ```
 
-That submits a single-GPU `h200` job that:
+Alternatively, use `--repo_id=owner/dataset --revision=SOURCE_SHA`; the CLI creates
+and reuses a writable working copy without modifying the pinned Hub snapshot.
+Use `vlm.auto_serve=true` to own a local vLLM service when the environment has the
+required dependencies and GPU memory. vLLM is not installed by the annotation extra.
 
-1. starts from the `vllm/vllm-openai` image and installs `lerobot` on top,
-2. boots one vLLM server per GPU and drives it over the OpenAI-compatible API,
-3. runs the `plan` / `interjections` / `vqa` modules across the dataset,
-4. with `--push_to_hub=true`, uploads the result to `--new_repo_id` (or
-   back to `--repo_id` in place if you leave that unset).
+Annotations go into `language_persistent` and `language_events` in the dataset's
+Parquet shards. [Language Columns and Recipes](./language_and_recipes) explains
+how policies consume them.
 
-The command streams the job's logs; `Ctrl-C` detaches without cancelling
-it. List the available flavors and their pricing with `hf jobs hardware`.
+| Module          | Annotations                                | Column                |
+| --------------- | ------------------------------------------ | --------------------- |
+| `plan`          | `subtask`, `plan`, `memory`, `task_aug`    | `language_persistent` |
+| `interjections` | `interjection` and `say` speech tool calls | `language_events`     |
+| `vqa`           | Grounded user/assistant Q&A                | `language_events`     |
 
-<Tip warning={true}>
+Each module is enabled by default; disable it with `--plan.enabled=false`,
+`--interjections.enabled=false` or `--vqa.enabled=false`. The tool catalogue lives
+in `meta/info.json["tools"]`; existing tools are retained and `say` is added.
 
-Qwen3.6 ships with thinking enabled, which eats the token budget the
-annotator needs for its JSON answer — `--vlm.chat_template_kwargs='{"enable_thinking": false}'`
-turns it off. Without `--push_to_hub=true` the annotated dataset is
-discarded when the pod exits.
+## Execution, options and resume
 
-</Tip>
+```text
+           ┌─ plan/subtasks → interjections → plan refresh ─┐
+v3 input ──┤                                                ├─ validate → materialize
+           └─ VQA ──────────────────────────────────────────┘
+```
 
-### Job options
+Stages are sequential by default. Workers initialize once and commit checked batches
+to `runtime.run_uri`; re-running the same configuration reuses valid outputs, repairs
+corrupt/incomplete work and avoids model startup on a fully cached run. Uncommitted
+work can repeat. Changing model, prompt or upstream content invalidates affected work;
+a module's version must change when its behavior changes.
 
-| Flag                | Default                   | What it does                                                                    |
-| ------------------- | ------------------------- | ------------------------------------------------------------------------------- |
-| `--job.target`      | `local`                   | HF Jobs flavor to run on (e.g. `h200`, `h200x4`). Omitted/`local` runs here.    |
-| `--job.image`       | `vllm/vllm-openai:latest` | Runtime image for the pod.                                                      |
-| `--job.timeout`     | `2h`                      | Wall-clock cap. Raise it for large datasets.                                    |
-| `--job.detach`      | `false`                   | Submit and exit instead of streaming logs.                                      |
-| `--job.lerobot_ref` | `main`                    | Git ref of lerobot installed on the pod — point it at a branch to test changes. |
-| `--job.tags`        | `[]`                      | Extra tags on the job and on any dataset it pushes (`lerobot` is always added). |
+| Option                                                                        | Default                            | Use                                                                                                                                          |
+| ----------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runtime.mode`                                                                | `run`                              | `plan` previews independent work without inference/submission; downstream plans wait for real outputs. `resume` also verifies existing work. |
+| `runtime.run_uri`                                                             | Local annotation staging directory | Persistent local/shared path or remote store; required explicitly for HF Jobs.                                                               |
+| `runtime.workers` / `batch_size` / `shard_size`                               | `1` / `16` / `64`                  | Worker processes/groups, items per checkpoint batch, items per work shard. Use at least one shard per requested worker.                      |
+| `runtime.max_parallel_stages`                                                 | `1`                                | Admit independent stages concurrently; requires an explicit CPU/GPU/memory `resource_budget`.                                                |
+| `runtime.max_retries`                                                         | `2`                                | Bounded retries for temporary network/service failures; schema/input errors and unknown bugs fail immediately.                               |
+| `executor.episode_parallelism` / `vlm.client_concurrency`                     | `16` / `16`                        | Threads inside each language worker and requests per client, not global endpoint limits.                                                     |
+| `plan.frames_per_second` / `max_frames_per_prompt` / `window_overlap_seconds` | `2` / `60` / `1`                   | Subtask sampling density, frame budget including overlap, and context overlap.                                                               |
+| `plan.emit_plan` / `emit_memory` / `n_task_rephrasings`                       | `true` / `true` / `10`             | Select plan/memory output; `0` rephrasings disables task augmentation.                                                                       |
+| `vlm.camera_key` / `vqa.restrict_to_default_camera` / `vqa.vqa_emission_hz`   | First image camera / `false` / `1` | Default camera, whether VQA uses only that camera, and VQA frequency.                                                                        |
 
-For a bigger dataset, scale to `h200x4` and raise
-`--vlm.parallel_servers` / `--vlm.num_gpus` to match, and give the job
-more headroom with e.g. `--job.timeout=8h`.
+Subtasks use timestamped contact sheets and a describe→segment pass. Optional
+`plan.subtask_seeded_relabel=true` refines wording with another call per subtask.
+Long episodes use overlapping context but nonoverlapping output ownership, preserving
+exact source frame IDs/timestamps in `meta/annotations/windows/*.parquet`. An unlabelled
+window fails rather than borrowing neighbouring labels. Inspect boundaries and idle tails:
+structural validation is not a human assessment of label quality.
 
-Remote runs need `--repo_id` (the pod pulls the dataset from the Hub;
-`--root` names a directory only your machine has). A dataset that exists
-only in your local cache is pushed to a **private** repo first.
+Tune `vlm.max_new_tokens` and model-specific `vlm.chat_template_kwargs` so the
+model has enough response budget for valid JSON, especially on long windows.
 
-## Key options
+For concurrent stages, use a configuration file or Python; reserve worker resources
+separately from an external/owned model service:
 
-These are the flags you'll reach for most often. Run
-`lerobot-annotate --help` for everything else; the defaults are tuned for
-short manipulation episodes.
+```python
+from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
+from lerobot.data_processing.configs import RuntimeConfig
+from lerobot.data_processing.types import Resources
 
-### Dataset in / out
+cfg = AnnotationPipelineConfig()
+cfg.runtime = RuntimeConfig(
+    run_uri="/data/runs/annotation", workers=2,
+    max_parallel_stages=2, resource_budget=Resources(cpus=4, memory_gb=16),
+)
+# Pass cfg to run_annotation_pipeline(cfg, Path("/data/my-lerobot-v3-copy")),
+# or serialize it and use --config_path=annotation.json.
+```
 
-| Flag              | Default | What it does                                                            |
-| ----------------- | ------- | ----------------------------------------------------------------------- |
-| `--repo_id`       | —       | Hub dataset to annotate (downloaded if `--root` unset).                 |
-| `--root`          | —       | Annotate a local dataset directory instead.                             |
-| `--new_repo_id`   | —       | Push the result to a new repo (leaves the source repo untouched).       |
-| `--push_to_hub`   | `false` | Upload after annotating (to `--new_repo_id`, else back to `--repo_id`). |
-| `--only_episodes` | all     | Annotate just these episode indices (handy for a test run).             |
-| `--seed`          | `1729`  | Seeds the RNGs that pick interjection timestamps + VQA question types.  |
+For a shared model endpoint, run one authenticated coordinator and point **all**
+clients at `vlm.endpoint_limit_url` with the same `vlm.endpoint_limit_key`:
 
-### Which modules run
+```bash
+uv run python -m lerobot.data_processing.endpoint_limits \
+    --host=0.0.0.0 --port=8090 --key=annotation --limit=8 \
+    --token-env=ANNOTATION_LIMIT_TOKEN
+```
 
-Every module is on by default and can be toggled independently (set to
-`false` to skip it, e.g. to iterate on one module at a time):
+Set `vlm.endpoint_limit_token_env=ANNOTATION_LIMIT_TOKEN` on clients; use TLS or a
+private trusted network. The limit covers participating clients across workers/runs.
+Unreachable coordinators fail closed. Ambiguous timeouts or killed workers leave permits
+held: drain/cancel inference before restarting the coordinator, rather than assuming
+old requests ended. Put API credentials in `vlm.api_key_env`, not saved configuration.
 
-| Flag                      | Default | Turns off                           |
-| ------------------------- | ------- | ----------------------------------- |
-| `--plan.enabled`          | `true`  | subtasks + plan + memory + task_aug |
-| `--interjections.enabled` | `true`  | interjections + speech atoms        |
-| `--vqa.enabled`           | `true`  | the VQA pairs                       |
+## Slurm and Hugging Face Jobs
 
-### The VLM (`--vlm.*`)
+### Slurm
 
-| Flag                       | Default            | What it does                                                                         |
-| -------------------------- | ------------------ | ------------------------------------------------------------------------------------ |
-| `--vlm.model_id`           | `Qwen/Qwen3.6-27B` | The model to serve and prompt.                                                       |
-| `--vlm.camera_key`         | first `images.*`   | Which camera every prompt is grounded on.                                            |
-| `--vlm.serve_command`      | auto               | The exact `vllm serve …` command (set TP size, GPU memory, `--max-model-len` here).  |
-| `--vlm.parallel_servers`   | `1`                | Independent servers for round-robin routing (one per GPU).                           |
-| `--vlm.num_gpus`           | `0`                | GPUs per server (`0` = one each).                                                    |
-| `--vlm.client_concurrency` | `16`               | In-flight requests across all servers.                                               |
-| `--vlm.max_new_tokens`     | `512`              | Generation cap per call.                                                             |
-| `--vlm.temperature`        | `0.2`              | Sampling temperature.                                                                |
-| `--vlm.reasoning_effort`   | `null`             | Thinking-budget hint (`low`/`medium`/`high`) forwarded to OpenAI-compatible servers. |
+Run the controller where `sbatch`/`squeue` are available. Code, dataset, Python environment
+and run storage must be visible to workers. Language clients need a reachable model
+service; the controller's localhost is not another node's localhost.
 
-### Subtasks / plan / memory (`--plan.*`)
+```bash
+uv run lerobot-annotate --root=/shared/my-lerobot-v3-copy \
+    --vlm.auto_serve=false --vlm.api_base=http://model.internal:8000/v1 \
+    --runtime.backend=slurm --runtime.workers=4 \
+    --runtime.run_uri=/shared/runs/annotation \
+    --runtime.slurm.python_executable=/shared/env/bin/python \
+    --runtime.slurm.working_directory=/shared/project \
+    --runtime.slurm.max_concurrent=4 --runtime.slurm.time_limit=02:00:00
+```
 
-| Flag                            | Default    | What it does                                                                                                                 |
-| ------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `--plan.frames_per_second`      | `2.0`      | Frame sampling rate for the contact sheets (`2.0` = one frame every 0.5s).                                                   |
-| `--plan.max_frames_per_prompt`  | `60`       | Frame budget per VLM call. Episodes whose sampling exceeds this are auto-windowed at the same density, then stitched.        |
-| `--plan.contact_sheet_columns`  | `5`        | Columns per contact-sheet grid (`contact_sheet_frames_per_sheet` tiles, time row-major).                                     |
-| `--plan.plan_max_steps`         | `8`        | Upper bound on subtasks per episode.                                                                                         |
-| `--plan.subtask_describe_first` | `true`     | Run the describe→segment grounding pass (best subtask quality; +1 call/episode).                                             |
-| `--plan.subtask_seeded_relabel` | `false`    | Second pass: re-label each subtask from its prev/current/next contact sheets, seeded with the first label (+1 call/subtask). |
-| `--plan.subtask_relabel_frames` | `5`        | Frames sampled uniformly per segment sheet in the relabel pass (only used when `subtask_seeded_relabel=true`).               |
-| `--plan.emit_plan`              | `true`     | Emit the numbered `plan` rows (`false` = subtasks + memory only).                                                            |
-| `--plan.emit_memory`            | `true`     | Emit the `memory` rows (`false` = subtasks + plan only); symmetric to `emit_plan`.                                           |
-| `--plan.n_task_rephrasings`     | `10`       | How many `task_aug` rephrasings to emit (`0` disables).                                                                      |
-| `--plan.derive_task_from_video` | `if_short` | Use the dataset task as-is (`off`), only when it's missing/short (`if_short`), or always re-derive from video (`always`).    |
+Steps declare CPU, GPU and memory requests; Slurm supports both CPU and GPU jobs.
+Each array has a dependent finalizer. Resume refuses duplicate active submissions;
+detaching the controller does not cancel cluster jobs. Configure `partition`, `account`
+and writable model/kernel caches for your cluster. `runtime.mode=plan` renders scripts
+for independent stages without submitting jobs.
 
-### Interjections + VQA
+### Running on Hugging Face Jobs
 
-| Flag                                            | Default | What it does                                               |
-| ----------------------------------------------- | ------- | ---------------------------------------------------------- |
-| `--interjections.max_interjections_per_episode` | `3`     | Cap on interjection/speech pairs per episode.              |
-| `--vqa.vqa_emission_hz`                         | `1.0`   | How often VQA pairs are emitted.                           |
-| `--vqa.restrict_to_default_camera`              | `false` | Ground VQA only on `--vlm.camera_key` (else every camera). |
-| `--vqa.coordinate_scale`                        | `1000`  | VLM bbox/keypoint grid, stored as [0, 1] (`none` = px).    |
-| `--executor.episode_parallelism`                | `16`    | Episodes processed concurrently within each phase.         |
+Replace `SOURCE_SHA`, `CODE_SHA`, account/repository names and the image digest below.
+Remote annotation requires a pinned Hub source, persistent remote storage and a public
+code repository. The image must include Python 3.12+, git, ffmpeg and compatible dataset,
+annotation and model-service dependencies; code installation uses `--no-deps`.
 
-## Contributing new modules
+```bash
+hf auth login
+uv run lerobot-annotate --repo_id=owner/dataset --revision=SOURCE_SHA \
+    --runtime.run_uri=hf://buckets/your-account/annotations/run-1 \
+    --runtime.hf_jobs.namespace=your-account \
+    --runtime.hf_jobs.code_revision=CODE_SHA \
+    --job.target=h200 --job.image=YOUR_RUNTIME@sha256:IMAGE_DIGEST \
+    --job.timeout=30m --job.detach=true
+```
 
-The pipeline is built to grow, and **contributions are very welcome** —
-a brand-new module (say, trajectory traces or affordances), a new prompt
-template, a smarter grounding flow, or quality fixes to the existing
-`plan` / `interjections` / `vqa` modules.
+The built-in language recipe runs on **one HF node with local workers**, optionally
+owning its VLM service. Generic steps can use multiple HF worker jobs only when they
+explicitly declare remotely readable inputs. Local roots are never silently uploaded.
+Resolved configuration files work remotely; credentials travel as secrets. Pin model
+revisions (`vlm.model_revision`) and verify externally served models yourself. Check
+`hf jobs hardware`, cap concurrency/timeouts, and smoke-test the image before scaling.
 
-Every module lives under
-`src/lerobot/annotations/steerable_pipeline/modules/`, shares the VLM
-client and the keyframe cache, writes its raw output to the staging
-tree, and plugs into the executor as its own phase. Got an idea? Open an
-issue or PR on [the repo](https://github.com/huggingface/lerobot).
+Outputs survive job exit even without Hub publication. The job prints a release index;
+restore it with its key relative to the run store:
 
-## How recipes consume the output
+```python
+from pathlib import Path
+from lerobot.data_processing.artifacts import ArtifactStore
+from lerobot.jobs.processing import restore_release
 
-The annotations are meant to be read by recipes (see
-[Language Columns and Recipes](./language_and_recipes)). Typically:
+store = ArtifactStore("hf://buckets/your-account/annotations/run-1")
+restore_release(store, "releases/RELEASE_DIGEST.json", Path("restored"))
+```
 
-- low-level / high-level / memory-update branches read
-  `subtask` / `plan` / `memory` from `language_persistent`.
-- an interjection-response branch reads `interjection` events plus the
-  paired speech atom (merged into one assistant turn via `tool_calls_from`)
-  and the matching `plan` refresh at the same timestamp.
-- a VQA branch reads the `(vqa, user)` and `(vqa, assistant)` pairs from
-  `language_events`.
+Unchanged videos reference the pinned source revision; restoration verifies their hashes.
+For account/job setup, see the [HF Jobs guide](https://huggingface.co/docs/huggingface_hub/guides/jobs).
 
-## Why state and events are split
+## Data safety and publication
 
-Two ideas shape the design:
+- One controller owns each run. Process a separate dataset version while training:
+  local commits are recoverable, not atomic snapshots for simultaneous readers.
+- Native rows/columns and publisher-owned labels are retained. Ownership records in
+  `meta/annotations/ownership/*.parquet` identify generated families that reruns may replace.
+- Labels and provenance are Parquet; JSON is used for internal control/debug records.
+  Validation checks source clocks, annotation structure and cross-family consistency.
+- Publication is explicit: `push_to_hub=true` requires `new_repo_id`, pinned source
+  `repo_id`/`revision`, a fresh `release_tag` and a reviewed `redistribution_permission`.
+  Permission notes do not invent a missing licence. Existing targets additionally require
+  `expected_target_revision` and must be processed datasets with matching lineage.
+- Later releases start from the processed target's pinned revision and upload changed
+  Parquet/metadata, not another video copy. Publication has bounded file/byte limits;
+  large staged uploads need a separate workflow. Seeds do not guarantee bitwise VLM/GPU
+  reproducibility, and cached-run time is not processing throughput.
 
-1. **Persistent state vs. exact events.** Persistent rows (`subtask`,
-   `plan`, `memory`) apply to the whole episode and answer "what's true
-   right now?". Event rows (`interjection`, `vqa`, speech) appear only on
-   the one frame whose timestamp matches. Timestamps are copied straight
-   from the source parquet — never recomputed in floating point.
-2. **One VLM pass.** All three modules share a single VLM client (the
-   OpenAI-compatible client talking to the job's vLLM server), so you pay
-   for one model load per dataset, not three.
+## Add an annotation step
 
-## Re-running a single module
+For prompt/grounding changes, reuse the existing modules and templates under
+`annotations/steerable_pipeline/`. For a new computation, implement an importable
+processing module; it need not use a VLM. This lifecycle sketch leaves prediction
+logic to your application:
 
-Each module stages its raw output to
-`<root>/.annotate_staging/episode_{N:06d}/<module>.jsonl`. This makes
-prompt iteration cheap: re-running one module overwrites only its own
-JSONL, then the writer recomposes the final parquet. Disable modules you
-don't want with `--plan.enabled=false` (and likewise
-`--interjections.enabled` / `--vqa.enabled`) to test one at a time.
+```python
+import pyarrow as pa
+from lerobot.data_processing.types import ItemResult, ModuleSpec, Outcome, Resources
 
-## What the validator checks
+class MyStep:
+    def __init__(self):
+        self.spec = ModuleSpec(
+            name="my_annotation", version="1", scope="episode",
+            outputs={"labels": pa.schema([
+                ("episode_index", pa.int64()), ("frame_index", pa.int64()),
+                ("timestamp", pa.float64()), ("label", pa.string()),
+            ])},
+            resources=Resources(cpus=1, gpus=0, memory_gb=4),
+        )
 
-Before the writer runs, `StagingValidator` confirms:
+    def setup(self, context):
+        pass  # Initialize the model/client once here, never in __init__.
 
-- every event row lands exactly on a real frame timestamp;
-- no speech / interjection pairs are left orphaned;
-- `plan` is refreshed at every interjection timestamp;
-- `memory` rows fall on subtask boundaries (a warning, not an error);
-- each VQA assistant `content` is valid JSON in one of the
-  bbox / keypoint / count / attribute / spatial shapes;
-- every row goes to the column chosen by `column_for_style(style)`.
+    def process_batch(self, items, context):
+        results = []
+        for item in items:
+            rows = self.predict(item.payload, seed=item.seed)
+            table = pa.Table.from_pylist(rows, schema=self.spec.outputs["labels"])
+            artifact = context.write_parquet(item, "labels", table)
+            results.append(ItemResult(item.item_id, Outcome.COMPLETED, (artifact,)))
+        return results
 
-Any error aborts the writer. Pass `--skip_validation=true` to override
-while debugging.
+    def predict(self, references, *, seed):
+        raise NotImplementedError("Implement bounded prediction on exact source frames")
 
-## Where each module's ideas come from
+    def teardown(self):
+        pass  # Release worker-owned resources.
+```
 
-- **`plan` — subtasks.** Hi Robot ([Shi 2025](https://arxiv.org/abs/2502.19417))
-  for atom granularity ("pick up one piece of lettuce", "place bowl to
-  box"); Pi0.7 ([Physical Intelligence 2025](https://pi.website/pi07))
-  for "how, not what" detail.
-- **`plan` — memory.** MEM ([Torne 2026](https://arxiv.org/abs/2603.03596)):
-  keep only the minimal relevant information — preserve outcomes, drop
-  specific attributes.
-- **`interjections`.** Hi Robot's scenario taxonomy: negative task,
-  situated correction, specific constraint, preference. Speech is a
-  tool-call-only atom
-  (`tool_calls=[{type:function, function:{name:"say", arguments:{text:...}}}]`).
-- **`vqa`.** ECoT ([Zawalski 2024](https://arxiv.org/abs/2407.08693)) for
-  grounded features (bounding boxes `[x_min, y_min, x_max, y_max]` and
-  keypoints, stored as [0, 1] image fractions) and Steerable VLA Policies
-  ([Zhao 2025](https://arxiv.org/abs/2509.07626)) for multi-abstraction
-  grounding. Pi0.7 also grounds answers across abstraction levels.
+Choose `scope` from `asset`, `episode`, `camera_stream`, `window` or `reduction`, and
+declare every output schema/resource requirement. Constructors must remain lightweight:
+planning inspects them without loading models. Return one result per item; masks and
+rejections need explicit reasons. Preserve source frame IDs/timestamps; window predictors
+can use `EpisodeWindow` and `reconcile_frame_rows`/`reconcile_spans` from
+`lerobot.data_processing.windows`. Bump the module version when semantics change.
 
-When improving a module, tweak its prompt template in
-`src/lerobot/annotations/steerable_pipeline/prompts/` rather than
-rewriting from scratch.
+Wire the step into a Python recipe, not a new CLI. A source provides `dataset_ref`
+and `discover(stage, store, upstream)`, yielding bounded JSON `InputItem` references
+and resolving verified upstream artifacts. It must verify pinned inputs; declaring
+`DatasetRef` alone does not make local files immutable.
 
-## Roughly how much it costs
+```python
+from lerobot.data_processing.configs import RuntimeConfig, StageConfig
+from lerobot.data_processing.pipeline import run_pipeline
 
-Per episode, the pipeline makes about `max_steps` plan calls,
-`max_interjections_per_episode` interjection calls, and
-`vqa_emission_hz × episode_seconds` VQA calls. With the defaults (8
-subtasks, 1 interjection, 1 Hz × 3 pairs) on a 30-second episode, that's
-~50 VLM calls.
+# source is your reference-only source; my_package.steps must exist on every worker.
+stages = [StageConfig("labels", "my_package.steps:MyStep")]
+store, completed = run_pipeline(source, stages, RuntimeConfig(run_uri="/data/runs/custom"))
+```
 
-Storage stays small: `language_persistent` is at most tens of KB per
-episode (parquet dictionary-encodes the one entry that repeats across
-frames), and `language_events` is empty on most frames — its size scales
-with the number of emissions, not `num_frames × num_emissions`.
+Use `depends_on=("other_stage",)` for ordering. Independent stages may overlap within
+the resource budget. `when="quality.usable"` records a reasoned mask for a false boolean
+supplied by the source after its declared dependency; it is **not** a built-in quality
+detector. For HF multi-job execution set `ModuleSpec.hf_jobs_compatible=True` only after
+making every input/model reference remote-readable; choose the CPU/GPU image/flavor
+and concurrency under `runtime.hf_jobs`.
+
+A custom step produces checked artifacts, not automatic dataset columns. Add explicit
+validation/materialization when introducing new columns, preserve native data, and
+review a small sample before scaling. Keep model/prompt semantics in the annotation
+module and scheduling, storage and retries in the engine. Run `lerobot-annotate --help`
+for the complete option list.
