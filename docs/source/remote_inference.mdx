@@ -51,7 +51,7 @@ Three client settings shape this behavior. `refill_seconds` decides how early to
 
 A checkpoint can be served when its saved processors predict an action chunk from a single current observation; ACT needs temporal ensembling disabled. ACT, SmolVLA, XVLA, EVO1 and LaWAM checkpoints have run on real robots through this path. Several other policies are supported at the contract level but have not been validated on hardware, and history-dependent policies need additional integration. The [policy support table](https://github.com/huggingface/lerobot/blob/main/src/lerobot/remote_inference/README.md#policy-support) lists every policy's status and restrictions.
 
-The robot driver must declare position-hold support, because the client refreshes the last applied target while it waits for actions. SO, OMX, Koch, HopeJr and Rebot followers declare it; OpenArm, Reachy2 and bimanual wrappers depend on their configuration; mobile bases and the Unitree G1 do not. See the [hardware table](./integrate_hardware#waiting-between-predictions). Unsupported robot or policy contracts are rejected at admission, before any motion.
+The robot driver must declare position-hold support, because the client refreshes the last applied target while it waits for actions. SO, OMX, Koch, HopeJr and Rebot followers declare it; OpenArm, Reachy2 and bimanual wrappers depend on their configuration; the Unitree G1 declares it only with the SONIC controller, whose retained target is the last motion token; mobile bases do not. See the [hardware table](./integrate_hardware#waiting-between-predictions). Unsupported robot or policy contracts are rejected at admission, before any motion.
 
 ## Start from a working rollout
 
@@ -440,7 +440,7 @@ The retired `lerobot[async]` extra and `lerobot.async_inference` commands are re
 
 The old `lerobot.rollout.inference` import location is removed in favor of `lerobot.inference` and `lerobot.remote_inference`. There is no `hold_mode` option: remote execution requires the driver's position-hold declaration, which the rollout checks automatically.
 
-**Unitree G1/SONIC has no supported remote replacement yet**; its motion tokens are not position targets, so do not substitute the new CLI into that recipe. See the [G1 guide](./unitree_g1).
+For Unitree G1 with SONIC, follow the [G1 remote recipe](./unitree_g1#run-on-the-physical-robot) rather than adapting the old commands; G1 locomotion controllers remain unsupported.
 
 </details>
 
