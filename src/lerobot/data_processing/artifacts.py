@@ -112,6 +112,10 @@ class ArtifactStore:
             return False
 
     def list(self, pattern: str) -> list[str]:
+        # Other worker processes can publish new checkpoint directories. Cached
+        # parent listings can hide them, even when the new directory exists.
+        if not self.is_local:
+            self.fs.invalidate_cache()
         prefix = self.root.rstrip("/") + "/"
         return sorted(path.removeprefix(prefix) for path in self.fs.glob(self.path(pattern)))
 

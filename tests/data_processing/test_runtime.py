@@ -35,6 +35,47 @@ def make_plan(store, config=None, *, size=6, shard_size=2):
     )
 
 
+@pytest.mark.parametrize("missing_directory_error", [False, True])
+def test_remote_listing_sees_checkpoints_written_by_other_workers(
+    tmp_path, monkeypatch, missing_directory_error
+):
+    store = ArtifactStore(tmp_path)
+    store.is_local = False
+    first = store.path("attempts/worker-0/checkpoint.json")
+    second = store.path("attempts/worker-1/checkpoint.json")
+    visible = [first]
+    cached = None
+
+    def glob(path):
+        nonlocal cached
+        assert path == store.path("attempts/*/checkpoint.json")
+        if cached is None:
+            cached = list(visible)
+        elif missing_directory_error and cached != visible:
+            raise FileNotFoundError("New worker directory absent from cached parent listing")
+        return cached
+
+    def invalidate_cache():
+        nonlocal cached
+        cached = None
+
+    monkeypatch.setattr(store.fs, "glob", glob)
+    monkeypatch.setattr(store.fs, "invalidate_cache", invalidate_cache)
+    assert store.list("attempts/*/checkpoint.json") == ["attempts/worker-0/checkpoint.json"]
+    visible.append(second)  # another process publishes a checkpoint, bypassing this client's cache
+    assert store.list("attempts/*/checkpoint.json") == [
+        "attempts/worker-0/checkpoint.json",
+        "attempts/worker-1/checkpoint.json",
+    ]
+
+
+def test_local_listing_does_not_invalidate_filesystem_cache(tmp_path, monkeypatch):
+    store = ArtifactStore(tmp_path)
+    store.put_json("checkpoint.json", {})
+    monkeypatch.setattr(store.fs, "invalidate_cache", lambda: pytest.fail("Local listings need no refresh"))
+    assert store.list("*.json") == ["checkpoint.json"]
+
+
 def output_values(store, plan):
     rows = []
     for shard in range(plan.shards):

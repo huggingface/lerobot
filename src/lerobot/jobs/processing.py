@@ -141,7 +141,7 @@ def dispatch_bundle(
     for path in store.list(f"submissions/hf/{digest}/*.json"):
         previous = store.read_json(path)
         info = inspect_job(
-            previous["job_id"],
+            job_id=previous["job_id"],
             **(
                 {"namespace": previous.get("namespace") or namespace}
                 if previous.get("namespace") or namespace
