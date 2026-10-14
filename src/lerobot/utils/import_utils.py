@@ -166,6 +166,8 @@ _pandas_available = is_package_available("pandas")
 _pyarrow_available = is_package_available("pyarrow")
 _fsspec_available = is_package_available("fsspec")
 _faker_available = is_package_available("faker")
+_msgpack_available = is_package_available("msgpack")
+_zenoh_available = is_package_available("eclipse-zenoh", import_name="zenoh")
 
 # Video encoding / decoding
 _av_available = is_package_available("av")

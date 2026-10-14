@@ -325,7 +325,21 @@ def test_plan_corruption_detected(tmp_path):
 
 
 def test_cpu_runtime_imports_no_vlm_or_torch():
-    script = "import sys; import lerobot.annotations.runtime.runtime; assert not any(k == 'torch' or 'vlm_client' in k for k in sys.modules); from lerobot.utils import get_safe_torch_device; assert callable(get_safe_torch_device)"
+    script = """
+import sys
+import lerobot.annotations.runtime.runtime
+assert not any(k == 'torch' or 'vlm_client' in k for k in sys.modules)
+from lerobot import utils
+from lerobot.utils.action_interpolator import ActionInterpolator
+from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.utils import init_logging
+assert utils.ActionInterpolator is ActionInterpolator
+assert utils.get_safe_torch_device is get_safe_torch_device
+assert utils.register_third_party_plugins is register_third_party_plugins
+assert utils.init_logging is init_logging
+assert all(hasattr(utils, name) for name in utils.__all__)
+"""
     subprocess.run([sys.executable, "-c", script], check=True)
 
 
