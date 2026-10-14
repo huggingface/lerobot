@@ -21,5 +21,15 @@ from .motors_bus import (
     MotorNormMode,
     SerialMotorsBus,
 )
+from .registers import CustomRegister, Register, RegisterName
 
-__all__ = ["DriveMode", "Motor", "MotorCalibration", "MotorNormMode", "SerialMotorsBus"]
+__all__ = [
+    "CustomRegister",
+    "DriveMode",
+    "Motor",
+    "MotorCalibration",
+    "MotorNormMode",
+    "Register",
+    "RegisterName",
+    "SerialMotorsBus",
+]

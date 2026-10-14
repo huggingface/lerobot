@@ -32,6 +32,8 @@ from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _rustypot_available, require_package
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
+from .registers import Register
+
 if TYPE_CHECKING or _rustypot_available:
     import rustypot
 else:
@@ -47,7 +49,7 @@ type Value = int | float
 logger = logging.getLogger(__name__)
 
 
-class MotorsBusBase(abc.ABC):
+class MotorsBusBase[RegisterT: str](abc.ABC):
     """
     Base class for all motor bus implementations.
 
@@ -82,22 +84,22 @@ class MotorsBusBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def read(self, data_name: str, motor: str) -> Value:
+    def read(self, data_name: RegisterT, motor: str) -> Value:
         """Read a value from a single motor."""
         pass
 
     @abc.abstractmethod
-    def write(self, data_name: str, motor: str, value: Value) -> None:
+    def write(self, data_name: RegisterT, motor: str, value: Value) -> None:
         """Write a value to a single motor."""
         pass
 
     @abc.abstractmethod
-    def sync_read(self, data_name: str, motors: str | list[str] | None = None) -> dict[str, Value]:
+    def sync_read(self, data_name: RegisterT, motors: str | list[str] | None = None) -> dict[str, Value]:
         """Read a value from multiple motors."""
         pass
 
     @abc.abstractmethod
-    def sync_write(self, data_name: str, values: dict[str, Value]) -> None:
+    def sync_write(self, data_name: RegisterT, values: dict[str, Value]) -> None:
         """Write values to multiple motors."""
         pass
 
@@ -153,12 +155,15 @@ class Motor:
     recv_id: int | None = None
 
 
-class SerialMotorsBus(MotorsBusBase):
+class SerialMotorsBus(MotorsBusBase[Register]):
     """Read and write a chain of servos daisy-chained on one serial port, Feetech or Dynamixel.
 
     rustypot handles each model's metadata (control table, resolution, baud rates, operating
     modes) and the serial I/O; LeRobot handles normalisation, calibration and the recommended
     settings. Motors of several models, such as STS and SCS or XL430 and XL330, share the port.
+
+    Type checkers accept generated register names. Use `CustomRegister` for dynamic names,
+    custom registers, or other case patterns. Runtime register lookup remains case-insensitive.
 
     To find the port, run:
     ```bash
@@ -588,7 +593,7 @@ class SerialMotorsBus(MotorsBusBase):
 
             # STS3215: clear Phase bit 4 to keep positions within [0, resolution - 1].
             if self.motors[motor].model == "sts3215":
-                phase = self.read("Phase", motor, normalize=False)
+                phase = int(self.read("Phase", motor, normalize=False))
                 if phase & 0x10:
                     self.write("Phase", motor, phase & ~0x10)
 
@@ -761,7 +766,7 @@ class SerialMotorsBus(MotorsBusBase):
             for motor, m in self.motors.items()
         }
 
-    def _sync_read_where(self, data_name: str) -> dict[str, Value]:
+    def _sync_read_where(self, data_name: Register) -> dict[str, Value]:
         """`data_name` of the motors that have the register."""
         motors = [motor for motor in self.motors if self._has_register(motor, data_name)]
         return self.sync_read(data_name, motors, normalize=False) if motors else {}
@@ -995,7 +1000,7 @@ class SerialMotorsBus(MotorsBusBase):
     @check_if_not_connected
     def read(
         self,
-        data_name: str,
+        data_name: Register,
         motor: str,
         *,
         normalize: bool = True,
@@ -1004,8 +1009,9 @@ class SerialMotorsBus(MotorsBusBase):
         """Read a register of one motor.
 
         Args:
-            data_name (`str`):
-                Register name, e.g. `"Present_Position"`; the case does not matter.
+            data_name (`Register`):
+                Generated register name, for example `"Present_Position"`. Use `CustomRegister`
+                for dynamic names or other case patterns. Runtime lookup ignores case.
             motor (`str`):
                 Motor name.
             normalize (`bool`, *optional*, defaults to `True`):
@@ -1050,7 +1056,7 @@ class SerialMotorsBus(MotorsBusBase):
 
     @check_if_not_connected
     def write(
-        self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
+        self, data_name: Register, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
     ) -> None:
         """Write a register of one motor, and wait for its answer.
 
@@ -1058,8 +1064,9 @@ class SerialMotorsBus(MotorsBusBase):
         reported: slower, but suited to configuring motors.
 
         Args:
-            data_name (`str`):
-                Register name, e.g. `"Goal_Position"`; the case does not matter.
+            data_name (`Register`):
+                Generated register name, for example `"Goal_Position"`. Use `CustomRegister`
+                for dynamic names or other case patterns. Runtime lookup ignores case.
             motor (`str`):
                 Motor name.
             value (`int | float`):
@@ -1098,7 +1105,7 @@ class SerialMotorsBus(MotorsBusBase):
     @check_if_not_connected
     def sync_read(
         self,
-        data_name: str,
+        data_name: Register,
         motors: NameOrID | Sequence[NameOrID] | None = None,
         *,
         normalize: bool = True,
@@ -1111,8 +1118,9 @@ class SerialMotorsBus(MotorsBusBase):
         one after the other. The values are therefore not one simultaneous snapshot.
 
         Args:
-            data_name (`str`):
-                Register name, e.g. `"Present_Position"`; the case does not matter.
+            data_name (`Register`):
+                Generated register name, for example `"Present_Position"`. Use `CustomRegister`
+                for dynamic names or other case patterns. Runtime lookup ignores case.
             motors (`str | int | Sequence[str | int]`, *optional*):
                 Motors to read, by name or id. `None` reads every motor.
             normalize (`bool`, *optional*, defaults to `True`):
@@ -1158,7 +1166,7 @@ class SerialMotorsBus(MotorsBusBase):
     @check_if_not_connected
     def sync_write(
         self,
-        data_name: str,
+        data_name: Register,
         values: Value | dict[str, Value],
         *,
         normalize: bool = True,
@@ -1171,8 +1179,9 @@ class SerialMotorsBus(MotorsBusBase):
         of motors sharing a protocol and the register's address and size.
 
         Args:
-            data_name (`str`):
-                Register name, e.g. `"Goal_Position"`; the case does not matter.
+            data_name (`Register`):
+                Generated register name, for example `"Goal_Position"`. Use `CustomRegister`
+                for dynamic names or other case patterns. Runtime lookup ignores case.
             values (`int | float | dict[str, int | float]`):
                 One value for every motor, or a value per motor name.
             normalize (`bool`, *optional*, defaults to `True`):

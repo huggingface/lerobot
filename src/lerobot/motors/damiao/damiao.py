@@ -72,7 +72,7 @@ class MotorState(TypedDict):
     temp_rotor: float
 
 
-class DamiaoMotorsBus(MotorsBusBase):
+class DamiaoMotorsBus(MotorsBusBase[str]):
     """
     The Damiao implementation for a MotorsBus using CAN bus communication.
 

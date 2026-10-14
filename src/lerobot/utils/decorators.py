@@ -14,14 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from functools import wraps
+from typing import Concatenate, Protocol
 
 from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 
-def check_if_not_connected(func):
+class _Connectable(Protocol):
+    @property
+    def is_connected(self) -> bool: ...
+
+
+def check_if_not_connected[T: _Connectable, **P, R](
+    func: Callable[Concatenate[T, P], R],
+) -> Callable[Concatenate[T, P], R]:
     @wraps(func)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self: T, /, *args: P.args, **kwargs: P.kwargs) -> R:
         if not self.is_connected:
             raise DeviceNotConnectedError(
                 f"{self.__class__.__name__} is not connected. Run `.connect()` first."

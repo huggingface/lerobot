@@ -65,7 +65,7 @@ class MotorState(TypedDict):
     temp_rotor: float
 
 
-class RobstrideMotorsBus(MotorsBusBase):
+class RobstrideMotorsBus(MotorsBusBase[str]):
     """
     The Robstride implementation for a MotorsBus using CAN bus communication.
 
