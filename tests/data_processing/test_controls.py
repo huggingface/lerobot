@@ -34,11 +34,9 @@ def test_independent_stages_overlap_and_join_waits(tmp_path):
                 "peer": str(tmp_path / peer),
             },
         )
-        for name, peer in (("hands", "subtasks"), ("subtasks", "hands"))
+        for name, peer in (("first", "second"), ("second", "first"))
     ]
-    stages.append(
-        StageConfig("join", "tests.data_processing._modules:Echo", depends_on=("hands", "subtasks"))
-    )
+    stages.append(StageConfig("join", "tests.data_processing._modules:Echo", depends_on=("first", "second")))
     store, completed = run_pipeline(
         Source(),
         stages,
@@ -48,7 +46,7 @@ def test_independent_stages_overlap_and_join_waits(tmp_path):
             resource_budget=Resources(cpus=2, memory_gb=8),
         ),
     )
-    assert set(completed) == {"hands", "subtasks", "join"}
+    assert set(completed) == {"first", "second", "join"}
     assert all(summary.completed == 1 for _, summary in completed.values())
     assert len(store.list("stages/*/accepted/*.parquet")) == 3
 
@@ -91,7 +89,7 @@ def test_condition_masks_without_model_setup_and_missing_condition_errors(tmp_pa
     stages = [
         StageConfig("quality", "tests.data_processing._modules:Echo"),
         StageConfig(
-            "hands",
+            "annotation",
             "tests.data_processing._modules:Echo",
             {"log_path": str(log)},
             depends_on=("quality",),
@@ -100,7 +98,7 @@ def test_condition_masks_without_model_setup_and_missing_condition_errors(tmp_pa
         ),
     ]
     store, completed = run_pipeline(Source(), stages, RuntimeConfig(run_uri=str(tmp_path / "run")))
-    plan, summary = completed["hands"]
+    plan, summary = completed["annotation"]
     assert summary.masked == summary.items == 1 and summary.completed == 0
     assert not log.exists()  # Not even model setup or teardown ran.
     result = next(iter(accepted_in_shard(store, plan, 0).values()))

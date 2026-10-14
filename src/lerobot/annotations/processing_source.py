@@ -18,7 +18,6 @@ import pyarrow.parquet as pq
 
 from lerobot.data_processing.artifacts import file_checksum
 from lerobot.data_processing.types import (
-    Artifact,
     DatasetRef,
     InputItem,
     artifact_identities,
@@ -172,19 +171,7 @@ class LeRobotEpisodeSource:
                     for name, outputs in bindings.items()
                     if "atoms" in outputs[str(ep)]
                 }
-                quality = None
-                if "quality" in bindings:
-                    artifact = Artifact(**bindings["quality"][str(ep)]["quality"])
-                    if not store.verify(artifact):
-                        raise ValueError("Quality artifact checksum mismatch")
-                    with store.open(artifact.path) as stream:
-                        quality = pq.read_table(stream).to_pylist()[0]
-                mask = (
-                    quality["reason"]
-                    if quality and not quality["usable"] and stage.id not in {"validate", "materialize"}
-                    else None
-                )
-                metadata = {**payload, "upstream": parent, **({"quality": quality} if quality else {})}
+                metadata = {**payload, "upstream": parent}
                 yield InputItem(
                     str(ep),
                     metadata,
@@ -192,7 +179,6 @@ class LeRobotEpisodeSource:
                     identity_payload=artifact_identities(metadata),
                     physical_seconds=payload["rows"] / self.fps,
                     camera_seconds=payload["rows"] / self.fps * self.cameras,
-                    mask_reason=mask,
                 )
 
 

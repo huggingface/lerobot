@@ -4,7 +4,7 @@
 
 Make `lerobot-annotate` a resumable annotation and enrichment workflow for **existing
 LeRobot v3 datasets**. Start with a valid dataset, plan bounded episodes/windows,
-run quality checks and annotation stages, then validate and write Parquet annotations.
+run the existing annotation stages, then validate and write Parquet annotations.
 The same recipe can run on a laptop, Slurm CPU/GPU workers or HF Jobs without changing
 what its labels mean. Non-VLM modules reuse the runtime without a VLM dependency.
 
@@ -14,15 +14,15 @@ the existing standalone preparation scripts when needed. Annotation preserves na
 videos, FPS, camera names, actions/state and publisher-owned labels.
 
 ```text
-Existing v3 → Plan → Quality + annotation → Validate → Enriched v3
-                           │                    │
-               Local / Slurm / HF Jobs   Verified checkpoints
-                                             + resume
+Existing v3 → Work plan → Existing annotation stages → Validate → Enriched v3
+                                  │                     │
+                      Local / Slurm / HF Jobs    Verified checkpoints
+                                                     + resume
 ```
 
 Stages run sequentially by default or concurrently when dependencies and explicit
 CPU/GPU/memory budgets allow. Shared endpoint limits protect model services; overlapping
-windows keep exact source clocks; unusable inputs receive explicit masks and reasons.
+windows keep exact source clocks; the engine supports explicit masks and reasons.
 Checked checkpoints let interrupted runs reuse completed work instead of starting over.
 
 Each output remains an ordinary LeRobot dataset, not a merged FineRobotics dataset.
@@ -30,10 +30,11 @@ Originals stay with their publishers. Enrich the processed dataset's Parquet fil
 without creating another video copy; publishing requires explicit permission and
 attribution. `MultiLeRobotDataset` development is separate from this runtime.
 
-Language annotation, sampled video-quality checks, exported-model embeddings and
-reference-only ICL pair validation are implemented. Hand estimation, value labels,
-camera odometry and human↔robot pair generation need separate modules. This is an
-experimental runtime, not a claim of corpus-scale throughput or annotation accuracy.
+The concrete workflows are the ones already on main: plan/subtasks/memory and task
+augmentation, interjections/speech, and VQA. The runtime does not add quality detectors,
+embedding models, hand/value estimation, camera odometry or ICL pair generation.
+New annotation workflows belong in separate follow-up PRs. This is an experimental
+runtime, not a claim of corpus-scale throughput or annotation accuracy.
 HF language jobs currently use one node with local workers; generic remote-readable
 modules can use multiple HF worker jobs.
 
@@ -49,8 +50,7 @@ modules can use multiple HF worker jobs.
 | Finalizer      | Require complete coverage; publish a checked index                           | Hide failures by dropping episodes                 |
 | Sink           | Materialize declared enrichment columns and retain a checked release         | Implicitly publish or erase original labels        |
 
-Factories are trusted Python code, not an untrusted plugin sandbox. Exported PyTorch
-models additionally require an explicit trust assertion and a verified checksum.
+Factories are trusted Python code, not an untrusted plugin sandbox.
 Code commits, source/model revisions and image digests must be pinned for acceptance.
 
 ### Existing datasets and new enrichment stages
@@ -74,8 +74,8 @@ run_annotation_pipeline(cfg, Path("/data/lerobot-v3"))
 
 An enrichment module declares resources, version and Arrow schemas, reads bounded
 episode/window references and writes checked outputs. The runtime owns dispatch,
-checkpointing and validation; the module owns model and label semantics. New hand,
-value or action/state modules can reuse these contracts without requiring a VLM.
+checkpointing and validation; the module owns model and label semantics. Additional
+annotation workflows can reuse these contracts in follow-up PRs without a VLM dependency.
 
 ## Execution and recovery
 
@@ -116,13 +116,13 @@ can run plan/subtasks and VQA concurrently while interjections still wait for pl
 and materialization waits for every required stage.
 
 ```text
-                         ┌─ plan/subtasks → interjections ─┐
-v3 input → quality gate ──┤                                 ├─ validate → materialize
-                         └─ VQA ───────────────────────────┘
+           ┌─ plan/subtasks → interjections ─┐
+v3 input ──┤                                 ├─ validate → materialize
+           └─ VQA ───────────────────────────┘
 ```
 
-Future hand and value modules can likewise depend on quality without depending on
-each other; a merge stage would wait for their validated outputs.
+Applications can define other stages and dependencies through the same contract;
+those workflows are not included in this PR.
 
 The controller reserves `workers × Resources` per admitted stage across CPU, GPU
 and memory, conservatively counting every planned worker even if a scheduler queues
@@ -138,7 +138,6 @@ from lerobot.data_processing.types import Resources
 cfg.runtime.max_parallel_stages = 3
 cfg.runtime.resource_budget = Resources(cpus=6, gpus=0, memory_gb=24)
 cfg.runtime.workers = 2
-cfg.quality.enabled = True
 cfg.vlm.endpoint_limit_url = "http://model-coordinator.internal:8090"
 cfg.vlm.endpoint_limit_key = "qwen-annotation"
 ```
@@ -174,13 +173,10 @@ with a reason; missing/nonboolean fields fail instead of silently skipping. Mask
 are sealed into the plan, change item identity, remain in the accepted Parquet index,
 and count toward complete coverage. An entirely masked batch starts no model.
 
-For `lerobot-annotate`, `quality.enabled=true` samples the default annotation camera
-and checks missing/black frames before inference. Thresholds are configurable; this
-is a sampled episode gate, not proof that every frame/view is usable. Decisions and
-exact sampled source references are saved in `meta/annotations/quality/*.parquet`.
-Native rows, videos and previous/source-owned annotations are retained; users must
-honour these masks when training. Temporal/camera-specific quality modules can supply
-finer-grained gates through the same contract.
+This is an engine contract, not a built-in quality detector. Applications must supply
+the upstream decision and its provenance. The existing language recipe does not add
+a quality-check workflow. Masked source rows are retained; consumers must honour masks
+when training.
 
 ### Long episodes and retries
 
@@ -274,12 +270,9 @@ service. Persistent workers have bounded client concurrency. Plan-only and fully
 cached runs do not initialize an unnecessary VLM. Use a pinned model revision and
 verify that external endpoints actually serve it.
 
-The exported encoder example exercises real bounded CPU/CUDA inference and produces
-typed embeddings. It is not a hand/reward estimator. The pair-link reducer validates
-typed references, frame ranges, fixed splits, robot-action availability and simulation
-validation records. It does not generate demonstrations or prove semantic alignment.
-Weak semantic pairs never receive direct action loss; strong pair supervision needs
-explicit alignment evidence.
+The engine supplies lifecycle, batching, resource and typed-output contracts for future
+modules. It does not ship extra model workflows or ICL reducers. New workflows should
+be reviewed and tested separately from this framework change.
 
 ## Validation and release
 
