@@ -39,6 +39,47 @@ def test_pod_command_pins_fork_without_credentials():
             processing.build_pod_command("hf://buckets/me/run", "bundles/x", "b" * 64, SHA, repository)
 
 
+@pytest.mark.parametrize("stage", ["COMPLETED", "RUNNING"])
+def test_existing_bundle_checks_sdk_keyword_only_job_id(tmp_path, monkeypatch, stage):
+    store = ArtifactStore(tmp_path)
+    key, digest = processing.write_bundle(store, "worker", {}, SHA)
+    store.put_json(
+        f"submissions/hf/{digest}/previous.json",
+        {"job_id": "previous-test-job", "namespace": "test-user"},
+    )
+    monkeypatch.setattr(processing, "require_persistent_remote", lambda *_: None)
+    monkeypatch.setattr(processing, "validate_hardware", lambda *_: None)
+    monkeypatch.setattr(processing, "_secrets", lambda *_: {})
+
+    def inspect(*, job_id, namespace=None):
+        assert job_id == "previous-test-job" and namespace == "test-user"
+        return SimpleNamespace(id=job_id, status=SimpleNamespace(stage=stage))
+
+    submitted = []
+
+    def submit(**kwargs):
+        assert stage == "COMPLETED", "An active bundle must never be duplicated"
+        submitted.append(kwargs)
+        return SimpleNamespace(id="new-test-job")
+
+    monkeypatch.setattr(processing, "inspect_job", inspect)
+    monkeypatch.setattr(processing, "run_job", submit)
+    options = {
+        "image": "test/image@sha256:" + "b" * 64,
+        "flavor": "cpu-upgrade",
+        "code_revision": SHA,
+        "timeout": "20m",
+        "namespace": "test-user",
+    }
+    if stage == "RUNNING":
+        with pytest.raises(RuntimeError, match="still active"):
+            processing.dispatch_bundle(store, key, digest, **options)
+        assert not submitted
+    else:
+        assert processing.dispatch_bundle(store, key, digest, **options).id == "new-test-job"
+        assert len(submitted) == 1
+
+
 def test_bounded_jobs_real_workers_and_completed_resume(tmp_path, monkeypatch):
     store = ArtifactStore(tmp_path / "remote-simulation")
     plan = make_plan(store, size=7, shard_size=1)
