@@ -18,12 +18,13 @@ from unittest.mock import PropertyMock, patch
 
 import pytest
 
-pytest.importorskip("pynput")
-
-from lerobot.teleoperators.keyboard import (  # noqa: E402
+from lerobot.teleoperators.keyboard import (
     KeyboardMicroDuckTeleop,
     KeyboardMicroDuckTeleopConfig,
 )
+from lerobot.utils.import_utils import _pynput_available
+
+pytestmark = pytest.mark.skipif(not _pynput_available, reason="pynput is not installed")
 
 
 @pytest.fixture
