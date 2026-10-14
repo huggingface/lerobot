@@ -1969,8 +1969,8 @@ class DistillationTeachers:
         require_package("scipy", extra="scipy-dep")  # MoGe's focal/shift recovery
         self.params, self.device = params, device
         self.mixed = device.type == "cuda"
-        self.moge = load_depth_teacher(MoGe2, _teacher_file(params, "moge")).to(device).eval()
-        self.morgbd = load_depth_teacher(MoRGBDEncoder, _teacher_file(params, "morgbd")).to(device).eval()
+        self.moge = self._load_depth(MoGe2, "moge", torch.float16)
+        self.morgbd = self._load_depth(MoRGBDEncoder, "morgbd", torch.bfloat16)
         self.video = None
         if params.get("use_future_video", False):
             video = load_video_teacher(
@@ -1982,6 +1982,16 @@ class DistillationTeachers:
             video.to(device, torch.bfloat16 if self.mixed else torch.float32).eval()
             video.periods.data, video.periods_t.data = (p.to(device) for p in periods)  # RoPE stays fp32
             self.video = video
+
+    def _load_depth(self, cls: type[nn.Module], key: str, dtype: torch.dtype) -> nn.Module:
+        """On CUDA, store Linear/Conv2d weights in the dtype their autocast region already computes in
+        (same targets, about half the teacher memory); norms and position embeddings stay fp32."""
+        model = load_depth_teacher(cls, _teacher_file(self.params, key)).eval()
+        if self.mixed:
+            for module in model.modules():
+                if isinstance(module, (nn.Linear, nn.Conv2d)):
+                    module.to(dtype)
+        return model.to(self.device)
 
     def depth(self, images: Tensor) -> Tensor:
         depth = self.moge.depth(images, use_fp16=self.mixed)
