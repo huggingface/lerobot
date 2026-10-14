@@ -140,7 +140,11 @@ class MicroDuck(Robot):
         with self._state_lock:
             self._latest_state = None
             self._state_error = None
-        self._state_ready.clear()
+            self._state_ready.clear()
+        with self._frame_lock:
+            self._latest_frame = None
+            self._frame_ready.clear()
+        self._stop_event = threading.Event()
         try:
             try:
                 self._cmd.open()
@@ -161,7 +165,6 @@ class MicroDuck(Robot):
             if subscribed and not subscribed.get("accepted", True):
                 raise DeviceNotConnectedError(f"robotd refused the state subscription: {subscribed}")
 
-            self._stop_event.clear()
             self._start_thread(self._state_loop, "microduck-state")
             if self.config.use_camera:
                 self._start_thread(self._camera_loop, "microduck-camera")
@@ -201,39 +204,42 @@ class MicroDuck(Robot):
             return self._latest_state or {}
 
     def _start_thread(self, target, name: str) -> None:
-        thread = threading.Thread(target=target, name=name, daemon=True)
+        thread = threading.Thread(target=target, args=(self._stop_event,), name=name, daemon=True)
         thread.start()
         self._threads.append(thread)
 
-    def _state_loop(self) -> None:
-        while not self._stop_event.is_set():
+    def _state_loop(self, stop_event: threading.Event) -> None:
+        while not stop_event.is_set():
             try:
                 message = self._state_rpc.read_message()
             except (OSError, ValueError, ConnectionError) as e:
-                if not self._stop_event.is_set():
-                    with self._state_lock:
-                        self._state_error = e
-                        self._latest_state = None
+                with self._state_lock:
+                    if stop_event.is_set():
+                        return
+                    self._state_error = e
+                    self._latest_state = None
                     self._state_ready.set()
-                    logger.error(f"robot.state stream stopped: {e}")
+                logger.error(f"robot.state stream stopped: {e}")
                 return
             if message.get("method") != "robot.state":
                 continue
             with self._state_lock:
+                if stop_event.is_set():
+                    return
                 self._latest_state = message.get("params")
-            self._state_ready.set()
+                self._state_ready.set()
 
-    def _camera_loop(self) -> None:
+    def _camera_loop(self, stop_event: threading.Event) -> None:
         url = f"http://{self.config.remote_ip}:{self.config.camera_port}/frame"
         size = (self.config.camera_width, self.config.camera_height)
         with requests.Session() as session:
-            while not self._stop_event.is_set():
+            while not stop_event.is_set():
                 try:
                     response = session.get(url, timeout=self.config.camera_timeout_s)
                     response.raise_for_status()
                 except requests.RequestException as e:
                     logger.debug(f"Camera snapshot failed: {e}")
-                    self._stop_event.wait(0.2)
+                    stop_event.wait(0.2)
                     continue
                 frame = cv2.imdecode(np.frombuffer(response.content, dtype=np.uint8), cv2.IMREAD_COLOR)
                 if frame is None:
@@ -241,8 +247,10 @@ class MicroDuck(Robot):
                 if (frame.shape[1], frame.shape[0]) != size:
                     frame = cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
                 with self._frame_lock:
+                    if stop_event.is_set():
+                        return
                     self._latest_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                self._frame_ready.set()
+                    self._frame_ready.set()
 
     def _state_to_observation(self, state: dict[str, Any]) -> RobotObservation:
         obs: RobotObservation = {}
