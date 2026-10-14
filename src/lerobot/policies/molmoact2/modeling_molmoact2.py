@@ -34,6 +34,7 @@ import types
 from collections import deque
 from collections.abc import Iterator
 from contextlib import nullcontext, suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -53,6 +54,7 @@ from lerobot.utils.import_utils import (
     require_package,
 )
 
+from ..chunk import ChunkPolicySpec
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config
 from .utils_molmoact2 import (
@@ -632,6 +634,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def supports_rtc(self) -> bool:
         return self.config.inference_action_mode == "continuous"
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Direct chunk prediction returns the checkpoint's configured playback slice."""
+        spec = super().chunk_inference_spec()
+        return replace(spec, prediction_steps=self.config.n_action_steps)
 
     def __init__(
         self,
