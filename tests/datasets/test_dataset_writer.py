@@ -53,8 +53,8 @@ def _make_frame(features: dict, task: str = "Dummy task") -> dict:
 # ── Existing encode_video_worker tests ───────────────────────────────
 
 
-def test_encode_video_worker_forwards_camera_encoder(tmp_path):
-    """_encode_video_worker forwards camera_encoder to encode_video_frames."""
+def test_encode_video_worker_forwards_video_encoder(tmp_path):
+    """_encode_video_worker forwards video_encoder to encode_video_frames."""
     video_key = "observation.images.laptop"
     fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=0, frame_index=0)
     img_dir = tmp_path / Path(fpath).parent
@@ -74,16 +74,16 @@ def test_encode_video_worker_forwards_camera_encoder(tmp_path):
             0,
             tmp_path,
             fps=30,
-            camera_encoder=VideoEncoderConfig(vcodec="h264", preset=None),
+            video_encoder=VideoEncoderConfig(vcodec="h264", preset=None),
             encoder_threads=4,
         )
 
-    assert captured_kwargs["camera_encoder"].vcodec == "h264"
+    assert captured_kwargs["video_encoder"].vcodec == "h264"
     assert captured_kwargs["encoder_threads"] == 4
 
 
-def test_encode_video_worker_default_camera_encoder(tmp_path):
-    """_encode_video_worker passes None camera_encoder which encode_video_frames defaults."""
+def test_encode_video_worker_default_video_encoder(tmp_path):
+    """_encode_video_worker passes None video_encoder which encode_video_frames defaults."""
     video_key = "observation.images.laptop"
     fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=0, frame_index=0)
     img_dir = tmp_path / Path(fpath).parent
@@ -100,7 +100,7 @@ def test_encode_video_worker_default_camera_encoder(tmp_path):
     with patch("lerobot.datasets.dataset_writer.encode_video_frames", side_effect=mock_encode):
         _encode_video_worker(video_key, 0, tmp_path, fps=30)
 
-    assert captured_kwargs["camera_encoder"] is None
+    assert captured_kwargs["video_encoder"] is None
     assert captured_kwargs["encoder_threads"] is None
 
 
@@ -202,6 +202,74 @@ def test_clear_resets_buffer(tmp_path):
 
     dataset.clear_episode_buffer()
     assert dataset.writer.episode_buffer["size"] == 0
+
+
+def test_clear_removes_video_frame_staging_dir(tmp_path):
+    """clear_episode_buffer() removes PNG staging dirs for video features."""
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+    )
+
+    dataset.add_frame(_make_frame(features))
+    video_staging_dir = (
+        dataset.root
+        / Path(DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=0, frame_index=0)).parent
+    )
+    assert video_staging_dir.is_dir()
+
+    dataset.clear_episode_buffer()
+
+    assert dataset.writer.episode_buffer["size"] == 0
+    assert not video_staging_dir.exists()
+
+
+def test_batched_encoding_staging_survives_save(tmp_path):
+    """The post-save clear must NOT delete video staging frames.
+
+    With ``batch_encoding_size > 1`` the frames of already-saved episodes stay
+    on disk until the batch encode runs; the encoder deletes them afterwards.
+    A blanket switch of the post-save cleanup to ``camera_keys`` (as done in the
+    discard path) would silently break batched encoding.
+    """
+    video_key = "observation.images.cam"
+    features = {
+        video_key: {
+            "dtype": "video",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID,
+        fps=DEFAULT_FPS,
+        features=features,
+        root=tmp_path / "ds",
+        use_videos=True,
+        batch_encoding_size=2,
+    )
+    for _ in range(3):
+        dataset.add_frame(_make_frame(features))
+
+    staging_dir = dataset.writer._get_image_file_dir(0, video_key)
+    assert staging_dir.is_dir()
+
+    dataset.save_episode()  # first of a batch of 2: no encoding yet
+
+    assert staging_dir.is_dir() and any(staging_dir.iterdir())
 
 
 def test_finalize_is_idempotent(tmp_path):

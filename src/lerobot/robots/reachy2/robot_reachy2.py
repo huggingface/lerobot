@@ -19,7 +19,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.import_utils import _reachy2_sdk_available, require_package
 
 from ..robot import Robot
@@ -87,6 +87,12 @@ class Reachy2Robot(Robot):
         self.config = config
         self.robot_type = self.config.type
         self.use_external_commands = self.config.use_external_commands
+        # Clipped commands currently return the original targets, not the applied ones.
+        self.supports_position_hold = (
+            not config.with_mobile_base
+            and not config.use_external_commands
+            and config.max_relative_target is None
+        )
 
         self.reachy: None | ReachySDK = None
         self.cameras = make_cameras_from_configs(config.cameras)

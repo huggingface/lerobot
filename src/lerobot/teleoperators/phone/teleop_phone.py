@@ -21,11 +21,13 @@
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from lerobot.lerobot_types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _hebi_available, _teleop_available, require_package
 from lerobot.utils.rotation import Rotation
 
@@ -38,6 +40,9 @@ if TYPE_CHECKING or _teleop_available:
     from teleop import Teleop
 else:
     Teleop = None
+
+if TYPE_CHECKING:
+    from hebi._internal.group import Group as HebiGroup
 
 from ..teleoperator import Teleoperator
 from .config_phone import PhoneConfig, PhoneOS
@@ -69,7 +74,7 @@ class BasePhone:
     @property
     def feedback_features(self) -> dict[str, type]:
         # No haptic or other feedback implemented yet
-        pass
+        return {}
 
     def configure(self) -> None:
         # No additional configuration required for phone teleop
@@ -78,6 +83,14 @@ class BasePhone:
     def send_feedback(self, feedback: dict[str, float]) -> None:
         # We could add haptic feedback (vibrations) here, but it's not implemented yet
         raise NotImplementedError
+
+    def _apply_calibration(self, raw_pos: np.ndarray, raw_rot: Rotation) -> tuple[np.ndarray, Rotation]:
+        """Express a raw phone pose in the reference frame captured by `calibrate()`."""
+        if self._calib_pos is None or self._calib_rot_inv is None:
+            raise RuntimeError(f"{self} is not calibrated. Run `.calibrate()` first.")
+        pos_cal = self._calib_rot_inv.apply(raw_pos - self._calib_pos)
+        rot_cal = self._calib_rot_inv * raw_rot
+        return pos_cal, rot_cal
 
 
 class IOSPhone(BasePhone, Teleoperator):
@@ -88,14 +101,14 @@ class IOSPhone(BasePhone, Teleoperator):
         require_package("teleop", extra="phone")
         super().__init__(config)
         self.config = config
-        self._group = None
+        self._group: HebiGroup | None = None
 
     @property
     def is_connected(self) -> bool:
         return self._group is not None
 
     @check_if_already_connected
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         logger.info("Connecting to IPhone, make sure to open the HEBI Mobile I/O app.")
         lookup = hebi.Lookup()
         time.sleep(2.0)
@@ -105,7 +118,8 @@ class IOSPhone(BasePhone, Teleoperator):
         self._group = group
         logger.info(f"{self} connected to HEBI group with {group.size} module(s).")
 
-        self.calibrate()
+        if calibrate:
+            self.calibrate()
 
     def calibrate(self) -> None:
         print(
@@ -131,10 +145,11 @@ class IOSPhone(BasePhone, Teleoperator):
             moment the trigger was activated.
         """
         while True:
-            has_pose, position, rotation, fb_pose = self._read_current_pose()
-            if not has_pose:
+            pose = self._read_current_pose()
+            if pose is None:
                 time.sleep(0.01)
                 continue
+            position, rotation, fb_pose = pose
 
             io = getattr(fb_pose, "io", None)
             button_b = getattr(io, "b", None) if io is not None else None
@@ -146,7 +161,7 @@ class IOSPhone(BasePhone, Teleoperator):
 
             time.sleep(0.01)
 
-    def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None, object | None]:
+    def _read_current_pose(self) -> tuple[np.ndarray, Rotation, object] | None:
         """
         Reads the instantaneous 6-DoF pose from the connected iOS device via the HEBI SDK.
 
@@ -156,30 +171,38 @@ class IOSPhone(BasePhone, Teleoperator):
         physical frame.
 
         Returns:
-            A tuple containing:
-            - A boolean indicating if a valid pose was successfully read.
-            - The 3D position as a NumPy array, or None if not available.
-            - The orientation as a `Rotation` object, or None if not available.
+            None if no valid pose could be read, otherwise a tuple containing:
+            - The 3D position as a NumPy array.
+            - The orientation as a `Rotation` object.
             - The raw HEBI feedback object for accessing other data like button presses.
         """
+        if self._group is None:
+            raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")
         fbk = self._group.get_next_feedback()
         pose = fbk[0]
         ar_pos = getattr(pose, "ar_position", None)
         ar_quat = getattr(pose, "ar_orientation", None)
         if ar_pos is None or ar_quat is None:
-            return False, None, None, None
+            return None
         # HEBI provides orientation in w, x, y, z format.
         # Scipy's Rotation expects x, y, z, w.
         quat_xyzw = np.concatenate((ar_quat[1:], [ar_quat[0]]))  # wxyz to xyzw
-        rot = Rotation.from_quat(quat_xyzw)
+        # ARKit can emit zero/NaN quaternions before tracking is ready or on a
+        # dropped packet. Rotation.from_quat now rejects those; degrade the same
+        # way as a missing pose so teleop stays alive mid-session.
+        try:
+            rot = Rotation.from_quat(quat_xyzw)
+        except ValueError:
+            return None
         pos = ar_pos - rot.apply(self.config.camera_offset)
-        return True, pos, rot, pose
+        return pos, rot, pose
 
     @check_if_not_connected
-    def get_action(self) -> dict:
-        has_pose, raw_position, raw_rotation, fb_pose = self._read_current_pose()
-        if not has_pose or not self.is_calibrated:
+    def get_action(self) -> RobotAction:
+        pose = self._read_current_pose()
+        if pose is None or not self.is_calibrated:
             return {}
+        raw_position, raw_rotation, fb_pose = pose
 
         # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
         raw_inputs: dict[str, float | int | bool] = {}
@@ -203,9 +226,7 @@ class IOSPhone(BasePhone, Teleoperator):
         if enable and not self._enabled:
             self._reapply_position_calibration(raw_position)
 
-        # Apply calibration
-        pos_cal = self._calib_rot_inv.apply(raw_position - self._calib_pos)
-        rot_cal = self._calib_rot_inv * raw_rotation
+        pos_cal, rot_cal = self._apply_calibration(raw_position, raw_rotation)
 
         self._enabled = enable
 
@@ -229,10 +250,10 @@ class AndroidPhone(BasePhone, Teleoperator):
         require_package("teleop", extra="phone")
         super().__init__(config)
         self.config = config
-        self._teleop = None
-        self._teleop_thread = None
-        self._latest_pose = None
-        self._latest_message = None
+        self._teleop: Teleop | None = None
+        self._teleop_thread: threading.Thread | None = None
+        self._latest_pose: np.ndarray | None = None
+        self._latest_message: dict[str, Any] | None = None
         self._android_lock = threading.Lock()
 
     @property
@@ -240,7 +261,7 @@ class AndroidPhone(BasePhone, Teleoperator):
         return self._teleop is not None
 
     @check_if_already_connected
-    def connect(self) -> None:
+    def connect(self, calibrate: bool = True) -> None:
         logger.info("Starting teleop stream for Android...")
         self._teleop = Teleop()
         self._teleop.subscribe(self._android_callback)
@@ -248,7 +269,8 @@ class AndroidPhone(BasePhone, Teleoperator):
         self._teleop_thread.start()
         logger.info(f"{self} connected, teleop stream started.")
 
-        self.calibrate()
+        if calibrate:
+            self.calibrate()
 
     def calibrate(self) -> None:
         print(
@@ -280,13 +302,14 @@ class AndroidPhone(BasePhone, Teleoperator):
                 msg = self._latest_message or {}
 
             if bool(msg.get("move", False)):
-                ok, pos, rot, _pose = self._read_current_pose()
-                if ok:
+                pose = self._read_current_pose()
+                if pose is not None:
+                    pos, rot, _raw_pose = pose
                     return pos, rot
 
             time.sleep(0.01)
 
-    def _read_current_pose(self) -> tuple[bool, np.ndarray | None, Rotation | None, object | None]:
+    def _read_current_pose(self) -> tuple[np.ndarray, Rotation, np.ndarray] | None:
         """
         Reads the latest 6-DoF pose received from the Android device's WebXR session.
 
@@ -295,22 +318,21 @@ class AndroidPhone(BasePhone, Teleoperator):
         then decomposed into position and rotation, and the configured camera offset is applied.
 
         Returns:
-            A tuple containing:
-            - A boolean indicating if a valid pose was available.
-            - The 3D position as a NumPy array, or None if no pose has been received yet.
-            - The orientation as a `Rotation` object, or None if no pose has been received.
+            None if no pose has been received yet, otherwise a tuple containing:
+            - The 3D position as a NumPy array.
+            - The orientation as a `Rotation` object.
             - The raw 4x4 pose matrix as received from the teleop stream.
         """
         with self._android_lock:
             if self._latest_pose is None:
-                return False, None, None, None
+                return None
             p = self._latest_pose.copy()
             pose = self._latest_pose
         rot = Rotation.from_matrix(p[:3, :3])
         pos = p[:3, 3] - rot.apply(self.config.camera_offset)
-        return True, pos, rot, pose
+        return pos, rot, pose
 
-    def _android_callback(self, pose: np.ndarray, message: dict) -> None:
+    def _android_callback(self, pose: np.ndarray, message: dict[str, Any]) -> None:
         """
         Callback function to handle incoming data from the Android teleop stream.
 
@@ -329,10 +351,11 @@ class AndroidPhone(BasePhone, Teleoperator):
             self._latest_message = message
 
     @check_if_not_connected
-    def get_action(self) -> dict:
-        ok, raw_pos, raw_rot, pose = self._read_current_pose()
-        if not ok or not self.is_calibrated:
+    def get_action(self) -> RobotAction:
+        pose = self._read_current_pose()
+        if pose is None or not self.is_calibrated:
             return {}
+        raw_pos, raw_rot, _raw_pose = pose
 
         # Collect raw inputs (B1 / analogs on iOS, move/scale on Android)
         raw_inputs: dict[str, float | int | bool] = {}
@@ -348,9 +371,7 @@ class AndroidPhone(BasePhone, Teleoperator):
         if enable and not self._enabled:
             self._reapply_position_calibration(raw_pos)
 
-        # Apply calibration
-        pos_cal = self._calib_rot_inv.apply(raw_pos - self._calib_pos)
-        rot_cal = self._calib_rot_inv * raw_rot
+        pos_cal, rot_cal = self._apply_calibration(raw_pos, raw_rot)
 
         self._enabled = enable
 
@@ -399,8 +420,8 @@ class Phone(Teleoperator):
     def is_connected(self) -> bool:
         return self._phone_impl.is_connected
 
-    def connect(self) -> None:
-        return self._phone_impl.connect()
+    def connect(self, calibrate: bool = True) -> None:
+        return self._phone_impl.connect(calibrate)
 
     def calibrate(self) -> None:
         return self._phone_impl.calibrate()
@@ -420,7 +441,7 @@ class Phone(Teleoperator):
     def configure(self) -> None:
         return self._phone_impl.configure()
 
-    def get_action(self) -> dict:
+    def get_action(self) -> RobotAction:
         return self._phone_impl.get_action()
 
     def send_feedback(self, feedback: dict[str, float]) -> None:

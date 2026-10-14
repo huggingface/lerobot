@@ -25,7 +25,7 @@ from typing import Any
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.types import EnvTransition, PolicyAction, TransitionKey
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.utils.device_utils import get_safe_torch_device
 
 from .pipeline import ProcessorStep, ProcessorStepRegistry
@@ -59,7 +59,7 @@ class DeviceProcessorStep(ProcessorStep):
         "double": torch.float64,
     }
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """
         Initializes the processor by converting string configurations to torch objects.
 
@@ -135,36 +135,36 @@ class DeviceProcessorStep(ProcessorStep):
         new_transition = transition.copy()
         action = new_transition.get(TransitionKey.ACTION)
 
-        if action is not None and not isinstance(action, PolicyAction):
+        if action is not None and not isinstance(action, torch.Tensor):
             raise ValueError(f"If action is not None should be a PolicyAction type got {type(action)}")
 
-        simple_tensor_keys = [
+        simple_tensor_keys = (
             TransitionKey.ACTION,
             TransitionKey.REWARD,
             TransitionKey.DONE,
             TransitionKey.TRUNCATED,
-        ]
+        )
 
-        dict_tensor_keys = [
+        dict_tensor_keys = (
             TransitionKey.OBSERVATION,
             TransitionKey.COMPLEMENTARY_DATA,
-        ]
+        )
 
         # Process simple, top-level tensors
-        for key in simple_tensor_keys:
-            value = transition.get(key)
+        for tensor_key in simple_tensor_keys:
+            value = transition.get(tensor_key)
             if isinstance(value, torch.Tensor):
-                new_transition[key] = self._process_tensor(value)
+                new_transition[tensor_key] = self._process_tensor(value)
 
         # Process tensors nested within dictionaries
-        for key in dict_tensor_keys:
-            data_dict = transition.get(key)
+        for dict_key in dict_tensor_keys:
+            data_dict = transition.get(dict_key)
             if data_dict is not None:
                 new_data_dict = {
                     k: self._process_tensor(v) if isinstance(v, torch.Tensor) else v
                     for k, v in data_dict.items()
                 }
-                new_transition[key] = new_data_dict
+                new_transition[dict_key] = new_data_dict
 
         return new_transition
 

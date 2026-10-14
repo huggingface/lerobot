@@ -14,18 +14,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import sys
 from enum import IntEnum
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.types import RobotAction
+from lerobot.lerobot_types import RobotAction
 from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_gamepad import GamepadTeleopConfig
+
+if TYPE_CHECKING:
+    from .gamepad_utils import InputController
+
+logger = logging.getLogger(__name__)
 
 
 class GripperAction(IntEnum):
@@ -54,7 +61,14 @@ class GamepadTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        self.gamepad = None
+        self.gamepad: InputController | None = None
+
+        self.hidapi_fallback = config.hidapi_fallback
+        if sys.platform == "darwin" and not self.hidapi_fallback:
+            logger.warning(
+                "On macOS, pygame may not reliably detect input from some controllers. "
+                "If you experience issues, set `hidapi_fallback=true`."
+            )
 
     @property
     def action_features(self) -> dict:
@@ -75,19 +89,22 @@ class GamepadTeleop(Teleoperator):
     def feedback_features(self) -> dict:
         return {}
 
-    def connect(self) -> None:
-        # use HidApi for macos
-        if sys.platform == "darwin":
-            # NOTE: On macOS, pygame doesn’t reliably detect input from some controllers so we fall back to hidapi
-            from .gamepad_utils import GamepadControllerHID as Gamepad
-        else:
-            from .gamepad_utils import GamepadController as Gamepad
+    def connect(self, calibrate: bool = True) -> None:
+        if self.hidapi_fallback:
+            from .gamepad_utils import GamepadControllerHID
 
-        self.gamepad = Gamepad()
+            self.gamepad = GamepadControllerHID()
+        else:
+            from .gamepad_utils import GamepadController
+
+            self.gamepad = GamepadController()
         self.gamepad.start()
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
+        if self.gamepad is None:
+            raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")
+
         # Update the controller to get fresh inputs
         self.gamepad.update()
 
@@ -97,7 +114,7 @@ class GamepadTeleop(Teleoperator):
         # Create action from gamepad input
         gamepad_action = np.array([delta_x, delta_y, delta_z], dtype=np.float32)
 
-        action_dict = {
+        action_dict: RobotAction = {
             "delta_x": gamepad_action[0],
             "delta_y": gamepad_action[1],
             "delta_z": gamepad_action[2],
@@ -112,7 +129,7 @@ class GamepadTeleop(Teleoperator):
 
         return action_dict
 
-    def get_teleop_events(self) -> dict[str, Any]:
+    def get_teleop_events(self) -> dict[TeleopEvents, bool]:
         """
         Get extra control events from the gamepad such as intervention status,
         episode termination, success indicators, etc.
@@ -170,6 +187,7 @@ class GamepadTeleop(Teleoperator):
         # No calibration needed for gamepad
         pass
 
+    @property
     def is_calibrated(self) -> bool:
         """Check if gamepad is calibrated."""
         # Gamepad doesn't require calibration

@@ -15,6 +15,7 @@
 # limitations under the License.
 import logging
 import multiprocessing
+import multiprocessing.queues
 import queue
 import threading
 from pathlib import Path
@@ -24,6 +25,12 @@ import PIL.Image
 import torch
 
 logger = logging.getLogger(__name__)
+
+# One pending write: (image, destination path, PNG compress level). ``None`` is the stop sentinel.
+ImageWriterItem = tuple[np.ndarray | PIL.Image.Image, Path, int]
+ImageWriterQueue = (
+    queue.Queue[ImageWriterItem | None] | multiprocessing.queues.JoinableQueue[ImageWriterItem | None]
+)
 
 
 def safe_stop_image_writer(func):
@@ -41,11 +48,51 @@ def safe_stop_image_writer(func):
     return wrapper
 
 
-def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) -> PIL.Image.Image:
-    # TODO(aliberts): handle 1 channel and 4 for depth images
-    if image_array.ndim != 3:
-        raise ValueError(f"The array has {image_array.ndim} dimensions, but 3 is expected for an image.")
+def squeeze_single_channel(array: np.ndarray) -> np.ndarray:
+    """Drop a leading or trailing singleton channel dim: ``(1, H, W)`` / ``(H, W, 1)`` -> ``(H, W)``.
 
+    Unlike ``array.squeeze()``, this only removes the channel axis, never an ``H`` or ``W`` of size 1.
+    """
+    if array.ndim == 3:
+        if array.shape[0] == 1:
+            return array[0]
+        if array.shape[-1] == 1:
+            return array[..., 0]
+    return array
+
+
+def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) -> PIL.Image.Image:
+    """Convert a NumPy array to a PIL Image, preserving precision for grayscale.
+
+    Behaviour by shape:
+
+    - ``(H, W)`` or ``(1, H, W)`` / ``(H, W, 1)``: single-channel grayscale.
+      The native dtype is preserved using the matching PIL mode
+      (``I;16`` / ``F``). This is the path used for raw depth maps (no rescaling, clamping, or downcasting)
+    - ``(3, H, W)`` / ``(H, W, 3)``: RGB. Channels-first inputs are transposed
+      to channels-last. Float inputs in ``[0, 1]`` are scaled to ``uint8``
+      (existing behaviour, gated by ``range_check``).
+
+    Other shapes / channel counts raise ``NotImplementedError`` or
+    ``ValueError``.
+    """
+    # TODO(CarolinePascal): 4 dimensions RGB-D images
+    if image_array.ndim not in (2, 3):
+        raise ValueError(f"The array has {image_array.ndim} dimensions, but 2 or 3 is expected for an image.")
+
+    # Squeeze 3D single-channel inputs to 2D so depth maps work whether the
+    # caller emits (H, W), (1, H, W), or (H, W, 1).
+    image_array = squeeze_single_channel(image_array)
+
+    if image_array.ndim == 2:
+        if image_array.dtype not in [np.uint16, np.float32]:
+            raise ValueError(
+                f"Unsupported single-channel image dtype: {image_array.dtype}. "
+                f"Supported dtypes: {sorted(str(d) for d in [np.uint16, np.float32])}."
+            )
+        return PIL.Image.fromarray(np.ascontiguousarray(image_array))
+
+    # 3D path: must be RGB (3 channels), channels-first or channels-last.
     if image_array.shape[0] == 3:
         # Transpose from pytorch convention (C, H, W) to (H, W, C)
         image_array = image_array.transpose(1, 2, 0)
@@ -71,13 +118,29 @@ def image_array_to_pil_image(image_array: np.ndarray, range_check: bool = True) 
     return PIL.Image.fromarray(image_array)
 
 
+def save_kwargs_for_path(fpath: Path, compress_level: int) -> dict:
+    """Pick the right format-specific kwargs for :meth:`PIL.Image.Image.save`.
+
+    PNG uses ``compress_level`` (0-9, zlib). TIFF uses ``compression`` (raw) for lossless raw depth maps.
+    """
+    suffix = Path(fpath).suffix.lower()
+    if suffix == ".png":
+        return {"compress_level": compress_level}
+    if suffix in (".tif", ".tiff"):
+        return {"compression": "raw"}
+    else:
+        raise ValueError(f"Unsupported image file extension: {suffix}")
+
+
 def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1):
     """
     Saves a NumPy array or PIL Image to a file.
 
     This function handles both NumPy arrays and PIL Image objects, converting
     the former to a PIL Image before saving. It includes error handling for
-    the save operation.
+    the save operation. The output format is inferred from the *fpath*
+    extension: ``.png`` → PNG with ``compress_level``, ``.tiff`` / ``.tif``
+    → lossless raw depth maps (TIFF).
 
     Args:
         image (np.ndarray | PIL.Image.Image): The image data to save.
@@ -101,12 +164,12 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level
             img = image
         else:
             raise TypeError(f"Unsupported image type: {type(image)}")
-        img.save(fpath, compress_level=compress_level)
+        img.save(fpath, **save_kwargs_for_path(fpath, compress_level))
     except Exception as e:
         logger.error("Error writing image %s: %s", fpath, e)
 
 
-def worker_thread_loop(queue: queue.Queue):
+def worker_thread_loop(queue: ImageWriterQueue) -> None:
     while True:
         item = queue.get()
         if item is None:
@@ -117,7 +180,7 @@ def worker_thread_loop(queue: queue.Queue):
         queue.task_done()
 
 
-def worker_process(queue: queue.Queue, num_threads: int):
+def worker_process(queue: ImageWriterQueue, num_threads: int) -> None:
     threads = []
     for _ in range(num_threads):
         t = threading.Thread(target=worker_thread_loop, args=(queue,))
@@ -143,12 +206,12 @@ class AsyncImageWriter:
     the number of threads. If it is still not stable, try to use 1 subprocess, or more.
     """
 
-    def __init__(self, num_processes: int = 0, num_threads: int = 1):
+    def __init__(self, num_processes: int = 0, num_threads: int = 1) -> None:
         self.num_processes = num_processes
         self.num_threads = num_threads
-        self.queue = None
-        self.threads = []
-        self.processes = []
+        self.queue: ImageWriterQueue
+        self.threads: list[threading.Thread] = []
+        self.processes: list[multiprocessing.Process] = []
         self._stopped = False
 
         if num_threads <= 0 and num_processes <= 0:
@@ -173,20 +236,20 @@ class AsyncImageWriter:
 
     def save_image(
         self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
-    ):
+    ) -> None:
         if isinstance(image, torch.Tensor):
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()
         self.queue.put((image, fpath, compress_level))
 
-    def wait_until_done(self):
+    def wait_until_done(self) -> None:
         self.queue.join()
 
-    def stop(self):
+    def stop(self) -> None:
         if self._stopped:
             return
 
-        if self.num_processes == 0:
+        if isinstance(self.queue, queue.Queue):
             for _ in self.threads:
                 self.queue.put(None)
             for t in self.threads:

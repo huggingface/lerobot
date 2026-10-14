@@ -14,7 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from lerobot.cameras import CameraConfig
 
 from ..config import RobotConfig
 from ..rebot_b601_follower import RebotB601FollowerConfig
@@ -23,7 +25,12 @@ from ..rebot_b601_follower import RebotB601FollowerConfig
 @RobotConfig.register_subclass("bi_rebot_b601_follower")
 @dataclass
 class BiRebotB601FollowerConfig(RobotConfig):
-    """Configuration class for the bimanual reBot B601-DM follower robot."""
+    """Configuration class for the bimanual reBot B601 follower robot."""
 
     left_arm_config: RebotB601FollowerConfig
     right_arm_config: RebotB601FollowerConfig
+
+    # Top-level cameras not attached to a specific side. Keys are kept as-is in
+    # observations (no `left_`/`right_` prefix). Per-arm cameras (declared on
+    # `{left,right}_arm_config.cameras`) are prefixed.
+    cameras: dict[str, CameraConfig] = field(default_factory=dict)

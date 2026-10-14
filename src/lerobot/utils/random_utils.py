@@ -53,8 +53,9 @@ def serialize_numpy_rng_state() -> dict[str, torch.Tensor]:
     `safetensors.save_file()` or `torch.save()`.
     """
     np_state = np.random.get_state()
-    # Ensure no breaking changes from numpy
-    assert np_state[0] == "MT19937"
+    # Ensure no breaking changes from numpy: the legacy MT19937 state is a tuple, not the newer dict form.
+    if not isinstance(np_state, tuple) or np_state[0] != "MT19937":
+        raise RuntimeError(f"Unsupported numpy RNG state format: {type(np_state).__name__}")
     return {
         "np_rng_state_values": torch.tensor(np_state[1], dtype=torch.int64),
         "np_rng_state_index": torch.tensor([np_state[2]], dtype=torch.int64),
@@ -85,6 +86,8 @@ def serialize_torch_rng_state() -> dict[str, torch.Tensor]:
     torch_rng_state_dict = {"torch_rng_state": torch.get_rng_state()}
     if torch.cuda.is_available():
         torch_rng_state_dict["torch_cuda_rng_state"] = torch.cuda.get_rng_state()
+    if torch.backends.mps.is_available():
+        torch_rng_state_dict["torch_mps_rng_state"] = torch.mps.get_rng_state()
     return torch_rng_state_dict
 
 
@@ -95,6 +98,8 @@ def deserialize_torch_rng_state(rng_state_dict: dict[str, torch.Tensor]) -> None
     torch.set_rng_state(rng_state_dict["torch_rng_state"])
     if torch.cuda.is_available() and "torch_cuda_rng_state" in rng_state_dict:
         torch.cuda.set_rng_state(rng_state_dict["torch_cuda_rng_state"])
+    if torch.backends.mps.is_available() and "torch_mps_rng_state" in rng_state_dict:
+        torch.mps.set_rng_state(rng_state_dict["torch_mps_rng_state"])
 
 
 def serialize_rng_state() -> dict[str, torch.Tensor]:

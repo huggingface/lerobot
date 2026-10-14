@@ -15,8 +15,8 @@
 # limitations under the License.
 
 from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.common.control_utils import init_keyboard_listener
 from lerobot.datasets import LeRobotDataset, aggregate_pipeline_dataset_features, create_initial_features
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
     RobotProcessorPipeline,
@@ -37,8 +37,8 @@ from lerobot.scripts.lerobot_record import record_loop
 from lerobot.teleoperators.phone import Phone, PhoneConfig
 from lerobot.teleoperators.phone.config_phone import PhoneOS
 from lerobot.teleoperators.phone.phone_processor import MapPhoneActionToRobotAction
-from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.feature_utils import combine_feature_dicts
+from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.utils import log_say
 from lerobot.utils.visualization_utils import init_rerun
 

@@ -61,15 +61,19 @@ Full details in [`docs/source/so101.mdx`](./docs/source/so101.mdx) and [`docs/so
 **4.1 Install**
 
 ```bash
-pip install 'lerobot[feetech]'              # SO-100/SO-101 motor stack
-# pip install 'lerobot[all]'                # everything
-# pip install 'lerobot[aloha,pusht]'        # specific features
-# pip install 'lerobot[smolvla]'            # add SmolVLA deps
-git lfs install && git lfs pull
-hf auth login                               # required to push datasets/policies
-```
+# uv (recommended — see AGENTS.md and CLAUDE.md)
+uv sync --locked --extra feetech          # SO-100/SO-101 motor stack
+# uv sync --locked --extra all            # everything
+# uv sync --locked --extra smolvla        # add SmolVLA deps
 
-Contributors can alternatively use `uv sync --locked --extra feetech` (see `AGENTS.md`).
+# pip (alternative, e.g. when not working from source)
+# pip install 'lerobot[feetech]'
+# pip install 'lerobot[all]'
+# pip install 'lerobot[smolvla]'
+
+git lfs install && git lfs pull
+hf auth login                             # required to push datasets/policies
+```
 
 **4.2 Find USB ports** — run once per arm, unplug when prompted.
 
@@ -138,7 +142,7 @@ lerobot-replay --robot.type=so101_follower --robot.port=<FOLLOWER_PORT> --robot.
   --dataset.repo_id=${HF_USER}/my_task --dataset.episode=0
 ```
 
-**4.9 Train** (default: ACT — fastest, lowest memory). Apple silicon: `--policy.device=mps`. See §6/§7 for policy and duration.
+**4.9 Train** (default: ACT — fastest, lowest memory). Apple silicon: `--policy.device=mps`. No local GPU? Add `--job.target=<flavor>` (e.g. `a10g-small`, list them with `hf jobs hardware`) to run on Hugging Face Jobs instead. See §6/§7 for policy and duration.
 
 ```bash
 lerobot-train \

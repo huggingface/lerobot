@@ -25,13 +25,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.types import EnvTransition, RobotObservation, TransitionKey
+from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.utils.constants import (
+    ACTION_CODE_TOKEN_MASK,
     ACTION_TOKEN_MASK,
     ACTION_TOKENS,
     OBS_LANGUAGE_ATTENTION_MASK,
@@ -136,7 +138,7 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         # Standardize to a list of strings for the tokenizer
         if isinstance(task, str):
             return [task]
-        elif isinstance(task, (list, tuple)) and all(isinstance(t, str) for t in task):
+        elif isinstance(task, list | tuple) and all(isinstance(t, str) for t in task):
             return list(task)
 
         return None
@@ -293,6 +295,15 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         return config
 
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        """Save the tokenizer so object-provided instances reload without overrides."""
+        artifact_path = Path("tokenizer")
+        save_pretrained = getattr(self.input_tokenizer, "save_pretrained", None)
+        if save_pretrained is None:
+            raise TypeError("Tokenizer must implement save_pretrained() to save a portable pipeline.")
+        save_pretrained(save_directory / artifact_path)
+        return {"tokenizer_name": artifact_path.as_posix()}
+
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
@@ -349,6 +360,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
     max_action_tokens: int = 256
     fast_skip_tokens: int = 128
     paligemma_tokenizer_name: str = "google/paligemma-3b-pt-224"
+    allow_truncation: bool = True
     # Internal tokenizer instance (not part of the config)
     action_tokenizer: Any = field(default=None, init=False, repr=False)
     _paligemma_tokenizer: Any = field(default=None, init=False, repr=False)
@@ -412,14 +424,15 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             # During inference, no action is available, skip tokenization
             return new_transition
 
-        # Tokenize and get both tokens and mask
-        tokens, mask = self._tokenize_action(action)
+        # Tokenize and get masks for the full formatted sequence and the discrete action codes.
+        tokens, mask, code_mask = self._tokenize_action(action)
 
         # Store mask in complementary data
         complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
         if complementary_data is None:
             complementary_data = {}
         complementary_data[ACTION_TOKEN_MASK] = mask
+        complementary_data[ACTION_CODE_TOKEN_MASK] = code_mask
         complementary_data[ACTION_TOKENS] = tokens
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
         return new_transition
@@ -430,7 +443,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         """
         return self._paligemma_tokenizer.vocab_size - 1 - self.fast_skip_tokens - tokens
 
-    def _tokenize_action(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _tokenize_action(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Tokenizes the action tensor and creates a mask.
 
@@ -459,6 +472,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         # The fast tokenizer expects action data and returns token IDs
         tokens_list = []
         masks_list = []
+        code_masks_list = []
 
         for i in range(batch_size):
             # Tokenize single action (move to CPU first as tokenizer uses scipy which requires numpy)
@@ -476,65 +490,82 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             if tokens.dim() > 1:
                 tokens = tokens.flatten()
 
+            action_code_tokens = self._act_tokens_to_paligemma_tokens(tokens)
             bos_id = self._paligemma_tokenizer.bos_token_id
-            # add bos
+            prompt_tokens = torch.tensor(
+                self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False),
+                device=action.device,
+            )
+            end_tokens = torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device)
+
+            code_start = 1 + len(prompt_tokens)
+            code_end = code_start + len(action_code_tokens)
             tokens = torch.cat(
                 [
                     torch.tensor([bos_id], device=action.device),
-                    torch.tensor(
-                        self._paligemma_tokenizer.encode("Action: ", add_special_tokens=False),
-                        device=action.device,
-                    ),
-                    self._act_tokens_to_paligemma_tokens(tokens),
-                    torch.tensor(self._paligemma_tokenizer.encode("|"), device=action.device),
+                    prompt_tokens,
+                    action_code_tokens,
+                    end_tokens,
                 ]
             )
+            code_mask = torch.zeros(len(tokens), dtype=torch.bool, device=action.device)
+            code_mask[code_start:code_end] = True
 
             # Truncate or pad to max_action_tokens
             if len(tokens) > self.max_action_tokens:
+                if not self.allow_truncation:
+                    raise ValueError(
+                        f"FAST action sequence has {len(tokens)} tokens, exceeding "
+                        f"max_action_tokens={self.max_action_tokens}."
+                    )
                 logging.warning(
                     f"Token length ({len(tokens)}) exceeds max length ({self.max_action_tokens}), truncating. "
                     "Consider increasing the `max_action_tokens` in your model config if this happens frequently."
                 )
                 tokens = tokens[: self.max_action_tokens]
+                code_mask = code_mask[: self.max_action_tokens]
                 mask = torch.ones(self.max_action_tokens, dtype=torch.bool, device=action.device)
             else:
+                pad_len = self.max_action_tokens - len(tokens)
                 mask = torch.cat(
                     [
                         torch.ones(len(tokens), dtype=torch.bool, device=action.device),
-                        torch.zeros(
-                            self.max_action_tokens - len(tokens), dtype=torch.bool, device=action.device
-                        ),
+                        torch.zeros(pad_len, dtype=torch.bool, device=action.device),
                     ]
                 )
+                code_mask = torch.nn.functional.pad(code_mask, (0, pad_len), value=False)
                 # Pad tokens with zeros
-                tokens = torch.nn.functional.pad(tokens, (0, self.max_action_tokens - len(tokens)), value=0)
+                tokens = torch.nn.functional.pad(tokens, (0, pad_len), value=0)
 
             tokens_list.append(tokens)
             masks_list.append(mask)
+            code_masks_list.append(code_mask)
 
         # Stack into batched tensors
         tokens_batch = torch.stack(tokens_list, dim=0)  # (B, max_action_tokens)
         masks_batch = torch.stack(masks_list, dim=0)  # (B, max_action_tokens)
+        code_masks_batch = torch.stack(code_masks_list, dim=0)  # (B, max_action_tokens)
 
         # Remove batch dimension if input was single sample
         if single_sample:
             tokens_batch = tokens_batch.squeeze(0)
             masks_batch = masks_batch.squeeze(0)
+            code_masks_batch = code_masks_batch.squeeze(0)
 
         # Move to the same device as the input
         if device is not None:
             tokens_batch = tokens_batch.to(device)
             masks_batch = masks_batch.to(device)
+            code_masks_batch = code_masks_batch.to(device)
 
-        return tokens_batch, masks_batch
+        return tokens_batch, masks_batch, code_masks_batch
 
     def action(self, action: torch.Tensor) -> torch.Tensor:
         """
         This method is not used since we override __call__.
         Required by ActionProcessorStep ABC.
         """
-        tokens, _ = self._tokenize_action(action)
+        tokens, _, _ = self._tokenize_action(action)
         return tokens
 
     def get_config(self) -> dict[str, Any]:
@@ -550,6 +581,9 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         config = {
             "trust_remote_code": self.trust_remote_code,
             "max_action_tokens": self.max_action_tokens,
+            "fast_skip_tokens": self.fast_skip_tokens,
+            "paligemma_tokenizer_name": self.paligemma_tokenizer_name,
+            "allow_truncation": self.allow_truncation,
         }
 
         # Only save tokenizer_name if it was used to create the tokenizer
@@ -557,6 +591,14 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
             config["action_tokenizer_name"] = self.action_tokenizer_name
 
         return config
+
+    def save_artifacts(self, save_directory: Path) -> dict[str, str]:
+        artifact_path = Path("action_tokenizer")
+        save_pretrained = getattr(self.action_tokenizer, "save_pretrained", None)
+        if save_pretrained is None:
+            raise TypeError("Action tokenizer must implement save_pretrained() to save a portable pipeline.")
+        save_pretrained(save_directory / artifact_path)
+        return {"action_tokenizer_name": artifact_path.as_posix()}
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]

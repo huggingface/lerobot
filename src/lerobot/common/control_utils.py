@@ -17,13 +17,10 @@ from __future__ import annotations
 ########################################################################################
 # Utilities
 ########################################################################################
-import logging
 import time
-import traceback
 from contextlib import nullcontext
 from copy import copy
-from functools import cache
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 import numpy as np
 import torch
@@ -38,37 +35,10 @@ else:
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
+    from lerobot.teleoperators import Teleoperator
+from lerobot.lerobot_types import PolicyAction, RobotAction
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.robots import Robot
-from lerobot.types import PolicyAction
-
-
-@cache
-def is_headless():
-    """
-    Detects if the Python script is running in a headless environment (e.g., without a display).
-
-    This function attempts to import `pynput`, a library that requires a graphical environment.
-    If the import fails, it assumes the environment is headless. The result is cached to avoid
-    re-running the check.
-
-    Returns:
-        True if the environment is determined to be headless, False otherwise.
-    """
-    try:
-        import pynput  # noqa
-
-        return False
-    except Exception:
-        print(
-            "Error trying to import pynput. Switching to headless mode. "
-            "As a result, the video stream from the cameras won't be shown, "
-            "and you won't be able to change the control flow with keyboards. "
-            "For more info, see traceback below.\n"
-        )
-        traceback.print_exc()
-        print()
-        return True
 
 
 def predict_action(
@@ -120,59 +90,6 @@ def predict_action(
         action = postprocessor(action)
 
     return action
-
-
-def init_keyboard_listener():
-    """
-    Initializes a non-blocking keyboard listener for real-time user interaction.
-
-    This function sets up a listener for specific keys (right arrow, left arrow, escape) to control
-    the program flow during execution, such as stopping recording or exiting loops. It gracefully
-    handles headless environments where keyboard listening is not possible.
-
-    Returns:
-        A tuple containing:
-        - The `pynput.keyboard.Listener` instance, or `None` if in a headless environment.
-        - A dictionary of event flags (e.g., `exit_early`) that are set by key presses.
-    """
-    # Allow to exit early while recording an episode or resetting the environment,
-    # by tapping the right arrow key '->'. This might require a sudo permission
-    # to allow your terminal to monitor keyboard events.
-    events = {}
-    events["exit_early"] = False
-    events["rerecord_episode"] = False
-    events["stop_recording"] = False
-
-    if is_headless():
-        logging.warning(
-            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
-        )
-        listener = None
-        return listener, events
-
-    # Only import pynput if not in a headless environment
-    from pynput import keyboard
-
-    def on_press(key):
-        try:
-            if key == keyboard.Key.right:
-                print("Right arrow key pressed. Exiting loop...")
-                events["exit_early"] = True
-            elif key == keyboard.Key.left:
-                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
-            elif key == keyboard.Key.esc:
-                print("Escape key pressed. Stopping data recording...")
-                events["stop_recording"] = True
-                events["exit_early"] = True
-        except Exception as e:
-            print(f"Error handling key press: {e}")
-
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
-
-    return listener, events
 
 
 def sanity_check_dataset_name(repo_id, policy_cfg):
@@ -253,7 +170,19 @@ def sanity_check_dataset_robot_compatibility(
 ########################################################################################
 
 
-def teleop_supports_feedback(teleop) -> bool:
+class ActuatedTeleoperator(Protocol):
+    """A teleoperator whose arm can be driven: position feedback plus torque control."""
+
+    def get_action(self) -> RobotAction: ...
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None: ...
+
+    def enable_torque(self) -> None: ...
+
+    def disable_torque(self) -> None: ...
+
+
+def teleop_supports_feedback(teleop: Teleoperator) -> TypeGuard[ActuatedTeleoperator]:
     """Return True when the teleop can receive position feedback (is actuated).
 
     Actuated teleops (e.g. SO-101, OpenArmMini) have non-empty ``feedback_features``
@@ -268,7 +197,9 @@ def teleop_supports_feedback(teleop) -> bool:
     )
 
 
-def teleop_smooth_move_to(teleop, target_pos: dict, duration_s: float = 2.0, fps: int = 30) -> None:
+def teleop_smooth_move_to(
+    teleop: ActuatedTeleoperator, target_pos: RobotAction, duration_s: float = 2.0, fps: int = 30
+) -> None:
     """Smoothly move an actuated teleop to ``target_pos`` via linear interpolation.
 
     Requires the teleoperator to support feedback (i.e. have non-empty

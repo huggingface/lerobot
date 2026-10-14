@@ -91,7 +91,7 @@ from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.device_utils import get_safe_torch_device
-from lerobot.utils.process import ProcessSignalHandler
+from lerobot.utils.process import ProcessSignalHandler, ensure_multiprocessing_start_method
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.transition import (
@@ -124,9 +124,7 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     cfg.validate()
     display_pid = False
     if not use_threads(cfg):
-        import torch.multiprocessing as mp
-
-        mp.set_start_method("spawn")
+        ensure_multiprocessing_start_method(cfg.policy.concurrency.multiprocessing_context)
         display_pid = True
 
     # Create logs directory to ensure it exists

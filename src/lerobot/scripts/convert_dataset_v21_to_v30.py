@@ -61,6 +61,7 @@ import pyarrow as pa
 import tqdm
 from datasets import Dataset, Features, Image
 from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.errors import RevisionNotFoundError
 from requests import HTTPError
 
 from lerobot.datasets import CODEBASE_VERSION, LeRobotDataset, aggregate_stats
@@ -70,7 +71,6 @@ from lerobot.datasets.io_utils import (
     get_parquet_file_size_in_mb,
     get_parquet_num_frames,
     load_info,
-    load_json,
     write_episodes,
     write_info,
     write_stats,
@@ -91,7 +91,10 @@ from lerobot.datasets.utils import (
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.utils.io_utils import load_json
 from lerobot.utils.utils import flatten_dict, init_logging
+
+logger = logging.getLogger(__name__)
 
 V21 = "v2.1"
 V30 = "v3.0"
@@ -158,9 +161,9 @@ def legacy_load_episodes_stats(local_dir: Path) -> dict:
     }
 
 
-def legacy_load_tasks(local_dir: Path) -> tuple[dict, dict]:
-    tasks = load_jsonlines(local_dir / LEGACY_TASKS_PATH)
-    tasks = {item["task_index"]: item["task"] for item in sorted(tasks, key=lambda x: x["task_index"])}
+def legacy_load_tasks(local_dir: Path) -> tuple[dict[int, str], dict[str, int]]:
+    task_items = load_jsonlines(local_dir / LEGACY_TASKS_PATH)
+    tasks = {item["task_index"]: item["task"] for item in sorted(task_items, key=lambda x: x["task_index"])}
     task_to_task_index = {task: task_index for task_index, task in tasks.items()}
     return tasks, task_to_task_index
 
@@ -206,7 +209,7 @@ def concat_data_files(paths_to_cat, new_root, chunk_idx, file_idx, image_keys):
     concatenated_df.to_parquet(path, index=False, schema=schema)
 
 
-def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
+def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int) -> list[dict[str, Any]]:
     data_dir = root / "data"
     ep_paths = sorted(data_dir.glob("*/*.parquet"))
 
@@ -214,10 +217,10 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
 
     chunk_idx = 0
     file_idx = 0
-    size_in_mb = 0
+    size_in_mb = 0.0
     num_frames = 0
-    paths_to_cat = []
-    episodes_metadata = []
+    paths_to_cat: list[Path] = []
+    episodes_metadata: list[dict[str, Any]] = []
 
     logging.info(f"Converting data files from {len(ep_paths)} episodes")
 
@@ -234,7 +237,7 @@ def convert_data(root: Path, new_root: Path, data_file_size_in_mb: int):
             chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
 
             # Reset for the next file
-            size_in_mb = 0
+            size_in_mb = 0.0
             paths_to_cat = []
 
         # Now create metadata with correct chunk/file indices
@@ -307,7 +310,9 @@ def convert_videos(root: Path, new_root: Path, video_file_size_in_mb: int):
     return episodes_metadata
 
 
-def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_file_size_in_mb: int):
+def convert_videos_of_camera(
+    root: Path, new_root: Path, video_key: str, video_file_size_in_mb: int
+) -> list[dict[str, Any]]:
     # Access old paths to mp4
     videos_dir = root / "videos"
     ep_paths = sorted(videos_dir.glob(f"*/{video_key}/*.mp4"))
@@ -315,10 +320,10 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
     ep_idx = 0
     chunk_idx = 0
     file_idx = 0
-    size_in_mb = 0
+    size_in_mb = 0.0
     duration_in_s = 0.0
-    paths_to_cat = []
-    episodes_metadata = []
+    paths_to_cat: list[Path] = []
+    episodes_metadata: list[dict[str, Any]] = []
 
     for ep_path in tqdm.tqdm(ep_paths, desc=f"convert videos of {video_key}"):
         ep_size_in_mb = get_file_size_in_mb(ep_path)
@@ -341,7 +346,7 @@ def convert_videos_of_camera(root: Path, new_root: Path, video_key: str, video_f
 
             # Move to next file and start fresh with current episode
             chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, DEFAULT_CHUNK_SIZE)
-            size_in_mb = 0
+            size_in_mb = 0.0
             duration_in_s = 0.0
             paths_to_cat = []
 
@@ -475,11 +480,11 @@ def convert_dataset(
     # First check if the dataset already has a v3.0 version
     if root is None and not force_conversion:
         try:
-            print("Trying to download v3.0 version of the dataset from the hub...")
+            logger.info("Trying to download v3.0 version of the dataset from the hub...")
             snapshot_download(repo_id, repo_type="dataset", revision=V30, local_dir=HF_LEROBOT_HOME / repo_id)
             return
         except Exception:
-            print("Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
+            logger.info("Dataset does not have an uploaded v3.0 version. Continuing with conversion.")
 
     # Set root based on whether local dataset path is provided
     use_local_dataset = False
@@ -487,7 +492,7 @@ def convert_dataset(
     if root.exists():
         validate_local_dataset_version(root)
         use_local_dataset = True
-        print(f"Using local dataset at {root}")
+        logger.info(f"Using local dataset at {root}")
 
     old_root = root.parent / f"{root.name}_old"
     new_root = root.parent / f"{root.name}_v30"
@@ -521,8 +526,8 @@ def convert_dataset(
         hub_api = HfApi()
         try:
             hub_api.delete_tag(repo_id, tag=CODEBASE_VERSION, repo_type="dataset")
-        except HTTPError as e:
-            print(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
+        except (HTTPError, RevisionNotFoundError) as e:
+            logger.warning(f"tag={CODEBASE_VERSION} probably doesn't exist. Skipping exception ({e})")
             pass
         hub_api.delete_files(
             delete_patterns=["data/chunk*/episode_*", "meta/*.jsonl", "videos/chunk*"],

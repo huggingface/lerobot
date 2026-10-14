@@ -23,7 +23,7 @@ TODO(alexander-soare):
 import math
 from collections import deque
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import einops
 import numpy as np
@@ -31,6 +31,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
 from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint
 
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from lerobot.utils.import_utils import _diffusers_available, require_package
@@ -79,7 +80,7 @@ class DiffusionPolicy(PreTrainedPolicy):
         self.config = config
 
         # queues are populated during rollout of the policy, they contain the n latest observations and actions
-        self._queues = None
+        self._queues: dict[str, deque[Tensor]] = {}
 
         self.diffusion = DiffusionModel(config)
 
@@ -101,11 +102,23 @@ class DiffusionPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
-        """Predict a chunk of actions given environment observations."""
-        # stack n latest observations from the queue
-        batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
-        actions = self.diffusion.generate_actions(batch, noise=noise)
+        """Predict a chunk of actions given environment observations.
 
+        Supports two modes:
+        - Online (queues populated via select_action): stacks observations from internal queues.
+        - Offline (empty queues, e.g. dataloader batch): uses the batch directly.
+        """
+        queues_populated = any(len(q) > 0 for q in self._queues.values())
+        if queues_populated:
+            batch = {k: torch.stack(list(self._queues[k]), dim=1) for k in batch if k in self._queues}
+        else:
+            batch = dict(batch)
+            if self.config.image_features:
+                for key in self.config.image_features:
+                    if batch[key].ndim == 4:
+                        batch[key] = batch[key].unsqueeze(1)
+                batch[OBS_IMAGES] = torch.stack([batch[key] for key in self.config.image_features], dim=-4)
+        actions = self.diffusion.generate_actions(batch, noise=noise)
         return actions
 
     @torch.no_grad()
@@ -160,7 +173,7 @@ class DiffusionPolicy(PreTrainedPolicy):
         return loss, None
 
 
-def _make_noise_scheduler(name: str, **kwargs: dict):
+def _make_noise_scheduler(name: str, **kwargs: Any) -> "DDPMScheduler | DDIMScheduler":
     """
     Factory for noise scheduler instances of the requested type. All kwargs are passed
     to the scheduler.
@@ -175,13 +188,29 @@ def _make_noise_scheduler(name: str, **kwargs: dict):
         raise ValueError(f"Unsupported noise scheduler type {name}")
 
 
+def _action_dim(config: DiffusionConfig) -> int:
+    """Size of the action output feature; `action_feature` is None when `output_features` has none."""
+    action_feature = config.action_feature
+    if action_feature is None:
+        raise ValueError(
+            "Diffusion Policy requires an action output feature (FeatureType.ACTION) in `output_features`."
+        )
+    return action_feature.shape[0]
+
+
 class DiffusionModel(nn.Module):
-    def __init__(self, config: DiffusionConfig):
+    def __init__(self, config: DiffusionConfig) -> None:
         super().__init__()
         self.config = config
 
+        robot_state_feature = config.robot_state_feature
+        if robot_state_feature is None:
+            raise ValueError(
+                "Diffusion Policy requires a robot state input feature (FeatureType.STATE) in `input_features`."
+            )
+
         # Build observation encoders (depending on which observations are provided).
-        global_cond_dim = self.config.robot_state_feature.shape[0]
+        global_cond_dim = robot_state_feature.shape[0]
         if self.config.image_features:
             num_images = len(self.config.image_features)
             if self.config.use_separate_rgb_encoder_per_camera:
@@ -233,7 +262,7 @@ class DiffusionModel(nn.Module):
             noise
             if noise is not None
             else torch.randn(
-                size=(batch_size, self.config.horizon, self.config.action_feature.shape[0]),
+                size=(batch_size, self.config.horizon, _action_dim(self.config)),
                 dtype=dtype,
                 device=device,
                 generator=generator,
@@ -508,6 +537,7 @@ class DiffusionRgbEncoder(nn.Module):
 
         # Note: we have a check in the config class to make sure all images have the same shape.
         images_shape = next(iter(config.image_features.values())).shape
+        dummy_shape_h_w: tuple[int, ...]
         if config.crop_shape is not None:
             dummy_shape_h_w = config.crop_shape
         elif config.resize_shape is not None:
@@ -612,16 +642,26 @@ class DiffusionConv1dBlock(nn.Module):
         return self.block(x)
 
 
+class _ResidualBlockKwargs(TypedDict):
+    """Keyword arguments shared by every `DiffusionConditionalResidualBlock1d` of the U-Net."""
+
+    cond_dim: int
+    kernel_size: int
+    n_groups: int
+    use_film_scale_modulation: bool
+
+
 class DiffusionConditionalUnet1d(nn.Module):
     """A 1D convolutional UNet with FiLM modulation for conditioning.
 
     Note: this removes local conditioning as compared to the original diffusion policy code.
     """
 
-    def __init__(self, config: DiffusionConfig, global_cond_dim: int):
+    def __init__(self, config: DiffusionConfig, global_cond_dim: int) -> None:
         super().__init__()
 
         self.config = config
+        action_dim = _action_dim(config)
 
         # Encoder for the diffusion timestep.
         self.diffusion_step_encoder = nn.Sequential(
@@ -636,12 +676,12 @@ class DiffusionConditionalUnet1d(nn.Module):
 
         # In channels / out channels for each downsampling block in the Unet's encoder. For the decoder, we
         # just reverse these.
-        in_out = [(config.action_feature.shape[0], config.down_dims[0])] + list(
+        in_out = [(action_dim, config.down_dims[0])] + list(
             zip(config.down_dims[:-1], config.down_dims[1:], strict=True)
         )
 
         # Unet encoder.
-        common_res_block_kwargs = {
+        common_res_block_kwargs: _ResidualBlockKwargs = {
             "cond_dim": cond_dim,
             "kernel_size": config.kernel_size,
             "n_groups": config.n_groups,
@@ -691,7 +731,7 @@ class DiffusionConditionalUnet1d(nn.Module):
 
         self.final_conv = nn.Sequential(
             DiffusionConv1dBlock(config.down_dims[0], config.down_dims[0], kernel_size=config.kernel_size),
-            nn.Conv1d(config.down_dims[0], config.action_feature.shape[0], 1),
+            nn.Conv1d(config.down_dims[0], action_dim, 1),
         )
 
     def forward(self, x: Tensor, timestep: Tensor | int, global_cond=None) -> Tensor:
@@ -715,22 +755,35 @@ class DiffusionConditionalUnet1d(nn.Module):
         else:
             global_feature = timesteps_embed
 
+        use_gc = self.config.gradient_checkpointing and self.training
+
         # Run encoder, keeping track of skip features to pass to the decoder.
         encoder_skip_features: list[Tensor] = []
         for resnet, resnet2, downsample in self.down_modules:
-            x = resnet(x, global_feature)
-            x = resnet2(x, global_feature)
+            if use_gc:
+                x = checkpoint(resnet, x, global_feature, use_reentrant=False)
+                x = checkpoint(resnet2, x, global_feature, use_reentrant=False)
+            else:
+                x = resnet(x, global_feature)
+                x = resnet2(x, global_feature)
             encoder_skip_features.append(x)
             x = downsample(x)
 
         for mid_module in self.mid_modules:
-            x = mid_module(x, global_feature)
+            if use_gc:
+                x = checkpoint(mid_module, x, global_feature, use_reentrant=False)
+            else:
+                x = mid_module(x, global_feature)
 
         # Run decoder, using the skip features from the encoder.
         for resnet, resnet2, upsample in self.up_modules:
             x = torch.cat((x, encoder_skip_features.pop()), dim=1)
-            x = resnet(x, global_feature)
-            x = resnet2(x, global_feature)
+            if use_gc:
+                x = checkpoint(resnet, x, global_feature, use_reentrant=False)
+                x = checkpoint(resnet2, x, global_feature, use_reentrant=False)
+            else:
+                x = resnet(x, global_feature)
+                x = resnet2(x, global_feature)
             x = upsample(x)
 
         x = self.final_conv(x)

@@ -31,6 +31,22 @@ lerobot-teleoperate \
     --display_data=true
 ```
 
+To stream the data to Foxglove instead of Rerun, add ``--display_mode=foxglove``
+(then connect the Foxglove app to ``ws://127.0.0.1:8765``; override the port with ``--display_port=<port>``):
+
+```shell
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431541 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
+    --robot.id=black \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=blue \
+    --display_data=true \
+    --display_mode=foxglove
+```
+
 Example teleoperation with bimanual so100:
 
 ```shell
@@ -89,6 +105,7 @@ from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
     bi_openarm_leader,
+    bi_openarm_mini,
     bi_rebot_102_leader,
     bi_so_leader,
     gamepad,
@@ -104,10 +121,14 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
+from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
+from lerobot.utils.visualization_utils import (
+    init_visualization,
+    log_visualization_data,
+    shutdown_visualization,
+)
 
 
 @dataclass
@@ -120,11 +141,14 @@ class TeleoperateConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
-    # Display data on a remote Rerun server
+    # Visualization backend used when display_data is True: "rerun" or "foxglove".
+    display_mode: str = "rerun"
+    # For "rerun": IP of a remote server to send to. For "foxglove": interface to bind the WebSocket
+    # server to (127.0.0.1 for local only, 0.0.0.0 for all interfaces).
     display_ip: str | None = None
-    # Port of the remote Rerun server
+    # For "rerun": port of the remote server. For "foxglove": port to bind the WebSocket server to.
     display_port: int | None = None
-    # Whether to  display compressed images in Rerun
+    # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
 
 
@@ -136,6 +160,7 @@ def teleop_loop(
     robot_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
     robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
     display_data: bool = False,
+    display_mode: str = "rerun",
     duration: float | None = None,
     display_compressed_images: bool = False,
 ):
@@ -148,8 +173,10 @@ def teleop_loop(
         teleop: The teleoperator device instance providing control actions.
         robot: The robot instance being controlled.
         fps: The target frequency for the control loop in frames per second.
-        display_data: If True, fetches robot observations and displays them in the console and Rerun.
-        display_compressed_images: If True, compresses images before sending them to Rerun for display.
+        display_data: If True, fetches robot observations and displays them in the console and the
+            visualization backend.
+        display_mode: Visualization backend to use when display_data is True ("rerun" or "foxglove").
+        display_compressed_images: If True, compresses images before sending them to the backend for display.
         duration: The maximum duration of the teleoperation loop in seconds. If None, the loop runs indefinitely.
         teleop_action_processor: An optional pipeline to process raw actions from the teleoperator.
         robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
@@ -157,56 +184,69 @@ def teleop_loop(
     """
 
     display_len = max(len(key) for key in robot.action_features)
+    # Teleoperation writes no dataset, so a missed deadline costs control smoothness
+    # only.  The live readout below is the instantaneous rate; the timer adds the
+    # warning when the loop cannot keep up and the summary of where the time went.
+    timer = CycleTimer(fps, records_data=False)
     start = time.perf_counter()
-    while True:
-        loop_start = time.perf_counter()
+    try:
+        while True:
+            timer.tick()
+            loop_start = time.perf_counter()  # for the live readout below
 
-        # Get robot observation
-        # Not really needed for now other than for visualization
-        # teleop_action_processor can take None as an observation
-        # given that it is the identity processor as default
-        obs = robot.get_observation()
+            with timer.section("observe"):
+                # Get robot observation
+                # Not really needed for now other than for visualization
+                # teleop_action_processor can take None as an observation
+                # given that it is the identity processor as default
+                obs = robot.get_observation()
 
-        if robot.name == "unitree_g1":
-            teleop.send_feedback(obs)
+                if robot.name == "unitree_g1":
+                    teleop.send_feedback(obs)
 
-        # Get teleop action
-        raw_action = teleop.get_action()
+            with timer.section("teleop"):
+                # Get teleop action
+                raw_action = teleop.get_action()
 
-        # Process teleop action through pipeline
-        teleop_action = teleop_action_processor((raw_action, obs))
+                # Process teleop action through pipeline
+                teleop_action = teleop_action_processor((raw_action, obs))
 
-        # Process action for robot through pipeline
-        robot_action_to_send = robot_action_processor((teleop_action, obs))
+                # Process action for robot through pipeline
+                robot_action_to_send = robot_action_processor((teleop_action, obs))
 
-        # Send processed action to robot (robot_action_processor.to_output should return RobotAction)
-        _ = robot.send_action(robot_action_to_send)
+            with timer.section("send"):
+                # Send processed action to robot (robot_action_processor.to_output should return RobotAction)
+                _ = robot.send_action(robot_action_to_send)
 
-        if display_data:
-            # Process robot observation through pipeline
-            obs_transition = robot_observation_processor(obs)
+            if display_data:
+                with timer.section("telemetry"):
+                    # Process robot observation through pipeline
+                    obs_transition = robot_observation_processor(obs)
 
-            log_rerun_data(
-                observation=obs_transition,
-                action=teleop_action,
-                compress_images=display_compressed_images,
-            )
+                    log_visualization_data(
+                        display_mode,
+                        observation=obs_transition,
+                        action=teleop_action,
+                        compress_images=display_compressed_images,
+                    )
 
-            print("\n" + "-" * (display_len + 10))
-            print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-            # Display the final robot action that was sent
-            for motor, value in robot_action_to_send.items():
-                print(f"{motor:<{display_len}} | {value:>7.2f}")
-            move_cursor_up(len(robot_action_to_send) + 3)
+                    print("\n" + "-" * (display_len + 10))
+                    print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+                    # Display the final robot action that was sent
+                    for motor, value in robot_action_to_send.items():
+                        print(f"{motor:<{display_len}} | {value:>7.2f}")
+                    move_cursor_up(len(robot_action_to_send) + 3)
 
-        dt_s = time.perf_counter() - loop_start
-        precise_sleep(max(1 / fps - dt_s, 0.0))
-        loop_s = time.perf_counter() - loop_start
-        print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
-        move_cursor_up(1)
+            timer.wait()
+            loop_s = time.perf_counter() - loop_start
+            print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+            move_cursor_up(1)
 
-        if duration is not None and time.perf_counter() - start >= duration:
-            return
+            if duration is not None and time.perf_counter() - start >= duration:
+                return
+    finally:
+        # In `finally` so ^C — how a teleop session normally ends — still reports.
+        timer.log_run_summary()
 
 
 @parser.wrap()
@@ -214,7 +254,9 @@ def teleoperate(cfg: TeleoperateConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
-        init_rerun(session_name="teleoperation", ip=cfg.display_ip, port=cfg.display_port)
+        init_visualization(
+            cfg.display_mode, session_name="teleoperation", ip=cfg.display_ip, port=cfg.display_port
+        )
     display_compressed_images = (
         True
         if (cfg.display_data and cfg.display_ip is not None and cfg.display_port is not None)
@@ -234,6 +276,7 @@ def teleoperate(cfg: TeleoperateConfig):
             robot=robot,
             fps=cfg.fps,
             display_data=cfg.display_data,
+            display_mode=cfg.display_mode,
             duration=cfg.teleop_time_s,
             teleop_action_processor=teleop_action_processor,
             robot_action_processor=robot_action_processor,
@@ -244,7 +287,7 @@ def teleoperate(cfg: TeleoperateConfig):
         pass
     finally:
         if cfg.display_data:
-            shutdown_rerun()
+            shutdown_visualization(cfg.display_mode)
         teleop.disconnect()
         robot.disconnect()
 

@@ -67,7 +67,6 @@ import textwrap
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
 
 import cv2
 import numpy as np
@@ -76,7 +75,7 @@ import torch
 from pydantic import BaseModel, Field
 from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
 
-from lerobot.datasets import LeRobotDataset
+from lerobot.datasets import LeRobotDataset, resolve_episode_indices
 
 
 # Pydantic Models for SARM Subtask Annotation
@@ -101,7 +100,7 @@ class SubtaskAnnotation(BaseModel):
 
 
 def compute_temporal_proportions(
-    annotations: dict[int, Any], fps: int = 30, subtask_order: list[str] | None = None
+    annotations: dict[int, SubtaskAnnotation], fps: int = 30, subtask_order: list[str] | None = None
 ) -> dict[str, float]:
     """
     Compute dataset-level temporal proportions (priors) for each subtask.
@@ -257,8 +256,8 @@ class VideoAnnotator:
         model_name: str = "Qwen/Qwen3-VL-30B-A3B-Instruct",
         device: str = "cuda",
         torch_dtype: torch.dtype = torch.bfloat16,
-        model: Qwen3VLMoeForConditionalGeneration | None = None,  # noqa: F821
-        processor: AutoProcessor | None = None,  # noqa: F821
+        model: Qwen3VLMoeForConditionalGeneration | None = None,
+        processor: AutoProcessor | None = None,
     ):
         """
         Initialize the video annotator with local model.
@@ -454,6 +453,8 @@ class VideoAnnotator:
                     if attempt == max_retries - 1:
                         raise RuntimeError(f"Failed after {max_retries} attempts") from e
                     time.sleep(1)
+            # Only reached if the loop never ran (max_retries < 1); every attempt returns or raises.
+            raise ValueError(f"max_retries must be >= 1, got {max_retries}")
         finally:
             if is_extracted and extracted_path.exists():
                 extracted_path.unlink()
@@ -659,7 +660,7 @@ def visualize_annotations(
     num_episodes: int = 5,
     annotation_type: str = "sparse",
     episode_indices: list[int] | None = None,
-):
+) -> None:
     """
     Visualize subtask annotations for a set of episodes.
 
@@ -716,7 +717,7 @@ def visualize_annotations(
                     output_path = output_dir / f"episode_{ep_idx:04d}_{ann_type}.png"
                     visualize_episode(
                         ep_idx,
-                        annotations.get(ep_idx),
+                        annotations[ep_idx],
                         video_path,
                         video_start,
                         video_end,
@@ -730,7 +731,7 @@ def visualize_annotations(
                 output_path = output_dir / f"episode_{ep_idx:04d}_{annotation_type}.png"
                 visualize_episode(
                     ep_idx,
-                    annotations.get(ep_idx),
+                    annotations[ep_idx],
                     video_path,
                     video_start,
                     video_end,
@@ -910,7 +911,7 @@ def worker_process_episodes(
     dense_subtask_list: list[str] | None,
     model_name: str,
     torch_dtype: torch.dtype,
-) -> tuple[dict, dict | None]:
+) -> tuple[dict[int, SubtaskAnnotation], dict[int, SubtaskAnnotation] | None]:
     """Worker for parallel processing across GPUs."""
     device = f"cuda:{gpu_id}"
     dataset = LeRobotDataset(repo_id, download_videos=False)
@@ -929,7 +930,8 @@ def worker_process_episodes(
         else None
     )
 
-    sparse_annotations, dense_annotations = {}, {} if dense_subtask_list else None
+    sparse_annotations: dict[int, SubtaskAnnotation] = {}
+    dense_annotations: dict[int, SubtaskAnnotation] = {}
 
     for ep_idx in episode_indices:
         _, sparse_ann, err = process_single_episode(
@@ -945,7 +947,7 @@ def worker_process_episodes(
             if dense_ann:
                 dense_annotations[ep_idx] = dense_ann
 
-    return sparse_annotations, dense_annotations
+    return sparse_annotations, (dense_annotations if dense_subtask_list else None)
 
 
 def main():
@@ -1049,7 +1051,10 @@ def main():
     torch_dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}[args.dtype]
 
     # Determine episodes
-    episode_indices = args.episodes or list(range(dataset.meta.total_episodes))
+    resolved_episodes = resolve_episode_indices(args.episodes, dataset.meta.total_episodes)
+    episode_indices = (
+        resolved_episodes if resolved_episodes is not None else list(range(dataset.meta.total_episodes))
+    )
 
     existing_annotations = load_annotations_from_dataset(dataset.root, prefix="sparse")
     if args.skip_existing:

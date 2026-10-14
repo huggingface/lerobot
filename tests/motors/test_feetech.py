@@ -24,7 +24,7 @@ import pytest
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.encoding_utils import encode_sign_magnitude
 from lerobot.motors.feetech import MODEL_NUMBER, MODEL_NUMBER_TABLE, FeetechMotorsBus
-from lerobot.motors.feetech.tables import STS_SMS_SERIES_CONTROL_TABLE
+from lerobot.motors.feetech.tables import STS_SMS_SERIES_CONTROL_TABLE, STS_SMS_SERIES_ENCODINGS_TABLE
 
 try:
     import scservo_sdk as scs
@@ -274,6 +274,25 @@ def test__write_comm(raise_on_error, mock_motors, dummy_motors):
     assert mock_motors.stubs[stub].called
 
 
+def test_read_write_acceleration_multiplier_by_name(mock_motors, dummy_motors):
+    """Register 86 can be read and written by its name `Acceleration_Multiplier`."""
+    motor_name, motor = next(iter(dummy_motors.items()))
+    read_stub = mock_motors.build_read_stub(86, 1, motor.id, 7)
+    write_stub = mock_motors.build_write_stub(86, 1, motor.id, 9)
+    bus = FeetechMotorsBus(
+        port=mock_motors.port,
+        motors=dummy_motors,
+    )
+    bus.connect(handshake=False)
+
+    read_value = bus.read("Acceleration_Multiplier", motor_name)
+    bus.write("Acceleration_Multiplier", motor_name, 9)
+
+    assert read_value == 7
+    assert mock_motors.stubs[read_stub].called
+    assert mock_motors.stubs[write_stub].wait_called()
+
+
 @pytest.mark.parametrize(
     "addr, length, ids_values",
     [
@@ -292,6 +311,19 @@ def test__sync_read(addr, length, ids_values, mock_motors, dummy_motors):
 
     assert mock_motors.stubs[stub].called
     assert read_values == ids_values
+
+
+def test__sync_read_retries_after_transient_failure(mock_motors, dummy_motors):
+    addr, length, ids_values = (10, 4, {1: 1337})
+    stub = mock_motors.build_sync_read_stub(addr, length, ids_values, num_invalid_try=1)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    read_values, read_comm = bus._sync_read(addr, length, list(ids_values), num_retry=1)
+
+    assert read_comm == scs.COMM_SUCCESS
+    assert read_values == ids_values
+    assert mock_motors.stubs[stub].calls == 2
 
 
 @pytest.mark.parametrize("raise_on_error", (True, False))
@@ -430,6 +462,26 @@ def test_set_half_turn_homings(mock_motors, dummy_motors):
 
 
 @pytest.mark.parametrize(
+    "position, expected_homing",
+    [
+        (0, -2047),
+        (2047, 0),
+        (4094, 2047),
+        # 4095 - 2047 = 2048 does not fit an 11-bit sign-magnitude register: clamp to 2047.
+        (4095, 2047),
+    ],
+)
+def test_half_turn_homings_fit_the_sign_magnitude_register(position, expected_homing, dummy_motors):
+    bus = FeetechMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+    motor = next(iter(dummy_motors))
+
+    homing = bus._get_half_turn_homings({motor: position})[motor]
+
+    assert homing == expected_homing
+    encode_sign_magnitude(homing, STS_SMS_SERIES_ENCODINGS_TABLE["Homing_Offset"])  # must not raise
+
+
+@pytest.mark.parametrize(
     "initial_phase, expected_phase",
     [
         (0b00010000, 0b00000000),  # bit 4 set - cleared
@@ -509,12 +561,18 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     stub = mock_motors.build_sequential_sync_read_stub(
         *STS_SMS_SERIES_CONTROL_TABLE["Present_Position"], positions
     )
-    with patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]):
-        bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
-        bus.connect(handshake=False)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
 
+    with (
+        patch("lerobot.motors.motors_bus.enter_pressed", side_effect=[False, True]),
+        patch("lerobot.motors.motors_bus.time.sleep") as mock_sleep,
+        patch.object(bus, "sync_read", wraps=bus.sync_read) as mock_sync_read,
+    ):
         mins, maxes = bus.record_ranges_of_motion(display_values=False)
 
     assert mock_motors.stubs[stub].calls == 3
+    assert all(call.kwargs["num_retry"] == 5 for call in mock_sync_read.call_args_list)
+    mock_sleep.assert_called_once_with(0.02)
     assert mins == expected_mins
     assert maxes == expected_maxes

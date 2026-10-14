@@ -64,6 +64,21 @@ This will launch a [MuJoCo sim instance](https://huggingface.co/lerobot/unitree-
 - Press `9` to release the robot
 - Press `7` / `8` to increase / decrease waist height
 
+#### Choosing the End Effector
+
+`--robot.end_effector` says what the arms carry: `dex1` for the parallel grippers (the default), `dex3` for the three-finger hands, or `dummy` for bare wrists. In simulation it picks the MuJoCo model, which decides the finger actuators and which cameras the scene carries — the wrist cameras are mounted on the end effector, so `dummy` only has `head_camera`.
+
+```bash
+lerobot-teleoperate \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.end_effector=dex3 \
+  --teleop.id=wbc_unitree \
+  --robot.controller=GrootLocomotionController
+```
+
+The sim publishes the model's cameras over ZMQ on `--robot.sim_camera_port` (5555 by default), which is where the `zmq` cameras in `--robot.cameras` read them from. Pass `--robot.sim_publish_images=false` to open MuJoCo's interactive window instead: the sim renders either its cameras or its window, never both, since the offscreen contexts belong to the thread that creates them rather than to the viewer's. `--robot.sim_onscreen` names that choice outright rather than leaving it to the cameras, and asking for both is refused; set it and `--robot.sim_publish_images` both false to render neither, which is what a machine with no display can do.
+
 ### Connect to the Physical Robot
 
 The G1's Ethernet IP is fixed at `192.168.123.164`. Your machine must have a static IP on the same subnet: `192.168.123.x` where `x ≠ 164`.
@@ -271,7 +286,7 @@ python src/lerobot/scripts/lerobot_train.py \
 
 ### Inference with RTC
 
-Once trained, we recommend deploying policies using inference-time RTC:
+A compatible trained policy can use local inference-time RTC:
 
 ```bash
 lerobot-rollout \
@@ -288,6 +303,44 @@ lerobot-rollout \
   --inference.type=rtc
 ```
 
+G1 does not declare the position-target hold contract used by rollout's recoverable
+waiting. After motion begins, exhausting the action buffer therefore causes a terminal
+fault rather than a grace-period wait. Request deadlines and observation-age limits
+also apply. Validate that the policy's usable chunk covers inference latency before
+using this recipe; see [local RTC waiting and budgets](./inference#inference-backends).
+This local recipe does not establish remote support for G1 or SONIC latent-token policies.
+
+---
+
+## Part 5: SONIC Whole-Body Control (Latent-Token Policies)
+
+LeRobot now ports the **decoder** half of NVIDIA's [SONIC](https://nvlabs.github.io/GEAR-SONIC/) whole-body deploy stack as the `SonicWholeBodyController`. Instead of commanding joints, the policy outputs a 64-D **latent motion token** (`motion_token.{i}.pos`) each tick; the SONIC decoder maps that token plus recent proprioception history onto a residual action that is scaled and added to the standing pose, producing 50 Hz joint-position targets for all 29 DoF.
+
+The controller loads its ONNX decoder and all deploy constants (PD gains, `default_angles`, `action_scale`, and the neutral token) from [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder). The repo also ships a distilled low-latency decoder, selectable with the controller's `policy_type="low_latency"` argument (defaults to `"default"`).
+
+### Test in Simulation
+
+Any token-output policy trained on SONIC motion tokens (e.g. [`nepyope/sonic_walk`](https://huggingface.co/nepyope/sonic_walk)) can drive it:
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=nepyope/sonic_walk \
+  --policy.device=cuda \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.controller=SonicWholeBodyController \
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 15}}'
+```
+
+### Run on the Physical Robot
+
+The previous remote deployment recipe used the retired gRPC async client. The replacement [asynchronous remote inference](./remote_inference) currently requires an explicitly supported local position-hold contract and canonical actuator actions. SONIC's 64-D motion tokens are decoder inputs, not joint-position targets, even though their feature names end in `.pos`; they must not be treated as a position-hold interface.
+
+A validated remote SONIC/Unitree deployment is therefore not provided by this replacement yet. The simulation example above remains available. Physical remote support needs a controller-aware action/hold contract that keeps the 50 Hz balance controller and hardware communication onboard; do not substitute the new remote CLI into the retired recipe or bypass its capability checks.
+
+With `SonicWholeBodyController`, the observation state is the 64-D token echo rather than the 29 joint positions, so a compatible checkpoint must be trained against that state. On connect, the robot eases joints to the decoder's `default_angles` before the controller takes over.
+
 ---
 
 ## Additional Resources
@@ -300,4 +353,4 @@ lerobot-rollout \
 
 ---
 
-_Last updated: March 2026_
+_Last updated: July 2026_

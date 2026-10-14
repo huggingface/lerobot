@@ -42,12 +42,25 @@ class RealSenseCameraConfig(CameraConfig):
         height: Requested frame height in pixels for the color stream.
         serial_number_or_name: Unique serial number or human-readable name to identify the camera.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
+        use_rgb: Whether to enable the color stream. Defaults to True.
         use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds)
+        exposure: Manual exposure value for the color sensor. When set, auto-exposure is
+            disabled and this fixed value is used. Valid ranges are camera-model specific
+            and reported if the value is rejected. Defaults to None (leave unchanged).
+        gain: Manual gain value for the color sensor. When set, auto-exposure is disabled
+            and this fixed gain is used, which also freezes exposure at its current value
+            when no exposure is configured. Valid ranges are camera-model specific and
+            reported if the value is rejected. Defaults to None (leave unchanged).
+        white_balance: Manual white balance value for the color sensor. When set, auto
+            white balance is disabled and this fixed value is used. Valid ranges are
+            camera-model specific and reported if the value is rejected. Defaults to None
+            (leave unchanged).
 
     Note:
         - Either name or serial_number must be specified.
+        - At least one of `use_rgb` or `use_depth` must be enabled.
         - Depth stream configuration (if enabled) will use the same FPS as the color stream.
         - The actual resolution and FPS may be adjusted by the camera to the nearest supported mode.
         - For `fps`, `width` and `height`, either all of them need to be set, or none of them.
@@ -55,13 +68,32 @@ class RealSenseCameraConfig(CameraConfig):
 
     serial_number_or_name: str
     color_mode: ColorMode = ColorMode.RGB
+    use_rgb: bool = True
     use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
+    exposure: int | None = None
+    gain: int | None = None
+    white_balance: int | None = None
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
         self.rotation = Cv2Rotation(self.rotation)
+
+        if not self.use_rgb and not self.use_depth:
+            raise ValueError("At least one of `use_rgb` or `use_depth` must be enabled.")
+
+        manual_color_options = {
+            "exposure": self.exposure,
+            "gain": self.gain,
+            "white_balance": self.white_balance,
+        }
+        configured_color_options = [name for name, value in manual_color_options.items() if value is not None]
+        if configured_color_options and not self.use_rgb:
+            raise ValueError(
+                "Manual color sensor options require `use_rgb=True`. "
+                f"Configured options: {configured_color_options}."
+            )
 
         values = (self.fps, self.width, self.height)
         if any(v is not None for v in values) and any(v is None for v in values):

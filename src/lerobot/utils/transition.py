@@ -14,57 +14,56 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import torch
-
-from .constants import ACTION
 
 
 class Transition(TypedDict):
     state: dict[str, torch.Tensor]
     action: torch.Tensor
-    reward: float
+    reward: float | torch.Tensor
     next_state: dict[str, torch.Tensor]
-    done: bool
-    truncated: bool
-    complementary_info: dict[str, torch.Tensor | float | int] | None = None
+    done: bool | torch.Tensor
+    truncated: bool | torch.Tensor
+    complementary_info: NotRequired[dict[str, torch.Tensor | float | int] | None]
 
 
 def move_transition_to_device(transition: Transition, device: str = "cpu") -> Transition:
-    device = torch.device(device)
-    non_blocking = device.type == "cuda"
+    torch_device = torch.device(device)
+    non_blocking = torch_device.type == "cuda"
 
     # Move state tensors to device
     transition["state"] = {
-        key: val.to(device, non_blocking=non_blocking) for key, val in transition["state"].items()
+        key: val.to(torch_device, non_blocking=non_blocking) for key, val in transition["state"].items()
     }
 
     # Move action to device
-    transition[ACTION] = transition[ACTION].to(device, non_blocking=non_blocking)
+    transition["action"] = transition["action"].to(torch_device, non_blocking=non_blocking)
 
     # Move reward and done if they are tensors
     if isinstance(transition["reward"], torch.Tensor):
-        transition["reward"] = transition["reward"].to(device, non_blocking=non_blocking)
+        transition["reward"] = transition["reward"].to(torch_device, non_blocking=non_blocking)
 
     if isinstance(transition["done"], torch.Tensor):
-        transition["done"] = transition["done"].to(device, non_blocking=non_blocking)
+        transition["done"] = transition["done"].to(torch_device, non_blocking=non_blocking)
 
     if isinstance(transition["truncated"], torch.Tensor):
-        transition["truncated"] = transition["truncated"].to(device, non_blocking=non_blocking)
+        transition["truncated"] = transition["truncated"].to(torch_device, non_blocking=non_blocking)
 
     # Move next_state tensors to device
     transition["next_state"] = {
-        key: val.to(device, non_blocking=non_blocking) for key, val in transition["next_state"].items()
+        key: val.to(torch_device, non_blocking=non_blocking) for key, val in transition["next_state"].items()
     }
 
     # Move complementary_info tensors if present
-    if transition.get("complementary_info") is not None:
-        for key, val in transition["complementary_info"].items():
+    complementary_info = transition.get("complementary_info")
+    if complementary_info is not None:
+        for key, val in complementary_info.items():
             if isinstance(val, torch.Tensor):
-                transition["complementary_info"][key] = val.to(device, non_blocking=non_blocking)
+                complementary_info[key] = val.to(torch_device, non_blocking=non_blocking)
             elif isinstance(val, (int | float | bool)):
-                transition["complementary_info"][key] = torch.tensor(val, device=device)
+                complementary_info[key] = torch.tensor(val, device=torch_device)
             else:
                 raise ValueError(f"Unsupported type {type(val)} for complementary_info[{key}]")
     return transition

@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
 from enum import IntEnum
 
 import numpy as np
@@ -22,6 +21,43 @@ import numpy as np
 # ruff: noqa: N801, N815
 
 NUM_MOTORS = 29
+
+# Joint-order permutation between IsaacLab and Mujoco convention
+ISAACLAB_TO_MUJOCO = np.array(
+    [
+        0,
+        3,
+        6,
+        9,
+        13,
+        17,
+        1,
+        4,
+        7,
+        10,
+        14,
+        18,
+        2,
+        5,
+        8,
+        11,
+        15,
+        19,
+        21,
+        23,
+        25,
+        27,
+        12,
+        16,
+        20,
+        22,
+        24,
+        26,
+        28,
+    ],
+    dtype=np.int32,
+)
+MUJOCO_TO_ISAACLAB = np.argsort(ISAACLAB_TO_MUJOCO).astype(np.int32)
 
 REMOTE_AXES = ("remote.lx", "remote.ly", "remote.rx", "remote.ry")
 REMOTE_BUTTONS = tuple(f"remote.button.{i}" for i in range(16))
@@ -43,6 +79,26 @@ def get_gravity_orientation(quaternion: list[float] | np.ndarray) -> np.ndarray:
     return gravity_orientation
 
 
+def make_ort_session_options(
+    intra_op_num_threads: int | None = None, inter_op_num_threads: int | None = None
+):
+    """Build quiet ONNX Runtime SessionOptions, optionally capping the CPU thread pool.
+
+    These tiny MLP policies are latency-bound, not throughput-bound, so letting ORT grab
+    every core starves the real-time control loop / torch policy and causes stutter. Pass
+    1 intra + 1 inter thread for lowest-latency per-step inference.
+    """
+    import onnxruntime as ort
+
+    so = ort.SessionOptions()
+    so.log_severity_level = 3
+    if intra_op_num_threads is not None:
+        so.intra_op_num_threads = intra_op_num_threads
+    if inter_op_num_threads is not None:
+        so.inter_op_num_threads = inter_op_num_threads
+    return so
+
+
 class G1_29_JointArmIndex(IntEnum):
     # Left arm
     kLeftShoulderPitch = 15
@@ -61,21 +117,6 @@ class G1_29_JointArmIndex(IntEnum):
     kRightWristRoll = 26
     kRightWristPitch = 27
     kRightWristYaw = 28
-
-
-def make_locomotion_controller(name: str | None):
-    """Instantiate a locomotion controller by class name. Returns None if name is None."""
-    if name is None:
-        return None
-    controllers = {
-        "GrootLocomotionController": "lerobot.robots.unitree_g1.gr00t_locomotion",
-        "HolosomaLocomotionController": "lerobot.robots.unitree_g1.holosoma_locomotion",
-    }
-    module_path = controllers.get(name)
-    if module_path is None:
-        raise ValueError(f"Unknown controller: {name!r}. Available: {list(controllers)}")
-    module = importlib.import_module(module_path)
-    return getattr(module, name)()
 
 
 class G1_29_JointIndex(IntEnum):

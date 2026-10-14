@@ -37,13 +37,19 @@ def is_image_feature(key: str) -> bool:
 @dataclass
 class ConcurrencyConfig:
     """Configuration for the concurrency of the actor and learner.
+
     Possible values are:
     - "threads": Use threads for the actor and learner.
     - "processes": Use processes for the actor and learner.
+
+    ``multiprocessing_context`` selects the process-wide start method when
+    processes are used. Set it to ``None`` to preserve Python's default or a
+    method already selected by the embedding application.
     """
 
     actor: str = "threads"
     learner: str = "threads"
+    multiprocessing_context: str | None = "spawn"
 
 
 @dataclass
@@ -192,6 +198,10 @@ class GaussianActorConfig(PreTrainedConfig):
         return None
 
     def validate_features(self) -> None:
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "`input_features` and `output_features` must be resolved before validating them."
+            )
         has_image = any(is_image_feature(key) for key in self.input_features)
         has_state = OBS_STATE in self.input_features
 
@@ -204,15 +214,17 @@ class GaussianActorConfig(PreTrainedConfig):
             raise ValueError("You must provide 'action' in the output features")
 
     @property
-    def image_features(self) -> list[str]:
+    def image_features(self) -> list[str]:  # type: ignore[override]  # image keys, not PolicyFeatures
+        if not self.input_features:
+            return []
         return [key for key in self.input_features if is_image_feature(key)]
 
     @property
-    def observation_delta_indices(self) -> list:
+    def observation_delta_indices(self) -> None:
         return None
 
     @property
-    def action_delta_indices(self) -> list:
+    def action_delta_indices(self) -> None:
         return None  # SAC typically predicts one action at a time
 
     @property
