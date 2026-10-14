@@ -145,8 +145,7 @@ class LeKiwi(Robot):
         motors = self.arm_motors + self.base_motors
 
         self.bus.disable_torque(self.arm_motors)
-        for name in self.arm_motors:
-            self.bus.set_operating_mode("position", name)
+        self.bus.set_operating_mode("position", self.arm_motors)
 
         input("Move robot to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings(self.arm_motors)
@@ -195,8 +194,7 @@ class LeKiwi(Robot):
             self.bus.write("I_Coefficient", name, 0)
             self.bus.write("D_Coefficient", name, 32)
 
-        for name in self.base_motors:
-            self.bus.set_operating_mode("velocity", name)
+        self.bus.set_operating_mode("velocity", self.base_motors)
 
         self.bus.enable_torque()
 

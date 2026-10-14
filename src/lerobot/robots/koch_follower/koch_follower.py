@@ -122,8 +122,7 @@ class KochFollower(Robot):
                 self.bus.write_calibration(self.calibration)
                 return
         logger.info(f"\nRunning calibration of {self}")
-        for motor in self.bus.motors:
-            self.bus.set_operating_mode("extended_position", motor)
+        self.bus.set_operating_mode("extended_position")
 
         input(f"Move {self} to the middle of its range of motion and press ENTER....")
         homing_offsets = self.bus.set_half_turn_homings()

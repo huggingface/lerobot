@@ -144,8 +144,7 @@ class SOFollower(Robot):
 
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
-        for motor in self.bus.motors:
-            self.bus.set_operating_mode("position", motor)
+        self.bus.set_operating_mode("position")
 
         print(_HOMING_POSITION_DIAGRAM)
         print("Video walkthrough: https://huggingface.co/docs/lerobot/main/en/so101#calibration-video")

@@ -111,8 +111,7 @@ class SOLeader(Teleoperator):
 
         logger.info(f"\nRunning calibration of {self}")
         self.bus.disable_torque()
-        for motor in self.bus.motors:
-            self.bus.set_operating_mode("position", motor)
+        self.bus.set_operating_mode("position")
 
         print(_HOMING_POSITION_DIAGRAM)
         print("Video walkthrough: https://huggingface.co/docs/lerobot/main/en/so101#calibration-video")
@@ -146,8 +145,7 @@ class SOLeader(Teleoperator):
     def configure(self) -> None:
         self.bus.disable_torque()
         self.bus.configure_motors()
-        for motor in self.bus.motors:
-            self.bus.set_operating_mode("position", motor)
+        self.bus.set_operating_mode("position")
 
     def enable_torque(self) -> None:
         self.bus.enable_torque()

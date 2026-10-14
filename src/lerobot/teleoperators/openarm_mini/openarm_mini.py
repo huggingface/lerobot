@@ -129,8 +129,7 @@ class OpenArmMini(Teleoperator):
         for motor_name in self.bus.motors:
             self.bus.write("Phase", motor_name, 12)
 
-        for motor_name in self.bus.motors:
-            self.bus.set_operating_mode("position", motor_name)
+        self.bus.set_operating_mode("position")
 
         input(
             "\nCalibration: Zero Position\n"
@@ -196,8 +195,7 @@ class OpenArmMini(Teleoperator):
     def configure(self) -> None:
         self.bus.disable_torque()
         self.bus.configure_motors()
-        for motor in self.bus.motors:
-            self.bus.set_operating_mode("position", motor)
+        self.bus.set_operating_mode("position")
 
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):

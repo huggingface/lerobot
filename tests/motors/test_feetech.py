@@ -32,7 +32,7 @@ import rustypot
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.motors.feetech import FeetechMotorsBus
-from tests.mocks.mock_motors_bus import MockBus
+from tests.mocks.mock_motors_bus import make_bus, seed, written
 
 
 @pytest.fixture
@@ -61,22 +61,8 @@ def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
     }
 
 
-def make_bus(motors, calibration=None) -> SerialMotorsBus:
-    bus = SerialMotorsBus(port="/dev/dummy-port", motors=motors, calibration=calibration)
-    bus._bus = MockBus(motors=bus._definitions)
-    return bus
-
-
-def seed(bus, data_name: str, motor_id: int, value: int) -> None:
-    bus._bus.seed(motor_id, data_name.lower(), value)
-
-
-def written(bus, data_name: str, motor_id: int) -> int:
-    return bus._bus.stored(motor_id, data_name.lower())
-
-
 def test_sts_and_scs_share_a_bus():
-    """Opposite byte orders on one port: each motor keeps its own definition."""
+    """Each motor is mapped to the definition of its model, STS and SCS on one bus."""
     bus = SerialMotorsBus(
         "",
         {
@@ -114,6 +100,22 @@ def test_motors_on_different_firmware_fail_the_handshake(dummy_motors):
 
     with pytest.raises(RuntimeError, match="different firmware versions"):
         bus._handshake()
+
+
+def test_the_firmware_is_compared_within_each_servo_family():
+    """STS and SCS servos run firmware series of their own: only motors of one definition
+    must agree."""
+    bus = make_bus(
+        {
+            "sts": Motor(1, "sts3215", MotorNormMode.RANGE_M100_100),
+            "scs": Motor(2, "scs0009", MotorNormMode.RANGE_M100_100),
+        }
+    )
+    for motor_id, model_number, major in [(1, 777, 3), (2, 1284, 1)]:
+        seed(bus, "Model_Number", motor_id, model_number)
+        seed(bus, "Firmware_Major_Version", motor_id, major)
+
+    bus._handshake()
 
 
 def test_operating_modes_take_the_feetech_values(dummy_motors):
@@ -157,6 +159,27 @@ def test_the_drive_mode_is_applied_in_software(dummy_motors, dummy_calibration):
     assert bus._normalize({2: 27}) == {2: 100.0}
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        lambda bus: bus.write("Goal_Position", "dummy_2", -100.0),
+        lambda bus: bus.sync_write("Goal_Position", {"dummy_2": -100.0}),
+    ],
+    ids=["write", "sync_write"],
+)
+def test_a_command_is_inverted_in_software(command, dummy_motors, dummy_calibration):
+    """dummy_2 has drive mode 1: a goal at the bottom of the range lands on its top."""
+    calibration = {**dummy_calibration}
+    calibration["dummy_2"] = MotorCalibration(
+        id=2, drive_mode=1, homing_offset=0, range_min=27, range_max=3608
+    )
+    bus = make_bus(dummy_motors, calibration)
+
+    command(bus)
+
+    assert written(bus, "Goal_Position", 2) == 3608
+
+
 def test_a_sm8512bl_set_as_sts3215_fails_the_handshake(dummy_motors):
     """Same control table, but not the motor the robot was built with."""
     bus = make_bus(dummy_motors)
@@ -171,6 +194,21 @@ def test_a_sm8512bl_set_as_sts3215_fails_the_handshake(dummy_motors):
 def test_is_calibrated(dummy_motors, dummy_calibration):
     bus = make_bus(dummy_motors, dummy_calibration)
     for cal in dummy_calibration.values():
+        seed(bus, "Min_Position_Limit", cal.id, cal.range_min)
+        seed(bus, "Max_Position_Limit", cal.id, cal.range_max)
+        seed(bus, "Homing_Offset", cal.id, cal.homing_offset)
+
+    assert bus.is_calibrated
+
+
+def test_a_drive_mode_kept_in_software_does_not_count(dummy_motors, dummy_calibration):
+    """A Feetech has no Drive_Mode register: the drive mode lives in the calibration alone."""
+    calibration = {**dummy_calibration}
+    calibration["dummy_2"] = MotorCalibration(
+        id=2, drive_mode=1, homing_offset=-2006, range_min=27, range_max=3608
+    )
+    bus = make_bus(dummy_motors, calibration)
+    for cal in calibration.values():
         seed(bus, "Min_Position_Limit", cal.id, cal.range_min)
         seed(bus, "Max_Position_Limit", cal.id, cal.range_max)
         seed(bus, "Homing_Offset", cal.id, cal.homing_offset)
@@ -218,9 +256,11 @@ def test_set_half_turn_homings(dummy_motors):
 )
 def test_half_turn_homings_fit_the_sign_magnitude_register(position, expected_homing, dummy_motors):
     bus = make_bus(dummy_motors)
-    motor = next(iter(dummy_motors))
+    seed(bus, "Present_Position", 1, position)
 
-    assert bus._get_half_turn_homings({motor: position})[motor] == expected_homing
+    bus.set_half_turn_homings("dummy_1")
+
+    assert written(bus, "Homing_Offset", 1) == expected_homing
 
 
 @pytest.mark.parametrize(
@@ -288,8 +328,8 @@ def test_record_ranges_of_motion(dummy_motors):
 
 
 def test_scs_has_no_homing_offset():
-    """Calibration on the SCS is ranges only: the register does not exist, and the bus
-    neither reads nor writes it."""
+    """Calibration on the SCS is ranges only: the register does not exist, the bus neither
+    reads nor writes it, and refuses a half-turn homing before touching any register."""
     bus = make_bus({"dummy": Motor(1, "scs0009", MotorNormMode.RANGE_M100_100)})
     seed(bus, "Min_Position_Limit", 1, 10)
     seed(bus, "Max_Position_Limit", 1, 1000)
@@ -299,4 +339,11 @@ def test_scs_has_no_homing_offset():
     assert calibration["dummy"].homing_offset == 0
     bus.write_calibration(calibration)
     bus.reset_calibration()
+    writes = len(bus._bus.writes)
+    with pytest.raises(ValueError, match="no homing offset"):
+        bus.set_half_turn_homings()
+
+    assert len(bus._bus.writes) == writes
     assert all(register != "homing_offset" for _, register, _ in bus._bus.writes)
+    assert all(register != "homing_offset" for _, register in bus._bus.reads)
+    assert all(register != "homing_offset" for _, register in bus._bus.sync_reads)

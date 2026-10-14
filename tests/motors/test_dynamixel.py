@@ -22,6 +22,7 @@ a bus, homing offsets of the opposite sign, operating mode values, and a drive m
 that is a motor register rather than a calibration-only field.
 """
 
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,7 +33,7 @@ import rustypot
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.motors.dynamixel import DynamixelMotorsBus
-from tests.mocks.mock_motors_bus import MockBus
+from tests.mocks.mock_motors_bus import make_bus, seed, written
 
 
 @pytest.fixture
@@ -62,23 +63,8 @@ def dummy_calibration(dummy_motors) -> dict[str, MotorCalibration]:
     }
 
 
-def make_bus(motors, calibration=None) -> SerialMotorsBus:
-    bus = SerialMotorsBus(port="/dev/dummy-port", motors=motors, calibration=calibration)
-    bus._bus = MockBus(motors=bus._definitions)
-    return bus
-
-
-def seed(bus, data_name: str, motor_id: int, value: int) -> None:
-    bus._bus.seed(motor_id, data_name.lower(), value)
-
-
-def written(bus, data_name: str, motor_id: int) -> int:
-    return bus._bus.stored(motor_id, data_name.lower())
-
-
 def test_each_motor_keeps_its_own_definition(dummy_motors):
-    """XL430 (whose definition covers the XM540) and XL330 share the bus, each read and
-    written through its own definition."""
+    """Each motor is mapped to the definition of its model: the XL430's covers the XM540."""
     bus = SerialMotorsBus("", dummy_motors)
 
     assert bus._definitions == {
@@ -121,15 +107,55 @@ def test_the_drive_mode_is_left_to_the_motor(dummy_motors, dummy_calibration):
     assert bus._normalize({2: 27}) == {2: -100.0}
 
 
-def test_is_calibrated(dummy_motors, dummy_calibration):
+@pytest.mark.parametrize(
+    "command",
+    [
+        lambda bus: bus.write("Goal_Position", "dummy_2", -100.0),
+        lambda bus: bus.sync_write("Goal_Position", {"dummy_2": -100.0}),
+    ],
+    ids=["write", "sync_write"],
+)
+def test_a_command_is_not_inverted_a_second_time(command, dummy_motors, dummy_calibration):
+    """dummy_2 has drive mode 1, applied by its Drive_Mode register: the goal is sent as is."""
     bus = make_bus(dummy_motors, dummy_calibration)
-    for cal in dummy_calibration.values():
-        seed(bus, "Drive_Mode", cal.id, cal.drive_mode)
-        seed(bus, "Homing_Offset", cal.id, cal.homing_offset)
-        seed(bus, "Min_Position_Limit", cal.id, cal.range_min)
-        seed(bus, "Max_Position_Limit", cal.id, cal.range_max)
 
-    assert bus.is_calibrated
+    command(bus)
+
+    assert written(bus, "Goal_Position", 2) == 27
+
+
+def calibrated_bus(motors: dict[str, Motor], calibration: dict[str, MotorCalibration]) -> SerialMotorsBus:
+    """A bus whose motors hold `calibration`, motor by motor name."""
+    bus = make_bus(motors, calibration)
+    for motor, cal in calibration.items():
+        motor_id = motors[motor].id
+        seed(bus, "Drive_Mode", motor_id, cal.drive_mode)
+        seed(bus, "Homing_Offset", motor_id, cal.homing_offset)
+        seed(bus, "Min_Position_Limit", motor_id, cal.range_min)
+        seed(bus, "Max_Position_Limit", motor_id, cal.range_max)
+    return bus
+
+
+def test_is_calibrated(dummy_motors, dummy_calibration):
+    assert calibrated_bus(dummy_motors, dummy_calibration).is_calibrated
+
+
+@pytest.mark.parametrize(
+    "register, value",
+    [("Min_Position_Limit", 44), ("Max_Position_Limit", 1336), ("Homing_Offset", -708), ("Drive_Mode", 1)],
+)
+def test_a_motor_off_its_calibration_is_not_calibrated(register, value, dummy_motors, dummy_calibration):
+    bus = calibrated_bus(dummy_motors, dummy_calibration)
+    seed(bus, register, 1, value)
+
+    assert not bus.is_calibrated
+
+
+def test_the_calibration_ids_are_not_compared(dummy_motors, dummy_calibration):
+    """Calibrations are matched by motor name: the id a file holds does not count."""
+    calibration = {motor: replace(cal, id=cal.id + 10) for motor, cal in dummy_calibration.items()}
+
+    assert calibrated_bus(dummy_motors, calibration).is_calibrated
 
 
 def test_reset_calibration(dummy_motors):

@@ -12,10 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from functools import cached_property
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
-from lerobot.motors.motors_bus import SerialMotorsBus
+from lerobot.motors.motors_bus import Motor, MotorCalibration, SerialMotorsBus
+
+if TYPE_CHECKING:
+    import rustypot
+
+# What a MockBus is opened with: rustypot's own definitions, or the dummies below.
+type Definition = rustypot.ServoDefinition | DummyDefinition
 
 
 class DummyDefinition:
@@ -92,12 +100,12 @@ class MockBus:
         serial_port: str = "/dev/dummy-port",
         baudrate: int = 1_000_000,
         timeout: float = 1.0,
-        motors: dict | None = None,
+        motors: dict[int, Definition] | None = None,
     ):
         self.serial_port = serial_port
         self.baudrate = baudrate
         self.timeout = timeout
-        self.motors = dict(motors or {})  # id -> definition
+        self.motors: dict[int, Definition] = dict(motors or {})
         self.closed = False
 
         self.registers: dict[tuple[int, str], int] = {}
@@ -109,10 +117,11 @@ class MockBus:
         self.writes: list[tuple[int, str, int]] = []
         self.sync_reads: list[tuple[list[int], str]] = []
         self.sync_writes: list[tuple[list[int], str, list[int]]] = []
-        self.scans: list = []  # the definition each sweep read model numbers with
-        self.broadcast_scans: list = []  # the definition each broadcast scan read them with
+        self.scans: list[Definition] = []  # the definition each sweep read model numbers with
+        self.broadcast_scans: list[Definition] = []  # the definition each broadcast scan read them with
         self.torques: list[tuple[list[int], bool, int]] = []  # (ids, enabled, retries)
-        self.setups: list[tuple] = []  # change_id / change_baudrate calls, in order
+        # (operation, definition, motor id, new id or baud rate) of each change_id / change_baudrate, in order
+        self.setups: list[tuple[str, Definition, int, int]] = []
 
     # -- test-side helpers -------------------------------------------------
 
@@ -130,10 +139,13 @@ class MockBus:
     def set_baudrate(self, baudrate: int) -> None:
         self.baudrate = baudrate
 
-    def _answer(self, motor_ids: list[int], retries: int) -> None:
+    def _send(self, motor_ids: list[int], retries: int) -> None:
         if unknown := [motor_id for motor_id in motor_ids if motor_id not in self.motors]:
             raise ValueError(f"no motor with id {unknown[0]} on this bus")
         self.retries.append(retries)
+
+    def _answer(self, motor_ids: list[int], retries: int) -> None:
+        self._send(motor_ids, retries)
         if any(motor_id in self.absent for motor_id in motor_ids):
             raise RuntimeError("Timeout error")
 
@@ -148,15 +160,18 @@ class MockBus:
         self.seed(motor_id, register, value)
         return self.status.get(motor_id, 0)
 
-    def sync_read_register(self, motor_ids: list[int], register: str, retries: int = 0) -> list[int]:
+    def sync_read_register_with_error(
+        self, motor_ids: list[int], register: str, retries: int = 0
+    ) -> list[tuple[int, int]]:
         self._answer(motor_ids, retries)
         self.sync_reads.append((list(motor_ids), register))
-        return [self.stored(motor_id, register) for motor_id in motor_ids]
+        return [(self.stored(motor_id, register), self.status.get(motor_id, 0)) for motor_id in motor_ids]
 
     def sync_write_register(
         self, motor_ids: list[int], register: str, values: list[int], retries: int = 0
     ) -> None:
-        self._answer(motor_ids, retries)
+        """No motor answers a sync write: one that is absent goes unnoticed."""
+        self._send(motor_ids, retries)
         self.sync_writes.append((list(motor_ids), register, list(values)))
         for motor_id, value in zip(motor_ids, values, strict=True):
             self.seed(motor_id, register, value)
@@ -169,11 +184,11 @@ class MockBus:
             if register == "model_number" and motor_id not in self.absent
         }
 
-    def scan(self, definition, ids=None) -> dict[int, int]:
+    def scan(self, definition: Definition, ids: Sequence[int] | None = None) -> dict[int, int]:
         self.scans.append(definition)
         return self._found()
 
-    def broadcast_scan(self, definition, ids=None) -> dict[int, int]:
+    def broadcast_scan(self, definition: Definition, ids: Sequence[int] | None = None) -> dict[int, int]:
         self.broadcast_scans.append(definition)
         return self._found()
 
@@ -190,7 +205,7 @@ class MockBus:
                 self.seed(motor_id, "torque_enable", int(enabled))
         return failed
 
-    def change_id(self, definition, motor_id: int, new_id: int) -> None:
+    def change_id(self, definition: Definition, motor_id: int, new_id: int) -> None:
         """The motor's registers move with it to its new id."""
         if motor_id in self.absent:
             raise RuntimeError("Timeout error")
@@ -198,7 +213,7 @@ class MockBus:
         for id_, register in [key for key in self.registers if key[0] == motor_id]:
             self.registers[(new_id, register)] = self.registers.pop((id_, register))
 
-    def change_baudrate(self, definition, motor_id: int, baudrate: int) -> None:
+    def change_baudrate(self, definition: Definition, motor_id: int, baudrate: int) -> None:
         if motor_id in self.absent:
             raise RuntimeError("Timeout error")
         self.setups.append(("change_baudrate", definition, motor_id, baudrate))
@@ -213,7 +228,11 @@ def find_dummy_model(model: str) -> tuple[int, DummyDefinition]:
 
 class MockMotorsBus(SerialMotorsBus):
     """Bus over dummy servo definitions. It opens a `MockBus` where the real one opens a
-    `rustypot.Bus`, and keeps every one it opened in `opened`, oldest first."""
+    `rustypot.Bus`, and keeps every one it opened in `opened`, oldest first.
+
+    The dummy definitions and the `MockBus` stand in for rustypot's by duck typing, which
+    mypy would refuse in these overrides: the tests are outside its scope on purpose.
+    """
 
     _find_model = staticmethod(find_dummy_model)
 
@@ -221,9 +240,25 @@ class MockMotorsBus(SerialMotorsBus):
     def opened(self) -> list[MockBus]:
         return []
 
-    def _bus_class(self):
-        def open_bus(*args) -> MockBus:
-            self.opened.append(MockBus(*args))
-            return self.opened[-1]
+    def _open_bus(self) -> MockBus:
+        self.opened.append(
+            MockBus(self.port, self.default_baudrate, self.default_timeout / 1000, self._definitions)
+        )
+        return self.opened[-1]
 
-        return open_bus
+
+def make_bus(
+    motors: dict[str, Motor], calibration: dict[str, MotorCalibration] | None = None
+) -> SerialMotorsBus:
+    """A bus over the real rustypot definitions of `motors`, open on a `MockBus`."""
+    bus = SerialMotorsBus(port="/dev/dummy-port", motors=motors, calibration=calibration)
+    bus._bus = MockBus(motors=bus._definitions)
+    return bus
+
+
+def seed(bus: SerialMotorsBus, data_name: str, motor_id: int, value: int) -> None:
+    bus._bus.seed(motor_id, data_name.lower(), value)
+
+
+def written(bus: SerialMotorsBus, data_name: str, motor_id: int) -> int:
+    return bus._bus.stored(motor_id, data_name.lower())

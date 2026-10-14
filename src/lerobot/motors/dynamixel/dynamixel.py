@@ -49,7 +49,7 @@ class DynamixelMotorsBus(SerialMotorsBus):
         port: str,
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
-    ):
+    ) -> None:
         warnings.warn(
             "`DynamixelMotorsBus` is deprecated and will be removed in a future release: use `SerialMotorsBus` "
             "from `lerobot.motors`, which finds each motor's family from its model.",

@@ -92,8 +92,7 @@ class KochLeader(Teleoperator):
                 self.bus.write_calibration(self.calibration)
                 return
         logger.info(f"\nRunning calibration of {self}")
-        for motor in self.bus.motors:
-            self.bus.set_operating_mode("extended_position", motor)
+        self.bus.set_operating_mode("extended_position")
 
         self.bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
         drive_modes = {motor: 1 if motor == "elbow_flex" else 0 for motor in self.bus.motors}

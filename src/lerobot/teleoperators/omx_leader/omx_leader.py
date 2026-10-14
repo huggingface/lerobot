@@ -83,8 +83,7 @@ class OmxLeader(Teleoperator):
         self.bus.disable_torque()
         logger.info(f"\nUsing factory default calibration values for {self}")
         logger.info(f"\nWriting default configuration of {self} to the motors")
-        for motor in self.bus.motors:
-            self.bus.set_operating_mode("extended_position", motor)
+        self.bus.set_operating_mode("extended_position")
 
         for motor in self.bus.motors:
             if motor == "gripper":

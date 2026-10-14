@@ -48,7 +48,7 @@ class FeetechMotorsBus(SerialMotorsBus):
         motors: dict[str, Motor],
         calibration: dict[str, MotorCalibration] | None = None,
         protocol_version: int | None = None,
-    ):
+    ) -> None:
         warnings.warn(
             "`FeetechMotorsBus` is deprecated and will be removed in a future release: use `SerialMotorsBus` "
             "from `lerobot.motors`, which finds each motor's family from its model"
