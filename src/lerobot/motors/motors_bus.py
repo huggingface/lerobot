@@ -531,8 +531,9 @@ class SerialMotorsBus(MotorsBusBase):
         """Set up the motors one at a time, asking for each to be alone on the bus.
 
         Args:
-            motors (Sequence[str] | None, optional): Motors in the order they are set up. `None` (default)
-                goes from the last motor to the first, from the gripper down on an arm.
+            motors (`Sequence[str]`, *optional*):
+                Motors in the order they are set up. `None` goes from the last motor to the first,
+                from the gripper down on an arm.
         """
         for motor in reversed(self.motors) if motors is None else motors:
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
@@ -933,39 +934,61 @@ class SerialMotorsBus(MotorsBusBase):
     ) -> dict[str, MotorCalibration]:
         """Calibrate motors moved by hand.
 
-        The motors are freed and put in operating mode *mode*. The user then holds the joints in
-        the middle of their range of motion, which becomes a half turn of each motor, and moves
-        each joint through its whole range, recorded until ENTER. A full-turn motor is not
-        recorded: it spans the whole encoder of its model.
+        The selected motors are freed, put in an operating mode and given their direction: a
+        motor with a `Drive_Mode` register gets it written, inverted or not, while on the others,
+        as Feetech servos, an inversion is applied in software when normalising. The user then
+        holds the joints in the middle of their range of motion, which becomes a half turn of
+        each motor, and moves each joint through its whole range, recorded until ENTER. A
+        full-turn motor is not recorded: it spans the whole encoder of its model.
+
+        The motors need the operating mode and a homing offset, which the Feetech SCS0009 has
+        neither. Their homing offsets and position limits are rewritten, the cached
+        `calibration` is cleared, and their torque is left off. The calibration returned is not
+        written to the position limits nor saved: [`~SerialMotorsBus.write_calibration`] writes
+        it, and the device saves it.
 
         Args:
-            mode (str): Operating mode of the motors, by name.
-            full_turn_motors (Sequence[str]): Motors given the whole encoder range.
-            inverted_motors (Sequence[str], optional): Motors inverted through their `Drive_Mode`
-                register before the homing.
-            motors (Sequence[str] | None, optional): Motors to calibrate. `None` (default) calibrates
-                every motor.
+            mode (`str`):
+                Operating mode of the motors, e.g. `"position"`.
+            full_turn_motors (`Sequence[str]`):
+                Motors given the whole encoder range instead of the range they are moved through.
+            inverted_motors (`Sequence[str]`, *optional*, defaults to `()`):
+                Motors turning the other way.
+            motors (`Sequence[str]`, *optional*):
+                Motors to calibrate. `None` calibrates every motor.
 
         Returns:
-            dict[str, MotorCalibration]: The calibration of each motor, in the order of the bus, for
-                :pymeth:`write_calibration`.
+            `dict[str, MotorCalibration]`: The calibration of each motor, in the order of the bus.
+
+        Raises:
+            ValueError: If a motor is not on the bus, or a full-turn or inverted motor is not one
+                of the motors to calibrate; no motor has been touched then.
         """
         motor_names = self._get_motors_list(motors)
+        if unknown := [motor for motor in motor_names if motor not in self.motors]:
+            raise ValueError(f"Motors {unknown} are not on the bus.")
+        if outside := [motor for motor in (*full_turn_motors, *inverted_motors) if motor not in motor_names]:
+            raise ValueError(f"Motors {outside} are not among the motors to calibrate: {motor_names}.")
+
         self.disable_torque(motor_names)
         self.set_operating_mode(mode, motor_names)
-        for motor in inverted_motors:
-            self.write("Drive_Mode", motor, DriveMode.INVERTED.value)
+        drive_modes = {
+            motor: (DriveMode.INVERTED if motor in inverted_motors else DriveMode.NON_INVERTED).value
+            for motor in motor_names
+        }
+        for motor, drive_mode in drive_modes.items():
+            if self._has_register(motor, "Drive_Mode"):
+                self.write("Drive_Mode", motor, drive_mode)
 
         input("Move the joints to the middle of their range of motion and press ENTER....")
         homing_offsets = self.set_half_turn_homings(motor_names)
 
+        recorded = [motor for motor in motor_names if motor not in full_turn_motors]
         print(
-            f"Move all joints except {list(full_turn_motors)} sequentially through their entire "
-            "ranges of motion.\nRecording positions. Press ENTER to stop..."
+            f"Move {recorded} sequentially through their entire ranges of motion.\n"
+            "Recording positions. Press ENTER to stop..."
         )
-        range_mins, range_maxes = self.record_ranges_of_motion(
-            [motor for motor in motor_names if motor not in full_turn_motors]
-        )
+        range_mins, range_maxes = self.record_ranges_of_motion(recorded)
         for motor in full_turn_motors:
             range_mins[motor] = 0
             range_maxes[motor] = self.resolution(self.motors[motor].model) - 1
@@ -973,7 +996,7 @@ class SerialMotorsBus(MotorsBusBase):
         return {
             motor: MotorCalibration(
                 id=self.motors[motor].id,
-                drive_mode=(DriveMode.INVERTED if motor in inverted_motors else DriveMode.NON_INVERTED).value,
+                drive_mode=drive_modes[motor],
                 homing_offset=int(homing_offsets[motor]),
                 range_min=int(range_mins[motor]),
                 range_max=int(range_maxes[motor]),
