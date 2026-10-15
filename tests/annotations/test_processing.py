@@ -33,6 +33,96 @@ def config():
     return cfg
 
 
+@pytest.mark.parametrize("row_group_size", [333, 777, None])
+def test_native_identity_ignores_row_group_boundaries(
+    unaligned_episode_root, fragmented_parquet_reader, row_group_size
+):
+    import pyarrow as pa
+
+    from lerobot.annotations.processing_source import LeRobotEpisodeSource
+    from lerobot.datasets.io_utils import write_table_one_row_group_per_episode
+
+    root = unaligned_episode_root
+    path = root / "data/chunk-000/file-000.parquet"
+    table = pq.read_table(path)
+    before = LeRobotEpisodeSource(root)
+    assert pq.ParquetFile(path).metadata.num_row_groups == 1
+    if row_group_size is None:
+        write_table_one_row_group_per_episode(table, path)
+        assert [pq.ParquetFile(path).metadata.row_group(i).num_rows for i in range(2)] == [1200, 1000]
+    else:
+        pq.write_table(table, path, row_group_size=row_group_size)
+    assert pq.read_table(path).equals(table)
+    after = LeRobotEpisodeSource(root)
+    assert before.episodes == after.episodes
+    assert before.dataset_ref == after.dataset_ref
+
+    changed = table.set_column(
+        table.schema.get_field_index("note"), "note", pa.array([*table["note"].to_pylist()[:-1], "changed"])
+    )
+    pq.write_table(changed, path, row_group_size=555)
+    edited = LeRobotEpisodeSource(root)
+    assert edited.episodes[0]["native_parts"] == after.episodes[0]["native_parts"]
+    assert edited.episodes[1]["native_parts"] != after.episodes[1]["native_parts"]
+    assert edited.dataset_ref != after.dataset_ref
+
+
+def test_growing_preceding_episode_does_not_invalidate_unchanged_rows(unaligned_episode_root):
+    import pyarrow as pa
+
+    from lerobot.annotations.processing_source import LeRobotEpisodeSource
+
+    root = unaligned_episode_root
+    path = root / "data/chunk-000/file-000.parquet"
+    table = pq.read_table(path)
+    before = LeRobotEpisodeSource(root)
+    extra = {**table.slice(1199, 1).to_pylist()[0], "frame_index": 1200, "timestamp": 3.0}
+    updated = pa.concat_tables(
+        [table.slice(0, 1200), pa.Table.from_pylist([extra], schema=table.schema), table.slice(1200)]
+    )
+    pq.write_table(updated, path)
+    after = LeRobotEpisodeSource(root)
+    assert before.episodes[0]["native_parts"] != after.episodes[0]["native_parts"]
+    assert before.episodes[1] == after.episodes[1]
+
+
+def test_unaligned_shard_resume_reuses_all_language_stages(
+    unaligned_episode_root, fragmented_parquet_reader, monkeypatch
+):
+    from lerobot.annotations import processing
+
+    root = unaligned_episode_root
+    monkeypatch.setattr(processing, "make_frame_provider", lambda *a, **k: StubFrameProvider())
+    cfg = config()
+    cfg.interjections.enabled = cfg.vqa.enabled = True
+    cfg.interjections.max_interjections_per_episode = 1
+    cfg.interjections.interjection_min_t = 0.5
+    cfg.vqa.question_types = ("count",)
+    result = run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert result.validation_report.ok
+    path = root / "data/chunk-000/file-000.parquet"
+    assert [pq.ParquetFile(path).metadata.row_group(i).num_rows for i in range(2)] == [1200, 1000]
+    before = {
+        p.relative_to(root): p.read_bytes()
+        for name in ("data", "meta")
+        for p in (root / name).rglob("*")
+        if p.is_file()
+    }
+
+    def no_inference(*args, **kwargs):
+        pytest.fail("Unchanged episode was invalidated by the materializer's row groups")
+
+    monkeypatch.setattr(processing.LanguageModule, "setup", no_inference)
+    cfg.runtime.mode = "resume"
+    assert run_annotation_pipeline(cfg, root, client_factory=FACTORY).validation_report.ok
+    assert before == {
+        p.relative_to(root): p.read_bytes()
+        for name in ("data", "meta")
+        for p in (root / name).rglob("*")
+        if p.is_file()
+    }
+
+
 def test_feature_key_order_does_not_invalidate_episode(single_episode_root):
     import json
 

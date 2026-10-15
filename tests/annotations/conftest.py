@@ -56,3 +56,42 @@ def single_episode_root(tmp_path: Path) -> Path:
         episode_specs=[(0, 30, "Pour water from the bottle into the cup.")],
         fps=10,
     )
+
+
+@pytest.fixture
+def unaligned_episode_root(tmp_path: Path) -> Path:
+    """Two episodes crossing both the 1024-row hash batch and row-group cuts."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from tests.fixtures.dataset_factories import build_annotation_dataset
+
+    root = build_annotation_dataset(
+        tmp_path / "unaligned", [(0, 1200, "Pour water."), (1, 1000, "Pour water.")], fps=400
+    )
+    first = root / "data/chunk-000/file-000.parquet"
+    second = first.with_name("file-001.parquet")
+    table = pa.concat_tables([pq.read_table(first), pq.read_table(second)])
+    table = table.append_column(
+        "observation.state", pa.array([[float(i % 7), None] for i in range(2200)], pa.list_(pa.float32(), 2))
+    )
+    table = table.append_column("note", pa.array([None if i % 3 else f"frame-{i}" for i in range(2200)]))
+    table = table.append_column("image_bytes", pa.array([b"rgb" if i % 2 else None for i in range(2200)]))
+    pq.write_table(table, first, row_group_size=2200)
+    second.unlink()
+    return root
+
+
+@pytest.fixture
+def fragmented_parquet_reader(monkeypatch):
+    """Real Arrow reads with per-row-group batches, independent of version coalescing."""
+    import pyarrow.parquet as pq
+
+    original = pq.ParquetFile.iter_batches
+
+    def iter_batches(file, *args, **kwargs):
+        groups = kwargs.pop("row_groups", None)
+        for group in range(file.metadata.num_row_groups) if groups is None else groups:
+            yield from original(file, *args, row_groups=[group], **kwargs)
+
+    monkeypatch.setattr(pq.ParquetFile, "iter_batches", iter_batches)

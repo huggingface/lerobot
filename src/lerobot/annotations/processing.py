@@ -78,6 +78,9 @@ OWNERSHIP_SCHEMA = pa.schema(
     ]
 )
 
+# Persisted window format v1: keep fields/types/order stable. Even additive
+# changes require an explicit migration in processing_recipe before old rows
+# can be merged with new output, plus a language-plan module version bump.
 WINDOW_SCHEMA = pa.schema(
     [
         ("window_index", pa.int64()),

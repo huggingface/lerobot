@@ -115,19 +115,33 @@ class LeRobotEpisodeSource:
             native_columns = [
                 name for name in file.schema_arrow.names if name not in {LANGUAGE_PERSISTENT, LANGUAGE_EVENTS}
             ]
-            digest = hashlib.sha256()
             episodes = {}
             episode_digests = {}
+            # LeRobot episodes are contiguous. Carry only their final partial
+            # 1024-row block across reads, not a whole long episode.
+            current = None
+            pending = None
+
+            def hash_rows(ep, rows):
+                # One fixed-size block, not an IPC stream per reader batch.
+                # Combine chunks so physical Parquet/Arrow splits are invisible.
+                rows = rows.combine_chunks()
+                buffer = pa.BufferOutputStream()
+                with pa.ipc.new_stream(buffer, rows.schema) as writer:
+                    writer.write_table(rows)
+                episode_digests[ep].update(buffer.getvalue())
+
             for batch in file.iter_batches(batch_size=1024, columns=native_columns):
                 table = pa.Table.from_batches([batch]).replace_schema_metadata(None)
-                buffer = pa.BufferOutputStream()
-                with pa.ipc.new_stream(buffer, table.schema) as writer:
-                    writer.write_table(table)
-                digest.update(buffer.getvalue())
                 for ep in pc.unique(table["episode_index"]).to_pylist():
                     native = table.filter(pc.equal(table["episode_index"], ep))
+                    ep = str(ep)
+                    if ep != current:
+                        if pending is not None:
+                            hash_rows(current, pending)
+                        current, pending = ep, None
                     value = episodes.setdefault(
-                        str(ep),
+                        ep,
                         {
                             "rows": 0,
                             "task_index": native["task_index"][0].as_py()
@@ -136,17 +150,23 @@ class LeRobotEpisodeSource:
                         },
                     )
                     value["rows"] += native.num_rows
-                    buffer = pa.BufferOutputStream()
-                    with pa.ipc.new_stream(buffer, native.schema) as writer:
-                        writer.write_table(native)
-                    episode_digests.setdefault(str(ep), hashlib.sha256()).update(buffer.getvalue())
+                    episode_digests.setdefault(ep, hashlib.sha256())
+                    pending = pa.concat_tables([pending, native]) if pending is not None else native
+                    full_rows = pending.num_rows // 1024 * 1024
+                    for start in range(0, full_rows, 1024):
+                        hash_rows(ep, pending.slice(start, 1024))
+                    pending = pending.slice(full_rows) if full_rows < pending.num_rows else None
+            if pending is not None:
+                hash_rows(current, pending)
             for ep, value in episodes.items():
                 value["digest"] = episode_digests[ep].hexdigest()
-            return {"native": digest.hexdigest(), "episodes": episodes}
+            # File provenance uses the same canonical episode content, not
+            # reader batch framing that changes when materialization repacks it.
+            return {"native": fingerprint(episodes), "episodes": episodes}
 
         # Explicit frame-file pattern excludes sparse annotation Parquet tables.
         for path in sorted((root / "data").glob("chunk-*/file-*.parquet")):
-            data = cached(path, "native-v2", lambda path=path: inspect_data(path))
+            data = cached(path, "native-v3", lambda path=path: inspect_data(path))
             manifest.append({"path": str(path.relative_to(root)), "native": data["native"]})
             for ep_text, row in data["episodes"].items():
                 ep = int(ep_text)
