@@ -86,6 +86,15 @@ def patch_setPacketTimeout(self, packet_length):  # noqa: N802
     self.packet_timeout = (self.tx_time_per_byte * packet_length) + (self.tx_time_per_byte * 3.0) + 50
 
 
+def patch_clearPort(self):  # noqa: N802
+    """
+    Also discard unread input before each instruction. The SDK version only flushes the output, so a late
+    status packet (for example after a retried read) was taken as the answer to the next read.
+    """
+    self.ser.flush()
+    self.ser.reset_input_buffer()
+
+
 class FeetechMotorsBus(SerialMotorsBus):
     """
     The FeetechMotorsBus class allows to efficiently read and write to the attached motors. It relies on the
@@ -117,6 +126,9 @@ class FeetechMotorsBus(SerialMotorsBus):
         self.port_handler = scs.PortHandler(self.port)
         # HACK: monkeypatch
         self.port_handler.setPacketTimeout = patch_setPacketTimeout.__get__(  # type: ignore[method-assign]
+            self.port_handler, scs.PortHandler
+        )
+        self.port_handler.clearPort = patch_clearPort.__get__(  # type: ignore[method-assign]
             self.port_handler, scs.PortHandler
         )
         self.packet_handler = scs.PacketHandler(protocol_version)

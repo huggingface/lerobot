@@ -16,6 +16,7 @@
 
 import re
 import sys
+import time
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
@@ -341,6 +342,38 @@ def test__sync_read_comm(raise_on_error, mock_motors, dummy_motors):
         assert read_comm == scs.COMM_RX_TIMEOUT
 
     assert mock_motors.stubs[stub].called
+
+
+def _leave_reply_in_input_buffer(bus: FeetechMotorsBus, addr: int, length: int, ids: list[int]) -> None:
+    """Send a sync read request and never read its reply, as a read that timed out does."""
+    bus._setup_sync_reader(ids, addr, length)
+    assert bus.sync_reader.txPacket() == scs.COMM_SUCCESS
+    bus.port_handler.is_using = False  # a timed out receive releases the port in the same way
+    reply_bytes = len(ids) * (6 + length)  # header(2) id length error params checksum, for each motor
+    deadline = time.perf_counter() + 2.0
+    while bus.port_handler.getBytesAvailable() < reply_bytes:
+        assert time.perf_counter() < deadline, "the mock motors did not answer"
+        time.sleep(0.001)
+
+
+def test__sync_read_ignores_reply_left_in_input_buffer(mock_motors, dummy_motors):
+    # A late Present_Load reply (same length, same ids) must not answer the next Present_Position read.
+    load_addr, load_length = STS_SMS_SERIES_CONTROL_TABLE["Present_Load"]
+    pos_addr, pos_length = STS_SMS_SERIES_CONTROL_TABLE["Present_Position"]
+    loads = {1: 30, 2: 0, 3: 1068}
+    positions = {1: 2200, 2: 1296, 3: 2151}
+    mock_motors.build_sync_read_stub(load_addr, load_length, loads)
+    mock_motors.build_sync_read_stub(pos_addr, pos_length, positions)
+    bus = FeetechMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+    _leave_reply_in_input_buffer(bus, load_addr, load_length, list(loads))
+
+    read_positions, _ = bus._sync_read(pos_addr, pos_length, list(positions))
+    read_loads, _ = bus._sync_read(load_addr, load_length, list(loads))
+
+    assert read_positions == positions
+    # The stream stays aligned: no read answers with the reply of the previous one.
+    assert read_loads == loads
 
 
 @pytest.mark.parametrize(
