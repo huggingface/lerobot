@@ -1,0 +1,216 @@
+# LingBot-VLA 2.0
+
+LingBot-VLA 2.0 is Robbyant's vision-language-action model, the successor to LingBot-VLA 1.0. It pairs a
+Qwen3-VL-4B backbone with a sparse Mixture-of-Experts Qwen2 action expert (32 experts, top-4 routing) and
+generates action chunks with flow matching over a 55-D canonical state/action space shared across embodiments.
+
+The LeRobot port is the `lingbot_vla_v2` policy. It uses standard LeRobot datasets, processors, `lerobot-train`,
+`lerobot-eval` and `lerobot-rollout`, including upstream's dual-query depth and video distillation.
+
+For model details, see the [upstream repository](https://github.com/Robbyant/lingbot-vla-v2) and the
+[technical report](https://arxiv.org/abs/2607.06403).
+
+## Installation
+
+```bash
+pip install -e ".[training,lingbot_vla_v2]"
+```
+
+The Qwen3-VL tokenizer and image processor are loaded from `Qwen/Qwen3-VL-4B-Instruct` (`--policy.tokenizer_path`)
+when the processor is built. `flash-attn` is not needed; attention uses PyTorch SDPA.
+
+## Checkpoints
+
+| Checkpoint                        | Source                                               | Use                                                                                                                                       |
+| --------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `lerobot/lingbot_vla_v2_base`     | `robbyant/lingbot-vla-v2-6b`, format-only conversion | Starting point for fine-tuning. Features are the full 55-D canonical layout; pass slot mappings for your robot.                           |
+| `lerobot/lingbot_vla_v2_robotwin` | `robbyant/lingbot-vla-v2-6b-robotwin`, step 50000    | RoboTwin 2.0 evaluation. 14-D state/action, cameras `cam_high`, `cam_left_wrist`, `cam_right_wrist`, `QUANTILES` (q01/q99) normalization. |
+
+Load either one with `--policy.path`; the policy type is read from the checkpoint's `config.json`.
+
+## Mapping a robot onto the canonical layout
+
+The model sees a 55-D state and predicts 55-D actions. The layout is set by `canonical_joints` in the config:
+
+| Slot                | Dims | Content               |
+| ------------------- | ---- | --------------------- |
+| `arm.position`      | 14   | arm joint positions   |
+| `end.position`      | 14   | end-effector poses    |
+| `effector.position` | 2    | gripper positions     |
+| `hand.position`     | 12   | dexterous hand joints |
+| `waist.position`    | 4    | waist joints          |
+| `head.position`     | 2    | head joints           |
+| `base.velocity`     | 3    | mobile base velocity  |
+| `reserved.slots`    | 4    | reserved              |
+
+`--policy.state_slots` and `--policy.action_slots` map spans of your dataset's `observation.state` and `action`
+onto these slots, as JSON:
+
+```json
+{
+  "observation.state.arm.position": {
+    "origin_keys": [{ "observation.state": { "start": 0, "end": 5 } }]
+  }
+}
+```
+
+- Slot names are the canonical names above, optionally prefixed with `observation.state.` or `action.`. Unknown
+  names raise an error.
+- Each slot reads one or more `{start, end}` spans from `observation.state` (state slots) or `action` (action slots).
+  Spans are concatenated and packed from the start of the slot; the rest of the slot is zero-padded and excluded
+  from the loss.
+- With no slot mapping, the raw features are taken as the 55-D canonical layout, as in the base checkpoint.
+- Relative actions are off by default. `--policy.use_relative_actions=true` subtracts the current state from the
+  action, except for dims whose name contains an entry of `--policy.relative_exclude_joints` (default `["gripper"]`).
+
+The postprocessor inverts the mapping, so `select_action` returns actions in your robot's raw action space.
+Fine-tuned checkpoints save the slot mappings and dataset statistics with their processors.
+
+### Cameras
+
+The image step reads the cameras listed in the checkpoint's `input_features`, in that order. For the base
+checkpoint they are `camera_top`, `camera_wrist_left` and `camera_wrist_right`. Map your dataset cameras onto
+them with `--rename_map`; views your robot does not have are masked out.
+
+## Fine-tuning
+
+Example on [`maximellerbach/omx_multicubes`](https://huggingface.co/datasets/maximellerbach/omx_multicubes), a
+single arm with 5 joints and a gripper and two cameras (`top`, `wrist`):
+
+```bash
+lerobot-train \
+  --dataset.repo_id=maximellerbach/omx_multicubes \
+  --policy.path=lerobot/lingbot_vla_v2_base \
+  --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 5}}]}, "observation.state.effector.position": {"origin_keys": [{"observation.state": {"start": 5, "end": 6}}]}}' \
+  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 5}}]}, "action.effector.position": {"origin_keys": [{"action": {"start": 5, "end": 6}}]}}' \
+  --rename_map='{"observation.images.top": "observation.images.camera_top", "observation.images.wrist": "observation.images.camera_wrist_left"}' \
+  --policy.dtype=bfloat16 \
+  --policy.repo_id=your_repo_id \
+  --batch_size=1 \
+  --steps=30000 \
+  --save_freq=5000 \
+  --output_dir=outputs/train/lingbot_vla_v2_omx
+```
+
+Normalization statistics come from the dataset. Multi-GPU training uses the standard `torchrun` launcher with
+the `--parallelism.*` and `--accelerator.*` flags.
+
+### Dual-query distillation
+
+LingBot-VLA 2.0 appends learned query tokens (current and future depth/video) after the language tokens, and
+the action expert attends to them. Both checkpoints carry upstream's recipe in `align_params`, so the query
+tokens are always used at inference. During training, small heads read those tokens and are distilled from
+frozen teachers (LingBot-Depth with MoGe-2, and DINO-Video) with upstream's loss weights; the extra losses are
+logged as `depth_loss`, `future_depth_loss`, `current_video_loss` and `future_video_loss`.
+
+The teachers are downloaded on the first training step (about 3 GB from `robbyant/lingbot-vla-v2-6b` and
+`Ruicheng/moge-2-vitb-normal`), take about 2 GB of GPU memory and add roughly 130 ms per sample to each step.
+Each sample also loads the frame `chunk_size - 1` steps ahead, which the future targets need. Nothing extra
+runs at inference.
+
+### Key training parameters
+
+| Parameter                               | Default                     | Description                                                                |
+| --------------------------------------- | --------------------------- | -------------------------------------------------------------------------- |
+| `state_slots` / `action_slots`          | `null`                      | Raw spans to canonical slots (see above).                                  |
+| `use_relative_actions`                  | `false`                     | Train on actions relative to the current state.                            |
+| `loss_type`                             | `L1_fm`                     | Flow-matching loss on the velocity.                                        |
+| `normalization_mapping`                 | `MEAN_STD` state and action | The RoboTwin checkpoint uses `QUANTILES`.                                  |
+| `train_expert_only`                     | `false`                     | Freeze the Qwen3-VL backbone and train the action expert only.             |
+| `freeze_vision_encoder`                 | `false`                     | Freeze the vision tower.                                                   |
+| `gradient_checkpointing`                | `false`                     | Recompute activations in backward to save memory at the cost of step time. |
+| `use_moe_expert_lr`                     | `true`                      | Routed experts train at `lr * sqrt(num_experts / top_k)`, as upstream.     |
+| `optimizer_lr` / `scheduler_decay_lr`   | `1e-5` / `1e-5`             | AdamW peak and final learning rate.                                        |
+| `image_max_pixels` / `image_min_pixels` | `262144` / `131072`         | Qwen3-VL vision-token budget per image.                                    |
+| `chunk_size` / `n_action_steps`         | `50` / `50`                 | Predicted horizon and number of actions executed per chunk.                |
+| `num_steps`                             | `10`                        | Denoising steps at inference.                                              |
+| `tokenizer_path`                        | `Qwen/Qwen3-VL-4B-Instruct` | Qwen3-VL tokenizer and image processor. Use a local path offline.          |
+
+To fit a smaller GPU, combine `--policy.train_expert_only=true` and `--policy.gradient_checkpointing=true` with a
+small `--batch_size`.
+
+## Evaluation
+
+Evaluate the RoboTwin checkpoint in LeRobot's RoboTwin environment (see [RoboTwin](./robotwin) for setup). The
+rename map aligns the env camera names with the checkpoint's:
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/lingbot_vla_v2_robotwin \
+  --env.type=robotwin \
+  --env.task=beat_block_hammer \
+  --eval.batch_size=1 \
+  --eval.n_episodes=100 \
+  --rename_map='{"observation.images.head_camera": "observation.images.cam_high", "observation.images.left_camera": "observation.images.cam_left_wrist", "observation.images.right_camera": "observation.images.cam_right_wrist"}'
+```
+
+Upstream reports 93.52% (clean) and 92.80% (randomized) average success over the 50 RoboTwin 2.0 tasks for its
+Muon post-training recipe, evaluated with the upstream RoboTwin launcher in fp32
+([upstream README](https://github.com/Robbyant/lingbot-vla-v2)). These are upstream numbers, not measured
+through this port.
+
+<!-- TODO: RoboTwin success rate measured with lerobot-eval -->
+
+## Inference speed-ups
+
+Four flags, all off by default, speed up `select_action`. They need CUDA and fixed input shapes, and no extra
+dependencies:
+
+- `--policy.use_cudagraph_denoise=true`: capture the denoising loop as one CUDA graph.
+- `--policy.use_cudagraph_prefix=true`: capture the vision-language prefix KV fill.
+- `--policy.use_cudagraph_prefix_full=true`: also capture the vision tower in the prefix graph.
+- `--policy.compile_predict_velocity=true`: `torch.compile` the per-step velocity prediction. The first call
+  compiles for about a minute.
+
+Time for one 50-step action chunk with 10 denoising steps, RoboTwin checkpoint, one RTX PRO 6000:
+
+| Flags                                | bf16    | fp32    |
+| ------------------------------------ | ------- | ------- |
+| none                                 | ~756 ms | ~614 ms |
+| all three CUDA graph flags           | ~180 ms | ~203 ms |
+| all three CUDA graph flags + compile | ~120 ms | ~156 ms |
+
+In bf16 the CUDA graphs give the same outputs as eager; `torch.compile` changes the numerics slightly.
+
+## Deployment
+
+Run a fine-tuned checkpoint on a robot with `lerobot-rollout`, passing the same `--rename_map` as in training:
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=outputs/train/lingbot_vla_v2_omx/checkpoints/last/pretrained_model \
+  --robot.type=<your_robot_type> \
+  --robot.port=<port> \
+  --task="pick up the cube" \
+  --fps=30 \
+  --device=cuda
+```
+
+Real-Time Chunking is available with `--inference.type=rtc`, as for the other flow-matching policies.
+
+## Citation
+
+```bibtex
+@article{lingbotvla2,
+      title={From Foundation to Application: Improving VLA Models in Practice},
+      author={Wei Wu and Fangjing Wang and Fan Lu and He Sun and Shi Liu and Yunnan Wang and Yibin Yan and Yong Wang and Shuailei Ma and Xinyang Wang and Yibin Liu and Shuai Yang and Tianxiang Zhou and Kejia Zhang and Lei Zhou and Cheng Su and Nan Xue and Bin Tan and Han Zhang and Youchao Zhang and Fei Liao and Xing Zhu and Yujun Shen and Kecheng Zheng},
+      journal={arXiv preprint arXiv:2607.06403},
+      year={2026}
+}
+```
+
+## License
+
+The code and the converted checkpoints are Apache-2.0, as the upstream LingBot-VLA 2.0 and Qwen3-VL releases.
+
+Distillation training downloads three frozen teachers under their own licenses (inference never loads them):
+
+| Teacher       | Weights                                      | License                                                                           |
+| ------------- | -------------------------------------------- | --------------------------------------------------------------------------------- |
+| MoGe-2        | `Ruicheng/moge-2-vitb-normal`                | MIT                                                                               |
+| LingBot-Depth | `robbyant/lingbot-vla-v2-6b` (`depth/`)      | Apache-2.0                                                                        |
+| DINO-Video    | `robbyant/lingbot-vla-v2-6b` (`dino_video/`) | [DINOv3 License](https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md) |
+
+The DINO-Video weights are derived from Meta's DINOv3, so training with distillation means using them under the
+DINOv3 License, which among other terms asks you to acknowledge DINOv3 in publications and restricts some end uses.
