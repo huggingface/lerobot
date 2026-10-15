@@ -7,10 +7,11 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import multiprocessing
 import os
 import tempfile
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ProcessPoolExecutor, wait
 from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +24,9 @@ from lerobot.utils.import_utils import _pyarrow_available, require_package
 from .artifacts import ArtifactStore, file_checksum
 from .planner import StagePlan, load_module
 from .types import Outcome, canonical_json
-from .worker import accepted_in_shard, run_worker_group
+from .worker import _initialize_worker, accepted_in_shard, run_worker_group
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING or _pyarrow_available:
     import pyarrow as pa
@@ -156,6 +159,8 @@ def _run_local_owned(store, plan, workers, batch_size, max_retries, force_spawn=
         run_worker_group(store.uri, plan.plan_id, groups[0], batch_size, max_retries, store.storage_options)
         return finalize_stage(store, plan)
     with ExitStack() as stack:
+        spawn = multiprocessing.get_context("spawn")
+        stop = spawn.Event()
         devices = None
         if resources.gpus:
             devices = device_groups if device_groups is not None else gpu_assignments(workers, resources.gpus)
@@ -169,7 +174,9 @@ def _run_local_owned(store, plan, workers, batch_size, max_retries, force_spawn=
             stack.enter_context(
                 ProcessPoolExecutor(
                     max_workers=1 if resources.gpus else workers,
-                    mp_context=multiprocessing.get_context("spawn"),
+                    mp_context=spawn,
+                    initializer=_initialize_worker,
+                    initargs=(stop,),
                 )
             )
             for _ in range(workers if resources.gpus else 1)
@@ -189,8 +196,20 @@ def _run_local_owned(store, plan, workers, batch_size, max_retries, force_spawn=
             )
             for index, (pool, group) in enumerate(zip(pools, groups, strict=True))
         ]
-        for future in futures:
-            future.result()
+        try:
+            done, _ = wait(futures, return_when=FIRST_EXCEPTION)
+            for future in done:
+                future.result()
+        except BaseException:
+            stop.set()
+            for future in futures:
+                future.cancel()
+            logger.error(
+                "Worker group failed; stopping sibling groups after their current checkpointed batch"
+            )
+            # Context exit waits only for in-flight batches and teardown. Killing
+            # a process mid-request could leave shared model permits/inference live.
+            raise
     return finalize_stage(store, plan)
 
 

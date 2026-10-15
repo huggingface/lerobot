@@ -56,6 +56,9 @@ def publication(tmp_path, monkeypatch):
         def create_tag(self, **kwargs):
             calls.append(("tag", kwargs))
 
+        def delete_tag(self, **kwargs):
+            calls.append(("delete_tag", kwargs))
+
     monkeypatch.setattr(hub, "HfApi", API)
     monkeypatch.setattr(hub, "hf_hub_download", lambda *a, **k: str(lineage))
     cfg = AnnotationPipelineConfig(
@@ -87,7 +90,74 @@ def test_one_guarded_commit_preserves_license_and_skips_video(publication):
         "tag",
         {"repo_id": "lerobot/example", "repo_type": "dataset", "tag": "finerobotics-v0", "revision": COMMIT},
     )
-    assert len(calls) == 2  # no format-tag deletion/repoint or separate card commit
+    assert calls[2:] == [
+        ("delete_tag", {"repo_id": "lerobot/example", "repo_type": "dataset", "tag": "v3.0"}),
+        ("tag", {"repo_id": "lerobot/example", "repo_type": "dataset", "tag": "v3.0", "revision": COMMIT}),
+    ]
+
+
+def test_default_format_alias_tracks_releases_without_moving_release_tags(publication, monkeypatch):
+    root, cfg, _, api_class = publication
+    tags = {"v3.0": SHA}
+    head = SHA
+    commits = iter([COMMIT, "c" * 40])
+
+    def commit(self, **kwargs):
+        nonlocal head
+        assert kwargs["parent_commit"] == head
+        head = next(commits)
+        return SimpleNamespace(oid=head)
+
+    def create_tag(self, *, tag, revision, **kwargs):
+        assert tag not in tags
+        tags[tag] = revision
+
+    monkeypatch.setattr(api_class, "create_commit", commit)
+    monkeypatch.setattr(api_class, "create_tag", create_tag)
+    monkeypatch.setattr(api_class, "delete_tag", lambda self, *, tag, **kwargs: tags.pop(tag))
+    monkeypatch.setattr(api_class, "dataset_info", lambda *a, **k: SimpleNamespace(sha=head, private=False))
+    monkeypatch.setattr(
+        api_class,
+        "list_repo_refs",
+        lambda *a, **k: SimpleNamespace(tags=[SimpleNamespace(name=t) for t in tags]),
+    )
+    hub.publish_annotation(root, cfg, changed_paths=[])
+    assert tags == {"v3.0": COMMIT, "finerobotics-v0": COMMIT}
+    cfg.revision = cfg.expected_target_revision = COMMIT
+    cfg.release_tag = "finerobotics-v1"
+    hub.publish_annotation(root, cfg, changed_paths=[])
+    # LeRobotDataset's default revision is the format alias, not main.
+    assert tags == {"v3.0": "c" * 40, "finerobotics-v0": COMMIT, "finerobotics-v1": "c" * 40}
+
+
+def test_lineage_contains_science_and_pins_not_operational_config(publication):
+    root, cfg, calls, _ = publication
+    cfg.root = Path("/internal/private-source")
+    cfg.staging_dir = Path("/internal/staging")
+    cfg.runtime.run_uri = "s3://private-bucket/runs"
+    cfg.runtime.slurm.account = "private-account"
+    cfg.runtime.slurm.partition = "private-partition"
+    cfg.vlm.api_base = "https://private-model.internal/v1"
+    cfg.vlm.api_bases = ("https://private-replica.internal/v1",)
+    cfg.vlm.serve_command = "serve --internal-host private-host"
+    cfg.vlm.api_key_env = "PRIVATE_KEY_ENV"
+    cfg.vlm.endpoint_limit_url = "https://private-coordinator.internal"
+    cfg.runtime.hf_jobs.code_repository = "https://private-code.internal/repo.git"
+    cfg.runtime.hf_jobs.code_revision = "d" * 40
+    cfg.job.image = "private-registry.internal/runtime@sha256:" + "e" * 64
+    cfg.vlm.model_revision = "f" * 40
+    cfg.plan.frames_per_second = 3
+    cfg.only_episodes = (0, 2)
+    hub.publish_annotation(root, cfg, changed_paths=[])
+    lineage_bytes = calls[0][1]["operations"][hub.LINEAGE]
+    assert b"private-" not in lineage_bytes and b"/internal/" not in lineage_bytes
+    lineage = json.loads(lineage_bytes)
+    plan = lineage["processing"]["plan"]
+    assert plan["annotation_config"]["vlm"]["model_revision"] == "f" * 40
+    assert plan["annotation_config"]["plan"]["frames_per_second"] == 3
+    assert len(plan["prompts"]) == 64
+    assert lineage["only_episodes"] == [0, 2]
+    assert lineage["pins"] == {"code_revision": "d" * 40, "image_sha256": ["e" * 64]}
 
 
 @pytest.mark.parametrize(
@@ -131,6 +201,30 @@ def test_tag_failure_is_visible(publication, monkeypatch):
     with pytest.raises(RuntimeError, match="tag failed"):
         hub.publish_annotation(root, cfg, changed_paths=[])
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("operation", ["delete_tag", "create_tag"])
+def test_format_alias_failure_is_not_reported_as_success(publication, monkeypatch, operation):
+    root, cfg, calls, api_class = publication
+    original = getattr(api_class, operation)
+
+    def fail_format_alias(self, **kwargs):
+        if kwargs["tag"] == "v3.0":
+            raise RuntimeError("format alias update failed")
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(api_class, operation, fail_format_alias)
+    with pytest.raises(RuntimeError, match="format alias update failed"):
+        hub.publish_annotation(root, cfg, changed_paths=[])
+    assert calls[0][0] == "commit" and calls[1][1]["tag"] == cfg.release_tag
+
+
+def test_first_release_creates_missing_format_alias(publication, monkeypatch):
+    root, cfg, calls, api_class = publication
+    monkeypatch.setattr(api_class, "list_repo_refs", lambda *a, **k: SimpleNamespace(tags=[]))
+    hub.publish_annotation(root, cfg, changed_paths=[])
+    assert [name for name, _ in calls] == ["commit", "tag", "tag"]
+    assert calls[-1][1]["tag"] == "v3.0" and calls[-1][1]["revision"] == COMMIT
 
 
 def test_missing_license_is_not_invented(publication):
