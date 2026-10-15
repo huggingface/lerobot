@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
 import re
 from itertools import chain
 from pathlib import Path
@@ -51,7 +50,13 @@ from lerobot.robots import make_robot_from_config
 from lerobot.transforms import ImageTransforms, ImageTransformsConfig
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, OBS_STR, REWARD
 from lerobot.utils.feature_utils import hw_to_dataset_features
-from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_MOTOR_FEATURES, DUMMY_REPO_ID
+from tests.fixtures.constants import (
+    DUMMY_CHW,
+    DUMMY_HWC,
+    DUMMY_MOTOR_FEATURES,
+    DUMMY_REPO_ID,
+    DUMMY_VIDEO_INFO,
+)
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.utils import require_x86_64_kernel
 
@@ -590,47 +595,71 @@ def test_tmp_mixed_deletion(tmp_path, empty_lerobot_dataset_factory):
 # - [ ] remove old tests
 
 
-ENV_DATASET_POLICY_TRIPLETS = [
-    ("aloha", dataset, "act")
-    for dataset in [
-        "lerobot/aloha_sim_insertion_human",
-        "lerobot/aloha_sim_insertion_scripted",
-        "lerobot/aloha_sim_transfer_cube_human",
-        "lerobot/aloha_sim_transfer_cube_scripted",
-        "lerobot/aloha_sim_insertion_human_image",
-        "lerobot/aloha_sim_insertion_scripted_image",
-        "lerobot/aloha_sim_transfer_cube_human_image",
-        "lerobot/aloha_sim_transfer_cube_scripted_image",
-    ]
-] + [
-    ("pusht", dataset, policy)
-    for dataset in ["lerobot/pusht", "lerobot/pusht_image"]
-    for policy in ["diffusion", "vqbet"]
+ENV_POLICY_DATASET_CASES = [
+    # env_name, policy_name, motor_dim, camera_key, image_shape, fps
+    ("aloha", "act", 14, "observation.images.top", (64, 96, 3), 50),
+    ("pusht", "diffusion", 2, "observation.image", (96, 96, 3), 10),
+    ("pusht", "vqbet", 2, "observation.image", (96, 96, 3), 10),
 ]
 
 
+@pytest.mark.parametrize("use_videos", [True, False])
 @pytest.mark.parametrize(
-    "env_name, repo_id, policy_name",
-    ENV_DATASET_POLICY_TRIPLETS,
+    "env_name, policy_name, motor_dim, camera_key, image_shape, fps", ENV_POLICY_DATASET_CASES
 )
-def test_factory(env_name, repo_id, policy_name):
+def test_factory(
+    tmp_path,
+    info_factory,
+    lerobot_dataset_factory,
+    env_name,
+    policy_name,
+    motor_dim,
+    camera_key,
+    image_shape,
+    fps,
+    use_videos,
+):
     """
     Tests that:
-        - we can create a dataset with the factory.
+        - we can create a dataset with the factory from a local synthetic dataset (no Hub download).
         - for a commonly used set of data keys, the data dimensions are correct.
     """
+
+    motor_names = [f"motor_{i}" for i in range(motor_dim)]
+    motor_features = {
+        ACTION: {"dtype": "float32", "shape": (motor_dim,), "names": motor_names},
+        OBS_STATE: {"dtype": "float32", "shape": (motor_dim,), "names": motor_names},
+    }
+    camera_features = {
+        camera_key: {
+            "shape": image_shape,
+            "names": ["height", "width", "channels"],
+            "info": {**DUMMY_VIDEO_INFO, "video.fps": fps},
+        },
+    }
+    info = info_factory(
+        fps=fps,
+        total_episodes=1,
+        total_frames=50,
+        total_tasks=1,
+        motor_features=motor_features,
+        camera_features=camera_features,
+        use_videos=use_videos,
+    )
+    root = tmp_path / "dataset"
+    lerobot_dataset_factory(root=root, info=info, use_videos=use_videos)
+
     cfg = TrainPipelineConfig(
-        # TODO(rcadene, aliberts): remove dataset download
-        dataset=DatasetConfig(repo_id=repo_id, episodes=[0]),
+        dataset=DatasetConfig(repo_id=DUMMY_REPO_ID, root=str(root), episodes=[0]),
         env=make_env_config(env_name),
         policy=make_policy_config(policy_name),
     )
-
     dataset = make_dataset(cfg)
+    item = dataset[0]
+
     delta_timestamps = dataset.delta_timestamps
     camera_keys = dataset.meta.camera_keys
-
-    item = dataset[0]
+    assert camera_key in camera_keys
 
     keys_ndim_required = [
         (ACTION, 1, True),
@@ -642,15 +671,14 @@ def test_factory(env_name, repo_id, policy_name):
         (REWARD, 0, False),
         (DONE, 0, False),
     ]
+    # Include camera keys so the image checks below actually run.
+    keys_ndim_required += [(key, 3, True) for key in camera_keys]
 
     # test number of dimensions
     for key, ndim, required in keys_ndim_required:
         if key not in item:
-            if required:
-                assert key in item, f"{key}"
-            else:
-                logging.warning(f'Missing key in dataset: "{key}" not in {dataset}.')
-                continue
+            assert not required, f"{key}"
+            continue
 
         if delta_timestamps is not None and key in delta_timestamps:
             assert item[key].ndim == ndim + 1, f"{key}"
@@ -659,10 +687,13 @@ def test_factory(env_name, repo_id, policy_name):
             assert item[key].ndim == ndim, f"{key}"
 
         if key in camera_keys:
-            assert item[key].dtype == torch.float32, f"{key}"
-            # TODO(rcadene): we assume for now that image normalization takes place in the model
-            assert item[key].max() <= 1.0, f"{key}"
-            assert item[key].min() >= 0.0, f"{key}"
+            if key in dataset.meta.video_keys:
+                # make_dataset decodes videos as uint8; the training pipeline normalises later.
+                assert item[key].dtype == torch.uint8, f"{key}"
+            else:
+                assert item[key].dtype == torch.float32, f"{key}"
+                assert item[key].max() <= 1.0, f"{key}"
+                assert item[key].min() >= 0.0, f"{key}"
 
             if delta_timestamps is not None and key in delta_timestamps:
                 # test t,c,h,w
