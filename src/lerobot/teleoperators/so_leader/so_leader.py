@@ -22,6 +22,8 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
+from lerobot.motors.feetech.auto_calibration import AutoCalibrationConfig, auto_calibrate
+from lerobot.robots.so_follower.auto_calibration_plan import SO_LEADER_PLAN
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
@@ -143,6 +145,22 @@ class SOLeader(Teleoperator):
                 range_max=int(range_maxes[motor]),
             )
 
+        self.bus.write_calibration(self.calibration)
+        self._save_calibration()
+        print(f"Calibration saved to {self.calibration_fpath}")
+
+    def auto_calibrate(self, config: AutoCalibrationConfig | None = None) -> None:
+        """Calibrate without moving the arm by hand: every joint is driven into its end stops.
+
+        The arm moves on its own. See lerobot.motors.feetech.auto_calibration and SO_LEADER_PLAN.
+        """
+        logger.info(f"\nRunning automatic calibration of {self}")
+        # The arm must be free to be put in the start pose.
+        self.bus.disable_torque()
+        print(SO_LEADER_PLAN.start_pose)
+        input(f"Put {self} in the start pose, clear the space around it and press ENTER...")
+        self.calibration = auto_calibrate(self.bus, SO_LEADER_PLAN, config)
+        self.bus.disable_torque()
         self.bus.write_calibration(self.calibration)
         self._save_calibration()
         print(f"Calibration saved to {self.calibration_fpath}")
