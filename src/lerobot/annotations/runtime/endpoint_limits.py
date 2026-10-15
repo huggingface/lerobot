@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hmac
 import json
+import logging
 import os
 import threading
 import time
@@ -23,7 +24,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .errors import ErrorCategory, TemporaryServiceError, classify_error, request_not_sent
+from .errors import EndpointLimitError, ErrorCategory, TemporaryServiceError, classify_error, request_not_sent
+
+logger = logging.getLogger(__name__)
 
 
 class EndpointLimitServer(ThreadingHTTPServer):
@@ -147,6 +150,18 @@ class SharedEndpointLimit:
                     ) from None
                 time.sleep(0.1 * (2**attempt))
 
+    def _try_release(self, request_id):
+        try:
+            self._release(request_id)
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Shared endpoint permit %s may be retained (%s); inspect status and drain/reset if needed",
+                request_id,
+                type(exc).__name__,
+            )
+            return False
+
     @contextmanager
     def permit(self):
         request_id = str(uuid.uuid4())
@@ -162,7 +177,7 @@ class SharedEndpointLimit:
                     self._post("acquire", request_id, timeout=min(10, remaining))
                     acquired = True
                 except HTTPError as exc:
-                    if exc.code != 429:
+                    if exc.code != 429 and classify_error(exc) != ErrorCategory.SERVICE:
                         raise
                 except (URLError, TimeoutError, ConnectionError):
                     pass  # Fail closed; never send inference without a permit.
@@ -171,20 +186,29 @@ class SharedEndpointLimit:
                     jitter = 0.8 + int(request_id[:2], 16) / 640
                     time.sleep(min(delay * jitter, max(0, deadline - time.monotonic())))
                     delay = min(2, delay * 2)
-        finally:
-            if not acquired:
-                self._release(request_id)  # No inference was sent; ambiguous acquisitions are safe to clear.
+        except BaseException as exc:
+            self._try_release(request_id)  # No inference was sent; safe to clear ambiguous acquisitions.
+            if not isinstance(exc, Exception):
+                raise
+            raise EndpointLimitError(
+                "Shared endpoint admission failed; inference was not sent and is not retried"
+            ) from exc
         try:
             yield
         except Exception as exc:
             status = exc.code if isinstance(exc, HTTPError) else getattr(exc, "status_code", None)
-            if request_not_sent(exc) or (classify_error(exc) != ErrorCategory.NETWORK and status != 504):
-                self._release(request_id)
+            safe_to_release = request_not_sent(exc) or (
+                classify_error(exc) != ErrorCategory.NETWORK and status != 504
+            )
+            if safe_to_release and self._try_release(request_id):
+                raise
             # Transport and gateway timeouts may leave upstream inference running.
             # Preserve the slot until the operator drains/cancels the endpoint, not by TTL.
-            raise
+            raise EndpointLimitError(
+                "Shared endpoint permit retained; request is not retried. Drain/cancel inference before reset."
+            ) from exc
         else:
-            self._release(request_id)
+            self._try_release(request_id)  # A lost release must not discard/resend a successful response.
 
 
 class _NoRedirect(HTTPRedirectHandler):

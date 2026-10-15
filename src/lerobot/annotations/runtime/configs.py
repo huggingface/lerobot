@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 """Serializable processing controls, independent of training and scheduler flavors."""
 
+import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,10 +23,13 @@ class SlurmConfig:
     sbatch: str = "sbatch"
     squeue: str = "squeue"
     requeue: bool = True
+    command_timeout_s: float = 30.0
 
     def __post_init__(self):
         if self.max_concurrent is not None and self.max_concurrent < 1:
             raise ValueError("Slurm concurrency must be positive")
+        if not math.isfinite(self.command_timeout_s) or self.command_timeout_s <= 0:
+            raise ValueError("Slurm command_timeout_s must be finite and positive")
 
 
 @dataclass
