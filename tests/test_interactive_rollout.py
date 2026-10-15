@@ -24,7 +24,7 @@ import os
 import time
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -32,22 +32,24 @@ import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+# Front-end and engine internals, imported from their defining modules.
+from lerobot.inference import (  # noqa: E402
+    InferenceEngine,
+    PolicyQuery,
+    QueryAnswer,
+    QueryKind,
+)
+from lerobot.policies.pretrained import PreTrainedPolicy  # noqa: E402
 from lerobot.rollout import (  # noqa: E402
     AskResult,
     BaseStrategyConfig,
-    InferenceEngine,
     InteractiveSession,
     LinkedEvent,
-    QueryAnswer,
-    QueryKind,
     RolloutController,
     RolloutEvent,
-    RolloutStrategy,
 )
-
-# Front-end and engine internals, imported from their defining modules.
-from lerobot.rollout.inference import PolicyQuery  # noqa: E402
 from lerobot.rollout.interactive import InteractiveCommand, parse_command  # noqa: E402
+from tests.interactive_helpers import _FakeEngine, _loop_ctx, _make_ctx
 
 
 def _wait_for(predicate, timeout: float = 2.0) -> bool:
@@ -134,105 +136,6 @@ def test_linked_event_wait():
 
 
 # --- Shared fakes ---
-
-
-class _FakeEngine(InferenceEngine):
-    """Real task-holder and query-channel semantics with mocked lifecycle methods."""
-
-    failed = False
-    failure_traceback = None
-    # Plain attributes shadowing the base properties, so tests can flip them.
-    supports_text_queries = True
-    # Answer inline on the caller's thread like the sync backend, exercising pump_query.
-    control_thread_owns_policy = True
-
-    # Declared here to satisfy the ABC; the instances below shadow them.
-    def start(self) -> None: ...
-    def stop(self) -> None: ...
-    def reset(self) -> None: ...
-    def get_action(self, obs_frame=None): ...
-
-    def __init__(self, task: str = "pick up the cube") -> None:
-        super().__init__(task=task)
-        self.start = MagicMock()
-        self.stop = MagicMock()
-        self.reset = MagicMock()
-        self.pause = MagicMock()
-        self.resume = MagicMock()
-        self.notify_observation = MagicMock()
-        self.get_action = MagicMock(return_value=None)
-        self.text_error: Exception | None = None
-        self.seen_query_obs: list = []
-        self.seen_queries: list = []
-        self.subtasks_planned = 0
-
-    def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
-        self.seen_queries.append((query.kind, query.text))
-        self.seen_query_obs.append(obs_processed)
-        if self.text_error is not None:
-            raise self.text_error
-        if query.kind is QueryKind.NEXT_SUBTASK:
-            # A stand-in decomposer: one subtask per query, advancing.
-            self.subtasks_planned += 1
-            return f"subtask {self.subtasks_planned} of {query.text}"
-        return f"answer: {query.text}"
-
-
-def _loop_ctx(engine, robot=None, stop_event=None, **cfg_overrides):
-    """The rollout context a real control loop needs, with identity processors."""
-
-    def identity(x):
-        return x
-
-    cfg = {
-        "play_sounds": False,
-        "fps": 100.0,
-        "duration": 0.0,
-        "use_torch_compile": False,
-        "interpolation_multiplier": 1,
-        "display_data": False,
-        "autosteer_interval_s": 0.0,
-    }
-    cfg.update(cfg_overrides)
-    return SimpleNamespace(
-        runtime=SimpleNamespace(
-            cfg=SimpleNamespace(**cfg),
-            shutdown_event=stop_event if stop_event is not None else LinkedEvent(Event()),
-            cadence_report=None,
-        ),
-        policy=SimpleNamespace(inference=engine),
-        hardware=SimpleNamespace(
-            robot_wrapper=robot if robot is not None else MagicMock(),
-            teleop=None,
-            initial_position={"joint.pos": 0.0},
-        ),
-        processors=SimpleNamespace(
-            teleop_action_processor=identity,
-            robot_action_processor=identity,
-            robot_observation_processor=identity,
-        ),
-        data=SimpleNamespace(dataset=None, dataset_features={}, hw_features={}, ordered_action_keys=[]),
-    )
-
-
-def _make_ctx(run_behavior=None):
-    """A mock strategy plus the fake context the controller needs."""
-    parent = Event()
-    engine = _FakeEngine()
-    ctx = _loop_ctx(engine, stop_event=LinkedEvent(parent))
-
-    # Autospec so a strategy signature drift fails here, not on real hardware during /reset.
-    strategy = create_autospec(RolloutStrategy, instance=True)
-    strategy.config = BaseStrategyConfig()  # the controller enforces supports_interactive on it
-    run_started = Event()
-
-    def default_run(c):
-        run_started.set()
-        while not c.runtime.shutdown_event.is_set():
-            time.sleep(0.005)
-
-    strategy.run.side_effect = run_behavior or default_run
-    return ctx, strategy, engine, parent, run_started
 
 
 # --- RolloutController (the programmatic API) ---
@@ -386,6 +289,71 @@ def test_controller_strategy_failure_reaches_the_failure_surface():
     assert events[-1] is RolloutEvent.STOPPED
     assert controller.failed
     assert "robot io broke" in controller.failure_traceback
+
+
+def test_interactive_cli_strategy_failure_exits_nonzero_after_teardown(monkeypatch):
+    from lerobot.scripts import lerobot_rollout
+
+    def failing_run(ctx):
+        raise OSError("robot io broke")
+
+    ctx, strategy, engine, parent, _ = _make_ctx(failing_run)
+    cfg = ctx.runtime.cfg
+    cfg.interactive = True
+    cfg.inference = SimpleNamespace(log_level="INFO")
+    cfg.robot = SimpleNamespace(type="test_robot")
+    cfg.strategy = strategy.config
+    monkeypatch.setattr(lerobot_rollout, "init_logging", lambda **_: None)
+    monkeypatch.setattr(
+        lerobot_rollout, "ProcessSignalHandler", lambda **_: SimpleNamespace(shutdown_event=parent)
+    )
+    monkeypatch.setattr(lerobot_rollout, "build_rollout_context", lambda *_: ctx)
+    monkeypatch.setattr(lerobot_rollout, "create_strategy", lambda _: strategy)
+    with _pipe_stream() as (reader, _):
+        session = InteractiveSession(strategy, ctx, input_stream=reader)
+        session.controller.start()
+        monkeypatch.setattr(lerobot_rollout, "InteractiveSession", lambda *_: session)
+        with pytest.raises(SystemExit) as stopped:
+            lerobot_rollout.rollout.__wrapped__(cfg)
+    assert stopped.value.code == 1
+    assert not engine.failed
+    strategy.teardown.assert_called_once_with(ctx)
+
+
+@pytest.mark.parametrize("run_fails", [False, True])
+def test_segment_end_hold_failure_is_terminal_and_preserves_original_error(run_fails, caplog):
+    from lerobot.rollout.strategies import BaseStrategy
+
+    def run(ctx):
+        if run_fails:
+            raise OSError("original observation failure")
+
+    controller, events, strategy, engine, _parent, _run_started = _make_controller(run)
+    robot = controller._ctx.hardware.robot_wrapper
+    robot.supports_hold = True
+    robot.hardware_failure = None
+    robot.hold.side_effect = OSError("final hold failed")
+    real_strategy = BaseStrategy(BaseStrategyConfig())
+    real_strategy._engine = engine
+    strategy.hold_control_state.side_effect = real_strategy.hold_control_state
+    thread = _serve_thread(controller)
+    assert controller.start()
+    _join_session(thread)
+
+    engine.pause.assert_called_once()
+    robot.hold.assert_called_once()
+    assert RolloutEvent.STRATEGY_FAILED in events
+    assert RolloutEvent.SEGMENT_ENDED not in events
+    assert events[-1] is RolloutEvent.STOPPED
+    assert controller.failed and controller.stopped and not controller.running
+    assert controller.start() is False
+    expected = "original observation failure" if run_fails else "final hold failed"
+    assert expected in controller.failure_traceback
+    if run_fails:
+        assert "final hold failed" not in controller.failure_traceback
+    else:
+        assert len([record for record in caplog.records if record.exc_info]) == 1
+    assert "final hold failed" in caplog.text
 
 
 def test_controller_failed_return_move_emits_reset_failed():
@@ -635,7 +603,7 @@ def test_session_subtask_sets_and_reports_task(capsys):
 
 def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     """A /subtask switch must reach the policy and drop stale queued actions."""
-    from lerobot.rollout.inference import SyncInferenceEngine
+    from lerobot.inference import SyncInferenceEngine
 
     policy = MagicMock()
     policy.config.use_amp = False
@@ -673,6 +641,37 @@ def test_sync_engine_uses_new_task_and_flushes_precomputed_actions():
     # Only the first call after a switch flushes.
     engine.get_action({"observation.state": np.zeros(1, dtype=np.float32)})
     assert policy.drop_queued_actions.call_count == 1
+
+
+def test_sync_engine_vqa_drops_precomputed_actions():
+    """Inline text generation stales any queued chunk by its duration, so a VQA flushes it."""
+    from lerobot.inference import SyncInferenceEngine
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    policy.supports_text_generation.return_value = True
+    policy.generate_text.return_value = "a red cube"
+
+    engine = SyncInferenceEngine(
+        policy=policy,
+        preprocessor=lambda obs: obs,
+        postprocessor=lambda action: action,
+        dataset_features={
+            "action": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
+        },
+        ordered_action_keys=["j1.pos", "j2.pos"],
+        task="pick up the cube",
+        device="cpu",
+        robot_type="mock",
+    )
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+
+    assert engine.ask("what do you see?")
+    assert engine.pump_query({"observation.state": np.zeros(1, dtype=np.float32)})
+    assert policy.drop_queued_actions.call_count == 1
+    assert policy.reset.call_count == 0
+    assert [answer.answer for answer in delivered] == ["a red cube"]
 
 
 def test_drop_queued_actions_clears_the_queues_dict_convention():
@@ -902,6 +901,11 @@ def test_engine_query_channel_holds_one_question_and_answers_it_once():
     assert (dropped.kind, dropped.text) == (QueryKind.VQA, "what do you see?")
     assert not engine.has_pending_query
     assert engine.drop_pending_query() is None
+    engine.pump_query()
+    assert len(delivered) == 1
+    assert delivered[0].question == "what do you see?"
+    assert "cancelled" in delivered[0].error
+    delivered.clear()
 
     engine.ask("is the cube in the box?")
     engine.pump_query({"joint.pos": 1.0})
@@ -1036,10 +1040,56 @@ def test_controller_segment_end_drops_stale_subtask_answer_and_reports_the_pendi
     assert not any(a.kind is QueryKind.NEXT_SUBTASK for a in answers)
     assert not engine.has_pending_query
     unserved = next(a for a in answers if a.question == "what do you see?")
-    assert not unserved.ok and "run ended" in unserved.error
+    assert not unserved.ok and "cancelled" in unserved.error
 
     controller.stop()
     _join_session(thread)
+
+
+@pytest.mark.parametrize("late_error", [False, True])
+def test_segment_end_reports_claimed_vqa_once_before_its_worker_returns(late_error):
+    """Stopping the chat must not wait for model generation to explain cancellation."""
+    answers = []
+    generating, finish = Event(), Event()
+    controller, _events, _strategy, engine, _parent, run_started = _make_controller(answers=answers)
+    engine.control_thread_owns_policy = False
+
+    def generate(obs, query):
+        generating.set()
+        assert finish.wait(2)
+        if late_error:
+            raise RuntimeError("obsolete failure")
+        return "obsolete answer"
+
+    engine._generate_text = generate
+    thread = _serve_thread(controller)
+    worker = Thread(target=lambda: engine._service_query({"joint.pos": 0.0}))
+    try:
+        controller.start()
+        assert run_started.wait(2)
+        assert controller.ask("what do you see?") is AskResult.QUEUED
+        worker.start()
+        assert generating.wait(2)
+        controller.stop()
+        _join_session(thread)
+        assert len(answers) == 1
+        assert answers[0].question == "what do you see?"
+        assert answers[0].answer is None
+        assert "cancelled" in answers[0].error
+        assert engine._query_in_flight
+        assert not engine.ask("another question?"), "cancellation cannot free a worker still generating"
+        engine.report_cancelled_query()
+        engine.pump_query()
+        assert len(answers) == 1
+    finally:
+        finish.set()
+        controller.stop()
+        _join_session(thread)
+        if worker.ident is not None:
+            _join_session(worker)
+    engine.pump_query()
+    assert len(answers) == 1, "late success or failure must not follow the cancellation notice"
+    assert not engine._query_in_flight
 
 
 # --- Autosteer (policy-driven subtask sequencing) ---
@@ -1062,7 +1112,7 @@ class _FakeClock:
 def engine_clock(monkeypatch):
     """Replace the engine module's clock so interval tests cannot race real time."""
     clock = _FakeClock()
-    monkeypatch.setattr("lerobot.rollout.inference.base.time", SimpleNamespace(perf_counter=clock))
+    monkeypatch.setattr("lerobot.inference.base.time", SimpleNamespace(perf_counter=clock))
     return clock
 
 
@@ -1085,6 +1135,7 @@ def test_engine_autosteer_interval_is_measured_from_when_a_subtask_lands(engine_
     # The first subtask is requested on the very next tick, not an interval later.
     engine.pump_query({"joint.pos": 0.0})
     assert engine.task == "subtask 1 of tidy the table"
+    engine.record_dispatch()
 
     # The clock started when the subtask landed, so the next query is not due.
     engine_clock.advance(9.9)
@@ -1133,8 +1184,13 @@ def test_engine_autosteer_does_not_double_queue_while_generation_is_in_flight():
     engine.pump_query({"joint.pos": 0.0})  # a control tick during the in-flight generation
     assert not engine.has_pending_query
 
-    # Once the answer lands the channel frees, and the next turn queues again.
+    # Once the answer lands the channel frees, but another planned hold cannot
+    # preempt the fresh action required to act on this subtask.
+    assert engine._apply_subtask(claimed, "subtask")
     engine._publish_answer(QueryAnswer(question=claimed.text, answer="subtask", kind=claimed.kind))
+    engine.pump_query({"joint.pos": 0.0})
+    assert not engine.has_pending_query
+    engine.record_dispatch()
     engine.pump_query({"joint.pos": 0.0})
     assert engine.has_pending_query
 
@@ -1270,6 +1326,7 @@ class _StubChunkPolicy:
 
         self.chunk_len = chunk_len
         self.action_dim = action_dim
+        self.config = SimpleNamespace(n_obs_steps=1, chunk_size=chunk_len, n_action_steps=chunk_len)
         self._release = Semaphore(0)
         self.in_inference = Event()
         self.predicted_tasks: list[str] = []
@@ -1294,6 +1351,13 @@ class _StubChunkPolicy:
     def reset(self):
         pass
 
+    chunk_inference_spec = PreTrainedPolicy.chunk_inference_spec
+    drop_queued_actions = PreTrainedPolicy.drop_queued_actions
+    _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
+
+    def supports_rtc(self):
+        return True
+
     def supports_text_generation(self):
         return True
 
@@ -1304,16 +1368,16 @@ class _StubChunkPolicy:
         return f"answer: {batch[QUERY_TEXT]}"
 
 
-def _make_rtc_engine(rtc_queue_threshold: int = 30, chunk_len: int = 10):
+def _make_rtc_engine(rtc_queue_threshold: int = 30, chunk_len: int = 10, **engine_kwargs):
+    from lerobot.inference import RTCInferenceEngine
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
-    from lerobot.rollout.inference import RTCInferenceEngine
 
     policy = _StubChunkPolicy(chunk_len=chunk_len)
     engine = RTCInferenceEngine(
         policy=policy,
         preprocessor=_IdentityPipeline(),
         postprocessor=_IdentityPipeline(),
-        robot_wrapper=SimpleNamespace(robot_type="mock", action_features={}),
+        robot_wrapper=SimpleNamespace(robot_type="mock", action_features={}, supports_hold=True),
         rtc_config=RTCConfig(enabled=True, execution_horizon=8, max_guidance_weight=1.0),
         dataset_features={
             "observation.state": {"dtype": "float32", "shape": (2,), "names": ["j1.pos", "j2.pos"]},
@@ -1322,6 +1386,7 @@ def _make_rtc_engine(rtc_queue_threshold: int = 30, chunk_len: int = 10):
         fps=30.0,
         device="cpu",
         rtc_queue_threshold=rtc_queue_threshold,
+        **engine_kwargs,
     )
     return engine, policy
 
@@ -1342,10 +1407,12 @@ def _running_rtc_engine(rtc_queue_threshold: int = 30, chunk_len: int = 10):
         engine.stop()
 
 
-def test_rtc_engine_dispatched_task_tracks_chunk_provenance_across_set_task():
+@pytest.mark.parametrize("supports_hold", [False, True])
+def test_rtc_engine_dispatched_task_tracks_chunk_provenance_across_set_task(supports_hold):
     """``dispatched_task`` may only advance to the new instruction when an action from a
     chunk conditioned on it is popped — that is what frame provenance rests on."""
     with _running_rtc_engine() as (engine, policy):
+        engine._robot.supports_hold = supports_hold
         policy.allow_one_inference()  # first chunk, conditioned on "task A"
         assert _wait_for(lambda: len(policy.predicted_tasks) == 1)
         assert _wait_for(lambda: engine.get_action(None) is not None)
@@ -1356,11 +1423,21 @@ def test_rtc_engine_dispatched_task_tracks_chunk_provenance_across_set_task():
         assert _wait_for(policy.in_inference.is_set)
         assert engine.set_task("task B") is True
 
-        # Leftovers still serve under the old label.
-        assert engine.get_action(None) is not None
+        # An in-flight retarget revokes old motion through a planned local hold.
+        # The dispatched label changes only once a new-task action actually runs.
+        if supports_hold:
+            assert engine.get_action(None) is None
+            assert not engine.dispatch_allowed()
+            engine.acknowledge_hold()
+            engine.notify_observation(dict(_RTC_OBS))
+        else:
+            assert engine.get_action(None) is not None
         assert engine.dispatched_task == "task A"
 
         policy.allow_one_inference()  # the in-flight chunk (still task A) lands
+        if supports_hold:
+            assert _wait_for(lambda: not engine._hold.requested)
+            engine.notify_observation(dict(_RTC_OBS))
         policy.allow_one_inference()  # the next chunk is conditioned on task B
         assert _wait_for(lambda: len(policy.predicted_tasks) == 3)
         assert policy.predicted_tasks == ["task A", "task A", "task B"]
@@ -1379,7 +1456,7 @@ def test_rtc_engine_reset_discards_chunk_from_inflight_inference(caplog):
 
         engine.reset()  # bumps the epoch, clears queue and observation
 
-        with caplog.at_level(logging.INFO, logger="lerobot.rollout.inference.rtc"):
+        with caplog.at_level(logging.INFO, logger="lerobot.inference.rtc"):
             policy.allow_one_inference()  # the stale chunk completes now
             assert _wait_for(lambda: any("Discarding action chunk" in r.getMessage() for r in caplog.records))
         assert engine.action_queue.qsize() == 0
@@ -1402,6 +1479,13 @@ def test_rtc_engine_answers_vqa_on_rtc_thread_delivered_by_control_pump():
         assert engine.supports_text_queries
         assert engine.ask("what do you see?") is True
 
+        # The control thread must revoke interpolation and acknowledge a real
+        # robot hold before the worker may run text on a newly captured frame.
+        assert _wait_for(lambda: not engine.dispatch_allowed())
+        assert not engine._ready_answers
+        engine.acknowledge_hold()
+        engine.notify_observation(dict(_RTC_OBS))
+
         assert _wait_for(lambda: len(engine._ready_answers) > 0)
         assert policy.generate_thread_names == ["RTCInference"]
         assert delivered == []  # the generating thread never fires the observer itself
@@ -1412,18 +1496,156 @@ def test_rtc_engine_answers_vqa_on_rtc_thread_delivered_by_control_pump():
         assert delivered[0].answer == "answer: what do you see?"
 
 
-def test_rtc_engine_get_action_raises_on_unlabeled_action():
+def test_rtc_engine_get_action_faults_on_missing_provenance():
     """An unlabeled action would silently corrupt dispatched_task and the frame labels."""
-    from lerobot.policies.rtc import ActionQueue
-    from lerobot.policies.rtc.configuration_rtc import RTCConfig
-
     engine, _policy = _make_rtc_engine()
-    queue = ActionQueue(RTCConfig(enabled=True, execution_horizon=8, max_guidance_weight=1.0))
-    queue.merge(torch.zeros(4, 2), torch.zeros(4, 2), real_delay=0)  # no task label
-    engine._action_queue = queue
+    engine._runtime.activate()
+    engine.action_queue.merge(torch.zeros(4, 2), torch.zeros(4, 2), real_delay=0)
 
-    with pytest.raises(RuntimeError, match="task provenance"):
-        engine.get_action(None)
+    assert engine.get_action(None) is None
+    assert engine.failed
+    assert "Action lacks request provenance" in engine.failure_traceback
+
+
+def test_rtc_engine_refuses_restart_while_running_and_after_stop():
+    engine, _policy = _make_rtc_engine()
+    engine.start()
+    worker = engine._rtc_thread
+    try:
+        with pytest.raises(RuntimeError, match="cannot be restarted"):
+            engine.start()
+        assert engine._rtc_thread is worker
+        assert worker.is_alive()
+    finally:
+        engine.stop()
+
+    assert not worker.is_alive()
+    with pytest.raises(RuntimeError, match="cannot be restarted"):
+        engine.start()
+
+
+def test_rtc_reset_runs_on_policy_worker_after_inflight_call_finishes():
+    """A reset cannot mutate policy/processor state during an existing model call."""
+    with _running_rtc_engine() as (engine, policy):
+        reset_threads = []
+        policy.reset = lambda: reset_threads.append(current_thread().name)
+        assert _wait_for(policy.in_inference.is_set)
+        engine.reset()
+        assert reset_threads == []
+        assert engine.action_queue.empty()
+        policy.allow_one_inference()
+        assert _wait_for(lambda: reset_threads == ["RTCInference"])
+        assert engine.action_queue.empty()
+
+
+def test_rtc_observation_slot_owns_buffers_and_keeps_capture_time():
+    """Recycled camera arrays and delayed request submission cannot refresh provenance."""
+    engine, _ = _make_rtc_engine()
+    source = {**_RTC_OBS, "camera": np.zeros((2, 2, 3), dtype=np.uint8)}
+    engine._robot.observation_time = time.monotonic() - 1
+    engine.notify_observation(source)
+    source["camera"][:] = 255
+    assert not engine._obs_holder["obs"]["camera"].any()
+    assert engine._obs_holder["capture_time"] == engine._robot.observation_time
+
+
+@pytest.mark.parametrize("operation", ["pause", "reset"])
+def test_rtc_invalidation_reports_an_unclaimed_question_once(operation):
+    engine, _policy = _make_rtc_engine(rtc_queue_threshold=-1)
+    delivered = []
+    engine.set_answer_observer(delivered.append)
+    assert engine.ask("what do you see?")
+    getattr(engine, operation)()
+    engine.drop_pending_query()
+    engine.pump_query()
+    engine.pump_query()
+    assert not engine.has_pending_query
+    assert len(delivered) == 1
+    assert delivered[0].answer is None
+    assert "cancelled" in delivered[0].error
+
+
+@pytest.mark.parametrize("operation", ["pause", "reset", "task"])
+def test_rtc_invalidation_during_text_reports_cancellation_without_stale_motion(operation):
+    """A completed operator query cannot override a newer execution context."""
+    with _running_rtc_engine(rtc_queue_threshold=-1) as (engine, policy):
+        generating, finish = Event(), Event()
+
+        def generate_text(batch):
+            generating.set()
+            assert finish.wait(2)
+            return "a stale answer"
+
+        policy.generate_text = generate_text
+        assert engine.ask("what do you see?")
+        assert not engine.dispatch_allowed()
+        engine.acknowledge_hold()
+        engine.notify_observation(dict(_RTC_OBS))
+        assert generating.wait(2)
+        if operation == "task":
+            engine.set_task("new instruction")
+        else:
+            getattr(engine, operation)()
+        finish.set()
+        assert _wait_for(lambda: not engine._query_in_flight)
+        delivered = []
+        engine.set_answer_observer(delivered.append)
+        engine.pump_query()
+        engine.pump_query()
+        assert len(delivered) == 1
+        assert delivered[0].answer is None
+        assert "cancelled" in delivered[0].error
+        assert engine.action_queue.empty()
+        if operation == "pause":
+            assert not engine._runtime.active
+            assert not engine.dispatch_allowed()
+        if operation == "task":
+            assert engine.task == "new instruction"
+
+
+def test_hung_compile_warmup_faults_then_reaches_control_thread_hold():
+    """Warmup cannot bypass the deadline gate while its model worker is blocked."""
+    from lerobot.rollout.strategies import BaseStrategy
+    from lerobot.rollout.strategies.core import send_next_action
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    shutdown = Event()
+    engine, policy = _make_rtc_engine(
+        use_torch_compile=True, action_timeout_s=0.1, startup_timeout_s=1, shutdown_event=shutdown
+    )
+    now = [time.monotonic()]
+    engine._runtime.clock = lambda: now[0]
+    engine._robot.observation_time = now[0]
+    engine._robot.hold = MagicMock()
+    strategy = BaseStrategy(BaseStrategyConfig())
+    strategy._engine = engine
+    strategy._interpolator = ActionInterpolator(multiplier=1)
+    timer = MagicMock()
+    engine.start()
+    try:
+        engine.resume()
+        engine.notify_observation(dict(_RTC_OBS))
+        assert policy.in_inference.wait(2)
+        assert not engine.ready
+        now[0] += 0.2
+        assert strategy._handle_warmup(True, timer), "cold compilation uses the longer startup budget"
+        now[0] += 1
+        assert not strategy._handle_warmup(True, timer)
+        assert engine.failed
+        assert not engine._reset_pending, "a hung model must not receive a concurrent reset"
+        assert not shutdown.is_set(), "shutdown must wait until the local hold has been applied"
+        context = SimpleNamespace(
+            policy=SimpleNamespace(inference=engine),
+            data=SimpleNamespace(dataset_features={}, ordered_action_keys=[]),
+            hardware=SimpleNamespace(robot_wrapper=engine._robot),
+        )
+        assert send_next_action({}, {}, context, strategy._interpolator) is None
+        engine._robot.hold.assert_called_once()
+        assert shutdown.is_set()
+        assert not strategy._warmup_flushed
+    finally:
+        policy.unblock()
+        engine.stop()
 
 
 # --- Config validation ---
