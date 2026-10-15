@@ -236,7 +236,9 @@ Hub sources require their exact upstream commit. No project-specific tags are ad
 
 Local source fingerprints and episode indexes are reused while file identity, size,
 mtime and ctime are unchanged; `runtime.verify_sources=true` forces a full source read.
-This local change detector is not an adversarial integrity guarantee. Artifacts retain
+This local change detector is not an adversarial integrity guarantee: same-size edits
+within a coarse filesystem timestamp tick can be invisible. Treat published local
+artifacts as immutable. Artifacts retain
 checksum/schema checks (unchanged local verification is memoized within a store instance;
 remote checks and downloads still hash bytes). Endpoint addresses, worker counts and
 dataset-root locations do not change language cache identity. Reuse after relocation
