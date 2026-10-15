@@ -127,6 +127,16 @@ def test_default_image_fails_before_paid_dispatch(cloud, monkeypatch):
     )
     with pytest.raises(ValueError, match="immutable image"):
         annotate.submit_annotate_to_hf(cloud)
+    assert not ArtifactStore(cloud.runtime.run_uri).list("bundles/*.json")
+
+
+@pytest.mark.parametrize("mode", ["run", "plan"])
+def test_missing_code_pin_writes_no_bundle(cloud, mode):
+    cloud.runtime.mode = mode
+    cloud.runtime.hf_jobs.code_revision = None
+    with pytest.raises(ValueError, match="immutable.*Git"):
+        annotate.submit_annotate_to_hf(cloud)
+    assert not ArtifactStore(cloud.runtime.run_uri).list("bundles/*.json")
 
 
 def test_active_job_rejected_on_resume(cloud, monkeypatch):

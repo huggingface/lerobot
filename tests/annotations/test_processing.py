@@ -33,6 +33,178 @@ def config():
     return cfg
 
 
+@pytest.mark.parametrize("failure", ["window", "clock", "frames"])
+def test_bad_episode_is_rejected_without_losing_batch(fixture_dataset_root, monkeypatch, failure):
+    from lerobot.annotations import processing
+
+    root = fixture_dataset_root
+    path = root / "data/chunk-000/file-000.parquet"
+    if failure == "window":
+        original = processing.PlanSubtasksMemoryModule._subtasks_for_window
+
+        def spans(self, record, *args, **kwargs):
+            return [] if record.episode_index == 0 else original(self, record, *args, **kwargs)
+
+        monkeypatch.setattr(processing.PlanSubtasksMemoryModule, "_subtasks_for_window", spans)
+    else:
+        import pyarrow as pa
+
+        table = pq.read_table(path)
+        original_native = table
+        name = "timestamp" if failure == "clock" else "frame_index"
+        values = table[name].to_pylist()
+        values[2] = values[1]
+        table = table.set_column(
+            table.schema.get_field_index(name), name, pa.array(values, type=table[name].type)
+        )
+        pq.write_table(table, path)
+    monkeypatch.setattr(processing, "make_frame_provider", lambda *a, **k: StubFrameProvider())
+    cfg = config()
+    cfg.interjections.enabled = True
+    cfg.plan.max_frames_per_prompt = 2
+    cfg.plan.window_overlap_seconds = 0
+    result = run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert result.validation_report.ok
+    assert any(
+        {
+            "window": "empty_subtask_window",
+            "clock": "invalid_episode_clock",
+            "frames": "invalid_episode_frames",
+        }[failure]
+        in warning
+        for warning in result.validation_report.warnings
+    )
+    assert pq.read_table(root / "data/chunk-000/file-001.parquet")["language_persistent"][0].as_py()
+    if failure != "window":
+        calls = []
+        original_batch = processing.LanguageModule.process_batch
+
+        def observe(self, items, context):
+            calls.extend(item.key for item in items)
+            return original_batch(self, items, context)
+
+        monkeypatch.setattr(processing.LanguageModule, "process_batch", observe)
+        pq.write_table(original_native, path)
+        repaired = run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+        assert repaired.validation_report.ok and set(calls) == {"0"}
+
+
+def test_external_staging_plan_does_not_write_dataset(single_episode_root, tmp_path):
+    root = single_episode_root
+    before = {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    cfg = config()
+    cfg.staging_dir = tmp_path / "external-stage"
+    cfg.runtime.mode = "plan"
+    run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()} == before
+    assert list(cfg.staging_dir.rglob("plan.json"))
+
+
+@pytest.mark.parametrize(
+    "change", ["append", "native", "metadata", "video", "shared_file_append", "selection"]
+)
+def test_episode_changes_only_recompute_affected_vlm_items(
+    fixture_dataset_root, tmp_path, monkeypatch, change
+):
+    import json
+
+    import pyarrow as pa
+
+    from lerobot.annotations import processing
+    from tests.fixtures.dataset_factories import build_annotation_dataset
+
+    root = fixture_dataset_root
+    info_path = root / "meta/info.json"
+    info = json.loads(info_path.read_text())
+    camera = "observation.images.top"
+    if change == "video":
+        info["features"][camera] = {"dtype": "video", "shape": [24, 32, 3], "names": None}
+        info["video_path"] = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+        metadata = []
+        for ep in (0, 1):
+            video = root / f"videos/{camera}/chunk-000/file-{ep:03d}.mp4"
+            video.parent.mkdir(parents=True, exist_ok=True)
+            video.write_bytes(f"video-{ep}".encode())
+            metadata.append(
+                {
+                    "episode_index": ep,
+                    f"videos/{camera}/chunk_index": 0,
+                    f"videos/{camera}/file_index": ep,
+                    f"videos/{camera}/from_timestamp": 0.0,
+                    f"videos/{camera}/to_timestamp": 1.2,
+                }
+            )
+        path = root / "meta/episodes/chunk-000/file-000.parquet"
+        path.parent.mkdir(parents=True)
+        pq.write_table(pa.Table.from_pylist(metadata), path)
+        info_path.write_text(json.dumps(info))
+    first_path = root / "data/chunk-000/file-000.parquet"
+    second_path = first_path.with_name("file-001.parquet")
+    if change == "shared_file_append":
+        pq.write_table(pa.concat_tables([pq.read_table(first_path), pq.read_table(second_path)]), first_path)
+        second_path.unlink()
+    calls = []
+    original = processing.LanguageModule.process_batch
+
+    def observe(self, items, context):
+        calls.extend((self.phase, item.key) for item in items)
+        return original(self, items, context)
+
+    monkeypatch.setattr(processing.LanguageModule, "process_batch", observe)
+    monkeypatch.setattr(processing, "make_frame_provider", lambda *a, **k: StubFrameProvider())
+    cfg = config()
+    cfg.interjections.enabled = cfg.vqa.enabled = True
+    cfg.interjections.max_interjections_per_episode = 1
+    cfg.interjections.interjection_min_t = 0.5
+    cfg.vqa.K, cfg.vqa.vqa_emission_hz, cfg.vqa.question_types = 1, 1, ("count",)
+    if change == "selection":
+        cfg.only_episodes = (0,)
+    run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    calls.clear()
+    if change in {"append", "shared_file_append"}:
+        other = build_annotation_dataset(
+            tmp_path / "new", [(2, 12, "Could you tidy the kitchen please?")], fps=10
+        )
+        new = pq.read_table(other / "data/chunk-000/file-002.parquet")
+        target = first_path if change == "shared_file_append" else first_path.with_name("file-002.parquet")
+        if change == "shared_file_append":
+            old = pq.read_table(first_path)
+            for name in set(old.column_names) - set(new.column_names):
+                new = new.append_column(name, _language_array([[]] * len(new), old[name].type))
+            new = pa.concat_tables([old, new.select(old.column_names)])
+        pq.write_table(new, target)
+        info = json.loads(info_path.read_text())
+        info["total_episodes"] += 1
+        info_path.write_text(json.dumps(info))
+        expected = {"2"}
+    elif change == "native":
+        table = pq.read_table(second_path)
+        times = table["timestamp"].to_pylist()
+        times[2] += 0.01
+        table = table.set_column(
+            table.schema.get_field_index("timestamp"),
+            "timestamp",
+            pa.array(times, type=table["timestamp"].type),
+        )
+        pq.write_table(table, second_path)
+        expected = {"1"}
+    elif change == "metadata":
+        path = root / "meta/episodes/notes.txt"
+        path.parent.mkdir(parents=True)
+        path.write_text("Administrative note, not a model input")
+        expected = set()
+    elif change == "selection":
+        cfg.only_episodes = None
+        expected = {"1"}
+    else:
+        (root / f"videos/{camera}/chunk-000/file-000.mp4").write_bytes(b"reencoded-video-0")
+        expected = {"0"}
+    run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert {key for _, key in calls} == expected
+    for phase in ("plan", "vqa", "interjections", "plan_update"):
+        assert {key for name, key in calls if name == phase} == expected
+
+
 def test_semantic_cache_survives_relocation_and_endpoint_changes(single_episode_root, tmp_path, monkeypatch):
     import shutil
 
@@ -120,7 +292,7 @@ def test_rejected_episode_does_not_discard_healthy_batch(fixture_dataset_root, m
     assert pq.read_table(root / "data/chunk-000/file-001.parquet")["language_persistent"][0].as_py()
 
 
-def test_materialized_cache_pruning_keeps_inference_resume(single_episode_root):
+def test_materialized_cache_pruning_keeps_inference_resume(single_episode_root, caplog):
     cfg = config()
     cfg.runtime.retain_materialized_outputs = False
     CLIENTS.clear()
@@ -129,6 +301,66 @@ def test_materialized_cache_pruning_keeps_inference_resume(single_episode_root):
     assert not list((single_episode_root / ".annotate_staging/prepared").rglob("*-*"))
     run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
     assert len(CLIENTS) == count
+    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    assert len(CLIENTS) == count
+    assert "Invalid artifact checksum" not in caplog.text
+    assert not list((single_episode_root / ".annotate_staging/prepared").iterdir())
+
+
+def test_consolidated_windows_preserve_unselected_episodes(fixture_dataset_root):
+    import pyarrow as pa
+
+    root = fixture_dataset_root
+    first = root / "data/chunk-000/file-000.parquet"
+    second = first.with_name("file-001.parquet")
+    pq.write_table(pa.concat_tables([pq.read_table(first), pq.read_table(second)]), first)
+    second.unlink()
+    cfg = config()
+    run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    paths = list((root / "meta/annotations/windows").rglob("*.parquet"))
+    assert paths == [root / "meta/annotations/windows/chunk-000/file-000.parquet"]
+    before = pq.read_table(paths[0]).to_pylist()
+    assert {row["episode_index"] for row in before} == {0, 1}
+    cfg.only_episodes = (0,)
+    cfg.plan.emit_memory = False
+    run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    after = pq.read_table(paths[0]).to_pylist()
+    assert [row for row in after if row["episode_index"] == 1] == [
+        row for row in before if row["episode_index"] == 1
+    ]
+    assert len(after) == len(before)
+
+
+def test_unexpected_module_errors_still_fail_fast(single_episode_root, monkeypatch):
+    from lerobot.annotations import processing
+
+    def bug(*args):
+        raise ValueError("unexpected module bug")
+
+    monkeypatch.setattr(processing.PlanSubtasksMemoryModule, "run_episode", bug)
+    with pytest.raises(ValueError, match="unexpected module bug"):
+        run_annotation_pipeline(config(), single_episode_root, client_factory=FACTORY)
+
+
+def test_native_episode_fingerprints_survive_row_group_rewrite(tmp_path):
+    import pyarrow as pa
+
+    from lerobot.annotations.processing_source import LeRobotEpisodeSource
+    from lerobot.datasets.io_utils import write_table_one_row_group_per_episode
+    from tests.fixtures.dataset_factories import build_annotation_dataset
+
+    root = build_annotation_dataset(tmp_path / "data", [(0, 1200, "Task"), (1, 700, "Task")], fps=10)
+    first = root / "data/chunk-000/file-000.parquet"
+    second = first.with_name("file-001.parquet")
+    table = pa.concat_tables([pq.read_table(first), pq.read_table(second)])
+    pq.write_table(table, first)
+    second.unlink()
+    before = LeRobotEpisodeSource(root)
+    write_table_one_row_group_per_episode(table, first)
+    after = LeRobotEpisodeSource(root)
+    assert [episode["native_parts"] for episode in before.episodes.values()] == [
+        episode["native_parts"] for episode in after.episodes.values()
+    ]
 
 
 @pytest.mark.parametrize("version", ["v2.1", "v4.0", None, 3])
@@ -332,7 +564,9 @@ def test_plan_mode_does_not_construct_models(single_episode_root):
 def test_window_provenance_keeps_exact_source_references(single_episode_root):
     cfg = config()
     run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
-    rows = pq.read_table(single_episode_root / "meta/annotations/windows/episode-0.parquet").to_pylist()
+    rows = pq.read_table(
+        single_episode_root / "meta/annotations/windows/chunk-000/file-000.parquet"
+    ).to_pylist()
     native = pq.read_table(single_episode_root / "data/chunk-000/file-000.parquet")
     owned = [row for row in rows if row["owned"]]
     assert [row["frame_index"] for row in owned] == native["frame_index"].to_pylist()

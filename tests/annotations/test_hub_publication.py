@@ -204,6 +204,37 @@ def test_preflight_runs_before_model_setup(publication, single_episode_root, mon
     assert not CLIENTS and not calls
 
 
+@pytest.mark.parametrize("new_target", [False, True])
+def test_preflight_counts_generated_shard_metadata_before_inference(
+    publication, fixture_dataset_root, monkeypatch, new_target
+):
+    import httpx
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    from lerobot.annotations.processing import run_annotation_pipeline
+    from tests.annotations.test_processing import CLIENTS, FACTORY
+
+    _, cfg, calls, api_class = publication
+    root = fixture_dataset_root
+    cfg.push_to_hub = True
+    cfg.interjections.enabled = cfg.vqa.enabled = False
+    cfg.vlm.auto_serve = False
+    cfg.max_publish_files = 7  # 2 data + 2 ownership + 2 windows + info + README + lineage = 9
+    if new_target:
+        cfg.repo_id, cfg.expected_target_revision = "owner/source", None
+
+        def absent(self, repo_id):
+            raise RepositoryNotFoundError(
+                "absent", response=httpx.Response(404, request=httpx.Request("GET", "https://test.example"))
+            )
+
+        monkeypatch.setattr(api_class, "dataset_info", absent)
+    CLIENTS.clear()
+    with pytest.raises(ValueError, match="single-commit"):
+        run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert not CLIENTS and not calls
+
+
 def test_local_source_publishes_with_content_provenance(publication, single_episode_root, monkeypatch):
     import httpx
     from huggingface_hub.errors import RepositoryNotFoundError
