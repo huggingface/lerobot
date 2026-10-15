@@ -154,6 +154,11 @@ class VqaConfig:
     # True: ground VQA only on --vlm.camera_key (default: every camera).
     restrict_to_default_camera: bool = False
 
+    # Grid the VLM answers bbox/keypoint coordinates on. Qwen3-VL-family models use
+    # 0-1000 whatever the image size. None = the model answers in pixels of the frame.
+    # Either way coordinates are stored as [0, 1] fractions of the image width/height.
+    coordinate_scale: float | None = 1000.0
+
 
 @dataclass
 class VlmConfig:

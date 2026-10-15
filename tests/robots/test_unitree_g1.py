@@ -51,7 +51,7 @@ class TokenController:
 
     def __init__(self, dim: int = TOKEN_DIM):
         self.action_ft = {f"motion_token.{i}.pos": float for i in range(dim)}
-        self.observation_ft = {f"motion_token_state.{i}.pos": float for i in range(dim)}
+        self.observation_ft = {f"motion_token.{i}.pos": float for i in range(dim)}
         self.kp = np.full(NUM_MOTORS, 100.0, np.float32)
         self.kd = np.full(NUM_MOTORS, 2.0, np.float32)
         self.default_angles = np.zeros(NUM_MOTORS, np.float32)
@@ -177,13 +177,10 @@ def make_robot():
                 cameras=cameras or {},
                 **config_kwargs,
             )
-            robot = UnitreeG1(cfg)
-            if controller is not None:
-                robot.controller = controller
-                # observation_features/action_features are cached_property; drop any cached value
-                # so the injected controller is taken into account.
-                robot.__dict__.pop("observation_features", None)
-                robot.__dict__.pop("action_features", None)
+            # Hand the stub to __init__ where it would resolve the configured controller by
+            # name, so construction-time state (the hold declaration) sees it.
+            with patch(f"{module}.make_robot_controller", lambda name: controller):
+                robot = UnitreeG1(cfg)
             built.append(robot)
             return robot
 
@@ -342,6 +339,65 @@ class TestActionFeatures:
         factory, _ = make_robot
         robot = factory(controller=TokenController())
         assert len(robot.action_features) == len(robot.observation_features) == TOKEN_DIM
+
+
+# ---------------------------------------------------------------------------
+# Rollout hold contract
+# ---------------------------------------------------------------------------
+
+
+def thread_safe(robot):
+    """Wrap in rollout's robot wrapper, whose hold contract gates remote admission."""
+    pytest.importorskip("datasets", reason="lerobot.rollout requires datasets")
+    from lerobot.rollout.robot_wrapper import ThreadSafeRobot
+
+    return ThreadSafeRobot(robot)
+
+
+class TestPositionHold:
+    def test_token_controller_is_holdable(self, make_robot):
+        """Re-sending the last token keeps the SONIC decoder balancing, so it can be retained."""
+        factory, _ = make_robot
+        robot = factory(controller=TokenController())
+
+        assert robot.supports_position_hold
+        thread_safe(robot).configure_position_hold()
+
+    def test_locomotion_controller_is_not_holdable(self, make_robot):
+        """Joystick velocities cannot be retained as a target."""
+        factory, _ = make_robot
+        robot = factory(controller=LocomotionOnlyController())
+
+        assert not robot.supports_position_hold
+        with pytest.raises(ValueError, match="position-hold"):
+            thread_safe(robot).configure_position_hold()
+
+    def test_raw_joint_control_is_not_holdable(self, make_robot):
+        factory, _ = make_robot
+        robot = factory()
+
+        assert not robot.supports_position_hold
+        with pytest.raises(ValueError, match="position-hold"):
+            thread_safe(robot).configure_position_hold()
+
+    def test_hold_before_first_command_replays_the_echoed_token(self, make_robot):
+        """Until a policy action arrives, the hold replays the token the controller echoes as
+        state, so the echo must use the action keys (SONIC seeds it with the neutral token)."""
+        from lerobot.robots.unitree_g1.unitree_g1 import G1_29_LowState
+
+        factory, _ = make_robot
+        controller = TokenController()
+        echo = {key: 0.01 * i for i, key in enumerate(controller.observation_ft)}
+        controller.observation_state = lambda: dict(echo)
+        robot = factory(controller=controller)
+        robot._lowstate = G1_29_LowState()  # get_observation() is empty until a state arrives
+        wrapper = thread_safe(robot)
+        wrapper.configure_position_hold()
+
+        wrapper.get_observation()
+        wrapper.hold()
+
+        assert {key: robot.controller_input[key] for key in echo} == echo
 
 
 # ---------------------------------------------------------------------------
