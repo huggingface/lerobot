@@ -33,6 +33,120 @@ def config():
     return cfg
 
 
+def test_feature_key_order_does_not_invalidate_episode(single_episode_root):
+    import json
+
+    from lerobot.annotations.processing_source import LeRobotEpisodeSource
+    from lerobot.annotations.runtime.artifacts import ArtifactStore
+    from lerobot.annotations.runtime.configs import StageConfig
+
+    root = single_episode_root
+    info_path = root / "meta/info.json"
+    info = json.loads(info_path.read_text())
+    info["features"] = {
+        field.name: {"dtype": str(field.type), "shape": [1], "names": None}
+        for field in pq.read_schema(root / "data/chunk-000/file-000.parquet")
+    }
+    info_path.write_text(json.dumps(info))
+    store = ArtifactStore(root / ".annotate_staging/processing")
+    stage = StageConfig("plan", "unused")
+
+    def item():
+        return next(LeRobotEpisodeSource(root).discover(stage, store, {}))
+
+    before = item()
+    info_path.write_text(json.dumps(info, sort_keys=True))
+    after = item()
+    assert before.payload["native_parts"] == after.payload["native_parts"]
+    assert before.content_digest == after.content_digest
+    info["features"]["timestamp"]["shape"] = [2]
+    info_path.write_text(json.dumps(info))
+    assert item().content_digest != before.content_digest
+
+
+@pytest.mark.parametrize("cameras", [("wrist", "top"), ("top", "wrist")])
+def test_inplace_resume_preserves_camera_order(single_episode_root, monkeypatch, cameras):
+    import json
+
+    import pyarrow as pa
+
+    from lerobot.annotations import processing
+    from lerobot.annotations.processing_source import LeRobotEpisodeSource
+    from lerobot.annotations.runtime.artifacts import ArtifactStore
+    from lerobot.annotations.runtime.configs import StageConfig
+
+    root = single_episode_root
+    keys = [f"observation.images.{name}" for name in cameras]
+    info_path = root / "meta/info.json"
+    info = json.loads(info_path.read_text())
+    info["features"] = {
+        field.name: {"dtype": str(field.type), "shape": [1], "names": None}
+        for field in pq.read_schema(root / "data/chunk-000/file-000.parquet")
+    }
+    row = {"episode_index": 0}
+    for key in keys:
+        info["features"][key] = {"dtype": "video", "shape": [24, 32, 3], "names": None}
+        video = root / f"videos/{key}/chunk-000/file-000.mp4"
+        video.parent.mkdir(parents=True)
+        video.write_bytes(key.encode())  # Only frame/model dependencies are stubbed below.
+        row.update(
+            {
+                f"videos/{key}/{name}": value
+                for name, value in (
+                    ("chunk_index", 0),
+                    ("file_index", 0),
+                    ("from_timestamp", 0.0),
+                    ("to_timestamp", 3.0),
+                )
+            }
+        )
+    info_path.write_text(json.dumps(info))
+    path = root / "meta/episodes/chunk-000/file-000.parquet"
+    path.parent.mkdir(parents=True)
+    pq.write_table(pa.Table.from_pylist([row]), path)
+    monkeypatch.setattr(
+        processing, "make_frame_provider", lambda *a, **k: StubFrameProvider(cameras=tuple(keys))
+    )
+    cfg = config()
+    cfg.interjections.enabled = cfg.vqa.enabled = True
+    cfg.interjections.max_interjections_per_episode = 1
+    cfg.interjections.interjection_min_t = 0.5
+    cfg.vqa.question_types = ("count",)
+    run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    updated = json.loads(info_path.read_text())
+    assert [key for key, feature in updated["features"].items() if feature["dtype"] == "video"] == keys
+    before = {
+        p.relative_to(root): p.read_bytes()
+        for name in ("data", "meta")
+        for p in (root / name).rglob("*")
+        if p.is_file()
+    }
+
+    def no_model_setup(*args, **kwargs):
+        pytest.fail("Cached in-place resume constructed a language model client")
+
+    monkeypatch.setattr(processing.LanguageModule, "setup", no_model_setup)
+    cfg.runtime.mode = "resume"
+    result = run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert result.validation_report.ok
+    assert before == {
+        p.relative_to(root): p.read_bytes()
+        for name in ("data", "meta")
+        for p in (root / name).rglob("*")
+        if p.is_file()
+    }
+    store = ArtifactStore(root / ".annotate_staging/processing")
+    stage = StageConfig("plan", "unused")
+    original = next(LeRobotEpisodeSource(root).discover(stage, store, {}))
+    updated["features"] = {
+        **{k: v for k, v in updated["features"].items() if k not in keys},
+        **{k: updated["features"][k] for k in reversed(keys)},
+    }
+    info_path.write_text(json.dumps(updated))
+    reordered = next(LeRobotEpisodeSource(root).discover(stage, store, {}))
+    assert original.content_digest != reordered.content_digest
+
+
 @pytest.mark.parametrize("failure", ["window", "clock", "frames"])
 def test_bad_episode_is_rejected_without_losing_batch(fixture_dataset_root, monkeypatch, failure):
     from lerobot.annotations import processing

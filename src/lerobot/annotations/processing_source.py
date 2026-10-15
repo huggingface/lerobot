@@ -192,7 +192,7 @@ class LeRobotEpisodeSource:
             "fps": self.fps,
             "features": [
                 (key, {name: value.get(name) for name in ("dtype", "shape", "names")})
-                for key, value in info["features"].items()
+                for key, value in sorted(info["features"].items())
             ],
         }
         self.video_bindings = defaultdict(list)
