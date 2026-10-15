@@ -150,6 +150,26 @@ def test_process_local_storage_is_rejected(tmp_path):
         render_slurm(store, plan, runtime(tmp_path))
 
 
+def test_failed_array_points_to_plan_tasks_and_logs(tmp_path, monkeypatch):
+    from lerobot.jobs import slurm
+
+    store = ArtifactStore(tmp_path / "run")
+    plan = make_plan(store, size=1)
+    cfg = runtime(tmp_path)
+
+    def submit(command, **kwargs):
+        if "--wait" in command:
+            raise subprocess.CalledProcessError(1, command)
+        return SimpleNamespace(stdout="123\n")
+
+    monkeypatch.setattr(slurm.subprocess, "run", submit)
+    with pytest.raises(RuntimeError, match="worker-123_.*finalizer-") as exc:
+        run_slurm(store, plan, cfg)
+    assert plan.plan_id in str(exc.value) and "sacct -j 123" in str(exc.value)
+    assert isinstance(exc.value.__cause__, subprocess.CalledProcessError)
+    assert store.list(f"{plan.prefix}/slurm/*.json")
+
+
 def test_generated_shell_executes_with_spaces(tmp_path):
     store = ArtifactStore(tmp_path / "run with spaces")
     plan = make_plan(store, size=3, shard_size=1)

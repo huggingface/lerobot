@@ -59,6 +59,8 @@ class RuntimeConfig:
     batch_size: int = 16
     shard_size: int = 64
     max_retries: int = 2
+    verify_sources: bool = False
+    retain_materialized_outputs: bool = True
     # Sequential by default. Parallel admission reserves every worker's resources.
     max_parallel_stages: int = 1
     resource_budget: Resources | None = None

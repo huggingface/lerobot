@@ -118,6 +118,17 @@ def test_remote_requires_login(cloud, monkeypatch):
         annotate.submit_annotate_to_hf(cloud)
 
 
+def test_default_image_fails_before_paid_dispatch(cloud, monkeypatch):
+    from lerobot.annotations.steerable_pipeline.config import AnnotationJobConfig
+
+    cloud.job.image = AnnotationJobConfig().image
+    monkeypatch.setattr(
+        processing, "run_job", lambda **kwargs: pytest.fail("An unconfigured image cannot launch")
+    )
+    with pytest.raises(ValueError, match="immutable image"):
+        annotate.submit_annotate_to_hf(cloud)
+
+
 def test_active_job_rejected_on_resume(cloud, monkeypatch):
     annotate.submit_annotate_to_hf(cloud)
     monkeypatch.setattr(
@@ -133,3 +144,17 @@ def test_real_remote_requirement(tmp_path):
     for uri in (tmp_path, "memory://invalid"):
         with pytest.raises(ValueError, match="persistent remote"):
             processing.require_persistent_remote(ArtifactStore(uri))
+
+
+def test_public_annotation_submitter_needs_no_datasets(monkeypatch):
+    import lerobot.jobs as jobs
+    from lerobot.utils import import_utils
+
+    def require(name, **kwargs):
+        if name == "datasets":
+            raise ImportError("datasets deliberately unavailable")
+
+    monkeypatch.setattr(import_utils, "require_package", require)
+    assert callable(jobs.__getattr__("submit_annotate_to_hf"))
+    with pytest.raises(ImportError, match="deliberately unavailable"):
+        jobs.__getattr__("submit_to_hf")

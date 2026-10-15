@@ -25,6 +25,7 @@ from .types import (
     DatasetRef,
     InputItem,
     ProcessingModule,
+    ScientificProcessingModule,
     WorkItem,
     canonical_json,
     checked_name,
@@ -119,7 +120,7 @@ def seal_plan(
     identity = {
         "dataset": asdict(dataset),
         "factory": factory,
-        "config": module.scientific_config() if hasattr(module, "scientific_config") else config,
+        "config": module.scientific_config() if isinstance(module, ScientificProcessingModule) else config,
         "module": {"name": module.spec.name, "version": module.spec.version, "scope": module.spec.scope},
         "schemas": schemas,
         "upstream": upstream or {},

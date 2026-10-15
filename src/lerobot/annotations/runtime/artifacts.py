@@ -14,6 +14,8 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO
 
+from filelock import FileLock
+
 from lerobot.streaming.location import StorageLocation
 from lerobot.utils.import_utils import _fsspec_available, require_package
 
@@ -33,11 +35,15 @@ class ArtifactStore:
     def __init__(self, uri: str | Path, *, storage_options: dict | None = None):
         require_package("fsspec", "dataset")
         self.uri = str(uri).rstrip("/")
-        self.location = StorageLocation.parse(uri)
         self.storage_options = storage_options or {}
         self.fs, self.root = fsspec.core.url_to_fs(self.uri, **self.storage_options)
         protocols = self.fs.protocol if isinstance(self.fs.protocol, tuple) else (self.fs.protocol,)
         self.is_local = bool({"file", "local"}.intersection(protocols))
+        self._verified: dict[tuple[str, tuple], tuple[str, int]] = {}
+
+    @property
+    def location(self):
+        return StorageLocation.parse(self.uri)
 
     def path(self, relative: str) -> str:
         path = PurePosixPath(relative)
@@ -56,7 +62,7 @@ class ArtifactStore:
             return json.load(stream)
 
     def put_file(self, relative: str, source: Path, *, name: str = "", rows: int | None = None) -> Artifact:
-        """Close and hash a file before publishing it; local outputs use an atomic link."""
+        """Publish closed files without clobbering another participating writer."""
         digest, size = file_checksum(source)
         path = self.path(relative)
         if self.fs.exists(path):
@@ -69,8 +75,12 @@ class ArtifactStore:
                     shutil.copyfileobj(stream, destination)
                     destination.flush()
                     os.fsync(destination.fileno())
-                # Unlike replace(), link() cannot clobber an already published key.
-                os.link(temporary, path)
+                # Shared publication lock + atomic rename works without hard links
+                # (e.g. exFAT/SMB). The filesystem must support locks and rename.
+                with FileLock(str(path) + ".publish.lock"):
+                    if Path(path).exists():
+                        raise FileExistsError(path)
+                    os.replace(temporary, path)
             finally:
                 Path(temporary).unlink(missing_ok=True)
         else:
@@ -89,8 +99,15 @@ class ArtifactStore:
             return self.put_file(relative, source)
 
     def checksum(self, relative: str) -> tuple[str, int]:
+        path = self.path(relative)
+        token = local_file_token(Path(path)) if self.is_local else None
         with self.open(relative) as stream:
-            return _stream_checksum(stream)
+            result = _stream_checksum(stream)
+        if token is not None and local_file_token(Path(path)) == token:
+            if len(self._verified) >= 4096:
+                self._verified.clear()
+            self._verified[(path, token)] = result
+        return result
 
     def download(self, artifact: Artifact, destination: Path) -> Path:
         """Copy and hash in one pass; never expose a partial or corrupt destination."""
@@ -105,7 +122,11 @@ class ArtifactStore:
 
     def verify(self, artifact: Artifact) -> bool:
         try:
-            return self.checksum(artifact.path) == (artifact.sha256, artifact.size)
+            path = self.path(artifact.path)
+            token = local_file_token(Path(path)) if self.is_local else None
+            expected = (artifact.sha256, artifact.size)
+            cached = self._verified.get((path, token)) if token is not None else None
+            return (cached if cached is not None else self.checksum(artifact.path)) == expected
         except (FileNotFoundError, OSError):
             return False
 
@@ -121,6 +142,12 @@ class ArtifactStore:
 def file_checksum(path: Path) -> tuple[str, int]:
     with path.open("rb") as stream:
         return _stream_checksum(stream)
+
+
+def local_file_token(path: Path) -> tuple:
+    """Local change detector, not a content digest or an adversarial integrity proof."""
+    stat = path.stat()
+    return (str(path.resolve()), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
 
 def _stream_checksum(stream: BinaryIO, output: BinaryIO | None = None) -> tuple[str, int]:

@@ -44,6 +44,57 @@ def test_json_retry_corrects_but_does_not_silently_accept_leading_zeroes():
     assert "use 2.52, not 002.52" in calls[1][0][-1]["content"]
 
 
+@pytest.mark.parametrize("status,expected_calls", [(429, 3), (502, 3), (400, 1)])
+def test_request_retries_are_bounded_and_preserve_api_version(monkeypatch, status, expected_calls):
+    import sys
+    from types import SimpleNamespace
+
+    from lerobot.annotations.steerable_pipeline import vlm_client
+    from lerobot.annotations.steerable_pipeline.config import VlmConfig
+
+    calls, delays, settings = [], [], []
+
+    class ResponseError(Exception):
+        status_code = status
+
+    class Client:
+        def __init__(self, **kwargs):
+            settings.append(kwargs)
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) < 3:
+                raise ResponseError()
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))])
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    monkeypatch.setattr(vlm_client.time, "sleep", delays.append)
+    cfg = VlmConfig(auto_serve=False, api_base="https://example.test/v1?api-version=2024-10-21")
+    client = vlm_client.make_vlm_client(cfg)
+    try:
+        if status == 400:
+            with pytest.raises(ResponseError):
+                client.generate_json([[{"role": "user", "content": "test"}]])
+        else:
+            assert client.generate_json([[{"role": "user", "content": "test"}]]) == [{"ok": True}]
+        assert len(calls) == expected_calls
+        assert delays == ([1, 2] if status != 400 else [])
+        assert settings == [
+            {
+                "base_url": "https://example.test/v1",
+                "api_key": "EMPTY",
+                "max_retries": 0,
+                "default_query": {"api-version": "2024-10-21"},
+            }
+        ]
+    finally:
+        client.close()
+
+
 def test_bind_serve_port_substitutes_placeholder() -> None:
     # The {port} placeholder is replaced everywhere it appears, regardless of
     # parallel vs single server — the bug was the single-server path passing

@@ -79,6 +79,7 @@ def test_one_guarded_commit_preserves_license_and_skips_video(publication):
     assert "videos/camera/file.mp4" not in commit["operations"]
     card = commit["operations"]["README.md"].decode()
     assert "license: cc-by-4.0" in card and "Original attribution and links." in card
+    assert "finerobotics\n" not in card
     assert "lerobot/example" in card and "revision='finerobotics-v0'" in card
     assert json.loads(commit["operations"][hub.LINEAGE])["upstream_source"]["repo_id"] == "owner/source"
     assert hub.LINEAGE in commit["operations"]
@@ -188,3 +189,37 @@ def test_update_cannot_patch_unrelated_publisher_source(publication):
     with pytest.raises(ValueError, match="start from.*processed"):
         hub.publish_annotation(root, cfg, changed_paths=[])
     assert not calls
+
+
+def test_preflight_runs_before_model_setup(publication, single_episode_root, monkeypatch):
+    from lerobot.annotations.processing import run_annotation_pipeline
+    from tests.annotations.test_processing import CLIENTS, FACTORY
+
+    _, cfg, calls, _ = publication
+    cfg.push_to_hub = True
+    cfg.redistribution_permission = None
+    CLIENTS.clear()
+    with pytest.raises(ValueError, match="permission"):
+        run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    assert not CLIENTS and not calls
+
+
+def test_local_source_publishes_with_content_provenance(publication, single_episode_root, monkeypatch):
+    import httpx
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    _, cfg, calls, api_class = publication
+    cfg.repo_id = cfg.revision = cfg.expected_target_revision = None
+
+    def absent(self, repo_id):
+        if not calls:
+            raise RepositoryNotFoundError(
+                "not found",
+                response=httpx.Response(404, request=httpx.Request("GET", "https://test.example")),
+            )
+        return SimpleNamespace(sha=SHA)
+
+    monkeypatch.setattr(api_class, "dataset_info", absent)
+    hub.publish_annotation(single_episode_root, cfg, changed_paths=[])
+    source = json.loads(calls[1][1]["operations"][hub.LINEAGE])["source"]
+    assert source["type"] == "local" and len(source["native_content_sha256"]) == 64

@@ -44,6 +44,7 @@ from .steerable_pipeline.modules import (
     PlanSubtasksMemoryModule,
 )
 from .steerable_pipeline.modules.plan_subtasks_memory import subtask_windows
+from .steerable_pipeline.prompts import _DIR as PROMPT_DIR, load as load_prompt
 from .steerable_pipeline.staging import EpisodeStaging
 from .steerable_pipeline.validator import StagingValidator
 from .steerable_pipeline.vlm_client import make_vlm_client
@@ -163,21 +164,33 @@ class LanguageModule:
         import draccus
 
         values = draccus.encode(self.config)
-        shared = {key: values[key] for key in ("vlm", "seed", "video_backend")}
-        shared["vlm"].pop("client_concurrency", None)
-        for key in (
-            "endpoint_limit_url",
-            "endpoint_limit_key",
-            "endpoint_limit_token_env",
-            "endpoint_limit_timeout_s",
-        ):
-            shared["vlm"].pop(key, None)
+        shared = {key: values[key] for key in ("seed", "video_backend")}
+        shared["vlm"] = {
+            key: values["vlm"][key]
+            for key in (
+                "backend",
+                "model_id",
+                "model_revision",
+                "max_new_tokens",
+                "temperature",
+                "max_model_len",
+                "chat_template_kwargs",
+                "reasoning_effort",
+                "camera_key",
+            )
+        }
         names = ("plan",) if self.phase in {"plan", "plan_update"} else (self.phase,)
         return {
-            "root": str(self.root),
             "phase": self.phase,
             "client_factory": self.client_factory,
             "annotation_config": {**shared, **{name: values[name] for name in names}},
+            "prompts": fingerprint(
+                {
+                    path.stem: load_prompt(path.stem)
+                    for path in sorted(PROMPT_DIR.glob("*.txt"))
+                    if path.stem.startswith(names)
+                }
+            ),
         }
 
     def teardown(self):
@@ -209,9 +222,8 @@ class LanguageModule:
             # enabled stages are present. These artifacts retain exact source clocks.
             output = staging.read(output_name)
             if self.phase == "plan" and not any(row.get("style") == "subtask" for row in output):
-                raise ValueError(
-                    "Subtask annotation returned no subtasks; refusing a successful empty result"
-                )
+                shutil.rmtree(staging.root, ignore_errors=True)
+                return ItemResult(item.item_id, Outcome.REJECTED, reason="no_subtasks")
             artifact = context.write_parquet(item, "atoms", _staged_table(output))
             artifacts = [artifact]
             if self.phase == "plan":
@@ -276,6 +288,9 @@ class LanguageValidator:
         self.schema = pa.schema([("episode_index", pa.int64()), ("warnings", pa.list_(pa.string()))])
         self.spec = ModuleSpec("language_validate", "1", "episode", {"validation": self.schema})
 
+    def scientific_config(self):
+        return {"skip_validation": self.skip_validation}
+
     def setup(self, context):
         pass
 
@@ -290,6 +305,10 @@ class LanguageValidator:
             for name, artifact in item.payload["upstream"].items():
                 staging.write("plan" if name == "plan_update" else name, _read_atoms(context.store, artifact))
             report = StagingValidator().validate([record], staging.root)
+            report.warnings.extend(
+                f"Episode {record.episode_index}: {name} {value['outcome']} ({value['reason']})"
+                for name, value in item.payload.get("unavailable", {}).items()
+            )
             if not report.ok and not self.skip_validation:
                 raise ValueError(report.summary() + ": " + "; ".join(report.errors))
             table = pa.Table.from_pylist(
@@ -312,6 +331,9 @@ class LanguageMaterializer:
         self.spec = ModuleSpec(
             "language_materialize", "2", "asset", {"data": None, "ownership": OWNERSHIP_SCHEMA}
         )
+
+    def scientific_config(self):
+        return {}  # All materialization inputs are content-bound in the work items.
 
     def setup(self, context):
         pass

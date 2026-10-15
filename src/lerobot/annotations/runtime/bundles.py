@@ -2,7 +2,8 @@
 # Licensed under the Apache License, Version 2.0 (the "License").
 """Portable trusted configuration bundles; not executable code or credentials."""
 
-from urllib.parse import urlsplit
+import re
+from urllib.parse import parse_qsl, urlsplit
 
 from .types import fingerprint
 
@@ -23,7 +24,13 @@ def check_credentials(value):
             check_credentials(entry)
     elif isinstance(value, str) and "://" in value:
         url = urlsplit(value)
-        if url.username or url.password or url.query:
+        query = parse_qsl(url.query, keep_blank_values=True)
+        safe_query = not url.query or (
+            len(query) == 1
+            and query[0][0] == "api-version"
+            and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(?:-preview)?", query[0][1])
+        )
+        if url.username or url.password or not safe_query or url.fragment:
             raise ValueError("Persistent URLs cannot contain credentials or signed query strings")
 
 

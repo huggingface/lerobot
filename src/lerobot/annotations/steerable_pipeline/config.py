@@ -23,19 +23,16 @@ from typing import Any
 from lerobot.annotations.runtime.configs import RuntimeConfig
 from lerobot.configs.default import JobConfig
 
-# The annotation pipeline boots its own vLLM server, so the pod starts from the
-# official vLLM runtime rather than the prebuilt `lerobot-gpu` training image;
-# `lerobot` is pip-installed on top (see `lerobot.jobs.annotate`).
-DEFAULT_ANNOTATE_JOB_IMAGE = "vllm/vllm-openai:latest"
+# No floating/default runtime: supply a dependency-complete image@sha256:digest.
+DEFAULT_ANNOTATE_JOB_IMAGE = ""
 
 
 @dataclass
 class AnnotationJobConfig(JobConfig):
     """`JobConfig` with the annotation runtime's defaults.
 
-    Adds `lerobot_ref` because the vLLM image ships no lerobot: the pod installs
-    it from git, and the ref decides which code actually annotates. Point it at a
-    branch/tag/SHA to try unmerged changes remotely.
+    The image provides dependencies; the pod installs only LeRobot source from
+    an immutable 40-character Git commit SHA (not a branch or tag).
     """
 
     image: str = DEFAULT_ANNOTATE_JOB_IMAGE
@@ -191,6 +188,7 @@ class VlmConfig:
     parallel_servers: int = 1
     num_gpus: int = 0
     client_concurrency: int = 16
+    request_max_retries: int = 2
     # All clients of this endpoint/model must share one coordinator and key.
     endpoint_limit_url: str | None = None
     endpoint_limit_key: str | None = None
@@ -262,7 +260,7 @@ class AnnotationPipelineConfig:
     # ``"torchcodec"`` / ``"pyav"`` explicitly.
     video_backend: str | None = None
 
-    # Upload to the Hub (new_repo_id if set, else repo_id; one must be set).
+    # Publication requires an explicit new_repo_id, permission and release tag.
     push_to_hub: bool = False
     push_private: bool = False
     push_commit_message: str | None = None

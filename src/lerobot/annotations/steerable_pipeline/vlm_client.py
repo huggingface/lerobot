@@ -48,6 +48,10 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Protocol
+from urllib.parse import parse_qsl, urlsplit
+
+from lerobot.annotations.runtime.bundles import check_credentials
+from lerobot.annotations.runtime.errors import ErrorCategory, classify_error, retry_delay
 
 from .config import VlmConfig
 
@@ -265,6 +269,10 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
     api_key = config.api_key
     auto_serve = config.auto_serve
     api_bases: list[str] = list(config.api_bases) or [api_base]
+    for base in [api_base, *api_bases]:
+        check_credentials(base)
+    if config.request_max_retries < 0:
+        raise ValueError("request_max_retries must be nonnegative")
 
     print(
         f"[lerobot-annotate] backend=openai model={config.model_id} "
@@ -286,8 +294,7 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
             api_bases = [api_base]
             print(f"[lerobot-annotate] server ready at {api_base}", flush=True)
 
-    # Worker retry classification owns transport retries, rather than multiplying
-    # SDK retries with shard retries. Every retry reacquires global admission.
+    # Explicit request retries reacquire global admission; hidden SDK retries do not.
     shared_limit = None
     if config.endpoint_limit_url:
         from lerobot.annotations.runtime.endpoint_limits import SharedEndpointLimit
@@ -300,7 +307,17 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
             config.endpoint_limit_token_env,
             config.endpoint_limit_timeout_s,
         )
-    clients = [OpenAI(base_url=base, api_key=api_key, max_retries=0) for base in api_bases]
+    clients = []
+    for base in api_bases:
+        url = urlsplit(base)
+        clients.append(
+            OpenAI(
+                base_url=url._replace(query="").geturl(),
+                api_key=api_key,
+                max_retries=0,
+                **({"default_query": dict(parse_qsl(url.query))} if url.query else {}),
+            )
+        )
     # round-robin counter for parallel mode
     rr_counter = {"i": 0}
 
@@ -332,8 +349,18 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
         with rr_lock:
             chosen = clients[rr_counter["i"] % len(clients)]
             rr_counter["i"] += 1
-        with request_limit, shared_limit.permit() if shared_limit else nullcontext():
-            response = chosen.chat.completions.create(**kwargs)
+        for retry in range(config.request_max_retries + 1):
+            try:
+                with request_limit, shared_limit.permit() if shared_limit else nullcontext():
+                    response = chosen.chat.completions.create(**kwargs)
+                break
+            except Exception as exc:
+                if retry == config.request_max_retries or classify_error(exc) not in {
+                    ErrorCategory.NETWORK,
+                    ErrorCategory.SERVICE,
+                }:
+                    raise
+                time.sleep(retry_delay(retry))
         # Some OpenAI-compatible servers can return a choice with no message
         # (safety filter, or a "thinking" model that spends the whole budget
         # before emitting content). Treat that as an empty reply so the

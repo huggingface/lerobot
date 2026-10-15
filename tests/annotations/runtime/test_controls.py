@@ -138,6 +138,13 @@ def test_transient_retry_and_permanent_fail_fast(tmp_path, monkeypatch):
         assert len(errors) == 1
         assert errors[0]["category"] == ("invalid_schema" if permanent else "temporary_network")
         assert errors[0]["retryable"] is not permanent
+        import pyarrow.parquet as pq
+
+        paths = store.list(f"metrics/{plan.plan_id}/workers/*.parquet")
+        assert len(paths) == 1
+        with store.open(paths[0]) as stream:
+            rows = pq.read_table(stream).to_pylist()
+        assert rows[0]["last_error_category"] == errors[0]["category"]
     assert delays == [1.0]
     assert retry_delay(100) == 30
     assert classify_error(UndecodableInputError("bad bytes")) == ErrorCategory.INPUT

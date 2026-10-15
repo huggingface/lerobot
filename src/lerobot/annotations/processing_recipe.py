@@ -33,6 +33,10 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
     """Build a language recipe; current flags remain compatible, execution is shared."""
     root = root.resolve()
     _load_v3_info(root)
+    if cfg.push_to_hub and cfg.runtime.mode != "plan":
+        from .hub import preflight_publication
+
+        preflight_publication(root, cfg)
     if (
         cfg.runtime.backend == "slurm"
         and cfg.vlm.auto_serve
@@ -46,7 +50,7 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
     enabled = [name for name in ("plan", "interjections", "vqa") if getattr(cfg, name).enabled]
     if not enabled:
         return PipelineRunSummary([], [], ValidationReport())
-    source = LeRobotEpisodeSource(root, cfg.only_episodes)
+    source = LeRobotEpisodeSource(root, cfg.only_episodes, verify_sources=cfg.runtime.verify_sources)
     if not source.episodes:
         raise ValueError("No episodes selected")
     # Credentials are environment references, never written to a work plan.
@@ -176,6 +180,12 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
         # after publishing the journal can finish the commit on the next invocation.
         prepared = root / ".annotate_staging" / "prepared" / plan.plan_id
         commit_local_files(root, files, prepared, expected=expected)
+    if not runtime.retain_materialized_outputs:
+        # Opt-in cache retention policy, only after durable local commit. Keep
+        # model outputs/provenance; missing materialization assets rebuild on CPU.
+        for _, result in accepted_items(store, plan):
+            for artifact in result.artifacts:
+                store.fs.rm(store.path(artifact.path))
     phases = [
         PhaseResult(name, summary.completed, summary.masked + summary.rejected)
         for name, (_, summary) in completed.items()
