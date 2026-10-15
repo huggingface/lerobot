@@ -52,6 +52,8 @@ REGS = [
     "Homing_Offset", "Lock", "Baud_Rate", "Phase", "Angular_Resolution",
 ]
 
+GRIPPER_SOFT = {"Torque_Limit", "Max_Torque_Limit", "Protection_Current", "Overload_Torque"}
+
 STATUS_BITS = {0: "voltage", 1: "sensor", 2: "temperature", 3: "current", 4: "angle", 5: "overload"}
 
 
@@ -86,8 +88,12 @@ def main() -> int:
         vals = [row[n] for n in names]
         mark = ""
         if reg not in PER_SERVO:
-            common, count = Counter(vals).most_common(1)[0]
-            odd = [n for n in names if row[n] != common]
+            # Grippers are configured softer on purpose (lerobot lowers their
+            # torque and protection limits so a closed gripper cannot cook
+            # itself), so they are compared with nobody on those registers.
+            peers = [n for n in names if not (n.endswith("grip") and reg in GRIPPER_SOFT)]
+            common, count = Counter(row[n] for n in peers).most_common(1)[0]
+            odd = [n for n in peers if row[n] != common]
             if odd and count > 1:
                 mark = "  <- " + ", ".join(odd)
                 for n in odd:
@@ -106,8 +112,23 @@ def main() -> int:
         tl = table["Torque_Limit"][n]
         if isinstance(tl, int) and tl < 100:
             flags.append(f"{n}: Torque_Limit = {tl} - it can barely push (1000 = full)")
-        if table["Torque_Enable"][n] == 0:
-            flags.append(f"{n}: torque is OFF")
+    # Torque off everywhere is just "nothing has it enabled" - every lerobot
+    # disconnect turns it off. Only an odd one out means anything.
+    te = [table["Torque_Enable"][n] for n in names]
+    if len(set(te)) > 1:
+        for n in names:
+            if table["Torque_Enable"][n] == 0:
+                flags.append(f"{n}: torque is OFF while others are on")
+    # Heat is the tell for a servo that is fighting something: a joint that
+    # was told to move and could not draws stall current the whole time.
+    temps = {n: table["Present_Temperature"][n] for n in names
+             if isinstance(table["Present_Temperature"][n], int)}
+    if len(temps) > 2:
+        med = sorted(temps.values())[len(temps) // 2]
+        for n, t in temps.items():
+            if t - med >= 6:
+                flags.append(f"{n}: {t} C, {t - med} C hotter than the others - it has been "
+                             "pushing against something (stall, bind, or a stripped gear)")
 
     print("FINDINGS" if flags else "No servo differs from its neighbours.")
     for f in flags:
