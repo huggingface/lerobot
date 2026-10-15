@@ -21,8 +21,10 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from threading import Lock
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
+from functools import partial
+from threading import Lock, Thread
 from typing import Any, Protocol
 
 import torch
@@ -32,6 +34,8 @@ from lerobot.utils import QUERY_KIND, QUERY_TEXT
 from .contracts import DEFAULT_MAX_TEXT_INPUT_CHARS, QueryKind
 
 logger = logging.getLogger(__name__)
+
+EXTERNAL_HISTORY_DEFAULT = 4
 
 
 class InferenceRobot(Protocol):
@@ -69,12 +73,25 @@ class InferenceRobot(Protocol):
 
 @dataclass(frozen=True)
 class PolicyQuery:
-    """A queued request for the policy's text head."""
+    """A queued request for the policy's text head or an external text backend."""
 
     kind: QueryKind
     text: str
     task_version: int = 0
     intent_generation: int = 0
+    history: tuple[tuple[dict, str], ...] = field(default=(), repr=False, compare=False)
+    """External planner observations paired with the commands the engine accepted after them."""
+
+
+@dataclass(frozen=True)
+class PlannerReply:
+    """What an external text backend returns: the answer text plus what the operator should see."""
+
+    text: str
+    detail: str = ""
+    """The model's own assessment, such as its scene description."""
+    completed: bool = False
+    """The autosteer goal is complete: ``text`` is a status, not an instruction."""
 
 
 @dataclass(frozen=True)
@@ -89,6 +106,13 @@ class QueryAnswer:
     answer: str | None = None
     error: str | None = None
     kind: QueryKind = QueryKind.VQA
+    held: bool = False
+    """A NEXT_SUBTASK answer that repeated the current instruction: nothing was sent."""
+    completed: bool = False
+    """The planner reports the autosteer goal complete: ``answer`` is a status, not an instruction."""
+    detail: str = ""
+    """What an external planner reported beside its answer, such as its scene assessment."""
+    latency_s: float | None = None
 
     @property
     def ok(self) -> bool:
@@ -115,6 +139,14 @@ class InferenceEngine(abc.ABC):
     The base also sequences autosteer and prevents superseded answers applying.
     Plain VQA discards buffered continuation everywhere: sync drops queued actions
     inline, async engines hold and invalidate first; subtasks can change the task.
+
+    External text backend: with :attr:`external_text` set, every query is answered by
+    that callable on a worker thread instead of the policy, while the robot keeps
+    acting. Such requests live in their own slot, invisible to ``has_pending_query``,
+    so no backend requests a language hold for them. The one hold they do cause is
+    deliberate: an autosteer goal pauses the backend until the planner's first
+    accepted reply, because the goal is context for the planner, not an instruction
+    for the policy.
 
     Subclasses must call ``super().__init__`` and implement resource ownership,
     action production and query execution. Async implementations additionally
@@ -148,6 +180,22 @@ class InferenceEngine(abc.ABC):
         self._autosteer_due_at: float = 0.0
         self._autosteer_generation = 0
         self._autosteer_waiting_for_motion = False
+
+        # External text backend: an off-policy planner answering on its own worker thread.
+        # It never touches the policy, so its requests get their own slot and the backends'
+        # language-hold logic (keyed on ``has_pending_query``) never sees them.
+        self.external_text: Callable[..., str | PlannerReply] | None = None
+        # (observation, accepted command) pairs shown back to the planner. The engine fills
+        # them; the planner configuration only sets how many are kept.
+        self.external_history: deque[tuple[dict, str]] = deque(maxlen=EXTERNAL_HISTORY_DEFAULT)
+        self._external_pending: PolicyQuery | None = None
+        self._external_in_flight = False
+        self._external_claimed: PolicyQuery | None = None
+        # Bumped whenever the run context ends, so a worker result from before is discarded.
+        self._external_generation = 0
+        # Motion is revoked from autosteer start until the planner's first accepted reply.
+        self._planner_hold = False
+        self._planner_resume_due = False
 
     # ------------------------------------------------------------------
     # Task (language instruction)
@@ -220,8 +268,11 @@ class InferenceEngine(abc.ABC):
 
     @property
     def supports_text_queries(self) -> bool:
-        """Whether this backend accepts policy text queries; false by default."""
-        return False
+        """Whether this backend accepts text queries.
+
+        The base knows only the external backend; subclasses OR in their policy's text head.
+        """
+        return self.external_text is not None
 
     def set_answer_observer(self, observer: Callable[[QueryAnswer], None] | None) -> None:
         """Register the callback :meth:`pump_query` hands ready answers to."""
@@ -244,7 +295,10 @@ class InferenceEngine(abc.ABC):
         """Queue one operator VQA from any thread; reject invalid input or a busy channel."""
         if self.text_input_error(question) is not None:
             return False
-        return self._queue_query(PolicyQuery(kind=QueryKind.VQA, text=question))
+        query = PolicyQuery(kind=QueryKind.VQA, text=question)
+        if self.external_text is not None:
+            return self._queue_external_query(query)
+        return self._queue_query(query)
 
     def text_input_error(self, text: str, *, instruction: bool = False) -> str | None:
         """Validate without mutation: local queries allow 1–4096 characters.
@@ -266,45 +320,89 @@ class InferenceEngine(abc.ABC):
 
         The interval starts when a subtask is applied. At least one action must
         dispatch before another turn; planner progress belongs to the policy.
+
+        With an external text backend the goal is context for the planner, not an
+        instruction for the policy: the backend is paused until the planner's first
+        accepted reply, so no action predicted for the previous instruction is released
+        after it. :meth:`pump_query` resumes the backend on the control thread.
         """
         if error := self.text_input_error(goal):
             raise ValueError(error)
+        external = self.external_text is not None
+        if external:
+            # pause() also ends the external run context (see drop_pending_query), so the
+            # hold is armed only after it.
+            self.pause()
         with self._query_lock:
             self._autosteer_generation += 1
             if self._pending_query is not None and self._pending_query.kind is QueryKind.NEXT_SUBTASK:
                 self._pending_query = None
+            if self._external_pending is not None and self._external_pending.kind is QueryKind.NEXT_SUBTASK:
+                self._external_pending = None
             self._autosteer_goal = goal
             self._autosteer_waiting_for_motion = False
             self._autosteer_interval_s = max(0.0, interval_s)
             # Due immediately: first subtask requested on the next control tick.
             self._autosteer_due_at = time.perf_counter()
+            self.external_history.clear()
+            self._planner_hold = external
+            self._planner_resume_due = False
         logger.info("Autosteer started for goal '%s' (every %.1fs)", goal, interval_s)
 
     def stop_autosteer(self) -> str | None:
-        """Stop the sequencer, returning the goal it was driving (or ``None``)."""
+        """Stop the sequencer, returning the goal it was driving (or ``None``).
+
+        A planner hold still in force is lifted: the operator took over before the
+        planner spoke, so the policy moves again under the current instruction.
+        """
         with self._query_lock:
             self._autosteer_generation += 1
             goal, self._autosteer_goal = self._autosteer_goal, None
             self._autosteer_waiting_for_motion = False
             if self._pending_query is not None and self._pending_query.kind is QueryKind.NEXT_SUBTASK:
                 self._pending_query = None
+            if self._external_pending is not None and self._external_pending.kind is QueryKind.NEXT_SUBTASK:
+                self._external_pending = None
+            self.external_history.clear()
+            self._release_planner_hold()
         if goal is not None:
             logger.info("Autosteer stopped (goal was '%s')", goal)
         return goal
 
+    def hold_for_planner(self) -> bool:
+        """True while an external planner owns the instruction stream but has not spoken yet.
+
+        :meth:`start_autosteer` pauses asynchronous backends for that interval; the
+        synchronous backend consults this from ``dispatch_allowed``.
+        """
+        with self._query_lock:
+            return self._planner_hold
+
     def drop_pending_query(self) -> PolicyQuery | None:
-        """Discard an unclaimed query at run end; return it and queue one VQA cancellation notice."""
+        """Discard an unclaimed query at run end; return it and queue one VQA cancellation notice.
+
+        This also ends the external backend's run context: its unclaimed request is
+        dropped the same way, a worker result still in flight will be discarded, the
+        history is cleared and a planner hold is forgotten, since whoever paused or reset
+        the backend owns its activation from here on.
+        """
         with self._query_lock:
             dropped, self._pending_query = self._pending_query, None
-            if dropped is not None and dropped.kind is QueryKind.VQA:
-                self._ready_answers.append(
-                    QueryAnswer(
-                        question=dropped.text,
-                        error="cancelled: the run changed before it could be answered",
-                        kind=dropped.kind,
+            external, self._external_pending = self._external_pending, None
+            for query in (dropped, external):
+                if query is not None and query.kind is QueryKind.VQA:
+                    self._ready_answers.append(
+                        self._cancelled(query, "cancelled: the run changed before it could be answered")
                     )
-                )
-        return dropped
+            self._external_generation += 1
+            self.external_history.clear()
+            self._planner_hold = False
+            self._planner_resume_due = False
+        return dropped if dropped is not None else external
+
+    @staticmethod
+    def _cancelled(query: PolicyQuery, error: str) -> QueryAnswer:
+        return QueryAnswer(question=query.text, error=error, kind=query.kind)
 
     def report_cancelled_query(self) -> None:
         """Queue one cancellation notice for a claimed VQA whose run context ended.
@@ -313,17 +411,16 @@ class InferenceEngine(abc.ABC):
         retains the busy slot until it finishes; observers still run only from the
         control-thread pump. Obsolete autosteer turns produce no announcement.
         """
+        error = "cancelled: the instruction or run changed while it was being answered"
         with self._query_lock:
             query = self._claimed_query
             if query is not None and query.kind is QueryKind.VQA:
                 self._claimed_query = None
-                self._ready_answers.append(
-                    QueryAnswer(
-                        question=query.text,
-                        error="cancelled: the instruction or run changed while it was being answered",
-                        kind=query.kind,
-                    )
-                )
+                self._ready_answers.append(self._cancelled(query, error))
+            query = self._external_claimed
+            if query is not None and query.kind is QueryKind.VQA:
+                self._external_claimed = None
+                self._ready_answers.append(self._cancelled(query, error))
 
     def _discard_invalid_query(self) -> None:
         """Finish an obsolete worker turn, reporting only an unanswered operator VQA."""
@@ -351,12 +448,17 @@ class InferenceEngine(abc.ABC):
         the end of a tick rather than from :meth:`get_action`: a text generation far
         outlasts a control tick.  Returns ``True`` when a query was served inline.  With
         ``obs_processed=None`` (the controller's idle poll) a pending query stays queued
-        and the sequencer does not advance.
+        and the sequencer does not advance.  External requests are handed to their worker
+        thread here, and a backend paused for the planner is resumed here once the first
+        reply is applied, so activation stays with the control thread.
         """
         self._poll_autosteer(obs_processed)
         served = False
         if self.control_thread_owns_policy:
             served = self._service_query(obs_processed)
+        if self.external_text is not None:
+            self._service_external_query(obs_processed)
+        self._resume_after_planner(obs_processed)
         self._deliver_answer()
         return served
 
@@ -380,16 +482,26 @@ class InferenceEngine(abc.ABC):
                 return
             if time.perf_counter() < self._autosteer_due_at:
                 return
-            if self._pending_query is not None or self._query_in_flight:
+            external = self.external_text is not None
+            busy = (
+                self._external_pending is not None or self._external_in_flight
+                if external
+                else self._pending_query is not None or self._query_in_flight
+            )
+            if busy:
                 # A /vqa (or our own previous query) is still queued or being generated.
                 # The deadline stays in the past, so the next tick retries this turn.
                 return
-            self._pending_query = PolicyQuery(
+            query = PolicyQuery(
                 kind=QueryKind.NEXT_SUBTASK,
                 text=self._autosteer_goal,
                 task_version=self.task_version,
                 intent_generation=self._autosteer_generation,
             )
+            if external:
+                self._external_pending = query
+            else:
+                self._pending_query = query
 
     def _take_query(self) -> PolicyQuery | None:
         """Claim the pending query.  Call from the policy-owning thread."""
@@ -506,6 +618,157 @@ class InferenceEngine(abc.ABC):
                 subtask,
             )
         return live
+
+    # ------------------------------------------------------------------
+    # External text backend (off-policy planner)
+    # ------------------------------------------------------------------
+
+    def _queue_external_query(self, query: PolicyQuery) -> bool:
+        with self._query_lock:
+            if (
+                self._external_pending is not None
+                or self._external_in_flight
+                or len(self._ready_answers) >= 16
+            ):
+                return False
+            self._external_pending = replace(
+                query, task_version=self.task_version, intent_generation=self._autosteer_generation
+            )
+        return True
+
+    def _service_external_query(self, obs_processed: dict | None) -> bool:
+        """Hand the pending external request to a worker thread.  Control thread only.
+
+        The observation is copied first, so the backend sees the capture the request was
+        made from rather than what the control loop overwrites next tick.  Returns ``True``
+        when a request was claimed.
+        """
+        if obs_processed is None or self.external_text is None:
+            return False
+        with self._query_lock:
+            if self._external_pending is None or self._external_in_flight:
+                return False
+            query, self._external_pending = self._external_pending, None
+            self._external_in_flight = True
+            self._external_claimed = query
+            query = replace(query, history=tuple(self.external_history))
+            generation = self._external_generation
+            generate = partial(self.external_text, task=self.task)
+        Thread(
+            target=self._resolve_external_query,
+            args=(query, deepcopy(obs_processed), generate, generation),
+            name="external-text-query",
+            daemon=True,
+        ).start()
+        return True
+
+    def _resolve_external_query(
+        self,
+        query: PolicyQuery,
+        obs_processed: dict,
+        generate: Callable[[dict, PolicyQuery], str | PlannerReply],
+        generation: int,
+    ) -> None:
+        """Run the external backend and apply its reply.  Worker thread.
+
+        Cancellation and application are atomic under ``_query_lock``: a reply whose run
+        context or sequencer ended meanwhile is discarded, so it can neither overwrite a
+        newer instruction nor announce a stale plan, and a restart with the identical
+        goal counts as a new sequencer.
+        """
+        started = time.perf_counter()
+        try:
+            result = generate(obs_processed, query)
+            reply = result if isinstance(result, PlannerReply) else PlannerReply(text=result)
+            if not isinstance(reply.text, str) or not reply.text.strip():
+                # Fail here so garbage becomes an error answer instead of steering the robot.
+                raise TypeError(
+                    "the external text backend must return a non-empty str, "
+                    f"got {reply.text!r} ({type(reply.text).__name__})"
+                )
+            answer = QueryAnswer(
+                question=query.text,
+                answer=reply.text.strip(),
+                kind=query.kind,
+                completed=reply.completed,
+                detail=reply.detail,
+            )
+        except Exception as e:
+            logger.exception("External text query failed (%s) for %r", query.kind.value, query.text)
+            answer = QueryAnswer(question=query.text, error=f"{type(e).__name__}: {e}", kind=query.kind)
+        answer = replace(answer, latency_s=round(time.perf_counter() - started, 3))
+        with self._query_lock:
+            if generation != self._external_generation:
+                self._finish_external_query(None)  # the run ended; its VQA notice was queued then
+                return
+            if query.kind is not QueryKind.NEXT_SUBTASK:
+                self._finish_external_query(answer)
+                return
+            if not self._autosteer_turn_is_current(query):
+                logger.info(
+                    "Discarding autosteer reply for %r — the sequencer stopped or was retargeted "
+                    "while it was being generated",
+                    query.text,
+                )
+                self._finish_external_query(None)
+                return
+            subtask = answer.answer if answer.ok and not answer.completed else None
+            if subtask is not None and (error := self.text_input_error(subtask, instruction=True)):
+                answer = replace(answer, answer=None, error=f"ValueError: unusable subtask: {error}")
+                subtask = None
+            if not answer.ok:
+                self._autosteer_goal = None
+                self._release_planner_hold()
+                logger.info("Autosteer stopped (goal was '%s') — planning failed", query.text)
+            elif subtask is None:
+                # Completion is a normal outcome, not an instruction: the sequencer ends and
+                # a paused backend stays paused until the operator resets or restarts.
+                self._autosteer_goal = None
+                logger.info("Autosteer stopped (goal was '%s') — the planner reports it complete", query.text)
+            else:
+                changed = self.set_task(subtask)
+                # Armed only now, so the interval measures motion between subtasks; a fresh
+                # action must also reach the robot before another turn.
+                self._autosteer_due_at = time.perf_counter() + self._autosteer_interval_s
+                self._autosteer_waiting_for_motion = True
+                # A repeat enters the history too, so the planner can judge lack of progress.
+                self.external_history.append((obs_processed, subtask))
+                if not changed:
+                    answer = replace(answer, held=True)
+                    logger.info("Autosteer holds %r — nothing sent to the policy", subtask)
+                self._release_planner_hold()
+            self._finish_external_query(answer)
+
+    def _finish_external_query(self, answer: QueryAnswer | None) -> None:
+        """Free the external slot and publish ``answer`` when it is still wanted.
+
+        ``None`` means the turn was discarded; a slot whose claim was already reported
+        as cancelled publishes nothing either.  Caller holds ``_query_lock``.
+        """
+        reported = self._external_claimed is None
+        self._external_in_flight = False
+        self._external_claimed = None
+        if answer is not None and not reported:
+            self._ready_answers.append(answer)
+
+    def _release_planner_hold(self) -> None:
+        """Schedule the backend's resumption on the control thread.  Caller holds ``_query_lock``."""
+        if self._planner_hold:
+            self._planner_hold = False
+            self._planner_resume_due = True
+
+    def _resume_after_planner(self, obs_processed: dict | None) -> None:
+        """Resume a backend paused for the planner once its hold was released.  Control thread only.
+
+        The idle poll (``obs_processed=None``) runs between segments, where the backend
+        must stay paused; :meth:`drop_pending_query` clears the flag at segment end.
+        """
+        if obs_processed is None:
+            return
+        with self._query_lock:
+            due, self._planner_resume_due = self._planner_resume_due, False
+        if due and not self.failed:
+            self.resume()
 
     def _generate_text(self, obs_processed: dict, query: PolicyQuery) -> str:
         """Generate text on the policy-owning thread using the backend's processor path."""
