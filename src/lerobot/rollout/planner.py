@@ -248,6 +248,14 @@ class VlmPlanner:
         reply_field = REPLY_FIELD[query.kind]
         logger.info("Planner reply (%s): %r", query.kind.value, reply)
         text = reply.get(reply_field) if isinstance(reply, dict) else None
+        if (
+            query.kind is QueryKind.VQA
+            and isinstance(text, list)
+            and all(isinstance(item, str) for item in text)
+        ):
+            # Enumerating questions ("what is on the table?") could come back as a list despite the prompt.
+            # A listed instruction stays an error: joined subtasks would make one compound command.
+            text = ", ".join(item.strip() for item in text if item.strip())
         if not isinstance(text, str) or not text.strip():
             raise ValueError(f"Planner returned no non-empty {reply_field}: {reply!r}")
         text = text.strip()
