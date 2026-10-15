@@ -189,6 +189,14 @@ def test_tabular_parity(dataset_roots):
     for idx in [0, len(upstream_u) // 2, len(upstream_u) - 1]:
         assert_items_equal(lance_u[idx], upstream_u[idx])
 
+    # duplicate episodes: each served once, mirroring upstream's parquet isin() filter
+    upstream_dup = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[1, 1])
+    lance_dup = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[1, 1])
+    assert len(lance_dup) == len(upstream_dup) == len(upstream_s)
+    assert lance_dup.absolute_to_relative_idx == upstream_dup.reader._absolute_to_relative_idx
+    for idx in [0, len(upstream_dup) - 1]:
+        assert_items_equal(lance_dup[idx], upstream_dup[idx])
+
     # close() releases pools/handles; the next read reopens
     lance_ds.reader.close()
     assert_items_equal(lance_ds[0], upstream[0])
