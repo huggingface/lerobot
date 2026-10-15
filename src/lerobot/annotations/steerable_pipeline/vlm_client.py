@@ -267,6 +267,10 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
 
     api_base = config.api_base
     api_key = config.api_key
+    if config.api_key_env:
+        api_key = os.environ.get(config.api_key_env, "")
+        if not api_key:
+            raise ValueError(f"Environment variable {config.api_key_env} is not set")
     auto_serve = config.auto_serve
     api_bases: list[str] = list(config.api_bases) or [api_base]
     for base in [api_base, *api_bases]:
@@ -314,6 +318,7 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
             OpenAI(
                 base_url=url._replace(query="").geturl(),
                 api_key=api_key,
+                timeout=config.request_timeout_s,
                 max_retries=0,
                 **({"default_query": dict(parse_qsl(url.query))} if url.query else {}),
             )

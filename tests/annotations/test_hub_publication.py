@@ -235,9 +235,16 @@ def test_preflight_counts_generated_shard_metadata_before_inference(
     assert not CLIENTS and not calls
 
 
-def test_local_source_publishes_with_content_provenance(publication, single_episode_root, monkeypatch):
+def test_local_source_publishes_with_content_provenance(
+    publication, unaligned_episode_root, fragmented_parquet_reader, monkeypatch
+):
     import httpx
     from huggingface_hub.errors import RepositoryNotFoundError
+
+    from lerobot.annotations import processing
+    from lerobot.annotations.processing_source import LeRobotEpisodeSource
+    from tests.annotations._helpers import StubFrameProvider
+    from tests.annotations.test_processing import FACTORY, config
 
     _, cfg, calls, api_class = publication
     cfg.repo_id = cfg.revision = cfg.expected_target_revision = None
@@ -251,6 +258,10 @@ def test_local_source_publishes_with_content_provenance(publication, single_epis
         return SimpleNamespace(sha=SHA)
 
     monkeypatch.setattr(api_class, "dataset_info", absent)
-    hub.publish_annotation(single_episode_root, cfg, changed_paths=[])
+    root = unaligned_episode_root
+    original = LeRobotEpisodeSource(root).dataset_ref.revision
+    monkeypatch.setattr(processing, "make_frame_provider", lambda *a, **k: StubFrameProvider())
+    assert processing.run_annotation_pipeline(config(), root, client_factory=FACTORY).validation_report.ok
+    hub.publish_annotation(root, cfg, changed_paths=[])
     source = json.loads(calls[1][1]["operations"][hub.LINEAGE])["source"]
-    assert source["type"] == "local" and len(source["native_content_sha256"]) == 64
+    assert source == {"type": "local", "native_content_sha256": original}
