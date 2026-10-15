@@ -181,6 +181,11 @@ class DynamixelMotorsBus(SerialMotorsBus):
 
     def write_calibration(self, calibration_dict: dict[str, MotorCalibration], cache: bool = True) -> None:
         for motor, calibration in calibration_dict.items():
+            # `Drive_Mode` selects the direction convention that `Homing_Offset` and the position
+            # limits are expressed in, and `read_calibration()` reads it back. Omitting it here left
+            # `is_calibrated` permanently False -- and the joint running backwards, since
+            # `apply_drive_mode` is False for Dynamixel so nothing compensates it in software.
+            self.write("Drive_Mode", motor, calibration.drive_mode)
             self.write("Homing_Offset", motor, calibration.homing_offset)
             self.write("Min_Position_Limit", motor, calibration.range_min)
             self.write("Max_Position_Limit", motor, calibration.range_max)

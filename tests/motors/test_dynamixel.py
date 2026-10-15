@@ -351,6 +351,42 @@ def test_reset_calibration(mock_motors, dummy_motors):
     assert all(mock_motors.stubs[stub].called for stub in write_maxes_stubs)
 
 
+def test_write_calibration_writes_drive_mode(mock_motors, dummy_motors, dummy_calibration):
+    """`Drive_Mode` must be written back, because `read_calibration()` reads it.
+
+    Without it `is_calibrated` can never become True for a device that calibrates an inverted
+    joint, and the joint keeps running in the stale direction -- `apply_drive_mode` is False for
+    Dynamixel, so nothing compensates for it in software.
+    """
+    write_stubs = []
+    for motor in dummy_motors.values():
+        calibration = dummy_calibration[next(name for name, m in dummy_motors.items() if m.id == motor.id)]
+        write_stubs += [
+            mock_motors.build_write_stub(
+                *X_SERIES_CONTROL_TABLE["Drive_Mode"], motor.id, calibration.drive_mode
+            ),
+            mock_motors.build_write_stub(
+                *X_SERIES_CONTROL_TABLE["Homing_Offset"],
+                motor.id,
+                encode_twos_complement(calibration.homing_offset, 4),
+            ),
+            mock_motors.build_write_stub(
+                *X_SERIES_CONTROL_TABLE["Min_Position_Limit"], motor.id, calibration.range_min
+            ),
+            mock_motors.build_write_stub(
+                *X_SERIES_CONTROL_TABLE["Max_Position_Limit"], motor.id, calibration.range_max
+            ),
+        ]
+
+    bus = DynamixelMotorsBus(port=mock_motors.port, motors=dummy_motors)
+    bus.connect(handshake=False)
+
+    bus.write_calibration(dummy_calibration)
+
+    assert all(mock_motors.stubs[stub].called for stub in write_stubs)
+    assert bus.calibration == dummy_calibration
+
+
 def test_set_half_turn_homings(mock_motors, dummy_motors):
     """
     For this test, we assume that the homing offsets are already 0 such that
