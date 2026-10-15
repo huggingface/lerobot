@@ -51,6 +51,7 @@ def worker_schema():
             ("items_computed", pa.int64()),
             ("items_reused", pa.int64()),
             ("retries", pa.int64()),
+            ("last_error_category", pa.string()),
             ("bytes_written", pa.int64()),
             ("requested_cpu_hours", pa.float64()),
             ("requested_gpu_hours", pa.float64()),

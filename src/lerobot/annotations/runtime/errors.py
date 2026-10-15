@@ -3,6 +3,7 @@
 """Retry only positively identified temporary failures, not arbitrary exceptions."""
 
 import errno
+import socket
 from enum import StrEnum
 from urllib.error import HTTPError, URLError
 
@@ -24,6 +25,25 @@ class TemporaryServiceError(RuntimeError):
     """An adapter explicitly identifies a temporary service failure."""
 
 
+def request_not_sent(error: Exception) -> bool:
+    """Only positively identified connect/pool failures are safe to release."""
+    seen = set()
+    current: object = error
+    while isinstance(current, Exception) and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (ConnectionRefusedError, socket.gaierror)):
+            return True
+        cls = type(current)
+        if cls.__module__.startswith("httpx") and cls.__name__ in {
+            "ConnectError",
+            "ConnectTimeout",
+            "PoolTimeout",
+        }:
+            return True
+        current = current.reason if isinstance(current, URLError) else current.__cause__
+    return False
+
+
 def classify_error(error: Exception) -> ErrorCategory:
     if isinstance(error, UndecodableInputError):
         return ErrorCategory.INPUT
@@ -34,7 +54,7 @@ def classify_error(error: Exception) -> ErrorCategory:
         )
     if isinstance(error, TemporaryServiceError):
         return ErrorCategory.SERVICE
-    if isinstance(error, (TimeoutError, ConnectionError, URLError)):
+    if isinstance(error, (TimeoutError, ConnectionError, URLError, socket.gaierror)):
         return ErrorCategory.NETWORK
     cls = type(error)
     if (

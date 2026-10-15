@@ -24,5 +24,6 @@ def __getattr__(name):
         raise AttributeError(name)
     from lerobot.utils.import_utils import require_package
 
-    require_package("datasets", extra="dataset")
+    if name == "submit_to_hf":
+        require_package("datasets", extra="dataset")
     return getattr(importlib.import_module(f"lerobot.jobs.{modules[name]}"), name)

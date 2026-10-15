@@ -23,7 +23,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .errors import ErrorCategory, TemporaryServiceError, classify_error
+from .errors import ErrorCategory, TemporaryServiceError, classify_error, request_not_sent
 
 
 class EndpointLimitServer(ThreadingHTTPServer):
@@ -31,10 +31,13 @@ class EndpointLimitServer(ThreadingHTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, address, *, key: str, limit: int, token: str):
+    def __init__(self, address, *, key: str, limit: int, token: str, admin_token: str | None = None):
         if limit < 1 or not key or not token:
             raise ValueError("Endpoint coordinator requires a key, positive limit and secret token")
         self.key, self.limit, self.token = key, limit, token
+        if admin_token and hmac.compare_digest(admin_token, token):
+            raise ValueError("Endpoint reset requires a separate administrator token")
+        self.admin_token = admin_token
         self.active: set[str] = set()
         self.released: deque[str] = deque(maxlen=10000)
         self.lock = threading.Lock()
@@ -47,7 +50,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         server = self.server
-        if not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + server.token):
+        token = server.admin_token if self.path == "/reset" else server.token
+        if not token or not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + token):
             self.send_error(401)
             return
         try:
@@ -55,15 +59,33 @@ class _Handler(BaseHTTPRequestHandler):
             if not 0 < size <= 4096:
                 raise ValueError("Invalid body size")
             value = json.loads(self.rfile.read(size))
-            request_id = value["request_id"]
-            uuid.UUID(request_id)
-            if value["key"] != server.key or self.path not in {"/acquire", "/release"}:
+            if value["key"] != server.key or self.path not in {"/acquire", "/release", "/status", "/reset"}:
                 raise ValueError("Unknown endpoint key or operation")
+            if self.path in {"/acquire", "/release"}:
+                request_id = value["request_id"]
+                if not isinstance(request_id, str):
+                    raise ValueError("Invalid request ID")
+                uuid.UUID(request_id)
+            elif self.path == "/reset" and value.get("drained") is not True:
+                raise ValueError("Confirm inference is drained/cancelled before resetting")
         except (ValueError, KeyError, TypeError):
             self.send_error(400)
             return
         with server.lock:
-            if self.path == "/release":
+            if self.path in {"/status", "/reset"}:
+                if self.path == "/reset":
+                    server.released.extend(server.active)
+                    server.active.clear()
+                body = json.dumps(
+                    {"key": server.key, "limit": server.limit, "active": sorted(server.active)}
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            elif self.path == "/release":
                 server.active.discard(request_id)
                 server.released.append(request_id)
                 status = 200
@@ -156,7 +178,7 @@ class SharedEndpointLimit:
             yield
         except Exception as exc:
             status = exc.code if isinstance(exc, HTTPError) else getattr(exc, "status_code", None)
-            if classify_error(exc) != ErrorCategory.NETWORK and status != 504:
+            if request_not_sent(exc) or (classify_error(exc) != ErrorCategory.NETWORK and status != 504):
                 self._release(request_id)
             # Transport and gateway timeouts may leave upstream inference running.
             # Preserve the slot until the operator drains/cancels the endpoint, not by TTL.
@@ -177,9 +199,16 @@ def main():
     parser.add_argument("--key", required=True)
     parser.add_argument("--limit", required=True, type=int)
     parser.add_argument("--token-env", default="LEROBOT_ENDPOINT_LIMIT_TOKEN")
+    parser.add_argument(
+        "--admin-token-env", help="Separate secret for drained-only /reset; omitted disables reset"
+    )
     args = parser.parse_args()
     with EndpointLimitServer(
-        (args.host, args.port), key=args.key, limit=args.limit, token=os.environ[args.token_env]
+        (args.host, args.port),
+        key=args.key,
+        limit=args.limit,
+        token=os.environ[args.token_env],
+        admin_token=os.environ[args.admin_token_env] if args.admin_token_env else None,
     ) as server:
         server.serve_forever()
 
