@@ -244,6 +244,10 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
 
     api_base = config.api_base
     api_key = config.api_key
+    if config.api_key_env:
+        api_key = os.environ.get(config.api_key_env, "")
+        if not api_key:
+            raise ValueError(f"Environment variable {config.api_key_env} is not set")
     auto_serve = config.auto_serve
     api_bases: list[str] = [api_base]
 
@@ -267,7 +271,15 @@ def _make_openai_client(config: VlmConfig) -> VlmClient:
             api_bases = [api_base]
             print(f"[lerobot-annotate] server ready at {api_base}", flush=True)
 
-    clients = [OpenAI(base_url=base, api_key=api_key) for base in api_bases]
+    clients = [
+        OpenAI(
+            base_url=base,
+            api_key=api_key,
+            timeout=config.request_timeout_s,
+            max_retries=config.request_max_retries,
+        )
+        for base in api_bases
+    ]
     # round-robin counter for parallel mode
     rr_counter = {"i": 0}
 

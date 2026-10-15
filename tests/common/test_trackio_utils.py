@@ -219,7 +219,8 @@ def test_trackio_logger_reports_space_and_stores_resolved_space_id(trackio, tmp_
     assert "https://huggingface.co/spaces/alice/my-space" in caplog.text
 
 
-def test_trackio_logger_reports_self_hosted_server(trackio, tmp_path, caplog):
+def test_trackio_logger_reports_self_hosted_server(trackio, tmp_path, caplog, monkeypatch):
+    monkeypatch.setenv("NO_COLOR", "1")
     trackio.init.return_value.url = "https://tracker.example.com"
     cfg = make_cfg(tmp_path)
 
@@ -227,7 +228,7 @@ def test_trackio_logger_reports_self_hosted_server(trackio, tmp_path, caplog):
         TrackioLogger(cfg)
 
     assert cfg.trackio.space_id is None
-    assert "https://tracker.example.com" in caplog.text
+    assert caplog.messages[-1] == "Track this run --> https://tracker.example.com"
 
 
 def test_trackio_logger_reports_local_dashboard_command(trackio, tmp_path, caplog):

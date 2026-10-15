@@ -31,11 +31,11 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
+from lerobot.inference import QueryAnswer, QueryKind, RemoteInferenceConfig, RTCInferenceConfig
 from lerobot.utils.stdin_input import StdinCommandListener
 from lerobot.utils.utils import log_say
 
 from .controller import AskResult, RolloutController, RolloutEvent
-from .inference import QueryAnswer, QueryKind
 
 if TYPE_CHECKING:
     from .context import RolloutContext
@@ -76,6 +76,14 @@ class InteractiveCommand:
 def _format_task(task: str) -> str:
     """Render a task string for the operator, naming the empty case explicitly."""
     return repr(task) if task else "(none — set one with /subtask <text>)"
+
+
+def _format_latency(answer: QueryAnswer) -> str:
+    return f" ({answer.latency_s:.1f}s)" if answer.latency_s is not None else ""
+
+
+def _format_detail(answer: QueryAnswer) -> str:
+    return f"\n  {answer.detail}" if answer.detail else ""
 
 
 def _strip_quotes(text: str) -> str:
@@ -182,7 +190,7 @@ class InteractiveSession:
             )
         elif event is RolloutEvent.SEGMENT_ENDED:
             self._print(
-                "Rollout run ended on its own (duration reached). Robot is holding position — "
+                "Rollout run ended. Robot is holding position — "
                 "/start to run again, /reset to return to initial position, /stop to shut down."
             )
         elif event is RolloutEvent.RESET_STARTED:
@@ -205,16 +213,28 @@ class InteractiveSession:
     def _report_answer(self, answer: QueryAnswer) -> None:
         """Render a resolved text query (an operator question or an autosteer turn)."""
         if answer.kind is QueryKind.NEXT_SUBTASK:
-            if answer.ok:
+            if answer.completed:
+                self._print(
+                    f"Planner reports {answer.question!r} complete{_format_latency(answer)} — run ended, "
+                    "robot holding. /reset to return to initial position."
+                )
+            elif answer.ok and answer.held:
+                self._print(
+                    f"Autosteer holds {answer.answer!r}{_format_latency(answer)} — nothing sent to the policy"
+                    f"{_format_detail(answer)}"
+                )
+            elif answer.ok:
                 # The engine has already applied it via set_task; just announce.
-                self._print(f"Autosteer subtask: {answer.answer!r}")
+                self._print(
+                    f"Autosteer subtask: {answer.answer!r}{_format_latency(answer)}{_format_detail(answer)}"
+                )
             else:
                 self._print(
                     f"Autosteer stopped — could not plan the next subtask for {answer.question!r}: "
                     f"{answer.error}"
                 )
         elif answer.ok:
-            self._print(f"Q: {answer.question}\nA: {answer.answer}")
+            self._print(f"Q: {answer.question}\nA: {answer.answer}{_format_latency(answer)}")
         else:
             self._print(f"Could not answer {answer.question!r} — {answer.error}")
 
@@ -263,6 +283,9 @@ class InteractiveSession:
         if not task:
             self._print(f"Current task: {_format_task(self.controller.task)}")
             return
+        if error := self.controller.text_input_error(task, instruction=True):
+            self._print(f"Task rejected — {error}")
+            return
         previous = self.controller.task
         steering = self.controller.autosteer_goal
         if steering is not None:
@@ -278,6 +301,16 @@ class InteractiveSession:
             # set_task also refuses while stopping; "unchanged" would imply it was applied.
             self._print("Can't change the task — the session is stopping.")
 
+    def _text_support_hint(self) -> str:
+        if getattr(self._runtime.cfg, "planner", None) is None:
+            return "Attach an external planner with --planner.model_id, or use a policy with a text head."
+        inference = self._runtime.cfg.inference
+        if isinstance(inference, RemoteInferenceConfig):
+            return "Check the deployment's text support and server language.enabled setting."
+        if isinstance(inference, RTCInferenceConfig):
+            return "Check policy text support and the robot's position-hold capability."
+        return "Check whether this policy supports text generation."
+
     def _cmd_vqa(self, cmd: InteractiveCommand) -> None:
         # Strip quotes first, so /vqa "" prints the usage hint instead of queueing an empty question.
         question = _strip_quotes(cmd.args)
@@ -288,12 +321,14 @@ class InteractiveSession:
         if result is AskResult.QUEUED:
             self._print(f"Asked: {question!r} — answering from the next observation...")
         elif result is AskResult.UNSUPPORTED:
-            self._print("This policy has no text head — it cannot answer questions.")
+            self._print(f"Text queries are unavailable for this setup. {self._text_support_hint()}")
         elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to answer from.")
         elif result is AskResult.BUSY:
             # Could be a previous /vqa or an autosteer query — the channel does not say which.
             self._print("The policy is busy with another query — try again in a moment.")
+        elif result is AskResult.INVALID:
+            self._print(f"Question rejected — {self.controller.text_input_error(question)}")
         else:  # a future AskResult variant must not be mislabeled as busy
             logger.error("Unhandled AskResult %r for /vqa", result)
             self._print(f"Could not queue the question ({result.value}).")
@@ -316,9 +351,11 @@ class InteractiveSession:
             return
         result = self.controller.autosteer(goal)
         if result is AskResult.UNSUPPORTED:
-            self._print("This policy has no text head — it cannot plan subtasks.")
+            self._print(f"Autosteering is unavailable for this setup. {self._text_support_hint()}")
         elif result is AskResult.NOT_RUNNING:
             self._print("Not running — /start first so the policy has a live view to plan from.")
+        elif result is AskResult.INVALID:
+            self._print(f"Autosteer goal rejected — {self.controller.text_input_error(goal)}")
         elif result is AskResult.QUEUED:
             self._print(
                 f"Autosteer on — goal {goal!r}. The policy picks its own subtasks; "
