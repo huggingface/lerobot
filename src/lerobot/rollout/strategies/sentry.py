@@ -54,9 +54,9 @@ class SentryStrategy(RolloutStrategy):
     so no push is ever silently dropped and exactly one push runs at a
     time.
 
-    Policy state (hidden state, RTC queue) intentionally persists across
-    episode boundaries — Sentry slices one continuous rollout, the robot
-    does not reset between slices.
+    Policy hidden state persists across episode boundaries. Async motion is
+    invalidated and held during blocking saves, then resumes from a fresh capture;
+    the robot does not return to its initial position between slices.
 
     Requires ``streaming_encoding=True`` (enforced in config validation)
     to prevent disk I/O from blocking the control loop.
@@ -164,7 +164,8 @@ class SentryStrategy(RolloutStrategy):
                 # keeping push_to_hub efficient (uploads complete files).
                 elapsed = time.perf_counter() - episode_start
                 if elapsed >= episode_duration_s:
-                    self._checked_save_episode(dataset)
+                    with self._pause_for_recording(ctx):
+                        self._checked_save_episode(dataset)
                     logger.info(
                         "Episode saved (total: %d, elapsed: %.1fs)",
                         dataset.num_episodes,
