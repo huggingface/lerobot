@@ -41,6 +41,11 @@ if TYPE_CHECKING or _serial_available:
 else:
     serial = None  # type: ignore[assignment]
 
+try:
+    import termios as _termios
+except ImportError:
+    _termios = None  # type: ignore[assignment]
+
 if TYPE_CHECKING or _deepdiff_available:
     from deepdiff import DeepDiff
 else:
@@ -577,7 +582,12 @@ class SerialMotorsBus(MotorsBusBase):
         bus._connect(handshake=False)
         baudrate_ids = {}
         for baudrate in tqdm(bus.available_baudrates, desc="Scanning port"):
-            bus.set_baudrate(baudrate)
+            try:
+                bus.set_baudrate(baudrate)
+            except Exception as e:
+                if bus._skip_unsupported_baudrate(e):
+                    continue
+                raise
             ids_models = bus.broadcast_ping()
             if ids_models:
                 tqdm.write(f"Motors found for {baudrate=}: {pformat(ids_models, indent=4)}")
@@ -707,6 +717,18 @@ class SerialMotorsBus(MotorsBusBase):
             int: Baud-rate in bits / second.
         """
         return self.port_handler.getBaudRate()
+
+    @staticmethod
+    def _skip_unsupported_baudrate(exc: Exception) -> bool:
+        """True when changing baudrate fails because the host cannot apply the rate.
+
+        Some host/kernel stacks (notably CDC ACM on Linux) reject certain baudrates
+        such as 250000 or 128000, raising ``termios.error: [Errno 22]``. During motor
+        discovery we want to skip those baudrates instead of aborting the scan.
+        """
+        return (_termios is not None and isinstance(exc, _termios.error)) or (
+            serial is not None and isinstance(exc, serial.SerialException)
+        )
 
     def set_baudrate(self, baudrate: int) -> None:
         """Set a new UART baud-rate on the port.
