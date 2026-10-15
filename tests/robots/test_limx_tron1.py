@@ -234,6 +234,19 @@ def test_action_order_follows_joint_names():
     assert vendor.published[-1].q == pytest.approx(list(range(8)))
 
 
+def test_send_action_returns_only_the_commanded_setpoint():
+    robot = HarnessRobot(make_config(robot_type="SF_TRON1A", publish_rate=0.0001), FakeVendorRobot())
+    robot.connect()
+    try:
+        action = {pos_key(name): float(index) for index, name in enumerate(robot.config.joint_names)}
+        sent = robot.send_action({**action, "unrelated.pos": 1.0})
+    finally:
+        robot.disconnect()
+
+    assert sent == action
+    assert set(sent) == set(robot.action_features)
+
+
 def test_missing_joint_key_is_reported():
     robot = HarnessRobot(make_config(), FakeVendorRobot())
     robot.connect()
