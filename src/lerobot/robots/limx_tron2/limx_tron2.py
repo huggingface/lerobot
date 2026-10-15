@@ -16,11 +16,12 @@
 
 """LeRobot driver for the LimX Dynamics TRON2 dual-arm robot.
 
-The connection rides on TRON2's WebSocket JSON transport, provided by the
-``tron2-env`` package.  Keeping the transport on a wire protocol rather than on
-the vendor low-level SDK is deliberate: that SDK ships native extensions bound to
-the CPython 3.8 ABI, so it cannot be imported from the Python 3.12+ environments
-LeRobot runs in.
+The connection goes through ``tron2-env``, LimX's public TRON2 runtime, to the
+motion controller running on the robot.  LeRobot sends ServoJ joint targets and
+the robot-side controller interpolates towards them; this is the same interface
+LimX's own policy deployment (``tron2_openpi``) uses.  The vendor low-level SDK
+(``limxsdk``) is deliberately not used here: on TRON2 it is a motor-level
+interface that takes raw per-joint PD commands, bypassing that controller.
 
 ``tron2_env`` is imported lazily inside [`LimxTron2.connect`], so a missing
 optional dependency surfaces as a one-line ``pip install 'lerobot[limx_tron2]'``

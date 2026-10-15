@@ -6,10 +6,12 @@ integration covers the **dual-arm** configuration: two 7-DoF arms and a 2-DoF he
 LeRobot as a single `limx_tron2` robot.
 
 <Tip>
-  This integration talks to the robot's **WebSocket controller** directly, so no
-  vendor low-level SDK is required. That is deliberate: the vendor low-level SDK
-  ships native extensions bound to the CPython 3.8 ABI, and cannot be imported
-  from the Python 3.12+ environments LeRobot runs in.
+  This integration drives the robot's own **motion controller** through
+  `tron2-env`, LimX's public TRON2 runtime and the same interface its own policy
+  deployment uses: LeRobot sends joint targets, and the robot-side controller
+  interpolates towards them. It deliberately does not use the vendor low-level
+  SDK (`limxsdk`), which on TRON2 takes raw per-joint PD commands and bypasses
+  that controller.
 </Tip>
 
 ## Supported Hardware

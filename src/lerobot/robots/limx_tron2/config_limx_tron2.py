@@ -102,7 +102,7 @@ class LimxTron2Config(RobotConfig):
     # Grippers are opt-in.  The runtime normalises gripper *commands* to 0..1
     # but does not document the units of the value it reports back, so enabling
     # this before verifying that on hardware would put the observation and the
-    # action on different scales.  See the "Grippers" section of the README.
+    # action on different scales.  See the "Grippers" section of the docs page.
     include_grippers: bool = False
 
     # --- naming -----------------------------------------------------------
