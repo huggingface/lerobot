@@ -20,6 +20,8 @@ from lerobot.utils.import_utils import make_device_from_device_class
 from .config import TeleoperatorConfig
 
 if TYPE_CHECKING:
+    from lerobot.robots.config import RobotConfig
+
     from .teleoperator import Teleoperator
 
 
@@ -33,7 +35,14 @@ class TeleopEvents(Enum):
     TERMINATE_EPISODE = "terminate_episode"
 
 
-def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
+def make_teleoperator_from_config(
+    config: TeleoperatorConfig, robot_config: "RobotConfig | None" = None
+) -> "Teleoperator":
+    # robot_config: the --robot.* config from the same CLI invocation, already parsed by the
+    # caller (lerobot_teleoperate.py/lerobot_record.py) before either factory runs. Every
+    # branch below ignores it except isaac_teleop, which needs to know the actual follower
+    # (--robot.type/--robot.motor_family) to select its kinematics profile -- the teleoperator
+    # and the robot are otherwise constructed independently, with no other channel between them.
     # TODO(Steven): Consider just using the make_device_from_device_class for all types
     if config.type == "keyboard":
         from .keyboard import KeyboardTeleop
@@ -111,6 +120,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .bi_rebot_102_leader import BiRebot102Leader
 
         return BiRebot102Leader(config)
+    elif config.type == "isaac_teleop":
+        from .isaac_teleop import XRController
+
+        return XRController(config, robot_config=robot_config)
     else:
         try:
             return cast("Teleoperator", make_device_from_device_class(config))
