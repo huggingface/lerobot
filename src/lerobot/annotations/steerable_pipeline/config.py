@@ -271,7 +271,9 @@ class AnnotationPipelineConfig:
 
     # Publication requires an explicit new_repo_id, permission and release tag.
     push_to_hub: bool = False
-    push_private: bool = False
+    # Inherit Hub source visibility; local-only sources default to private.
+    push_private: bool | None = None
+    allow_public_from_private: bool = False
     push_commit_message: str | None = None
     release_tag: str | None = None
     expected_target_revision: str | None = None

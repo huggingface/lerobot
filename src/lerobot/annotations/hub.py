@@ -36,8 +36,10 @@ def _publication_context(root, cfg):
     api = HfApi()
     target = cfg.new_repo_id
     previous = {}
+    target_info = None
     try:
-        current = api.dataset_info(target).sha
+        target_info = api.dataset_info(target)
+        current = target_info.sha
     except RepositoryNotFoundError:
         current = None
     if current is not None:
@@ -54,13 +56,32 @@ def _publication_context(root, cfg):
         raise ValueError("Publisher inputs are not implicit publication targets")
     elif cfg.expected_target_revision:
         raise ValueError("Expected target revision was provided for an absent repository")
+    source_info = None
+    if cfg.repo_id:
+        source_info = (
+            target_info if cfg.repo_id == target else api.dataset_info(cfg.repo_id, revision=cfg.revision)
+        )
+    for info in (source_info, target_info):
+        if info is not None and not isinstance(getattr(info, "private", None), bool):
+            raise ValueError("Cannot determine source/target visibility; refusing publication")
+    private = cfg.push_private
+    if target_info is not None:
+        private = target_info.private
+        if cfg.push_private is not None and cfg.push_private != private:
+            raise ValueError(
+                "Existing target visibility differs from push_private; it is not changed automatically"
+            )
+    elif private is None:
+        private = source_info.private if source_info is not None else True
+    if source_info is not None and source_info.private and not private and not cfg.allow_public_from_private:
+        raise ValueError("Public publication of a private source requires allow_public_from_private=true")
     # Do not delete or repoint an immutable release after a rerun.
     if current is not None:
         tags = {tag.name for tag in api.list_repo_refs(target, repo_type="dataset").tags}
         if cfg.release_tag in tags:
             raise ValueError("Release tag already exists; choose a new release tag")
     check_credentials(draccus.encode(cfg))
-    return api, current, previous
+    return api, current, previous, private
 
 
 def _source_files(root):
@@ -93,7 +114,7 @@ def _check_limits(files, cfg, *, extra_files=0):
 def preflight_publication(root, cfg, *, planned_paths=()):
     """Fail before inference on known publication blockers; final sizes are rechecked."""
     root = Path(root).resolve()
-    _, current, _ = _publication_context(root, cfg)
+    _, current, _, _ = _publication_context(root, cfg)
     planned = set(planned_paths)
     paths = set(_source_files(root)) if current is None else set()
     paths.update(planned | {"README.md", LINEAGE})
@@ -108,7 +129,7 @@ def preflight_publication(root, cfg, *, planned_paths=()):
 def publish_annotation(root, cfg, *, changed_paths):
     """One guarded release; updates never re-upload unchanged videos."""
     root = Path(root).resolve()
-    api, current, previous = _publication_context(root, cfg)
+    api, current, previous, private = _publication_context(root, cfg)
     target = cfg.new_repo_id
     card_path = root / "README.md"
     card = DatasetCard(card_path.read_text() if card_path.exists() else "---\n{}\n---\n# Processed dataset\n")
@@ -143,6 +164,7 @@ def publish_annotation(root, cfg, *, changed_paths):
         "source": source,
         "parent_commit": current,
         "release_tag": cfg.release_tag,
+        "private": private,
         "redistribution_permission": cfg.redistribution_permission,
         "processing": draccus.encode(cfg),
     }
@@ -167,7 +189,7 @@ def publish_annotation(root, cfg, *, changed_paths):
         files[LINEAGE] = staging / "lineage.json"
         _check_limits(files, cfg)
         if current is None:
-            api.create_repo(repo_id=target, repo_type="dataset", private=cfg.push_private, exist_ok=False)
+            api.create_repo(repo_id=target, repo_type="dataset", private=private, exist_ok=False)
             current = api.dataset_info(target).sha
             lineage["parent_commit"] = current
             (staging / "lineage.json").write_bytes(canonical_json(lineage))

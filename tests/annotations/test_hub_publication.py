@@ -37,8 +37,8 @@ def publication(tmp_path, monkeypatch):
     calls = []
 
     class API:
-        def dataset_info(self, repo_id):
-            return SimpleNamespace(sha=SHA)
+        def dataset_info(self, repo_id, *, revision=None):
+            return SimpleNamespace(sha=SHA, private=False)
 
         def create_repo(self, **kwargs):
             calls.append(("create_repo", kwargs))
@@ -161,13 +161,15 @@ def test_new_processed_target_complete_copy_and_preflight(publication, monkeypat
     root, cfg, calls, api_class = publication
     cfg.repo_id, cfg.expected_target_revision = "owner/source", None
 
-    def absent_until_created(self, repo_id):
+    def absent_until_created(self, repo_id, *, revision=None):
+        if repo_id == cfg.repo_id:
+            return SimpleNamespace(sha=SHA, private=False)
         if not any(name == "create_repo" for name, _ in calls):
             raise RepositoryNotFoundError(
                 "not found",
                 response=httpx.Response(404, request=httpx.Request("GET", "https://test.example")),
             )
-        return SimpleNamespace(sha=SHA)
+        return SimpleNamespace(sha=SHA, private=False)
 
     monkeypatch.setattr(api_class, "dataset_info", absent_until_created)
     cfg.max_publish_files = 1
@@ -223,7 +225,9 @@ def test_preflight_counts_generated_shard_metadata_before_inference(
     if new_target:
         cfg.repo_id, cfg.expected_target_revision = "owner/source", None
 
-        def absent(self, repo_id):
+        def absent(self, repo_id, *, revision=None):
+            if repo_id == cfg.repo_id:
+                return SimpleNamespace(sha=SHA, private=False)
             raise RepositoryNotFoundError(
                 "absent", response=httpx.Response(404, request=httpx.Request("GET", "https://test.example"))
             )
@@ -233,6 +237,90 @@ def test_preflight_counts_generated_shard_metadata_before_inference(
     with pytest.raises(ValueError, match="single-commit"):
         run_annotation_pipeline(cfg, root, client_factory=FACTORY)
     assert not CLIENTS and not calls
+
+
+@pytest.mark.parametrize(
+    "source_private,requested,allow_public,expected",
+    [
+        (False, None, False, False),
+        (False, True, False, True),
+        (True, None, False, True),
+        (True, False, False, None),
+        (True, False, True, False),
+        (True, True, False, True),
+    ],
+)
+def test_publication_inherits_visibility_and_requires_private_source_opt_in(
+    publication, monkeypatch, source_private, requested, allow_public, expected
+):
+    import httpx
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    root, cfg, calls, api_class = publication
+    cfg.repo_id, cfg.expected_target_revision = "owner/source", None
+    cfg.push_private = requested
+    cfg.allow_public_from_private = allow_public
+    revisions = []
+
+    def info(self, repo_id, *, revision=None):
+        if repo_id == cfg.repo_id:
+            revisions.append(revision)
+            return SimpleNamespace(sha=SHA, private=source_private)
+        if not calls:
+            raise RepositoryNotFoundError(
+                "absent", response=httpx.Response(404, request=httpx.Request("GET", "https://test.example"))
+            )
+        return SimpleNamespace(sha=SHA, private=calls[0][1]["private"])
+
+    monkeypatch.setattr(api_class, "dataset_info", info)
+    if expected is None:
+        for action in (
+            hub.preflight_publication,
+            lambda root, cfg: hub.publish_annotation(root, cfg, changed_paths=[]),
+        ):
+            with pytest.raises(ValueError, match="allow_public_from_private"):
+                action(root, cfg)
+        assert not calls
+    else:
+        hub.publish_annotation(root, cfg, changed_paths=[])
+        assert calls[0][0] == "create_repo" and calls[0][1]["private"] is expected
+    assert revisions and all(revision == SHA for revision in revisions)
+
+
+@pytest.mark.parametrize("missing_visibility", [False, True])
+def test_existing_target_visibility_cannot_be_ignored(publication, monkeypatch, missing_visibility):
+    root, cfg, calls, api_class = publication
+    if missing_visibility:
+        monkeypatch.setattr(api_class, "dataset_info", lambda *a, **k: SimpleNamespace(sha=SHA, private=None))
+    else:
+        cfg.push_private = True  # Existing processed target is public; never silently ignore this.
+    with pytest.raises(ValueError, match="visibility"):
+        hub.publish_annotation(root, cfg, changed_paths=[])
+    assert not calls
+
+
+def test_visibility_is_rechecked_at_publication(publication, monkeypatch):
+    import httpx
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    root, cfg, calls, api_class = publication
+    cfg.repo_id, cfg.expected_target_revision = "owner/source", None
+    cfg.push_private = False
+    source_private = False
+
+    def info(self, repo_id, *, revision=None):
+        if repo_id == cfg.repo_id:
+            return SimpleNamespace(sha=SHA, private=source_private)
+        raise RepositoryNotFoundError(
+            "absent", response=httpx.Response(404, request=httpx.Request("GET", "https://test.example"))
+        )
+
+    monkeypatch.setattr(api_class, "dataset_info", info)
+    hub.preflight_publication(root, cfg)
+    source_private = True
+    with pytest.raises(ValueError, match="allow_public_from_private"):
+        hub.publish_annotation(root, cfg, changed_paths=[])
+    assert not calls
 
 
 def test_local_source_publishes_with_content_provenance(
@@ -263,5 +351,6 @@ def test_local_source_publishes_with_content_provenance(
     monkeypatch.setattr(processing, "make_frame_provider", lambda *a, **k: StubFrameProvider())
     assert processing.run_annotation_pipeline(config(), root, client_factory=FACTORY).validation_report.ok
     hub.publish_annotation(root, cfg, changed_paths=[])
+    assert calls[0][1]["private"] is True  # Unknown local-only visibility defaults to private.
     source = json.loads(calls[1][1]["operations"][hub.LINEAGE])["source"]
     assert source == {"type": "local", "native_content_sha256": original}

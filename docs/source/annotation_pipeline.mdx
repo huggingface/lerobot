@@ -244,6 +244,10 @@ For account/job setup, see the [HF Jobs guide](https://huggingface.co/docs/huggi
   `repo_id`/`revision`, a fresh `release_tag` and a reviewed `redistribution_permission`.
   Permission notes do not invent a missing licence. Existing targets additionally require
   `expected_target_revision` and must be processed datasets with matching lineage.
+  New targets inherit source visibility (`push_private=null`); local-only sources default
+  to private. Publishing a private Hub source publicly requires both `push_private=false`
+  and `allow_public_from_private=true`, in addition to reviewed permission. Unknown
+  visibility fails closed. Existing target visibility is checked, never silently changed.
 - Later releases start from the processed target's pinned revision and upload changed
   Parquet/metadata, not another video copy. Publication has bounded file/byte limits;
   large staged uploads need a separate workflow. Seeds do not guarantee bitwise VLM/GPU
