@@ -8,9 +8,12 @@
 
 """Exercise signed-URL expiry through real HTTP response handling."""
 
+import gc
 import threading
+import weakref
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 
 import httpx
 import pytest
@@ -256,3 +259,62 @@ def test_concurrent_expired_ranges_preserve_each_payload(fetcher):
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = [pool.submit(fetcher.read_range, "video.mp4", i, 2) for i in range(4)]
         assert [future.result() for future in futures] == [b"01", b"12", b"23", b"34"]
+
+
+@pytest.mark.parametrize("parts", [1, 4])
+def test_finished_ranges_do_not_retain_video_bodies_until_gc(
+    fetcher: NativeHTTPRangeFetcher, parts: int
+) -> None:
+    """Closed HTTP response cycles must not retain a second copy of fetched video bytes."""
+    responses: list[weakref.ReferenceType[httpx.Response]] = []
+    chunk_size = 1024 * 1024
+
+    class VideoStream(httpx.SyncByteStream):
+        def __init__(self, start: int, stop: int) -> None:
+            self.start = start
+            self.stop = stop
+
+        def __iter__(self) -> Iterator[bytes]:
+            first_size = max(0, min(self.stop + 1, chunk_size) - self.start)
+            if first_size:
+                yield b"a" * first_size
+            second_size = self.stop + 1 - self.start - first_size
+            if second_size:
+                yield b"b" * second_size
+
+    def serve(request: httpx.Request) -> httpx.Response:
+        start, stop = map(int, request.headers["range"].removeprefix("bytes=").split("-"))
+        response = httpx.Response(206, stream=VideoStream(start, stop), request=request)
+        responses.append(weakref.ref(response))
+        return response
+
+    fetcher.subrange_parts = parts
+    fetcher.subrange_min_bytes = 1
+    if parts > 1:
+        fetcher._subrange_pool = ThreadPoolExecutor(max_workers=parts)
+    fetcher._resolved_urls["video.mp4"] = "https://cdn.example/video"
+    fetcher.client = httpx.Client(transport=httpx.MockTransport(serve))
+    gc.collect()
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for _ in range(8):
+            payload = fetcher.read_range("video.mp4", 0, 2 * chunk_size)
+            assert len(payload) == 2 * chunk_size
+            assert payload[:chunk_size] == b"a" * chunk_size
+            assert payload[chunk_size:] == b"b" * chunk_size
+            del payload
+        # HTTPX response/stream cycles may survive until GC. They should retain
+        # only response metadata, not megabytes of already delivered video.
+        retained_body_bytes = 0
+        for reference in responses:
+            response = reference()
+            if response is not None:
+                assert response.is_closed
+                with suppress(httpx.ResponseNotRead):
+                    retained_body_bytes += len(response.content)
+        assert retained_body_bytes == 0
+    finally:
+        if was_enabled:
+            gc.enable()
+        gc.collect()
