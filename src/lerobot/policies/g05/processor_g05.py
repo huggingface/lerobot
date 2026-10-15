@@ -1093,9 +1093,13 @@ def fix_g05_train_overrides(
     ``G05EmbodimentProjectionStep`` (policy-space, padded dims), and its unnormalizer is renamed
     to ``g05_stepwise_unnormalizer`` when per-timestep stats are enabled. Left alone, the override
     either targets a step name that doesn't exist (unnormalizer) or replaces the projected stats
-    with raw ones (normalizer).
+    with raw ones (normalizer). The same goes for the ``relative_actions_processor`` override a
+    relative-action run adds: G0.5's relative step is registered as ``g05_relative_joint_actions``.
     """
     preprocessor_overrides = dict(preprocessor_overrides or {})
+    relative_override = preprocessor_overrides.pop("relative_actions_processor", None)
+    if relative_override is not None:
+        preprocessor_overrides["g05_relative_joint_actions"] = relative_override
     normalizer_override = preprocessor_overrides.get("normalizer_processor")
     if normalizer_override is not None:
         normalizer_override = dict(normalizer_override)
