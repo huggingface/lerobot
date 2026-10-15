@@ -103,10 +103,16 @@ class LimxTron2(Robot):
             return
 
         controller = self._make_controller()
-        controller.start()
+        try:
+            controller.start()
+        except BaseException:
+            # start() may have opened the socket or spawned the publish thread
+            # before failing; tear those down so a failed connect leaks nothing.
+            self._safe_disconnect(controller)
+            raise
 
         if not controller.is_connected():
-            controller.disconnect()
+            self._safe_disconnect(controller)
             raise ConnectionError(
                 f"TRON2 controller at ws://{self.config.robot_ip}:{self.config.port} "
                 "did not report a live connection"
@@ -153,6 +159,11 @@ class LimxTron2(Robot):
         controller, self._controller = self._controller, None
         if controller is None:
             return
+        self._safe_disconnect(controller)
+
+    @staticmethod
+    def _safe_disconnect(controller: Any) -> None:
+        """Disconnect ``controller``, logging rather than raising teardown errors."""
         try:
             controller.disconnect()
         except Exception:  # noqa: BLE001 - cleanup must not mask the original error
@@ -223,8 +234,11 @@ class LimxTron2(Robot):
                 when `include_grippers` is set.
 
         Returns:
-            `RobotAction`: The action that was sent.  The controller interpolates towards the setpoint
-            rather than echoing it, so the setpoint is the closest honest answer to "what was sent".
+            `RobotAction`: The setpoint actually commanded, restricted to the keys that were sent.  As in
+            the other LeRobot robots (see [`Robot.send_action`]), this is the command, not a measured echo:
+            the controller interpolates towards the setpoint, and the measured joint positions are reported
+            by [`LimxTron2.get_observation`].  Keys the robot ignores (grippers when `include_grippers` is
+            off, or any extra entries) are dropped so recorded datasets match `action_features`.
 
         Raises:
             KeyError: If a joint key is missing, or only one side of the gripper pair is present.
@@ -233,16 +247,19 @@ class LimxTron2(Robot):
 
         servoj = servoj_vector(action, self.config.joint_names)
         controller.command_joints(servoj)
+        sent: RobotAction = {
+            pos_key(name): float(value) for name, value in zip(self.config.joint_names, servoj, strict=True)
+        }
 
         if self.config.include_grippers:
             openings = gripper_openings(action, self.config.gripper_names)
             if openings is not None:
                 left, right = openings
                 controller.command_end_effector(np.asarray([left]), np.asarray([right]))
+                sent[pos_key(self.config.gripper_names[0])] = left
+                sent[pos_key(self.config.gripper_names[1])] = right
 
-        # The controller interpolates towards the setpoint rather than echoing
-        # it, so the setpoint is the closest honest answer to "what was sent".
-        return action
+        return sent
 
     # ---------------------------------------------------------------- helpers
 

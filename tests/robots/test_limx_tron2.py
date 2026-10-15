@@ -207,6 +207,50 @@ def test_grippers_are_forwarded_when_enabled():
     assert right == pytest.approx(75.0)
 
 
+def test_send_action_returns_the_commanded_setpoint():
+    robot = HarnessRobot(make_config(), FakeTransport())
+    robot.connect()
+    try:
+        action = {f"{name}.pos": float(index) for index, name in enumerate(robot.config.joint_names)}
+        sent = robot.send_action(action)
+    finally:
+        robot.disconnect()
+
+    assert sent == action
+    assert set(sent) == set(robot.action_features)
+
+
+def test_send_action_drops_keys_that_were_not_sent():
+    robot = HarnessRobot(make_config(), FakeTransport())  # grippers disabled
+    robot.connect()
+    try:
+        action = {f"{name}.pos": 0.0 for name in robot.config.joint_names}
+        action["left_gripper.pos"] = 0.5
+        action["right_gripper.pos"] = 0.5
+        action["unrelated.pos"] = 1.0
+        sent = robot.send_action(action)
+    finally:
+        robot.disconnect()
+
+    assert set(sent) == set(robot.action_features)
+
+
+def test_send_action_reports_grippers_when_enabled():
+    robot = HarnessRobot(make_config(include_grippers=True), FakeTransport())
+    robot.connect()
+    try:
+        action = {f"{name}.pos": 0.0 for name in robot.config.joint_names}
+        action["left_gripper.pos"] = 0.25
+        action["right_gripper.pos"] = 0.75
+        sent = robot.send_action(action)
+    finally:
+        robot.disconnect()
+
+    assert set(sent) == set(robot.action_features)
+    assert sent["left_gripper.pos"] == pytest.approx(0.25)
+    assert sent["right_gripper.pos"] == pytest.approx(0.75)
+
+
 # ----------------------------------------------------------------- lifecycle
 
 
@@ -227,6 +271,54 @@ def test_context_manager_connects_and_disconnects():
     assert not robot.is_connected
     assert transport.disconnect_calls == 1, "transport was not closed exactly once"
     assert not transport.is_connected()
+
+
+class FailingStartController:
+    """Controller stub whose ``start()`` fails after partially opening the connection."""
+
+    def __init__(self) -> None:
+        self.disconnect_calls = 0
+
+    def start(self) -> None:
+        raise OSError("publish thread failed to start")
+
+    def is_connected(self) -> bool:
+        return False
+
+    def disconnect(self) -> None:
+        self.disconnect_calls += 1
+
+
+def test_connect_cleans_up_when_start_raises():
+    controller = FailingStartController()
+
+    class FailingRobot(LimxTron2):
+        def _make_controller(self):
+            return controller
+
+    robot = FailingRobot(make_config())
+    with pytest.raises(OSError, match="failed to start"):
+        robot.connect()
+
+    assert controller.disconnect_calls == 1, "a failed start() must still close the controller"
+    assert not robot.is_connected
+
+
+def test_connect_failure_keeps_the_original_error_when_cleanup_fails():
+    class BrokenTeardown(FailingStartController):
+        def disconnect(self) -> None:
+            super().disconnect()
+            raise RuntimeError("teardown also failed")
+
+    controller = BrokenTeardown()
+
+    class FailingRobot(LimxTron2):
+        def _make_controller(self):
+            return controller
+
+    with pytest.raises(OSError, match="failed to start"):
+        FailingRobot(make_config()).connect()
+    assert controller.disconnect_calls == 1
 
 
 def test_disconnect_is_idempotent():
