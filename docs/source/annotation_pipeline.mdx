@@ -65,17 +65,17 @@ corrupt/incomplete work and avoids model startup on a fully cached run. Uncommit
 work can repeat. Changing model, prompt or upstream content invalidates affected work;
 a module's version must change when its behavior changes.
 
-| Option                                                                        | Default                            | Use                                                                                                                                          |
-| ----------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runtime.mode`                                                                | `run`                              | `plan` previews independent work without inference/submission; downstream plans wait for real outputs. `resume` also verifies existing work. |
-| `runtime.run_uri`                                                             | Local annotation staging directory | Persistent local/shared path or remote store; required explicitly for HF Jobs.                                                               |
-| `runtime.workers` / `batch_size` / `shard_size`                               | `1` / `16` / `64`                  | Worker processes/groups, items per checkpoint batch, items per work shard. Use at least one shard per requested worker.                      |
-| `runtime.max_parallel_stages`                                                 | `1`                                | Admit independent stages concurrently; requires an explicit CPU/GPU/memory `resource_budget`.                                                |
-| `runtime.max_retries`                                                         | `2`                                | Bounded retries for temporary network/service failures; schema/input errors and unknown bugs fail immediately.                               |
-| `executor.episode_parallelism` / `vlm.client_concurrency`                     | `16` / `16`                        | Threads inside each language worker and requests per client, not global endpoint limits.                                                     |
-| `plan.frames_per_second` / `max_frames_per_prompt` / `window_overlap_seconds` | `2` / `60` / `1`                   | Subtask sampling density, frame budget including overlap, and context overlap.                                                               |
-| `plan.emit_plan` / `emit_memory` / `n_task_rephrasings`                       | `true` / `true` / `10`             | Select plan/memory output; `0` rephrasings disables task augmentation.                                                                       |
-| `vlm.camera_key` / `vqa.restrict_to_default_camera` / `vqa.vqa_emission_hz`   | First image camera / `false` / `1` | Default camera, whether VQA uses only that camera, and VQA frequency.                                                                        |
+| Option                                                                        | Default                            | Use                                                                                                                                                                        |
+| ----------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runtime.mode`                                                                | `run`                              | `plan` previews independent work without inference/submission; downstream plans wait for real outputs. `resume` is an alias of `run`: both verify and reuse existing work. |
+| `runtime.run_uri`                                                             | Local annotation staging directory | Persistent local/shared path or remote store; required explicitly for HF Jobs.                                                                                             |
+| `runtime.workers` / `batch_size` / `shard_size`                               | `1` / `16` / `64`                  | Worker processes/groups, items per checkpoint batch, items per work shard. Use at least one shard per requested worker.                                                    |
+| `runtime.max_parallel_stages`                                                 | `1`                                | Admit independent stages concurrently; requires an explicit CPU/GPU/memory `resource_budget`.                                                                              |
+| `runtime.max_retries`                                                         | `2`                                | Bounded retries for temporary network/service failures; schema/input errors and unknown bugs fail immediately.                                                             |
+| `executor.episode_parallelism` / `vlm.client_concurrency`                     | `16` / `16`                        | Threads inside each language worker and requests per client, not global endpoint limits.                                                                                   |
+| `plan.frames_per_second` / `max_frames_per_prompt` / `window_overlap_seconds` | `2` / `60` / `1`                   | Subtask sampling density, frame budget including overlap, and context overlap.                                                                                             |
+| `plan.emit_plan` / `emit_memory` / `n_task_rephrasings`                       | `true` / `true` / `10`             | Select plan/memory output; `0` rephrasings disables task augmentation.                                                                                                     |
+| `vlm.camera_key` / `vqa.restrict_to_default_camera` / `vqa.vqa_emission_hz`   | First image camera / `false` / `1` | Default camera, whether VQA uses only that camera, and VQA frequency.                                                                                                      |
 
 Subtasks use timestamped contact sheets and a describe→segment pass. Optional
 `plan.subtask_seeded_relabel=true` refines wording with another call per subtask.
@@ -119,6 +119,16 @@ Unreachable coordinators fail closed. Ambiguous timeouts or killed workers leave
 held: drain/cancel inference before restarting the coordinator, rather than assuming
 old requests ended. Put API credentials in `vlm.api_key_env`, not saved configuration.
 
+Known connect/DNS failures release their permits. Inspect held request IDs with an
+authenticated `POST /status` (`{"key":"annotation"}`). For operator recovery, start
+the coordinator with a **separate** `--admin-token-env`; after draining/cancelling
+inference, `POST /reset` with that admin bearer token and
+`{"key":"annotation","drained":true}`. Reset is disabled without an admin token;
+never reset live inference just to unblock workers. Request retries (429/5xx and temporary
+network failures) are bounded by `vlm.request_max_retries=2`; each reacquires admission.
+An empty subtask result is recorded as rejected (`no_subtasks`), dependent stages are
+masked, and healthy episodes continue. Rejected families leave existing labels intact.
+
 ## Slurm and Hugging Face Jobs
 
 ### Slurm
@@ -149,6 +159,21 @@ Replace `SOURCE_SHA`, `CODE_SHA`, account/repository names and the image digest 
 Remote annotation requires a pinned Hub source, persistent remote storage and a public
 code repository. The image must include Python 3.12+, git, ffmpeg and compatible dataset,
 annotation and model-service dependencies; code installation uses `--no-deps`.
+There is no default job image: a stock vLLM image is **not** a dependency-complete
+LeRobot runtime. For an external endpoint, build from your pinned Python 3.12+ base,
+install git/ffmpeg and a hash-locked dependency set resolved from this code revision's
+`lerobot[annotations]`, then smoke-test these imports and a small decode/annotation:
+
+```bash
+python -c 'import draccus, datasets, pyarrow, av, openai; import lerobot.annotations.processing'
+```
+
+Publish that tested image and pass its registry digest below. For `vlm.auto_serve=true`,
+also include an explicitly pinned vLLM version with compatible Torch/video-decoder
+versions; do not install unconstrained dependencies on top of vLLM at job startup.
+`bootstrap_packages` is only for a small number of explicit `name==version` additions,
+not automatic dependency resolution. `job.lerobot_ref` is a legacy code-SHA alias,
+not a branch/tag selector.
 
 ```bash
 hf auth login
@@ -199,6 +224,28 @@ For account/job setup, see the [HF Jobs guide](https://huggingface.co/docs/huggi
   large staged uploads need a separate workflow. Seeds do not guarantee bitwise VLM/GPU
   reproducibility, and cached-run time is not processing throughput.
 
+Publication checks permissions, target lineage/tags and known source-size lower bounds
+**before inference**; final generated sizes are checked again before upload. A local-only
+source can be published to a new explicit target with native-content SHA256 provenance;
+Hub sources require their exact upstream commit. No project-specific tags are added.
+
+Local source fingerprints and episode indexes are reused while file identity, size,
+mtime and ctime are unchanged; `runtime.verify_sources=true` forces a full source read.
+This local change detector is not an adversarial integrity guarantee. Artifacts retain
+checksum/schema checks (unchanged local verification is memoized within a store instance;
+remote checks and downloads still hash bytes). Endpoint addresses, worker counts and
+dataset-root locations do not change language cache identity. Reuse after relocation
+requires the same persistent `runtime.run_uri`; model/config/prompt changes still invalidate
+work. Packaged prompt edits and prompt overrides are hashed; provide the same overrides
+to all workers. Corrupt checkpoints are ignored with diagnostic warnings, not silently.
+
+Prepared commit files are removed only after successful commit/recovery. Run-store
+outputs are retained for resume by default. Set `runtime.retain_materialized_outputs=false`
+to remove large materialization artifacts after a durable local commit, retaining inference
+outputs; a later run rebuilds those files on CPU. Remote HF release copies remain durable
+until you explicitly retire that release/store. Local stores require shared filesystem locks
+and atomic rename, but not hard-link support. There is no automatic cache TTL/deletion.
+
 ## Add an annotation step
 
 For prompt/grounding changes, reuse the existing modules and templates under
@@ -246,6 +293,10 @@ planning inspects them without loading models. Return one result per item; masks
 rejections need explicit reasons. Preserve source frame IDs/timestamps; window predictors
 can use `EpisodeWindow` and `reconcile_frame_rows`/`reconcile_spans` from
 `lerobot.annotations.runtime.windows`. Bump the module version when semantics change.
+Modules may optionally implement `ScientificProcessingModule.scientific_config()` to
+return only result-affecting settings (including model/prompt digests). Without this hook,
+the entire constructor config is scientific. Keep paths/endpoints in constructor config
+for execution; never omit a setting that can change results from the scientific hook.
 
 Wire the step into a Python recipe, not a new CLI. A source provides `dataset_ref`
 and `discover(stage, store, upstream)`, yielding bounded JSON `InputItem` references

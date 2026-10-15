@@ -30,9 +30,15 @@ Jobs GPU instead of this machine (see ``lerobot.jobs.annotate``):
 
   uv run lerobot-annotate \\
       --repo_id=user/dataset \\
-      --new_repo_id=user/dataset_annotated \\
-      --push_to_hub=true \\
-      --job.target=h200
+      --revision=SOURCE_COMMIT_SHA \\
+      --runtime.run_uri=hf://buckets/user/annotations/run-1 \\
+      --runtime.hf_jobs.code_revision=CODE_COMMIT_SHA \\
+      --job.image=YOUR_DEPENDENCY_COMPLETE_IMAGE@sha256:IMAGE_DIGEST \\
+      --job.target=h200 --job.timeout=30m
+
+Replace the SHAs/digest with immutable pins. The image must provide annotation,
+dataset, video-decoder and model-service dependencies; LeRobot installs --no-deps.
+See the annotation pipeline guide for image preparation and publication options.
 """
 
 import logging
@@ -102,8 +108,7 @@ def annotate(cfg: AnnotationPipelineConfig) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     if cfg.job.is_remote or cfg.runtime.backend == "hf_jobs":
-        # Imported lazily: the submitter pulls in LeRobotDataset (the `dataset`
-        # extra), which a local annotation run over --root doesn't need.
+        # Imported lazily; submission does not load training or model code.
         from lerobot.jobs.annotate import submit_annotate_to_hf
 
         return submit_annotate_to_hf(cfg)
