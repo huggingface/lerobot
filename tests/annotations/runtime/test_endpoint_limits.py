@@ -16,7 +16,9 @@ from lerobot.annotations.runtime.endpoint_limits import EndpointLimitServer, Sha
 @pytest.fixture
 def coordinator(monkeypatch):
     monkeypatch.setenv("LEROBOT_ENDPOINT_LIMIT_TOKEN", "test-only-secret")
-    with EndpointLimitServer(("127.0.0.1", 0), key="qwen", limit=2, token="test-only-secret") as server:
+    with EndpointLimitServer(
+        ("127.0.0.1", 0), key="qwen", limit=2, token="test-only-secret", admin_token="test-admin"
+    ) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
@@ -161,3 +163,99 @@ def test_vlm_clients_share_one_limit(coordinator, monkeypatch):
     finally:
         for client in clients:
             client.close()
+
+
+def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from lerobot.annotations.steerable_pipeline import vlm_client
+    from lerobot.annotations.steerable_pipeline.config import VlmConfig
+
+    server, url = coordinator
+    operations, calls = [], []
+    original = SharedEndpointLimit._post
+
+    def post(self, operation, *args, **kwargs):
+        operations.append(operation)
+        return original(self, operation, *args, **kwargs)
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, **kwargs):
+            assert len(server.active) == 1
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise HTTPError("http://model.invalid", 503, "retry", {}, None)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))])
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    monkeypatch.setattr(SharedEndpointLimit, "_post", post)
+    monkeypatch.setattr(vlm_client, "retry_delay", lambda _: 0)
+    client = vlm_client.make_vlm_client(
+        VlmConfig(auto_serve=False, endpoint_limit_url=url, endpoint_limit_key="qwen")
+    )
+    try:
+        assert client.generate_json([[{"role": "user", "content": "test"}]]) == [{"ok": True}]
+        assert operations == ["acquire", "release", "acquire", "release"]
+        assert not server.active
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("kind", ["refused", "dns", "httpx_connect", "wrapped", "read"])
+def test_only_known_connect_failures_release_permits(coordinator, kind):
+    import socket
+
+    import httpx
+
+    server, url = coordinator
+    limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN")
+    errors = {
+        "refused": ConnectionRefusedError(),
+        "dns": socket.gaierror(),
+        "httpx_connect": httpx.ConnectError("not connected"),
+        "read": httpx.ReadTimeout("ambiguous"),
+    }
+    wrapped = RuntimeError("SDK wrapper")
+    wrapped.__cause__ = errors["httpx_connect"]
+    errors["wrapped"] = wrapped
+    with pytest.raises(type(errors[kind])), limit.permit():
+        raise errors[kind]
+    assert len(server.active) == (1 if kind == "read" else 0)
+
+
+def test_authenticated_status_and_drained_only_admin_reset(coordinator):
+    import json
+    from urllib.request import Request, urlopen
+
+    server, url = coordinator
+    limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN")
+    with pytest.raises(TimeoutError), limit.permit():
+        raise TimeoutError()
+
+    def post(path, token, **body):
+        request = Request(
+            url + path,
+            data=json.dumps({"key": "qwen", **body}).encode(),
+            headers={"Authorization": "Bearer " + token},
+        )
+        with urlopen(request, timeout=5) as response:
+            return json.load(response)
+
+    assert len(post("/status", "test-only-secret")["active"]) == 1
+    for token, body, status in [
+        ("wrong", {}, 401),
+        ("test-only-secret", {"drained": True}, 401),
+        ("test-admin", {}, 400),
+    ]:
+        with pytest.raises(HTTPError) as exc:
+            post("/reset", token, **body)
+        assert exc.value.code == status and server.active
+    assert post("/reset", "test-admin", drained=True)["active"] == []
+    assert not server.active

@@ -166,22 +166,30 @@ def _run_slurm_owned(store, plan, runtime: RuntimeConfig):
             f"Slurm array {job_id} was submitted but its ID could not be persisted; inspect/cancel it explicitly"
         ) from exc
     # Cancel an impossible dependency rather than leaving --wait stuck forever.
-    finalizer = subprocess.run(
-        [
-            cfg.sbatch,
-            *scripts.job_args,
-            "--wait",
-            f"--dependency=afterok:{job_id}",
-            "--kill-on-invalid-dep=yes",
-            "--cpus-per-task=1",
-            "--mem=4096M",
-            f"--output={scripts.finalizer.parent}/finalizer-%j.log",
-            str(scripts.finalizer),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
+    try:
+        finalizer = subprocess.run(
+            [
+                cfg.sbatch,
+                *scripts.job_args,
+                "--wait",
+                f"--dependency=afterok:{job_id}",
+                "--kill-on-invalid-dep=yes",
+                "--cpus-per-task=1",
+                "--mem=4096M",
+                f"--output={scripts.finalizer.parent}/finalizer-%j.log",
+                str(scripts.finalizer),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"Slurm stage {plan.plan_id}, array {job_id} failed. Inspect array tasks with "
+            f"sacct -j {job_id}; worker logs: {scripts.worker.parent}/worker-{job_id}_*.log; "
+            f"finalizer logs: {scripts.finalizer.parent}/finalizer-*.log. "
+            "Fix the failing shard/service and resume; accepted checkpoints are retained."
+        ) from exc
     _job_id(finalizer.stdout)
     return finalize_stage(store, plan)

@@ -177,10 +177,21 @@ def test_persistent_credentials_rejected(tmp_path):
         {"api_key": "literal"},
         {"url": "https://host/path?token=secret"},
         {"url": "https://user:password@host/path"},
+        {"url": "https://host/path?api-version=2024-10-21&sig=secret"},
+        {"url": "https://host/path?api-version=secret"},
+        {"url": "https://host/path#secret"},
     ):
         with pytest.raises(ValueError):
             processing.write_bundle(store, "worker", value, SHA)
     assert not store.list("bundles/*.json")
+
+
+def test_persistent_api_version_query_is_not_a_credential(tmp_path):
+    store = ArtifactStore(tmp_path / "run")
+    key, _ = processing.write_bundle(
+        store, "worker", {"url": "https://host/path?api-version=2024-10-21"}, SHA
+    )
+    assert store.read_json(key)["config"]["url"].endswith("api-version=2024-10-21")
 
 
 def test_hardware_admission_uses_current_inventory(monkeypatch):
