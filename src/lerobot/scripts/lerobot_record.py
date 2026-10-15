@@ -118,6 +118,8 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    disconnect_quietly,
+    stop_motion,
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
@@ -381,6 +383,14 @@ def record_loop(
 
         timestamp = time.perf_counter() - start_episode_t
 
+    # The loop has returned with the last action still in force. What comes
+    # next is save_episode() and, eventually, finalize() - synchronous video
+    # encoding that can run for minutes - during which nobody calls
+    # teleop.get_action() and its stale-link zeroing never fires. A stick
+    # that was deflected at the episode boundary would drive the base for
+    # the whole encode. So: come to rest here, every time.
+    stop_motion(robot)
+
 
 @parser.wrap()
 def record(
@@ -565,19 +575,28 @@ def record(
 
         log_say("Stop recording", cfg.play_sounds, blocking=True)
 
+        # Robot to rest and disconnected BEFORE the encode and the display
+        # flush, both of which can take a long time or hang, and both of
+        # which used to run with torque on and the base on its last command.
+        # `if robot.is_connected: robot.disconnect()` was the old guard - and
+        # is_connected is False exactly when a camera has dropped, which is
+        # the case that most needs the base stopped.
+        stop_motion(robot)
+        disconnect_quietly(robot, "robot")
+        if teleop:
+            disconnect_quietly(teleop, "teleop")
+
         if dataset:
             dataset.finalize()
-
-        if robot.is_connected:
-            robot.disconnect()
-        if teleop and teleop.is_connected:
-            teleop.disconnect()
 
         if listener is not None:
             listener.stop()
 
         if cfg.display_data:
-            shutdown_visualization(cfg.display_mode)
+            try:
+                shutdown_visualization(cfg.display_mode)
+            except Exception as e:  # noqa: BLE001
+                logging.warning("display shutdown failed: %s", e)
 
         if cfg.dataset.push_to_hub:
             if dataset and dataset.num_episodes > 0:

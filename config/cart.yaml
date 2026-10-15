@@ -1,0 +1,60 @@
+# Full xlerobot, all devices LOCAL. Run on the cart (elroy, the Orin) when
+# nothing is being teleoperated from another machine - checking motors,
+# running a policy, driving from a program.
+#
+# For split teleoperation use cart-remote.yaml, with the leaders published
+# from the operator station by operator-leader-host.sh.
+#
+# Motor layout: bus1 = left arm 1-6 + head 7-8, bus2 = right arm 1-6.
+# The base is two brushless wheels on an ODESC/ODrive over USB.
+
+robot:
+  id: xlerobot
+  type: xlerobot_2wheels_odrive
+  base: odrive            # odrive | omniwheels | none - or BASE=<which> on the scripts
+  port1: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00 # left arm + head
+  port2: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00 # right arm only
+
+  # Keep in step with cart-remote.yaml.
+  wheel_radius: 0.0825
+  wheelbase: 0.25
+  invert_left_wheel: true
+  invert_right_wheel: false
+  max_linear_mps: 0.5
+
+  cameras:
+    # fourcc and warmup are both load-bearing; this file was missing them.
+    #
+    # Without MJPG, OpenCV picks YUYV: 640x480x2 bytes x 30fps is 18.4 MB/s
+    # PER CAMERA, and two of them is 37 MB/s on a USB 2.0 bus that manages
+    # about 35. Both streams starve and deliver black frames - not an error,
+    # just nothing. MJPG is roughly a tenth of that.
+    #
+    # Without warmup_s the first frames after open are black on these
+    # cameras, which looks identical to the bandwidth problem.
+    left_wrist:
+      type: opencv
+      index_or_path: /dev/cam_left
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG
+      buffer_size: 2         # cam-probe.sh: 4 = 133 ms stale under load, 1 = 15 fps, 2 = 30 fps and <= 1 frame
+      warmup_s: 1
+    right_wrist:
+      type: opencv
+      index_or_path: /dev/cam_right
+      width: 640
+      height: 480
+      fps: 30
+      fourcc: MJPG
+      buffer_size: 2         # cam-probe.sh: 4 = 133 ms stale under load, 1 = 15 fps, 2 = 30 fps and <= 1 frame
+      warmup_s: 1
+    head:
+      type: intelrealsense
+      serial_number_or_name: "836112060112"
+      fps: 30
+      width: 1280
+      height: 720
+      color_mode: BGR
+      use_depth: True

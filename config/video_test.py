@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""Send a synthetic camera feed to a rerun viewer. No robot, no cameras.
+
+The point is to take everything else out of the picture. A teleoperation run
+that shows nothing on the viewer has four things that could be wrong at once -
+the viewer command, the network path, the rerun version pair, and lerobot's
+own display arguments - and you cannot tell them apart while the arms are
+moving. This touches no hardware and goes through the same two lerobot
+functions a real run does, so if a pattern appears here, video works, and
+anything still missing during a run is lerobot's arguments and nothing else.
+
+    ./config/video-test.sh                 # to the default viewer host
+    ./config/video-test.sh 192.168.1.52    # somewhere else
+    ./config/video-test.sh --local         # this machine's own desktop
+
+It is also a bisection tool. A viewer that wedges has several possible
+causes tangled together - frame rate, pixel count, how many streams, JPEG
+decode - and these take them away one at a time:
+
+    --scalars            no images at all
+    --cameras 1          one stream instead of three
+    --size 160           160x120 instead of 640x480
+    --fps 1              one frame a second
+    --no-compress        send raw instead of JPEG
+    --no-overlay         do not burn the frame number into the picture
+
+Each frame carries its own number and elapsed time. Read the number on
+screen, compare it with the "sent frame" line in the terminal, and the
+difference divided by the frame rate is the end-to-end lag. If the gap
+holds steady the pipeline has a fixed buffer somewhere; if it widens, it
+is being fed faster than it drains.
+
+    --no-static          bypass lerobot's logger for the images. This was the
+                         control that identified static=True as the wedge;
+                         lerobot no longer logs images static, so it should
+                         now behave the same either way.
+
+Start with everything turned down and walk back up until it breaks.
+
+Start the viewer first, on the machine that has the screen:
+
+    uvx --from rerun-sdk==<version printed below> rerun
+
+with no other arguments. Plain `rerun` opens the window AND listens on
+0.0.0.0:9876 for exactly this kind of connection - those are one process,
+not two. `--serve-grpc` is the other thing: a server with no window, which
+is why it prints an invitation to go and start a viewer separately.
+"""
+
+import argparse
+import math
+import sys
+import time
+
+import numpy as np
+
+try:
+    import cv2
+except ImportError:  # the overlay is a convenience, not a requirement
+    cv2 = None
+
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+
+def stamp(img: np.ndarray, n: int, t: float) -> np.ndarray:
+    """Burn the frame number and elapsed time into the picture.
+
+    This is what makes lag a number instead of an impression. The terminal
+    prints the frame it has just SENT; the viewer shows the frame it has
+    just DRAWN. The difference between the two, divided by the frame rate,
+    is the end-to-end latency - and it tells you whether that latency is
+    fixed or growing, which fixed buffers and runaway queues do differently.
+    """
+    if cv2 is None:
+        return img
+    H = img.shape[0]
+    scale = max(0.6, H / 240.0)
+    text = f"{n}  {t:5.1f}s"
+    pos = (8, H - 12)
+    cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), int(6 * scale))
+    cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), int(2 * scale))
+    return img
+
+
+def frame(t: float, phase: float, W: int, H: int) -> np.ndarray:
+    """A moving bar on a colour gradient, with a frame counter block.
+
+    Movement matters: a still image cannot tell a live stream apart from one
+    frame that arrived and then nothing.
+    """
+    img = np.zeros((H, W, 3), dtype=np.uint8)
+    xs = np.linspace(0, 255, W, dtype=np.uint8)
+    img[:, :, 0] = xs[None, :]
+    img[:, :, 1] = np.linspace(0, 255, H, dtype=np.uint8)[:, None]
+    img[:, :, 2] = int(127 + 127 * math.sin(t * 2 + phase))
+
+    x = int((0.5 + 0.5 * math.sin(t * 1.5 + phase)) * (W - 60))
+    img[:, x : x + 60, :] = 255
+    return img
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("host", nargs="?", default=None, help="viewer IP")
+    ap.add_argument("--port", type=int, default=9876)
+    ap.add_argument("--local", action="store_true", help="render on this machine")
+    ap.add_argument("--fps", type=float, default=30.0)
+    ap.add_argument("--seconds", type=float, default=60.0)
+    ap.add_argument("--no-compress", action="store_true")
+    ap.add_argument("--cameras", type=int, default=3, help="how many image panels (0-3)")
+    ap.add_argument("--size", type=int, default=640, help="frame width; height is 3/4 of it")
+    ap.add_argument("--scalars", action="store_true", help="scalars only, no images")
+    ap.add_argument("--no-overlay", action="store_true", help="no frame number on the picture")
+    ap.add_argument(
+        "--no-static",
+        action="store_true",
+        help="bypass lerobot's logger and log images directly (was the static=True repro)",
+    )
+    args = ap.parse_args()
+
+    try:
+        import rerun
+
+        ver = rerun.__version__
+    except Exception:
+        ver = "unknown"
+
+    if args.local:
+        print(f"sending to this machine's own desktop (rerun-sdk {ver})")
+        init_rerun(session_name="video_test")
+    else:
+        if not args.host:
+            print("error: give a viewer IP, or --local", file=sys.stderr)
+            return 2
+        print(f"sending to {args.host}:{args.port} (rerun-sdk {ver})")
+        print(f"the viewer there must be {ver} too - start it with:")
+        print(f"    uvx --from rerun-sdk=={ver} rerun")
+        init_rerun(session_name="video_test", ip=args.host, port=args.port)
+
+    ncam = 0 if args.scalars else max(0, min(3, args.cameras))
+    W = args.size
+    H = args.size * 3 // 4
+    print(
+        f"{args.fps:g} fps for {args.seconds:g}s, {ncam} camera(s) at {W}x{H}, "
+        f"compress={not args.no_compress} - ctrl-c to stop"
+    )
+    print(f"expect {ncam} moving panel(s) and two scalars that sweep.")
+
+    names = ["cam_head", "cam_left", "cam_right"][:ncam]
+    phases = [0.0, 2.1, 4.2]
+    period = 1.0 / args.fps
+    t0 = time.perf_counter()
+    n = 0
+    try:
+        while (t := time.perf_counter() - t0) < args.seconds:
+            imgs = {
+                nm: (
+                    frame(t, phases[i], W, H)
+                    if args.no_overlay
+                    else stamp(frame(t, phases[i], W, H), n, t)
+                )
+                for i, nm in enumerate(names)
+            }
+            act = {"left_arm_shoulder_pan.pos": 50.0 * math.sin(t + 0.2)}
+
+            if args.no_static:
+                # Mirror what lerobot does, with one difference: the images go
+                # on the timeline rather than being logged static. Everything
+                # else - entity paths, compression, the scalars - is the same,
+                # so a change in behaviour here is attributable to that alone.
+                import rerun as rr
+
+                for k, arr in imgs.items():
+                    ent = rr.Image(arr)
+                    if not args.no_compress:
+                        ent = ent.compress()
+                    rr.log(f"observation.{k}", ent)          # static=False
+                log_rerun_data(
+                    observation={"left_arm_shoulder_pan.pos": 50.0 * math.sin(t)},
+                    action=act,
+                    compress_images=not args.no_compress,
+                )
+            else:
+                obs = dict(imgs)
+                obs["left_arm_shoulder_pan.pos"] = 50.0 * math.sin(t)
+                log_rerun_data(
+                    observation=obs, action=act, compress_images=not args.no_compress
+                )
+            n += 1
+            if n % int(max(args.fps, 1)) == 0:
+                print(
+                    f"  sent frame {n:5d} at {t:5.1f}s  ({n / t:4.1f} Hz)"
+                    f"   <- compare with the number on screen",
+                    flush=True,
+                )
+            time.sleep(max(0.0, period - ((time.perf_counter() - t0) - t)))
+    except KeyboardInterrupt:
+        print()
+
+    print(f"sent {n} frames.")
+    print("Still wrong? Bisect it - each step removes one suspect:")
+    print("  --scalars                 no images at all. Wedges here = not video.")
+    print("  --cameras 1 --fps 1       one small slow stream.")
+    print("  --size 160                pixels, not frames.")
+    print("  --fps 1                   frames, not pixels.")
+    print("  --no-compress             the viewer's JPEG decode.")
+    print("  --no-static               bypass lerobot's image logging entirely.")
+    print("Then walk back up until it breaks; that is your answer.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

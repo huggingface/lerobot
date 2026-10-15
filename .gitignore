@@ -176,3 +176,6 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+# Claude Code
+.claude/

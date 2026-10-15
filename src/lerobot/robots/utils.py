@@ -126,3 +126,42 @@ def ensure_safe_goal_position(
         )
 
     return safe_goal_positions
+
+
+def stop_motion(robot: Robot) -> None:
+    """Bring any velocity-controlled part of *robot* to rest. Best effort, never raises.
+
+    A control loop that returns, or a script that reaches its ``finally``,
+    leaves the last action in force. For a position-controlled arm that is
+    harmless; for wheels in velocity mode it is a base that keeps driving
+    through whatever happens next - an episode save, a minutes-long video
+    encode, a traceback. Servos such as the STS3215 have no watchdog of
+    their own.
+
+    Prefers a robot-provided ``stop_base()``. Failing that, sends an action
+    with every ``.vel`` feature zeroed, which the robot's ``send_action``
+    will apply to the parts it drives by velocity and ignore otherwise.
+    """
+    try:
+        stop = getattr(robot, "stop_base", None)
+        if callable(stop):
+            stop()
+            return
+        vel_keys = [k for k in getattr(robot, "action_features", {}) if str(k).endswith(".vel")]
+        if vel_keys and getattr(robot, "is_connected", False):
+            robot.send_action(dict.fromkeys(vel_keys, 0.0))
+    except Exception as e:  # noqa: BLE001
+        logging.warning("stop_motion(%s) failed: %s", robot, e)
+
+
+def disconnect_quietly(device, what: str) -> None:
+    """Disconnect *device* if it will let us, logging rather than raising.
+
+    For ``finally`` blocks: a disconnect that raises there masks the real
+    exception and skips everything after it.
+    """
+    try:
+        if getattr(device, "is_connected", True):
+            device.disconnect()
+    except Exception as e:  # noqa: BLE001
+        logging.warning("%s disconnect failed: %s", what, e)

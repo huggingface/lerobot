@@ -16,6 +16,6 @@
 
 from .config import RobotConfig
 from .robot import Robot
-from .utils import make_robot_from_config
+from .utils import disconnect_quietly, make_robot_from_config, stop_motion
 
-__all__ = ["Robot", "RobotConfig", "make_robot_from_config"]
+__all__ = ["Robot", "RobotConfig", "disconnect_quietly", "make_robot_from_config", "stop_motion"]

@@ -218,6 +218,21 @@ class OpenCVCamera(Camera):
         if self.videocapture is None:
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
 
+        # Buffer depth goes first: V4L2 allocates its ring when the format is
+        # applied, and a request made after that only takes effect on the next
+        # re-init. Not every backend honours it, so the result is logged, not
+        # enforced - config/cam-probe.sh measures what the driver actually does.
+        if self.config.buffer_size is not None:
+            accepted = self.videocapture.set(cv2.CAP_PROP_BUFFERSIZE, float(self.config.buffer_size))
+            actual = self.videocapture.get(cv2.CAP_PROP_BUFFERSIZE)
+            if not accepted or int(round(actual)) != self.config.buffer_size:
+                logger.warning(
+                    f"{self}: requested buffer_size={self.config.buffer_size} but the driver reports "
+                    f"{actual}; frames may be up to {actual:.0f} deep (stale) under load."
+                )
+            else:
+                logger.info(f"{self}: driver buffer depth set to {self.config.buffer_size} frame(s).")
+
         set_fourcc_after_size_and_fps = platform.system() == "Windows"
         if self.config.fourcc is not None and not set_fourcc_after_size_and_fps:
             self._validate_fourcc()

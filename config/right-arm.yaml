@@ -1,0 +1,28 @@
+# Single right SO-101 arm + its leader. Standard lerobot, no custom code.
+#
+#   lerobot-teleoperate --config_path=config/right-arm.yaml
+#
+# IDs match what config/bi-arms.yaml derives, so calibration is shared.
+
+robot:
+  type: so101_follower
+  id: xlerobot_arms_right
+  disable_torque_on_disconnect: true
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00   # Right follower
+
+  cameras:
+    front:
+      type: opencv
+      index_or_path: /dev/cam_right
+      width: 1280
+      height: 720
+      fps: 30
+      fourcc: MJPG   # YUYV caps 1280x720 at 10fps; MJPG does 30
+      warmup_s: 1
+
+teleop:
+  type: so101_leader
+  id: xlerobot_leaders_right
+  port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A017922-if00   # Right leader (ttyACM3)
+
+display_data: false
