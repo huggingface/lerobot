@@ -256,6 +256,8 @@ one recomputation of older cached work.
 
 The generic runtime is Torch-free on CPU. The language recipe is not: its shared
 dataset/configuration/video modules import Torch even in planning and CPU workers.
+The frame provider defers its own Torch/decoder/encoder imports until use, but this
+does not prevent those shared imports from loading Torch or video dependencies.
 Selecting a CPU HF Jobs flavor does not remove that dependency; budget workers accordingly.
 Persisted window tables use a fixed v1 schema; adding fields or changing their types/order
 requires an explicit migration before merging older window rows.

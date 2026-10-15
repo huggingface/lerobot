@@ -34,14 +34,24 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import PIL.Image
-import torch
-
-from lerobot.configs import RGBEncoderConfig
-from lerobot.datasets.video_utils import decode_video_frames, reencode_video
 
 from .reader import EpisodeRecord, snap_to_frame
 
 logger = logging.getLogger(__name__)
+
+
+def decode_video_frames(*args, **kwargs):
+    """Keep the decoder hook while deferring its direct video imports until use."""
+    from lerobot.datasets.video_utils import decode_video_frames
+
+    return decode_video_frames(*args, **kwargs)
+
+
+def reencode_video(*args, **kwargs):
+    """Keep the encoder hook while deferring its direct video imports until use."""
+    from lerobot.datasets.video_utils import reencode_video
+
+    return reencode_video(*args, **kwargs)
 
 
 class FrameProvider(Protocol):
@@ -268,6 +278,8 @@ class VideoFrameProvider:
         would inherit the source codec (often AV1 in modern LeRobot
         datasets), which vllm's libav build cannot decode.
         """
+        from lerobot.configs import RGBEncoderConfig
+
         if self.camera_key is None:
             return None
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -363,6 +375,8 @@ def _frame_to_pil(frame: Any) -> Any:
     the VLM-message boundary, because the chat backends expect PIL images /
     data URLs. Non-tensor inputs (e.g. test stubs) pass through untouched.
     """
+    import torch
+
     if not isinstance(frame, torch.Tensor):
         return frame
     array = frame.detach().cpu()
