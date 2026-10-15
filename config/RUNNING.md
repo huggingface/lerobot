@@ -238,6 +238,7 @@ pixel-bound.
 | `./config/odrive-check.sh` | the ODESC: config vs the cart's bus limits, `--apply` to write them, `--watch` for the XH-M609 relay-drop test. No motors needed. |
 | `./config/cam-probe.sh` | how many stale frames a camera hands back after a pause; `--buffersize 1` is the fix if it is more than one |
 | `./config/scan-motors.sh` | which motor ids answer, at which baud rate |
+| `./config/servo-regs.sh [--bus 1]` | every config and status register, servo by servo, flagging the one that differs. For a servo that answers a scan but will not move. Read-only. |
 | `./config/power-check.sh` | voltage, temperature and load per servo, with torque applied one at a time |
 | `./config/viewer.sh` | the rerun viewer, at the version uv.lock says. Run it on the Mac. |
 | `./config/video-test.sh` | a synthetic camera feed to the viewer, no robot. Separates the video link from everything else. |
