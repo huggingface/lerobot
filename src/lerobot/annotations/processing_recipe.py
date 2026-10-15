@@ -21,7 +21,7 @@ import pyarrow.parquet as pq
 from lerobot.annotations.runtime.artifacts import file_checksum
 from lerobot.annotations.runtime.configs import StageConfig
 from lerobot.annotations.runtime.pipeline import run_pipeline
-from lerobot.annotations.runtime.types import Artifact, canonical_json
+from lerobot.annotations.runtime.types import Artifact
 from lerobot.annotations.runtime.worker import accepted_in_shard, accepted_items
 from lerobot.datasets.language import language_feature_info
 
@@ -191,11 +191,11 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
                     if previous.exists():
                         for batch in pq.ParquetFile(previous).iter_batches():
                             table = pa.Table.from_batches([batch])
-                            writer.write_table(
-                                table.filter(
-                                    pc.invert(pc.is_in(table["episode_index"], pa.array(sorted(updates))))
-                                )
+                            retained = table.filter(
+                                pc.invert(pc.is_in(table["episode_index"], pa.array(sorted(updates))))
                             )
+                            if retained.num_rows:
+                                writer.write_table(retained)
                     for artifact in updates.values():
                         temporary = store.download(artifact, directory / "window-input.parquet")
                         for batch in pq.ParquetFile(temporary).iter_batches():
@@ -209,7 +209,8 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
         if not any(tool.get("function", {}).get("name") == "say" for tool in tools):
             info["tools"] = [*tools, SAY_TOOL_SCHEMA]
         info_path = directory / "info.json"
-        info_path.write_bytes(canonical_json(info))
+        # Feature order selects the default camera; do not sort the native metadata.
+        info_path.write_text(json.dumps(info, separators=(",", ":"), allow_nan=False))
         files["meta/info.json"] = info_path
         # Preparation lives outside the transient release directory so a crash
         # after publishing the journal can finish the commit on the next invocation.
