@@ -176,7 +176,9 @@ class VlmConfig:
     api_base: str = "http://localhost:8000/v1"
     api_bases: tuple[str, ...] = ()
     api_key: str = "EMPTY"
+    # Read the key from this environment variable (e.g. HF_TOKEN) so it stays out of commands and logs.
     api_key_env: str | None = None
+    request_timeout_s: float = 600.0
 
     # Spawn a server if none answers api_base; False = fail fast on a remote.
     auto_serve: bool = True
@@ -188,6 +190,7 @@ class VlmConfig:
     parallel_servers: int = 1
     num_gpus: int = 0
     client_concurrency: int = 16
+    # Explicit retries reacquire shared endpoint admission; SDK retries stay disabled.
     request_max_retries: int = 2
     # All clients of this endpoint/model must share one coordinator and key.
     endpoint_limit_url: str | None = None

@@ -130,6 +130,8 @@ inference, `POST /reset` with that admin bearer token and
 `{"key":"annotation","drained":true}`. Reset is disabled without an admin token;
 never reset live inference just to unblock workers. Request retries (429/5xx and temporary
 network failures) are bounded by `vlm.request_max_retries=2`; each reacquires admission.
+`vlm.request_timeout_s` bounds each request (600 seconds by default); hidden SDK retries
+stay disabled so they cannot bypass shared admission.
 An empty subtask result is recorded as rejected (`no_subtasks`), dependent stages are
 masked, and healthy episodes continue. Rejected families leave existing labels intact.
 
