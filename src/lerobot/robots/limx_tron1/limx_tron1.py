@@ -76,6 +76,8 @@ class LimxTron1(Robot):
         self._latest_state: tuple[float, ...] | None = None
         self._state_received_at: float = 0.0
         self._state_lock = threading.Lock()
+        #: Serialises SDK publishes: `send_action` and the publish loop run on different threads.
+        self._publish_lock = threading.Lock()
         #: Latest joint target, or `None` while the robot should be left alone.
         self._target: np.ndarray | None = (
             np.asarray(config.start_pose, dtype=np.float64) if config.start_pose is not None else None
@@ -230,7 +232,8 @@ class LimxTron1(Robot):
         # No `motor_names` and no `parallel_solve_required`: the legged builds route commands by
         # index and have no parallel-linkage conversion, and the vendor's own controller leaves
         # both fields empty.
-        robot.publishRobotCmd(command)
+        with self._publish_lock:
+            robot.publishRobotCmd(command)
 
     # --------------------------------------------------------------- features
 

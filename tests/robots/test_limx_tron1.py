@@ -301,6 +301,36 @@ def test_publish_loop_keeps_sending_the_latest_target():
     assert len(vendor.published) > 1, "the target was sent once but never republished"
 
 
+class OverlapDetectingVendorRobot(FakeVendorRobot):
+    """Records whether two threads were ever inside ``publishRobotCmd`` at once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._active = 0
+        self.max_concurrent = 0
+
+    def publishRobotCmd(self, cmd: FakeRobotCmd) -> None:  # noqa: N802 - vendor method name
+        self._active += 1
+        self.max_concurrent = max(self.max_concurrent, self._active)
+        time.sleep(0.0005)  # widen the window an unsynchronised caller would race in
+        super().publishRobotCmd(cmd)
+        self._active -= 1
+
+
+def test_send_action_and_publish_loop_never_publish_concurrently():
+    vendor = OverlapDetectingVendorRobot()
+    robot = HarnessRobot(make_config(publish_rate=2000.0), vendor)
+    robot.connect()
+    try:
+        action = {pos_key(name): 0.0 for name in robot.config.joint_names}
+        for _ in range(200):
+            robot.send_action(action)
+    finally:
+        robot.disconnect()
+
+    assert vendor.max_concurrent == 1, "the SDK handle was published to from two threads at once"
+
+
 # ------------------------------------------------------- robot_type export
 
 
