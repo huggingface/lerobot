@@ -11,6 +11,7 @@ from urllib.error import HTTPError
 import pytest
 
 from lerobot.annotations.runtime.endpoint_limits import EndpointLimitServer, SharedEndpointLimit
+from lerobot.annotations.runtime.errors import EndpointLimitError
 
 
 @pytest.fixture
@@ -83,7 +84,7 @@ def test_authentication_idempotency_and_ambiguous_inference(coordinator):
         limit._post("acquire", str(uuid.uuid4()))
     assert exc.value.code == 401 and not server.active
     limit.token = "test-only-secret"
-    with pytest.raises(TimeoutError), limit.permit():
+    with pytest.raises(EndpointLimitError), limit.permit():
         raise TimeoutError("Inference may still be running")
     assert len(server.active) == 1  # No unsafe lease expiry/free on ambiguous timeout.
     with pytest.raises(ValueError), limit.permit():
@@ -104,8 +105,10 @@ def test_gateway_timeout_preserves_inference_permit(coordinator, status, sdk_err
         error = ServiceError("Model service response")
     else:
         error = HTTPError("http://model.invalid", status, "Model service response", {}, None)
-    with pytest.raises(type(error)), limit.permit():
+    with pytest.raises(EndpointLimitError if status == 504 else type(error)) as failure, limit.permit():
         raise error
+    if status == 504:
+        assert failure.value.__cause__ is error
     # A proxy timeout does not confirm that upstream inference has stopped.
     assert len(server.active) == (1 if status == 504 else 0)
 
@@ -165,7 +168,8 @@ def test_vlm_clients_share_one_limit(coordinator, monkeypatch):
             client.close()
 
 
-def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch):
+@pytest.mark.parametrize("connect_failure", [False, True])
+def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch, connect_failure):
     pytest.importorskip("datasets")
     import sys
     from types import SimpleNamespace
@@ -189,6 +193,8 @@ def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch):
             assert len(server.active) == 1
             calls.append(kwargs)
             if len(calls) == 1:
+                if connect_failure:
+                    raise ConnectionRefusedError("inference was not sent")
                 raise HTTPError("http://model.invalid", 503, "retry", {}, None)
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))])
 
@@ -209,6 +215,106 @@ def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch):
         client.close()
 
 
+@pytest.mark.parametrize("failure", ["read", "gateway", "admission", "release", "release_error"])
+def test_unsafe_shared_requests_are_not_retried(coordinator, tmp_path, monkeypatch, caplog, failure):
+    pytest.importorskip("datasets")
+    import sys
+    import uuid
+    from types import SimpleNamespace
+
+    from lerobot.annotations.runtime import worker
+    from lerobot.annotations.runtime.artifacts import ArtifactStore
+    from lerobot.annotations.runtime.errors import ErrorCategory, classify_error
+    from lerobot.annotations.runtime.runtime import run_local
+    from lerobot.annotations.steerable_pipeline import vlm_client
+    from lerobot.annotations.steerable_pipeline.config import VlmConfig
+    from tests.annotations.runtime._modules import Echo
+    from tests.annotations.runtime.test_runtime import make_plan
+
+    server, url = coordinator
+    calls = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            if failure == "read":
+                raise TimeoutError("ambiguous model read")
+            if failure == "gateway":
+                raise HTTPError("http://model.invalid", 504, "ambiguous gateway timeout", {}, None)
+            if failure == "release_error":
+                raise HTTPError("http://model.invalid", 503, "failed release must not hide this", {}, None)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))])
+
+        def close(self):
+            pass
+
+    if failure == "admission":
+        limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN")
+        for _ in range(server.limit):
+            limit._post("acquire", str(uuid.uuid4()))
+    elif failure in {"release", "release_error"}:
+
+        def release(*args):
+            raise ConnectionError("coordinator unavailable after completion")
+
+        monkeypatch.setattr(SharedEndpointLimit, "_release", release)
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    monkeypatch.setattr(vlm_client, "retry_delay", lambda _: 0)
+    monkeypatch.setattr(worker, "retry_delay", lambda _: 0)
+    client = vlm_client.make_vlm_client(
+        VlmConfig(
+            auto_serve=False,
+            endpoint_limit_url=url,
+            endpoint_limit_key="qwen",
+            endpoint_limit_timeout_s=0.05 if failure == "admission" else 2,
+        )
+    )
+    prompts = [[{"role": "user", "content": "test"}]]
+    try:
+        if failure == "release":
+            assert client.generate_json(prompts) == [{"ok": True}]
+            assert "permit" in caplog.text and "retained" in caplog.text
+        else:
+
+            def process(*args):
+                client.generate_json(prompts)
+                pytest.fail("Uncertain request unexpectedly succeeded")
+
+            monkeypatch.setattr(Echo, "process_batch", process)
+            store = ArtifactStore(tmp_path / "run")
+            plan = make_plan(store, size=1)
+            with pytest.raises(RuntimeError, match="not retried") as exc:
+                run_local(store, plan, max_retries=2)
+            assert classify_error(exc.value) == ErrorCategory.PERMANENT
+            assert exc.value.__cause__ is not None
+            errors = store.list(f"{plan.prefix}/attempts/*/*/error.json")
+            assert len(errors) == 1 and store.read_json(errors[0])["retryable"] is False
+        assert len(calls) == (0 if failure == "admission" else 1)
+        assert len(server.active) == (2 if failure == "admission" else 1)
+    finally:
+        client.close()
+
+
+def test_interrupted_admission_clears_its_unsent_request(coordinator, monkeypatch):
+    server, url = coordinator
+    limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN")
+    original = limit._post
+
+    def post(operation, *args, **kwargs):
+        result = original(operation, *args, **kwargs)
+        if operation == "acquire":
+            raise KeyboardInterrupt()
+        return result
+
+    monkeypatch.setattr(limit, "_post", post)
+    with pytest.raises(KeyboardInterrupt), limit.permit():
+        pytest.fail("Interrupted admission must not send inference")
+    assert not server.active
+
+
 @pytest.mark.parametrize("kind", ["refused", "dns", "httpx_connect", "wrapped", "read"])
 def test_only_known_connect_failures_release_permits(coordinator, kind):
     import socket
@@ -226,7 +332,7 @@ def test_only_known_connect_failures_release_permits(coordinator, kind):
     wrapped = RuntimeError("SDK wrapper")
     wrapped.__cause__ = errors["httpx_connect"]
     errors["wrapped"] = wrapped
-    with pytest.raises(type(errors[kind])), limit.permit():
+    with pytest.raises(EndpointLimitError if kind == "read" else type(errors[kind])), limit.permit():
         raise errors[kind]
     assert len(server.active) == (1 if kind == "read" else 0)
 
@@ -237,7 +343,7 @@ def test_authenticated_status_and_drained_only_admin_reset(coordinator):
 
     server, url = coordinator
     limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN")
-    with pytest.raises(TimeoutError), limit.permit():
+    with pytest.raises(EndpointLimitError), limit.permit():
         raise TimeoutError()
 
     def post(path, token, **body):

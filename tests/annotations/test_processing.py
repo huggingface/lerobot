@@ -469,6 +469,52 @@ def test_unchanged_source_fingerprints_avoid_media_reads(single_episode_root, mo
     assert reads == [video, video]
 
 
+@pytest.mark.parametrize("reason", ["no_subtasks", "empty_subtask_window:0"])
+@pytest.mark.parametrize("recovers", [False, True])
+@pytest.mark.parametrize("retries", [0, 2])
+def test_empty_model_results_retry_only_affected_episode(
+    fixture_dataset_root, monkeypatch, reason, recovers, retries
+):
+    from collections import Counter
+
+    from lerobot.annotations import processing
+    from lerobot.annotations.steerable_pipeline.reader import RejectedEpisodeError
+
+    original = processing.PlanSubtasksMemoryModule.run_episode
+    calls = Counter()
+
+    def run(self, record, staging):
+        calls[record.episode_index] += 1
+        if record.episode_index == 0 and (not recovers or calls[0] == 1):
+            if reason == "no_subtasks":
+                return
+            raise RejectedEpisodeError(reason, "model returned no owned spans")
+        original(self, record, staging)
+
+    monkeypatch.setattr(processing.PlanSubtasksMemoryModule, "run_episode", run)
+    cfg = config()
+    cfg.plan.rejection_max_retries = retries
+    root = fixture_dataset_root
+    result = run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert result.validation_report.ok
+    succeeds = recovers and retries > 0
+    assert calls == {0: 2 if succeeds else retries + 1, 1: 1}
+    labelled = pq.read_table(root / "data/chunk-000/file-000.parquet")["language_persistent"][0].as_py()
+    assert bool(labelled) is succeeds
+    assert any(reason in warning for warning in result.validation_report.warnings) is not succeeds
+    before = calls.copy()
+    cfg.runtime.mode = "resume"
+    assert run_annotation_pipeline(cfg, root, client_factory=FACTORY).validation_report.ok
+    assert calls == before  # final rejections are sticky after the bounded attempts
+
+
+def test_negative_model_rejection_retry_limit_is_rejected():
+    from lerobot.annotations.steerable_pipeline.config import PlanConfig
+
+    with pytest.raises(ValueError, match="rejection_max_retries"):
+        PlanConfig(rejection_max_retries=-1)
+
+
 def test_rejected_episode_does_not_discard_healthy_batch(fixture_dataset_root, monkeypatch):
     from lerobot.annotations import processing
 

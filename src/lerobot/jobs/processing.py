@@ -252,7 +252,10 @@ def run_hf_stage(store, plan, runtime):
                 )
             )
         for job in jobs:
-            follow_processing_job(job)
+            if cfg.detach or not follow_processing_job(job):
+                raise KeyboardInterrupt(
+                    "Detached from HF workers; submitted jobs remain running. Resume the controller to continue."
+                )
     return finalize_stage(store, plan)
 
 

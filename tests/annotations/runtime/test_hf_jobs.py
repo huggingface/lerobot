@@ -116,6 +116,38 @@ def test_bounded_jobs_real_workers_and_completed_resume(tmp_path, monkeypatch):
     assert len(history) == 5
 
 
+@pytest.mark.parametrize("detach", [False, True], ids=["ctrl-c", "configured"])
+def test_detach_stops_controller_without_submitting_more_paid_groups(tmp_path, monkeypatch, detach):
+    store = ArtifactStore(tmp_path / "run")
+    plan = make_plan(store, size=7, shard_size=1)
+    cfg = RuntimeConfig(backend="hf_jobs", workers=5)
+    cfg.hf_jobs.cpu_image = "cpu-runtime@sha256:" + "b" * 64
+    cfg.hf_jobs.code_revision = SHA
+    cfg.hf_jobs.max_parallel = 2
+    cfg.hf_jobs.detach = detach
+    monkeypatch.setattr(processing, "require_persistent_remote", lambda *_: None)
+    monkeypatch.setattr(processing, "validate_hardware", lambda *_: None)
+    monkeypatch.setattr(processing, "_secrets", lambda *_: {})
+    submitted, followed = [], []
+
+    def submit(**kwargs):
+        job = SimpleNamespace(id=f"job-{len(submitted)}")
+        submitted.append(job)
+        return job
+
+    def follow(job):
+        followed.append(job.id)
+        return False  # Ctrl-C detaches, it does not cancel or complete the job.
+
+    monkeypatch.setattr(processing, "run_job", submit)
+    monkeypatch.setattr(processing, "follow_processing_job", follow)
+    with pytest.raises(KeyboardInterrupt, match="Detached"):
+        processing.run_hf_stage(store, plan, cfg)
+    assert len(submitted) == 2
+    assert followed == ([] if detach else ["job-0"])
+    assert len(store.list("submissions/hf/*/*.json")) == 2
+
+
 def test_bundle_tampering_and_code_mismatch(tmp_path, monkeypatch):
     store = ArtifactStore(tmp_path / "store")
     key, digest = processing.write_bundle(store, "worker", {}, SHA)

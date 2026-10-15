@@ -122,6 +122,11 @@ private trusted network. The limit covers participating clients across workers/r
 Unreachable coordinators fail closed. Ambiguous timeouts or killed workers leave permits
 held: drain/cancel inference before restarting the coordinator, rather than assuming
 old requests ended. Put API credentials in `vlm.api_key_env`, not saved configuration.
+Admission failures and retained-permit errors raise `EndpointLimitError`, chained to
+the original error and non-retryable by both client and worker. Admission timeout is
+one configured wait, not multiplied by request retries. A failed release after a
+successful completion logs a retained-permit warning and keeps the response; it never
+resends that request. The coordinator may still need operator recovery.
 
 Known connect/DNS failures release their permits. Inspect held request IDs with an
 authenticated `POST /status` (`{"key":"annotation"}`). For operator recovery, start
@@ -132,8 +137,12 @@ never reset live inference just to unblock workers. Request retries (429/5xx and
 network failures) are bounded by `vlm.request_max_retries=2`; each reacquires admission.
 `vlm.request_timeout_s` bounds each request (600 seconds by default); hidden SDK retries
 stay disabled so they cannot bypass shared admission.
-An empty subtask result is recorded as rejected (`no_subtasks`), dependent stages are
-masked, and healthy episodes continue. Rejected families leave existing labels intact.
+Empty subtask results (`no_subtasks`, `empty_subtask_window:N`) receive up to
+`plan.rejection_max_retries=2` additional episode-local attempts before final rejection;
+set it to zero to disable. Invalid clocks/frames are not retried. Final rejections are
+cached on resume, dependent stages are masked, and healthy episodes continue. Changing
+the plan retry policy changes its scientific cache identity. Rejected families leave
+existing labels intact; never delete audit checkpoints to retry an input.
 
 ## Slurm and Hugging Face Jobs
 
@@ -158,8 +167,18 @@ Each array has a dependent finalizer. Resume refuses duplicate active submission
 detaching the controller does not cancel cluster jobs. Configure `partition`, `account`
 and writable model/kernel caches for your cluster. `runtime.mode=plan` renders scripts
 for independent stages without submitting jobs.
+Purged array IDs do not block resume. Queue probes and non-waiting submissions use
+`runtime.slurm.command_timeout_s` (30 seconds); scheduler errors/timeouts fail closed.
+A submission timeout can mean the job was accepted: inspect the queue before retrying.
+The dependent `sbatch --wait` intentionally has no short command timeout.
 
 ### Running on Hugging Face Jobs
+
+For generic remote-worker stages, Ctrl-C or `runtime.hf_jobs.detach=true` stops the
+stage with `KeyboardInterrupt` after its currently submitted group; it launches no later
+worker groups or dependent stages. Submitted jobs and already running independent stage
+controllers are not cancelled; job IDs remain recorded. Resume after they finish. For
+controller-wide detachment, detach the outer single-node annotation job instead.
 
 Replace `SOURCE_SHA`, `CODE_SHA`, account/repository names and the image digest below.
 Remote annotation requires a pinned Hub source, persistent remote storage and a public
@@ -225,6 +244,10 @@ For account/job setup, see the [HF Jobs guide](https://huggingface.co/docs/huggi
   `repo_id`/`revision`, a fresh `release_tag` and a reviewed `redistribution_permission`.
   Permission notes do not invent a missing licence. Existing targets additionally require
   `expected_target_revision` and must be processed datasets with matching lineage.
+  New targets inherit source visibility (`push_private=null`); local-only sources default
+  to private. Publishing a private Hub source publicly requires both `push_private=false`
+  and `allow_public_from_private=true`, in addition to reviewed permission. Unknown
+  visibility fails closed. Existing target visibility is checked, never silently changed.
 - Later releases start from the processed target's pinned revision and upload changed
   Parquet/metadata, not another video copy. Publication has bounded file/byte limits;
   large staged uploads need a separate workflow. Seeds do not guarantee bitwise VLM/GPU
@@ -267,6 +290,10 @@ requires an explicit migration before merging older window rows.
 Fingerprints and prepared files follow `staging_dir` (default: the dataset's `.annotate_staging`).
 Set it to an external path to keep planning writes outside the dataset; a pending commit
 must be recovered before planning. Mutating runs retain the dataset's commit journal/lock.
+Prepared files, installed files, journal replacements and their directory entries are
+fsynced before recovery state is retired on POSIX. The filesystem must honor fsync and
+atomic rename; this is still not a multi-file snapshot for concurrent readers. Windows
+has no portable directory fsync, so full power-loss durability is not promised there.
 Owned prepared files and empty per-plan directories are removed after successful recovery.
 Run-store
 outputs are retained for resume by default. Set `runtime.retain_materialized_outputs=false`

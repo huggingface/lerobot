@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lerobot.annotations.runtime.configs import RuntimeConfig
+from lerobot.annotations.runtime.configs import RuntimeConfig, SlurmConfig
 from lerobot.annotations.runtime.runtime import finalize_stage
 from lerobot.annotations.runtime.types import Resources
 from lerobot.annotations.runtime.worker import run_worker_group
@@ -107,6 +107,7 @@ def test_sbatch_dispatch_dependencies_real_worker_outputs_and_resume(tmp_path, m
         if command[0] != "sbatch":
             return real_run(command, **kwargs)
         commands.append(command)
+        assert (kwargs.get("timeout", 0) > 0) == ("--wait" not in command)
         assert "SBATCH_GRES" not in kwargs["env"]
         if "--wait" not in command:
             for index in range(3):
@@ -136,10 +137,81 @@ def test_active_submission_cannot_be_duplicated(tmp_path, monkeypatch):
 
     def active(command, **kwargs):
         assert command[0] == "squeue"
-        return SimpleNamespace(stdout="123_0\n")
+        return subprocess.CompletedProcess(command, 0, stdout="123_0\n", stderr="")
 
     monkeypatch.setattr(slurm.subprocess, "run", active)
     with pytest.raises(RuntimeError, match="still active"):
+        run_slurm(store, plan, runtime(tmp_path))
+
+
+def test_resume_after_failed_array_has_left_squeue(tmp_path, monkeypatch):
+    from lerobot.jobs import slurm
+
+    store = ArtifactStore(tmp_path / "run")
+    log = tmp_path / "calls"
+    plan = make_plan(store, {"log_path": str(log)}, size=2, shard_size=1)
+    run_worker_group(store.uri, plan.plan_id, [0], 1, 0)
+    store.put_json(f"{plan.prefix}/slurm/old.json", {"array_job_id": "123"})
+    commands = []
+
+    def submit(command, **kwargs):
+        commands.append(command)
+        if command[0] == "squeue":
+            error = "slurm_load_jobs error: Invalid job id specified"
+            if kwargs["check"]:
+                raise subprocess.CalledProcessError(1, command, stderr=error)
+            assert kwargs["timeout"] > 0
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr=error)
+        if "--wait" not in command:
+            run_worker_group(store.uri, plan.plan_id, [0, 1], 1, 0)
+        return subprocess.CompletedProcess(command, 0, stdout="456\n", stderr="")
+
+    monkeypatch.setattr(slurm.subprocess, "run", submit)
+    assert run_slurm(store, plan, runtime(tmp_path)).completed == 2
+    assert log.read_text().splitlines().count("0") == 1
+    assert store.exists(f"{plan.prefix}/slurm/old.json")  # audit history stays intact
+    assert len(commands) == 3
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+def test_unavailable_scheduler_never_resubmits(tmp_path, monkeypatch, timeout):
+    from lerobot.jobs import slurm
+
+    store = ArtifactStore(tmp_path / "run")
+    plan = make_plan(store)
+    store.put_json(f"{plan.prefix}/slurm/old.json", {"array_job_id": "123"})
+
+    def probe(command, **kwargs):
+        assert command[0] == "squeue", "An uncertain scheduler must not launch duplicate work"
+        assert kwargs["timeout"] > 0
+        if timeout:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="Unable to contact slurm controller")
+
+    monkeypatch.setattr(slurm.subprocess, "run", probe)
+    with pytest.raises((subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        run_slurm(store, plan, runtime(tmp_path))
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_scheduler_timeout_is_finite_and_positive(value):
+    with pytest.raises(ValueError, match="command_timeout_s"):
+        SlurmConfig(command_timeout_s=value)
+
+
+def test_submission_timeout_requires_explicit_queue_inspection(tmp_path, monkeypatch):
+    from lerobot.jobs import slurm
+
+    store = ArtifactStore(tmp_path / "run")
+    plan = make_plan(store)
+
+    def timeout(command, **kwargs):
+        assert command[0] == "sbatch" and "--wait" not in command
+        assert kwargs["timeout"] == 30
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(slurm.subprocess, "run", timeout)
+    with pytest.raises(RuntimeError, match="may have been accepted"):
         run_slurm(store, plan, runtime(tmp_path))
 
 

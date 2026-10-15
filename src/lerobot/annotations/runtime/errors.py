@@ -25,6 +25,10 @@ class TemporaryServiceError(RuntimeError):
     """An adapter explicitly identifies a temporary service failure."""
 
 
+class EndpointLimitError(RuntimeError):
+    """Admission failed or inference may still run: automatic retries are unsafe."""
+
+
 def request_not_sent(error: Exception) -> bool:
     """Only positively identified connect/pool failures are safe to release."""
     seen = set()
@@ -45,6 +49,8 @@ def request_not_sent(error: Exception) -> bool:
 
 
 def classify_error(error: Exception) -> ErrorCategory:
+    if isinstance(error, EndpointLimitError):
+        return ErrorCategory.PERMANENT  # Do not follow its retryable transport cause.
     if isinstance(error, UndecodableInputError):
         return ErrorCategory.INPUT
     status = error.code if isinstance(error, HTTPError) else getattr(error, "status_code", None)

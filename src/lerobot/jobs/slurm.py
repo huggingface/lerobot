@@ -125,14 +125,17 @@ def _run_slurm_owned(store, plan, runtime: RuntimeConfig):
         if previous.get("array_job_id"):
             state = subprocess.run(
                 [cfg.squeue, "--noheader", f"--jobs={previous['array_job_id']}", "--format=%i"],
-                check=True,
+                check=False,
                 capture_output=True,
                 text=True,
+                timeout=cfg.command_timeout_s,
             )
             if state.stdout.strip():
                 raise RuntimeError(
                     f"Slurm array {previous['array_job_id']} is still active; wait or cancel it explicitly before resuming"
                 )
+            if state.returncode and "invalid job id" not in state.stderr.lower():
+                state.check_returncode()  # Controller/network errors are not proof the array ended.
     concurrency = min(scripts.groups, cfg.max_concurrent or scripts.groups)
     args = [
         cfg.sbatch,
@@ -147,9 +150,19 @@ def _run_slurm_owned(store, plan, runtime: RuntimeConfig):
     if cfg.requeue:
         args.append("--requeue")
     environment = {key: value for key, value in os.environ.items() if not key.startswith("SBATCH_")}
-    submission = subprocess.run(
-        [*args, str(scripts.worker)], check=True, capture_output=True, text=True, env=environment
-    )
+    try:
+        submission = subprocess.run(
+            [*args, str(scripts.worker)],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=cfg.command_timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            "Slurm submission timed out; it may have been accepted. Inspect the queue before resubmitting."
+        ) from exc
     job_id = _job_id(submission.stdout)
     audit = {
         "array_job_id": job_id,

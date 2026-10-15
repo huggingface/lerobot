@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import shutil
 from collections import Counter, defaultdict
@@ -136,7 +137,7 @@ class LanguageModule:
         self.config = draccus.decode(AnnotationPipelineConfig, annotation_config)
         self.client_factory = client_factory
         outputs = {"atoms": ATOM_SCHEMA, **({"windows": WINDOW_SCHEMA} if phase == "plan" else {})}
-        self.spec = ModuleSpec(f"language_{phase}", "4" if phase == "plan" else "3", "episode", outputs)
+        self.spec = ModuleSpec(f"language_{phase}", "5" if phase == "plan" else "3", "episode", outputs)
 
     def setup(self, context):
         cfg = self.config
@@ -204,12 +205,23 @@ class LanguageModule:
 
     def process_batch(self, items, context):
         def process(item):
-            try:
-                return annotate(item)
-            except RejectedEpisodeError as exc:
-                return ItemResult(item.item_id, Outcome.REJECTED, reason=exc.reason)
-            finally:
-                shutil.rmtree(context.scratch / item.item_id, ignore_errors=True)
+            retries = self.config.plan.rejection_max_retries if self.phase == "plan" else 0
+            for retry in range(retries + 1):
+                try:
+                    return annotate(item)
+                except RejectedEpisodeError as exc:
+                    empty = exc.reason == "no_subtasks" or exc.reason.startswith("empty_subtask_window:")
+                    if not empty or retry == retries:
+                        return ItemResult(item.item_id, Outcome.REJECTED, reason=exc.reason)
+                    logging.getLogger(__name__).warning(
+                        "Retrying empty model result: episode=%s reason=%s retry=%s/%s",
+                        item.key,
+                        exc.reason,
+                        retry + 1,
+                        retries,
+                    )
+                finally:
+                    shutil.rmtree(context.scratch / item.item_id, ignore_errors=True)
 
         def annotate(item):
             record = _load_record(self.root, item.payload)
@@ -234,7 +246,7 @@ class LanguageModule:
             # enabled stages are present. These artifacts retain exact source clocks.
             output = staging.read(output_name)
             if self.phase == "plan" and not any(row.get("style") == "subtask" for row in output):
-                return ItemResult(item.item_id, Outcome.REJECTED, reason="no_subtasks")
+                raise RejectedEpisodeError("no_subtasks", "Model returned no subtasks")
             artifact = context.write_parquet(item, "atoms", _staged_table(output))
             artifacts = [artifact]
             if self.phase == "plan":
