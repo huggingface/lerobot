@@ -2,7 +2,7 @@
 
 Simulator servers keep physics, assets, rendering, native controllers, and their dependency pins in a separate process. The policy environment runs inference, saved processors, evaluation, and rollout. Both clients use the same canonical observations and actions.
 
-`lerobot-eval` supports the simulator server through `--env.type=sim`. In-process environment types are available for compatibility. Use the server path for benchmark integrations. [EnvHub](./envhub) environments keep running in-process; see [EnvHub and the simulator server](./envhub#envhub-and-the-simulator-server).
+`lerobot-eval` supports the simulator server through `--env.type=sim`. In-process environment types are available for compatibility. Use the server path for benchmark integrations. [EnvHub](./envhub) repositories can be served with `uv run scripts/run_sim.py --envhub <user/repo>`; see [EnvHub and the simulator server](./envhub#envhub-and-the-simulator-server).
 
 ## Start a simulator with Docker
 
@@ -14,7 +14,7 @@ uv run scripts/run_sim.py docker/sims/configs/libero.yaml
 
 The launcher uses `docker/sims/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Swap the YAML to select another backend.
 
-Overrides accept existing dotted keys, parse values as YAML, and leave the source file unchanged. The launcher retains the effective configuration in a temporary cache for container restarts; rerun it after a host reboot. Switching configuration recreates the server and ends active sessions. Add `--no-build` to reuse an image or `--stop` to shut down the server.
+Overrides accept existing dotted keys, parse values as YAML, and leave the source file unchanged. The launcher retains the effective configuration in a temporary cache for container restarts; rerun it after a host reboot. Switching configuration recreates the server and ends active sessions. The image is built when missing; add `--build` to rebuild it after changing the simulator or LeRobot source, or `--stop` to shut down the server.
 
 For example, select camera acquisition dimensions without editing the YAML:
 
