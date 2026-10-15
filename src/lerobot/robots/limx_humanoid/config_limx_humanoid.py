@@ -14,7 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Robot configuration for the LimX humanoid robots (Oli and Luna).
+"""Robot configuration for the LimX Dynamics Oli humanoid robot (``HU_D04``).
+
+The Luna humanoid (``HU_L04``) is a different build with 27 joints rather than 31, and is not
+covered by this robot type.
 
 Registering the subclass is what makes ``--robot.type=limx_humanoid`` resolvable on the
 LeRobot command line.
@@ -133,8 +136,8 @@ class LimxHumanoidConfig(RobotConfig):
             `None` when the SDK's own default is correct.  Note that on the humanoid build the SDK
             does not validate this value, so a wrong one is not reported as an error.
         kp (`list[float]`, *optional*):
-            Position gains, one per joint in `joint_names` order.  Defaults to a conservative
-            starting set; see the note below.
+            Position gains, one per joint in `joint_names` order.  Defaults to the vendor's
+            standing-controller gains for Oli; see the note below.
         kd (`list[float]`, *optional*):
             Derivative gains, matching `kp` joint for joint.
         joint_names (`list[str]`, *optional*):
@@ -164,9 +167,11 @@ class LimxHumanoidConfig(RobotConfig):
         bring-up, so LeRobot never writes a calibration file and ``calibration_dir`` is ignored.
 
     Note:
-        The gain defaults are a starting point, not vendor-published values.  Confirm them on the
-        real robot before running a trained policy: gains that are too low will let a full-size
-        humanoid sag under its own weight, and gains that are too high will make it oscillate.
+        The gain defaults are the vendor's published gains for its *standing* controller on Oli
+        (``humanoid-rl-deploy-python``, ``stand_controller/joint_params.yaml``).  They are specific
+        to that mode: the vendor's walk and mimic controllers use different gains.  A policy should
+        run with the same ``kp``/``kd`` it was trained or recorded with, so set them explicitly
+        when the data came from another control mode.
     """
 
     # --- connection -------------------------------------------------------

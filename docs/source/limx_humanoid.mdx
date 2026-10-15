@@ -175,7 +175,8 @@ right_wrist_roll_joint
 (`humanoid-rl-deploy-python`, `stand_controller/joint_params.yaml`) — the values the vendor ships to
 hold a real Oli upright. They are controller-specific, not universal: the vendor's walk and mimic
 controllers use different gains, and its damping controller sets only `kd` (a soft, zero-stiffness
-mode used to bring the robot down). Override `kp`/`kd` for those modes.
+mode used to bring the robot down). Override `kp`/`kd` for those modes, and run a policy with the
+same gains it was trained or recorded with.
 
 ## Joint Limits
 

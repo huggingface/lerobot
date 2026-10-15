@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LeRobot driver for the LimX humanoid robots (Oli and Luna).
+"""LeRobot driver for the LimX Dynamics Oli humanoid robot (``HU_D04``).
 
 The connection rides on the vendor low-level SDK, which reaches the robot's own control process
 over IP.  The SDK is imported lazily inside [`LimxHumanoid.connect`], so a missing optional
