@@ -114,9 +114,13 @@ def test_state(robot: XLerobot, n: int = 30) -> dict:
             print(f"      {k:<34}{last[k]:8.2f}")
     for k in ("head_motor_1.pos", "head_motor_2.pos"):
         print(f"      {k:<34}{last[k]:8.2f}")
-    print()
-    for k in ("x.vel", "y.vel", "theta.vel"):
-        print(f"      {k:<34}{last[k]:8.3f}")
+    # Whatever the configured base reports: x/y/theta for the omniwheels,
+    # x/theta for the ODrive, nothing at all for base: none.
+    vel_keys = [k for k in last if k.endswith(".vel")]
+    if vel_keys:
+        print()
+        for k in vel_keys:
+            print(f"      {k:<34}{last[k]:8.3f}")
 
     # Constancy is NOT evidence of a fault here. connect() leaves torque on,
     # so a healthy servo holding position reports the same number every
@@ -252,10 +256,9 @@ def test_arms(robot: XLerobot, base: dict, span: float = 5.0) -> None:
     print("      Each joint moves a few degrees and returns. Make sure both")
     print("      arms are clear of the table, each other and the cameras.")
     print()
-    print("      The wheels should NOT move. send_action writes a goal velocity")
-    print("      to all three on every call, and with no .vel keys that goal is")
-    print("      zero - so a twitch here means the base calibration is wrong,")
-    print("      not that the arms are misbehaving.")
+    print("      The wheels should NOT move: an action with no .vel keys sends")
+    print("      the base nothing. A wheel that twitches here is being driven by")
+    print("      something other than this test.")
     if not ask(f"Nudge all 12 arm joints by {span:.0f} degrees, one at a time?"):
         record(WARN, "arm nudge skipped")
         return
