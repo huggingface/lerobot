@@ -83,3 +83,21 @@ class TemporaryEcho(Echo):
             self.marker.touch()
             raise ConnectionError("temporary connection failure")
         return super().process_batch(items, context)
+
+
+class FailFastEcho(Echo):
+    """Fail one group while its sibling has an in-flight, checkpointable batch."""
+
+    def process_batch(self, items, context):
+        ready = Path(self.failure_marker + ".ready")
+        if items[0].key == self.fail_key and not Path(self.failure_marker).exists():
+            deadline = time.monotonic() + 20
+            while not ready.exists():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Sibling worker did not start")
+                time.sleep(0.01)
+            Path(self.failure_marker).touch()
+            raise ValueError("permanent sibling failure")
+        ready.touch()
+        time.sleep(0.1)
+        return super().process_batch(items, context)

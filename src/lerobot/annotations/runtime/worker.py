@@ -15,6 +15,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import asdict
+from multiprocessing.synchronize import Event
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,14 @@ from .planner import StagePlan, load_module
 from .types import Artifact, ItemResult, Outcome, WorkItem, checked_name, fingerprint
 
 logger = logging.getLogger(__name__)
+_stop_event: Event | None = None
+
+
+def _initialize_worker(stop_event: Event) -> None:
+    """Share cancellation through spawn initialization, never through a task queue."""
+    global _stop_event
+    _stop_event = stop_event
+
 
 if TYPE_CHECKING or _pyarrow_available:
     import pyarrow as pa
@@ -235,6 +244,9 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
         try:
             for shard in shards:
                 for retry in range(max_retries + 1):
+                    if _stop_event is not None and _stop_event.is_set():
+                        status = "cancelled"
+                        return
                     with context.measure("resume_scan"):
                         accepted = accepted_in_shard(store, plan, shard)
                     reused.update(accepted)
@@ -247,6 +259,9 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
                     context.attempt = attempt
                     try:
                         for offset in range(0, len(pending), batch_size):
+                            if _stop_event is not None and _stop_event.is_set():
+                                status = "cancelled"
+                                return
                             batch = pending[offset : offset + batch_size]
                             active = [item for item in batch if item.mask_reason is None]
                             if active and not initialized:
@@ -320,7 +335,10 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
                             initialized = False
                             module = load_module(plan.factory, plan.config)
                         context.add_metric("retries", 1)
-                        time.sleep(delay)
+                        if _stop_event is None:
+                            time.sleep(delay)
+                        else:
+                            _stop_event.wait(delay)
             status = "completed"
         finally:
             try:

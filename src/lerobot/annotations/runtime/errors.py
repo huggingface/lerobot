@@ -25,8 +25,12 @@ class TemporaryServiceError(RuntimeError):
     """An adapter explicitly identifies a temporary service failure."""
 
 
+class EndpointAdmissionTimeoutError(TemporaryServiceError):
+    """No inference sent and permit cleared: retry at the checkpointed worker, not the client."""
+
+
 class EndpointLimitError(RuntimeError):
-    """Admission failed or inference may still run: automatic retries are unsafe."""
+    """Permanent admission failure or uncertain permit: automatic retries are unsafe."""
 
 
 def request_not_sent(error: Exception) -> bool:

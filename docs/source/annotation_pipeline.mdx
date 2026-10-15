@@ -64,6 +64,10 @@ to `runtime.run_uri`; re-running the same configuration reuses valid outputs, re
 corrupt/incomplete work and avoids model startup on a fully cached run. Uncommitted
 work can repeat. Changing model, prompt or upstream content invalidates affected work;
 a module's version must change when its behavior changes.
+The first local worker-group failure signals sibling groups to stop and cancels pending
+groups. In-flight batches finish checkpointing and teardown before the error returns;
+no later batches are started. This is cooperative cancellation, not a kill of a hung
+model request: configure finite service timeouts. Resume reuses completed batches.
 
 | Option                                                                        | Default                            | Use                                                                                                                                                                        |
 | ----------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -122,10 +126,14 @@ private trusted network. The limit covers participating clients across workers/r
 Unreachable coordinators fail closed. Ambiguous timeouts or killed workers leave permits
 held: drain/cancel inference before restarting the coordinator, rather than assuming
 old requests ended. Put API credentials in `vlm.api_key_env`, not saved configuration.
-Admission failures and retained-permit errors raise `EndpointLimitError`, chained to
-the original error and non-retryable by both client and worker. Coordinator overload
-or temporary outages retry the same admission ID within one configured deadline;
-expiry is not multiplied by request retries. Permit cleanup has separate bounded
+Admission expires after `vlm.endpoint_limit_timeout_s=300` seconds (request timeout:
+`vlm.request_timeout_s=600`). When no inference was sent and permit cleanup succeeds,
+`EndpointAdmissionTimeoutError` is a temporary service error retried by the worker with
+backoff and checkpoint reuse, up to `runtime.max_retries`; the client does not multiply
+admission waits by its request retries. Permanent admission failures, unconfirmed cleanup
+and retained-permit errors raise non-retryable `EndpointLimitError`. Coordinator overload
+or temporary outages retry the same admission ID within that single deadline.
+Permit cleanup has separate bounded
 network retries. A failed release after a
 successful completion logs a retained-permit warning and keeps the response; it never
 resends that request. The coordinator may still need operator recovery.
@@ -153,6 +161,8 @@ existing labels intact; never delete audit checkpoints to retry an input.
 Run the controller where `sbatch`/`squeue` are available. Code, dataset, Python environment
 and run storage must be visible to workers. Language clients need a reachable model
 service; the controller's localhost is not another node's localhost.
+Only trusted operators may write `runtime.run_uri`: plans contain importable factories,
+so write access equals code execution with the workers' credentials.
 
 ```bash
 uv run lerobot-annotate --root=/shared/my-lerobot-v3-copy \
@@ -194,6 +204,10 @@ install git/ffmpeg and a hash-locked dependency set resolved from this code revi
 ```bash
 python -c 'import draccus, datasets, pyarrow, av, openai; import lerobot.annotations.processing'
 ```
+
+Only trusted operators may write `runtime.run_uri`, including its bucket and bundles:
+plans contain importable factories, so write access equals code execution with the
+HF workers' credentials. Do not execute a run store supplied by an untrusted party.
 
 Publish that tested image and pass its registry digest below. For `vlm.auto_serve=true`,
 also include an explicitly pinned vLLM version with compatible Torch/video-decoder
@@ -254,6 +268,14 @@ For account/job setup, see the [HF Jobs guide](https://huggingface.co/docs/huggi
   Parquet/metadata, not another video copy. Publication has bounded file/byte limits;
   large staged uploads need a separate workflow. Seeds do not guarantee bitwise VLM/GPU
   reproducibility, and cached-run time is not processing throughput.
+- Release tags are immutable; the format tag (for example `v3.0`) moves to each new
+  release, matching `LeRobotDataset.push_to_hub`. Default loads follow that alias.
+  Pin `revision` to a release tag or commit for reproducible reads. Tag failures are
+  reported, even after the commit exists; a delete/recreate alias update is not atomic.
+- Published lineage contains scientific annotation settings, prompt fingerprints,
+  episode selection and available code/model/image pins, not operational configs,
+  endpoint addresses, local paths, bucket locations or scheduler accounts. Inspect
+  free-text permission notes and custom model parameters before public publication.
 
 Publication checks permissions, target lineage/tags, projected file counts (including
 ownership/window tables) and known unchanged-source bytes **before inference**, for both
