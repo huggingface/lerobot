@@ -177,7 +177,7 @@ class SharedEndpointLimit:
                     self._post("acquire", request_id, timeout=min(10, remaining))
                     acquired = True
                 except HTTPError as exc:
-                    if exc.code != 429:
+                    if exc.code != 429 and classify_error(exc) != ErrorCategory.SERVICE:
                         raise
                 except (URLError, TimeoutError, ConnectionError):
                     pass  # Fail closed; never send inference without a permit.
