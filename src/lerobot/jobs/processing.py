@@ -37,6 +37,14 @@ def require_persistent_remote(store):
         raise ValueError("HF Jobs requires a persistent remote runtime.run_uri, not local/memory storage")
 
 
+def validate_job_pins(image, code_revision):
+    """Reject incomplete launch settings before persisting a bundle or submitting work."""
+    if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image or ""):
+        raise ValueError("Choose an immutable image@sha256:digest before HF Jobs dispatch")
+    if not re.fullmatch(r"[0-9a-f]{40}", code_revision or ""):
+        raise ValueError("HF Jobs code_revision must be an immutable 40-character Git commit SHA")
+
+
 def build_pod_command(
     run_uri,
     bundle_key,
@@ -131,8 +139,7 @@ def dispatch_bundle(
     resources=Resources(),
 ):
     require_persistent_remote(store)
-    if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image or ""):
-        raise ValueError("Choose an immutable image@sha256:digest before HF Jobs dispatch")
+    validate_job_pins(image, code_revision)
     if not flavor or flavor == "local":
         raise ValueError("An HF Jobs hardware flavor is required")
     command = build_pod_command(store.uri, key, digest, code_revision, code_repository, bootstrap_packages)
@@ -209,6 +216,7 @@ def run_hf_stage(store, plan, runtime):
     resources = spec.resources
     image = cfg.gpu_image if resources.gpus else cfg.cpu_image
     flavor = cfg.gpu_flavor if resources.gpus else cfg.cpu_flavor
+    validate_job_pins(image, cfg.code_revision)
     groups = min(runtime.workers, plan.shards)
     for start in range(0, groups, cfg.max_parallel):
         jobs = []

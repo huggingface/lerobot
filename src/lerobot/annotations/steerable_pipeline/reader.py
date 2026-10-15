@@ -42,6 +42,14 @@ from lerobot.datasets.io_utils import load_tasks
 from lerobot.datasets.utils import DEFAULT_TASKS_PATH
 
 
+class RejectedEpisodeError(ValueError):
+    """A known per-episode input/model outcome, not a configuration or programming error."""
+
+    def __init__(self, reason: str, message: str):
+        self.reason = reason
+        super().__init__(message)
+
+
 @dataclass
 class EpisodeRecord:
     """Per-episode record yielded by the reader."""

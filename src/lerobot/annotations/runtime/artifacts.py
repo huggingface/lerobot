@@ -11,6 +11,8 @@ import json
 import os
 import shutil
 import tempfile
+import threading
+from collections import OrderedDict
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO
 
@@ -32,14 +34,20 @@ class ArtifactStore:
     unique keys; only the controller publishes the stage's accepted index.
     """
 
-    def __init__(self, uri: str | Path, *, storage_options: dict | None = None):
+    def __init__(
+        self, uri: str | Path, *, storage_options: dict | None = None, verification_cache_size: int = 131072
+    ):
         require_package("fsspec", "dataset")
         self.uri = str(uri).rstrip("/")
         self.storage_options = storage_options or {}
         self.fs, self.root = fsspec.core.url_to_fs(self.uri, **self.storage_options)
         protocols = self.fs.protocol if isinstance(self.fs.protocol, tuple) else (self.fs.protocol,)
         self.is_local = bool({"file", "local"}.intersection(protocols))
-        self._verified: dict[tuple[str, tuple], tuple[str, int]] = {}
+        if verification_cache_size < 1:
+            raise ValueError("verification_cache_size must be positive")
+        self._verification_cache_size = verification_cache_size
+        self._verified: OrderedDict[tuple[str, tuple], tuple[str, int]] = OrderedDict()
+        self._verification_lock = threading.Lock()
 
     @property
     def location(self):
@@ -77,7 +85,13 @@ class ArtifactStore:
                     os.fsync(destination.fileno())
                 # Shared publication lock + atomic rename works without hard links
                 # (e.g. exFAT/SMB). The filesystem must support locks and rename.
-                with FileLock(str(path) + ".publish.lock"):
+                # Bounded lock stripes, not one permanent inode per artifact.
+                # Never unlink a lock: waiters may already hold its old inode.
+                key = str(PurePosixPath(relative)).casefold()
+                slot = int(hashlib.sha256(key.encode()).hexdigest()[:2], 16) % 64
+                lock = Path(self.root) / ".publication-locks" / f"{slot:02d}.lock"
+                lock.parent.mkdir(exist_ok=True)
+                with FileLock(lock):
                     if Path(path).exists():
                         raise FileExistsError(path)
                     os.replace(temporary, path)
@@ -104,9 +118,11 @@ class ArtifactStore:
         with self.open(relative) as stream:
             result = _stream_checksum(stream)
         if token is not None and local_file_token(Path(path)) == token:
-            if len(self._verified) >= 4096:
-                self._verified.clear()
-            self._verified[(path, token)] = result
+            with self._verification_lock:
+                self._verified[(path, token)] = result
+                self._verified.move_to_end((path, token))
+                if len(self._verified) > self._verification_cache_size:
+                    self._verified.popitem(last=False)
         return result
 
     def download(self, artifact: Artifact, destination: Path) -> Path:
@@ -125,7 +141,10 @@ class ArtifactStore:
             path = self.path(artifact.path)
             token = local_file_token(Path(path)) if self.is_local else None
             expected = (artifact.sha256, artifact.size)
-            cached = self._verified.get((path, token)) if token is not None else None
+            with self._verification_lock:
+                cached = self._verified.get((path, token)) if token is not None else None
+                if cached is not None and token is not None:
+                    self._verified.move_to_end((path, token))
             return (cached if cached is not None else self.checksum(artifact.path)) == expected
         except (FileNotFoundError, OSError):
             return False

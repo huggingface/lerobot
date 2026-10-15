@@ -118,14 +118,16 @@ def seal_plan(
         for name, schema in module.spec.outputs.items()
     }
     identity = {
-        "dataset": asdict(dataset),
         "factory": factory,
         "config": module.scientific_config() if isinstance(module, ScientificProcessingModule) else config,
         "module": {"name": module.spec.name, "version": module.spec.version, "scope": module.spec.scope},
         "schemas": schemas,
-        "upstream": upstream or {},
     }
     semantic_id = fingerprint(identity)
+    # Dataset/stage revisions describe the run, not every content-bound item.
+    # Keep the conservative identity for sources without complete local pins.
+    identity.update(dataset=asdict(dataset), upstream=upstream or {})
+    conservative_id = fingerprint(identity)
     # Packing belongs to the plan, but never to a logical item's identity/seed.
     schema = pa.schema(
         [
@@ -154,12 +156,17 @@ def seal_plan(
                     selection.update(canonical_json(asdict(item)) + b"\n")
                     item_id = fingerprint(
                         {
-                            "stage": semantic_id,
+                            "stage": semantic_id if item.content_digest is not None else conservative_id,
                             "key": item.key,
                             "payload": item.identity_payload
                             if item.identity_payload is not None
                             else item.payload,
                             **({"mask_reason": item.mask_reason} if item.mask_reason is not None else {}),
+                            **(
+                                {"content_digest": item.content_digest}
+                                if item.content_digest is not None
+                                else {}
+                            ),
                         }
                     )
                     batch.append(

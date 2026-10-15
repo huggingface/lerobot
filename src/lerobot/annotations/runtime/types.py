@@ -93,6 +93,9 @@ class InputItem:
     physical_seconds: float | None = None
     camera_seconds: float | None = None
     mask_reason: str | None = None
+    # Opt in only when this digest pins ALL item-local native/upstream inputs.
+    # Otherwise the planner conservatively includes dataset/stage-wide revisions.
+    content_digest: str | None = None
 
     def __post_init__(self):
         if not self.key or not math.isfinite(self.cost) or self.cost < 0:
@@ -102,6 +105,8 @@ class InputItem:
             raise ValueError("Masks require a nonempty reason")
         if self.identity_payload is not None:
             canonical_json(self.identity_payload)
+        if self.content_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", self.content_digest):
+            raise ValueError("content_digest must be a complete SHA256 item-input fingerprint")
         for seconds in (self.physical_seconds, self.camera_seconds):
             if seconds is not None and (not math.isfinite(seconds) or seconds < 0):
                 raise ValueError("Input duration must be finite and nonnegative")
