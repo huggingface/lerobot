@@ -69,6 +69,7 @@ def _connected(*, positions_deg=None, use_can_fd=True, macos=False, **config_kwa
     config_kwargs.setdefault("joint_limits", _WIDE_LIMITS)
     with (
         patch(f"{_FOLLOWER}.require_package", lambda *a, **kw: None),
+        patch(f"{_FOLLOWER}.platform.system", return_value="Darwin"),
         patch(f"{_ADAPTER}.require_package", lambda *a, **kw: None),
         patch(f"{_ADAPTER}._is_macos", return_value=macos),
         patch(f"{_ADAPTER}.MotorBridgeController") as controller_cls,
@@ -87,11 +88,24 @@ def _connected(*, positions_deg=None, use_can_fd=True, macos=False, **config_kwa
 
 
 def test_features_match_joints():
-    with patch(f"{_FOLLOWER}.require_package", lambda *a, **kw: None):
+    with (
+        patch(f"{_FOLLOWER}.require_package", lambda *a, **kw: None),
+        patch(f"{_FOLLOWER}.platform.system", return_value="Darwin"),
+    ):
         robot = OpenArmFollower(OpenArmFollowerConfig(port="can0"))
     expected = {f"{motor}.pos" for motor in _EXPECTED_MOTORS}
     assert set(robot.action_features) == expected
     assert set(robot.observation_features) == expected
+
+
+def test_linux_uses_python_can_backend():
+    with (
+        patch(f"{_FOLLOWER}.platform.system", return_value="Linux"),
+        patch(f"{_FOLLOWER}.DamiaoMotorsBus") as bus_class,
+    ):
+        OpenArmFollower(OpenArmFollowerConfig(port="can0"))
+
+    bus_class.assert_called_once()
 
 
 def test_connect_maps_models_and_ids():
