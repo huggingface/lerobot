@@ -243,6 +243,34 @@ def test_interrupted_shard_resumes_only_uncommitted_batches(tmp_path):
     assert output_values(store, plan)[-1]["key"] == "5"
 
 
+@pytest.mark.parametrize("permanent", [False, True])
+def test_diagnostic_store_outage_does_not_override_retry_decision(tmp_path, monkeypatch, caplog, permanent):
+    store = ArtifactStore(tmp_path / "run")
+    plan = make_plan(store, size=1)
+    original = ArtifactStore.put_file
+    failures = []
+
+    def put(self, relative, source, **kwargs):
+        if relative.endswith("/error.json"):
+            raise ConnectionError("diagnostic store is still unavailable")
+        if "/outputs/" in relative and not failures:
+            failures.append(relative)
+            if permanent:
+                raise ValueError("original invalid schema")
+            raise ConnectionError("original output store outage")
+        return original(self, relative, source, **kwargs)
+
+    monkeypatch.setattr(ArtifactStore, "put_file", put)
+    monkeypatch.setattr(worker.time, "sleep", lambda _: None)
+    if permanent:
+        with pytest.raises(ValueError, match="original invalid schema"):
+            run_local(store, plan, max_retries=1)
+    else:
+        assert run_local(store, plan, max_retries=1).completed == 1
+    assert len(failures) == 1
+    assert "Could not persist worker error diagnostic" in caplog.text
+
+
 @pytest.mark.parametrize("malformed_field", ["results", "artifacts"])
 @pytest.mark.parametrize("replace_existing", [False, True], ids=["cached", "repair"])
 @pytest.mark.parametrize("batch_size", [1, 2])

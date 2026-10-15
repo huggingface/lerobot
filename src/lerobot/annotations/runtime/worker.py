@@ -292,16 +292,24 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
                         category = classify_error(exc)
                         retryable = category in {ErrorCategory.NETWORK, ErrorCategory.SERVICE}
                         delay = retry_delay(retry) if retryable and retry < max_retries else 0.0
-                        store.put_json(
-                            f"{attempt}/error.json",
-                            {
-                                "category": category.value,
-                                "exception_type": type(exc).__name__,
-                                "retry": retry,
-                                "retryable": retryable,
-                                "backoff_seconds": delay,
-                            },
-                        )
+                        try:
+                            store.put_json(
+                                f"{attempt}/error.json",
+                                {
+                                    "category": category.value,
+                                    "exception_type": type(exc).__name__,
+                                    "retry": retry,
+                                    "retryable": retryable,
+                                    "backoff_seconds": delay,
+                                },
+                            )
+                        except Exception as diagnostic_error:
+                            logger.warning(
+                                "Could not persist worker error diagnostic: plan=%s shard=%s (%s)",
+                                plan_id,
+                                shard,
+                                type(diagnostic_error).__name__,
+                            )
                         context.metrics["last_error_category"] = category.value
                         if not retryable or retry == max_retries:
                             raise
