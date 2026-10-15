@@ -123,8 +123,10 @@ Unreachable coordinators fail closed. Ambiguous timeouts or killed workers leave
 held: drain/cancel inference before restarting the coordinator, rather than assuming
 old requests ended. Put API credentials in `vlm.api_key_env`, not saved configuration.
 Admission failures and retained-permit errors raise `EndpointLimitError`, chained to
-the original error and non-retryable by both client and worker. Admission timeout is
-one configured wait, not multiplied by request retries. A failed release after a
+the original error and non-retryable by both client and worker. Coordinator overload
+or temporary outages retry the same admission ID within one configured deadline;
+expiry is not multiplied by request retries. Permit cleanup has separate bounded
+network retries. A failed release after a
 successful completion logs a retained-permit warning and keeps the response; it never
 resends that request. The coordinator may still need operator recovery.
 

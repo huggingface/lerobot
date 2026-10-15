@@ -315,6 +315,30 @@ def test_interrupted_admission_clears_its_unsent_request(coordinator, monkeypatc
     assert not server.active
 
 
+@pytest.mark.parametrize("status", [503, 504])
+def test_temporary_coordinator_failure_reuses_admission_id_within_one_deadline(
+    coordinator, monkeypatch, status
+):
+    server, url = coordinator
+    limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN", timeout=2)
+    original = limit._post
+    requests = []
+
+    def post(operation, request_id, **kwargs):
+        if operation == "acquire":
+            requests.append(request_id)
+            if len(requests) == 1:
+                original(operation, request_id, **kwargs)  # Lost response after the permit was granted.
+                raise HTTPError(url, status, "temporary coordinator error", {}, None)
+        return original(operation, request_id, **kwargs)
+
+    monkeypatch.setattr(limit, "_post", post)
+    with limit.permit():
+        assert len(server.active) == 1
+    assert len(requests) == 2 and requests[0] == requests[1]
+    assert not server.active
+
+
 @pytest.mark.parametrize("kind", ["refused", "dns", "httpx_connect", "wrapped", "read"])
 def test_only_known_connect_failures_release_permits(coordinator, kind):
     import socket
