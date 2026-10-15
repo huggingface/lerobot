@@ -239,6 +239,7 @@ pixel-bound.
 | `./config/cam-probe.sh` | how many stale frames a camera hands back after a pause; `--buffersize 1` is the fix if it is more than one |
 | `./config/scan-motors.sh` | which motor ids answer, at which baud rate |
 | `./config/servo-regs.sh [--bus 1]` | every config and status register, servo by servo, flagging the one that differs. For a servo that answers a scan but will not move. Read-only. |
+| `./config/set-servo-id.sh --bus N --id M` | set a replacement servo's id and baud rate. It must be the only servo on that bus board; refuses otherwise. Then recalibrate that arm. |
 | `./config/power-check.sh` | voltage, temperature and load per servo, with torque applied one at a time |
 | `./config/viewer.sh` | the rerun viewer, at the version uv.lock says. Run it on the Mac. |
 | `./config/video-test.sh` | a synthetic camera feed to the viewer, no robot. Separates the video link from everything else. |
