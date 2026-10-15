@@ -130,6 +130,8 @@ inference, `POST /reset` with that admin bearer token and
 `{"key":"annotation","drained":true}`. Reset is disabled without an admin token;
 never reset live inference just to unblock workers. Request retries (429/5xx and temporary
 network failures) are bounded by `vlm.request_max_retries=2`; each reacquires admission.
+`vlm.request_timeout_s` bounds each request (600 seconds by default); hidden SDK retries
+stay disabled so they cannot bypass shared admission.
 An empty subtask result is recorded as rejected (`no_subtasks`), dependent stages are
 masked, and healthy episodes continue. Rejected families leave existing labels intact.
 
@@ -232,7 +234,9 @@ Publication checks permissions, target lineage/tags, projected file counts (incl
 ownership/window tables) and known unchanged-source bytes **before inference**, for both
 new targets and updates. Generated sizes are checked again before upload. A local-only
 source can be published to a new explicit target with native-content SHA256 provenance;
-Hub sources require their exact upstream commit. No project-specific tags are added.
+Hub sources require their exact upstream commit. Native-content identity ignores
+Parquet row groups and Arrow reader batches, so the same fingerprint version reproduces
+it before or after annotation materialization. No project-specific tags are added.
 
 Local source fingerprints and episode indexes are reused while file identity, size,
 mtime and ctime are unchanged; `runtime.verify_sources=true` forces a full source read.
@@ -251,6 +255,14 @@ invalidate unrelated VLM items, nor does expanding `only_episodes`. A changed sh
 video invalidates the episodes that reference that file. Whole-dataset/stage digests
 remain in plan provenance, not these item keys. Initial corrected identities may require
 one recomputation of older cached work.
+
+The generic runtime is Torch-free on CPU. The language recipe is not: its shared
+dataset/configuration/video modules import Torch even in planning and CPU workers.
+The frame provider defers its own Torch/decoder/encoder imports until use, but this
+does not prevent those shared imports from loading Torch or video dependencies.
+Selecting a CPU HF Jobs flavor does not remove that dependency; budget workers accordingly.
+Persisted window tables use a fixed v1 schema; adding fields or changing their types/order
+requires an explicit migration before merging older window rows.
 
 Fingerprints and prepared files follow `staging_dir` (default: the dataset's `.annotate_staging`).
 Set it to an external path to keep planning writes outside the dataset; a pending commit

@@ -17,11 +17,17 @@
 
 from __future__ import annotations
 
+import sys
+from dataclasses import asdict
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.annotations.steerable_pipeline.vlm_client import _bind_serve_port  # noqa: E402
+from lerobot.annotations.steerable_pipeline.config import VlmConfig  # noqa: E402
+from lerobot.annotations.steerable_pipeline.vlm_client import _bind_serve_port, make_vlm_client  # noqa: E402
 
 
 def test_json_retry_corrects_but_does_not_silently_accept_leading_zeroes():
@@ -87,6 +93,7 @@ def test_request_retries_are_bounded_and_preserve_api_version(monkeypatch, statu
             {
                 "base_url": "https://example.test/v1",
                 "api_key": "EMPTY",
+                "timeout": 600.0,
                 "max_retries": 0,
                 "default_query": {"api-version": "2024-10-21"},
             }
@@ -208,3 +215,21 @@ def test_nested_request_batches_have_one_shared_concurrency_limit(monkeypatch):
     client.close()
     client.close()
     assert len(closed) == 1
+
+
+def test_api_key_is_read_from_environment(monkeypatch) -> None:
+    constructor = MagicMock()
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=constructor))
+    config = VlmConfig(
+        auto_serve=False, api_key_env="TEST_PLANNER_KEY", request_timeout_s=30, request_max_retries=0
+    )
+    monkeypatch.delenv("TEST_PLANNER_KEY", raising=False)
+    with pytest.raises(ValueError, match="TEST_PLANNER_KEY is not set"):
+        make_vlm_client(config)
+    constructor.assert_not_called()
+    monkeypatch.setenv("TEST_PLANNER_KEY", "test-secret")
+    make_vlm_client(config)
+    constructor.assert_called_once_with(
+        base_url=config.api_base, api_key="test-secret", timeout=30, max_retries=0
+    )
+    assert "test-secret" not in str(asdict(config))

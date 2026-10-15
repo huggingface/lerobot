@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -30,6 +31,36 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.annotations.steerable_pipeline.frames import VideoFrameProvider  # noqa: E402
+
+
+def test_frame_module_defers_direct_video_imports():
+    # Shared dataset/config imports may still load Torch. This narrower contract
+    # keeps the frame module itself usable without eagerly importing decoders.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import builtins
+import importlib
+from lerobot.annotations.steerable_pipeline import reader
+
+original = builtins.__import__
+def guarded(name, *args, **kwargs):
+    if name in {"torch", "lerobot.configs", "lerobot.datasets.video_utils"}:
+        raise AssertionError(f"Eager frame dependency: {name}")
+    return original(name, *args, **kwargs)
+
+builtins.__import__ = guarded
+frames = importlib.import_module("lerobot.annotations.steerable_pipeline.frames")
+assert frames.null_provider().camera_keys == []
+""",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_timestamp_badges_do_not_encourage_invalid_json_numbers(monkeypatch):
