@@ -1,0 +1,228 @@
+# LimX Luna
+
+The [LimX Dynamics](https://www.limxdynamics.com/) Luna humanoid (`HU_L04`) is supported in LeRobot.
+The robot exposes 27 actuated joints — two 6-DoF legs, a 3-DoF waist, a 2-DoF head and two 5-DoF
+arms — and LeRobot drives all of them as a single `limx_luna` robot.
+
+<Tip>
+  This integration talks to the robot's own control process through the vendor
+  low-level SDK, which is published on PyPI as prebuilt wheels (`limxsdk`). It
+  is imported lazily, on `connect()`, so `--robot.type=limx_luna` stays
+  discoverable even when the extra is not installed.
+</Tip>
+
+## Supported Hardware
+
+| Component | Description                                                              |
+| --------- | ------------------------------------------------------------------------ |
+| Legs      | 2 × 6 DoF, commanded as joint positions in radians                       |
+| Waist     | 3 DoF (yaw, roll, pitch)                                                 |
+| Head      | 2 DoF (yaw, pitch)                                                       |
+| Arms      | 2 × 5 DoF (shoulder pitch, roll, yaw; elbow; wrist yaw), joint positions |
+| Transport | Vendor low-level SDK over IP, robot control port                         |
+
+Luna is a separate build from the LimX Oli humanoid (`HU_D04`), which has 31 joints and its own
+robot type (`limx_humanoid`).
+
+## Install
+
+Luna support is an optional extra, because it pulls in the vendor SDK:
+
+```bash
+pip install -e '.[limx_luna]'
+```
+
+If the extra is not installed, connecting fails with an error telling you to install it.
+
+<Warning>
+  The vendor publishes a different newest build per platform: `4.1.1` ships
+  Linux wheels only, while `4.1.0` is the newest Windows one, and there is no
+  macOS wheel. The extra therefore asks for `limxsdk>=4.1.0` on Linux and
+  Windows and is skipped on macOS.
+</Warning>
+
+## The `ROBOT_TYPE` Variable
+
+The vendor package picks its joint table from the `ROBOT_TYPE` environment variable, which it reads
+**when it is first imported**. Two consequences shape this integration:
+
+- The driver exports `ROBOT_TYPE` from `robot_type` immediately before it imports the package, so
+  the variable is in place in time.
+- A process cannot switch robot builds once the package has loaded. Run a separate process per
+  build.
+
+On the humanoid build the vendor package does not validate the value, so a wrong `robot_type` is
+**not** reported as an error — it silently selects the wrong table. For Luna, set `robot_type` to
+`"HU_L04_01"`; leave it `None` only if your environment already exports `ROBOT_TYPE`.
+
+## Connecting to a Real Robot
+
+Follow the bring-up procedure in the documentation shipped with the robot: power it on suspended,
+enable the motors, and switch it into the mode that lets your own code command it. Then connect to
+the robot's control process; `robot_ip` defaults to `10.192.1.2`, the address the vendor SDK uses
+for a real humanoid. Your deployment may differ.
+
+Only run against a real robot in an authorised environment, with the normal bring-up and
+emergency-stop procedures in place.
+
+## Gains
+
+`kp` and `kd` are **required** — there is no default, and the configuration is rejected without
+them. The vendor has published standing-controller gains for Oli but not for Luna. The only Luna
+gains it has published belong to its motion-tracking policies
+([`luna-beyondmimic`](https://github.com/limx-luna/luna-beyondmimic)); those are defined in motor
+space for the ankle and waist linkages (see [Joint Space](#joint-space)) and listed in a different
+joint order, so they are not usable as defaults here.
+
+Pass one value per joint, in `joint_names` order, and run a policy with the same gains it was
+trained or recorded with:
+
+```bash
+lerobot-record \
+  --robot.type=limx_luna \
+  --robot.robot_type=HU_L04_01 \
+  --robot.kp='[...27 values...]' \
+  --robot.kd='[...27 values...]'
+```
+
+## Verify the Connection
+
+```python
+from lerobot.robots.limx_luna import LimxLuna, LimxLunaConfig
+
+config = LimxLunaConfig(robot_type="HU_L04_01", kp=KP, kd=KD)  # your 27-value gain tables
+robot = LimxLuna(config)
+robot.connect()
+print(robot.get_observation())
+robot.disconnect()
+```
+
+`get_observation()` returns one `"<joint>.pos"` entry per joint, in radians, keyed by the joint
+names in the configuration (see [Joint Names](#joint-names)).
+
+## Send Actions
+
+`send_action()` consumes exactly the keys that `get_observation()` produces, so a policy trained on
+recorded observations can be replayed without a translation layer:
+
+```python
+obs = robot.get_observation()
+robot.send_action({key: value for key, value in obs.items()})  # holds the measured pose
+```
+
+Actions are joint positions in radians. The driver republishes the latest target at `publish_rate`
+while connected, so the controller keeps receiving setpoints between `send_action()` calls.
+
+Nothing is published until either `start_pose` or a first action provides a target, so connecting
+alone does not move the robot.
+
+## Joint Space
+
+Luna's ankles and waist are driven through parallel linkages, so the vendor controller has two joint
+spaces: a **motor** space, where the ankle and waist slots hold linkage motor positions, and a
+**serial** joint space, where they are the ankle and waist axes themselves and the controller solves
+the linkages.
+
+This integration works in the serial joint space: every command asks the controller to solve the
+linkages, and observations and actions are joint angles, consistent with the URDF. Data recorded in
+motor space — for example by the vendor's closed-loop motion-tracking policies — uses the same
+joint names but is not directly interchangeable with it.
+
+## Configuration
+
+| Field                 | Default            | Description                                                                                     |
+| --------------------- | ------------------ | ----------------------------------------------------------------------------------------------- |
+| `robot_ip`            | `10.192.1.2`       | Address of the robot's own control process                                                      |
+| `robot_type`          | `None`             | Robot build exported as `ROBOT_TYPE`. For Luna use `"HU_L04_01"`; `None` leaves the SDK default |
+| `kp`                  | required           | 27 position gains, in `joint_names` order                                                       |
+| `kd`                  | required           | 27 derivative gains, matching `kp` joint for joint                                              |
+| `joint_names`         | vendor joint names | 27 names, in SDK vector order. Override to match an existing dataset                            |
+| `publish_rate`        | `1000.0`           | Command publish rate in Hz                                                                      |
+| `start_pose`          | `None`             | 27-value pose to hold once connected. `None` leaves the robot where it is                       |
+| `observation_timeout` | `1.0`              | Seconds to wait for a fresh state sample                                                        |
+| `state_max_age`       | `None`             | Reject state older than this many seconds. `None` disables the check; on hardware prefer `~0.5` |
+
+## Joint Names
+
+The vendor SDK addresses joints positionally, so this integration uses the vendor's own joint names
+in the hardware order of the Luna controller configuration (published in `luna-beyondmimic`); the
+URDF in [`luna-description`](https://github.com/limx-luna/luna-description) lists them in the same
+order:
+
+```
+left_hip_pitch_joint    left_hip_roll_joint     left_hip_yaw_joint      left_knee_joint
+left_ankle_pitch_joint  left_ankle_roll_joint
+right_hip_pitch_joint   right_hip_roll_joint    right_hip_yaw_joint     right_knee_joint
+right_ankle_pitch_joint right_ankle_roll_joint
+waist_yaw_joint         waist_roll_joint        waist_pitch_joint
+head_yaw_joint          head_pitch_joint
+left_shoulder_pitch_joint   left_shoulder_roll_joint   left_shoulder_yaw_joint
+left_elbow_joint            left_wrist_yaw_joint
+right_shoulder_pitch_joint  right_shoulder_roll_joint  right_shoulder_yaw_joint
+right_elbow_joint           right_wrist_yaw_joint
+```
+
+<Warning>
+  If you already have a dataset or policy checkpoint that uses different joint
+  names, pass your own table via `--robot.joint_names=[...]` (27 entries, in the
+  order above) rather than renaming inside the dataset. No translation is done
+  for you.
+</Warning>
+
+## Joint Limits
+
+The URDF in `luna-description` (`HU_L04_01.urdf`) gives each joint a position limit (radians), in
+`joint_names` order:
+
+| Group     | Lower                                            | Upper                                      |
+| --------- | ------------------------------------------------ | ------------------------------------------ |
+| Left leg  | `-3.054, -1.047, -1.571, -0.087, -1.012, -0.436` | `1.571, 1.571, 1.571, 2.443, 0.611, 0.436` |
+| Right leg | `-3.054, -1.571, -1.571, -0.087, -1.012, -0.436` | `1.571, 1.047, 1.571, 2.443, 0.611, 0.436` |
+| Waist     | `-1.571, -0.524, -0.524`                         | `1.571, 0.524, 0.785`                      |
+| Head      | `-0.785, -0.524`                                 | `0.785, 0.524`                             |
+| Left arm  | `-3.054, -0.087, -2.531, -2.391, -1.571`         | `1.047, 1.920, 1.571, 0.524, 1.571`        |
+| Right arm | `-3.054, -1.920, -1.571, -2.391, -1.571`         | `1.047, 0.087, 2.531, 0.524, 1.571`        |
+
+The driver does not clamp targets to these limits — it passes actions through and lets the robot's
+own controller enforce them. Keep them in mind when authoring actions.
+
+## Control Mode
+
+Commands are sent in the SDK's **mode 0** (torque-position hybrid) with a position target, zero
+desired velocity and **zero feedforward torque**, which reduces it to pure PD position tracking with
+the configured `kp`/`kd`.
+
+The command's motor-name field uses the vendor joint names. At connect time the driver reads the
+real names the SDK reports (`getMotorNames()`); when that returns a usable 27-entry set it is used
+verbatim, otherwise the [table above](#joint-names) is sent.
+
+## Safety
+
+- `kp` and `kd` must be supplied explicitly; there are no default gains to fall back on.
+- `start_pose` is only published once a target exists, so connecting does not command a motion.
+- `state_max_age` is disabled by default. On hardware, set it (for example `0.5`) so a stale state
+  sample is rejected instead of being fed to a policy.
+- The robot's own controller owns calibration and zeroing; `calibrate()` is a no-op here and
+  `is_calibrated` reports `True`.
+
+## Network Security Boundary
+
+The vendor control channel is plaintext and unauthenticated. It is intended for a trusted, local
+robot network only — do not expose the control port beyond that boundary.
+
+## Troubleshooting
+
+| Symptom                                   | Likely cause                                                                         |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `limx_luna has no default gains`          | Pass `kp` and `kd`, 27 values each; see [Gains](#gains)                              |
+| `'limxsdk' is required but not installed` | Install it with `pip install -e '.[limx_luna]'`                                      |
+| `failed to initialise against 10.192.1.2` | The robot-side control process is not running, or `robot_ip` is wrong                |
+| `no fresh state sample within 1.0s`       | No state is arriving: the control process is not publishing, or `robot_ip` is wrong  |
+| The robot follows the wrong joint table   | `robot_type` does not match the robot build; the vendor package does not validate it |
+| Observation keys do not match a dataset   | Pass a matching `joint_names` table; see [Joint Names](#joint-names)                 |
+
+## Out of Scope
+
+- **Cameras.** This integration exposes joint positions only. Image observations are not part of it,
+  so it does not accept a `cameras` configuration.
+- **Simulation environments.** No LeRobot environment ships with this robot.
