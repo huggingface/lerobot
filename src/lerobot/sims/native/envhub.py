@@ -73,9 +73,9 @@ def _download_hub_file(
     cfg_str: str,
     trust_remote_code: bool,
     hub_cache_dir: str | None,
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str, str | None]:
     """
-    Parse `cfg_str` (hub URL), enforce `trust_remote_code`, and return
+    Parse `cfg_str` (hub URL or local directory), enforce `trust_remote_code`, and return
     (repo_id, file_path, local_file, revision).
     """
     if not trust_remote_code:
@@ -84,6 +84,17 @@ def _download_hub_file(
             "Executing hub env modules runs arbitrary Python code from third-party repositories. "
             "If you trust this repo and understand the risks, call `make_env(..., trust_remote_code=True)` "
             "and prefer pinning to a specific revision: 'user/repo@<commit-hash>:env.py'."
+        )
+
+    # A local directory holding the repository's files, e.g. one baked into a simulator image.
+    directory, _, local_path = cfg_str.partition(":")
+    if os.path.isdir(directory):
+        file_path = local_path or "env.py"
+        return (
+            os.path.basename(os.path.abspath(directory)),
+            file_path,
+            os.path.join(directory, file_path),
+            None,
         )
 
     repo_id, revision, file_path = _parse_hub_url(cfg_str)

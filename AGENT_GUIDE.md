@@ -379,7 +379,7 @@ lerobot-eval \
 Benchmark simulators have native dependencies that conflict with LeRobot's. Each one runs in its own image built from [`docker/Dockerfile.sim`](./docker/Dockerfile.sim) (one `<benchmark>_native` stage per simulator: LIBERO, LIBERO+, MetaWorld, RoboCasa, RoboCerebra, RoboMME, RoboTwin, VLABench), and `lerobot-eval` connects to it:
 
 ```bash
-uv run scripts/run_sim.py docker/sims/configs/libero.yaml   # builds and starts the server on :7448
+lerobot-env-server --docker --config=docker/sims/configs/libero.yaml   # builds and starts the server on :7448
 lerobot-eval --policy.path=<your_policy> \
   --env.type=sim --env.deployment=libero --env.task=libero_spatial \
   --eval.n_episodes=50

@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib.util
-import os
-import subprocess
 import sys
 import types
 from pathlib import Path
@@ -22,58 +19,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from lerobot.env_server import launcher
 from lerobot.env_server.configuration import load_config
-
-
-def test_launcher_runs_without_installed_lerobot(tmp_path):
-    script = Path(__file__).resolve().parents[2] / "scripts/run_sim.py"
-    config = tmp_path / "sim.yaml"
-    config.write_text("sim:\n  type: libero\n  task: libero_spatial\n")
-    docker = tmp_path / "docker"
-    docker.write_text('#!/bin/sh\n[ "$1" = image ] && exit 0\nprintf "%s\\n" "$SIM" "$SIM_CONFIG"\n')
-    docker.chmod(0o700)
-    result = subprocess.run(
-        [sys.executable, "-I", str(script), str(config), "--set", "sim.task=libero_goal", "--build"],
-        env={**os.environ, "PATH": str(tmp_path)},
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    backend, effective_config = result.stdout.strip().splitlines()
-    assert backend == "libero"
-    assert yaml.safe_load(Path(effective_config).read_text())["sim"]["task"] == "libero_goal"
-
-
-def test_launcher_serves_an_envhub_repository(tmp_path):
-    script = Path(__file__).resolve().parents[2] / "scripts/run_sim.py"
-    docker = tmp_path / "docker"
-    docker.write_text(
-        '#!/bin/sh\n[ "$1" = image ] && exit 0\n'
-        'printf "%s\\n" "$SIM" "$ENVHUB_REPO" "$SIM_TAG" "$SIM_START_PERIOD" "$SIM_CONFIG"\n'
-    )
-    docker.chmod(0o700)
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-I",
-            str(script),
-            "--envhub",
-            "User/My-Env@v1",
-            "--set",
-            "sim.fps=50",
-            "--build",
-        ],
-        # Set, so the launcher does not fetch them from the Hub.
-        env={**os.environ, "PATH": str(tmp_path), "ENVHUB_REQUIREMENTS": "", "ENVHUB_PACKAGES": ""},
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    backend, repo, tag, start_period, effective_config = result.stdout.strip().splitlines()
-    assert (backend, repo, tag, start_period) == ("envhub", "User/My-Env@v1", "user-my-env-v1", "600s")
-    sim = yaml.safe_load(Path(effective_config).read_text())["sim"]
-    assert sim["kwargs"] == {"hub_path": "User/My-Env@v1", "trust_remote_code": True}
-    assert sim["fps"] == 50
+from lerobot.scripts import lerobot_env_server
 
 
 def test_native_config_overrides_preserve_source(tmp_path):
@@ -89,11 +37,7 @@ def test_native_config_overrides_preserve_source(tmp_path):
             load_config(path, [override])
 
 
-def test_launcher_selects_backend_from_overridden_config(tmp_path, monkeypatch):
-    script = Path(__file__).resolve().parents[2] / "scripts/run_sim.py"
-    spec = importlib.util.spec_from_file_location("run_sim", script)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def test_docker_launch_selects_backend_from_overridden_config(tmp_path, monkeypatch):
     config = tmp_path / "sim.yaml"
     config.write_text("sim:\n  type: libero\n  task: libero_spatial\n")
     calls = []
@@ -103,9 +47,10 @@ def test_launcher_selects_backend_from_overridden_config(tmp_path, monkeypatch):
         calls.append((command, kwargs))
         return types.SimpleNamespace(returncode=0 if image_exists else 1)
 
-    monkeypatch.setattr(module.subprocess, "run", run)
-    monkeypatch.setattr(sys, "argv", [str(script), str(config), "--set", "sim.task=libero_goal"])
-    module.main()
+    monkeypatch.setattr(launcher.subprocess, "run", run)
+    argv = ["lerobot-env-server", "--docker", f"--config={config}", "--set", "sim.task=libero_goal"]
+    monkeypatch.setattr(sys, "argv", argv)
+    lerobot_env_server.main()
     # An existing image is reused; a missing one is built.
     assert calls[0][0] == ["docker", "image", "inspect", "lerobot-sim-libero:local"]
     command, options = calls[1]
@@ -115,9 +60,59 @@ def test_launcher_selects_backend_from_overridden_config(tmp_path, monkeypatch):
     assert yaml.safe_load(mounted.read_text())["sim"]["task"] == "libero_goal"
     assert yaml.safe_load(config.read_text())["sim"]["task"] == "libero_spatial"
     image_exists = False
-    module.main()
+    lerobot_env_server.main()
     assert calls[-1][0][-5:] == ["up", "-d", "--wait", "--build", "sim"]
     config.write_text("sim:\n  type: invalid-backend\n  task: libero_spatial\n")
     with pytest.raises(SystemExit):
-        module.main()
+        lerobot_env_server.main()
     assert len(calls) == 4
+
+
+def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(launcher.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)))
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "env.py").write_text("")
+    downloads = []
+
+    def download(repo, revision=None):
+        downloads.append((repo, revision))
+        return str(snapshot)
+
+    monkeypatch.setattr(launcher, "snapshot_download", download)
+    monkeypatch.setattr(launcher.tempfile, "gettempdir", lambda: str(tmp_path))
+    argv = ["lerobot-env-server", "--docker", "--envhub=User/My-Env@v1", "--set", "sim.fps=50", "--build"]
+    monkeypatch.setattr(sys, "argv", argv)
+    lerobot_env_server.main()
+    command, options = calls[-1]
+    assert command[-5:] == ["up", "-d", "--wait", "--build", "sim"]
+    env = options["env"]
+    assert (env["SIM"], env["SIM_TAG"], env["SIM_START_PERIOD"]) == ("envhub", "user-my-env-v1", "600s")
+    # Downloaded on the host, then copied as plain files into the build context.
+    assert downloads == [("User/My-Env", "v1")]
+    assert (Path(env["ENVHUB_DIR"]) / "env.py").is_file() and Path(env["ENVHUB_DIR"]) != snapshot
+    # The server loads the copy baked into the image.
+    sim = yaml.safe_load(Path(env["SIM_CONFIG"]).read_text())["sim"]
+    assert sim["kwargs"] == {"hub_path": launcher.ENVHUB_IMAGE_DIR, "trust_remote_code": True}
+    assert sim["fps"] == 50
+
+
+def test_docker_launch_builds_a_local_envhub_directory(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(launcher.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)))
+    (tmp_path / "custom.py").write_text("")
+    argv = ["lerobot-env-server", "--docker", f"--envhub={tmp_path}:custom.py", "--build"]
+    monkeypatch.setattr(sys, "argv", argv)
+    lerobot_env_server.main()
+    env = calls[-1][1]["env"]
+    assert env["ENVHUB_DIR"] == str(tmp_path.resolve())
+    assert env["SIM_TAG"] == f"local-{tmp_path.name.lower()}"
+    hub_path = yaml.safe_load(Path(env["SIM_CONFIG"]).read_text())["sim"]["kwargs"]["hub_path"]
+    assert hub_path == f"{launcher.ENVHUB_IMAGE_DIR}:custom.py"
+
+
+def test_build_and_stop_require_docker(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["lerobot-env-server", "--envhub=user/repo", "--build"])
+    with pytest.raises(SystemExit):
+        lerobot_env_server.main()

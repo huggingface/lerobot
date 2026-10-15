@@ -285,7 +285,7 @@ The hub URL format supports several patterns:
 By default, EnvHub environments run inside the evaluation process: `make_env` downloads the repository's `env.py`, and its dependencies are installed next to LeRobot. To keep an environment's dependencies away from your policy's, serve it with the [simulator server](./simulator_server) instead. One command builds an image with the repository and its `requirements.txt`, and starts the server:
 
 ```bash
-uv run scripts/run_sim.py --envhub username/my-env@<commit>
+lerobot-env-server --docker --envhub=username/my-env@<commit>
 ```
 
 Besides `requirements.txt` (installed with pip's rules, so `--extra-index-url` lines work), the image installs the apt packages listed in an optional `packages.txt`, one per line, as in Hugging Face Spaces.
@@ -312,7 +312,7 @@ To be served, an environment must follow these conventions:
 
 For examples, see the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments-6ad0f5bf3fac8dbe626c17dc): [`lerobot/so101-tabletop-mujoco`](https://huggingface.co/lerobot/so101-tabletop-mujoco) (MuJoCo) and [`lerobot/so101-tabletop-isaac`](https://huggingface.co/lerobot/so101-tabletop-isaac) (Isaac Sim, installed through `requirements.txt` and `packages.txt`) serve the same SO-101 scene with the same observations, actions and `LEROBOT_SIM`.
 
-Private repositories work too: the launcher passes your Hugging Face token (`HF_TOKEN` or `hf auth login`) to the image build as a secret, used only to download the repository and never stored in the image. Test a new environment in-process first (see [Step 2: Test Locally](#step-2-test-locally)).
+The repository is downloaded on your machine with your Hugging Face login (`HF_TOKEN` or `hf auth login`), so private repositories work too, and the image build never sees a token. `--envhub` also takes a local directory holding `env.py`, to serve an environment before pushing it: `lerobot-env-server --docker --envhub=./my-env`. `--build` rebuilds only what changed: the apt packages when `packages.txt` changes, the requirements when `requirements.txt` changes, and otherwise just the repository's files. Test a new environment in-process first (see [Step 2: Test Locally](#step-2-test-locally)).
 
 ## Multi-Task Environments
 

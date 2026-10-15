@@ -43,7 +43,7 @@ pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
 Run RoboMME in its own simulator image, so its `numpy`/`gymnasium` pins never meet LeRobot's:
 
 ```bash
-uv run scripts/run_sim.py docker/sims/configs/robomme.yaml
+lerobot-env-server --docker --config=docker/sims/configs/robomme.yaml
 ```
 
 Then evaluate with `--env.type=sim --env.deployment=robomme` (see [Simulator servers](./simulator_server)).

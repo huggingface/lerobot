@@ -1,4 +1,4 @@
-# Policy-independent server. scripts/run_sim.py selects the image from the YAML.
+# Policy-independent server. `lerobot-env-server --docker` selects the image from the YAML.
 services:
   sim:
     image: lerobot-sim-${SIM:?Select a backend}:${SIM_TAG:-local}
@@ -7,12 +7,9 @@ services:
       dockerfile: docker/Dockerfile.sim
       args:
         SIM: ${SIM}
-        ENVHUB_REPO: ${ENVHUB_REPO:-}
-        ENVHUB_REQUIREMENTS: ${ENVHUB_REQUIREMENTS:-}
-        ENVHUB_PACKAGES: ${ENVHUB_PACKAGES:-}
-      # Build-time only: lets the EnvHub stage download a private repository.
-      secrets:
-        - hf_token
+      # The EnvHub stage's repository files; unused by the other stages.
+      additional_contexts:
+        envhub: ${ENVHUB_DIR:-.}
     command: [lerobot-env-server, --config=/config/sim.yaml]
     volumes:
       - ${SIM_CONFIG:?Select a simulator YAML}:/config/sim.yaml:ro
@@ -30,7 +27,3 @@ services:
       timeout: 10s
       start_period: ${SIM_START_PERIOD:-60s}
       retries: 12
-
-secrets:
-  hf_token:
-    environment: HF_TOKEN

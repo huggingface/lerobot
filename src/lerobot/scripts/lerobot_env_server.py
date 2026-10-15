@@ -12,13 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run an environment server from an explicit YAML configuration."""
+"""Run a simulator server from a YAML configuration or an EnvHub repository.
+
+lerobot-env-server --docker --config=docker/sims/configs/libero.yaml   # in its Docker image, on :7448
+lerobot-env-server --docker --envhub=<user/repo[@revision]>            # serve an EnvHub repository
+lerobot-env-server --config=docker/sims/configs/metaworld.yaml         # in this environment
+"""
 
 import argparse
 import logging
 import signal
 
-from lerobot.env_server.configuration import load_config
+from lerobot.env_server.configuration import envhub_config, load_config
+from lerobot.env_server.launcher import run_in_docker
 from lerobot.env_server.server import EnvServer, ServerConfig
 from lerobot.sims.backend import BackendConfig
 from lerobot.sims.native.envhub import resolve_envhub_sim
@@ -26,13 +32,44 @@ from lerobot.transport.zenoh import ZenohConfig
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True)
-    parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--config", help="Simulator YAML; sim.type selects the backend and its Docker image")
+    parser.add_argument(
+        "--envhub",
+        metavar="REPO",
+        help="Serve an EnvHub repository (user/repo[@revision], or a local directory); trusts and runs its env.py",
+    )
+    parser.add_argument(
+        "--set", action="append", default=[], metavar="KEY=VALUE", help="Override an existing dotted YAML key"
+    )
+    parser.add_argument(
+        "--docker",
+        action="store_true",
+        help="Run the server in its Docker image (built from this LeRobot checkout), on localhost:7448",
+    )
+    parser.add_argument(
+        "--build", action="store_true", help="With --docker: rebuild the image (it is built when missing)"
+    )
+    parser.add_argument("--stop", action="store_true", help="With --docker: stop the server")
     args = parser.parse_args()
+    if (args.build or args.stop) and not args.docker:
+        parser.error("--build and --stop apply to --docker")
+    if args.envhub:
+        data = envhub_config(args.envhub, args.set, args.config)
+    elif args.config:
+        data = load_config(args.config, args.set)
+    else:
+        parser.error("Pass --config or --envhub")
+    if args.docker:
+        try:
+            run_in_docker(data, build=args.build, stop=args.stop)
+        except (RuntimeError, ValueError) as error:
+            parser.error(str(error))
+        return
     # force: an imported module may already have installed a WARNING-level root handler.
     logging.basicConfig(level=logging.INFO, force=True)
-    data = load_config(args.config, args.set)
     if data["sim"].get("type") == "envhub":
         # Settings left null come from the repository's env.py (LEROBOT_SIM), else defaults.
         data["sim"] = resolve_envhub_sim(data["sim"])

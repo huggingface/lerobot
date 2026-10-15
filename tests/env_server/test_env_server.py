@@ -768,6 +768,26 @@ def test_envhub_backend_serves_a_hub_repository(tmp_path, monkeypatch):
         backend_module.Backend(config, num_envs=1)
 
 
+def test_envhub_backend_serves_a_local_directory(tmp_path, monkeypatch):
+    from lerobot.sims import backend as backend_module
+    from lerobot.sims.native import envhub
+
+    (tmp_path / "env.py").write_text(_ENVHUB_ENV)
+
+    def no_download(**kwargs):
+        raise AssertionError("A local directory is not downloaded")
+
+    monkeypatch.setattr(envhub, "hf_hub_download", no_download)
+    config = backend_module.BackendConfig(
+        type="envhub", task="", kwargs={"hub_path": str(tmp_path), "trust_remote_code": True}
+    )
+    backend = backend_module.Backend(config, num_envs=1)
+    try:
+        assert backend.tasks == {"reach_suite": ["0"]}
+    finally:
+        backend.close()
+
+
 def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
     import builtins
 

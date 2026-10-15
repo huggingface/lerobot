@@ -108,23 +108,19 @@ RUN uv pip install "metaworld==3.0.0"
 # layers are cached by their content: a new commit that only changes env.py rebuilds the last layer.
 # Requirements resolve across indexes as pip does. The repository is cached where the Hub loader reads it.
 FROM base AS envhub_native
-ARG ENVHUB_PACKAGES=""
+# The repository's files, from the `envhub` build context that `lerobot-env-server --docker --envhub` downloads
+# on the host. Each layer is rebuilt only when the files it copies change: apt packages (packages.txt, as in
+# Hugging Face Spaces), Python requirements, then the rest of the repository.
 USER root
-RUN if [ -n "${ENVHUB_PACKAGES}" ]; then echo "${ENVHUB_PACKAGES}" | base64 -d > /tmp/packages.txt \
-        && apt-get update && xargs -a /tmp/packages.txt apt-get install -y --no-install-recommends \
-        && rm -rf /var/lib/apt/lists/* /tmp/packages.txt; fi
+COPY --from=envhub packages.tx[t] /tmp/envhub/
+RUN if [ -f /tmp/envhub/packages.txt ]; then apt-get update \
+        && xargs -a /tmp/envhub/packages.txt apt-get install -y --no-install-recommends \
+        && rm -rf /var/lib/apt/lists/*; fi
 USER user_lerobot
-ARG ENVHUB_REQUIREMENTS=""
-RUN if [ -n "${ENVHUB_REQUIREMENTS}" ]; then echo "${ENVHUB_REQUIREMENTS}" | base64 -d > /tmp/requirements.txt \
-        && UV_INDEX_STRATEGY=unsafe-best-match uv pip install --no-cache -r /tmp/requirements.txt \
-        && rm /tmp/requirements.txt; fi
-ARG ENVHUB_REPO=""
-# A private repository's token is a build secret: mounted for this step only, never stored in the image.
-RUN --mount=type=secret,id=hf_token,env=HF_TOKEN,required=false \
-    test -n "${ENVHUB_REPO}" || { echo "Set the ENVHUB_REPO build argument to <user/repo[@revision]>" >&2; exit 1; } \
-    && python -c "import sys; from huggingface_hub import snapshot_download; \
-repo, _, revision = sys.argv[1].split(':')[0].partition('@'); \
-snapshot_download(repo, revision=revision or None)" "${ENVHUB_REPO}"
+COPY --from=envhub requirements.tx[t] /tmp/envhub/
+RUN if [ -f /tmp/envhub/requirements.txt ]; then \
+        UV_INDEX_STRATEGY=unsafe-best-match uv pip install --no-cache -r /tmp/envhub/requirements.txt; fi
+COPY --chown=user_lerobot:user_lerobot --from=envhub . /envhub
 
 # ---------------------------------------------------------------------------- RoboCasa
 FROM base AS robocasa_native
