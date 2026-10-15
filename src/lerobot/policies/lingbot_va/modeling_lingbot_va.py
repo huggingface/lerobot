@@ -48,7 +48,6 @@ from .utils import (
     WanTransformer3DModel,
     WanVAEStreamingWrapper,
     _sample_timestep_id,
-    _torch_dtype,
     clean_prompt,
     data_seq_to_patch,
     denormalize_latents,
@@ -72,7 +71,7 @@ class LingBotVAPolicy(PreTrainedPolicy):
         config.validate_features()
         self.config = config
 
-        self.dtype = _torch_dtype(config.dtype)
+        self.dtype = config.dtype
 
         # Trainable dual-stream transformer (the only sub-module saved in the LeRobot checkpoint).
         self.transformer = WanTransformer3DModel(

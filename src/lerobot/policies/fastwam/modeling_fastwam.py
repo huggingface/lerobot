@@ -255,7 +255,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         across checkpoints) and are intentionally excluded from `model.safetensors`
         — see `FastWAM.__init__`. The tokenizer comes from `google/umt5-xxl`.
         """
-        dtype = _dtype_from_name(config.torch_dtype)
+        dtype = config.dtype
         device = config.device
         if device is None:
             # PreTrainedConfig.__post_init__ always resolves a device; None here is a programming error.
@@ -372,13 +372,6 @@ def _slice_infer_value(value: Any, *, index: int, batch_size: int) -> Any:
     if isinstance(value, (list, tuple)) and len(value) == batch_size:
         return value[index]
     return value
-
-
-def _dtype_from_name(name: str) -> torch.dtype:
-    dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
-    if name not in dtype_map:
-        raise ValueError(f"Unsupported torch dtype `{name}`.")
-    return dtype_map[name]
 
 
 def batch_device(batch: dict[str, Any]) -> torch.device:
