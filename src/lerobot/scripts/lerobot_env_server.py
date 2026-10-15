@@ -21,6 +21,7 @@ import signal
 from lerobot.env_server.configuration import load_config
 from lerobot.env_server.server import EnvServer, ServerConfig
 from lerobot.sims.backend import BackendConfig
+from lerobot.sims.native.envhub import resolve_envhub_sim
 from lerobot.transport.zenoh import ZenohConfig
 
 
@@ -29,11 +30,15 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
     args = parser.parse_args()
+    # force: an imported module may already have installed a WARNING-level root handler.
+    logging.basicConfig(level=logging.INFO, force=True)
     data = load_config(args.config, args.set)
+    if data["sim"].get("type") == "envhub":
+        # Settings left null come from the repository's env.py (LEROBOT_SIM), else defaults.
+        data["sim"] = resolve_envhub_sim(data["sim"])
     data["sim"] = BackendConfig(**data["sim"])
     if "zenoh" in data:
         data["zenoh"] = ZenohConfig(**data["zenoh"])
-    logging.basicConfig(level=logging.INFO)
     server = EnvServer(ServerConfig(**data))
     signal.signal(signal.SIGTERM, lambda *_: server.stop.set())
     try:

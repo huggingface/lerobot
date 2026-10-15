@@ -1,0 +1,16 @@
+# Serve an EnvHub repository: `uv run scripts/run_sim.py --envhub <user/repo[@revision]>`.
+# null values come from the repository's optional LEROBOT_SIM dict in env.py, else from defaults
+# (fps 30, position control, generic component names). --set overrides either.
+deployment: envhub
+sim:
+  type: envhub
+  task: ""
+  fps: null
+  control: null
+  semantics: null
+  kwargs:
+    hub_path: ""
+    trust_remote_code: false
+  state_names: null
+  action_names: null
+  gripper_indices: null

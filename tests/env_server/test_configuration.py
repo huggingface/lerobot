@@ -16,6 +16,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -29,10 +30,10 @@ def test_launcher_runs_without_installed_lerobot(tmp_path):
     config = tmp_path / "sim.yaml"
     config.write_text("sim:\n  type: libero\n  task: libero_spatial\n")
     docker = tmp_path / "docker"
-    docker.write_text('#!/bin/sh\nprintf "%s\\n" "$SIM" "$SIM_CONFIG"\n')
+    docker.write_text('#!/bin/sh\n[ "$1" = image ] && exit 0\nprintf "%s\\n" "$SIM" "$SIM_CONFIG"\n')
     docker.chmod(0o700)
     result = subprocess.run(
-        [sys.executable, "-I", str(script), str(config), "--set", "sim.task=libero_goal", "--no-build"],
+        [sys.executable, "-I", str(script), str(config), "--set", "sim.task=libero_goal", "--build"],
         env={**os.environ, "PATH": str(tmp_path)},
         check=True,
         capture_output=True,
@@ -41,6 +42,38 @@ def test_launcher_runs_without_installed_lerobot(tmp_path):
     backend, effective_config = result.stdout.strip().splitlines()
     assert backend == "libero"
     assert yaml.safe_load(Path(effective_config).read_text())["sim"]["task"] == "libero_goal"
+
+
+def test_launcher_serves_an_envhub_repository(tmp_path):
+    script = Path(__file__).resolve().parents[2] / "scripts/run_sim.py"
+    docker = tmp_path / "docker"
+    docker.write_text(
+        '#!/bin/sh\n[ "$1" = image ] && exit 0\n'
+        'printf "%s\\n" "$SIM" "$ENVHUB_REPO" "$SIM_TAG" "$SIM_START_PERIOD" "$SIM_CONFIG"\n'
+    )
+    docker.chmod(0o700)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(script),
+            "--envhub",
+            "User/My-Env@v1",
+            "--set",
+            "sim.fps=50",
+            "--build",
+        ],
+        # Set, so the launcher does not fetch them from the Hub.
+        env={**os.environ, "PATH": str(tmp_path), "ENVHUB_REQUIREMENTS": "", "ENVHUB_PACKAGES": ""},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    backend, repo, tag, start_period, effective_config = result.stdout.strip().splitlines()
+    assert (backend, repo, tag, start_period) == ("envhub", "User/My-Env@v1", "user-my-env-v1", "600s")
+    sim = yaml.safe_load(Path(effective_config).read_text())["sim"]
+    assert sim["kwargs"] == {"hub_path": "User/My-Env@v1", "trust_remote_code": True}
+    assert sim["fps"] == 50
 
 
 def test_native_config_overrides_preserve_source(tmp_path):
@@ -64,18 +97,27 @@ def test_launcher_selects_backend_from_overridden_config(tmp_path, monkeypatch):
     config = tmp_path / "sim.yaml"
     config.write_text("sim:\n  type: libero\n  task: libero_spatial\n")
     calls = []
-    monkeypatch.setattr(module.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)))
-    monkeypatch.setattr(
-        sys, "argv", [str(script), str(config), "--set", "sim.task=libero_goal", "--no-build"]
-    )
+    image_exists = True
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return types.SimpleNamespace(returncode=0 if image_exists else 1)
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    monkeypatch.setattr(sys, "argv", [str(script), str(config), "--set", "sim.task=libero_goal"])
     module.main()
-    command, options = calls[0]
+    # An existing image is reused; a missing one is built.
+    assert calls[0][0] == ["docker", "image", "inspect", "lerobot-sim-libero:local"]
+    command, options = calls[1]
     assert command[-4:] == ["up", "-d", "--wait", "sim"]
     assert options["env"]["SIM"] == "libero"
     mounted = Path(options["env"]["SIM_CONFIG"])
     assert yaml.safe_load(mounted.read_text())["sim"]["task"] == "libero_goal"
     assert yaml.safe_load(config.read_text())["sim"]["task"] == "libero_spatial"
+    image_exists = False
+    module.main()
+    assert calls[-1][0][-5:] == ["up", "-d", "--wait", "--build", "sim"]
     config.write_text("sim:\n  type: invalid-backend\n  task: libero_spatial\n")
     with pytest.raises(SystemExit):
         module.main()
-    assert len(calls) == 1
+    assert len(calls) == 4

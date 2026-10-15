@@ -107,6 +107,11 @@ class Backend:
         """Describe this task using its observation and action spaces."""
         self._ensure()
         env = self.envs[0]
+        if not isinstance(env.observation_space, spaces.Dict):
+            raise ValueError(
+                "The simulator server needs dict observations, as in-process LeRobot does "
+                f"(pixels, agent_pos, environment_state), got {env.observation_space}"
+            )
         obs = canonical_observation(env.observation_space.sample(), self.config.type)
         features = []
         for name, array in obs.items():
@@ -124,6 +129,8 @@ class Backend:
                     self.config.semantics,
                 )
             )
+        if not isinstance(env.action_space, spaces.Box) or len(env.action_space.shape) != 1:
+            raise ValueError(f"The simulator server needs a 1-D Box action space, got {env.action_space}")
         dim = env.action_space.shape[0]
         action_names = self.config.action_names or tuple(f"command_{i}" for i in range(dim))
         return EnvDescriptor(

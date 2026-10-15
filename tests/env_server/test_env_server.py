@@ -56,7 +56,7 @@ def test_torch_free_import():
 import sys
 sys.modules['torch'] = None
 import numpy as np
-import lerobot.env_server.server, lerobot.sims.backend
+import lerobot.env_server.server, lerobot.sims.backend, lerobot.sims.native.envhub
 from lerobot.transport.wire.client import query_reply, decode_reply
 from lerobot.transport.wire.features import FeatureSpec, feature_mismatch, validate_array
 from lerobot.transport.wire.protocol import Envelope, MessageType, correlate_reply, raise_peer_error, validate_reply
@@ -660,6 +660,7 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
 
 
 def test_world_reset_keeps_operator_instruction():
+    pytest.importorskip("datasets", reason="rollout requires the dataset extra")
     from types import SimpleNamespace
 
     from lerobot.robots.remote.world import EpisodeStatus
@@ -698,3 +699,151 @@ def test_world_reset_keeps_operator_instruction():
     engine.task = "pick up the ketchup"
     assert RolloutStrategy._reset_sim_world(strategy, ctx) == "pick up the ketchup"
     assert engine.task == "pick up the ketchup"
+
+
+_ENVHUB_ENV = """
+import gymnasium as gym
+import numpy as np
+from gymnasium import spaces
+
+
+class Reach(gym.Env):
+    observation_space = spaces.Dict(
+        {
+            "pixels": spaces.Dict({"front": spaces.Box(0, 255, (8, 8, 3), np.uint8)}),
+            "agent_pos": spaces.Box(-10, 10, (2,), np.float32),
+        }
+    )
+    action_space = spaces.Box(-1, 1, (2,), np.float32)
+    task_description = "reach the goal"
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        self.pos = self.np_random.uniform(-1, 1, 2).astype(np.float32)
+        return self._obs(), {}
+
+    def step(self, action):
+        self.pos += action
+        done = bool(np.linalg.norm(self.pos) > 3)
+        return self._obs(), float(done), done, False, {"is_success": done}
+
+    def _obs(self):
+        return {"pixels": {"front": np.zeros((8, 8, 3), np.uint8)}, "agent_pos": self.pos.copy()}
+
+
+def make_env(n_envs=1, use_async_envs=False):
+    return {"reach_suite": {0: gym.vector.SyncVectorEnv([Reach] * n_envs)}}
+"""
+
+
+def test_envhub_backend_serves_a_hub_repository(tmp_path, monkeypatch):
+    from lerobot.sims import backend as backend_module
+    from lerobot.sims.native import envhub
+
+    env_file = tmp_path / "env.py"
+    env_file.write_text(_ENVHUB_ENV)
+    # Only the network download is stubbed; the consent check and URL parsing run for real.
+    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
+    config = backend_module.BackendConfig(
+        type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True}
+    )
+    backend = backend_module.Backend(config, num_envs=2)
+    try:
+        descriptor = backend.descriptor()
+        assert backend.tasks == {"reach_suite": ["0"]}
+        assert {f.name: (f.shape, f.kind) for f in descriptor.features} == {
+            "observation.images.front": ((8, 8, 3), "rgb"),
+            "observation.state": ((2,), "tensor"),
+        }
+        assert descriptor.action_feature.shape == (2,)
+        first = backend.reset([3, 4]).obs["observation.state"]
+        np.testing.assert_array_equal(backend.reset([3, 4]).obs["observation.state"], first)
+        result = backend.step(np.full((2, 2), 0.5, np.float32))
+        assert result.task == ("reach the goal", "reach the goal")
+    finally:
+        backend.close()
+    # Running remote code needs explicit consent.
+    config.kwargs["trust_remote_code"] = False
+    with pytest.raises(RuntimeError, match="Refusing"):
+        backend_module.Backend(config, num_envs=1)
+
+
+def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
+    import builtins
+
+    from lerobot.sims import backend as backend_module
+    from lerobot.sims.native import envhub
+
+    # A simulator app that can start only once per process (e.g. Isaac Sim) lives in module state.
+    env_file = tmp_path / "env.py"
+    env_file.write_text("import builtins\nbuiltins.envhub_imports += 1\n" + _ENVHUB_ENV)
+    monkeypatch.setattr(builtins, "envhub_imports", 0, raising=False)
+    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
+    config = backend_module.BackendConfig(
+        type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True}
+    )
+    # The probe and two sessions each build a Backend.
+    for _ in range(3):
+        backend = backend_module.Backend(config, num_envs=1)
+        backend.reset([0])
+        backend.close()
+    assert builtins.envhub_imports == 1
+
+
+def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
+    from lerobot.sims import backend as backend_module
+    from lerobot.sims.native import envhub
+
+    env_file = tmp_path / "env.py"
+    # A flat array observation, which in-process LeRobot does not accept either.
+    env_file.write_text(
+        "import gymnasium as gym\n"
+        "def make_env(n_envs=1, use_async_envs=False):\n"
+        "    return gym.vector.SyncVectorEnv([lambda: gym.make('CartPole-v1')] * n_envs)\n"
+    )
+    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
+    config = backend_module.BackendConfig(
+        type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True}
+    )
+    backend = backend_module.Backend(config, num_envs=1)
+    try:
+        with pytest.raises(ValueError, match="dict observations"):
+            backend.descriptor()
+    finally:
+        backend.close()
+
+
+def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
+    from lerobot.sims.native import envhub
+
+    declared = (
+        'LEROBOT_SIM = {"fps": 15, "control": "delta", "semantics": "reach-delta-v1",'
+        ' "state_names": ["x", "y"], "action_names": ["dx", "dy"]}\n'
+    )
+    env_file = tmp_path / "env.py"
+    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
+    sim = {
+        "type": "envhub",
+        "kwargs": {"hub_path": "user/reach", "trust_remote_code": True},
+        **dict.fromkeys(envhub.SIM_DEFAULTS),
+    }
+    # Repository values fill the null settings; an explicit value wins over them.
+    env_file.write_text(_ENVHUB_ENV + declared)
+    resolved = envhub.resolve_envhub_sim({**sim, "fps": 50})
+    assert (resolved["fps"], resolved["control"], resolved["semantics"]) == (50, "delta", "reach-delta-v1")
+    assert (resolved["state_names"], resolved["action_names"], resolved["gripper_indices"]) == (
+        ["x", "y"],
+        ["dx", "dy"],
+        [],
+    )
+    # Repositories without LEROBOT_SIM keep working with the defaults.
+    env_file.write_text(_ENVHUB_ENV)
+    assert {key: envhub.resolve_envhub_sim(sim)[key] for key in envhub.SIM_DEFAULTS} == envhub.SIM_DEFAULTS
+    # A typo in LEROBOT_SIM is an error, not a silently ignored setting.
+    env_file.write_text(_ENVHUB_ENV + 'LEROBOT_SIM = {"fsp": 30}\n')
+    with pytest.raises(ValueError, match="unknown keys"):
+        envhub.resolve_envhub_sim(sim)
+    # Nothing is downloaded when every setting is explicit.
+    monkeypatch.setattr(envhub, "hf_hub_download", None)
+    explicit = {**sim, **envhub.SIM_DEFAULTS}
+    assert envhub.resolve_envhub_sim(explicit) is explicit

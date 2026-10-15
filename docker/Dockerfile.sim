@@ -102,6 +102,28 @@ ENV LEROBOT_SIM_REQUIRE_NUMPY=1
 FROM base AS metaworld_native
 RUN uv pip install "metaworld==3.0.0"
 
+# ---------------------------------------------------------------------------- EnvHub
+# Any EnvHub repository (user/repo[@revision][:env.py]). The launcher passes the repository's optional
+# packages.txt (apt, as in Hugging Face Spaces) and requirements.txt as base64 build arguments, so these
+# layers are cached by their content: a new commit that only changes env.py rebuilds the last layer.
+# Requirements resolve across indexes as pip does. The repository is cached where the Hub loader reads it.
+FROM base AS envhub_native
+ARG ENVHUB_PACKAGES=""
+USER root
+RUN if [ -n "${ENVHUB_PACKAGES}" ]; then echo "${ENVHUB_PACKAGES}" | base64 -d > /tmp/packages.txt \
+        && apt-get update && xargs -a /tmp/packages.txt apt-get install -y --no-install-recommends \
+        && rm -rf /var/lib/apt/lists/* /tmp/packages.txt; fi
+USER user_lerobot
+ARG ENVHUB_REQUIREMENTS=""
+RUN if [ -n "${ENVHUB_REQUIREMENTS}" ]; then echo "${ENVHUB_REQUIREMENTS}" | base64 -d > /tmp/requirements.txt \
+        && UV_INDEX_STRATEGY=unsafe-best-match uv pip install --no-cache -r /tmp/requirements.txt \
+        && rm /tmp/requirements.txt; fi
+ARG ENVHUB_REPO=""
+RUN test -n "${ENVHUB_REPO}" || { echo "Set the ENVHUB_REPO build argument to <user/repo[@revision]>" >&2; exit 1; } \
+    && python -c "import sys; from huggingface_hub import snapshot_download; \
+repo, _, revision = sys.argv[1].split(':')[0].partition('@'); \
+snapshot_download(repo, revision=revision or None)" "${ENVHUB_REPO}"
+
 # ---------------------------------------------------------------------------- RoboCasa
 FROM base AS robocasa_native
 ARG ROBOCASA_SHA=56e355ccc64389dfc1b8a61a33b9127b975ba681
