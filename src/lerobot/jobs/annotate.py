@@ -15,6 +15,7 @@ from .processing import (
     dispatch_bundle,
     follow_processing_job,
     require_persistent_remote,
+    validate_job_pins,
 )
 
 
@@ -26,6 +27,9 @@ def submit_annotate_to_hf(cfg):
         raise ValueError("Remote annotation requires --repo_id; a host-local --root is not uploaded")
     if not cfg.runtime.run_uri:
         raise ValueError("Remote annotation requires persistent runtime.run_uri")
+    code = cfg.runtime.hf_jobs.code_revision or cfg.job.lerobot_ref
+    image = cfg.runtime.hf_jobs.gpu_image or cfg.job.image
+    validate_job_pins(image, code)
     store = ArtifactStore(cfg.runtime.run_uri)
     require_persistent_remote(store)
     token = get_token()
@@ -37,7 +41,6 @@ def submit_annotate_to_hf(cfg):
     remote.runtime.backend = "local"
     remote.job.target = "local"
     config = draccus.encode(remote)
-    code = cfg.runtime.hf_jobs.code_revision or cfg.job.lerobot_ref
     key, digest = write_bundle(store, "annotate", config, code)
     if cfg.runtime.mode == "plan":
         return key
@@ -54,7 +57,7 @@ def submit_annotate_to_hf(cfg):
         store,
         key,
         digest,
-        image=cfg.runtime.hf_jobs.gpu_image or cfg.job.image,
+        image=image,
         flavor=cfg.job.target if cfg.job.is_remote else cfg.runtime.hf_jobs.gpu_flavor,
         code_revision=code,
         timeout=cfg.job.timeout,

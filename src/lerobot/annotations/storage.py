@@ -4,8 +4,10 @@
 
 import json
 import os
+import re
 import shutil
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from filelock import FileLock
@@ -59,6 +61,10 @@ def _recover_owned(root: Path) -> None:
         prepared = Path(entry["prepared"])
         if prepared.name == f"{index:08d}-{entry['sha256']}":
             prepared.unlink(missing_ok=True)
+    for directory in {Path(entry["prepared"]).parent for entry in journal["files"]}:
+        if directory.parent.name == "prepared" and re.fullmatch(r"[0-9a-f]{64}", directory.name):
+            with suppress(OSError):  # Preserve any caller files; never recursively remove directories.
+                directory.rmdir()  # Only the now-empty, explicitly journal-owned plan directory.
     journal_path.unlink()
 
 

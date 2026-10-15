@@ -139,6 +139,9 @@ def accepted_in_shard(store: ArtifactStore, plan: StagePlan, shard: int) -> dict
         if path in seen:
             continue
         seen.add(path)
+        if store.exists(path.split("/checkpoints/")[0] + "/pruned.json"):
+            logger.debug("Skipping intentionally pruned materialization checkpoint %s", path)
+            continue
         try:
             checkpoint = store.read_json(path)
             if not path.startswith(f"stages/{checkpoint['plan_id']}/attempts/{checkpoint['shard']:08d}/"):

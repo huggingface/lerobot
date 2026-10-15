@@ -80,8 +80,12 @@ a module's version must change when its behavior changes.
 Subtasks use timestamped contact sheets and a describe→segment pass. Optional
 `plan.subtask_seeded_relabel=true` refines wording with another call per subtask.
 Long episodes use overlapping context but nonoverlapping output ownership, preserving
-exact source frame IDs/timestamps in `meta/annotations/windows/*.parquet`. An unlabelled
-window fails rather than borrowing neighbouring labels. Inspect boundaries and idle tails:
+exact source frame IDs/timestamps in `meta/annotations/windows/chunk-*/file-*.parquet`
+(one table per data shard, anchored to each episode's first shard). Partial updates preserve
+unselected episodes. An unlabelled window rejects that episode with a reason rather
+than borrowing neighbouring labels; healthy episodes in the batch continue. Invalid
+episode clocks/frames are also rejected, while unexpected module errors still fail fast.
+Inspect boundaries and idle tails:
 structural validation is not a human assessment of label quality.
 
 Tune `vlm.max_new_tokens` and model-specific `vlm.chat_template_kwargs` so the
@@ -224,8 +228,9 @@ For account/job setup, see the [HF Jobs guide](https://huggingface.co/docs/huggi
   large staged uploads need a separate workflow. Seeds do not guarantee bitwise VLM/GPU
   reproducibility, and cached-run time is not processing throughput.
 
-Publication checks permissions, target lineage/tags and known source-size lower bounds
-**before inference**; final generated sizes are checked again before upload. A local-only
+Publication checks permissions, target lineage/tags, projected file counts (including
+ownership/window tables) and known unchanged-source bytes **before inference**, for both
+new targets and updates. Generated sizes are checked again before upload. A local-only
 source can be published to a new explicit target with native-content SHA256 provenance;
 Hub sources require their exact upstream commit. No project-specific tags are added.
 
@@ -238,13 +243,28 @@ dataset-root locations do not change language cache identity. Reuse after reloca
 requires the same persistent `runtime.run_uri`; model/config/prompt changes still invalidate
 work. Packaged prompt edits and prompt overrides are hashed; provide the same overrides
 to all workers. Corrupt checkpoints are ignored with diagnostic warnings, not silently.
+Language items pin their own native rows, referenced video files/offsets, task, relevant
+metadata and upstream artifacts. Appending episodes or changing one episode does not
+invalidate unrelated VLM items, nor does expanding `only_episodes`. A changed shared
+video invalidates the episodes that reference that file. Whole-dataset/stage digests
+remain in plan provenance, not these item keys. Initial corrected identities may require
+one recomputation of older cached work.
 
-Prepared commit files are removed only after successful commit/recovery. Run-store
+Fingerprints and prepared files follow `staging_dir` (default: the dataset's `.annotate_staging`).
+Set it to an external path to keep planning writes outside the dataset; a pending commit
+must be recovered before planning. Mutating runs retain the dataset's commit journal/lock.
+Owned prepared files and empty per-plan directories are removed after successful recovery.
+Run-store
 outputs are retained for resume by default. Set `runtime.retain_materialized_outputs=false`
 to remove large materialization artifacts after a durable local commit, retaining inference
-outputs; a later run rebuilds those files on CPU. Remote HF release copies remain durable
+outputs; explicit prune markers make the CPU-only rebuild normal, not a corruption warning.
+Remote HF release copies remain durable
 until you explicitly retire that release/store. Local stores require shared filesystem locks
-and atomic rename, but not hard-link support. There is no automatic cache TTL/deletion.
+and atomic rename, but not hard-link support. Publication reuses at most 64 lock stripes;
+locks are not unlinked while another writer could be waiting. Local verification uses an
+LRU (131,072 entries; `ArtifactStore(..., verification_cache_size=...)`), not
+periodic whole-cache clears. There is no automatic cache TTL/deletion. Legacy per-artifact
+locks/window files are not automatically deleted from old run stores/datasets.
 
 ## Add an annotation step
 
@@ -302,6 +322,10 @@ Wire the step into a Python recipe, not a new CLI. A source provides `dataset_re
 and `discover(stage, store, upstream)`, yielding bounded JSON `InputItem` references
 and resolving verified upstream artifacts. It must verify pinned inputs; declaring
 `DatasetRef` alone does not make local files immutable.
+For item-local reuse, set `InputItem.content_digest` to a complete SHA256 fingerprint of
+all native inputs and that item's upstream content; keep operational bindings in `payload`.
+Without this explicit contract, dataset/upstream-wide revisions remain in item identity.
+Do not opt in with paths alone or omit a model-visible input.
 
 ```python
 from lerobot.annotations.runtime.configs import RuntimeConfig, StageConfig

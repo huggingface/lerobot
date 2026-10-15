@@ -92,9 +92,9 @@ def test_local_publication_needs_no_hardlinks_and_cannot_clobber(tmp_path, monke
     source.write_bytes(b"result")
     store = ArtifactStore(tmp_path / "run")
 
-    def publish(_):
+    def publish(index):
         try:
-            return store.put_file("same-key", source)
+            return store.put_file("./same-key" if index % 2 else "same-key", source)
         except FileExistsError:
             return None
 
@@ -105,6 +105,55 @@ def test_local_publication_needs_no_hardlinks_and_cannot_clobber(tmp_path, monke
     assert store.verify(artifact)
     Path(store.path(artifact.path)).write_bytes(b"broken")
     assert not store.verify(artifact)  # memoized verification still detects changes
+
+
+def test_publication_lock_count_is_bounded(tmp_path):
+    store = ArtifactStore(tmp_path / "run")
+    source = tmp_path / "source"
+    source.write_bytes(b"result")
+    for index in range(300):
+        store.put_file(f"items/{index}/output", source)
+    assert len(list((tmp_path / "run").rglob("*.lock"))) <= 64
+
+
+def test_verification_cache_survives_large_second_pass(tmp_path, monkeypatch):
+    from lerobot.annotations.runtime.artifacts import file_checksum
+    from lerobot.annotations.runtime.types import Artifact
+
+    store = ArtifactStore(tmp_path / "run")
+    (tmp_path / "run").mkdir()
+    artifacts = []
+    for index in range(10000):
+        path = tmp_path / "run" / str(index)
+        path.write_bytes(b"checked")
+        digest, size = file_checksum(path)
+        artifacts.append(Artifact(str(index), digest, size))
+    assert all(store.verify(artifact) for artifact in artifacts)
+    monkeypatch.setattr(store, "open", lambda *args: pytest.fail("Unchanged artifacts should be memoized"))
+    assert all(store.verify(artifact) for artifact in artifacts)
+
+
+def test_complete_item_pins_exclude_global_provenance_but_unpinned_items_do_not(tmp_path):
+    store = ArtifactStore(tmp_path / "run")
+    for pinned in (False, True):
+        items = [InputItem("0", {"value": 0}, content_digest="c" * 64 if pinned else None)]
+        first = seal_plan(store, DatasetRef("input", "a" * 64), FACTORY, {}, items, upstream={"parent": "x"})
+        changed = seal_plan(
+            store, DatasetRef("input", "b" * 64), FACTORY, {}, items, upstream={"parent": "y"}
+        )
+        assert first.plan_id != changed.plan_id
+        assert (first.read_shard(store, 0)[0].item_id == changed.read_shard(store, 0)[0].item_id) is pinned
+
+
+def test_verification_cache_evicts_lru_not_the_entire_index(tmp_path):
+    store = ArtifactStore(tmp_path / "run", verification_cache_size=2)
+    source = tmp_path / "source"
+    source.write_bytes(b"data")
+    a, b = store.put_file("a", source), store.put_file("b", source)
+    assert store.verify(a)  # a, not b, must survive the next insertion.
+    c = store.put_file("c", source)
+    assert {path.rsplit("/", 1)[-1] for path, _ in store._verified} == {"a", "c"}
+    assert store.verify(a) and store.verify(c) and store.verify(b)
 
 
 def output_values(store, plan):

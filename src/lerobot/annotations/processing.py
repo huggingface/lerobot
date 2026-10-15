@@ -45,6 +45,7 @@ from .steerable_pipeline.modules import (
 )
 from .steerable_pipeline.modules.plan_subtasks_memory import subtask_windows
 from .steerable_pipeline.prompts import _DIR as PROMPT_DIR, load as load_prompt
+from .steerable_pipeline.reader import RejectedEpisodeError
 from .steerable_pipeline.staging import EpisodeStaging
 from .steerable_pipeline.validator import StagingValidator
 from .steerable_pipeline.vlm_client import make_vlm_client
@@ -200,6 +201,14 @@ class LanguageModule:
 
     def process_batch(self, items, context):
         def process(item):
+            try:
+                return annotate(item)
+            except RejectedEpisodeError as exc:
+                return ItemResult(item.item_id, Outcome.REJECTED, reason=exc.reason)
+            finally:
+                shutil.rmtree(context.scratch / item.item_id, ignore_errors=True)
+
+        def annotate(item):
             record = _load_record(self.root, item.payload)
             staging = EpisodeStaging(context.scratch / item.item_id, record.episode_index)
             for name, artifact in item.payload["upstream"].items():
@@ -222,7 +231,6 @@ class LanguageModule:
             # enabled stages are present. These artifacts retain exact source clocks.
             output = staging.read(output_name)
             if self.phase == "plan" and not any(row.get("style") == "subtask" for row in output):
-                shutil.rmtree(staging.root, ignore_errors=True)
                 return ItemResult(item.item_id, Outcome.REJECTED, reason="no_subtasks")
             artifact = context.write_parquet(item, "atoms", _staged_table(output))
             artifacts = [artifact]
@@ -246,8 +254,6 @@ class LanguageModule:
                 artifacts.append(
                     context.write_parquet(item, "windows", pa.Table.from_pylist(rows, schema=WINDOW_SCHEMA))
                 )
-            if staging.root.exists():
-                shutil.rmtree(staging.root)
             return ItemResult(item.item_id, Outcome.COMPLETED, tuple(artifacts))
 
         with ThreadPoolExecutor(
@@ -300,7 +306,21 @@ class LanguageValidator:
     def process_batch(self, items, context):
         results = []
         for item in items:
-            record = _load_record(self.root, item.payload)
+            try:
+                record = _load_record(self.root, item.payload)
+            except RejectedEpisodeError as exc:
+                table = pa.Table.from_pylist(
+                    [
+                        {
+                            "episode_index": item.payload["episode_index"],
+                            "warnings": [f"Episode {item.key}: rejected ({exc.reason})"],
+                        }
+                    ],
+                    schema=self.schema,
+                )
+                artifact = context.write_parquet(item, "validation", table)
+                results.append(ItemResult(item.item_id, Outcome.COMPLETED, (artifact,)))
+                continue
             staging = EpisodeStaging(context.scratch / item.item_id, record.episode_index)
             for name, artifact in item.payload["upstream"].items():
                 staging.write("plan" if name == "plan_update" else name, _read_atoms(context.store, artifact))

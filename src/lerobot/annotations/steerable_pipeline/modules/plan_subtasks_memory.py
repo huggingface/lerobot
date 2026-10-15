@@ -31,7 +31,7 @@ from ..frames import (
     to_contact_sheet_blocks,
 )
 from ..prompts import load as load_prompt
-from ..reader import EpisodeRecord, reconstruct_subtask_spans, snap_to_frame
+from ..reader import EpisodeRecord, RejectedEpisodeError, reconstruct_subtask_spans, snap_to_frame
 from ..staging import EpisodeStaging
 from ..vlm_client import VlmClient
 
@@ -607,8 +607,9 @@ class PlanSubtasksMemoryModule:
             )
             owned_spans = reconcile_spans(window, spans, record.frame_timestamps)
             if not owned_spans:
-                raise ValueError(
-                    f"Subtask window {window.index} returned no owned spans; refusing silent missing coverage"
+                raise RejectedEpisodeError(
+                    f"empty_subtask_window:{window.index}",
+                    f"Subtask window {window.index} returned no owned spans; refusing silent missing coverage",
                 )
             for span in owned_spans:
                 if (

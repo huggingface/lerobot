@@ -90,14 +90,19 @@ def _check_limits(files, cfg, *, extra_files=0):
         )
 
 
-def preflight_publication(root, cfg):
+def preflight_publication(root, cfg, *, planned_paths=()):
     """Fail before inference on known publication blockers; final sizes are rechecked."""
     root = Path(root).resolve()
     _, current, _ = _publication_context(root, cfg)
-    if current is None:
-        # At least these source bytes and README/lineage must be uploaded. New
-        # annotation sizes are unknowable until processing, so this is a lower bound.
-        _check_limits(_source_files(root), cfg, extra_files=2)
+    planned = set(planned_paths)
+    paths = set(_source_files(root)) if current is None else set()
+    paths.update(planned | {"README.md", LINEAGE})
+    # Count all planned outputs on both create and update, with no double counting.
+    # Only unchanged source bytes are a known lower bound; generated sizes may shrink.
+    unchanged = {
+        name: root / name for name in paths - planned - {"README.md", LINEAGE} if (root / name).is_file()
+    }
+    _check_limits(unchanged, cfg, extra_files=len(paths) - len(unchanged))
 
 
 def publish_annotation(root, cfg, *, changed_paths):
@@ -125,7 +130,12 @@ def publish_annotation(root, cfg, *, changed_paths):
     else:
         from .processing_source import LeRobotEpisodeSource
 
-        source = {"type": "local", "native_content_sha256": LeRobotEpisodeSource(root).dataset_ref.revision}
+        source = {
+            "type": "local",
+            "native_content_sha256": LeRobotEpisodeSource(
+                root, cache_dir=cfg.resolved_staging_dir(root)
+            ).dataset_ref.revision,
+        }
         attribution = f"a local dataset (native content SHA256 `{source['native_content_sha256']}`)"
     lineage = {
         "version": 1,
