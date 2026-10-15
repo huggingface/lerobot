@@ -25,7 +25,7 @@ from gripette.grasp_projection import GraspProjection
 from huggingface_hub import snapshot_download
 from openarm_gripette_model import OPENARM_RIGHT_DIR
 
-from lerobot.configs import PreTrainedConfig
+from lerobot.configs import DatasetRecordConfig, PreTrainedConfig
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
@@ -36,10 +36,16 @@ from lerobot.processor import (
     transition_to_robot_action,
 )
 from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
-from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
+from lerobot.rollout import (
+    BaseStrategyConfig,
+    EpisodicStrategyConfig,
+    RolloutConfig,
+    build_rollout_context,
+    create_strategy,
+)
 from lerobot.rollout.inference import SyncInferenceConfig
 from lerobot.rollout.robot_wrapper import ThreadSafeRobot
-from lerobot.rollout.strategies import BaseStrategy
+from lerobot.rollout.strategies import EpisodicStrategy
 from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.utils import init_logging
@@ -66,6 +72,29 @@ URDF_JOINTS = [
 class DryRunRobotWrapper(ThreadSafeRobot):
     def send_action(self, action):
         return action
+
+
+class ManualResetEpisodicStrategy(EpisodicStrategy):
+    def __init__(
+        self,
+        config: EpisodicStrategyConfig,
+        action_step: GrabetteRelativePoseToJoints,
+        signs: np.ndarray,
+        gripper_action: RobotAction | None,
+    ) -> None:
+        super().__init__(config)
+        self._action_step = action_step
+        self._signs = signs
+        self._gripper_action = gripper_action
+
+    def _reset_loop(self, *, robot: ThreadSafeRobot, **_: object) -> None:
+        q_cmd = prepare_manual_start(
+            cast(OpenArmGripetteFollower, robot.inner),
+            self._signs,
+            gripper_action=self._gripper_action,
+        )
+        self._action_step.reset()
+        print("Held joints (URDF deg):", np.round(q_cmd, 1))
 
 
 def resolve_policy(args: argparse.Namespace) -> PreTrainedConfig:
@@ -101,6 +130,7 @@ def main() -> None:
     parser.add_argument("--task", default="")
     parser.add_argument("--fps", type=float, default=10.0)
     parser.add_argument("--n_action_steps", type=int, default=10)
+    parser.add_argument("--interpolation_multiplier", type=int, default=1)
     parser.add_argument("--duration", type=float, default=60.0)
     parser.add_argument("--joint_signs", type=float, nargs=7, default=[1.0] * 7)
     parser.add_argument("--max_joint_step", type=float, default=5.0)
@@ -108,12 +138,32 @@ def main() -> None:
     parser.add_argument("--initial_gripper_closure", type=float, default=None)
     parser.add_argument("--display_data", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
+    parser.add_argument("--record_repo_id", default=None)
+    parser.add_argument("--record_root", default=None)
+    parser.add_argument("--num_episodes", type=int, default=1)
+    parser.add_argument("--push_to_hub", action="store_true")
     args = parser.parse_args()
 
     for name in ("initial_gripper_strategy", "initial_gripper_closure"):
         value = getattr(args, name)
         if value is not None and not 0.0 <= value <= 1.0:
             parser.error(f"--{name} must be between 0 and 1")
+
+    if args.record_repo_id:
+        if not args.record_repo_id.split("/", 1)[-1].startswith("rollout_"):
+            parser.error("--record_repo_id name must start with 'rollout_'")
+        if args.num_episodes < 1:
+            parser.error("--num_episodes must be at least 1")
+        if args.duration <= 0:
+            parser.error("--duration must be positive when recording")
+        if not args.fps.is_integer():
+            parser.error("--fps must be a whole number when recording")
+        if args.initial_gripper_strategy is None or args.initial_gripper_closure is None:
+            parser.error(
+                "--initial_gripper_strategy and --initial_gripper_closure are required when recording"
+            )
+    elif args.record_root or args.push_to_hub:
+        parser.error("--record_root and --push_to_hub require --record_repo_id")
 
     init_logging()
     policy_config = resolve_policy(args)
@@ -153,12 +203,31 @@ def main() -> None:
         gripper_camera_height=image_feature.shape[1],
         gripper_camera_width=image_feature.shape[2],
     )
+    dataset_config = (
+        DatasetRecordConfig(
+            repo_id=args.record_repo_id,
+            single_task=args.task,
+            root=args.record_root,
+            fps=int(args.fps),
+            episode_time_s=args.duration,
+            reset_time_s=0,
+            num_episodes=args.num_episodes,
+            push_to_hub=args.push_to_hub,
+        )
+        if args.record_repo_id
+        else None
+    )
+    strategy_config = (
+        EpisodicStrategyConfig(reset_to_initial_position=False) if dataset_config else BaseStrategyConfig()
+    )
     rollout_config = RolloutConfig(
         robot=robot_config,
         policy=policy_config,
-        strategy=BaseStrategyConfig(),
+        strategy=strategy_config,
         inference=SyncInferenceConfig(),
+        dataset=dataset_config,
         fps=args.fps,
+        interpolation_multiplier=args.interpolation_multiplier,
         duration=args.duration,
         device=args.device or auto_select_torch_device().type,
         task=args.task,
@@ -184,6 +253,7 @@ def main() -> None:
     print("Held joints (URDF deg):", np.round(q_cmd, 1))
     print("Held oak_l position (m):", np.round(kinematics.forward_kinematics(q_cmd)[:3, 3], 3))
 
+    initial_gripper_action = None
     if args.initial_gripper_strategy is not None or args.initial_gripper_closure is not None:
         observation = robot.get_observation()
         projection = GraspProjection()
@@ -195,6 +265,7 @@ def main() -> None:
         )
         closure = measured_closure if args.initial_gripper_closure is None else args.initial_gripper_closure
         proximal, distal = projection.decode(strategy, closure)
+        initial_gripper_action = {"proximal.pos": proximal, "distal.pos": distal}
         print(
             f"{'DRY RUN: ' if args.dry_run else ''}Initial gripper: "
             f"strategy={strategy:.2f} closure={closure:.2f}"
@@ -206,8 +277,7 @@ def main() -> None:
                         f"{joint}.pos": sign * target
                         for joint, sign, target in zip(ROBOT_JOINTS, signs, q_cmd, strict=True)
                     },
-                    "proximal.pos": proximal,
-                    "distal.pos": distal,
+                    **initial_gripper_action,
                 }
             )
 
@@ -215,7 +285,16 @@ def main() -> None:
         context.hardware.robot_wrapper = DryRunRobotWrapper(robot)
     input(f"{'DRY RUN: the robot will not move. ' if args.dry_run else ''}Press ENTER to start...")
 
-    strategy_runner = BaseStrategy(rollout_config.strategy)
+    strategy_runner = (
+        ManualResetEpisodicStrategy(
+            cast(EpisodicStrategyConfig, rollout_config.strategy),
+            action_step,
+            signs,
+            None if args.dry_run else initial_gripper_action,
+        )
+        if dataset_config
+        else create_strategy(rollout_config.strategy)
+    )
     if rollout_config.display_data:
         init_visualization(
             rollout_config.display_mode,
