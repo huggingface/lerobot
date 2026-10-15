@@ -1170,6 +1170,77 @@ class SerialMotorsBus(MotorsBusBase):
 
         return {self._id_to_name(id_): value for id_, value in decoded.items()}
 
+    @check_if_not_connected
+    def sync_read_block(
+        self,
+        data_names: Sequence[str],
+        motors: NameOrID | Sequence[NameOrID] | None = None,
+        *,
+        normalize: bool = True,
+        num_retry: int = 0,
+    ) -> dict[str, dict[str, Value]]:
+        """Read several registers from several motors in a single bus transaction.
+
+        The bus is read once over the address range spanning the lowest to the highest requested register,
+        then each register is extracted, sign-decoded and (optionally) normalised exactly as
+        :pymeth:`sync_read` would. This makes reading a group of neighbouring registers (e.g. the
+        `Present_*` telemetry registers) cost one transaction instead of one per register. Any bytes lying
+        between the requested registers are read from the bus and discarded, so keep the group compact.
+
+        Args:
+            data_names (Sequence[str]): Register names. Duplicates are ignored, order is preserved.
+            motors (NameOrID | Sequence[NameOrID] | None, optional): Motors to query. `None` (default) reads every motor.
+            normalize (bool, optional): Normalisation flag, applied per register to those listed in
+                :pyattr:`normalized_data`. Defaults to `True`.
+            num_retry (int, optional): Retry attempts.  Defaults to `0`.
+
+        Returns:
+            dict[str, dict[str, Value]]: Mapping *register name → (motor name → value)*.
+
+        Raises:
+            ValueError: `data_names` is empty.
+            TypeError: `data_names` is a single string instead of a sequence of names.
+        """
+
+        self._assert_protocol_is_compatible("sync_read")
+
+        if isinstance(data_names, str):
+            raise TypeError(f"'data_names' should be a sequence of register names, got '{data_names}'.")
+        data_names = list(dict.fromkeys(data_names))
+        if not data_names:
+            raise ValueError("'data_names' should contain at least one register name.")
+
+        names = self._get_motors_list(motors)
+        ids = [self.motors[motor].id for motor in names]
+        models = [self.motors[motor].model for motor in names]
+
+        model = next(iter(models))
+        addr_lengths: dict[str, tuple[int, int]] = {}
+        for data_name in data_names:
+            if self._has_different_ctrl_tables:
+                assert_same_address(self.model_ctrl_table, models, data_name)
+            addr_lengths[data_name] = get_address(self.model_ctrl_table, model, data_name)
+
+        start = min(addr for addr, _ in addr_lengths.values())
+        end = max(addr + length for addr, length in addr_lengths.values())
+
+        err_msg = f"Failed to sync read block {data_names} on {ids=} after {num_retry + 1} tries."
+        self._sync_read_txrx(
+            start, end - start, ids, num_retry=num_retry, raise_on_error=True, err_msg=err_msg
+        )
+
+        values: dict[str, dict[str, Value]] = {}
+        for data_name, (addr, length) in addr_lengths.items():
+            raw_ids_values = {id_: self.sync_reader.getData(id_, addr, length) for id_ in ids}
+            decoded = self._decode_sign(data_name, raw_ids_values)
+            if normalize and data_name in self.normalized_data:
+                normalized = self._normalize(decoded)
+                values[data_name] = {self._id_to_name(id_): value for id_, value in normalized.items()}
+            else:
+                values[data_name] = {self._id_to_name(id_): value for id_, value in decoded.items()}
+
+        return values
+
     def _sync_read(
         self,
         addr: int,
@@ -1180,6 +1251,27 @@ class SerialMotorsBus(MotorsBusBase):
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> tuple[dict[int, int], int]:
+        comm = self._sync_read_txrx(
+            addr, length, motor_ids, num_retry=num_retry, raise_on_error=raise_on_error, err_msg=err_msg
+        )
+        values = {id_: self.sync_reader.getData(id_, addr, length) for id_ in motor_ids}
+        return values, comm
+
+    def _sync_read_txrx(
+        self,
+        addr: int,
+        length: int,
+        motor_ids: list[int],
+        *,
+        num_retry: int = 0,
+        raise_on_error: bool = True,
+        err_msg: str = "",
+    ) -> int:
+        """Transmit one sync read for `length` bytes at `addr` and receive the replies, retrying on failure.
+
+        On success the received bytes stay in :pyattr:`sync_reader`, ready to be extracted with `getData` for
+        any register lying inside the block. Returns the communication result.
+        """
         self._setup_sync_reader(motor_ids, addr, length)
         for n_try in range(1 + num_retry):
             comm = self.sync_reader.txRxPacket()
@@ -1193,8 +1285,7 @@ class SerialMotorsBus(MotorsBusBase):
         if not self._is_comm_success(comm) and raise_on_error:
             raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
 
-        values = {id_: self.sync_reader.getData(id_, addr, length) for id_ in motor_ids}
-        return values, comm
+        return comm
 
     def _setup_sync_reader(self, motor_ids: list[int], addr: int, length: int) -> None:
         self.sync_reader.clearParam()
