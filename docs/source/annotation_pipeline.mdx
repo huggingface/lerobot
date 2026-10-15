@@ -122,6 +122,11 @@ private trusted network. The limit covers participating clients across workers/r
 Unreachable coordinators fail closed. Ambiguous timeouts or killed workers leave permits
 held: drain/cancel inference before restarting the coordinator, rather than assuming
 old requests ended. Put API credentials in `vlm.api_key_env`, not saved configuration.
+Admission failures and retained-permit errors raise `EndpointLimitError`, chained to
+the original error and non-retryable by both client and worker. Admission timeout is
+one configured wait, not multiplied by request retries. A failed release after a
+successful completion logs a retained-permit warning and keeps the response; it never
+resends that request. The coordinator may still need operator recovery.
 
 Known connect/DNS failures release their permits. Inspect held request IDs with an
 authenticated `POST /status` (`{"key":"annotation"}`). For operator recovery, start
