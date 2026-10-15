@@ -63,6 +63,7 @@ from lerobot.policies.g05.tokenizer_g05 import (
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     PolicyProcessorPipeline,
     RenderRuntimeMessagesStep,
     RenderTrainingMessagesStep,
@@ -763,6 +764,50 @@ def test_finetune_overrides_reproject_stats_and_retarget_stepwise_unnormalizer(t
     assert norm_step._tensor_stats[OBS_STATE]["q99"].shape[-1] == 20
     # so100 state maps to policy dims 10..15; the new stat (4.0) should land there, not be dropped.
     torch.testing.assert_close(norm_step._tensor_stats[OBS_STATE]["q99"][10:16], torch.full((6,), 4.0))
+
+
+def test_resuming_a_relative_action_run_loads_its_saved_pipeline(tmp_path: Path):
+    """On --resume, lerobot-train loads the saved pipeline with a `relative_actions_processor`
+    override, which must reach G0.5's `g05_relative_joint_actions` step instead of raising."""
+    config = _config(use_relative_actions=True, relative_exclude_joints=["gripper"])
+    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=_raw_stats(7))
+    preprocessor.save_pretrained(tmp_path)
+    postprocessor.save_pretrained(tmp_path)
+
+    # lerobot_train.py's resume overrides: no stats, plus the relative/absolute action steps.
+    loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(
+        config,
+        pretrained_path=tmp_path,
+        preprocessor_overrides={
+            "device_processor": {"device": "cpu"},
+            "normalizer_processor": {
+                "features": {**config.input_features, **config.output_features},
+                "norm_map": config.normalization_mapping,
+            },
+            "rename_observations_processor": {"rename_map": {}},
+            "relative_actions_processor": {
+                "enabled": True,
+                "exclude_joints": ["gripper"],
+                "action_names": None,
+            },
+        },
+        postprocessor_overrides={
+            "unnormalizer_processor": {
+                "features": config.output_features,
+                "norm_map": config.normalization_mapping,
+            },
+            "absolute_actions_processor": {"enabled": True},
+        },
+    )
+
+    relative = next(
+        step for step in loaded_preprocessor.steps if isinstance(step, G05RelativeJointActionsStep)
+    )
+    assert relative.enabled and relative.exclude_joints == ["gripper"]
+    absolute = next(
+        step for step in loaded_postprocessor.steps if isinstance(step, AbsoluteActionsProcessorStep)
+    )
+    assert absolute.enabled
 
 
 def test_recipe_finetune_loads_the_saved_pipeline_and_turns_the_renderer_on(tmp_path):
