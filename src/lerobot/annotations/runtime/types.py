@@ -12,7 +12,7 @@ import math
 import re
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -176,3 +176,10 @@ class ProcessingModule(Protocol):
     def process_batch(self, items: list[WorkItem], context: WorkerContext) -> list[ItemResult]: ...
 
     def teardown(self) -> None: ...
+
+
+@runtime_checkable
+class ScientificProcessingModule(ProcessingModule, Protocol):
+    """Optional hook: omit operational bindings, retain every result-affecting setting."""
+
+    def scientific_config(self) -> dict[str, Any]: ...

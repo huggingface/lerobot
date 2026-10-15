@@ -83,6 +83,30 @@ def test_local_listing_does_not_invalidate_filesystem_cache(tmp_path, monkeypatc
     assert store.list("*.json") == ["checkpoint.json"]
 
 
+def test_local_publication_needs_no_hardlinks_and_cannot_clobber(tmp_path, monkeypatch):
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setattr(os, "link", lambda *args: pytest.fail("Hard links are not portable"))
+    source = tmp_path / "source"
+    source.write_bytes(b"result")
+    store = ArtifactStore(tmp_path / "run")
+
+    def publish(_):
+        try:
+            return store.put_file("same-key", source)
+        except FileExistsError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(publish, range(4)))
+    assert sum(result is not None for result in results) == 1
+    artifact = next(result for result in results if result)
+    assert store.verify(artifact)
+    Path(store.path(artifact.path)).write_bytes(b"broken")
+    assert not store.verify(artifact)  # memoized verification still detects changes
+
+
 def output_values(store, plan):
     rows = []
     for shard in range(plan.shards):
@@ -130,6 +154,23 @@ def test_model_lifecycle_once_across_shards_and_noop_resume(tmp_path):
     assert log.read_bytes() == before
 
 
+def test_repacking_reuses_logical_items_without_model_startup(tmp_path):
+    store = ArtifactStore(tmp_path / "run")
+    log = tmp_path / "calls"
+    first = make_plan(store, {"log_path": str(log)}, shard_size=2)
+    summary = run_local(store, first)
+    calls = log.read_bytes()
+    repacked = make_plan(store, {"log_path": str(log)}, shard_size=3)
+    assert repacked.plan_id != first.plan_id
+    assert run_local(store, repacked).content_digest == summary.content_digest
+    assert log.read_bytes() == calls
+    artifact = next(iter(accepted_in_shard(store, first, 0).values())).artifacts[0]
+    Path(store.path(artifact.path)).write_bytes(b"corrupt")
+    assert run_local(store, repacked).content_digest == summary.content_digest
+    assert log.read_text().splitlines().count("0") == 2
+    assert all(log.read_text().splitlines().count(str(key)) == 1 for key in range(1, 6))
+
+
 def test_interrupted_shard_resumes_only_uncommitted_batches(tmp_path):
     store = ArtifactStore(tmp_path / "run")
     log = tmp_path / "calls"
@@ -150,7 +191,7 @@ def test_interrupted_shard_resumes_only_uncommitted_batches(tmp_path):
 @pytest.mark.parametrize("malformed_field", ["results", "artifacts"])
 @pytest.mark.parametrize("replace_existing", [False, True], ids=["cached", "repair"])
 @pytest.mark.parametrize("batch_size", [1, 2])
-def test_resume_skips_malformed_checkpoints(tmp_path, malformed_field, replace_existing, batch_size):
+def test_resume_skips_malformed_checkpoints(tmp_path, malformed_field, replace_existing, batch_size, caplog):
     store = ArtifactStore(tmp_path / "run")
     log = tmp_path / "calls"
     plan = make_plan(store, {"log_path": str(log)}, size=2)
@@ -171,6 +212,7 @@ def test_resume_skips_malformed_checkpoints(tmp_path, malformed_field, replace_e
         )
 
     second = run_local(store, plan, batch_size=batch_size)
+    assert "Ignoring invalid" in caplog.text and plan.plan_id in caplog.text
     assert second.completed == 2 and second.content_digest == first.content_digest
     calls = log.read_text().splitlines()
     assert calls.count("0") == (2 if replace_existing else 1)
