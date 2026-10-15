@@ -4,6 +4,14 @@
     ./config/set-servo-id.sh --bus 2 --id 5      right wrist roll
     ./config/set-servo-id.sh --bus 1 --id 7      head_motor_1, and so on
 
+    # on rosie, on a leader arm's bus board (its leader unplugged):
+    ./config/set-servo-id.sh --bus 2 --id 5 --port /dev/serial/by-id/usb-1a86_...
+
+Any bus board will do - the id lives in the servo, not the board. A
+leader board supplies a lower voltage than the followers', which is fine
+for this: a 12 V servo answers and takes its id at 5 V. (The reverse - a
+5-7.4 V servo on a follower board - is not fine; it will burn.)
+
 lerobot-setup-motors walks every servo on the robot, one at a time, asking
 you to re-plug each in turn. Replacing one servo needs only this.
 
@@ -40,13 +48,17 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bus", type=int, choices=(1, 2), required=True)
     ap.add_argument("--id", type=int, required=True)
+    ap.add_argument("--port", default=None,
+                    help="any bus board to do it on - e.g. a leader arm's board on rosie. "
+                         "Default: that bus's follower board on elroy. --bus still picks "
+                         "which joint name and id table to use.")
     args = ap.parse_args()
 
     if args.id not in NAMES[args.bus]:
         print(f"error: bus {args.bus} has no id {args.id}; it has {sorted(NAMES[args.bus])}", file=sys.stderr)
         return 2
     name = NAMES[args.bus][args.id]
-    port = PORTS[args.bus]
+    port = args.port or PORTS[args.bus]
 
     print(f"\nSetting up {name}: bus {args.bus}, id {args.id}")
     print(f"  {port}\n")
