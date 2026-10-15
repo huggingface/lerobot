@@ -25,6 +25,7 @@ from .openarm_gripette_follower import OpenArmGripetteFollower
 def prepare_manual_start(
     robot: OpenArmGripetteFollower,
     signs: np.ndarray,
+    gripper_action: dict[str, float] | None = None,
     input_fn: Callable[[str], object] = input,
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> np.ndarray:
@@ -35,13 +36,16 @@ def prepare_manual_start(
     robot.arm.bus.disable_torque()
     sleep_fn(0.05)
     robot.arm.bus.disable_torque()
+    if gripper_action is not None:
+        robot.send_action(gripper_action)
     input_fn("Arm torque is OFF. Support and place the arm, then press ENTER...")
 
     observation = robot.arm.get_observation()
     measured = np.array([observation[f"joint_{i}.pos"] for i in range(1, 8)], dtype=np.float64)
+    hold_action = {f"joint_{i}.pos": float(value) for i, value in enumerate(measured, start=1)}
 
+    robot.arm.send_action(hold_action)
     robot.arm.bus.enable_torque()
     sleep_fn(0.05)
     robot.arm.bus.enable_torque()
-    robot.arm.send_action({f"joint_{i}.pos": float(value) for i, value in enumerate(measured, start=1)})
     return signs * measured

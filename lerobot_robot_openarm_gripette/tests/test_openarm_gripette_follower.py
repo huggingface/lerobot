@@ -70,17 +70,31 @@ def test_prepare_manual_start_disables_torque_captures_pose_and_holds():
     events = []
     robot.arm.bus.disable_torque.side_effect = lambda: events.append("disable")
     robot.arm.bus.enable_torque.side_effect = lambda: events.append("enable")
+    robot.send_action.side_effect = lambda _: events.append("open_gripper")
+    robot.arm.send_action.side_effect = lambda _: events.append("hold")
     robot.arm.get_observation.return_value = {f"joint_{i}.pos": float(i) for i in range(1, 8)}
 
     result = prepare_manual_start(
         robot,
         np.array([1, -1, 1, -1, 1, -1, 1]),
+        gripper_action={"proximal.pos": 1.0, "distal.pos": 1.0},
         input_fn=lambda _: events.append("prompt"),
         sleep_fn=lambda _: events.append("sleep"),
     )
 
-    assert events == ["disable", "sleep", "disable", "prompt", "enable", "sleep", "enable"]
+    assert events == [
+        "disable",
+        "sleep",
+        "disable",
+        "open_gripper",
+        "prompt",
+        "hold",
+        "enable",
+        "sleep",
+        "enable",
+    ]
     assert result.tolist() == [1, -2, 3, -4, 5, -6, 7]
+    robot.send_action.assert_called_once_with({"proximal.pos": 1.0, "distal.pos": 1.0})
     robot.arm.send_action.assert_called_once_with({f"joint_{i}.pos": float(i) for i in range(1, 8)})
 
 
