@@ -206,6 +206,19 @@ def test_action_order_follows_joint_names():
     assert vendor.published[-1].q == pytest.approx(list(range(HUMANOID_DIM)))
 
 
+def test_send_action_returns_only_the_commanded_setpoint():
+    robot = HarnessRobot(make_config(publish_rate=0.0001), FakeVendorRobot())
+    robot.connect()
+    try:
+        action = {pos_key(name): float(index) for index, name in enumerate(robot.config.joint_names)}
+        sent = robot.send_action({**action, "unrelated.pos": 1.0})
+    finally:
+        robot.disconnect()
+
+    assert sent == action
+    assert set(sent) == set(robot.action_features)
+
+
 def test_vendor_motor_names_are_preferred_when_usable():
     vendor = FakeVendorRobot(motor_names=[f"j{index}" for index in range(HUMANOID_DIM)])
     robot = HarnessRobot(make_config(publish_rate=0.0001), vendor)

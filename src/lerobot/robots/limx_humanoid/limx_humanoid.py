@@ -318,9 +318,11 @@ class LimxHumanoid(Robot):
                 Target joint positions in radians, keyed by ``"<joint>.pos"``.
 
         Returns:
-            `RobotAction`: The action that was sent.  The controller interpolates towards the
-            setpoint rather than echoing it, so the setpoint is the closest honest answer to
-            "what was sent".
+            `RobotAction`: The setpoint actually commanded, keyed by `action_features`.  As in
+            the other LeRobot robots (see [`Robot.send_action`]), this is the command, not a
+            measured echo; measured positions come from [`LimxHumanoid.get_observation`].  Any
+            keys the robot does not command are dropped, so recorded datasets match
+            `action_features`.
 
         Raises:
             KeyError: If a joint key is missing from the action.
@@ -335,7 +337,9 @@ class LimxHumanoid(Robot):
         # the loop republishing the previous pose.
         self._target = target
         self._publish(target)
-        return action
+        return {
+            pos_key(name): float(value) for name, value in zip(self.config.joint_names, target, strict=True)
+        }
 
     # ---------------------------------------------------------------- helpers
 
