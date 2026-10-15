@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -62,7 +63,8 @@ def test_gripette_observation_encodes_policy_state_and_preserves_camera():
     assert processed["closure"] == pytest.approx(0.4)
 
 
-def test_relative_pose_processor_holds_anchor_for_chunk_and_decodes_gripper():
+def test_relative_pose_processor_holds_anchor_for_chunk_and_decodes_gripper(caplog):
+    caplog.set_level(logging.INFO)
     kinematics = MagicMock()
     kinematics.forward_kinematics.return_value = np.eye(4)
     kinematics.inverse_kinematics.side_effect = lambda q, *_args, **_kwargs: q + 1.0
@@ -88,6 +90,10 @@ def test_relative_pose_processor_holds_anchor_for_chunk_and_decodes_gripper():
     assert outputs[0]["joint_2.pos"] == 3.0
     assert outputs[0]["proximal.pos"] == 1.0
     assert outputs[0]["distal.pos"] == 0.75
+    assert (
+        "Predicted relative action: X=+0.1000 m Y=+0.0000 m Z=+0.0000 m | "
+        "RX=+0.0 deg RY=+0.0 deg RZ=+0.0 deg"
+    ) in caplog.messages
 
 
 def test_relative_pose_processor_rejects_unsafe_ik_jump():

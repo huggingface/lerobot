@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -29,6 +30,8 @@ ROBOT_JOINTS = [f"joint_{i}" for i in range(1, 8)]
 POSITION_NAMES = ["x", "y", "z"]
 ROTATION_NAMES = [f"r6d_{i}" for i in range(6)]
 GRIPPER_NAMES = ["strategy", "closure"]
+
+logger = logging.getLogger(__name__)
 
 
 @ProcessorStepRegistry.register("gripette_policy_observation")
@@ -108,6 +111,22 @@ class GrabetteRelativePoseToJoints(RobotActionProcessorStep):
         pose = np.eye(4, dtype=np.float64)
         pose[:3, :3] = np.stack([row1, row2, np.cross(row1, row2)])
         pose[:3, 3] = [float(action[name]) for name in POSITION_NAMES]
+
+        ry = np.arcsin(np.clip(-pose[2, 0], -1.0, 1.0))
+        if abs(np.cos(ry)) > 1e-6:
+            rx = np.arctan2(pose[2, 1], pose[2, 2])
+            rz = np.arctan2(pose[1, 0], pose[0, 0])
+        else:
+            rx = np.arctan2(-pose[1, 2], pose[1, 1])
+            rz = 0.0
+        rotation_deg = np.degrees([rx, ry, rz])
+        rotation_deg[np.abs(rotation_deg) < 5e-4] = 0.0
+        logger.info(
+            "Predicted relative action: X=%+.4f m Y=%+.4f m Z=%+.4f m | "
+            "RX=%+.1f deg RY=%+.1f deg RZ=%+.1f deg",
+            *pose[:3, 3],
+            *rotation_deg,
+        )
 
         if chunk_start:
             self._anchor = self.kinematics.forward_kinematics(self._q_cmd) @ np.linalg.inv(pose)
