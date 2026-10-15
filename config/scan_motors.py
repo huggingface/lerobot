@@ -200,7 +200,11 @@ def main() -> int:
         print("\n  WARNING: something answered at a non-default baud rate.")
         print(f"  lerobot talks at {EXPECTED_BAUD}. Re-run lerobot-setup-motors for those.")
 
-    return 0 if (have_arms and have_head and have_base) else 1
+    # The servo wheels are optional - base: odrive and none have none - so
+    # success is arms and head. (This used to name a have_base that was
+    # renamed away when the ODrive base arrived, and raised on every clean
+    # scan.)
+    return 0 if (have_arms and have_head) else 1
 
 
 if __name__ == "__main__":
