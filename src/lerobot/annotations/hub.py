@@ -1,6 +1,6 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License").
-"""One guarded, bounded release commit; never infer a licence or move an old tag."""
+"""Guarded releases with immutable release tags and a current format-version alias."""
 
 import json
 import re
@@ -158,15 +158,38 @@ def publish_annotation(root, cfg, *, changed_paths):
             ).dataset_ref.revision,
         }
         attribution = f"a local dataset (native content SHA256 `{source['native_content_sha256']}`)"
+    # Reuse the result-affecting cache contract, not the operational constructor
+    # config. Import here to keep publication checks independent of model modules.
+    from .processing import LanguageModule
+
+    processing = {
+        phase: LanguageModule(root, phase, draccus.encode(cfg)).scientific_config()
+        for phase in ("plan", "interjections", "vqa")
+        if getattr(cfg, phase).enabled
+    }
+    images = (cfg.job.image, cfg.runtime.hf_jobs.cpu_image, cfg.runtime.hf_jobs.gpu_image)
+    code_revision = cfg.runtime.hf_jobs.code_revision or cfg.job.lerobot_ref
     lineage = {
-        "version": 1,
+        "version": 2,
         "processed_repo_id": target,
         "source": source,
         "parent_commit": current,
         "release_tag": cfg.release_tag,
         "private": private,
         "redistribution_permission": cfg.redistribution_permission,
-        "processing": draccus.encode(cfg),
+        "processing": processing,
+        "only_episodes": cfg.only_episodes,
+        "validation_enabled": not cfg.skip_validation,
+        "pins": {
+            "code_revision": code_revision if re.fullmatch(r"[0-9a-f]{40}", code_revision or "") else None,
+            "image_sha256": sorted(
+                {
+                    image.rsplit("@sha256:", 1)[1]
+                    for image in images
+                    if image and re.search(r"@sha256:[0-9a-f]{64}$", image)
+                }
+            ),
+        },
     }
     if cfg.expected_target_revision:
         lineage["upstream_source"] = previous.get("upstream_source", previous.get("source"))
@@ -177,7 +200,8 @@ def publish_annotation(root, cfg, *, changed_paths):
         f"This processed dataset is based on {attribution}. "
         "The original remains with its publisher. Native signals and source labels are retained; "
         "enabled LeRobot language stages add canonical Parquet annotations. "
-        f"Exact settings and permission notes: `{LINEAGE}`.\n\n"
+        f"Scientific settings, available pins and permission notes: `{LINEAGE}`. "
+        "Default loads follow the latest format-version tag; pin a release tag or commit for reproducibility.\n\n"
         "```python\nfrom lerobot.datasets.lerobot_dataset import LeRobotDataset\n"
         f"dataset = LeRobotDataset({target!r}, revision={cfg.release_tag!r})\n```\n"
     )
@@ -207,7 +231,10 @@ def publish_annotation(root, cfg, *, changed_paths):
     info = json.loads((root / "meta/info.json").read_text())
     version = info["codebase_version"]
     tags = {tag.name for tag in api.list_repo_refs(target, repo_type="dataset").tags}
-    if version not in tags:
-        api.create_tag(repo_id=target, repo_type="dataset", tag=version, revision=commit.oid)
+    # Match LeRobotDataset.push_to_hub: the format tag is a mutable compatibility
+    # alias used by default loads, not an immutable processing release.
+    if version in tags:
+        api.delete_tag(repo_id=target, repo_type="dataset", tag=version)
+    api.create_tag(repo_id=target, repo_type="dataset", tag=version, revision=commit.oid)
     # A tag failure is an error, never swallowed as publication success.
     return commit

@@ -215,11 +215,10 @@ def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch, con
         client.close()
 
 
-@pytest.mark.parametrize("failure", ["read", "gateway", "admission", "release", "release_error"])
+@pytest.mark.parametrize("failure", ["read", "gateway", "release", "release_error"])
 def test_unsafe_shared_requests_are_not_retried(coordinator, tmp_path, monkeypatch, caplog, failure):
     pytest.importorskip("datasets")
     import sys
-    import uuid
     from types import SimpleNamespace
 
     from lerobot.annotations.runtime import worker
@@ -251,11 +250,7 @@ def test_unsafe_shared_requests_are_not_retried(coordinator, tmp_path, monkeypat
         def close(self):
             pass
 
-    if failure == "admission":
-        limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN")
-        for _ in range(server.limit):
-            limit._post("acquire", str(uuid.uuid4()))
-    elif failure in {"release", "release_error"}:
+    if failure in {"release", "release_error"}:
 
         def release(*args):
             raise ConnectionError("coordinator unavailable after completion")
@@ -269,7 +264,7 @@ def test_unsafe_shared_requests_are_not_retried(coordinator, tmp_path, monkeypat
             auto_serve=False,
             endpoint_limit_url=url,
             endpoint_limit_key="qwen",
-            endpoint_limit_timeout_s=0.05 if failure == "admission" else 2,
+            endpoint_limit_timeout_s=2,
         )
     )
     prompts = [[{"role": "user", "content": "test"}]]
@@ -292,8 +287,97 @@ def test_unsafe_shared_requests_are_not_retried(coordinator, tmp_path, monkeypat
             assert exc.value.__cause__ is not None
             errors = store.list(f"{plan.prefix}/attempts/*/*/error.json")
             assert len(errors) == 1 and store.read_json(errors[0])["retryable"] is False
-        assert len(calls) == (0 if failure == "admission" else 1)
-        assert len(server.active) == (2 if failure == "admission" else 1)
+        assert len(calls) == 1
+        assert len(server.active) == 1
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("cleanup_succeeds", [False, True])
+def test_admission_timeout_retries_only_in_worker_and_reuses_checkpoints(
+    coordinator, tmp_path, monkeypatch, cleanup_succeeds
+):
+    pytest.importorskip("datasets")
+    import sys
+    import uuid
+    from types import SimpleNamespace
+
+    from lerobot.annotations.runtime import worker
+    from lerobot.annotations.runtime.artifacts import ArtifactStore
+    from lerobot.annotations.runtime.errors import ErrorCategory, classify_error
+    from lerobot.annotations.runtime.runtime import run_local
+    from lerobot.annotations.steerable_pipeline import vlm_client
+    from lerobot.annotations.steerable_pipeline.config import VlmConfig
+    from tests.annotations.runtime._modules import Echo
+    from tests.annotations.runtime.test_runtime import make_plan
+
+    server, url = coordinator
+    limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN")
+    occupied = [str(uuid.uuid4()) for _ in range(server.limit)]
+    for request_id in occupied:
+        limit._post("acquire", request_id)
+    model_calls, backoffs = [], []
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, **kwargs):
+            model_calls.append(kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))])
+
+        def close(self):
+            pass
+
+    def backoff(retry):
+        backoffs.append(retry)
+        for request_id in occupied:
+            limit._post("release", request_id)
+        return 0
+
+    if not cleanup_succeeds:
+
+        def failed_release(*args):
+            raise ConnectionError("coordinator unavailable")
+
+        monkeypatch.setattr(SharedEndpointLimit, "_release", failed_release)
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=Client))
+    monkeypatch.setattr(
+        vlm_client, "retry_delay", lambda _: pytest.fail("Client must not repeat admission waits")
+    )
+    monkeypatch.setattr(worker, "retry_delay", backoff)
+    client = vlm_client.make_vlm_client(
+        VlmConfig(
+            auto_serve=False, endpoint_limit_url=url, endpoint_limit_key="qwen", endpoint_limit_timeout_s=0.05
+        )
+    )
+    process = Echo.process_batch
+
+    def annotate(self, items, context):
+        if items[0].key == "1":
+            assert client.generate_json([[{"role": "user", "content": "test"}]]) == [{"ok": True}]
+        return process(self, items, context)
+
+    monkeypatch.setattr(Echo, "process_batch", annotate)
+    store = ArtifactStore(tmp_path / "run")
+    log = tmp_path / "calls"
+    plan = make_plan(store, {"log_path": str(log)}, size=2)
+    try:
+        if cleanup_succeeds:
+            assert run_local(store, plan, batch_size=1).completed == 2
+            assert len(model_calls) == 1 and backoffs == [0]
+            assert log.read_text().splitlines().count("0") == 1
+            assert not server.active
+        else:
+            with pytest.raises(EndpointLimitError) as exc:
+                run_local(store, plan, batch_size=1)
+            assert classify_error(exc.value) == ErrorCategory.PERMANENT
+            assert not model_calls and not backoffs
+        errors = store.list(f"{plan.prefix}/attempts/*/*/error.json")
+        assert len(errors) == 1
+        assert store.read_json(errors[0])["category"] == (
+            ErrorCategory.SERVICE.value if cleanup_succeeds else ErrorCategory.PERMANENT.value
+        )
     finally:
         client.close()
 

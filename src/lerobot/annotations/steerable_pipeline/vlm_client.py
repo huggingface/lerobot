@@ -51,7 +51,12 @@ from typing import Any, Protocol
 from urllib.parse import parse_qsl, urlsplit
 
 from lerobot.annotations.runtime.bundles import check_credentials
-from lerobot.annotations.runtime.errors import ErrorCategory, classify_error, retry_delay
+from lerobot.annotations.runtime.errors import (
+    EndpointAdmissionTimeoutError,
+    ErrorCategory,
+    classify_error,
+    retry_delay,
+)
 
 from .config import VlmConfig
 
@@ -360,10 +365,15 @@ def _build_openai_client(config: VlmConfig, shutdowns) -> VlmClient:
                     response = chosen.chat.completions.create(**kwargs)
                 break
             except Exception as exc:
-                if retry == config.request_max_retries or classify_error(exc) not in {
-                    ErrorCategory.NETWORK,
-                    ErrorCategory.SERVICE,
-                }:
+                if (
+                    isinstance(exc, EndpointAdmissionTimeoutError)
+                    or retry == config.request_max_retries
+                    or classify_error(exc)
+                    not in {
+                        ErrorCategory.NETWORK,
+                        ErrorCategory.SERVICE,
+                    }
+                ):
                     raise
                 time.sleep(retry_delay(retry))
         # Some OpenAI-compatible servers can return a choice with no message

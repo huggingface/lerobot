@@ -24,7 +24,14 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from .errors import EndpointLimitError, ErrorCategory, TemporaryServiceError, classify_error, request_not_sent
+from .errors import (
+    EndpointAdmissionTimeoutError,
+    EndpointLimitError,
+    ErrorCategory,
+    TemporaryServiceError,
+    classify_error,
+    request_not_sent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -187,9 +194,13 @@ class SharedEndpointLimit:
                     time.sleep(min(delay * jitter, max(0, deadline - time.monotonic())))
                     delay = min(2, delay * 2)
         except BaseException as exc:
-            self._try_release(request_id)  # No inference was sent; safe to clear ambiguous acquisitions.
+            released = self._try_release(request_id)  # Clear even an acquisition with a lost response.
             if not isinstance(exc, Exception):
                 raise
+            if isinstance(exc, TimeoutError) and released:
+                raise EndpointAdmissionTimeoutError(
+                    "Shared endpoint admission timed out; no inference sent, worker may retry"
+                ) from exc
             raise EndpointLimitError(
                 "Shared endpoint admission failed; inference was not sent and is not retried"
             ) from exc

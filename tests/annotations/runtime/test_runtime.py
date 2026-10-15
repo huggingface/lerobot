@@ -243,6 +243,30 @@ def test_interrupted_shard_resumes_only_uncommitted_batches(tmp_path):
     assert output_values(store, plan)[-1]["key"] == "5"
 
 
+@pytest.mark.parametrize("fail_key", ["0", "1"])
+def test_spawn_failure_stops_sibling_batches_and_preserves_resume(tmp_path, fail_key):
+    store = ArtifactStore(tmp_path / "run")
+    log = tmp_path / "calls"
+    plan = seal_plan(
+        store,
+        DatasetRef("local/input", "a" * 64),
+        "tests.annotations.runtime._modules:FailFastEcho",
+        {"log_path": str(log), "fail_key": fail_key, "failure_marker": str(tmp_path / "failed")},
+        (InputItem(str(i), {}) for i in range(20)),
+        shard_size=1,
+    )
+    with pytest.raises(ValueError, match="permanent sibling failure"):
+        run_local(store, plan, workers=2, batch_size=1)
+    lines = log.read_text().splitlines()
+    completed = [line for line in lines if line.isdigit()]
+    assert 1 <= len(completed) < 10  # Do not drain the healthy group's ten shards.
+    assert lines.count("setup") == lines.count("teardown") == 2
+    assert not store.list(f"{plan.prefix}/accepted/*.parquet")
+    assert run_local(store, plan, workers=2, batch_size=1).completed == 20
+    final = log.read_text().splitlines()
+    assert all(final.count(key) == 1 for key in completed)  # Cancelled siblings checkpoint first.
+
+
 @pytest.mark.parametrize("permanent", [False, True])
 def test_diagnostic_store_outage_does_not_override_retry_decision(tmp_path, monkeypatch, caplog, permanent):
     store = ArtifactStore(tmp_path / "run")
@@ -438,8 +462,9 @@ def test_spawn_dispatch_shares_cpu_pool_but_isolates_gpu_groups(tmp_path, monkey
     pools, calls = [], []
 
     class Pool:
-        def __init__(self, *, max_workers, mp_context):
+        def __init__(self, *, max_workers, mp_context, initializer, initargs):
             assert mp_context.get_start_method() == "spawn"
+            assert initializer is worker._initialize_worker and len(initargs) == 1
             pools.append(max_workers)
 
         def __enter__(self):
