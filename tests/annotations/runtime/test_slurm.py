@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lerobot.annotations.runtime.configs import RuntimeConfig
+from lerobot.annotations.runtime.configs import RuntimeConfig, SlurmConfig
 from lerobot.annotations.runtime.runtime import finalize_stage
 from lerobot.annotations.runtime.types import Resources
 from lerobot.annotations.runtime.worker import run_worker_group
@@ -190,6 +190,28 @@ def test_unavailable_scheduler_never_resubmits(tmp_path, monkeypatch, timeout):
 
     monkeypatch.setattr(slurm.subprocess, "run", probe)
     with pytest.raises((subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        run_slurm(store, plan, runtime(tmp_path))
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_scheduler_timeout_is_finite_and_positive(value):
+    with pytest.raises(ValueError, match="command_timeout_s"):
+        SlurmConfig(command_timeout_s=value)
+
+
+def test_submission_timeout_requires_explicit_queue_inspection(tmp_path, monkeypatch):
+    from lerobot.jobs import slurm
+
+    store = ArtifactStore(tmp_path / "run")
+    plan = make_plan(store)
+
+    def timeout(command, **kwargs):
+        assert command[0] == "sbatch" and "--wait" not in command
+        assert kwargs["timeout"] == 30
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(slurm.subprocess, "run", timeout)
+    with pytest.raises(RuntimeError, match="may have been accepted"):
         run_slurm(store, plan, runtime(tmp_path))
 
 

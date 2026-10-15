@@ -168,7 +168,8 @@ def test_vlm_clients_share_one_limit(coordinator, monkeypatch):
             client.close()
 
 
-def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch):
+@pytest.mark.parametrize("connect_failure", [False, True])
+def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch, connect_failure):
     pytest.importorskip("datasets")
     import sys
     from types import SimpleNamespace
@@ -192,6 +193,8 @@ def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch):
             assert len(server.active) == 1
             calls.append(kwargs)
             if len(calls) == 1:
+                if connect_failure:
+                    raise ConnectionRefusedError("inference was not sent")
                 raise HTTPError("http://model.invalid", 503, "retry", {}, None)
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))])
 
@@ -212,7 +215,7 @@ def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch):
         client.close()
 
 
-@pytest.mark.parametrize("failure", ["read", "gateway", "admission", "release"])
+@pytest.mark.parametrize("failure", ["read", "gateway", "admission", "release", "release_error"])
 def test_unsafe_shared_requests_are_not_retried(coordinator, tmp_path, monkeypatch, caplog, failure):
     pytest.importorskip("datasets")
     import sys
@@ -241,6 +244,8 @@ def test_unsafe_shared_requests_are_not_retried(coordinator, tmp_path, monkeypat
                 raise TimeoutError("ambiguous model read")
             if failure == "gateway":
                 raise HTTPError("http://model.invalid", 504, "ambiguous gateway timeout", {}, None)
+            if failure == "release_error":
+                raise HTTPError("http://model.invalid", 503, "failed release must not hide this", {}, None)
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))])
 
         def close(self):
@@ -250,7 +255,7 @@ def test_unsafe_shared_requests_are_not_retried(coordinator, tmp_path, monkeypat
         limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN")
         for _ in range(server.limit):
             limit._post("acquire", str(uuid.uuid4()))
-    elif failure == "release":
+    elif failure in {"release", "release_error"}:
 
         def release(*args):
             raise ConnectionError("coordinator unavailable after completion")
@@ -291,6 +296,23 @@ def test_unsafe_shared_requests_are_not_retried(coordinator, tmp_path, monkeypat
         assert len(server.active) == (2 if failure == "admission" else 1)
     finally:
         client.close()
+
+
+def test_interrupted_admission_clears_its_unsent_request(coordinator, monkeypatch):
+    server, url = coordinator
+    limit = SharedEndpointLimit(url, "qwen", "LEROBOT_ENDPOINT_LIMIT_TOKEN")
+    original = limit._post
+
+    def post(operation, *args, **kwargs):
+        result = original(operation, *args, **kwargs)
+        if operation == "acquire":
+            raise KeyboardInterrupt()
+        return result
+
+    monkeypatch.setattr(limit, "_post", post)
+    with pytest.raises(KeyboardInterrupt), limit.permit():
+        pytest.fail("Interrupted admission must not send inference")
+    assert not server.active
 
 
 @pytest.mark.parametrize("kind", ["refused", "dns", "httpx_connect", "wrapped", "read"])
