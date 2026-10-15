@@ -178,6 +178,7 @@ MODEL_CONTROL_TABLE = {
     "scs_series": SCS_SERIES_CONTROL_TABLE,
     "sms_series": STS_SMS_SERIES_CONTROL_TABLE,
     "sts3215": STS_SMS_SERIES_CONTROL_TABLE,
+    "sts3235": STS_SMS_SERIES_CONTROL_TABLE,
     "sts3250": STS_SMS_SERIES_CONTROL_TABLE,
     "scs0009": SCS_SERIES_CONTROL_TABLE,
     "sm8512bl": STS_SMS_SERIES_CONTROL_TABLE,
@@ -188,6 +189,7 @@ MODEL_RESOLUTION = {
     "sms_series": 4096,
     "scs_series": 1024,
     "sts3215": 4096,
+    "sts3235": 4096,
     "sts3250": 4096,
     "sm8512bl": 4096,
     "scs0009": 1024,
@@ -199,6 +201,7 @@ MODEL_BAUDRATE_TABLE = {
     "scs_series": SCS_SERIES_BAUDRATE_TABLE,
     "sm8512bl": STS_SMS_SERIES_BAUDRATE_TABLE,
     "sts3215": STS_SMS_SERIES_BAUDRATE_TABLE,
+    "sts3235": STS_SMS_SERIES_BAUDRATE_TABLE,
     "sts3250": STS_SMS_SERIES_BAUDRATE_TABLE,
     "scs0009": SCS_SERIES_BAUDRATE_TABLE,
 }
@@ -220,6 +223,7 @@ MODEL_ENCODING_TABLE = {
     "sms_series": STS_SMS_SERIES_ENCODINGS_TABLE,
     "scs_series": {},
     "sts3215": STS_SMS_SERIES_ENCODINGS_TABLE,
+    "sts3235": STS_SMS_SERIES_ENCODINGS_TABLE,
     "sts3250": STS_SMS_SERIES_ENCODINGS_TABLE,
     "sm8512bl": STS_SMS_SERIES_ENCODINGS_TABLE,
     "scs0009": {},
@@ -241,6 +245,9 @@ SCAN_BAUDRATES = [
 
 MODEL_NUMBER_TABLE = {
     "sts3215": 777,
+    # FEETECH FD1.9.8.5, ft_setup_bat/setup_en.log: 9,8,8,0,STS3235.
+    # https://gitee.com/ftservo/fddebug/tree/179d6e8c2db40e82e57aa56e8679db855c2ed605
+    "sts3235": 2057,
     "sts3250": 2825,
     "sm8512bl": 11272,
     "scs0009": 1284,
@@ -251,6 +258,7 @@ MODEL_PROTOCOL = {
     "sms_series": 0,
     "scs_series": 1,
     "sts3215": 0,
+    "sts3235": 0,
     "sts3250": 0,
     "sm8512bl": 0,
     "scs0009": 1,
