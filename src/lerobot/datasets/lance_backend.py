@@ -262,10 +262,11 @@ class LanceDatasetReader(BaseDatasetReader):
         self._subset_index: _EpisodeSubsetIndex | None = None
         if self.episodes is not None:
             # Rows are served in storage order regardless of the episodes list
-            # order, matching the default reader's parquet predicate pushdown.
+            # order, matching the default reader's parquet predicate pushdown;
+            # likewise a duplicated episode is served once, as its isin() filter does.
             # The index keeps only per-episode bounds (O(num_episodes)) and resolves
             # either direction with a binary search instead of one entry per frame.
-            selected = sorted(self.episodes)
+            selected = sorted(set(self.episodes))
             self._subset_index = _EpisodeSubsetIndex(self._ep_from[selected], self._ep_to[selected])
 
         self._task_names = list(self.meta.tasks.index)
