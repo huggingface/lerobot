@@ -261,6 +261,22 @@ The hub URL format supports several patterns:
 | `user/repo:path`     | Load custom file               | `make_env("lerobot/envs:pusht.py")`    |
 | `user/repo@rev:path` | Revision + custom file         | `make_env("lerobot/envs@v1:pusht.py")` |
 
+## EnvHub and the simulator server
+
+EnvHub environments run inside the evaluation process, as before: `make_env` downloads the repository's `env.py`, and its dependencies (`requirements.txt`) are installed next to LeRobot. The [simulator server](./simulator_server) (`--env.type=sim`) does not change this path. It runs only the built-in simulators in `lerobot.sims.native`, each in its own Docker image, so a Hub environment cannot be served out of process yet.
+
+To evaluate a Hub environment, keep using its in-process config type with explicit consent, for example:
+
+```bash
+lerobot-eval \
+    --env.type=isaaclab_arena \
+    --env.hub_path=nvidia/isaaclab-arena-envs \
+    --trust_remote_code=true \
+    ...
+```
+
+To run an environment behind the simulator server instead (to isolate dependencies that conflict with your policy), port it as a built-in backend: see [Adding a benchmark](./adding_benchmarks). Environments that return LeRobot-style observations (`pixels`, `agent_pos`, `environment_state`) need no observation adapter.
+
 ## Multi-Task Environments
 
 For benchmarks with multiple tasks (like LIBERO), return a nested dictionary:

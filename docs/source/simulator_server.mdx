@@ -2,7 +2,7 @@
 
 Simulator servers keep physics, assets, rendering, native controllers, and their dependency pins in a separate process. The policy environment runs inference, saved processors, evaluation, and rollout. Both clients use the same canonical observations and actions.
 
-`lerobot-eval` supports the simulator server through `--env.type=sim`. In-process environment types are available for compatibility. Use the server path for benchmark integrations.
+`lerobot-eval` supports the simulator server through `--env.type=sim`. In-process environment types are available for compatibility. Use the server path for benchmark integrations. [EnvHub](./envhub) environments keep running in-process; see [EnvHub and the simulator server](./envhub#envhub-and-the-simulator-server).
 
 ## Start a simulator with Docker
 
