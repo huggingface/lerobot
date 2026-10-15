@@ -166,6 +166,7 @@ def test_vlm_clients_share_one_limit(coordinator, monkeypatch):
 
 
 def test_request_retry_reacquires_shared_admission(coordinator, monkeypatch):
+    pytest.importorskip("datasets")
     import sys
     from types import SimpleNamespace
 
