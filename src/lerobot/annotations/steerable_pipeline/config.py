@@ -47,6 +47,8 @@ class PlanConfig:
     """``plan`` module: subtasks + plan + memory + task augmentation."""
 
     enabled: bool = True
+    # Retry model-dependent empty outputs locally before caching a final rejection.
+    rejection_max_retries: int = 2
 
     # ``task_aug`` rephrasings at t=0 (renderer rotates ${task} among them); 0 disables.
     n_task_rephrasings: int = 10
@@ -107,6 +109,10 @@ class PlanConfig:
 
     # Optional EgoMimic-style 5-axis task augmentation; replaces n_task_rephrasings.
     task_aug_axes: TaskAugAxesConfig = field(default_factory=lambda: TaskAugAxesConfig())
+
+    def __post_init__(self):
+        if self.rejection_max_retries < 0:
+            raise ValueError("rejection_max_retries must be nonnegative")
 
 
 @dataclass

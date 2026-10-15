@@ -469,6 +469,40 @@ def test_unchanged_source_fingerprints_avoid_media_reads(single_episode_root, mo
     assert reads == [video, video]
 
 
+@pytest.mark.parametrize("reason", ["no_subtasks", "empty_subtask_window:0"])
+@pytest.mark.parametrize("recovers", [False, True])
+def test_empty_model_results_retry_only_affected_episode(fixture_dataset_root, monkeypatch, reason, recovers):
+    from collections import Counter
+
+    from lerobot.annotations import processing
+    from lerobot.annotations.steerable_pipeline.reader import RejectedEpisodeError
+
+    original = processing.PlanSubtasksMemoryModule.run_episode
+    calls = Counter()
+
+    def run(self, record, staging):
+        calls[record.episode_index] += 1
+        if record.episode_index == 0 and (not recovers or calls[0] == 1):
+            if reason == "no_subtasks":
+                return
+            raise RejectedEpisodeError(reason, "model returned no owned spans")
+        original(self, record, staging)
+
+    monkeypatch.setattr(processing.PlanSubtasksMemoryModule, "run_episode", run)
+    cfg = config()
+    root = fixture_dataset_root
+    result = run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert result.validation_report.ok
+    assert calls == {0: 2 if recovers else 3, 1: 1}
+    labelled = pq.read_table(root / "data/chunk-000/file-000.parquet")["language_persistent"][0].as_py()
+    assert bool(labelled) is recovers
+    assert any(reason in warning for warning in result.validation_report.warnings) is not recovers
+    before = calls.copy()
+    cfg.runtime.mode = "resume"
+    assert run_annotation_pipeline(cfg, root, client_factory=FACTORY).validation_report.ok
+    assert calls == before  # final rejections are sticky after the bounded attempts
+
+
 def test_rejected_episode_does_not_discard_healthy_batch(fixture_dataset_root, monkeypatch):
     from lerobot.annotations import processing
 

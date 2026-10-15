@@ -132,8 +132,12 @@ never reset live inference just to unblock workers. Request retries (429/5xx and
 network failures) are bounded by `vlm.request_max_retries=2`; each reacquires admission.
 `vlm.request_timeout_s` bounds each request (600 seconds by default); hidden SDK retries
 stay disabled so they cannot bypass shared admission.
-An empty subtask result is recorded as rejected (`no_subtasks`), dependent stages are
-masked, and healthy episodes continue. Rejected families leave existing labels intact.
+Empty subtask results (`no_subtasks`, `empty_subtask_window:N`) receive up to
+`plan.rejection_max_retries=2` additional episode-local attempts before final rejection;
+set it to zero to disable. Invalid clocks/frames are not retried. Final rejections are
+cached on resume, dependent stages are masked, and healthy episodes continue. Changing
+the plan retry policy changes its scientific cache identity. Rejected families leave
+existing labels intact; never delete audit checkpoints to retry an input.
 
 ## Slurm and Hugging Face Jobs
 
