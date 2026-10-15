@@ -104,7 +104,13 @@ def test_local_publication_needs_no_hardlinks_and_cannot_clobber(tmp_path, monke
     artifact = next(result for result in results if result)
     assert store.verify(artifact)
     Path(store.path(artifact.path)).write_bytes(b"broken")
-    assert not store.verify(artifact)  # memoized verification still detects changes
+    # Downloads hash bytes even when a coarse filesystem clock hides same-size edits.
+    with pytest.raises(ValueError, match="download checksum mismatch"):
+        store.download(artifact, tmp_path / "download")
+    assert not (tmp_path / "download").exists()
+    # Give the stat-keyed memo an observable change, independent of clock granularity.
+    Path(store.path(artifact.path)).write_bytes(b"broken-output")
+    assert not store.verify(artifact)
 
 
 def test_publication_lock_count_is_bounded(tmp_path):
