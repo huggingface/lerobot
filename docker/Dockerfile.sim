@@ -119,7 +119,9 @@ RUN if [ -n "${ENVHUB_REQUIREMENTS}" ]; then echo "${ENVHUB_REQUIREMENTS}" | bas
         && UV_INDEX_STRATEGY=unsafe-best-match uv pip install --no-cache -r /tmp/requirements.txt \
         && rm /tmp/requirements.txt; fi
 ARG ENVHUB_REPO=""
-RUN test -n "${ENVHUB_REPO}" || { echo "Set the ENVHUB_REPO build argument to <user/repo[@revision]>" >&2; exit 1; } \
+# A private repository's token is a build secret: mounted for this step only, never stored in the image.
+RUN --mount=type=secret,id=hf_token,env=HF_TOKEN,required=false \
+    test -n "${ENVHUB_REPO}" || { echo "Set the ENVHUB_REPO build argument to <user/repo[@revision]>" >&2; exit 1; } \
     && python -c "import sys; from huggingface_hub import snapshot_download; \
 repo, _, revision = sys.argv[1].split(':')[0].partition('@'); \
 snapshot_download(repo, revision=revision or None)" "${ENVHUB_REPO}"

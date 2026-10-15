@@ -10,6 +10,9 @@ services:
         ENVHUB_REPO: ${ENVHUB_REPO:-}
         ENVHUB_REQUIREMENTS: ${ENVHUB_REQUIREMENTS:-}
         ENVHUB_PACKAGES: ${ENVHUB_PACKAGES:-}
+      # Build-time only: lets the EnvHub stage download a private repository.
+      secrets:
+        - hf_token
     command: [lerobot-env-server, --config=/config/sim.yaml]
     volumes:
       - ${SIM_CONFIG:?Select a simulator YAML}:/config/sim.yaml:ro
@@ -27,3 +30,7 @@ services:
       timeout: 10s
       start_period: ${SIM_START_PERIOD:-60s}
       retries: 12
+
+secrets:
+  hf_token:
+    environment: HF_TOKEN

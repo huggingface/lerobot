@@ -312,7 +312,7 @@ To be served, an environment must follow these conventions:
 
 For examples, see the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments-6ad0f5bf3fac8dbe626c17dc): [`lerobot/so101-tabletop-mujoco`](https://huggingface.co/lerobot/so101-tabletop-mujoco) (MuJoCo) and [`lerobot/so101-tabletop-isaac`](https://huggingface.co/lerobot/so101-tabletop-isaac) (Isaac Sim, installed through `requirements.txt` and `packages.txt`) serve the same SO-101 scene with the same observations, actions and `LEROBOT_SIM`.
 
-The image build downloads the repository without credentials, so serve public repositories. Test a new environment in-process first (see [Step 2: Test Locally](#step-2-test-locally)).
+Private repositories work too: the launcher passes your Hugging Face token (`HF_TOKEN` or `hf auth login`) to the image build as a secret, used only to download the repository and never stored in the image. Test a new environment in-process first (see [Step 2: Test Locally](#step-2-test-locally)).
 
 ## Multi-Task Environments
 

@@ -38,12 +38,22 @@ from pathlib import Path
 import yaml
 
 
-def envhub_file(hub_path: str, name: str) -> str:
+def hf_token() -> str:
+    """The Hugging Face token from HF_TOKEN or `hf auth login`, or "" without one."""
+    if os.environ.get("HF_TOKEN"):
+        return os.environ["HF_TOKEN"]
+    hf_home = Path(os.environ.get("HF_HOME", Path.home() / ".cache/huggingface"))
+    path = Path(os.environ.get("HF_TOKEN_PATH", hf_home / "token"))
+    return path.read_text().strip() if path.is_file() else ""
+
+
+def envhub_file(hub_path: str, name: str, token: str) -> str:
     """Base64 of a file at the repository root at the served revision, or "" when it has none."""
     repo, _, revision = hub_path.split(":")[0].partition("@")
     url = f"https://huggingface.co/{repo}/resolve/{revision or 'main'}/{name}"
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:  # nosec B310
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:  # nosec B310
             return base64.b64encode(response.read()).decode()
     except urllib.error.HTTPError as error:
         if error.code == 404:
@@ -112,13 +122,15 @@ def main() -> None:
         if args.build or subprocess.run(inspect, capture_output=True).returncode:  # nosec B603
             command.append("--build")
             if backend == "envhub":
+                # Private repositories: the build reads the token as a secret, never as a build argument.
+                env["HF_TOKEN"] = hf_token()
                 # Passed by content, so that the image layers installing them are reused across commits.
                 for variable, name in (
                     ("ENVHUB_REQUIREMENTS", "requirements.txt"),
                     ("ENVHUB_PACKAGES", "packages.txt"),
                 ):
                     if variable not in env:
-                        env[variable] = envhub_file(repo, name)
+                        env[variable] = envhub_file(repo, name, env["HF_TOKEN"])
         command.append("sim")
     subprocess.run(command, env=env, check=True)
 
