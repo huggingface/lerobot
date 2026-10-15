@@ -280,6 +280,10 @@ requires an explicit migration before merging older window rows.
 Fingerprints and prepared files follow `staging_dir` (default: the dataset's `.annotate_staging`).
 Set it to an external path to keep planning writes outside the dataset; a pending commit
 must be recovered before planning. Mutating runs retain the dataset's commit journal/lock.
+Prepared files, installed files, journal replacements and their directory entries are
+fsynced before recovery state is retired on POSIX. The filesystem must honor fsync and
+atomic rename; this is still not a multi-file snapshot for concurrent readers. Windows
+has no portable directory fsync, so full power-loss durability is not promised there.
 Owned prepared files and empty per-plan directories are removed after successful recovery.
 Run-store
 outputs are retained for resume by default. Set `runtime.retain_materialized_outputs=false`
