@@ -137,8 +137,8 @@ class TrackioConfig:
     """
 
     enable: bool = False
-    # Set to true to disable saving checkpoints as artifacts despite training.save_checkpoint=True
-    disable_artifact: bool = False
+    # Opt in with False to duplicate checkpoint weights in Trackio; Hub uploads are configured separately.
+    disable_artifact: bool = True
     project: str = "lerobot"
     # Hugging Face Space (`user/space`) to log to instead of the local database; created if missing.
     # Required for remote jobs (--job.target), whose local database vanishes with the pod.

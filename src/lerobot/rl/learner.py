@@ -49,6 +49,7 @@ import os
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
@@ -702,6 +703,11 @@ def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipeli
     # Load config using Draccus
     checkpoint_cfg_path = os.path.join(checkpoint_dir, PRETRAINED_MODEL_DIR, "train_config.json")
     checkpoint_cfg = TrainRLServerPipelineConfig.from_pretrained(checkpoint_cfg_path)
+
+    # Keep the caller's tracking settings (including CLI overrides), recovering only the saved run name.
+    checkpoint_cfg.trackio = replace(
+        cfg.trackio, run_name=cfg.trackio.run_name or checkpoint_cfg.trackio.run_name
+    )
 
     # Ensure resume flag is set in returned config
     checkpoint_cfg.resume = True

@@ -126,7 +126,8 @@ dataset = [
 ]
 training = [
     "lerobot[dataset]",
-    "trackio>=0.38.1,<1.0.0",
+    "trackio[gpu]>=0.38.1,<1.0.0; sys_platform != 'darwin'",
+    "trackio[apple-gpu]>=0.38.1,<1.0.0; sys_platform == 'darwin'",
     "lerobot[accelerate-dep]",
 ]
 hardware = [

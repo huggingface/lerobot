@@ -86,7 +86,7 @@ def test_trackio_config_defaults():
     cfg = TrackioConfig()
 
     assert cfg.enable is False
-    assert cfg.disable_artifact is False
+    assert cfg.disable_artifact is True
     assert cfg.project == "lerobot"
     assert cfg.space_id is None
     assert cfg.private is None
@@ -339,7 +339,13 @@ def test_log_video_invalid_mode_raises(trackio, tmp_path):
 
 
 def test_log_policy_standard_checkpoint(trackio, tmp_path):
-    logger = TrackioLogger(make_cfg(tmp_path, dataset=SimpleNamespace(repo_id="user/repo")))
+    logger = TrackioLogger(
+        make_cfg(
+            tmp_path,
+            dataset=SimpleNamespace(repo_id="user/repo"),
+            trackio=TrackioConfig(disable_artifact=False),
+        )
+    )
     checkpoint_dir = make_checkpoint(tmp_path, "model.safetensors")
 
     logger.log_policy(checkpoint_dir)
@@ -357,7 +363,7 @@ def test_log_policy_standard_checkpoint(trackio, tmp_path):
 
 
 def test_log_policy_peft_checkpoint(trackio, tmp_path):
-    logger = TrackioLogger(make_cfg(tmp_path))
+    logger = TrackioLogger(make_cfg(tmp_path, trackio=TrackioConfig(disable_artifact=False)))
     checkpoint_dir = make_checkpoint(
         tmp_path, "adapter_model.safetensors", "adapter_config.json", "config.json"
     )
@@ -375,7 +381,7 @@ def test_log_policy_peft_checkpoint(trackio, tmp_path):
 
 
 def test_log_policy_empty_checkpoint_skips_upload(trackio, tmp_path, caplog):
-    logger = TrackioLogger(make_cfg(tmp_path))
+    logger = TrackioLogger(make_cfg(tmp_path, trackio=TrackioConfig(disable_artifact=False)))
     checkpoint_dir = make_checkpoint(tmp_path)
 
     with caplog.at_level(logging.WARNING):
@@ -387,7 +393,7 @@ def test_log_policy_empty_checkpoint_skips_upload(trackio, tmp_path, caplog):
 
 
 def test_log_policy_upload_failure_is_not_fatal(trackio, tmp_path, caplog):
-    logger = TrackioLogger(make_cfg(tmp_path))
+    logger = TrackioLogger(make_cfg(tmp_path, trackio=TrackioConfig(disable_artifact=False)))
     checkpoint_dir = make_checkpoint(tmp_path, "model.safetensors")
     trackio.log_artifact.side_effect = RuntimeError("space is sleeping")
 
@@ -398,8 +404,8 @@ def test_log_policy_upload_failure_is_not_fatal(trackio, tmp_path, caplog):
     assert "space is sleeping" in caplog.text
 
 
-def test_log_policy_disabled_artifact(trackio, tmp_path):
-    logger = TrackioLogger(make_cfg(tmp_path, trackio=TrackioConfig(disable_artifact=True)))
+def test_log_policy_artifacts_disabled_by_default(trackio, tmp_path):
+    logger = TrackioLogger(make_cfg(tmp_path))
     checkpoint_dir = make_checkpoint(tmp_path, "model.safetensors")
 
     logger.log_policy(checkpoint_dir)
@@ -529,7 +535,7 @@ def make_cfg(trackio_cfg, resume=False):
     )
 
 
-first_cfg = TrackioConfig(enable=True, project="e2e")
+first_cfg = TrackioConfig(enable=True, project="e2e", disable_artifact=False)
 first = TrackioLogger(make_cfg(first_cfg))
 first.log_dict({"loss": 1.0, "ignored": [1]}, step=0)
 first.log_dict({"loss": 0.5}, step=1)
