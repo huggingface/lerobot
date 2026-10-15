@@ -158,6 +158,10 @@ Each array has a dependent finalizer. Resume refuses duplicate active submission
 detaching the controller does not cancel cluster jobs. Configure `partition`, `account`
 and writable model/kernel caches for your cluster. `runtime.mode=plan` renders scripts
 for independent stages without submitting jobs.
+Purged array IDs do not block resume. Queue probes and non-waiting submissions use
+`runtime.slurm.command_timeout_s` (30 seconds); scheduler errors/timeouts fail closed.
+A submission timeout can mean the job was accepted: inspect the queue before retrying.
+The dependent `sbatch --wait` intentionally has no short command timeout.
 
 ### Running on Hugging Face Jobs
 
