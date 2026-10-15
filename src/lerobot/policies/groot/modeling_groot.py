@@ -23,9 +23,11 @@ orchestration are handled by LeRobot's standard training stack.
 """
 
 import builtins
+import dataclasses
 import logging
 import os
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, Unpack
 
@@ -39,6 +41,7 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..chunk import ChunkPolicySpec
 from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..utils import get_device_from_parameters
 from .configuration_groot import (
@@ -114,7 +117,7 @@ class GrootPolicy(PreTrainedPolicy):
         qwen_model = getattr(backbone, "model", None)
         if qwen_model is not None:
             _tie_unused_qwen_lm_head(qwen_model)
-        if self.config.model_params_fp32:
+        if self.config.dtype == torch.float32:
             self._cast_model_parameters_to_fp32(model)
         return model
 
@@ -244,11 +247,15 @@ class GrootPolicy(PreTrainedPolicy):
         # This is a base GR00T model - load it fresh
         logger.info("Detected base GR00T model, loading from HuggingFace...")
 
+        # Config overrides from kwargs go through the constructor (or `dataclasses.replace`) rather than
+        # setattr, so that `__post_init__` validates them (and warns about deprecated keys) exactly as it
+        # does for config.json and the CLI.
+        field_names = {f.name for f in dataclasses.fields(GrootConfig)}
+        field_kwargs = {key: value for key, value in kwargs.items() if key in field_names}
+
         if config is None:
             # Create default config with the pretrained path
-            config = GrootConfig(
-                base_model_path=str(pretrained_name_or_path),
-            )
+            config = GrootConfig(**{"base_model_path": str(pretrained_name_or_path), **field_kwargs})
 
             # Add minimal visual feature required for validation
             # validate_features() will automatically add state and action features
@@ -263,11 +270,8 @@ class GrootPolicy(PreTrainedPolicy):
         else:
             # Override the base_model_path with the provided path
             config.base_model_path = str(pretrained_name_or_path)
-
-        # Pass through any additional config overrides from kwargs
-        for key, value in kwargs.items():
-            if hasattr(config, key):
-                setattr(config, key, value)
+            if field_kwargs:
+                config = dataclasses.replace(config, **field_kwargs)
 
         inferred_version = infer_groot_model_version(config.base_model_path)
         if inferred_version is not None and inferred_version != GROOT_N1_7:
@@ -306,10 +310,23 @@ class GrootPolicy(PreTrainedPolicy):
             horizons.append(execution_horizon)
         return min(horizons)
 
-    def _resolve_prediction_horizon(self, actions: Tensor) -> int:
-        """Return the policy-facing action horizon for a native GR00T prediction."""
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Declare the native wrapper's cropped prediction and playback horizons."""
+        spec = super().chunk_inference_spec()
+        native_horizon = getattr(self._groot_model.config, "action_horizon", None)
+        if not isinstance(native_horizon, int) or native_horizon <= 0:
+            raise ValueError("GR00T chunk serving requires a positive native action_horizon.")
+        prediction_steps = self._bound_prediction_horizon(native_horizon)
+        return replace(
+            spec,
+            prediction_steps=prediction_steps,
+            execution_steps=min(prediction_steps, self._resolve_action_queue_steps()),
+        )
 
-        horizons = [actions.shape[1]]
+    def _bound_prediction_horizon(self, available_steps: int) -> int:
+        """Apply the same checkpoint and playback bounds before and after inference."""
+
+        horizons = [available_steps]
         checkpoint_action_horizon = infer_groot_n1_7_action_horizon(
             self.config.base_model_path,
             self.config.embodiment_tag,
@@ -323,6 +340,10 @@ class GrootPolicy(PreTrainedPolicy):
                 horizons.append(horizon)
 
         return max(1, min(horizons))
+
+    def _resolve_prediction_horizon(self, actions: Tensor) -> int:
+        """Return the policy-facing action horizon for a native GR00T prediction."""
+        return self._bound_prediction_horizon(actions.shape[1])
 
     def _filter_groot_inputs(self, batch: dict[str, Tensor], *, include_action: bool) -> dict[str, Tensor]:
         allowed_base = {"state", "state_mask", "action_mask", "embodiment_id"}
