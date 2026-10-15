@@ -53,6 +53,12 @@ def _recover_owned(root: Path) -> None:
             os.replace(temporary, target)
         finally:
             Path(temporary).unlink(missing_ok=True)
+    # Keep recovery files until every target is committed. Delete only files
+    # created by this journal, including when prepared_root is caller-owned.
+    for index, entry in enumerate(journal["files"]):
+        prepared = Path(entry["prepared"])
+        if prepared.name == f"{index:08d}-{entry['sha256']}":
+            prepared.unlink(missing_ok=True)
     journal_path.unlink()
 
 

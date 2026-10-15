@@ -33,6 +33,104 @@ def config():
     return cfg
 
 
+def test_semantic_cache_survives_relocation_and_endpoint_changes(single_episode_root, tmp_path, monkeypatch):
+    import shutil
+
+    root = single_episode_root
+    moved = tmp_path / "moved"
+    shutil.copytree(root, moved)
+    cfg = config()
+    cfg.runtime.run_uri = str(tmp_path / "shared-cache")
+    CLIENTS.clear()
+    run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    count = len(CLIENTS)
+    cfg.vlm.api_base = "http://another-host:9000/v1"
+    cfg.vlm.serve_port = 9000
+    cfg.vlm.api_key_env = "OTHER_TOKEN"
+    monkeypatch.setenv("OTHER_TOKEN", "EMPTY")
+    cfg.executor.episode_parallelism = 2
+    run_annotation_pipeline(cfg, moved, client_factory=FACTORY)
+    assert len(CLIENTS) == count
+    original = pq.read_table(root / "data/chunk-000/file-000.parquet")
+    assert pq.read_table(moved / "data/chunk-000/file-000.parquet").equals(original)
+
+
+def test_prompt_override_invalidates_affected_inference(single_episode_root, monkeypatch):
+    from lerobot.annotations.steerable_pipeline.prompts import load
+
+    cfg = config()
+    CLIENTS.clear()
+    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    count = len(CLIENTS)
+    monkeypatch.setenv("LEROBOT_PROMPT_OVERRIDE_plan_subtasks", load("plan_subtasks") + "\nBe precise.")
+    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    assert len(CLIENTS) == count + 1
+
+
+def test_unchanged_source_fingerprints_avoid_media_reads(single_episode_root, monkeypatch):
+    from lerobot.annotations import processing_source
+
+    root = single_episode_root
+    video = root / "videos/camera/test.mp4"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"source-video")
+    first = processing_source.LeRobotEpisodeSource(root)
+    real_checksum = processing_source.file_checksum
+    reads = []
+
+    def checksum(path):
+        if path == video:
+            reads.append(path)
+        return real_checksum(path)
+
+    monkeypatch.setattr(processing_source, "file_checksum", checksum)
+    assert processing_source.LeRobotEpisodeSource(root).dataset_ref == first.dataset_ref
+    assert not reads
+    assert processing_source.LeRobotEpisodeSource(root, verify_sources=True).dataset_ref == first.dataset_ref
+    assert reads == [video]
+    video.write_bytes(b"changed-vid!")
+    assert processing_source.LeRobotEpisodeSource(root).dataset_ref != first.dataset_ref
+    assert reads == [video, video]
+
+
+def test_rejected_episode_does_not_discard_healthy_batch(fixture_dataset_root, monkeypatch):
+    from lerobot.annotations import processing
+
+    original = processing.PlanSubtasksMemoryModule.run_episode
+
+    def run(self, record, staging):
+        if record.episode_index != 0:
+            original(self, record, staging)
+
+    monkeypatch.setattr(processing.PlanSubtasksMemoryModule, "run_episode", run)
+    cfg = config()
+    cfg.interjections.enabled = True
+    cfg.runtime.batch_size = 16
+    root = fixture_dataset_root
+    result = run_annotation_pipeline(cfg, root, client_factory=FACTORY)
+    assert result.validation_report.ok
+    assert any("no_subtasks" in warning for warning in result.validation_report.warnings)
+    phases = {phase.name: phase for phase in result.phases}
+    assert phases["plan"].episodes_processed == 1 and phases["plan"].episodes_skipped == 1
+    assert phases["interjections"].episodes_skipped == 1
+    assert (
+        pq.read_table(root / "data/chunk-000/file-000.parquet")["language_persistent"].to_pylist()
+        == [[]] * 12
+    )
+    assert pq.read_table(root / "data/chunk-000/file-001.parquet")["language_persistent"][0].as_py()
+
+
+def test_materialized_cache_pruning_keeps_inference_resume(single_episode_root):
+    cfg = config()
+    cfg.runtime.retain_materialized_outputs = False
+    CLIENTS.clear()
+    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    count = len(CLIENTS)
+    assert not list((single_episode_root / ".annotate_staging/prepared").rglob("*-*"))
+    run_annotation_pipeline(cfg, single_episode_root, client_factory=FACTORY)
+    assert len(CLIENTS) == count
+
+
 @pytest.mark.parametrize("version", ["v2.1", "v4.0", None, 3])
 @pytest.mark.parametrize("mode", ["plan", "run"])
 def test_runtime_rejects_non_v3_before_planning_or_inference(single_episode_root, version, mode):

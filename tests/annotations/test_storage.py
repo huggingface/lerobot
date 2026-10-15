@@ -30,5 +30,7 @@ def test_commit_recovery_and_expected_inputs(tmp_path, monkeypatch):
     recover_local_commit(root)
     assert (root / "b").read_text() == "new"
     assert not (root / ".processing_commit.json").exists()
+    assert not list((tmp_path / "prepared").iterdir())
+    assert all(source.read_text() == "new" for source in sources.values())
     with pytest.raises(RuntimeError, match="after planning"):
         commit_local_files(root, sources, tmp_path / "prepared", expected={"a": None})

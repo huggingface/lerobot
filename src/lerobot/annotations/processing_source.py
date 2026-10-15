@@ -16,7 +16,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from lerobot.annotations.runtime.artifacts import file_checksum
+from lerobot.annotations.runtime.artifacts import file_checksum, local_file_token
 from lerobot.annotations.runtime.types import (
     DatasetRef,
     InputItem,
@@ -27,6 +27,7 @@ from lerobot.annotations.runtime.worker import accepted_items
 from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 
 from .steerable_pipeline.reader import EpisodeRecord, _load_tasks_lookup
+from .storage import atomic_json
 
 
 def _load_v3_info(root: Path) -> dict[str, Any]:
@@ -67,15 +68,37 @@ def _load_record(root, payload):
 class LeRobotEpisodeSource:
     """Discover small episode/file references; only workers collect episode clocks."""
 
-    def __init__(self, root: Path, only_episodes=None):
+    def __init__(self, root: Path, only_episodes=None, *, verify_sources=False):
         self.root = root
         info = _load_v3_info(root)
         self.episodes: dict[int, dict[str, Any]] = {}
         tasks = _load_tasks_lookup(root)
         manifest: list[dict[str, Any]] = []
         selected = set(only_episodes) if only_episodes is not None else None
-        # Explicit frame-file pattern excludes sparse annotation Parquet tables.
-        for path in sorted((root / "data").glob("chunk-*/file-*.parquet")):
+        cache_path = root / ".annotate_staging/input-fingerprints.json"
+        try:
+            cache = json.loads(cache_path.read_text()) if not verify_sources else {}
+            if not isinstance(cache, dict):
+                cache = {}
+        except (OSError, ValueError):
+            cache = {}
+        refreshed = {}
+
+        def cached(path, kind, compute):
+            key = kind + ":" + str(path.relative_to(root))
+            token = list(local_file_token(path))
+            old = cache.get(key, {})
+            value = (
+                old["value"]
+                if isinstance(old, dict) and "value" in old and old.get("token") == token
+                else compute()
+            )
+            if list(local_file_token(path)) != token:
+                raise RuntimeError(f"Source changed during fingerprinting: {path.relative_to(root)}")
+            refreshed[key] = {"token": token, "value": value}
+            return value
+
+        def inspect_data(path):
             file = pq.ParquetFile(path)
             native_columns = [
                 name for name in file.schema_arrow.names if name not in {LANGUAGE_PERSISTENT, LANGUAGE_EVENTS}
@@ -87,26 +110,37 @@ class LeRobotEpisodeSource:
                 with pa.ipc.new_stream(buffer, table.schema) as writer:
                     writer.write_table(table)
                 digest.update(buffer.getvalue())
-            manifest.append({"path": str(path.relative_to(root)), "native": digest.hexdigest()})
             columns = ["episode_index"] + (["task_index"] if "task_index" in file.schema_arrow.names else [])
+            episodes = {}
             for batch in file.iter_batches(columns=columns):
                 for row in batch.to_pylist():
-                    ep = row["episode_index"]
-                    if selected is not None and ep not in selected:
-                        continue
-                    value = self.episodes.setdefault(
-                        ep,
-                        {
-                            "episode_index": ep,
-                            "paths": [],
-                            "rows": 0,
-                            "task": tasks.get(row.get("task_index"), ""),
-                        },
+                    value = episodes.setdefault(
+                        str(row["episode_index"]), {"rows": 0, "task_index": row.get("task_index")}
                     )
-                    relative = str(path.relative_to(root))
-                    if relative not in value["paths"]:
-                        value["paths"].append(relative)
                     value["rows"] += 1
+            return {"native": digest.hexdigest(), "episodes": episodes}
+
+        # Explicit frame-file pattern excludes sparse annotation Parquet tables.
+        for path in sorted((root / "data").glob("chunk-*/file-*.parquet")):
+            data = cached(path, "native-v1", lambda path=path: inspect_data(path))
+            manifest.append({"path": str(path.relative_to(root)), "native": data["native"]})
+            for ep_text, row in data["episodes"].items():
+                ep = int(ep_text)
+                if selected is not None and ep not in selected:
+                    continue
+                value = self.episodes.setdefault(
+                    ep,
+                    {
+                        "episode_index": ep,
+                        "paths": [],
+                        "rows": 0,
+                        "task": tasks.get(row.get("task_index"), ""),
+                    },
+                )
+                relative = str(path.relative_to(root))
+                if relative not in value["paths"]:
+                    value["paths"].append(relative)
+                value["rows"] += row["rows"]
         self.fps = info["fps"]
         self.cameras = sum(
             feature["dtype"] in {"image", "video"} for feature in info.get("features", {}).values()
@@ -122,17 +156,21 @@ class LeRobotEpisodeSource:
         for directory in ("videos", "meta/episodes"):
             for path in sorted((root / directory).rglob("*")):
                 if path.is_file():
-                    manifest.append({"path": str(path.relative_to(root)), "checksum": file_checksum(path)})
+                    digest = cached(path, "sha256", lambda path=path: file_checksum(path))
+                    manifest.append({"path": str(path.relative_to(root)), "checksum": digest})
         manifest.append({"tasks": tasks})
-        self.dataset_ref = DatasetRef(str(root.resolve()), fingerprint(manifest))
+        self.dataset_ref = DatasetRef("lerobot-native", fingerprint(manifest))
+        atomic_json(cache_path, refreshed)
 
     def discover(self, stage, store, upstream):
         bindings = {}
+        outcomes = defaultdict(dict)
         for name, (plan, _) in upstream.items():
-            bindings[name] = {
-                item.key: {artifact.name: asdict(artifact) for artifact in result.artifacts}
-                for item, result in accepted_items(store, plan)
-            }
+            bindings[name] = {}
+            for item, result in accepted_items(store, plan):
+                bindings[name][item.key] = {artifact.name: asdict(artifact) for artifact in result.artifacts}
+                if result.reason:
+                    outcomes[item.key][name] = {"outcome": result.outcome.value, "reason": result.reason}
         if stage.id == "materialize":
             by_file = defaultdict(dict)
             for ep, payload in self.episodes.items():
@@ -171,7 +209,8 @@ class LeRobotEpisodeSource:
                     for name, outputs in bindings.items()
                     if "atoms" in outputs[str(ep)]
                 }
-                metadata = {**payload, "upstream": parent}
+                unavailable = outcomes[str(ep)]
+                metadata = {**payload, "upstream": parent, "unavailable": unavailable}
                 yield InputItem(
                     str(ep),
                     metadata,
@@ -179,6 +218,9 @@ class LeRobotEpisodeSource:
                     identity_payload=artifact_identities(metadata),
                     physical_seconds=payload["rows"] / self.fps,
                     camera_seconds=payload["rows"] / self.fps * self.cameras,
+                    mask_reason=("upstream_unavailable:" + ",".join(sorted(unavailable)))
+                    if unavailable and stage.id not in {"validate", "materialize"}
+                    else None,
                 )
 
 

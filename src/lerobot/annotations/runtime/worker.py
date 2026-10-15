@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import base64
-import json
+import logging
 import os
 import tempfile
 import threading
@@ -24,7 +24,9 @@ from .artifacts import ArtifactStore
 from .errors import ErrorCategory, classify_error, retry_delay
 from .metrics import measure, record_worker
 from .planner import StagePlan, load_module
-from .types import Artifact, ItemResult, Outcome, WorkItem, checked_name
+from .types import Artifact, ItemResult, Outcome, WorkItem, checked_name, fingerprint
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING or _pyarrow_available:
     import pyarrow as pa
@@ -85,19 +87,23 @@ class WorkerContext:
             self.metrics[name] = self.metrics.get(name, 0) + value
 
 
+class _InvalidResultError(ValueError):
+    """Safe diagnostic messages, never model output or arbitrary persisted content."""
+
+
 def validate_result(result: ItemResult, item: WorkItem, context: WorkerContext) -> None:
     if result.item_id != item.item_id:
-        raise ValueError("Module returned the wrong item identity")
+        raise _InvalidResultError("Module returned the wrong item identity")
     names = [artifact.name for artifact in result.artifacts]
     if len(names) != len(set(names)):
-        raise ValueError("Duplicate output names")
+        raise _InvalidResultError("Duplicate output names")
     if result.outcome == Outcome.COMPLETED and set(names) != set(context.schemas):
-        raise ValueError("Completed item is missing declared outputs")
+        raise _InvalidResultError("Completed item is missing declared outputs")
     for artifact in result.artifacts:
         if not artifact.path.startswith(context.attempt + "/outputs/" + item.item_id + "/"):
-            raise ValueError("Output belongs to another item or attempt")
+            raise _InvalidResultError("Output belongs to another item or attempt")
         if artifact.name not in context.schemas or not context.store.verify(artifact):
-            raise ValueError("Invalid artifact checksum or name")
+            raise _InvalidResultError("Invalid artifact checksum or name")
         if context.schemas[artifact.name] is None:
             continue
         with context.store.open(artifact.path) as stream:
@@ -106,7 +112,7 @@ def validate_result(result: ItemResult, item: WorkItem, context: WorkerContext) 
                 not parquet.schema_arrow.equals(context.schemas[artifact.name], check_metadata=True)
                 or parquet.metadata.num_rows != artifact.rows
             ):
-                raise ValueError("Invalid artifact schema or row count")
+                raise _InvalidResultError("Invalid artifact schema or row count")
 
 
 def accepted_in_shard(store: ArtifactStore, plan: StagePlan, shard: int) -> dict[str, ItemResult]:
@@ -114,10 +120,28 @@ def accepted_in_shard(store: ArtifactStore, plan: StagePlan, shard: int) -> dict
     items = {item.item_id: item for item in plan.read_shard(store, shard)}
     accepted: dict[str, ItemResult] = {}
     context = None
-    for path in store.list(f"{plan.prefix}/attempts/{shard:08d}/*/checkpoints/*.json"):
+
+    def checkpoint_paths():
+        yield from store.list(f"{plan.prefix}/attempts/{shard:08d}/*/checkpoints/*.json")
+        # Bind current execution settings, but reuse checked logical results from
+        # other plans. A healthy same-plan resume needs no shared index lookups.
+        for item_id in sorted(items.keys() - accepted.keys()):
+            for reference in store.list(f"cache/items/{item_id}/*.json"):
+                try:
+                    path = store.read_json(reference)["checkpoint"]
+                    if not path.startswith(plan.prefix + "/"):
+                        yield path
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    logger.warning("Ignoring invalid cache reference %s (%s)", reference, type(exc).__name__)
+
+    seen = set()
+    for path in checkpoint_paths():
+        if path in seen:
+            continue
+        seen.add(path)
         try:
             checkpoint = store.read_json(path)
-            if checkpoint["plan_id"] != plan.plan_id or checkpoint["shard"] != shard:
+            if not path.startswith(f"stages/{checkpoint['plan_id']}/attempts/{checkpoint['shard']:08d}/"):
                 continue
             # Replay is read-only: decode schemas once, without creating scratch files.
             if context is None:
@@ -133,11 +157,25 @@ def accepted_in_shard(store: ArtifactStore, plan: StagePlan, shard: int) -> dict
                     ):
                         continue
                     validate_result(result, items[result.item_id], context)
-                except (OSError, ValueError, KeyError, TypeError):
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    logger.warning(
+                        "Ignoring invalid result: plan=%s shard=%s checkpoint=%s (%s)",
+                        plan.plan_id,
+                        shard,
+                        path,
+                        str(exc) if isinstance(exc, _InvalidResultError) else type(exc).__name__,
+                    )
                     continue
                 accepted[result.item_id] = result
-        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        except (OSError, ValueError, KeyError, TypeError) as exc:
             # An incomplete, stale or corrupt checkpoint is not completion evidence.
+            logger.warning(
+                "Ignoring invalid checkpoint: plan=%s shard=%s checkpoint=%s (%s)",
+                plan.plan_id,
+                shard,
+                path,
+                type(exc).__name__,
+            )
             continue
     return accepted
 
@@ -232,14 +270,20 @@ def _run_worker_group(store_uri, plan_id, shards, batch_size, max_retries, stora
                             if any(r.outcome == Outcome.FAILED for r in results):
                                 raise RuntimeError("Module reported failed work")
                             with context.measure("checkpoint"):
+                                checkpoint_path = f"{attempt}/checkpoints/{offset:08d}.json"
                                 store.put_json(
-                                    f"{attempt}/checkpoints/{offset:08d}.json",
+                                    checkpoint_path,
                                     {
                                         "plan_id": plan_id,
                                         "shard": shard,
                                         "results": [asdict(r) for r in results],
                                     },
                                 )
+                                for result in results:
+                                    store.put_json(
+                                        f"cache/items/{result.item_id}/{fingerprint(checkpoint_path)}.json",
+                                        {"checkpoint": checkpoint_path},
+                                    )
                         break
                     except Exception as exc:
                         category = classify_error(exc)
