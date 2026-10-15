@@ -76,6 +76,8 @@ class LimxHumanoid(Robot):
         self._sdk_motor_names: list[str] | None = None
         self._state_received_at: float = 0.0
         self._state_lock = threading.Lock()
+        #: Serialises SDK publishes: `send_action` and the publish loop run on different threads.
+        self._publish_lock = threading.Lock()
         #: Latest joint target, or `None` while the robot should be left alone.
         self._target: np.ndarray | None = (
             np.asarray(config.start_pose, dtype=np.float64) if config.start_pose is not None else None
@@ -265,7 +267,8 @@ class LimxHumanoid(Robot):
         # route by name); fall back to the descriptive table otherwise.
         command.motor_names = list(self._sdk_motor_names or self.config.joint_names)
         command.parallel_solve_required = [True] * HUMANOID_DIM
-        robot.publishRobotCmd(command)
+        with self._publish_lock:
+            robot.publishRobotCmd(command)
 
     # --------------------------------------------------------------- features
 
