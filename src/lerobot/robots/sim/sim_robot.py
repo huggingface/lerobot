@@ -50,7 +50,14 @@ class SimRobot(Robot):
             self.client = InProcessEnvClient(env.backend_config())
         else:
             deployment = env.type if env is not None else None
-            self.client = EnvClient(config.endpoint, deployment, config.timeout_s, config.setup_timeout_s)
+            self.client = EnvClient(
+                config.endpoint,
+                deployment,
+                config.timeout_s,
+                config.setup_timeout_s,
+                encoding=config.encoding,
+                jpeg_quality=config.jpeg_quality,
+            )
         try:
             self.descriptor = self.client.describe()
             if env is not None and config.endpoint is not None:

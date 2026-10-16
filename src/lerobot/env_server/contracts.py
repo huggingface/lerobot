@@ -99,7 +99,11 @@ class StepResult:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "StepResult":
         """Reconstruct validated declarations from decoded wire fields."""
-        return cls(**{**data, "task": tuple(data["task"])})
+        # JPEG replies carry one frame per world; stack them back into the batch.
+        obs = {
+            name: np.stack(value) if isinstance(value, list) else value for name, value in data["obs"].items()
+        }
+        return cls(**{**data, "obs": obs, "task": tuple(data["task"])})
 
 
 @dataclass(frozen=True)
