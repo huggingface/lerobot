@@ -80,7 +80,7 @@ LeRobot 不強制要求嚴格的觀測（observation）schema。相反地，它�
 你的 `step()` 和 `reset()` 必須在 `info` 字典（dict）中包含 `"is_success"`：
 
 ```python
-info = {"is_success": True}   # or False
+info = {"is_success": True}   # 或 False
 return observation, reward, terminated, truncated, info
 ```
 

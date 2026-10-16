@@ -34,13 +34,13 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  策略 v0（在示範上訓練）                                                   │
+│  Policy v0 (trained on demos)                                           │
 │       ↓                                                                 │
-│  HIL 收集（針對當前失敗模式）→ 微調 → 策略 v1                                │
+│  HIL Collection (target current failure modes) → Fine-tune → Policy v1  │
 │       ↓                                                                 │
-│  HIL 收集（針對新的失敗模式）→ 微調 → 策略 v2                                │
+│  HIL Collection (target new failure modes) → Fine-tune → Policy v2      │
 │       ↓                                                                 │
-│  ...（重複直到效能令人滿意）                                                │
+│  ... (repeat until satisfactory performance)                            │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 

@@ -60,7 +60,7 @@ pip install -e ".[groot]"
 此指令使用 `new_embodiment` 旗標（flag），此旗標用於 SO-101 機器人，[進一步了解 GR00T 如何處理不同的具身類型（embodiments）](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/policy.md#--embodiment-tag)。
 
 ```bash
-# install extra deps for training
+# 安裝訓練所需的額外相依套件
 pip install "lerobot[training]"
 
 hf auth login
@@ -187,13 +187,13 @@ lerobot-eval \
 使用你的參數（parameters）訓練你的模型（trained your model）完成後，你可以在下游任務（downstream task）中執行推論（inference）。請參考[策略部署（lerobot-rollout）](./inference)中的說明。例如：
 
 ```bash
-# install extra deps for roullout and real hardware
+# 安裝 rollout 與實體硬體所需的額外相依套件
 pip install "lerobot[feetech,viz]"
 
 export MODEL_ID=your_trained_model_on_huggingface
 
-# make sure that camera index matches your setup!
-# find index using `uv run lerobot-find-cameras opencv`
+# 請確認相機索引與你的設定相符！
+# 使用 `uv run lerobot-find-cameras opencv` 找出索引
 WRIST_CAM='wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30, fourcc: "MJPG"}'
 FRONT_CAM='front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: "MJPG"}'
 export ROBOT_CAMERAS="{ $WRIST_CAM, $FRONT_CAM }"

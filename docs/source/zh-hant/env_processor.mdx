@@ -310,7 +310,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
 ### 1. 建立處理器步驟[[1-create-the-processor-step]]
 
 ```python
-# In src/lerobot/processor/env_processor.py
+# 位於 src/lerobot/processor/env_processor.py
 
 @dataclass
 @ProcessorStepRegistry.register(name="myenv_processor")
@@ -332,7 +332,7 @@ class MyEnvProcessorStep(ObservationProcessorStep):
 ### 2. 更新你的 `EnvConfig` 子類別（update your `EnvConfig` subclass）[[2-update-your-envconfig-subclass]]
 
 ```python
-# In src/lerobot/envs/factory.py
+# 位於 src/lerobot/envs/factory.py
 
 def make_env_pre_post_processors(env_cfg: EnvConfig):
     if isinstance(env_cfg, LiberoEnv) or "libero" in env_cfg.type:

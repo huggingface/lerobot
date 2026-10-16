@@ -301,11 +301,11 @@ def get_observation(self) -> dict[str, Any]:
     if not self.is_connected:
         raise ConnectionError(f"{self} is not connected.")
 
-    # Read arm position
+    # 讀取手臂位置
     obs_dict = self.bus.sync_read("Present_Position")
     obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
 
-    # Capture images from cameras
+    # 從相機擷取影像
     for cam_key, cam in self.cameras.items():
         obs_dict[cam_key] = cam.async_read()
 
@@ -324,7 +324,7 @@ def get_observation(self) -> dict[str, Any]:
 def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
     goal_pos = {key.removesuffix(".pos"): val for key, val in action.items()}
 
-    # Send goal position to the arm
+    # 將目標位置傳送給手臂
     self.bus.sync_write("Goal_Position", goal_pos)
 
     return action

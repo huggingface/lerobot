@@ -60,7 +60,7 @@ LeTeleop 會**為你自動啟動 CloudXR 執行期（auto-launches the CloudXR r
 EULA 的初始化：
 
 ```bash
-python -m isaacteleop.cloudxr --accept-eula   # one-time: accept the CloudXR EULA
+python -m isaacteleop.cloudxr --accept-eula   # 只需執行一次：接受 CloudXR EULA
 ```
 
 之後，`connect()` 會以非互動方式（non-interactively）啟動執行期（runtime）。啟動時**會阻塞約 30 秒**，
@@ -98,7 +98,7 @@ teleop_device.connect()
 try:
     while True:
         action = teleop_device.get_action()
-        # ... drive the robot ...
+        # ……操控機器人……
 finally:
     teleop_device.disconnect()
 ```
@@ -316,9 +316,9 @@ clutch 已經產生絕對的基座座標系姿態（absolute base‑frame pose�
   編碼為 rotvec 目標，並把 closedness 反轉（inverts）為馬達夾爪目標（motor gripper target）：
 
   ```python
-  action["ee.x"], action["ee.y"], action["ee.z"] = ee_pose[:3]   # absolute, base frame [m]
-  action["ee.wx"], action["ee.wy"], action["ee.wz"] = orient_rotvec  # orientation target (rotvec)
-  action["ee.gripper_pos"] = (1 - closedness) * 100   # motor units; SO-101 calibrates 100 = open
+  action["ee.x"], action["ee.y"], action["ee.z"] = ee_pose[:3]   # 絕對值，基座座標系 [m]
+  action["ee.wx"], action["ee.wy"], action["ee.wz"] = orient_rotvec  # 姿態目標（rotvec）
+  action["ee.gripper_pos"] = (1 - closedness) * 100   # 馬達單位；SO-101 校正後 100 = 張開
   ```
 
   夾爪極性（gripper polarity，`100 = 開，0 = 閉`）是來源中的硬體校正慣例，若夾爪在應該關閉時開啟，請在該處翻轉（flip）它。
