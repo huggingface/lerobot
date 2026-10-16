@@ -520,7 +520,9 @@ def create_lerobot_dataset_card(
 
     Keyword arguments are used to replace values in the card template.
     Note: If specified, `license` must be a valid license identifier from
-    https://huggingface.co/docs/hub/repositories-licenses.
+    https://huggingface.co/docs/hub/repositories-licenses. For derived
+    datasets, `source_datasets` may be passed to record the dataset(s) the
+    data originates from in the card metadata.
 
     Args:
         tags (list | None): A list of tags to add to the dataset card.
@@ -541,6 +543,7 @@ def create_lerobot_dataset_card(
         kwargs = {**kwargs, "dataset_structure": dataset_structure}
     card_data = DatasetCardData(
         license=kwargs.get("license"),
+        source_datasets=kwargs.get("source_datasets"),
         tags=card_tags,
         task_categories=["robotics"],
         configs=[

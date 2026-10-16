@@ -49,6 +49,17 @@ from .video_utils import StreamingVideoEncoder
 logger = logging.getLogger(__name__)
 
 
+class _Unset:
+    """Sentinel type marking a `push_to_hub` argument that was not passed explicitly."""
+
+    def __repr__(self) -> str:
+        return "<unset>"
+
+
+_UNSET = _Unset()
+DEFAULT_LICENSE = "apache-2.0"
+
+
 class LeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -648,7 +659,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self,
         branch: str | None = None,
         tags: list | None = None,
-        license: str | None = "apache-2.0",
+        license: str | None | _Unset = _UNSET,
         tag_version: bool = True,
         push_videos: bool = True,
         private: bool | None = None,
@@ -666,7 +677,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             branch: Optional branch to push to. Created from the current
                 revision if it does not exist.
             tags: Optional list of tags for the dataset card.
-            license: License identifier for the dataset card.
+            license: License identifier for the dataset card. Defaults to
+                ``"apache-2.0"``; when the caller does not pass it explicitly,
+                a warning is logged so the declared license can be checked
+                against the actual license of the data (which matters for
+                conversions of third-party datasets).
             tag_version: If ``True``, create a Git tag for the current codebase
                 version.
             push_videos: If ``False``, skip uploading the ``videos/`` directory.
@@ -676,12 +691,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
             upload_large_folder: If ``True``, use ``upload_large_folder`` instead
                 of ``upload_folder`` for very large datasets.
             **card_kwargs: Additional keyword arguments forwarded to dataset card
-                creation.
+                creation. For derived datasets, pass ``source_datasets`` (a list
+                of dataset identifiers) to record the origin in the card metadata.
         """
         if self.meta.storage_format != DEFAULT_STORAGE_FORMAT:
             raise NotImplementedError(
                 f"push_to_hub is not supported for storage_format={self.meta.storage_format!r}: "
                 "the data files are not managed by LeRobotDataset."
+            )
+        if isinstance(license, _Unset):
+            license = DEFAULT_LICENSE
+            logger.warning(
+                "No license was passed to push_to_hub(), so the dataset card will declare the "
+                f"default license '{DEFAULT_LICENSE}'. Check that this matches the actual license "
+                "of the data — conversions of third-party datasets (e.g. CC BY) must keep their "
+                "attribution and change-notice terms. Pass license= explicitly to confirm or change "
+                "it, and consider source_datasets=[...] to link the original dataset."
             )
         ignore_patterns = ["images/"]
         if not push_videos:
