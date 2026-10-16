@@ -41,6 +41,7 @@ else:
     register_to_config = lambda f: f  # noqa: E731
     Attention = FeedForward = TimestepEmbedding = Timesteps = None
 
+from ..common.flow_matching import FlowConvention, euler_integrate, make_flow_matching_inputs
 from .configuration_vla_jepa import VLAJEPAConfig
 
 
@@ -298,8 +299,9 @@ class VLAJEPAActionHead(nn.Module):
     ) -> torch.Tensor:
         noise = torch.randn_like(actions)
         t = self.sample_time(actions.shape[0], actions.device, actions.dtype)
-        noisy_actions = (1 - t[:, None, None]) * noise + t[:, None, None] * actions
-        velocity = actions - noise
+        noisy_actions, velocity, _ = make_flow_matching_inputs(
+            actions, noise, t, convention=FlowConvention.NOISE_AT_ZERO
+        )
         t_discretized = (t * self.config.action_num_timestep_buckets).long()
 
         hidden_states = self._build_inputs(noisy_actions, state, t_discretized)
@@ -329,26 +331,30 @@ class VLAJEPAActionHead(nn.Module):
         state: torch.Tensor | None = None,
     ) -> torch.Tensor:
         batch_size = conditioning_tokens.shape[0]
-        actions = torch.randn(
+        noise = torch.randn(
             batch_size,
             self.action_horizon,
             self.config.action_dim,
             dtype=conditioning_tokens.dtype,
             device=conditioning_tokens.device,
         )
-        dt = 1.0 / max(self.num_inference_timesteps, 1)
-        for step in range(self.num_inference_timesteps):
-            t_cont = step / float(max(self.num_inference_timesteps, 1))
-            t_value = int(t_cont * self.config.action_num_timestep_buckets)
-            timesteps = torch.full(
-                (batch_size,), t_value, device=conditioning_tokens.device, dtype=torch.long
-            )
-            hidden_states = self._build_inputs(actions, state, timesteps)
+        num_steps = self.num_inference_timesteps
+
+        def denoise_fn(x_t: torch.Tensor, _time: torch.Tensor, step: int) -> torch.Tensor:
+            t_value = int(step / float(num_steps) * self.config.action_num_timestep_buckets)
+            timesteps = torch.full((batch_size,), t_value, device=x_t.device, dtype=torch.long)
+            hidden_states = self._build_inputs(x_t, state, timesteps)
             pred = self.model(
                 hidden_states=hidden_states,
                 encoder_hidden_states=conditioning_tokens,
                 timestep=timesteps,
             )
-            pred_velocity = self.action_decoder(pred[:, -self.action_horizon :])
-            actions = actions + dt * pred_velocity
-        return actions
+            return self.action_decoder(pred[:, -self.action_horizon :])
+
+        return euler_integrate(
+            denoise_fn,
+            noise,
+            num_steps,
+            convention=FlowConvention.NOISE_AT_ZERO,
+            step_aware=True,
+        )
