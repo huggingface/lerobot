@@ -203,6 +203,7 @@ def create_camera_instance(cam_meta: dict[str, Any], *, warmup_s: int = 1) -> di
             orbbec_config = OrbbecCameraConfig(
                 serial_number_or_name=cam_id,
                 color_mode=ColorMode.RGB,
+                warmup_s=warmup_s,
             )
             instance = OrbbecCamera(orbbec_config)
         else:

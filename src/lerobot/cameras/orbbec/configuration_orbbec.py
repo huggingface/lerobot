@@ -1,4 +1,4 @@
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,9 +23,8 @@ class OrbbecCameraConfig(CameraConfig):
     """Configuration class for Orbbec cameras accessed through pyorbbecsdk.
 
     This class provides configuration options for Orbbec cameras, identifying the
-    device via its serial number or a unique human-readable name. This first version
-    is color-only: depth capture is intentionally not implemented so LeRobot dataset
-    image features keep the usual RGB shape.
+    device via its serial number or a unique human-readable name, with optional depth
+    sensing. When both streams are enabled, depth is aligned to the color stream.
 
     Example configurations for an Orbbec Gemini 335:
     ```python
@@ -34,6 +33,7 @@ class OrbbecCameraConfig(CameraConfig):
     OrbbecCameraConfig("CP1234567890", 60, 640, 480)  # 640x480 @ 60FPS
 
     # Advanced configurations
+    OrbbecCameraConfig("CP1234567890", 30, 640, 480, use_depth=True)  # With depth sensing
     OrbbecCameraConfig("CP1234567890", 30, 640, 480, rotation=Cv2Rotation.ROTATE_90)  # With 90° rotation
     ```
 
@@ -43,24 +43,33 @@ class OrbbecCameraConfig(CameraConfig):
         height: Requested frame height in pixels for the color stream.
         serial_number_or_name: Unique serial number or human-readable name to identify the camera.
         color_mode: Color mode for image output (RGB or BGR). Defaults to RGB.
+        use_rgb: Whether to enable the color stream. Defaults to True.
+        use_depth: Whether to enable depth stream. Defaults to False.
         rotation: Image rotation setting (0°, 90°, 180°, or 270°). Defaults to no rotation.
         warmup_s: Time reading frames before returning from connect (in seconds).
 
     Note:
         - Either the name or the serial number must be specified.
         - When identifying a camera by name, ensure only one camera with that name is connected.
+        - At least one of `use_rgb` or `use_depth` must be enabled.
+        - Depth stream configuration (if enabled) will use the same FPS as the color stream.
         - The actual resolution and FPS may be adjusted by the camera to the nearest supported mode.
         - For `fps`, `width` and `height`, either all of them need to be set, or none of them.
     """
 
     serial_number_or_name: str
     color_mode: ColorMode = ColorMode.RGB
+    use_rgb: bool = True
+    use_depth: bool = False
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
         self.rotation = Cv2Rotation(self.rotation)
+
+        if not self.use_rgb and not self.use_depth:
+            raise ValueError("At least one of `use_rgb` or `use_depth` must be enabled.")
 
         values = (self.fps, self.width, self.height)
         if any(v is not None for v in values) and any(v is None for v in values):
