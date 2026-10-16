@@ -710,7 +710,7 @@ class SARMRewardModel(PreTrainedRewardModel):
         return {
             "stage_loss": stage_loss,
             "subtask_loss": subtask_loss,
-            "total_loss": stage_loss + subtask_loss,
+            "total_loss": self.config.stage_loss_weight * stage_loss + subtask_loss,
         }
 
     def forward(self, batch):
