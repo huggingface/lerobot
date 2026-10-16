@@ -10,7 +10,7 @@
 
 ## 訓練 SmolVLA[[training-smolvla]]
 
-本節將示範如何使用 PEFT，在 libero 資料集上訓練預訓練的 SmolVLA 策略。
+本節將示範如何使用 PEFT，在 libero 資料集上訓練預訓練的 SmolVLA 策略（policy）。
 為了簡潔，我們只在 `libero_spatial` 子集上訓練，並以 `lerobot/smolvla_base` 作為
 要進行參數高效微調（fine-tune）的模型：
 
@@ -43,7 +43,7 @@ lerobot-train \
 歡迎提出 issue。
 
 預設情況下，PEFT 會以 SmolVLA 中 LM expert 的 `q_proj` 與 `v_proj` 層為目標，同時也會以
-狀態與動作的投影矩陣為目標，因為它們最可能與任務相關。如果你需要以其他層為目標，
+狀態（state）與動作（action）的投影矩陣為目標，因為它們最可能與任務相關。如果你需要以其他層為目標，
 可以使用 `--peft.target_modules` 指定。至於支援哪些輸入，請參閱對應 PEFT 方法的
 文件（例如 [LoRA 的 target_modules 說明](https://huggingface.co/docs/peft/main/en/package_reference/lora#peft.LoraConfig.target_modules)）。
 通常支援後綴清單或正規表示式。例如，若要改以 `lm_expert` 的 MLP 為目標，而不是

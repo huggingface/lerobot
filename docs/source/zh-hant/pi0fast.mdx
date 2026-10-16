@@ -80,7 +80,7 @@ lerobot-train-tokenizer \
 
 ## 使用方式[[usage]]
 
-若要在 LeRobot 中使用 π₀-FAST，請將策略（policy）類型指定為：
+若要在 LeRobot 中使用 π₀-FAST，請將策略類型（policy type）指定為：
 
 ```python
 policy.type=pi0_fast
@@ -149,7 +149,7 @@ actions = policy.predict_action_chunk(batch)
 - **視覺編碼器**：用於理解影像的 SigLIP 視覺塔（vision tower）
 - **語言模型**：Gemma 2B，負責處理語言指令並預測動作 token
 
-模型以影像、文字指令與機器人狀態作為輸入，並輸出離散的 FAST token，再將它們解碼回連續的動作。
+模型以影像、文字指令與機器人狀態（state）作為輸入，並輸出離散的 FAST token，再將它們解碼回連續的動作。
 
 ## 設定選項[[configuration-options]]
 

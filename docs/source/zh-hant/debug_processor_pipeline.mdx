@@ -215,8 +215,8 @@ for i, intermediate in enumerate(processor.step_through(data)):
 
 在除錯工作階段中，你可以：
 
-- 檢查 `intermediate[TransitionKey.OBSERVATION]`，查看觀測資料
-- 檢查 `intermediate[TransitionKey.ACTION]`，查看動作的轉換結果
+- 檢查 `intermediate[TransitionKey.OBSERVATION]`，查看觀測資料（observation data）
+- 檢查 `intermediate[TransitionKey.ACTION]`，查看動作（action）的轉換結果
 - 檢查 transition 的任何部分，了解每個步驟的作用
 
 逐步除錯非常適合用來理解*資料*的轉換，那資料的*結構*呢？hook 與逐步除錯能幫你除錯執行期的行為，但你也需要確保管線產出的資料格式符合下游元件的預期。這就是特徵契約（feature contract）驗證派上用場的地方。

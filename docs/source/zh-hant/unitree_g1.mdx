@@ -6,7 +6,7 @@
   style={{ width: "100%" }}
 />
 
-LeRobot 現在支援 Unitree G1 人形機器人！你可以進行遙操作、訓練移動操作（locomanipulation）策略、在模擬中測試等。29 與 23 自由度（DoF）兩種版本都有支援。
+LeRobot 現在支援 Unitree G1 人形機器人！你可以進行遙操作、訓練移動操作（locomanipulation）策略（policy）、在模擬中測試等。29 與 23 自由度（DoF）兩種版本都有支援。
 
 ---
 
@@ -307,7 +307,7 @@ lerobot-rollout \
 
 ## 第 5 部分：SONIC 全身控制（latent token 策略）[[part-5-sonic-whole-body-control-latent-token-policies]]
 
-LeRobot 現在將 NVIDIA [SONIC](https://nvlabs.github.io/GEAR-SONIC/) 全身控制部署架構中的**解碼器**部分，移植為 `SonicWholeBodyController`。策略不再直接命令各個關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將這個 token 與近期的本體感覺（proprioception）歷史，對應成一個殘差動作，經過縮放後加到站立姿態上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
+LeRobot 現在將 NVIDIA [SONIC](https://nvlabs.github.io/GEAR-SONIC/) 全身控制部署架構中的**解碼器**部分，移植為 `SonicWholeBodyController`。策略不再直接命令各個關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將這個 token 與近期的本體感覺（proprioception）歷史，對應成一個殘差動作（action），經過縮放後加到站立姿態上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
 
 控制器會從 [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder) 載入 ONNX 解碼器與所有部署常數（PD 增益、`default_angles`、`action_scale` 以及中性 token）。這個儲存庫也提供蒸餾過的低延遲解碼器，可透過控制器的 `policy_type="low_latency"` 引數選用（預設為 `"default"`）。
 
@@ -377,7 +377,7 @@ python -m lerobot.async_inference.robot_client \
 
 - `--policy_device` 是*伺服器*載入策略時使用的裝置，用戶端會在交握時傳送這項資訊。
 - `--actions_per_chunk` 不得超過檢查點的區塊大小（`nepyope/sonic_walk` 為 50）。
-- 使用 `SonicWholeBodyController` 時，觀測狀態是 64 維的 token 回傳值，而不是 29 個關節位置，因此檢查點必須以同樣的狀態訓練。
+- 使用 `SonicWholeBodyController` 時，觀測狀態（observation state）是 64 維的 token 回傳值，而不是 29 個關節位置，因此檢查點必須以同樣的狀態訓練。
 
 連線時，機器人會先讓每個關節平順地移動到解碼器的 `default_angles`，控制器才接手，因此最初的策略命令不會從連線時的姿態突然跳動。
 

@@ -186,7 +186,7 @@ lerobot-record \
 
 ##### 只使用需要的部位[[use-the-relevant-parts]]
 
-根據我們的初步測試，當只有部分關節在動時仍錄製**所有**關節，可能會讓某些策略的模型品質下降。
+根據我們的初步測試，當只有部分關節在動時仍錄製**所有**關節，可能會讓某些策略（policy）的模型品質下降。
 為了避免這種情況，可以使用以下方式，將特定部位排除在錄製與重播之外：
 
 ```bash
@@ -194,7 +194,7 @@ lerobot-record \
 ```
 
 其中 `<part>` 為以下其中之一：`mobile_base`、`l_arm`、`r_arm`、`neck`、`antennas`。
-它決定對應的部位是否會錄製在觀測中。未設定時為 True。
+它決定對應的部位是否會錄製在觀測（observation）中。未設定時為 True。
 
 預設情況下，**所有部位都會被錄製**。
 
@@ -205,7 +205,7 @@ lerobot-record \
 ```
 
 其中 `<part>` 為以下其中之一：`mobile_base`、`l_arm`、`r_arm`、`neck`、`antennas`。
-決定對應的部位是否會錄製在動作中。未設定時為 True。
+決定對應的部位是否會錄製在動作（action）中。未設定時為 True。
 
 > **重要：** 在同一個工作階段中，機器人與遙操作器兩邊**啟用的部位必須一致**。
 > 例如，如果機器人以 `--robot.with_mobile_base=false` 執行，遙操作器也必須以 `--teleoperator.with_mobile_base=false` 停用相同的部位。

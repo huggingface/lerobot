@@ -1,6 +1,6 @@
 # FLUX 3 Action[[flux-3-action]]
 
-FLUX 3 Action 根據相機觀測、狀態與任務指令預測機器人動作。凍結的
+FLUX 3 Action 根據相機觀測（observation）、狀態（state）與任務指令預測機器人動作（action）。凍結的
 影片 VAE 與文字編碼器的輸出會送入擴散 Transformer（diffusion transformer），由它預測影片的潛在表示（latent）與動作區塊（action chunk）；
 推論時只會回傳動作。LeRobot 支援推論與 PEFT：以 LoRA 調整主幹網路（trunk），
 同時完整訓練機器人的動作頭與條件頭。
@@ -13,7 +13,7 @@ FLUX 3 Action 根據相機觀測、狀態與任務指令預測機器人動作。
 
 ## 安裝[[installation]]
 
-在 LeRobot 的原始碼目錄中，安裝訓練、策略、PEFT 與 EMA 相依套件：
+在 LeRobot 的原始碼目錄中，安裝訓練、策略（policy）、PEFT 與 EMA 相依套件：
 
 ```bash
 pip install -e ".[training,flux3,peft,diffusion]"

@@ -1,7 +1,7 @@
 # LeIsaac × LeRobot EnvHub[[leisaac-lerobot-envhub]]
 
 LeRobot EnvHub 現已支援透過 LeIsaac 進行**模擬環境中的模仿學習**。
-啟動日常的操作任務、遙操作機器人、收集示範、推送到 Hub，並在 LeRobot 中訓練策略，全部都在同一個流程中完成。
+啟動日常的操作任務、遙操作機器人、收集示範、推送到 Hub，並在 LeRobot 中訓練策略（policy），全部都在同一個流程中完成。
 
 [LeIsaac](https://github.com/LightwheelAI/leisaac) 整合了 IsaacLab 與 SO101 主臂／從臂的配置，提供以下功能：
 
@@ -63,7 +63,7 @@ pip install numpy==1.26.0
 
 ## 使用範例[[usage-example]]
 
-EnvHub 以統一的介面提供所有 LeIsaac 支援的任務。以下範例會載入 `so101_pick_orange`，示範隨機動作的 rollout 與互動式遙操作。
+EnvHub 以統一的介面提供所有 LeIsaac 支援的任務。以下範例會載入 `so101_pick_orange`，示範隨機動作（action）的 rollout 與互動式遙操作。
 
 ### 隨機動作[[random-action]]
 

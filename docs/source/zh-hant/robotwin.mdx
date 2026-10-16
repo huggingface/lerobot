@@ -1,6 +1,6 @@
 # RoboTwin 2.0[[robotwin-20]]
 
-RoboTwin 2.0 是建構在 SAPIEN 物理引擎上的**大規模雙臂操作基準測試**。它為雙臂（bimanual）機器人策略提供一套標準化的評估方式，涵蓋 50 項任務（以上游 `main` 分支為準），並具備強大的領域隨機化（domain randomization）：雜物、光照、背景、桌面高度與語言指令。
+RoboTwin 2.0 是建構在 SAPIEN 物理引擎上的**大規模雙臂操作基準測試**。它為雙臂（bimanual）機器人策略（policy）提供一套標準化的評估方式，涵蓋 50 項任務（以上游 `main` 分支為準），並具備強大的領域隨機化（domain randomization）：雜物、光照、背景、桌面高度與語言指令。
 
 - 論文：[RoboTwin 2.0: A Scalable Data Generator and Benchmark with Strong Domain Randomization for Robust Bimanual Robotic Manipulation](https://arxiv.org/abs/2506.18088)
 - GitHub：[RoboTwin-Platform/RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin)
@@ -11,15 +11,15 @@ RoboTwin 2.0 是建構在 SAPIEN 物理引擎上的**大規模雙臂操作基準
 
 ## 概覽[[overview]]
 
-| 屬性     | 值                                                      |
-| -------- | ------------------------------------------------------- |
-| 任務     | 50 項雙臂操作任務                                       |
-| 機器人   | Aloha-AgileX 雙臂（14 自由度，每臂 7 個）               |
-| 動作空間 | 14 維關節空間，連續值範圍 `[-1, 1]`                     |
-| 相機     | `head_camera`、`left_camera`、`right_camera`            |
-| 模擬器   | SAPIEN（不是 MuJoCo）                                   |
-| 評估方式 | 每個任務 100 個回合（episode），50 個 demo_clean 示範   |
-| 評估設定 | **簡單**（`demo_clean`）與**困難**（`demo_randomized`） |
+| 屬性                     | 值                                                      |
+| ------------------------ | ------------------------------------------------------- |
+| 任務                     | 50 項雙臂操作任務                                       |
+| 機器人                   | Aloha-AgileX 雙臂（14 自由度，每臂 7 個）               |
+| 動作空間（action space） | 14 維關節空間，連續值範圍 `[-1, 1]`                     |
+| 相機                     | `head_camera`、`left_camera`、`right_camera`            |
+| 模擬器                   | SAPIEN（不是 MuJoCo）                                   |
+| 評估方式                 | 每個任務 100 個回合（episode），50 個 demo_clean 示範   |
+| 評估設定                 | **簡單**（`demo_clean`）與**困難**（`demo_randomized`） |
 
 ## 可用任務[[available-tasks]]
 
@@ -56,7 +56,7 @@ RoboTwin 2.0 資料集以 **LeRobot v3.0 格式**發布在 Hugging Face Hub 上�
 lerobot/robotwin_unified
 ```
 
-它包含全部 50 項任務、超過 100,000 條預先收集的軌跡（79.6 GB，Apache 2.0 授權）。不需要轉換格式——它已經是正確的 LeRobot v3.0 結構，包含影片觀測與動作標籤。
+它包含全部 50 項任務、超過 100,000 條預先收集的軌跡（79.6 GB，Apache 2.0 授權）。不需要轉換格式——它已經是正確的 LeRobot v3.0 結構，包含影片觀測（observation）與動作標籤。
 
 你可以直接使用 HF Datasets 函式庫載入：
 
@@ -123,7 +123,7 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 ### 建議：標準評估[[standard-evaluation-recommended]]
 
-依照官方的評估方式，在單一任務上以 100 個回合（episode）評估策略（policy）：
+依照官方的評估方式，在單一任務上以 100 個回合（episode）評估策略：
 
 ```bash
 lerobot-eval \

@@ -158,23 +158,23 @@ policy_action: torch.Tensor = torch.tensor([[0.2, 0.1, 0.8]])  # 模型輸出張
 
 LeRobot 在 `lerobot.processor.converters` 中提供了轉換函式，用來銜接不同的資料格式。這些函式負責在機器人硬體的資料結構、策略模型的格式，以及在處理器管線中流動的內部 `EnvTransition` 表示之間進行轉換。
 
-| 類別                 | 函式                          | 說明                        |
-| -------------------- | ----------------------------- | --------------------------- |
-| **機器人硬體轉換器** | `robot_action_to_transition`  | 機器人 dict → EnvTransition |
-|                      | `observation_to_transition`   | 機器人觀測 → EnvTransition  |
-|                      | `transition_to_robot_action`  | EnvTransition → 機器人 dict |
-| **策略／訓練轉換器** | `batch_to_transition`         | 批次 dict → EnvTransition   |
-|                      | `transition_to_batch`         | EnvTransition → 批次 dict   |
-|                      | `policy_action_to_transition` | 策略張量 → EnvTransition    |
-|                      | `transition_to_policy_action` | EnvTransition → 策略張量    |
-| **工具函式**         | `create_transition`           | 以預設值建立 transition     |
-|                      | `identity_transition`         | 直接傳遞、不做轉換的轉換器  |
+| 類別                 | 函式                          | 說明                                      |
+| -------------------- | ----------------------------- | ----------------------------------------- |
+| **機器人硬體轉換器** | `robot_action_to_transition`  | 機器人 dict → EnvTransition               |
+|                      | `observation_to_transition`   | 機器人觀測（observation） → EnvTransition |
+|                      | `transition_to_robot_action`  | EnvTransition → 機器人 dict               |
+| **策略／訓練轉換器** | `batch_to_transition`         | 批次 dict → EnvTransition                 |
+|                      | `transition_to_batch`         | EnvTransition → 批次 dict                 |
+|                      | `policy_action_to_transition` | 策略張量 → EnvTransition                  |
+|                      | `transition_to_policy_action` | EnvTransition → 策略張量                  |
+| **工具函式**         | `create_transition`           | 以預設值建立 transition                   |
+|                      | `identity_transition`         | 直接傳遞、不做轉換的轉換器                |
 
 關鍵在於：**機器人硬體轉換器**處理的是個別數值與字典，而**策略／訓練轉換器**處理的是批次張量與模型輸出。轉換函式會自動處理這些結構上的差異，讓你的處理器步驟能專注在核心的轉換上，不必擔心資料格式是否相容。
 
 ## 處理器範例[[processor-examples]]
 
-以下範例展示了策略（policy）訓練與推論時實際使用的處理器設定。
+以下範例展示了策略訓練與推論時實際使用的處理器設定。
 
 以下是用於策略訓練與推論的處理器範例：
 

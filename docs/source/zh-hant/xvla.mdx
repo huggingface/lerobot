@@ -2,7 +2,7 @@
 
 ## 概覽[[overview]]
 
-多年來，機器人學一直希望打造出能依循人類自然語言指令、在多種環境與具身形態（embodiment）上靈巧操作的代理（agent）。大型語言模型（LLM）與視覺語言模型（VLM）近期的突破指出了一條可行的路：將這些基礎模型（foundation model）的架構延伸到具身控制（embodied control），讓它們以動作為依歸。視覺-語言-動作（Vision-Language-Action，VLA）模型因此興起，期望單一的通用模型能同時具備廣泛的語義理解與穩健的操作技能。
+多年來，機器人學一直希望打造出能依循人類自然語言指令、在多種環境與具身形態（embodiment）上靈巧操作的代理。大型語言模型（LLM）與視覺語言模型（VLM）近期的突破指出了一條可行的路：將這些基礎模型（foundation model）的架構延伸到具身控制（embodied control），讓它們以動作為依歸。視覺-語言-動作（Vision-Language-Action，VLA）模型因此興起，期望單一的通用模型能同時具備廣泛的語義理解與穩健的操作技能。
 
 然而，訓練這類模型並不容易。機器人資料分散在不同的平台、感測器、具身形態與收集流程之間，異質性無所不在：不同的機械臂配置、不同的動作空間、不同的相機設定、不同的視覺領域，以及不同的任務分布。這些不一致造成了嚴重的分布偏移（distribution shift），使預訓練不穩定，適應新環境的效果也不可靠。
 
@@ -262,7 +262,7 @@ lerobot-train \
 domain_id = 3
 ```
 
-domain_id 會由前處理管線中的 `XVLAAddDomainIdProcessorStep` 自動加入觀測中。
+domain_id 會由前處理管線中的 `XVLAAddDomainIdProcessorStep` 自動加入觀測（observation）中。
 
 `lerobot/xvla-base` 模型已在以下領域 ID 上訓練過。建議選擇與你的機器人或配置最相近的一個：
 

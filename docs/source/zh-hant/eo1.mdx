@@ -1,10 +1,10 @@
 # EO-1[[eo-1]]
 
-EO-1 是一個**用於機器人控制的視覺-語言-動作策略**。LeRobot 的實作將 EO-1 整合進標準的 LeRobot 訓練、評估與處理器（processor）介面。
+EO-1 是一個**用於機器人控制的視覺-語言-動作策略**（vision-language-action policy）。LeRobot 的實作將 EO-1 整合進標準的 LeRobot 訓練、評估與處理器（processor）介面。
 
 ## 模型概覽[[model-overview]]
 
-EO-1 使用 Qwen2.5-VL 骨幹網路（backbone）進行視覺與語言理解，並加上一個連續的流匹配（flow matching）動作頭來控制機器人。這個策略會將每個機器人控制樣本整理成一段多模態對話：相機影像傳入 Qwen2.5-VL，機器人狀態以 EO-1 的狀態 token 表示，未來的動作區塊（action chunk）則以 EO-1 的動作 token 表示。
+EO-1 使用 Qwen2.5-VL 骨幹網路（backbone）進行視覺與語言理解，並加上一個連續的流匹配（flow matching）動作頭來控制機器人。這個策略會將每個機器人控制樣本整理成一段多模態對話：相機影像傳入 Qwen2.5-VL，機器人狀態（state）以 EO-1 的狀態 token 表示，未來的動作區塊（action chunk）則以 EO-1 的動作 token 表示。
 
 <img
   src="https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/eo_pipeline.png"
@@ -45,7 +45,7 @@ EO-1 可以透過 `policy.attn_implementation=sdpa` 使用標準的 PyTorch scal
 
 EO-1 需要的 LeRobot 資料集須包含：
 
-- 至少一個視覺觀測，例如 `observation.images.image`
+- 至少一個視覺觀測（observation），例如 `observation.images.image`
 - `observation.state`
 - `action`
 - 透過資料集的 `task` 欄位提供的語言任務指令

@@ -1,7 +1,7 @@
 # 非同步推論[[asynchronous-inference]]
 
-我們透過 [SmolVLA](https://huggingface.co/papers/2506.01844) 推出了一種在真實世界機器人上執行推論的新方式：**將動作預測與動作執行解耦**。
-本教學將示範如何以微調過的 SmolVLA，以及 LeRobot 支援的所有策略，使用非同步推論（_async inference_）。
+我們透過 [SmolVLA](https://huggingface.co/papers/2506.01844) 推出了一種在真實世界機器人上執行推論的新方式：**將動作預測（action prediction）與動作執行解耦**。
+本教學將示範如何以微調過的 SmolVLA，以及 LeRobot 支援的所有策略（policy），使用非同步推論（_async inference_）。
 **用 LeRobot 支援的所有策略試試非同步推論**吧！
 
 **你將學到：**
@@ -60,7 +60,7 @@ python -m lerobot.async_inference.robot_client \
 - `SERVER`：策略伺服器的位址與連接埠
 - `ROBOT`：要連接的機器人類型、連接埠，以及機器人在本機的 `id`
 - `POLICY`：要執行的策略類型，以及伺服器上要執行的檢查點（checkpoint）的模型名稱／路徑。你也需要指定伺服器要使用哪個裝置，以及一次輸出多少個動作（上限為該策略的最大動作數）。
-- `CLIENT`：傳送新的觀測給伺服器之前的區塊大小閾值，以及在重疊部分彙整動作的函式。你也可以選擇在執行時將佇列大小視覺化，協助你調校 `CLIENT` 的參數。
+- `CLIENT`：傳送新的觀測（observation）給伺服器之前的區塊大小閾值，以及在重疊部分彙整動作的函式。你也可以選擇在執行時將佇列大小視覺化，協助你調校 `CLIENT` 的參數。
 
 要特別注意的是：
 

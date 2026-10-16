@@ -1,6 +1,6 @@
 # VLA-JEPA[[vla-jepa]]
 
-這是 **VLA-JEPA** 的 LeRobot 移植版。VLA-JEPA 是一個視覺-語言-動作模型，結合了 Qwen3-VL 語言骨幹網路（backbone）、自監督的影片世界模型（world model，V-JEPA2），以及採用流匹配（flow matching）的 DiT 動作頭（action head）。
+這是 **VLA-JEPA** 的 LeRobot 移植版。VLA-JEPA 是一個視覺-語言-動作模型（vision-language-action model），結合了 Qwen3-VL 語言骨幹網路（backbone）、自監督的影片世界模型（world model，V-JEPA2），以及採用流匹配（flow matching）的 DiT 動作頭（action head）。
 
 ---
 
@@ -39,7 +39,7 @@ VLA-JEPA 有三個主要元件：
 `action_num_heads` / `action_attention_head_dim` 覆寫。由此可得出兩種寬度：
 
 - DiT 的**內部**寬度為 `heads x head_dim`（`DiT-B` 為 768），由這兩個值推算而來，而不是直接設定；
-- DiT 的**輸出**寬度，以及動作解碼器與狀態編碼器 MLP 的寬度，為
+- DiT 的**輸出**寬度，以及動作解碼器與狀態編碼器（state encoder） MLP 的寬度，為
   `action_hidden_size`（預設 1024）。
 
 因此 `DiT-B` 執行的是寬度 768 的 Transformer，再投影到 1024。兩者彼此獨立。

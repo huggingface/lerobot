@@ -63,7 +63,7 @@ teleop_device = Phone(teleop_config)
 
 ### 步驟 3：執行範例[[step-3-run-an-example]]
 
-執行其中一個範例腳本，即可進行遙操作、錄製資料集、重播資料集或評估策略。
+執行其中一個範例腳本，即可進行遙操作、錄製資料集、重播資料集或評估策略（policy）。
 
 所有腳本都假設你已經設定好機器人（例如 SO-100 從臂），並設定了正確的序列埠。
 
@@ -83,7 +83,7 @@ teleop_device = Phone(teleop_config)
 
 此外，你可以編輯範例中的處理器步驟，自訂對應方式或安全限制。你也可以重新對應輸入（例如改用其他類比輸入），或修改輸入與運動學的步驟，將管線調整為適用於其他機器人（例如 LeKiwi）。更多相關內容，請參閱[機器人與遙操作器的處理器](./processors_robots_teleop)指南。
 
-- 執行這個範例錄製資料集，它會儲存絕對的末端執行器觀測與動作：
+- 執行這個範例錄製資料集，它會儲存絕對的末端執行器觀測（observation）與動作（action）：
 
   ```bash
   cd examples/phone_to_so100
@@ -150,7 +150,7 @@ teleop_device = Phone(teleop_config)
   )
   ```
 
-- `GripperVelocityToJoint` 步驟會根據目前量測到的狀態，將類似速度的夾爪輸入轉換為絕對的夾爪位置。`speed_factor` 是速度要乘上的係數。
+- `GripperVelocityToJoint` 步驟會根據目前量測到的狀態（state），將類似速度的夾爪輸入轉換為絕對的夾爪位置。`speed_factor` 是速度要乘上的係數。
 
   ```python
   GripperVelocityToJoint(speed_factor=20.0)

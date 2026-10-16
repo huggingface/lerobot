@@ -1,7 +1,7 @@
 # MolmoAct2 策略[[molmoact2-policy]]
 
 MolmoAct2 是 LeRobot 對
-[MolmoAct2](https://allenai.org/blog/molmoact2) 的策略（policy）實作，已移植到 LeRobot 的
+[MolmoAct2](https://allenai.org/blog/molmoact2) 的策略實作（policy implementation），已移植到 LeRobot 的
 訓練、評估、檢查點（checkpoint）與資料集介面，讓它更容易搭配
 LeRobot 資料集使用。
 
@@ -31,7 +31,7 @@ expert 的區塊，同時讓 VLM、vision tower、connector 與策略包裝器
 大小。這個路徑已在雙節點、八 GPU 的 GB200 執行上驗證過，但這個
 LeRobot 移植版並未提供原始 MolmoAct2 的 `fsdp_devices`
 模型平行（model parallel）訓練路徑。在單 GPU 的 GB200 上，以兩種實際的提示寬度重播時，
-只產生一個編譯後的動作計算圖，沒有任何 graph break，記憶體峰值與 eager 執行相同，皆為 55.15 GiB，
+只產生一個編譯後的動作計算圖（action graph），沒有任何 graph break，記憶體峰值與 eager 執行相同，皆為 55.15 GiB，
 穩態下也有些許加速。請將這些結果視為
 實作上的檢查，而非可移植的吞吐量或 ETA 宣稱。
 
@@ -208,7 +208,7 @@ accelerate launch \
   [`norm_stats.json`](https://huggingface.co/allenai/MolmoAct2/blob/main/norm_stats.json)。
 - `policy.control_mode`：插入提示中、用來描述動作
   空間的文字，例如 `delta end-effector pose` 或 `absolute joint pose`。
-- `policy.image_keys`：傳給處理器的 LeRobot 影像觀測鍵名，
+- `policy.image_keys`：傳給處理器的 LeRobot 影像觀測鍵名（image observation key），
   順序有意義。
 - `policy.dtype`：Pi0.5 風格的精度切換。`bfloat16` 會對大型 VLM 矩陣使用 bf16
   autocast 與儲存，同時讓完整的 action

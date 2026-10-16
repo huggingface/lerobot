@@ -1,6 +1,6 @@
 # π₀ (Pi0)[[pi0]]
 
-π₀ 是由 Physical Intelligence 開發的**通用機器人控制視覺-語言-動作模型**。LeRobot 的實作改寫自他們開源的 [OpenPI](https://github.com/Physical-Intelligence/openpi) 儲存庫。
+π₀ 是由 Physical Intelligence 開發的**通用機器人控制視覺-語言-動作模型**（vision-language-action model）。LeRobot 的實作改寫自他們開源的 [OpenPI](https://github.com/Physical-Intelligence/openpi) 儲存庫。
 
 ## 模型概覽[[model-overview]]
 
@@ -93,7 +93,7 @@ lerobot-train \
 
 ## 相對動作[[relative-actions]]
 
-π₀ 預設會預測絕對動作。你可以啟用**相對動作**（relative action），讓模型預測相對於目前機器人狀態的偏移量。在某些設定下，這可以提升訓練的穩定性。
+π₀ 預設會預測絕對動作。你可以啟用**相對動作**（relative action），讓模型預測相對於目前機器人狀態（state）的偏移量。在某些設定下，這可以提升訓練的穩定性。
 
 若要使用相對動作，請先透過 CLI，在相對空間中重新計算資料集的統計量：
 

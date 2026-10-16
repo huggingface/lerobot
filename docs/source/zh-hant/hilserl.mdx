@@ -136,11 +136,11 @@ class DatasetConfig:
 
 ### 處理器管線架構[[processor-pipeline-architecture]]
 
-HIL-SERL 使用模組化的處理器管線（processor pipeline）架構，透過一系列可組合的步驟處理機器人的觀測與動作。管線分為兩個主要部分：
+HIL-SERL 使用模組化的處理器管線（processor pipeline）架構，透過一系列可組合的步驟處理機器人的觀測（observation）與動作（action）。管線分為兩個主要部分：
 
 #### 環境處理器管線[[environment-processor-pipeline]]
 
-環境處理器（`env_processor`）負責處理傳入的觀測與環境狀態：
+環境處理器（`env_processor`）負責處理傳入的觀測與環境狀態（state）：
 
 1. **VanillaObservationProcessorStep**：將原始的機器人觀測轉換為標準格式
 2. **JointVelocityProcessorStep**（可選）：將關節速度資訊加入觀測
@@ -605,7 +605,7 @@ observation.images.front: [180, 250, 120, 150]
 
 獎勵分類器（reward classifier）在 HIL-SERL 流程中扮演重要的角色：它能自動分配獎勵，並自動判斷回合（episode）是否成功。獎勵分類器不需要手動定義獎勵函數，也不必每個時間步都仰賴人類回饋，而是學會從視覺觀測中預測成功或失敗。這讓 RL 演算法能根據機器人的相機輸入，取得一致且自動化的獎勵訊號，進而有效率地學習。
 
-本指南說明如何為 LeRobot 的人在迴圈強化學習實作訓練獎勵分類器。獎勵分類器會學習在給定狀態下預測獎勵值，可以在 RL 設定中用來訓練策略（policy）。
+本指南說明如何為 LeRobot 的人在迴圈強化學習實作訓練獎勵分類器。獎勵分類器會學習在給定狀態下預測獎勵值，可以在 RL 設定中用來訓練策略。
 
 **注意**：訓練獎勵分類器是可選的。你可以先用遊戲手把或鍵盤手動標註成功與否，開始第一輪的 RL 實驗。
 

@@ -1,6 +1,6 @@
 # 即時分塊（RTC）[[real-time-chunking-rtc]]
 
-即時分塊（Real-Time Chunking，RTC）讓以流匹配（flow matching）為基礎的大型機器人策略，例如 [Pi0](./pi0)、[Pi0.5](./pi05) 與 [SmolVLA](./smolvla)，即使推論延遲很高，也能產生流暢、連續且反應靈敏的動作。LeRobot 提供原本在推論時進行引導的 guided 模式；對於相容的 Pi05 檢查點（checkpoint），也提供訓練時的動作條件化（action conditioning），搭配低成本的硬前綴（hard prefix）推論。
+即時分塊（Real-Time Chunking，RTC）讓以流匹配（flow matching）為基礎的大型機器人策略（policy），例如 [Pi0](./pi0)、[Pi0.5](./pi05) 與 [SmolVLA](./smolvla)，即使推論延遲很高，也能產生流暢、連續且反應靈敏的動作。LeRobot 提供原本在推論時進行引導的 guided 模式；對於相容的 Pi05 檢查點，也提供訓練時的動作條件化（action conditioning），搭配低成本的硬前綴（hard prefix）推論。
 
 這些策略會一次產生一段未來的動作區塊（chunk，例如一次 50 步），而不是單一動作。
 由於模型很大，產生每個區塊所需的時間，比機器人執行它的時間還要長。

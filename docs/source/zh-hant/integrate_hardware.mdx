@@ -136,13 +136,13 @@ def observation_features(self) -> dict:
 ```
 <!-- prettier-ignore-end -->
 
-在這個例子中，觀測是一個簡單的字典，儲存每個馬達的位置與一張相機影像。
+在這個例子中，觀測（observation）是一個簡單的字典，儲存每個馬達的位置與一張相機影像。
 
 ### `action_features`[[actionfeatures]]
 
 這個屬性描述你的機器人透過 `send_action()` 預期接收的命令。同樣地，鍵名必須符合預期的輸入格式，值則定義每個命令的形狀／型別。
 
-這裡我們直接使用與 `observation_features` 相同的關節本體感覺特徵（`self._motors_ft`）：送出的動作就是每個馬達的目標位置。
+這裡我們直接使用與 `observation_features` 相同的關節本體感覺特徵（`self._motors_ft`）：送出的動作（action）就是每個馬達的目標位置。
 
 <!-- prettier-ignore-start -->
 ```python
@@ -293,7 +293,7 @@ def configure(self) -> None:
 
 ### `get_observation()`[[getobservation]]
 
-從機器人回傳一個感測器數值的字典，通常包括馬達狀態、相機影格、各種感測器等。在 LeRobot 框架中，這些觀測會被送入策略，用來預測接下來要執行的動作。字典的鍵名與結構必須與 `observation_features` 一致。
+從機器人回傳一個感測器數值的字典，通常包括馬達狀態（state）、相機影格、各種感測器等。在 LeRobot 框架中，這些觀測會被送入策略（policy），用來預測接下來要執行的動作。字典的鍵名與結構必須與 `observation_features` 一致。
 
 <!-- prettier-ignore-start -->
 ```python

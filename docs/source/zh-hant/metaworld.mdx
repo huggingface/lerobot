@@ -88,12 +88,12 @@ lerobot-eval \
 
 ### 策略的輸入與輸出[[policy-inputs-and-outputs]]
 
-**觀測：**
+**觀測（observation）：**
 
 - `observation.image`——單一相機視角（`corner2`），480x480 HWC uint8
 - `observation.state`——4 維本體感覺（proprioceptive）狀態（末端執行器位置 + 夾爪）
 
-**動作：**
+**動作（action）：**
 
 - 在 `Box(-1, 1, shape=(4,))` 中連續控制——3D 末端執行器增量 + 1D 夾爪
 

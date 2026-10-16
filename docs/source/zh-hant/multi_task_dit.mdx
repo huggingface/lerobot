@@ -1,6 +1,6 @@
 # 多任務 DiT 策略[[multitask-dit-policy]]
 
-多任務擴散 Transformer（Multitask Diffusion Transformer，DiT）策略（policy）是原始 Diffusion Policy 架構的進化版，利用一個大型 DiT，以文字與視覺為條件進行多任務的機器人學習。這個實作支援以擴散（diffusion）與流匹配（flow matching）兩種目標函數生成動作，讓機器人能依據語言指令執行多樣的操作任務。
+多任務擴散 Transformer（Multitask Diffusion Transformer，DiT）策略（policy）是原始 Diffusion Policy 架構的進化版，利用一個大型 DiT，以文字與視覺為條件進行多任務的機器人學習。這個實作支援以擴散與流匹配（flow matching）兩種目標函數生成動作（action），讓機器人能依據語言指令執行多樣的操作任務。
 
 ## 模型概覽[[model-overview]]
 
@@ -8,7 +8,7 @@
 
 - **CLIP 視覺編碼器**：處理來自多個相機視角的 RGB 影像
 - **CLIP 文字編碼器**：編碼語言任務指令（權重凍結，搭配可學習的投影層）
-- **Diffusion Transformer**：以觀測與語言為條件，預測動作序列
+- **Diffusion Transformer**：以觀測（observation）與語言為條件，預測動作序列
 - **兩種目標函數**：支援以擴散（DDPM/DDIM）與流匹配兩種方式生成動作
 
 這個模型令人振奮之處在於：只要約 4.5 億個參數，就能達到極高的靈巧度，

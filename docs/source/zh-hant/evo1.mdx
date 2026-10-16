@@ -1,10 +1,10 @@
 # EVO1[[evo1]]
 
-EVO1 是一個用於機器人控制的視覺-語言-動作策略，以 InternVL3 骨幹網路（backbone）與連續的流匹配（flow matching）動作頭為核心。這個 LeRobot 整合將 EVO1 提供為標準的策略類型，因此可以透過一般的 LeRobot 資料集、檢查點（checkpoint）與處理器（processor）API 進行訓練與評估。
+EVO1 是一個用於機器人控制的視覺-語言-動作策略（vision-language-action policy），以 InternVL3 骨幹網路（backbone）與連續的流匹配（flow matching）動作頭為核心。這個 LeRobot 整合將 EVO1 提供為標準的策略類型，因此可以透過一般的 LeRobot 資料集、檢查點與處理器API 進行訓練與評估。
 
 ## 模型概覽[[model-overview]]
 
-這個策略以 InternVL3 將一或多張相機影像與語言任務提示（prompt）轉為嵌入向量（embedding），將機器人的狀態／動作向量填補（pad）到固定的最大維度，並以流匹配動作頭預測未來的動作區塊（action chunk）。推論時，策略會取樣一個動作區塊，從中回傳 `n_action_steps` 個動作後，再重新取樣。
+這個策略以 InternVL3 將一或多張相機影像與語言任務提示轉為嵌入向量（embedding），將機器人的狀態（state）／動作向量填補到固定的最大維度，並以流匹配動作頭預測未來的動作區塊（action chunk）。推論時，策略會取樣一個動作區塊，從中回傳 `n_action_steps` 個動作後，再重新取樣。
 
 ### LeRobot 整合涵蓋的範圍[[what-the-lerobot-integration-covers]]
 
@@ -40,7 +40,7 @@ EVO1 使用 Hugging Face `transformers` 原生的 InternVL 實作，因此 `poli
 
 EVO1 需要的 LeRobot 資料集須包含：
 
-- 一到 `policy.max_views` 個視覺觀測，例如 `observation.images.image`
+- 一到 `policy.max_views` 個視覺觀測（observation），例如 `observation.images.image`
 - `observation.state`
 - `action`
 - 資料集 `task` 欄位中的語言任務指令，或以 `policy.task_field` 指定的其他欄位

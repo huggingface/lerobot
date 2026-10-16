@@ -1,6 +1,6 @@
 # TOPReward[[topreward]]
 
-TOPReward 是一個**零樣本（zero-shot）獎勵模型**，它從現成的視覺語言模型（VLM）中取出 token 的對數機率（log-probability），作為機器人的獎勵訊號。給定一段軌跡影片與一段任務指令，它會回傳 VLM 認為該指令成立的對數概似（log-likelihood），完全不需要微調。
+TOPReward 是一個**零樣本獎勵模型**（zero-shot reward model），它從現成的視覺語言模型（VLM）中取出 token 的對數機率（log-probability），作為機器人的獎勵訊號。給定一段軌跡影片與一段任務指令，它會回傳 VLM 認為該指令成立的對數概似（log-likelihood），完全不需要微調。
 
 **論文**：[TOPReward: Token Probabilities as Hidden Zero-Shot Rewards for Robotics](https://arxiv.org/abs/2602.19313)
 **專案**：[topreward.github.io](https://topreward.github.io/webpage/)
@@ -66,7 +66,7 @@ TOPReward 需要：
 
 | 設定欄位                  | 預設值                      | 意義                                           |
 | ------------------------- | --------------------------- | ---------------------------------------------- |
-| `reward_model.image_key`  | `observation.images.top`    | TOPReward 使用的相機觀測                       |
+| `reward_model.image_key`  | `observation.images.top`    | TOPReward 使用的相機觀測（observation）        |
 | `reward_model.task_key`   | `task`                      | 補充資料（complementary data）中任務字串的鍵名 |
 | `reward_model.max_frames` | `16`                        | 每個樣本的影格上限                             |
 | `reward_model.fps`        | `2.0`                       | 傳給 Qwen 影片處理器的中繼資料                 |

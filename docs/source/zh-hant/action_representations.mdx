@@ -77,7 +77,7 @@ action_chunk = [
 
 ### 相對動作（OpenPI / pi0 使用）[[relative-actions-used-by-openpi-pi0]]
 
-區塊中的每個動作，都是相對於**做出預測當下的目前狀態**的偏移量。區塊中的所有動作共用同一個參考點：
+區塊中的每個動作，都是相對於**做出預測當下的目前狀態**（state）的偏移量。區塊中的所有動作共用同一個參考點：
 
 ```
 current_state = [45.0, -30.0, 10.0]
@@ -125,7 +125,7 @@ delta_chunk = [
 
 LeRobot 提供 `RelativeActionsProcessorStep`，可在處理器管線（processor pipeline）中進行絕對動作與相對動作的轉換。pi0、pi0.5 與 pi0_fast 就是透過它支援相對動作。
 
-> **注意：** 所有 pi 模型（pi0、pi0.5、pi0_fast）都會在正規化**之前**套用相對轉換（`relative → normalize`），因此正規化器看到的一律是差量（相對）值。這表示以 `use_relative_actions=true` 訓練時，它們全都**需要相對動作的統計值**。在 pi0_fast 中，`RelativeActionsProcessorStep` 只會修改動作，狀態觀測維持不變，因此 `NormalizerProcessorStep` 仍會在狀態 tokenizer 之前執行，tokenizer 也會如預期收到正規化後的狀態。
+> **注意：** 所有 pi 模型（pi0、pi0.5、pi0_fast）都會在正規化**之前**套用相對轉換（`relative → normalize`），因此正規化器看到的一律是差量（相對）值。這表示以 `use_relative_actions=true` 訓練時，它們全都**需要相對動作的統計值**。在 pi0_fast 中，`RelativeActionsProcessorStep` 只會修改動作，狀態觀測（state observation）維持不變，因此 `NormalizerProcessorStep` 仍會在狀態 tokenizer 之前執行，tokenizer 也會如預期收到正規化後的狀態。
 
 ### 運作方式[[how-it-works]]
 
@@ -168,7 +168,7 @@ lerobot-train \
 
 `relative_exclude_joints` 參數用來指定哪些關節應維持在絕對空間中。例如，夾爪命令通常是二元的（開／關），使用相對編碼也沒有好處。
 
-對於定義了 `action_feature_names` 的策略設定，`make_policy` 會從資料集動作特徵的 `names` 中繼資料填入這份清單。
+對於定義了 `action_feature_names` 的策略設定（policy configuration），`make_policy` 會從資料集動作特徵的 `names` 中繼資料填入這份清單。
 名稱可以是一個扁平的序列，或是所有值都是 list 或 tuple 的字典。
 例如，`{"arm": ["shoulder", "elbow"], "hand": ["gripper"]}` 會變成 `["shoulder", "elbow", "gripper"]`，而不是群組的鍵名。
 群組的插入順序與群組內的順序都會保留，因此請依照動作向量中的順序宣告名稱。

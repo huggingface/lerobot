@@ -1,6 +1,6 @@
 # π₀.₅（Pi05）策略[[-pi05-policy]]
 
-π₀.₅ 是 Physical Intelligence 開發的**具備開放世界泛化能力的視覺-語言-動作模型**。LeRobot 的實作改寫自他們開源的 [OpenPI](https://github.com/Physical-Intelligence/openpi) 儲存庫。
+π₀.₅ 是 Physical Intelligence 開發的**具備開放世界泛化能力的視覺-語言-動作模型**（vision-language-action model）。LeRobot 的實作改寫自他們開源的 [OpenPI](https://github.com/Physical-Intelligence/openpi) 儲存庫。
 
 ## 模型概覽[[model-overview]]
 
@@ -44,7 +44,7 @@
 
 ## 使用方式[[usage]]
 
-若要在 LeRobot 設定中使用 π₀.₅，請將策略類型指定為：
+若要在 LeRobot 設定中使用 π₀.₅，請將策略類型（policy type）指定為：
 
 ```python
 policy.type=pi05
@@ -285,7 +285,7 @@ lerobot-train \
     ...
 ```
 
-`memory_frames` 包含目前的觀測。`memory_stride` 的單位是
+`memory_frames` 包含目前的觀測（observation）。`memory_stride` 的單位是
 **資料集影格**，而不是秒，因此請依資料集的 `fps` 調整：MEM
 以相隔一秒的六個觀測預訓練，對
 30 fps 的資料集（預設）而言是 `memory_stride=30`，但對 10 fps 的資料集（例如
@@ -308,7 +308,7 @@ vision tower 增加任何可學習的參數。最後一個這類層執行完畢�
 --policy.use_proprioceptive_memory=true
 ```
 
-啟用後，每個保留的影格都會加入一個投影後的連續狀態 token，
+啟用後，每個保留的影格都會加入一個投影後的連續狀態（state）token，
 離散化的狀態則會從文字提示中移除，讓狀態只被
 表示一次（MEM 第 III-D 節）。這會改變提示的格式，因此
 請從訓練一開始就啟用，而不是在訓練途中才啟用。視覺記憶與

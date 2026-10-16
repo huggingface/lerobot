@@ -73,7 +73,7 @@ lerobot-eval \
 
 ### 多任務套件評估[[multi-suite-evaluation]]
 
-傳入以逗號分隔的清單，即可一次在多個任務套件上評估策略：
+傳入以逗號分隔的清單，即可一次在多個任務套件上評估策略（policy）：
 
 ```bash
 lerobot-eval \
@@ -86,7 +86,7 @@ lerobot-eval \
 
 ### 控制模式[[control-mode]]
 
-LIBERO 支援兩種控制模式：`relative`（預設）與 `absolute`。不同的 VLA 檢查點（checkpoint）以不同的動作參數化方式訓練，因此請確認模式與你的策略相符：
+LIBERO 支援兩種控制模式：`relative`（預設）與 `absolute`。不同的 VLA 檢查點（checkpoint）以不同的動作參數化（action parameterization）方式訓練，因此請確認模式與你的策略相符：
 
 ```bash
 --env.control_mode=relative   # 或 "absolute"
@@ -95,7 +95,7 @@ LIBERO 支援兩種控制模式：`relative`（預設）與 `absolute`。不同�
 ### 重設效能[[reset-performance]]
 
 LeRobot 預設會保留 LIBERO 的硬重設（hard reset）行為。啟用固定的初始
-狀態後，你可以選擇改用軟重設（soft reset），省去每個回合都重建模擬器
+狀態（state）後，你可以選擇改用軟重設（soft reset），省去每個回合都重建模擬器
 模型與渲染器的步驟：
 
 ```bash
@@ -103,7 +103,7 @@ LeRobot 預設會保留 LIBERO 的硬重設（hard reset）行為。啟用固定
 ```
 
 軟重設比較快，但在環境的穩定步驟之後，結果並不會與硬重設逐位元相同，
-因此相機觀測與策略結果可能會
+因此相機觀測（observation）與策略結果可能會
 略有差異。重現基準測試結果時，請使用硬重設。
 
 ### 策略的輸入與輸出[[policy-inputs-and-outputs]]

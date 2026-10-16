@@ -5,7 +5,7 @@
 - 論文：[VLABench: A Large-Scale Benchmark for Language-Conditioned Robotics Manipulation with Long-Horizon Reasoning](https://arxiv.org/abs/2412.18194)
 - GitHub：[OpenMOSS/VLABench](https://github.com/OpenMOSS/VLABench)
 - 專案網站：[vlabench.github.io](https://vlabench.github.io)
-- 預訓練策略：[`lerobot/smolvla_vlabench`](https://huggingface.co/lerobot/smolvla_vlabench)
+- 預訓練策略（policy）：[`lerobot/smolvla_vlabench`](https://huggingface.co/lerobot/smolvla_vlabench)
 
 <img
   src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/vlabench.png"
@@ -129,14 +129,14 @@ lerobot-eval \
 
 ## 策略的輸入與輸出[[policy-inputs-and-outputs]]
 
-**觀測：**
+**觀測（observation）：**
 
 - `observation.state`——7 維末端執行器狀態（位置 xyz + 歐拉角 xyz + 夾爪）
 - `observation.images.image`——前方相機，480×480 HWC uint8
 - `observation.images.second_image`——第二台相機，480×480 HWC uint8
 - `observation.images.wrist_image`——腕部相機，480×480 HWC uint8
 
-**動作：**
+**動作（action）：**
 
 - 在 `Box(-1, 1, shape=(7,))` 中連續控制——3D 位置 + 3D 歐拉角朝向 + 1D 夾爪。
 

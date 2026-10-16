@@ -1,6 +1,6 @@
 # LaWAM[[lawam]]
 
-`lawam` 是將 [LaWAM](https://github.com/RLinf/LaWAM) 接入 LeRobot 的轉接器（adapter）。LaWAM 是一種潛在世界動作模型（latent world action model），用於能感知動力學的機器人策略。它結合了 Qwen3-VL 骨幹網路（backbone）、潛在動作／世界模型，以及流匹配（flow matching）動作頭，同時提供標準的 LeRobot 策略、訓練與評估介面。
+`lawam` 是將 [LaWAM](https://github.com/RLinf/LaWAM) 接入 LeRobot 的轉接器。LaWAM 是一種潛在世界動作模型（latent world action model），用於能感知動力學的機器人策略（policy）。它結合了 Qwen3-VL 骨幹網路（backbone）、潛在動作／世界模型，以及流匹配（flow matching）動作頭，同時提供標準的 LeRobot 策略、訓練與評估介面。
 
 相關資源：
 
@@ -58,7 +58,7 @@ lerobot-train \
   --policy.repo_id=your_org/lawam_sft
 ```
 
-在建立 LaWAM 的訓練批次之前，轉接器會使用 LeRobot 資料集的統計量，進行動作與狀態的正規化。姿態動作使用 min-max 正規化，而 LIBERO 配方（recipe）會明確將夾爪通道對齊為二元的 `0/1` 值，以符合原生 LaWAM 的訓練契約。如此一來，`-1/+1` 與 `0/1` 兩種資料集慣例都會對應到相同的模型目標。預訓練檢查點保留了預訓練時的 `action_horizon=24` 與 `n_action_steps=24`；LIBERO SFT 配方會將兩者都覆寫為 `8`，同時保留 `chunk_size=50` 作為填補後的 Flow 序列長度。訓練時，LaWAM 的自然時間編碼會使用目前資料集的 FPS，處理器也會儲存這個頻率，作為評估時的備用值。`policy.num_video_frames` 控制觀測影格的時間窗。
+在建立 LaWAM 的訓練批次之前，轉接器會使用 LeRobot 資料集的統計量，進行動作與狀態（state）的正規化。姿態動作使用 min-max 正規化，而 LIBERO 配方（recipe）會明確將夾爪通道對齊為二元的 `0/1` 值，以符合原生 LaWAM 的訓練契約。如此一來，`-1/+1` 與 `0/1` 兩種資料集慣例都會對應到相同的模型目標。預訓練檢查點保留了預訓練時的 `action_horizon=24` 與 `n_action_steps=24`；LIBERO SFT 配方會將兩者都覆寫為 `8`，同時保留 `chunk_size=50` 作為填補後的 Flow 序列長度。訓練時，LaWAM 的自然時間編碼會使用目前資料集的 FPS，處理器也會儲存這個頻率，作為評估時的備用值。`policy.num_video_frames` 控制觀測影格（observation frame）的時間窗。
 
 已發布的 LaWAM 預訓練與 LIBERO SFT 配方不使用隨機影像擴增（image augmentation）。策略處理器只會套用 Qwen 與 LAM 骨幹網路所需的確定性縮放與 ImageNet 正規化。LeRobot 資料集層級的影像轉換，仍可用於另外設計的訓練配方。
 

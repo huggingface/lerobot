@@ -12,7 +12,7 @@ SARM（Stage-Aware Reward Modeling，階段感知獎勵建模）是一個以影�
 
 ## 為什麼需要獎勵模型？[[why-reward-models]]
 
-標準的行為複製（behavior cloning）會一視同仁地對待所有示範影格，但真實世界的機器人資料集往往很雜亂：其中包含猶豫、修正，以及品質參差不齊的軌跡。獎勵模型能解決這個問題：它從示範中學到一個可泛化的**任務進度**（task progress）概念，給定影片影格與任務描述，就能預測機器人距離完成任務還有多遠（0→1）。這個學到的「進度訊號」有多種用途，其中兩個很有潛力的應用是：（1）**加權的模仿學習**（RA-BC），在策略（policy）訓練時給高進度的影格更高的權重；**（2）強化學習（reinforcement learning）**，由獎勵模型提供密集的獎勵，用於線上或離線的策略改進。
+標準的行為複製（behavior cloning）會一視同仁地對待所有示範影格，但真實世界的機器人資料集往往很雜亂：其中包含猶豫、修正，以及品質參差不齊的軌跡。獎勵模型能解決這個問題：它從示範中學到一個可泛化的**任務進度**（task progress）概念，給定影片影格與任務描述，就能預測機器人距離完成任務還有多遠（0→1）。這個學到的「進度訊號」有多種用途，其中兩個很有潛力的應用是：（1）**加權的模仿學習**（RA-BC），在訓練策略（policy）時給高進度的影格更高的權重；**（2）強化學習（reinforcement learning）**，由獎勵模型提供密集的獎勵，用於線上或離線的策略改進。
 
 ## 概覽[[overview]]
 
@@ -42,7 +42,7 @@ progress_t = P_{k-1} + α̅_k × τ_t
 - `P_{k-1}` 是累積先驗值（前面各子任務比例的總和）
 - `α̅_k` 是子任務 k 的時間比例
 
-這確保了相同的任務狀態會對應到一致的進度值，即使示範的長度各不相同。
+這確保了相同的任務狀態（state）會對應到一致的進度值，即使示範的長度各不相同。
 
 ## 輸入與目標[[inputs-and-targets-what-the-new-code-expects]]
 
@@ -329,13 +329,13 @@ lerobot-train \
 
 ### 訓練引數[[training-arguments]]
 
-| 引數                       | 說明                                                  | 預設                     |
-| -------------------------- | ----------------------------------------------------- | ------------------------ |
-| `--policy.annotation_mode` | `single_stage`、`dense_only` 或 `dual`                | `single_stage`           |
-| `--policy.image_key`       | 影像對應的相機鍵名                                    | `observation.images.top` |
-| `--policy.state_key`       | 關節狀態的鍵名                                        | `observation.state`      |
-| `--policy.n_obs_steps`     | 觀測歷史的步數（觀測影格總數 = `n_obs_steps + 1`）    | `8`                      |
-| `--policy.frame_gap`       | 取樣觀測之間的間隔（以影格數計；30 fps 時 30 ≈ 1 秒） | `30`                     |
+| 引數                       | 說明                                                                      | 預設                     |
+| -------------------------- | ------------------------------------------------------------------------- | ------------------------ |
+| `--policy.annotation_mode` | `single_stage`、`dense_only` 或 `dual`                                    | `single_stage`           |
+| `--policy.image_key`       | 影像對應的相機鍵名                                                        | `observation.images.top` |
+| `--policy.state_key`       | 關節狀態的鍵名                                                            | `observation.state`      |
+| `--policy.n_obs_steps`     | 觀測歷史（observation history）的步數（觀測影格總數 = `n_obs_steps + 1`） | `8`                      |
+| `--policy.frame_gap`       | 取樣觀測之間的間隔（以影格數計；30 fps 時 30 ≈ 1 秒）                     | `30`                     |
 
 ---
 
@@ -407,7 +407,7 @@ python -m lerobot.rewards.sarm.compute_rabc_weights \
 獎勵對齊行為複製（RA-BC）會使用訓練好的 SARM 模型，依據預測的進度提升幅度，為訓練樣本加上權重。這需要兩個步驟：
 
 1. 使用訓練好的 SARM 模型，**預先計算**所有影格的**進度值**
-2. 使用預先計算的值，以 RA-BC 加權的方式**訓練策略（policy）**
+2. 使用預先計算的值，以 RA-BC 加權的方式**訓練策略**
 
 ### RA-BC 如何運作[[how-ra-bc-works]]
 

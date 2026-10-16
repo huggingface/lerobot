@@ -451,7 +451,7 @@ echo "https://huggingface.co/spaces/lerobot/visualize_dataset?path=/${HF_USER}/r
 
 ## 回合重播[[replay-an-episode]]
 
-`replay` 是一個很實用的功能，可以重播你錄製的任何回合，或任何現有資料集中的回合。它能幫你測試機器人動作的可重複性，並評估同型號機器人之間的可轉移性。
+`replay` 是一個很實用的功能，可以重播你錄製的任何回合，或任何現有資料集中的回合。它能幫你測試機器人動作（action）的可重複性，並評估同型號機器人之間的可轉移性。
 
 你可以使用以下指令或 API 範例，在機器人上重播第一個回合：
 
@@ -509,7 +509,7 @@ robot.disconnect()
 
 ## 訓練策略[[train-a-policy]]
 
-若要訓練策略（policy）來控制你的機器人，請使用 [`lerobot-train`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_train.py) 腳本，並提供幾個必要的引數。以下是範例指令：
+若要訓練策略來控制你的機器人，請使用 [`lerobot-train`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_train.py) 腳本，並提供幾個必要的引數。以下是範例指令：
 
 ```bash
 lerobot-train \
@@ -525,7 +525,7 @@ lerobot-train \
 我們來說明這個指令：
 
 1. 我們以 `--dataset.repo_id=${HF_USER}/record-test` 指定稍早錄製的資料集。
-2. 我們以 `policy.type=act` 指定策略，這會從 [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py) 載入設定。重要的是，這個策略會自動配合資料集中記錄的機器人馬達狀態數、馬達動作數與相機（例如 `laptop` 和 `phone`）。
+2. 我們以 `policy.type=act` 指定策略，這會從 [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py) 載入設定。重要的是，這個策略會自動配合資料集中記錄的機器人馬達狀態（state）、馬達動作與相機（例如 `laptop` 和 `phone`）的數量。
 3. 因為我們使用 Nvidia GPU 訓練，所以設定 `policy.device=cuda`；若要在 Apple silicon 上訓練，可以改用 `policy.device=mps`。
 4. 我們設定 `wandb.enable=true`，使用 [Weights and Biases](https://docs.wandb.ai/quickstart) 視覺化訓練曲線。這是可選的，但若要使用，請先執行 `wandb login` 登入。
 

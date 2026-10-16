@@ -63,7 +63,7 @@ dict[str, dict[int, gym.vector.VectorEnv]]
 
 ## 你的環境必須提供什麼[[what-your-environment-must-provide]]
 
-LeRobot 不強制要求嚴格的觀測（observation）結構，而是仰賴所有基準測試都遵循的一組慣例。
+LeRobot 不強制要求嚴格的觀測結構（observation structure），而是仰賴所有基準測試都遵循的一組慣例。
 
 ### 環境的屬性[[env-attributes]]
 
@@ -88,13 +88,13 @@ return observation, reward, terminated, truncated, info
 
 最簡單的做法，是把模擬器的輸出對應到 `preprocess_observation()` 已經認得的標準鍵名。請在你的 `gym.Env` 中完成這件事（例如寫一個 `_format_raw_obs()` 輔助函式）：
 
-| 你的環境應輸出         | LeRobot 對應至             | 說明                               |
-| ---------------------- | -------------------------- | ---------------------------------- |
-| `"pixels"`（單一陣列） | `observation.image`        | 單一相機影像，HWC uint8            |
-| `"pixels"`（字典）     | `observation.images.<cam>` | 多相機，每個 HWC uint8             |
-| `"agent_pos"`          | `observation.state`        | 本體感覺（proprioceptive）狀態向量 |
-| `"environment_state"`  | `observation.env_state`    | 完整環境狀態（如 PushT）           |
-| `"robot_state"`        | `observation.robot_state`  | 巢狀的機器人狀態字典（如 LIBERO）  |
+| 你的環境應輸出         | LeRobot 對應至             | 說明                                            |
+| ---------------------- | -------------------------- | ----------------------------------------------- |
+| `"pixels"`（單一陣列） | `observation.image`        | 單一相機影像，HWC uint8                         |
+| `"pixels"`（字典）     | `observation.images.<cam>` | 多相機，每個 HWC uint8                          |
+| `"agent_pos"`          | `observation.state`        | 本體感覺狀態向量（proprioceptive state vector） |
+| `"environment_state"`  | `observation.env_state`    | 完整環境狀態（如 PushT）                        |
+| `"robot_state"`        | `observation.robot_state`  | 巢狀的機器人狀態字典（如 LIBERO）               |
 
 如果你的模擬器使用不同的鍵名，有兩種做法：
 
@@ -103,7 +103,7 @@ return observation, reward, terminated, truncated, info
 
 ### 動作[[actions]]
 
-動作是 `gym.spaces.Box` 中的連續 numpy 陣列，維度取決於你的基準測試（LIBERO 為 7，Meta-World 為 4，依此類推）。策略會透過 `input_features` / `output_features` 設定，配合不同的動作維度。
+動作（action）是 `gym.spaces.Box` 中的連續 numpy 陣列，維度取決於你的基準測試（LIBERO 為 7，Meta-World 為 4，依此類推）。策略會透過 `input_features` / `output_features` 設定，配合不同的動作維度。
 
 ### 特徵宣告[[feature-declaration]]
 

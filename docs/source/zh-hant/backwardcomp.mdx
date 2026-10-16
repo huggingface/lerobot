@@ -2,7 +2,7 @@
 
 ## 策略正規化遷移（PR #1452）[[policy-normalization-migration-pr-1452]]
 
-**破壞性變更**：LeRobot 策略的權重中不再內嵌正規化（normalization）層，正規化現在改由外部的 `PolicyProcessorPipeline` 元件處理。
+**破壞性變更**：LeRobot 策略（policy）的權重中不再內嵌正規化（normalization）層，正規化現在改由外部的 `PolicyProcessorPipeline` 元件處理。
 
 ### 有什麼改變？[[what-changed]]
 
@@ -89,7 +89,7 @@ PR [#777](https://github.com/huggingface/lerobot/pull/777) 改善了 LeRobot 的
 ```
 
 以下逐一說明。
-新版程式碼以 `.pos` 後綴表示位置觀測，並移除了 `main_` 前綴：
+新版程式碼以 `.pos` 後綴表示位置觀測（observation），並移除了 `main_` 前綴：
 
 <!-- prettier-ignore-start -->
 ```python
@@ -127,7 +127,7 @@ python examples/backward_compatibility/replay.py \
 
 ### 使用舊版校正系統訓練的策略[[using-policies-trained-with-the-previous-calibration-system]]
 
-策略輸出的動作格式與資料集相同（`torch.Tensors`），因此應套用相同的轉換。
+策略輸出動作（action）的格式與資料集相同（`torch.Tensors`），因此應套用相同的轉換。
 
 若要找出這些轉換，建議先依照上一節的說明，重播策略訓練時所用資料集中的一個回合。
 接著，將這些相同的轉換加入你的推論腳本（此處以 `record.py` 腳本為例）：

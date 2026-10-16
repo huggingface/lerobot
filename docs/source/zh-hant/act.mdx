@@ -1,6 +1,6 @@
 # ACT (Action Chunking with Transformers)[[act-action-chunking-with-transformers]]
 
-ACT 是一個**輕量且高效的模仿學習（imitation learning）策略**，特別適合精細的操作任務。由於訓練速度快、運算需求低且表現出色，它是**我們推薦你剛開始使用 LeRobot 時的第一個模型**。
+ACT 是一個**輕量且高效的模仿學習（imitation learning）策略**（policy），特別適合精細的操作任務。由於訓練速度快、運算需求低且表現出色，它是**我們推薦你剛開始使用 LeRobot 時的第一個模型**。
 
 <div class="video-container">
   <iframe
@@ -34,7 +34,7 @@ ACT 採用以 Transformer 為基礎的架構，包含三個主要部分：
 
 1. **視覺骨幹網路（vision backbone）**：以 ResNet-18 處理來自多個相機視角的影像
 2. **Transformer 編碼器**：整合相機特徵、關節位置，以及學習到的潛在變數
-3. **Transformer 解碼器**：使用交叉注意力（cross-attention）產生連貫的動作序列
+3. **Transformer 解碼器**：使用交叉注意力（cross-attention）產生連貫的動作序列（action sequence）
 
 策略的輸入包括：
 

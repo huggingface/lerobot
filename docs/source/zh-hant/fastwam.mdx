@@ -4,14 +4,14 @@ FastWAM 是一個用於機器人控制的世界動作模型（World Action Model
 
 ## 模型概覽[[model-overview]]
 
-FastWAM 在訓練時保留影片建模，但推論時改為直接預測動作，而不是反覆生成未來的觀測。這個 LeRobot 策略包裝了 FastWAM 的動作模型，將 LeRobot 的批次轉換成 FastWAM 的訓練樣本，並提供標準的處理器管線，負責正規化與動作的後處理。
+FastWAM 在訓練時保留影片建模，但推論時改為直接預測動作，而不是反覆生成未來的觀測（observation）。這個 LeRobot 策略包裝了 FastWAM 的動作模型，將 LeRobot 的批次轉換成 FastWAM 的訓練樣本，並提供標準的處理器管線，負責正規化與動作的後處理。
 
 這個實作預設會從 `Wan-AI/Wan2.2-TI2V-5B` 初始化視覺世界模型（world model）的元件，並預測形狀為 `[batch, action_horizon, action_dim]` 的動作區塊（action chunk）。
 
 ### LeRobot 整合涵蓋的範圍[[what-the-lerobot-integration-covers]]
 
 - 透過 LeRobot 使用標準的 `policy.type=fastwam` 設定
-- 影像、狀態、動作與語言任務的批次轉換
+- 影像、狀態（state）、動作與語言任務的批次轉換
 - 透過 `select_action` 與 `predict_action_chunk` 推論動作區塊
 - 透過 LeRobot 的策略 API 儲存／載入檢查點（checkpoint）
 - 可設定的 LIBERO 夾爪動作後處理

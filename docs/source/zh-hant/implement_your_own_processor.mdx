@@ -5,7 +5,7 @@
 
 ## 為什麼你會需要自訂處理器？[[why-would-you-need-a-custom-processor]]
 
-在大多數情況下，從感測器讀取原始資料，或模型輸出動作時，你都需要處理這些資料，讓它們與目標系統相容。例如，一個常見的需求是將資料範圍正規化（normalization），讓它適合神經網路使用。
+在大多數情況下，從感測器讀取原始資料，或模型輸出動作（action）時，你都需要處理這些資料，讓它們與目標系統相容。例如，一個常見的需求是將資料範圍正規化（normalization），讓它適合神經網路使用。
 
 LeRobot 的 `NormalizerProcessorStep` 就是負責這項關鍵任務：
 
@@ -88,7 +88,7 @@ class NormalizerProcessorStep(ProcessorStep):
 **關鍵原則：**
 
 - **一律使用 `transition.copy()`**，避免副作用
-- 以一致的方式**同時處理觀測與動作**
+- 以一致的方式**同時處理觀測（observation）與動作**
 - **將設定與狀態分開**：`get_config()` 回傳可序列化為 JSON 的參數，`state_dict()` 回傳張量
 - 在 `__post_init__()` 中**將統計值轉換為張量**，以提升運算效率
 
@@ -143,7 +143,7 @@ new_normalizer.load_state_dict(tensors)
 
 ### 轉換特徵[[transform-features]]
 
-`transform_features` 方法定義了你的處理器如何轉換特徵（feature）的名稱與形狀。這對策略的設定與除錯都非常重要。
+`transform_features` 方法定義了你的處理器如何轉換特徵（feature）的名稱與形狀。這對策略（policy）的設定與除錯都非常重要。
 
 以 `NormalizerProcessorStep` 來說，特徵通常會維持不變，因為正規化不會改變鍵名或形狀：
 

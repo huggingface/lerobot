@@ -14,7 +14,7 @@ WALL-OSS 團隊正在打造具身基礎模型，用來擷取並壓縮世界上�
   width="85%"
 />
 
-在技術上，WALL-OSS 採用緊密耦合的多模態架構（tightly-coupled MoE structure），同時整合離散與連續的動作建模策略。透過兩階段的訓練流程（Inspiration → Integration），模型逐步將語義推理與高頻動作生成統一起來。其核心創新包括：
+在技術上，WALL-OSS 採用緊密耦合的多模態架構（tightly-coupled MoE structure），同時整合離散與連續的動作建模（action modeling）策略。透過兩階段的訓練流程（Inspiration → Integration），模型逐步將語義推理與高頻動作生成統一起來。其核心創新包括：
 
 - **強化具身感知的多模態預訓練**：以統一的視覺-語言-動作資料進行大規模訓練，強化對空間、因果與操作的理解。
 - **統一跨層級思維鏈**（Unified Cross-Level Chain-of-Thought，Uni-CoT）：以單一的可微分框架，統一高層次的指令推理、子任務分解與細粒度的動作合成，形成從「理解」到「執行」的連續鏈條。
@@ -34,7 +34,7 @@ WALL-OSS 團隊正在打造具身基礎模型，用來擷取並壓縮世界上�
 
 ## 使用方式[[usage]]
 
-若要在 LeRobot 中使用 WallX，請將策略類型指定為：
+若要在 LeRobot 中使用 WallX，請將策略類型（policy type）指定為：
 
 ```python
 policy.type=wall_x

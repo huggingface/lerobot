@@ -93,20 +93,20 @@ dataset = LeRobotDataset("lerobot/robomme")
 
 ### 資料集特徵[[dataset-features]]
 
-| 特徵               | 形狀          | 說明                 |
-| ------------------ | ------------- | -------------------- |
-| `image`            | (256, 256, 3) | 前方相機 RGB         |
-| `wrist_image`      | (256, 256, 3) | 腕部相機 RGB         |
-| `actions`          | (8,)          | 關節角度 + 夾爪      |
-| `state`            | (8,)          | 關節位置 + 夾爪狀態  |
-| `simple_subgoal`   | str           | 高階語言標註         |
-| `grounded_subgoal` | str           | 對應到場景的語言標註 |
-| `episode_index`    | int           | 回合 ID              |
-| `frame_index`      | int           | 回合內的影格索引     |
+| 特徵               | 形狀          | 說明                         |
+| ------------------ | ------------- | ---------------------------- |
+| `image`            | (256, 256, 3) | 前方相機 RGB                 |
+| `wrist_image`      | (256, 256, 3) | 腕部相機 RGB                 |
+| `actions`          | (8,)          | 關節角度 + 夾爪              |
+| `state`            | (8,)          | 關節位置 + 夾爪狀態（state） |
+| `simple_subgoal`   | str           | 高階語言標註                 |
+| `grounded_subgoal` | str           | 對應到場景的語言標註         |
+| `episode_index`    | int           | 回合 ID                      |
+| `frame_index`      | int           | 回合內的影格索引             |
 
 ### 特徵鍵名對齊（訓練）[[feature-key-alignment-training]]
 
-環境包裝器會將相機提供在 `pixels/<camera_name>` 下，名稱由 `RoboMMEEnv.front_camera_name` 與 `RoboMMEEnv.wrist_camera_name` 決定（預設為 `camera1` 與 `camera2`）。`RoboMMEEnv` 中的 `features_map` 會將它們對應到策略使用的 `observation.images.camera1` 與 `observation.images.camera2`。狀態則以 `agent_pos` 提供，並對應到 `observation.state`。
+環境包裝器會將相機提供在 `pixels/<camera_name>` 下，名稱由 `RoboMMEEnv.front_camera_name` 與 `RoboMMEEnv.wrist_camera_name` 決定（預設為 `camera1` 與 `camera2`）。`RoboMMEEnv` 中的 `features_map` 會將它們對應到策略（policy）使用的 `observation.images.camera1` 與 `observation.images.camera2`。狀態則以 `agent_pos` 提供，並對應到 `observation.state`。
 
 資料集的原始欄位與這些策略鍵名不符，因此微調（fine-tune）時請傳入 `--rename_map`：
 
@@ -114,7 +114,7 @@ dataset = LeRobotDataset("lerobot/robomme")
 --rename_map='{"image": "observation.images.camera1", "wrist_image": "observation.images.camera2", "state": "observation.state", "actions": "action"}'
 ```
 
-如果你訓練時使用不同的鍵名，請覆寫 `--env.front_camera_name` / `--env.wrist_camera_name`，讓評估時的觀測鍵名與策略訓練時一致。
+如果你訓練時使用不同的鍵名，請覆寫 `--env.front_camera_name` / `--env.wrist_camera_name`，讓評估時的觀測（observation）與策略訓練時的鍵名一致。
 
 ## 動作空間[[action-spaces]]
 

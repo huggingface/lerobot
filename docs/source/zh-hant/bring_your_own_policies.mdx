@@ -156,7 +156,7 @@ class MyPolicy(PreTrainedPolicy):
 | 方法                                                              | 呼叫者          | 作用                                                                                                                                                                                                                                                    |
 | ----------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `reset() -> None`                                                 | `lerobot-eval`  | 在每個回合（episode）開始時，清除該回合的狀態。                                                                                                                                                                                                         |
-| `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`  | 回傳下一個動作 `(B, action_dim)`。每一步都會呼叫。                                                                                                                                                                                                      |
+| `select_action(batch, **kwargs) -> Tensor`                        | `lerobot-eval`  | 回傳下一個動作（action）`(B, action_dim)`。每一步都會呼叫。                                                                                                                                                                                             |
 | `predict_action_chunk(batch, **kwargs) -> Tensor`                 | 策略本身        | 回傳動作區塊（action chunk）`(B, chunk_size, action_dim)`。目前在基底類別上是抽象方法；若你的策略不分塊，請 raise `NotImplementedError`。                                                                                                               |
 | `forward(batch, reduction="mean") -> tuple[Tensor, dict \| None]` | `lerobot-train` | 回傳 `(loss, output_dict)`。若想支援逐樣本加權，請接受 `reduction="none"`。                                                                                                                                                                             |
 | `get_optim_params() -> dict`                                      | 優化器          | 簡單的策略回傳 `self.parameters()`；使用多個優化器的策略回傳具名的參數字典（依參數群組設定學習率的範例，請見 [`modeling_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/modeling_act.py) 中的 `get_optim_params`）。 |
@@ -277,7 +277,7 @@ input_steps = [
 訓練與推論會儲存並載入同一條管線。執行階段的
 渲染只會在明確指定 `query_kind` 時執行。訓練渲染會略過
 執行階段的查詢；在設定了配方時，會處理帶有原始
-標註或動作目標的樣本。一般只有觀測的輸入會直接通過。有標註的純文字訓練
+標註或動作目標的樣本。一般只有觀測（observation）的輸入會直接通過。有標註的純文字訓練
 不需要動作張量也能進行。沒有標註的訓練則需要動作
 目標，才能啟用任務的備用機制。
 

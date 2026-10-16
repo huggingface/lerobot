@@ -1,6 +1,6 @@
 # ROBOMETER[[robometer]]
 
-ROBOMETER 是一個**通用的影片-語言機器人獎勵模型**。它根據一段軌跡影片與任務描述，預測密集的逐影格任務進度，以及逐影格的成功與否。
+ROBOMETER 是一個**通用的影片-語言機器人獎勵模型**（reward model）。它根據一段軌跡影片與任務描述，預測密集的逐影格任務進度，以及逐影格的成功與否。
 
 **論文**：[ROBOMETER: Scaling General-Purpose Robotic Reward Models via Trajectory Comparisons](https://arxiv.org/abs/2603.02115)
 **專案**：[robometer.github.io](https://robometer.github.io/)
@@ -61,7 +61,7 @@ ROBOMETER 需要：
 
 | 設定欄位                  | 預設值                   | 意義                                               |
 | ------------------------- | ------------------------ | -------------------------------------------------- |
-| `reward_model.image_key`  | `observation.images.top` | ROBOMETER 使用的相機／影片觀測                     |
+| `reward_model.image_key`  | `observation.images.top` | ROBOMETER 使用的相機／影片觀測（observation）      |
 | `reward_model.task_key`   | `task`                   | 補充資料（complementary data）中存放任務字串的鍵名 |
 | `reward_model.max_frames` | `8`                      | 傳給 ROBOMETER 的最大影格數                        |
 
@@ -159,7 +159,7 @@ LeRobot 的設定會儲存一份序列化的 `vlm_config`，其中包含調整�
 
 - 目前 LeRobot 的整合只能用於推論；並未實作 ROBOMETER 的訓練或偏好配對訓練。
 - 雖然 ROBOMETER 在內部會預測每個影格的進度與成功，`compute_reward()` 為了配合 LeRobot 獎勵模型的 API，只會為每個樣本回傳一個純量。
-- ROBOMETER 以影片與語言為基礎；它不會使用特權式的機器人狀態，例如接觸力或物件姿態。
+- ROBOMETER 以影片與語言為基礎；它不會使用特權式的機器人狀態（state），例如接觸力或物件姿態。
 
 ## 參考資料[[references]]
 
