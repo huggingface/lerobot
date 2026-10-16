@@ -1,0 +1,217 @@
+# LIBERO[[libero]]
+
+LIBERO 是專為研究**終身機器人學習**（lifelong robot learning）設計的基準測試（benchmark）。它的核心概念是：機器人不應只預訓練一次，而是要隨著時間持續與使用者一起學習、適應。LIBERO 提供一組標準化的操作任務，聚焦在**知識遷移**（knowledge transfer），也就是機器人能否將已學到的東西應用到新的情境。在 LIBERO 上評估，可以公平地比較不同的演算法，研究人員也能在彼此的成果上繼續發展。
+
+- 論文：[Benchmarking Knowledge Transfer for Lifelong Robot Learning](https://arxiv.org/abs/2306.03310)
+- GitHub: [Lifelong-Robot-Learning/LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO)
+- 專案網站：[libero-project.github.io](https://libero-project.github.io)
+
+![LIBERO 基準測試概覽](https://libero-project.github.io/assets/img/libero/fig1.png)
+
+## 可用任務[[available-tasks]]
+
+LIBERO 包含**五個任務套件**，共 **130 個任務**，從簡單的物件操作到複雜的多步驟情境都有：
+
+| 任務套件       | CLI 名稱         | 任務數 | 說明                                         |
+| -------------- | ---------------- | ------ | -------------------------------------------- |
+| LIBERO-Spatial | `libero_spatial` | 10     | 需要推理空間關係的任務                       |
+| LIBERO-Object  | `libero_object`  | 10     | 以操作不同物件為主的任務                     |
+| LIBERO-Goal    | `libero_goal`    | 10     | 以目標為條件、目標會改變的任務               |
+| LIBERO-90      | `libero_90`      | 90     | 來自 LIBERO-100 的短時程任務                 |
+| LIBERO-Long    | `libero_10`      | 10     | 來自 LIBERO-100 的長時程（long-horizon）任務 |
+
+## 安裝[[installation]]
+
+依照 LeRobot 的安裝說明完成安裝後：
+
+```bash
+pip install -e ".[libero]"
+```
+
+<Tip>
+LIBERO 需要 Linux（`sys_platform == 'linux'`）。LeRobot 使用 MuJoCo 進行模擬，請在訓練或評估之前設定渲染後端：
+
+```bash
+export MUJOCO_GL=egl  # 用於無顯示器的伺服器（HPC、雲端）
+```
+
+</Tip>
+
+## 評估[[evaluation]]
+
+### 預設評估（建議）[[default-evaluation-recommended]]
+
+在四個標準任務套件上評估，每個任務 10 個回合（episode）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --env.max_parallel_tasks=1
+```
+
+### 單一任務套件評估[[single-suite-evaluation]]
+
+在一個 LIBERO 任務套件上評估：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.batch_size=2 \
+  --eval.n_episodes=3
+```
+
+- `--env.task` 選擇任務套件（`libero_object`、`libero_spatial` 等）。
+- `--env.task_ids` 限定特定的任務索引（`[0]`、`[1,2,3]` 等）。省略時會執行任務套件中的所有任務。
+- `--eval.batch_size` 控制同時平行執行的環境數量。
+- `--eval.n_episodes` 設定每個任務要執行的回合數。
+
+### 多任務套件評估[[multi-suite-evaluation]]
+
+傳入以逗號分隔的清單，即可一次在多個任務套件上評估策略（policy）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero \
+  --env.task=libero_object,libero_spatial \
+  --eval.batch_size=1 \
+  --eval.n_episodes=2
+```
+
+### 控制模式[[control-mode]]
+
+LIBERO 支援兩種控制模式：`relative`（預設）與 `absolute`。不同的 VLA 檢查點（checkpoint）以不同的動作參數化（action parameterization）方式訓練，因此請確認模式與你的策略相符：
+
+```bash
+--env.control_mode=relative   # 或 "absolute"
+```
+
+### 重設效能[[reset-performance]]
+
+LeRobot 預設會保留 LIBERO 的硬重設（hard reset）行為。啟用固定的初始
+狀態（state）後，你可以選擇改用軟重設（soft reset），省去每個回合都重建模擬器
+模型與渲染器的步驟：
+
+```bash
+--env.init_states=true --env.hard_reset=false
+```
+
+軟重設比較快，但在環境的穩定步驟之後，結果並不會與硬重設逐位元相同，
+因此相機觀測（observation）與策略結果可能會
+略有差異。重現基準測試結果時，請使用硬重設。
+
+### 策略的輸入與輸出[[policy-inputs-and-outputs]]
+
+**觀測：**
+
+- `observation.state`：8 維本體感覺（proprioception）特徵（末端執行器位置、軸角表示的方向、夾爪 qpos）
+- `observation.images.image`：主相機視角（`agentview_image`），HWC uint8
+- `observation.images.image2`：腕部相機視角（`robot0_eye_in_hand_image`），HWC uint8
+
+<Tip warning={true}>
+  LeRobot 規定視覺特徵必須使用 `.images.*` 前綴。請確認策略設定中的
+  `input_features` 使用相同的鍵名，且資料集的
+  中繼資料鍵名也遵守這個慣例。如果你的資料使用不同的鍵名，
+  就必須重新命名觀測，使其符合策略的預期，因為
+  鍵名已經寫入正規化統計量那一層中。
+</Tip>
+
+**動作：**
+
+- `Box(-1, 1, shape=(7,))` 中的連續控制：6D 末端執行器增量 + 1D 夾爪
+
+### 建議的評估回合數[[recommended-evaluation-episodes]]
+
+為了讓基準測試可以重現，請在全部四個標準任務套件（Spatial、Object、Goal、Long）上**每個任務執行 10 個回合**。這樣共有 400 個回合，與已發表結果所用的流程一致。成功率可能會因評估種子不同而有幾個百分點的差異，因此建議取 3 個種子的平均。
+
+`lerobot-eval` 會在每個成功率旁邊回報 95% Wilson 區間（`pc_success_ci95`）。在 10 個回合下，某個任務拿到 9/10，區間大約是 60% 到 98%；而 400 個回合的任務套件總計若為 80%，區間大約是 76% 到 84%。如果兩個策略在某個任務上的區間重疊，就表示這次執行並不能證明它們在該任務上有差異。這個區間只涵蓋抽到哪些回合所造成的變異，並不涵蓋策略的訓練種子；後者需要不只一次的訓練才能衡量。
+
+<Tip>
+  若要在相同的回合上比較兩個策略，請使用相同的 `--seed`，維持
+  `--env.init_states=true`，並將每個任務放在同一個批次中執行
+  （`--eval.batch_size` 等於每個任務的回合數）。
+</Tip>
+
+## 訓練[[training]]
+
+### 資料集[[dataset]]
+
+有兩個經過前處理的 LIBERO 資料集與 LeRobot 完全相容。它們包含相同的示範與相同的結構描述（schema），差別只在於相機影格的儲存方式：
+
+|                  | [lerobot/libero](https://huggingface.co/datasets/lerobot/libero) | [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero) |
+| ---------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 回合／影格／任務 | 1,693 / 273,465 / 40                                             | 1,693 / 273,465 / 40                                                           |
+| 相機             | 2× 256×256×3                                                     | 2× 256×256×3                                                                   |
+| 狀態／動作維度   | 8 / 7                                                            | 8 / 7                                                                          |
+| 資料集格式       | v3.0                                                             | v3.0                                                                           |
+| 相機編碼方式     | MP4 影片                                                         | parquet 中的 PNG                                                               |
+| 下載大小         | **1.9 GB**                                                       | 69.9 GB                                                                        |
+| 額外相依套件     | 影片後端（`torchcodec` 或 `pyav`）                               | 無                                                                             |
+
+**建議使用 [lerobot/libero](https://huggingface.co/datasets/lerobot/libero)**：**下載量小 37 倍**，**載入速度相當**（每個 worker 約 330 samples/s）。重新編碼成影片會有些微失真；如果你無法安裝影片解碼後端，請使用以影像儲存的版本。
+
+供參考，Physical Intelligence 發布的原始資料集：
+
+- [physical-intelligence/libero](https://huggingface.co/datasets/physical-intelligence/libero)
+
+<Tip>
+回報結果時，請以 `--dataset.revision=<commit-sha>` 固定版本：Hub 上的資料集可能會被重新上傳，成功率只有在相同的資料版本下才能互相比較。
+</Tip>
+
+### 訓練指令範例[[example-training-command]]
+
+在建議的資料集上訓練 SmolVLA：
+
+```bash
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.load_vlm_weights=true \
+  --policy.push_to_hub=false \
+  --dataset.repo_id=lerobot/libero \
+  --dataset.video_backend=torchcodec \
+  --output_dir=./outputs/libero_smolvla \
+  --steps=100000 \
+  --batch_size=64
+```
+
+若要在 Hub 上分享結果，請將 `--policy.push_to_hub=false` 換成 `--policy.repo_id=${HF_USER}/libero-smolvla`。儲存的檢查點可依[評估](#evaluation)一節的說明，以 `lerobot-eval` 評估。
+
+## 重現已發表的結果[[reproducing-published-results]]
+
+我們在 LIBERO 基準測試上重現了 Pi0.5 的結果：以 Physical Intelligence 的 LIBERO 基礎模型（`pi05_libero`）為起點，使用 [HuggingFace LIBERO 資料集](https://huggingface.co/datasets/HuggingFaceVLA/libero)，在 8 張 H100 GPU 上以 bfloat16、批次大小 256 額外微調（fine-tune）6k 步。
+
+微調後的模型：[lerobot/pi05_libero_finetuned](https://huggingface.co/lerobot/pi05_libero_finetuned)
+
+### 評估指令[[evaluation-command]]
+
+```bash
+lerobot-eval \
+  --output_dir=./eval_logs/ \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --policy.path=pi05_libero_finetuned \
+  --policy.n_action_steps=10 \
+  --env.max_parallel_tasks=1
+```
+
+我們設定 `n_action_steps=10`，與 OpenPI 的原始實作一致。
+
+### 結果[[results]]
+
+| 模型                | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | 平均     |
+| ------------------- | -------------- | ------------- | ----------- | --------- | -------- |
+| **Pi0.5 (LeRobot)** | 97.0           | 99.0          | 98.0        | 96.0      | **97.5** |
+
+這些結果與 Physical Intelligence 回報的[原始結果](https://github.com/Physical-Intelligence/openpi/tree/main/examples/libero#results)一致：
+
+| 模型               | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | 平均      |
+| ------------------ | -------------- | ------------- | ----------- | --------- | --------- |
+| **Pi0.5 (OpenPI)** | 98.8           | 98.2          | 98.0        | 92.4      | **96.85** |

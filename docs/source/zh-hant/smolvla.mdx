@@ -1,0 +1,118 @@
+# SmolVLA[[smolvla]]
+
+SmolVLA 是 Hugging Face 推出的輕量級機器人基礎模型（foundation model）。它的設計讓你能輕鬆在 LeRobot 資料集上微調（fine-tune），加快你的開發速度！
+
+<p align="center">
+  <img
+    src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/aooU0a3DMtYmy_1IWMaIM.png"
+    alt="SmolVLA architecture."
+    width="500"
+  />
+  <br />
+  <em>
+    圖 1. SmolVLA 的輸入包括：(i) 多個相機視角、(ii)
+    機器人目前的感覺運動狀態（sensorimotor state），以及 (iii) 自然語言
+    指令。這些輸入會被編碼為脈絡特徵，在生成動作區塊（action chunk）時，
+    用來作為 action expert 的條件。
+  </em>
+</p>
+
+## 設定你的環境[[set-up-your-environment]]
+
+1. 依照我們的[安裝指南](./installation)安裝 LeRobot。
+2. 執行以下指令，安裝 SmolVLA 的相依套件：
+
+   ```bash
+   pip install -e ".[smolvla]"
+   ```
+
+## 收集資料集[[collect-a-dataset]]
+
+SmolVLA 是基礎模型，因此需要用你自己的資料微調，才能在你的環境中發揮最佳效能。
+建議先錄製約 50 個任務回合（episode）作為起點。請參考我們的指南開始：[錄製資料集](./il_robots)
+
+<Tip>
+
+在你的資料集中，請確保你引入的每一種變化都有足夠的示範（例如在方塊取放任務中，方塊在桌上的位置）。
+
+建議參考以下這個在 [SmolVLA 論文](https://huggingface.co/papers/2506.01844)中使用的資料集：
+
+🔗 [SVLA SO100 PickPlace](https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2Flerobot%2Fsvla_so100_pickplace%2Fepisode_0)
+
+在這個資料集中，我們在 5 個不同的方塊位置錄製了 50 個回合，每個位置各收集 10 個取放回合。這種將每種變化重複多次的結構，有助於模型泛化得更好。我們也試過只有 25 個回合的類似資料集，結果數量不足，效能很差。因此，資料的品質與數量絕對是關鍵。
+資料集上傳到 Hub 之後，就可以使用我們的微調腳本，讓 SmolVLA 適應你的應用。
+
+</Tip>
+
+## 在你的資料上微調 SmolVLA[[finetune-smolvla-on-your-data]]
+
+使用我們預訓練的 450M 模型 [`smolvla_base`](https://hf.co/lerobot/smolvla_base)，在你的資料上微調。
+在單張 A100 GPU 上訓練 20k 步，大約需要 4 小時。你應該依效能與使用情境調整步數。
+
+如果你沒有 GPU，可以使用我們在 [![Google Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb) 上的 notebook 訓練
+
+使用 `--dataset.repo_id` 將你的資料集傳給訓練腳本。如果想測試安裝是否成功，請執行以下指令，這裡使用的是我們為 [SmolVLA 論文](https://huggingface.co/papers/2506.01844)收集的其中一個資料集。
+
+```bash
+cd lerobot && lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=${HF_USER}/mydataset \
+  --batch_size=64 \
+  --steps=20000 \
+  --output_dir=outputs/train/my_smolvla \
+  --job_name=my_smolvla_training \
+  --policy.device=cuda \
+  --wandb.enable=true
+```
+
+<Tip>
+  你可以先從較小的批次大小開始，只要載入時間仍然很短， 就在 GPU
+  能負荷的範圍內逐步增加。
+</Tip>
+
+微調是一門藝術。若要完整了解所有微調選項，請執行
+
+```bash
+lerobot-train --help
+```
+
+<p align="center">
+  <img
+    src="https://cdn-uploads.huggingface.co/production/uploads/640e21ef3c82bd463ee5a76d/S-3vvVCulChREwHDkquoc.gif"
+    alt="Comparison of SmolVLA across task variations."
+    width="500"
+  />
+  <br />
+  <em>
+    圖 2：SmolVLA 在不同任務變化下的比較。由左至右： (1) 方塊取放計數、(2)
+    方塊取放計數、(3) 受到干擾時的 方塊取放計數，以及 (4) 以真實世界的 SO101
+    取放樂高積木的泛化能力。
+  </em>
+</p>
+
+## 評估微調後的模型並即時執行[[evaluate-the-finetuned-model-and-run-it-in-real-time]]
+
+和錄製回合時一樣，建議你先登入 Hugging Face Hub。你可以依照對應的步驟操作：[錄製資料集](./il_robots#record-a-dataset)。
+登入後，就可以用以下指令在你的環境中執行推論：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --robot.type=so101_follower \
+  --robot.port=/dev/ttyACM0 \ # <- 使用你的連接埠
+  --robot.id=my_blue_follower_arm \ # <- 使用你的機器人 ID
+  --robot.cameras="{ front: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}}" \ # <- 使用你的相機
+  --task="Grasp a lego block and put it in the bin." \ # <- 使用你在錄製資料集時使用的相同任務描述
+  # <- 可選：在運算能力較低的硬體上執行時，使用 RTC \
+  # --inference.type=rtc \
+  # --inference.rtc.execution_horizon=10 \
+  # --inference.rtc.max_guidance_weight=10.0 \
+  # <- 可選：若想在回合之間遙操作，啟用遙操作器 \
+  # --teleop.type=so100_leader \
+  # --teleop.port=/dev/ttyACM0 \
+  # --teleop.id=my_red_leader_arm \
+  # --display_data=true # 可選：若想查看相機畫面，請啟用 \
+  --policy.path=HF_USER/FINETUNE_MODEL_NAME # <- 使用你微調後的模型
+```
+
+你可以依評估的設定，調整錄製的時間長度與回合數，建立你的評估套件。

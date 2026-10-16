@@ -1,0 +1,241 @@
+# π₀-FAST (Pi0-FAST)[[-fast-pi0-fast]]
+
+π₀-FAST 是一個**用於通用機器人控制的視覺-語言-動作模型（vision-language-action model）**，以自迴歸（autoregressive）的「預測下一個 token」方式，對連續的機器人動作建模。
+
+## 模型概覽[[model-overview]]
+
+π₀-FAST 結合了視覺-語言模型的強大能力，以及一種名為 **FAST**（Frequency-space Action Sequence Tokenization）的全新動作 token 化方法。這讓自迴歸的 VLA 能在高度靈巧的任務上訓練——這些任務用標準的分箱離散化方法是做不到的——而且訓練速度比 π₀ 這類以擴散（diffusion）為基礎的方法**快上 5 倍**。
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-pifast.png"
+  alt="An overview of Pi0-FAST"
+  width="85%"
+/>
+
+### 為什麼使用 FAST？[[why-fast]]
+
+標準的機器人動作 token 化方法，採用逐維度、逐時間步的簡單分箱方式。這對簡單的行為還算堪用，但遇到需要精確度與高頻控制的複雜、靈巧技能時，很快就會失效。
+
+FAST 透過訊號處理技術壓縮動作序列來解決這個問題，產生密集的動作 token 序列，可以像語言 token 一樣以自迴歸的方式預測。
+
+### FAST token 化的運作方式[[how-fast-tokenization-works]]
+
+FAST tokenizer 透過以下步驟壓縮動作序列：
+
+1. **正規化**：取一個形狀為 `(H, D)` 的連續動作區塊（action chunk），其中 `H` 是時域（horizon），`D` 是動作維度。使用支援的正規化方法之一進行正規化（建議使用 Quantiles，以處理離群值）。
+
+2. **離散餘弦轉換（DCT）**：對每個動作維度分別套用 DCT（透過 scipy）。DCT 是一種常用於影像與音訊編解碼器（JPEG、MP3）的壓縮演算法。
+
+3. **量化**：對每個動作維度四捨五入並移除不重要的係數，得到一個稀疏的頻率矩陣。
+
+4. **攤平**：將矩陣攤平成一維向量，低頻分量排在前面。
+
+5. **位元組對編碼（BPE）**：訓練一個 BPE tokenizer，將 DCT 係數壓縮成密集的動作 token，壓縮率通常比先前的 token 化方法高出**10 倍**。
+
+只要訓練模型預測這些 FAST token，這種方法就能把**任何現有的 VLM** 變成 VLA。
+
+## 安裝需求[[installation-requirements]]
+
+1. 依照我們的[安裝指南](./installation)安裝 LeRobot。
+2. 執行以下指令安裝 π₀-FAST 的相依套件：
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+## 訓練自訂 FAST tokenizer[[training-a-custom-fast-tokenizer]]
+
+FAST tokenizer 有兩種選擇：
+
+1. **使用預訓練的 tokenizer**：`lerobot/fast-action-tokenizer` 是以 100 萬筆以上的真實機器人動作序列訓練的，可作為通用的 tokenizer 使用。
+
+2. **訓練自己的 tokenizer**：若想在你的資料集上取得最佳效能，可以用自己的資料微調（fine-tune）tokenizer。
+
+### 訓練你自己的 tokenizer[[training-your-own-tokenizer]]
+
+```bash
+lerobot-train-tokenizer \
+    --repo_id "user/my-lerobot-dataset" \
+    --action_horizon 10 \
+    --encoded_dims "0:6" \
+    --vocab_size 1024 \
+    --scale 10.0 \
+    --normalization_mode QUANTILES \
+    --output_dir "./my_fast_tokenizer" \
+    --push_to_hub \
+    --hub_repo_id "username/my-action-tokenizer"
+```
+
+### tokenizer 的主要參數[[key-tokenizer-parameters]]
+
+| 參數                   | 說明                                                                       | 預設值       |
+| ---------------------- | -------------------------------------------------------------------------- | ------------ |
+| `--repo_id`            | LeRobot 資料集的儲存庫 ID                                                  | 必填         |
+| `--action_horizon`     | 每個區塊中的未來動作數量                                                   | `10`         |
+| `--encoded_dims`       | 要編碼的維度範圍，以逗號分隔（例如 `"0:6,7:23"`）                          | `"0:6,7:23"` |
+| `--vocab_size`         | BPE 詞彙表大小                                                             | `1024`       |
+| `--scale`              | 量化時使用的 DCT 縮放係數                                                  | `10.0`       |
+| `--normalization_mode` | 正規化模式（`MEAN_STD`、`MIN_MAX`、`QUANTILES`、`QUANTILE10`、`IDENTITY`） | `QUANTILES`  |
+| `--sample_fraction`    | 每個回合（episode）取樣的區塊比例                                          | `0.1`        |
+
+## 使用方式[[usage]]
+
+若要在 LeRobot 中使用 π₀-FAST，請將策略類型（policy type）指定為：
+
+```python
+policy.type=pi0_fast
+```
+
+## 訓練[[training]]
+
+若要訓練 π₀-FAST，可以使用 LeRobot 的訓練腳本：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0_fast \
+    --output_dir=./outputs/pi0fast_training \
+    --job_name=pi0fast_training \
+    --policy.pretrained_path=lerobot/pi0fast-base \
+    --policy.dtype=bfloat16 \
+    --policy.gradient_checkpointing=true \
+    --policy.chunk_size=10 \
+    --policy.n_action_steps=10 \
+    --policy.max_action_tokens=256 \
+    --steps=100000 \
+    --batch_size=4 \
+    --policy.device=cuda
+```
+
+### 主要的訓練參數[[key-training-parameters]]
+
+| 參數                                   | 說明                               | 預設值                          |
+| -------------------------------------- | ---------------------------------- | ------------------------------- |
+| `--policy.gradient_checkpointing=true` | 大幅減少訓練時的記憶體用量         | `false`                         |
+| `--policy.dtype=bfloat16`              | 使用混合精度訓練以提升效率         | `float32`                       |
+| `--policy.chunk_size`                  | 要預測的動作步數（動作時域）       | `50`                            |
+| `--policy.n_action_steps`              | 要執行的動作步數                   | `50`                            |
+| `--policy.max_action_tokens`           | 每個動作區塊最多的 FAST token 數量 | `256`                           |
+| `--policy.action_tokenizer_name`       | 要使用的 FAST tokenizer            | `lerobot/fast-action-tokenizer` |
+| `--policy.compile_model=true`          | 啟用 torch.compile 以加速訓練      | `false`                         |
+
+## 推論[[inference]]
+
+### 以 KV 快取加速推論[[kv-caching-for-fast-inference]]
+
+π₀-FAST 支援 **KV 快取**，這是 LLM 推論中廣泛使用的最佳化技巧。它會快取注意力機制中的鍵值對，避免自迴歸解碼時重複計算。
+
+```python
+# KV 快取預設為啟用
+policy.use_kv_cache=true
+```
+
+### 推論範例[[inference-example]]
+
+```python
+from lerobot.policies.pi0_fast import PI0FastPolicy, PI0FastConfig
+
+# 載入策略
+policy = PI0FastPolicy.from_pretrained("your-model-path")
+
+# 進行推論
+actions = policy.predict_action_chunk(batch)
+```
+
+## 模型架構[[model-architecture]]
+
+π₀-FAST 採用以 PaliGemma 為基礎的架構：
+
+- **視覺編碼器**：用於理解影像的 SigLIP 視覺塔（vision tower）
+- **語言模型**：Gemma 2B，負責處理語言指令並預測動作 token
+
+模型以影像、文字指令與機器人狀態（state）作為輸入，並輸出離散的 FAST token，再將它們解碼回連續的動作。
+
+## 設定選項[[configuration-options]]
+
+| 參數                 | 說明                                           | 預設值     |
+| -------------------- | ---------------------------------------------- | ---------- |
+| `paligemma_variant`  | VLM 骨幹網路的版本（`gemma_300m`、`gemma_2b`） | `gemma_2b` |
+| `max_state_dim`      | 狀態向量的最大維度（會填補）                   | `32`       |
+| `max_action_dim`     | 動作向量的最大維度（會填補）                   | `32`       |
+| `temperature`        | 取樣溫度（0.0 為 greedy 取樣）                 | `0.0`      |
+| `max_decoding_steps` | 最大解碼步數                                   | `256`      |
+| `use_kv_cache`       | 啟用 KV 快取以加速推論                         | `true`     |
+
+## 與 π₀ 的比較[[comparison-with-]]
+
+| 特性         | π₀                                    | π₀-FAST              |
+| ------------ | ------------------------------------- | -------------------- |
+| 動作表示方式 | 流匹配（flow matching，屬於擴散方法） | 自迴歸 token（FAST） |
+| 訓練速度     | 1x                                    | **快 5 倍**          |
+| 靈巧度       | 高                                    | 高                   |
+| 推論方法     | 反覆去雜訊                            | 自迴歸解碼           |
+| KV 快取      | 不適用                                | 支援                 |
+
+## 重現 π₀Fast 的結果[[reproducing-fast-results]]
+
+我們使用 LeRobot 的實作，在 LIBERO 基準測試上重現了 π₀Fast 的結果。我們以 LeRobot 的 PiFast 基礎模型 [lerobot/pi0fast-base](https://huggingface.co/lerobot/pi0fast-base) 為起點，使用 [HuggingFace LIBERO 資料集](https://huggingface.co/datasets/HuggingFaceVLA/libero)，在 8 張 H100 GPU 上以 bfloat16、批次大小 256 額外微調了 40k 步。
+
+微調後的模型可以在這裡找到：
+
+- **π₀Fast LIBERO**: [lerobot/pi0fast-libero](https://huggingface.co/lerobot/pi0fast-libero)
+
+使用的訓練指令如下：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=lerobot/libero \
+  --output_dir=outputs/libero_pi0fast \
+  --job_name=libero_pi0fast \
+  --policy.path=lerobot/pi0fast-base \
+  --policy.dtype=bfloat16 \
+  --steps=100000 \
+  --save_freq=20000 \
+  --batch_size=4 \
+  --policy.device=cuda \
+  --policy.scheduler_warmup_steps=4000 \
+  --policy.scheduler_decay_steps=100000 \
+  --policy.scheduler_decay_lr=1e-5 \
+  --policy.gradient_checkpointing=true \
+  --policy.chunk_size=10 \
+  --policy.n_action_steps=10 \
+  --policy.max_action_tokens=256 \
+  --policy.empty_cameras=1 \
+```
+
+接著，我們使用 LeRobot 的 LIBERO 實作評估微調後的模型，執行以下指令：
+
+```bash
+tasks="libero_object,libero_spatial,libero_goal,libero_10"
+lerobot-eval \
+  --policy.path=lerobot/pi0fast-libero \
+  --policy.max_action_tokens=256 \
+  --env.type=libero \
+  --policy.gradient_checkpointing=false \
+  --env.task=${tasks} \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --rename_map='{"observation.images.image":"observation.images.base_0_rgb","observation.images.image2":"observation.images.left_wrist_0_rgb"}'
+```
+
+**注意：** 我們將 `n_action_steps` 設為 10，與原始的 OpenPI 實作相同。
+
+### 結果[[results]]
+
+我們在 LIBERO 基準測試上得到以下結果：
+
+| 模型        | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | 平均     |
+| ----------- | -------------- | ------------- | ----------- | --------- | -------- |
+| **π₀-fast** | 70.0           | 100.0         | 100.0       | 60.0      | **82.5** |
+
+完整的評估輸出資料夾（包含影片）可在[此處](https://drive.google.com/drive/folders/1HXpwPTRm4hx6g1sF2P7OOqGG0TwPU7LQ?usp=sharing)取得。
+
+## 授權[[license]]
+
+本模型採用 **Apache 2.0 授權**，與原始的 [OpenPI 儲存庫](https://github.com/Physical-Intelligence/openpi)一致。
+
+## 參考資料[[references]]
+
+- [FAST: Efficient Robot Action Tokenization](https://www.physicalintelligence.company/research/fast) - Physical Intelligence Blog
+- [OpenPI Repository](https://github.com/Physical-Intelligence/openpi) - 原始實作
+- [FAST Tokenizer on Hugging Face](https://huggingface.co/physical-intelligence/fast) - 預訓練的 tokenizer

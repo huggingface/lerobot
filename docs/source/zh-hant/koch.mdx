@@ -1,0 +1,283 @@
+# Koch v1.1[[koch-v11]]
+
+在以下步驟中，我們將說明如何組裝 Koch v1.1 機器人。
+
+## 訂購並組裝零件[[order-and-assemble-the-parts]]
+
+請依照這份 [README](https://github.com/jess-moss/koch-v1-1) 中的採購與組裝說明操作，它會引導你完成從臂（follower arm）與主臂（leader arm）的組裝，如下圖所示。
+
+若想觀看組裝過程的示範，可以參考[這部教學影片](https://youtu.be/8nQIg9BwwTk)。
+
+> [!WARNING]
+> 這部影片製作之後，我們簡化了設定流程，因此有兩件事與影片中的說明不同：
+>
+> - 不要一開始就插上所有馬達線，請等到[設定馬達](#configure-the-motors)步驟中指示時再插。
+> - 不要一開始就將控制板（PCB）鎖到底座上，請等到[設定馬達](#configure-the-motors)步驟中指示時再鎖。
+
+## 安裝 LeRobot 🤗[[install-lerobot]]
+
+若要安裝 LeRobot，請依照我們的[安裝指南](./installation)操作。
+
+除了這些說明之外，你還需要安裝 Dynamixel SDK：
+
+```bash
+pip install -e ".[dynamixel]"
+```
+
+## 設定馬達[[configure-the-motors]]
+
+### 1. 找出與每支手臂相關聯的 USB 連接埠[[1-find-the-usb-ports-associated-with-each-arm]]
+
+若要找出每個匯流排伺服轉接器（bus servo adapter）的連接埠（port），請執行此腳本：
+
+```bash
+lerobot-find-port
+```
+
+<hfoptions id="example">
+<hfoption id="Mac">
+
+範例輸出：
+
+```
+Finding all available ports for the MotorBus.
+['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+Remove the USB cable from your MotorsBus and press Enter when done.
+
+[...Disconnect corresponding leader or follower arm and press Enter...]
+
+The port of this MotorsBus is /dev/tty.usbmodem575E0032081
+Reconnect the USB cable.
+```
+
+其中找到的連接埠為 `/dev/tty.usbmodem575E0032081`，對應到你的主臂或從臂。
+
+</hfoption>
+<hfoption id="Linux">
+
+在 Linux 上，你可能需要執行以下指令來授予 USB 連接埠的存取權限：
+
+```bash
+sudo chmod 666 /dev/ttyACM0
+sudo chmod 666 /dev/ttyACM1
+```
+
+範例輸出：
+
+```
+Finding all available ports for the MotorBus.
+['/dev/ttyACM0', '/dev/ttyACM1']
+Remove the usb cable from your MotorsBus and press Enter when done.
+
+[...Disconnect corresponding leader or follower arm and press Enter...]
+
+The port of this MotorsBus is /dev/ttyACM1
+Reconnect the USB cable.
+```
+
+其中找到的連接埠為 `/dev/ttyACM1`，對應到你的主臂或從臂。
+
+</hfoption>
+</hfoptions>
+
+### 2. 設定馬達 id 與鮑率[[2-set-the-motors-ids-and-baudrates]]
+
+每個馬達在匯流排（bus）上都以唯一的 id 識別。全新的馬達通常預設 id 為 `1`。為了讓馬達與控制器之間能正常通訊，我們首先需要替每個馬達設定一個互不重複的 id。此外，資料在匯流排上的傳輸速度由鮑率（baudrate）決定。控制器與所有馬達都必須設定為相同的鮑率，才能互相通訊。
+
+為此，我們要先用控制器逐一連接每個馬達來設定這些值。由於這些參數會寫入馬達內部記憶體的非揮發性區段（EEPROM），因此只需要設定一次。
+
+如果你要重新利用其他機器人的馬達，可能也需要執行這個步驟，因為 id 與鮑率很可能不相符。
+
+#### 從臂[[follower]]
+
+將電腦的 USB 線與 5V 電源供應器接到從臂的控制板（controller board）。接著，使用上一步取得的連接埠，執行以下指令或 API 範例。你還需要透過 `id` 參數替從臂命名。
+
+設定馬達 id 的操作示範，請參閱[這部影片](https://huggingface.co/docs/lerobot/zh-hant/so101#setup-motors-video)，影片中示範的是 SO101 手臂的流程。
+
+<hfoptions id="setup_motors">
+<hfoption id="Command">
+
+```bash
+lerobot-setup-motors \
+    --robot.type=koch_follower \
+    --robot.port=/dev/tty.usbmodem575E0031751 # <- 在此貼上上一步找到的連接埠
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.robots.koch_follower import KochFollower, KochFollowerConfig
+
+config = KochFollowerConfig(
+    port="/dev/tty.usbmodem575E0031751",
+    id="my_awesome_follower_arm",
+)
+follower = KochFollower(config)
+follower.setup_motors()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+你應該會看到以下指示。
+
+```
+Connect the controller board to the 'gripper' motor only and press enter.
+```
+
+依照指示，插上夾爪（gripper）的馬達。確認它是唯一連接到控制板的馬達，而且該馬達本身尚未與其他馬達串接（daisy-chain）。按下 `[Enter]` 後，腳本會自動為該馬達設定 id 與鮑率。
+
+<details>
+<summary>疑難排解</summary>
+
+若你在此時遇到錯誤，請檢查你的線材並確認它們已正確插好：
+
+<ul>
+  <li>電源供應器</li>
+  <li>電腦與控制板之間的 USB 線</li>
+  <li>控制板到馬達的 3-pin 線</li>
+</ul>
+
+若你使用的是 Waveshare 控制板，請確認兩個跳線（jumper）都設在 `B` 通道（USB）上。
+
+</details>
+
+接著你應該會看到以下訊息：
+
+```
+'gripper' motor id set to 6
+```
+
+接著是下一個指示：
+
+```
+Connect the controller board to the 'wrist_roll' motor only and press enter.
+```
+
+你可以從控制板拔下 3-pin 線，但另一端可以繼續接在夾爪馬達上，因為它已經在正確的位置。現在，將另一條 3-pin 線插到腕部滾轉（wrist roll）馬達上，並接到控制板。和前一個馬達一樣，確認它是唯一連接到控制板的馬達，而且該馬達本身沒有連接其他馬達。
+
+依照指示對每個馬達重複這個步驟。
+
+> [!TIP]
+> 每一步按下 Enter 前，都請檢查接線。例如，你在操作控制板時，電源線可能會鬆脫。
+
+完成後，腳本就會直接結束，此時馬達即可使用。現在你可以將每個馬達的 3-pin 線依序接到下一個馬達，再將第一個馬達（id=1 的肩部平移馬達）的線接到控制板，然後就可以把控制板固定到手臂底座上。
+
+#### 主臂[[leader]]
+
+對主臂執行相同的步驟，但要相應地修改指令或腳本。
+
+<hfoptions id="setup_motors">
+<hfoption id="Command">
+
+```bash
+lerobot-setup-motors \
+    --teleop.type=koch_leader \
+    --teleop.port=/dev/tty.usbmodem575E0031751 \  # <- 在此貼上上一步找到的連接埠
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.koch_leader import KochLeader, KochLeaderConfig
+
+config = KochLeaderConfig(
+    port="/dev/tty.usbmodem575E0031751",
+    id="my_awesome_leader_arm",
+)
+leader = KochLeader(config)
+leader.setup_motors()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+## 校正[[calibrate]]
+
+接下來，你需要校正機器人，確保主臂（leader arm）與從臂（follower arm）處於相同的實體位置時，會讀到相同的位置數值。
+校正非常重要，因為它能讓在某一台機器人上訓練的神經網路，也能在另一台機器人上運作。
+
+#### 從臂[[calibrate-follower]]
+
+執行以下指令或 API 範例來校正從臂：
+
+<hfoptions id="calibrate_follower">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --robot.type=koch_follower \
+    --robot.port=/dev/tty.usbmodem58760431551 \ # <- 你機器人的連接埠
+    --robot.id=my_awesome_follower_arm  # <- 為機器人取一個唯一的名稱
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.robots.koch_follower import KochFollowerConfig, KochFollower
+
+config = KochFollowerConfig(
+    port="/dev/tty.usbmodem585A0076891",
+    id="my_awesome_follower_arm",
+)
+
+follower = KochFollower(config)
+follower.connect(calibrate=False)
+follower.calibrate()
+follower.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+我們統一了大多數機器人的校正方法，因此這支 Koch 手臂的校正步驟與 SO100、SO101 相同。首先，將機器人移動到每個關節都位於活動範圍中間的位置，然後按下 `Enter`。接著，讓所有關節走完完整的活動範圍。SO101 的相同流程影片可在[這裡](https://huggingface.co/docs/lerobot/zh-hant/so101#calibration-video)找到，可作為參考。
+
+#### 主臂[[calibrate-leader]]
+
+以相同的步驟校正主臂，執行以下指令或 API 範例：
+
+<hfoptions id="calibrate_leader">
+<hfoption id="Command">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=koch_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 你機器人的連接埠
+    --teleop.id=my_awesome_leader_arm  # <- 為機器人取一個唯一的名稱
+```
+
+</hfoption>
+<hfoption id="API example">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.koch_leader import KochLeaderConfig, KochLeader
+
+config = KochLeaderConfig(
+    port="/dev/tty.usbmodem575E0031751",
+    id="my_awesome_leader_arm",
+)
+
+leader = KochLeader(config)
+leader.connect(calibrate=False)
+leader.calibrate()
+leader.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+恭喜 🎉，你的機器人已準備好自行學習任務。依照這份教學開始訓練它：[開始使用真實世界機器人](./il_robots)
+
+> [!TIP]
+> 若你有任何問題或需要協助，請至 [Discord](https://discord.com/invite/s3KuuzsPFb) 與我們聯繫。

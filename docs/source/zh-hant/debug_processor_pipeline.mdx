@@ -1,0 +1,299 @@
+# 除錯你的處理器管線[[debug-your-processor-pipeline]]
+
+處理器管線（processor pipeline）可能非常複雜，尤其是串接了多個轉換步驟的時候。
+與單純的函式呼叫不同，管線天生缺乏可觀測性，
+你很難看到每個步驟之間發生了什麼，也很難找出問題出在哪裡。
+本指南提供專門為這些問題設計的除錯工具與技巧，
+幫助你理解資料在管線中的流動過程。
+
+我們將介紹三種互補的除錯方法：用於執行期監控的 **hook**、用於詳細檢查的**逐步除錯（step-through debugging）**，以及用於找出結構不相符的**特徵驗證**。每種方法各有用途，搭配使用就能完整掌握管線的行為。
+
+## 理解 hooks[[understanding-hooks]]
+
+hook 是在管線執行過程中，於特定時間點被呼叫的函式。
+它們讓你能在不修改管線程式碼的情況下，檢查、監控或修改資料。
+你可以把它們想成管線的「事件監聽器」。
+
+### 什麼是 hook？[[what-is-a-hook]]
+
+hook 是一個回呼函式（callback），會在管線執行的特定時刻被自動呼叫。
+這個概念來自事件驅動的程式設計：想像你可以「掛進」管線的執行流程中，觀察正在發生的事情，或對它做出反應。
+
+你可以把 hook 想成在管線中插入一個個檢查站。每當管線經過其中一個檢查站時，就會短暫停下來呼叫你的 hook 函式，讓你有機會檢查目前的狀態、記錄資訊並驗證資料。
+
+hook 就是一個接受兩個參數的函式：
+
+- `step_idx: int` - 目前處理步驟的索引（0、1、2 等）
+- `transition: EnvTransition` - 管線在這個時間點的資料 transition
+
+hook 的好處在於它不具侵入性：你可以加入監控、驗證或除錯的邏輯，而不必修改管線程式碼中的任何一行。管線本身維持簡潔、專注於核心邏輯，而記錄、監控與除錯這類橫切關注點（cross-cutting concern）則交給 hook 處理。
+
+### 前置與後置 hooks[[before-vs-after-hooks]]
+
+管線支援兩種 hook：
+
+- **前置 hook**（`register_before_step_hook`）- 在每個步驟執行前被呼叫
+- **後置 hook**（`register_after_step_hook`）- 在每個步驟完成後被呼叫
+
+```python
+def before_hook(step_idx: int, transition: EnvTransition):
+    """在步驟處理 transition 之前被呼叫。"""
+    print(f"About to execute step {step_idx}")
+    # 適用於：記錄、驗證、事前準備
+
+def after_hook(step_idx: int, transition: EnvTransition):
+    """在步驟處理 transition 之後被呼叫。"""
+    print(f"Completed step {step_idx}")
+    # 適用於：監控結果、清理、除錯
+
+processor.register_before_step_hook(before_hook)
+processor.register_after_step_hook(after_hook)
+```
+
+### 實作 NaN 偵測 hook[[implementing-a-nan-detection-hook]]
+
+以下是一個偵測 NaN 值的 hook 實用範例：
+
+```python
+def check_nans(step_idx: int, transition: EnvTransition):
+    """檢查觀測中的 NaN 值。"""
+    obs = transition.get(TransitionKey.OBSERVATION)
+    if obs:
+        for key, value in obs.items():
+            if isinstance(value, torch.Tensor) and torch.isnan(value).any():
+                print(f"NaN detected in {key} at step {step_idx}")
+
+# 註冊 hook，使其在每個步驟之後執行
+processor.register_after_step_hook(check_nans)
+
+# 處理你的資料——hook 會自動被呼叫
+output = processor(input_data)
+
+# 除錯完成後移除 hook
+processor.unregister_after_step_hook(check_nans)
+```
+
+### hooks 的內部運作機制[[how-hooks-work-internally]]
+
+了解內部機制，能幫助你更有效地使用 hook。管線維護兩個獨立的清單：一個存放前置 hook，另一個存放後置 hook。註冊 hook 時，它只是被加到對應的清單中。
+
+執行期間，管線會依照嚴格的順序進行：對每個處理步驟，先依註冊順序呼叫所有前置 hook，接著執行實際的步驟轉換，最後再依註冊順序呼叫所有後置 hook。這會在每個步驟周圍形成一個可預期的「三明治」結構。
+
+關鍵在於，hook 不會改變管線的核心邏輯——它們純粹是額外加上的。管線的 `_forward` 方法負責協調 hook 與處理步驟的執行時機，確保你的除錯或監控程式碼在正確的時間點執行，又不會干擾主要的資料流。
+
+以下是管線執行 hook 的簡化示意：
+
+```python
+class DataProcessorPipeline:
+    def __init__(self):
+        self.steps = [...]
+        self.before_step_hooks = []  # 前置 hook 清單
+        self.after_step_hooks = []   # 後置 hook 清單
+
+    def _forward(self, transition):
+        """讓 transition 依序通過所有步驟的內部方法。"""
+        for step_idx, processor_step in enumerate(self.steps):
+            # 1. 呼叫所有前置 hook
+            for hook in self.before_step_hooks:
+                hook(step_idx, transition)
+
+            # 2. 執行實際的處理步驟
+            transition = processor_step(transition)
+
+            # 3. 呼叫所有後置 hook
+            for hook in self.after_step_hooks:
+                hook(step_idx, transition)
+
+        return transition
+
+    def register_before_step_hook(self, hook_fn):
+        self.before_step_hooks.append(hook_fn)
+
+    def register_after_step_hook(self, hook_fn):
+        self.after_step_hooks.append(hook_fn)
+```
+
+### 執行流程[[execution-flow]]
+
+執行流程如下所示：
+
+```
+輸入 → 前置 hook → 步驟 0 → 後置 hook → 前置 hook → 步驟 1 → 後置 hook → ... → 輸出
+```
+
+例如，有 3 個步驟，且同時使用兩種 hook：
+
+```python
+def timing_before(step_idx, transition):
+    print(f"⏱️  Starting step {step_idx}")
+
+def validation_after(step_idx, transition):
+    print(f"✅ Completed step {step_idx}")
+
+processor.register_before_step_hook(timing_before)
+processor.register_after_step_hook(validation_after)
+
+# 輸出結果：
+# ⏱️  Starting step 0
+# ✅ Completed step 0
+# ⏱️  Starting step 1
+# ✅ Completed step 1
+# ⏱️  Starting step 2
+# ✅ Completed step 2
+```
+
+### 多個 hooks[[multiple-hooks]]
+
+你可以註冊多個相同類型的 hook——它們會依註冊順序執行：
+
+```python
+def log_shapes(step_idx: int, transition: EnvTransition):
+    obs = transition.get(TransitionKey.OBSERVATION)
+    if obs:
+        print(f"Step {step_idx} observation shapes:")
+        for key, value in obs.items():
+            if isinstance(value, torch.Tensor):
+                print(f"  {key}: {value.shape}")
+
+processor.register_after_step_hook(check_nans) # 第一個執行
+processor.register_after_step_hook(log_shapes) # 第二個執行
+
+# 兩個 hook 都會在每個步驟之後依註冊順序被呼叫
+output = processor(input_data)
+```
+
+雖然 hook 非常適合在管線正常執行時監控特定問題（例如偵測 NaN）或收集指標，但有時你需要更深入地探究。當你想確切了解每個步驟發生了什麼，或要除錯複雜的轉換邏輯時，逐步除錯能提供你需要的詳細檢查能力。
+
+## 逐步除錯[[step-through-debugging]]
+
+逐步除錯就像為你的管線提供慢動作重播。你不必看著資料從輸入到輸出一閃而過地被轉換，而是可以在每個步驟之後暫停，檢查發生了什麼。
+
+當你想理解一個複雜的管線、除錯非預期的行為，或確認每個轉換都如預期運作時，這種方法特別有用。hook 適合自動化的監控，而逐步除錯則讓你能手動、互動地控制整個檢查過程。
+
+`step_through()` 方法是一個產生器（generator），會在每個處理步驟之後產出當下的 transition 狀態，讓你檢查中間結果。你可以把它想成資料流經管線時拍下的一系列快照——每張快照都準確呈現資料多經過一次轉換之後的樣子。
+
+### 逐步除錯的運作方式[[how-step-through-works]]
+
+`step_through()` 方法從根本上改變了管線的執行方式。它不會依序執行完所有步驟再只回傳最終結果，而是把管線變成一個會逐步產出中間結果的迭代器。
+
+內部的運作方式如下：這個方法會先把你的輸入資料轉換成管線內部的 transition 格式，並產出這個初始狀態。接著套用第一個處理步驟並產出結果，再將第二個步驟套用到該結果上並再次產出，依此類推。每次 `yield` 都會給你那個時間點 transition 的完整快照。
+
+這種產生器模式之所以強大，是因為它是惰性求值（lazy）的——只有在你要求時，管線才會計算下一個步驟。這表示你可以在任何時間點停下來，仔細檢查目前的狀態，再決定是否繼續。你不必為了除錯一個有問題的步驟，就執行整條管線。
+
+`step_through()` 會在每個步驟之後暫停並提供中間的 transition，而不是執行完整條管線後只讓你看到最終結果：
+
+```python
+# 建立一個產出中間狀態的生成器
+for i, intermediate_result in enumerate(processor.step_through(input_data)):
+    print(f"=== After step {i} ===")
+
+    # 檢查此階段的觀測
+    obs = intermediate_result.get(TransitionKey.OBSERVATION)
+    if obs:
+        for key, value in obs.items():
+            if isinstance(value, torch.Tensor):
+                print(f"{key}: shape={value.shape}, dtype={value.dtype}")
+```
+
+### 使用中斷點進行互動式除錯[[interactive-debugging-with-breakpoints]]
+
+你可以在逐步執行的迴圈中加入中斷點，進行互動式除錯：
+
+```python
+# 逐步走過管線並進行除錯
+for i, intermediate in enumerate(processor.step_through(data)):
+    print(f"Step {i}: {processor.steps[i].__class__.__name__}")
+
+    # 設定中斷點以檢查當前狀態
+    breakpoint()  # 除錯器會在此暫停
+
+    # 現在你可以在除錯器中檢查 'intermediate'：
+    # - 檢查張量的形狀和值
+    # - 驗證預期的轉換
+    # - 尋找非預期的變化
+```
+
+在除錯工作階段中，你可以：
+
+- 檢查 `intermediate[TransitionKey.OBSERVATION]`，查看觀測資料（observation data）
+- 檢查 `intermediate[TransitionKey.ACTION]`，查看動作（action）的轉換結果
+- 檢查 transition 的任何部分，了解每個步驟的作用
+
+逐步除錯非常適合用來理解*資料*的轉換，那資料的*結構*呢？hook 與逐步除錯能幫你除錯執行期的行為，但你也需要確保管線產出的資料格式符合下游元件的預期。這就是特徵契約（feature contract）驗證派上用場的地方。
+
+## 驗證特徵契約[[validating-feature-contracts]]
+
+特徵契約定義了管線預期的輸入資料結構，以及它產出的輸出資料結構。
+驗證這些契約，能幫你及早發現不相符的問題。
+
+### 理解特徵契約[[understanding-feature-contracts]]
+
+每個處理器步驟都有一個 `transform_features()` 方法，描述它如何改變資料結構：
+
+```python
+# 從你的管線取得預期的輸出特徵
+initial_features = {
+    PipelineFeatureType.OBSERVATION: {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(7,)),
+        "observation.image": PolicyFeature(type=FeatureType.IMAGE, shape=(3, 224, 224))
+    },
+    PipelineFeatureType.ACTION: {
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,))
+    }
+}
+
+# 檢查你的管線將會輸出什麼
+output_features = processor.transform_features(initial_features)
+
+print("Input features:")
+for feature_type, features in initial_features.items():
+    print(f"  {feature_type}:")
+    for key, feature in features.items():
+        print(f"    {key}: {feature.type.value}, shape={feature.shape}")
+
+print("\nOutput features:")
+for feature_type, features in output_features.items():
+    print(f"  {feature_type}:")
+    for key, feature in features.items():
+        print(f"    {key}: {feature.type.value}, shape={feature.shape}")
+```
+
+### 驗證預期特徵[[verifying-expected-features]]
+
+檢查你的管線是否產出預期的特徵：
+
+```python
+# 定義你預期管線產出的特徵
+expected_keys = ["observation.state", "observation.image", "action"]
+
+print("Validating feature contract...")
+for expected_key in expected_keys:
+    found = False
+    for feature_type, features in output_features.items():
+        if expected_key in features:
+            feature = features[expected_key]
+            print(f"✅ {expected_key}: {feature.type.value}, shape={feature.shape}")
+            found = True
+            break
+
+    if not found:
+        print(f"❌ Missing expected feature: {expected_key}")
+```
+
+這項驗證能幫助確保你的管線可以和預期特定資料結構的下游元件正確搭配。
+
+## 總結[[summary]]
+
+了解這三種除錯方法之後，你就能有系統地解決任何管線問題：
+
+1. **hook** - 用於執行期的監控與驗證，不需修改管線程式碼
+2. **逐步除錯** - 用於檢查中間狀態並理解轉換過程
+3. **特徵驗證** - 用於確保資料結構符合契約
+
+**各種方法的使用時機：**
+
+- 需要理解管線在做什麼，或遇到非預期的情況時，先從**逐步除錯**開始
+- 在開發與正式環境中加入 **hook** 持續監控，自動抓出問題
+- 部署前使用**特徵驗證**，確保你的管線能與下游元件正確搭配
+
+這三種工具相輔相成，為複雜的管線提供它天生缺乏的完整可觀測性。透過 hook 留意問題、逐步除錯幫助你理解行為，再加上特徵驗證確保相容性，你就能有信心且有效率地除錯任何管線。

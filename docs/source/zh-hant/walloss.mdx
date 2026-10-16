@@ -1,0 +1,149 @@
+# WALL-OSS[[wall-oss]]
+
+WALL-OSS 是 [XSquare Robot](https://x2robot.com/en/research/68bc2cde8497d7f238dde690) 團隊在 2025 年提出的開源具身智慧（embodied intelligence）基礎模型。LeRobot 的實作改寫自他們開源的 [WallX](https://github.com/X-Square-Robot/wall-x) 儲存庫。
+
+X Square Robot 的 WALL-OSS 現已整合進 Hugging Face 的 LeRobot 生態系，這是 LeRobot 與 X Square Robot 團隊一次令人振奮的合作。你現在可以直接透過 LeRobot 對 WALL-OSS 進行後訓練（post-training）、評估與部署。我們希望藉此讓開源機器人社群更容易客製化與部署 WALL-OSS 基礎模型。歡迎閱讀並探索 WALL-OSS 的[論文](https://arxiv.org/pdf/2509.11766)與[程式碼](https://github.com/X-Square-Robot/wall-x)。
+
+## 模型概覽[[model-overview]]
+
+WALL-OSS 團隊正在打造具身基礎模型，用來擷取並壓縮世界上最有價值的資料：連續且高保真的物理互動串流。透過在模型的決策與實體的親身經驗之間建立直接的回饋迴路，讓真正能泛化的智慧得以湧現。這種智慧不只理解世界如何運作，也知道如何在其中有效地行動。
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/walloss-lerobot-paper.png"
+  alt="WALL-OSS 概覽"
+  width="85%"
+/>
+
+在技術上，WALL-OSS 採用緊密耦合的多模態架構（tightly-coupled MoE structure），同時整合離散與連續的動作建模（action modeling）策略。透過兩階段的訓練流程（Inspiration → Integration），模型逐步將語義推理與高頻動作生成統一起來。其核心創新包括：
+
+- **強化具身感知的多模態預訓練**：以統一的視覺-語言-動作資料進行大規模訓練，強化對空間、因果與操作的理解。
+- **統一跨層級思維鏈**（Unified Cross-Level Chain-of-Thought，Uni-CoT）：以單一的可微分框架，統一高層次的指令推理、子任務分解與細粒度的動作合成，形成從「理解」到「執行」的連續鏈條。
+- **混合專家（Mixture-of-Experts，MoE）動作頭**：依任務階段動態啟用專家，並在離散或連續空間中建模動作，以維持穩定的 VLM 先驗（prior）。
+- **兩階段訓練範式**：
+  - **Inspiration 階段**：注入離散的動作先驗，強化空間理解與語義-動作的對齊。
+  - **Integration 階段**：使用流匹配（flow matching）實現高頻的連續控制。
+
+## 安裝需求[[installation-requirements]]
+
+1. 按照我們的[安裝指南](./installation)安裝 LeRobot。
+2. 執行以下指令，安裝 WallX 的相依套件：
+
+   ```bash
+   pip install -e ".[wallx]"
+   ```
+
+## 使用方式[[usage]]
+
+若要在 LeRobot 中使用 WallX，請將策略類型（policy type）指定為：
+
+```python
+policy.type=wall_x
+```
+
+### 文字生成與互動控制[[text-generation-and-interactive-control]]
+
+WALL-OSS 透過[整合自己的策略](./bring_your_own_policies#text-capable-policies)中說明的策略契約（contract），
+提供原生的文字生成功能。
+執行時會先提供 `query_kind` 與呼叫端擁有的 `text`，
+再執行 WALL-OSS 的一般輸入管線：
+
+```python
+request = {
+    **observation,
+    "query_kind": "vqa",
+    "text": "Which object is closest to the right gripper?",
+}
+processed_batch = preprocessor(request)
+answer = policy.generate_text(processed_batch)
+```
+
+`vqa` 會將問題保留為使用者的內容。`next_subtask` 會在 `${subtask}`
+之前套用檢查點的配方（recipe）。WALL-X 直接為其 Qwen 視覺語言專家覆寫公開的
+`generate_text(processed_batch)` API，
+並透過 `supports_text_generation()` 回報此能力。
+
+互動式的語言執行環境可以先生成子任務，
+再以該子任務作為 WALL-OSS 動作預測的條件：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=your-org/your-wall-oss-checkpoint \
+  --robot.type=your_robot_type \
+  --robot.port=/dev/your_robot_port \
+  --task="clear the table" \
+  --interactive=true
+```
+
+執行 `/start` 之後，使用 `/vqa <question>` 進行以影像為依據的 VQA，
+或使用 `/autosteer <goal>`，依配方生成下一個子任務。`/subtask <text>`
+會略過生成，直接將指令送往動作推論。
+
+## 訓練[[training]]
+
+要訓練 WallX，可以使用標準的 LeRobot 訓練腳本，搭配適當的設定：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=wall_x \
+    --output_dir=./outputs/wallx_training \
+    --job_name=wallx_training \
+    --policy.repo_id=your_repo_id \
+    --policy.pretrained_name_or_path=x-square-robot/wall-oss-flow \
+    --policy.prediction_mode=diffusion \
+    --policy.attn_implementation=eager \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### 使用語言標註訓練[[train-with-language-annotations]]
+
+WALL-X 使用內建的配方，以 LeRobot 的可選語言
+欄位進行訓練。只有在要取代這個配方時，才需要設定 `recipe_path`：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your_org/your_language_annotated_dataset \
+  --policy.type=wall_x \
+  --policy.pretrained_name_or_path=x-square-robot/wall-oss-flow \
+  --policy.text_loss_weight=0.01 \
+  --policy.flow_loss_weight=1.0 \
+  --policy.device=cuda \
+  --batch_size=1 \
+  --steps=20000
+```
+
+被指定的 assistant 回合會以下一個 token 的交叉熵（cross-entropy）監督，而 `low_level`
+配方串流則以連續的 flow 動作監督。一筆資料可能只受
+其中一種目標監督，或兩者皆有。使用者提示、影像、本體感覺（proprioception）、動作查詢
+token 與填補都不計入文字損失。設定 `policy.recipe=null` 即可
+改用 WALL-OSS 原本只有動作的訓練路徑。
+
+標註的結構描述（schema）與可用的配方，
+請參閱[語言欄位與配方](./language_and_recipes)。
+
+### 訓練引數[[training-arguments]]
+
+| 引數                           | 說明                                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `--dataset.repo_id`            | 訓練資料集在 Hugging Face Hub 上的儲存庫 ID（例如 `lerobot/aloha_sim_insertion_human`）                 |
+| `--policy.type`                | 指定使用 WallX 策略架構                                                                                 |
+| `--output_dir`                 | 儲存訓練檢查點與記錄檔的本機目錄                                                                        |
+| `--job_name`                   | 這次訓練的名稱識別（用於記錄與追蹤）                                                                    |
+| `--policy.repo_id`             | 你在 Hugging Face Hub 上的儲存庫 ID，訓練好的模型會推送到這裡                                           |
+| `--policy.pretrained_path`     | 用來初始化的預訓練 WallX 權重路徑（官方的 WALL-OSS 檢查點）                                             |
+| `--policy.prediction_mode`     | 動作預測的方式：`diffusion` 或 `fast`。`diffusion` 以迭代去雜訊生成動作，`fast` 則改用下一個 token 預測 |
+| `--policy.attn_implementation` | 注意力的實作後端。`eager` 使用標準的 PyTorch 注意力（其他選項包括 `flash_attention_2` 或 `sdpa`）       |
+| `--steps`                      | 要執行的訓練總步數                                                                                      |
+| `--policy.device`              | 訓練使用的裝置（GPU 用 `cuda`，CPU 用 `cpu`）                                                           |
+| `--batch_size`                 | 每個訓練批次的樣本數                                                                                    |
+
+語言訓練使用 `policy.text_loss_weight`（預設 `0.01`）、
+`policy.flow_loss_weight`（預設 `1.0`）與 `policy.tokenizer_max_length`
+（預設 `768`）。`policy.recipe_path` 可選擇用來取代內建配方。
+
+## 授權[[license]]
+
+本模型採用 **Apache 2.0 授權**，與原始的 [WallX 儲存庫](https://github.com/X-Square-Robot/wall-x)一致。

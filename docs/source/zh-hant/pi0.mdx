@@ -1,0 +1,135 @@
+# π₀ (Pi0)[[pi0]]
+
+π₀ 是由 Physical Intelligence 開發的**通用機器人控制視覺-語言-動作模型**（vision-language-action model）。LeRobot 的實作改寫自他們開源的 [OpenPI](https://github.com/Physical-Intelligence/openpi) 儲存庫。
+
+## 模型概覽[[model-overview]]
+
+π₀ 是機器人領域的一項突破，也是 [Physical Intelligence](https://www.physicalintelligence.company/blog/pi0) 開發的第一個通用機器人基礎模型（foundation model）。傳統的機器人程式是只會重複固定動作的狹隘專才，π₀ 則被設計為通用策略（generalist policy），能理解視覺輸入、解讀自然語言指令，並控制各種不同的機器人完成多樣的任務。
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-pi0%20(1).png"
+  alt="An overview of Pi0"
+  width="85%"
+/>
+
+### Physical Intelligence 的願景[[the-vision-for-physical-intelligence]]
+
+正如 Physical Intelligence 所說，雖然 AI 在數位領域已取得非凡的成就，從下棋到藥物研發都是如此，但在物理世界中，人類的智慧仍遠遠領先 AI。套用莫拉維克悖論（Moravec's paradox）的說法，贏一盤棋對 AI 來說是「簡單」的問題，但摺襯衫或收拾桌面，卻需要解決一些史上最困難的工程問題。π₀ 是發展人工物理智慧的第一步，目標是讓使用者能像使用大型語言模型一樣，直接要求機器人執行任何想要的任務。
+
+### 架構與方法[[architecture-and-approach]]
+
+π₀ 結合了以下幾項關鍵創新：
+
+- **流匹配**（flow matching）：以一種新穎的方法，透過流匹配（擴散模型的一種變體），為預訓練的 VLM 加上連續動作輸出的能力
+- **跨具身訓練**（cross-embodiment training）：以來自 8 種不同機器人平台的資料訓練，包括 UR5e、雙臂 UR5e、Franka、雙臂 Trossen、雙臂 ARX、移動式 Trossen 與移動式 Fibocom
+- **網際網路規模的預訓練**：從擁有 30 億參數的預訓練視覺-語言模型繼承語義知識
+- **高頻控制**：以最高 50 Hz 的頻率輸出馬達命令，實現即時的靈巧操作
+
+## 安裝需求[[installation-requirements]]
+
+1. 依照我們的[安裝指南](./installation)安裝 LeRobot。
+2. 執行以下指令，安裝 Pi0 的相依套件：
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+## 訓練資料與能力[[training-data-and-capabilities]]
+
+π₀ 以迄今規模最大的機器人互動資料集訓練，結合了三種關鍵的資料來源：
+
+1. **網際網路規模的預訓練**：來自網路的視覺-語言資料，用於語義理解
+2. **Open X-Embodiment 資料集**：開源的機器人操作資料集
+3. **Physical Intelligence 資料集**：涵蓋 8 種不同機器人、規模龐大且多樣的靈巧任務資料集
+
+## 使用方式[[usage]]
+
+若要在 LeRobot 中使用 π₀，請將策略類型指定為：
+
+```python
+policy.type=pi0
+```
+
+## 訓練[[training]]
+
+要訓練 π₀，可以使用標準的 LeRobot 訓練腳本，搭配適當的設定：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --output_dir=./outputs/pi0_training \
+    --job_name=pi0_training \
+    --policy.pretrained_path=lerobot/pi0_base \
+    --policy.repo_id=your_repo_id \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --policy.dtype=bfloat16 \
+    --policy.freeze_vision_encoder=false \
+    --policy.train_expert_only=false \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=32
+```
+
+### 關鍵訓練參數[[key-training-parameters]]
+
+- **`--policy.compile_model=true`**：啟用模型編譯，加快訓練速度
+- **`--policy.gradient_checkpointing=true`**：大幅減少訓練過程中的記憶體使用量
+- **`--policy.dtype=bfloat16`**：使用混合精度（mixed precision）訓練以提升效率
+- **`--batch_size=32`**：訓練的批次大小，請依你的 GPU 記憶體調整
+- **`--policy.pretrained_path=lerobot/pi0_base`**：要微調（fine-tune）的 π₀ 基礎模型，可選擇：
+  - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
+  - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero)（專門針對 Libero 資料集訓練）
+
+### 訓練參數說明[[training-parameters-explained]]
+
+| 參數                    | 預設值  | 說明                     |
+| ----------------------- | ------- | ------------------------ |
+| `freeze_vision_encoder` | `false` | 不凍結視覺編碼器         |
+| `train_expert_only`     | `false` | 不凍結 VLM，訓練所有參數 |
+
+**💡 提示**：設定 `train_expert_only=true` 會凍結 VLM，只訓練 action expert 與投影層，讓微調時使用更少的記憶體。
+
+## 相對動作[[relative-actions]]
+
+π₀ 預設會預測絕對動作。你可以啟用**相對動作**（relative action），讓模型預測相對於目前機器人狀態（state）的偏移量。在某些設定下，這可以提升訓練的穩定性。
+
+若要使用相對動作，請先透過 CLI，在相對空間中重新計算資料集的統計量：
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.chunk_size 50 \
+    --operation.relative_exclude_joints "['gripper']" \
+    --push_to_hub true
+```
+
+或等效的 Python 寫法：
+
+```python
+from lerobot.datasets import LeRobotDataset, recompute_stats
+
+dataset = LeRobotDataset("your_dataset")
+recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_joints=["gripper"])
+dataset.push_to_hub()
+```
+
+`chunk_size` 應與你的策略的 `chunk_size` 一致（π₀ 預設為 50）。`relative_exclude_joints` 列出應維持在絕對空間中的關節名稱（例如夾爪命令）。使用 `--push_to_hub true` 可將更新後的統計量上傳到 Hub。
+
+然後啟用相對動作進行訓練：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi0 \
+    --policy.use_relative_actions=true \
+    --policy.relative_exclude_joints='["gripper"]' \
+    ...
+```
+
+## 授權[[license]]
+
+本模型採用 **Apache 2.0 授權**，與原始的 [OpenPI 儲存庫](https://github.com/Physical-Intelligence/openpi)一致。

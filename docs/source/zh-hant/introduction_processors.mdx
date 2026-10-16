@@ -1,0 +1,318 @@
+# 處理器簡介[[introduction-to-processors]]
+
+在機器人領域中，機器人與人類產生的資料，和機器學習模型所期望的輸入之間，存在根本上的落差。
+機器人輸出的是原始的感測器資料，例如相機影像與關節位置，這些資料在交給模型處理之前，需要先經過正規化（normalization）、組成批次（batching），並放到正確的裝置上。
+人類下達的語言指令必須切分為 token、轉換成數值表示；不同的機器人也使用不同的座標系統，需要加以統一。
+
+模型的輸出也有同樣的挑戰。
+模型可能輸出末端執行器（end-effector）的位置，但機器人需要的是關節空間的命令；或者遙操作器（teleoperator）產生的是相對移動，但機器人預期的是絕對命令。
+模型的預測值通常經過正規化，需要轉換回真實世界的尺度。
+
+跨領域的轉換又增加了一層複雜度。
+在某套機器人設定上收集的訓練資料，部署到不同硬體時需要調整；以特定相機配置訓練的模型，必須能在新的配置下運作；命名慣例不同的資料集，也需要加以統一。
+
+**這就是處理器（processor）派上用場的地方。** 它們就像通用的翻譯器，填補這些落差，讓資料從感測器、模型到致動器之間順暢流動。
+處理器負責所有的前處理與後處理步驟，將原始的環境資料轉換成模型可用的輸入，反之亦然。
+
+這表示你喜歡的策略（policy）可以這樣使用：
+
+```python
+import torch
+
+from lerobot.datasets import LeRobotDataset
+from lerobot.policies import make_pre_post_processors
+from lerobot.policies.your_policy import YourPolicy
+from lerobot.processor import RobotProcessorPipeline, PolicyProcessorPipeline
+dataset = LeRobotDataset("hf_user/dataset", episodes=[0])
+sample = dataset[10]
+
+model = YourPolicy.from_pretrained(
+    "hf_user/model",
+)
+model.eval()
+model.to("cuda")
+preprocessor, postprocessor = make_pre_post_processors(model.config, pretrained_path="hf_user/model", dataset_stats=dataset.meta.stats)
+
+preprocessed_sample = preprocessor(sample)
+action = model.select_action(preprocessed_sample)
+postprocessed_action = postprocessor(action)
+```
+
+## 什麼是處理器？[[what-are-processors]]
+
+在機器人領域中，資料有許多形式：來自相機的影像、來自感測器的關節位置、來自使用者的文字指令等等。每種資料在模型能有效使用之前，都需要經過特定的轉換。模型需要這些資料經過：
+
+- **正規化**：縮放到適合神經網路處理的範圍
+- **組成批次**：整理成適合批次處理的維度
+- **切分為 token**：將文字轉換成數值表示
+- **放到裝置上**：移到正確的硬體上（CPU/GPU）
+- **轉換型別**：轉型為適當的資料型別
+
+處理器透過可組合、可重複使用的步驟來處理這些轉換，這些步驟可以串接成管線（pipeline）。你可以把它想成一條模組化的生產線，每個工作站都對你的資料進行特定的轉換。
+
+## 核心概念[[core-concepts]]
+
+### EnvTransition：通用資料容器[[envtransition-the-universal-data-container]]
+
+`EnvTransition` 是在所有處理器之間流動的基本資料結構。
+它是一個帶有型別的字典，代表機器人與環境之間的一次完整互動：
+
+- **OBSERVATION**：所有感測器資料（影像、狀態、本體感覺）
+- **ACTION**：要執行或已執行的動作
+- **REWARD**：強化學習的訊號
+- **DONE/TRUNCATED**：回合（episode）邊界的標記
+- **INFO**：任意的中繼資料
+- **COMPLEMENTARY_DATA**：任務描述、索引、填補旗標、步驟之間的資料
+
+批次轉換器會將 `index`、`episode_index` 與 `frame_index` 等索引用的中繼資料保留在 `COMPLEMENTARY_DATA` 中。
+在 `batch_to_transition` / `transition_to_batch` 的往返轉換中，`frame_index` 會保留原本的純量或張量值。
+如果輸入中沒有 `frame_index`，轉換器也不會加入它。
+
+### ProcessorStep：基本構件[[processorstep-the-building-block]]
+
+`ProcessorStep` 是處理 transition 的單一轉換單元。它是一個抽象基底類別，有兩個必須實作的方法：
+
+```python
+from lerobot.processor import ProcessorStep, EnvTransition
+
+class MyProcessorStep(ProcessorStep):
+    """範例處理器步驟：繼承並實作抽象方法。"""
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """轉換 transition：必須實作的抽象方法。"""
+        # 你的處理邏輯放在這裡
+        return transition
+
+    def transform_features(self, features):
+        """宣告此步驟如何轉換特徵的形狀／型別：必須實作的抽象方法。"""
+        return features  # 大多數處理器直接回傳不變的特徵
+```
+
+`__call__` 是處理器步驟的核心，它接收一個 `EnvTransition`，並回傳修改後的 `EnvTransition`。
+
+`transform_features` 用來宣告這個步驟會如何轉換特徵（feature）的形狀與型別。
+
+### DataProcessorPipeline：泛用協調器[[dataprocessorpipeline-the-generic-orchestrator]]
+
+`DataProcessorPipeline[TInput, TOutput]` 會將多個 `ProcessorStep` 實例串接在一起：
+
+```python
+from lerobot.processor import RobotProcessorPipeline, PolicyProcessorPipeline
+
+# 用於機器人硬體（非批次資料）
+robot_processor = RobotProcessorPipeline[RobotAction, RobotAction](
+    steps=[step1, step2, step3],
+    name="robot_pipeline"
+)
+
+# 用於模型訓練/推論（批次資料）
+policy_processor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+    steps=[step1, step2, step3],
+    name="policy_pipeline"
+)
+```
+
+## RobotProcessorPipeline vs PolicyProcessorPipeline[[robotprocessorpipeline-vs-policyprocessorpipeline]]
+
+兩者的主要差別在於處理的資料結構：
+
+| 面向         | RobotProcessorPipeline             | PolicyProcessorPipeline                  |
+| ------------ | ---------------------------------- | ---------------------------------------- |
+| **輸入**     | `dict[str, Any]`——機器人的個別數值 | `dict[str, Any]`——批次張量               |
+| **輸出**     | `dict[str, Any]`——機器人的個別命令 | `torch.Tensor`——策略的預測               |
+| **使用情境** | 即時機器人控制                     | 模型訓練／推論                           |
+| **資料格式** | 非批次、異質                       | 批次、同質                               |
+| **範例**     | `{"joint_1": 0.5}`                 | `{"observation.state": tensor([[0.5]])}` |
+
+**`RobotProcessorPipeline`** 適用於機器人硬體介面：
+
+```python
+# 機器人資料結構：dict[str, Any] 用於觀測和動作
+robot_obs: dict[str, Any] = {
+    "joint_1": 0.5,           # 個別關節值
+    "joint_2": -0.3,
+    "camera_0": image_array   # 原始相機資料
+}
+
+robot_action: dict[str, Any] = {
+    "joint_1": 0.2,          # 目標關節位置
+    "joint_2": 0.1,
+    "gripper": 0.8
+}
+```
+
+**`PolicyProcessorPipeline`** 適用於模型訓練與批次處理：
+
+```python
+# 策略資料結構：批次字典和張量
+policy_batch: dict[str, Any] = {
+    "observation.state": torch.tensor([[0.5, -0.3]]),      # 批次狀態
+    "observation.images.camera0": torch.tensor(...),       # 批次影像
+    "action": torch.tensor([[0.2, 0.1, 0.8]])              # 批次動作
+}
+
+policy_action: torch.Tensor = torch.tensor([[0.2, 0.1, 0.8]])  # 模型輸出張量
+```
+
+## 轉換函式[[converter-functions]]
+
+LeRobot 在 `lerobot.processor.converters` 中提供了轉換函式，用來銜接不同的資料格式。這些函式負責在機器人硬體的資料結構、策略模型的格式，以及在處理器管線中流動的內部 `EnvTransition` 表示之間進行轉換。
+
+| 類別                 | 函式                          | 說明                                      |
+| -------------------- | ----------------------------- | ----------------------------------------- |
+| **機器人硬體轉換器** | `robot_action_to_transition`  | 機器人 dict → EnvTransition               |
+|                      | `observation_to_transition`   | 機器人觀測（observation） → EnvTransition |
+|                      | `transition_to_robot_action`  | EnvTransition → 機器人 dict               |
+| **策略／訓練轉換器** | `batch_to_transition`         | 批次 dict → EnvTransition                 |
+|                      | `transition_to_batch`         | EnvTransition → 批次 dict                 |
+|                      | `policy_action_to_transition` | 策略張量 → EnvTransition                  |
+|                      | `transition_to_policy_action` | EnvTransition → 策略張量                  |
+| **工具函式**         | `create_transition`           | 以預設值建立 transition                   |
+|                      | `identity_transition`         | 直接傳遞、不做轉換的轉換器                |
+
+關鍵在於：**機器人硬體轉換器**處理的是個別數值與字典，而**策略／訓練轉換器**處理的是批次張量與模型輸出。轉換函式會自動處理這些結構上的差異，讓你的處理器步驟能專注在核心的轉換上，不必擔心資料格式是否相容。
+
+## 處理器範例[[processor-examples]]
+
+以下範例展示了策略訓練與推論時實際使用的處理器設定。
+
+以下是用於策略訓練與推論的處理器範例：
+
+```python
+# 訓練資料預處理（針對 GPU 效能最佳化的順序）
+training_preprocessor = PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+    steps=[
+        RenameObservationsProcessorStep(rename_map={}),     # 統一鍵名
+        AddBatchDimensionProcessorStep(),                   # 加入批次維度
+        TokenizerProcessorStep(tokenizer_name="...", ...),  # 將語言切分為 token
+        DeviceProcessorStep(device="cuda"),                 # 先移至 GPU
+        NormalizerProcessorStep(features=..., stats=...),   # 在 GPU 上正規化
+    ]
+)
+
+# 模型輸出後處理
+training_postprocessor = PolicyProcessorPipeline[torch.Tensor, torch.Tensor](
+    steps=[
+        DeviceProcessorStep(device="cpu"),                  # 移至 CPU
+        UnnormalizerProcessorStep(features=..., stats=...), # 反正規化
+    ]
+    to_transition=policy_action_to_transition,
+    to_output=transition_to_policy_action,
+)
+```
+
+### 機器人與策略之間透過處理器的互動[[an-interaction-between-a-robot-and-a-policy-with-processors]]
+
+最常見的實際情境會同時用到兩種管線：機器人硬體產生的觀測需要經過策略端的處理，而策略的輸出也需要經過與機器人相容的後處理：
+
+```python
+# 實際部署：機器人感測器 → 模型 → 機器人命令
+with torch.no_grad():
+    while not done:
+        raw_obs = robot.get_observation()  # dict[str, Any]
+
+        # 將你的機器人觀測加入策略觀測處理器
+
+        policy_input = policy_preprocessor(raw_obs)  # 批次字典
+
+        policy_output = policy.select_action(policy_input)  # 策略張量
+
+        policy_action = policy_postprocessor(policy_output)
+
+        # 將你的機器人動作加入策略動作處理器
+
+        robot.send_action(policy_action)
+```
+
+## 特徵契約：形狀與型別轉換[[feature-contracts-shape-and-type-transformation]]
+
+處理器不只會轉換資料，還可以**改變資料結構本身**。`transform_features()` 方法會宣告這些變化，這對錄製資料集與建立策略都非常重要。
+
+### 為什麼特徵契約很重要[[why-feature-contracts-matter]]
+
+建立資料集或策略時，LeRobot 需要知道：
+
+- 處理之後**會有哪些資料欄位**
+- 每個欄位的**形狀與型別**
+- **如何設定模型**，以符合預期的資料結構
+
+```python
+# 範例：一個將速度加入觀測的處理器
+class VelocityProcessor(ObservationProcessorStep):
+    def observation(self, obs):
+        new_obs = obs.copy()
+        if "observation.state" in obs:
+            # 將計算出的速度欄位串接到狀態中
+            new_obs["observation.state"] = self._compute_velocity(obs["observation.state"])
+        return new_obs
+
+    def transform_features(self, features):
+        """宣告我們正在加入的新速度欄位。"""
+        state_feature = features[PipelineFeatureType.OBSERVATION].get("observation.state")
+        if state_feature:
+            double_shape = (state_feature.shape[0] * 2,) if state_feature.shape else (2,)
+            features[PipelineFeatureType.OBSERVATION]["observation.state"] = PolicyFeature(
+                type=FeatureType.STATE, shape=double_shape
+            )
+        return features
+```
+
+### 特徵規格函式[[feature-specification-functions]]
+
+`create_initial_features()` 與 `aggregate_pipeline_dataset_features()` 解決了建立資料集時的一個關鍵問題：在處理任何資料之前，就確定最終的資料結構。
+由於處理器管線可能會新增特徵（例如速度欄位）、改變張量形狀（例如裁切影像），或重新命名鍵名，資料集必須事先知道完整的輸出規格，才能配置適當的儲存空間並定義資料結構。
+這兩個函式會搭配使用：先從機器人硬體的規格開始（`create_initial_features()`），再模擬整條管線的轉換（`aggregate_pipeline_dataset_features()`），計算出最終的特徵字典並傳給 `LeRobotDataset.create()`，確保處理器的輸出與資料集預期儲存的內容完全一致。
+
+```python
+from lerobot.datasets import aggregate_pipeline_dataset_features
+
+# 從機器人的原始特徵開始
+initial_features = create_initial_features(
+    observation=robot.observation_features,  # {"joint_1.pos": float, "camera_0": (480,640,3)}
+    action=robot.action_features            # {"joint_1.pos": float, "gripper.pos": float}
+)
+
+# 套用處理器管線來計算最終特徵
+final_features = aggregate_pipeline_dataset_features(
+    pipeline=my_processor_pipeline,
+    initial_features=initial_features,
+    use_videos=True
+)
+
+# 用於資料集建立
+dataset = LeRobotDataset.create(
+    repo_id="my_dataset",
+    features=final_features,  # 明確知道會有哪些資料
+    ...
+)
+```
+
+## 常用處理器步驟[[common-processor-steps]]
+
+LeRobot 提供了許多已註冊的處理器步驟。以下是最常用的核心處理器：
+
+### 基本處理器[[essential-processors]]
+
+- **`normalizer_processor`**：使用資料集的統計值（mean/std 或 min/max）正規化觀測與動作
+- **`device_processor`**：將張量移到 CPU/GPU，並可選擇轉換 dtype
+- **`to_batch_processor`**：為 transition 加上批次維度，以配合模型的輸入格式
+- **`rename_observations_processor`**：使用對應字典重新命名觀測的鍵名
+- **`tokenizer_processor`**：將自然語言的任務描述切分為 token，並產生注意力遮罩（attention mask）
+
+### 下一步[[next-steps]]
+
+- **[實作你自己的處理器](./implement_your_own_processor)** - 建立自訂的處理器步驟
+- **[除錯你的管線](./debug_processor_pipeline)** - 排解問題並最佳化管線
+- **[機器人與遙操作器的處理器](./processors_robots_teleop)** - 實際的整合模式
+
+## 總結[[summary]]
+
+處理器透過以下特點，解決了機器人領域中的資料轉換問題：
+
+- **模組化的轉換**：可組合、可重複使用的處理步驟
+- **型別安全**：在編譯期就能檢查的泛型管線
+- **效能最佳化**：以 GPU 加速運算
+- **區分機器人與策略**：針對不同資料結構使用各自的管線
+- **完整的生態系**：30 多個已註冊的處理器，涵蓋常見任務
+
+關鍵在於：`RobotProcessorPipeline` 處理非批次的機器人硬體資料，而 `PolicyProcessorPipeline` 處理批次的模型資料。請依照你的資料結構選擇正確的工具！

@@ -1,0 +1,227 @@
+# 即時分塊（RTC）[[real-time-chunking-rtc]]
+
+即時分塊（Real-Time Chunking，RTC）讓以流匹配（flow matching）為基礎的大型機器人策略（policy），例如 [Pi0](./pi0)、[Pi0.5](./pi05) 與 [SmolVLA](./smolvla)，即使推論延遲很高，也能產生流暢、連續且反應靈敏的動作。LeRobot 提供原本在推論時進行引導的 guided 模式；對於相容的 Pi05 檢查點，也提供訓練時的動作條件化（action conditioning），搭配低成本的硬前綴（hard prefix）推論。
+
+這些策略會一次產生一段未來的動作區塊（chunk，例如一次 50 步），而不是單一動作。
+由於模型很大，產生每個區塊所需的時間，比機器人執行它的時間還要長。
+如果只是單純地依序執行區塊，每當下一個區塊太晚送達，或與先前已執行的動作不一致時，就會出現停頓、不順暢的過渡，或行為突然轉變等問題。
+
+RTC 的解法是在機器人繼續執行目前區塊的同時，以非同步的方式產生下一個區塊，並引導新的區塊，讓它與前一個區塊中已執行的部分順暢銜接。
+
+## RTC 的運作方式（簡化版）[[how-rtc-works-simplified]]
+
+RTC 讓機器人在移動的同時就先預想下一步。當機器人正在執行一個動作區塊時，RTC 就會提早開始產生下一個區塊。
+但等新區塊準備好時，機器人已經又移動了一些，因此 RTC 必須確保新區塊仍能與機器人目前的動作順暢銜接。
+
+為此，RTC 將新區塊的開頭視為影像修補（inpainting），也就是「填補空缺」的問題：
+它會輕微調整新區塊的前段，讓它自然地接上機器人正在進行的動作。結果就是沒有停頓，也沒有突然的跳動。
+
+以技術上的說法，RTC 會在流匹配的去雜訊過程中加入一個引導項（guidance term），強制新區塊中重疊的時間步貼近前一個區塊已執行的部分，通常會搭配一個柔性的過渡遮罩。
+
+## 快速開始[[quick-start]]
+
+### 安裝[[installation]]
+
+RTC 已內建在 LeRobot 中，只要安裝你需要的策略相依套件即可：
+
+```bash
+# 用於 Pi0 或 Pi0.5
+pip install -e ".[pi]"
+
+# 用於 SmolVLA
+pip install -e ".[smolvla]"
+```
+
+### 搭配 Pi0 使用 RTC[[using-rtc-with-pi0]]
+
+在真實機器人上部署 RTC 時，可以使用 `lerobot-rollout --strategy.type=base --inference.type=rtc`。
+以下程式碼片段是一個簡化的範例，說明 RTC 如何在你的管線中搭配 Pi0 運作：
+
+```python
+from lerobot.policies.pi0 import PI0Policy, PI0Config
+from lerobot.configs import RTCAttentionSchedule
+from lerobot.policies.rtc import RTCConfig, ActionQueue
+
+# 載入啟用 RTC 的 Pi0
+policy_cfg = PI0Config()
+
+# 啟用 RTC
+policy_cfg.rtc_config = RTCConfig(
+    enabled=True,
+    execution_horizon=10,  # 要與前一個區塊混合的步數
+    max_guidance_weight=10.0,  # 強制一致性的強度
+    prefix_attention_schedule=RTCAttentionSchedule.EXP,  # 指數混合
+)
+
+# 載入策略
+policy = PI0Policy.from_pretrained("lerobot/pi0_base", policy_cfg=policy_cfg, device="cuda")
+
+# 現在使用帶 RTC 參數的 predict_action_chunk
+inference_delay = 4  # 推論延遲的步數，此值應根據策略的推論延遲計算
+
+# 初始化動作佇列
+action_queue = ActionQueue(policy_cfg.rtc_config)
+
+# 以下列函式在另一個執行緒中啟動
+def get_actions():
+  while True:
+    if should_get_actions:
+
+      prev_actions = action_queue.get_left_over()
+      obs = get_robot_observations(robot)
+
+      # 使用 RTC 產生動作
+      actions = policy.predict_action_chunk(
+          obs,
+          inference_delay=inference_delay,
+          prev_chunk_left_over=prev_actions,
+      )
+
+      action_queue.merge(
+          actions, actions, inference_delay
+      )
+
+for step in range(num_steps):
+    action = action_queue.get()
+
+    # 執行前 N 個動作
+    execute_actions(action)
+```
+
+## 主要參數[[key-parameters]]
+
+`RTCConfig` 有以下可以調整的參數：
+
+**`mode`** 用來選擇動作前綴的條件化方式：
+
+- `guided`（預設）在去雜訊過程中套用原始的 Jacobian 引導，可搭配一般的流匹配檢查點使用。
+- `trained` 會以每個動作各自的 flow timestep，對前一個區塊的前綴進行硬性修補（hard inpainting）。目前需要以 `policy.rtc_training_max_delay > 0` 訓練的 Pi05 檢查點，而且不需要為引導執行反向傳播。
+
+使用 trained 模式時，`execution_horizon` 與 rollout 後端的
+`inference.queue_threshold` 都必須至少為檢查點的
+`rtc_training_max_delay`，且 `execution_horizon` 不得超過
+`chunk_size - rtc_training_max_delay`（即 RTC 論文中的 `d <= s <= H - d`
+界限）；rollout 會在連接機器人之前檢查這一點。
+
+**`execution_horizon`**：要與前一個區塊保持一致的時間步數。數值越高，過渡越順暢，但反應可能會變慢。
+
+常見的值：8-12 步
+
+```python
+RTCConfig(execution_horizon=10)
+```
+
+**`max_guidance_weight`**：強制與前一個區塊保持一致的強度。這是一個可調整的超參數，用來在過渡的順暢度與策略的反應速度之間取得平衡。對於 10 步的流匹配（SmolVLA、Pi0、Pi0.5），10.0 是最佳值。
+
+**`prefix_attention_schedule`**：如何在重疊區域內分配一致性的權重。
+
+- `LINEAR`：從 inference_delay 到 execution_horizon 線性衰減
+- `EXP`：指數衰減（建議入門時使用）
+- `ONES`：在整個 execution_horizon 上都使用完整權重
+- `ZEROS`：二元（到 inference_delay 為止使用完整權重，之後為零）
+
+**`inference_delay`**：你的系統推論延遲有多少個時間步。這個值會傳給 `predict_action_chunk()`，而不是寫在設定中，因為它在執行時可能會變動。
+
+## 離線測試 RTC[[testing-rtc-offline]]
+
+在真實機器人上執行之前，先用資料集的樣本測試 RTC，將它的運作方式視覺化：
+
+```bash
+python examples/rtc/eval_dataset.py \
+    --policy.path=lerobot/pi0_libero_finetuned \
+    --dataset.repo_id=HuggingFaceVLA/libero \
+    --rtc.execution_horizon=10 \
+    --rtc.max_guidance_weight=10.0 \
+    --device=cuda
+```
+
+在評估相容的訓練時 RTC Pi05 檢查點時，請加上 `--rtc.mode=trained`。
+不支援的策略會拒絕 trained 模式，而不會退回
+guided RTC。
+
+這個腳本會將去雜訊過程視覺化，比較一般的生成方式（左）與 RTC（右）。在 RTC 的圖中，可以看到最初幾步（藍色／紫色線條）如何被引導去貼合紅色的真實軌跡（前一個區塊的尾端），讓區塊之間順暢過渡。
+
+<p align="center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/flow_matching.png"
+    alt="Denoising steps with and without RTC"
+    width="100%"
+  />
+</p>
+
+## 在真實機器人上測試 RTC[[testing-rtc-with-a-real-robot]]
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USERNAME}/policy_repo_id \
+    --inference.type=rtc \
+    --inference.rtc.mode=guided \
+    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.max_guidance_weight=10.0 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58FA0834591 \
+    --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Move green small object into the purple platform" \
+    --duration=120 \
+    --device=cuda
+```
+
+若是訓練時 RTC 的 Pi05 檢查點，請將模式改為 `trained`。檢查點
+會記錄它支援的最大延遲，rollout 會依此檢查量測到的
+延遲：
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USERNAME}/pi05_training_rtc \
+    --inference.type=rtc \
+    --inference.rtc.mode=trained \
+    --inference.rtc.execution_horizon=10 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58FA0834591 \
+    --task="Move green small object into the purple platform" \
+    --duration=120 \
+    --device=cuda
+```
+
+## 與 LeRobot 非同步推論的差異[[how-it-differs-from-the-async-inference-in-lerobot]]
+
+RTC 與[非同步推論](./async)都能改善即時的機器人控制，但它們解決的是不同的問題。
+
+| 面向         | 非同步推論             | RTC                            |
+| ------------ | ---------------------- | ------------------------------ |
+| **問題**     | 等待推論時出現閒置影格 | 動作區塊之間不連續             |
+| **解法**     | 將預測與執行解耦       | 引導新區塊從前一個區塊順暢延續 |
+| **效益**     | 不需等待，動作連續     | 順暢的過渡，自然的動作         |
+| **最適用於** | 推論延遲高的大型模型   | 以流匹配為基礎的策略           |
+
+**兩者一起使用**，就能得到最好的流暢度與反應速度！
+
+## 進階：除錯追蹤[[advanced-debug-tracking]]
+
+RTC 內建除錯追蹤功能，協助你了解推論期間發生了什麼事：
+
+```python
+# 啟用除錯追蹤
+policy_cfg.rtc_config.debug = True
+policy_cfg.rtc_config.debug_maxlen = 100
+
+# 推論後，存取除錯資料
+debug_data = policy.rtc_processor.get_debug_data()
+
+# 將去雜訊步驟、修正等視覺化
+from lerobot.policies.rtc.debug_visualizer import RTCDebugVisualizer
+visualizer = RTCDebugVisualizer()
+# ... 建立圖表
+```
+
+離線 RTC 視覺化的完整範例，請參閱 `examples/rtc/eval_dataset.py`。
+
+## 參考資料[[references]]
+
+- [Smooth-As-Butter Robot Policies](https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html)：附有真實機器人結果的精彩技術說明
+- [Physical Intelligence - Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking)：原始論文與研究
+- [Kinetix RTC Implementation](https://github.com/Physical-Intelligence/real-time-chunking-kinetix)：Physical Intelligence 的參考實作
+- [Training-Time Action Conditioning](https://arxiv.org/abs/2512.05964)：在訓練時以乾淨前綴作為條件的高效 RTC
+- [RLDX-1](https://github.com/RLWRLD/RLDX-1)：訓練時 RTC 整合所參考的 PyTorch 實作

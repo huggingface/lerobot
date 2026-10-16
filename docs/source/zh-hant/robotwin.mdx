@@ -1,0 +1,223 @@
+# RoboTwin 2.0[[robotwin-20]]
+
+RoboTwin 2.0 是建構在 SAPIEN 物理引擎上的**大規模雙臂操作基準測試**。它為雙臂（bimanual）機器人策略（policy）提供一套標準化的評估方式，涵蓋 50 項任務（以上游 `main` 分支為準），並具備強大的領域隨機化（domain randomization）：雜物、光照、背景、桌面高度與語言指令。
+
+- 論文：[RoboTwin 2.0: A Scalable Data Generator and Benchmark with Strong Domain Randomization for Robust Bimanual Robotic Manipulation](https://arxiv.org/abs/2506.18088)
+- GitHub：[RoboTwin-Platform/RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin)
+- 排行榜：[robotwin-platform.github.io/leaderboard](https://robotwin-platform.github.io/leaderboard)
+- 資料集：[lerobot/robotwin_unified](https://huggingface.co/datasets/lerobot/robotwin_unified)
+
+![RoboTwin 2.0 基準測試概覽](https://www.aitntnews.com/pictures/2025/7/8/9a7f79cb-5ba9-11f0-8581-fa163e47d677.png)
+
+## 概覽[[overview]]
+
+| 屬性                     | 值                                                      |
+| ------------------------ | ------------------------------------------------------- |
+| 任務                     | 50 項雙臂操作任務                                       |
+| 機器人                   | Aloha-AgileX 雙臂（14 自由度，每臂 7 個）               |
+| 動作空間（action space） | 14 維關節空間，連續值範圍 `[-1, 1]`                     |
+| 相機                     | `head_camera`、`left_camera`、`right_camera`            |
+| 模擬器                   | SAPIEN（不是 MuJoCo）                                   |
+| 評估方式                 | 每個任務 100 個回合（episode），50 個 demo_clean 示範   |
+| 評估設定                 | **簡單**（`demo_clean`）與**困難**（`demo_randomized`） |
+
+## 可用任務[[available-tasks]]
+
+RoboTwin 2.0 在上游的 `envs/` 目錄中提供了 50 項雙臂操作任務。權威的任務清單是 `src/lerobot/envs/robotwin.py` 中的 `ROBOTWIN_TASKS` tuple，內容與上游儲存庫完全一致。任務範例：
+
+| 任務                | CLI 名稱                 | 類別       |
+| ------------------- | ------------------------ | ---------- |
+| 用錘子敲擊方塊      | `beat_block_hammer`      | 工具使用   |
+| 按鈴／鬧鐘          | `click_bell`             | 精準按壓   |
+| 堆疊方塊（2／3 個） | `stack_blocks_two/three` | 堆疊       |
+| 堆疊碗（2／3 個）   | `stack_bowls_two/three`  | 堆疊       |
+| 傳遞方塊／麥克風    | `handover_block`         | 雙臂協調   |
+| 舉起鍋子            | `lift_pot`               | 雙臂抬舉   |
+| 搖晃瓶子            | `shake_bottle`           | 連續動作   |
+| 轉動開關            | `turn_switch`            | 關節式物體 |
+| 蓋印章              | `stamp_seal`             | 精準放置   |
+| 掃描物體            | `scan_object`            | 行動操作   |
+
+將以逗號分隔的清單傳給 `--env.task`，即可在一次評估中執行多項任務。
+
+<Tip warning={true}>
+  `open_laptop` 目前在上游有問題：它的 `check_success()` 使用了
+  `self.arm_tag`，但這個屬性只會在腳本專家（scripted-expert）的 `play_once()`
+  流程中設定，因此一般的策略評估無法使用。
+  在上游修正之前請避免使用它，或自行修補這個任務， 在 `load_actors()` 中預設
+  `self.arm_tag = "left"`。
+</Tip>
+
+## 資料集[[dataset]]
+
+RoboTwin 2.0 資料集以 **LeRobot v3.0 格式**發布在 Hugging Face Hub 上：
+
+```
+lerobot/robotwin_unified
+```
+
+它包含全部 50 項任務、超過 100,000 條預先收集的軌跡（79.6 GB，Apache 2.0 授權）。不需要轉換格式——它已經是正確的 LeRobot v3.0 結構，包含影片觀測（observation）與動作標籤。
+
+你可以直接使用 HF Datasets 函式庫載入：
+
+```python
+from datasets import load_dataset
+ds = load_dataset("lerobot/robotwin_unified", split="train")
+```
+
+## 安裝[[installation]]
+
+RoboTwin 2.0 需要 **Linux** 系統搭配 NVIDIA GPU（建議 CUDA 12.1）。安裝大約需要 20 分鐘。
+
+### 1. 建立 conda 環境[[1-create-a-conda-environment]]
+
+```bash
+conda create -n robotwin python=3.10 -y
+conda activate robotwin
+```
+
+### 2. 安裝 LeRobot[[2-install-lerobot]]
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+pip install -e "."
+```
+
+### 3. 安裝 RoboTwin 2.0[[3-install-robotwin-20]]
+
+```bash
+git clone https://github.com/RoboTwin-Platform/RoboTwin.git
+cd RoboTwin
+bash script/_install.sh
+bash script/_download_assets.sh
+```
+
+安裝腳本會處理所有 Python 相依套件，包括 SAPIEN、CuRobo、mplib 與 pytorch3d。
+
+<Tip warning={true}>
+如果自動安裝失敗，請手動安裝：
+
+```bash
+pip install -r requirements.txt
+pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+cd envs && git clone https://github.com/NVlabs/curobo.git && cd curobo
+pip install -e . --no-build-isolation
+```
+
+接著套用必要的 mplib 修正：在 `mplib/planner.py` 第 807 行，從條件判斷中移除 `or collide`。
+
+</Tip>
+
+### 4. 將 RoboTwin 加入 PYTHONPATH[[4-add-robotwin-to-pythonpath]]
+
+RoboTwin 的任務模組必須能被 LeRobot 匯入。請在 `RoboTwin/` 目錄下執行：
+
+```bash
+export PYTHONPATH="${PYTHONPATH}:$(pwd)"
+```
+
+將這一行加入你的 shell 設定檔，讓它永久生效。
+
+## 評估[[evaluation]]
+
+### 建議：標準評估[[standard-evaluation-recommended]]
+
+依照官方的評估方式，在單一任務上以 100 個回合（episode）評估策略：
+
+```bash
+lerobot-eval \
+  --policy.path="your-hf-policy-id" \
+  --env.type=robotwin \
+  --env.task=beat_block_hammer \
+  --eval.batch_size=1 \
+  --eval.n_episodes=100
+```
+
+### 單一任務快速檢查[[single-task-quick-check]]
+
+```bash
+lerobot-eval \
+  --policy.path="your-hf-policy-id" \
+  --env.type=robotwin \
+  --env.task=beat_block_hammer \
+  --eval.batch_size=1 \
+  --eval.n_episodes=5
+```
+
+### 多任務批次評估[[multi-task-sweep]]
+
+在一次執行中評估多項任務：
+
+```bash
+lerobot-eval \
+  --policy.path="your-hf-policy-id" \
+  --env.type=robotwin \
+  --env.task=beat_block_hammer,click_bell,handover_block,stack_blocks_two \
+  --eval.batch_size=1 \
+  --eval.n_episodes=100
+```
+
+### 完整基準測試：全部 50 項任務[[full-benchmark-all-50-tasks]]
+
+```bash
+lerobot-eval \
+  --policy.path="your-hf-policy-id" \
+  --env.type=robotwin \
+  --env.task=adjust_bottle,beat_block_hammer,blocks_ranking_rgb,blocks_ranking_size,click_alarmclock,click_bell,dump_bin_bigbin,grab_roller,handover_block,handover_mic,hanging_mug,lift_pot,move_can_pot,move_pillbottle_pad,move_playingcard_away,move_stapler_pad,open_microwave,pick_diverse_bottles,pick_dual_bottles,place_a2b_left,place_a2b_right,place_bread_basket,place_bread_skillet,place_burger_fries,place_can_basket,place_cans_plasticbox,place_container_plate,place_dual_shoes,place_empty_cup,place_fan,place_mouse_pad,place_object_basket,place_object_scale,place_object_stand,place_phone_stand,place_shoe,press_stapler,put_bottles_dustbin,put_object_cabinet,rotate_qrcode,scan_object,shake_bottle,shake_bottle_horizontally,stack_blocks_three,stack_blocks_two,stack_bowls_three,stack_bowls_two,stamp_seal,turn_switch \
+  --eval.batch_size=1 \
+  --eval.n_episodes=100
+```
+
+<!-- prettier-ignore -->
+<Tip>
+  上方指令刻意省略了 `open_laptop`，因為上游有 `self.arm_tag`
+  的錯誤（請參閱[可用任務](#available-tasks)章節）。
+  待上游修復後再重新加入。
+</Tip>
+
+## 相機設定[[camera-configuration]]
+
+預設包含全部三個相機：
+
+| 相機鍵名       | 說明                 |
+| -------------- | -------------------- |
+| `head_camera`  | 裝在軀幹上的俯視相機 |
+| `left_camera`  | 裝在左臂腕部的相機   |
+| `right_camera` | 裝在右臂腕部的相機   |
+
+若只要使用部分相機，請覆寫 `--env.camera_names`：
+
+```bash
+lerobot-eval \
+  --policy.path="your-hf-policy-id" \
+  --env.type=robotwin \
+  --env.task=beat_block_hammer \
+  --env.camera_names="head_camera,left_camera" \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+## 環境設定參考[[environment-config-reference]]
+
+`RoboTwinEnvConfig` 的主要參數：
+
+| 參數                 | 預設值                                   | 說明                               |
+| -------------------- | ---------------------------------------- | ---------------------------------- |
+| `task`               | `"beat_block_hammer"`                    | 以逗號分隔的任務名稱               |
+| `fps`                | `25`                                     | 模擬的 FPS                         |
+| `episode_length`     | `300`                                    | 每個回合的最大步數                 |
+| `obs_type`           | `"pixels_agent_pos"`                     | `"pixels"` 或 `"pixels_agent_pos"` |
+| `camera_names`       | `"head_camera,left_camera,right_camera"` | 以逗號分隔的啟用相機               |
+| `observation_height` | `240`                                    | 相機影像的高度（像素）             |
+| `observation_width`  | `320`                                    | 相機影像的寬度（像素）             |
+
+## 排行榜提交[[leaderboard-submission]]
+
+評估結果可以提交到 [RoboTwin 2.0 排行榜](https://robotwin-platform.github.io/leaderboard)。官方的評估方式要求：
+
+- 每項任務以 50 個 `demo_clean` 示範進行訓練
+- 每項任務評估 100 個回合
+- 分別回報**簡單**（`demo_clean`）與**困難**（`demo_randomized`）設定下的成功率
+
+提交方式請參閱 [RoboTwin 2.0 文件](https://robotwin-platform.github.io/doc/)。

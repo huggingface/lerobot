@@ -1,0 +1,321 @@
+# 將大型資料集移植到 LeRobot Dataset v3.0[[porting-large-datasets-to-lerobot-dataset-v30]]
+
+本教學說明如何將大規模的機器人資料集移植為 LeRobot Dataset v3.0 格式。我們以 **DROID 1.0.1** 資料集作為主要範例，示範如何在 SLURM 叢集上，處理有數千個分片（shard）、規模達數 TB 的資料集。
+
+## 檔案組織：v2.1 vs v3.0[[file-organization-v21-vs-v30]]
+
+Dataset v3.0 從根本上改變了資料的組織與儲存方式：
+
+**v2.1 結構（以回合為單位）**：
+
+```
+dataset/
+├── data/chunk-000/episode_000000.parquet
+├── data/chunk-000/episode_000001.parquet
+├── videos/chunk-000/camera/episode_000000.mp4
+└── meta/episodes.jsonl
+```
+
+**v3.0 結構（以檔案為單位）**：
+
+```
+dataset/
+├── data/chunk-000/file-000.parquet        # 每個檔案包含多個回合
+├── videos/camera/chunk-000/file-000.mp4   # 整併後的影片區塊
+└── meta/episodes/chunk-000/file-000.parquet  # 結構化的中繼資料
+```
+
+從各回合（episode）各自獨立的檔案，改為以檔案為單位的區塊（chunk），大幅提升了效能，也降低了儲存的額外負擔。
+
+## Dataset v3.0 的新功能[[whats-new-in-dataset-v30]]
+
+Dataset v3.0 為處理大型資料集帶來了顯著的改進：
+
+### 🏗️ **強化的檔案組織**[[enhanced-file-organization]]
+
+- **以檔案為單位的結構**：回合現在會被分組存放在分塊的檔案中，而不是每個回合各自一個檔案
+- **可設定的檔案大小**：適用於資料檔與影片檔
+- **更好的儲存效率**：壓縮效果更好，額外負擔更少
+
+### 📊 **現代化的中繼資料管理**[[modern-metadata-management]]
+
+- **以 Parquet 儲存中繼資料**：以高效的 parquet 格式取代 JSON Lines
+- **結構化的回合存取**：可透過 `dataset.meta.episodes` 直接以 pandas DataFrame 存取
+- **逐回合的統計量**：在回合層級提供更完整的統計資訊
+
+### 🚀 **效能提升**[[performance-enhancements]]
+
+- **記憶體映射存取**：透過 PyArrow 的記憶體映射（memory mapping）改善 RAM 用量
+- **載入更快**：大幅縮短資料集的初始化時間
+- **可擴展性更好**：專為包含數百萬個回合的資料集設計
+
+## 先決條件[[prerequisites]]
+
+移植大型資料集之前，請確認你已具備：
+
+- **已安裝支援 v3.0 的 LeRobot**。請依照我們的[安裝指南](./installation)操作。
+- **足夠的儲存空間**：原始資料集可能非常大（例如 DROID 需要 2TB）
+- **叢集的使用權限**（大型資料集建議使用）：SLURM 或類似的工作排程器
+- **資料集專用的相依套件**：以 DROID 來說，你會需要 TensorFlow Dataset 的相關工具
+
+## 認識 DROID 資料集[[understanding-the-droid-dataset]]
+
+[DROID 1.0.1](https://droid-dataset.github.io/droid/the-droid-dataset) 是大規模機器人資料集的絕佳範例：
+
+- **大小**：1.7TB（RLDS 格式）、8.7TB（原始資料）
+- **結構**：2048 個預先定義的 TensorFlow 資料集分片
+- **內容**：來自 Franka Emika Panda 機器人的 76,000 多筆操作軌跡
+- **範圍**：橫跨多種環境與物件的真實世界操作任務
+- **格式**：原本為 TensorFlow Records/RLDS 格式，需要轉換為 LeRobot 格式
+- **存放位置**：Google Cloud Storage，可透過 `gsutil` 公開存取
+
+這個資料集包含多樣的操作示範，具備：
+
+- 多個相機視角（腕部相機、外部相機）
+- 自然語言任務描述
+- 機器人的本體感覺（proprioception）狀態（state）與動作
+- 成功／失敗的標註
+
+### DROID 特徵結構描述[[droid-features-schema]]
+
+```python
+DROID_FEATURES = {
+    # 回合標記
+    "is_first": {"dtype": "bool", "shape": (1,)},
+    "is_last": {"dtype": "bool", "shape": (1,)},
+    "is_terminal": {"dtype": "bool", "shape": (1,)},
+
+    # 語言指令
+    "language_instruction": {"dtype": "string", "shape": (1,)},
+    "language_instruction_2": {"dtype": "string", "shape": (1,)},
+    "language_instruction_3": {"dtype": "string", "shape": (1,)},
+
+    # 機器人狀態
+    "observation.state.gripper_position": {"dtype": "float32", "shape": (1,)},
+    "observation.state.cartesian_position": {"dtype": "float32", "shape": (6,)},
+    "observation.state.joint_position": {"dtype": "float32", "shape": (7,)},
+
+    # 相機觀測
+    "observation.images.wrist_left": {"dtype": "image"},
+    "observation.images.exterior_1_left": {"dtype": "image"},
+    "observation.images.exterior_2_left": {"dtype": "image"},
+
+    # 動作
+    "action.gripper_position": {"dtype": "float32", "shape": (1,)},
+    "action.cartesian_position": {"dtype": "float32", "shape": (6,)},
+    "action.joint_position": {"dtype": "float32", "shape": (7,)},
+
+    # 標準 LeRobot 格式
+    "observation.state": {"dtype": "float32", "shape": (8,)},  # 關節 + 夾爪
+    "action": {"dtype": "float32", "shape": (8,)},  # 關節 + 夾爪
+}
+```
+
+## 方法 1：單機移植[[approach-1-single-computer-porting]]
+
+### 步驟 1：安裝相依套件[[step-1-install-dependencies]]
+
+針對 DROID：
+
+```bash
+pip install tensorflow
+pip install tensorflow_datasets
+```
+
+其他資料集請安裝適用於你的來源格式的讀取工具。
+
+### 步驟 2：下載原始資料[[step-2-download-raw-data]]
+
+使用 `gsutil` 從 Google Cloud Storage 下載 DROID：
+
+```bash
+# 若尚未安裝，請先安裝 Google Cloud SDK
+# https://cloud.google.com/sdk/docs/install
+
+# 下載完整的 RLDS 資料集（1.7TB）
+gsutil -m cp -r gs://gresearch/robotics/droid/1.0.1 /your/data/
+
+# 或只下載 100 個回合的樣本（2GB）供測試
+gsutil -m cp -r gs://gresearch/robotics/droid_100 /your/data/
+```
+
+> [!WARNING]
+> 大型資料集需要大量的時間與儲存空間：
+>
+> - **完整的 DROID（1.7TB）**：依頻寬而定，需要數天才能下載完成
+> - **處理時間**：在本機移植完整資料集需要 7 天以上
+> - **上傳時間**：推送到 Hugging Face Hub 需 3 天以上
+> - **本機儲存**：處理後的 LeRobot 格式約需 400GB
+
+### 步驟 3：移植資料集[[step-3-port-the-dataset]]
+
+```bash
+python examples/port_datasets/port_droid.py \
+    --raw-dir /your/data/droid/1.0.1 \
+    --repo-id your_id/droid_1.0.1 \
+    --push-to-hub
+```
+
+### 開發與測試[[development-and-testing]]
+
+在開發時，你可以只移植單一分片：
+
+```bash
+python examples/port_datasets/port_droid.py \
+    --raw-dir /your/data/droid/1.0.1 \
+    --repo-id your_id/droid_1.0.1_test \
+    --num-shards 2048 \
+    --shard-index 0
+```
+
+這個方法適用於較小的資料集或測試，但大型資料集需要叢集運算。
+
+## 方法 2：SLURM 叢集移植（建議）[[approach-2-slurm-cluster-porting-recommended]]
+
+對於 DROID 這類大型資料集，跨多個節點平行處理能大幅縮短處理時間。
+
+### 步驟 1：安裝叢集相依套件[[step-1-install-cluster-dependencies]]
+
+```bash
+pip install datatrove  # Hugging Face 的分散式處理函式庫
+```
+
+### 步驟 2：設定你的 SLURM 環境[[step-2-configure-your-slurm-environment]]
+
+找出你的分割區（partition）資訊：
+
+```bash
+sinfo --format="%R"  # 列出可用的分割區
+sinfo -N -p your_partition -h -o "%N cpus=%c mem=%m"  # 檢查資源
+```
+
+選擇一個 **CPU 分割區**，移植資料集不需要 GPU。
+
+### 步驟 3：啟動平行移植工作[[step-3-launch-parallel-porting-jobs]]
+
+```bash
+python examples/port_datasets/slurm_port_shards.py \
+    --raw-dir /your/data/droid/1.0.1 \
+    --repo-id your_id/droid_1.0.1 \
+    --logs-dir /your/logs \
+    --job-name port_droid \
+    --partition your_partition \
+    --workers 2048 \
+    --cpus-per-task 8 \
+    --mem-per-cpu 1950M
+```
+
+#### 參數指引[[parameter-guidelines]]
+
+- **`--workers`**：平行工作的數量（DROID 的分片數為 2048，因此最多 2048）
+- **`--cpus-per-task`**：建議使用 8 個 CPU，讓影格編碼能平行處理
+- **`--mem-per-cpu`**：總共約 16GB RAM（8×1950M），用來載入原始影格
+
+> [!TIP]
+> 在啟動數千個工作之前，先以較少的 worker（例如 100）測試你的叢集設定。
+
+### 步驟 4：監控進度[[step-4-monitor-progress]]
+
+檢查執行中的工作：
+
+```bash
+squeue -u $USER
+```
+
+監控整體進度：
+
+```bash
+jobs_status /your/logs
+```
+
+檢視個別工作的記錄檔：
+
+```bash
+less /your/logs/port_droid/slurm_jobs/JOB_ID_WORKER_ID.out
+```
+
+對失敗的工作除錯：
+
+```bash
+failed_logs /your/logs/port_droid
+```
+
+### 步驟 5：彙整分片[[step-5-aggregate-shards]]
+
+所有移植工作完成後：
+
+```bash
+python examples/port_datasets/slurm_aggregate_shards.py \
+    --repo-id your_id/droid_1.0.1 \
+    --logs-dir /your/logs \
+    --job-name aggr_droid \
+    --partition your_partition \
+    --workers 2048 \
+    --cpus-per-task 8 \
+    --mem-per-cpu 1950M
+```
+
+### 步驟 6：上傳到 Hub[[step-6-upload-to-hub]]
+
+```bash
+python examples/port_datasets/slurm_upload.py \
+    --repo-id your_id/droid_1.0.1 \
+    --logs-dir /your/logs \
+    --job-name upload_droid \
+    --partition your_partition \
+    --workers 50 \
+    --cpus-per-task 4 \
+    --mem-per-cpu 1950M
+```
+
+> [!NOTE]
+> 上傳使用較少的 worker（50），因為它受限於網路而非運算。
+
+## Dataset v3.0 檔案結構[[dataset-v30-file-structure]]
+
+完成後的資料集會是這樣的新結構：
+
+```
+dataset/
+├── meta/
+│   ├── episodes/
+│   │   └── chunk-000/
+│   │       └── file-000.parquet    # 回合中繼資料
+│   ├── tasks.parquet               # 任務定義
+│   ├── stats.json                  # 彙整後的統計
+│   └── info.json                   # 資料集資訊
+├── data/
+│   └── chunk-000/
+│       └── file-000.parquet        # 整併後的回合資料
+└── videos/
+    └── camera_key/
+        └── chunk-000/
+            └── file-000.mp4        # 整併後的影片檔案
+```
+
+這以高效、大小合宜的區塊，取代了舊有每個回合一個檔案的結構。
+
+## 從 Dataset v2.1 遷移[[migrating-from-dataset-v21]]
+
+如果你有 v2.1 格式的既有資料集，請使用遷移工具：
+
+```bash
+python src/lerobot/scripts/convert_dataset_v21_to_v30.py \
+    --repo-id your_id/existing_dataset
+```
+
+這會自動：
+
+- 將檔案結構轉換為 v3.0 格式
+- 將中繼資料從 JSON Lines 遷移為 parquet
+- 彙整統計量，並建立逐回合的統計量
+- 更新版本資訊
+
+## 效能優勢[[performance-benefits]]
+
+Dataset v3.0 為大型資料集帶來顯著的改進：
+
+- **載入更快**：初始化時間縮短為原本的 1/3 到 1/5
+- **記憶體效率**：透過記憶體映射改善 RAM 用量
+- **可擴展的處理**：能有效率地處理數百萬個回合
+- **儲存最佳化**：減少檔案數量並改善壓縮

@@ -1,0 +1,593 @@
+# SARM：階段感知獎勵建模[[sarm-stage-aware-reward-modeling]]
+
+SARM（Stage-Aware Reward Modeling，階段感知獎勵建模）是一個以影片為基礎的獎勵建模框架，適用於長時程（long-horizon）的機器人操作任務。本指南說明如何訓練 SARM 獎勵模型，以及如何選擇性地搭配獎勵對齊行為複製（Reward-Aligned Behavior Cloning，RA-BC）使用。
+
+**論文**：[SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation](https://arxiv.org/abs/2509.25358)
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-sarm.png"
+  alt="An overview of SARM"
+  width="80%"
+/>
+
+## 為什麼需要獎勵模型？[[why-reward-models]]
+
+標準的行為複製（behavior cloning）會一視同仁地對待所有示範影格，但真實世界的機器人資料集往往很雜亂：其中包含猶豫、修正，以及品質參差不齊的軌跡。獎勵模型能解決這個問題：它從示範中學到一個可泛化的**任務進度**（task progress）概念，給定影片影格與任務描述，就能預測機器人距離完成任務還有多遠（0→1）。這個學到的「進度訊號」有多種用途，其中兩個很有潛力的應用是：（1）**加權的模仿學習**（RA-BC），在訓練策略（policy）時給高進度的影格更高的權重；**（2）強化學習（reinforcement learning）**，由獎勵模型提供密集的獎勵，用於線上或離線的策略改進。
+
+## 概覽[[overview]]
+
+SARM 具有以下特點：
+
+1. **階段感知的架構**：同時預測高階的任務階段，以及每個階段內的細部進度
+2. **子任務標註（subtask annotation）**：使用自然語言的子任務標註，推導出一致的進度標籤
+3. **時間比例（temporal proportion）**：為每個子任務計算資料集層級的先驗值（α̅\_k），讓不同長度的示範都能以一致的方式正規化進度
+
+SARM 會為每個影格（frame）以精簡的 **stage+tau** 目標進行訓練：
+
+- **stage**：整數的階段索引 `k ∈ {0, ..., K-1}`
+- **τ (tau)**：階段內的進度 `τ ∈ [0, 1]`
+- **目標編碼**：`y = k + τ`（資料集處理器產生的就是這個值）
+
+在推論時（以及下游的 RA-BC 中），SARM 會使用資料集層級的**時間比例** `α̅_k`（儲存在 `meta/temporal_proportions_*.json` 中），將原始的 `k + τ` 值轉換為 `[0, 1]` 之間的**正規化進度**。
+
+這符合論文中的**公式 (2)**：
+
+```
+progress_t = P_{k-1} + α̅_k × τ_t
+```
+
+其中：
+
+- `τ_t = (t - s_k) / (e_k - s_k)` 是子任務內正規化後的時間
+- `P_{k-1}` 是累積先驗值（前面各子任務比例的總和）
+- `α̅_k` 是子任務 k 的時間比例
+
+這確保了相同的任務狀態（state）會對應到一致的進度值，即使示範的長度各不相同。
+
+## 輸入與目標[[inputs-and-targets-what-the-new-code-expects]]
+
+SARM 是透過它的處理器（`src/lerobot/rewards/sarm/processor_sarm.py`）進行訓練的，處理器會：
+
+- 以 CLIP（ViT-B/32）將影像與任務文字**編碼**成 `video_features` 與 `text_features`
+- 將機器人狀態**填補或截斷**成 `state_features`（最多 `max_state_dim`）
+- 使用 stage+tau 編碼 `y = k + τ`，**建立目標** `sparse_targets`（在 `dense_only`/`dual` 模式下還有 `dense_targets`）
+- 使用每個樣本的 `lengths` 張量**遮罩倒帶（rewind）影格**（倒帶是一種訓練時的資料增強）
+
+每個訓練樣本至少需要：
+
+- `task`（字串）：任務描述
+- 資料集中 `policy.image_key` 對應的影像，以及 `policy.state_key` 對應的狀態
+
+---
+
+## 標註模式[[annotation-modes]]
+
+你可以從 **3 種標註模式**中選擇，它們決定了進度標籤的計算方式：
+
+| 模式           | 所需標註              | 預測頭                  | 使用情境                               |
+| -------------- | --------------------- | ----------------------- | -------------------------------------- |
+| `single_stage` | 無                    | 僅 sparse               | 簡單任務、快速實驗，不需要 VLM         |
+| `dense_only`   | Dense（VLM）          | 雙頭（sparse 自動產生） | 想詳細追蹤子任務，但不需要定義高階階段 |
+| `dual`         | Sparse + Dense（VLM） | 雙頭                    | 完整的 SARM 論文設定，兼具兩種粒度     |
+
+### 模式細節[[mode-details]]
+
+<hfoptions id="mode_explanation">
+<hfoption id="single_stage">
+
+**不需要標註。** 整個回合（episode）會被視為一個名為 `"task"` 的單一階段，進度在回合期間從 0 線性增加到 1。
+
+- **Sparse 頭**：1 個階段（"task"），線性進度
+- **Dense 頭**：不使用
+- **最適合**：簡單任務、快速實驗，或無法使用 VLM 標註時
+
+## 設定你的環境[[set-up-your-environment]]
+
+1. 依照我們的[安裝指南](./installation)安裝 LeRobot。
+2. 執行以下指令安裝 SARM 的相依套件：
+
+```bash
+pip install -e ".[sarm]"
+```
+
+工作流程：
+
+```
+1. 訓練 SARM → 2. 視覺化預測 → 3.（可選）以 RA-BC 訓練策略
+```
+
+</hfoption>
+<hfoption id="dense_only">
+
+**只使用 VLM 產生的 dense（細粒度）標註。** sparse 頭會自動使用一個涵蓋整個回合的 `"task"` 階段，而 dense 頭則學習詳細的子任務進度。
+
+- **Sparse 頭**：1 個階段（"task"），線性進度（自動產生）
+- **Dense 頭**：來自 VLM 標註的多個細粒度階段
+- **最適合**：想詳細追蹤子任務，但不需要定義高階階段時
+
+工作流程：
+
+```
+1. 標註（dense） → 2. 驗證 → 3. 訓練 SARM → 4. 視覺化 → 5.（可選）以 RA-BC 訓練策略
+```
+
+</hfoption>
+<hfoption id="dual">
+
+**同時使用 VLM 產生的 sparse 與 dense 標註。** 也就是 SARM 論文中描述的完整雙頭模式，同時預測高階（sparse）與細粒度（dense）的階段。
+
+- **Sparse 頭**：來自 VLM 標註的高階階段
+- **Dense 頭**：來自 VLM 標註的細粒度階段
+- **最適合**：兩種粒度都有用的複雜多階段任務
+
+工作流程：
+
+```
+1. 標註（sparse+dense） → 2. 驗證 → 3. 訓練 SARM → 4. 視覺化 → 5.（可選）以 RA-BC 訓練策略
+```
+
+</hfoption>
+</hfoptions>
+
+---
+
+## 步驟 1：子任務標註[[step-1-subtask-annotation]]
+
+<hfoptions id="annotation_mode">
+<hfoption id="single_stage">
+
+**不需要標註！** 直接跳過這個步驟。模型會使用回合（episode）的任務描述，並自動計算線性進度。
+
+</hfoption>
+<hfoption id="dense_only">
+
+使用 VLM **只產生 dense（細粒度）標註**，sparse 階段會自動產生。
+
+```bash
+python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
+  --repo-id your-username/your-dataset \
+  --dense-only \
+  --dense-subtasks "Bring robot arms up from starting position,Grab near side and do 1st fold,Grab side and do 2nd fold,Grab side and do 3rd fold to finish folding" \
+  --video-key observation.images.base \
+  --num-workers 4 \
+  --push-to-hub
+```
+
+**會儲存哪些內容：**
+
+- `meta/temporal_proportions_sparse.json` - 自動產生的 sparse 比例（`{"task": 1.0}`）
+- `meta/temporal_proportions_dense.json` - dense 的時間比例
+- `episodes/*.parquet` 中每個回合的欄位：
+  - `dense_subtask_names`、`dense_subtask_start_frames`、`dense_subtask_end_frames`
+  - （另外還有以時間表示的欄位：`dense_subtask_start_times`、`dense_subtask_end_times`）
+
+</hfoption>
+<hfoption id="dual">
+
+使用 VLM **同時產生 sparse（高階）與 dense（細粒度）標註**。
+
+```bash
+python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
+  --repo-id your-username/your-dataset \
+  --sparse-subtasks "Bring arms up from starting position,Fold the towel (3 folds in total)" \
+  --dense-subtasks "Bring robot arms up from starting position,Grab near side and do 1st fold,Grab side and do 2nd fold,Grab side and do 3rd fold to finish folding" \
+  --video-key observation.images.base \
+  --num-workers 4 \
+  --push-to-hub
+```
+
+**會儲存哪些內容：**
+
+- `meta/temporal_proportions_sparse.json` - sparse 的時間比例
+- `meta/temporal_proportions_dense.json` - dense 的時間比例
+- `episodes/*.parquet` 中每個回合的欄位：
+  - `sparse_subtask_names`、`sparse_subtask_start_frames`、`sparse_subtask_end_frames`
+  - `dense_subtask_names`、`dense_subtask_start_frames`、`dense_subtask_end_frames`
+  - （另外還有以時間表示的欄位：`*_subtask_start_times`、`*_subtask_end_times`）
+
+</hfoption>
+</hfoptions>
+
+### 標註引數[[annotation-arguments]]
+
+| 引數                   | 說明                                                    |
+| ---------------------- | ------------------------------------------------------- |
+| `--repo-id`            | HuggingFace 資料集儲存庫 ID                             |
+| `--sparse-subtasks`    | 以逗號分隔的高階子任務名稱清單                          |
+| `--dense-subtasks`     | 以逗號分隔的細粒度子任務名稱清單                        |
+| `--dense-only`         | 只產生 dense 標註（自動建立 sparse 的 "task" 階段）     |
+| `--video-key`          | 要使用的相機／影片鍵名（例如 `observation.images.top`） |
+| `--num-workers`        | 平行 GPU worker 的數量（預設：1）                       |
+| `--episodes`           | 要標註的回合索引（預設：全部）                          |
+| `--skip-existing`      | 跳過已有標註的回合                                      |
+| `--model`              | VLM 模型（預設：`Qwen/Qwen3-VL-30B-A3B-Instruct`）      |
+| `--num-visualizations` | 標註完成後要視覺化的回合數（預設：5，設為 0 可跳過）    |
+
+> **注意**：標註完成後，預設會自動視覺化 5 個回合。使用 `--num-visualizations 0` 可跳過這個步驟。
+
+---
+
+## 步驟 2：驗證標註[[step-2-verify-annotations]]
+
+<hfoptions id="verify_mode">
+<hfoption id="single_stage">
+
+**不需要驗證！** 直接跳過這個步驟。
+
+</hfoption>
+<hfoption id="dense_only">
+
+使用 `--visualize-only` 旗標視覺化標註結果：
+
+```bash
+python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
+  --repo-id your-username/your-dataset \
+  --visualize-only \
+  --visualize-type dense \
+  --num-visualizations 5 \
+  --video-key observation.images.base \
+  --output-dir ./subtask_viz
+```
+
+</hfoption>
+<hfoption id="dual">
+
+使用 `--visualize-only` 旗標視覺化標註結果：
+
+```bash
+python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
+  --repo-id your-username/your-dataset \
+  --visualize-only \
+  --visualize-type both \
+  --num-visualizations 5 \
+  --video-key observation.images.base \
+  --output-dir ./subtask_viz
+```
+
+</hfoption>
+</hfoptions>
+
+這會產生視覺化結果，在影片影格上疊加子任務的邊界，並顯示子任務的時間軸。
+
+### 視覺化引數[[visualization-arguments]]
+
+| 引數                   | 說明                                            |
+| ---------------------- | ----------------------------------------------- |
+| `--visualize-only`     | 只視覺化既有標註（不產生）                      |
+| `--num-visualizations` | 要視覺化的回合數（預設：5）                     |
+| `--visualize-type`     | 要視覺化的標註類型：`sparse`、`dense` 或 `both` |
+
+**提示**：若標註不準確，請將子任務的描述寫得更具體，再重新執行。
+
+---
+
+## 步驟 3：訓練 SARM[[step-3-train-sarm]]
+
+<hfoptions id="train_mode">
+<hfoption id="single_stage">
+
+以**不使用標註**的方式訓練，進度從 0 線性增加到 1：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=sarm \
+  --policy.annotation_mode=single_stage \
+  --policy.image_key=observation.images.base \
+  --output_dir=outputs/train/sarm_single \
+  --batch_size=32 \
+  --steps=5000 \
+  --wandb.enable=true \
+  --wandb.project=sarm \
+  --policy.repo_id=your-username/your-model-name
+```
+
+</hfoption>
+<hfoption id="dense_only">
+
+以**只使用 dense 標註**的方式訓練（sparse 自動產生）：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=sarm \
+  --policy.annotation_mode=dense_only \
+  --policy.image_key=observation.images.base \
+  --output_dir=outputs/train/sarm_dense \
+  --batch_size=32 \
+  --steps=5000 \
+  --wandb.enable=true \
+  --wandb.project=sarm \
+  --policy.repo_id=your-username/your-model-name
+```
+
+</hfoption>
+<hfoption id="dual">
+
+以**同時使用 sparse 與 dense 標註**的方式訓練：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=sarm \
+  --policy.annotation_mode=dual \
+  --policy.image_key=observation.images.base \
+  --output_dir=outputs/train/sarm_dual \
+  --batch_size=32 \
+  --steps=5000 \
+  --wandb.enable=true \
+  --wandb.project=sarm \
+  --policy.repo_id=your-username/your-model-name
+```
+
+</hfoption>
+</hfoptions>
+
+### 多 GPU 訓練[[multi-gpu-training]]
+
+加上 `accelerate launch --multi_gpu --num_processes=4`，即可使用多個 GPU 訓練。
+
+### 訓練引數[[training-arguments]]
+
+| 引數                       | 說明                                                                      | 預設                     |
+| -------------------------- | ------------------------------------------------------------------------- | ------------------------ |
+| `--policy.annotation_mode` | `single_stage`、`dense_only` 或 `dual`                                    | `single_stage`           |
+| `--policy.image_key`       | 影像對應的相機鍵名                                                        | `observation.images.top` |
+| `--policy.state_key`       | 關節狀態的鍵名                                                            | `observation.state`      |
+| `--policy.n_obs_steps`     | 觀測歷史（observation history）的步數（觀測影格總數 = `n_obs_steps + 1`） | `8`                      |
+| `--policy.frame_gap`       | 取樣觀測之間的間隔（以影格數計；30 fps 時 30 ≈ 1 秒）                     | `30`                     |
+
+---
+
+## 步驟 4：視覺化預測[[step-4-visualize-predictions]]
+
+使用 `compute_rabc_weights.py` 並加上 `--visualize-only`，即可視覺化模型的預測（以及可用時，由標註推導出的目標），不會寫出 parquet 檔案。
+
+<hfoptions id="viz_mode">
+<hfoption id="single_stage">
+
+```bash
+python -m lerobot.rewards.sarm.compute_rabc_weights \
+  --dataset-repo-id your-username/your-dataset \
+  --reward-model-path your-username/sarm-model \
+  --visualize-only \
+  --num-visualizations 5 \
+  --head-mode sparse \
+  --output-dir ./sarm_viz
+```
+
+</hfoption>
+<hfoption id="dense_only">
+
+```bash
+python -m lerobot.rewards.sarm.compute_rabc_weights \
+  --dataset-repo-id your-username/your-dataset \
+  --reward-model-path your-username/sarm-model \
+  --visualize-only \
+  --num-visualizations 5 \
+  --head-mode dense \
+  --output-dir ./sarm_viz
+```
+
+</hfoption>
+<hfoption id="dual">
+
+```bash
+python -m lerobot.rewards.sarm.compute_rabc_weights \
+  --dataset-repo-id your-username/your-dataset \
+  --reward-model-path your-username/sarm-model \
+  --visualize-only \
+  --num-visualizations 5 \
+  --head-mode both \
+  --output-dir ./sarm_viz
+```
+
+</hfoption>
+</hfoptions>
+
+視覺化會顯示：
+
+- **進度圖**：預測的進度（以及在可用且 `--stride 1` 時，可選擇顯示由標註推導出的「GT」）
+- **階段機率**：預測階段機率的堆疊面積圖
+- **樣本影格**：回合中帶有進度／階段標籤的關鍵影格
+
+### 視覺化引數[[visualization-arguments-1]]
+
+| 引數                   | 說明                                              |
+| ---------------------- | ------------------------------------------------- |
+| `--visualize-only`     | 只視覺化預測結果（不計算 RA-BC）                  |
+| `--num-visualizations` | 要視覺化的回合數（預設：5）                       |
+| `--head-mode`          | 要使用的 SARM 預測頭：`sparse`、`dense` 或 `both` |
+| `--stride`             | 每 N 個影格計算一次，其餘以內插補齊（預設：1）    |
+
+---
+
+## 步驟 5（可選）：以 RA-BC 訓練策略[[step-5-optional-train-policy-with-ra-bc]]
+
+獎勵對齊行為複製（RA-BC）會使用訓練好的 SARM 模型，依據預測的進度提升幅度，為訓練樣本加上權重。這需要兩個步驟：
+
+1. 使用訓練好的 SARM 模型，**預先計算**所有影格的**進度值**
+2. 使用預先計算的值，以 RA-BC 加權的方式**訓練策略**
+
+### RA-BC 如何運作[[how-ra-bc-works]]
+
+對每個訓練樣本，RA-BC 會計算進度差：
+
+```
+r_i = φ(o_{t+Δ}) - φ(o_t)
+```
+
+其中 `φ` 是 SARM 的進度預測，`Δ` 是策略的 `chunk_size`。進度為正的樣本（好的示範）會獲得較高的權重，進度為負或為零的樣本則會被降低權重。
+
+加權方式依循論文中的**公式 8-9**：
+
+- **軟權重**：`w̃_i = clip((r_i − (μ − 2σ)) / (4σ + ε), 0, 1)`
+- **最終權重**：`w_i = 𝟙{r_i > κ} + 𝟙{0 ≤ r_i ≤ κ} × w̃_i`
+
+### 步驟 5a：計算 SARM 進度值[[step-5a-compute-sarm-progress-values]]
+
+首先，在資料集的所有影格上執行 SARM 模型，計算進度值：
+
+```bash
+python -m lerobot.rewards.sarm.compute_rabc_weights \
+  --dataset-repo-id your-username/your-dataset \
+  --reward-model-path your-username/sarm-model \
+  --head-mode sparse \
+  --num-visualizations 5 \
+  --push-to-hub
+```
+
+此腳本會：
+
+- 處理所有影格並計算進度值
+- 將進度值儲存為磁碟上資料集旁的 parquet 檔案（預設為 `<dataset_root>/sarm_progress.parquet`）
+- 產生前 N 個回合的視覺化結果（預設：5）
+
+**引數：**
+
+| 引數                   | 說明                                              | 預設     |
+| ---------------------- | ------------------------------------------------- | -------- |
+| `--reward-model-path`  | 訓練好的 SARM 模型路徑                            | （必填） |
+| `--head-mode`          | 要使用的 SARM 預測頭：`sparse`、`dense` 或 `both` | `sparse` |
+| `--device`             | 推論使用的裝置                                    | `cuda`   |
+| `--visualize-only`     | 只視覺化預測結果（不計算 RA-BC）                  | `false`  |
+| `--num-visualizations` | 要視覺化的回合數（預設：5，設為 0 可跳過）        | `5`      |
+
+**輸出格式**（`sarm_progress.parquet`）：
+
+| 欄位              | 說明                                |
+| ----------------- | ----------------------------------- |
+| `index`           | 資料集中的全域影格索引              |
+| `episode_index`   | 回合編號                            |
+| `frame_index`     | 回合內的影格索引                    |
+| `progress_sparse` | sparse 頭的進度值 [0, 1]            |
+| `progress_dense`  | dense 頭的進度值 [0, 1]（若有計算） |
+
+### 步驟 5b：以 RA-BC 訓練策略[[step-5b-train-policy-with-ra-bc]]
+
+取得進度檔案後，就可以用 RA-BC 加權訓練你的策略。若沒有明確指定，進度檔案會從資料集路徑自動偵測（`sarm_progress.parquet`）。目前支援 RA-BC 的有 PI0、PI0.5 與 SmolVLA：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=pi0 \
+  --sample_weighting.type=rabc \
+  --sample_weighting.head_mode=sparse \
+  --sample_weighting.kappa=0.01 \
+  --output_dir=outputs/train/policy_rabc \
+  --batch_size=32 \
+  --steps=40000
+```
+
+訓練腳本會自動：
+
+- 從 parquet 檔案載入預先計算的進度值
+- 使用策略的 `chunk_size` 計算進度差（Δ）
+- 依據進度提升幅度計算樣本權重
+- 在訓練期間套用加權的損失函數
+
+**RA-BC 引數：**
+
+| 引數                               | 說明                                              | 預設                    |
+| ---------------------------------- | ------------------------------------------------- | ----------------------- |
+| `--sample_weighting.type`          | 加權方式（`rabc` 或 `uniform`）                   | `rabc`                  |
+| `--sample_weighting.progress_path` | 進度 parquet 檔案的路徑                           | `sarm_progress.parquet` |
+| `--sample_weighting.head_mode`     | 要使用哪個 SARM 預測頭的進度：`sparse` 或 `dense` | `sparse`                |
+| `--sample_weighting.kappa`         | 判斷高品質樣本的閾值 κ                            | `0.01`                  |
+| `--sample_weighting.epsilon`       | 為了數值穩定性加入的極小常數                      | `1e-6`                  |
+
+### 調校 RA-BC 的 Kappa[[tuning-ra-bc-kappa]]
+
+`kappa` 參數是決定哪些樣本獲得完整權重（w=1）的閾值。了解如何調校它，是讓 RA-BC 發揮效果的關鍵。
+
+**加權的運作方式：**
+
+| 條件                | 權重                  |
+| ------------------- | --------------------- |
+| `delta > kappa`     | 1.0（硬門檻）         |
+| `0 ≤ delta ≤ kappa` | 依 Eq. 8 計算的軟權重 |
+| `delta < 0`         | 0.0（進度為負）       |
+
+**診斷 kappa 的問題：**
+
+訓練期間請觀察以下 WandB 指標：
+
+| 指標                          | 健康範圍  | 問題指標              |
+| ----------------------------- | --------- | --------------------- |
+| `sample_weight_mean_weight`   | 0.3 - 0.8 | ≈ 1.0 表示 kappa 太低 |
+| `sample_weighting/delta_mean` | > 0       | 應為正值              |
+| `sample_weighting/delta_std`  | > 0       | 資料品質的變異        |
+
+**若 `sample_weight_mean_weight ≈ 1.0`：** 代表你的 kappa 太低。大多數樣本的 `delta > kappa`，完全跳過了軟加權，RA-BC 就會等同於一般的 BC。
+
+**依據你的資料設定 kappa：**
+
+預設的 `kappa=0.01` 是針對論文中的 T 恤摺疊任務（30 fps 下約 90 秒的回合）調校的。對於你的資料集，請查看記錄下來的 `sample_weighting/delta_mean` 與 `sample_weighting/delta_std`：
+
+```
+# 若 delta_mean ≈ 0.03 且 delta_std ≈ 0.02：
+# 大多數 delta 落在 [0.01, 0.05] 範圍內
+
+# 選項 1：設定 kappa = delta_mean（中等選擇性）
+--sample_weighting.kappa=0.03
+
+# 選項 2：設定 kappa = delta_mean + delta_std（高選擇性）
+--sample_weighting.kappa=0.05
+
+# 選項 3：設定 kappa = delta_mean + 2*delta_std（非常有選擇性）
+--sample_weighting.kappa=0.07
+```
+
+**RA-BC 可能沒有幫助的情況：**
+
+如果你的資料集品質已經很高（所有示範的進度都很一致），RA-BC 就幫助不大，因為沒有需要過濾的內容。
+
+### 以 RA-BC 進行多 GPU 訓練[[multi-gpu-training-with-ra-bc]]
+
+```bash
+accelerate launch \
+  --multi_gpu \
+  --num_processes=4 \
+  src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=your-username/your-dataset \
+  --policy.type=pi0 \
+  --sample_weighting.type=rabc \
+  --sample_weighting.kappa=0.01 \
+  --output_dir=outputs/train/policy_rabc \
+  --batch_size=32 \
+  --steps=40000
+```
+
+---
+
+## 提示與最佳實務[[tips-best-practices]]
+
+### 選擇模式[[choosing-a-mode]]
+
+- 想快速實驗時，**先從 `single_stage` 開始**——不需要額外標註
+- 想詳細追蹤進度，但任務沒有明確的高階階段時，使用 **`dense_only`**
+- 粗細兩種粒度的進度都有意義的複雜任務，使用 **`dual`**
+
+### 標註品質[[annotation-quality]]
+
+1. **子任務名稱要具體**：不要只寫「fold」，而是寫「grab near side and fold toward center」
+2. **以視覺化確認**：訓練前務必檢查幾個回合
+3. **命名一致**：所有回合都使用相同的子任務名稱
+
+### RA-BC[[ra-bc]]
+
+1. **先訓練 SARM**：RA-BC 的品質完全取決於 SARM 的品質
+2. **觀察 `sample_weight_mean_weight`**：若它 ≈ 1.0，請調高 kappa（請參閱[調校 RA-BC 的 Kappa](#tuning-ra-bc-kappa)）
+
+---
+
+## 引用[[citation]]
+
+```bibtex
+@article{chen2025sarm,
+  title={SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation},
+  author={Chen, Qianzhong and Yu, Justin and Schwager, Mac and Abbeel, Pieter and Shentu, Yide and Wu, Philipp},
+  journal={arXiv preprint arXiv:2509.25358},
+  year={2025}
+}
+```
