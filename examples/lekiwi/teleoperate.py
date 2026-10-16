@@ -61,7 +61,7 @@ def main():
         arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
         # Keyboard
         keyboard_keys = keyboard.get_action()
-        base_action = robot._from_keyboard_to_base_action(keyboard_keys)
+        base_action = robot.from_keyboard_to_base_action(keyboard_keys)
 
         action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 

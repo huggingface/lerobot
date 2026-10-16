@@ -67,6 +67,15 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
+Example driving a mobile robot's base from the keyboard, with no leader arm (the arm holds its position):
+
+```shell
+lerobot-teleoperate \
+  --robot.type=lekiwi_client \
+  --robot.remote_ip=172.18.134.136 \
+  --base_teleop.type=keyboard
+```
+
 """
 
 import logging
@@ -121,6 +130,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
+from lerobot.teleoperators.mobile_base import MobileBaseTeleop
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging, move_cursor_up
@@ -133,9 +143,12 @@ from lerobot.utils.visualization_utils import (
 
 @dataclass
 class TeleoperateConfig:
-    # TODO: pepijn, steven: if more robots require multiple teleoperators (like lekiwi) its good to make this possibele in teleop.py and record.py with List[Teleoperator]
-    teleop: TeleoperatorConfig
     robot: RobotConfig
+    # Teleoperator to control the robot. Optional when `base_teleop` drives a mobile robot alone.
+    teleop: TeleoperatorConfig | None = None
+    # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard`, alongside `teleop`
+    # for the arms. Without `teleop`, the arms hold the position they had when teleoperation started.
+    base_teleop: TeleoperatorConfig | None = None
     # Limit the maximum frames per second.
     fps: int = 60
     teleop_time_s: float | None = None
@@ -151,9 +164,15 @@ class TeleoperateConfig:
     # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
 
+    def __post_init__(self):
+        if self.teleop is None and self.base_teleop is None:
+            raise ValueError(
+                "Use --teleop.type=... to specify a teleoperator, or --base_teleop.type=... for a mobile base."
+            )
+
 
 def teleop_loop(
-    teleop: Teleoperator,
+    teleop: Teleoperator | MobileBaseTeleop,
     robot: Robot,
     fps: int,
     teleop_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
@@ -195,16 +214,12 @@ def teleop_loop(
             loop_start = time.perf_counter()  # for the live readout below
 
             with timer.section("observe"):
-                # Get robot observation
-                # Not really needed for now other than for visualization
-                # teleop_action_processor can take None as an observation
-                # given that it is the identity processor as default
+                # Get robot observation, handed to the teleoperator, the processors and the display
                 obs = robot.get_observation()
 
-                if robot.name == "unitree_g1":
-                    teleop.send_feedback(obs)
-
             with timer.section("teleop"):
+                teleop.on_observation(obs)
+
                 # Get teleop action
                 raw_action = teleop.get_action()
 
@@ -263,8 +278,14 @@ def teleoperate(cfg: TeleoperateConfig):
         else cfg.display_compressed_images
     )
 
-    teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
+    teleop: Teleoperator | MobileBaseTeleop
+    if cfg.base_teleop is not None:
+        arm = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+        teleop = MobileBaseTeleop(robot, base=make_teleoperator_from_config(cfg.base_teleop), arm=arm)
+    else:
+        assert cfg.teleop is not None  # enforced by TeleoperateConfig.__post_init__
+        teleop = make_teleoperator_from_config(cfg.teleop)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     teleop.connect()
