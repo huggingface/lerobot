@@ -49,17 +49,20 @@ echo
 torch_report
 if is_jetson; then
   # The dataset stack has to agree with torch: torchcodec is built against a
-  # specific torch release. Recording writes video through PyAV and survives
-  # a mismatch; reading the dataset back (training, replay) does not.
+  # specific torch release, and loads the SYSTEM FFmpeg. On elroy the second
+  # never works (NVIDIA's FFmpeg 8 ships no libswscale) and lerobot falls
+  # back to PyAV, which carries its own FFmpeg. Reported, not fixed.
   "${RUN[@]}" --no-sync python - <<'PY' 2>/dev/null || echo "dataset : NOT importable - lerobot-record will fail"
 import importlib.metadata as m
 v = {p: m.version(p) for p in ("datasets", "av", "torchcodec")}
 print("dataset : " + "  ".join(f"{k} {x}" for k, x in v.items()))
 try:
     import torchcodec.decoders  # noqa: F401  loads the native library against this torch
-    print("          torchcodec loads against this torch")
+    print("          torchcodec loads - video reads use it")
 except Exception as e:
-    print(f"          torchcodec does NOT load against this torch: {type(e).__name__}: {str(e)[:120]}")
-    print("          recording still works (PyAV encodes); reading back needs video_backend=pyav")
+    print("          torchcodec's native library does not load here - expected on the Jetson:")
+    print("          NVIDIA's FFmpeg 8 has no libswscale. Video reads fall back to PyAV")
+    print("          automatically; recording never decodes. Not an error. (System FFmpeg")
+    print("          is deliberately left as NVIDIA ships it - see ORIN-SETUP.md.)")
 PY
 fi

@@ -401,3 +401,22 @@ three, so two correct wheels can mask a third spinning backwards.
 
 Each of those adds exactly one new thing. When something breaks, it is the
 thing you just added.
+
+### Video decoding: PyAV, not torchcodec (2026-10-15)
+
+`torchcodec` installs (0.12, matching torch 2.12) but its native library
+cannot load here: it uses the **system** FFmpeg, and NVIDIA's FFmpeg 8
+(`ffmpeg 7:8.0.1-nvidia1`, from repo.download.nvidia.com/jetson/ffmpeg)
+ships no `libswscale`. torchcodec's FFmpeg-8 module needs
+`libswscale.so.9`; there is no package for it. Ubuntu's FFmpeg 6 is half
+present too (missing `libavdevice60`, `libavfilter9`), and completing it
+would make torchcodec load - **deliberately not done**, to leave the system
+FFmpeg exactly as NVIDIA installs it.
+
+Nothing needs it. Recording encodes with PyAV, which carries its own
+FFmpeg inside the venv; inference uses live frames. Reading a dataset back
+falls back to PyAV automatically (lerobot `import_utils.py`, FORK-LOCAL:
+it probes `torchcodec.decoders`, the import that actually loads the
+library). `./config/sync.sh` reports the state. Train on a machine where
+torchcodec loads if decode speed ever matters.
+

@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import functools
 import importlib
 import importlib.metadata
 import importlib.util
@@ -88,17 +89,30 @@ def is_package_available(
         return package_exists
 
 
+@functools.cache
 def get_safe_default_video_backend():
+    # FORK-LOCAL: probe torchcodec.decoders, not torchcodec, and decide once.
+    #
+    # `import torchcodec` succeeds even when its native library cannot load:
+    # libtorchcodec is only dlopen'ed by torchcodec.decoders. So the check
+    # below used to pass, torchcodec was chosen, and decoding failed at the
+    # first frame. That is the normal state on the Jetson, whose NVIDIA
+    # FFmpeg 8 build ships no libswscale (torchcodec's FFmpeg-8 module needs
+    # libswscale.so.9). Recording never decodes and PyAV carries its own
+    # FFmpeg, so pyav is a complete answer there. Cached: the dataset code
+    # asks per dataset and per config, and the full loader traceback is
+    # ~40 lines.
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
         # Despite being installed, torchcodec may not be loadable at runtime.
         try:
-            importlib.import_module("torchcodec")
+            importlib.import_module("torchcodec.decoders")
             return "torchcodec"
         except (ImportError, OSError, RuntimeError) as e:
+            first = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
             logger.warning(
-                f"{e}\n'torchcodec' is installed but cannot be loaded (see the error above). "
-                "Falling back to 'pyav' as a default decoder."
+                f"'torchcodec' is installed but its native library cannot be loaded ({first}). "
+                "Using 'pyav' to decode video. Pass video_backend explicitly to override."
             )
             return "pyav"
     else:
