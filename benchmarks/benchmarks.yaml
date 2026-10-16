@@ -1,0 +1,51 @@
+benchmarks:
+- name: libero
+  task: libero_spatial
+  train_smoke: true
+  revision: a24f1f380461b665158d52acd140152c79e8b36d
+  rename_map:
+    observation.images.image: observation.images.camera1
+    observation.images.image2: observation.images.camera2
+- name: metaworld
+  task: metaworld-push-v3
+  revision: 8d82bdf3487776404e5e863f585c9d5210b96d14
+  rename_map:
+    observation.image: observation.images.camera1
+- name: robotwin
+  task: beat_block_hammer,click_bell,handover_block,stack_blocks_two,click_alarmclock,open_microwave,adjust_bottle,lift_pot,stamp_seal,turn_switch
+  revision: eb55d3a74f6cd26c6388aecd116b37b63fac144d
+  rename_map:
+    observation.images.head_camera: observation.images.camera1
+    observation.images.left_camera: observation.images.camera2
+    observation.images.right_camera: observation.images.camera3
+- name: robocasa
+  task: CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle
+  revision: f7af588d11e30b0069f200792fb285904b74c80b
+  rename_map:
+    observation.images.robot0_agentview_left: observation.images.camera1
+    observation.images.robot0_eye_in_hand: observation.images.camera3
+    observation.images.robot0_agentview_right: observation.images.camera2
+- name: robocerebra
+  task: libero_10
+  revision: b0538da48c480803662adf724471f7a585dbbd73
+  rename_map:
+    observation.images.image: observation.images.camera1
+    observation.images.wrist_image: observation.images.camera2
+- name: robomme
+  task: PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock
+  revision: c5b271ec8c1b2f4c1c83bce16933bd7c315287cd
+- name: libero_plus
+  task: libero_spatial
+  revision: bb424c8a430f483a7e9aafb24a1a47f5c951eae5
+  rename_map:
+    observation.images.image: observation.images.camera1
+    observation.images.image2: observation.images.camera2
+- name: vlabench
+  task: select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower
+  build_args:
+    VLABENCH_ASSETS_REPO: lerobot/vlabench-assets
+  revision: 7ef370813eb35823caa94088b50f5389a51e4c47
+  rename_map:
+    observation.images.image: observation.images.camera1
+    observation.images.second_image: observation.images.camera2
+    observation.images.wrist_image: observation.images.camera3
