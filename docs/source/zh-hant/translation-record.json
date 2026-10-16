@@ -76,7 +76,7 @@
     },
     "damiao.mdx": {
       "source_version": "45388ab9b815b1b0821b9e25b45b63d20091bb6d",
-      "title": "Damiao 馬達與 CAN 匯流排"
+      "title": "Damiao 馬達與 CAN 匯流排（Damiao Motors and CAN Bus）"
     },
     "debug_processor_pipeline.mdx": {
       "source_version": "4826c947ecc2df9a7dfc5184d5847cf1029ec63c",
@@ -96,7 +96,7 @@
     },
     "envhub_isaaclab_arena.mdx": {
       "source_version": "cd077806de4cb464ed4d18caad4816287bc80ab0",
-      "title": "NVIDIA IsaacLab Arena Environments"
+      "title": "NVIDIA IsaacLab Arena 環境（NVIDIA IsaacLab Arena Environments）"
     },
     "envhub_leisaac.mdx": {
       "source_version": "91bb6a8715f96c51c944781ac3df798c46ceb78e",
@@ -119,7 +119,7 @@
     },
     "feetech.mdx": {
       "source_version": "8012d62bc6e723c7e275ba5d4c944437eef63234",
-      "title": "更新 Feetech 韌體"
+      "title": "更新 Feetech 韌體（Updating Feetech Firmware）"
     },
     "flux3.mdx": {
       "source_title": "FLUX 3 Action (flux3)",
@@ -208,7 +208,7 @@
     "lerobot-dataset-v3.mdx": {
       "source_title": "Using LeRobotDataset",
       "source_version": "975cc6b64576d83f6daa73edcd81c37d47bb8aa0",
-      "title": "使用 LeRobotDataset"
+      "title": "使用 LeRobotDataset（Using LeRobotDataset）"
     },
     "libero.mdx": {
       "source_version": "c701a496bc27315a2d4e133d457f7daec4b29a38",
@@ -233,7 +233,7 @@
     "multi_gpu_training.mdx": {
       "source_title": "Multi GPU training",
       "source_version": "e5d01cc3613f088ef61fcff20d7bd127a3aed3a0",
-      "title": "多 GPU 訓練"
+      "title": "多 GPU 訓練（Multi GPU training）"
     },
     "multi_task_dit.mdx": {
       "source_version": "ebe46489a76d3fbfabc6454690473fdb80ac138f",
@@ -339,15 +339,15 @@
     },
     "third_party_robots.mdx": {
       "source_version": "c96612bf408ee7cc878e5a5c95ab80ce4deb107b",
-      "title": "第三方機器人與遙操作器"
+      "title": "第三方機器人與遙操作器（Third-Party Robots & Teleoperators）"
     },
     "third_party_sensors.mdx": {
       "source_version": "34ca8c42e1fce1603e0d5d4c9c55aeed0734e388",
-      "title": "第三方相機與感測器"
+      "title": "第三方相機與感測器（Third-Party Cameras & Sensors）"
     },
     "tools.mdx": {
       "source_version": "d888811842c644f3a16640f8fb7a45ec8cf7dba4",
-      "title": "工具"
+      "title": "工具（Tools）"
     },
     "topreward.mdx": {
       "source_version": "f84fbed49941cddc341dc0d91abab162c968ee5f",
@@ -356,7 +356,7 @@
     "torch_accelerators.mdx": {
       "source_title": "PyTorch accelerators",
       "source_version": "a84c69378e02baff6c1877f53a73844a47afd3b7",
-      "title": "PyTorch accelerators"
+      "title": "PyTorch 加速器（PyTorch accelerators）"
     },
     "unitree_g1.mdx": {
       "source_title": "Unitree G1",
@@ -366,7 +366,7 @@
     "using_dataset_tools.mdx": {
       "source_title": "Using the Dataset Tools",
       "source_version": "e566c4ad70eb2386a2d217a347ad952cb83d0991",
-      "title": "使用資料集工具"
+      "title": "使用資料集工具（Using the Dataset Tools）"
     },
     "video_encoding_parameters.mdx": {
       "source_version": "27811a89ba5fbcbd49dadfde86e87100250dbbdf",

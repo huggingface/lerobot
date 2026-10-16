@@ -20,7 +20,7 @@
   - local: hilserl_sim
     title: 在模擬環境中訓練強化學習（Train RL in Simulation）
   - local: multi_gpu_training
-    title: 多 GPU 訓練
+    title: 多 GPU 訓練（Multi GPU training）
   - local: hil_data_collection
     title: 人在迴圈中的資料收集（Human In the Loop Data Collection）
   - local: peft_training
@@ -32,19 +32,19 @@
   - local: hardware_guide
     title: 運算硬體指南（Compute Hardware Guide）
   - local: torch_accelerators
-    title: PyTorch accelerators
+    title: PyTorch 加速器（PyTorch accelerators）
   title: 運算與硬體（Compute & Hardware）
 - sections:
   - local: lerobot-dataset-v3
-    title: 使用 LeRobotDataset
+    title: 使用 LeRobotDataset（Using LeRobotDataset）
   - local: porting_datasets_v3
     title: 移植大型資料集（Porting Large Datasets）
   - local: using_dataset_tools
-    title: 使用資料集工具
+    title: 使用資料集工具（Using the Dataset Tools）
   - local: language_and_recipes
     title: 語言欄位與配方（Language Columns and Recipes）
   - local: tools
-    title: 工具
+    title: 工具（Tools）
   - local: annotation_pipeline
     title: 標註管線（Annotation Pipeline）
   - local: video_encoding_parameters
@@ -128,7 +128,7 @@
   - local: robomme
     title: RoboMME
   - local: envhub_isaaclab_arena
-    title: NVIDIA IsaacLab Arena Environments
+    title: NVIDIA IsaacLab Arena 環境（NVIDIA IsaacLab Arena Environments）
   - local: vlabench
     title: VLABench
   title: 基準測試（Benchmarks）
@@ -170,7 +170,7 @@
   - local: rebot_b601
     title: reBot B601
   - local: third_party_robots
-    title: 第三方機器人與遙操作器
+    title: 第三方機器人與遙操作器（Third-Party Robots & Teleoperators）
   title: 機器人（Robots）
 - sections:
   - local: phone_teleop
@@ -182,19 +182,19 @@
   - local: cameras
     title: 相機（Cameras）
   - local: third_party_sensors
-    title: 第三方相機與感測器
+    title: 第三方相機與感測器（Third-Party Cameras & Sensors）
   title: 感測器（Sensors）
 - sections:
   - local: notebooks
     title: Notebooks
   - local: feetech
-    title: 更新 Feetech 韌體
+    title: 更新 Feetech 韌體（Updating Feetech Firmware）
   - local: damiao
-    title: Damiao 馬達與 CAN 匯流排
+    title: Damiao 馬達與 CAN 匯流排（Damiao Motors and CAN Bus）
   title: 資源（Resources）
 - sections:
   - local: contributing
-    title: 貢獻至 LeRobot
+    title: 貢獻至 LeRobot（Contribute to LeRobot）
   - local: writing_docstrings
     title: 撰寫 docstring（Writing docstrings）
   - local: backwardcomp
