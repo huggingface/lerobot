@@ -65,9 +65,9 @@ pip install -e ".[evaluation]"
 cd ..
 
 
-# 6. 安裝額外依賴項
+# 6. 安裝額外相依套件
 pip install onnxruntime==1.23.2 lightwheel-sdk==1.0.1 vuer[all]==0.0.70 qpsolvers==4.8.1
-pip install numpy==1.26.0 # Isaac Sim 5.1 依賴 numpy==1.26.0，這將在下一版修正
+pip install numpy==1.26.0 # Isaac Sim 5.1 需要 numpy==1.26.0，這將在下一版修正
 ```
 
 ## 評估策略（evaluating policies）[[evaluating-policies]]
@@ -165,7 +165,7 @@ Stepping through eval batches:   8%|██████▍    | 4/50 [00:45<08:06
 更多影片錄製（video recording）詳情，請參閱 [IsaacLab 錄製文件（IsaacLab Recording Documentation）](https://isaac-sim.github.io/IsaacLab/main/source/how-to/record_video.html)。
 
 <Tip>
-使用 `--env.headless=true` 以無頭模式（headless）執行時，必須為啟用攝影機的環境（environments）明確啟用攝影機（enable cameras explicitly）：
+使用 `--env.headless=true` 以無頭模式（headless）執行時，必須為啟用相機的環境（environments）明確啟用相機（enable cameras explicitly）：
 
 ```bash
 --env.headless=true --env.enable_cameras=true
@@ -202,9 +202,9 @@ HuggingFace Hub 上提供 IsaacLab Arena 範例資料集（dataset）供實驗�
 | [Arena-GR1-Manipulation-Task](https://huggingface.co/datasets/nvidia/Arena-GR1-Manipulation-Task-v3)      | GR1 微波爐操作      | ~4K              |
 | [Arena-G1-Loco-Manipulation-Task](https://huggingface.co/datasets/nvidia/Arena-G1-Loco-Manipulation-Task) | G1 移動操作         | ~4K              |
 
-## 環境配置（environment configuration）[[environment-configuration]]
+## 環境設定（environment configuration）[[environment-configuration]]
 
-### 完整配置選項（full configuration options）[[full-configuration-options]]
+### 完整設定選項（full configuration options）[[full-configuration-options]]
 
 ```python
 from lerobot.envs.configs import IsaaclabArenaEnv
@@ -232,7 +232,7 @@ config = IsaaclabArenaEnv(
 
     # 影片錄製
     video=False,                      # 啟用影片錄製
-    video_length=100,                 # 每段影片的幀數
+    video_length=100,                 # 每段影片的影格數
     video_interval=200,               # 錄製間隔步數
 
     # 進階
@@ -259,7 +259,7 @@ from lerobot.configs.eval import EvalPipelineConfig
 
 @parser.wrap()
 def main(cfg: EvalPipelineConfig):
-    """對 IsaacLab Arena 環境執行隨機動作推演。"""
+    """對 IsaacLab Arena 環境執行隨機動作 rollout。"""
     logging.info(pformat(asdict(cfg)))
 
     from lerobot.envs import make_env
@@ -353,7 +353,7 @@ export PRIVACY_CONSENT=Y
 
 ### 影片錄製無法運作（video recording not working）[[video-recording-not-working]]
 
-以無頭模式（headless）執行時啟用攝影機（enable cameras）：
+以無頭模式（headless）執行時啟用相機（enable cameras）：
 
 ```bash
 --env.video=true --env.enable_cameras=true --env.headless=true
@@ -369,7 +369,7 @@ export PRIVACY_CONSENT=Y
 
 ### Isaac Sim 初始化期間出現 libGLU.so.1 錯誤[[libgluso1-errors-during-isaac-sim-initialization]]
 
-確保已安裝以下依賴（dependencies），這在無頭機器（headless machines）上較容易發生。
+確保已安裝以下相依套件（dependencies），這在無頭機器（headless machines）上較容易發生。
 
 ```bash
 sudo apt update && sudo apt install -y libglu1-mesa libxt6
@@ -447,7 +447,7 @@ lerobot-eval \
   --eval.n_episodes=100
 ```
 
-### 環境配置（environment configuration）[[environment-configuration-1]]
+### 環境設定（environment configuration）[[environment-configuration-1]]
 
 可透過修改設定檔（configuration file）中的 `robot`、`task` 和 `layout` 設定快速啟動評估（evaluation）。
 
@@ -497,7 +497,7 @@ resample_objects_placement_on_reset: true
 resample_robot_placement_on_reset: true
 
 # =========================
-# 重播配置設定
+# 重播設定
 # =========================
 replay_cfgs:
   add_camera_to_observation: true

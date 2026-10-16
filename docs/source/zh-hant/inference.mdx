@@ -57,7 +57,7 @@ lerobot-rollout \
 
 ### Sentry（`--strategy.type=sentry`）[[sentry---strategytypesentry]]
 
-連續的自主錄製（recording），並定期上傳到 Hugging Face Hub。回合邊界（episode boundaries）會從攝影機解析度（camera resolution）與 FPS 自動計算，使每個儲存的回合都產生一個完整的影片檔案，讓上傳保持高效。
+連續的自主錄製（recording），並定期上傳到 Hugging Face Hub。回合邊界（episode boundaries）會從相機解析度（camera resolution）與 FPS 自動計算，使每個儲存的回合都產生一個完整的影片檔案，讓上傳保持高效。
 
 策略狀態（policy state，隱藏狀態 hidden state、RTC 佇列 queue）會跨回合邊界（episode boundaries）持續存在：機器人在回合之間不會重設。
 
@@ -157,7 +157,7 @@ lerobot-rollout \
 | `Enter`   | 將資料集（dataset）推送到 Hub（僅修正模式）               |
 | `ESC`     | 停止工作階段（session）                                   |
 
-也可透過 `--strategy.input_device=pedal` 支援腳踏板輸入（foot pedal input）。以 `--strategy.pedal.*` 旗標（flag）設定踏板代碼（configure pedal codes）。
+也可透過 `--strategy.input_device=pedal` 支援腳踏板輸入（foot pedal input）。以 `--strategy.pedal.*` 旗標（flag）設定踏板程式碼（configure pedal codes）。
 
 | 旗標（flag）                         | 描述                                                                                                                                         |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -209,7 +209,7 @@ lerobot-rollout \
 
 ### 自帶策略（Bring your own strategy）[[bring-your-own-strategy]]
 
-`--strategy.type` 接受環境中註冊的任何策略（strategy），不限於上述內建項目。一個策略是位於可用 pip 安裝之套件中的兩個類別：一個註冊在 `RolloutStrategyConfig` 上的設定（config），以及一個名稱去掉 `Config` 尾綴的 `RolloutStrategy` 子類（subclass） —— 與[自訂硬體（custom hardware）](./integrate_hardware#the-4-core-conventions)相同的 `SomethingConfig`/`Something` 慣例，會從設定所屬的模組或套件解析。
+`--strategy.type` 接受環境中註冊的任何策略（strategy），不限於上述內建項目。一個策略是位於可用 pip 安裝之套件中的兩個類別：一個註冊在 `RolloutStrategyConfig` 上的設定（config），以及一個名稱去掉 `Config` 尾綴的 `RolloutStrategy` 子類別（subclass） —— 與[自訂硬體（custom hardware）](./integrate_hardware#the-4-core-conventions)相同的 `SomethingConfig`/`Something` 慣例，會從設定所屬的模組或套件解析。
 
 ```python
 from dataclasses import dataclass
@@ -267,7 +267,7 @@ lerobot-rollout \
 
 ### 預設：同步（sync）[[sync-default]]
 
-每個控制刻（control tick）一次策略呼叫（policy call）。主迴圈會阻塞（main loop blocks），直到動作（action）被計算出來。
+每個控制週期（control tick）一次策略呼叫（policy call）。主迴圈會阻塞（main loop blocks），直到動作（action）被計算出來。
 
 適用於所有策略（policy）。不需要額外旗標（flag）。
 
@@ -353,13 +353,13 @@ Robot reset — holding at initial position. /start to run.
 (printf '/start\n'; sleep 60; printf '/stop\n') | lerobot-rollout ... --interactive=true
 ```
 
-**`/subtask`** 會從下一次推論（inference）起生效。使用 `--inference.type=sync` 時，預先計算好的區塊動作（chunk actions）會被丟棄，因此切換會落在下一個控制刻（control tick）；使用 `rtc` 時，新區塊會與前一區塊剩餘的前綴（leftover prefix）混合，因此會在單次推論內生效，動作也保持連續（使用 `--inference.rtc.enabled=false` 時，佇列中的區塊會先耗盡，使切換延遲最多一個區塊）。
+**`/subtask`** 會從下一次推論（inference）起生效。使用 `--inference.type=sync` 時，預先計算好的區塊動作（chunk actions）會被丟棄，因此切換會落在下一個控制週期（control tick）；使用 `rtc` 時，新區塊會與前一區塊剩餘的前綴（leftover prefix）混合，因此會在單次推論內生效，動作也保持連續（使用 `--inference.rtc.enabled=false` 時，佇列中的區塊會先耗盡，使切換延遲最多一個區塊）。
 
 使用 `--use_torch_compile=true` 時，若某個指令 tokenize 後的長度不同，可能觸發重新編譯（recompilation），使推論暫停與原本暖機（warm-up）一樣長的時間 —— 若你預期會經常重新下指令，請保持關閉編譯。
 
 `/vqa` 與 `/autosteer` 需要具有 text head 的策略（即 `PreTrainedPolicy.generate_text()` 的實作）；目前內建的 LeRobot 策略尚未提供，因此除非你的策略有，否則這兩個指令都會被拒絕。
 
-**`/vqa`** 會依據下一次觀測（observation）作答，並在就緒時輸出，因此你可以同時繼續輸入；同一時間只會有一個問題在處理中（autosteer 自己的查詢會共用該 slot）。文字生成遠比一個控制刻（control tick）慢，因此機器人會先消化佇列中的動作，然後保持位置直到答案產生，而這段時間會計入 `--duration`。只有在執行進行中才會接受提問 —— 閒置的引擎沒有目前的視野 —— 而當某個區段（segment）結束時仍未回答的問題會被丟棄並回報。
+**`/vqa`** 會依據下一次觀測（observation）作答，並在就緒時輸出，因此你可以同時繼續輸入；同一時間只會有一個問題在處理中（autosteer 自己的查詢會共用該 slot）。文字生成遠比一個控制週期（control tick）慢，因此機器人會先消化佇列中的動作，然後保持位置直到答案產生，而這段時間會計入 `--duration`。只有在執行進行中才會接受提問 —— 閒置的引擎沒有目前的視野 —— 而當某個區段（segment）結束時仍未回答的問題會被丟棄並回報。
 
 **`/autosteer`** 會交給策略一個目標，並每隔 `--autosteer_interval_s` 秒（預設 10）向它索取下一個子任務，透過與 `/subtask` 相同的路徑套用每個子任務，並在對話中公告。每個查詢都是一次完整的文字生成，因此該間隔是成本的調節旋鈕：較低的值會更早重新規劃，但會讓迴圈花更多時間在生成文字而非採取行動。計畫進度存在於策略（policy）中，而非 rollout 中，因此計畫會隨著區段結束而消失；序列器（sequencer）也會在 `/reset`、`/subtask`、`/autosteer off` 以及第一次規劃失敗時停止。
 
@@ -426,7 +426,7 @@ strategy.teardown(ctx)  # 收尾（teardown）仍由呼叫端負責
 | `--policy.path`                   | **必填。** HF Hub model ID 或本機檢查點路徑（checkpoint path）               | --              |
 | `--robot.type`                    | **必填。** 機器人類型（robot type，例如 `so100_follower`、`koch_follower`）  | --              |
 | `--robot.port`                    | 機器人的序列埠（serial port）                                                | --              |
-| `--robot.cameras`                 | 攝影機設定（camera configuration, JSON dict）                                | --              |
+| `--robot.cameras`                 | 相機設定（camera configuration, JSON dict）                                  | --              |
 | `--fps`                           | 策略推論與資料集錄製頻率（policy inference and dataset recording frequency） | 30              |
 | `--duration`                      | 以秒為單位的執行時間（0 = 無限；互動模式下為每區段）                         | 0               |
 | `--device`                        | Torch device（`cpu`、`cuda`、`mps`）                                         | 自動            |
@@ -461,9 +461,9 @@ Cadence summary — whole run, 2 episodes · target 30 Hz × 2 (16.7 ms tick slo
   pacing headroom: 7.4 ms slept per tick on average (max 13.0 ms) — near zero means the loop is saturated
 ```
 
-由上而下閱讀：**effective cadence** 是你相對於 `--fps` 實際達到的成果，**cycles over budget** 是迴圈無法維持目標的頻率，**step breakdown** 說明時間花在哪裡，而 **pacing headroom** 接近零表示已沒有餘裕吸收一次緩慢的刻（tick）。`infer` 佔比偏高指向策略（policy）或裝置；`observe` 佔比偏高則指向相機。某個步驟的 `worst` 遠高於其 `mean` 屬於一次性事件 —— 在上例中，`record` 每格為 0.67 ms，而 620 ms 的離群值（outlier）是關閉某個回合時造成阻塞的 `save_episode`。
+由上而下閱讀：**effective cadence** 是你相對於 `--fps` 實際達到的成果，**cycles over budget** 是迴圈無法維持目標的頻率，**step breakdown** 說明時間花在哪裡，而 **pacing headroom** 接近零表示已沒有餘裕吸收一次緩慢的控制週期（tick）。`infer` 佔比偏高指向策略（policy）或裝置；`observe` 佔比偏高則指向相機。某個步驟的 `worst` 遠高於其 `mean` 屬於一次性事件 —— 在上例中，`record` 每格為 0.67 ms，而 620 ms 的離群值（outlier）是關閉某個回合時造成阻塞的 `save_episode`。
 
-這裡的一個 _cycle_ 是相當於一個策略動作的刻數（`--interpolation_multiplier` 個刻）。只有整個 cycle 超出 `1/fps` 預算時才會讓你掉影格（frame）；單一控制刻超出其時槽只會讓內插後的動作較不平順，這也是兩者分開計算的原因。若未使用內插，一個 cycle 就是單一刻，因此報告會省略這項區分，全程以刻（tick）計算。
+這裡的一個 _cycle_ 是相當於一個策略動作的控制週期數（`--interpolation_multiplier` 個）。只有整個 cycle 超出 `1/fps` 預算時才會讓你掉影格（frame）；單一控制週期超出其時槽只會讓內插後的動作較不平順，這也是兩者分開計算的原因。若未使用內插，一個 cycle 就是單一控制週期，因此報告會省略這項區分，全程以控制週期計算。
 
 在[互動工作階段（interactive sessions）](#interactive-sessions)中，每個 `/start` 區段都有自己的計時器，因此報告會每個區段（`/reset`、`/stop` 或 `--duration`）在對話中出現一次，而不是每個行程（process）一次。
 
@@ -493,8 +493,8 @@ signal_handler = ProcessSignalHandler(use_threads=True)
 ctx = build_rollout_context(
     cfg,
     signal_handler.shutdown_event,
-    robot_action_processor=my_custom_action_processor,       # 選用
-    robot_observation_processor=my_custom_obs_processor,     # 選用
+    robot_action_processor=my_custom_action_processor,       # 可選
+    robot_observation_processor=my_custom_obs_processor,     # 可選
 )
 
 strategy = BaseStrategy(cfg.strategy)

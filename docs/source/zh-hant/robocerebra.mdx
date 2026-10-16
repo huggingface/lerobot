@@ -1,6 +1,6 @@
 # RoboCerebra[[robocerebra]]
 
-[RoboCerebra](https://robocerebra.github.io/) 是一個長水平操作基準測試（long-horizon manipulation benchmark），用於評估（evaluates） VLAs 的**高階推理（high-level reasoning）、規劃與記憶（planning and memory）**能力。每個回合（episode）串接多個子目標（multiple sub-goals），搭配以語言為基礎的中間指令（language-grounded intermediate instructions），建構於 LIBERO 的模擬器堆疊（simulator stack，MuJoCo + robosuite，Franka Panda 7 自由度）之上。
+[RoboCerebra](https://robocerebra.github.io/) 是一個長時程操作基準測試（long-horizon manipulation benchmark），用於評估（evaluates） VLAs 的**高階推理（high-level reasoning）、規劃與記憶（planning and memory）**能力。每個回合（episode）串接多個子目標（multiple sub-goals），搭配以語言為基礎的中間指令（language-grounded intermediate instructions），建構於 LIBERO 的模擬器堆疊（simulator stack，MuJoCo + robosuite，Franka Panda 7 自由度）之上。
 
 - 論文：[RoboCerebra: A Large-scale Benchmark for Long-horizon Robotic Manipulation Evaluation](https://arxiv.org/abs/2506.06677)
 - 專案網站：[robocerebra.github.io](https://robocerebra.github.io/)
@@ -9,11 +9,11 @@
 
 ## 可用任務（available tasks）[[available-tasks]]
 
-RoboCerebra 複用 LIBERO 的模擬器（simulator），因此評估（evaluation）針對 LIBERO `libero_10` 長水平套件（long-horizon suite）進行：
+RoboCerebra 複用 LIBERO 的模擬器（simulator），因此評估（evaluation）針對 LIBERO `libero_10` 長時程套件（long-horizon suite）進行：
 
 | 套件（suite） | CLI 名稱（name） | 任務數（tasks） | 描述（description）                                                                                     |
 | ------------- | ---------------- | --------------- | ------------------------------------------------------------------------------------------------------- |
-| LIBERO-10     | `libero_10`      | 10              | 串接 3–6 個子目標的廚房/客廳長水平任務（Long-horizon kitchen/living room tasks chaining 3–6 sub-goals） |
+| LIBERO-10     | `libero_10`      | 10              | 串接 3–6 個子目標的廚房/客廳長時程任務（Long-horizon kitchen/living room tasks chaining 3–6 sub-goals） |
 
 資料集（dataset）中每個 RoboCerebra 回合（episode）被分割為多個子任務（multiple sub-tasks），各附有自然語言指令（natural-language instructions），統一資料集（unified dataset）將這些指令作為獨立的監督訊號（independent supervision signals）呈現。
 
@@ -36,7 +36,7 @@ export MUJOCO_GL=egl  # 適用於無螢幕伺服器（HPC、雲端）
 
 ## 評估（evaluation）[[evaluation]]
 
-RoboCerebra 的評估（eval）針對 LIBERO 的 `libero_10` 套件（suite）執行，使用 RoboCerebra 的攝影機命名方式（camera naming，`image` + `wrist_image`），並額外配置一個空攝影機插槽（extra empty-camera slot），以確保以三視角訓練的策略（three-view-trained policy）能接收預期的輸入配置（input layout）：
+RoboCerebra 的評估（eval）針對 LIBERO 的 `libero_10` 套件（suite）執行，使用 RoboCerebra 的相機命名方式（camera naming，`image` + `wrist_image`），並額外配置一個空相機插槽（extra empty-camera slot），以確保以三視角訓練的策略（three-view-trained policy）能接收預期的輸入配置（input layout）：
 
 ```bash
 lerobot-eval \
@@ -66,7 +66,7 @@ lerobot-eval \
 
 - `observation.state` — 8 維本體感覺狀態（8-dim proprioceptive state，7 個關節位置 joint positions + 夾爪 gripper）
 - `observation.images.image` — 第三人稱視角（third-person view），256×256 HWC uint8
-- `observation.images.wrist_image` — 腕部攝影機視角（wrist-mounted camera view），256×256 HWC uint8
+- `observation.images.wrist_image` — 腕部相機視角（wrist-mounted camera view），256×256 HWC uint8
 
 **動作（actions）：**
 
@@ -79,7 +79,7 @@ lerobot-eval \
 | 特徵（feature）                  | 形狀（shape） | 描述（description）                           |
 | -------------------------------- | ------------- | --------------------------------------------- |
 | `observation.images.image`       | (256, 256, 3) | 第三人稱視角（third-person view）             |
-| `observation.images.wrist_image` | (256, 256, 3) | 腕部攝影機（wrist-mounted camera）            |
+| `observation.images.wrist_image` | (256, 256, 3) | 腕部相機（wrist-mounted camera）              |
 | `observation.state`              | (8,)          | 關節位置（joint pos） + 夾爪（gripper）       |
 | `action`                         | (7,)          | 末端執行器增量（EEF delta） + 夾爪（gripper） |
 

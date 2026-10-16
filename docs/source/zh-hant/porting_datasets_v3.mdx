@@ -22,7 +22,7 @@ dataset/
 dataset/
 ├── data/chunk-000/file-000.parquet        # 每個檔案包含多個 episode
 ├── videos/camera/chunk-000/file-000.mp4   # 整併後的影片區塊
-└── meta/episodes/chunk-000/file-000.parquet  # 結構化的元資料
+└── meta/episodes/chunk-000/file-000.parquet  # 結構化的中繼資料
 ```
 
 從個別的回合檔案（episode files）轉為以檔案為基礎（file-based）的區塊（chunk），大幅提升效能並降低儲存開銷。
@@ -37,9 +37,9 @@ dataset/
 - **可設定的檔案大小（configurable file sizes）**：適用於資料檔案與影片檔案
 - **改善的儲存效率（improved storage efficiency）**：更好的壓縮與更少的開銷（overhead）
 
-### 📊 **現代化的元資料管理（modern metadata management）**[[modern-metadata-management]]
+### 📊 **現代化的中繼資料管理（modern metadata management）**[[modern-metadata-management]]
 
-- **以 Parquet 為基礎的元資料（parquet-based metadata）**：以高效的 parquet 格式取代 JSON Lines
+- **以 Parquet 為基礎的中繼資料（parquet-based metadata）**：以高效的 parquet 格式取代 JSON Lines
 - **結構化的回合存取（structured episode access）**：透過 `dataset.meta.episodes` 直接存取 pandas DataFrame
 - **每個回合的統計（per-episode statistics）**：在回合層級（episode level）強化統計追蹤（statistics tracking）
 
@@ -71,7 +71,7 @@ dataset/
 
 此資料集（dataset）包含多樣的操作示範（manipulation demonstrations），具備：
 
-- 多個攝影機視角（multiple camera views，例如腕部攝影機 wrist camera 、外部攝影機 exterior cameras）
+- 多個相機視角（multiple camera views，例如腕部相機 wrist camera 、外部相機 exterior cameras）
 - 自然語言任務描述（natural language task descriptions）
 - 機器人本體感覺狀態（proprioceptive state）與動作（action）
 - 成功/失敗標註（success/failure annotations）
@@ -280,7 +280,7 @@ dataset/
 ├── meta/
 │   ├── episodes/
 │   │   └── chunk-000/
-│   │       └── file-000.parquet    # Episode 元資料
+│   │       └── file-000.parquet    # Episode 中繼資料
 │   ├── tasks.parquet               # 任務定義
 │   ├── stats.json                  # 彙整後的統計
 │   └── info.json                   # 資料集資訊
@@ -307,7 +307,7 @@ python src/lerobot/scripts/convert_dataset_v21_to_v30.py \
 這會自動：
 
 - 將檔案結構（file structure）轉換為 v3.0 格式
-- 將元資料（metadata）從 JSON Lines 遷移至 parquet
+- 將中繼資料（metadata）從 JSON Lines 遷移至 parquet
 - 彙整統計（aggregates statistics）並建立每個回合的統計（per-episode stats）
 - 更新版本資訊（version information）
 

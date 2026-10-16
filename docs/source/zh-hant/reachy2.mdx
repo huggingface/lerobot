@@ -39,7 +39,7 @@ docker run --rm -it \
 ```
 
 > [!NOTE]
-> 若 MuJoCo 執行緩慢（模擬頻率 simulation frequency 過低），請在前述命令後附加 `-e LD_LIBRARY_PATH="/opt/host-libs:$LD_LIBRARY_PATH" \` 以改善效能：
+> 若 MuJoCo 執行緩慢（模擬頻率 simulation frequency 過低），請在前述指令後附加 `-e LD_LIBRARY_PATH="/opt/host-libs:$LD_LIBRARY_PATH" \` 以改善效能：
 >
 > ```
 > docker run --rm -it \
@@ -82,7 +82,7 @@ docker run --rm -it \
 
 請依照[安裝說明（installation instructions）](https://github.com/huggingface/lerobot#installation)安裝 LeRobot。
 
-安裝含 Reachy 2 依賴套件的 LeRobot：
+安裝含 Reachy 2 相依套件的 LeRobot：
 
 ```bash
 pip install -e ".[reachy2]"
@@ -106,7 +106,7 @@ pip install -e ".[reachy2]"
 Reachy 2 完全受 LeRobot 錄製功能（recording features）支援。
 
 **範例：在不使用移動底座的情況下開始錄製（record）：**
-首先，將 reachy2 與 reachy2_teleoperator 加入 record 腳本的 imports 中。接著您可以使用以下命令：
+首先，將 reachy2 與 reachy2_teleoperator 加入 record 腳本的 imports 中。接著您可以使用以下指令：
 
 ```bash
 lerobot-record \
@@ -210,9 +210,9 @@ lerobot-record \
 > **重要：** 在同一個工作階段中，機器人與遙操作器（robot and the teleoperator）兩邊**啟用的部件必須相符**。
 > 例如，若機器人以 `--robot.with_mobile_base=false` 執行，則遙操作器（teleoperator）也必須停用相同的部件 `--teleoperator.with_mobile_base=false`。
 
-##### 使用相關的攝影機（use the relevant cameras）[[use-the-relevant-cameras]]
+##### 使用相關的相機（use the relevant cameras）[[use-the-relevant-cameras]]
 
-您可以對**攝影機（cameras）**做相同的事。使用以下方式以預設參數（default parameters）啟用或停用每台攝影機：
+您可以對**相機（cameras）**做相同的事。使用以下方式以預設參數（default parameters）啟用或停用每台相機：
 
 ```bash
 --robot.with_left_teleop_camera=<true|false> \
@@ -220,17 +220,17 @@ lerobot-record \
 --robot.with_torso_camera=<true|false>
 ```
 
-預設情況下不錄製任何攝影機（no camera is recorded），所有攝影機引數（camera arguments）都設為 `false`。
-若您願意，可以使用 `--robot.camera_width` 與 `--robot.camera_height` 引數為 Reachy 2 的攝影機設定自訂的 `width` 與 `height` 參數（parameters）：
+預設情況下不錄製任何相機（no camera is recorded），所有相機引數（camera arguments）都設為 `false`。
+若您願意，可以使用 `--robot.camera_width` 與 `--robot.camera_height` 引數為 Reachy 2 的相機設定自訂的 `width` 與 `height` 參數（parameters）：
 
 ```bash
 --robot.camera_width=1920 \
 --robot.camera_height=1080
 ```
 
-這會變更所有 3 台預設機器人攝影機（default robot cameras，由上述布林引數啟用 bool arguments）的解析度（resolution）。
+這會變更所有 3 台預設機器人相機（default robot cameras，由上述布林引數啟用 bool arguments）的解析度（resolution）。
 
-若您願意，可以照常使用以下方式新增機器人以外的額外攝影機（additional cameras）：
+若您願意，可以照常使用以下方式新增機器人以外的額外相機（additional cameras）：
 
 ```bash
 --robot.cameras="{ extra: {type: opencv, index_or_path: 42, width: 640, height: 480, fps: 30}}" \

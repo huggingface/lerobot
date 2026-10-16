@@ -1,4 +1,4 @@
-# 小抄（Cheat sheet）[[cheat-sheet]]
+# 速查表（Cheat sheet）[[cheat-sheet]]
 
 所有 LeRobot 指令集中在此處。如果您忘記了如何使用某個特定指令，或想了解一個新指令，都可以在這裡查閱。
 
@@ -22,9 +22,9 @@
 lerobot-find-port
 ```
 
-###### 尋找攝影機（find cameras）[[find-cameras]]
+###### 尋找相機（find cameras）[[find-cameras]]
 
-快速找到攝影機索引並驗證其輸出。此指令會將攝影機資訊印到終端機（terminal），並將每個偵測到的攝影機的測試畫面儲存到 `lerobot/outputs/captured_images`
+快速找到相機索引並驗證其輸出。此指令會將相機資訊印到終端機（terminal），並將每個偵測到的相機的測試畫面儲存到 `lerobot/outputs/captured_images`
 
 ```bash
 lerobot-find-cameras
@@ -45,7 +45,7 @@ lerobot-calibrate \
 
 ### 遙操作（teleoperation）[[teleoperation]]
 
-使用兩個攝影機進行遙操作，並透過 Rerun 顯示資料。
+使用兩個相機進行遙操作，並透過 Rerun 顯示資料。
 
 ```bash
 lerobot-teleoperate \
@@ -64,7 +64,7 @@ lerobot-teleoperate \
 資料集（dataset）會自動上傳到伺服器（server）並儲存到 repo_id 下，請確保您已透過 CLI 登入 HF 帳號：
 `hf auth login`
 
-您可以從以下位址取得令牌（token）：[https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+您可以從以下位址取得存取權杖（access token）：[https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
 
 ```bash
 lerobot-record \
@@ -91,7 +91,7 @@ lerobot-record \
 
 ### 錄製深度（recording depth）[[recording-depth]]
 
-Intel RealSense 攝影機（`type: intelrealsense`）在您設定 `use_depth: true` 時會錄製深度串流（record a depth stream）。深度會量化為 12 位元編碼（quantized to 12-bit codes），並儲存為獨立的影片。
+Intel RealSense 相機（`type: intelrealsense`）在您設定 `use_depth: true` 時會錄製深度串流（record a depth stream）。深度會量化為 12 位元編碼（quantized to 12-bit codes），並儲存為獨立的影片。
 
 ```bash
 lerobot-record \
@@ -160,7 +160,7 @@ lerobot-train --config_path=${HF_USER}/policy_test --resume=true --job.target=a1
 
 ### 推論（inference）[[inference]]
 
-推論（inference）是指在機器人上運行已訓練的策略/模型（trained policy/model）。為此我們使用 `lerobot-rollout`。您需要提供策略的路徑（path to your policy），可以是本機路徑或 Hugging Face 上的路徑，例如 "lerobot/folding_latest"。您的攝影機配置（cameras configuration）需要與收集資料集（collecting the dataset）時使用的一致。持續時間以秒為單位，若未指定則會無限期運行。
+推論（inference）是指在機器人上執行已訓練的策略/模型（trained policy/model）。為此我們使用 `lerobot-rollout`。您需要提供策略的路徑（path to your policy），可以是本機路徑或 Hugging Face 上的路徑，例如 "lerobot/folding_latest"。您的相機設定（cameras configuration）需要與收集資料集（collecting the dataset）時使用的一致。持續時間以秒為單位，若未指定則會無限期執行。
 
 > [!TIP]
 > 如果您使用的是先前的 V0.5.1 版本，則需要使用 `lerobot-record` 而非 `lerobot-rollout`。更多資訊請參閱[此處](https://huggingface.co/docs/lerobot/v0.5.1/en/il_robots#run-inference-and-evaluate-your-policy)。

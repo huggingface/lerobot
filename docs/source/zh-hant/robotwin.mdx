@@ -16,14 +16,14 @@ RoboTwin 2.0 是一個基於 SAPIEN 物理引擎建構的**大規模雙臂操作
 | 任務（task）               | 50 項雙臂操作任務（dual-arm manipulation tasks）                        |
 | 機器人（robot）            | Aloha-AgileX 雙臂（bimanual，14 自由度，每臂 7 個）                     |
 | 動作空間（action space）   | 14 維關節空間（joint-space），連續值範圍 `[-1, 1]`                      |
-| 攝影機（cameras）          | `head_camera`、`left_camera`、`right_camera`                            |
+| 相機（cameras）            | `head_camera`、`left_camera`、`right_camera`                            |
 | 模擬器（simulator）        | SAPIEN（非 MuJoCo）                                                     |
 | 評估協議（eval protocol）  | 100 任務/回合（episodes/task），50 個 demo_clean 示範（demonstrations） |
 | 評估設定（eval settings ） | **簡單**（`demo_clean`）和**困難**（`demo_randomized`）                 |
 
 ## 可用任務（available tasks）[[available-tasks]]
 
-RoboTwin 2.0 在上游（upstream）`envs/` 目錄中提供了 50 項雙臂操作任務（dual-arm manipulation tasks）。規範的任務列表定義在 `src/lerobot/envs/robotwin.py` 中的 `ROBOTWIN_TASKS` 元組，與上游倉庫（upstream repo）完全一致。範例任務：
+RoboTwin 2.0 在上游（upstream）`envs/` 目錄中提供了 50 項雙臂操作任務（dual-arm manipulation tasks）。規範的任務列表定義在 `src/lerobot/envs/robotwin.py` 中的 `ROBOTWIN_TASKS` 元組，與上游儲存庫（upstream repo）完全一致。範例任務：
 
 | 任務（task）        | CLI 名稱（name）         | 類別（category）               |
 | ------------------- | ------------------------ | ------------------------------ |
@@ -93,7 +93,7 @@ bash script/_install.sh
 bash script/_download_assets.sh
 ```
 
-安裝腳本會處理所有 Python 依賴（dependencies），包括 SAPIEN、CuRobo、mplib 和 pytorch3d。
+安裝腳本會處理所有 Python 相依套件（dependencies），包括 SAPIEN、CuRobo、mplib 和 pytorch3d。
 
 <Tip warning={true}>
 如果自動安裝失敗，請手動安裝：
@@ -176,17 +176,17 @@ lerobot-eval \
   待上游修復後再重新加入。
 </Tip>
 
-## 攝影機配置（camera configuration）[[camera-configuration]]
+## 相機設定（camera configuration）[[camera-configuration]]
 
-預設包含全部三個攝影機：
+預設包含全部三個相機：
 
-| 攝影機鍵值（camera key） | 描述（description）                                    |
-| ------------------------ | ------------------------------------------------------ |
-| `head_camera`            | 軀幹安裝的俯視攝影機（torso-mounted overhead view）    |
-| `left_camera`            | 左臂腕部安裝的攝影機（left arm wrist-mounted camera）  |
-| `right_camera`           | 右臂腕部安裝的攝影機（right arm wrist-mounted camera） |
+| 相機鍵值（camera key） | 描述（description）                                  |
+| ---------------------- | ---------------------------------------------------- |
+| `head_camera`          | 軀幹安裝的俯視相機（torso-mounted overhead view）    |
+| `left_camera`          | 左臂腕部安裝的相機（left arm wrist-mounted camera）  |
+| `right_camera`         | 右臂腕部安裝的相機（right arm wrist-mounted camera） |
 
-要使用部分攝影機，可覆寫 `--env.camera_names`：
+要使用部分相機，可覆寫 `--env.camera_names`：
 
 ```bash
 lerobot-eval \
@@ -198,19 +198,19 @@ lerobot-eval \
   --eval.n_episodes=10
 ```
 
-## 環境配置參考（environment config reference）[[environment-config-reference]]
+## 環境設定參考（environment config reference）[[environment-config-reference]]
 
 `RoboTwinEnvConfig` 的關鍵參數（parameters）：
 
-| 參數（parameter）    | 預設值（default）                        | 描述（description）                                      |
-| -------------------- | ---------------------------------------- | -------------------------------------------------------- |
-| `task`               | `"beat_block_hammer"`                    | 以逗號分隔的任務名稱（comma-separated task names）       |
-| `fps`                | `25`                                     | 模擬影格率（simulation FPS）                             |
-| `episode_length`     | `300`                                    | 每回合最大步數（max steps per episode）                  |
-| `obs_type`           | `"pixels_agent_pos"`                     | `"pixels"` 或 `"pixels_agent_pos"`                       |
-| `camera_names`       | `"head_camera,left_camera,right_camera"` | 以逗號分隔的啟用攝影機（comma-separated active cameras） |
-| `observation_height` | `240`                                    | 攝影機像素高度（camera pixel height）                    |
-| `observation_width`  | `320`                                    | 攝影機像素寬度（camera pixel width）                     |
+| 參數（parameter）    | 預設值（default）                        | 描述（description）                                    |
+| -------------------- | ---------------------------------------- | ------------------------------------------------------ |
+| `task`               | `"beat_block_hammer"`                    | 以逗號分隔的任務名稱（comma-separated task names）     |
+| `fps`                | `25`                                     | 模擬影格率（simulation FPS）                           |
+| `episode_length`     | `300`                                    | 每回合最大步數（max steps per episode）                |
+| `obs_type`           | `"pixels_agent_pos"`                     | `"pixels"` 或 `"pixels_agent_pos"`                     |
+| `camera_names`       | `"head_camera,left_camera,right_camera"` | 以逗號分隔的啟用相機（comma-separated active cameras） |
+| `observation_height` | `240`                                    | 相機像素高度（camera pixel height）                    |
+| `observation_width`  | `320`                                    | 相機像素寬度（camera pixel width）                     |
 
 ## 排行榜提交（leaderboard submission）[[leaderboard-submission]]
 

@@ -6,9 +6,9 @@
 
 ## 架構概覽（architecture overview）[[architecture-overview]]
 
-VLA-JEPA 有三個主要組件（components）：
+VLA-JEPA 有三個主要元件（components）：
 
-| 組件（component）                   | 模組（module）                    | 角色（role）                                                                          |
+| 元件（component）                   | 模組（module）                    | 角色（role）                                                                          |
 | ----------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------- |
 | **Qwen3-VL 骨幹網路（backbone）**   | `Qwen3VLInterface`                | 將影像與語言指令（images + language instruction）融合（fuses）為 context tokens       |
 | **DiT-B 動作頭（action head）**     | `VLAJEPAActionHead`               | 對動作區塊（action chunk）進行流匹配擴散（flow-matching diffusion）                   |
@@ -28,7 +28,7 @@ VLA-JEPA 有三個主要組件（components）：
 
 ### 動作頭細節（action head details）[[action-head-details]]
 
-透過 `action_model_type` 可選用的預設值：
+透過 `action_model_type` 可可選的預設值：
 
 | 預設值  | Heads | Head dim |
 | ------- | ----- | -------- |
@@ -59,7 +59,7 @@ VLA-JEPA 有三個主要組件（components）：
 
 有三個檢查點（checkpoints）可直接在 LeRobot 組織（org）中取得：[`lerobot/VLA-JEPA`](https://huggingface.co/collections/lerobot/vla-jepa)，由 [ginwind/VLA-JEPA](https://huggingface.co/ginwind/VLA-JEPA) 轉換而來：
 
-| 檢查點（checkpoint）          | 資料集（dataset） | 攝影機（cameras）                     | 世界模型（world model） | 動作 dim（action dim） |
+| 檢查點（checkpoint）          | 資料集（dataset） | 相機（cameras）                       | 世界模型（world model） | 動作 dim（action dim） |
 | ----------------------------- | ----------------- | ------------------------------------- | ----------------------- | ---------------------- |
 | `lerobot/VLA-JEPA-LIBERO`     | LIBERO-10         | 2（agentview + 腕部 wrist）           | 啟用（enabled）         | 7                      |
 | `lerobot/VLA-JEPA-Pretrain`   | DROID 1.0.1       | 2（外部左側視角 exterior left views） | 啟用（enabled）         | 7                      |
@@ -212,7 +212,7 @@ lerobot-eval \
 
 ---
 
-## 在攝影機數量不同的資料集上微調（fine-tuning on datasets with a different number of cameras）[[fine-tuning-on-datasets-with-a-different-number-of-cameras]]
+## 在相機數量不同的資料集上微調（fine-tuning on datasets with a different number of cameras）[[fine-tuning-on-datasets-with-a-different-number-of-cameras]]
 
 預訓練世界模型預測器（pretrained world model predictor）是以 `embed_dim = world_model_num_views × 1024` 訓練（training）而成，亦即兩個相機視角。
 
@@ -243,7 +243,7 @@ lerobot-train \
 
 **選項 2 — 重新初始化預測器的輸入投影（reinitialize the predictor input projection）**
 
-如果您想將 `world_model_num_views` 改為 2 以外的值，請以 `strict=False` 載入檢查點（checkpoint），並為新的 `embed_dim` 重新初始化（reinitialize） `model.video_predictor.predictor_embed`。其餘所有預測器區塊的權重（predictor block weights，attention、MLP、norm、output projection）都與攝影機數量無關，可沿用預訓練檢查點（pretrained checkpoint）。
+如果您想將 `world_model_num_views` 改為 2 以外的值，請以 `strict=False` 載入檢查點（checkpoint），並為新的 `embed_dim` 重新初始化（reinitialize） `model.video_predictor.predictor_embed`。其餘所有預測器區塊的權重（predictor block weights，attention、MLP、norm、output projection）都與相機數量無關，可沿用預訓練檢查點（pretrained checkpoint）。
 
 ---
 

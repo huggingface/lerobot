@@ -15,7 +15,7 @@ LIBERO-plus 透過沿以下各軸（axes）擾動（perturbing）每個原始 LI
 | 維度（dimension）                      | 改變的內容（what changes）                                                                |
 | -------------------------------------- | ----------------------------------------------------------------------------------------- |
 | 物件佈局（objects layout）             | 目標位置（target position）、干擾物件（confounding objects）是否存在                      |
-| 攝影機視角（camera viewpoints）        | 攝影機位置（camera position）、朝向（orientation）、視野（field-of-view）                 |
+| 相機視角（camera viewpoints）          | 相機位置（camera position）、朝向（orientation）、視野（field-of-view）                   |
 | 機器人初始狀態（robot initial states） | 機械手臂起始姿態（manipulator start pose）                                                |
 | 語言指令（language instructions）      | 由 LLM 改寫的任務描述（ LLM-rewritten task description，改述 paraphrase／同義詞 synonym） |
 | 光照條件（light conditions）           | 強度（intensity）、方向（direction）、顏色（color）、陰影（shadow）                       |
@@ -31,8 +31,8 @@ LIBERO-plus 涵蓋與 LIBERO 相同的五個套件（suites）：
 | LIBERO-Spatial | `libero_spatial` | 10              | 280                   | 需要推理（reasoning）空間關係（spatial relations）的任務（tasks）        |
 | LIBERO-Object  | `libero_object`  | 10              | 280                   | 聚焦於操作不同物件（manipulating different objects）的任務（tasks）      |
 | LIBERO-Goal    | `libero_goal`    | 10              | 300                   | 目標會變動（changing targets）的目標條件式任務（goal-conditioned tasks） |
-| LIBERO-90      | `libero_90`      | 90              | 400                   | 來自 LIBERO-100 集合的短水平任務（short-horizon tasks）                  |
-| LIBERO-Long    | `libero_10`      | 10              | 520                   | 來自 LIBERO-100 集合的長水平任務（long-horizon tasks）                   |
+| LIBERO-90      | `libero_90`      | 90              | 400                   | 來自 LIBERO-100 集合的短時程任務（short-horizon tasks）                  |
+| LIBERO-Long    | `libero_10`      | 10              | 520                   | 來自 LIBERO-100 集合的長時程任務（long-horizon tasks）                   |
 
 <Tip warning={true}>
   安裝 LIBERO-plus 會**取代**原生（vanilla）的 LIBERO，它會解除安裝

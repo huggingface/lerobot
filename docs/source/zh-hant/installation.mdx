@@ -118,7 +118,7 @@ brew install ffmpeg
 
 ## 步驟 3：安裝 LeRobot 🤗[[step-3-install-lerobot]]
 
-基本的 `lerobot` 安裝刻意保持**輕量（lightweight）**——只包含核心 ML 相依套件（PyTorch、torchvision、numpy、opencv、einops、draccus、huggingface-hub、gymnasium、safetensors）。較重的相依套件則以選用的額外套件（extras）把關，讓您只安裝需要的部分。
+基本的 `lerobot` 安裝刻意保持**輕量（lightweight）**——只包含核心 ML 相依套件（PyTorch、torchvision、numpy、opencv、einops、draccus、huggingface-hub、gymnasium、safetensors）。較重的相依套件則以可選的額外套件（extras）把關，讓您只安裝需要的部分。
 
 ### 以原始碼安裝（from source）[[from-source]]
 
@@ -270,7 +270,7 @@ sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-de
 
 對於其他作業系統請參閱：[編譯 PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
-## 選用的相依套件（optional dependencies）[[optional-dependencies]]
+## 可選的相依套件（optional dependencies）[[optional-dependencies]]
 
 LeRobot 為特定功能提供可選的額外套件（optional extras）。多個額外套件（multiple extras）可以組合使用（例如 `.[aloha,feetech]`）。如需所有可用的額外套件，請參閱 `pyproject.toml`。若您使用 `uv`，請將下列指令中的 `pip install` 替換為 `uv pip install`。
 

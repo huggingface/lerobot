@@ -17,7 +17,7 @@ Hooks 是在管線（pipeline）執行過程中特定時間點被呼叫的函式
 ### 什麼是 hook（what is a hook）？[[what-is-a-hook]]
 
 hook 是一個回呼函式（callback function），在管線執行（pipeline execution）的特定時刻被自動觸發（automatically invoked）。
-這個概念來自事件驅動程式設計（event-driven programming），想像您可以「掛鉤（hook into）」到管線的執行流程（pipeline’s execution flow）中，觀察（observe）或回應（react）正在發生的事情。
+這個概念來自事件驅動程式設計（event-driven programming），想像您可以「hook（hook into）」到管線的執行流程（pipeline’s execution flow）中，觀察（observe）或回應（react）正在發生的事情。
 
 將 hooks 想像成在管線（pipeline）中插入檢查點（checkpoints）。每當管線到達這些檢查點時，它會短暫暫停並呼叫您的 hook 函式（function），讓您有機會檢查當前狀態（current state）、記錄資訊（log information）和驗證資料（validate data）。
 

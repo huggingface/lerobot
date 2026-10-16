@@ -52,7 +52,7 @@ lerobot-train \
   --policy.repo_id=your_org/lawam_sft
 ```
 
-此適配器在建立 LaWAM 訓練批次之前，會使用 LeRobot 資料集的統計資料來進行動作與狀態正規化（action and state normalization）。姿態動作用最小-最大正規化（min-max normalization），而 LIBERO 配方會明確將夾爪通道對齊為二元 `0/1` 值，以符合原生 LaWAM 訓練契約。這會將 `-1/+1` 與 `0/1` 兩種資料集慣例對應到相同的模型目標。預訓練檢查點保留其預訓練值 `action_horizon=24` 與 `n_action_steps=24`；LIBERO SFT 配方會將兩者覆寫為 `8`，同時保留 `chunk_size=50` 作為填充後的 Flow 序列長度。訓練會使用目前資料集的 FPS 進行 LaWAM 的自然時間編碼（natural-time encoding），而處理器會保存該頻率作為評估的備援機制（fallback）。`policy.num_video_frames` 控制觀測影格的視窗（observation frame window）。
+此適配器在建立 LaWAM 訓練批次之前，會使用 LeRobot 資料集的統計資料來進行動作與狀態正規化（action and state normalization）。姿態動作用最小-最大正規化（min-max normalization），而 LIBERO 配方會明確將夾爪通道對齊為二元 `0/1` 值，以符合原生 LaWAM 訓練契約。這會將 `-1/+1` 與 `0/1` 兩種資料集慣例對應到相同的模型目標。預訓練檢查點保留其預訓練值 `action_horizon=24` 與 `n_action_steps=24`；LIBERO SFT 配方會將兩者覆寫為 `8`，同時保留 `chunk_size=50` 作為填充後的 Flow 序列長度。訓練會使用目前資料集的 FPS 進行 LaWAM 的自然時間編碼（natural-time encoding），而處理器會儲存該頻率作為評估的備援機制（fallback）。`policy.num_video_frames` 控制觀測影格的視窗（observation frame window）。
 
 已發布的 LaWAM 預訓練與 LIBERO SFT 配方不使用隨機影像擴增（random image augmentation）。策略處理器（policy processor）僅套用 Qwen 與 LAM 主幹（backbones）所需的確定性縮放（deterministic resize）與 ImageNet 正規化（normalization）。LeRobot 的資料集層級影像轉換仍可供另行設計的訓練配方使用。
 

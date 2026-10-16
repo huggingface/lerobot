@@ -13,7 +13,7 @@ LingBot-VA 是一個**雙串流 transformer 混合體（dual-stream “mixture-o
 （action stream, `action_embedder → blocks → action_proj_out`）共用相同的 30 個 transformer 區塊（blocks）與
 文字條件（text conditioning）。
 
-| 元件（component）                       | 類（class）             | 角色（role）                                                            |
+| 元件（component）                       | 類別（class）           | 角色（role）                                                            |
 | --------------------------------------- | ----------------------- | ----------------------------------------------------------------------- |
 | DiT 骨幹（backbone，可訓練 trainable）  | `WanTransformer3DModel` | 約 50 億參數的雙串流（dual-stream） transformer。                       |
 | VAE（凍結 frozen）                      | `AutoencoderKLWan`      | Wan2.2 VAE，`z_dim=48`。於載入時從來源儲存庫延遲拉取（lazy-pulled）。   |
@@ -21,7 +21,7 @@ LingBot-VA 是一個**雙串流 transformer 混合體（dual-stream “mixture-o
 
 在推論（inference）時，此策略（policy）以每個塊為單位執行自迴歸迴圈（runs an autoregressive loop per chunk）：它以兩個獨立的流匹配排程器
 （flow matching scheduler），對影片潛在表徵串流（video-latent stream，CFG，約 20 步）與動作串流（action stream，約 50 步）去雜訊（denoise），
-並跨塊維持一個 KV 快取（KV cache）。在執行塊（chunk）的過程中，真實觀測到的關鍵影格（Real observed keyframes）
+並跨塊維持一個 KV 快取（KV cache）。在執行區塊（chunk）的過程中，真實觀測到的關鍵影格（Real observed keyframes）
 會被回饋到 KV 快取中（閉迴路世界建模，closed-loop world modeling）。
 
 ### LeRobot 整合涵蓋的內容（what the LeRobot integration covers）[[what-the-lerobot-integration-covers]]
@@ -30,7 +30,7 @@ LingBot-VA 是一個**雙串流 transformer 混合體（dual-stream “mixture-o
 - Hub 上即用的 LeRobot 格式檢查點（checkpoints，由已發布的上游 released upstream 版本轉換而來）。
 - 在標準 `select_action` 介面（interface）背後的自迴歸雙串流推論（autoregressive dual-stream inference；
   單一環境評估 single-environment eval，`--eval.batch_size=1`）。
-- 在評估／訓練（eval / training）期間可選擇性地儲存策略的**預測（想像）影片（predicted, imagined videos）**。
+- 在評估／訓練（eval / training）期間可選擇儲存策略的**預測（想像）影片（predicted, imagined videos）**。
 - 以 `lerobot-eval` 在 LIBERO 與 RoboTwin 上進行評估（evaluation）。
 - 透過雙串流流匹配損失（dual-stream flow-matching loss, `policy.forward`）進行訓練／微調（training / fine-tuning），詳見下文。
 
@@ -101,7 +101,7 @@ lerobot-eval \
 ## 訓練／微調（training / fine-tuning）[[training-fine-tuning]]
 
 `LingBotVAPolicy.forward(batch)` 實作了論文中的雙串流**流匹配**損失（dual-stream flow-matching loss,
-`latent_loss + action_loss`，以時間步加權 timestep-weighted、動作遮罩 action-masked）：它將攝影機片段（camera clips）
+`latent_loss + action_loss`，以時間步加權 timestep-weighted、動作遮罩 action-masked）：它將相機片段（camera clips）
 以 VAE 編碼（VAE-encodes）為影片潛在表徵（video latents），將任務以 UMT5 編碼（UMT5-encodes），
 對兩個串流（streams）加入雜訊（noises），執行 transformer 的區塊因果訓練通道（transformer’s block-causal training pass），並回傳 `(loss, metrics)`。
 優化器（optimizer）預設為 AdamW，搭配線性暖身後恆定的排程（linear-warmup-then-constant schedule，與上游一致）。
@@ -122,10 +122,10 @@ lerobot-train \
   --batch_size=1 --steps=... --output_dir=outputs/train/lingbot_va
 ```
 
-資料集（dataset）必須提供攝影機片段（camera clips，每個攝影機一個時間視窗 temporal window，經 VAE 編碼為 `frame_chunk_size` 個潛在影格 latent frames），
+資料集（dataset）必須提供相機片段（camera clips，每個相機一個時間視窗 temporal window，經 VAE 編碼為 `frame_chunk_size` 個潛在影格 latent frames），
 以及每個項目（item） `frame_chunk_size * action_per_frame` 個動作步（action steps）。
 
-## 資料格式（動作通道 & 攝影機順序，action channels & camera order）[[data-format-action-channels-camera-order]]
+## 資料格式（動作通道 & 相機順序，action channels & camera order）[[data-format-action-channels-camera-order]]
 
 LingBot-VA 是一個**末端執行器（笛卡兒）姿態（end-effector Cartesian pose）**策略，它預測 EEF 姿態（EEF poses） + 夾爪（gripper），而非關節位置（joint positions）。
 動作採用固定的多具身（multi-embodiment）**30 維（30-dim）**佈局（layout）；請將您機器人的動作維度（action dimensions）
@@ -149,15 +149,15 @@ LingBot-VA 是一個**末端執行器（笛卡兒）姿態（end-effector Cartes
 關節空間的資料集（joint-space dataset，或不同的 EEF 慣例 convention）在微調（fine-tuning）這些檢查點（checkpoints）之前，
 必須重新對映（remapped ）到此 schema。
 
-**攝影機順序是固定且對順序敏感的（camera order is fixed and order-sensitive）**，各攝影機的潛在表徵（per-camera latents）會依 `obs_cam_keys` 的順序（order）在空間上串接（concatenated spatially），
-因此實體攝影機（physical camera）→插槽的對映（slot mapping）必須與訓練（training）時相符：
+**相機順序是固定且對順序敏感的（camera order is fixed and order-sensitive）**，各相機的潛在表徵（per-camera latents）會依 `obs_cam_keys` 的順序（order）在空間上串接（concatenated spatially），
+因此實體相機（physical camera）→插槽的對映（slot mapping）必須與訓練（training）時相符：
 
 | 基準測試 | `obs_cam_keys`（依序）                                                                                | `camera_layout`                                                                               |
 | -------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | LIBERO   | `observation.images.image`（agentview／第三人稱）、`observation.images.image2`（手上 eye-in-hand）    | `width_concat`（潛在表徵 latents 沿寬度 width 串接 concatenate）                              |
 | RoboTwin | `observation.images.head_camera`、`observation.images.left_camera`、`observation.images.right_camera` | `robotwin_tshape`（下方為全解析度頭部 full-res head，上方為兩個半解析度手腕 half-res wrists） |
 
-第一個攝影機是外部／頭部視角（exterior/head view），其餘為手腕視角（wrist views）。
+第一個相機是外部／頭部視角（exterior/head view），其餘為手腕視角（wrist views）。
 
 ## 推論超參數（LIBERO）（inference hyperparameters on LIBERO）[[inference-hyperparameters-libero]]
 

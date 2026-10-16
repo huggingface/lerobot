@@ -4,7 +4,7 @@ EO-1 是一個**用於機器人控制的視覺-語言-動作策略（Vision-Lang
 
 ## 模型概覽（model overview）[[model-overview]]
 
-EO-1 使用 Qwen2.5-VL 骨幹網路（backbone）進行視覺與語言理解（vision-language understanding），並加入一個連續的流匹配動作頭（continuous flow-matching action head）來控制機器人。此策略（policy）將每個機器人控制樣本（robot-control sample ）格式化為一段多模態對話（multimodal conversation）：攝影機影像（camera images）會傳入 Qwen2.5-VL，機器人狀態（robot state）以 EO-1 狀態 token （state tokens）表示，而未來的動作區塊（future action chunk）則以 EO-1 動作 token （action tokens）表示。
+EO-1 使用 Qwen2.5-VL 骨幹網路（backbone）進行視覺與語言理解（vision-language understanding），並加入一個連續的流匹配動作頭（continuous flow-matching action head）來控制機器人。此策略（policy）將每個機器人控制樣本（robot-control sample ）格式化為一段多模態對話（multimodal conversation）：相機影像（camera images）會傳入 Qwen2.5-VL，機器人狀態（robot state）以 EO-1 狀態 token （state tokens）表示，而未來的動作區塊（future action chunk）則以 EO-1 動作 token （action tokens）表示。
 
 <img
   src="https://huggingface.co/datasets/HaomingSong/lerobot-documentation-images/resolve/main/lerobot/eo_pipeline.png"
@@ -133,7 +133,7 @@ lerobot-train \
 
 ### 使用語言標註訓練（train with language annotations）[[train-with-language-annotations]]
 
-`EO1Config` 內含一個配方（recipe），可從 LeRobot 的選用
+`EO1Config` 內含一個配方（recipe），可從 LeRobot 的可選
 語言欄位（optional language columns）進行訓練。內建的聯合配方（built-in joint recipe）會在同一個序列中
 監督選定的助理回應（assistant response）及其連續動作區塊（continuous action chunk）：
 
@@ -170,7 +170,7 @@ YAML 覆寫檔；LeRobot 不提供共用的預設配方檔案（default recipe f
 | `policy.path`                          | `lerobot/eo1-base`            | 已轉換為原生 LeRobot 格式的 EO-1 發布權重（released EO-1 weights）                               |
 | `policy.vlm_base`                      | `Qwen/Qwen2.5-VL-3B-Instruct` | 僅在不使用 `policy.path` 訓練時使用的 Qwen 處理器/骨幹網路（processor/backbone）                 |
 | `policy.dtype`                         | `bfloat16`                    | 骨幹網路（backbone）的 dtype 要求：torch dtype 名稱，例如 `bfloat16`、`float32`                  |
-| `policy.attn_implementation`           | `None`                        | 選用的 Qwen attention 後端（backend），例如 `sdpa`                                               |
+| `policy.attn_implementation`           | `None`                        | 可選的 Qwen attention 後端（backend），例如 `sdpa`                                               |
 | `policy.gradient_checkpointing`        | `false`                       | 降低訓練期間的記憶體用量                                                                         |
 | `policy.chunk_size`                    | `8`                           | 每個區塊預測的未來動作數量（number of future actions predicted per chunk）                       |
 | `policy.n_action_steps`                | `8`                           | 從取樣區塊中實際採用的動作數量（number of actions consumed from a sampled chunk）                |
@@ -198,7 +198,7 @@ lerobot-eval \
   --eval.n_episodes=20
 ```
 
-若資料集（dataset）或環境（environments）的攝影機名稱（camera names）與檢查點設定（checkpoint configuration）不同，請傳入 `rename_map`：
+若資料集（dataset）或環境（environments）的相機名稱（camera names）與檢查點設定（checkpoint configuration）不同，請傳入 `rename_map`：
 
 ```bash
 lerobot-eval \

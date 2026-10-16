@@ -25,7 +25,7 @@ EnvHub 套件儲存在 Hugging Face Hub 上，可以透過 LeRobot 以單行程�
 - 一個單一的 `gym.Env`（將被自動包裝）
 - 一個對應 `{suite_name: {task_id: VectorEnv}}` 的字典（dict，用於多任務基準測試 multi-task benchmark）
 
-你也可以將 `EnvConfig` 物件傳遞給 `make_env` 來設定環境（configure the environment，例如環境數量 number of environments、任務 task、攝影機名稱 camera name、初始狀態 initial states、控制模式 control mode、回合長度 episode length 等）。
+你也可以將 `EnvConfig` 物件傳遞給 `make_env` 來設定環境（configure the environment，例如環境數量 number of environments、任務 task、相機名稱 camera name、初始狀態 initial states、控制模式 control mode、回合長度 episode length 等）。
 
 最後，你的環境必須實作標準的 `gym.vector.VectorEnv` 介面（interface）才能與 LeRobot 配合使用，包括 `reset` 和 `step` 等方法（methods）。
 
@@ -83,11 +83,11 @@ env = make_env("lerobot/cartpole-env", trust_remote_code=True)
 ```
 my-environment-repo/
 ├── env.py                 # 主要環境定義（必要）
-├── requirements.txt       # 相依套件（可選用）
+├── requirements.txt       # 相依套件（可選）
 ├── README.md             # 說明文件（建議）
-├── assets/               # 圖片、影片等（可選用）
+├── assets/               # 圖片、影片等（可選）
 │   └── demo.gif
-└── configs/              # 設定檔（如有需要，可選用）
+└── configs/              # 設定檔（如有需要，可選）
     └── task_config.yaml
 ```
 

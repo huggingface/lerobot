@@ -20,7 +20,7 @@
 
 ## 安裝（installation）[[installation]]
 
-> RoboMME 需要 **Linux**（ManiSkill/SAPIEN 使用 Vulkan 渲染）。建議使用 Docker 以隔離依賴衝突（dependency conflicts）。
+> RoboMME 需要 **Linux**（ManiSkill/SAPIEN 使用 Vulkan 渲染）。建議使用 Docker 以隔離相依性衝突（dependency conflicts）。
 
 ### 原生安裝（Linux）[[native-linux]]
 
@@ -30,7 +30,7 @@ pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
   'robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@main'
 ```
 
-> **依賴注意事項（dependency note）**：`mani-skill`（由 `robomme` 拉取）固定使用 `gymnasium==0.29.1` 和 `numpy<2.0.0`，這與 lerobot 的基礎要求 `numpy>=2.0.0` 衝突。這就是為什麼 `robomme` 不是 pyproject 的額外依賴（extra）——請使用上述覆寫安裝方式，或使用下方的 Docker 方法以完全避免衝突。
+> **相依套件注意事項（dependency note）**：`mani-skill`（由 `robomme` 拉取）固定使用 `gymnasium==0.29.1` 和 `numpy<2.0.0`，這與 lerobot 的基礎要求 `numpy>=2.0.0` 衝突。這就是為什麼 `robomme` 不是 pyproject 的額外套件（extra）——請使用上述覆寫安裝方式，或使用下方的 Docker 方法以完全避免衝突。
 
 ### Docker（推薦）[[docker-recommended]]
 
@@ -95,8 +95,8 @@ dataset = LeRobotDataset("lerobot/robomme")
 
 | 特徵（feature）    | 形狀（shape） | 描述（description）                                     |
 | ------------------ | ------------- | ------------------------------------------------------- |
-| `image`            | (256, 256, 3) | 前方攝影機 RGB（front camera RGB）                      |
-| `wrist_image`      | (256, 256, 3) | 腕部攝影機 RGB（wrist camera RGB）                      |
+| `image`            | (256, 256, 3) | 前方相機 RGB（front camera RGB）                        |
+| `wrist_image`      | (256, 256, 3) | 腕部相機 RGB（wrist camera RGB）                        |
 | `actions`          | (8,)          | 關節角度（joint angles） + 夾爪（gripper）              |
 | `state`            | (8,)          | 關節位置（joint positions） + 夾爪狀態（gripper state） |
 | `simple_subgoal`   | str           | 高階語言標註（high-level language annotation）          |
@@ -106,7 +106,7 @@ dataset = LeRobotDataset("lerobot/robomme")
 
 ### 訓練用特徵鍵對齊（feature key alignment, training）[[feature-key-alignment-training]]
 
-環境封裝器（env wrapper）會將其相機公開在 `pixels/<camera_name>` 下，名稱由 `RoboMMEEnv.front_camera_name` 和 `RoboMMEEnv.wrist_camera_name` 決定（預設為 `camera1` 和 `camera2`）。`RoboMMEEnv` 中的 `features_map` 會將這些映射到 `observation.images.camera1` 和 `observation.images.camera2` 供策略（policy）使用。狀態以 `agent_pos` 公開並映射到 `observation.state`。
+環境包裝器（env wrapper）會將其相機公開在 `pixels/<camera_name>` 下，名稱由 `RoboMMEEnv.front_camera_name` 和 `RoboMMEEnv.wrist_camera_name` 決定（預設為 `camera1` 和 `camera2`）。`RoboMMEEnv` 中的 `features_map` 會將這些映射到 `observation.images.camera1` 和 `observation.images.camera2` 供策略（policy）使用。狀態以 `agent_pos` 公開並映射到 `observation.state`。
 
 資料集的原始欄位與這些策略鍵（policy keys）不符，因此在微調時請傳入 `--rename_map`：
 
@@ -130,4 +130,4 @@ dataset = LeRobotDataset("lerobot/robomme")
 - **僅支援 Linux**：ManiSkill 需要 SAPIEN/Vulkan。不支援 macOS 和 Windows。
 - **建議使用 GPU**：渲染可在 CPU 上執行但速度較慢；CUDA + Vulkan 可達到完整速度。
 - **gymnasium / numpy 衝突**：請參閱上方的安裝注意事項。Docker 映像會自動處理此問題。
-- **ManiSkill 分支**：`robomme` 依賴於特定的 ManiSkill 分支（fork，`YinpeiDai/ManiSkill`），會透過 `robomme` 套件自動拉取（pull）。
+- **ManiSkill 分支**：`robomme` 需要特定的 ManiSkill 分支（fork，`YinpeiDai/ManiSkill`），會透過 `robomme` 套件自動拉取（pull）。

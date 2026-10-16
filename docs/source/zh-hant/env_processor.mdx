@@ -25,7 +25,7 @@ raw_observation = env.step(action)
 # 2. 將 numpy 轉為 torch，將影像正規化至 [0,1]
 observation = preprocess_observation(raw_observation)
 
-# 3. 加入任務元資料（用於多任務環境）
+# 3. 加入任務中繼資料（用於多任務環境）
 observation = add_envs_task(env, observation)
 
 # 4. 環境特定的前處理（新增！）
@@ -265,7 +265,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
     def _process_observation(self, observation):
         processed_obs = observation.copy()
 
-        # 處理影像：翻轉 180° 以符合攝影機慣例
+        # 處理影像：翻轉 180° 以符合相機慣例
         for key in list(processed_obs.keys()):
             if key.startswith("observation.images."):
                 img = processed_obs[key]
@@ -297,7 +297,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
 1. **影像旋轉（image rotation）**：HuggingFaceVLA/libero 資料集（dataset）的影像（images）相對於原始 LIBERO 模擬器（raw LIBERO simulator）旋轉了 180°。這個處理器（processor）會處理此慣例不一致（convention mismatch），讓在該資料集（dataset）上訓練的策略（policies trained）能無縫運作。
 
 2. **狀態攤平（state flattening）**：原始 LIBERO 環境（raw LIBERO environment）公開了包含所有可用狀態資訊（state information，位置 position、四元數 quaternion、速度 velocity、矩陣表示法 matrix representation 等）的巢狀字典（nested dictionaries）。這個處理器（processor）會：
-   - 選出相關的組件（components：pos、quat、gripper）
+   - 選出相關的元件（components：pos、quat、gripper）
    - 將四元數（quaternion）轉換為軸角（axis-angle，更適合學習）
    - 攤平（flattens）成策略（policy）所預期的單一 8D 向量（vector）
 
@@ -329,7 +329,7 @@ class MyEnvProcessorStep(ObservationProcessorStep):
         return processed
 ```
 
-### 2. 更新您的 `EnvConfig` 子類（update your `EnvConfig` subclass）[[2-update-your-envconfig-subclass]]
+### 2. 更新您的 `EnvConfig` 子類別（update your `EnvConfig` subclass）[[2-update-your-envconfig-subclass]]
 
 ```python
 # In src/lerobot/envs/factory.py
@@ -407,7 +407,7 @@ class CoordinateTransformPostprocessor(ProcessorStep):
 
 3. **從環境公開所有資料（expose all data from environments）**：讓處理器（processor）決定要使用哪些，而非在環境中硬編碼（hardcoding）這些選擇。
 
-4. **記錄慣例（document conventions）**：清楚地記錄（document）您的處理器（processor）所處理的任何座標系慣例（system conventions）、攝影機朝向（camera orientations）或資料格式（data formats）。
+4. **記錄慣例（document conventions）**：清楚地記錄（document）您的處理器（processor）所處理的任何座標系慣例（system conventions）、相機朝向（camera orientations）或資料格式（data formats）。
 
 5. **獨立測試（test independently）**：環境處理器（environment processor）應該能在不載入完整策略（full policies）或環境（environment）的情況下進行測試。
 

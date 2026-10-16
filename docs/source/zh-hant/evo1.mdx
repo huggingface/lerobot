@@ -4,7 +4,7 @@ EVO1 是一個用於機器人控制的視覺-語言-動作策略（Vision-Langua
 
 ## 模型概覽（model overview）[[model-overview]]
 
-此策略（policy）以 InternVL3 嵌入（embeds）一或多張攝影機影像（camera images）與語言任務提示詞（language task prompt），將機器人狀態／動作向量（state/action vectors）填補（pad）到固定的最大維度（fixed maximum dimensions），並以流匹配動作頭（flow-matching action head）預測未來的動作塊（predicts future action chunks）。在推論（inference）期間，策略會取樣（samples）一個動作塊（action chunk），並在再次取樣之前，從該塊（chunk）回傳 `n_action_steps` 個動作（actions）。
+此策略（policy）以 InternVL3 嵌入（embeds）一或多張相機影像（camera images）與語言任務提示詞（language task prompt），將機器人狀態／動作向量（state/action vectors）填補（pad）到固定的最大維度（fixed maximum dimensions），並以流匹配動作頭（flow-matching action head）預測未來的動作區塊（predicts future action chunks）。在推論（inference）期間，策略會取樣（samples）一個動作區塊（action chunk），並在再次取樣之前，從該區塊（chunk）回傳 `n_action_steps` 個動作（actions）。
 
 ### LeRobot 整合涵蓋的內容（what the LeRobot integration covers）[[what-the-lerobot-integration-covers]]
 
@@ -20,7 +20,7 @@ EVO1 是一個用於機器人控制的視覺-語言-動作策略（Vision-Langua
 ## 安裝需求（installation requirements）[[installation-requirements]]
 
 1. 按照[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
-2. 安裝 EVO1 的依賴套件（dependencies）：
+2. 安裝 EVO1 的相依套件（dependencies）：
 
    ```bash
    pip install -e ".[training,evo1]"
@@ -177,13 +177,13 @@ lerobot-rollout \
 
 已發布的檢查點在
 [`train_config.json`](https://huggingface.co/zuoxingdong/evo1_libero/blob/515921f4a2c1d3f3ad523721eafa26fdf2af315b/train_config.json)
-中記錄了完整解析後的階段 2 設定。實際測量的執行使用兩張 H100 GPU，搭配兩個 DDP 程序，每個程序的批次大小為 64，因此全域批次大小為 128。兩個階段都使用相同的拓撲（topology）。基礎 VLM 來自
+中記錄了完整解析後的階段 2 設定。實際測量的執行使用兩張 H100 GPU，搭配兩個 DDP 行程，每個行程的批次大小為 64，因此全域批次大小為 128。兩個階段都使用相同的拓撲（topology）。基礎 VLM 來自
 `OpenGVLab/InternVL3-1B-hf` 的修訂版
 `014c0583a0d4bedf29fbe2dbff4f865eb998e171`。
-已發布的產物並未記錄精確的 LeRobot 訓練提交（commit）或其原始依賴鎖定（dependency lock），
-因此下列命令會從目前的 checkout 重現所記錄的設定與拓撲，而不是逐位元重建軟體環境。
+已發布的產物並未記錄精確的 LeRobot 訓練提交（commit）或其原始相依套件鎖定（dependency lock），
+因此下列指令會從目前的 checkout 重現所記錄的設定與拓撲，而不是逐位元重建軟體環境。
 
-從 LeRobot 原始碼 checkout 中，安裝鎖定的依賴套件並下載該確切的 VLM 修訂版：
+從 LeRobot 原始碼 checkout 中，安裝鎖定的相依套件並下載該確切的 VLM 修訂版：
 
 ```bash
 uv sync --locked --extra training --extra evo1 --extra libero
@@ -293,11 +293,11 @@ uv run accelerate launch --num_processes=2 -m lerobot.scripts.lerobot_train \
 
 #### 作者格式評估設定檔（author-format evaluation profile）[[author-format-evaluation-profile]]
 
-作者格式的 EVO1 LIBERO 設定檔使用原始的 LIBERO 攝影機特徵名稱
+作者格式的 EVO1 LIBERO 設定檔使用原始的 LIBERO 相機特徵名稱
 （`observation.images.agentview_image` 與 `observation.images.robot0_eye_in_hand_image`），每 14 個動作
 重新規劃一次，並在推進模擬器之前將夾爪命令二值化。EVO1 策略後處理器
 可將填補的 24D 動作裁切回 7D 的 LIBERO 動作空間，並套用該夾爪二值化。若要
-在相同的每個任務一回合設定下評估作者格式的檢查點，請保留原始攝影機名稱
+在相同的每個任務一回合設定下評估作者格式的檢查點，請保留原始相機名稱
 而非預設的 `image`/`image2` 對映，並設定 LIBERO 動作後處理旗標：
 
 ```bash
@@ -320,8 +320,8 @@ lerobot-eval \
 
 #### 原生 `lerobot/libero` v3 設定檔（profile）[[native-lerobotlibero-v3-profile]]
 
-修訂版 `a1aaacb7f6cd6ee5fb43120f673cebb0cfea7dd4` 會將攝影機特徵儲存為 `image` 與
-`image2`。此範例會評估全部十個 LIBERO Object 任務，並在全新的程序中啟動每個任務：
+修訂版 `a1aaacb7f6cd6ee5fb43120f673cebb0cfea7dd4` 會將相機特徵儲存為 `image` 與
+`image2`。此範例會評估全部十個 LIBERO Object 任務，並在全新的行程中啟動每個任務：
 
 ```bash
 export MUJOCO_GL=egl

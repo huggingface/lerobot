@@ -35,7 +35,7 @@ RoboCasa365 將其 365 個任務（tasks）組織為兩個系列（two families�
 
 ## 安裝（installation）[[installation]]
 
-RoboCasa 及其依賴套件 `robosuite` 未發佈在 PyPI 上，且 RoboCasa 自身的 `setup.py` 硬編碼（hardcodes）了 `lerobot==0.3.3`，這與本倉庫的（this repo’s） `lerobot` 衝突。因此 LeRobot **不**提供 `robocasa` 額外依賴（extra） — 請手動以可編輯模式克隆（editable clones）安裝這兩個套件（packages，對 `robocasa` 使用 `--no-deps` 以跳過其遮蔽 shadowed 的 `lerobot` 固定版本）：
+RoboCasa 及其相依套件 `robosuite` 未發佈在 PyPI 上，且 RoboCasa 自身的 `setup.py` 硬編碼（hardcodes）了 `lerobot==0.3.3`，這與本儲存庫的（this repo’s） `lerobot` 衝突。因此 LeRobot **不**提供 `robocasa` 額外套件（extra） — 請手動以可編輯模式克隆（editable clones）安裝這兩個套件（packages，對 `robocasa` 使用 `--no-deps` 以跳過其遮蔽 shadowed 的 `lerobot` 固定版本）：
 
 ```bash
 # 在完成標準 LeRobot 安裝步驟之後。
@@ -45,7 +45,7 @@ git clone https://github.com/ARISE-Initiative/robosuite.git ~/robosuite
 pip install -e ~/robocasa --no-deps
 pip install -e ~/robosuite
 
-# Robocasa 的執行時期依賴（即其 setup.py 原本會拉取的套件，減去
+# Robocasa 的執行時期相依套件（即其 setup.py 原本會拉取的套件，減去
 # 錯誤的 lerobot 固定版本）。
 pip install numpy numba scipy mujoco pygame Pillow opencv-python \
             pyyaml pynput tqdm termcolor imageio h5py lxml hidapi \
@@ -80,7 +80,7 @@ export MUJOCO_GL=egl  # 用於無顯示的伺服器（HPC、雲端）
 
 ## 評估（evaluation）[[evaluation]]
 
-以下所有評估程式碼片段（eval snippets）與 CI 指令一致（參見 `.github/workflows/benchmark_tests.yml`）。`--rename_map` 參數（parameter）將 RoboCasa 的原生攝影機鍵名（native camera keys, `robot0_agentview_left` / `robot0_eye_in_hand` / `robot0_agentview_right`）對應到已發佈的（released） `smolvla_robocasa` 策略訓練（policy training）時使用的三攝影機（`camera1` / `camera2` / `camera3`）輸入佈局（input layout）。
+以下所有評估程式碼片段（eval snippets）與 CI 指令一致（參見 `.github/workflows/benchmark_tests.yml`）。`--rename_map` 參數（parameter）將 RoboCasa 的原生相機鍵名（native camera keys, `robot0_agentview_left` / `robot0_eye_in_hand` / `robot0_agentview_right`）對應到已發佈的（released） `smolvla_robocasa` 策略訓練（policy training）時使用的三相機（`camera1` / `camera2` / `camera3`）輸入佈局（input layout）。
 
 預設情況下，每個任務會使用由 RoboCasa 註冊的 rollout horizon。設定 `--env.episode_length=<steps>` 可將相同且明確的 horizon 套用至每個選取的任務。
 
@@ -136,11 +136,11 @@ lerobot-eval \
 
 ## 策略的輸入與輸出（policy inputs and outputs）[[policy-inputs-and-outputs]]
 
-**觀測**（observations，RoboCasa 原始攝影機名稱保持原樣）：
+**觀測**（observations，RoboCasa 原始相機名稱保持原樣）：
 
 - `observation.state` — 16 維本體感覺狀態（ 16-dim proprioceptive state，底盤位置 base position、底盤四元數 base quaternion、相對末端執行器位置 relative end-effector position、相對末端執行器四元數 relative end-effector quaternion、夾爪 gripper qpos）
 - `observation.images.robot0_agentview_left` — 左側代理視角（left agent view），256×256 HWC uint8
-- `observation.images.robot0_eye_in_hand` — 腕部攝影機視角（wrist camera view），256×256 HWC uint8
+- `observation.images.robot0_eye_in_hand` — 腕部相機視角（wrist camera view），256×256 HWC uint8
 - `observation.images.robot0_agentview_right` — 右側代理視角（right agent view），256×256 HWC uint8
 
 **動作（actions）：**

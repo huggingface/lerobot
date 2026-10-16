@@ -175,9 +175,9 @@ lerobot-train \
   - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
   - [lerobot/pi05_libero_base](https://huggingface.co/lerobot/pi05_libero_base)（專門針對 Libero 資料集訓練）
 
-### 選用的訓練時 RTC（Optional training-time RTC）[[optional-training-time-rtc]]
+### 可選的訓練時 RTC（Optional training-time RTC）[[optional-training-time-rtc]]
 
-Pi05 可以選擇性地學習動作前綴條件化（action-prefix conditioning），以實現高效率的
+Pi05 可以選擇學習動作前綴條件化（action-prefix conditioning），以實現高效率的
 [即時區塊化（Real-Time Chunking）](./rtc)，其做法遵循
 [Training-Time Action Conditioning for Efficient Real-Time Chunking](https://arxiv.org/abs/2512.05964)。
 請將 `policy.rtc_training_max_delay` 設為預期的最大推論延遲
@@ -251,7 +251,7 @@ rollout 才會以明確的錯誤停止。預設的
 
 ## 短時域觀測記憶（Short-Horizon Observation Memory, MEM）[[short-horizon-observation-memory-mem]]
 
-Pi05 可以選擇性地使用基於
+Pi05 可以選擇使用基於
 [MEM](https://arxiv.org/abs/2603.03596) 的短時域視覺與本體感覺（proprioceptive）上下文。兩條
 路徑預設皆為停用，因此現有的檢查點與訓練指令仍維持單影格（single-frame）的 Pi05 行為。
 

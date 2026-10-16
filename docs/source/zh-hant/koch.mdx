@@ -55,7 +55,7 @@ Reconnect the USB cable.
 </hfoption>
 <hfoption id="Linux">
 
-在 Linux 上，您可能需要執行以下命令來授予 USB 連接埠（ports）的存取權：
+在 Linux 上，您可能需要執行以下指令來授予 USB 連接埠（ports）的存取權：
 
 ```bash
 sudo chmod 666 /dev/ttyACM0
@@ -90,7 +90,7 @@ Reconnect the USB cable.
 
 #### 從臂（follower）[[follower]]
 
-將電腦的 USB 線與 5V 電源供應器連接到從臂的控制板（follower arm’s controller board）。然後，使用您在上一步取得的連接埠（port），執行以下命令或執行 API 範例。您還需要搭配 `id` 參數（parameter）為您的從臂（follower arm）命名。
+將電腦的 USB 線與 5V 電源供應器連接到從臂的控制板（follower arm’s controller board）。然後，使用您在上一步取得的連接埠（port），執行以下指令或執行 API 範例。您還需要搭配 `id` 參數（parameter）為您的從臂（follower arm）命名。
 
 若需要如何設定馬達 id 的視覺化參考，請參閱[這部影片](https://huggingface.co/docs/lerobot/zh-hant/so101#setup-motors-video)，我們在其中示範了 SO101 手臂的流程。
 
@@ -205,7 +205,7 @@ leader.setup_motors()
 
 #### 從臂（follower）[[calibrate-follower]]
 
-執行以下命令或 API 範例來校正從臂（calibrate the follower arm）：
+執行以下指令或 API 範例來校正從臂（calibrate the follower arm）：
 
 <hfoptions id="calibrate_follower">
 <hfoption id="Command">
@@ -243,7 +243,7 @@ follower.disconnect()
 
 #### 主臂（leader）[[calibrate-leader]]
 
-執行相同的步驟來校正主臂（calibrate the leader arm），執行以下命令或 API 範例：
+執行相同的步驟來校正主臂（calibrate the leader arm），執行以下指令或 API 範例：
 
 <hfoptions id="calibrate_leader">
 <hfoption id="Command">

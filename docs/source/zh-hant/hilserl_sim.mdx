@@ -24,9 +24,9 @@ pip install -e ".[hilserl]"
 - 一個遊戲手把或鍵盤來控制機器人
 - 一張 Nvidia GPU
 
-## 配置（configuration）[[configuration]]
+## 設定（configuration）[[configuration]]
 
-若要搭配 LeRobot 使用 `gym_hil`，您需要建立一個配置檔案（configuration file）。範例請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/env_config.json)。主要配置片段（configuration sections）包括：
+若要搭配 LeRobot 使用 `gym_hil`，您需要建立一個設定檔（configuration file）。範例請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/env_config.json)。主要設定片段（configuration sections）包括：
 
 ### 環境類型與任務（environment type and task）[[environment-type-and-task]]
 
@@ -48,7 +48,7 @@ pip install -e ".[hilserl]"
 - `PandaPickCubeGamepad-v0`：搭配遊戲手把控制
 - `PandaPickCubeKeyboard-v0`：搭配鍵盤控制
 
-### 處理器配置（processor configuration）[[processor-configuration]]
+### 處理器設定（processor configuration）[[processor-configuration]]
 
 ```json
 {
@@ -123,7 +123,7 @@ python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 
 ### 訓練策略（training a policy）[[training-a-policy]]
 
-若要訓練策略（train a policy），請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/train_config.json)提供的組態範例，然後跑執行者與學習者伺服器（actor and learner servers）：
+若要訓練策略（train a policy），請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/train_config.json)提供的設定範例，然後跑執行者與學習者伺服器（actor and learner servers）：
 
 ```bash
 python -m lerobot.rl.actor --config_path path/to/train_gym_hil_env.json

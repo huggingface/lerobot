@@ -75,7 +75,7 @@ pytest -sv tests/test_specific_feature.py
 
 請使用範本（template）來取得必填欄位（required fields）與範例。
 
-- **Issues:** 請遵循 [工單模板](https://github.com/huggingface/lerobot/blob/main/.github/ISSUE_TEMPLATE/bug-report.yml)。
+- **Issues:** 請遵循 [工單範本](https://github.com/huggingface/lerobot/blob/main/.github/ISSUE_TEMPLATE/bug-report.yml)。
 - **Pull requests:** 以 `upstream/main` 進行 rebase，使用具描述性的分支名稱（請勿直接在 `main` 上工作），在本地端執行 `pre-commit` 與測試，並遵循 [PR 範本](https://github.com/huggingface/lerobot/blob/main/.github/PULL_REQUEST_TEMPLATE.md)。
 
 > [!IMPORTANT]

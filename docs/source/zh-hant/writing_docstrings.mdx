@@ -53,7 +53,7 @@ def send_action(self, action: RobotAction, rate_hz: float = 30.0) -> RobotAction
 
 `Args:` · `Returns:` · `Raises:` · `Yields:` · `Example:` · `Note:`
 
-依照上述順序，不使用其他區段標題（section headers）。最前面是一行摘要（one-line summary），接著是選用的自由格式
+依照上述順序，不使用其他區段標題（section headers）。最前面是一行摘要（one-line summary），接著是可選的自由格式
 描述，最後才是各個區段。
 
 ### `Args:` 這一行會被機器解析[[the-args-line-is-machine-parsed]]
@@ -207,7 +207,7 @@ class SOFollowerConfig:
 ```
 
 > [!IMPORTANT]
-> **doc-builder 不會從基底類（base classes）繼承 docstring。** LeRobot 註冊的設定類
+> **doc-builder 不會從基底類別（base classes）繼承 docstring。** LeRobot 註冊的設定類
 > 經常只是簡單的多重繼承過渡類（multiple-inheritance shims）：
 >
 > ```python
@@ -218,13 +218,13 @@ class SOFollowerConfig:
 > ```
 >
 > 這個類會渲染出**每一個**欄位（包括繼承而來的欄位），卻完全沒有描述，無論
-> 基底類的文件寫得多好都一樣。`Args:` 區塊必須放在
+> 基底類別的文件寫得多好都一樣。`Args:` 區塊必須放在
 > `[[autodoc]]` 指名的具體類上，而且也必須涵蓋繼承而來的欄位。
 
-### 先基底類，再具體子類[[base-class-then-concrete-subclass]]
+### 先基底類別，再具體子類別[[base-class-then-concrete-subclass]]
 
-抽象基底類承載標準的約定。子類只記錄與之不同的部分：連接埠語意（port semantics）、
-校正上的特殊情況（calibration quirks）、馬達配置（motor layout）、支援的特徵鍵（feature keys）。不要把基底的約定複製到每個子類中。
+抽象基底類別承載標準的約定。子類別只記錄與之不同的部分：連接埠語意（port semantics）、
+校正上的特殊情況（calibration quirks）、馬達配置（motor layout）、支援的特徵鍵（feature keys）。不要把基底的約定複製到每個子類別中。
 
 `Robot`、`Teleoperator`、`Camera`、`MotorsBus`、`ProcessorStep` 與 `PreTrainedPolicy` 都遵循這種
 結構。

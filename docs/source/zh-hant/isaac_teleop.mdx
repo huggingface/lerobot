@@ -8,7 +8,7 @@ pedals）等。
 在 LeRobot 中，Isaac Teleop 以一個自足（self-contained）的範例形式提供，位於
 [`examples/isaac_teleop_to_so101/`](https://github.com/huggingface/lerobot/tree/main/examples/isaac_teleop_to_so101)。
 每個 Isaac Teleop 輸入裝置在範例的
-`isaac_teleop` 套件中都是自己的 `Teleoperator` 子類（subclass），共用同一個工作階段生命週期（見 `IsaacTeleopTeleoperator`）。
+`isaac_teleop` 套件中都是自己的 `Teleoperator` 子類別（subclass），共用同一個工作階段生命週期（見 `IsaacTeleopTeleoperator`）。
 目前可用的裝置是 **XR 控制器**（`XRController`）與可反向驅動（back-drivable）的
 **SO-101 leader 手臂**（`SO101LeaderArm`）；Manus 手套與手部／全身追蹤是
 自然的下一批裝置（natural next devices）。本指南聚焦於 XR 控制器；SO-101 leader 則在
@@ -86,11 +86,11 @@ export LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1
 此**環境變數優先於設定欄位（env var takes precedence over the config field）**：若設定了 `LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1`，即使 `auto_launch_cloudxr=True` 也會跳過自動啟動（auto-launch）。此變數與 Isaac Lab 的 `ISAACLAB_CXR_SKIP_AUTOLAUNCH` **互相獨立（independent）**，設定其一不會影響
 另一個。
 
-**每個程序一個遙操作器（one teleoperator per process）。** CloudXR 執行期會以程序為範圍（process-wide）設定環境（environment，單例 singleton），因此每個程序（process）請只執行一個 Isaac Teleop 遙操作器（teleoperator）。
+**每個行程一個遙操作器（one teleoperator per process）。** CloudXR 執行期會以行程為範圍（process-wide）設定環境（environment，單例 singleton），因此每個行程（process）請只執行一個 Isaac Teleop 遙操作器（teleoperator）。
 
 **關閉（shutting down）。** 離開時請務必呼叫 `teleop_device.disconnect()`，包括在 Ctrl-C 時。請將
 您的遙操作迴圈包（teleoperation loop）在 `try/finally` 中，並在 `finally` 中呼叫 `disconnect()`。這會在 CloudXR 執行期（runtime）**之前**先拆除 OpenXR 工作階段（session），這是必要的順序；啟動器的
-`atexit` 掛鉤（hook）只會回收執行期，而不會執行工作階段的 `__exit__`，因此若沒有
+`atexit` hook（hook）只會回收執行期，而不會執行工作階段的 `__exit__`，因此若沒有
 明確的 `disconnect()`，被中斷的執行會以錯誤的順序關閉。
 
 ```python
@@ -178,7 +178,7 @@ home *位置（position）*都會從手臂**量測到的關節（measured joints
 因此 home 等於手臂實體所在的位置，即使它在脫離狀態（disengaged）下移動過，啟動也不會跳動（jump‑free）。
 home *方向（orientation）*則保留最後下達的旋轉（rotation）：5 自由度手臂只會軟性（softly）追蹤方向（tracks orientation），
 因此 latching 量測到的手腕方向（wrist orientation），
-會在每次 re‑clutch 時將其追蹤偏移（tracking offset）注入（inject）到命令中。
+會在每次 re‑clutch 時將其追蹤偏移（tracking offset）注入（inject）到指令中。
 
 ## 控制方式（controls）[[controls]]
 
@@ -292,7 +292,7 @@ python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower
 鏡射（mirror）開始時手臂不會突然彈動，而在 leader 串流過時（stream is stale）時，follower 會
 維持在其量測姿態（measured pose）。
 
-URDF 抓取使用 `huggingface_hub`（本就是 LeRobot 的依賴套件）對公開的
+URDF 抓取使用 `huggingface_hub`（本就是 LeRobot 的相依套件）對公開的
 `lerobot/robot-urdfs` bucket 進行，因此不需登入。它會快取在
 `HF_LEROBOT_HOME/robot-urdfs/so101/` 底下；刪除該資料夾可強制重新下載。
 

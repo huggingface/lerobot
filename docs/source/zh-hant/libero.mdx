@@ -17,8 +17,8 @@ LIBERO 包含**五個任務套件（task suites）**，涵蓋 **130 個任務（
 | LIBERO-Spatial | `libero_spatial`  | 10              | 需要推理（reasoning）空間關係（spatial relations）的任務（tasks）            |
 | LIBERO-Object  | `libero_object`   | 10              | 以操作不同物件（manipulating different objects）為核心的任務（tasks）        |
 | LIBERO-Goal    | `libero_goal`     | 10              | 目標條件式任務（Goal-conditioned tasks），目標會隨之變化（changing targets） |
-| LIBERO-90      | `libero_90`       | 90              | 來自 LIBERO-100 集合的短水平任務（short-horizon tasks）                      |
-| LIBERO-Long    | `libero_10`       | 10              | 來自 LIBERO-100 集合的長水平任務（long-horizon tasks）                       |
+| LIBERO-90      | `libero_90`       | 90              | 來自 LIBERO-100 集合的短時程任務（short-horizon tasks）                      |
+| LIBERO-Long    | `libero_10`       | 10              | 來自 LIBERO-100 集合的長時程任務（long-horizon tasks）                       |
 
 ## 安裝[[installation]]
 
@@ -107,13 +107,13 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 **觀測（observations）：**
 
 - `observation.state` — 8 維本體感覺特徵（8-dim proprioceptive features，末端執行器位置 eef position、軸角方向 axis-angle orientation、夾爪關節位置 gripper qpos）
-- `observation.images.image` — 主攝影機視角（main camera view, `agentview_image`），HWC uint8
-- `observation.images.image2` — 腕部攝影機視角（wrist camera view, `robot0_eye_in_hand_image`），HWC uint8
+- `observation.images.image` — 主相機視角（main camera view, `agentview_image`），HWC uint8
+- `observation.images.image2` — 腕部相機視角（wrist camera view, `robot0_eye_in_hand_image`），HWC uint8
 
 <Tip warning={true}>
   LeRobot 強制要求視覺特徵（visual features）使用 `.images.*`
   前綴（prefix）。請確保您的策略設定 （policy config）中 `input_features`
-  使用相同的命名鍵（naming keys）， 且資料集的元資料鍵 （dataset metadata
+  使用相同的命名鍵（naming keys）， 且資料集的中繼資料鍵 （dataset metadata
   keys）也遵循此慣例（convention）。如果您的資料包含不同的鍵名（keys），
   您必須重新命名觀測值（observations）以符合策略（policy）的預期，因為命名鍵（naming
   keys） 已編碼在正規化統計層中（inside the normalization statistics layer）。
@@ -147,11 +147,11 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 | 相機               | 2× 256×256×3                                                     | 2× 256×256×3                                                                   |
 | 狀態 / 動作維度    | 8 / 7                                                            | 8 / 7                                                                          |
 | 資料集格式         | v3.0                                                             | v3.0                                                                           |
-| 相機編碼           | MP4 視訊                                                         | PNG（parquet 內）                                                              |
+| 相機編碼           | MP4 影片                                                         | PNG（parquet 內）                                                              |
 | 下載大小           | **1.9 GB**                                                       | 69.9 GB                                                                        |
-| 額外相依套件       | 視訊後端（`torchcodec` 或 `pyav`）                               | 無                                                                             |
+| 額外相依套件       | 影片後端（`torchcodec` 或 `pyav`）                               | 無                                                                             |
 
-**我們推薦 [lerobot/libero](https://huggingface.co/datasets/lerobot/libero)**：**下載量縮小 37 倍**，且**載入速度相當**（每工作程序約 330 個樣本/秒）。視訊重新編碼（re-encoding）會有些許失真；若您無法安裝視訊解碼後端（video decoding backend），請改用基於影像的版本。
+**我們推薦 [lerobot/libero](https://huggingface.co/datasets/lerobot/libero)**：**下載量縮小 37 倍**，且**載入速度相當**（每工作行程約 330 個樣本/秒）。影片重新編碼（re-encoding）會有些許失真；若您無法安裝影片解碼後端（video decoding backend），請改用基於影像的版本。
 
 供參考，Physical Intelligence 發布的原始資料集（dataset）：
 

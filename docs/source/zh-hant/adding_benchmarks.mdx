@@ -1,6 +1,6 @@
 # 新增基準測試（adding a new benchmark）[[adding-a-new-benchmark]]
 
-本指南將引導您為 LeRobot 新增一個模擬基準測試（simulation benchmark）。請依序遵循以下步驟，並以現有的基準測試作為模板（templates）。
+本指南將引導您為 LeRobot 新增一個模擬基準測試（simulation benchmark）。請依序遵循以下步驟，並以現有的基準測試作為範本（templates）。
 
 LeRobot 中的基準測試（benchmark）是一組 [Gymnasium](https://gymnasium.farama.org/) 環境，這些環境將第三方模擬器（third-party simulator，如 LIBERO 或 Meta-World）封裝在標準的 `gym.Env` 介面（interface）之後。`lerobot-eval` CLI 接著能以統一的方式在所有基準測試上執行評估（evaluation）。
 
@@ -8,11 +8,11 @@ LeRobot 中的基準測試（benchmark）是一組 [Gymnasium](https://gymnasium
 
 在深入了解之前，以下是已整合的內容：
 
-| 基準測試（benchmark） | 環境檔案（env file） | 設定類（config class） | 任務（task）                | 動作維度（action dim ） | 處理器（processor）          |
-| --------------------- | -------------------- | ---------------------- | --------------------------- | ----------------------- | ---------------------------- |
-| LIBERO                | `envs/libero.py`     | `LiberoEnv`            | 5 個套件（suites）共 130 個 | 7                       | `LiberoProcessorStep`        |
-| Meta-World            | `envs/metaworld.py`  | `MetaworldEnv`         | 50 個（MT50）               | 4                       | 無                           |
-| IsaacLab Arena        | Hub 託管             | `IsaaclabArenaEnv`     | 可設定                      | 可設定                  | `IsaaclabArenaProcessorStep` |
+| 基準測試（benchmark） | 環境檔案（env file） | 設定類別（config class） | 任務（task）                | 動作維度（action dim ） | 處理器（processor）          |
+| --------------------- | -------------------- | ------------------------ | --------------------------- | ----------------------- | ---------------------------- |
+| LIBERO                | `envs/libero.py`     | `LiberoEnv`              | 5 個套件（suites）共 130 個 | 7                       | `LiberoProcessorStep`        |
+| Meta-World            | `envs/metaworld.py`  | `MetaworldEnv`           | 50 個（MT50）               | 4                       | 無                           |
+| IsaacLab Arena        | Hub 託管             | `IsaaclabArenaEnv`       | 可設定                      | 可設定                  | `IsaaclabArenaProcessorStep` |
 
 請使用 `src/lerobot/envs/libero.py` 和 `src/lerobot/envs/metaworld.py` 作為參考實作（reference implementations）。
 
@@ -90,15 +90,15 @@ return observation, reward, terminated, truncated, info
 
 | 您的環境應輸出         | LeRobot 對應至             | 描述                                     |
 | ---------------------- | -------------------------- | ---------------------------------------- |
-| `"pixels"`（單一陣列） | `observation.image`        | 單一攝影機影像，HWC uint8                |
-| `"pixels"`（字典）     | `observation.images.<cam>` | 多攝影機，每個 HWC uint8                 |
+| `"pixels"`（單一陣列） | `observation.image`        | 單一相機影像，HWC uint8                  |
+| `"pixels"`（字典）     | `observation.images.<cam>` | 多相機，每個 HWC uint8                   |
 | `"agent_pos"`          | `observation.state`        | 本體感覺狀態（proprioceptive state）向量 |
 | `"environment_state"`  | `observation.env_state`    | 完整環境狀態（如 PushT）                 |
 | `"robot_state"`        | `observation.robot_state`  | 巢狀機器人狀態（state）字典（如 LIBERO） |
 
 如果您的模擬器（simulator）使用不同的鍵名（key names），您有兩種選擇：
 
-1. **建議做法：** 在您的 `gym.Env` 封裝器（wrapper）中將它們重新命名為標準鍵值（standard keys）。
+1. **建議做法：** 在您的 `gym.Env` 包裝器（wrapper）中將它們重新命名為標準鍵值（standard keys）。
 2. **替代方案：** 撰寫一個環境處理器，在 `preprocess_observation()` 執行後轉換觀測值（參見下方步驟 4）。
 
 ### 動作（actions）[[actions]]
@@ -107,7 +107,7 @@ return observation, reward, terminated, truncated, info
 
 ### 特徵宣告（feature declarations）[[feature-declaration]]
 
-每個 `EnvConfig` 子類（subclass）宣告兩個字典（dicts），告訴策略（policy）預期的內容：
+每個 `EnvConfig` 子類別（subclass）宣告兩個字典（dicts），告訴策略（policy）預期的內容：
 
 - `features` — 將特徵名稱（feature names）對應到 `PolicyFeature(type, shape)`（例如動作維度 action dim、影像形狀 image shape）。
 - `features_map` — 將原始觀測值鍵值（raw observation keys）對應到 LeRobot 慣例鍵值（convention keys，例如 `"agent_pos"` 對應到 `"observation.state"`）。
@@ -115,9 +115,9 @@ return observation, reward, terminated, truncated, info
 ## 逐步指南（step by step）[[step-by-step]]
 
 <Tip>
-  最少您需要兩個檔案：一個 **gym.Env 封裝器（wrapper）** 和一個帶有
+  最少您需要兩個檔案：一個 **gym.Env 包裝器（wrapper）** 和一個帶有
   `create_envs()` 覆寫（override）的 **EnvConfig
-  子類（subclass）**。其他一切都是可選的或屬於文件。不需要修改 `factory.py`。
+  子類別（subclass）**。其他一切都是可選的或屬於文件。不需要修改 `factory.py`。
 </Tip>
 
 ### 檢查清單（checklist）[[checklist]]
@@ -132,9 +132,9 @@ return observation, reward, terminated, truncated, info
 | `docs/source/<benchmark>.mdx`            | 是   | 面向使用者的文件頁面（user-facing documentation page）                |
 | `docs/source/_toctree.yml`               | 是   | 將您的頁面加入文件側邊欄（docs sidebar）                              |
 
-### 1. gym.Env 封裝器（wrapper, `src/lerobot/envs/<benchmark>.py`）[[1-the-gymenv-wrapper-srclerobotenvsbenchmarkpy]]
+### 1. gym.Env 包裝器（wrapper, `src/lerobot/envs/<benchmark>.py`）[[1-the-gymenv-wrapper-srclerobotenvsbenchmarkpy]]
 
-建立一個封裝（wraps）第三方模擬器（third-party simulator）的 `gym.Env` 子類（subclass）：
+建立一個封裝（wraps）第三方模擬器（third-party simulator）的 `gym.Env` 子類別（subclass）：
 
 ```python
 class MyBenchmarkEnv(gym.Env):
@@ -182,8 +182,8 @@ def create_mybenchmark_envs(
 
 註冊（register）一個設定（config）dataclass，讓使用者可以用 `--env.type=<name>` 選擇您的基準測試（benchmark）。每個設定透過兩個方法擁有其環境建立（environment creation）和處理器邏輯（processor logic）：
 
-- **`create_envs(n_envs, use_async_envs)`** — 回傳（returns） `{suite: {task_id: VectorEnv}}`。基底類（base class）預設使用 `gym.make()` 來建立單任務環境（single-task envs）。多任務基準測試（multi-task benchmarks）覆寫（override）此方法。
-- **`get_env_processors()`** — 回傳 `(preprocessor, postprocessor)`。基底類（base class）預設回傳（returns）identity（無操作 no-op）管線（pipeline）。若您的基準測試（benchmark）需要觀測值/動作轉換（observation/action transforms），請覆寫此方法。
+- **`create_envs(n_envs, use_async_envs)`** — 回傳（returns） `{suite: {task_id: VectorEnv}}`。基底類別（base class）預設使用 `gym.make()` 來建立單任務環境（single-task envs）。多任務基準測試（multi-task benchmarks）覆寫（override）此方法。
+- **`get_env_processors()`** — 回傳 `(preprocessor, postprocessor)`。基底類別（base class）預設回傳（returns）identity（無操作 no-op）管線（pipeline）。若您的基準測試（benchmark）需要觀測值/動作轉換（observation/action transforms），請覆寫此方法。
 
 ```python
 @EnvConfig.register_subclass("<benchmark_name>")
@@ -276,7 +276,7 @@ pip install -e ".[mybenchmark]"
 
 ### 5. 文件（`docs/source/<benchmark>.mdx`）[[5-documentation-docssourcebenchmarkmdx]]
 
-按照下一節的模板（template）撰寫面向使用者的頁面（user-facing page）。完整範例請參見 `docs/source/libero.mdx` 和 `docs/source/metaworld.mdx`。
+按照下一節的範本（template）撰寫面向使用者的頁面（user-facing page）。完整範例請參見 `docs/source/libero.mdx` 和 `docs/source/metaworld.mdx`。
 
 ### 6. 目錄（`docs/source/_toctree.yml`）[[6-table-of-contents-docssourcetoctreeyml]]
 

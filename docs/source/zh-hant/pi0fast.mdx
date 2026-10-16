@@ -22,7 +22,7 @@ FAST 透過使用訊號處理（signal processing）技術壓縮動作序列（c
 
 FAST tokenizer 透過以下步驟壓縮動作序列（compresses action sequences）：
 
-1. **正規化（normalize）**：取一個形狀為 `(H, D)` 的連續動作區塊（continuous action chunk），其中 `H` 是水平（horizon），`D` 是動作維度（action dimension）。使用支援的正規化（normalization）方法之一進行正規化（建議使用分位數 quantiles 正規化以處理離群值 outliers）。
+1. **正規化（normalize）**：取一個形狀為 `(H, D)` 的連續動作區塊（continuous action chunk），其中 `H` 是時域（horizon），`D` 是動作維度（action dimension）。使用支援的正規化（normalization）方法之一進行正規化（建議使用分位數 quantiles 正規化以處理離群值 outliers）。
 
 2. **離散餘弦轉換（Discrete Cosine Transform, DCT）**：對每個動作維度（action dimension）分別套用 DCT（透過 scipy）。DCT 是一種常用於影像和音訊編解碼器（image and audio codecs， JPEG、MP3）的壓縮演算法（compression algorithm）。
 
@@ -37,7 +37,7 @@ FAST tokenizer 透過以下步驟壓縮動作序列（compresses action sequence
 ## 安裝需求（installation requirements）[[installation-requirements]]
 
 1. 按照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
-2. 執行以下指令安裝 π₀-FAST 的依賴套件（dependencies）：
+2. 執行以下指令安裝 π₀-FAST 的相依套件（dependencies）：
 
    ```bash
    pip install -e ".[pi]"
@@ -113,7 +113,7 @@ lerobot-train \
 | -------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------- |
 | `--policy.gradient_checkpointing=true` | 在訓練（training）期間大幅減少記憶體使用量                                           | `false`                         |
 | `--policy.dtype=bfloat16`              | 使用混合精度訓練（mixed precision training）以提升效率                               | `float32`                       |
-| `--policy.chunk_size`                  | 要預測的動作步數（number of action steps to predict，動作水平 action horizon）       | `50`                            |
+| `--policy.chunk_size`                  | 要預測的動作步數（number of action steps to predict，動作時域 action horizon）       | `50`                            |
 | `--policy.n_action_steps`              | 要執行的動作步數（number of action steps to execute）                                | `50`                            |
 | `--policy.max_action_tokens`           | 每個動作區塊的最大 FAST token 數量（maximum number of FAST tokens per action chunk） | `256`                           |
 | `--policy.action_tokenizer_name`       | 使用的 FAST tokenizer                                                                | `lerobot/fast-action-tokenizer` |
@@ -151,7 +151,7 @@ actions = policy.predict_action_chunk(batch)
 
 模型（model）接收影像（images）、文字指令（text instructions）和機器人狀態（robot state）作為輸入，並輸出離散（discrete）的 FAST token，再將其解碼回連續動作（decoded back to continuous actions）。
 
-## 配置選項（configuration options）[[configuration-options]]
+## 設定選項（configuration options）[[configuration-options]]
 
 | 參數（parameter）    | 描述（description）                                                | 預設值（default） |
 | -------------------- | ------------------------------------------------------------------ | ----------------- |

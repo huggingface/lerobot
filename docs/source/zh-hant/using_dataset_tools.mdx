@@ -9,7 +9,7 @@
 <div class="flex justify-center">
   <img
     src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-episode-v2.webp"
-    alt="LeRobot Dataset Visualizer 顯示 lerobot/svla_so101_pickplace 的回合 0：回合清單、兩段同步的攝影機錄影、任務，以及關節圖表"
+    alt="LeRobot Dataset Visualizer 顯示 lerobot/svla_so101_pickplace 的回合 0：回合清單、兩段同步的相機錄影、任務，以及關節圖表"
     width="800"
   />
 </div>
@@ -27,7 +27,7 @@
    </div>
 
 2. **挑選回合。** 側邊欄會列出每個回合，並顯示資料集的總影格（frame）數、回合數與 FPS。點選其中一個即可開啟，或使用 `↑` / `↓` 逐一切換。
-3. **觀看錄影。** 資料集中的每台攝影機都會同步播放。你可以放大其中一個，或隱藏不需要的。該回合的任務（task），也就是它的語言指令，會顯示在影片下方。
+3. **觀看錄影。** 資料集中的每台相機都會同步播放。你可以放大其中一個，或隱藏不需要的。該回合的任務（task），也就是它的語言指令，會顯示在影片下方。
 4. **同步閱讀資料。** 在影片下方，機器人的狀態（state）與動作（action）會以圖表呈現於整個回合中，每個關節一條線。游標會跟著播放進度移動，圖例則顯示目前影格（或在懸停時顯示指標所指位置）的每個值。按 `Space` 播放或暫停、拖曳進度列，或點選圖表跳到該時間點。
 
    <div class="flex justify-center">
@@ -73,7 +73,7 @@ lerobot-dataset-viz \
     --episode-index 0
 ```
 
-執行後，工具會開啟 `rerun.io` 並顯示所選回合（episode）的攝影機串流（camera streams）、機器人狀態（robot states）與動作（action）。
+執行後，工具會開啟 `rerun.io` 並顯示所選回合（episode）的相機串流（camera streams）、機器人狀態（robot states）與動作（action）。
 
 若要改用 [Foxglove](https://foxglove.dev) 而非 Rerun，請安裝對應的額外套件（extra）並加上 `--display-mode foxglove`。這會啟動一個 WebSocket 伺服器（server），你只要將 Foxglove app 連線到 `ws://127.0.0.1:8765`，它就會把該回合（episode）以可自由定位的時間軸（seekable timeline）形式提供，讓你能夠播放/暫停並拖曳（scrub）瀏覽。
 
@@ -93,7 +93,7 @@ LeRobot 提供數種操作資料集（dataset）的工具：
 4. **新增特徵（add features）** - 為資料集（dataset）新增新特徵（new features）
 5. **移除特徵（remove features）** - 從資料集（dataset）移除特徵（features）
 6. **修改任務（modify tasks）** - 變更與回合（episode）相關聯的自然語言任務描述（natural-language task descriptions）
-7. **轉換為影片（convert to video）** - 將以影像為基礎的資料集（image-based datasets）轉換為影片格式（video format）以節省儲存空間（RGB 與深度攝影機會以各自獨立的編碼器編碼）
+7. **轉換為影片（convert to video）** - 將以影像為基礎的資料集（image-based datasets）轉換為影片格式（video format）以節省儲存空間（RGB 與深度相機會以各自獨立的編碼器編碼）
 8. **重新編碼影片（re-encode videos）** - 以新的編碼器設定（encoder settings）重新編碼既有影片資料集（existing video dataset）的 RGB 與/或深度串流（depth streams）
 9. **顯示資料集資訊（show the info of datasets）** - 顯示資料集資訊的摘要（summary of datasets information），例如回合數量（number of episode）等
 
@@ -285,13 +285,13 @@ lerobot-edit-dataset \
 
 **參數（parameters）：**
 
-- `output_dir`：自訂的輸出目錄（選用，預設使用 `new_repo_id` 或 `{repo_id}_video`）
-- `rgb_encoder`：套用於 RGB 攝影機的影片編碼器（video encoder）設定，所有子欄位（sub-fields）皆可透過 `--operation.rgb_encoder.<field>` 存取。更多細節請參閱[影片編碼參數](./video_encoding_parameters)。
-- `depth_encoder`：套用於深度圖攝影機（depth-map cameras）的影片編碼器（video encoder）設定（例如來自 Intel RealSense）。除了標準的編碼器欄位之外，它還提供深度量化的旋鈕（quantization knobs, `depth_min`、`depth_max`、`shift`、`use_log`），可透過 `--operation.depth_encoder.<field>` 存取。這些量化設定會被保存到資料集元資料（dataset metadata）中，以便在載入時將深度反量化回實體單位（physical units）。詳情請參閱[深度串流](./video_encoding_parameters#depth-streams)章節。
+- `output_dir`：自訂的輸出目錄（可選，預設使用 `new_repo_id` 或 `{repo_id}_video`）
+- `rgb_encoder`：套用於 RGB 相機的影片編碼器（video encoder）設定，所有子欄位（sub-fields）皆可透過 `--operation.rgb_encoder.<field>` 存取。更多細節請參閱[影片編碼參數](./video_encoding_parameters)。
+- `depth_encoder`：套用於深度圖相機（depth-map cameras）的影片編碼器（video encoder）設定（例如來自 Intel RealSense）。除了標準的編碼器欄位之外，它還提供深度量化的旋鈕（quantization knobs, `depth_min`、`depth_max`、`shift`、`use_log`），可透過 `--operation.depth_encoder.<field>` 存取。這些量化設定會被儲存到資料集中繼資料（dataset metadata）中，以便在載入時將深度反量化回實體單位（physical units）。詳情請參閱[深度串流](./video_encoding_parameters#depth-streams)章節。
 - `episode_indices`：要轉換的特定回合清單（list of specific episodes，預設：所有回合）
 - `num_workers`：處理時的平行 worker 數量（number of parallel workers，預設：4）
 
-**注意：** 產生的資料集（dataset）會是一個完整的 LeRobotDataset，所有攝影機皆以影片形式編碼於 `videos/` 目錄中，而 parquet 檔案只包含元資料（metadata，不含原始影像資料）。深度圖攝影機（depth-map cameras）會被自動偵測並導向 `depth_encoder`，而 RGB 攝影機則使用 `rgb_encoder`。所有回合（episode）、統計（stats）與任務（task）都會被保留。
+**注意：** 產生的資料集（dataset）會是一個完整的 LeRobotDataset，所有相機皆以影片形式編碼於 `videos/` 目錄中，而 parquet 檔案只包含中繼資料（metadata，不含原始影像資料）。深度圖相機（depth-map cameras）會被自動偵測並導向 `depth_encoder`，而 RGB 相機則使用 `rgb_encoder`。所有回合（episode）、統計（stats）與任務（task）都會被保留。
 
 #### 重新編碼影片（re-encode videos）[[re-encode-videos]]
 

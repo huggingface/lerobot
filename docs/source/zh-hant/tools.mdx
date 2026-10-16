@@ -42,7 +42,7 @@ LeRobot v3.1 支援策略（policy）中的**工具呼叫（tool calls）**，�
 }
 ```
 
-透過資料集元資料（dataset metadata）存取器（accessor）讀取它：
+透過資料集中繼資料（dataset metadata）存取器（accessor）讀取它：
 
 ```python
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
@@ -54,7 +54,7 @@ tools = meta.tools     # list[dict] — OpenAI 工具綱要
 若資料集（dataset）的 `info.json` 未宣告任何工具（tools），`meta.tools`
 會回傳來自 `lerobot.datasets.language` 的 `DEFAULT_TOOLS`，目前是一份
 只含單一項目的清單（single-entry list），內含標準（canonical）的 `say` schema。因此未標註的
-資料集（unannotated datasets）與聊天模板的消費者（chat-template consumers）無需任何設定（configuration）即可
+資料集（unannotated datasets）與聊天範本的消費者（chat-template consumers）無需任何設定（configuration）即可
 繼續運作：
 
 ```python
@@ -120,7 +120,7 @@ user_interjection_response:
 > （runtime layer，`src/lerobot/tools/`、`Tool` 協定、`TOOL_REGISTRY`、
 > `get_tools(meta)`），這並不屬於如今所提供的目錄層（catalog layer），
 > 這些模組尚未存在於原始碼樹中。單靠步驟 1
-> 就足以讓工具透過 `meta.tools` 對聊天模板（chat template）可見，
+> 就足以讓工具透過 `meta.tools` 對聊天範本（chat template）可見，
 > 使模型（model）能學會*產生*該呼叫（generate the call）；
 > 而在推論（inference）時執行該呼叫（executing the call）則需要執行期層（runtime layer）。
 
@@ -160,7 +160,7 @@ user_interjection_response:
 ```
 
 此 schema 完全遵循 OpenAI 的函式呼叫慣例（OpenAI’s function-calling convention），因此
-聊天模板（chat template）可以原生地渲染它（render it）。
+聊天範本（chat template）可以原生地渲染它（render it）。
 
 ### 步驟 2 — 實作呼叫（implement the call）[[step-2-implement-the-call]]
 
@@ -201,10 +201,10 @@ TOOL_REGISTRY["record_observation"] = RecordObservationTool
 ```
 
 就這樣。在執行期（runtime），`get_tools(meta)` 會在 `meta.tools` 中
-查找每個 schema，實例化（instantiates）相符的已註冊類（registered class），並回傳
+查找每個 schema，實例化（instantiates）相符的已註冊類別（registered class），並回傳
 一個名稱（name） → 實例的字典（instance dict），供派送器（dispatcher）路由（route into）。
 
 若你想在*不*撰寫實作的情況下使用某個工具（例如僅為了
-訓練時的聊天模板格式化 training-time chat-template formatting），單靠步驟 1 就足夠了 —
+訓練時的聊天範本格式化 training-time chat-template formatting），單靠步驟 1 就足夠了 —
 模型（model）仍會學會*產生（generate）*該呼叫。步驟 2 與 3 只有在推論（inference）時
 真正需要*執行（execute）*它才需要。

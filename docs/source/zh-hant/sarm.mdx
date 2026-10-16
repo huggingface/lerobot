@@ -1,6 +1,6 @@
 # SARM：階段感知獎勵建模（Stage-Aware Reward Modeling）[[sarm-stage-aware-reward-modeling]]
 
-SARM（Stage-Aware Reward Modeling，階段感知獎勵建模）是一個以影片為基礎（video-based）、用於長水平機器人操作任務（long-horizon robot manipulation tasks）的獎勵建模框架（reward modeling framework）。本指南涵蓋如何訓練（training） SARM 獎勵模型（reward models），以及選擇性地將其與獎勵對齊行為複製（Reward-Aligned Behavior Cloning，RA-BC）一起使用。
+SARM（Stage-Aware Reward Modeling，階段感知獎勵建模）是一個以影片為基礎（video-based）、用於長時程機器人操作任務（long-horizon robot manipulation tasks）的獎勵建模框架（reward modeling framework）。本指南涵蓋如何訓練（training） SARM 獎勵模型（reward models），以及可選擇將其與獎勵對齊行為複製（Reward-Aligned Behavior Cloning，RA-BC）一起使用。
 
 **論文**：[SARM: Stage-Aware Reward Modeling for Long Horizon Robot Manipulation](https://arxiv.org/abs/2509.25358)
 
@@ -93,13 +93,13 @@ pip install -e ".[sarm]"
 工作流程（workflow）：
 
 ```
-1. 訓練 SARM → 2. 視覺化預測 → 3.（選用）以 RA-BC 訓練策略
+1. 訓練 SARM → 2. 視覺化預測 → 3.（可選）以 RA-BC 訓練策略
 ```
 
 </hfoption>
 <hfoption id="dense_only">
 
-**僅有來自 VLM 的 dense （顆粒度 fine-grained）標註（annotations）。** sparse 頭（sparse head）會自動使用涵蓋整個回合（episode）的單一 `"task"` 階段（stage），而 dense 頭（dense head）則學習詳細的子任務進程（detailed subtask progression）。
+**僅有來自 VLM 的 dense （顆粒度 fine-grained）標註（annotations）。** sparse 頭（sparse head）會自動使用涵蓋整個回合（episode）的單一 `"task"` 階段（stage），而 dense 頭（dense head）則學習詳細的子任務進度（detailed subtask progression）。
 
 - **sparse 頭（sparse head）**：1 個階段（"task"），線性進度（自動產生）
 - **dense 頭（dense head）**：來自 VLM 標註（annotation）的多個細粒度階段（fine-grained stages）
@@ -108,7 +108,7 @@ pip install -e ".[sarm]"
 工作流程（workflow）：
 
 ```
-1. 標註（dense） → 2. 驗證 → 3. 訓練 SARM → 4. 視覺化 → 5.（選用）以 RA-BC 訓練策略
+1. 標註（dense） → 2. 驗證 → 3. 訓練 SARM → 4. 視覺化 → 5.（可選）以 RA-BC 訓練策略
 ```
 
 </hfoption>
@@ -123,7 +123,7 @@ pip install -e ".[sarm]"
 工作流程（workflow）：
 
 ```
-1. 標註（sparse+dense） → 2. 驗證 → 3. 訓練 SARM → 4. 視覺化 → 5.（選用）以 RA-BC 訓練策略
+1. 標註（sparse+dense） → 2. 驗證 → 3. 訓練 SARM → 4. 視覺化 → 5.（可選）以 RA-BC 訓練策略
 ```
 
 </hfoption>
@@ -196,7 +196,7 @@ python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
 | `--sparse-subtasks`    | 以逗號分隔（comma-separated）的高階子任務名稱（high-level subtask names）清單        |
 | `--dense-subtasks`     | 以逗號分隔（comma-separated）的細粒度子任務名稱（fine-grained subtask names）清單    |
 | `--dense-only`         | 只產生 dense 標註（annotations，自動建立 sparse "task" 階段 stage）                  |
-| `--video-key`          | 要使用的攝影機/影片鍵（camera/video key，例如 `observation.images.top`）             |
+| `--video-key`          | 要使用的相機/影片鍵（camera/video key，例如 `observation.images.top`）               |
 | `--num-workers`        | 平行 GPU worker 的數量（預設：1）                                                    |
 | `--episodes`           | 要標註（annotation）的特定回合索引（episode indices，預設：全部）                    |
 | `--skip-existing`      | 跳過已有標註（annotation）的回合（episode）                                          |
@@ -332,7 +332,7 @@ lerobot-train \
 | 引數（argument）           | 描述（description）                                                                     | 預設（default）          |
 | -------------------------- | --------------------------------------------------------------------------------------- | ------------------------ |
 | `--policy.annotation_mode` | `single_stage`、`dense_only` 或 `dual`                                                  | `single_stage`           |
-| `--policy.image_key`       | 影像的攝影機鍵（camera key for images）                                                 | `observation.images.top` |
+| `--policy.image_key`       | 影像的相機鍵（camera key for images）                                                   | `observation.images.top` |
 | `--policy.state_key`       | 關節狀態的鍵（key for joint states）                                                    | `observation.state`      |
 | `--policy.n_obs_steps`     | 觀測歷史步數（observation history steps，總觀測影格（frame）數 = `n_obs_steps + 1`）    | `8`                      |
 | `--policy.frame_gap`       | 取樣觀測（sampled observations）之間的間隔（gap，以影格數為單位；30 fps 時：30 ≈ 1 秒） | `30`                     |
@@ -387,7 +387,7 @@ python -m lerobot.rewards.sarm.compute_rabc_weights \
 
 視覺化會顯示：
 
-- **進度圖（progress plot）**：預測的進度（predicted progress，以及在可用且 `--stride 1` 時，選用的標註推導 GT ，annotation-derived “GT”）
+- **進度圖（progress plot）**：預測的進度（predicted progress，以及在可用且 `--stride 1` 時，可選的標註推導 GT ，annotation-derived “GT”）
 - **階段機率（stage probabilities）**：預測階段機率（predicted stage probabilities）的堆疊面積圖（stacked area plot）
 - **樣本影格（sample frames）**：來自回合（episode）、帶有進度/階段標籤（progress/stage labels）的關鍵影格（key frames）
 

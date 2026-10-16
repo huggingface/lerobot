@@ -59,7 +59,7 @@ lerobot-train \
 
 `fp16` 的指數範圍（exponent range）遠小於 `bf16`，因此梯度（gradient）會在反向傳播（backward pass）前被放大，並在最佳化器步驟（optimizer step）前被縮回。LeRobot 將此工作交給 accelerate 的 `GradScaler`，它也會偵測溢出的梯度（overflowing gradient）並跳過那些最佳化器更新（optimizer updates）。在分片訓練（sharded training）下，梯度是 `DTensor`，PyTorch 會跨裝置網格（device mesh）縮減溢位旗標（overflow flag），因此某個 rank 發生溢位時，會跳過所有 rank 的更新。
 
-跳過更新是正常的，尤其是在最初的幾個步驟中，縮放值（scale）會從其初始值往下校準。這些情況在日誌中會以 `scale` 指標（metric）下降的形式呈現。縮放值會隨每個檢查點（checkpoint）一併儲存（`training_state/scaler_state.json`），並在恢復執行時還原，因此恢復後的執行作業不必重新校準。
+跳過更新是正常的，尤其是在最初的幾個步驟中，縮放值（scale）會從其初始值往下調整。這些情況在日誌中會以 `scale` 指標（metric）下降的形式呈現。縮放值會隨每個檢查點（checkpoint）一併儲存（`training_state/scaler_state.json`），並在恢復執行時還原，因此恢復後的執行作業不必重新調整。
 
 如果預設值不適合某個策略（policy），可以調整縮放器（scaler）：
 

@@ -116,7 +116,7 @@ features=combine_feature_dicts(
             pipeline=robot_joints_to_ee_pose,
             initial_features=create_initial_features(observation=robot.observation_features), # <- 我們可以預期的觀測特徵，這些來自我們的機器人和觀測處理器
             use_videos=True,
-            patterns=["observation.state.ee"], # <- 在這裡您可以選擇性地使用特定模式過濾我們想要儲存到資料集的特徵
+            patterns=["observation.state.ee"], # <- 在這裡您可以選擇使用特定模式過濾我們想要儲存到資料集的特徵
 
         ),
     ),

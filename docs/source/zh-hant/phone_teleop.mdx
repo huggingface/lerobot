@@ -8,7 +8,7 @@
 - 手機姿態（phone pose）如何對應到機器人末端執行器（end-effector, EE）目標（targets）
 - 如何調整安全限制（safety limits）、夾爪控制（gripper control）與 IK 設定（IK settings）
 
-若要使用手機控制您的機器人，請以下列命令安裝相關依賴套件（relevant dependencies）：
+若要使用手機控制您的機器人，請以下列指令安裝相關相依套件（relevant dependencies）：
 
 ```bash
 pip install lerobot[phone]
@@ -19,7 +19,7 @@ pip install lerobot[phone]
 ### 支援的平台（supported platforms）[[supported-platforms]]
 
 - iOS：使用 HEBI Mobile I/O app（ARKit 姿態 pose + 按鈕）。請先下載該 app 並開啟，範例會在您的網路上探索到它，並串流（stream）手機姿態（phone pose）與輸入。
-- Android：使用 `teleop` 套件（WebXR）。當您啟動 Python 程序（process）時，它會印出一個本機 URL。在手機上開啟該連結，點擊 Start，然後使用 Move 來串流姿態（stream pose）。
+- Android：使用 `teleop` 套件（WebXR）。當您啟動 Python 行程（process）時，它會印出一個本機 URL。在手機上開啟該連結，點擊 Start，然後使用 Move 來串流姿態（stream pose）。
 
 連結：
 

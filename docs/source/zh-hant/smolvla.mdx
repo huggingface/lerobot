@@ -10,7 +10,7 @@ SmolVLA 是 Hugging Face 的輕量級機器人基礎模型（lightweight foundat
   />
   <br />
   <em>
-    圖 1. SmolVLA 接收以下輸入： (i) 多個攝影機視角（multiple cameras views）、
+    圖 1. SmolVLA 接收以下輸入： (i) 多個相機視角（multiple cameras views）、
     (ii) 機器人當前的感覺運動狀態（sensorimotor state）， 以及 (iii)
     自然語言指令（natural language instruction），編碼為上下文特徵（contextual
     features）， 用於在生成動作區塊（action chunk）時對動作專家（action
@@ -21,7 +21,7 @@ SmolVLA 是 Hugging Face 的輕量級機器人基礎模型（lightweight foundat
 ## 設定您的環境（set up your environment）[[set-up-your-environment]]
 
 1. 按照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
-2. 執行以下命令安裝 SmolVLA 的依賴套件（dependencies）：
+2. 執行以下指令安裝 SmolVLA 的相依套件（dependencies）：
 
    ```bash
    pip install -e ".[smolvla]"
@@ -52,7 +52,7 @@ SmolVLA 是一個基礎模型（base model），因此需要在您自己的資�
 
 如果您沒有 GPU 裝置，可以使用我們的筆記本在 [![Google Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb) 上進行訓練（training）。
 
-使用 `--dataset.repo_id` 將您的資料集（dataset）傳遞給訓練腳本（training script）。如果您想測試安裝是否正確，請執行以下命令，這裡我們使用的是為 [SmolVLA 論文](https://huggingface.co/papers/2506.01844)收集的其中一個資料集。
+使用 `--dataset.repo_id` 將您的資料集（dataset）傳遞給訓練腳本（training script）。如果您想測試安裝是否正確，請執行以下指令，這裡我們使用的是為 [SmolVLA 論文](https://huggingface.co/papers/2506.01844)收集的其中一個資料集。
 
 ```bash
 cd lerobot && lerobot-train \
@@ -92,10 +92,10 @@ lerobot-train --help
   </em>
 </p>
 
-## 評估微調後的模型並即時運行（evaluate the finetuned model and run it in real-time）[[evaluate-the-finetuned-model-and-run-it-in-real-time]]
+## 評估微調後的模型並即時執行（evaluate the finetuned model and run it in real-time）[[evaluate-the-finetuned-model-and-run-it-in-real-time]]
 
 與錄製回合（recording an episode）時類似，建議您先登入 HuggingFace Hub。您可以按照相應的步驟操作：[錄製資料集（Record a dataset）](./il_robots#record-a-dataset)。
-登入後，您可以在您的設定中執行推理（inference）：
+登入後，您可以在您的設定中執行推論（inference）：
 
 ```bash
 lerobot-rollout \
@@ -117,4 +117,4 @@ lerobot-rollout \
   --policy.path=HF_USER/FINETUNE_MODEL_NAME # <- 使用您微調後的模型
 ```
 
-根據您的評估設定（evaluation setup），您可以配置錄製持續時間和回合數（duration and the number of episodes to record ），以建立您的評估套件（evaluation suite）。
+根據您的評估設定（evaluation setup），您可以設定錄製持續時間和回合數（duration and the number of episodes to record ），以建立您的評估套件（evaluation suite）。

@@ -21,7 +21,7 @@
 
 ## 訓練時間（training time）[[training-time]]
 
-機器人模仿學習（imitation learning）通常在**對資料集進行 5–10 個 epoch（5–10 epochs over the dataset）** 後收斂，而非數十萬個原始步數（raw steps）。一旦確定回合數量（epoch count），實際耗時（wall-clock）基本上就是：
+機器人模仿學習（imitation learning）通常在**對資料集進行 5–10 個 epoch（5–10 epochs over the dataset）** 後收斂，而非數十萬個原始步數（raw steps）。一旦確定epoch 數（epoch count），實際耗時（wall-clock）基本上就是：
 
 ```text
 total_frames    = sum of frames over all episodes      # 50 ep × 30 fps × 30 s ≈ 45,000
@@ -93,7 +93,7 @@ lerobot-train \
 
 注意事項：
 
-- 提交前先執行一次 `hf auth login`，Job 會以你的令牌（token）執行。
+- 提交前先執行一次 `hf auth login`，Job 會以你的存取權杖（access token）執行。
 - `--job.target` 對應上表：`t4-small`/`t4-medium`（T4，僅限 ACT）、`l4x1`/`l4x4`（L4 24 GB）、`a10g-small/large/largex2/largex4`（A10G 24 GB scaled out）、`a100-large`（A100）。要列出含定價的當前目錄，可執行 `hf jobs hardware`，或參閱 [https://huggingface.co/docs/hub/jobs](https://huggingface.co/docs/hub/jobs)。
 - Job 預設逾時（timeout）為 `2d`（48 小時）。用 `--job.timeout=4h`（或任何有效的時長字串）覆寫，以縮短或延長逾時。指令完成時 Job 會自動停止。
 - 完整逐步說明（full walkthrough）——資料集上傳（dataset upload）、檢查點串流（checkpoint streaming）、在 Job 上接續某次執行（resuming a run）——請參閱[模仿學習訓練指南](./il_robots#train-using-hugging-face-jobs)。

@@ -8,7 +8,7 @@
 
 請依照[安裝說明（installation instructions）](https://github.com/huggingface/lerobot#installation)安裝 LeRobot。
 
-安裝的 LeRobot 與 HopeJR 依賴套件（dependencies）：
+安裝的 LeRobot 與 HopeJR 相依套件（dependencies）：
 
 ```bash
 pip install -e ".[hopejr]"
@@ -233,7 +233,7 @@ lerobot-record \
     --dataset.streaming_encoding=true \
     --dataset.encoder_threads=2 \
     --display_data=true
-# 選用：--dataset.rgb_encoder.vcodec=auto
+# 可選：--dataset.rgb_encoder.vcodec=auto
 ```
 
 ### 重播（replay）[[replay]]
@@ -279,5 +279,5 @@ lerobot-record \
   --dataset.streaming_encoding=true \
   --dataset.encoder_threads=2 \
   --policy.path=outputs/train/hopejr_hand/checkpoints/last/pretrained_model
-# 選用：--dataset.rgb_encoder.vcodec=auto
+# 可選：--dataset.rgb_encoder.vcodec=auto
 ```

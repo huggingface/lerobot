@@ -1,4 +1,4 @@
-# 重新命名映射表與空白攝影機（rename map and empty cameras）[[rename-map-and-empty-cameras]]
+# 重新命名映射表與空白相機（rename map and empty cameras）[[rename-map-and-empty-cameras]]
 
 當您使用機器人策略（robot policy）進行訓練（train）、評估（evaluate）或錄製（record）時，您的**資料集（dataset）**或**環境（environment）**提供的觀測資料（observations）使用一組鍵名（set of keys，例如 `observation.images.front`、`observation.images.eagle`），而您的**策略（policy）**則期望另一組鍵名（例如 `observation.images.image`、`observation.images.image2`）。**重新命名映射表（rename map）**可以在不修改策略或資料來源的情況下橋接這個差異。
 
@@ -61,15 +61,15 @@ lerobot-eval \
   --rename_map='{"observation.images.image": "observation.images.base_0_rgb", "observation.images.image2": "observation.images.left_wrist_0_rgb"}'
 ```
 
-## 替代方案：直接編輯策略配置（edit the policy config directly）[[alternative-edit-the-policy-config-directly]]
+## 替代方案：直接編輯策略設定（edit the policy config directly）[[alternative-edit-the-policy-config-directly]]
 
 如果您總是使用相同的資料集（dataset）或環境（environment），您可以**編輯策略的 `config.json`**，使其觀測鍵名（observation keys）與您的資料來源匹配。這樣就不需要重新命名映射表（rename map）。
 
 取捨在於（tradeoff）：修改策略設定（policy config）會將其綁定到單一資料來源。重新命名對應表（rename map）則讓一個策略可以跨多個資料集（dataset）和環境（environment）使用。
 
-## 空白攝影機：視角數少於策略期望的數量（empty cameras: fewer views than the policy expects）[[empty-cameras-fewer-views-than-the-policy-expects]]
+## 空白相機：視角數少於策略期望的數量（empty cameras: fewer views than the policy expects）[[empty-cameras-fewer-views-than-the-policy-expects]]
 
-有些策略（policy）針對固定數量的影像輸入（image inputs）而建構。如果您的資料集（dataset）擁有較少的攝影機，您可以在策略設定中設定 **`empty_cameras`**，而不需要修改模型架構（model architecture）。
+有些策略（policy）針對固定數量的影像輸入（image inputs）而建構。如果您的資料集（dataset）擁有較少的相機，您可以在策略設定中設定 **`empty_cameras`**，而不需要修改模型架構（model architecture）。
 
 ### 運作原理（how it works）[[how-it-works]]
 
@@ -85,11 +85,11 @@ observation.images.empty_camera_1
 
 ### 範例（example）[[example]]
 
-XVLA-base 有三個視覺輸入（visual inputs），預設 `empty_cameras=0`。您的資料集（dataset）只有兩個攝影機：
+XVLA-base 有三個視覺輸入（visual inputs），預設 `empty_cameras=0`。您的資料集（dataset）只有兩個相機：
 
 1. 設定 `--policy.empty_cameras=1`。
-2. 配置（config）會新增第三個鍵：`observation.images.empty_camera_0`。
-3. 照常使用重新命名映射表（rename map）對應您的兩個實際攝影機（real cameras）。
+2. 設定（config）會新增第三個鍵：`observation.images.empty_camera_0`。
+3. 照常使用重新命名映射表（rename map）對應您的兩個實際相機（real cameras）。
 4. 第三個插槽（slot）會被遮罩掉（masked out ）——您的資料集（dataset）中不需要假影像（fake images）。
 
 ## 快速參考（quick reference）[[quick-reference]]
@@ -98,6 +98,6 @@ XVLA-base 有三個視覺輸入（visual inputs），預設 `empty_cameras=0`。
 | ---------------------------------------------------- | -------------------------------------------------------------------- |
 | 資料集鍵名（dataset keys） ≠ 策略鍵名（policy keys） | `--rename_map='{"dataset_key": "policy_key", ...}'`                  |
 | 環境鍵名（env keys） ≠ 策略鍵名（policy keys, eval） | `--rename_map='{"env_key": "policy_key", ...}'`                      |
-| 推演（rollout）時使用不同鍵名（inference）           | `--rename_map='{"source_key": "policy_key", ...}'`                   |
-| 攝影機數量少於策略期望（policy expects）             | `--policy.empty_cameras=N`（PI0、PI05、PI0Fast、SmolVLA、XVLA 支援） |
+| rollout時使用不同鍵名（inference）                   | `--rename_map='{"source_key": "policy_key", ...}'`                   |
+| 相機數量少於策略期望（policy expects）               | `--policy.empty_cameras=N`（PI0、PI05、PI0Fast、SmolVLA、XVLA 支援） |
 | 避免傳入重新命名對應表（rename map）                 | 編輯策略的 `config.json`，使其鍵名（keys）與您的資料來源匹配         |

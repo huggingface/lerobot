@@ -26,7 +26,7 @@ WALL-OSS 團隊致力於打造具身基礎模型（embodied foundation model）�
 ## 安裝需求（installation requirements）[[installation-requirements]]
 
 1. 按照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
-2. 執行以下命令安裝 WallX 相依套件（dependencies）：
+2. 執行以下指令安裝 WallX 相依套件（dependencies）：
 
    ```bash
    pip install -e ".[wallx]"
@@ -100,7 +100,7 @@ lerobot-train \
 
 ### 使用語言標註訓練（train with language annotations）[[train-with-language-annotations]]
 
-WALL-X 使用其內建配方（built-in recipe），從 LeRobot 的選用語言欄位（optional language
+WALL-X 使用其內建配方（built-in recipe），從 LeRobot 的可選語言欄位（optional language
 columns）進行訓練。只有在要取代該配方時才需設定 `recipe_path`：
 
 ```bash
@@ -142,7 +142,7 @@ token（action-query tokens）與填充（padding）都不計入文字損失（t
 
 語言訓練使用 `policy.text_loss_weight`（預設 `0.01`）、
 `policy.flow_loss_weight`（預設 `1.0`）與 `policy.tokenizer_max_length`
-（預設 `768`）。`policy.recipe_path` 可選擇性地取代內建配方（built-in recipe）。
+（預設 `768`）。`policy.recipe_path` 可選擇取代內建配方（built-in recipe）。
 
 ## 授權條款[[license]]
 

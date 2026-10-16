@@ -4,7 +4,7 @@
   - local: installation
     title: 安裝（Installation）
   - local: cheat-sheet
-    title: 小抄（Cheat sheet）
+    title: 速查表（Cheat sheet）
   title: 開始使用（Get started）
 - sections:
   - local: il_robots
@@ -14,7 +14,7 @@
   - local: bring_your_own_policies
     title: 新增策略（Adding a Policy）
   - local: integrate_hardware
-    title: 自備硬體（Bring Your Own Hardware）
+    title: 整合自己的硬體（Bring Your Own Hardware）
   - local: hilserl
     title: 使用強化學習訓練機器人（Train a Robot with RL）
   - local: hilserl_sim
@@ -26,7 +26,7 @@
   - local: peft_training
     title: 使用 PEFT 訓練（例如 LoRA）
   - local: rename_map
-    title: 使用重新命名映射表與空攝影機（Using Rename Map and Empty Cameras）
+    title: 使用重新命名映射表與空相機（Using Rename Map and Empty Cameras）
   title: 教學（Tutorials）
 - sections:
   - local: hardware_guide
@@ -42,7 +42,7 @@
   - local: using_dataset_tools
     title: 使用資料集工具
   - local: language_and_recipes
-    title: 語言欄位與範例（Language Columns and Recipes）
+    title: 語言欄位與配方（Language Columns and Recipes）
   - local: tools
     title: 工具
   - local: annotation_pipeline
@@ -180,7 +180,7 @@
   title: 遙操作器（Teleoperators）
 - sections:
   - local: cameras
-    title: 攝影機（Cameras）
+    title: 相機（Cameras）
   - local: third_party_sensors
     title: 第三方相機與感測器
   title: 感測器（Sensors）

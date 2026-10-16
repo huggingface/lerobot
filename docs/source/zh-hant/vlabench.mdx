@@ -1,6 +1,6 @@
 # VLABench[[vlabench]]
 
-[VLABench](https://github.com/OpenMOSS/VLABench) 是一個大規模基準測試（large-scale benchmark），用於評估**語言條件式機器人操作與長水平推理（language-conditioned robotic manipulation with long-horizon reasoning）**。上游套件（upstream suite）涵蓋 100 個任務類別（task categories）、超過 2,000 個物件（objects ），並從六個維度評估機器人智慧（evaluates six dimensions of robot intelligence）：網格與紋理理解（mesh & texture understanding）、空間推理（spatial reasoning）、世界知識遷移（world-knowledge transfer）、語義指令理解（semantic instruction comprehension）、物理定律理解（physical-law understanding），以及長水平規劃（long-horizon planning）。基於 MuJoCo / dm_control 搭配 Franka Panda 7 自由度機械臂建構而成。LeRobot 透過 `--env.task` 開放了其中 **43 個任務**（21 個基本 primitives 任務 tasks + 22 個組合 composites 任務 tasks，詳見下方[可用任務](#available-tasks)）。
+[VLABench](https://github.com/OpenMOSS/VLABench) 是一個大規模基準測試（large-scale benchmark），用於評估**語言條件式機器人操作與長時程推理（language-conditioned robotic manipulation with long-horizon reasoning）**。上游套件（upstream suite）涵蓋 100 個任務類別（task categories）、超過 2,000 個物件（objects ），並從六個維度評估機器人智慧（evaluates six dimensions of robot intelligence）：網格與紋理理解（mesh & texture understanding）、空間推理（spatial reasoning）、世界知識遷移（world-knowledge transfer）、語義指令理解（semantic instruction comprehension）、物理定律理解（physical-law understanding），以及長時程規劃（long-horizon planning）。基於 MuJoCo / dm_control 搭配 Franka Panda 7 自由度機械臂建構而成。LeRobot 透過 `--env.task` 開放了其中 **43 個任務**（21 個基本 primitives 任務 tasks + 22 個組合 composites 任務 tasks，詳見下方[可用任務](#available-tasks)）。
 
 - 論文：[VLABench: A Large-Scale Benchmark for Language-Conditioned Robotics Manipulation with Long-Horizon Reasoning](https://arxiv.org/abs/2412.18194)
 - GitHub：[OpenMOSS/VLABench](https://github.com/OpenMOSS/VLABench)
@@ -20,7 +20,7 @@ VLABench 提供兩個任務套件（task suites），在 LeRobot 的 `--env.task
 | 套件（suite）     | CLI 名稱（name） | 任務數（tasks） | 描述（description）                                                                                   |
 | ----------------- | ---------------- | --------------- | ----------------------------------------------------------------------------------------------------- |
 | 基本（primitive） | `primitive`      | 21              | 單一／少量技能組合（single / few-skill combinations，選取 select、插入 insert、物理問答 physics QA）  |
-| 組合（composite） | `composite`      | 22              | 多步推理與長水平規劃（multi-step reasoning and long-horizon planning，烹飪 cook、重新排列 rearrange） |
+| 組合（composite） | `composite`      | 22              | 多步推理與長時程規劃（multi-step reasoning and long-horizon planning，烹飪 cook、重新排列 rearrange） |
 
 **基本任務（primitive tasks）：** `select_fruit`、`select_toy`、`select_chemistry_tube`、`add_condiment`、`select_book`、`select_painting`、`select_drink`、`insert_flower`、`select_billiards`、`select_ingredient`、`select_mahjong`、`select_poker`，以及物理推理任務（`density_qa`、`friction_qa`、`magnetism_qa`、`reflection_qa`、`simple_cuestick_usage`、`simple_seesaw_usage`、`sound_speed_qa`、`thermal_expansion_qa`、`weight_qa`）。
 
@@ -59,7 +59,7 @@ export MUJOCO_GL=egl  # 適用於無頭伺服器（HPC、雲端）
 
 ## 評估（evaluation）[[evaluation]]
 
-以下所有評估指令片段（eval snippets）與 CI 執行的指令一致（請參閱 `.github/workflows/benchmark_tests.yml`）。`--rename_map` 參數（parameter）用於將 VLABench 的 `image` / `second_image` / `wrist_image` 攝影機鍵值（camera keys）對應到已發布的 `smolvla_vlabench` 策略訓練（policy training）時所使用的三攝影機（`camera1` / `camera2` / `camera3`）輸入布局（input layout）。
+以下所有評估指令片段（eval snippets）與 CI 執行的指令一致（請參閱 `.github/workflows/benchmark_tests.yml`）。`--rename_map` 參數（parameter）用於將 VLABench 的 `image` / `second_image` / `wrist_image` 相機鍵值（camera keys）對應到已發布的 `smolvla_vlabench` 策略訓練（policy training）時所使用的三相機（`camera1` / `camera2` / `camera3`）輸入布局（input layout）。
 
 ### 單任務評估（single-task evaluation，建議用於快速迭代）[[single-task-evaluation-recommended-for-quick-iteration]]
 
@@ -132,9 +132,9 @@ lerobot-eval \
 **觀測（observations）：**
 
 - `observation.state` — 7 維末端執行器狀態（7-dim end-effector state，位置 position xyz + 歐拉角 Euler xyz + 夾爪（gripper））
-- `observation.images.image` — 前方攝影機（front camera），480×480 HWC uint8
-- `observation.images.second_image` — 第二攝影機（second camera），480×480 HWC uint8
-- `observation.images.wrist_image` — 腕部攝影機（wrist camera），480×480 HWC uint8
+- `observation.images.image` — 前方相機（front camera），480×480 HWC uint8
+- `observation.images.second_image` — 第二相機（second camera），480×480 HWC uint8
+- `observation.images.wrist_image` — 腕部相機（wrist camera），480×480 HWC uint8
 
 **動作（actions）：**
 

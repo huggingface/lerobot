@@ -32,7 +32,7 @@ uv pip install natten==0.21.6+torch2110cu128 --find-links https://whl.natten.org
 
 請使用 **30 Hz** 的 LeRobot v3 資料集，包含六個絕對指令動作通道（absolute commanded-action channels）與六個量測狀態
 通道（measured-state channels），兩者的關節順序與單位需一致，夾爪（gripper）位於最後。請提供原始值（raw values）、一致的機器人
-校準（calibration），並將指令寫在 `task` 中。
+校正（calibration），並將指令寫在 `task` 中。
 
 ### 相機（cameras）[[cameras]]
 
@@ -87,7 +87,7 @@ Hub 快取會保留已下載的模型與共用編碼器（encoders），供恢�
 > `condition_on_past_actions`。變更這些參數需要相容的模型／處理器設定，並進行
 > 微調；一般的任務調適請保留檢查點中儲存的值。
 
-此預設組態（preset）啟用 rank/alpha 皆為 32 的 LoRA，以及衰減率（decay）0.999 的 EMA；不會自動上傳任何內容。請透過
+此預設設定（preset）啟用 rank/alpha 皆為 32 的 LoRA，以及衰減率（decay）0.999 的 EMA；不會自動上傳任何內容。請透過
 頂層的 `peft` 設定啟用新的轉接器（adapters），而不是使用 `--policy.use_peft=true`，後者用於識別已儲存的轉接器。
 
 在我們的實驗中，EMA 在 DROID 上帶來顯著效益，而 SO-101 的結果到目前為止則好壞參半。
@@ -113,7 +113,7 @@ accelerate launch --num_processes=4 --multi_gpu -m lerobot.scripts.lerobot_train
 | 較大預算         | 4      | 8                 | 4        | 128      | 14,000            | 3,500          |
 
 有效批次（effective batch）= GPU 數 × 每張 GPU 批次大小 × 累積步數（accumulation）。LeRobot 以微步（microsteps）計算 `steps`、`save_freq` 與
-`eval_steps`；除以累積步數即為優化器更新次數（optimizer updates）。此預設組態每 500 個微步（125 次更新）儲存並評估
+`eval_steps`；除以累積步數即為優化器更新次數（optimizer updates）。此預設設定每 500 個微步（125 次更新）儲存並評估
 一次。變更累積步數時，請讓這三個設定都能被它整除。
 排程器（scheduler）的凍結（freeze）、暖身（warmup）、衰減（decay）與冷卻（cooldown）長度也以微步計算。設定這些階段長度時，
 請將期望的優化器更新次數乘以累積係數。
@@ -121,7 +121,7 @@ accelerate launch --num_processes=4 --multi_gpu -m lerobot.scripts.lerobot_train
 動作維度與正規化。檢查點同時包含原始與 EMA 轉接器。請透過保留集（held-out）評估與 rollout
 選擇預算與檢查點；較大的批次並不保證更好的結果。
 
-此預設組態會保留每個任務最後 20% 的回合（episodes）用於評估。請依你的硬體調整批次大小與累積步數；
+此預設設定會保留每個任務最後 20% 的回合（episodes）用於評估。請依你的硬體調整批次大小與累積步數；
 請參閱[多 GPU 訓練](https://huggingface.co/docs/lerobot/main/zh-hant/multi_gpu_training)
 與 [PEFT 訓練](https://huggingface.co/docs/lerobot/main/zh-hant/peft_training)。
 
@@ -146,7 +146,7 @@ lerobot-train \
 自動上傳至 Hub 的功能已停用。若要使用較大預算，請比照 SO-101 範例以四張
 GPU 啟動，並加上 `--batch_size=8 --steps=14000`。
 
-此預設組態會載入 DROID 檢查點的相機排列、條件化、動作表示法、控制
+此預設設定會載入 DROID 檢查點的相機排列、條件化、動作表示法、控制
 頻率與處理器，只覆寫所列出的訓練／執行階段設定。你的資料集必須符合
 檢查點的約定（contract）：目前的套件使用三台相機、八個狀態／動作通道，以及
 15 Hz 的絕對關節位置指令（absolute joint-position commands）。如有需要，請用 `--rename_map` 對應相機名稱。
@@ -179,7 +179,7 @@ SO-101 檢查點讓最後一個通道維持絕對值（`delta_absolute_dims=[-1]
 
 正規化統計量（normalization statistics）由基礎模型儲存的處理器負責。請輸入原始的狀態／動作，並在訓練、恢復訓練與推論時
 使用相同的統計量。SO-101 套件的分位數（quantiles）假設了其特定的關節順序、
-單位與校準；它們並非通用的 SO-101 校準值。若要使用不同的統計量，
+單位與校正；它們並非通用的 SO-101 校正值。若要使用不同的統計量，
 請在訓練前準備一個具有對應處理器的獨立基礎模型。絕對動作的資料集統計量
 不能取代指令差量的統計量（command-delta statistics）。
 

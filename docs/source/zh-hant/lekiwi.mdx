@@ -15,11 +15,11 @@
 
 ### 有線版本（wired version）[[wired-version]]
 
-若您擁有**有線**的 LeKiwi 版本，可以跳過 Raspberry Pi 的安裝與 SSH 設定。您也可以在您的 PC 上直接執行 LeKiwi 腳本與用於遙操作（teleoperating）的主臂腳本（leader arm script）的所有命令。
+若您擁有**有線**的 LeKiwi 版本，可以跳過 Raspberry Pi 的安裝與 SSH 設定。您也可以在您的 PC 上直接執行 LeKiwi 腳本與用於遙操作（teleoperating）的主臂腳本（leader arm script）的所有指令。
 
 ## 在 Pi 上安裝軟體（install software on Pi）[[install-software-on-pi]]
 
-現在我們必須設定將在 LeKiwi 機器人上執行的遠端 PC。這通常是一台 Raspberry Pi，但也可以是任何能以 5V 執行、且有足夠 USB 連接埠（2 個以上）供攝影機與馬達控制板使用的 PC。
+現在我們必須設定將在 LeKiwi 機器人上執行的遠端 PC。這通常是一台 Raspberry Pi，但也可以是任何能以 5V 執行、且有足夠 USB 連接埠（2 個以上）供相機與馬達控制板使用的 PC。
 
 ### 安裝作業系統（install OS）[[install-os]]
 
@@ -90,7 +90,7 @@ Reconnect the USB cable.
 </hfoption>
 <hfoption id="Linux">
 
-在 Linux 上，您可能需要執行以下命令來授予 USB 連接埠（ports）的存取權：
+在 Linux 上，您可能需要執行以下指令來授予 USB 連接埠（ports）的存取權：
 
 ```bash
 sudo chmod 666 /dev/ttyACM0
@@ -119,7 +119,7 @@ Reconnect the USB cable.
 
 設定馬達的說明可在 SO101 [文件](./so101#configure-the-motors)中找到。除了手臂馬達的 id 之外，我們還需要為移動底座設定馬達 id。這些 id 需要依特定順序才能運作。下方是移動底座的馬達 id 與馬達安裝位置的圖片。請注意，LeKiwi 上我們只使用一塊馬達控制板。這表示車輪的馬達 id 為 7、8 和 9。
 
-您可以執行此命令來為 LeKiwi 設定馬達。它會先設定手臂的馬達（id 6..1），然後設定車輪的馬達（9,8,7）
+您可以執行此指令來為 LeKiwi 設定馬達。它會先設定手臂的馬達（id 6..1），然後設定車輪的馬達（9,8,7）
 
 ```bash
 lerobot-setup-motors \
@@ -164,7 +164,7 @@ ssh <your_pi_user_name>@<your_pi_ip_address>
 
 若您遇到連線錯誤：
 
-- 執行以下命令以確認 Pi 上已啟用 SSH：
+- 執行以下指令以確認 Pi 上已啟用 SSH：
   ```bash
   sudo raspi-config
   ```
@@ -189,11 +189,11 @@ lerobot-calibrate \
 
 ### 有線版本（wired version）[[wired-version]]
 
-若您擁有**有線**的 LeKiwi 版本，請在您的筆電上執行所有命令。
+若您擁有**有線**的 LeKiwi 版本，請在您的筆電上執行所有指令。
 
 ### 校正主臂（calibrate leader arm）[[calibrate-leader-arm]]
 
-接著，校正主臂（leader arm，它連接到筆電/PC）。在您的筆電上執行以下命令或 API 範例：
+接著，校正主臂（leader arm，它連接到筆電/PC）。在您的筆電上執行以下指令或 API 範例：
 
 <hfoptions id="calibrate_leader">
 <hfoption id="Command">
@@ -232,7 +232,7 @@ leader.disconnect()
 > [!TIP]
 > 若您使用 Mac，可能需要授予「終端機」存取鍵盤的權限以進行遙操作（teleoperation）。前往「系統偏好設定 > 安全性與隱私 > 輸入監控」，並勾選「終端機」的核取方塊。
 
-若要遙操作（teleoperation），請 SSH 進入您的 Raspberry Pi，執行 `conda activate lerobot` 與此命令：
+若要遙操作（teleoperation），請 SSH 進入您的 Raspberry Pi，執行 `conda activate lerobot` 與此指令：
 
 ```bash
 python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
@@ -264,11 +264,11 @@ python examples/lekiwi/teleoperate.py
 | F    | 降低速度       |
 
 > [!TIP]
-> 若您使用不同的鍵盤，可以在 [`LeKiwiClientConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/lekiwi/config_lekiwi.py) 中變更每個命令的按鍵。
+> 若您使用不同的鍵盤，可以在 [`LeKiwiClientConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/lekiwi/config_lekiwi.py) 中變更每個指令的按鍵。
 
 ### 有線版本（wired version）[[wired-version]]
 
-若您擁有**有線**的 LeKiwi 版本，請在您的筆電上執行所有命令。
+若您擁有**有線**的 LeKiwi 版本，請在您的筆電上執行所有指令。
 
 ## 錄製資料集（record a dataset）[[record-a-dataset]]
 
@@ -276,7 +276,7 @@ python examples/lekiwi/teleoperate.py
 
 我們使用 Hugging Face hub 功能來上傳您的資料集（dataset）。若您先前未曾使用過 Hub，請確認您可以使用具寫入權限的 token 透過 cli 登入，此 token 可從 [Hugging Face 設定](https://huggingface.co/settings/tokens)產生。
 
-執行此命令將您的 token 加入 CLI：
+執行此指令將您的 token 加入 CLI：
 
 ```bash
 hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
@@ -297,7 +297,7 @@ python examples/lekiwi/record.py
 
 #### 資料集上傳（dataset upload）[[dataset-upload]]
 
-在本機，您的資料集（dataset）儲存在此資料夾：`~/.cache/huggingface/lerobot/{repo-id}`。資料錄製（data recording）結束時，您的資料集會上傳到您的 Hugging Face 頁面（例如 <https://huggingface.co/datasets/cadene/so101_test>），您可以透過執行以下命令取得：
+在本機，您的資料集（dataset）儲存在此資料夾：`~/.cache/huggingface/lerobot/{repo-id}`。資料錄製（data recording）結束時，您的資料集會上傳到您的 Hugging Face 頁面（例如 <https://huggingface.co/datasets/cadene/so101_test>），您可以透過執行以下指令取得：
 
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/so101_test
@@ -309,9 +309,9 @@ echo https://huggingface.co/datasets/${HF_USER}/so101_test
 
 #### 收集資料的訣竅（tips for gathering data）[[tips-for-gathering-data]]
 
-一旦您熟悉了資料錄製（data recording），就可以建立一個更大的資料集（dataset）用於訓練（training）。一個很好的入門任務（task）是在不同位置抓取一個物體，並將它放入箱子。我們建議至少錄製 50 個回合（episode），每個位置錄製 10 個回合。在整個錄製過程中，保持攝影機固定並維持一致的抓取行為。同時也要確保您操作的物體在攝影機上是可見的。一個好的經驗法則是：您應該能夠只看著攝影機影像就自行完成該任務。
+一旦您熟悉了資料錄製（data recording），就可以建立一個更大的資料集（dataset）用於訓練（training）。一個很好的入門任務（task）是在不同位置抓取一個物體，並將它放入箱子。我們建議至少錄製 50 個回合（episode），每個位置錄製 10 個回合。在整個錄製過程中，保持相機固定並維持一致的抓取行為。同時也要確保您操作的物體在相機上是可見的。一個好的經驗法則是：您應該能夠只看著相機影像就自行完成該任務。
 
-在接下來的章節中，您將訓練（training）您的神經網路（neural network）。在達成可靠的抓取表現後，您可以開始在資料收集期間引入更多變化，例如額外的抓取位置、不同的抓取技巧，以及改變攝影機位置。
+在接下來的章節中，您將訓練（training）您的神經網路（neural network）。在達成可靠的抓取表現後，您可以開始在資料收集期間引入更多變化，例如額外的抓取位置、不同的抓取技巧，以及改變相機位置。
 
 避免過快加入太多變化，因為這可能會妨礙您的結果。
 

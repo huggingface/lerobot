@@ -30,15 +30,15 @@ ACT 作為絕佳的入門選擇，有以下幾個原因：
 
 ### 架構（architecture）[[architecture]]
 
-ACT 使用基於 Transformer 的架構（transformer-based architecture），包含三個主要組件（components）：
+ACT 使用基於 Transformer 的架構（transformer-based architecture），包含三個主要元件（components）：
 
-1. **視覺骨幹網路（vision backbone）**：ResNet-18 處理來自多個攝影機視角（multiple camera viewpoints）的影像（images）
-2. **Transformer 編碼器（Transformer encoder）**：整合來自攝影機特徵（camera features）、關節位置（joint positions）和學習到的潛在變數（learned latent variable）的資訊
+1. **視覺骨幹網路（vision backbone）**：ResNet-18 處理來自多個相機視角（multiple camera viewpoints）的影像（images）
+2. **Transformer 編碼器（Transformer encoder）**：整合來自相機特徵（camera features）、關節位置（joint positions）和學習到的潛在變數（learned latent variable）的資訊
 3. **Transformer 解碼器（Transformer decoder）**：使用交叉注意力機制（cross-attention）生成連貫的動作（action）序列
 
 策略（policy）的輸入（input）包括：
 
-- 多張 RGB 影像（例如來自手腕攝影機 wrist cameras、前方/頂部攝影機 front/top cameras）
+- 多張 RGB 影像（例如來自手腕相機 wrist cameras、前方/頂部相機 front/top cameras）
 - 當前機器人關節位置（current robot joint positions）
 - 潛在風格變數 `z`（latent style variable `z`；訓練 training 期間學習，推論 inference 時設為零）
 
@@ -47,7 +47,7 @@ ACT 使用基於 Transformer 的架構（transformer-based architecture），包
 ## 安裝需求（installation requirements）[[installation-requirements]]
 
 1. 按照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
-2. ACT 已包含在 LeRobot 的基礎安裝中，無需額外的依賴項（additional dependencies）！
+2. ACT 已包含在 LeRobot 的基礎安裝中，無需額外的相依套件（additional dependencies）！
 
 ## 訓練 ACT（training ACT）[[training-act]]
 

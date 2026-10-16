@@ -52,7 +52,7 @@ FastWAM 需要一個具備下列條件的 LeRobot 資料集（dataset）：
 - `action`
 - 透過資料集任務欄位（dataset task field）提供的語言任務指令（language task instruction），或預先計算的 `context` 與 `context_mask` 張量（tensors）
 
-預設的視覺設定（visual setup）是一個名為 `observation.images.image`、形狀（shape）為 `(3, 224, 448)` 的影像特徵（image feature）。若資料集（dataset）使用兩個攝影機，請設定（configure） `policy.input_features`，使其高度（heights）符合 `224`，且寬度總和（widths sum）為 `448`。
+預設的視覺設定（visual setup）是一個名為 `observation.images.image`、形狀（shape）為 `(3, 224, 448)` 的影像特徵（image feature）。若資料集（dataset）使用兩個相機，請設定（configure） `policy.input_features`，使其高度（heights）符合 `224`，且寬度總和（widths sum）為 `448`。
 
 ## 使用方式（usage）[[usage]]
 
@@ -108,7 +108,7 @@ lerobot-rollout \
 
 ### 影像特徵（feature）[[image-features]]
 
-`policy.image_size` 是串接後（concatenated）的 FastWAM 影像張量（image tensor）的尺寸（size），格式為 `(height, width)`。每個設定的影像特徵（configured image feature）都必須具有 `(3, height, camera_width)` 的形狀（shape），且所有攝影機寬度的總和（all camera widths must sum）必須等於所設定的寬度（configured width）。
+`policy.image_size` 是串接後（concatenated）的 FastWAM 影像張量（image tensor）的尺寸（size），格式為 `(height, width)`。每個設定的影像特徵（configured image feature）都必須具有 `(3, height, camera_width)` 的形狀（shape），且所有相機寬度的總和（all camera widths must sum）必須等於所設定的寬度（configured width）。
 
 ### 動作區塊化（action chunking）[[action-chunking]]
 
@@ -130,7 +130,7 @@ FastWAM 可以編譯其影片預填充（video-prefill）與快取的動作去�
 --policy.compile_action_infer=true
 ```
 
-此選項預設為停用。第一次動作預測會為目前的輸入形狀編譯圖形，因此速度較慢；之後具有相同形狀的預測會重複使用它。形狀變更可能會觸發重新編譯。在不支援的 PyTorch 或加速器組態上，仍可使用 eager 路徑。
+此選項預設為停用。第一次動作預測會為目前的輸入形狀編譯圖形，因此速度較慢；之後具有相同形狀的預測會重複使用它。形狀變更可能會觸發重新編譯。在不支援的 PyTorch 或加速器設定上，仍可使用 eager 路徑。
 
 ### LIBERO 動作切換（LIBERO action toggle）[[libero-action-toggle]]
 

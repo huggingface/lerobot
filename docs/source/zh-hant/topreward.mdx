@@ -23,7 +23,7 @@ TOPReward 詢問一個通用 VLM，**在機器人嘗試完成某任務的影片�
  or not. The answer is: True"
 ```
 
-將它前向傳遞（forwards）通過 VLM，對除了最後一個 token 之外的所有內容進行標籤遮罩（label-mask），並讀回（reads back）該 token 的對數機率（log-probability），預設就是收尾後綴模板（suffix template）的字面 `"True"`。所得的 `log P("True" | video + prompt + instruction)` 便是獎勵（reward）。
+將它前向傳遞（forwards）通過 VLM，對除了最後一個 token 之外的所有內容進行標籤遮罩（label-mask），並讀回（reads back）該 token 的對數機率（log-probability），預設就是收尾後綴範本（suffix template）的字面 `"True"`。所得的 `log P("True" | video + prompt + instruction)` 便是獎勵（reward）。
 
 由於此方法只依賴一個凍結（frozen）的 VLM，TOPReward 是**零樣本（zero-shot）**的：沒有需要託管的微調權重（no fine-tuned weights）。LeRobot 中的「模型（model）」是圍繞 `transformers` 的 `Qwen3VLForConditionalGeneration` 加上標籤遮罩邏輯（label-masking logic）的一個小型封裝（wrapper）。處理器（processor）擁有 tokenizer 並建構完整的聊天提示（chat prompt，EO-1/Robometer 模式）。
 
@@ -41,7 +41,7 @@ TOPReward 詢問一個通用 VLM，**在機器人嘗試完成某任務的影片�
 ## 安裝需求（installation requirements）[[installation-requirements]]
 
 1. 依照[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
-2. 安裝 TOPReward 選用的額外套件（extra）：
+2. 安裝 TOPReward 可選的額外套件（extra）：
 
 ```bash
 pip install -e ".[topreward]"
@@ -66,10 +66,10 @@ TOPReward 預期：
 
 | 設定欄位（config field）  | 預設（default）             | 含義（meaning）                                                    |
 | ------------------------- | --------------------------- | ------------------------------------------------------------------ |
-| `reward_model.image_key`  | `observation.images.top`    | TOPReward 使用的攝影機觀測（camera observation）                   |
+| `reward_model.image_key`  | `observation.images.top`    | TOPReward 使用的相機觀測（camera observation）                     |
 | `reward_model.task_key`   | `task`                      | 互補資料（complementary data）中任務字串（task string）的鍵（key） |
 | `reward_model.max_frames` | `16`                        | 每個樣本的影格上限（cap on frames per sample）                     |
-| `reward_model.fps`        | `2.0`                       | 傳給 Qwen 影片處理器（video processor）的元資料（metadata）        |
+| `reward_model.fps`        | `2.0`                       | 傳給 Qwen 影片處理器（video processor）的中繼資料（metadata）      |
 | `reward_model.vlm_name`   | `Qwen/Qwen3-VL-8B-Instruct` | 底層 VLM 的 Hugging Face Hub id                                    |
 
 模型（model）會回傳（returns）：
@@ -140,11 +140,11 @@ prompt_prefix = "The above video shows a robot manipulation trajectory that comp
 prompt_suffix_template = "{instruction} Decide whether the above statement is True or not. The answer is: True"
 ```
 
-兩者皆在 `TOPRewardConfig` 上公開以供消融（ablation）。後綴模板（suffix template）**必須**包含 `{instruction}`。
+兩者皆在 `TOPRewardConfig` 上公開以供消融（ablation）。後綴範本（suffix template）**必須**包含 `{instruction}`。
 
-### 聊天模板（chat template）[[chat-template]]
+### 聊天範本（chat template）[[chat-template]]
 
-`add_chat_template=True` 會在 tokenisation 之前，以 tokenizer 的聊天模板（tokenizer’s chat template）包裝完整提示（prompt，包括指令 instruction）。預設為 `False`，與上游論文的主要實驗相符。
+`add_chat_template=True` 會在 tokenisation 之前，以 tokenizer 的聊天範本（tokenizer’s chat template）包裝完整提示（prompt，包括指令 instruction）。預設為 `False`，與上游論文的主要實驗相符。
 
 ## 限制（limitations）[[limitations]]
 

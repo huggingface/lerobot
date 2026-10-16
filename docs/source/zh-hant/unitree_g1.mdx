@@ -42,7 +42,7 @@ pip install -e '.[unitree_g1]'
 
 ### 測試安裝（test the installation, simulation）[[test-the-installation-simulation]]
 
-模擬環境（simulation environment）有其自己的依賴套件（dependencies）。請查看模擬環境依賴套件（simulation environment dependencies）：[Unitree G1 Mujoco EnvHub](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。
+模擬環境（simulation environment）有其自己的相依套件（dependencies）。請查看模擬環境相依套件（simulation environment dependencies）：[Unitree G1 Mujoco EnvHub](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。
 
 ```bash
 pip install mujoco loguru msgpack msgpack-numpy
@@ -307,13 +307,13 @@ lerobot-rollout \
 
 ## 第 5 部分：SONIC 全身控制（Latent-Token Policies）[[part-5-sonic-whole-body-control-latent-token-policies]]
 
-LeRobot 現在將 NVIDIA 的 [SONIC](https://nvlabs.github.io/GEAR-SONIC/) 全身部署堆疊的**解碼器**部分移植為 `SonicWholeBodyController`。策略不再直接命令關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將該符元加上近期的本體感覺歷史（proprioception history）映射為殘差動作（residual action），該動作經縮放後加到站立姿勢（standing pose）上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
+LeRobot 現在將 NVIDIA 的 [SONIC](https://nvlabs.github.io/GEAR-SONIC/) 全身部署堆疊的**解碼器**部分移植為 `SonicWholeBodyController`。策略不再直接命令關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將該 token 加上近期的本體感覺歷史（proprioception history）映射為殘差動作（residual action），該動作經縮放後加到站立姿勢（standing pose）上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
 
-該控制器會從 [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder) 載入其 ONNX 解碼器與所有部署常數（PD 增益、`default_angles`、`action_scale` 以及中性符元）。該儲存庫也隨附一個蒸餾後的低延遲解碼器，可透過控制器的 `policy_type="low_latency"` 參數選用（預設為 `"default"`）。
+該控制器會從 [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder) 載入其 ONNX 解碼器與所有部署常數（PD 增益、`default_angles`、`action_scale` 以及中性 token）。該儲存庫也隨附一個蒸餾後的低延遲解碼器，可透過控制器的 `policy_type="low_latency"` 參數選用（預設為 `"default"`）。
 
 ### 在模擬中測試（test in simulation）[[test-in-simulation]]
 
-任何以 SONIC 動作符元訓練、會輸出符元的策略（例如 [`nepyope/sonic_walk`](https://huggingface.co/nepyope/sonic_walk)）都能驅動它：
+任何以 SONIC 動作 token 訓練、會輸出 token 的策略（例如 [`nepyope/sonic_walk`](https://huggingface.co/nepyope/sonic_walk)）都能驅動它：
 
 ```bash
 lerobot-rollout \
@@ -328,7 +328,7 @@ lerobot-rollout \
 
 ### 在實體機器人上執行（run on the physical robot）[[run-on-the-physical-robot]]
 
-在實體硬體上，請使用[非同步推論（async inference）](./async)來執行策略，而不是單一的 `lerobot-rollout` 迴圈。從筆電驅動的 rollout 會把網路放在控制迴圈中間：每個步驟都會因推論而阻塞，而只要有一次卡頓，就會讓機器人站立時所依賴的 50 Hz 平衡迴圈停滯。非同步推論將兩者分開——策略在您的 GPU 機器上執行，而機器人用戶端則在 G1 的 Jetson 上執行，因此 SONIC 控制器執行緒與 `rt/lowcmd` 都留在機載（onboard），只有 64 維符元區塊（token chunks）會通過網路。
+在實體硬體上，請使用[非同步推論（async inference）](./async)來執行策略，而不是單一的 `lerobot-rollout` 迴圈。從筆電驅動的 rollout 會把網路放在控制迴圈中間：每個步驟都會因推論而阻塞，而只要有一次卡頓，就會讓機器人站立時所依賴的 50 Hz 平衡迴圈停滯。非同步推論將兩者分開——策略在您的 GPU 機器上執行，而機器人用戶端則在 G1 的 Jetson 上執行，因此 SONIC 控制器執行緒與 `rt/lowcmd` 都留在機載（onboard），只有 64 維 token 區塊（token chunks）會透過網路傳送。
 
 三個行程，並讓第 2 部分的機器人伺服器全程保持執行：
 

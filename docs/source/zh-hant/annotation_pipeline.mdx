@@ -66,7 +66,7 @@ VLM 溝通。每個模組會將其輸出暫存（stages）到磁碟，由驗證�
 `plan` 模組（module）不會一次就向 VLM 索取子任務（subtasks）。相反地
 它使用一個兩步驟的**描述（describe） → 分段（segment）**流程（flow）：
 
-1. **描述（describe）** — VLM 只敘述它在所選攝影機中實際看到的內容
+1. **描述（describe）** — VLM 只敘述它在所選相機中實際看到的內容
    （不對任務 task 進行猜測）。
 2. **分段（segment）** — 將該描述（description）回饋回去（fed back in），VLM 便將
    回合（episode）切分為連續的原子子任務（consecutive atomic subtasks）。
@@ -89,7 +89,7 @@ contact sheets）重新檢視該區間，並以第一次的標籤（first label�
 
 產生的區間（resulting spans）接著會被縫合（stitched）成無間隙（gap-free）、涵蓋整個回合（full-episode cover）的
 覆蓋範圍，因此**每個影格恰好有一個作用中的子任務（every frame has exactly one active subtask）**。
-生產環境的設定（production settings，單一攝影機、帶時間戳的拼貼表 timestamped contact sheets、
+生產環境的設定（production settings，單一相機、帶時間戳的拼貼表 timestamped contact sheets、
 自動視窗化的子任務產生 auto-windowed subtask generation）請參閱
 [在 Hugging Face Jobs 上執行](#running-on-hugging-face-jobs)。
 
@@ -101,7 +101,7 @@ contact sheets）重新檢視該區間，並以第一次的標籤（first label�
 該清單中，並保留你事先宣告的任何工具（tools）。
 
 想新增你自己的工具（tool）？直接編輯 `meta/info.json["tools"]` —
-管線（pipeline）會保留已存在的內容。這讓工具對聊天模板（chat template）可見，
+管線（pipeline）會保留已存在的內容。這讓工具對聊天範本（chat template）可見，
 使模型（model）能學會*產生（generate）*該呼叫（call）。真正*執行（executes）*已產生呼叫的
 執行期層（runtime layer，`src/lerobot/tools/` 下的 `Tool`
 協定 / `TOOL_REGISTRY`）不屬於這個 PR —
@@ -205,7 +205,7 @@ pod 結束時被丟棄。
 | 旗標（flag）               | 預設               | 作用（what it does）                                                                                                 |
 | -------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------- |
 | `--vlm.model_id`           | `Qwen/Qwen3.6-27B` | 要提供服務並提示（prompt）的模型（model）。                                                                          |
-| `--vlm.camera_key`         | 第一個 `images.*`  | 每個提示所立基的攝影機（which camera every prompt is grounded on）。                                                 |
+| `--vlm.camera_key`         | 第一個 `images.*`  | 每個提示所立基的相機（which camera every prompt is grounded on）。                                                   |
 | `--vlm.serve_command`      | 自動               | 確切的 `vllm serve …` 指令（在此設定 TP 大小、GPU 記憶體、`--max-model-len`）。                                      |
 | `--vlm.parallel_servers`   | `1`                | 用於輪詢路由（round-robin routing）的獨立伺服器（servers，每個 GPU 一個）。                                          |
 | `--vlm.num_gpus`           | `0`                | 每個伺服器（server）的 GPU 數（`0` = 每個一顆）。                                                                    |
@@ -236,7 +236,7 @@ pod 結束時被丟棄。
 | ----------------------------------------------- | ------- | --------------------------------------------------------------------------------- |
 | `--interjections.max_interjections_per_episode` | `3`     | 每個回合插話/語音對（interjection/speech pairs per episode）的上限。              |
 | `--vqa.vqa_emission_hz`                         | `1.0`   | VQA 對發出的頻率（how often VQA pairs are emitted）。                             |
-| `--vqa.restrict_to_default_camera`              | `false` | 僅在 `--vlm.camera_key` 上立基（ground） VQA（否則每個攝影機皆立基）。            |
+| `--vqa.restrict_to_default_camera`              | `false` | 僅在 `--vlm.camera_key` 上立基（ground） VQA（否則每個相機皆立基）。              |
 | `--vqa.coordinate_scale`                        | `1000`  | VLM bbox/keypoint 網格，儲存為 [0, 1]（`none` = px）。                            |
 | `--executor.episode_parallelism`                | `16`    | 每個階段內同時處理的回合數（episodes processed concurrently within each phase）。 |
 
@@ -244,7 +244,7 @@ pod 結束時被丟棄。
 
 此管線（pipeline）的設計是為了成長（built to grow），且**非常歡迎貢獻** —
 全新的模組（brand-new module，例如軌跡痕跡 trajectory traces 或可供性 affordances）、新的提示
-模板（prompt template）、更聰明的立基流程（grounding flow），或對既有
+範本（prompt template）、更聰明的立基流程（grounding flow），或對既有
 `plan` / `interjections` / `vqa` 模組的品質修正（quality fixes）。
 
 每個模組（module）都位於
@@ -322,7 +322,7 @@ JSONL，之後由寫入器（writer）重新組合（recomposes）出最終的 p
   立基（multi-abstraction grounding）。Pi0.7 也會跨抽象層級為答案立基（grounds answers across abstraction levels）。
 
 在改進某個模組（module）時，請調整（tweak）其位於
-`src/lerobot/annotations/steerable_pipeline/prompts/` 的提示模板（prompt template），而非
+`src/lerobot/annotations/steerable_pipeline/prompts/` 的提示範本（prompt template），而非
 從頭改寫（rewriting from scratch）。
 
 ## 大致的成本（roughly how much it costs）[[roughly-how-much-it-costs]]

@@ -43,7 +43,7 @@ LeRobot 提供了管線機制（pipeline mechanism），用於對輸入資料（
 
 我們將以 `NormalizerProcessorStep` 作為主要範例，因為它展示了你經常會需要的核心處理器模式（processor patterns），包括狀態管理（state management）、設定序列化（configuration serialization），以及張量處理（tensor handling）。
 
-準備好您的問題所需的處理步驟序列（sequence of processing steps）。一個處理步驟（processor step）是一個實作以下方法（methods）的類（class）：
+準備好您的問題所需的處理步驟序列（sequence of processing steps）。一個處理步驟（processor step）是一個實作以下方法（methods）的類別（class）：
 
 - `__call__`：實作針對輸入轉換（input transition）的處理步驟（processing step）。
 - `get_config`：取得處理步驟（processing step）的設定（configuration）。
@@ -92,9 +92,9 @@ class NormalizerProcessorStep(ProcessorStep):
 - **將設定與狀態分離（separate config from state）**：`get_config()` 回傳可 JSON 序列化的參數（JSON-serializable params），`state_dict()` 回傳張量（returns tensors）
 - **在 `__post_init__()` 中將統計量（stats）轉換為張量（tensors）**，以提高運算效率
 
-### 配置與狀態管理（configuration and state management）[[configuration-and-state-management]]
+### 設定與狀態管理（configuration and state management）[[configuration-and-state-management]]
 
-處理器（processors）透過三個方法（methods）支援序列化（serialization），將設定（configuration）與張量狀態（tensor state）分離。`NormalizerProcessorStep` 完美地展示了這一點——它在狀態（state）中攜帶資料集統計量（dataset statistics，張量 tensors），並在配置（config）中攜帶超參數（hyperparameters）：
+處理器（processors）透過三個方法（methods）支援序列化（serialization），將設定（configuration）與張量狀態（tensor state）分離。`NormalizerProcessorStep` 完美地展示了這一點——它在狀態（state）中攜帶資料集統計量（dataset statistics，張量 tensors），並在設定（config）中攜帶超參數（hyperparameters）：
 
 ```python
 # 接續 NormalizerProcessorStep 範例...
@@ -138,7 +138,7 @@ tensors = normalizer.state_dict()
 # 還原（例如載入預訓練的 policy）
 new_normalizer = NormalizerProcessorStep(**config)
 new_normalizer.load_state_dict(tensors)
-# 現在 new_normalizer 擁有相同的統計量和配置
+# 現在 new_normalizer 擁有相同的統計量和設定
 ```
 
 ### 轉換特徵（transforming features）[[transform-features]]
@@ -186,7 +186,7 @@ def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, Po
 **基礎模型適配（foundational model adaptation）**：當你使用基礎預訓練策略（foundational pretrained policy）時，這特別有用，因為你很少能取得原始訓練的統計量（original training statistics）。你可以注入自己的資料集（dataset）統計量（statistics），使正規化器（normalizer）適配你特定的機器人或環境資料（robot or environment data）。
 
 範例：在機器人上進行策略評估（policy evaluation）時，覆寫（override）裝置和重新命名對應表（device and rename map）。
-用此方式可以在僅有 CPU 的機器人上執行以 CUDA 訓練的策略（policy trained），或在機器人使用與資料集（dataset）不同的名稱時重新對應攝影機鍵名（remap camera keys）。
+用此方式可以在僅有 CPU 的機器人上執行以 CUDA 訓練的策略（policy trained），或在機器人使用與資料集（dataset）不同的名稱時重新對應相機鍵名（remap camera keys）。
 
 直接使用 `from_pretrained`：
 
@@ -219,11 +219,11 @@ processor = RobotProcessorPipeline.from_pretrained(
 
 當資料驗證失敗（data validation fails）時，提供清楚且可操作的錯誤訊息（error messages），幫助使用者理解出了什麼問題以及如何修正。
 
-### 2. **選擇適當的基類（choose appropriate base classes）**[[2-choose-appropriate-base-classes]]
+### 2. **選擇適當的基底類別（choose appropriate base classes）**[[2-choose-appropriate-base-classes]]
 
-LeRobot 提供了專門的基類（base classes），可減少樣板程式碼（boilerplate code）並確保一致性。當你只需修改觀測（observations）時使用 `ObservationProcessorStep`，僅處理動作（action-only）時使用 `ActionProcessorStep`，專門用於字典式機器人動作（dictionary-based robot actions）時使用 `RobotActionProcessorStep`。
+LeRobot 提供了專門的基底類別（base classes），可減少樣板程式碼（boilerplate code）並確保一致性。當你只需修改觀測（observations）時使用 `ObservationProcessorStep`，僅處理動作（action-only）時使用 `ActionProcessorStep`，專門用於字典式機器人動作（dictionary-based robot actions）時使用 `RobotActionProcessorStep`。
 
-只有在你需要完全控制整個轉換（transition），或需要同時處理多個轉換組成部分（transition components）時，才直接繼承 `ProcessorStep`。專門的基底類（base class）會為你處理轉換管理（transition management）並提供型別安全（type safety）。
+只有在你需要完全控制整個轉換（transition），或需要同時處理多個轉換組成部分（transition components）時，才直接繼承 `ProcessorStep`。專門的基底類別（base class）會為你處理轉換管理（transition management）並提供型別安全（type safety）。
 
 ### 3. **註冊與命名（registration and naming）**[[3-registration-and-naming]]
 
@@ -258,7 +258,7 @@ LeRobot 提供了專門的基類（base classes），可減少樣板程式碼（
 1. **定義你的處理器（processor）** 為一個 dataclass，包含所需的方法（methods，`__call__`、`get_config`、`state_dict`、`load_state_dict`、`reset`、`transform_features`）
 2. **註冊它（register it）**，使用 `@ProcessorStepRegistry.register("name")` 以便被發現
 3. **整合它（integrate it）** 到 `DataProcessorPipeline` 中，與其他處理步驟（processing steps）一起使用
-4. **使用基底類（use base classes）**，如 `ObservationProcessorStep`，以盡可能減少樣板程式碼（boilerplate）
+4. **使用基底類別（use base classes）**，如 `ObservationProcessorStep`，以盡可能減少樣板程式碼（boilerplate）
 5. **實作裝置/資料型別感知（implement device/dtype awareness）**，以支援多 GPU 和混合精度設定（mixed precision setups）
 
 處理器系統（processor system）的設計是模組化且可組合的（modular and composable），讓你能從簡單、專注的元件（components）建構複雜的資料處理管線（pipelines）。無論你是為訓練（training ）預處理感測器資料，還是為機器人執行後處理模型輸出（post-processing model outputs ），自訂處理器（processor）都能為你提供處理機器人應用中任何資料轉換（data transformation）的彈性。
@@ -267,7 +267,7 @@ LeRobot 提供了專門的基類（base classes），可減少樣板程式碼（
 
 - **裝置/資料型別適配（device/dtype adaptation）**：內部張量（tensors）應與輸入張量一致
 - **清楚的錯誤訊息（clear error messages）**：幫助使用者理解出了什麼問題
-- **使用基類（base class usage）**：善用專門的基底類（base classes）以減少樣板程式碼（boilerplate）
+- **使用基底類別（base class usage）**：善用專門的基底類別（base classes）以減少樣板程式碼（boilerplate）
 - **特徵合約（feature contracts）**：使用 `transform_features()` 宣告資料結構（data structure）的變更
 
 從簡單的開始，徹底測試，並確保你的處理器（processors）能在不同硬體配置（hardware configurations）之間無縫運作！

@@ -1,6 +1,6 @@
 # 人在迴圈中的資料收集（Human-In-the-Loop data collection）[[human-in-the-loop-data-collection]]
 
-人在迴圈中（Human-In-the-Loop, HIL）的資料收集（data collection）讓您能透過將已訓練的策略（trained policy）部署（deployment）到真實機器人上，同時由人類操作員（human operator）監控（monitors）並在需要時介入（intervenes），來改進該策略。介入資料（intervention data，恢復動作與修正動作）會與自主運行片段（autonomous segments）一併記錄（recorded），產生更豐富的訓練資料集（training dataset），教導策略如何處理失敗情況（failures）。
+人在迴圈中（Human-In-the-Loop, HIL）的資料收集（data collection）讓您能透過將已訓練的策略（trained policy）部署（deployment）到真實機器人上，同時由人類操作員（human operator）監控（monitors）並在需要時介入（intervenes），來改進該策略。介入資料（intervention data，恢復動作與修正動作）會與自主執行片段（autonomous segments）一併記錄（recorded），產生更豐富的訓練資料集（training dataset），教導策略如何處理失敗情況（failures）。
 
 ---
 
@@ -21,12 +21,12 @@
 
 在 HIL 進行期間，人類操作員（human operator）在每個回合（episode）中遵循以下循環（loop）：
 
-1. **觀察（watch）**策略自主運行（policy run autonomously）
+1. **觀察（watch）**策略自主執行（policy run autonomously）
 2. 當即將發生失敗（failure）時**暫停（pause）**，機器人保持當前位置（position）
 3. **接管控制（take control）**並遙操作（teleoperate）機器人回到良好狀態（good state，恢復 recovery），然後修正行為（correct the behavior）
 4. **將控制權交還給策略（return control to the policy）**，策略恢復自主執行（policy resumes autonomous execution）
 5. 在回合（episode）內根據需要重複步驟 2–4 任意次數
-6. 當任務（task）完成時**結束回合（end the episode）**，儲存並進入下一個推演（next rollout）
+6. 當任務（task）完成時**結束回合（end the episode）**，儲存並進入下一個 rollout（next rollout）
 
 自主與人為控制（human-controlled）的片段（segments）都會被記錄（recorded）。策略（policy）和人類可以在單一回合（episode）內多次交替控制（alternate control），每次交接（handoff）後回合（episode）會從當前狀態（current state）繼續（不需要因為發生介入 intervention 而重置）。這在一條連續軌跡（continuous trajectory）中捕捉了自主執行（autonomous execution）、恢復（recovery）和修正（correction）。收集完成後，合併的資料集（combined dataset，原始示範 + HIL 資料）用於微調策略（fine-tune the policy）。
 
@@ -63,7 +63,7 @@
 
 > [!IMPORTANT]
 > 提供的指令預設使用 `bi_openarm_follower` + `bi_openarm_mini`。
-> `so_follower` + `so_leader` 的配置也已註冊（registered），可透過 CLI flags 使用。
+> `so_follower` + `so_leader` 的設定也已註冊（registered），可透過 CLI flags 使用。
 
 ---
 
@@ -158,7 +158,7 @@ lerobot-rollout --strategy.type=dagger \
 
 HIL 協定（HIL protocol）：
 
-1. 觀察策略（policy）自主運行（run autonomously，遙操作器 teleoperator 處於閒置 idle/自由 free 的狀態）
+1. 觀察策略（policy）自主執行（run autonomously，遙操作器 teleoperator 處於閒置 idle/自由 free 的狀態）
 2. 當您看到即將發生失敗（imminent failure）時，觸發**暫停輸入（pause input）**
    - 策略停止（policy stops）
    - 遙操作器（teleoperator）移動以匹配機器人位置（robot position，扭力 torque 啟用）

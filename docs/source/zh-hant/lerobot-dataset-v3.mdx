@@ -1,6 +1,6 @@
 # LeRobotDataset v3.0[[lerobotdataset-v30]]
 
-`LeRobotDataset v3.0` 是機器人學習資料的標準化格式（standardized format）。它提供對多模態時間序列資料（multi-modal time-series data）、感測運動訊號（sensorimotor signals）與多相機影片（multi‑camera video）的統一存取，並具備豐富的元資料（metadata）以便在 Hugging Face Hub 上進行索引（indexing）、搜尋與視覺化。
+`LeRobotDataset v3.0` 是機器人學習資料的標準化格式（standardized format）。它提供對多模態時間序列資料（multi-modal time-series data）、感測運動訊號（sensorimotor signals）與多相機影片（multi‑camera video）的統一存取，並具備豐富的中繼資料（metadata）以便在 Hugging Face Hub 上進行索引（indexing）、搜尋與視覺化。
 
 若想在閱讀其版面配置（layout）之前先了解此格式的資料集包含哪些內容，可以在 [LeRobot Dataset Visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0) 中開啟一個資料集：在瀏覽器中查看相機錄影、同步的狀態與動作圖表，以及每一個回合。參見[在瀏覽器中探索資料集](./using_dataset_tools#explore-a-dataset-in-the-browser)。
 
@@ -17,10 +17,10 @@
 ## `v3` 有哪些新功能（what's new in v3）[[whats-new-in-v3]]
 
 - **以檔案為基礎的儲存（file-based storage）**：每個 Parquet/MP4 檔案包含多個回合（many episodes，v2 為每個回合一個檔案）。
-- **關聯式元資料（relational metadata）**：回合邊界（episode boundaries）與查找（lookups）是透過元資料（metadata）解析，而非檔名。
+- **關聯式中繼資料（relational metadata）**：回合邊界（episode boundaries）與查找（lookups）是透過中繼資料（metadata）解析，而非檔名。
 - **Hub 原生串流（hub-native streaming）**：使用 `StreamingLeRobotDataset` 直接從 Hub 消費資料集（consume datasets）。
 - **降低檔案系統壓力（lower file-system pressure）**：更少、更大的檔案 ⇒ 更快的初始化，並在大規模（at scale）時減少問題。
-- **統一的組織方式（unified organization）**：乾淨的目錄結構（directory layout），資料與影片皆採用一致的路徑模板（path templates）。
+- **統一的組織方式（unified organization）**：乾淨的目錄結構（directory layout），資料與影片皆採用一致的路徑範本（path templates）。
 - **資料集儲存後端（dataset storage backends）**：資料集也可以儲存為 [LanceDB](https://lancedb.com) 資料表（tables），以直接從物件儲存（object storage）進行隨機存取與索引（indexing）（參見 [LanceDB 資料集後端](#lancedb-dataset-backend)）。
 
 ## 安裝（installation）[[installation]]
@@ -48,7 +48,7 @@ lerobot-record \
   --dataset.single_task="Grab the black cube" \
   --dataset.streaming_encoding=true \
   --dataset.encoder_threads=2
-# 選用：--dataset.rgb_encoder.vcodec=auto
+# 可選：--dataset.rgb_encoder.vcodec=auto
 ```
 
 更多細節請參閱[錄製指南](./il_robots#record-a-dataset)。
@@ -61,9 +61,9 @@ v3 的核心原則是**將儲存與使用者 API 解耦（decoupling storage fro
 
 1. **表格資料（tabular data）**：低維度（low‑dimensional）、高頻率的訊號（high‑frequency signals，狀態 state、動作 action、時間戳 timestamp）儲存於 **Apache Parquet**。存取方式為記憶體對映（memory-mapped）或透過 `datasets` 技術堆疊串流（streamed）。
 2. **視覺資料（visual data）**：相機影格（camera frames）串接後編碼（encoded）為 **MP4**。同一個回合（episode）的影格會被歸為一組；影片會依相機分片（shard）成實用的大小（practical size）。
-3. **元資料（metadata）**：以 JSON/Parquet 記錄描述結構定義（records describing schema，特徵名稱 feature names、dtype、shape）、影格率（frame rate）、正規化統計（normalization stats），以及 **回合分段（episode segmentation）**（在共用 Parquet/MP4 檔案中的開始/結束偏移量 offset）。
+3. **中繼資料（metadata）**：以 JSON/Parquet 記錄描述結構定義（records describing schema，特徵名稱 feature names、dtype、shape）、影格率（frame rate）、正規化統計（normalization stats），以及 **回合分段（episode segmentation）**（在共用 Parquet/MP4 檔案中的開始/結束偏移量 offset）。
 
-> 為了擴展到數百萬個回合（episodes），多個回合的表格資料列（tabular rows）與影片影格（video frames）會**串接（concatenated）**成更大的檔案。回合特定的視圖（episode‑specific views）是**透過元資料（via metadata）**重建，而非檔案邊界（file boundaries）。
+> 為了擴展到數百萬個回合（episodes），多個回合的表格資料列（tabular rows）與影片影格（video frames）會**串接（concatenated）**成更大的檔案。回合特定的視圖（episode‑specific views）是**透過中繼資料（via metadata）**重建，而非檔案邊界（file boundaries）。
 
 <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
   <figure style="margin:0; text-align:center;">
@@ -80,7 +80,7 @@ v3 的核心原則是**將儲存與使用者 API 解耦（decoupling storage fro
 
 ### 目錄結構（directory layout，簡化版）[[directory-layout-simplified]]
 
-- **`meta/info.json`**：標準結構定義（canonical schema，特徵 feature、shape/dtype）、FPS、程式碼庫版本（codebase version），以及用來定位資料/影片分片（shard）的**路徑模板（path templates）**。
+- **`meta/info.json`**：標準結構定義（canonical schema，特徵 feature、shape/dtype）、FPS、程式碼庫版本（codebase version），以及用來定位資料/影片分片（shard）的**路徑範本（path templates）**。
 - **`meta/stats.json`**：用於正規化（normalization）的全域特徵統計（global feature statistics, mean/std/min/max）；透過 `dataset.meta.stats` 公開。
 - **`meta/tasks.jsonl`**：對映到整數 ID 的自然語言任務描述（natural‑language task descriptions），供任務條件式策略（task‑conditioned policies）使用。
 - **`meta/episodes/`**：每個回合的記錄（per‑episode records，長度 length、任務 task、偏移量 offset），以**分塊 Parquet（chunked Parquet）**儲存以利擴展（scalability）。
@@ -261,7 +261,7 @@ LeRobot 提供數種轉換類型（transform types）：
 - **`enable`**：啟用/停用轉換（enable/disable transforms，預設：`False`）
 - **`max_num_transforms`**：每個影格（frame）套用的最大轉換數量（maximum number of transforms，預設：`3`）
 - **`random_order`**：以隨機順序（random order）套用轉換（transforms），或以標準順序（standard order）套用（預設：`False`）
-- **`weight`**：每個轉換（transform）的抽樣機率（sampling probability，越高 = 越可能，若權重總和不為 1，會被正規化 normalization）
+- **`weight`**：每個轉換（transform）的取樣機率（sampling probability，越高 = 越可能，若權重總和不為 1，會被正規化 normalization）
 - **`kwargs`**：轉換特定的參數（transform-specific parameters，例如亮度範圍 brightness range）
 
 ### 視覺化轉換（visualizing transforms）[[visualizing-transforms]]
@@ -287,7 +287,7 @@ lerobot-imgtransform-viz \
 
 ## 遷移（migrate） `v2.1` → `v3.0`[[migrate-v21-v30]]
 
-轉換器（converter）會將每個回合的檔案（per‑episode files）彙整成更大的分片（larger shards），並寫入回合偏移量/元資料（episode offsets/metadata）。請依照以下說明轉換你的資料集（dataset）。
+轉換器（converter）會將每個回合的檔案（per‑episode files）彙整成更大的分片（larger shards），並寫入回合偏移量/中繼資料（episode offsets/metadata）。請依照以下說明轉換你的資料集（dataset）。
 
 ```bash
 # 具備 v3 支援的預發布版本建置：
@@ -322,16 +322,16 @@ for episode in range(num_episodes):
     dataset.save_episode()
 
 # 錄製完成後、push_to_hub() 之前呼叫 finalize()
-dataset.finalize()  # 關閉 parquet writer，寫入元資料的 footer
+dataset.finalize()  # 關閉 parquet writer，寫入中繼資料的 footer
 dataset.push_to_hub()
 ```
 
 **為什麼這是必要的？（why is this necessary?）**
 
-資料集（dataset） v3.0 使用具緩衝元資料（buffered metadata）的漸進式（incremental） parquet 寫入以提升效率。`finalize()` 方法（method）會：
+資料集（dataset） v3.0 使用具緩衝中繼資料（buffered metadata）的漸進式（incremental） parquet 寫入以提升效率。`finalize()` 方法（method）會：
 
-- 將任何緩衝的回合元資料（buffered episode metadata）刷新（flush）到磁碟
-- 關閉 parquet writer 以寫入 footer 元資料（metadata），否則 parquet 檔案會損毀
+- 將任何緩衝的回合中繼資料（buffered episode metadata）刷新（flush）到磁碟
+- 關閉 parquet writer 以寫入 footer 中繼資料（metadata），否則 parquet 檔案會損毀
 - 確保資料集（dataset）可正確載入
 
 若不呼叫 `finalize()`，你的 parquet 檔案會不完整，資料集（dataset）也無法正常載入。
@@ -340,7 +340,7 @@ dataset.push_to_hub()
 
 ### LanceDB 資料集後端[[lancedb-dataset-backend]]
 
-`v3` 資料集也可以儲存為 [LanceDB](https://lancedb.com) 資料表。LanceDB 是建構於 Lance 格式上的多模態 data lakehouse，針對 AI 存取模式設計：可快速隨機存取任一資料列及其影片位元組（bytes），並在同一批資料表上建立純量（scalar）、向量（vector）與全文索引（full-text indexes），因此 EDA、mining、curation 與訓練都能直接從物件儲存（object storage）執行。此布局會保持 `meta/` 不變，並新增一個 `frames` 資料表來存放表格資料（tabular data），以及一個 `videos` 資料表以 blob 形式保存 MP4。`meta/info.json` 中的 `"storage_format": "lance"` 會選擇對應的讀取器（reader）；`LeRobotDataset` API、項目（items）與訓練流程（training pipeline）則維持不變。
+`v3` 資料集也可以儲存為 [LanceDB](https://lancedb.com) 資料表。LanceDB 是建構於 Lance 格式上的多模態 data lakehouse，針對 AI 存取模式設計：可快速隨機存取任一資料列及其影片位元組（bytes），並在同一批資料表上建立純量（scalar）、向量（vector）與全文索引（full-text indexes），因此 EDA、mining、curation 與訓練都能直接從物件儲存（object storage）執行。此布局會保持 `meta/` 不變，並新增一個 `frames` 資料表來存放表格資料（tabular data），以及一個 `videos` 資料表以 blob 形式儲存 MP4。`meta/info.json` 中的 `"storage_format": "lance"` 會選擇對應的讀取器（reader）；`LeRobotDataset` API、項目（items）與訓練流程（training pipeline）則維持不變。
 
 - **從 Hub 或 HF Storage Buckets 直接訓練讓 GPU 不再空等資料。** 隨機影格（random frames）會就地讀取，且只讀取每個批次（batch）所需的位元組（bytes），因此每個批次都是全域洗牌（global shuffle），且無需先下載任何資料。
 - **轉換成本約等於複製檔案。** 影片不會重新編碼（re-encoded），因此項目（items）與來源位元完全相同（bit-identical）。DROID 可在 34 分鐘內完成轉換。
@@ -357,7 +357,7 @@ pip install "lerobot-lancedb"
 lerobot-lance-convert --repo-id lerobot/pusht --out ./pusht-lance  # 或 --root <本機資料集目錄>
 ```
 
-載入時使用相同的類（class）：
+載入時使用相同的類別（class）：
 
 ```python
 from lerobot.datasets import LeRobotDataset

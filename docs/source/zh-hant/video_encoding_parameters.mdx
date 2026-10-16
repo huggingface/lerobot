@@ -2,7 +2,7 @@
 
 當啟用影片儲存（video storage）時，LeRobot 會將每個相機串流（camera stream）儲存為 **MP4** 檔案，而不是為每個時間步（timestep）儲存一個影像檔案。影片編碼（video encoding）會跨時間進行壓縮，相較於一堆 PNG，通常能縮減資料集（dataset）大小與 I/O，同時保留 MP4 這種每個播放器與載入器都懂的格式。
 
-將影格編碼（encoding frames）為 MP4 是一整套完整的 FFmpeg 管線（pipeline）：編碼器（encoder）選擇、像素格式（pixel format）、GOP/關鍵影格（keyframes）、品質與速度的取捨，以及選用的額外編碼器旗標（extra encoder flags）。這些旋鈕大多可由使用者透過 `rgb_encoder` 調整，這是一個透過 PyAV 傳入的巢狀（nested） `RGBEncoderConfig`（`lerobot.configs.video.RGBEncoderConfig`）。
+將影格編碼（encoding frames）為 MP4 是一整套完整的 FFmpeg 管線（pipeline）：編碼器（encoder）選擇、像素格式（pixel format）、GOP/關鍵影格（keyframes）、品質與速度的取捨，以及可選的額外編碼器旗標（extra encoder flags）。這些旋鈕大多可由使用者透過 `rgb_encoder` 調整，這是一個透過 PyAV 傳入的巢狀（nested） `RGBEncoderConfig`（`lerobot.configs.video.RGBEncoderConfig`）。
 
 你可以在 CLI 上以 `--dataset.rgb_encoder.<field>` 設定這些參數（parameters，例如搭配 `lerobot-record` 或 `lerobot-rollout`）。同一個區塊（block）會套用到該次執行中的每個相機影片串流（camera video stream）。
 
@@ -179,7 +179,7 @@ lerobot-record \
 > 無論輸入深度的單位為何，`depth_min`、`depth_max` 與 `shift` 一律以**公尺**解讀。輸入會被自動偵測：整數陣列（integer arrays，例如直接來自 RealSense 的 `uint16` 毫米）會被視為毫米，浮點陣列（floating arrays）則視為公尺。
 > 挑選 `depth_min` / `depth_max` 以涵蓋感測器的實際工作範圍（working range） — 超出該範圍的量化階會飽和（saturate），可能在邊界處抹除細節。
 
-深度特徵（depth feature）在 `meta/info.json` 中會以 `"is_depth_map": true` 標記，且其量化器設定（quantizer settings，`video.depth_min`、`video.depth_max`、`video.shift`、`video.use_log`）會被保存，這正是讓深度能在載入時**反量化回實體單位（dequantized back to physical units）**的關鍵。
+深度特徵（depth feature）在 `meta/info.json` 中會以 `"is_depth_map": true` 標記，且其量化器設定（quantizer settings，`video.depth_min`、`video.depth_max`、`video.shift`、`video.use_log`）會被儲存，這正是讓深度能在載入時**反量化回實體單位（dequantized back to physical units）**的關鍵。
 
 ### 載入時的輸出單位（output unit at load time）[[output-unit-at-load-time]]
 
@@ -197,13 +197,13 @@ lerobot-train \
 | `depth_output_unit` | `str`        | `"mm"`          | 深度圖（depth maps）在載入時反量化（dequantization）所用的實體單位：`"mm"`（毫米）或 `"m"`（公尺）。 |
 
 > [!TIP]
-> 這純粹是解碼時（decode-time）的呈現選擇 — 它**不會**改變已儲存的影片或其元資料（metadata），因此同一個資料集（dataset）可被讀取為 `mm` 或 `m` 而無需重新編碼（re-encoding）。它對沒有深度相機（depth cameras）的資料集（dataset）沒有影響。
+> 這純粹是解碼時（decode-time）的呈現選擇 — 它**不會**改變已儲存的影片或其中繼資料（metadata），因此同一個資料集（dataset）可被讀取為 `mm` 或 `m` 而無需重新編碼（re-encoding）。它對沒有深度相機（depth cameras）的資料集（dataset）沒有影響。
 
 ---
 
-## 資料集元資料中的持久化（persistence in dataset metadata）[[persistence-in-dataset-metadata]]
+## 資料集中繼資料中的持久化（persistence in dataset metadata）[[persistence-in-dataset-metadata]]
 
-在某個影片串流（video stream）的第一個回合（episode）被編碼後，編碼器設定（encoder configuration）會**被保存到資料集元資料（dataset metadata）**（`meta/info.json`）中每個影片特徵（video feature）之下，與從檔案本身探測到的值並列。對於影片特徵 `observation.images.<camera>`，在 `info.json` 中的佈局為：
+在某個影片串流（video stream）的第一個回合（episode）被編碼後，編碼器設定（encoder configuration）會**被儲存到資料集中繼資料（dataset metadata）**（`meta/info.json`）中每個影片特徵（video feature）之下，與從檔案本身探測到的值並列。對於影片特徵 `observation.images.<camera>`，在 `info.json` 中的佈局為：
 
 ```json
 {

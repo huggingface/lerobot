@@ -32,7 +32,7 @@ pip install -e ".[dynamixel]"
 lerobot-find-port
 ```
 
-此命令執行後，當出現提示時，請從主臂（leader arm）或從臂（follower arm）拔除 USB 線並按下 Enter。輸出會顯示「The port of this MotorsBus is [port]」。這會識別出被拔除手臂的連接埠（port）。對另一支手臂重複相同步驟，以識別出兩個連接埠。
+此指令執行後，當出現提示時，請從主臂（leader arm）或從臂（follower arm）拔除 USB 線並按下 Enter。輸出會顯示「The port of this MotorsBus is [port]」。這會識別出被拔除手臂的連接埠（port）。對另一支手臂重複相同步驟，以識別出兩個連接埠。
 
 <hfoptions id="find_port">
 <hfoption id="Mac">
@@ -130,7 +130,7 @@ ls -l /dev/omx_follower /dev/omx_leader
 <hfoptions id="teleoperate">
 <hfoption id="Mac">
 
-### 不使用攝影機遙操作（teleoperate without camera）[[teleoperate-without-camera]]
+### 不使用相機遙操作（teleoperate without camera）[[teleoperate-without-camera]]
 
 ```bash
 lerobot-teleoperate \
@@ -144,9 +144,9 @@ lerobot-teleoperate \
 
 在遙操作（teleoperation）期間，主臂（leader arm）的動作（motions）會由從臂（follower arm）即時鏡像。OMX 已預先設定完成，遙操作可立即開始，無需任何校正（calibration）步驟。
 
-### 使用攝影機遙操作（teleoperate with camera）[[teleoperate-with-camera]]
+### 使用相機遙操作（teleoperate with camera）[[teleoperate-with-camera]]
 
-您也可以在遙操作（teleoperation）期間，透過為從臂（follower arm）提供攝影機設定（camera configuration）來啟用攝影機輸入（camera input）。
+您也可以在遙操作（teleoperation）期間，透過為從臂（follower arm）提供相機設定（camera configuration）來啟用相機輸入（camera input）。
 
 ```bash
 lerobot-teleoperate \
@@ -160,12 +160,12 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
-當啟用攝影機時，攝影機串流（camera stream）會即時顯示並與機器人狀態同步（synchronized with the robot state）。這種設定對於視覺監控（visual monitoring）很有用，之後也可重複用於示範錄製（demonstration recording）與模仿學習（imitation learning）。
+當啟用相機時，相機串流（camera stream）會即時顯示並與機器人狀態同步（synchronized with the robot state）。這種設定對於視覺監控（visual monitoring）很有用，之後也可重複用於示範錄製（demonstration recording）與模仿學習（imitation learning）。
 
 </hfoption>
 <hfoption id="Linux">
 
-### 不使用攝影機遙操作（teleoperate without camera）[[teleoperate-without-camera-1]]
+### 不使用相機遙操作（teleoperate without camera）[[teleoperate-without-camera-1]]
 
 ```bash
 lerobot-teleoperate \
@@ -179,9 +179,9 @@ lerobot-teleoperate \
 
 在遙操作（teleoperation）期間，主臂（leader arm）的動作（motions）會由從臂（follower arm）即時鏡像。OMX 已預先設定完成，遙操作可立即開始，無需任何校正（calibration）步驟。
 
-### 使用攝影機遙操作（teleoperate with camera）[[teleoperate-with-camera-1]]
+### 使用相機遙操作（teleoperate with camera）[[teleoperate-with-camera-1]]
 
-您也可以在遙操作（teleoperation）期間，透過為從臂（follower arm）提供攝影機設定（camera configuration）來啟用攝影機輸入（camera input）。
+您也可以在遙操作（teleoperation）期間，透過為從臂（follower arm）提供相機設定（camera configuration）來啟用相機輸入（camera input）。
 
 ```bash
 lerobot-teleoperate \
@@ -195,7 +195,7 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
-當啟用攝影機時，攝影機串流（camera stream）會即時顯示並與機器人狀態同步（synchronized with the robot state）。這種設定對於視覺監控（visual monitoring）很有用，之後也可重複用於示範錄製（demonstration recording）與模仿學習（imitation learning）。
+當啟用相機時，相機串流（camera stream）會即時顯示並與機器人狀態同步（synchronized with the robot state）。這種設定對於視覺監控（visual monitoring）很有用，之後也可重複用於示範錄製（demonstration recording）與模仿學習（imitation learning）。
 
 </hfoption>
 </hfoptions>

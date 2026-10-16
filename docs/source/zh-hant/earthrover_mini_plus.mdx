@@ -57,7 +57,7 @@ hypercorn main:app --reload
 
 SDK 提供：
 
-- 前後相機的即時視訊
+- 前後相機的即時影像
 
 > [!IMPORTANT]
 > SDK 必須先執行，您才能使用機器人。
@@ -66,7 +66,7 @@ SDK 提供：
 
 請依照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 
-除了基本安裝之外，請安裝含硬體依賴套件（hardware dependencies）的 EarthRover Mini：
+除了基本安裝之外，請安裝含硬體相依套件（hardware dependencies）的 EarthRover Mini：
 
 ```bash
 pip install -e ".[hardware]"
@@ -77,7 +77,7 @@ pip install -e ".[hardware]"
 機器人使用網際網路（internet）進行通訊：
 
 - **移動命令（movement commands）**：透過 SDK 送出
-- **相機視訊（camera video）**：從 SDK 接收
+- **相機影片（camera video）**：從 SDK 接收
 - **機器人資訊（robot info）**：來自 SDK 的電量（battery）、位置（location）、速度（speed）
 
 您不需要插上任何東西（plug anything in），一切都透過 SDK 運作。
@@ -182,7 +182,7 @@ echo $HF_USER
 
 ### 開始錄製（start recording）[[start-recording]]
 
-使用標準的錄製命令：
+使用標準的錄製指令：
 
 ```bash
 lerobot-record \
@@ -195,7 +195,7 @@ lerobot-record \
     --dataset.streaming_encoding=true \
     --dataset.encoder_threads=2 \
     --display_data=true
-# 選用：--dataset.rgb_encoder.vcodec=auto
+# 可選：--dataset.rgb_encoder.vcodec=auto
 ```
 
 將 `your_username/dataset_name` 替換為您的 Hugging Face 使用者名稱與資料集的名稱。

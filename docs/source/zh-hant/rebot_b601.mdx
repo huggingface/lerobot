@@ -114,7 +114,7 @@ ip -details link show can0
 
 _從臂零位（左）與主臂零位（右）。圖中為 DM 從臂；RS 從臂使用相同的關節配置。_
 
-後續命令請重複使用相同的 `--robot.id` 與 `--teleop.id`，以便 LeRobot 載入已儲存的校正。若校正已存在，命令會讓你選擇重複使用，或輸入 `c` 重新校正。
+後續指令請重複使用相同的 `--robot.id` 與 `--teleop.id`，以便 LeRobot 載入已儲存的校正。若校正已存在，命令會讓你選擇重複使用，或輸入 `c` 重新校正。
 
 ### 從臂[[follower]]
 
@@ -240,7 +240,7 @@ lerobot-teleoperate \
 
 ## 錄製資料集[[record-a-dataset]]
 
-錄製前請先測試遙操作。若要新增攝影機，請先使用下列命令識別：
+錄製前請先測試遙操作。若要新增相機，請先使用下列指令識別：
 
 ```bash
 lerobot-find-cameras opencv
@@ -248,7 +248,7 @@ lerobot-find-cameras opencv
 
 ### 單臂[[single-arm]]
 
-此範例使用一台 OpenCV 攝影機在本機錄製五個 DM 回合（episode）：
+此範例使用一台 OpenCV 相機在本機錄製五個 DM 回合（episode）：
 
 ```bash
 lerobot-record \
@@ -269,11 +269,11 @@ lerobot-record \
     --display_data=true
 ```
 
-若使用 RS，請將 `motor_family` 改為 `rs`，並將機器人連接埠改為原生 CAN 通道。若只測試馬達，請移除攝影機引數（argument）。
+若使用 RS，請將 `motor_family` 改為 `rs`，並將機器人連接埠改為原生 CAN 通道。若只測試馬達，請移除相機引數（argument）。
 
 ### 雙臂[[bimanual]]
 
-此 DM 範例會錄製一個共用的頂部攝影機，以及每支手臂各一個腕部攝影機。資料集的攝影機鍵（keys）為 `top`、`left_wrist` 與 `right_wrist`。
+此 DM 範例會錄製一個共用的頂部相機，以及每支手臂各一個腕部相機。資料集的相機鍵（keys）為 `top`、`left_wrist` 與 `right_wrist`。
 
 ```bash
 lerobot-record \
@@ -341,7 +341,7 @@ lerobot-record \
 - RS 使用 MIT 控制，以及力量受限的阻抗式夾爪，因為 MotorBridge 並未為 RobStride 提供 `force_pos`。視測得的夾爪運動而定，移動時命令扭矩上限為 `3.5` N·m，保持時為 `1.0` N·m。若回饋失效，LeRobot 會嘗試命令夾爪扭矩為零，然後停用該手臂。
 - `mit_kp`、`mit_kd` 與 `pos_vel_velocity` 可接受每個關節一個純量，或接受以關節為鍵的對應表。
 - `max_relative_target` 會限制命令與最新量測位置之間的差異。例如，`--robot.max_relative_target=5.0` 會將每個命令關節限制為五度變化。
-- `joint_limits` 可選擇性地以公開關節度數覆寫系列預設值。
+- `joint_limits` 可選擇以公開關節度數覆寫系列預設值。
 
 從臂馬達方向會依馬達系列在內部選擇。若某個遙操作關節方向錯誤，主臂的 `joint_directions` 仍可設定。
 

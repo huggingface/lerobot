@@ -68,11 +68,11 @@
     },
     "cameras.mdx": {
       "source_version": "1d6b1b0f2d6882088ef0a67b4443608a9e0c7780",
-      "title": "攝影機（Cameras）"
+      "title": "相機（Cameras）"
     },
     "cheat-sheet.mdx": {
       "source_version": "0531c95bf434bab4217642bb18986a6a54741663",
-      "title": "小抄（Cheat sheet）"
+      "title": "速查表（Cheat sheet）"
     },
     "damiao.mdx": {
       "source_version": "45388ab9b815b1b0821b9e25b45b63d20091bb6d",
@@ -175,7 +175,7 @@
     },
     "integrate_hardware.mdx": {
       "source_version": "ffd744b43c38f352c0c8b69201a77df56610609a",
-      "title": "自備硬體（Bring Your Own Hardware）"
+      "title": "整合自己的硬體（Bring Your Own Hardware）"
     },
     "introduction_processors.mdx": {
       "source_version": "f3e63e3c6d7965388573b93838294c28f13aef34",
@@ -191,7 +191,7 @@
     },
     "language_and_recipes.mdx": {
       "source_version": "06a6b2c586dc3f2f5a0161fbd79c85c1e11e80d8",
-      "title": "語言欄位與範例（Language Columns and Recipes）"
+      "title": "語言欄位與配方（Language Columns and Recipes）"
     },
     "lawam.mdx": {
       "source_version": "23a7a4a66d68334e972942d472ed0f5faeabbd3a",
@@ -290,7 +290,7 @@
     },
     "rename_map.mdx": {
       "source_version": "16ee6344a8d7320236cb444332dd9b3c7e507808",
-      "title": "使用重新命名映射表與空攝影機（Using Rename Map and Empty Cameras）"
+      "title": "使用重新命名映射表與空相機（Using Rename Map and Empty Cameras）"
     },
     "robocasa.mdx": {
       "source_version": "2a3ddb39c59f7519672f83df96fcc8d3078e4e49",

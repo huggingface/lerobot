@@ -73,7 +73,7 @@ python -m lerobot.async_inference.robot_client \
 ## 非同步 vs. 同步推論（async vs. synchronous inference）[[async-vs-synchronous-inference]]
 
 同步推論（synchronous inference）仰賴交錯進行動作（action）區塊預測與動作執行。這本質上會導致*閒置影格（frame）*，也就是機器人閒置等待策略（policy）輸出（一個新動作區塊）的影格。
-接著，推論（inference）會受到明顯的即時延遲所困擾，機器人會因為缺乏可用動作（action）而乾脆停止動作。
+接著，推論（inference）會受到明顯的即延遲遲所困擾，機器人會因為缺乏可用動作（action）而乾脆停止動作。
 隨著機器人模型（model）的規模增大，這個問題有變得更嚴重的風險。
 
 <p align="center">
@@ -219,7 +219,7 @@ if client.start():
     except KeyboardInterrupt:
         client.stop()
         action_receiver_thread.join()
-        # （選擇性地）繪製動作佇列大小
+        # （可選）繪製動作佇列大小
         visualize_action_queue_size(client.action_queue_size)
 ```
 <!-- prettier-ignore-end -->

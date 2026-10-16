@@ -26,7 +26,7 @@
 
 本教學不限定於特定機器人：我們會帶您了解可適用於任何支援平台的命令和 API 程式碼範例。
 
-在資料收集（data collection）過程中，您將使用「遙操作（teloperation）」裝置，例如領導臂（leader arm）或鍵盤來遙操作（teleoperate）機器人並記錄其運動軌跡（motion trajectories）。
+在資料收集（data collection）過程中，您將使用「遙操作（teloperation）」裝置，例如主臂（leader arm）或鍵盤來遙操作（teleoperate）機器人並記錄其運動軌跡（motion trajectories）。
 
 一旦收集到足夠的軌跡（trajectories），您將訓練一個神經網路（train a neural network）來模仿（imitate）這些軌跡，並部署（deployment）訓練好的模型（trained model ），讓您的機器人能夠自主執行任務（task）。
 
@@ -34,7 +34,7 @@
 
 <Tip>
 
-想快速取得適合您設定的正確命令嗎？[快速開始 notebook（quickstart notebook）](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb) 讓您設定一次機器人，就能產生下方所有可直接貼上的命令。
+想快速取得適合您設定的正確指令嗎？[快速開始 notebook（quickstart notebook）](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb) 讓您設定一次機器人，就能產生下方所有可直接貼上的命令。
 
 </Tip>
 
@@ -44,7 +44,7 @@
 
 ## 遙操作（teleoperate）[[teleoperate]]
 
-在此範例中，我們將示範如何遙操作（teleoperation） SO101 機器人。每個命令都附有對應的 API 範例。
+在此範例中，我們將示範如何遙操作（teleoperation） SO101 機器人。每個指令都附有對應的 API 範例。
 
 請注意，與機器人關聯的 `id` 用於儲存校正檔案（calibration file）。在遙操作（teleoperation）、錄製（recording）和評估（evaluating）使用相同設定時，務必使用相同的 `id`。
 
@@ -96,13 +96,13 @@ while True:
 1. 識別任何缺少的校正（identify any missing calibrations），並啟動校正程序。
 2. 連接機器人和遙操作裝置（teleop device），並開始遙操作。
 
-## 攝影機（cameras）[[cameras]]
+## 相機（cameras）[[cameras]]
 
-要將攝影機加入您的設定，請參照此[指南](./cameras)。
+要將相機加入您的設定，請參照此[指南](./cameras)。
 
-## 搭配攝影機進行遙操作（teleoperate with cameras）[[teleoperate-with-cameras]]
+## 搭配相機進行遙操作（teleoperate with cameras）[[teleoperate-with-cameras]]
 
-使用 `rerun`，您可以在遙操作（teleoperate）的同時視覺化攝影機畫面和關節位置（joint positions）。在此範例中，我們使用的是 Koch 手臂。
+使用 `rerun`，您可以在遙操作（teleoperate）的同時視覺化相機畫面和關節位置（joint positions）。在此範例中，我們使用的是 Koch 手臂。
 
 <hfoptions id="teleoperate_koch_camera">
 <hfoption id="Command">
@@ -174,9 +174,9 @@ while True:
 
 熟悉遙操作（teleoperation）後，您就可以錄製（record）您的第一個資料集（dataset）。
 
-我們使用 Hugging Face Hub 功能來上傳您的資料集（dataset）。如果您之前未使用過 Hub，請確保您可以使用具有寫入權限的令牌（token）登入 CLI，此 token 可從 [Hugging Face 設定](https://huggingface.co/settings/tokens)頁面產生。
+我們使用 Hugging Face Hub 功能來上傳您的資料集（dataset）。如果您之前未使用過 Hub，請確保您可以使用具有寫入權限的存取權杖（access token）登入 CLI，此 token 可從 [Hugging Face 設定](https://huggingface.co/settings/tokens)頁面產生。
 
-執行以下命令將您的令牌（token）加入 CLI：
+執行以下指令將您的存取權杖（access token）加入 CLI：
 
 ```bash
 hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
@@ -189,7 +189,7 @@ HF_USER=$(NO_COLOR=1 hf auth whoami | awk -F': *' 'NR==1 {print $2}')
 echo $HF_USER
 ```
 
-現在您可以錄製資料集（record a dataset）了。要錄製 5 個回合（episode）並將資料集上傳到 Hub，請根據您的機器人調整下方程式碼，然後執行命令或 API 範例。
+現在您可以錄製資料集（record a dataset）了。要錄製 5 個回合（episode）並將資料集上傳到 Hub，請根據您的機器人調整下方程式碼，然後執行指令或 API 範例。
 
 <hfoptions id="record">
 <hfoption id="Command">
@@ -208,7 +208,7 @@ lerobot-record \
     --dataset.single_task="Grab the black cube" \
     --dataset.streaming_encoding=true \
     --dataset.encoder_threads=2
-# 選用：--dataset.rgb_encoder.vcodec=auto
+# 可選：--dataset.rgb_encoder.vcodec=auto
 ```
 </hfoption>
 <hfoption id="API example">
@@ -234,7 +234,7 @@ RESET_TIME_SEC = 10
 TASK_DESCRIPTION = "My task description"
 
 def main():
-    # 建立機器人配置
+    # 建立機器人設定
     robot_config = SO101FollowerConfig(
         port="/dev/tty.usbmodem5AB90687491",
         id="my_follower_arm",
@@ -343,7 +343,7 @@ if __name__ == "__main__":
 
 #### 資料集上傳（dataset upload）[[dataset-upload]]
 
-在本機端，您的資料集（dataset）儲存在此資料夾中：`~/.cache/huggingface/lerobot/{repo-id}`。資料錄製（data recording）結束後，您的資料集將被上傳到您的 Hugging Face 頁面（例如 `https://huggingface.co/datasets/${HF_USER}/record-test`），您可以執行以下命令取得該連結：
+在本機端，您的資料集（dataset）儲存在此資料夾中：`~/.cache/huggingface/lerobot/{repo-id}`。資料錄製（data recording）結束後，您的資料集將被上傳到您的 Hugging Face 頁面（例如 `https://huggingface.co/datasets/${HF_USER}/record-test`），您可以執行以下指令取得該連結：
 
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/record-test
@@ -372,7 +372,7 @@ hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-t
 ##### 2. 檢查點的建立與接續（checkpointing and resuming）[[2-checkpointing-and-resuming]]
 
 - 錄製（recording）過程中會自動建立檢查點（checkpoints）。
-- 如果發生問題，或您想在同一個資料集（dataset）中錄製更多回合（record additional episodes），可以使用 `--resume=true` 重新執行相同命令來接續（resume）錄製。續錄錄製時，`--dataset.num_episodes` 必須設定為**額外要錄製的回合數（number of additional episodes to be recorded）**，而不是資料集中的目標總回合數（targeted total number of episodes）！請確保您也設定了 `--dataset.root="local_path"`，這是儲存資料集新部分的本機路徑（local path），且是接續（resume）錄製所需的。
+- 如果發生問題，或您想在同一個資料集（dataset）中錄製更多回合（record additional episodes），可以使用 `--resume=true` 重新執行相同指令來接續（resume）錄製。續錄錄製時，`--dataset.num_episodes` 必須設定為**額外要錄製的回合數（number of additional episodes to be recorded）**，而不是資料集中的目標總回合數（targeted total number of episodes）！請確保您也設定了 `--dataset.root="local_path"`，這是儲存資料集新部分的本機路徑（local path），且是接續（resume）錄製所需的。
 - 若要從頭開始錄製（recording from scratch），請**手動刪除（manually delete）**資料集目錄（dataset directory）。
 
 ##### 3. 錄製參數（recording parameters）[[3-recording-parameters]]
@@ -404,9 +404,9 @@ hf upload ${HF_USER}/record-test ~/.cache/huggingface/lerobot/{repo-id} --repo-t
 
 #### 收集資料的技巧（tips for gathering data）[[tips-for-gathering-data]]
 
-熟悉資料錄製（data recording）後，您可以建立更大的資料集（dataset）進行訓練（training）。一個好的入門任務（starting task）是在不同位置抓取物體並放入箱中。我們建議至少錄製 50 個回合（episodes），每個位置 10 個回合。保持攝影機固定，並在整個錄製過程中維持一致的抓取行為。同時確保您操作的物體在攝影機畫面中可見。一個好的經驗法則是，您應該能夠僅透過觀看攝影機影像就能自行完成任務。
+熟悉資料錄製（data recording）後，您可以建立更大的資料集（dataset）進行訓練（training）。一個好的入門任務（starting task）是在不同位置抓取物體並放入箱中。我們建議至少錄製 50 個回合（episodes），每個位置 10 個回合。保持相機固定，並在整個錄製過程中維持一致的抓取行為。同時確保您操作的物體在相機畫面中可見。一個好的經驗法則是，您應該能夠僅透過觀看相機影像就能自行完成任務。
 
-在接下來的章節中，您將訓練（training）您的神經網路（neural network）。在達到可靠的抓取效能（reliable grasping performance）後，您可以開始在資料收集中引入更多變化，例如增加抓取位置、不同的抓取技巧，以及改變攝影機位置。
+在接下來的章節中，您將訓練（training）您的神經網路（neural network）。在達到可靠的抓取效能（reliable grasping performance）後，您可以開始在資料收集中引入更多變化，例如增加抓取位置、不同的抓取技巧，以及改變相機位置。
 
 避免太快引入過多變化，因為這可能會影響您的結果。
 
@@ -431,7 +431,7 @@ Cadence summary — whole run, 2 episodes · target 30 Hz (33.3 ms budget per ti
   pacing headroom: 15.1 ms slept per tick on average (max 16.7 ms) — near zero means the loop is saturated
 ```
 
-在您使用該資料集（dataset）進行訓練之前，這份報告值得一讀。影格的時間戳記（frame’s timestamp）是從其索引推導而來，因此一個以 25 Hz 執行的工作階段，仍會產生一個*聲稱*為 30 的資料集——錄下來的動作單純就是比現實更快。在上面的例子中，`observe` 佔了迴圈工作量的 74%，而其 `worst` 為 40 ms，預算卻只有 33.3 ms：正是攝影機（camera）導致那 16 個 tick 超支。**步調餘裕（pacing headroom）**接近零，代表已經沒有多餘空間可以吸收一次緩慢的 tick。
+在您使用該資料集（dataset）進行訓練之前，這份報告值得一讀。影格的時間戳記（frame’s timestamp）是從其索引推導而來，因此一個以 25 Hz 執行的工作階段，仍會產生一個*聲稱*為 30 的資料集——錄下來的動作單純就是比現實更快。在上面的例子中，`observe` 佔了迴圈工作量的 74%，而其 `worst` 為 40 ms，預算卻只有 33.3 ms：正是相機（camera）導致那 16 個 tick 超支。**步調餘裕（pacing headroom）**接近零，代表已經沒有多餘空間可以吸收一次緩慢的 tick。
 
 回合（episode）之間的重置階段（reset phases）以相同方式調節步調，但刻意不計入這些數字，因為它們不會錄製任何內容。`lerobot-teleoperate` 與 `lerobot-replay` 也以相同方式回報，而 `lerobot-rollout` 則會額外加入 [節奏回報（Cadence Reporting）](./inference#cadence-reporting) 中所述的插值專屬（interpolation-specific）資訊列。
 
@@ -441,7 +441,7 @@ Cadence summary — whole run, 2 episodes · target 30 Hz (33.3 ms budget per ti
 
 ## 視覺化資料集（visualize a dataset）[[visualize-a-dataset]]
 
-您的資料集（dataset）預設會上傳到 Hub（除非您傳入 `--dataset.push_to_hub=False`），因此您可以直接在 [LeRobot 資料集視覺化工具](https://huggingface.co/spaces/lerobot/visualize_dataset) 中開啟它：在其首頁輸入您的儲存庫 ID，或使用以下命令印出的連結直接前往第一個回合（episode）：
+您的資料集（dataset）預設會上傳到 Hub（除非您傳入 `--dataset.push_to_hub=False`），因此您可以直接在 [LeRobot 資料集視覺化工具](https://huggingface.co/spaces/lerobot/visualize_dataset) 中開啟它：在其首頁輸入您的儲存庫 ID，或使用以下指令印出的連結直接前往第一個回合（episode）：
 
 ```bash
 echo "https://huggingface.co/spaces/lerobot/visualize_dataset?path=/${HF_USER}/record-test/episode_0"
@@ -453,7 +453,7 @@ echo "https://huggingface.co/spaces/lerobot/visualize_dataset?path=/${HF_USER}/r
 
 一個實用的功能是 `replay` 函式，它允許您重播（replay）任何已錄製（recorded）的回合（episode）或任何現有資料集（dataset）中的回合。此功能可幫助您測試機器人動作（actions）的可重複性，並評估在相同型號機器人之間的可遷移性（transferability）。
 
-您可以使用以下命令或 API 範例在機器人上重播（replay）第一個回合（episode）：
+您可以使用以下指令或 API 範例在機器人上重播（replay）第一個回合（episode）：
 
 <hfoptions id="replay">
 <hfoption id="Command">
@@ -509,7 +509,7 @@ robot.disconnect()
 
 ## 訓練策略（train a policy）[[train-a-policy]]
 
-要訓練一個策略（train a policy）來控制您的機器人，請使用 [`lerobot-train`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_train.py) 腳本。需要幾個必要引數（arguments）。以下是一個範例命令：
+要訓練一個策略（train a policy）來控制您的機器人，請使用 [`lerobot-train`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/scripts/lerobot_train.py) 腳本。需要幾個必要引數（arguments）。以下是一個範例指令：
 
 ```bash
 lerobot-train \
@@ -525,13 +525,13 @@ lerobot-train \
 讓我們說明這個指令：
 
 1. 我們透過 `--dataset.repo_id=${HF_USER}/record-test` 提供了稍早錄製的資料集（dataset）作為引數（argument）。
-2. 我們透過 `policy.type=act` 提供了策略（policy）。這會從 [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py) 載入設定。重要的是，此策略會自動適配您機器人的馬達狀態（motor states）、馬達動作（motor actions）和攝影機（例如 `laptop` 和 `phone`），這些資訊已儲存在您的資料集（dataset）中。
+2. 我們透過 `policy.type=act` 提供了策略（policy）。這會從 [`configuration_act.py`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/act/configuration_act.py) 載入設定。重要的是，此策略會自動適配您機器人的馬達狀態（motor states）、馬達動作（motor actions）和相機（例如 `laptop` 和 `phone`），這些資訊已儲存在您的資料集（dataset）中。
 3. 我們提供了 `policy.device=cuda`，因為我們在 Nvidia GPU 上訓練（training），但您可以使用 `policy.device=mps` 在 Apple silicon 上訓練。
-4. 我們提供了 `wandb.enable=true` 以使用 [Weights and Biases](https://docs.wandb.ai/quickstart) 來視覺化訓練圖表（training plots）。這是選用的，但如果您要使用，請確保已執行 `wandb login` 並完成登入。
+4. 我們提供了 `wandb.enable=true` 以使用 [Weights and Biases](https://docs.wandb.ai/quickstart) 來視覺化訓練圖表（training plots）。這是可選的，但如果您要使用，請確保已執行 `wandb login` 並完成登入。
 
 訓練（training）應需要數小時。您會在 `outputs/train/act_so101_test/checkpoints` 中找到檢查點（checkpoints）。
 
-要從檢查點繼續訓練（resume training from a checkpoint），以下是從 `act_so101_test` 策略（policy）的 `last` 檢查點繼續的範例命令：
+要從檢查點繼續訓練（resume training from a checkpoint），以下是從 `act_so101_test` 策略（policy）的 `last` 檢查點繼續的範例指令：
 
 ```bash
 lerobot-train \
@@ -580,11 +580,11 @@ hf jobs cancel <job-id>
 
 預設情況下，Job 的實際執行時間上限為 `2d`（48 小時）。您可以使用 HF Jobs 的時間字串覆寫它，例如 `--job.timeout=4h` 以更快失敗，或 `--job.timeout=7d` 以進行較長的執行。
 
-> **注意：** 模型儲存庫（model repo）會事先建立（它保存了 Job 執行所依據的暫存訓練配置）。如果某次執行在模型推送前失敗，該儲存庫會留在 Hub 上供您檢查；它不會自動刪除，因此重複失敗可能會留下空的儲存庫。您可以使用 `hf repo delete <repo-id>` 移除它。
+> **注意：** 模型儲存庫（model repo）會事先建立（它儲存了 Job 執行所依據的暫存訓練設定）。如果某次執行在模型推送前失敗，該儲存庫會留在 Hub 上供您檢查；它不會自動刪除，因此重複失敗可能會留下空的儲存庫。您可以使用 `hf repo delete <repo-id>` 移除它。
 
 **先決條件（prerequisites）：** 提交前請執行 `hf auth login`。若要整合 Weights & Biases，請執行 `wandb login` 或在您的機器上設定 `WANDB_API_KEY`；該金鑰會自動轉發給 Job。
 
-**接續特定 job（resuming on a job）。** 在接續命令中加上 `--job.target` 會在雲端執行接續；同一個命令在本機或遠端皆可運作。檢查點儲存庫（checkpoint repo）是唯一的真實來源（source of truth），新的檢查點會在同一個儲存庫中延續其脈絡：
+**接續特定 job（resuming on a job）。** 在接續指令中加上 `--job.target` 會在雲端執行接續；同一個命令在本機或遠端皆可運作。檢查點儲存庫（checkpoint repo）是唯一的真實來源（source of truth），新的檢查點會在同一個儲存庫中延續其脈絡：
 
 ```bash
 # 在 Job 上接續一個 Hub 執行（其檢查點已在 Hub 上）
@@ -598,11 +598,11 @@ lerobot-train \
   --job.target=a10g-small
 ```
 
-Job 設定來自目前的命令，因此請視需要覆寫 `--job.target`、`--job.timeout` 等；若要讓接續後的執行本身之後也能被接續，請保留 `--save_checkpoint_to_hub=true`。
+Job 設定來自目前的指令，因此請視需要覆寫 `--job.target`、`--job.timeout` 等；若要讓接續後的執行本身之後也能被接續，請保留 `--save_checkpoint_to_hub=true`。
 
 #### 上傳策略的檢查點（upload policy checkpoints）[[upload-policy-checkpoints]]
 
-訓練（training）完成後，使用以下命令上傳最新的檢查點（checkpoint）：
+訓練（training）完成後，使用以下指令上傳最新的檢查點（checkpoint）：
 
 ```bash
 hf upload ${HF_USER}/act_so101_test \
