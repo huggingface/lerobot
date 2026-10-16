@@ -28,6 +28,7 @@ from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .configuration_keyboard import (
     KeyboardEndEffectorTeleopConfig,
+    KeyboardMicroDuckTeleopConfig,
     KeyboardRoverTeleopConfig,
     KeyboardTeleopConfig,
 )
@@ -435,4 +436,107 @@ class KeyboardRoverTeleop(KeyboardTeleop):
         return {
             "linear_velocity": linear_velocity,
             "angular_velocity": angular_velocity,
+        }
+
+
+class KeyboardMicroDuckTeleop(KeyboardTeleop):
+    """
+    Keyboard teleoperator for the Pollen Robotics Microduck.
+
+    Emits the ``microduck`` robot's action space: a body twist (``vx``, ``vy``, ``vyaw``) and a head pose
+    (``neck_pitch.pos``, ``head_pitch.pos``, ``head_yaw.pos``, ``head_roll.pos``).
+
+    Keyboard Controls:
+        Body (held):
+            - W / S: Walk forward / backward
+            - A / D: Strafe left / right
+            - Z / X: Turn left / right
+            - Space: Stop
+        Head (held):
+            - I / K: Pitch down / up
+            - J / L: Yaw left / right
+            - U / O: Roll left / right
+            - Y / H: Neck pitch down / up
+            - C: Recenter the head
+        Speed:
+            - + / -: Next / previous speed preset
+    """
+
+    config_class = KeyboardMicroDuckTeleopConfig
+    name = "keyboard_microduck"
+
+    # key -> (head joint, direction)
+    HEAD_KEYS = {
+        "i": ("head_pitch", 1.0),
+        "k": ("head_pitch", -1.0),
+        "j": ("head_yaw", 1.0),
+        "l": ("head_yaw", -1.0),
+        "u": ("head_roll", -1.0),
+        "o": ("head_roll", 1.0),
+        "y": ("neck_pitch", 1.0),
+        "h": ("neck_pitch", -1.0),
+    }
+
+    def __init__(self, config: KeyboardMicroDuckTeleopConfig):
+        super().__init__(config)
+        self.config = config
+        self.speed_index = len(config.speed_scales) - 1
+        self.head = dict.fromkeys(("neck_pitch", "head_pitch", "head_yaw", "head_roll"), 0.0)
+        self._last_t: float | None = None
+
+    @property
+    def action_features(self) -> dict:
+        return {
+            "vx": float,
+            "vy": float,
+            "vyaw": float,
+            **{f"{joint}.pos": float for joint in self.head},
+        }
+
+    def _drain_pressed_keys(self):
+        # Speed presets step once per key press, not once per loop iteration while held.
+        while not self.event_queue.empty():
+            key, is_pressed = self.event_queue.get_nowait()
+            if is_pressed and not self.current_pressed.get(key, False):
+                if key in ("+", "="):
+                    self.speed_index = min(self.speed_index + 1, len(self.config.speed_scales) - 1)
+                    logging.info(f"Microduck speed scale: {self.config.speed_scales[self.speed_index]}")
+                elif key == "-":
+                    self.speed_index = max(self.speed_index - 1, 0)
+                    logging.info(f"Microduck speed scale: {self.config.speed_scales[self.speed_index]}")
+            if is_pressed:
+                self.current_pressed[key] = True
+            else:
+                self.current_pressed.pop(key, None)
+
+    @check_if_not_connected
+    def get_action(self) -> RobotAction:
+        before_read_t = time.perf_counter()
+        self._drain_pressed_keys()
+        pressed = {key for key, is_pressed in self.current_pressed.items() if is_pressed}
+
+        now = time.perf_counter()
+        dt = 0.0 if self._last_t is None else min(now - self._last_t, 0.1)
+        self._last_t = now
+
+        scale = self.config.speed_scales[self.speed_index]
+        vx = self.config.vx * scale * (("w" in pressed) - ("s" in pressed))
+        vy = self.config.vy * scale * (("a" in pressed) - ("d" in pressed))
+        vyaw = self.config.vyaw * scale * (("z" in pressed) - ("x" in pressed))
+        if keyboard is not None and keyboard.Key.space in pressed:
+            vx = vy = vyaw = 0.0
+
+        if "c" in pressed:
+            self.head = dict.fromkeys(self.head, 0.0)
+        for key, (joint, direction) in self.HEAD_KEYS.items():
+            if key in pressed:
+                target = self.head[joint] + direction * self.config.head_rate * dt
+                self.head[joint] = max(-self.config.max_head, min(self.config.max_head, target))
+
+        self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
+        return {
+            "vx": vx,
+            "vy": vy,
+            "vyaw": vyaw,
+            **{f"{joint}.pos": value for joint, value in self.head.items()},
         }
