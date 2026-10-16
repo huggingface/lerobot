@@ -189,6 +189,8 @@ openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]
+# LimX's public TRON2 runtime; pure Python, talks to the robot-side motion controller.
+limx_tron2 = ["tron2-env>=0.1.0,<0.2.0"]
 unitree_g1 = [
     # "unitree-sdk2==1.0.1",
     "lerobot[pyzmq-dep]",
