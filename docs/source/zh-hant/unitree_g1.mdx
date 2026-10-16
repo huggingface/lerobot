@@ -6,7 +6,7 @@
   style={{ width: "100%" }}
 />
 
-LeRobot 現已支援 Unitree G1 人形機器人！你可以進行遙操作（teleoperate）、訓練移動操作策略（train locomanipulation policies）、在模擬中測試（test in sim）等。29 與 23 自由度的變體皆受支援。
+LeRobot 現在支援 Unitree G1 人形機器人！你可以進行遙操作、訓練移動操作（locomanipulation）策略、在模擬中測試等。29 與 23 自由度（DoF）兩種版本都有支援。
 
 ---
 
@@ -14,7 +14,7 @@ LeRobot 現已支援 Unitree G1 人形機器人！你可以進行遙操作（tel
 
 ### 安裝 Unitree SDK[[install-the-unitree-sdk]]
 
-請依照 [unitree_sdk2_python 安裝指南](https://github.com/unitreerobotics/unitree_sdk2_python#installation)操作。已在 `unitree_sdk2py==1.0.1` 與 `cyclonedds==0.10.2` 上測試過：
+請依照 [unitree_sdk2_python 安裝指南](https://github.com/unitreerobotics/unitree_sdk2_python#installation)操作。已使用 `unitree_sdk2py==1.0.1` 與 `cyclonedds==0.10.2` 測試過：
 
 ```bash
 conda create -y -n lerobot python=3.12
@@ -36,13 +36,13 @@ pip install -e '.[unitree_g1]'
 ```
 
 <Tip>
-  目前，pinocchio 必須從 conda-forge 安裝（而非 pip），才能包含手臂 IK 所需的
-  CasADi 綁定（bindings）。
+  目前 pinocchio 必須從 conda-forge 安裝（而不是 pip），才會包含手臂 IK 所需的
+  CasADi 綁定（binding）。
 </Tip>
 
-### 測試安裝[[test-the-installation-simulation]]
+### 測試安裝（模擬）[[test-the-installation-simulation]]
 
-模擬環境（simulation environment）有其自己的相依套件（dependencies）。請查看模擬環境相依套件（simulation environment dependencies）：[Unitree G1 Mujoco EnvHub](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。
+模擬環境有自己的相依套件，請參閱模擬環境的相依套件說明：[Unitree G1 Mujoco EnvHub](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。
 
 ```bash
 pip install mujoco loguru msgpack msgpack-numpy
@@ -59,14 +59,14 @@ lerobot-teleoperate \
   --robot.controller=GrootLocomotionController
 ```
 
-這會為 G1 啟動一個 [MuJoCo 模擬實例（sim instance）](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。你可以在啟動前將遊戲手把連接到你的機器，以便在模擬（simulation）中控制機器人的移動。我們透過 `--robot.controller` 同時支援 [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) 與 [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl)。
+這會為 G1 啟動一個 [MuJoCo 模擬實例](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。你可以在啟動前將遊戲手把接上電腦，以便在模擬中控制機器人的移動。我們透過 `--robot.controller` 同時支援 [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) 與 [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl)。
 
-- 按下 `9` 以釋放機器人（release the robot）
-- 按下 `7` / `8` 以增加 / 降低腰部高度（increase / decrease waist height）
+- 按 `9` 釋放機器人
+- 按 `7` / `8` 提高／降低腰部高度
 
 #### 選擇末端執行器[[choosing-the-end-effector]]
 
-`--robot.end_effector` 指定手臂所搭載的末端執行器（end effector）：`dex1` 代表平行夾爪（預設）、`dex3` 代表三指手，或 `dummy` 代表裸手腕。在模擬中，它會選擇 MuJoCo 模型，而該模型決定手指致動器以及場景帶有哪些相機——腕部相機安裝在末端執行器上，因此 `dummy` 只有 `head_camera`。
+`--robot.end_effector` 指定手臂所搭載的末端執行器（end effector）：`dex1` 為平行夾爪（預設），`dex3` 為三指手，`dummy` 則是沒有末端執行器的裸手腕。在模擬中，它會決定要使用哪個 MuJoCo 模型，進而決定手指的致動器，以及場景中有哪些相機；腕部相機安裝在末端執行器上，因此 `dummy` 只有 `head_camera`。
 
 ```bash
 lerobot-teleoperate \
@@ -77,11 +77,11 @@ lerobot-teleoperate \
   --robot.controller=GrootLocomotionController
 ```
 
-模擬會透過 ZMQ 在 `--robot.sim_camera_port`（預設為 5555）上發佈模型的相機影像，`--robot.cameras` 中的 `zmq` 相機會從該處讀取。改為傳入 `--robot.sim_publish_images=false` 以開啟 MuJoCo 的互動視窗：模擬只會渲染其相機或視窗，絕不會同時渲染兩者，因為離螢幕情境（offscreen contexts）屬於建立它們的執行緒，而非檢視器的執行緒。`--robot.sim_onscreen` 會直接指明該選擇，而不是交由相機決定；同時要求兩者會被拒絕；將它與 `--robot.sim_publish_images` 都設為 false 即可兩者都不渲染，這正是沒有顯示器的機器可以採用的做法。
+模擬會透過 ZMQ，在 `--robot.sim_camera_port`（預設為 5555）上發布模型的相機影像，`--robot.cameras` 中的 `zmq` 相機就是從這裡讀取。若改為傳入 `--robot.sim_publish_images=false`，則會開啟 MuJoCo 的互動視窗：模擬只會渲染相機或視窗其中之一，不會同時渲染兩者，因為離屏（offscreen）的渲染情境屬於建立它的執行緒，而不屬於檢視器的執行緒。`--robot.sim_onscreen` 可以直接指定這個選擇，而不是交由相機設定決定；同時要求兩者會被拒絕。將它與 `--robot.sim_publish_images` 都設為 false，就兩者都不渲染，這也是沒有顯示器的機器唯一能用的做法。
 
 ### 連接到實體機器人[[connect-to-the-physical-robot]]
 
-G1 的乙太網路（Ethernet）IP 固定為 `192.168.123.164`。你的機器必須在相同子網路（subnet）上具有靜態（static）IP：`192.168.123.x`，其中 `x ≠ 164`。
+G1 的乙太網路 IP 固定為 `192.168.123.164`。你的電腦必須在同一個子網路上設定靜態 IP：`192.168.123.x`，其中 `x ≠ 164`。
 
 ```bash
 # 將 'enp131s0' 替換為你的乙太網路介面名稱（以 `ip a` 查看）
@@ -90,7 +90,7 @@ sudo ip addr add 192.168.123.200/24 dev enp131s0
 sudo ip link set enp131s0 up
 ```
 
-### SSH 連入機器人[[ssh-into-the-robot]]
+### 以 SSH 連線到機器人[[ssh-into-the-robot]]
 
 ```bash
 ssh unitree@192.168.123.164
@@ -99,7 +99,7 @@ ssh unitree@192.168.123.164
 
 ### 透過乙太網路分享網際網路[[share-internet-via-ethernet]]
 
-G1 需要網際網路存取（internet access）才能複製（clone）repo 與安裝套件（install packages）。透過乙太網路（Ethernet）分享你筆電的連線：
+G1 需要網際網路才能 clone 儲存庫與安裝套件。請透過乙太網路分享你筆電的網路連線：
 
 **在你的筆電上：**
 
@@ -147,12 +147,12 @@ python -m pip install -e '.[unitree_g1]'
 
 <Tip>
   目前，pinocchio 必須從 conda-forge 安裝（而非 pip），才能包含手臂 IK 所需的
-  CasADi 綁定（bindings）。
+  CasADi 綁定。
 </Tip>
 
-### 可選：在機器人上啟用 WiFi[[optional-enable-wifi-on-the-robot]]
+### 在機器人上啟用 WiFi（可選）[[optional-enable-wifi-on-the-robot]]
 
-若要進行無線 SSH 存取，你可以在 G1 上啟用 WiFi（預設為封鎖）：
+若要以無線方式 SSH 連線，可以在 G1 上啟用 WiFi（預設為封鎖）：
 
 ```bash
 sudo rfkill unblock all
@@ -176,7 +176,7 @@ sudo nmcli connection up "YourNetwork"
 ip a show wlan0
 ```
 
-之後你就可以透過 WiFi 而非乙太網路進行 SSH：
+之後就可以改用 WiFi，而不是乙太網路進行 SSH 連線：
 
 ```bash
 ssh unitree@<ROBOT_WIFI_IP>
@@ -189,7 +189,7 @@ ssh unitree@<ROBOT_WIFI_IP>
 
 ### 執行機器人伺服器[[run-the-robot-server]]
 
-在機器人上（於 `~/lerobot`）：
+在機器人上（於 `~/lerobot` 目錄中）：
 
 ```bash
 cd ~/lerobot
@@ -198,9 +198,9 @@ python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 
 ### 執行移動策略[[run-the-locomotion-policy]]
 
-你可以從筆電透過乙太網路（Ethernet）、透過 WiFi（實驗性 experimental）或直接在機器人本身上執行遙操作用戶端（teleoperation client）。請留意你的網路可能引入的延遲（latency）。
+你可以從筆電透過乙太網路、透過 WiFi（實驗性），或直接在機器人上執行遙操作用戶端。請留意網路可能造成的延遲。
 
-**從你的筆電：**
+**在你的筆電上：**
 
 ```bash
 lerobot-teleoperate \
@@ -220,7 +220,7 @@ lerobot-teleoperate \
 
 ## 第 3 部分：使用 Homunculus 外骨骼進行移動操作[[part-3-loco-manipulation-with-the-homunculus-exoskeleton]]
 
-我們透過 Homunculus 外骨骼（Exoskeleton）提供移動操作（loco-manipulation）解決方案，這是一個用於全身控制（whole-body control）的開源 7 自由度外骨骼（7 DoF exoskeleton）。請至[這裡](https://github.com/nepyope/hmc_exo)查看。
+我們透過 Homunculus 外骨骼提供移動操作（loco-manipulation）的解決方案。這是一款用於全身控制的開源 7 自由度外骨骼，請到[這裡](https://github.com/nepyope/hmc_exo)查看。
 
 ### 校正[[calibrate]]
 
@@ -232,7 +232,7 @@ lerobot-calibrate \
   --teleop.id=exo
 ```
 
-校正（calibration）期間，讓每個關節走完其完整範圍（move each joint through its entire range）。擬合（fitting）完成後，將關節移動到中立位置（move the joint in a neutral position）並按下 `n` 以繼續。
+校正期間，請讓每個關節走完完整的活動範圍。擬合完成後，將關節移到中立位置，再按 `n` 繼續。
 
 ### 錄製資料集[[record-a-dataset]]
 
@@ -255,9 +255,9 @@ lerobot-record \
   --dataset.encoder_threads=2
 ```
 
-> **注意：** 若你只使用搖桿（joystick），請省略 `--teleop.left_arm_config.port` 與 `--teleop.right_arm_config.port`。
+> **注意：** 如果你只使用搖桿，請省略 `--teleop.left_arm_config.port` 與 `--teleop.right_arm_config.port`。
 
-範例資料集（example dataset）：[nepyope/unitree_box_move_blue_full](https://huggingface.co/datasets/nepyope/unitree_box_move_blue_full)
+範例資料集：[nepyope/unitree_box_move_blue_full](https://huggingface.co/datasets/nepyope/unitree_box_move_blue_full)
 
 ---
 
@@ -286,7 +286,7 @@ python src/lerobot/scripts/lerobot_train.py \
 
 ### 使用 RTC 進行推論[[inference-with-rtc]]
 
-訓練（training）完成後，我們建議使用推論時的 RTC （inference-time RTC）來部署策略（deploying policies）：
+訓練完成後，建議使用推論時的 RTC 部署策略：
 
 ```bash
 lerobot-rollout \
@@ -305,15 +305,15 @@ lerobot-rollout \
 
 ---
 
-## 第 5 部分：SONIC 全身控制[[part-5-sonic-whole-body-control-latent-token-policies]]
+## 第 5 部分：SONIC 全身控制（latent token 策略）[[part-5-sonic-whole-body-control-latent-token-policies]]
 
-LeRobot 現在將 NVIDIA 的 [SONIC](https://nvlabs.github.io/GEAR-SONIC/) 全身部署堆疊的**解碼器**部分移植為 `SonicWholeBodyController`。策略不再直接命令關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將該 token 加上近期的本體感覺歷史（proprioception history）映射為殘差動作（residual action），該動作經縮放後加到站立姿勢（standing pose）上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
+LeRobot 現在將 NVIDIA [SONIC](https://nvlabs.github.io/GEAR-SONIC/) 全身控制部署架構中的**解碼器**部分，移植為 `SonicWholeBodyController`。策略不再直接命令各個關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將這個 token 與近期的本體感覺（proprioception）歷史，對應成一個殘差動作，經過縮放後加到站立姿態上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
 
-該控制器會從 [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder) 載入其 ONNX 解碼器與所有部署常數（PD 增益、`default_angles`、`action_scale` 以及中性 token）。該儲存庫也隨附一個蒸餾後的低延遲解碼器，可透過控制器的 `policy_type="low_latency"` 參數選用（預設為 `"default"`）。
+控制器會從 [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder) 載入 ONNX 解碼器與所有部署常數（PD 增益、`default_angles`、`action_scale` 以及中性 token）。這個儲存庫也提供蒸餾過的低延遲解碼器，可透過控制器的 `policy_type="low_latency"` 引數選用（預設為 `"default"`）。
 
 ### 在模擬中測試[[test-in-simulation]]
 
-任何以 SONIC 動作 token 訓練、會輸出 token 的策略（例如 [`nepyope/sonic_walk`](https://huggingface.co/nepyope/sonic_walk)）都能驅動它：
+任何以 SONIC motion token 訓練、會輸出 token 的策略（例如 [`nepyope/sonic_walk`](https://huggingface.co/nepyope/sonic_walk)）都可以驅動它：
 
 ```bash
 lerobot-rollout \
@@ -328,9 +328,9 @@ lerobot-rollout \
 
 ### 在實體機器人上執行[[run-on-the-physical-robot]]
 
-在實體硬體上，請使用[非同步推論（async inference）](./async)來執行策略，而不是單一的 `lerobot-rollout` 迴圈。從筆電驅動的 rollout 會把網路放在控制迴圈中間：每個步驟都會因推論而阻塞，而只要有一次卡頓，就會讓機器人站立時所依賴的 50 Hz 平衡迴圈停滯。非同步推論將兩者分開——策略在你的 GPU 機器上執行，而機器人用戶端則在 G1 的 Jetson 上執行，因此 SONIC 控制器執行緒與 `rt/lowcmd` 都留在機載（onboard），只有 64 維 token 區塊（token chunks）會透過網路傳送。
+在實體硬體上，請以[非同步推論](./async)執行策略，而不是單一的 `lerobot-rollout` 迴圈。從筆電驅動的 rollout 會讓網路夾在控制迴圈中間：每一步都要等推論完成，只要卡一下，機器人站立時所依賴的 50 Hz 平衡迴圈就會停頓。非同步推論將兩者分開：策略在你的 GPU 機器上執行，機器人用戶端則在 G1 的 Jetson 上執行，因此 SONIC 控制器的執行緒與 `rt/lowcmd` 都留在機器人上，只有 64 維的 token 區塊會經過網路傳送。
 
-三個行程，並讓第 2 部分的機器人伺服器全程保持執行：
+共有三個行程，第 2 部分的機器人伺服器要全程保持執行：
 
 ```text
 GPU machine                     G1 (Jetson)
@@ -349,13 +349,13 @@ python -m lerobot.async_inference.policy_server \
   --fps=30
 ```
 
-在機器人上，啟動伺服器（橋接器 + 相機）：
+在機器人上啟動伺服器（橋接器 + 相機）：
 
 ```bash
 python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 ```
 
-接著，在機器人的第二個終端機中啟動用戶端。機器人端的所有通訊都是回送（loopback），因為橋接器執行於同一台機器上：
+接著在機器人上的第二個終端機中啟動用戶端。由於橋接器在同一台機器上執行，機器人端的所有通訊都走本機回送（loopback）：
 
 ```bash
 python -m lerobot.async_inference.robot_client \
@@ -375,20 +375,20 @@ python -m lerobot.async_inference.robot_client \
 
 有幾點請留意：
 
-- `--policy_device` 是*伺服器*載入策略所用的裝置——用戶端會在握手（handshake）期間傳送此資訊。
+- `--policy_device` 是*伺服器*載入策略時使用的裝置，用戶端會在交握時傳送這項資訊。
 - `--actions_per_chunk` 不得超過檢查點的區塊大小（`nepyope/sonic_walk` 為 50）。
-- 使用 `SonicWholeBodyController` 時，觀測狀態是 64 維 token echo，而不是 29 個關節位置，因此檢查點必須以相同的狀態進行訓練。
+- 使用 `SonicWholeBodyController` 時，觀測狀態是 64 維的 token 回傳值，而不是 29 個關節位置，因此檢查點必須以同樣的狀態訓練。
 
-連線時，機器人會先讓每個關節平順地移動到解碼器的 `default_angles`，之後控制器才會接管，因此最初的策略命令不會從連線時的姿勢猛然跳動。
+連線時，機器人會先讓每個關節平順地移動到解碼器的 `default_angles`，控制器才接手，因此最初的策略命令不會從連線時的姿態突然跳動。
 
 ---
 
 ## 其他資源[[additional-resources]]
 
-- [Unitree SDK 文件](https://github.com/unitreerobotics/unitree_sdk2_python)
+- [Unitree SDK 說明文件](https://github.com/unitreerobotics/unitree_sdk2_python)
 - [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl)
 - [Holosoma](https://github.com/amazon-far/holosoma)
-- [LeRobot 文件](https://github.com/huggingface/lerobot)
+- [LeRobot 說明文件](https://github.com/huggingface/lerobot)
 - [Unitree IL LeRobot](https://github.com/unitreerobotics/unitree_IL_lerobot)
 
 ---

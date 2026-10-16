@@ -12,11 +12,11 @@
 
 OMX 組裝指南：https://ai.robotis.com/omx/assembly_guide_omx.html
 
-OMX 機器人出廠時已預先設定好。馬達 ID、通訊參數（communication parameters）與關節偏移量（joint offsets）都已設定完成，因此在使用 LeRobot 前不需要額外的馬達設定（motor setup）或校正（calibration）。
+OMX 機器人出廠時就已經設定好。馬達 ID、通訊參數與關節偏移量都已完成設定，因此使用 LeRobot 之前，不需要再額外設定馬達或進行校正。
 
 ## 安裝 LeRobot 🤗[[install-lerobot]]
 
-若要安裝 LeRobot，請依照我們的[安裝指南（Installation Guide）](./installation)操作。
+若要安裝 LeRobot，請依照我們的[安裝指南](./installation)操作。
 
 除了這些說明之外，你還需要安裝 Dynamixel SDK：
 
@@ -26,13 +26,13 @@ pip install -e ".[dynamixel]"
 
 ## 連接機器人[[connect-the-robot]]
 
-若要找出每個匯流排伺服轉接器（bus servo adapter）的連接埠（port），請執行此腳本：
+若要找出每個匯流排伺服馬達轉接器的連接埠，請執行這個腳本：
 
 ```bash
 lerobot-find-port
 ```
 
-此指令執行後，當出現提示時，請從主臂（leader arm）或從臂（follower arm）拔除 USB 線並按下 Enter。輸出會顯示「The port of this MotorsBus is [port]」。這會識別出被拔除手臂的連接埠（port）。對另一支手臂重複相同步驟，以識別出兩個連接埠。
+執行這個指令後，依提示從主臂或從臂其中之一拔掉 USB 線，再按下 Enter。輸出會顯示「The port of this MotorsBus is [port]」，這就是被拔掉的那支手臂的連接埠。對另一支手臂重複相同步驟，就能找出兩個連接埠。
 
 <hfoptions id="find_port">
 <hfoption id="Mac">
@@ -50,17 +50,17 @@ The port of this MotorsBus is /dev/tty.usbmodem575E0032081
 Reconnect the USB cable.
 ```
 
-其中找到的連接埠（found port）為：`/dev/tty.usbmodem575E0032081`，對應到你的主臂（leader arm）或從臂（follower arm）。
+其中找到的連接埠為 `/dev/tty.usbmodem575E0032081`，對應到你的主臂或從臂。
 
 </hfoption>
 <hfoption id="Linux">
 
-在 Linux 上，我們強烈建議使用 udev 規則為 OMX 主臂（leader arm）與從臂（follower arm）指定持久且易讀的裝置名稱。這可避免當機器人被拔除（unplugged）、重新插上（replugged），或系統重新開機（rebooted）時，ttyACM0 和 ttyACM1 等裝置名稱發生變更的問題。
+在 Linux 上，強烈建議使用 udev 規則，為 OMX 主臂與從臂指定固定且容易辨識的裝置名稱。這樣可以避免在機器人拔除、重新插上或系統重新開機時，ttyACM0、ttyACM1 這類裝置名稱跟著改變的問題。
 
 #### 1. 找出你的裝置序號[[1-find-your-device-serial-numbers]]
 
-你應該已經使用 `lerobot-find-port` 取得主臂（leader）與從臂（follower）的連接埠編號（port numbers），例如 ../../ttyACM?。你可以使用 `ls -l /dev/serial/by-id/` 命令，將這些結果與序列號（serial numbers）進行對應。
-若要建立 udev 規則，你需要每個 OMX 裝置的唯一序列號（unique serial number）。最簡單的方式是列出以下路徑底下的裝置：
+你應該已經用 `lerobot-find-port` 取得主臂與從臂的連接埠編號，例如 ../../ttyACM?。你可以用 `ls -l /dev/serial/by-id/` 指令，將這些結果與序號對應起來。
+若要建立 udev 規則，你需要每個 OMX 裝置獨一無二的序號。最簡單的方式，是列出以下路徑底下的裝置：
 
 ```bash
 ls -l /dev/serial/by-id/
@@ -73,39 +73,39 @@ usb-ROBOTIS_OpenRB-150_228BDD7B503059384C2E3120FF0A2B19-if00 -> ../../ttyACM0
 usb-ROBOTIS_OpenRB-150_67E1ED68503059384C2E3120FF092234-if00 -> ../../ttyACM1
 ```
 
-在每一行中，序列號是位於 `usb-ROBOTIS_OpenRB-150_` 之後、`-if00` 之前的那一長串字串。
+每一行中，序號就是 `usb-ROBOTIS_OpenRB-150_` 之後、`-if00` 之前的那一長串字串。
 
-從臂序列號（follower serial）：`228BDD7B503059384C2E3120FF0A2B19`
+從臂序號：`228BDD7B503059384C2E3120FF0A2B19`
 
-主臂序列號（leader serial）：`67E1ED68503059384C2E3120FF092234`
+主臂序號：`67E1ED68503059384C2E3120FF092234`
 
 #### 2. 建立 udev 規則[[2-create-the-udev-rule]]
 
-建立一個新的 udev 規則檔案（ule file）：
+建立一個新的 udev 規則檔：
 
 ```bash
 sudo nano /etc/udev/rules.d/99-omx.rules
 ```
 
-貼上以下幾行，並將序列號（serial numbers）替換為你在上方找到的值：
+貼上以下內容，並將序號換成你在上面找到的值：
 
 ```bash
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{serial}=="228BDD7B503059384C2E3120FF0A2B19", SYMLINK+="omx_follower"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{serial}=="67E1ED68503059384C2E3120FF092234", SYMLINK+="omx_leader"
 ```
 
-儲存檔案並重新載入 udev 規則（rules）：
+儲存檔案，並重新載入 udev 規則：
 
 ```bash
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-現在將兩個裝置各拔除並重新插上（unplug and replug）一次。
+接著將兩個裝置各拔除再重新插上一次。
 
 #### 3. 驗證符號連結[[3-verify-the-symlinks]]
 
-檢查持久性的裝置名稱（persistent device names）是否存在：
+確認固定的裝置名稱已經存在：
 
 ```bash
 ls -l /dev/omx_follower /dev/omx_leader
@@ -118,14 +118,14 @@ ls -l /dev/omx_follower /dev/omx_leader
 /dev/omx_leader   -> ttyACM*
 ```
 
-這些名稱在重新開機（reboots）與重新連接（reconnections）後仍保持穩定。
+這些名稱在重新開機與重新連接之後都會保持不變。
 
 </hfoption>
 </hfoptions>
 
 ## 遙操作[[teleoperate]]
 
-在識別出正確的連接埠（ports）後，你可以直接使用主臂遙操作從臂（teleoperate the follower arm using the leader arm）。
+確認正確的連接埠之後，就可以直接用主臂遙操作從臂。
 
 <hfoptions id="teleoperate">
 <hfoption id="Mac">
@@ -142,11 +142,11 @@ lerobot-teleoperate \
   --teleop.id=omx_leader_arm
 ```
 
-在遙操作（teleoperation）期間，主臂（leader arm）的動作（motions）會由從臂（follower arm）即時鏡像。OMX 已預先設定完成，遙操作可立即開始，無需任何校正（calibration）步驟。
+遙操作期間，從臂會即時跟著主臂做出相同的動作。由於 OMX 已預先設定好，不需要任何校正步驟，就能立刻開始遙操作。
 
 ### 使用相機遙操作[[teleoperate-with-camera]]
 
-你也可以在遙操作（teleoperation）期間，透過為從臂（follower arm）提供相機設定（camera configuration）來啟用相機輸入（camera input）。
+你也可以為從臂提供相機設定，在遙操作期間啟用相機輸入。
 
 ```bash
 lerobot-teleoperate \
@@ -160,7 +160,7 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
-當啟用相機時，相機串流（camera stream）會即時顯示並與機器人狀態同步（synchronized with the robot state）。這種設定對於視覺監控（visual monitoring）很有用，之後也可重複用於示範錄製（demonstration recording）與模仿學習（imitation learning）。
+啟用相機後，相機畫面會即時顯示，並與機器人狀態同步。這樣的設定很適合用來進行視覺監控，之後也能沿用於錄製示範與模仿學習。
 
 </hfoption>
 <hfoption id="Linux">
@@ -177,11 +177,11 @@ lerobot-teleoperate \
   --teleop.id=omx_leader_arm
 ```
 
-在遙操作（teleoperation）期間，主臂（leader arm）的動作（motions）會由從臂（follower arm）即時鏡像。OMX 已預先設定完成，遙操作可立即開始，無需任何校正（calibration）步驟。
+遙操作期間，從臂會即時跟著主臂做出相同的動作。由於 OMX 已預先設定好，不需要任何校正步驟，就能立刻開始遙操作。
 
 ### 使用相機遙操作[[teleoperate-with-camera-1]]
 
-你也可以在遙操作（teleoperation）期間，透過為從臂（follower arm）提供相機設定（camera configuration）來啟用相機輸入（camera input）。
+你也可以為從臂提供相機設定，在遙操作期間啟用相機輸入。
 
 ```bash
 lerobot-teleoperate \
@@ -195,11 +195,11 @@ lerobot-teleoperate \
   --display_data=true
 ```
 
-當啟用相機時，相機串流（camera stream）會即時顯示並與機器人狀態同步（synchronized with the robot state）。這種設定對於視覺監控（visual monitoring）很有用，之後也可重複用於示範錄製（demonstration recording）與模仿學習（imitation learning）。
+啟用相機後，相機畫面會即時顯示，並與機器人狀態同步。這樣的設定很適合用來進行視覺監控，之後也能沿用於錄製示範與模仿學習。
 
 </hfoption>
 </hfoptions>
 
-恭喜 🎉，你的機器人已準備就緒，可以開始自行學習任務（learn a task）。
+恭喜 🎉，你的機器人已經準備好自己學習任務了。
 
-> 若你有任何問題或需要協助，請至 [Discord](https://discord.com/invite/robotis) 與我們聯繫。
+> 如果有任何問題或需要協助，歡迎到 [Discord](https://discord.com/invite/robotis) 與我們聯繫。
