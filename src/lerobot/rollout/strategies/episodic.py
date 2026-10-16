@@ -40,6 +40,7 @@ from lerobot.common.control_utils import (
 )
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.robots.sim.world import get_world
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -52,7 +53,7 @@ from lerobot.utils.visualization_utils import log_visualization_data
 from ..configs import EpisodicStrategyConfig
 from ..context import RolloutContext
 from ..robot_wrapper import ThreadSafeRobot
-from .core import RolloutStrategy, safe_push_to_hub, send_next_action
+from .core import RolloutStrategy, safe_push_to_hub, send_next_action, world_finished
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,8 @@ class EpisodicStrategy(RolloutStrategy):
         # the run summary averages across them without the untimed reset phases.
         timer = CycleTimer(fps, interpolator.multiplier)
 
+        # A simulated world resets itself at each episode start: no manual reset phase.
+        simulated = get_world(robot.inner) is not None
         with VideoEncodingManager(dataset):
             try:
                 recorded_episodes = 0
@@ -142,6 +145,7 @@ class EpisodicStrategy(RolloutStrategy):
                         break
 
                     # Reset policy state at episode start (discard leftover hidden state / queue)
+                    self._reset_sim_world(ctx)
                     engine.reset()
                     interpolator.reset()
                     # A reset interpolator re-primes over two consecutive inference
@@ -162,8 +166,10 @@ class EpisodicStrategy(RolloutStrategy):
                     )
 
                     # Reset phase, skip after the last episode (but run when re-recording)
-                    if not events["stop_recording"] and (
-                        recorded_episodes < num_episodes - 1 or events["rerecord_episode"]
+                    if (
+                        not simulated
+                        and not events["stop_recording"]
+                        and (recorded_episodes < num_episodes - 1 or events["rerecord_episode"])
                     ):
                         log_say("Reset the environment", play_sounds)
 
@@ -291,6 +297,8 @@ class EpisodicStrategy(RolloutStrategy):
             self._require_engine().pump_query(obs_processed)
             timer.wait()
             timestamp = time.perf_counter() - start_t
+            if world_finished(robot):
+                break
 
     def _reset_loop(
         self,
