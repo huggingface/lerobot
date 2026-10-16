@@ -108,6 +108,25 @@ def test_admission_and_stale_generation(server):
         other.close()
 
 
+def test_jpeg_observations_match_raw(server):
+    from lerobot.envs.batched import BatchedEnv
+
+    _, endpoint = server
+    obs = {}
+    for encoding in ("raw", "jpeg"):
+        env = BatchedEnv(EnvClient(endpoint, encoding=encoding, jpeg_quality=95), num_envs=2)
+        try:
+            obs[encoding], _ = env.reset(seed=[10, 20])
+        finally:
+            env.close()
+    raw, jpeg = obs["raw"]["observation.image"], obs["jpeg"]["observation.image"]
+    assert jpeg.shape == raw.shape == (2, 8, 8, 3) and jpeg.dtype == np.uint8
+    assert np.abs(jpeg.astype(int) - raw.astype(int)).mean() < 8
+    np.testing.assert_array_equal(obs["jpeg"]["observation.state"], obs["raw"]["observation.state"])
+    with pytest.raises(ValueError, match="raw or jpeg"):
+        EnvClient(endpoint, encoding="png")
+
+
 def test_vector_client(server):
     from lerobot.envs.batched import BatchedEnv, prepare_canonical_observation
 

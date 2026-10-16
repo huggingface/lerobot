@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 
 from lerobot.sims.backend import Backend, BackendConfig
-from lerobot.transport.wire.codec import CodecLimits, decode_message, encode_message
+from lerobot.transport.wire.codec import CodecLimits, RGBImage, decode_message, encode_message
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import (
     BoundedSubscriber,
@@ -68,10 +68,21 @@ class _Command(Command):
 class _Session(SimSession):
     """A world session served to one client, alive while the client's presence token is."""
 
-    def __init__(self, server: "EnvServer", prefix: str, *args: Any, **kwargs: Any):
+    def __init__(
+        self,
+        server: "EnvServer",
+        prefix: str,
+        *args: Any,
+        encoding: str = "raw",
+        jpeg_quality: int = 90,
+        **kwargs: Any,
+    ):
         super().__init__(*args, **kwargs)
         self.server = server
         self.prefix = prefix
+        self.encoding = encoding
+        self.jpeg_quality = jpeg_quality
+        self.rgb = {f.name for f in self.descriptor.features if f.kind == "rgb"}
         self.opened_at = time.monotonic()
         self.seen_client = False
         self.presence: BoundedSubscriber[PresenceEvent] = server.transport.subscribe_liveliness(
@@ -79,9 +90,22 @@ class _Session(SimSession):
         )
         self.token: PresenceToken = server.transport.declare_token(prefix + "/alive")
 
+    def encode(self, reply: dict[str, Any]) -> dict[str, Any]:
+        """Send each world's camera frames as JPEG when the client asked for it at open."""
+        result = reply.get("result")
+        if self.encoding == "raw" or result is None:
+            return reply
+        obs = {
+            name: [RGBImage(image, "jpeg", self.jpeg_quality) for image in value]
+            if name in self.rgb
+            else value
+            for name, value in result["obs"].items()
+        }
+        return {**reply, "result": {**result, "obs": obs}}
+
     def _command_done(self, command: Command, reply: dict[str, Any]) -> None:
         assert isinstance(command, _Command) and command.message is not None and command.pending is not None
-        self.server._send(command.pending, command.message.reply(MessageType.ACK, reply))
+        self.server._send(command.pending, command.message.reply(MessageType.ACK, self.encode(reply)))
 
     def _command_failed(self, command: Command, code: ErrorCode, reason: str) -> None:
         assert isinstance(command, _Command) and command.message is not None and command.pending is not None
@@ -198,19 +222,32 @@ class EnvServer:
             self._close_session(message.session_id)
             return {}
         command = _Command(message.request_id, np.empty(0), message, pending) if pending else None
-        return session.handle(operation, body, command)
+        reply = session.handle(operation, body, command)
+        return None if reply is None else session.encode(reply)
 
     def _open(self, body: dict) -> dict:
         count = body.get("num_envs", 1)
         clock = body.get("clock", "lockstep")
         async_worlds = body.get("async_worlds", False)
+        encoding = body.get("encoding", "raw")
+        jpeg_quality = body.get("jpeg_quality", 90)
         check_open(self.descriptor, count, clock, self.config.max_envs)
         if type(async_worlds) is not bool:
             raise ProtocolError(ErrorCode.MALFORMED, "async_worlds must be a boolean")
+        if encoding not in {"raw", "jpeg"} or type(jpeg_quality) is not int or not 1 <= jpeg_quality <= 100:
+            raise ProtocolError(
+                ErrorCode.UNSUPPORTED, "Image encoding must be raw or jpeg, quality in [1, 100]"
+            )
         batch_bytes = count * sum(
             int(np.prod(f.shape)) * np.dtype(f.dtype).itemsize for f in self.descriptor.features
         )
-        if batch_bytes + 65536 > min(CodecLimits().max_payload_bytes, self.config.zenoh.max_payload_bytes):
+        # JPEG frames are far smaller on the wire, but the client still decodes them to full size.
+        budget = (
+            min(CodecLimits().max_payload_bytes, self.config.zenoh.max_payload_bytes)
+            if encoding == "raw"
+            else CodecLimits().max_decoded_bytes
+        )
+        if batch_bytes + 65536 > budget:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Observation batch exceeds transport payload budget")
         if len(self.sessions) >= self.config.max_sessions:
             raise ProtocolError(ErrorCode.BUSY, "Simulator capacity is owned by another session")
@@ -226,15 +263,19 @@ class EnvServer:
             body.get("task_id", 0),
             body.get("seeds"),
             self.config.command_timeout_s,
+            encoding=encoding,
+            jpeg_quality=jpeg_quality,
             async_worlds=async_worlds,
         )
         self.sessions[session_id] = session
-        return {
-            "session": session_id,
-            "result": session.opened.to_dict(),
-            "generation": 0,
-            "descriptor": session.backend.descriptor().to_dict(),
-        }
+        return session.encode(
+            {
+                "session": session_id,
+                "result": session.opened.to_dict(),
+                "generation": 0,
+                "descriptor": session.backend.descriptor().to_dict(),
+            }
+        )
 
     def _tick(self) -> None:
         now = time.monotonic()

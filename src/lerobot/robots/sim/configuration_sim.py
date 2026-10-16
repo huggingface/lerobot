@@ -78,6 +78,9 @@ class SimRobotConfig(RobotConfig):
 
     env: SimulatedEnvConfig | None = None
     endpoint: str | None = None
+    # Served only: "jpeg" sends camera frames as JPEG at jpeg_quality, a bandwidth for fidelity tradeoff.
+    encoding: str = "raw"
+    jpeg_quality: int = 90
     task_id: int = 0
     # realtime: the world advances at its control rate, also while the policy computes, as hardware does.
     # lockstep: each sent action advances the world exactly one step.

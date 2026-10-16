@@ -48,6 +48,9 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     disable_env_checker: bool = True
     # Where `lerobot-env-server` serves this environment; unset, it runs in this process.
     endpoint: str | None = None
+    # Served only: "jpeg" sends camera frames as JPEG at jpeg_quality, a bandwidth for fidelity tradeoff.
+    encoding: str = "raw"
+    jpeg_quality: int = 90
 
     @property
     def type(self) -> str:
@@ -116,7 +119,13 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
             check_served(descriptor.config, settings, endpoint)
 
             def client() -> EnvClient | InProcessEnvClient:
-                return EnvClient(endpoint, self.type, SERVED_TIMEOUT_S)
+                return EnvClient(
+                    endpoint,
+                    self.type,
+                    SERVED_TIMEOUT_S,
+                    encoding=self.encoding,
+                    jpeg_quality=self.jpeg_quality,
+                )
         else:
             sim = self.backend_config()
             local = InProcessEnvClient(sim)
