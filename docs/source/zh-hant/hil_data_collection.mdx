@@ -1,36 +1,36 @@
 # 人在迴圈中的資料收集[[human-in-the-loop-data-collection]]
 
-人在迴圈中（Human-In-the-Loop, HIL）的資料收集（data collection）讓你能透過將已訓練的策略（trained policy）部署（deployment）到真實機器人上，同時由人類操作員（human operator）監控（monitors）並在需要時介入（intervenes），來改進該策略。介入資料（intervention data，恢復動作與修正動作）會與自主執行片段（autonomous segments）一併記錄（recorded），產生更豐富的訓練資料集（training dataset），教導策略如何處理失敗情況（failures）。
+人在迴圈（human-in-the-loop，HIL）的資料收集，是把訓練好的策略（policy）部署到真實機器人上，由人類操作員在旁監看、必要時介入，藉此改進策略。介入時的資料（回復與修正的動作）會與自主執行的片段一起錄下來，形成更豐富的訓練資料集，教策略如何應對失敗的情況。
 
 ---
 
-## 為什麼需要人在迴圈中的機制？[[why-human-in-the-loop]]
+## 為什麼需要人在迴圈？[[why-human-in-the-loop]]
 
-標準的行為複製（standard behavioral cloning）僅在成功的示範（successful demonstrations）上訓練策略（train a policy）。在部署（deployment）期間，微小的誤差可能會不斷累積（compound），將機器人推入訓練期間從未見過的狀態（分佈偏移 distribution shift）。HIL 資料收集透過以下方式解決此問題：
+標準的行為複製（behavioral cloning）只用成功的示範來訓練策略。部署時，小小的誤差可能不斷累積，把機器人推到訓練時從未見過的狀態（分布偏移，distribution shift）。HIL 資料收集透過以下方式解決這個問題：
 
-- 在真實機器人上執行已訓練的策略（trained policy）
-- 當機器人即將失敗（about to fail）時由人為介入（human intervene）
-- 將人為的恢復與修正（human’s recovery and correction）記錄（recording）為訓練資料（training data）
-- 使用合併的資料集（combined dataset）微調策略（fine-tuning the policy）
+- 在真實機器人上執行訓練好的策略
+- 當機器人快要失敗時，由人介入
+- 將人的回復與修正動作錄下來，作為訓練資料
+- 用合併後的資料集微調（fine-tune）策略
 
-這將產生一個不僅知道如何執行任務（task），還知道如何在出錯時恢復（recover）的策略（policy）。
+這樣訓練出來的策略，不只知道怎麼完成任務，也知道出錯時該如何回復。
 
 ---
 
 ## 運作方式[[how-it-works]]
 
-在 HIL 進行期間，人類操作員（human operator）在每個回合（episode）中遵循以下循環（loop）：
+在 HIL 工作階段中，人類操作員會在每個回合（episode）裡重複以下流程：
 
-1. **觀察（watch）**策略自主執行（policy run autonomously）
-2. 當即將發生失敗（failure）時**暫停（pause）**，機器人保持當前位置（position）
-3. **接管控制（take control）**並遙操作（teleoperate）機器人回到良好狀態（good state，恢復 recovery），然後修正行為（correct the behavior）
-4. **將控制權交還給策略（return control to the policy）**，策略恢復自主執行（policy resumes autonomous execution）
-5. 在回合（episode）內根據需要重複步驟 2–4 任意次數
-6. 當任務（task）完成時**結束回合（end the episode）**，儲存並進入下一個 rollout（next rollout）
+1. **觀察**策略自主執行
+2. 快要失敗時**暫停**，機器人會停在原位
+3. **接手控制**，以遙操作（teleoperation）將機器人帶回良好的狀態（回復），再修正它的行為
+4. **將控制權交還給策略**，策略繼續自主執行
+5. 在同一個回合中，視需要重複步驟 2–4 任意次數
+6. 任務完成時**結束回合**，儲存後進入下一次 rollout
 
-自主與人為控制（human-controlled）的片段（segments）都會被記錄（recorded）。策略（policy）和人類可以在單一回合（episode）內多次交替控制（alternate control），每次交接（handoff）後回合（episode）會從當前狀態（current state）繼續（不需要因為發生介入 intervention 而重置）。這在一條連續軌跡（continuous trajectory）中捕捉了自主執行（autonomous execution）、恢復（recovery）和修正（correction）。收集完成後，合併的資料集（combined dataset，原始示範 + HIL 資料）用於微調策略（fine-tune the policy）。
+自主執行與人為控制的片段都會被錄下來。在同一個回合中，策略與人可以多次輪流控制，每次交接後，回合都會從目前的狀態繼續（不會因為有人介入就重設）。這樣一條連續的軌跡，就同時包含了自主執行、回復與修正。收集完成後，再用合併的資料集（原始示範 + HIL 資料）微調策略。
 
-此過程可以迭代重複（repeated iteratively）：部署（deployment）、收集（collect）、微調（fine-tune）、再重複。每一輪針對當前策略的失敗模式（policy’s failure modes）。
+這個過程可以反覆進行：部署、收集、微調，再重複。每一輪都針對目前策略的失敗模式下手。
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -50,31 +50,31 @@
 
 ### 遙操作器需求[[teleoperator-requirements]]
 
-使用 `lerobot-rollout` 搭配 `--strategy.type=dagger` 模式需要**具有主動馬達的遙操作器（teleoperators with active motors）**，能夠：
+`lerobot-rollout` 的 `--strategy.type=dagger` 模式需要**馬達可主動驅動的遙操作器（teleoperator）**，能夠：
 
-- 以程式方式啟用/停用扭力（enable/disable torque）
-- 移動到目標位置（target positions，用於在暫停時鏡像機器人狀態 robot state）
+- 以程式控制開啟／關閉扭力
+- 移動到目標位置（暫停時用來同步機器人的狀態）
 
-**相容的遙操作器（teleoperator）：**
+**相容的遙操作器：**
 
 - `bi_openarm_mini` - 雙臂 OpenArm Mini
 - `so_leader` - SO100 / SO101 主臂（leader arm）
-- `bi_so_leader` - 雙臂 SO100 / SO101 主臂（leader arm）
+- `bi_so_leader` - 雙臂 SO100 / SO101 主臂
 
 > [!IMPORTANT]
 > 提供的指令預設使用 `bi_openarm_follower` + `bi_openarm_mini`。
-> `so_follower` + `so_leader` 的設定也已註冊（registered），可透過 CLI flags 使用。
+> `so_follower` + `so_leader` 的設定也已註冊，可透過 CLI 旗標使用。
 
 ---
 
 ## 腳本[[script]]
 
-使用 `lerobot-rollout` 搭配 `--strategy.type=dagger` 進行 HIL 資料收集（data collection）。透過 `--inference.type=sync|rtc` 選擇推論後端（inference backend）：
+使用 `lerobot-rollout` 搭配 `--strategy.type=dagger` 進行 HIL 資料收集，並以 `--inference.type=sync|rtc` 選擇推論後端：
 
-| 模式（mode）    | 旗標（flag）             | 模型（model）         |
-| --------------- | ------------------------ | --------------------- |
-| 標準（預設）    | _（不需要旗標（flag））_ | ACT、Diffusion Policy |
-| 即時區塊（RTC） | `--inference.type=rtc`   | Pi0、Pi0.5、SmolVLA   |
+| 模式            | 旗標                   | 模型                  |
+| --------------- | ---------------------- | --------------------- |
+| 標準（預設）    | _（不需要旗標）_       | ACT、Diffusion Policy |
+| 即時分塊（RTC） | `--inference.type=rtc` | Pi0、Pi0.5、SmolVLA   |
 
 ---
 
@@ -82,7 +82,7 @@
 
 ### 步驟 1：預訓練基礎策略[[step-1-pre-train-a-base-policy]]
 
-首先，在你的示範資料集（demonstration dataset）上訓練策略（train a policy）：
+首先，用你的示範資料集訓練一個策略：
 
 ```bash
 python src/lerobot/scripts/lerobot_train.py \
@@ -116,11 +116,11 @@ lerobot-rollout --strategy.type=dagger \
     --interpolation_multiplier=2
 ```
 
-使用 `--interpolation_multiplier=N` 時，機器人會針對每個策略動作接收 `N` 個內插指令（控制以 `fps × N` Hz 執行），而策略推論與資料集記錄仍維持在 `--fps`，因此錄製的資料集會與其宣告的 FPS 相符。
+使用 `--interpolation_multiplier=N` 時，策略每輸出一個動作，機器人會收到 `N` 個內插後的命令（控制頻率為 `fps × N` Hz），而策略推論與資料集錄製仍維持在 `--fps`，因此錄下的資料集會與它宣告的 FPS 相符。
 
-**搭配 RTC 用於大型模型（Pi0、Pi0.5、SmolVLA）：**
+**大型模型（Pi0、Pi0.5、SmolVLA）搭配 RTC：**
 
-對於推論（inference）延遲較高（high inference latency）的模型（model），啟用 RTC 以實現流暢執行（smooth execution）：
+對於推論延遲較高的模型，請啟用 RTC 讓執行更流暢：
 
 ```bash
 lerobot-rollout --strategy.type=dagger \
@@ -147,37 +147,37 @@ lerobot-rollout --strategy.type=dagger \
 
 **操控方式（概念說明）：**
 
-互動模式（interaction model）如下：
+互動方式如下：
 
-- **暫停輸入（pause input）**：暫停自主策略執行（pause autonomous policy execution）
-- **接管輸入（takeover input）**：將控制權轉移（transfer control）給人類操作員（human operator）並記錄介入資料（record intervention data）
-- **交還策略輸入（return-to-policy input）**：將控制權交還（hand control back）給策略（policy）並繼續同一回合（same episode）
-- **回合控制輸入（episode control inputs）**：根據需要儲存（save）/重新錄製（re-record）/停止（stop）/重置（reset）
+- **暫停輸入**：暫停策略的自主執行
+- **接手輸入**：將控制權轉給人類操作員，並錄下介入的資料
+- **交還輸入**：將控制權交還給策略，並繼續同一個回合
+- **回合控制輸入**：視需要儲存／重新錄製／停止／重設
 
-實際的按鍵（key）/踏板（pedal）對應可能因腳本和硬體整合而異。請以每個腳本印出的操控說明作為你設定上具體對應關係的依據（source of truth）。
+實際的按鍵或踏板對應，可能因腳本與硬體整合而有所不同。請以每個腳本印出的操作說明為準，確認你這套設定的實際對應方式。
 
-HIL 協定（HIL protocol）：
+**HIL 操作流程：**
 
-1. 觀察策略（policy）自主執行（run autonomously，遙操作器 teleoperator 處於閒置 idle/自由 free 的狀態）
-2. 當你看到即將發生失敗（imminent failure）時，觸發**暫停輸入（pause input）**
-   - 策略停止（policy stops）
-   - 遙操作器（teleoperator）移動以匹配機器人位置（robot position，扭力 torque 啟用）
-   - 暫停期間不記錄影格（frame）
-3. 觸發**接管輸入（takeover input）**以接管控制
-   - 遙操作器扭力停用（teleoperator torque disabled），可自由移動
-   - **恢復（recovery）**：遙操作（teleoperate）機器人回到良好狀態（good state）
-   - **修正（correction）**：修正行為（correct the behavior）
-   - 所有動作都會被記錄（recorded）
-4. 觸發**交還策略輸入（return-to-policy input）**
-   - 策略（policy）從當前狀態（current state）恢復自主執行（resumes autonomous execution）
-   - 你可以隨時再次介入（intervene again，重複步驟 2–4）
-5. 當任務（task）完成（或達到回合時間限制 episode time limit）時結束並儲存回合（save the episode）
-6. **重置（reset）**：遙操作（teleoperate）移動到機器人位置（robot position），你可以將機器人移動到起始位置（starting position）
-7. 開始下一個回合（next episode）
+1. 觀察策略自主執行（遙操作器處於閒置、可自由移動的狀態）
+2. 看到快要失敗時，觸發**暫停輸入**
+   - 策略停止
+   - 遙操作器移動到與機器人相同的位置（扭力開啟）
+   - 暫停期間不會錄製影格（frame）
+3. 觸發**接手輸入**以取得控制權
+   - 遙操作器的扭力關閉，可自由移動
+   - **回復**：以遙操作將機器人帶回良好的狀態
+   - **修正**：修正它的行為
+   - 所有動作都會被錄下來
+4. 觸發**交還輸入**
+   - 策略從目前的狀態繼續自主執行
+   - 你隨時可以再次介入（重複步驟 2–4）
+5. 任務完成（或達到回合的時間上限）時，結束並儲存回合
+6. **重設**：遙操作器移動到機器人的位置，你可以把機器人移回起始位置
+7. 開始下一個回合
 
-**Linux 的腳踏板設定（foot pedal setup）：**
+**腳踏板設定（Linux）：**
 
-如果使用 USB 腳踏板（foot pedal, PCsensor FootSwitch），請確保存取權限（ensure access）：
+如果使用 USB 腳踏板（PCsensor FootSwitch），請確認具有存取權限：
 
 ```bash
 sudo setfacl -m u:$USER:rw /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
@@ -185,7 +185,7 @@ sudo setfacl -m u:$USER:rw /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
 
 ### 步驟 3：微調策略[[step-3-fine-tune-the-policy]]
 
-在**合併的**資料集（combined dataset， `demo-dataset` + `hil-dataset` 合併在一起）上進行微調（fine-tune）：
+在**合併後的**資料集（`demo-dataset` + `hil-dataset` 合併在一起）上進行微調：
 
 ```bash
 python src/lerobot/scripts/lerobot_train.py \
@@ -196,7 +196,7 @@ python src/lerobot/scripts/lerobot_train.py \
     --steps=20000
 ```
 
-然後部署（deployment）微調後的策略（fine-tuned policy），從步驟 2 重新開始，針對其剩餘的失敗模式（failure modes）進行改進。
+接著部署微調後的策略，再從步驟 2 重新開始，針對它剩下的失敗模式下手。
 
 ---
 
@@ -204,41 +204,41 @@ python src/lerobot/scripts/lerobot_train.py \
 
 ### 何時介入[[when-to-intervene]]
 
-當你觀察到以下情況時介入（intervene）：
+看到以下情況時就應該介入：
 
-- 機器人即將犯下不可逆的錯誤（irreversible mistake）
-- 機器人猶豫不決或表現出不確定的行為（hesitating or showing uncertain behavior）
-- 機器人偏離預期軌跡（deviating from the expected trajectory）
+- 機器人即將犯下無法挽回的錯誤
+- 機器人猶豫不決，或表現出不確定的行為
+- 機器人偏離預期的軌跡（trajectory）
 
 ### 恢復：遙操作回到良好狀態[[recovery-teleoperating-back-to-a-good-state]]
 
-在恢復（recovery）階段，遙操作（teleoperate）機器人回到以下狀態（state）：
+回復階段，請以遙操作將機器人帶回符合以下條件的狀態：
 
-- 機器人處於熟悉的、分佈內的配置（familiar, in-distribution configuration）
-- 當前子任務（subtask）仍然可以完成
-- 恢復軌跡（recovery trajectory）本身就是有資訊量的訓練資料（informative training data）
+- 機器人處於熟悉、在訓練資料分布內的姿態
+- 目前的子任務仍然可以完成
+- 回復的軌跡本身就是有參考價值的訓練資料
 
 ### 修正的品質[[quality-of-corrections]]
 
-在修正（correction）階段：
+修正階段：
 
-- 提供**自信、乾淨的**軌跡（trajectory）
-- 完整地完成當前子任務（subtask）
-- 不要過度修正或添加不必要的動作（action）
+- 提供**果斷、乾淨**的軌跡
+- 完整完成目前的子任務
+- 不要過度修正，也不要加入多餘的動作
 
 ---
 
 ## 相關工作[[related-work]]
 
-此 HIL 資料收集方法（HIL data collection approach）建立在互動式模仿學習（interactive imitation learning）的理念之上：
+這種 HIL 資料收集方法，是建立在互動式模仿學習（interactive imitation learning）的概念之上：
 
-- **DAgger** (Ross et al., 2011) 引入了核心理念：不只在專家示範上訓練（training on expert demonstrations），而是在學習者所造訪（learner visits）的狀態（state）上查詢專家的修正（query the expert for corrections）。這透過迭代收集 on-policy 資料，打破了標準行為複製（standard behavioral cloning）的累積誤差循環（compounding-error cycle）。
+- **DAgger**（Ross et al., 2011）提出了核心概念：不只用專家示範訓練，而是在*學習者（learner）*實際走到的狀態上，請專家提供修正。透過反覆收集 on-policy 資料，打破了標準行為複製中誤差不斷累積的循環。
 
-- **HG-DAgger** (Kelly et al., 2019) 使其在機器人領域變得實用：人類專家監控（human expert monitors）機器人，僅在需要時介入（intervenes），而非標註每一個狀態（labeling every state）。自主（autonomous）與人類控制（human control）之間的切換正是此處腳本所使用的暫停（pause） → 接管（takeover） → 交還策略循環（return-to-policy loop）。
+- **HG-DAgger**（Kelly et al., 2019）讓這個方法在機器人上變得可行：由人類專家監看機器人，只在需要時介入，而不必標註每一個狀態。自主控制與人為控制之間的切換方式，正是這裡的腳本所使用的「暫停 → 接手 → 交還策略」循環。
 
-- **RaC** (Hu et al., 2025) 透過將介入（interventions）明確分解為**恢復**（recovery，遙操作回到良好狀態 good state）和**修正**（corrections，從該處示範正確行為），將此循環擴展至長期任務（task）。此分解方式即為 `lerobot-rollout` 中 DAgger 策略（strategy）所遵循的協定（protocol）。
+- **RaC**（Hu et al., 2025）將介入明確拆成**回復**（以遙操作回到良好的狀態）與**修正**（從那裡示範正確的行為），把這個循環擴展到長時程（long-horizon）任務。`lerobot-rollout` 中的 DAgger 執行策略（strategy）遵循的就是這種拆分方式。
 
-- **π0.6/RECAP** (Physical Intelligence, 2025) 將相同的迭代收集與微調循環（iterative collect-and-finetune loop）大規模應用於 VLA 模型，展示即使是大型預訓練策略（large pretrained policies）也能從針對自身失敗模式（failure modes）的人類修正（human corrections）中獲得顯著改善。π0.6 使用 RECAP 進行訓練。
+- **π0.6/RECAP**（Physical Intelligence, 2025）將同樣的「收集再微調」循環，大規模地應用在 VLA 模型上，證明即使是大型的預訓練策略，也能從針對自身失敗模式的人為修正中獲得明顯的改善。π0.6 就是以 RECAP 訓練的。
 
 ```bibtex
 @article{ross2011dagger,
