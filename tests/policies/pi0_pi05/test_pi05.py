@@ -168,7 +168,9 @@ def test_default_peft_targets_match_model_module_names():
 
     Regression test: `time_mlp_in`/`time_mlp_out` were previously written with an
     `action_` prefix inherited from pi0, but PI05Pytorch names them without it, so
-    the LoRA adapter never targeted these projections.
+    the LoRA adapter never targeted these projections. Similarly, `state_proj` was
+    inherited from pi0's naming but PI05Pytorch has no such module at all (state only
+    enters via the MEM-gated `proprio_history_proj`), so it must not appear either.
     """
     import re
     from types import SimpleNamespace
@@ -187,6 +189,6 @@ def test_default_peft_targets_match_model_module_names():
     ):
         assert pattern.fullmatch(module), f"PEFT target regex should match {module}"
 
-    # pi0-style names do not exist in PI05Pytorch and must not be targeted.
-    for module in ("model.action_time_mlp_in", "model.action_time_mlp_out"):
+    # pi0-style names that do not exist in PI05Pytorch and must not be targeted.
+    for module in ("model.action_time_mlp_in", "model.action_time_mlp_out", "model.state_proj"):
         assert not pattern.fullmatch(module), f"PEFT target regex should not match {module}"
