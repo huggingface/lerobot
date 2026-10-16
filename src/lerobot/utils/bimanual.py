@@ -14,9 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Any
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+
+logger = logging.getLogger(__name__)
 
 
 class BimanualMixin:
@@ -59,5 +62,21 @@ class BimanualMixin:
 
     @check_if_not_connected
     def disconnect(self) -> None:
-        self.left_arm.disconnect()
-        self.right_arm.disconnect()
+        """Attempt cleanup of both arms, then re-raise the first failure.
+
+        Cleanup continues after errors or interrupts. Additional failures are logged.
+
+        Raises:
+            BaseException: The first cleanup failure, after both arms have been attempted.
+        """
+        first_exception: BaseException | None = None
+        for name, arm in (("left", self.left_arm), ("right", self.right_arm)):
+            try:
+                arm.disconnect()
+            except BaseException as e:
+                logger.error(f"Failed to disconnect {name} arm: {e}")
+                if first_exception is None:
+                    first_exception = e
+
+        if first_exception is not None:
+            raise first_exception
