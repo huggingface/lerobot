@@ -603,7 +603,8 @@ def reencode_video(
         encoder_threads: Optional thread count forwarded to :meth:`VideoEncoderConfig.get_codec_options`.
         log_level: libav log level while encoding, or ``None`` to leave logging unchanged. Defaults to WARNING.
         overwrite: When ``False`` and ``output_video_path`` already exists, skip and log a warning.
-        start_time_s: When set, trim the output to start at this timestamp (seconds).
+        start_time_s: When set, trim the output to start at this timestamp (seconds). Output
+            timestamps are rebased to the source time base so the first kept frame starts at t=0.
         end_time_s: When set, trim the output to end at this timestamp (seconds, exclusive).
     """
 
@@ -661,6 +662,7 @@ def reencode_video(
                 out_stream.width = width
                 out_stream.height = height
 
+                first_pts: int | None = None
                 for frame in src.decode(in_stream):
                     frame_time_s = frame.time
                     if start_time_s is not None and frame_time_s < start_time_s:
@@ -668,8 +670,17 @@ def reencode_video(
                     if end_time_s is not None and frame_time_s >= end_time_s:
                         break
                     frame = frame.reformat(width=width, height=height, format=pix_fmt)
-                    if start_time_s is not None:
-                        frame.pts = None  # reset timestamps so the trimmed output starts at t=0
+                    if start_time_s is not None and frame.pts is not None:
+                        # Rebase the source timestamps so the trimmed output starts at t=0 while
+                        # keeping the source time base. Clearing pts instead makes the encoder
+                        # emit non-strictly-monotonic timestamps: the mp4 muxer then rejects the
+                        # output with "[Errno 22] Invalid argument" ("non monotonically increasing
+                        # dts") as soon as the clip exceeds a frame-count threshold that depends
+                        # on the frame rate (e.g. ~8.7 s at 30 fps, ~2.2 s at 60 fps), and every
+                        # output frame reports time 0 even below that threshold.
+                        if first_pts is None:
+                            first_pts = frame.pts
+                        frame.pts = frame.pts - first_pts
                     packet = out_stream.encode(frame)
                     if packet:
                         dst.mux(packet)
