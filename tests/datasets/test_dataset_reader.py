@@ -94,9 +94,9 @@ def test_load_rejects_language_columns_missing_from_metadata(tmp_path, lerobot_d
 
 @pytest.mark.parametrize(
     ("metadata_field", "offset"),
-    [("dataset_from_index", 1), ("dataset_to_index", 3)],
+    [("dataset_from_index", 1), ("dataset_to_index", 3), ("dataset_to_index", -3)],
 )
-def test_load_rejects_episode_bounds_that_include_other_rows(
+def test_load_rejects_episode_bounds_that_disagree_with_rows(
     tmp_path, lerobot_dataset_factory, metadata_field, offset
 ):
     dataset = lerobot_dataset_factory(
@@ -115,6 +115,43 @@ def test_load_rejects_episode_bounds_that_include_other_rows(
 
     with pytest.raises(ValueError, match=r"episode 0: metadata declares rows"):
         dataset.reader.load_and_activate()
+
+
+def test_load_checks_only_selected_episode_metadata_from_parquet(tmp_path, lerobot_dataset_factory):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    root = tmp_path / "ds"
+    original_dataset = lerobot_dataset_factory(
+        root=root,
+        total_episodes=2,
+        total_frames=60,
+        use_videos=False,
+        delta_timestamps={"action": [0.0, 1 / DEFAULT_FPS]},
+    )
+    expected_frames = original_dataset.meta.episodes[1]["length"]
+
+    episodes_path = next((root / "meta" / "episodes").glob("*/*.parquet"))
+    table = pq.read_table(episodes_path)
+    to_indices = table["dataset_to_index"].to_pylist()
+    to_indices[0] -= 3
+    column_index = table.schema.get_field_index("dataset_to_index")
+    table = table.set_column(
+        column_index,
+        "dataset_to_index",
+        pa.array(to_indices, type=table.schema.field(column_index).type),
+    )
+    pq.write_table(table, episodes_path)
+
+    # Episode 0 is corrupt on disk, but it is not part of this reader's request.
+    dataset = LeRobotDataset(
+        repo_id=DUMMY_REPO_ID,
+        root=root,
+        episodes=[1],
+        delta_timestamps={"action": [0.0, 1 / DEFAULT_FPS]},
+    )
+    assert dataset.episodes == [1]
+    assert len(dataset) == expected_frames
 
 
 def test_load_rejects_video_interval_that_cannot_contain_episode_frames(tmp_path, lerobot_dataset_factory):

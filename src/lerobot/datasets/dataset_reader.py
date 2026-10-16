@@ -278,11 +278,32 @@ class DatasetReader(BaseDatasetReader):
         requested_episodes = (
             set(self.episodes) if self.episodes is not None else set(range(self._meta.total_episodes))
         )
+
+        # Project the small set of columns needed for validation once. Repeated
+        # Dataset row access can decode every metadata column for each episode.
+        episode_columns = ["episode_index", "dataset_from_index", "dataset_to_index"]
+        episode_columns.extend(
+            column
+            for video_key in self._meta.video_keys
+            for column in (f"videos/{video_key}/from_timestamp", f"videos/{video_key}/to_timestamp")
+        )
+        episode_columns = [column for column in episode_columns if column in self._meta.episodes.column_names]
+        episode_rows = self._meta.episodes.data.table.select(episode_columns).to_pylist()
+        episode_metadata_by_index = {
+            int(episode["episode_index"]): episode
+            for episode in episode_rows
+            if episode["episode_index"] is not None
+        }
+
         for episode_index in sorted(set(rows_by_episode) - requested_episodes):
             errors.append(f"loaded data contains unexpected episode_index {episode_index}")
 
         for episode_index in sorted(requested_episodes):
-            episode = self._meta.episodes[episode_index]
+            episode = episode_metadata_by_index.get(episode_index)
+            if episode is None:
+                errors.append(f"episode {episode_index}: metadata has no corresponding episode row")
+                continue
+
             row = rows_by_episode.get(episode_index)
             if row is None:
                 errors.append(f"episode {episode_index}: metadata has no corresponding data rows")
