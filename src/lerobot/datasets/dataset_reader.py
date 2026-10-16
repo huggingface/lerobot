@@ -15,6 +15,7 @@
 # limitations under the License.
 """Private reader component for LeRobotDataset. Handles random-access reading (HF dataset, delta indices, video decoding)."""
 
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -181,6 +182,7 @@ class DatasetReader(BaseDatasetReader):
         if not self._check_cached_episodes_sufficient():
             self.hf_dataset = None
             return False
+        self._validate_episode_metadata()
         self._build_index_mapping()
         return True
 
@@ -190,6 +192,7 @@ class DatasetReader(BaseDatasetReader):
         Returns the loaded dataset (also stored in :attr:`hf_dataset`).
         """
         self.hf_dataset = self._load_hf_dataset()
+        self._validate_episode_metadata()
         self._build_index_mapping()
         return self.hf_dataset
 
@@ -248,6 +251,93 @@ class DatasetReader(BaseDatasetReader):
                 "Metadata must describe the stored data; add the entries returned by "
                 "lerobot.datasets.language.language_feature_info() to meta/info.json['features'] "
                 "or rerun the annotation pipeline's metadata synchronization."
+            )
+
+    def _validate_episode_metadata(self) -> None:
+        """Ensure episode boundaries and video slots agree with the loaded rows."""
+        if self.hf_dataset is None or len(self.hf_dataset) == 0 or self._meta.episodes is None:
+            return
+        if self.delta_indices is None and not self._meta.video_keys:
+            return
+
+        # Keep this check column-pruned: images and other potentially large features are not read.
+        frame_metadata = self.hf_dataset.data.table.select(["episode_index", "index"])
+        grouped = frame_metadata.group_by("episode_index").aggregate(
+            [("index", "min"), ("index", "max"), ("index", "count"), ("index", "count_distinct")]
+        )
+
+        errors = []
+        rows_by_episode = {}
+        for row in grouped.to_pylist():
+            episode_index = row["episode_index"]
+            if episode_index is None:
+                errors.append("loaded data contains rows without an episode_index")
+                continue
+            rows_by_episode[int(episode_index)] = row
+
+        requested_episodes = (
+            set(self.episodes) if self.episodes is not None else set(range(self._meta.total_episodes))
+        )
+        for episode_index in sorted(set(rows_by_episode) - requested_episodes):
+            errors.append(f"loaded data contains unexpected episode_index {episode_index}")
+
+        for episode_index in sorted(requested_episodes):
+            episode = self._meta.episodes[episode_index]
+            row = rows_by_episode.get(episode_index)
+            if row is None:
+                errors.append(f"episode {episode_index}: metadata has no corresponding data rows")
+                continue
+
+            start = int(episode["dataset_from_index"])
+            end = int(episode["dataset_to_index"])
+            row_count = int(row["index_count"])
+            distinct_index_count = int(row["index_count_distinct"])
+            min_index = row["index_min"]
+            max_index = row["index_max"]
+            if (
+                end <= start
+                or row_count != end - start
+                or distinct_index_count != end - start
+                or min_index != start
+                or max_index != end - 1
+            ):
+                errors.append(
+                    f"episode {episode_index}: metadata declares rows [{start}, {end}), but its {row_count} "
+                    f"data rows have indices [{min_index}, {max_index}] ({distinct_index_count} distinct)"
+                )
+
+            if row_count == 0 or self._meta.fps <= 0:
+                continue
+            last_frame_offset_s = (row_count - 1) / self._meta.fps
+            for video_key in self._meta.video_keys:
+                from_key = f"videos/{video_key}/from_timestamp"
+                to_key = f"videos/{video_key}/to_timestamp"
+                try:
+                    from_timestamp = float(episode[from_key])
+                    to_timestamp = float(episode[to_key])
+                except (KeyError, TypeError, ValueError):
+                    errors.append(
+                        f"episode {episode_index}: missing or invalid video interval for {video_key}"
+                    )
+                    continue
+
+                if (
+                    not math.isfinite(from_timestamp)
+                    or not math.isfinite(to_timestamp)
+                    or from_timestamp < 0
+                    or to_timestamp < from_timestamp
+                    or from_timestamp + last_frame_offset_s > to_timestamp + self._tolerance_s
+                ):
+                    errors.append(
+                        f"episode {episode_index}: video interval for {video_key} is "
+                        f"[{from_timestamp}, {to_timestamp}), too short for {row_count} frames at {self._meta.fps} fps"
+                    )
+
+        if errors:
+            details = "\n  - ".join(errors)
+            raise ValueError(
+                f"Episode metadata for '{self._meta.repo_id}' contradicts the loaded dataset rows; "
+                f"samples may mix frames or data from different episodes:\n  - {details}"
             )
 
     def _check_cached_episodes_sufficient(self) -> bool:

@@ -92,6 +92,48 @@ def test_load_rejects_language_columns_missing_from_metadata(tmp_path, lerobot_d
         dataset.reader.load_and_activate()
 
 
+@pytest.mark.parametrize(
+    ("metadata_field", "offset"),
+    [("dataset_from_index", 1), ("dataset_to_index", 3)],
+)
+def test_load_rejects_episode_bounds_that_include_other_rows(
+    tmp_path, lerobot_dataset_factory, metadata_field, offset
+):
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds",
+        total_episodes=2,
+        total_frames=60,
+        use_videos=False,
+        delta_timestamps={"action": [0.0, 1 / DEFAULT_FPS]},
+    )
+    episode_value = dataset.meta.episodes[0][metadata_field] + offset
+    dataset.meta.episodes = dataset.meta.episodes.map(
+        lambda _episode, index: {metadata_field: episode_value} if index == 0 else {},
+        with_indices=True,
+        load_from_cache_file=False,
+    )
+
+    with pytest.raises(ValueError, match=r"episode 0: metadata declares rows"):
+        dataset.reader.load_and_activate()
+
+
+def test_load_rejects_video_interval_that_cannot_contain_episode_frames(tmp_path, lerobot_dataset_factory):
+    dataset = lerobot_dataset_factory(
+        root=tmp_path / "ds", total_episodes=2, total_frames=60, use_videos=True
+    )
+    video_key = dataset.meta.video_keys[0]
+    metadata_field = f"videos/{video_key}/from_timestamp"
+    episode_value = dataset.meta.episodes[0][metadata_field] + 1.5
+    dataset.meta.episodes = dataset.meta.episodes.map(
+        lambda _episode, index: {metadata_field: episode_value} if index == 0 else {},
+        with_indices=True,
+        load_from_cache_file=False,
+    )
+
+    with pytest.raises(ValueError, match=rf"episode 0: video interval for {video_key} is"):
+        dataset.reader.load_and_activate()
+
+
 # ── Counts ───────────────────────────────────────────────────────────
 
 
