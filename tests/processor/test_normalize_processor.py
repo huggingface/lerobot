@@ -766,6 +766,62 @@ def test_empty_stats():
     assert torch.allclose(result[TransitionKey.OBSERVATION][OBS_IMAGE], observation[OBS_IMAGE])
 
 
+@pytest.mark.parametrize("shape", [(0,), (0, 3), (3, 0), (1, 0, 2)])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.int64])
+@pytest.mark.parametrize("batch_shape", [(), (2,)])
+def test_zero_sized_feature_without_stats_preserves_tensor_contract(
+    shape: tuple[int, ...], dtype: torch.dtype, batch_shape: tuple[int, ...]
+) -> None:
+    """Omitted empty-feature statistics leave ordinary normalization active."""
+    empty_key = f"{OBS_STATE}.empty"
+    features = {
+        OBS_STATE: PolicyFeature(FeatureType.STATE, (2,)),
+        empty_key: PolicyFeature(FeatureType.STATE, shape),
+        ACTION: PolicyFeature(FeatureType.ACTION, (2,)),
+    }
+    stats = {
+        OBS_STATE: {"mean": [1.0, 2.0], "std": [2.0, 4.0]},
+        ACTION: {"min": [1.0, 2.0], "max": [3.0, 4.0]},
+    }
+    normalizer = NormalizerProcessorStep(
+        features=features,
+        norm_map={
+            FeatureType.STATE: NormalizationMode.MEAN_STD,
+            FeatureType.ACTION: NormalizationMode.MIN_MAX,
+        },
+        stats=stats,
+    )
+    empty_tensor = torch.empty((*batch_shape, *shape), dtype=dtype)
+    ordinary_shape = (*batch_shape, 2)
+    observation = {
+        OBS_STATE: torch.tensor([5.0, 10.0]).expand(ordinary_shape),
+        empty_key: empty_tensor,
+    }
+    action = torch.tensor([1.0, 4.0]).expand(ordinary_shape)
+
+    result = normalizer(create_transition(observation=observation, action=action))
+    normalized_observation = result[TransitionKey.OBSERVATION]
+    normalized_empty = normalized_observation[empty_key]
+
+    assert isinstance(normalized_empty, torch.Tensor)
+    assert normalized_empty.shape == empty_tensor.shape
+    assert normalized_empty.dtype == dtype
+    torch.testing.assert_close(normalized_empty, empty_tensor)
+    torch.testing.assert_close(
+        normalized_observation[OBS_STATE], torch.tensor([2.0, 2.0]).expand(ordinary_shape)
+    )
+    torch.testing.assert_close(result[TransitionKey.ACTION], torch.tensor([-1.0, 1.0]).expand(ordinary_shape))
+    assert normalizer.stats is not None
+    assert set(normalizer.stats) == {OBS_STATE, ACTION}
+    assert empty_key not in normalizer._tensor_stats
+    assert set(normalizer.state_dict()) == {
+        f"{OBS_STATE}.mean",
+        f"{OBS_STATE}.std",
+        f"{ACTION}.min",
+        f"{ACTION}.max",
+    }
+
+
 def test_partial_stats():
     """If statistics are incomplete, we should raise."""
     stats = {OBS_IMAGE: {"mean": [0.5]}}  # Missing std / (min,max)

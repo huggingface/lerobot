@@ -264,7 +264,10 @@ def pil_to_chw_tensor(img: PILImage.Image) -> torch.Tensor:
     return transforms.ToTensor()(img)
 
 
-def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[torch.Tensor | str]]:
+def hf_transform_to_torch(
+    items_dict: dict[str, list[Any]],
+    features: dict[str, dict] | None = None,
+) -> dict[str, list[torch.Tensor | str]]:
     """Convert a batch from a Hugging Face dataset to torch tensors.
 
     This transform function converts items from Hugging Face dataset format (pyarrow)
@@ -274,14 +277,34 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
     types are converted to torch.tensor.
 
     Args:
-        items_dict (dict): A dictionary representing a batch of data from a
-            Hugging Face dataset.
+        items_dict (`dict[str, list[Any]]`):
+            A batch of data from a Hugging Face dataset.
+        features (`dict[str, dict] | None`, *optional*):
+            LeRobot feature metadata. Empty numerical
+            tensors retain their declared dtype and shape when metadata is supplied.
 
     Returns:
-        dict: The batch with items converted to torch tensors.
+        `dict[str, list[torch.Tensor | str]]`: The batch with items converted to torch tensors.
+
+    Raises:
+        ValueError: If a declared zero-sized numerical feature contains a nonempty value.
     """
     for key in items_dict:
         if key in LANGUAGE_COLUMNS:
+            continue
+        feature = features.get(key) if features is not None else None
+        if (
+            feature is not None
+            and feature["dtype"] not in {"image", "video", "string", "language"}
+            and any(dimension == 0 for dimension in feature["shape"])
+        ):
+            empty_tensors = []
+            for value in items_dict[key]:
+                array = np.asarray(value, dtype=feature["dtype"])
+                if array.size != 0:
+                    raise ValueError(f"Zero-sized feature {key!r} contains a nonempty value")
+                empty_tensors.append(torch.from_numpy(array.reshape(feature["shape"])))
+            items_dict[key] = empty_tensors
             continue
         first_item = items_dict[key][0]
         if isinstance(first_item, PILImage.Image):

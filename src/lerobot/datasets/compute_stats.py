@@ -510,18 +510,20 @@ def compute_episode_stats(
 
     Processes different data types appropriately:
     - Images/videos: Samples from paths, computes per-channel stats, normalizes to [0,1]
-    - Numerical arrays: Computes per-feature statistics
+    - Numerical arrays: Computes per-feature statistics, skipping declared zero-sized features
     - Strings: Skipped (no statistics computed)
 
     Args:
-        episode_data: Dictionary mapping feature names to data
-            - For images/videos: list of file paths
-            - For numerical data: numpy arrays
-        features: Dictionary describing each feature's dtype and shape
+        episode_data (`dict[str, list[str] | np.ndarray]`):
+            Feature data: file paths for images/videos and numpy arrays for numerical features.
+        features (`dict[str, dict]`):
+            Feature metadata describing each feature's dtype and shape.
+        quantile_list (`list[float] | None`, *optional*):
+            Quantiles to compute. Defaults to `DEFAULT_QUANTILES` when omitted.
 
     Returns:
-        Dictionary mapping feature names to their statistics dictionaries.
-        Each statistics dictionary contains min, max, mean, std, count, and quantiles.
+        `dict[str, dict[str, np.ndarray]]`: Statistics containing min, max, mean, std,
+        count, and quantiles. Declared zero-sized numerical features are omitted.
 
     Note:
         For 'image'/'video' features, stats are computed per channel and kept with a
@@ -535,6 +537,11 @@ def compute_episode_stats(
     ep_stats: dict[str, dict[str, np.ndarray]] = {}
     for key, data in episode_data.items():
         if features[key]["dtype"] in {"string", "language"}:
+            continue
+        if features[key]["dtype"] not in {"image", "video"} and any(
+            dimension == 0 for dimension in features[key].get("shape", ())
+        ):
+            logger.debug("Skipping statistics for zero-sized feature %s", key)
             continue
 
         axes_to_reduce: int | tuple[int, ...]

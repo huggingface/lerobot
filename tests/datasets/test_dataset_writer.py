@@ -25,8 +25,12 @@ from PIL import Image
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from lerobot.configs import VideoEncoderConfig
 from lerobot.datasets.dataset_writer import _encode_video_worker
+from lerobot.datasets.io_utils import load_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_IMAGE_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
@@ -35,6 +39,23 @@ SIMPLE_FEATURES = {
     "state": {"dtype": "float32", "shape": (6,), "names": None},
     "action": {"dtype": "float32", "shape": (6,), "names": None},
 }
+
+ZERO_WIDTH_CASES = [
+    (dtype, shape, 0)
+    for dtype in ("float32", "float64", "int64")
+    for shape in ((0,), (0, 3), (5, 0), (2, 0, 3))
+] + [
+    ("float32", (2, 0, 3, 1), 0),
+    ("float32", (1, 2, 0, 3, 1), 0),
+    ("float64", (0,), 1),
+    ("int64", (2, 0, 3), 1),
+]
+
+
+def _assert_empty_tensor(value: torch.Tensor, dtype: str, shape: tuple[int, ...]) -> None:
+    assert value.dtype == getattr(torch, dtype)
+    assert tuple(value.shape) == shape
+    assert value.numel() == 0
 
 
 def _make_frame(features: dict, task: str = "Dummy task") -> dict:
@@ -304,3 +325,119 @@ def test_finalize_then_read_roundtrip(tmp_path):
     for i in range(5):
         item = dataset[i]
         assert torch.allclose(item["state"], known_states[i], atol=1e-5)
+
+
+@pytest.mark.parametrize(("dtype", "shape", "num_workers"), ZERO_WIDTH_CASES)
+def test_zero_width_features_roundtrip_multiple_episodes(
+    tmp_path: Path, dtype: str, shape: tuple[int, ...], num_workers: int
+) -> None:
+    """Empty numeric columns survive storage and single, batch, and delta reads."""
+    root = tmp_path / "zero_width"
+    features = {
+        "action": {"dtype": "float32", "shape": (2,), "names": None},
+        "target": {"dtype": dtype, "shape": shape, "names": None},
+    }
+    dataset = LeRobotDataset.create(repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=features, root=root)
+    actions = np.arange(10, dtype=np.float32).reshape(5, 2)
+    index = 0
+    for episode_length in (2, 3):
+        for _ in range(episode_length):
+            dataset.add_frame(
+                {
+                    "task": "Test task",
+                    "action": actions[index].copy(),
+                    "target": np.empty(shape, dtype=dtype),
+                }
+            )
+            index += 1
+        dataset.save_episode()
+    dataset.finalize()
+
+    # Inspect the stored column, independently of the Torch reading transform.
+    table = pq.read_table(sorted((root / "data").rglob("*.parquet")))
+    column = table.column("target").combine_chunks()
+    storage = column.storage if isinstance(column, pa.ExtensionArray) else column
+    assert len(storage) == len(actions)
+    assert all(np.asarray(row).size == 0 for row in storage.to_pylist())
+    arrow_dtype = column.type
+    while (
+        isinstance(arrow_dtype, pa.ExtensionType)
+        or pa.types.is_list(arrow_dtype)
+        or pa.types.is_large_list(arrow_dtype)
+        or pa.types.is_fixed_size_list(arrow_dtype)
+    ):
+        if isinstance(arrow_dtype, pa.ExtensionType):
+            arrow_dtype = arrow_dtype.storage_type
+        else:
+            arrow_dtype = arrow_dtype.value_type
+    assert arrow_dtype == pa.from_numpy_dtype(np.dtype(dtype))
+
+    reloaded = LeRobotDataset(repo_id=DUMMY_REPO_ID, root=root, download_videos=False)
+    assert reloaded.num_episodes == 2
+    assert len(reloaded) == 5
+    assert reloaded.meta.features["target"]["dtype"] == dtype
+    assert tuple(reloaded.meta.features["target"]["shape"]) == shape
+    assert "target" not in reloaded.meta.stats
+    assert "target" not in load_stats(root)
+    for stat, expected in {
+        "min": actions.min(axis=0),
+        "max": actions.max(axis=0),
+        "mean": actions.mean(axis=0),
+        "std": actions.std(axis=0),
+        "count": np.array([len(actions)]),
+    }.items():
+        np.testing.assert_allclose(reloaded.meta.stats["action"][stat], expected, rtol=1e-6)
+
+    for index in range(len(reloaded)):
+        item = reloaded[index]
+        _assert_empty_tensor(item["target"], dtype, shape)
+        torch.testing.assert_close(item["action"], torch.from_numpy(actions[index]))
+        assert item["episode_index"].item() == (0 if index < 2 else 1)
+        assert item["task"] == "Test task"
+
+    # Include repeated and out-of-order indices to exercise batched gathering.
+    indices = [4, 0, 2, 4]
+    for index, item in zip(indices, reloaded.__getitems__(indices), strict=True):
+        _assert_empty_tensor(item["target"], dtype, shape)
+        torch.testing.assert_close(item["action"], torch.from_numpy(actions[index]))
+
+    deltas = [-1 / DEFAULT_FPS, 0.0, 1 / DEFAULT_FPS]
+    windowed = LeRobotDataset(
+        repo_id=DUMMY_REPO_ID,
+        root=root,
+        download_videos=False,
+        delta_timestamps={"action": deltas, "target": deltas},
+    )
+    for index, item in zip(indices, windowed.__getitems__(indices), strict=True):
+        start, stop = (0, 2) if index < 2 else (2, 5)
+        window = [min(max(index + offset, start), stop - 1) for offset in (-1, 0, 1)]
+        padding = torch.tensor([index - 1 < start, False, index + 1 >= stop])
+        _assert_empty_tensor(item["target"], dtype, (3, *shape))
+        torch.testing.assert_close(item["action"], torch.from_numpy(actions[window]))
+        assert torch.equal(item["target_is_pad"], padding)
+        assert torch.equal(item["action_is_pad"], padding)
+        torch.testing.assert_close(item["target"], windowed[index]["target"])
+
+    loader = torch.utils.data.DataLoader(
+        windowed,
+        batch_size=2,
+        num_workers=num_workers,
+        multiprocessing_context="spawn" if num_workers else None,
+    )
+    batch = next(iter(loader))
+    _assert_empty_tensor(batch["target"], dtype, (2, 3, *shape))
+    expected_actions = torch.from_numpy(actions[np.array([[0, 0, 1], [0, 1, 1]])])
+    torch.testing.assert_close(batch["action"], expected_actions)
+
+
+@pytest.mark.parametrize("shape", [(0,), (2, 0, 3)])
+def test_add_frame_rejects_nonempty_zero_width_feature(tmp_path: Path, shape: tuple[int, ...]) -> None:
+    """A variable-length storage column must not relax the declared frame shape."""
+    features = {"target": {"dtype": "float32", "shape": shape, "names": None}}
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=features, root=tmp_path / "ds"
+    )
+    nonempty_shape = tuple(max(size, 1) for size in shape)
+    with pytest.raises(ValueError, match="feature 'target'.*expected shape"):
+        dataset.add_frame({"task": "Test task", "target": np.zeros(nonempty_shape, dtype=np.float32)})
+    assert dataset.writer.episode_buffer["size"] == 0
