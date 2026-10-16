@@ -221,7 +221,7 @@ class OpenCVCamera(Camera):
         # Buffer depth goes first: V4L2 allocates its ring when the format is
         # applied, and a request made after that only takes effect on the next
         # re-init. Not every backend honours it, so the result is logged, not
-        # enforced - `config/video.sh probe` measures what the driver actually does.
+        # enforced - `config/video.sh probe` (XLeRobot repo) measures what the driver actually does.
         if self.config.buffer_size is not None:
             accepted = self.videocapture.set(cv2.CAP_PROP_BUFFERSIZE, float(self.config.buffer_size))
             actual = self.videocapture.get(cv2.CAP_PROP_BUFFERSIZE)
