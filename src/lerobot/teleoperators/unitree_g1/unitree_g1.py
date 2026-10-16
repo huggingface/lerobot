@@ -16,10 +16,12 @@
 
 import logging
 import time
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, G1_29_JointArmIndex
+from lerobot.lerobot_types import RobotObservation
+from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, REMOTE_BUTTONS, G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _unitree_sdk_available
@@ -31,7 +33,7 @@ else:
     class Joystick:
         def __init__(self):
             raise ImportError(
-                "unitree_sdk2py is required for RemoteController. Install with: pip install unitree_sdk2py"
+                "unitree_sdk2py is required for WirelessRemote. Install with: pip install unitree_sdk2py"
             )
 
 
@@ -42,119 +44,74 @@ from .exo_serial import ExoskeletonArm
 
 logger = logging.getLogger(__name__)
 
+# SDK button names in the bit order of the wireless_remote bytes 2-3 (little-endian uint16),
+# which is also the index order of the remote.button.* keys.
+_WIRELESS_BUTTONS = (
+    "RB",
+    "LB",
+    "start",
+    "back",
+    "RT",
+    "LT",
+    "",
+    "",
+    "A",
+    "B",
+    "X",
+    "Y",
+    "up",
+    "right",
+    "down",
+    "left",
+)
 
-class RemoteController:
-    """Unitree remote controller data parser for joystick and button state."""
+# remote.button.* indices the exo thumbstick buttons stand in for.
+_LEFT_EXO_BUTTON = 4  # RT
+_RIGHT_EXO_BUTTON = 0  # RB
 
-    # ADC parameters for exoskeleton joystick (12-bit ADC)
-    ADC_MAX = 4095
-    ADC_HALF = ADC_MAX / 2
-    JOYSTICK_X_IDX = 11  # X axis in raw ADC array
-    JOYSTICK_BTN_IDX = 12  # Button in raw ADC array
-    JOYSTICK_Y_IDX = 13  # Y axis in raw ADC array
 
-    # Map SDK named buttons to positional indices matching the wireless_remote
-    # byte layout (little-endian uint16 from bytes 2-3).
-    _BUTTON_MAP: list[str] = [
-        "RB",
-        "LB",
-        "start",
-        "back",
-        "RT",
-        "LT",
-        "",
-        "",
-        "A",
-        "B",
-        "X",
-        "Y",
-        "up",
-        "right",
-        "down",
-        "left",
-    ]
+@dataclass
+class RemoteInput:
+    """Locomotion stick and button state, sent to the robot as the ``remote.*`` actions."""
+
+    lx: float = 0.0
+    ly: float = 0.0
+    rx: float = 0.0
+    ry: float = 0.0
+    buttons: list[int] = field(default_factory=lambda: [0] * len(REMOTE_BUTTONS))
+
+    @property
+    def is_active(self) -> bool:
+        axes = (self.lx, self.ly, self.rx, self.ry)
+        return any(abs(value) > 1e-3 for value in axes) or any(self.buttons)
+
+    def to_action(self) -> dict[str, float]:
+        return dict(zip(REMOTE_AXES, (self.lx, self.ly, self.rx, self.ry), strict=True))
+
+
+class WirelessRemote:
+    """Decodes the raw ``wireless_remote`` bytes of the G1's lowstate with the Unitree SDK parser."""
 
     def __init__(self) -> None:
-        self.lx = 0.0
-        self.ly = 0.0
-        self.rx = 0.0
-        self.ry = 0.0
-        self.button = [0] * 16
-        self.remote_action: dict[str, float] = dict.fromkeys(REMOTE_AXES, 0.0)
-
-        # SDK joystick parser for wireless remote bytes
         self._joystick = Joystick()
         # Disable axis smoothing and deadzone to preserve raw values
         for axis in (self._joystick.lx, self._joystick.ly, self._joystick.rx, self._joystick.ry):
             axis.smooth = 1.0
             axis.deadzone = 0.0
 
-        # Joystick center calibration (read at connect time)
-        self.left_center_x = self.ADC_HALF
-        self.left_center_y = self.ADC_HALF
-        self.right_center_x = self.ADC_HALF
-        self.right_center_y = self.ADC_HALF
-
-        # Whether to use exo joystick (detected at connect time)
-        self.use_left_exo_joystick = False
-        self.use_right_exo_joystick = False
-
-    def _sync_remote_action(self) -> None:
-        self.remote_action.update(zip(REMOTE_AXES, (self.lx, self.ly, self.rx, self.ry), strict=True))
-
-    def calibrate_center(self, raw16: list[int] | None, side: str) -> None:
-        if raw16 is None or len(raw16) < 16:
-            logger.info(f"{side.capitalize()} exo joystick: no data available")
-            return
-
-        btn_val = raw16[self.JOYSTICK_BTN_IDX]
-        logger.info(f"{side.capitalize()} exo joystick button ADC: {btn_val} (threshold: {self.ADC_HALF})")
-        if btn_val <= self.ADC_HALF:
-            logger.info(f"{side.capitalize()} exo joystick not detected (button below threshold)")
-            return
-
-        x = raw16[self.JOYSTICK_X_IDX]
-        y = raw16[self.JOYSTICK_Y_IDX]
-        if side == "left":
-            self.use_left_exo_joystick = True
-            self.left_center_x, self.left_center_y = x, y
-        else:
-            self.use_right_exo_joystick = True
-            self.right_center_x, self.right_center_y = x, y
-        logger.info(f"{side.capitalize()} exo joystick enabled, center: x={x}, y={y}")
-
-    def set_from_exo(self, raw16: list[int] | None, side: str) -> None:
-        if raw16 is None or len(raw16) < 16:
-            return
-
-        if side == "left":
-            if not self.use_left_exo_joystick:
-                return
-            self.lx = (raw16[self.JOYSTICK_X_IDX] - self.left_center_x) / self.ADC_HALF
-            self.ly = (raw16[self.JOYSTICK_Y_IDX] - self.left_center_y) / self.ADC_HALF
-            self.button[4] = 1 if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF else 0
-            return
-
-        if not self.use_right_exo_joystick:
-            return
-        self.rx = (raw16[self.JOYSTICK_X_IDX] - self.right_center_x) / self.ADC_HALF
-        self.ry = (raw16[self.JOYSTICK_Y_IDX] - self.right_center_y) / self.ADC_HALF
-        self.button[0] = 1 if raw16[self.JOYSTICK_BTN_IDX] < self.ADC_HALF else 0
-
-    def set_from_wireless(self, wireless_remote: bytes) -> None:
-        """Parse Unitree wireless remote raw bytes into joystick + button state."""
+    def parse(self, wireless_remote: bytes) -> RemoteInput | None:
         if len(wireless_remote) < 24:
-            return
-        self._joystick.extract(wireless_remote)
-
-        self.lx = self._joystick.lx.data
-        self.ly = self._joystick.ly.data
-        self.rx = self._joystick.rx.data
-        self.ry = self._joystick.ry.data
-
-        for i, name in enumerate(self._BUTTON_MAP):
-            if name:
-                self.button[i] = getattr(self._joystick, name).data
+            return None
+        joystick = self._joystick
+        joystick.extract(wireless_remote)
+        buttons = [getattr(joystick, name).data if name else 0 for name in _WIRELESS_BUTTONS]
+        return RemoteInput(
+            lx=joystick.lx.data,
+            ly=joystick.ly.data,
+            rx=joystick.rx.data,
+            ry=joystick.ry.data,
+            buttons=buttons,
+        )
 
 
 class UnitreeG1Teleoperator(Teleoperator):
@@ -205,11 +162,14 @@ class UnitreeG1Teleoperator(Teleoperator):
         )
 
         self.ik_helper: ExoskeletonIKHelper | None = None
-        self.remote_controller = RemoteController()
+        self.wireless_remote = WirelessRemote()
+        # Latest reading of each source, kept apart so one never masks the other.
+        self._wireless_input = RemoteInput()
+        self._exo_input = RemoteInput()
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        remote_features: dict[str, type] = dict.fromkeys(self.remote_controller.remote_action, float)
+        remote_features: dict[str, type] = dict.fromkeys(REMOTE_AXES, float)
         if not self._arm_control_enabled:
             return remote_features
         joint_features = {f"{name}.q": float for name in self._g1_arm_joint_names}
@@ -245,10 +205,8 @@ class UnitreeG1Teleoperator(Teleoperator):
 
         time.sleep(0.1)  # Give serial time to populate buffer
 
-        left_raw = self.left_arm.read_raw()
-        right_raw = self.right_arm.read_raw()
-        self.remote_controller.calibrate_center(left_raw, "left")
-        self.remote_controller.calibrate_center(right_raw, "right")
+        self.left_arm.detect_joystick()
+        self.right_arm.detect_joystick()
 
     def calibrate(self) -> None:
         if not self.left_arm.is_calibrated:
@@ -270,35 +228,44 @@ class UnitreeG1Teleoperator(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, float]:
-        joint_action: dict[str, float] = {}
-        left_raw = None
-        right_raw = None
-        if self._arm_control_enabled:
-            if self.ik_helper is None:
-                raise DeviceNotConnectedError(f"{self} IK helper is not initialized. Run `.connect()` first.")
-            left_raw = self.left_arm.read_raw()
-            right_raw = self.right_arm.read_raw()
+        if not self._arm_control_enabled:
+            return self._wireless_input.to_action()
 
-            left_angles = self.left_arm.get_angles()
-            right_angles = self.right_arm.get_angles()
-            joint_action = self.ik_helper.compute_g1_joints_from_exo(left_angles, right_angles)
+        if self.ik_helper is None:
+            raise DeviceNotConnectedError(f"{self} IK helper is not initialized. Run `.connect()` first.")
+        # One sample per arm feeds both the IK and the thumbstick.
+        left_raw = self.left_arm.read_raw()
+        right_raw = self.right_arm.read_raw()
+        joint_action = self.ik_helper.compute_g1_joints_from_exo(
+            self.left_arm.angles_from_raw(left_raw), self.right_arm.angles_from_raw(right_raw)
+        )
+        self._update_exo_input(left_raw, right_raw)
 
-        # Wireless remote has priority when non-zero; otherwise, use exo joystick.
-        rc = self.remote_controller
-        wireless_active = (
-            abs(rc.lx) > 1e-3 or abs(rc.ly) > 1e-3 or abs(rc.rx) > 1e-3 or abs(rc.ry) > 1e-3
-        ) or any(rc.button)
-        if self._arm_control_enabled and not wireless_active:
-            rc.set_from_exo(left_raw, "left")
-            rc.set_from_exo(right_raw, "right")
+        # Wireless remote has priority when touched; otherwise, use exo joystick.
+        remote = self._wireless_input if self._wireless_input.is_active else self._exo_input
+        return {**joint_action, **remote.to_action()}
 
-        rc._sync_remote_action()
-        return {**joint_action, **rc.remote_action}
+    def _update_exo_input(self, left_raw: list[int] | None, right_raw: list[int] | None) -> None:
+        # A missing sample keeps the previous reading.
+        left = self.left_arm.joystick_from_raw(left_raw)
+        if left is not None:
+            self._exo_input.lx, self._exo_input.ly = left.x, left.y
+            self._exo_input.buttons[_LEFT_EXO_BUTTON] = int(left.pressed)
+        right = self.right_arm.joystick_from_raw(right_raw)
+        if right is not None:
+            self._exo_input.rx, self._exo_input.ry = right.x, right.y
+            self._exo_input.buttons[_RIGHT_EXO_BUTTON] = int(right.pressed)
+
+    def on_observation(self, observation: RobotObservation) -> None:
+        wireless_remote = observation.get("wireless_remote")
+        if wireless_remote is None:
+            return
+        remote = self.wireless_remote.parse(wireless_remote)
+        if remote is not None:
+            self._wireless_input = remote
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        wireless_remote = feedback.get("wireless_remote")
-        if wireless_remote is not None:
-            self.remote_controller.set_from_wireless(wireless_remote)
+        self.on_observation(feedback)
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()

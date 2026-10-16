@@ -19,7 +19,7 @@ from typing import Any
 
 import draccus
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors.motors_bus import MotorCalibration
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
@@ -186,6 +186,14 @@ class Teleoperator(abc.ABC):
                 structure should match :pymeth:`observation_features`.
         """
         pass
+
+    def on_observation(self, observation: RobotObservation) -> None:
+        """Receive the latest raw robot observation before get_action().
+
+        Override when actions depend on robot state. The default does nothing.
+        Implementations must not mutate the observation.
+        """
+        return None
 
     @abc.abstractmethod
     def send_feedback(self, feedback: dict[str, Any]) -> None:

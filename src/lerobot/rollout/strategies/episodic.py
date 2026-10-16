@@ -178,6 +178,7 @@ class EpisodicStrategy(RolloutStrategy):
                             # engage).
                             if self.config.smooth_handover:
                                 obs = robot.get_observation()
+                                teleop.on_observation(obs)
                                 current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
                                 if (
                                     teleop_supports_feedback(teleop)
@@ -324,6 +325,7 @@ class EpisodicStrategy(RolloutStrategy):
             obs = robot.get_observation()
 
             if teleop is not None:
+                teleop.on_observation(obs)
                 act = teleop.get_action()
                 act_teleop = processors.teleop_action_processor((act, obs))
                 robot_action = processors.robot_action_processor((act_teleop, obs))
