@@ -26,15 +26,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import numpy as np
-import torch
 
 from lerobot.policies import (
     ChunkPolicySpec as ChunkPolicySpec,
     ExecutionMode as ExecutionMode,
     FeatureSpec as FeatureSpec,
 )
+
+if TYPE_CHECKING:
+    import torch
 
 DEFAULT_MAX_TEXT_INPUT_CHARS = 4096
 DEFAULT_MAX_TEXT_OUTPUT_CHARS = 8192
