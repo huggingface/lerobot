@@ -76,6 +76,12 @@ class UnitreeG1Config(RobotConfig):
     # Socket config for ZMQ bridge
     robot_ip: str = "192.168.123.164"  # default G1 IP
 
+    # Talk DDS (rt/lowcmd, rt/lowstate) directly through the Unitree SDK when running onboard.
+    # Ignored in simulation. Remote clients continue to use the ZMQ bridge.
+    onboard: bool = False
+    # DDS network interface for onboard mode; None lets CycloneDDS select the default.
+    network_interface: str | None = None
+
     # Cameras (ZMQ-based remote cameras)
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
