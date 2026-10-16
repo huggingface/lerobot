@@ -1,19 +1,19 @@
 # GR00T 策略[[gr00t-policy]]
 
-GR00T 是 NVIDIA 的基礎模型家族（NVIDIA foundation model family），專為通用人形機器人推理與技能（generalized humanoid robot reasoning and skills）而打造。它是一個跨具身策略（cross-embodiment policy），接受多模態輸入（multimodal input），包括語言（language）、影像（images）和本體感覺（proprioception），以在多樣化的環境（environments）中執行操作任務（manipulation tasks）。
+GR00T 是 NVIDIA 為通用人形機器人的推理與技能所打造的基礎模型（foundation model）系列。它是一個跨機器人形態（cross-embodiment）的策略（policy），接受語言、影像與本體感覺（proprioception）等多模態輸入，在多樣的環境中執行操作任務。
 
-LeRobot 透過 `groot` 策略類型（policy type）整合 GR00T N1.7。
+LeRobot 透過 `groot` 策略類型整合 GR00T N1.7。
 
 > [!WARNING]
-> **破壞性變更（breaking change）：** LeRobot 已移除對 GR00T N1.5 的支援，目前版本僅支援 GR00T N1.7。N1.5 的檢查點（checkpoint）與設定（configs）會被拒絕並附上遷移提示（rejected with a migration note）。若要繼續使用 N1.5 檢查點，請釘選最後一個支援它的版本：`pip install 'lerobot==0.5.1'`。若要使用目前版本，請遷移到 GR00T N1.7（基礎模型 base model [`nvidia/GR00T-N1.7-3B`](https://huggingface.co/nvidia/GR00T-N1.7-3B)）。
+> **破壞性變更：** LeRobot 已移除對 GR00T N1.5 的支援，目前的版本只支援 GR00T N1.7。N1.5 的檢查點（checkpoint）與設定會被拒絕，並附上遷移說明。若要繼續使用 N1.5 的檢查點，請釘選最後一個支援它的版本：`pip install 'lerobot==0.5.1'`。若要使用目前的版本，請遷移到 GR00T N1.7（基礎模型 [`nvidia/GR00T-N1.7-3B`](https://huggingface.co/nvidia/GR00T-N1.7-3B)）。
 
 ## 模型概覽[[model-overview]]
 
-GR00T N1.7 使用 Cosmos-Reason2/Qwen3-VL 骨幹網路（backbone），並提供 SimplerEnv、DROID 與 LIBERO 的檢查點（checkpoint）。
+GR00T N1.7 使用 Cosmos-Reason2/Qwen3-VL 作為骨幹網路（backbone），並提供 SimplerEnv、DROID 與 LIBERO 的檢查點（checkpoint）。
 
-開發者和研究人員可以使用自己的真實或合成資料（real or synthetic data）對 GR00T 進行後訓練（post-train），以適應（adapt）特定的人形機器人或任務（humanoid robots or tasks）。
+開發者與研究人員可以用自己的真實或合成資料，對 GR00T 進行後訓練（post-training），讓它適用於特定的人形機器人或任務。
 
-GR00T 使用預訓練的視覺和語言編碼器（pre-trained vision and language encoders），搭配 流匹配動作 transformer （flow matching action transformer），以視覺（vision）、語言（language）和本體感覺（proprioception）為條件（conditioned），對動作區塊（chunk of actions）建模。
+GR00T 使用預訓練的視覺與語言編碼器，搭配以流匹配（flow matching）訓練的動作 transformer，以視覺、語言與本體感覺為條件，對動作區塊（action chunk）建模。
 
 <img
   src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-groot-paper1%20(1).png"
@@ -21,23 +21,23 @@ GR00T 使用預訓練的視覺和語言編碼器（pre-trained vision and langua
   width="80%"
 />
 
-其優異的效能來自於在大規模且多樣化的人形機器人資料集（expansive and diverse humanoid dataset）上進行訓練（training），這些資料集包括：
+它的優異表現，來自於在大規模且多樣化的人形機器人資料集上訓練，其中包括：
 
-- 從機器人擷取的真實資料（real captured data from robots）。
-- 使用 NVIDIA Isaac GR00T Blueprint 生成的合成資料（synthetic data）。
-- 網際網路規模的影片資料（internet-scale video data）。
+- 從機器人實際擷取的資料。
+- 使用 NVIDIA Isaac GR00T Blueprint 產生的合成資料。
+- 網際網路規模的影片資料。
 
-這種方法使模型（model）透過後訓練（post-training）能夠高度適應（highly adaptable）特定的具身類型（specific embodiments）、任務（task）和環境（environments）。
+這種做法讓模型能透過後訓練，高度適應特定的機器人形態、任務與環境。
 
 ## 安裝需求[[installation-requirements]]
 
-GR00T 是為 NVIDIA GPU 加速系統設計的。請安裝帶有 GR00T 額外套件（extra）的 LeRobot：
+GR00T 是為 NVIDIA GPU 加速的系統設計的。請安裝含 GR00T 額外套件的 LeRobot：
 
 ```bash
 pip install "lerobot[groot]"
 ```
 
-若使用原始碼簽出（source checkout）：
+若使用原始碼安裝：
 
 ```bash
 pip install -e ".[groot]"
@@ -55,9 +55,9 @@ pip install -e ".[groot]"
 
 ### 訓練指令範例[[training-command-example]]
 
-以下是在你自己的資料集（dataset）上微調（finetuning）基礎 GR00T 模型（model）的完整訓練指令（training command）：
+以下是在你自己的資料集上微調（fine-tune）GR00T 基礎模型的完整訓練指令：
 
-此指令使用 `new_embodiment` 旗標（flag），此旗標用於 SO-101 機器人，[進一步了解 GR00T 如何處理不同的具身類型（embodiments）](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/policy.md#--embodiment-tag)。
+這個指令使用了 `new_embodiment` 旗標，用於 SO-101 機器人。[進一步了解 GR00T 如何處理不同的機器人形態。](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/policy.md#--embodiment-tag)
 
 ```bash
 # 安裝訓練所需的額外相依套件
@@ -107,13 +107,13 @@ lerobot-train \
 ### LIBERO 基準測試結果[[libero-benchmark-results]]
 
 > [!NOTE]
-> 在執行 `lerobot-eval` 之前，請先按照 [LIBERO](./libero) 的設定說明（setup instructions）進行。
+> 執行 `lerobot-eval` 之前，請先依照 [LIBERO](./libero) 的設定說明完成設定。
 
-GR00T N1.7 在 LIBERO 基準測試套件（benchmark suite）上展現了優異的效能。若要重現（reproduce） LeRobot 的結果，請參考 [LIBERO](./libero) 章節中的說明。
+GR00T N1.7 在 LIBERO 基準測試套件上展現了優異的表現。若要重現 LeRobot 的結果，請依照 [LIBERO](./libero) 章節中的說明操作。
 
 ### 在 LIBERO 上訓練[[train-on-libero]]
 
-某個 LIBERO 套件（suite，此處為 `libero_spatial`）的訓練指令（training command）範例：
+LIBERO 套件（此處為 `libero_spatial`）的訓練指令範例：
 
 ```bash
 IMAGE_TRANSFORMS='{
@@ -154,19 +154,19 @@ lerobot-train \
   --job_name=$JOB_NAME
 ```
 
-這會遵循[此處](https://github.com/NVIDIA/Isaac-GR00T/blob/main/examples/LIBERO/README.md)的配方。
+這會依循[這裡](https://github.com/NVIDIA/Isaac-GR00T/blob/main/examples/LIBERO/README.md)的配方。
 
 ### GR00T N1.7 LIBERO 結果[[gr00t-n17-libero-results]]
 
 LeRobot 整合的初步結果（GR00T-LeRobot，每個套件 `eval.n_episodes >= 50`）：
 
-| 套件（suite）    | 成功率（success rate） | 檢查點（checkpoint）                                                                                          |
-| ---------------- | ---------------------: | ------------------------------------------------------------------------------------------------------------- |
-| LIBERO Spatial   |                    95% | [nvidia/gr00t17-lerobot-libero_spatial-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_spatial-640) |
-| LIBERO Object    |                   100% | [nvidia/gr00t17-lerobot-libero_object-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_object-640)   |
-| LIBERO Goal      |                    98% | [nvidia/gr00t17-lerobot-libero_goal-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_goal-640)       |
-| LIBERO 10 (Long) |                    93% | [nvidia/gr00t17-lerobot-libero_10-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_10-640)           |
-| **Average**      |              **96.5%** |                                                                                                               |
+| 套件             |    成功率 | 檢查點                                                                                                        |
+| ---------------- | --------: | ------------------------------------------------------------------------------------------------------------- |
+| LIBERO Spatial   |       95% | [nvidia/gr00t17-lerobot-libero_spatial-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_spatial-640) |
+| LIBERO Object    |      100% | [nvidia/gr00t17-lerobot-libero_object-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_object-640)   |
+| LIBERO Goal      |       98% | [nvidia/gr00t17-lerobot-libero_goal-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_goal-640)       |
+| LIBERO 10 (Long) |       93% | [nvidia/gr00t17-lerobot-libero_10-640](https://huggingface.co/nvidia/gr00t17-lerobot-libero_10-640)           |
+| **Average**      | **96.5%** |                                                                                                               |
 
 ```bash
 export MODEL_ID=your_trained_model_on_huggingface
@@ -180,11 +180,11 @@ lerobot-eval \
   --eval.n_episodes=50
 ```
 
-回報成功率（reporting success rates）時，每個套件（suite）請使用 `eval.n_episodes >= 50`。
+回報成功率時，每個套件請使用 `eval.n_episodes >= 50`。
 
 ### 在你的硬體環境中進行評估[[evaluate-in-your-hardware-setup]]
 
-使用你的參數（parameters）訓練你的模型（trained your model）完成後，你可以在下游任務（downstream task）中執行推論（inference）。請參考[策略部署（lerobot-rollout）](./inference)中的說明。例如：
+用你的參數訓練好模型後，就可以在下游任務中執行推論。請依照[策略部署（lerobot-rollout）](./inference)中的說明操作。例如：
 
 ```bash
 # 安裝 rollout 與實體硬體所需的額外相依套件
@@ -220,8 +220,8 @@ uv run lerobot-rollout \
 ```
 
 > [!NOTE]
-> `inference.queue_threshold` 的值不應超過 5，以確保穩定的推論（inference）。
+> `inference.queue_threshold` 的值不應超過 5，以確保推論穩定。
 
-## 授權條款[[license]]
+## 授權[[license]]
 
 GR00T N1.7 依據 [NVIDIA Open Model License Agreement](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) 發布。

@@ -1,6 +1,6 @@
 # ACT (Action Chunking with Transformers)[[act-action-chunking-with-transformers]]
 
-ACT 是一種**輕量且高效的模仿學習策略（lightweight and efficient policy for imitation learning）**，特別適合精細操作任務（fine-grained manipulation tasks）。由於其訓練（training）速度快、計算需求低且表現優異，它是**我們推薦你入門 LeRobot 時首選的模型（model）**。
+ACT 是一個**輕量且高效的模仿學習（imitation learning）策略**，特別適合精細的操作任務。由於訓練速度快、運算需求低且表現出色，它是**我們推薦你剛開始使用 LeRobot 時的第一個模型**。
 
 <div class="video-container">
   <iframe
@@ -18,40 +18,40 @@ _觀看 LeRobot 團隊的教學影片，了解 ACT 的運作方式：[LeRobot AC
 
 ## 模型概覽[[model-overview]]
 
-Action Chunking with Transformers（ACT）由 Zhao 等人在論文 [Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://arxiv.org/abs/2304.13705) 中提出。該策略（policy）旨在使用平價硬體和最少的示範資料（demonstration data）來實現精確且充分接觸（contact-rich）的操作任務（task）。
+Action Chunking with Transformers（ACT）由 Zhao 等人在論文 [Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://arxiv.org/abs/2304.13705) 中提出。這個策略（policy）的設計目標，是以平價的硬體和極少量的示範資料，完成精確且接觸頻繁的操作任務。
 
 ### 為什麼 ACT 非常適合初學者[[why-act-is-great-for-beginners]]
 
-ACT 作為絕佳的入門選擇，有以下幾個原因：
+ACT 是很好的入門選擇，原因如下：
 
-- **訓練速度快（fast training）**：在單張 GPU 上幾小時內即可完成訓練（training）
-- **輕量（lightweight）**：僅約 8,000 萬個參數（parameters），高效且易於使用
-- **資料效率高（data efficient）**：通常僅需 50 筆示範（demonstrations）即可達到高成功率（high success rates）
+- **訓練快速**：在單張 GPU 上幾小時就能訓練完成
+- **輕量**：只有約 8,000 萬個參數，有效率又容易上手
+- **資料效率高**：通常只需要 50 筆示範，就能達到很高的成功率
 
 ### 架構[[architecture]]
 
-ACT 使用基於 Transformer 的架構（transformer-based architecture），包含三個主要元件（components）：
+ACT 採用以 Transformer 為基礎的架構，包含三個主要部分：
 
-1. **視覺骨幹網路（vision backbone）**：ResNet-18 處理來自多個相機視角（multiple camera viewpoints）的影像（images）
-2. **Transformer 編碼器（Transformer encoder）**：整合來自相機特徵（camera features）、關節位置（joint positions）和學習到的潛在變數（learned latent variable）的資訊
-3. **Transformer 解碼器（Transformer decoder）**：使用交叉注意力機制（cross-attention）生成連貫的動作（action）序列
+1. **視覺骨幹網路（vision backbone）**：以 ResNet-18 處理來自多個相機視角的影像
+2. **Transformer 編碼器**：整合相機特徵、關節位置，以及學習到的潛在變數
+3. **Transformer 解碼器**：使用交叉注意力（cross-attention）產生連貫的動作序列
 
-策略（policy）的輸入（input）包括：
+策略的輸入包括：
 
-- 多張 RGB 影像（例如來自手腕相機 wrist cameras、前方/頂部相機 front/top cameras）
-- 當前機器人關節位置（current robot joint positions）
-- 潛在風格變數 `z`（latent style variable `z`；訓練 training 期間學習，推論 inference 時設為零）
+- 多張 RGB 影像（例如來自腕部相機、前方／上方相機）
+- 機器人目前的關節位置
+- 潛在的風格變數 `z`（訓練時學習，推論時設為零）
 
-輸出（outputs）為一個包含 `k` 個未來動作序列的區塊（chunk of `k` future action sequences）。
+輸出則是一個包含 `k` 個未來動作序列的區塊（chunk）。
 
 ## 安裝需求[[installation-requirements]]
 
-1. 按照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
-2. ACT 已包含在 LeRobot 的基礎安裝中，無需額外的相依套件（additional dependencies）！
+1. 依照我們的[安裝指南](./installation)安裝 LeRobot。
+2. ACT 已包含在 LeRobot 的基本安裝中，不需要額外的相依套件！
 
 ## 訓練 ACT[[training-act]]
 
-ACT 可與標準的 LeRobot 訓練管線（training pipeline）無縫整合。以下是在你的資料集（dataset）上訓練 ACT 的完整範例：
+ACT 可以直接搭配標準的 LeRobot 訓練流程使用。以下是在你的資料集上訓練 ACT 的完整範例：
 
 ```bash
 lerobot-train \
@@ -66,17 +66,17 @@ lerobot-train \
 
 ### 訓練技巧[[training-tips]]
 
-1. **從預設值開始（start with defaults）**：ACT 的預設超參數（default hyperparameters）對大多數任務（task）都能良好運作
-2. **訓練時長（training duration）**：在單張 GPU 上進行 100k 訓練步驟（training steps）預計需要幾小時
-3. **批次大小（batch size）**：建議從批次大小（batch size） 8 開始，再根據你的 GPU 記憶體進行調整
+1. **先用預設值**：ACT 的預設超參數對大多數任務都很適用
+2. **訓練時間**：在單張 GPU 上訓練 100k 步，大約需要幾小時
+3. **批次大小**：先從批次大小 8 開始，再依你的 GPU 記憶體調整
 
 ### 使用 Google Colab 訓練[[train-using-google-colab]]
 
-如果你的本機電腦沒有強大的 GPU，可以按照 [ACT 訓練筆記本（ACT training notebook）](./notebooks#training-act) 使用 Google Colab 來訓練（training）你的模型（model）。
+如果你的電腦沒有強大的 GPU，可以依照 [ACT 訓練 notebook](./notebooks#training-act)，使用 Google Colab 訓練模型。
 
 ## 評估 ACT[[evaluating-act]]
 
-訓練（training）完成後，你可以使用 `lerobot-rollout` 指令搭配已訓練策略（trained policy）來評估你的 ACT 策略。這將執行推論（inference）並記錄評估回合（record evaluation episodes）：
+訓練完成後，可以使用 `lerobot-rollout` 指令搭配訓練好的策略來評估 ACT。這會執行推論並錄下評估的回合（episode）：
 
 ```bash
 lerobot-rollout \
