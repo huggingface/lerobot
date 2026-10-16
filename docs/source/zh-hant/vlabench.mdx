@@ -34,7 +34,7 @@ VLABench 提供兩個任務套件（task suites），在 LeRobot 的 `--env.task
 
 ## 安裝（installation）[[installation]]
 
-VLABench **不在 PyPI 上** — 其唯一的發行管道是 [OpenMOSS/VLABench](https://github.com/OpenMOSS/VLABench) GitHub 儲存庫（repo） — 因此 LeRobot 不提供 `vlabench` 附加套件（extra）。請手動以可編輯模式（editable） clone 安裝，同時安裝 VLABench 所需的 MuJoCo / dm_control 指定版本，然後下載網格資源（mesh assets）：
+VLABench **不在 PyPI 上**——其唯一的發行管道是 [OpenMOSS/VLABench](https://github.com/OpenMOSS/VLABench) GitHub 儲存庫（repo）——因此 LeRobot 不提供 `vlabench` 附加套件（extra）。請手動以可編輯模式（editable） clone 安裝，同時安裝 VLABench 所需的 MuJoCo / dm_control 指定版本，然後下載網格資源（mesh assets）：
 
 ```bash
 # 在完成標準的 LeRobot 安裝步驟之後。
@@ -131,14 +131,14 @@ lerobot-eval \
 
 **觀測（observations）：**
 
-- `observation.state` — 7 維末端執行器狀態（7-dim end-effector state，位置 position xyz + 歐拉角 Euler xyz + 夾爪（gripper））
-- `observation.images.image` — 前方相機（front camera），480×480 HWC uint8
-- `observation.images.second_image` — 第二相機（second camera），480×480 HWC uint8
-- `observation.images.wrist_image` — 腕部相機（wrist camera），480×480 HWC uint8
+- `observation.state`——7 維末端執行器狀態（7-dim end-effector state，位置 position xyz + 歐拉角 Euler xyz + 夾爪（gripper））
+- `observation.images.image`——前方相機（front camera），480×480 HWC uint8
+- `observation.images.second_image`——第二相機（second camera），480×480 HWC uint8
+- `observation.images.wrist_image`——腕部相機（wrist camera），480×480 HWC uint8
 
 **動作（actions）：**
 
-- 在 `Box(-1, 1, shape=(7,))` 中連續控制（continuous control） — 3D 位置（position）+ 3D 歐拉角方向（Euler orientation）+ 1D 夾爪（gripper）。
+- 在 `Box(-1, 1, shape=(7,))` 中連續控制（continuous control）——3D 位置（position）+ 3D 歐拉角方向（Euler orientation）+ 1D 夾爪（gripper）。
 
 ## 訓練（training）[[training]]
 
@@ -146,8 +146,8 @@ lerobot-eval \
 
 Hub 上已預先收集的 LeRobot 格式 VLABench 資料集（dataset）：
 
-- [`VLABench/vlabench_primitive_ft_lerobot_video`](https://huggingface.co/datasets/VLABench/vlabench_primitive_ft_lerobot_video) — 5,000 個回合（episodes），128 個任務（tasks），480×480 影像。
-- [`VLABench/vlabench_composite_ft_lerobot_video`](https://huggingface.co/datasets/VLABench/vlabench_composite_ft_lerobot_video) — 5,977 個回合（episodes），167 個任務（tasks），224×224 影像。
+- [`VLABench/vlabench_primitive_ft_lerobot_video`](https://huggingface.co/datasets/VLABench/vlabench_primitive_ft_lerobot_video)——5,000 個回合（episodes），128 個任務（tasks），480×480 影像。
+- [`VLABench/vlabench_composite_ft_lerobot_video`](https://huggingface.co/datasets/VLABench/vlabench_composite_ft_lerobot_video)——5,977 個回合（episodes），167 個任務（tasks），224×224 影像。
 
 ### 訓練指令範例（example training command）[[example-training-command]]
 

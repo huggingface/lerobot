@@ -150,13 +150,13 @@ LIBERO-plus 支援兩種控制模式（modes）：`relative`（預設）與 `abs
 
 **觀測（observations）：**
 
-- `observation.state` — 8 維本體感覺特徵（8-dim proprioceptive features，末端執行器位置 eef position、軸角朝向 axis-angle orientation、夾爪 gripper qpos）
-- `observation.images.image` — 主相機視角（main camera view，`agentview_image`），HWC uint8
-- `observation.images.image2` — 手腕相機視角（wrist camera view，`robot0_eye_in_hand_image`），HWC uint8
+- `observation.state`——8 維本體感覺特徵（8-dim proprioceptive features，末端執行器位置 eef position、軸角朝向 axis-angle orientation、夾爪 gripper qpos）
+- `observation.images.image`——主相機視角（main camera view，`agentview_image`），HWC uint8
+- `observation.images.image2`——手腕相機視角（wrist camera view，`robot0_eye_in_hand_image`），HWC uint8
 
 **動作（actions）：**
 
-- 在 `Box(-1, 1, shape=(7,))` 中的連續控制 — 6D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
+- 在 `Box(-1, 1, shape=(7,))` 中的連續控制——6D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
 
 ### 建議的評估回合數（recommended evaluation episodes）[[recommended-evaluation-episodes]]
 

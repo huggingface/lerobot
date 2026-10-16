@@ -4,7 +4,7 @@
 
 - 論文：[RoboCerebra: A Large-scale Benchmark for Long-horizon Robotic Manipulation Evaluation](https://arxiv.org/abs/2506.06677)
 - 專案網站：[robocerebra.github.io](https://robocerebra.github.io/)
-- 資料集（dataset）：[`lerobot/robocerebra_unified`](https://huggingface.co/datasets/lerobot/robocerebra_unified) — LeRobot v3.0，6,660 個回合（episode） / 571,116 影格（frames），20 fps，1,728 個語言為基礎的子任務（language-grounded sub-tasks）。
+- 資料集（dataset）：[`lerobot/robocerebra_unified`](https://huggingface.co/datasets/lerobot/robocerebra_unified)——LeRobot v3.0，6,660 個回合（episode） / 571,116 影格（frames），20 fps，1,728 個語言為基礎的子任務（language-grounded sub-tasks）。
 - 預訓練策略（pretrained policy）：[`lerobot/smolvla_robocerebra`](https://huggingface.co/lerobot/smolvla_robocerebra)
 
 ## 可用任務（available tasks）[[available-tasks]]
@@ -64,13 +64,13 @@ lerobot-eval \
 
 **觀測（observations）：**
 
-- `observation.state` — 8 維本體感覺狀態（8-dim proprioceptive state，7 個關節位置 joint positions + 夾爪 gripper）
-- `observation.images.image` — 第三人稱視角（third-person view），256×256 HWC uint8
-- `observation.images.wrist_image` — 腕部相機視角（wrist-mounted camera view），256×256 HWC uint8
+- `observation.state`——8 維本體感覺狀態（8-dim proprioceptive state，7 個關節位置 joint positions + 夾爪 gripper）
+- `observation.images.image`——第三人稱視角（third-person view），256×256 HWC uint8
+- `observation.images.wrist_image`——腕部相機視角（wrist-mounted camera view），256×256 HWC uint8
 
 **動作（actions）：**
 
-- 在 `Box(-1, 1, shape=(7,))` 中連續控制（continuous control） — 末端執行器增量（end-effector delta, 6D）+ 夾爪（gripper, 1D）
+- 在 `Box(-1, 1, shape=(7,))` 中連續控制（continuous control）——末端執行器增量（end-effector delta, 6D）+ 夾爪（gripper, 1D）
 
 ## 訓練（training）[[training]]
 

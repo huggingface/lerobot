@@ -19,11 +19,11 @@ uv tool install git+https://github.com/huggingface/leLab.git && lelab
 
 ### 功能（features）[[features]]
 
-- **新增機器人（add robots）** — 選擇手臂類型（leader/follower）、從中間位置（middle position）校正每個關節（calibrate each joint），並接上相機。
-- **遙操作（teleoperation）** — 用 leader 手臂控制 follower 手臂，並即時檢視手臂的 3D 視覺化畫面。
-- **資料集錄製（dataset recording）** — 定義任務描述（task description）、回合數量（number of episodes），以及每個回合與重置的持續時間（episode/reset durations）。按空白鍵可在回合之間切換。建議錄製 30 個以上的回合。
-- **本機訓練（local training）** — 使用選定的資料集（dataset）、策略類型（policy type）、批次大小（batch size）與步數（step count），直接在你自己的機器上訓練策略（train a policy）。
-- **透過 HF Jobs 進行雲端訓練（cloud training with HF Jobs）** — 透過 [HF Jobs](https://huggingface.co/docs/huggingface_hub/en/guides/jobs) 在強大的 GPU 上訓練，並提供透明的計價方式。請先執行 `hf auth login`。硬體與批次（batch）大小的建議請參閱[運算硬體指南](hardware_guide)。
-- **訓練視覺化（training visualization）** — 在應用程式中即時觀看訓練進度，並自動儲存檢查點（checkpoint）。
-- **執行訓練好的策略（run trained policies）** — 從你的 jobs 清單中挑選任何模型（model），一鍵在機器人上執行推論（inference）。
-- **使用社群資料集（use community datasets）** — 提供任何 Hugging Face 資料集 ID，即可用非你自己錄製的資料集進行訓練（training）。
+- **新增機器人（add robots）**——選擇手臂類型（leader/follower）、從中間位置（middle position）校正每個關節（calibrate each joint），並接上相機。
+- **遙操作（teleoperation）**——用 leader 手臂控制 follower 手臂，並即時檢視手臂的 3D 視覺化畫面。
+- **資料集錄製（dataset recording）**——定義任務描述（task description）、回合數量（number of episodes），以及每個回合與重置的持續時間（episode/reset durations）。按空白鍵可在回合之間切換。建議錄製 30 個以上的回合。
+- **本機訓練（local training）**——使用選定的資料集（dataset）、策略類型（policy type）、批次大小（batch size）與步數（step count），直接在你自己的機器上訓練策略（train a policy）。
+- **透過 HF Jobs 進行雲端訓練（cloud training with HF Jobs）**——透過 [HF Jobs](https://huggingface.co/docs/huggingface_hub/en/guides/jobs) 在強大的 GPU 上訓練，並提供透明的計價方式。請先執行 `hf auth login`。硬體與批次（batch）大小的建議請參閱[運算硬體指南](hardware_guide)。
+- **訓練視覺化（training visualization）**——在應用程式中即時觀看訓練進度，並自動儲存檢查點（checkpoint）。
+- **執行訓練好的策略（run trained policies）**——從你的 jobs 清單中挑選任何模型（model），一鍵在機器人上執行推論（inference）。
+- **使用社群資料集（use community datasets）**——提供任何 Hugging Face 資料集 ID，即可用非你自己錄製的資料集進行訓練（training）。

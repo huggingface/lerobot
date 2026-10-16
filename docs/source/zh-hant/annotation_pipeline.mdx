@@ -3,8 +3,8 @@
 `lerobot-annotate` 會以視覺語言模型（vision-language model, VLM）觀看每個回合的
 影片（each episode’s video），並將自然語言標註（natural-language annotations）寫回你的資料集（dataset）。它會從
 [語言欄位與配方（recipes）](./language_and_recipes) 頁面
-填入兩個語言欄位（language columns） — `language_persistent` 與
-`language_events` — 直接寫入
+填入兩個語言欄位（language columns）——`language_persistent` 與
+`language_events`——直接寫入
 `data/chunk-*/file-*.parquet`。
 
 簡而言之：讓它指向一個 LeRobot 資料集（dataset），它就會加入子任務（adds subtasks）、規劃（plan）、
@@ -66,12 +66,12 @@ VLM 溝通。每個模組會將其輸出暫存（stages）到磁碟，由驗證�
 `plan` 模組（module）不會一次就向 VLM 索取子任務（subtasks）。相反地
 它使用一個兩步驟的**描述（describe） → 分段（segment）**流程（flow）：
 
-1. **描述（describe）** — VLM 只敘述它在所選相機中實際看到的內容
+1. **描述（describe）**——VLM 只敘述它在所選相機中實際看到的內容
    （不對任務 task 進行猜測）。
-2. **分段（segment）** — 將該描述（description）回饋回去（fed back in），VLM 便將
+2. **分段（segment）**——將該描述（description）回饋回去（fed back in），VLM 便將
    回合（episode）切分為連續的原子子任務（consecutive atomic subtasks）。
 
-兩個階段都將回合（episode）視為**帶時間戳的拼貼表（timestamped contact sheets）** — 以
+兩個階段都將回合（episode）視為**帶時間戳的拼貼表（timestamped contact sheets）**——以
 `frames_per_second`（預設 0.5 秒）取樣的影格（frames），打包成 JPEG
 網格（grids），並將每個影格的時間（frame time）烙印在其角落，使 VLM 能直接
 引用確切的邊界時間（boundary times）。這在視覺 token（vision tokens）上遠比每個影格一張影像（one image per frame）便宜，
@@ -84,7 +84,7 @@ VLM 溝通。每個模組會將其輸出暫存（stages）到磁碟，由驗證�
 此外，可選地還有第三個**種子重標記（seeded-relabel）**階段（`--plan.subtask_seeded_relabel`），
 它會以每個區間（span）的前一個/當前/下一個分段拼貼表（previous/current/next segment
 contact sheets）重新檢視該區間，並以第一次的標籤（first label）作為先驗（prior）最小幅度地
-修正標籤 — 它會固定邊界（keeps the boundaries fixed），僅銳化措辭（sharpens wording），
+修正標籤——它會固定邊界（keeps the boundaries fixed），僅銳化措辭（sharpens wording），
 代價是每個子任務多一次呼叫（one extra call per subtask）。
 
 產生的區間（resulting spans）接著會被縫合（stitched）成無間隙（gap-free）、涵蓋整個回合（full-episode cover）的
@@ -100,11 +100,11 @@ contact sheets）重新檢視該區間，並以第一次的標籤（first label�
 在每次執行後，管線（pipeline）都會確保標準的 `say` schema 存在於
 該清單中，並保留你事先宣告的任何工具（tools）。
 
-想新增你自己的工具（tool）？直接編輯 `meta/info.json["tools"]` —
+想新增你自己的工具（tool）？直接編輯 `meta/info.json["tools"]`——
 管線（pipeline）會保留已存在的內容。這讓工具對聊天範本（chat template）可見，
 使模型（model）能學會*產生（generate）*該呼叫（call）。真正*執行（executes）*已產生呼叫的
 執行期層（runtime layer，`src/lerobot/tools/` 下的 `Tool`
-協定 / `TOOL_REGISTRY`）不屬於這個 PR —
+協定 / `TOOL_REGISTRY`）不屬於這個 PR——
 [工具（Tools）](./tools)文件將那些部分標記為
 尚未實作（not-yet-implemented）。
 
@@ -112,7 +112,7 @@ contact sheets）重新檢視該區間，並以第一次的標籤（first label�
 
 標註一個真實資料集（dataset）需要一顆大到足以提供 VLM 服務的 GPU，因此
 `lerobot-annotate` 可以把自己派送（dispatch）到
-[Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs) — 與
+[Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs)——與
 `lerobot-train` 相同。在你原本會於本機執行的確切指令上加上
 `--job.target=<flavor>`，它就會改在該硬體上執行：
 
@@ -147,7 +147,7 @@ uv run lerobot-annotate \
 <Tip warning={true}>
 
 Qwen3.6 出廠即啟用思考（thinking），這會吃掉標註器（annotator）為其 JSON 答案所需的
-token 預算 — `--vlm.chat_template_kwargs='{"enable_thinking": false}'`
+token 預算——`--vlm.chat_template_kwargs='{"enable_thinking": false}'`
 會將它關閉。若未設定 `--push_to_hub=true`，標註後的資料集（dataset）會在
 pod 結束時被丟棄。
 
@@ -161,7 +161,7 @@ pod 結束時被丟棄。
 | `--job.image`       | `vllm/vllm-openai:latest` | pod 的執行期映像（runtime image）。                                           |
 | `--job.timeout`     | `2h`                      | 實際時間上限（wall-clock cap）。大型資料集請調高。                            |
 | `--job.detach`      | `false`                   | 提交後即結束，而非串流日誌（streaming logs）。                                |
-| `--job.lerobot_ref` | `main`                    | 安裝到 pod 上的 lerobot 之 Git ref — 指向某分支以測試變更。                   |
+| `--job.lerobot_ref` | `main`                    | 安裝到 pod 上的 lerobot 之 Git ref——指向某分支以測試變更。                    |
 | `--job.tags`        | `[]`                      | 加在工作與其推送的任何資料集上的額外標籤（tags，`lerobot` 一律會加上）。      |
 
 若要處理更大的資料集（dataset），請擴充到 `h200x4`，並相應提高
@@ -242,7 +242,7 @@ pod 結束時被丟棄。
 
 ## 貢獻新模組（contributing new modules）[[contributing-new-modules]]
 
-此管線（pipeline）的設計是為了成長（built to grow），且**非常歡迎貢獻** —
+此管線（pipeline）的設計是為了成長（built to grow），且**非常歡迎貢獻**——
 全新的模組（brand-new module，例如軌跡痕跡 trajectory traces 或可供性 affordances）、新的提示
 範本（prompt template）、更聰明的立基流程（grounding flow），或對既有
 `plan` / `interjections` / `vqa` 模組的品質修正（quality fixes）。
@@ -304,12 +304,12 @@ JSONL，之後由寫入器（writer）重新組合（recomposes）出最終的 p
 
 ## 每個模組的構想來自何處（where each module's ideas come from）[[where-each-modules-ideas-come-from]]
 
-- **`plan` — 子任務（subtasks）。** Hi Robot（[Shi 2025](https://arxiv.org/abs/2502.19417)）
+- **`plan`——子任務（subtasks）。** Hi Robot（[Shi 2025](https://arxiv.org/abs/2502.19417)）
   提供原子粒度（atom granularity，拿起一片生菜、把碗放到
   盒子裡）；Pi0.7（[Physical Intelligence 2025](https://pi.website/pi07)）
   提供「怎麼做，而非做什麼（how, not what）」的細節。
-- **`plan` — 記憶（memory）。** MEM（[Torne 2026](https://arxiv.org/abs/2603.03596)）：
-  只保留最小的相關資訊 — 保留結果（outcomes），捨棄
+- **`plan`——記憶（memory）。** MEM（[Torne 2026](https://arxiv.org/abs/2603.03596)）：
+  只保留最小的相關資訊——保留結果（outcomes），捨棄
   特定屬性（specific attributes）。
 - **`interjections`。** Hi Robot 的情境分類法（scenario taxonomy）：負面任務（negative task）、
   情境校正（situated correction）、特定約束（specific constraint）、偏好（preference）。語音（speech）是一個

@@ -33,7 +33,7 @@ TOPReward 詢問一個通用 VLM，**在機器人嘗試完成某任務的影片�
 - 透過 `transformers` 的 `Qwen3VLForConditionalGeneration` API 載入 VLM。
 - 在處理器（processor）中組裝提示（prompt assembly） + tokenisation，與 upstream 的 `QwenClient.compute_instruction_reward` 相符。
 - `compute_reward()` 為每個樣本回傳一個純量對數機率（returns one scalar log-prob per sample）。
-- LeRobot 獎勵模型（reward-model）儲存/載入 — `save_pretrained` 只寫入 `config.json`（VLM 由 `vlm_name` 識別）。
+- LeRobot 獎勵模型（reward-model）儲存/載入——`save_pretrained` 只寫入 `config.json`（VLM 由 `vlm_name` 識別）。
 - 一個離線標記腳本（offline labeling script），會寫入一個 `topreward_progress.parquet`（與 SARM 相容的 schema），供 RA-BC 與疊加（overlay）使用。
 
 目前的 LeRobot 移植**僅支援 Qwen3-VL 用戶端（client）**。其他上游（upstream）用戶端（Gemini、OpenAI、Gemma、Molmo）可作為後續的額外功能（follow-up extras）加入。

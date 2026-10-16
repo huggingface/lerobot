@@ -6,9 +6,9 @@
 
 在處理不同的機器人環境（robot environments，LIBERO、MetaWorld、Aloha 等）時，每個環境往往有各自獨特的資料格式（data formats）、座標系（coordinate systems）與慣例（conventions），需要在策略處理（policy processing）**之前**先標準化（standardization）。若沒有環境處理器（environment processors），這些轉換（transformations）將會：
 
-1. **硬編碼在環境程式碼中（hardcoded in environment code）** — 使得難以對不同的狀態表示法（state representations）進行實驗
-2. **在各策略間重複（duplicated across policies）** — 每個策略（policy）都得處理環境特定的怪癖（environment-specific quirks）
-3. **與策略邏輯混雜（mixed with policy logic）** — 違反關注點分離（violating separation of concerns），也讓除錯（debugging）更困難
+1. **硬編碼在環境程式碼中（hardcoded in environment code）**——使得難以對不同的狀態表示法（state representations）進行實驗
+2. **在各策略間重複（duplicated across policies）**——每個策略（policy）都得處理環境特定的怪癖（environment-specific quirks）
+3. **與策略邏輯混雜（mixed with policy logic）**——違反關注點分離（violating separation of concerns），也讓除錯（debugging）更困難
 
 環境處理器（environment processors）透過在原始環境觀測（raw environment observations）與策略輸入（policy inputs）之間提供一個**專屬的處理層（dedicated processing layer）**來解決這些問題。
 

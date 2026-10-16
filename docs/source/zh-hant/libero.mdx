@@ -106,9 +106,9 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 
 **觀測（observations）：**
 
-- `observation.state` — 8 維本體感覺特徵（8-dim proprioceptive features，末端執行器位置 eef position、軸角方向 axis-angle orientation、夾爪關節位置 gripper qpos）
-- `observation.images.image` — 主相機視角（main camera view, `agentview_image`），HWC uint8
-- `observation.images.image2` — 腕部相機視角（wrist camera view, `robot0_eye_in_hand_image`），HWC uint8
+- `observation.state`——8 維本體感覺特徵（8-dim proprioceptive features，末端執行器位置 eef position、軸角方向 axis-angle orientation、夾爪關節位置 gripper qpos）
+- `observation.images.image`——主相機視角（main camera view, `agentview_image`），HWC uint8
+- `observation.images.image2`——腕部相機視角（wrist camera view, `robot0_eye_in_hand_image`），HWC uint8
 
 <Tip warning={true}>
   LeRobot 強制要求視覺特徵（visual features）使用 `.images.*`
@@ -121,7 +121,7 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 
 **動作（actions）：**
 
-- 在 `Box(-1, 1, shape=(7,))` 連續控制（continuous control）— 6D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
+- 在 `Box(-1, 1, shape=(7,))` 連續控制（continuous control）——6D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
 
 ### 建議的評估回合數（recommended evaluation episodes）[[recommended-evaluation-episodes]]
 
@@ -158,7 +158,7 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 - [physical-intelligence/libero](https://huggingface.co/datasets/physical-intelligence/libero)
 
 <Tip>
-在回報結果時，請固定 `--dataset.revision=<commit-sha>` —— Hub 資料集可能被重新上傳，成功率只有在相同的資料修訂版本（data revision）下才具可比性。
+在回報結果時，請固定 `--dataset.revision=<commit-sha>`——Hub 資料集可能被重新上傳，成功率只有在相同的資料修訂版本（data revision）下才具可比性。
 </Tip>
 
 ### 訓練指令範例（example training command）[[example-training-command]]

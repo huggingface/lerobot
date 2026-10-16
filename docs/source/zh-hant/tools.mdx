@@ -14,7 +14,7 @@ LeRobot v3.1 支援策略（policy）中的**工具呼叫（tool calls）**，�
 
 分成兩層（layers）。
 
-**目錄（catalog）** — 一份 OpenAI 風格（OpenAI-style）的函式 schemas 清單 — 位於
+**目錄（catalog）**——一份 OpenAI 風格（OpenAI-style）的函式 schemas 清單——位於
 每個資料集（dataset）的 `meta/info.json["tools"]`。範例：
 
 ```json
@@ -66,7 +66,7 @@ prompt_str = tokenizer.apply_chat_template(
 )
 ```
 
-**實作（implementations）** — 可執行的 Python — 將位於
+**實作（implementations）**——可執行的 Python——將位於
 `src/lerobot/tools/`，每個工具一個檔案（one file per tool）。執行期派送器（runtime dispatcher）與
 標準（canonical）的 `say` 實作（wrap Kyutai 的 pocket-tts）
 並不屬於此處所述的目錄層（catalog layer）；如今這一層（layer）只提供
@@ -74,8 +74,8 @@ schema 儲存與 `DEFAULT_TOOLS` 後備常數（fallback constant）。
 
 ## 每列的工具叫用（per-row tool invocations）[[per-row-tool-invocations]]
 
-上述目錄（catalog）描述*可以呼叫什麼（what can be called）*。實際的*呼叫（call）* — 即
-函式名稱（function name）加上引數值（argument values） — 是逐列儲存（stored per-row）的，位於
+上述目錄（catalog）描述*可以呼叫什麼（what can be called）*。實際的*呼叫（call）*——即
+函式名稱（function name）加上引數值（argument values）——是逐列儲存（stored per-row）的，位於
 `language_events` 中的 assistant atom 上：
 
 ```python
@@ -128,7 +128,7 @@ user_interjection_response:
 可呼叫它以在常規控制迴圈之外（outside the regular control loop）
 擷取額外的觀測（capture an extra observation）。
 
-### 步驟 1 — 宣告 schema（declare the schema）[[step-1-declare-the-schema]]
+### 步驟 1——宣告 schema（declare the schema）[[step-1-declare-the-schema]]
 
 在 `meta/info.json["tools"]` 下新增一個項目（entry）。你可以在執行標註管線（annotation pipeline）
 *之前*直接編輯磁碟上的檔案（它會被保留），
@@ -162,7 +162,7 @@ user_interjection_response:
 此 schema 完全遵循 OpenAI 的函式呼叫慣例（OpenAI’s function-calling convention），因此
 聊天範本（chat template）可以原生地渲染它（render it）。
 
-### 步驟 2 — 實作呼叫（implement the call）[[step-2-implement-the-call]]
+### 步驟 2——實作呼叫（implement the call）[[step-2-implement-the-call]]
 
 建立 `src/lerobot/tools/record_observation.py`：
 
@@ -186,11 +186,11 @@ class RecordObservationTool:
         return f"saved {label}.png"
 ```
 
-每個工具一個檔案可讓相依套件（dependencies）保持隔離 — `record_observation`
+每個工具一個檔案可讓相依套件（dependencies）保持隔離——`record_observation`
 可能會引入 `pillow`，而 `say` 則引入 `pocket-tts`。使用者只安裝
 所需的工具，即可避免沉重的遞移相依（transitive deps）。
 
-### 步驟 3 — 註冊它（register it）[[step-3-register-it]]
+### 步驟 3——註冊它（register it）[[step-3-register-it]]
 
 新增到 `src/lerobot/tools/registry.py`：
 
@@ -205,6 +205,6 @@ TOOL_REGISTRY["record_observation"] = RecordObservationTool
 一個名稱（name） → 實例的字典（instance dict），供派送器（dispatcher）路由（route into）。
 
 若你想在*不*撰寫實作的情況下使用某個工具（例如僅為了
-訓練時的聊天範本格式化 training-time chat-template formatting），單靠步驟 1 就足夠了 —
+訓練時的聊天範本格式化 training-time chat-template formatting），單靠步驟 1 就足夠了——
 模型（model）仍會學會*產生（generate）*該呼叫。步驟 2 與 3 只有在推論（inference）時
 真正需要*執行（execute）*它才需要。

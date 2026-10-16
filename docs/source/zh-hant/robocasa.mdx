@@ -31,11 +31,11 @@ RoboCasa365 將其 365 個任務（tasks）組織為兩個系列（two families�
 
 - 單一任務名稱（a single task name, `CloseFridge`）
 - 逗號分隔的列表（comma-separated list, `CloseFridge,OpenBlenderLid,PickPlaceCoffee`）
-- 基準測試群組捷徑（benchmark-group shortcut） — `atomic_seen`、`composite_seen`、`composite_unseen`、`pretrain50`、`pretrain100`、`pretrain200`、`pretrain300` — 會自動展開為上游任務（task）列表並自動設定資料集（dataset） `split`（`target` 或 `pretrain`）。
+- 基準測試群組捷徑（benchmark-group shortcut）——`atomic_seen`、`composite_seen`、`composite_unseen`、`pretrain50`、`pretrain100`、`pretrain200`、`pretrain300`——會自動展開為上游任務（task）列表並自動設定資料集（dataset） `split`（`target` 或 `pretrain`）。
 
 ## 安裝（installation）[[installation]]
 
-RoboCasa 及其相依套件 `robosuite` 未發佈在 PyPI 上，且 RoboCasa 自身的 `setup.py` 硬編碼（hardcodes）了 `lerobot==0.3.3`，這與本儲存庫的（this repo’s） `lerobot` 衝突。因此 LeRobot **不**提供 `robocasa` 額外套件（extra） — 請手動以可編輯模式克隆（editable clones）安裝這兩個套件（packages，對 `robocasa` 使用 `--no-deps` 以跳過其遮蔽 shadowed 的 `lerobot` 固定版本）：
+RoboCasa 及其相依套件 `robosuite` 未發佈在 PyPI 上，且 RoboCasa 自身的 `setup.py` 硬編碼（hardcodes）了 `lerobot==0.3.3`，這與本儲存庫的（this repo’s） `lerobot` 衝突。因此 LeRobot **不**提供 `robocasa` 額外套件（extra）——請手動以可編輯模式克隆（editable clones）安裝這兩個套件（packages，對 `robocasa` 使用 `--no-deps` 以跳過其遮蔽 shadowed 的 `lerobot` 固定版本）：
 
 ```bash
 # 在完成標準 LeRobot 安裝步驟之後。
@@ -138,14 +138,14 @@ lerobot-eval \
 
 **觀測**（observations，RoboCasa 原始相機名稱保持原樣）：
 
-- `observation.state` — 16 維本體感覺狀態（ 16-dim proprioceptive state，底盤位置 base position、底盤四元數 base quaternion、相對末端執行器位置 relative end-effector position、相對末端執行器四元數 relative end-effector quaternion、夾爪 gripper qpos）
-- `observation.images.robot0_agentview_left` — 左側代理視角（left agent view），256×256 HWC uint8
-- `observation.images.robot0_eye_in_hand` — 腕部相機視角（wrist camera view），256×256 HWC uint8
-- `observation.images.robot0_agentview_right` — 右側代理視角（right agent view），256×256 HWC uint8
+- `observation.state`——16 維本體感覺狀態（ 16-dim proprioceptive state，底盤位置 base position、底盤四元數 base quaternion、相對末端執行器位置 relative end-effector position、相對末端執行器四元數 relative end-effector quaternion、夾爪 gripper qpos）
+- `observation.images.robot0_agentview_left`——左側代理視角（left agent view），256×256 HWC uint8
+- `observation.images.robot0_eye_in_hand`——腕部相機視角（wrist camera view），256×256 HWC uint8
+- `observation.images.robot0_agentview_right`——右側代理視角（right agent view），256×256 HWC uint8
 
 **動作（actions）：**
 
-- 在 `Box(-1, 1, shape=(12,))` 中的連續控制（continuous control）— 底盤運動（base motion, 4D）+ 控制模式（control mode, 1D）+ 末端執行器位置（end-effector position, 3D）+ 末端執行器旋轉（end-effector rotation, 3D）+ 夾爪（gripper, 1D）。
+- 在 `Box(-1, 1, shape=(12,))` 中的連續控制（continuous control）——底盤運動（base motion, 4D）+ 控制模式（control mode, 1D）+ 末端執行器位置（end-effector position, 3D）+ 末端執行器旋轉（end-effector rotation, 3D）+ 夾爪（gripper, 1D）。
 
 ## 訓練（training）[[training]]
 

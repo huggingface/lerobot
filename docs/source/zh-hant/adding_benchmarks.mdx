@@ -109,8 +109,8 @@ return observation, reward, terminated, truncated, info
 
 每個 `EnvConfig` 子類別（subclass）宣告兩個字典（dicts），告訴策略（policy）預期的內容：
 
-- `features` — 將特徵名稱（feature names）對應到 `PolicyFeature(type, shape)`（例如動作維度 action dim、影像形狀 image shape）。
-- `features_map` — 將原始觀測值鍵值（raw observation keys）對應到 LeRobot 慣例鍵值（convention keys，例如 `"agent_pos"` 對應到 `"observation.state"`）。
+- `features`——將特徵名稱（feature names）對應到 `PolicyFeature(type, shape)`（例如動作維度 action dim、影像形狀 image shape）。
+- `features_map`——將原始觀測值鍵值（raw observation keys）對應到 LeRobot 慣例鍵值（convention keys，例如 `"agent_pos"` 對應到 `"observation.state"`）。
 
 ## 逐步指南（step by step）[[step-by-step]]
 
@@ -182,8 +182,8 @@ def create_mybenchmark_envs(
 
 註冊（register）一個設定（config）dataclass，讓使用者可以用 `--env.type=<name>` 選擇你的基準測試（benchmark）。每個設定透過兩個方法擁有其環境建立（environment creation）和處理器邏輯（processor logic）：
 
-- **`create_envs(n_envs, use_async_envs)`** — 回傳（returns） `{suite: {task_id: VectorEnv}}`。基底類別（base class）預設使用 `gym.make()` 來建立單任務環境（single-task envs）。多任務基準測試（multi-task benchmarks）覆寫（override）此方法。
-- **`get_env_processors()`** — 回傳 `(preprocessor, postprocessor)`。基底類別（base class）預設回傳（returns）identity（無操作 no-op）管線（pipeline）。若你的基準測試（benchmark）需要觀測值/動作轉換（observation/action transforms），請覆寫此方法。
+- **`create_envs(n_envs, use_async_envs)`**——回傳（returns） `{suite: {task_id: VectorEnv}}`。基底類別（base class）預設使用 `gym.make()` 來建立單任務環境（single-task envs）。多任務基準測試（multi-task benchmarks）覆寫（override）此方法。
+- **`get_env_processors()`**——回傳 `(preprocessor, postprocessor)`。基底類別（base class）預設回傳（returns）identity（無操作 no-op）管線（pipeline）。若你的基準測試（benchmark）需要觀測值/動作轉換（observation/action transforms），請覆寫此方法。
 
 ```python
 @EnvConfig.register_subclass("<benchmark_name>")
@@ -229,7 +229,7 @@ class MyBenchmarkEnvConfig(EnvConfig):
 - `register_subclass` 的名稱就是使用者在 CLI 傳入的值（`--env.type=<name>`）。
 - `features` 告訴策略（policy）環境（environment）會產生什麼。
 - `features_map` 將原始觀測值（raw observation values）鍵值對應到 LeRobot 慣例鍵值（convention keys）。
-- **不需要修改 `factory.py`** — 工廠會自動委派給 `cfg.create_envs()` 和 `cfg.get_env_processors()`。
+- **不需要修改 `factory.py`**——工廠會自動委派給 `cfg.create_envs()` 和 `cfg.get_env_processors()`。
 
 ### 3. 可選：環境處理器 env processor（`src/lerobot/processor/env_processor.py`）[[3-env-processor-optional-srclerobotprocessorenvprocessorpy]]
 
@@ -299,24 +299,24 @@ pip install -e ".[mybenchmark]"
 
 完成上述步驟後，確認一切正常運作：
 
-1. **安裝（install）** — 執行 `pip install -e ".[mybenchmark]"` 並驗證相依群組安（dependency group）裝無誤。
-2. **環境建立冒煙測試（smoke test env creation）** — 在 Python 中使用你的設定（config）呼叫（call） `make_env()`，檢查回傳的字典（returned dict）具有預期的 `{suite: {task_id: VectorEnv}}` 結構，且 `reset()` 回傳（returns）的觀測（observation）包含正確的鍵值（right keys）。
-3. **執行完整評估（run a full eval）** — `lerobot-eval --env.type=<name> --env.task=<task> --eval.n_episodes=1 --policy.path=<any_compatible_policy>` 以端對端（end-to-end）方式測試完整管線（full pipeline）。（`batch_size` 預設會根據 CPU 核心數自動調整；傳入 `--eval.batch_size=1` 可強制使用單一環境 environment。）
-4. **檢查成功偵測（check success detection）** — 驗證當任務（task）實際完成時 `info["is_success"]` 會變為 `True`。這是評估迴圈（eval loop）用來計算成功率（success rates）的依據。
+1. **安裝（install）**——執行 `pip install -e ".[mybenchmark]"` 並驗證相依群組安（dependency group）裝無誤。
+2. **環境建立冒煙測試（smoke test env creation）**——在 Python 中使用你的設定（config）呼叫（call） `make_env()`，檢查回傳的字典（returned dict）具有預期的 `{suite: {task_id: VectorEnv}}` 結構，且 `reset()` 回傳（returns）的觀測（observation）包含正確的鍵值（right keys）。
+3. **執行完整評估（run a full eval）**——`lerobot-eval --env.type=<name> --env.task=<task> --eval.n_episodes=1 --policy.path=<any_compatible_policy>` 以端對端（end-to-end）方式測試完整管線（full pipeline）。（`batch_size` 預設會根據 CPU 核心數自動調整；傳入 `--eval.batch_size=1` 可強制使用單一環境 environment。）
+4. **檢查成功偵測（check success detection）**——驗證當任務（task）實際完成時 `info["is_success"]` 會變為 `True`。這是評估迴圈（eval loop）用來計算成功率（success rates）的依據。
 
 ## 撰寫基準測試文件頁面（writing a benchmark doc page）[[writing-a-benchmark-doc-page]]
 
 每個基準測試（benchmark）的 `.mdx` 頁面應包含：
 
-- **標題與描述（title and description）** — 1-2 段（paragraphs）說明該基準測試（benchmark）測試什麼以及為何重要。
-- **連結（links）** — 論文、GitHub 儲存庫（repository）、專案網站（如有）。
+- **標題與描述（title and description）**——1-2 段（paragraphs）說明該基準測試（benchmark）測試什麼以及為何重要。
+- **連結（links）**——論文、GitHub 儲存庫（repository）、專案網站（如有）。
 - **概覽圖片或 GIF（overview image or GIF）。**
-- **可用任務（available tasks）** — 任務套件（task suites）表格，包含數量（counts）和簡要描述（descriptions）。
-- **安裝（installation）** — `pip install -e ".[<benchmark>]"` 加上任何額外步驟（環境變數 env vars、系統套件 system packages）。
-- **評估（evaluation）** — 建議的 `lerobot-eval` 指令，包含 `n_episodes` 以確保結果可重現（reproducible）。`batch_size` 預設為自動；僅在需要時才指定。若適用，包含單任務（single-task）和多任務（multi-task）的範例。
-- **策略輸入與輸出（policy inputs and outputs）** — 觀測鍵值（observation keys）及其形狀（shapes）、動作空間描述（action space description）。
-- **建議評估回合數（recommended evaluation episodes）** — 每個任務的標準回合數（how many episodes per task is standard）。
-- **訓練（training）** — 範例 `lerobot-train` 指令。
-- **重現已發表結果（reproducing published results）** — 連結至預訓練模型（pretrained model）、評估指令（eval command）、結果表格（results table，如有）。
+- **可用任務（available tasks）**——任務套件（task suites）表格，包含數量（counts）和簡要描述（descriptions）。
+- **安裝（installation）**——`pip install -e ".[<benchmark>]"` 加上任何額外步驟（環境變數 env vars、系統套件 system packages）。
+- **評估（evaluation）**——建議的 `lerobot-eval` 指令，包含 `n_episodes` 以確保結果可重現（reproducible）。`batch_size` 預設為自動；僅在需要時才指定。若適用，包含單任務（single-task）和多任務（multi-task）的範例。
+- **策略輸入與輸出（policy inputs and outputs）**——觀測鍵值（observation keys）及其形狀（shapes）、動作空間描述（action space description）。
+- **建議評估回合數（recommended evaluation episodes）**——每個任務的標準回合數（how many episodes per task is standard）。
+- **訓練（training）**——範例 `lerobot-train` 指令。
+- **重現已發表結果（reproducing published results）**——連結至預訓練模型（pretrained model）、評估指令（eval command）、結果表格（results table，如有）。
 
 完整範例請參見 `docs/source/libero.mdx` 和 `docs/source/metaworld.mdx`。

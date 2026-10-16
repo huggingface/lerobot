@@ -51,7 +51,7 @@
 每個相機都有一個有界佇列（bounded queue，`encoder_queue_maxsize`，預設 30 個影格 frame）。當編碼器（encoder）跟不上時：
 
 1. 佇列被填滿（queue fills up，消耗 RAM）
-2. 新影格（new frame）會被**丟棄（dropped）**（而非阻塞）— 擷取迴圈（capture loop）會不受干擾地繼續
+2. 新影格（new frame）會被**丟棄（dropped）**（而非阻塞）——擷取迴圈（capture loop）會不受干擾地繼續
 3. 記錄一則警告：`"Encoder queue full for {camera}, dropped N frame(s)"`
 4. 在回合（episode）結束時，會回報每個相機的掉影格總數（total dropped frames per camera）
 
@@ -108,7 +108,7 @@
 | 影片檔案很大                                                                                    | 使用 HW 編碼器（encoder）或 H.264                        | 預期中的取捨。若 CPU 允許，切換到 `libsvtav1`                                                                                                                                                                                                                        |
 | `save_episode()` 仍然很慢                                                                       | `streaming_encoding` 為 `False`                          | 設定 `--dataset.streaming_encoding=true`                                                                                                                                                                                                                             |
 | 編碼器執行緒（encoder thread）當機（crash）                                                     | 編解碼器（HW codec）不可用或設定無效（invalid settings） | 檢查 `vcodec` 是否已安裝，嘗試 `--dataset.rgb_encoder.vcodec=auto`                                                                                                                                                                                                   |
-| 錄製的資料集（recorded dataset）缺少影格（missing frames）                                      | CPU/GPU 匱乏（starvation）或偶發（occasional）的負載尖峰 | 若約 5% 的影格（frames）缺失，你的系統很可能超載了（overloaded） — 請遵循上述建議。若缺失的影格較少（約 2%），它們可能是偶發的短暫負載尖峰（occasional transient load spikes）所致（常在啟動時），可視為預期內。                                                     |
+| 錄製的資料集（recorded dataset）缺少影格（missing frames）                                      | CPU/GPU 匱乏（starvation）或偶發（occasional）的負載尖峰 | 若約 5% 的影格（frames）缺失，你的系統很可能超載了（overloaded）——請遵循上述建議。若缺失的影格較少（約 2%），它們可能是偶發的短暫負載尖峰（occasional transient load spikes）所致（常在啟動時），可視為預期內。                                                      |
 
 ## 6. 建議設定（recommended configurations）[[6-recommended-configurations]]
 
@@ -151,5 +151,5 @@ lerobot-record --dataset.rgb_encoder.vcodec=h264 --dataset.streaming_encoding=fa
 
 ## 7. 結語（closing note）[[7-closing-note]]
 
-效能最終取決於你的確切設定 — 每秒影格數（frames-per-second）、解析度（resolution）、CPU 核心數與負載（load）、可用記憶體、回合長度（episode length），以及你選擇的編碼器（encoder）。請務必以你的目標工作負載（target workload）測試，留意你的 CPU 與系統能力，並合理地調校 `encoder_threads`、`encoder_queue_maxsize` 與
+效能最終取決於你的確切設定——每秒影格數（frames-per-second）、解析度（resolution）、CPU 核心數與負載（load）、可用記憶體、回合長度（episode length），以及你選擇的編碼器（encoder）。請務必以你的目標工作負載（target workload）測試，留意你的 CPU 與系統能力，並合理地調校 `encoder_threads`、`encoder_queue_maxsize` 與
 `vcodec`。話雖如此，一個常見的實用設定（適用於許多應用）是三台相機、640×480x3 @30fps；在現代系統上，這通常以預設的串流影片編碼（streaming video encoding）設定即可順利運作。請務必透過比較影片時長（video duration）與 CLI 的回合時長（episode duration），並確認列數（row count）等於 FPS × CLI 時長，來驗證你錄製的資料集（recorded dataset）是健康的（healthy）。

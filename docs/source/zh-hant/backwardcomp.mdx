@@ -9,7 +9,7 @@
 | 項目                                 | PR #1452 之前                                    | PR #1452 之後                                                |
 | ------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------ |
 | **正規化（normalization）的位置**    | 嵌入於模型（model）權重中 (`normalize_inputs.*`) | 外部的 `PolicyProcessorPipeline` 元件                        |
-| **模型（model）狀態（state）的字典** | 包含正規化（normalization）的統計資料            | **僅含乾淨的權重** — 不含正規化參數（parameter）             |
+| **模型（model）狀態（state）的字典** | 包含正規化（normalization）的統計資料            | **僅含乾淨的權重**——不含正規化參數（parameter）              |
 | **使用方式**                         | `policy(batch)` 處理全部                         | `preprocessor(batch)` → `policy(...)` → `postprocessor(...)` |
 
 ### 對現有模型的影響（impact on existing models）[[impact-on-existing-models]]

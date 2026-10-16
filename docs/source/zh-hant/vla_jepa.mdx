@@ -222,14 +222,14 @@ lerobot-eval \
 
 </Tip>
 
-**預設行為 — 視角填充／裁剪（view padding / trimming，無須任何操作）**
+**預設行為——視角填充／裁剪（view padding / trimming，無須任何操作）**
 
 從 `VLA-JEPA-Pretrain` 微調（fine-tune）時，模型（model）會自動調整餵給世界模型的視角數量（number of views fed to the world model）以符合 `world_model_num_views`：
 
 - **單視角資料集（single-view datasets，例如 BridgeV2）：** 單視角的潛在表示（single-view latent）會被複製（duplicated），以產生雙視角的世界模型輸入（two-view world-model input），在不造成任何權重形狀不符（weight mismatch）的情況下保留 JEPA 自監督訊號（self-supervised signal）。
 - **超過 2 視角的資料集（>2-view datasets，例如 3 視角的 DROID）：** 所有視角（views）都會傳入 Qwen 骨幹網路（backbone，以取得更豐富的 context），但世界模型（world model）只使用前 `world_model_num_views` 個視角（一個腕部 wrist + 一個第三人稱 third-person，依設定的視角順序）。
 
-**選項 1 — 停用世界模型（disable the world model）**
+**選項 1——停用世界模型（disable the world model）**
 
 設定 `enable_world_model=False` 可完全略過 JEPA 損失（loss）。只會載入並訓練（loaded and trained） Qwen 骨幹網路與動作頭（backbone and action head）。這對於取得良好的動作表現（action performance）已足夠。
 
@@ -241,7 +241,7 @@ lerobot-train \
   --dataset.repo_id=your_org/single_camera_dataset
 ```
 
-**選項 2 — 重新初始化預測器的輸入投影（reinitialize the predictor input projection）**
+**選項 2——重新初始化預測器的輸入投影（reinitialize the predictor input projection）**
 
 如果你想將 `world_model_num_views` 改為 2 以外的值，請以 `strict=False` 載入檢查點（checkpoint），並為新的 `embed_dim` 重新初始化（reinitialize） `model.video_predictor.predictor_embed`。其餘所有預測器區塊的權重（predictor block weights，attention、MLP、norm、output projection）都與相機數量無關，可沿用預訓練檢查點（pretrained checkpoint）。
 

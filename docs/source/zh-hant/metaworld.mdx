@@ -12,13 +12,13 @@ Meta-World 是一個用於**多任務與元強化學習（multi-task and meta re
 
 Meta-World 提供 50 個任務（task），並按難度分組（difficulty groups）。在 LeRobot 中，你可以對個別任務（individual tasks）、難度群組（difficulty groups）或完整的 MT50 套件（suite）進行評估（evaluation）：
 
-| 群組（group） | CLI 名稱（name）                         | 任務數（tasks） | 描述（description）                                                                    |
-| ------------- | ---------------------------------------- | --------------- | -------------------------------------------------------------------------------------- |
-| 簡單          | `easy`                                   | 28              | 具有簡單動力學（dynamics）和單步目標的任務（single-step goals）                        |
-| 中等          | `medium`                                 | 11              | 需要多步推理（multi-step reasoning）的任務（tasks）                                    |
-| 困難          | `hard`                                   | 6               | 具有複雜接觸（complex contacts）和精確操作（precise manipulation）的任務（tasks）      |
-| 極難          | `very_hard`                              | 5               | 套件（suite）中最具挑戰性的任務（most challenging tasks）                              |
-| MT50（全部）  | 以逗號分隔的列表（comma-separated list） | 50              | 全部 50 個任務（task） — 最具挑戰性的多任務設定（most challenging multi-task setting） |
+| 群組（group） | CLI 名稱（name）                         | 任務數（tasks） | 描述（description）                                                                   |
+| ------------- | ---------------------------------------- | --------------- | ------------------------------------------------------------------------------------- |
+| 簡單          | `easy`                                   | 28              | 具有簡單動力學（dynamics）和單步目標的任務（single-step goals）                       |
+| 中等          | `medium`                                 | 11              | 需要多步推理（multi-step reasoning）的任務（tasks）                                   |
+| 困難          | `hard`                                   | 6               | 具有複雜接觸（complex contacts）和精確操作（precise manipulation）的任務（tasks）     |
+| 極難          | `very_hard`                              | 5               | 套件（suite）中最具挑戰性的任務（most challenging tasks）                             |
+| MT50（全部）  | 以逗號分隔的列表（comma-separated list） | 50              | 全部 50 個任務（task）——最具挑戰性的多任務設定（most challenging multi-task setting） |
 
 你也可以直接傳入個別任務名稱（individual task names，例如 `assembly-v3`、`dial-turn-v3`）。
 
@@ -90,16 +90,16 @@ lerobot-eval \
 
 **觀測值（observations）：**
 
-- `observation.image` — 單一相機視角（single camera view, `corner2`），480x480 HWC uint8
-- `observation.state` — 4 維本體感知狀態（4-dim proprioceptive state，末端執行器位置 end-effector position + 夾爪 gripper）
+- `observation.image`——單一相機視角（single camera view, `corner2`），480x480 HWC uint8
+- `observation.state`——4 維本體感知狀態（4-dim proprioceptive state，末端執行器位置 end-effector position + 夾爪 gripper）
 
 **動作（actions）：**
 
-- 在 `Box(-1, 1, shape=(4,))` 中連續控制 — 3D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
+- 在 `Box(-1, 1, shape=(4,))` 中連續控制——3D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
 
 ### 建議評估回合數（recommended evaluation episodes）[[recommended-evaluation-episodes]]
 
-為確保可重現的基準測試（reproducible benchmarking），建議使用**每個任務 10 個回合（10 episodes per task）**。對於完整的 MT50 套件（suite），這將產生共 500 個回合（episodes）。如果你關注泛化能力（generalization），請在完整的 MT50 上執行 — 它刻意設計得具有挑戰性，比起少數幾個特定任務更能揭示優勢與劣勢。
+為確保可重現的基準測試（reproducible benchmarking），建議使用**每個任務 10 個回合（10 episodes per task）**。對於完整的 MT50 套件（suite），這將產生共 500 個回合（episodes）。如果你關注泛化能力（generalization），請在完整的 MT50 上執行——它刻意設計得具有挑戰性，比起少數幾個特定任務更能揭示優勢與劣勢。
 
 ## 訓練（training）[[training]]
 

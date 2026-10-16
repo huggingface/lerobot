@@ -144,7 +144,7 @@ processor.register_after_step_hook(validation_after)
 
 ### 多個 hooks（multiple hooks）[[multiple-hooks]]
 
-你可以註冊（register）多個相同類型（same type）的 hooks ——它們會按照註冊順序（order registered）執行：
+你可以註冊（register）多個相同類型（same type）的 hooks——它們會按照註冊順序（order registered）執行：
 
 ```python
 def log_shapes(step_idx: int, transition: EnvTransition):

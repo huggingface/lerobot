@@ -7,7 +7,7 @@
 你可以在 CLI 上以 `--dataset.rgb_encoder.<field>` 設定這些參數（parameters，例如搭配 `lerobot-record` 或 `lerobot-rollout`）。同一個區塊（block）會套用到該次執行中的每個相機影片串流（camera video stream）。
 
 > [!TIP]
-> 必須開啟影片儲存（video storage），`rgb_encoder` 才會有任何效果 —
+> 必須開啟影片儲存（video storage），`rgb_encoder` 才會有任何效果——
 > 在 Python API 中設定
 > `use_videos=True`，或在 CLI 上設定
 > `--dataset.video=true`（錄製時的預設值）。若關閉影片，輸入會維持為影像，且
@@ -54,7 +54,7 @@ lerobot-record \
 | ----------------- | ---------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `vcodec`          | `str`            | `"libsvtav1"`   | 影片編解碼器（codec）名稱。`"auto"` 會從固定的偏好清單挑選第一個可用的硬體編碼器（encoder），並回退到 `libsvtav1`。                                                                                                                                         |
 | `pix_fmt`         | `str`            | `"yuv420p"`     | 輸出像素格式（pixel format）。必須被你 FFmpeg 建置中所選的編解碼器（codec）支援。                                                                                                                                                                           |
-| `g`               | `int`            | `2`             | GOP 大小 — 每 `g` 個影格（frame）一個關鍵影格（keyframe）。以 FFmpeg 選項 `g` 發出（emitted）。                                                                                                                                                             |
+| `g`               | `int`            | `2`             | GOP 大小——每 `g` 個影格（frame）一個關鍵影格（keyframe）。以 FFmpeg 選項 `g` 發出（emitted）。                                                                                                                                                              |
 | `crf`             | `int` 或 `float` | `30`            | 抽象的品質值（abstract quality value），依編解碼器對映（mapped per codec，請參閱 [mapping](https://github.com/huggingface/lerobot/blob/main/src/lerobot/configs/video.py#L197)）。在對映為單調（mapping is monotone）的情況下，越低 → 品質越高 / 輸出越大。 |
 | `preset`          | `int` 或 `str`   | `12` \*         | 編碼器速度預設（encoder speed preset）；意義取決於編解碼器（codec）。<br/>\* 當未設定且 `vcodec=libsvtav1` 時，LeRobot 預設為 `12`。                                                                                                                        |
 | `fast_decode`     | `int`            | `0`             | `libsvtav1`：`0–2`，透過 `svtav1-params` 傳入。<br/>`h264` / `hevc`（軟體）：若 `>0`，設定 `tune=fastdecode`。<br/>其他編解碼器（codec）：通常不使用。                                                                                                      |
@@ -177,7 +177,7 @@ lerobot-record \
 
 > [!TIP]
 > 無論輸入深度的單位為何，`depth_min`、`depth_max` 與 `shift` 一律以**公尺**解讀。輸入會被自動偵測：整數陣列（integer arrays，例如直接來自 RealSense 的 `uint16` 毫米）會被視為毫米，浮點陣列（floating arrays）則視為公尺。
-> 挑選 `depth_min` / `depth_max` 以涵蓋感測器的實際工作範圍（working range） — 超出該範圍的量化階會飽和（saturate），可能在邊界處抹除細節。
+> 挑選 `depth_min` / `depth_max` 以涵蓋感測器的實際工作範圍（working range）——超出該範圍的量化階會飽和（saturate），可能在邊界處抹除細節。
 
 深度特徵（depth feature）在 `meta/info.json` 中會以 `"is_depth_map": true` 標記，且其量化器設定（quantizer settings，`video.depth_min`、`video.depth_max`、`video.shift`、`video.use_log`）會被儲存，這正是讓深度能在載入時**反量化回實體單位（dequantized back to physical units）**的關鍵。
 
@@ -197,7 +197,7 @@ lerobot-train \
 | `depth_output_unit` | `str`        | `"mm"`          | 深度圖（depth maps）在載入時反量化（dequantization）所用的實體單位：`"mm"`（毫米）或 `"m"`（公尺）。 |
 
 > [!TIP]
-> 這純粹是解碼時（decode-time）的呈現選擇 — 它**不會**改變已儲存的影片或其中繼資料（metadata），因此同一個資料集（dataset）可被讀取為 `mm` 或 `m` 而無需重新編碼（re-encoding）。它對沒有深度相機（depth cameras）的資料集（dataset）沒有影響。
+> 這純粹是解碼時（decode-time）的呈現選擇——它**不會**改變已儲存的影片或其中繼資料（metadata），因此同一個資料集（dataset）可被讀取為 `mm` 或 `m` 而無需重新編碼（re-encoding）。它對沒有深度相機（depth cameras）的資料集（dataset）沒有影響。
 
 ---
 
@@ -241,7 +241,7 @@ lerobot-train \
 > [!IMPORTANT]
 > 這個區塊只從**第一個**回合（episode）填入**一次**。它假設資料集（dataset）中每個
 > 回合（episode）都以相同的 `rgb_encoder`
-> 編碼。錄製（recording）途中變更編碼器（encoder）設定並不受支援 — `info.json`
+> 編碼。錄製（recording）途中變更編碼器（encoder）設定並不受支援——`info.json`
 > 只會反映第一個回合（episode）所用的參數（parameters）。
 
 ---

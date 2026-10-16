@@ -10,22 +10,22 @@
 
 此設計乾淨地分成三層（layers）：
 
-1. **資料集中的資料（data in the dataset）** — 語言標註（language annotations）與影格（frame）一同儲存於
+1. **資料集中的資料（data in the dataset）**——語言標註（language annotations）與影格（frame）一同儲存於
    `data/chunk-*/file-*.parquet`，作為兩個可選欄位（columns, `language_persistent`
    與 `language_events`）。沒有這些欄位的資料集（dataset）會維持既有的
    行為。
-2. **配方（recipe）** — 一個 YAML 檔案，宣告要綁定哪些標註列（annotation rows），以及
+2. **配方（recipe）**——一個 YAML 檔案，宣告要綁定哪些標註列（annotation rows），以及
    如何將它們排布為聊天回合（chat turns，`role`、`content`、可選的影像、
    可選的工具呼叫）。配方（recipe）純粹是設定（pure config）；新增一個配方
    不需要 Python。
-3. **訓練格式（training format）** — 在取樣時，`RenderMessagesStep` 會依據每個影格的標註（per-frame annotations）
+3. **訓練格式（training format）**——在取樣時，`RenderMessagesStep` 會依據每個影格的標註（per-frame annotations）
    解析配方（recipe），並發出 HF 風格的 `messages` 以及
    LeRobot 特有的旁附資料（`message_streams`、`target_message_indices`），
    供策略處理器（policy processors）消費。
 
 本頁依序說明每一層（layer）。
 
-## 第 1 層 — 資料集中的語言欄位（language columns in the dataset）[[layer-1-language-columns-in-the-dataset]]
+## 第 1 層——資料集中的語言欄位（language columns in the dataset）[[layer-1-language-columns-in-the-dataset]]
 
 這兩個可選欄位與影格（frame）資料一同位於
 `data/chunk-*/file-*.parquet`：
@@ -64,7 +64,7 @@ tool_calls: list[Json] | null
 
 `LeRobotDataset` 維持與 recipe 無關（recipe-agnostic）。當 `language_persistent` 與 `language_events` 存在時它會直接傳遞，而未標註的資料集（unannotated datasets）則維持既有的行為。
 
-## 第 2 層 — 配方剖析（recipe anatomy）[[layer-2-recipe-anatomy]]
+## 第 2 層——配方剖析（recipe anatomy）[[layer-2-recipe-anatomy]]
 
 配方（recipe）是由來自 `lerobot.datasets.recipe` 的 `TrainingRecipe` 與 `MessageTurn` 所支撐的 YAML 檔案。它們
 宣告要提取哪些標註列（annotation rows，透過 `bindings`），以及如何將它們組成
@@ -132,7 +132,7 @@ ask_vqa_top:
 `route: vqa` 標記會讓相符的稀疏 VQA 標註（sparse VQA annotation）優先於
 一般加權混合選擇（weighted blend selection）；元件名稱（component names）純粹只是描述用途。
 
-## 第 3 層 — 訓練格式（training format）[[layer-3-training-format]]
+## 第 3 層——訓練格式（training format）[[layer-3-training-format]]
 
 渲染後的樣本（rendered samples）使用 HF 風格的聊天訊息（HF-style chat messages）加上 LeRobot 旁附資料（sidecars）：
 
