@@ -241,6 +241,9 @@ def test_streaming_dataloader_uses_num_workers_capped_by_rank_episodes(num_worke
     class Dataset(torch.utils.data.IterableDataset):
         meta = SimpleNamespace(has_language_columns=False)
 
+        def set_data_parallel_shard(self, rank, world_size):
+            pass
+
         def num_episodes_for_rank(self, rank, world_size):
             return 8
 
@@ -267,3 +270,32 @@ def test_streaming_dataloader_uses_num_workers_capped_by_rank_episodes(num_worke
     train, _ = make_dataloaders(cfg, Dataset(), None, 0, parallel_dims)
 
     assert train.num_workers == expected
+
+
+@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+def test_streaming_dataloader_receives_the_trainers_data_parallel_rank():
+    class StreamingDataset(torch.utils.data.IterableDataset):
+        meta = SimpleNamespace(has_language_columns=False)
+        set_data_parallel_shard = MagicMock()
+        num_episodes_for_rank = MagicMock(return_value=1)
+        num_frames_for_rank = MagicMock(return_value=1)
+
+        def __iter__(self):
+            return iter([])
+
+    cfg = SimpleNamespace(
+        trainable_config=SimpleNamespace(),
+        dataset=SimpleNamespace(streaming=True),
+        resume=False,
+        seed=42,
+        num_workers=0,
+        batch_size=2,
+        prefetch_factor=None,
+        persistent_workers=False,
+        dataloader_multiprocessing_context=None,
+    )
+    parallel_dims = SimpleNamespace(device_type="cpu", dp_rank=3, dp_world_size=4)
+
+    make_dataloaders(cfg, StreamingDataset(), None, 0, parallel_dims)
+
+    StreamingDataset.set_data_parallel_shard.assert_called_once_with(3, 4)
