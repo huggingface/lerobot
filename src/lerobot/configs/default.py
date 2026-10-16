@@ -125,21 +125,37 @@ class DatasetConfig:
                 self.exclude_episodes = [episode for episode in self.exclude_episodes if episode >= 0]
 
 
+TRACKIO_RESUME_MODES = frozenset({"allow", "must", "never"})
+
+
 @dataclass
-class WandBConfig:
+class TrackioConfig:
+    """Experiment tracking with Trackio (https://huggingface.co/docs/trackio).
+
+    Runs are stored in a local SQLite database under `~/.cache/huggingface/trackio` and viewed with
+    `trackio show --project <project>`. Set `space_id` to sync the run to a Hugging Face Space instead.
+    """
+
     enable: bool = False
-    # Set to true to disable saving an artifact despite training.save_checkpoint=True
-    disable_artifact: bool = False
+    # Opt in with False to duplicate checkpoint weights in Trackio; Hub uploads are configured separately.
+    disable_artifact: bool = True
     project: str = "lerobot"
-    entity: str | None = None
-    notes: str | None = None
-    run_id: str | None = None
-    resume: str | None = None  # Allowed values: 'allow', 'must', 'never', or 'auto'.
-    mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
-    console: str = "wrap"
-    console_multipart: bool = False
-    console_chunk_max_seconds: int = 0
-    add_tags: bool = True  # If True, save configuration as tags in the WandB run.
+    # Hugging Face Space (`user/space`) to log to instead of the local database; created if missing.
+    # Required for remote jobs (--job.target), whose local database vanishes with the pod.
+    space_id: str | None = None
+    # Whether a newly created Space is private. Ignored if the Space already exists.
+    private: bool | None = None
+    # Run name. Defaults to "<job_name>-<short id>", persisted in the checkpoint so resuming reattaches to it.
+    run_name: str | None = None
+    # Allowed values: 'allow', 'must', 'never'. Defaults to 'allow' when resuming a checkpoint that stored a
+    # run_name (reattach if the run exists, else start a new run under that name) and to 'never' otherwise.
+    resume: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.resume is not None and self.resume not in TRACKIO_RESUME_MODES:
+            raise ValueError(
+                f"trackio.resume must be one of {sorted(TRACKIO_RESUME_MODES)}, got {self.resume!r}."
+            )
 
 
 @dataclass
