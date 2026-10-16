@@ -41,7 +41,7 @@ class BiOpenArmLeader(BimanualMixin, Teleoperator):
         self.config = config
 
         left_arm_config = OpenArmLeaderConfig(
-            id=f"{config.id}_left" if config.id else None,
+            id=f"{config.id}_left" if config.id else "left",
             calibration_dir=config.calibration_dir,
             port=config.left_arm_config.port,
             can_interface=config.left_arm_config.can_interface,
@@ -56,7 +56,7 @@ class BiOpenArmLeader(BimanualMixin, Teleoperator):
         )
 
         right_arm_config = OpenArmLeaderConfig(
-            id=f"{config.id}_right" if config.id else None,
+            id=f"{config.id}_right" if config.id else "right",
             calibration_dir=config.calibration_dir,
             port=config.right_arm_config.port,
             can_interface=config.right_arm_config.can_interface,
