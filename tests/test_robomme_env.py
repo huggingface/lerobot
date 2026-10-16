@@ -87,17 +87,6 @@ def test_robomme_env_config_type():
     assert cfg.type == "robomme"
 
 
-def test_robomme_features_map():
-    from lerobot.envs.configs import RoboMMEEnv
-    from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
-
-    cfg = RoboMMEEnv()
-    assert cfg.features_map[ACTION] == ACTION
-    assert cfg.features_map["pixels/camera1"] == f"{OBS_IMAGES}.camera1"
-    assert cfg.features_map["pixels/camera2"] == f"{OBS_IMAGES}.camera2"
-    assert cfg.features_map["agent_pos"] == OBS_STATE
-
-
 def test_robomme_rejects_duplicate_camera_names():
     from lerobot.envs.configs import RoboMMEEnv
 
@@ -105,48 +94,21 @@ def test_robomme_rejects_duplicate_camera_names():
         RoboMMEEnv(front_camera_name="camera", wrist_camera_name="camera")
 
 
-def test_robomme_camera_feature_names_are_configurable():
+def test_robomme_settings_name_the_cameras_and_action_space():
     from lerobot.envs.configs import RoboMMEEnv
-    from lerobot.utils.constants import OBS_IMAGES
 
-    cfg = RoboMMEEnv(front_camera_name="image", wrist_camera_name="wrist_image")
-    assert cfg.features_map["pixels/image"] == f"{OBS_IMAGES}.image"
-    assert cfg.features_map["pixels/wrist_image"] == f"{OBS_IMAGES}.wrist_image"
+    kwargs = RoboMMEEnv(front_camera_name="image", wrist_camera_name="wrist_image").sim_settings()["kwargs"]
+    assert (kwargs["front_camera_name"], kwargs["wrist_camera_name"]) == ("image", "wrist_image")
 
 
-def test_robomme_preserves_explicit_feature_mapping():
+@pytest.mark.parametrize(
+    ("action_space", "control", "names"), [("joint_angle", "position", 8), ("ee_pose", "eef_pose", 0)]
+)
+def test_robomme_conventions_follow_the_action_space(action_space, control, names):
     from lerobot.envs.configs import RoboMMEEnv
-    from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
-    cfg = RoboMMEEnv(
-        features_map={
-            "pixels/camera1": f"{OBS_IMAGES}.custom_front",
-            "custom": "observation.custom",
-        }
-    )
-
-    assert cfg.features_map["pixels/camera1"] == f"{OBS_IMAGES}.custom_front"
-    assert cfg.features_map["pixels/camera2"] == f"{OBS_IMAGES}.camera2"
-    assert cfg.features_map["agent_pos"] == OBS_STATE
-    assert cfg.features_map[ACTION] == ACTION
-    assert cfg.features_map["custom"] == "observation.custom"
-
-
-def test_robomme_features_action_dim_joint_angle():
-    from lerobot.envs.configs import RoboMMEEnv
-    from lerobot.utils.constants import ACTION
-
-    cfg = RoboMMEEnv(action_space="joint_angle")
-    assert cfg.features[ACTION].shape == (8,)
-
-
-def test_robomme_features_action_dim_ee_pose():
-    """`ee_pose` uses a 7-D action; __post_init__ sets the correct shape."""
-    from lerobot.envs.configs import RoboMMEEnv
-    from lerobot.utils.constants import ACTION
-
-    cfg = RoboMMEEnv(action_space="ee_pose")
-    assert cfg.features[ACTION].shape == (7,)
+    sim = RoboMMEEnv(action_space=action_space).backend_config()
+    assert sim.control == control and len(sim.action_names) == names
 
 
 # ---------------------------------------------------------------------------

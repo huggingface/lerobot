@@ -82,7 +82,6 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
-from lerobot.envs.utils import NEW_ROLLOUT_OPTION
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
@@ -224,9 +223,7 @@ def rollout(
     policy.reset()
     preprocessor.reset()
     postprocessor.reset()
-    # NEW_ROLLOUT_OPTION tells FreezeAfterEpisodeEnd this is a genuine new episode, as
-    # opposed to Gymnasium's argument-less autoreset of a sub-env that already finished.
-    observation, info = env.reset(seed=seeds, options={NEW_ROLLOUT_OPTION: True})
+    observation, info = env.reset(seed=seeds)
     if render_callback is not None:
         render_callback(env)
 
@@ -270,8 +267,8 @@ def rollout(
     # of this public loop is covered; rebinding the same callable each rollout is a no-op.
     # The anchor is [B, state_dim] and tracks exactly what the single shared action queue tracks,
     # so it inherits the queue's batching assumptions rather than adding any: every sub-env
-    # refills on the same step, and a sub-env that finished early is frozen by
-    # FreezeAfterEpisodeEnd and its transitions discarded.
+    # refills on the same step, and a sub-env that finished early stays frozen at its terminal state
+    # and its transitions are discarded.
     if bind_relative_anchor(policy, preprocessor) is not None:
         logging.info("Relative actions enabled: chunk anchor held until the action queue drains")
 
@@ -289,7 +286,12 @@ def rollout(
     try:
         while not np.all(done) and step < max_steps:
             # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-            observation = preprocess_observation(observation)
+            if getattr(env, "canonical_observations", False):
+                from lerobot.envs.batched import prepare_canonical_observation
+
+                observation = prepare_canonical_observation(observation)
+            else:
+                observation = preprocess_observation(observation)
             if return_observations:
                 all_observations.append(deepcopy(observation))
 
@@ -407,7 +409,12 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
-        observation = preprocess_observation(observation)
+        if getattr(env, "canonical_observations", False):
+            from lerobot.envs.batched import prepare_canonical_observation
+
+            observation = prepare_canonical_observation(observation)
+        else:
+            observation = preprocess_observation(observation)
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
@@ -507,7 +514,6 @@ def eval_policy(
             ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
         elif hasattr(env, "call"):
             # Here we must render all frames and discard any we don't need.
-            # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
             ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
 
     if max_episodes_rendered > 0:
@@ -794,8 +800,12 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         trust_remote_code=cfg.trust_remote_code,
     )
 
-    logging.info("Making policy.")
+    if getattr(cfg.env, "descriptor", None) is not None:
+        from lerobot.env_server.admission import validate_checkpoint
 
+        validate_checkpoint(cfg.env.descriptor, cfg.policy, cfg.rename_map)
+
+    logging.info("Making policy.")
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
@@ -813,6 +823,7 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
+        pretrained_revision=cfg.policy.pretrained_revision,
         preprocessor_overrides=preprocessor_overrides,
     )
 
@@ -860,6 +871,15 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
             logger.info(task_group_info)
     # Close all vec envs
     close_envs(envs)
+
+    descriptions = {
+        f"{group}_{task_id}": env.latest.task[0]
+        for group, tasks in envs.items()
+        for task_id, env in tasks.items()
+        if getattr(env, "latest", None) is not None
+    }
+    if descriptions:
+        (Path(cfg.output_dir) / "task_descriptions.json").write_text(json.dumps(descriptions, indent=2))
 
     # Save info
     with open(Path(cfg.output_dir) / "eval_info.json", "w") as f:

@@ -48,8 +48,11 @@ class EvalPipelineConfig:
         if policy_path:
             yaml_overrides = parser.get_yaml_overrides("policy")
             cli_overrides = parser.get_cli_overrides("policy") or []
+            revision = parser.parse_arg("policy.pretrained_revision") or parser.parse_arg(
+                "pretrained_revision", yaml_overrides
+            )
             self.policy = PreTrainedConfig.from_pretrained(
-                policy_path, cli_overrides=yaml_overrides + cli_overrides
+                policy_path, revision=revision, cli_overrides=yaml_overrides + cli_overrides
             )
             self.policy.pretrained_path = Path(policy_path)
 
