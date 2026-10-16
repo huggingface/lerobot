@@ -20,8 +20,6 @@ from collections.abc import Iterator
 import pytest
 
 TABLES_MODULES = [
-    "lerobot.motors.feetech.tables",
-    "lerobot.motors.dynamixel.tables",
     "lerobot.motors.damiao.tables",
     "lerobot.motors.robstride.tables",
 ]
