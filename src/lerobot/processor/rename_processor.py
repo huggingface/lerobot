@@ -32,6 +32,9 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
     from an environment's format to the format expected by a LeRobot policy or
     other downstream components.
 
+    Renames are simultaneous: swaps and chains are supported, but two present keys
+    cannot share a destination. Such collisions raise `ValueError` instead of discarding data.
+
     Attributes:
         rename_map: A dictionary mapping from old key names to new key names.
                     Keys present in an observation that are not in this map will
@@ -40,12 +43,9 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
 
     rename_map: dict[str, str] = field(default_factory=dict)
 
-    def observation(self, observation):
-        processed_obs = {}
-        for key, value in observation.items():
-            processed_obs[_rename_key_with_metadata(key, self.rename_map)] = value
-
-        return processed_obs
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        """Rename observations and their padding metadata, raising on key collisions."""
+        return _rename_keys(observation, self.rename_map, rename_metadata=True)
 
     def get_config(self) -> dict[str, Any]:
         return {"rename_map": self.rename_map}
@@ -56,11 +56,12 @@ class RenameObservationsProcessorStep(ObservationProcessorStep):
         """Transforms:
         - Each key in the observation that appears in `rename_map` is renamed to its value.
         - Keys not in `rename_map` remain unchanged.
+        - Colliding destination keys raise `ValueError`.
         """
         new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = features.copy()
-        new_features[PipelineFeatureType.OBSERVATION] = {
-            self.rename_map.get(k, k): v for k, v in features[PipelineFeatureType.OBSERVATION].items()
-        }
+        new_features[PipelineFeatureType.OBSERVATION] = _rename_keys(
+            features[PipelineFeatureType.OBSERVATION], self.rename_map
+        )
         return new_features
 
 
@@ -80,14 +81,14 @@ def rename_stats(stats: dict[str, dict[str, Any]], rename_map: dict[str, str]) -
     Returns:
         A new statistics dictionary with its top-level keys renamed. Returns an
         empty dictionary if the input `stats` is empty.
+
+    Raises:
+        ValueError: If two present source keys map to the same destination.
     """
     if not stats:
         return {}
-    renamed: dict[str, dict[str, Any]] = {}
-    for old_key, sub_stats in stats.items():
-        new_key = rename_map.get(old_key, old_key)
-        renamed[new_key] = deepcopy(sub_stats) if sub_stats is not None else {}
-    return renamed
+    renamed = _rename_keys(stats, rename_map)
+    return {key: deepcopy(sub_stats) if sub_stats is not None else {} for key, sub_stats in renamed.items()}
 
 
 def _rename_key_with_metadata(key: str, rename_map: dict[str, str]) -> str:
@@ -103,7 +104,29 @@ def _rename_key_with_metadata(key: str, rename_map: dict[str, str]) -> str:
 
 
 def rename_batch_keys(batch: dict[str, Any], rename_map: dict[str, str] | None) -> dict[str, Any]:
-    """Canonicalize raw dataset keys before they are grouped into a transition."""
+    """Canonicalize raw dataset keys before grouping them, raising `ValueError` on collisions."""
     if not rename_map:
         return batch
-    return {_rename_key_with_metadata(key, rename_map): value for key, value in batch.items()}
+    return _rename_keys(batch, rename_map, rename_metadata=True)
+
+
+def _rename_keys[T](
+    values: dict[str, T], rename_map: dict[str, str], *, rename_metadata: bool = False
+) -> dict[str, T]:
+    """Rename simultaneously, rejecting two present sources with the same destination."""
+    renamed: dict[str, T] = {}
+    sources: dict[str, str] = {}
+    for old_key, value in values.items():
+        new_key = (
+            _rename_key_with_metadata(old_key, rename_map)
+            if rename_metadata
+            else rename_map.get(old_key, old_key)
+        )
+        if new_key in sources:
+            raise ValueError(
+                f"Rename collision: '{sources[new_key]}' and '{old_key}' both map to '{new_key}'. "
+                "Use distinct destination names to avoid losing data."
+            )
+        sources[new_key] = old_key
+        renamed[new_key] = value
+    return renamed
