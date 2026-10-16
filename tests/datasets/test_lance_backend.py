@@ -220,6 +220,12 @@ def test_video_parity(video_dataset_roots):
         assert actual[f"{video_key}_is_pad"].tolist() == expected[f"{video_key}_is_pad"].tolist()
         assert_items_equal(actual, expected)
 
+    # Batched depth windows share a PyAV open/seek but must remain identical to
+    # individual reads, including duplicate and adjacent sample indices.
+    indices = [3, 4, 4, 5]
+    for idx, item in zip(indices, lance_d.__getitems__(indices), strict=True):
+        assert_items_equal(item, lance_d[idx])
+
     # one-element window: squeeze semantics must match upstream's shape
     single = {video_key: [0.0]}
     upstream_1 = LeRobotDataset(
@@ -384,6 +390,63 @@ def test_rgb_single_request_keeps_direct_decode_result():
         decoded = reader._decode_videos([{}], {"timestamp": []}, {}, {file_key: (Decoder(), None)})
 
     assert decoded[0][file_key[0]].data_ptr() == batch_data.data_ptr()
+
+
+def test_depth_batch_decode_merges_nearby_windows() -> None:
+    file_key = ("observation.images.depth", 0, 0)
+    file_requests = [
+        (0, [0.2, 0.1, 0.2, 0.0]),
+        (1, [0.1, 0.2, 0.3]),
+        (2, [5.0]),
+    ]
+    calls = []
+
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(fps=10, features={file_key[0]: {"shape": (2, 2, 1)}})
+    reader.tolerance_s = 1e-4
+
+    def decode_depth_frames(source, timestamps, key):
+        calls.append(timestamps)
+        return torch.tensor(timestamps, dtype=torch.float32).reshape(-1, 1, 1, 1)
+
+    reader._decode_depth_frames = decode_depth_frames
+    decoded = dict(reader._decode_depth_file_requests(None, file_requests, file_key))
+
+    assert calls == [[0.0, 0.1, 0.2, 0.3], [5.0]]
+    # The shared decode must preserve each window's original order and duplicates.
+    torch.testing.assert_close(decoded[0][:, 0, 0, 0], torch.tensor([0.2, 0.1, 0.2, 0.0]))
+    torch.testing.assert_close(decoded[1][:, 0, 0, 0], torch.tensor([0.1, 0.2, 0.3]))
+    assert decoded[2][0, 0, 0].item() == 5.0
+
+
+@pytest.mark.parametrize(
+    ("shape", "max_frames"),
+    [
+        pytest.param((720, 1280, 1), 9, id="byte-cap"),
+        pytest.param((2, 2, 1), 64, id="frame-cap"),
+    ],
+)
+def test_depth_batch_decode_limits_merged_span(shape: tuple[int, int, int], max_frames: int) -> None:
+    file_key = ("observation.images.depth", 0, 0)
+    file_requests = [(index, [index / 10]) for index in range(max_frames + 6)]
+    calls = []
+
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(fps=10, features={file_key[0]: {"shape": shape}})
+    reader.tolerance_s = 1e-4
+
+    def decode_depth_frames(source, timestamps, key):
+        calls.append(timestamps)
+        return torch.tensor(timestamps, dtype=torch.float32).reshape(-1, 1, 1, 1)
+
+    reader._decode_depth_frames = decode_depth_frames
+    decoded = dict(reader._decode_depth_file_requests(None, file_requests, file_key))
+
+    assert calls == [
+        [index / 10 for index in range(max_frames)],
+        [index / 10 for index in range(max_frames, max_frames + 6)],
+    ]
+    assert len(decoded) == max_frames + 6
 
 
 def test_reader_reopens_after_failed_open(video_dataset_roots, monkeypatch):
