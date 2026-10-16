@@ -56,7 +56,8 @@ batch, but uses more memory and fetches more data before the first sample.
 **Limits.** The byte budget (`streaming_byte_budget_gb`) and an explicit `video_decoder_cache_size`
 stay per rank: each worker gets 1/N of them. A worker needs at least one episode, so `lerobot-train`
 uses at most as many workers as the rank has episodes. `--num_workers=0` keeps the dataset in the
-training process.
+training process. There, the training thread applies the image transforms, so the same `--seed`
+gives the same transforms.
 
 ## MP4 sidecars and the first run
 
