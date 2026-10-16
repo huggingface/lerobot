@@ -75,6 +75,12 @@ class RTCConfig:
     max_guidance_weight: float = 10.0
     execution_horizon: int = 10
 
+    # How the prefix error is pulled back onto ``x_t`` (see docs/source/rtc.mdx). ``identity`` treats
+    # d(x1)/d(x_t) as the identity, so only the weighted prefix is corrected (historical behaviour).
+    # ``vjp`` is the RTC paper's vector-Jacobian product through the denoiser: one extra backward pass
+    # per denoising step, and the correction also reaches the actions after the prefix.
+    guidance_jacobian: str = "identity"
+
     # Debug settings
     debug: bool = False
     debug_maxlen: int = 100
@@ -83,6 +89,8 @@ class RTCConfig:
         """Validate RTC configuration parameters."""
         if self.mode not in {"guided", "trained"}:
             raise ValueError(f"mode must be 'guided' or 'trained', got {self.mode!r}")
+        if self.guidance_jacobian not in {"identity", "vjp"}:
+            raise ValueError(f"guidance_jacobian must be 'identity' or 'vjp', got {self.guidance_jacobian!r}")
         if self.max_guidance_weight <= 0:
             raise ValueError(f"max_guidance_weight must be positive, got {self.max_guidance_weight}")
         if self.debug_maxlen <= 0:
