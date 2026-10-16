@@ -12,9 +12,9 @@ LeRobot 提供多種影像擷取選項（video capture）：
 > [!TIP]
 > 關於 `OpenCVCamera` 的相容性細節，請參閱 [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html)。
 
-### 找到您的相機（find your camera）[[find-your-camera]]
+### 找到你的相機（find your camera）[[find-your-camera]]
 
-每個相機（camera）都需要一個唯一識別碼（unique identifier）才能建立實例（instantiated），讓您能夠區分多個已連接的裝置（connected devices）。
+每個相機（camera）都需要一個唯一識別碼（unique identifier）才能建立實例（instantiated），讓你能夠區分多個已連接的裝置（connected devices）。
 
 `OpenCVCamera` 和 `RealSenseCamera` 支援自動探索（auto-discovery）。執行下方指令即可列出可用裝置（available devices）及其識別碼（identifiers）。請注意，依作業系統不同，這些識別碼可能會在重新開機（rebooting）或重新插拔相機（re-plugging the camera）後變更。
 
@@ -22,7 +22,7 @@ LeRobot 提供多種影像擷取選項（video capture）：
 lerobot-find-cameras opencv # Intel Realsense 相機則使用 realsense
 ```
 
-若您連接了兩台相機（cameras），輸出會類似以下內容：
+若你連接了兩台相機（cameras），輸出會類似以下內容：
 
 ```bash
 --- Detected Cameras ---
@@ -41,7 +41,7 @@ Camera #0:
 ```
 
 > [!WARNING]
-> 在 `macOS` 上使用 Intel RealSense 相機時，您可能會遇到這個[錯誤](https://github.com/IntelRealSense/librealsense/issues/12307)：`Error finding RealSense cameras: failed to set power state`，這可以透過以 `sudo` 權限執行相同指令來解決。請注意，在 `macOS` 上使用 RealSense 相機並不穩定。
+> 在 `macOS` 上使用 Intel RealSense 相機時，你可能會遇到這個[錯誤](https://github.com/IntelRealSense/librealsense/issues/12307)：`Error finding RealSense cameras: failed to set power state`，這可以透過以 `sudo` 權限執行相同指令來解決。請注意，在 `macOS` 上使用 RealSense 相機並不穩定。
 
 `ZMQCamera` 和 `Reachy2Camera` 不支援自動探索（auto-discovery）。它們必須手動設定，提供其網路位址與連接埠（network address and port）或機器人 SDK 設定。
 
@@ -72,7 +72,7 @@ Camera #0:
 >     ...
 > ```
 >
-> 您也可以手動呼叫 `connect()` 和 `disconnect()`，但後者請務必放在 `finally` 區塊（block）中。
+> 你也可以手動呼叫 `connect()` 和 `disconnect()`，但後者請務必放在 `finally` 區塊（block）中。
 
 <hfoptions id="shell_restart">
 <hfoption id="Open CV Camera">
@@ -82,7 +82,7 @@ Camera #0:
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 from lerobot.cameras import ColorMode, Cv2Rotation
 
-# 以您想要的 FPS、解析度、色彩模式與旋轉建立一個 `OpenCVCameraConfig`。
+# 以你想要的 FPS、解析度、色彩模式與旋轉建立一個 `OpenCVCameraConfig`。
 config = OpenCVCameraConfig(
     index_or_path=0,
     fps=15,
@@ -173,23 +173,23 @@ Intel RealSense 和 Reachy 2 相機（cameras）可以同步擷取彩色與深�
 
 關於錄製資料集（record a dataset）時深度串流（depth streams）如何儲存與編碼（stored and encoded），請參閱影片編碼指南的[深度串流（depth streams）](./video_encoding_parameters#depth-streams)章節。
 
-## 使用您手機的相機[[use-your-phones-camera]]
+## 使用你手機的相機[[use-your-phones-camera]]
 
 <hfoptions id="use phone">
 <hfoption id="iPhone & macOS">
 
 若要在 macOS 上將 iPhone 當作相機（camera）使用，請啟用「接續互通相機（Continuity Camera）」功能：
 
-- 確認您的 Mac 執行 macOS 13 或更新版本，且您的 iPhone 為 iOS 16 或更新版本。
+- 確認你的 Mac 執行 macOS 13 或更新版本，且你的 iPhone 為 iOS 16 或更新版本。
 - 兩台裝置都使用相同的 Apple ID 登入。
-- 以 USB 線連接您的裝置，或開啟 Wi-Fi 與藍牙進行無線連線。
+- 以 USB 線連接你的裝置，或開啟 Wi-Fi 與藍牙進行無線連線。
 
 如需更多細節，請前往 [Apple 支援](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac)。
 
 </hfoption>
 <hfoption id="OBS virtual camera">
 
-若您想使用 OBS 將手機當作相機（camera）使用，請依照以下步驟設定虛擬相機（virtual camera）。
+若你想使用 OBS 將手機當作相機（camera）使用，請依照以下步驟設定虛擬相機（virtual camera）。
 
 1. _（僅限 Linux）安裝 `v4l2loopback-dkms` 和 `v4l-utils`_。這些套件（packages）會建立虛擬相機裝置（virtual camera devices）並驗證其設定。安裝方式：
 
@@ -197,21 +197,21 @@ Intel RealSense 和 Reachy 2 相機（cameras）可以同步擷取彩色與深�
 sudo apt install v4l2loopback-dkms v4l-utils
 ```
 
-2. _在您的手機上安裝 [DroidCam app](https://droidcam.app)_。此 app 同時提供 iOS 和 Android 版本。
+2. _在你的手機上安裝 [DroidCam app](https://droidcam.app)_。此 app 同時提供 iOS 和 Android 版本。
 3. _下載並安裝 [OBS Studio](https://obsproject.com)_。
 4. _下載並安裝 [DroidCam OBS 外掛](https://droidcam.app/obs)_。
 5. _啟動 OBS Studio_。
 
-6. *將您的手機新增為來源。*請依照[這裡](https://droidcam.app/obs/usage)的說明操作。請務必將解析度設為 `640x480` 以避免浮水印（watermarks）。
+6. *將你的手機新增為來源。*請依照[這裡](https://droidcam.app/obs/usage)的說明操作。請務必將解析度設為 `640x480` 以避免浮水印（watermarks）。
 7. *調整解析度設定。*在 OBS Studio 中，前往 `File > Settings > Video` 或 `OBS > Preferences... > Video`。手動輸入將 `Base(Canvas) Resolution` 和 `Output(Scaled) Resolution` 改為 `640x480`。
 8. *啟動虛擬相機（virtual camera）。*在 OBS Studio 中，請依照[這裡](https://obsproject.com/kb/virtual-camera-guide)的說明操作。
 9. _驗證虛擬相機設定與解析度（virtual camera setup and resolution）。_
    - **Linux**：使用 `v4l2-ctl` 列出裝置並檢查解析度（resolution）：
      ```bash
      v4l2-ctl --list-devices  # 找到 VirtualCam 並記下其 /dev/videoX 路徑
-     v4l2-ctl -d /dev/videoX --get-fmt-video  # 換成您的 VirtualCam 路徑
+     v4l2-ctl -d /dev/videoX --get-fmt-video  # 換成你的 VirtualCam 路徑
      ```
-     您應該會看到列出的 `VirtualCam` 以及解析度 `640x480`。
+     你應該會看到列出的 `VirtualCam` 以及解析度 `640x480`。
    - **macOS**：開啟 Photo Booth 或 FaceTime，並選擇「OBS Virtual Camera」作為輸入。
    - **Windows**：內建的相機 app 不支援虛擬相機（virtual cameras）。請使用視訊會議 app（Zoom、Teams），或直接執行 `lerobot-find-cameras opencv` 進行驗證。
 
@@ -231,4 +231,4 @@ sudo apt install v4l2loopback-dkms v4l-utils
 </hfoption>
 </hfoptions>
 
-若一切設定正確，您的手機將會顯示為標準的 OpenCV 相機，並可搭配 `OpenCVCamera` 使用。
+若一切設定正確，你的手機將會顯示為標準的 OpenCV 相機，並可搭配 `OpenCVCamera` 使用。

@@ -6,9 +6,9 @@
   width="70%"
 />
 
-EarthRover Mini Plus 是一款完全開源的移動機器人（mobile robot），透過 Frodobots SDK 經由雲端連線。這讓您能夠控制機器人並錄製資料集（record datasets）以訓練 AI 模型（training AI models）。
+EarthRover Mini Plus 是一款完全開源的移動機器人（mobile robot），透過 Frodobots SDK 經由雲端連線。這讓你能夠控制機器人並錄製資料集（record datasets）以訓練 AI 模型（training AI models）。
 
-## 您需要準備的東西（what you need）[[what-you-need]]
+## 你需要準備的東西（what you need）[[what-you-need]]
 
 ### 硬體（hardware）[[hardware]]
 
@@ -18,7 +18,7 @@ EarthRover Mini Plus 是一款完全開源的移動機器人（mobile robot）�
 
 ### 設定 Frodobots SDK（setting up the Frodobots SDK）[[setting-up-the-frodobots-sdk]]
 
-機器人需要在您的電腦上執行 [Frodobots SDK](https://github.com/frodobots-org/earth-rovers-sdk)。方法如下：
+機器人需要在你的電腦上執行 [Frodobots SDK](https://github.com/frodobots-org/earth-rovers-sdk)。方法如下：
 
 1. 下載並安裝 SDK：
 
@@ -30,7 +30,7 @@ pip install -r requirements.txt
 
 2. 儲存憑證（credentials）：
 
-在您的 .env 變數（variables）中寫入 Frodobots 團隊提供的 SDK API 金鑰（key）與 bot 名稱（name）。
+在你的 .env 變數（variables）中寫入 Frodobots 團隊提供的 SDK API 金鑰（key）與 bot 名稱（name）。
 
 ```bash
 SDK_API_TOKEN=your_sdk_api_token_here
@@ -53,14 +53,14 @@ IMAGE_FORMAT=jpeg
 hypercorn main:app --reload
 ```
 
-4. 開啟您的網頁瀏覽器並前往 `http://localhost:8000`，然後點擊「Join」
+4. 開啟你的網頁瀏覽器並前往 `http://localhost:8000`，然後點擊「Join」
 
 SDK 提供：
 
 - 前後相機的即時影像
 
 > [!IMPORTANT]
-> SDK 必須先執行，您才能使用機器人。
+> SDK 必須先執行，你才能使用機器人。
 
 ## 安裝 LeRobot（install LeRobot）[[install-lerobot]]
 
@@ -80,7 +80,7 @@ pip install -e ".[hardware]"
 - **相機影片（camera video）**：從 SDK 接收
 - **機器人資訊（robot info）**：來自 SDK 的電量（battery）、位置（location）、速度（speed）
 
-您不需要插上任何東西（plug anything in），一切都透過 SDK 運作。
+你不需要插上任何東西（plug anything in），一切都透過 SDK 運作。
 
 ## 校正（calibration）[[calibration]]
 
@@ -88,7 +88,7 @@ pip install -e ".[hardware]"
 
 ## 控制機器人（controlling the robot）[[controlling-the-robot]]
 
-您可以使用鍵盤控制機器人，就像用 WASD 鍵玩電玩遊戲一樣。
+你可以使用鍵盤控制機器人，就像用 WASD 鍵玩電玩遊戲一樣。
 
 ### 鍵盤控制（keyboard controls）[[keyboard-controls]]
 
@@ -107,7 +107,7 @@ pip install -e ".[hardware]"
 
 ### 速度設定（speed settings）[[speed-settings]]
 
-您可以調整機器人的移動速度：
+你可以調整機器人的移動速度：
 
 - **前進/後退速度（forward/backward speed）**：預設為全速（1.0）
 - **轉向速度（turning speed）**：預設為全速（1.0）
@@ -150,13 +150,13 @@ finally:
 ```
 
 > [!TIP]
-> 若您使用 Mac，可能需要授予「終端機（Terminal）」存取鍵盤的權限以進行遙操作（teleoperation）。前往「系統偏好設定 > 安全性與隱私 > 輸入監控」，並勾選「終端機」的核取方塊。
+> 若你使用 Mac，可能需要授予「終端機（Terminal）」存取鍵盤的權限以進行遙操作（teleoperation）。前往「系統偏好設定 > 安全性與隱私 > 輸入監控」，並勾選「終端機」的核取方塊。
 
 ## 錄製資料（recording data）[[recording-data]]
 
-一旦您能好好駕駛機器人，就可以開始錄製資料來訓練 AI 模型。系統會記錄：
+一旦你能好好駕駛機器人，就可以開始錄製資料來訓練 AI 模型。系統會記錄：
 
-- **您的操作**：您如何移動機器人（前進、後退、轉向）
+- **你的操作**：你如何移動機器人（前進、後退、轉向）
 - **機器人所見**：
   - 兩台相機的影片
   - 機器人的速度與方向
@@ -167,13 +167,13 @@ finally:
 
 ### 設定 Hugging Face（setting up Hugging Face）[[setting-up-hugging-face]]
 
-我們使用 Hugging Face 將您的資料儲存在線上。首先，使用您從 [Hugging Face 設定](https://huggingface.co/settings/tokens)取得的 token 登入：
+我們使用 Hugging Face 將你的資料儲存在線上。首先，使用你從 [Hugging Face 設定](https://huggingface.co/settings/tokens)取得的 token 登入：
 
 ```bash
 hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-儲存您的 Hugging Face 使用者名稱：
+儲存你的 Hugging Face 使用者名稱：
 
 ```bash
 HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
@@ -198,16 +198,16 @@ lerobot-record \
 # 可選：--dataset.rgb_encoder.vcodec=auto
 ```
 
-將 `your_username/dataset_name` 替換為您的 Hugging Face 使用者名稱與資料集的名稱。
+將 `your_username/dataset_name` 替換為你的 Hugging Face 使用者名稱與資料集的名稱。
 
 ### 儲存的內容（what gets saved）[[what-gets-saved]]
 
-您的資料集包含：
+你的資料集包含：
 
-**您的動作（2 個特徵）**：
+**你的動作（2 個特徵）**：
 
-- `linear_velocity`：您向前/向後移動了多少
-- `angular_velocity`：您向左/向右轉了多少
+- `linear_velocity`：你向前/向後移動了多少
+- `angular_velocity`：你向左/向右轉了多少
 
 **機器人觀測（24 個特徵）**：
 
@@ -225,14 +225,14 @@ lerobot-record \
 - 磁力計（x、y、z）
 - 車輪轉速 RPM（4 個車輪）
 
-### 您的資料會存放在哪裡（where your data goes）[[where-your-data-goes]]
+### 你的資料會存放在哪裡（where your data goes）[[where-your-data-goes]]
 
-在您的電腦上：`~/.cache/huggingface/lerobot/{repo-id}`
+在你的電腦上：`~/.cache/huggingface/lerobot/{repo-id}`
 
-錄製完成後，您的資料會自動上傳到您的 Hugging Face 頁面：
+錄製完成後，你的資料會自動上傳到你的 Hugging Face 頁面：
 
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/earthrover-navigation
 ```
 
-您的資料集會被標記為 `LeRobot`，方便社群探索。
+你的資料集會被標記為 `LeRobot`，方便社群探索。

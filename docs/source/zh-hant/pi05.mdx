@@ -36,7 +36,7 @@
    pip install -e ".[pi]"
    ```
 
-   若您是從 PyPI 安裝 LeRobot：
+   若你是從 PyPI 安裝 LeRobot：
 
    ```bash
    pip install 'lerobot[pi]'
@@ -65,7 +65,7 @@ policy.type=pi05
 | `observation.state`         | 8                       | 離散化為 256 個 bin 並寫入提示（prompt）   |
 | `action`                    | 7                       | 內部填充至 32；損失（loss）使用前 7 個維度 |
 
-**這裡不需要 `--rename_map`**——鍵已經相符；若您的鍵不同，請參閱[重新命名對映與空相機（Rename Map and Empty Cameras）](./rename_map)。
+**這裡不需要 `--rename_map`**——鍵已經相符；若你的鍵不同，請參閱[重新命名對映與空相機（Rename Map and Empty Cameras）](./rename_map)。
 
 <Tip>
   π₀.₅ 使用受閘控（gated）的
@@ -107,7 +107,7 @@ lerobot-train \
 
 ### 分位數統計（Quantile statistics）[[quantile-statistics]]
 
-π₀.₅ 使用分位數（quantiles）對 `STATE` 與 `ACTION` 進行正規化，因此您資料集的 `meta/stats.json` 需要 `q01` 與 `q99`。較舊的資料集僅有 `min`/`max`/`mean`/`std`，會在第一批次（batch）就失敗：
+π₀.₅ 使用分位數（quantiles）對 `STATE` 與 `ACTION` 進行正規化，因此你資料集的 `meta/stats.json` 需要 `q01` 與 `q99`。較舊的資料集僅有 `min`/`max`/`mean`/`std`，會在第一批次（batch）就失敗：
 
 ```
 ValueError: QUANTILES normalization mode requires q01 and q99 stats
@@ -140,7 +140,7 @@ python src/lerobot/scripts/augment_dataset_quantile_stats.py \
 
 ### 訓練指令範例（training command example）[[training-command-example]]
 
-同樣的微調，但凍結 VLM：記憶體用量較低，但成功率（success rate）會有所犧牲。請將 `--dataset.repo_id` 替換為您自己的資料集。
+同樣的微調，但凍結 VLM：記憶體用量較低，但成功率（success rate）會有所犧牲。請將 `--dataset.repo_id` 替換為你自己的資料集。
 
 ```bash
 lerobot-train \
@@ -170,8 +170,8 @@ lerobot-train \
 - **`--policy.compile_model=true`**：啟用模型編譯（model compilation）以加速訓練（training）
 - **`--policy.gradient_checkpointing=true`**：在訓練（training）過程中顯著降低記憶體使用量
 - **`--policy.dtype=bfloat16`**：使用混合精度訓練（mixed precision training）以提升效率
-- **`--batch_size=64`**：訓練批次大小（batch size for training），請根據您的 GPU 記憶體進行調整
-- **`--policy.pretrained_path=lerobot/pi05_base`**：您欲微調（finetune）的基礎 π₀.₅ 模型（base π₀.₅ model），選項包括：
+- **`--batch_size=64`**：訓練批次大小（batch size for training），請根據你的 GPU 記憶體進行調整
+- **`--policy.pretrained_path=lerobot/pi05_base`**：你欲微調（finetune）的基礎 π₀.₅ 模型（base π₀.₅ model），選項包括：
   - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
   - [lerobot/pi05_libero_base](https://huggingface.co/lerobot/pi05_libero_base)（專門針對 Libero 資料集訓練）
 
@@ -231,10 +231,10 @@ rollout 才會以明確的錯誤停止。預設的
 |                                     | `--policy.path`                  | `--policy.pretrained_path`             |
 | ----------------------------------- | -------------------------------- | -------------------------------------- |
 | 載入                                | 權重**與**檢查點的 `config.json` | 僅載入權重                             |
-| 特徵名稱                            | 來自檢查點                       | 來自您的資料集，在 `--rename_map` 之後 |
+| 特徵名稱                            | 來自檢查點                       | 來自你的資料集，在 `--rename_map` 之後 |
 | 已儲存的設定，例如 `n_action_steps` | 沿用                             | 重設為預設值                           |
 | `--policy.type`                     | 必須省略                         | 必填                                   |
-| `--rename_map`                      | 當您的相機鍵不同時需要           | 支援用於將資料集鍵標準化               |
+| `--rename_map`                      | 當你的相機鍵不同時需要           | 支援用於將資料集鍵標準化               |
 
 當原始資料集的特徵名稱與策略的特徵名稱不同時，無論使用哪種載入形式，都可以使用 `--rename_map`。
 例如，RoboMME 微調指令會對應其原始的 `image`、`wrist_image`、
@@ -324,7 +324,7 @@ attention）：在對應的 patch token 之間進行因果時間注意力（caus
 
 ## 相對動作（relative actions）[[relative-actions]]
 
-預設情況下，π₀.₅ 預測絕對動作（predicts absolute actions）。您可以啟用**相對動作（relative actions）**，讓模型（model）預測相對於當前機器人狀態（current robot state）的偏移量（offsets）。這對於某些設定可以提升訓練穩定性（training stability）。
+預設情況下，π₀.₅ 預測絕對動作（predicts absolute actions）。你可以啟用**相對動作（relative actions）**，讓模型（model）預測相對於當前機器人狀態（current robot state）的偏移量（offsets）。這對於某些設定可以提升訓練穩定性（training stability）。
 
 若要使用相對動作（relative actions），請先透過 CLI 在相對空間（relative space）中重新計算資料集統計量（dataset stats）：
 
@@ -348,7 +348,7 @@ recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_j
 dataset.push_to_hub()
 ```
 
-`chunk_size` 應與您策略的（policy’s） `chunk_size` 一致（π₀.₅ 預設為 50）。`relative_exclude_joints` 列出應保持在絕對空間（absolute space）中的關節名稱（joint names，如夾爪 gripper 指令）。使用 `--push_to_hub true` 將更新後的統計量（updated stats）上傳至 Hub。
+`chunk_size` 應與你策略的（policy’s） `chunk_size` 一致（π₀.₅ 預設為 50）。`relative_exclude_joints` 列出應保持在絕對空間（absolute space）中的關節名稱（joint names，如夾爪 gripper 指令）。使用 `--push_to_hub true` 將更新後的統計量（updated stats）上傳至 Hub。
 
 然後啟用相對動作（relative actions）進行訓練（training）：
 
@@ -375,7 +375,7 @@ lerobot-train \
 | **Libero 10**         | 96.0%        | 92.4%         |
 | **平均**              | 97.5%        | 96.85%        |
 
-這些結果展示了 π₀.₅ 在多樣化機器人操作任務（robotic manipulation tasks）中強大的泛化能力（generalization capabilities）。若要重現（reproduce）這些結果，您可以依照 [Libero](https://huggingface.co/docs/lerobot/libero) 章節中的說明操作。
+這些結果展示了 π₀.₅ 在多樣化機器人操作任務（robotic manipulation tasks）中強大的泛化能力（generalization capabilities）。若要重現（reproduce）這些結果，你可以依照 [Libero](https://huggingface.co/docs/lerobot/libero) 章節中的說明操作。
 
 ## 授權條款[[license]]
 

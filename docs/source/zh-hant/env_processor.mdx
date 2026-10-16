@@ -301,7 +301,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
    - 將四元數（quaternion）轉換為軸角（axis-angle，更適合學習）
    - 攤平（flattens）成策略（policy）所預期的單一 8D 向量（vector）
 
-3. **彈性（flexibility）**：環境仍公開**所有**原始資料（raw data）。如果您想嘗試不同的狀態表示法（state representations，例如納入速度 velocities、以矩陣表示法 matrix representation 取代軸角 axis-angle），可以建立一個新的處理器（processor）而無須修改環境程式碼（environment code）。
+3. **彈性（flexibility）**：環境仍公開**所有**原始資料（raw data）。如果你想嘗試不同的狀態表示法（state representations，例如納入速度 velocities、以矩陣表示法 matrix representation 取代軸角 axis-angle），可以建立一個新的處理器（processor）而無須修改環境程式碼（environment code）。
 
 ## 為新環境加入環境處理器（adding environment processors for new environments）[[adding-environment-processors-for-new-environments]]
 
@@ -320,7 +320,7 @@ class MyEnvProcessorStep(ObservationProcessorStep):
     def _process_observation(self, observation):
         processed = observation.copy()
 
-        # 您的環境特定轉換
+        # 你的環境特定轉換
         if "myenv.specific.state" in processed:
             state = processed.pop("myenv.specific.state")
             # 轉換為標準格式
@@ -329,7 +329,7 @@ class MyEnvProcessorStep(ObservationProcessorStep):
         return processed
 ```
 
-### 2. 更新您的 `EnvConfig` 子類別（update your `EnvConfig` subclass）[[2-update-your-envconfig-subclass]]
+### 2. 更新你的 `EnvConfig` 子類別（update your `EnvConfig` subclass）[[2-update-your-envconfig-subclass]]
 
 ```python
 # In src/lerobot/envs/factory.py
@@ -407,7 +407,7 @@ class CoordinateTransformPostprocessor(ProcessorStep):
 
 3. **從環境公開所有資料（expose all data from environments）**：讓處理器（processor）決定要使用哪些，而非在環境中硬編碼（hardcoding）這些選擇。
 
-4. **記錄慣例（document conventions）**：清楚地記錄（document）您的處理器（processor）所處理的任何座標系慣例（system conventions）、相機朝向（camera orientations）或資料格式（data formats）。
+4. **記錄慣例（document conventions）**：清楚地記錄（document）你的處理器（processor）所處理的任何座標系慣例（system conventions）、相機朝向（camera orientations）或資料格式（data formats）。
 
 5. **獨立測試（test independently）**：環境處理器（environment processor）應該能在不載入完整策略（full policies）或環境（environment）的情況下進行測試。
 

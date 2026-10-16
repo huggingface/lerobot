@@ -1,6 +1,6 @@
 # 人在迴圈中的資料收集（Human-In-the-Loop data collection）[[human-in-the-loop-data-collection]]
 
-人在迴圈中（Human-In-the-Loop, HIL）的資料收集（data collection）讓您能透過將已訓練的策略（trained policy）部署（deployment）到真實機器人上，同時由人類操作員（human operator）監控（monitors）並在需要時介入（intervenes），來改進該策略。介入資料（intervention data，恢復動作與修正動作）會與自主執行片段（autonomous segments）一併記錄（recorded），產生更豐富的訓練資料集（training dataset），教導策略如何處理失敗情況（failures）。
+人在迴圈中（Human-In-the-Loop, HIL）的資料收集（data collection）讓你能透過將已訓練的策略（trained policy）部署（deployment）到真實機器人上，同時由人類操作員（human operator）監控（monitors）並在需要時介入（intervenes），來改進該策略。介入資料（intervention data，恢復動作與修正動作）會與自主執行片段（autonomous segments）一併記錄（recorded），產生更豐富的訓練資料集（training dataset），教導策略如何處理失敗情況（failures）。
 
 ---
 
@@ -82,7 +82,7 @@
 
 ### 步驟 1：預訓練基礎策略（pre-train a base policy）[[step-1-pre-train-a-base-policy]]
 
-首先，在您的示範資料集（demonstration dataset）上訓練策略（train a policy）：
+首先，在你的示範資料集（demonstration dataset）上訓練策略（train a policy）：
 
 ```bash
 python src/lerobot/scripts/lerobot_train.py \
@@ -154,12 +154,12 @@ lerobot-rollout --strategy.type=dagger \
 - **交還策略輸入（return-to-policy input）**：將控制權交還（hand control back）給策略（policy）並繼續同一回合（same episode）
 - **回合控制輸入（episode control inputs）**：根據需要儲存（save）/重新錄製（re-record）/停止（stop）/重置（reset）
 
-實際的按鍵（key）/踏板（pedal）對應可能因腳本和硬體整合而異。請以每個腳本印出的操控說明作為您設定上具體對應關係的依據（source of truth）。
+實際的按鍵（key）/踏板（pedal）對應可能因腳本和硬體整合而異。請以每個腳本印出的操控說明作為你設定上具體對應關係的依據（source of truth）。
 
 HIL 協定（HIL protocol）：
 
 1. 觀察策略（policy）自主執行（run autonomously，遙操作器 teleoperator 處於閒置 idle/自由 free 的狀態）
-2. 當您看到即將發生失敗（imminent failure）時，觸發**暫停輸入（pause input）**
+2. 當你看到即將發生失敗（imminent failure）時，觸發**暫停輸入（pause input）**
    - 策略停止（policy stops）
    - 遙操作器（teleoperator）移動以匹配機器人位置（robot position，扭力 torque 啟用）
    - 暫停期間不記錄影格（frame）
@@ -170,9 +170,9 @@ HIL 協定（HIL protocol）：
    - 所有動作都會被記錄（recorded）
 4. 觸發**交還策略輸入（return-to-policy input）**
    - 策略（policy）從當前狀態（current state）恢復自主執行（resumes autonomous execution）
-   - 您可以隨時再次介入（intervene again，重複步驟 2–4）
+   - 你可以隨時再次介入（intervene again，重複步驟 2–4）
 5. 當任務（task）完成（或達到回合時間限制 episode time limit）時結束並儲存回合（save the episode）
-6. **重置（reset）**：遙操作（teleoperate）移動到機器人位置（robot position），您可以將機器人移動到起始位置（starting position）
+6. **重置（reset）**：遙操作（teleoperate）移動到機器人位置（robot position），你可以將機器人移動到起始位置（starting position）
 7. 開始下一個回合（next episode）
 
 **Linux 的腳踏板設定（foot pedal setup）：**
@@ -204,7 +204,7 @@ python src/lerobot/scripts/lerobot_train.py \
 
 ### 何時介入（when to intervene）[[when-to-intervene]]
 
-當您觀察到以下情況時介入（intervene）：
+當你觀察到以下情況時介入（intervene）：
 
 - 機器人即將犯下不可逆的錯誤（irreversible mistake）
 - 機器人猶豫不決或表現出不確定的行為（hesitating or showing uncertain behavior）

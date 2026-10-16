@@ -11,7 +11,7 @@
 - **擴散 Transformer（Diffusion Transformer）**：根據觀測與語言（observations and language）條件預測動作序列（action sequences）
 - **兩種目標函數（two objectives）**：支援擴散（DDPM/DDIM）和流匹配（flow matching）兩種動作生成（action generation）方式
 
-這個模型（model）令人興奮之處在於，您僅需約 4.5 億參數（~450M parameter）就能實現極高的靈巧度（dexterity），
+這個模型（model）令人興奮之處在於，你僅需約 4.5 億參數（~450M parameter）就能實現極高的靈巧度（dexterity），
 其表現可與數十億參數的 VLA 模型競爭，且所需的訓練（training）量顯著更少。
 
 ## 安裝需求（installation requirements）[[installation-requirements]]
@@ -36,7 +36,7 @@ policy.type=multi_task_dit
 
 ### 基本訓練指令（basic training command）[[basic-training-command]]
 
-以下是在您的資料集（dataset）上訓練多任務 DiT （training Multitask DiT）的完整訓練指令：
+以下是在你的資料集（dataset）上訓練多任務 DiT （training Multitask DiT）的完整訓練指令：
 
 ```bash
 lerobot-train \
@@ -75,7 +75,7 @@ lerobot-train \
 
 **關鍵參數（key parameters）：**
 
-- **Batch Size**：192-320 - 如果您有支援此規模的 GPU，將獲得最佳的訓練動態（training dynamics）
+- **Batch Size**：192-320 - 如果你有支援此規模的 GPU，將獲得最佳的訓練動態（training dynamics）
 - **Horizon**：32 - 預測的動作步數（number of action steps to predict），在 30Hz 下約為 1.0 秒
 - **n_action_steps**：24 - 在 30Hz 下約為 0.8 秒
 - **Objective**：`diffusion` - 建議先從擴散（diffusion）開始，若生成品質（generation quality）不佳再嘗試流匹配（flow matching）
@@ -160,7 +160,7 @@ lerobot-train \
 --policy.use_separate_rgb_encoder_per_camera=true
 
 # 影像前處理
---policy.image_resize_shape=[XXX,YYY] \ # 您可能需要調整影像大小以加速推論
+--policy.image_resize_shape=[XXX,YYY] \ # 你可能需要調整影像大小以加速推論
 --policy.image_crop_shape=[224,224] \
 --policy.image_crop_is_random=true  # 訓練時隨機裁剪，推論時中心裁剪
 ```
@@ -191,7 +191,7 @@ lerobot-train \
 
 此外，我們實作了流匹配目標函數（flow-matching objective），其高層（high-level）概念描述於 [Boston Dynamics 部落格文章](https://bostondynamics.com/blog/large-behavior-models-atlas-find-new-footing/) 中。
 
-建議測試流匹配目標函數（flow-matching objective）並評估其對您任務（task）的效能差異：
+建議測試流匹配目標函數（flow-matching objective）並評估其對你任務（task）的效能差異：
 
 ```bash
 --policy.objective=flow_matching \
@@ -212,7 +212,7 @@ lerobot-train \
 
 #### 3. `horizon` 調校（horizon tuning）[[3-horizon-tuning]]
 
-模型（model）對您選擇的時域（horizon）可能相當敏感。建議根據控制頻率（control frequency），從大約 1 秒的時域（horizon）開始：
+模型（model）對你選擇的時域（horizon）可能相當敏感。建議根據控制頻率（control frequency），從大約 1 秒的時域（horizon）開始：
 
 - **30 Hz 頻率**：`horizon=30`
 - **10 Hz 頻率**：`horizon=10`
@@ -255,9 +255,9 @@ lerobot-train \
 
 模型（model）可能在推論（inference）時「崩潰（collapse）」，導致靜止或無動作（static or no motion）輸出。這可能發生在：
 
-1. **訓練資料不足（insufficient training data）**：如果您只有 20-50 個範例（examples），嘗試將資料集大小（dataset size）大致翻倍。一旦超過 300 個範例仍然出現此問題，可能是任務過於複雜（task may be too complex）。
+1. **訓練資料不足（insufficient training data）**：如果你只有 20-50 個範例（examples），嘗試將資料集大小（dataset size）大致翻倍。一旦超過 300 個範例仍然出現此問題，可能是任務過於複雜（task may be too complex）。
 
-2. **多個相似任務（multiple similar tasks）**：當您的資料集（dataset）包含多個相似任務（multiple similar tasks，例如抓取 2 個不同物體）時，模型（model）可能過度依賴語言條件（language conditioning），而語言描述可能不夠豐富（not be rich enough）。
+2. **多個相似任務（multiple similar tasks）**：當你的資料集（dataset）包含多個相似任務（multiple similar tasks，例如抓取 2 個不同物體）時，模型（model）可能過度依賴語言條件（language conditioning），而語言描述可能不夠豐富（not be rich enough）。
 
 **除錯建議（debugging tips）：**
 
@@ -267,7 +267,7 @@ lerobot-train \
 
 ### 執行錯誤的任務（executing the wrong task）[[executing-the-wrong-task]]
 
-有時機器人會完全忽略您的指令（instruction）而執行其他任務（task）。這通常只在您訓練（training）了多個任務（multiple tasks）時才會發生。
+有時機器人會完全忽略你的指令（instruction）而執行其他任務（task）。這通常只在你訓練（training）了多個任務（multiple tasks）時才會發生。
 
 **可能原因（potential causes）：**
 

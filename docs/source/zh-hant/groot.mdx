@@ -55,7 +55,7 @@ pip install -e ".[groot]"
 
 ### 訓練指令範例（training command example）[[training-command-example]]
 
-以下是在您自己的資料集（dataset）上微調（finetuning）基礎 GR00T 模型（model）的完整訓練指令（training command）：
+以下是在你自己的資料集（dataset）上微調（finetuning）基礎 GR00T 模型（model）的完整訓練指令（training command）：
 
 此指令使用 `new_embodiment` 旗標（flag），此旗標用於 SO-101 機器人，[進一步了解 GR00T 如何處理不同的具身類型（embodiments）](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/policy.md#--embodiment-tag)。
 
@@ -182,9 +182,9 @@ lerobot-eval \
 
 回報成功率（reporting success rates）時，每個套件（suite）請使用 `eval.n_episodes >= 50`。
 
-### 在您的硬體環境中進行評估（evaluate in your hardware setup）[[evaluate-in-your-hardware-setup]]
+### 在你的硬體環境中進行評估（evaluate in your hardware setup）[[evaluate-in-your-hardware-setup]]
 
-使用您的參數（parameters）訓練您的模型（trained your model）完成後，您可以在下游任務（downstream task）中執行推論（inference）。請參考[策略部署（lerobot-rollout）](./inference)中的說明。例如：
+使用你的參數（parameters）訓練你的模型（trained your model）完成後，你可以在下游任務（downstream task）中執行推論（inference）。請參考[策略部署（lerobot-rollout）](./inference)中的說明。例如：
 
 ```bash
 # install extra deps for roullout and real hardware

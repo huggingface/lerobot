@@ -1,6 +1,6 @@
 # 新增基準測試（adding a new benchmark）[[adding-a-new-benchmark]]
 
-本指南將引導您為 LeRobot 新增一個模擬基準測試（simulation benchmark）。請依序遵循以下步驟，並以現有的基準測試作為範本（templates）。
+本指南將引導你為 LeRobot 新增一個模擬基準測試（simulation benchmark）。請依序遵循以下步驟，並以現有的基準測試作為範本（templates）。
 
 LeRobot 中的基準測試（benchmark）是一組 [Gymnasium](https://gymnasium.farama.org/) 環境，這些環境將第三方模擬器（third-party simulator，如 LIBERO 或 Meta-World）封裝在標準的 `gym.Env` 介面（interface）之後。`lerobot-eval` CLI 接著能以統一的方式在所有基準測試上執行評估（evaluation）。
 
@@ -59,15 +59,15 @@ dict[str, dict[int, gym.vector.VectorEnv]]
 4. 結果以階層方式彙整（aggregated hierarchically）：回合（episode）、任務（task）、套件（suite）、整體（overall）。
 5. 指標（metrics）包含 `pc_success`（成功率 success rate）、`avg_sum_reward` 和 `avg_max_reward`。每個成功率都會附上其計數（`n_success` / `n_episodes`）以及以百分比表示的 95% Wilson 區間（`pc_success_ci95`），並分別在任務（task）、套件（suite）與整體（overall）層級提供。該區間僅涵蓋回合之間的取樣雜訊（sampling noise over episodes）；對於相同配方（recipe）在不同訓練執行（training runs）之間的變異（variation）則不具任何說明。
 
-關鍵之處：您的環境（env）必須在每次 `step()` 呼叫時回傳（return） `info["is_success"]`。這是評估迴圈（eval loop）判斷任務（task）是否完成的方式。
+關鍵之處：你的環境（env）必須在每次 `step()` 呼叫時回傳（return） `info["is_success"]`。這是評估迴圈（eval loop）判斷任務（task）是否完成的方式。
 
-## 您的環境必須提供什麼（what your environment must provide）[[what-your-environment-must-provide]]
+## 你的環境必須提供什麼（what your environment must provide）[[what-your-environment-must-provide]]
 
 LeRobot 不強制要求嚴格的觀測（observation）schema。相反地，它依賴一組所有基準測試（benchmark）都遵循的慣例（conventions）。
 
 ### 環境的屬性（env attributes）[[env-attributes]]
 
-您的 `gym.Env` 必須設定以下屬性（attributes）：
+你的 `gym.Env` 必須設定以下屬性（attributes）：
 
 | 屬性（attribute）    | 類型（type） | 原因（why）                                                       |
 | -------------------- | ------------ | ----------------------------------------------------------------- |
@@ -77,7 +77,7 @@ LeRobot 不強制要求嚴格的觀測（observation）schema。相反地，它�
 
 ### 成功回報（success reporting）[[success-reporting]]
 
-您的 `step()` 和 `reset()` 必須在 `info` 字典（dict）中包含 `"is_success"`：
+你的 `step()` 和 `reset()` 必須在 `info` 字典（dict）中包含 `"is_success"`：
 
 ```python
 info = {"is_success": True}   # or False
@@ -86,9 +86,9 @@ return observation, reward, terminated, truncated, info
 
 ### 觀測（observations）[[observations]]
 
-最簡單的方法是將您模擬器的輸出（simulator’s outputs）對應到 `preprocess_observation()` 已能理解的標準鍵值（standard keys）。在您的 `gym.Env` 中進行此操作（例如在 `_format_raw_obs()` 輔助函式中）：
+最簡單的方法是將你模擬器的輸出（simulator’s outputs）對應到 `preprocess_observation()` 已能理解的標準鍵值（standard keys）。在你的 `gym.Env` 中進行此操作（例如在 `_format_raw_obs()` 輔助函式中）：
 
-| 您的環境應輸出         | LeRobot 對應至             | 描述                                     |
+| 你的環境應輸出         | LeRobot 對應至             | 描述                                     |
 | ---------------------- | -------------------------- | ---------------------------------------- |
 | `"pixels"`（單一陣列） | `observation.image`        | 單一相機影像，HWC uint8                  |
 | `"pixels"`（字典）     | `observation.images.<cam>` | 多相機，每個 HWC uint8                   |
@@ -96,14 +96,14 @@ return observation, reward, terminated, truncated, info
 | `"environment_state"`  | `observation.env_state`    | 完整環境狀態（如 PushT）                 |
 | `"robot_state"`        | `observation.robot_state`  | 巢狀機器人狀態（state）字典（如 LIBERO） |
 
-如果您的模擬器（simulator）使用不同的鍵名（key names），您有兩種選擇：
+如果你的模擬器（simulator）使用不同的鍵名（key names），你有兩種選擇：
 
-1. **建議做法：** 在您的 `gym.Env` 包裝器（wrapper）中將它們重新命名為標準鍵值（standard keys）。
+1. **建議做法：** 在你的 `gym.Env` 包裝器（wrapper）中將它們重新命名為標準鍵值（standard keys）。
 2. **替代方案：** 撰寫一個環境處理器，在 `preprocess_observation()` 執行後轉換觀測值（參見下方步驟 4）。
 
 ### 動作（actions）[[actions]]
 
-動作（action）是 `gym.spaces.Box` 中的連續 numpy 陣列（arrays）。維度（dimensionality）取決於您的基準測試（benchmark，LIBERO 為 7，Meta-World 為 4，等等）。策略（policy）透過其 `input_features` / `output_features` 設定來適應（adapt）不同的動作維度（action dimensions）。
+動作（action）是 `gym.spaces.Box` 中的連續 numpy 陣列（arrays）。維度（dimensionality）取決於你的基準測試（benchmark，LIBERO 為 7，Meta-World 為 4，等等）。策略（policy）透過其 `input_features` / `output_features` 設定來適應（adapt）不同的動作維度（action dimensions）。
 
 ### 特徵宣告（feature declarations）[[feature-declaration]]
 
@@ -115,7 +115,7 @@ return observation, reward, terminated, truncated, info
 ## 逐步指南（step by step）[[step-by-step]]
 
 <Tip>
-  最少您需要兩個檔案：一個 **gym.Env 包裝器（wrapper）** 和一個帶有
+  最少你需要兩個檔案：一個 **gym.Env 包裝器（wrapper）** 和一個帶有
   `create_envs()` 覆寫（override）的 **EnvConfig
   子類別（subclass）**。其他一切都是可選的或屬於文件。不需要修改 `factory.py`。
 </Tip>
@@ -125,12 +125,12 @@ return observation, reward, terminated, truncated, info
 | 檔案                                     | 必要 | 原因                                                                  |
 | ---------------------------------------- | ---- | --------------------------------------------------------------------- |
 | `src/lerobot/envs/<benchmark>.py`        | 是   | 將模擬器（simulator）封裝（wraps）為標準 gym.Env                      |
-| `src/lerobot/envs/configs.py`            | 是   | 為 CLI 註冊（registers）您的基準測試（benchmark）及其 `create_envs()` |
+| `src/lerobot/envs/configs.py`            | 是   | 為 CLI 註冊（registers）你的基準測試（benchmark）及其 `create_envs()` |
 | `src/lerobot/processor/env_processor.py` | 可選 | 自訂觀測值/動作轉換（observation/action transforms）                  |
 | `src/lerobot/envs/utils.py`              | 可選 | 僅在需要新的原始觀測值鍵（raw observation keys）時                    |
 | `pyproject.toml`                         | 是   | 宣告基準測試專屬的相依套件（benchmark-specific dependencies）         |
 | `docs/source/<benchmark>.mdx`            | 是   | 面向使用者的文件頁面（user-facing documentation page）                |
-| `docs/source/_toctree.yml`               | 是   | 將您的頁面加入文件側邊欄（docs sidebar）                              |
+| `docs/source/_toctree.yml`               | 是   | 將你的頁面加入文件側邊欄（docs sidebar）                              |
 
 ### 1. gym.Env 包裝器（wrapper, `src/lerobot/envs/<benchmark>.py`）[[1-the-gymenv-wrapper-srclerobotenvsbenchmarkpy]]
 
@@ -161,7 +161,7 @@ class MyBenchmarkEnv(gym.Env):
         ...
 ```
 
-**基於 GPU 的模擬器（GPU-based simulators，例如使用 EGL 渲染的 MuJoCo）：** 如果您的模擬器（simulator）在 `__init__` 期間分配 GPU/EGL 上下文（contexts），請將該分配延遲到在首次 `reset()`/`step()` 時呼叫的 `_ensure_env()` 輔助函式中。這可避免當 `AsyncVectorEnv` 產生工作行程（spawns worker processes）時繼承（inheriting）stale GPU handles。相關模式（pattern）請參見 `LiberoEnv._ensure_env()`。
+**基於 GPU 的模擬器（GPU-based simulators，例如使用 EGL 渲染的 MuJoCo）：** 如果你的模擬器（simulator）在 `__init__` 期間分配 GPU/EGL 上下文（contexts），請將該分配延遲到在首次 `reset()`/`step()` 時呼叫的 `_ensure_env()` 輔助函式中。這可避免當 `AsyncVectorEnv` 產生工作行程（spawns worker processes）時繼承（inheriting）stale GPU handles。相關模式（pattern）請參見 `LiberoEnv._ensure_env()`。
 
 同時提供一個回傳巢狀字典結構（nested dict structure）的工廠函式（factory function）：
 
@@ -180,10 +180,10 @@ def create_mybenchmark_envs(
 
 ### 2. 設定 config（`src/lerobot/envs/configs.py`）[[2-the-config-srclerobotenvsconfigspy]]
 
-註冊（register）一個設定（config）dataclass，讓使用者可以用 `--env.type=<name>` 選擇您的基準測試（benchmark）。每個設定透過兩個方法擁有其環境建立（environment creation）和處理器邏輯（processor logic）：
+註冊（register）一個設定（config）dataclass，讓使用者可以用 `--env.type=<name>` 選擇你的基準測試（benchmark）。每個設定透過兩個方法擁有其環境建立（environment creation）和處理器邏輯（processor logic）：
 
 - **`create_envs(n_envs, use_async_envs)`** — 回傳（returns） `{suite: {task_id: VectorEnv}}`。基底類別（base class）預設使用 `gym.make()` 來建立單任務環境（single-task envs）。多任務基準測試（multi-task benchmarks）覆寫（override）此方法。
-- **`get_env_processors()`** — 回傳 `(preprocessor, postprocessor)`。基底類別（base class）預設回傳（returns）identity（無操作 no-op）管線（pipeline）。若您的基準測試（benchmark）需要觀測值/動作轉換（observation/action transforms），請覆寫此方法。
+- **`get_env_processors()`** — 回傳 `(preprocessor, postprocessor)`。基底類別（base class）預設回傳（returns）identity（無操作 no-op）管線（pipeline）。若你的基準測試（benchmark）需要觀測值/動作轉換（observation/action transforms），請覆寫此方法。
 
 ```python
 @EnvConfig.register_subclass("<benchmark_name>")
@@ -215,7 +215,7 @@ class MyBenchmarkEnvConfig(EnvConfig):
         return create_<benchmark>_envs(task=self.task, n_envs=n_envs, ...)
 
     def get_env_processors(self):
-        """若您的基準測試需要觀測值/動作轉換，請覆寫此方法。"""
+        """若你的基準測試需要觀測值/動作轉換，請覆寫此方法。"""
         from lerobot.processor import PolicyProcessorPipeline
         from lerobot.processor.env_processor import MyBenchmarkProcessorStep
         return (
@@ -233,7 +233,7 @@ class MyBenchmarkEnvConfig(EnvConfig):
 
 ### 3. 可選：環境處理器 env processor（`src/lerobot/processor/env_processor.py`）[[3-env-processor-optional-srclerobotprocessorenvprocessorpy]]
 
-僅在您的基準測試（benchmark）需要 `preprocess_observation()` 無法處理的觀測轉換（observation transforms）時才需要（例如影像翻轉 image flipping、座標轉換 coordinate conversion）。在此處定義處理器步驟（processor step），並在您的設定（config）中從 `get_env_processors()` 回傳（return）它（參見步驟 2）：
+僅在你的基準測試（benchmark）需要 `preprocess_observation()` 無法處理的觀測轉換（observation transforms）時才需要（例如影像翻轉 image flipping、座標轉換 coordinate conversion）。在此處定義處理器步驟（processor step），並在你的設定（config）中從 `get_env_processors()` 回傳（return）它（參見步驟 2）：
 
 ```python
 @dataclass
@@ -241,7 +241,7 @@ class MyBenchmarkEnvConfig(EnvConfig):
 class MyBenchmarkProcessorStep(ObservationProcessorStep):
     def _process_observation(self, observation):
         processed = observation.copy()
-        # 您的轉換邏輯
+        # 你的轉換邏輯
         return processed
 
     def transform_features(self, features):
@@ -266,7 +266,7 @@ mybenchmark = ["my-benchmark-pkg==1.2.3", "lerobot[scipy-dep]"]
 - **永遠固定** 基準測試套件（benchmark packages）至精確版本（version，例如 `metaworld==3.0.0`）以確保可重現性（reproducibility）。
 - 需要時**加入平台標籤**（add platform markers，例如 `; sys_platform == 'linux'`）。
 - 若已知有脆弱的傳遞相依套件（fragile transitive deps），**固定其版本**（例如為 Meta-World 固定 `gymnasium==1.1.0`）。
-- 在您的基準測試文件頁面（benchmark doc page）中 **記錄約束條件（document constraints）**。
+- 在你的基準測試文件頁面（benchmark doc page）中 **記錄約束條件（document constraints）**。
 
 使用者透過以下方式安裝（install）：
 
@@ -280,7 +280,7 @@ pip install -e ".[mybenchmark]"
 
 ### 6. 目錄（`docs/source/_toctree.yml`）[[6-table-of-contents-docssourcetoctreeyml]]
 
-將您的基準測試（benchmark）加入「Benchmarks」區段（section）：
+將你的基準測試（benchmark）加入「Benchmarks」區段（section）：
 
 ```yaml
 - sections:
@@ -295,12 +295,12 @@ pip install -e ".[mybenchmark]"
   title: "Benchmarks"
 ```
 
-## 驗證您的整合（verifying your integration）[[verifying-your-integration]]
+## 驗證你的整合（verifying your integration）[[verifying-your-integration]]
 
 完成上述步驟後，確認一切正常運作：
 
 1. **安裝（install）** — 執行 `pip install -e ".[mybenchmark]"` 並驗證相依群組安（dependency group）裝無誤。
-2. **環境建立冒煙測試（smoke test env creation）** — 在 Python 中使用您的設定（config）呼叫（call） `make_env()`，檢查回傳的字典（returned dict）具有預期的 `{suite: {task_id: VectorEnv}}` 結構，且 `reset()` 回傳（returns）的觀測（observation）包含正確的鍵值（right keys）。
+2. **環境建立冒煙測試（smoke test env creation）** — 在 Python 中使用你的設定（config）呼叫（call） `make_env()`，檢查回傳的字典（returned dict）具有預期的 `{suite: {task_id: VectorEnv}}` 結構，且 `reset()` 回傳（returns）的觀測（observation）包含正確的鍵值（right keys）。
 3. **執行完整評估（run a full eval）** — `lerobot-eval --env.type=<name> --env.task=<task> --eval.n_episodes=1 --policy.path=<any_compatible_policy>` 以端對端（end-to-end）方式測試完整管線（full pipeline）。（`batch_size` 預設會根據 CPU 核心數自動調整；傳入 `--eval.batch_size=1` 可強制使用單一環境 environment。）
 4. **檢查成功偵測（check success detection）** — 驗證當任務（task）實際完成時 `info["is_success"]` 會變為 `True`。這是評估迴圈（eval loop）用來計算成功率（success rates）的依據。
 

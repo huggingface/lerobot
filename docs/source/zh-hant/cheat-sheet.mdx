@@ -1,12 +1,12 @@
 # 速查表（Cheat sheet）[[cheat-sheet]]
 
-所有 LeRobot 指令集中在此處。如果您忘記了如何使用某個特定指令，或想了解一個新指令，都可以在這裡查閱。
+所有 LeRobot 指令集中在此處。如果你忘記了如何使用某個特定指令，或想了解一個新指令，都可以在這裡查閱。
 
 > [!WARNING]
-> 對於以下列出的所有指令，請記得將連接埠（ports）/名稱（names）/ID（id）替換為您自己的值！
+> 對於以下列出的所有指令，請記得將連接埠（ports）/名稱（names）/ID（id）替換為你自己的值！
 
 > [!TIP]
-> 另一個查看所有指令並針對您的特定設置進行配置的好方法，是使用這個 [Jupyter Notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb)。
+> 另一個查看所有指令並針對你的特定設置進行配置的好方法，是使用這個 [Jupyter Notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb)。
 
 ### 設定與安裝（setup and installation）[[setup-and-installation]]
 
@@ -16,7 +16,7 @@
 
 ###### 尋找連接埠（find port）[[find-port]]
 
-使用此工具來識別您的機器人連接到哪個序列埠（serial port）。請依照終端機（terminal）中的指示操作：系統會要求您拔除 USB 線並按下 Enter。腳本接著會偵測並印出該機器人的正確序列埠。
+使用此工具來識別你的機器人連接到哪個序列埠（serial port）。請依照終端機（terminal）中的指示操作：系統會要求你拔除 USB 線並按下 Enter。腳本接著會偵測並印出該機器人的正確序列埠。
 
 ```bash
 lerobot-find-port
@@ -32,7 +32,7 @@ lerobot-find-cameras
 
 ### 校正（calibration）[[calibration]]
 
-在大多數情況下，您只需要對每個機器人和遙操作裝置（teleoperation device）執行一次校正（calibration）。在執行校正之前，請確保所有關節（joints）大致處於中間位置（middle position）。
+在大多數情況下，你只需要對每個機器人和遙操作裝置（teleoperation device）執行一次校正（calibration）。在執行校正之前，請確保所有關節（joints）大致處於中間位置（middle position）。
 
 ```bash
 lerobot-calibrate \
@@ -61,10 +61,10 @@ lerobot-teleoperate \
 
 ### 錄製資料集（recording a dataset）[[recording-a-dataset]]
 
-資料集（dataset）會自動上傳到伺服器（server）並儲存到 repo_id 下，請確保您已透過 CLI 登入 HF 帳號：
+資料集（dataset）會自動上傳到伺服器（server）並儲存到 repo_id 下，請確保你已透過 CLI 登入 HF 帳號：
 `hf auth login`
 
-您可以從以下位址取得存取權杖（access token）：[https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+你可以從以下位址取得存取權杖（access token）：[https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
 
 ```bash
 lerobot-record \
@@ -82,7 +82,7 @@ lerobot-record \
     --display_data=true
 ```
 
-在收集資料集（collecting the dataset）時，您可以使用鍵盤控制流程：
+在收集資料集（collecting the dataset）時，你可以使用鍵盤控制流程：
 使用鍵盤快捷鍵控制資料錄製流程（data recording flow）：
 
 - 按下 **右方向鍵 (`→`)**：儲存當回合（episode）並進入下一回合。
@@ -91,7 +91,7 @@ lerobot-record \
 
 ### 錄製深度（recording depth）[[recording-depth]]
 
-Intel RealSense 相機（`type: intelrealsense`）在您設定 `use_depth: true` 時會錄製深度串流（record a depth stream）。深度會量化為 12 位元編碼（quantized to 12-bit codes），並儲存為獨立的影片。
+Intel RealSense 相機（`type: intelrealsense`）在你設定 `use_depth: true` 時會錄製深度串流（record a depth stream）。深度會量化為 12 位元編碼（quantized to 12-bit codes），並儲存為獨立的影片。
 
 ```bash
 lerobot-record \
@@ -121,7 +121,7 @@ lerobot-record \
 
 ### 訓練（training）[[training]]
 
-根據您的硬體配置，訓練策略（train the policy）可能需要數小時。以下是訓練簡單 `ACT` 策略的方式：
+根據你的硬體配置，訓練策略（train the policy）可能需要數小時。以下是訓練簡單 `ACT` 策略的方式：
 
 ```bash
 lerobot-train \
@@ -138,7 +138,7 @@ lerobot-train \
 - 策略類型（policy types）：`act`、`diffusion`、`smolvla`、`pi05`
 - 裝置：`cuda`（NVIDIA）、`mps`（Apple Silicon）、`cpu`
 
-如果您想微調特定模型（fine-tune a specific model），可以提供模型的路徑（path to the model）。在這種情況下只需提供 path，可以省略 type。
+如果你想微調特定模型（fine-tune a specific model），可以提供模型的路徑（path to the model）。在這種情況下只需提供 path，可以省略 type。
 
 ```bash
 lerobot-train \
@@ -150,7 +150,7 @@ lerobot-train \
     --steps=20000
 ```
 
-沒有本機 GPU 嗎？在任一指令中加上 `--job.target=<flavor>`（例如 `a10g-small`），`lerobot-train` 就會改在 [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) 上執行；它會為您上傳僅存於本機的資料集（local-only dataset），並推送訓練好的模型（pushes the trained model）。使用 `hf jobs hardware` 可列出可用的 flavor。
+沒有本機 GPU 嗎？在任一指令中加上 `--job.target=<flavor>`（例如 `a10g-small`），`lerobot-train` 就會改在 [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) 上執行；它會為你上傳僅存於本機的資料集（local-only dataset），並推送訓練好的模型（pushes the trained model）。使用 `hf jobs hardware` 可列出可用的 flavor。
 
 若要接續（resume）訓練，將 `--config_path` 指向某個檢查點（checkpoint）並加上 `--resume=true`。它接受本機路徑（local path）或 Hub 儲存庫的 repo id（會取得最新的檢查點），在本機或透過加上 `--job.target=<flavor>` 在 Job 上執行皆可：
 
@@ -160,10 +160,10 @@ lerobot-train --config_path=${HF_USER}/policy_test --resume=true --job.target=a1
 
 ### 推論（inference）[[inference]]
 
-推論（inference）是指在機器人上執行已訓練的策略/模型（trained policy/model）。為此我們使用 `lerobot-rollout`。您需要提供策略的路徑（path to your policy），可以是本機路徑或 Hugging Face 上的路徑，例如 "lerobot/folding_latest"。您的相機設定（cameras configuration）需要與收集資料集（collecting the dataset）時使用的一致。持續時間以秒為單位，若未指定則會無限期執行。
+推論（inference）是指在機器人上執行已訓練的策略/模型（trained policy/model）。為此我們使用 `lerobot-rollout`。你需要提供策略的路徑（path to your policy），可以是本機路徑或 Hugging Face 上的路徑，例如 "lerobot/folding_latest"。你的相機設定（cameras configuration）需要與收集資料集（collecting the dataset）時使用的一致。持續時間以秒為單位，若未指定則會無限期執行。
 
 > [!TIP]
-> 如果您使用的是先前的 V0.5.1 版本，則需要使用 `lerobot-record` 而非 `lerobot-rollout`。更多資訊請參閱[此處](https://huggingface.co/docs/lerobot/v0.5.1/en/il_robots#run-inference-and-evaluate-your-policy)。
+> 如果你使用的是先前的 V0.5.1 版本，則需要使用 `lerobot-record` 而非 `lerobot-rollout`。更多資訊請參閱[此處](https://huggingface.co/docs/lerobot/v0.5.1/en/il_robots#run-inference-and-evaluate-your-policy)。
 
 ```bash
 lerobot-rollout \

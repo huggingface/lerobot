@@ -86,7 +86,7 @@ lerobot-eval \
 
 ### 控制模式（control mode）[[control-mode]]
 
-LIBERO 支援兩種控制模式（control modes）——`relative`（預設）和 `absolute`。不同的 VLA 檢查點（checkpoint）使用不同的動作參數化（action parameterization）方式進行訓練（training），因此請確保模式（mode）與您的策略（policy）相符：
+LIBERO 支援兩種控制模式（control modes）——`relative`（預設）和 `absolute`。不同的 VLA 檢查點（checkpoint）使用不同的動作參數化（action parameterization）方式進行訓練（training），因此請確保模式（mode）與你的策略（policy）相符：
 
 ```bash
 --env.control_mode=relative   # or "absolute"
@@ -94,7 +94,7 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 
 ### 重置效能（reset performance）[[reset-performance]]
 
-預設情況下，LeRobot 會保留 LIBERO 的硬重置（hard-reset）行為。在啟用固定初始狀態（fixed initial states）後，您可以選擇改用軟重置（soft reset），以跳過每個回合重建模擬器模型（simulator model）與渲染器（renderer）的步驟：
+預設情況下，LeRobot 會保留 LIBERO 的硬重置（hard-reset）行為。在啟用固定初始狀態（fixed initial states）後，你可以選擇改用軟重置（soft reset），以跳過每個回合重建模擬器模型（simulator model）與渲染器（renderer）的步驟：
 
 ```bash
 --env.init_states=true --env.hard_reset=false
@@ -112,10 +112,10 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 
 <Tip warning={true}>
   LeRobot 強制要求視覺特徵（visual features）使用 `.images.*`
-  前綴（prefix）。請確保您的策略設定 （policy config）中 `input_features`
+  前綴（prefix）。請確保你的策略設定 （policy config）中 `input_features`
   使用相同的命名鍵（naming keys）， 且資料集的中繼資料鍵 （dataset metadata
-  keys）也遵循此慣例（convention）。如果您的資料包含不同的鍵名（keys），
-  您必須重新命名觀測值（observations）以符合策略（policy）的預期，因為命名鍵（naming
+  keys）也遵循此慣例（convention）。如果你的資料包含不同的鍵名（keys），
+  你必須重新命名觀測值（observations）以符合策略（policy）的預期，因為命名鍵（naming
   keys） 已編碼在正規化統計層中（inside the normalization statistics layer）。
 </Tip>
 
@@ -151,7 +151,7 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 | 下載大小           | **1.9 GB**                                                       | 69.9 GB                                                                        |
 | 額外相依套件       | 影片後端（`torchcodec` 或 `pyav`）                               | 無                                                                             |
 
-**我們推薦 [lerobot/libero](https://huggingface.co/datasets/lerobot/libero)**：**下載量縮小 37 倍**，且**載入速度相當**（每工作行程約 330 個樣本/秒）。影片重新編碼（re-encoding）會有些許失真；若您無法安裝影片解碼後端（video decoding backend），請改用基於影像的版本。
+**我們推薦 [lerobot/libero](https://huggingface.co/datasets/lerobot/libero)**：**下載量縮小 37 倍**，且**載入速度相當**（每工作行程約 330 個樣本/秒）。影片重新編碼（re-encoding）會有些許失真；若你無法安裝影片解碼後端（video decoding backend），請改用基於影像的版本。
 
 供參考，Physical Intelligence 發布的原始資料集（dataset）：
 

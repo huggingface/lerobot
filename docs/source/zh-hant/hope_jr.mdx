@@ -16,13 +16,13 @@ pip install -e ".[hopejr]"
 
 ## 裝置設定（device configuration）[[device-configuration]]
 
-在開始校正（calibration）與操作之前，您需要識別每個 HopeJR 元件的 USB 連接埠（ports）。執行此腳本來找出手臂（arm）、手（hand）、手套（glove）與外骨骼（exoskeleton）的 USB 連接埠：
+在開始校正（calibration）與操作之前，你需要識別每個 HopeJR 元件的 USB 連接埠（ports）。執行此腳本來找出手臂（arm）、手（hand）、手套（glove）與外骨骼（exoskeleton）的 USB 連接埠：
 
 ```bash
 lerobot-find-port
 ```
 
-這會顯示可用的 USB 連接埠（ports）及其相關聯的裝置。請記下連接埠路徑（port paths，例如 `/dev/tty.usbmodem58760433331`、`/dev/tty.usbmodem11301`），因為在錄製資料（recording data）、重播回合（replaying episodes）或執行遙操作腳本（running teleoperation scripts）時，您需要在 `--robot.port` 與 `--teleop.port` 參數（parameter）中指定它們。
+這會顯示可用的 USB 連接埠（ports）及其相關聯的裝置。請記下連接埠路徑（port paths，例如 `/dev/tty.usbmodem58760433331`、`/dev/tty.usbmodem11301`），因為在錄製資料（recording data）、重播回合（replaying episodes）或執行遙操作腳本（running teleoperation scripts）時，你需要在 `--robot.port` 與 `--teleop.port` 參數（parameter）中指定它們。
 
 ## 步驟 1：校正（calibration）[[step-1-calibration]]
 
@@ -76,7 +76,7 @@ lerobot-calibrate \
   ></img>
 </p>
 
-當您為所有關節（joints）設定好適當的界限（boundaries）後，點擊「Save」將校正值（calibration values）儲存到馬達（motors）。
+當你為所有關節（joints）設定好適當的界限（boundaries）後，點擊「Save」將校正值（calibration values）儲存到馬達（motors）。
 
 ### 1.2 校正遙操作器手套（calibrate teleoperator glove）[[12-calibrate-teleoperator-glove]]
 
@@ -126,7 +126,7 @@ lerobot-calibrate \
     --robot.id=white
 ```
 
-這會開啟一個校正（calibration） GUI，您可以在其中為每個馬達設定範圍限制（range limits）。手臂的運動組織如下：
+這會開啟一個校正（calibration） GUI，你可以在其中為每個馬達設定範圍限制（range limits）。手臂的運動組織如下：
 
 - **肩部（Shoulder）**：俯仰（pitch）、偏擺（yaw）與滾轉（roll）
 - **肘部（Elbow）**：彎曲（flex）
@@ -141,7 +141,7 @@ lerobot-calibrate \
   ></img>
 </p>
 
-使用校正介面（calibration interface）為每個關節（joint）設定範圍界限（range boundaries）。讓每個關節走完其完整的活動範圍（move each joint through its full range of motion），並相應地調整最小值與最大值（minimum and maximum values）。當您為所有關節設定好適當的界限後，儲存校正（calibration）。
+使用校正介面（calibration interface）為每個關節（joint）設定範圍界限（range boundaries）。讓每個關節走完其完整的活動範圍（move each joint through its full range of motion），並相應地調整最小值與最大值（minimum and maximum values）。當你為所有關節設定好適當的界限後，儲存校正（calibration）。
 
 ### 1.4 校正遙操作器外骨骼（calibrate teleoperator exoskeleton）[[14-calibrate-teleoperator-exoskeleton]]
 
@@ -152,7 +152,7 @@ lerobot-calibrate \
     --teleop.id=black
 ```
 
-外骨骼（exoskeleton）讓人得以控制機器人手臂。校正（calibration）期間，系統會提示您讓所有關節走完其完整的活動範圍（move all joints through their full range of motion）：
+外骨骼（exoskeleton）讓人得以控制機器人手臂。校正（calibration）期間，系統會提示你讓所有關節走完其完整的活動範圍（move all joints through their full range of motion）：
 
 ```
 Move all joints through their entire range of motion.

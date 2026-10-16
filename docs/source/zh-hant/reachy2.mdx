@@ -12,7 +12,7 @@ Reachy 2 是由 Pollen Robotics 製造的開源人形機器人，專為具身 AI
 
 ## Reachy 2 模擬（simulation）[[reachy-2-simulation]]
 
-**（僅限 Linux）** 您可以使用所提供的 [Docker 映像](https://hub.docker.com/r/pollenrobotics/reachy2_core)，在模擬（Gazebo 或 MuJoCo）中執行 Reachy 2。
+**（僅限 Linux）** 你可以使用所提供的 [Docker 映像](https://hub.docker.com/r/pollenrobotics/reachy2_core)，在模擬（Gazebo 或 MuJoCo）中執行 Reachy 2。
 
 1. 安裝 [Docker Engine](https://docs.docker.com/engine/)。
 2. 執行（適用於 MuJoCo）：
@@ -67,11 +67,11 @@ docker run --rm -it \
 
 ### 事前準備（prerequisites）[[prerequisites]]
 
-- 在您的機器人上，檢查**服務映像（service images）**是否符合最低版本：
+- 在你的機器人上，檢查**服務映像（service images）**是否符合最低版本：
   - **reachy2-core >= 1.7.5.2**
   - **webrtc >= 2.0.1.1**
 
-接著，若您想使用 VR 遙操作（teleoperation）：
+接著，若你想使用 VR 遙操作（teleoperation）：
 
 - 安裝 [Reachy 2 遙操作應用程式](https://docs.pollen-robotics.com/teleoperation/teleoperation-introduction/discover-teleoperation/)。
   使用版本 **>=v1.2.0**
@@ -106,7 +106,7 @@ pip install -e ".[reachy2]"
 Reachy 2 完全受 LeRobot 錄製功能（recording features）支援。
 
 **範例：在不使用移動底座的情況下開始錄製（record）：**
-首先，將 reachy2 與 reachy2_teleoperator 加入 record 腳本的 imports 中。接著您可以使用以下指令：
+首先，將 reachy2 與 reachy2_teleoperator 加入 record 腳本的 imports 中。接著你可以使用以下指令：
 
 ```bash
 lerobot-record \
@@ -187,7 +187,7 @@ lerobot-record \
 ##### 使用相關的部件（use the relevant parts）[[use-the-relevant-parts]]
 
 從我們的初步測試來看，在只有部分關節在移動時仍錄製（recording）**所有**關節（joints），可能會使某些策略（policy）的模型品質（model quality）下降。
-為避免這種情況，您可以使用以下方式將特定部件（specific parts）排除在錄製（recording）與重播（replay）之外：
+為避免這種情況，你可以使用以下方式將特定部件（specific parts）排除在錄製（recording）與重播（replay）之外：
 
 ```bash
 --robot.with_<part>=false
@@ -212,7 +212,7 @@ lerobot-record \
 
 ##### 使用相關的相機（use the relevant cameras）[[use-the-relevant-cameras]]
 
-您可以對**相機（cameras）**做相同的事。使用以下方式以預設參數（default parameters）啟用或停用每台相機：
+你可以對**相機（cameras）**做相同的事。使用以下方式以預設參數（default parameters）啟用或停用每台相機：
 
 ```bash
 --robot.with_left_teleop_camera=<true|false> \
@@ -221,7 +221,7 @@ lerobot-record \
 ```
 
 預設情況下不錄製任何相機（no camera is recorded），所有相機引數（camera arguments）都設為 `false`。
-若您願意，可以使用 `--robot.camera_width` 與 `--robot.camera_height` 引數為 Reachy 2 的相機設定自訂的 `width` 與 `height` 參數（parameters）：
+若你願意，可以使用 `--robot.camera_width` 與 `--robot.camera_height` 引數為 Reachy 2 的相機設定自訂的 `width` 與 `height` 參數（parameters）：
 
 ```bash
 --robot.camera_width=1920 \
@@ -230,7 +230,7 @@ lerobot-record \
 
 這會變更所有 3 台預設機器人相機（default robot cameras，由上述布林引數啟用 bool arguments）的解析度（resolution）。
 
-若您願意，可以照常使用以下方式新增機器人以外的額外相機（additional cameras）：
+若你願意，可以照常使用以下方式新增機器人以外的額外相機（additional cameras）：
 
 ```bash
 --robot.cameras="{ extra: {type: opencv, index_or_path: 42, width: 640, height: 480, fps: 30}}" \

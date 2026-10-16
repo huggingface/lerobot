@@ -72,7 +72,7 @@ export MUJOCO_GL=egl  # 用於無顯示的伺服器（HPC、雲端）
 
 ### 物件註冊資料（object registries）[[object-registries]]
 
-預設情況下，環境（env）僅從 `lightwheel` 註冊（registry）資料（即 `--type objs_lw` 所安裝的內容）中取樣物件（samples objects），這可以避免在 objaverse / aigen 資產包（packs）不在磁碟上時出現 `Probabilities contain NaN` 崩潰。如果您已下載完整資產集（full asset set），可在執行時啟用完整註冊資料（full registry）：
+預設情況下，環境（env）僅從 `lightwheel` 註冊（registry）資料（即 `--type objs_lw` 所安裝的內容）中取樣物件（samples objects），這可以避免在 objaverse / aigen 資產包（packs）不在磁碟上時出現 `Probabilities contain NaN` 崩潰。如果你已下載完整資產集（full asset set），可在執行時啟用完整註冊資料（full registry）：
 
 ```bash
 --env.obj_registries='[objaverse,lightwheel]'

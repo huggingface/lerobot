@@ -1,14 +1,14 @@
 # 手機（Phone）[[phone]]
 
-使用您的手機（iOS 或 Android）來控制您的機器人。
+使用你的手機（iOS 或 Android）來控制你的機器人。
 
-**在本指南中，您將學到：**
+**在本指南中，你將學到：**
 
 - 如何連接 iOS/Android 手機
 - 手機姿態（phone pose）如何對應到機器人末端執行器（end-effector, EE）目標（targets）
 - 如何調整安全限制（safety limits）、夾爪控制（gripper control）與 IK 設定（IK settings）
 
-若要使用手機控制您的機器人，請以下列指令安裝相關相依套件（relevant dependencies）：
+若要使用手機控制你的機器人，請以下列指令安裝相關相依套件（relevant dependencies）：
 
 ```bash
 pip install lerobot[phone]
@@ -18,8 +18,8 @@ pip install lerobot[phone]
 
 ### 支援的平台（supported platforms）[[supported-platforms]]
 
-- iOS：使用 HEBI Mobile I/O app（ARKit 姿態 pose + 按鈕）。請先下載該 app 並開啟，範例會在您的網路上探索到它，並串流（stream）手機姿態（phone pose）與輸入。
-- Android：使用 `teleop` 套件（WebXR）。當您啟動 Python 行程（process）時，它會印出一個本機 URL。在手機上開啟該連結，點擊 Start，然後使用 Move 來串流姿態（stream pose）。
+- iOS：使用 HEBI Mobile I/O app（ARKit 姿態 pose + 按鈕）。請先下載該 app 並開啟，範例會在你的網路上探索到它，並串流（stream）手機姿態（phone pose）與輸入。
+- Android：使用 `teleop` 套件（WebXR）。當你啟動 Python 行程（process）時，它會印出一個本機 URL。在手機上開啟該連結，點擊 Start，然後使用 Move 來串流姿態（stream pose）。
 
 連結：
 
@@ -34,7 +34,7 @@ pip install lerobot[phone]
   - Android：按住 `Move` 按鈕，放開即停止。第一次按下會擷取一個參考姿態（reference pose）。
 - 夾爪控制（gripper control）：
   - iOS：類比輸入 `A3` 以速度輸入（velocity input）的方式控制夾爪（gripper）。
-  - Android：按鈕 `A` 與 `B` 作用類似遞增/遞減（increment/decrement，A 開啟、B 關閉）。您可以在 `GripperVelocityToJoint` 步驟中調整速度（velocity）。
+  - Android：按鈕 `A` 與 `B` 作用類似遞增/遞減（increment/decrement，A 開啟、B 關閉）。你可以在 `GripperVelocityToJoint` 步驟中調整速度（velocity）。
 
 <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/phone_teleop.webp" alt="Phone teleop orientation" title="Phone teleop orientation" width="40%">
 
@@ -59,15 +59,15 @@ teleop_device = Phone(teleop_config)
 - iOS：按住 `B1` 以擷取參考姿態（reference pose）。
 - Android：在 WebXR 頁面按下 `Move` 按鈕以擷取參考姿態（reference pose）。
 
-為什麼要校正（calibration）？我們擷取當前姿態（current pose），使後續的姿態（subsequent poses）都以一個與機器人對齊的座標系（robot aligned frame）來表示。當您再次按下按鈕以啟用控制（enable control）時，會重新擷取位置（position），以避免在停用期間重新擺放手機所造成的漂移（drift）。
+為什麼要校正（calibration）？我們擷取當前姿態（current pose），使後續的姿態（subsequent poses）都以一個與機器人對齊的座標系（robot aligned frame）來表示。當你再次按下按鈕以啟用控制（enable control）時，會重新擷取位置（position），以避免在停用期間重新擺放手機所造成的漂移（drift）。
 
 ### 步驟 3：執行範例（run an example）[[step-3-run-an-example]]
 
 執行其中一個範例腳本來遙操作（teleoperation）、錄製資料集（record a dataset）、重播資料集（replay a dataset）或評估策略（evaluate a policy）。
 
-所有腳本都假設您已設定好機器人（例如 SO-100 follower）並設定了正確的序列埠（serial port）。
+所有腳本都假設你已設定好機器人（例如 SO-100 follower）並設定了正確的序列埠（serial port）。
 
-此外，您還需要**將機器人的 URDF 複製到 examples 資料夾中**。以本教學的範例（使用 SO100/SO101）而言，請將 [SO-ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101) 中的 `SO101` 資料夾複製到 `examples/phone_to_so100/` 目錄中，使得 URDF 檔案路徑變為 `examples/phone_to_so100/SO101/so101_new_calib.urdf`。
+此外，你還需要**將機器人的 URDF 複製到 examples 資料夾中**。以本教學的範例（使用 SO100/SO101）而言，請將 [SO-ARM100 repo](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101) 中的 `SO101` 資料夾複製到 `examples/phone_to_so100/` 目錄中，使得 URDF 檔案路徑變為 `examples/phone_to_so100/SO101/so101_new_calib.urdf`。
 
 - 執行此範例以進行遙操作（teleoperation）：
 
@@ -81,7 +81,7 @@ teleop_device = Phone(teleop_config)
 - Android：啟動腳本（script）後，在手機上開啟印出的本機 URL，點擊 Start，然後按住 Move。
 - iOS：先開啟 HEBI Mobile I/O；B1 啟用動作（enables motion）。A3 控制夾爪（gripper）。
 
-此外，您可以透過編輯範例中所示的處理器步驟（processor steps）來自訂對應關係（customize mapping）或安全限制（safety limits）。您也可以重新對應輸入（例如使用不同的類比輸入），或修改輸入與運動學步驟（kinematics steps），將流程調整為適用於其他機器人（例如 LeKiwi）。更多相關內容請參閱[機器人與遙操作器的處理器](./processors_robots_teleop)指南。
+此外，你可以透過編輯範例中所示的處理器步驟（processor steps）來自訂對應關係（customize mapping）或安全限制（safety limits）。你也可以重新對應輸入（例如使用不同的類比輸入），或修改輸入與運動學步驟（kinematics steps），將流程調整為適用於其他機器人（例如 LeKiwi）。更多相關內容請參閱[機器人與遙操作器的處理器](./processors_robots_teleop)指南。
 
 - 執行此範例以錄製資料集（record a dataset），它會儲存絕對末端執行器的觀測值（absolute end effector observations）與動作（actions）：
 
@@ -191,6 +191,6 @@ teleop_device = Phone(teleop_config)
 
 ### 疑難排解[[troubleshooting]]
 
-- iOS 未被探索到：確認 HEBI Mobile I/O 已開啟，且您的筆電/手機位於同一網路上。
-- Android URL 無法連線：檢查您本機使用的是 `https` 而非 `http`，使用腳本印出的確切 IP，並允許您的瀏覽器進入並忽略憑證問題（ignore the certificate issue）。
-- 動作感覺相反（motion feels inverted）：調整 `MapPhoneActionToRobotAction` 中的正負號翻轉（sign flips），或交換軸向（swap axes）以符合您的設定。
+- iOS 未被探索到：確認 HEBI Mobile I/O 已開啟，且你的筆電/手機位於同一網路上。
+- Android URL 無法連線：檢查你本機使用的是 `https` 而非 `http`，使用腳本印出的確切 IP，並允許你的瀏覽器進入並忽略憑證問題（ignore the certificate issue）。
+- 動作感覺相反（motion feels inverted）：調整 `MapPhoneActionToRobotAction` 中的正負號翻轉（sign flips），或交換軸向（swap axes）以符合你的設定。

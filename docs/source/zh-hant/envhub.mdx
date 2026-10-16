@@ -91,9 +91,9 @@ my-environment-repo/
     └── task_config.yaml
 ```
 
-## 建立您的環境儲存庫（creating your environment repository）[[creating-your-environment-repository]]
+## 建立你的環境儲存庫（creating your environment repository）[[creating-your-environment-repository]]
 
-### 步驟 1：定義您的環境（define your environment）[[step-1-define-your-environment]]
+### 步驟 1：定義你的環境（define your environment）[[step-1-define-your-environment]]
 
 建立一個包含 `make_env` 函式（function）的 `env.py` 檔案：
 
@@ -103,7 +103,7 @@ import gymnasium as gym
 
 def make_env(n_envs: int = 1, use_async_envs: bool = False):
     """
-    為您的自訂任務建立向量化環境。
+    為你的自訂任務建立向量化環境。
 
     Args:
         n_envs: 平行環境數量
@@ -113,7 +113,7 @@ def make_env(n_envs: int = 1, use_async_envs: bool = False):
         gym.vector.VectorEnv 或對應套件名稱到向量化環境的字典
     """
     def _make_single_env():
-        # 建立您的自訂環境
+        # 建立你的自訂環境
         return gym.make("CartPole-v1")
 
     # 選擇向量環境類型
@@ -132,7 +132,7 @@ def make_env(n_envs: int = 1, use_async_envs: bool = False):
 ```python
 from lerobot.envs.utils import _load_module_from_path, _call_make_env, _normalize_hub_result
 
-# 載入您的模組
+# 載入你的模組
 module = _load_module_from_path("./env.py")
 
 # 測試 make_env 函式
@@ -390,7 +390,7 @@ pip install gymnasium numpy
 
 ```python
 def make_env(n_envs: int, use_async_envs: bool):
-    # 您的實作
+    # 你的實作
     pass
 ```
 

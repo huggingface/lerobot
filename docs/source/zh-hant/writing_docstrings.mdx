@@ -4,7 +4,7 @@ LeRobot 的 API 參考文件是直接從 `src/lerobot/` 中的 docstring 產生�
 註解（comment），而是該物件公開發布的文件；下方的格式正是渲染器（renderer）與
 CI 檢查所解析的格式。
 
-本頁就是這份約定（contract）。如果您要在 `src/lerobot/` 中新增或編輯任何公開的內容，請遵循它。
+本頁就是這份約定（contract）。如果你要在 `src/lerobot/` 中新增或編輯任何公開的內容，請遵循它。
 
 > [!IMPORTANT]
 > **沒有文件的公開方法，就等於看不見的方法。** `[[autodoc]]` 會默默略過沒有
@@ -64,7 +64,7 @@ name (`type`, *optional*, defaults to `X`):
 ```
 
 `make check-docstrings` 會**拿 `*optional*, defaults to` 子句與實際 signature 中的預設值比對**。
-它不是裝飾用的：如果您寫的預設值已經和程式碼不一致，CI 就會
+它不是裝飾用的：如果你寫的預設值已經和程式碼不一致，CI 就會
 失敗。必填參數則完全省略這個子句：
 
 ```python
@@ -93,7 +93,7 @@ name (`type`, *optional*, defaults to `X`):
 
 ### 使用 `**Attributes**:`，而非 `Attributes:`[[attributes-never-attributes]]
 
-doc-builder 會把單獨的 `Attributes:` 解析為 **`Parameters:` 的同義詞（synonym）**，因此您的屬性（attributes）會被渲染
+doc-builder 會把單獨的 `Attributes:` 解析為 **`Parameters:` 的同義詞（synonym）**，因此你的屬性（attributes）會被渲染
 成建構子引數（constructor arguments）。這種錯誤不會有任何提示。只要屬性與建構子
 參數不同，就要使用粗體形式搭配 `--` 分隔符號：
 
@@ -127,7 +127,7 @@ class Robot(abc.ABC):
 > [!NOTE]
 > doc-builder 會在頁面的任何地方解析這個語法，包括圍欄式程式碼區塊（fenced code blocks）內部。這就是為什麼
 > 本頁的 docstring 範例使用一般文字而非交叉參照：若程式碼區塊中含有交叉參照，
-> 會渲染出解析後的連結，而不是您需要輸入的語法。在您自己的 docstring 中，請盡量
+> 會渲染出解析後的連結，而不是你需要輸入的語法。在你自己的 docstring 中，請盡量
 > 使用交叉參照；這項限制只影響「說明這個語法」的文件。
 
 ### 提示框（Callouts）[[callouts]]
@@ -276,7 +276,7 @@ doc-builder build lerobot docs/source/ --build_dir /tmp/doc-build
 
 ## 檢查清單[[checklist]]
 
-- [ ] 您動到的每個公開成員都有 docstring。
+- [ ] 你動到的每個公開成員都有 docstring。
 - [ ] 每個 `Args:` 項目都與簽章相符，包括 `*optional*, defaults to` 子句。
 - [ ] `Returns:` 以型別開頭，並寫在一行縮排內容中。
 - [ ] 沒有單獨的 `Attributes:`，而是使用 `**Attributes**:` 搭配 `--` 分隔符號。

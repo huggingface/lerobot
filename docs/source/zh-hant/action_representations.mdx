@@ -28,7 +28,7 @@ action = [x: 0.25, y: -0.10, z: 0.15, wx: 0.0, wy: 0.0, wz: 0.1, gripper: 0.8]
 
 ### 在兩種空間之間轉換（converting between spaces）[[converting-between-spaces]]
 
-LeRobot 提供處理器步驟（processor step），使用正向與逆向運動學（forward and inverse kinematics）在關節空間（joint space）與 EE 空間（EE space）之間轉換。這些都建構在 `RobotKinematics` 之上，它會載入您機器人的 URDF 模型（URDF model）。
+LeRobot 提供處理器步驟（processor step），使用正向與逆向運動學（forward and inverse kinematics）在關節空間（joint space）與 EE 空間（EE space）之間轉換。這些都建構在 `RobotKinematics` 之上，它會載入你機器人的 URDF 模型（URDF model）。
 
 ```python
 from lerobot.model.kinematics import RobotKinematics
@@ -54,7 +54,7 @@ ik_step = InverseKinematicsEEToJoints(kinematics=kinematics, motor_names=[...])
 
 ## 絕對、相對與差量動作（absolute, relative, and delta actions）[[absolute-relative-and-delta-actions]]
 
-無論您是在關節空間（joint space）或 EE 空間（EE space）中工作，動作值（action values）都可以用三種不同的方式表示。這裡的術語沿用 [UMI (Chi et al., 2024)](https://arxiv.org/abs/2402.10329) 的定義。
+無論你是在關節空間（joint space）或 EE 空間（EE space）中工作，動作值（action values）都可以用三種不同的方式表示。這裡的術語沿用 [UMI (Chi et al., 2024)](https://arxiv.org/abs/2402.10329) 的定義。
 
 ### LeRobot 預設：絕對動作（absolute actions）[[absolute-actions-lerobot-default]]
 
@@ -109,7 +109,7 @@ delta_chunk = [
 ]
 ```
 
-在此，每一步都相對於它的前一步。要還原絕對位置（absolute positions），您必須把所有先前的差量（deltas）加總起來，這代表誤差會隨時間累積（errors accumulate over time）。UMI 也正是基於這個原因明確反對這種表示法（representation）。
+在此，每一步都相對於它的前一步。要還原絕對位置（absolute positions），你必須把所有先前的差量（deltas）加總起來，這代表誤差會隨時間累積（errors accumulate over time）。UMI 也正是基於這個原因明確反對這種表示法（representation）。
 
 ### 視覺化比較（visual comparison）[[visual-comparison]]
 
@@ -145,7 +145,7 @@ LeRobot 提供 `RelativeActionsProcessorStep`，可在處理器管線（processo
 
 ### 為 pi 系列啟用相對動作（enabling relative actions for the pi family, pi0, pi0.5, pi0_fast）[[enabling-relative-actions-for-the-pi-family-pi0-pi05-pi0fast]]
 
-**步驟 1**：為您的資料集（dataset）預先計算相對動作統計量（relative action statistics）：
+**步驟 1**：為你的資料集（dataset）預先計算相對動作統計量（relative action statistics）：
 
 ```bash
 lerobot-edit-dataset \
@@ -180,7 +180,7 @@ lerobot-train \
 
 ### 將相對動作與 EE 空間結合（combining relative actions with EE space）[[combining-relative-actions-with-ee-space]]
 
-相對動作（relative actions）在關節空間（joint space）與 EE 空間（EE space）中都可運作。舉例來說，如果您的資料集（dataset）儲存的是 EE 動作（EE actions），相對編碼（relative encoding）會將它們轉換為相對於目前 EE 姿態（current EE pose）的偏移量（offsets）：
+相對動作（relative actions）在關節空間（joint space）與 EE 空間（EE space）中都可運作。舉例來說，如果你的資料集（dataset）儲存的是 EE 動作（EE actions），相對編碼（relative encoding）會將它們轉換為相對於目前 EE 姿態（current EE pose）的偏移量（offsets）：
 
 ```
 current_ee_state = [x: 0.25, y: -0.10, z: 0.15, gripper: 0.8]

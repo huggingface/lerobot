@@ -62,7 +62,7 @@ SARM 透過其處理器（`src/lerobot/rewards/sarm/processor_sarm.py`）進行�
 
 ## 標註模式（annotation modes）[[annotation-modes]]
 
-您可以從決定進度標籤（progress labels）如何計算的 **3 種標註模式（3 annotation modes）**中選擇：
+你可以從決定進度標籤（progress labels）如何計算的 **3 種標註模式（3 annotation modes）**中選擇：
 
 | 模式（mode）   | 所需標註（annotation） | 頭（heads）             | 使用情境（use case）                                                                   |
 | -------------- | ---------------------- | ----------------------- | -------------------------------------------------------------------------------------- |
@@ -81,7 +81,7 @@ SARM 透過其處理器（`src/lerobot/rewards/sarm/processor_sarm.py`）進行�
 - **dense 頭（dense head）**：不使用
 - **最適合**：簡單任務（simple tasks）、快速實驗，或當 VLM 標註（annotation）不可用時
 
-## 設定您的環境（set up your environment）[[set-up-your-environment]]
+## 設定你的環境（set up your environment）[[set-up-your-environment]]
 
 1. 依照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 2. 執行以下指令安裝 SARM 相依套件（dependencies）：
@@ -103,7 +103,7 @@ pip install -e ".[sarm]"
 
 - **sparse 頭（sparse head）**：1 個階段（"task"），線性進度（自動產生）
 - **dense 頭（dense head）**：來自 VLM 標註（annotation）的多個細粒度階段（fine-grained stages）
-- **最適合**：當您想要詳細的子任務追蹤（detailed subtask tracking），但不需要定義高階階段（high-level stages）時
+- **最適合**：當你想要詳細的子任務追蹤（detailed subtask tracking），但不需要定義高階階段（high-level stages）時
 
 工作流程（workflow）：
 
@@ -257,7 +257,7 @@ python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
 | `--num-visualizations` | 要視覺化的回合（episode）數量（預設：5）                      |
 | `--visualize-type`     | 要視覺化的標註（annotation）類型：`sparse`、`dense` 或 `both` |
 
-**提示**：若標註（annotation）不準確，請將您的子任務（task）描述調整得更具體並重新執行。
+**提示**：若標註（annotation）不準確，請將你的子任務（task）描述調整得更具體並重新執行。
 
 ---
 
@@ -426,7 +426,7 @@ r_i = φ(o_{t+Δ}) - φ(o_t)
 
 ### 步驟 5a：計算 SARM 進度值（compute sarm progress values）[[step-5a-compute-sarm-progress-values]]
 
-首先，在您資料集（dataset）中的所有影格（frames）上執行 SARM 模型（model）以計算進度值（progress values）：
+首先，在你資料集（dataset）中的所有影格（frames）上執行 SARM 模型（model）以計算進度值（progress values）：
 
 ```bash
 python -m lerobot.rewards.sarm.compute_rabc_weights \
@@ -465,7 +465,7 @@ python -m lerobot.rewards.sarm.compute_rabc_weights \
 
 ### 步驟 5b：以 RA-BC 訓練策略（train policy with ra-bc）[[step-5b-train-policy-with-ra-bc]]
 
-一旦有了進度檔案（progress file），就以 RA-BC 加權訓練您的策略（train your policy）。若未明確提供，進度檔案會從資料集路徑（dataset path）自動偵測（`sarm_progress.parquet`）。目前 PI0、PI0.5 與 SmolVLA 支援 RA-BC：
+一旦有了進度檔案（progress file），就以 RA-BC 加權訓練你的策略（train your policy）。若未明確提供，進度檔案會從資料集路徑（dataset path）自動偵測（`sarm_progress.parquet`）。目前 PI0、PI0.5 與 SmolVLA 支援 RA-BC：
 
 ```bash
 lerobot-train \
@@ -518,11 +518,11 @@ lerobot-train \
 | `sample_weighting/delta_mean` | > 0                       | 應為正值                      |
 | `sample_weighting/delta_std`  | > 0                       | 資料品質的變異                |
 
-**若 `sample_weight_mean_weight ≈ 1.0`：** 您的 kappa 太低。大多數樣本的 `delta > kappa`，完全繞過了軟加權（soft-weighting）。RA-BC 便等同於普通的 BC。
+**若 `sample_weight_mean_weight ≈ 1.0`：** 你的 kappa 太低。大多數樣本的 `delta > kappa`，完全繞過了軟加權（soft-weighting）。RA-BC 便等同於普通的 BC。
 
-**根據您的資料設定 kappa（setting kappa based on your data）：**
+**根據你的資料設定 kappa（setting kappa based on your data）：**
 
-預設的 `kappa=0.01` 是針對論文的 T 恤摺疊任務（30fps 下約 90 秒的回合 episode）調校的。對於您的資料集（dataset），請檢查記錄的 `sample_weighting/delta_mean` 與 `sample_weighting/delta_std`：
+預設的 `kappa=0.01` 是針對論文的 T 恤摺疊任務（30fps 下約 90 秒的回合 episode）調校的。對於你的資料集（dataset），請檢查記錄的 `sample_weighting/delta_mean` 與 `sample_weighting/delta_std`：
 
 ```
 # 若 delta_mean ≈ 0.03 且 delta_std ≈ 0.02：
@@ -540,7 +540,7 @@ lerobot-train \
 
 **RA-BC 何時可能沒有幫助（when RA-BC may not help）：**
 
-若您的資料集（dataset）已經是高品質（所有示範的進度皆一致），RA-BC 不會提供太多益處，因為沒有東西可以過濾。
+若你的資料集（dataset）已經是高品質（所有示範的進度皆一致），RA-BC 不會提供太多益處，因為沒有東西可以過濾。
 
 ### 以 RA-BC 進行多 GPU 訓練（multi-gpu training with RA-BC）[[multi-gpu-training-with-ra-bc]]
 
@@ -565,7 +565,7 @@ accelerate launch \
 ### 選擇模式（choosing a mode）[[choosing-a-mode]]
 
 - **從 `single_stage` 開始**進行快速實驗 - 沒有標註開銷（annotation overhead）
-- 當您想要詳細的進度追蹤（progress tracking）但任務（task）沒有明確的高階階段（high-level stages）時，使用 **`dense_only`**
+- 當你想要詳細的進度追蹤（progress tracking）但任務（task）沒有明確的高階階段（high-level stages）時，使用 **`dense_only`**
 - 對於粗粒度與細粒度進度（coarse and fine-grained progress）皆有意義的複雜任務（complex tasks），使用 **`dual`**
 
 ### 標註品質（annotation quality）[[annotation-quality]]

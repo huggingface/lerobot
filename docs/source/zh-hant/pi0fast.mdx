@@ -45,13 +45,13 @@ FAST tokenizer 透過以下步驟壓縮動作序列（compresses action sequence
 
 ## 訓練自訂 FAST tokenizer（training a custom FAST tokenizer）[[training-a-custom-fast-tokenizer]]
 
-您有兩種 FAST tokenizer 的選擇：
+你有兩種 FAST tokenizer 的選擇：
 
 1. **使用預訓練 tokenizer（use the pre-trained tokenizer）**：`lerobot/fast-action-tokenizer` tokenizer 是在 100 萬筆以上的真實機器人動作序列（real robot action sequences）上訓練（training）的，可作為通用 tokenizer （general-purpose tokenizer）使用。
 
-2. **訓練自己的 tokenizer（train your own tokenizer）**：為了在您的特定資料集（specific dataset）上獲得最佳效能，您可以在自己的資料上微調（fine-tune） tokenizer。
+2. **訓練自己的 tokenizer（train your own tokenizer）**：為了在你的特定資料集（specific dataset）上獲得最佳效能，你可以在自己的資料上微調（fine-tune） tokenizer。
 
-### 訓練您自己的 Tokenizer（training your own tokenizer）[[training-your-own-tokenizer]]
+### 訓練你自己的 Tokenizer（training your own tokenizer）[[training-your-own-tokenizer]]
 
 ```bash
 lerobot-train-tokenizer \
@@ -88,7 +88,7 @@ policy.type=pi0_fast
 
 ## 訓練（training）[[training]]
 
-若要訓練（training） π₀-FAST，您可以使用 LeRobot 訓練腳本（training script）：
+若要訓練（training） π₀-FAST，你可以使用 LeRobot 訓練腳本（training script）：
 
 ```bash
 lerobot-train \

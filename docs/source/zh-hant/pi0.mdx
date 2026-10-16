@@ -52,7 +52,7 @@ policy.type=pi0
 
 ## 訓練（training）[[training]]
 
-要訓練（training） π₀，您可以使用標準的 LeRobot 訓練腳本（training script）搭配適當的設置（configuration）：
+要訓練（training） π₀，你可以使用標準的 LeRobot 訓練腳本（training script）搭配適當的設置（configuration）：
 
 ```bash
 lerobot-train \
@@ -77,8 +77,8 @@ lerobot-train \
 - **`--policy.compile_model=true`**：啟用模型編譯（model compilation）以加速訓練（training）
 - **`--policy.gradient_checkpointing=true`**：大幅減少訓練（training）過程中的記憶體使用量
 - **`--policy.dtype=bfloat16`**：使用混合精度（mixed precision）訓練（training）以提升效率
-- **`--batch_size=32`**：訓練（training）的批次大小（batch size），請根據您的 GPU 記憶體調整
-- **`--policy.pretrained_path=lerobot/pi0_base`**：您想要微調（fine-tune）的 π₀ 基礎模型（base π₀ model），選項包括：
+- **`--batch_size=32`**：訓練（training）的批次大小（batch size），請根據你的 GPU 記憶體調整
+- **`--policy.pretrained_path=lerobot/pi0_base`**：你想要微調（fine-tune）的 π₀ 基礎模型（base π₀ model），選項包括：
   - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
   - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero)（專門針對 Libero 資料集訓練）
 
@@ -93,7 +93,7 @@ lerobot-train \
 
 ## 相對動作（relative actions）[[relative-actions]]
 
-預設情況下，π₀ 預測絕對動作（absolute actions）。您可以啟用**相對動作（relative actions）**，使模型（model）預測相對於當前機器人狀態（current robot state）的偏移量（offsets）。這對於某些設定可以提升訓練穩定性（training stability）。
+預設情況下，π₀ 預測絕對動作（absolute actions）。你可以啟用**相對動作（relative actions）**，使模型（model）預測相對於當前機器人狀態（current robot state）的偏移量（offsets）。這對於某些設定可以提升訓練穩定性（training stability）。
 
 若要使用相對動作（relative action），請先透過 CLI 在相對空間（relative space）中重新計算資料集統計量（dataset stats）：
 
@@ -117,7 +117,7 @@ recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_j
 dataset.push_to_hub()
 ```
 
-`chunk_size` 應與您的策略（policy）的 `chunk_size` 一致（π₀ 預設為 50）。`relative_exclude_joints` 列出應保持在絕對空間（absolute space）中的關節名稱（joint names，例如夾爪 gripper 指令）。使用 `--push_to_hub true` 將更新後的統計量（stats ）上傳至 Hub。
+`chunk_size` 應與你的策略（policy）的 `chunk_size` 一致（π₀ 預設為 50）。`relative_exclude_joints` 列出應保持在絕對空間（absolute space）中的關節名稱（joint names，例如夾爪 gripper 指令）。使用 `--push_to_hub true` 將更新後的統計量（stats ）上傳至 Hub。
 
 然後啟用相對動作（relative action）進行訓練（training）：
 

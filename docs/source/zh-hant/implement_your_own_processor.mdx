@@ -1,11 +1,11 @@
-# 實作您自己的機器人處理器（implementing your own robot processor）[[implement-your-own-robot-processor]]
+# 實作你自己的機器人處理器（implementing your own robot processor）[[implement-your-own-robot-processor]]
 
-在本教學中，您將學習如何實作自己的機器人處理器（Robot Processor）。
+在本教學中，你將學習如何實作自己的機器人處理器（Robot Processor）。
 首先會探討為何需要自訂處理器（custom processor），接著以 `NormalizerProcessorStep` 作為貫穿全文的範例，說明如何實作（implement）、設定（configure）及序列化處理器（serialize a processor）。最後，列出 LeRobot 內建的所有 helper 處理器（processors）。
 
-## 為什麼您會需要自訂處理器？（why you might need a custom processor）[[why-would-you-need-a-custom-processor]]
+## 為什麼你會需要自訂處理器？（why you might need a custom processor）[[why-would-you-need-a-custom-processor]]
 
-在大多數情況下，從感測器讀取原始資料（raw data）或模型輸出動作（models output actions）時，您需要處理這些資料以使其與目標系統（target system）相容。例如，一個常見的需求是正規化資料範圍（normalizing data ranges），使其適用於神經網路（neural networks）。
+在大多數情況下，從感測器讀取原始資料（raw data）或模型輸出動作（models output actions）時，你需要處理這些資料以使其與目標系統（target system）相容。例如，一個常見的需求是正規化資料範圍（normalizing data ranges），使其適用於神經網路（neural networks）。
 
 LeRobot 的 `NormalizerProcessorStep` 正是處理這項關鍵任務：
 
@@ -37,13 +37,13 @@ pipeline = PolicyProcessorPipeline([
 ])
 ```
 
-LeRobot 提供了管線機制（pipeline mechanism），用於對輸入資料（input data）和輸出動作（output actions）實作一系列處理步驟（sequences of processing steps），讓您能輕鬆地以正確順序（order）組合這些轉換（transformations），以達到最佳效能。
+LeRobot 提供了管線機制（pipeline mechanism），用於對輸入資料（input data）和輸出動作（output actions）實作一系列處理步驟（sequences of processing steps），讓你能輕鬆地以正確順序（order）組合這些轉換（transformations），以達到最佳效能。
 
-## 如何實作您自己的處理器？（how to implement your own processor）[[how-to-implement-your-own-processor]]
+## 如何實作你自己的處理器？（how to implement your own processor）[[how-to-implement-your-own-processor]]
 
 我們將以 `NormalizerProcessorStep` 作為主要範例，因為它展示了你經常會需要的核心處理器模式（processor patterns），包括狀態管理（state management）、設定序列化（configuration serialization），以及張量處理（tensor handling）。
 
-準備好您的問題所需的處理步驟序列（sequence of processing steps）。一個處理步驟（processor step）是一個實作以下方法（methods）的類別（class）：
+準備好你的問題所需的處理步驟序列（sequence of processing steps）。一個處理步驟（processor step）是一個實作以下方法（methods）的類別（class）：
 
 - `__call__`：實作針對輸入轉換（input transition）的處理步驟（processing step）。
 - `get_config`：取得處理步驟（processing step）的設定（configuration）。

@@ -130,7 +130,7 @@ lerobot-train \
   --dataset.repo_id=your_org/your_dataset
 ```
 
-如果您想凍結（freeze） Qwen 骨幹網路（backbone）、只訓練動作頭（only train the action head），請設定 `policy.freeze_qwen=True`：
+如果你想凍結（freeze） Qwen 骨幹網路（backbone）、只訓練動作頭（only train the action head），請設定 `policy.freeze_qwen=True`：
 
 ```bash
 lerobot-train \
@@ -142,7 +142,7 @@ lerobot-train \
 
 ### 在不同具身上微調（fine-tuning on a different embodiment）[[fine-tuning-on-a-different-embodiment]]
 
-當目標機器人（target robot）的動作或狀態維度（action or state dimensionality）與預訓練檢查點（pretrained checkpoint）不同時，動作頭（action head）的輸入/輸出投影層（input/output projection layers）會有不相符的形狀（shapes），無法直接載入。`reinit_modules` 讓您列出允許形狀不符的鍵值前綴（key prefixes），這些層（layers）會被隨機重新初始化（randomly re-initialised），而其餘所有權重（weight）則沿用檢查點（checkpoint）的值。所列前綴（listed prefixes）以外的任何形狀不符（shape mismatch）都會引發錯誤（raises an error）。
+當目標機器人（target robot）的動作或狀態維度（action or state dimensionality）與預訓練檢查點（pretrained checkpoint）不同時，動作頭（action head）的輸入/輸出投影層（input/output projection layers）會有不相符的形狀（shapes），無法直接載入。`reinit_modules` 讓你列出允許形狀不符的鍵值前綴（key prefixes），這些層（layers）會被隨機重新初始化（randomly re-initialised），而其餘所有權重（weight）則沿用檢查點（checkpoint）的值。所列前綴（listed prefixes）以外的任何形狀不符（shape mismatch）都會引發錯誤（raises an error）。
 
 依賴 `action_dim` 與 `state_dim` 的層為：
 
@@ -161,7 +161,7 @@ lerobot-train \
   --dataset.repo_id=your_org/your_dataset
 ```
 
-如果您的機器人沒有本體感覺狀態（proprioceptive state），請從列表中省略 `model.action_model.state_encoder`。
+如果你的機器人沒有本體感覺狀態（proprioceptive state），請從列表中省略 `model.action_model.state_encoder`。
 
 ### 重現 LIBERO 結果（reproducing the LIBERO results）[[reproducing-the-libero-results]]
 
@@ -243,7 +243,7 @@ lerobot-train \
 
 **選項 2 — 重新初始化預測器的輸入投影（reinitialize the predictor input projection）**
 
-如果您想將 `world_model_num_views` 改為 2 以外的值，請以 `strict=False` 載入檢查點（checkpoint），並為新的 `embed_dim` 重新初始化（reinitialize） `model.video_predictor.predictor_embed`。其餘所有預測器區塊的權重（predictor block weights，attention、MLP、norm、output projection）都與相機數量無關，可沿用預訓練檢查點（pretrained checkpoint）。
+如果你想將 `world_model_num_views` 改為 2 以外的值，請以 `strict=False` 載入檢查點（checkpoint），並為新的 `embed_dim` 重新初始化（reinitialize） `model.video_predictor.predictor_embed`。其餘所有預測器區塊的權重（predictor block weights，attention、MLP、norm、output projection）都與相機數量無關，可沿用預訓練檢查點（pretrained checkpoint）。
 
 ---
 

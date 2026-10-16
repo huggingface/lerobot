@@ -48,7 +48,7 @@ X-VLA 表明，通用機器人智慧（generalist robot intelligence）不需要
 pip install -e .[xvla]
 ```
 
-新版本發布後，您可以這樣安裝：
+新版本發布後，你可以這樣安裝：
 
 ```bash
 pip install lerobot[xvla]
@@ -169,16 +169,16 @@ lerobot-train \
   --policy.train_soft_prompts=true
 ```
 
-💡 **最佳效能：** 如果您擁有足夠的運算資源並希望達到最佳的 X-VLA 微調（fine-tune）效能，應遵循官方微調策略（policy）：
+💡 **最佳效能：** 如果你擁有足夠的運算資源並希望達到最佳的 X-VLA 微調（fine-tune）效能，應遵循官方微調策略（policy）：
 
 **🔥 使用自訂學習率方案全參數微調所有元件（full-finetune all components with a custom learning-rate scheme）**
 
 為確保穩定最佳化（stable optimization），視覺語言模型（VLM）必須使用僅為基礎學習率（base learning rate） 1/10 的學習率（LR）進行訓練（training），而所有其他元件（components）使用完整的學習率（full LR）。
-此學習率比例（LR ratio）對於達成強大且穩定的微調效能（finetuning performance）至關重要。預設情況下已為您自動設定好。
+此學習率比例（LR ratio）對於達成強大且穩定的微調效能（finetuning performance）至關重要。預設情況下已為你自動設定好。
 ❕注意
 
 要完全匹配官方報告的效能，可能需要為軟提示（soft-prompts）額外設置預熱學習率（learning rate）排程（warm-up LR schedule），這能帶來微小的改善。
-我們鼓勵在您自訂的訓練管線（customized training pipeline）中實現此功能以獲得最佳結果。
+我們鼓勵在你自訂的訓練管線（customized training pipeline）中實現此功能以獲得最佳結果。
 
 ## 核心概念（core concepts）[[core-concepts]]
 
@@ -198,7 +198,7 @@ X-VLA 使用**動作註冊表（Action Registry）**系統來處理不同的動�
 
 #### 動作模式的重要性（why action modes matter）[[why-action-modes-matter]]
 
-當您擁有一個以 `action_dim=20` 訓練的預訓練檢查點（pretrained checkpoint，如 `lerobot/xvla-base`），並希望在具有不同動作維度（action dimension，例如雙臂 bimanual arms 的 14 維）的資料集（dataset）上訓練時，您不能簡單地裁剪動作維度（trim the action dimension）。動作模式（action mode）負責協調：
+當你擁有一個以 `action_dim=20` 訓練的預訓練檢查點（pretrained checkpoint，如 `lerobot/xvla-base`），並希望在具有不同動作維度（action dimension，例如雙臂 bimanual arms 的 14 維）的資料集（dataset）上訓練時，你不能簡單地裁剪動作維度（trim the action dimension）。動作模式（action mode）負責協調：
 
 1. **損失計算（loss computation）**：針對不同動作元件（action components，關節 joint 用 MSE、夾爪 gripper 用 BCE 等）使用不同的損失函數（loss functions）
 2. **前處理（preprocessing）**：將夾爪通道（gripper channels）歸零、填充維度（padding dimensions）
@@ -224,7 +224,7 @@ REAL_DIM = 12
 
 #### 推薦：Auto 的動作模式（auto action mode）[[auto-action-mode-recommended]]
 
-`auto` 動作模式（action mode）是在任何機器人上使用 X-VLA 最簡單的方式。它會自動偵測您資料集的動作維度（dataset’s action dimension）並處理填充/裁剪（padding/trimming）：
+`auto` 動作模式（action mode）是在任何機器人上使用 X-VLA 最簡單的方式。它會自動偵測你資料集的動作維度（dataset’s action dimension）並處理填充/裁剪（padding/trimming）：
 
 ```bash
 lerobot-train \
@@ -236,7 +236,7 @@ lerobot-train \
 
 **運作方式（how it works）：**
 
-- 從您的資料集（dataset）讀取 `action_feature.shape[-1]`（例如 Franka 為 7）
+- 從你的資料集（dataset）讀取 `action_feature.shape[-1]`（例如 Franka 為 7）
 - 模型輸出（model outputs） `max_action_dim`（預設 20）以保持預訓練相容性（pretrained compatibility）
 - 損失（loss）**僅在實際維度上計算**：`MSE(pred[:,:,:real_dim], target[:,:,:real_dim])`
 - 後處理（postprocess）將輸出裁剪（trims）回 `real_dim` 用於機器人控制（robot control）
@@ -255,7 +255,7 @@ lerobot-train \
 
 **訓練過程中（during training）**：預設情況下，domain_id 設為 0 用於一般訓練（training）。
 
-**評估過程中（during evaluation）**：指定與您的檢查點訓練設定（checkpoint’s training configuration）相匹配的 domain_id。
+**評估過程中（during evaluation）**：指定與你的檢查點訓練設定（checkpoint’s training configuration）相匹配的 domain_id。
 
 ```python
 # 範例：LIBERO 檢查點使用 domain_id=3
@@ -264,7 +264,7 @@ domain_id = 3
 
 domain_id 會由前處理管線（preprocessing pipeline）中的 `XVLAAddDomainIdProcessorStep` 自動加入觀測（observations）中。
 
-`lerobot/xvla-base` 模型（model）已在以下領域 ID 上進行訓練（training）。建議選擇一個與您的機器人/配置（robot/configuration）最相似的：
+`lerobot/xvla-base` 模型（model）已在以下領域 ID 上進行訓練（training）。建議選擇一個與你的機器人/配置（robot/configuration）最相似的：
 
 #### 微調資料集（fine-tuning datasets）[[fine-tuning-datasets]]
 
@@ -339,9 +339,9 @@ num_denoising_steps: int = 10  # 流匹配去噪步數
 
 ## 建立自訂動作模式（creating custom action modes）[[creating-custom-action-modes]]
 
-如果您的機器人擁有獨特的動作空間（unique action space），您可以建立自訂動作模式（custom action mode）：
+如果你的機器人擁有獨特的動作空間（unique action space），你可以建立自訂動作模式（custom action mode）：
 
-### 步驟 1：定義您的動作空間（define your action space）[[step-1-define-your-action-space]]
+### 步驟 1：定義你的動作空間（define your action space）[[step-1-define-your-action-space]]
 
 ```python
 from lerobot.policies.xvla.action_hub import BaseActionSpace, register_action
@@ -351,7 +351,7 @@ import torch.nn as nn
 class MyCustomActionSpace(BaseActionSpace):
     """我的機器人的自訂動作空間。"""
 
-    dim_action = 15  # 您的機器人的動作維度
+    dim_action = 15  # 你的機器人的動作維度
     gripper_idx = (7, 14)  # 夾爪通道索引
 
     def __init__(self):
@@ -360,7 +360,7 @@ class MyCustomActionSpace(BaseActionSpace):
         self.bce = nn.BCEWithLogitsLoss()
 
     def compute_loss(self, pred, target):
-        """定義您的損失計算方式。"""
+        """定義你的損失計算方式。"""
         # 範例：關節用 MSE，夾爪用 BCE
         joints_loss = self.mse(pred[:, :, :7], target[:, :, :7])
         gripper_loss = self.bce(pred[:, :, self.gripper_idx],
@@ -388,7 +388,7 @@ class MyCustomActionSpace(BaseActionSpace):
         return action
 ```
 
-### 步驟 2：使用您的自訂動作模式（use your custom action mode）[[step-2-use-your-custom-action-mode]]
+### 步驟 2：使用你的自訂動作模式（use your custom action mode）[[step-2-use-your-custom-action-mode]]
 
 ```bash
 lerobot-train \
@@ -414,7 +414,7 @@ policy.empty_cameras=1  # Adds 1 zero-padded camera view
 
 ### 自訂前處理管線 （custom preprocessing pipeline）[[custom-preprocessing-pipeline]]
 
-為您的環境（environment）建立自訂前處理管線（custom preprocessing pipeline）：
+為你的環境（environment）建立自訂前處理管線（custom preprocessing pipeline）：
 
 ```python
 from lerobot.processor import PolicyProcessorPipeline
@@ -427,22 +427,22 @@ from lerobot.policies.xvla import (
 # 建立自訂 pipeline
 preprocessor = PolicyProcessorPipeline(
     steps=[
-        YourCustomProcessorStep(),  # 您的自訂處理
+        YourCustomProcessorStep(),  # 你的自訂處理
         XVLAImageToFloatProcessorStep(),  # 必要：轉換為浮點數
         XVLAImageNetNormalizeProcessorStep(),  # 必要：ImageNet 標準化
-        XVLAAddDomainIdProcessorStep(domain_id=5),  # 您的領域 ID
+        XVLAAddDomainIdProcessorStep(domain_id=5),  # 你的領域 ID
     ]
 )
 ```
 
 ### 處理不同的動作維度（handling different action dimensions）[[handling-different-action-dimensions]]
 
-當您的資料集（dataset）動作維度（action dimensions）少於預訓練模型（pretrained model）時：
+當你的資料集（dataset）動作維度（action dimensions）少於預訓練模型（pretrained model）時：
 
 **選項 1（推薦）**：使用 `auto` 的動作模式（action mode）
 
 ```bash
-# 自動偵測您資料集的動作維度
+# 自動偵測你資料集的動作維度
 # 適用於任何機器人，無需自訂程式碼
 policy.action_mode=auto
 policy.max_action_dim=20  # 匹配預訓練模型
@@ -475,7 +475,7 @@ class MappedActionSpace(BaseActionSpace):
 
 **問題**：「動作維度不匹配（Action dimension mismatch）」
 
-- **解決方案**：確認您的 `action_mode` 與機器人的動作空間（robot’s action space）相匹配。如有需要，建立自訂動作模式（custom action mode）。
+- **解決方案**：確認你的 `action_mode` 與機器人的動作空間（robot’s action space）相匹配。如有需要，建立自訂動作模式（custom action mode）。
 
 **問題**：「影像數值超出 [0, 1] 範圍（Image values outside [0, 1] range）」
 
@@ -483,12 +483,12 @@ class MappedActionSpace(BaseActionSpace):
 
 **問題**：「找不到領域 ID（Domain ID not found）」
 
-- **解決方案**：確認 `XVLAAddDomainIdProcessorStep` 在您的前處理管線（preprocessing pipeline）中，並設定了正確的 domain_id。
+- **解決方案**：確認 `XVLAAddDomainIdProcessorStep` 在你的前處理管線（preprocessing pipeline）中，並設定了正確的 domain_id。
 
 **問題**：「新具身形態上的成功率低（Low success rate on new embodiment）」
 
 - **解決方案**：
-  1. 確認您的 action_mode 是否正確
+  1. 確認你的 action_mode 是否正確
   2. 確認軟提示（soft prompts）是否正在訓練（`train_soft_prompts=True`）
   3. 確保正確的前處理（preprocessing，ImageNet 正規化、domain_id）
   4. 考慮增加訓練步數（training steps）
@@ -503,7 +503,7 @@ class MappedActionSpace(BaseActionSpace):
 
 ## 引用[[citation]]
 
-如果您在研究中使用了 X-VLA，請引用：
+如果你在研究中使用了 X-VLA，請引用：
 
 ```bibtex
 @article{zheng2025x,
@@ -525,4 +525,4 @@ class MappedActionSpace(BaseActionSpace):
 
 ## 貢獻[[contributing]]
 
-我們歡迎貢獻！如果您為您的機器人實作了新的動作模式（action mode）或處理器（processor），請考慮提交 PR 以幫助社群。
+我們歡迎貢獻！如果你為你的機器人實作了新的動作模式（action mode）或處理器（processor），請考慮提交 PR 以幫助社群。

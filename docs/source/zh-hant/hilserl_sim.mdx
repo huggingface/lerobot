@@ -2,7 +2,7 @@
 
 本指南說明如何使用 gym_hil 模擬環境（simulation environments）作為真實機器人的替代方案，搭配 LeRobot 框架進行人在迴圈中（Human-In-the-Loop, HIL）的強化學習（reinforcement learning）。
 
-`gym_hil` 是一個提供 Gymnasium 相容模擬環境（simulation environments）的套件，專為人在迴圈中的強化學習（Human-In-the-Loop reinforcement learning）所設計。這些環境讓您可以：
+`gym_hil` 是一個提供 Gymnasium 相容模擬環境（simulation environments）的套件，專為人在迴圈中的強化學習（Human-In-the-Loop reinforcement learning）所設計。這些環境讓你可以：
 
 - 在模擬（simulation）中訓練策略（train policies），以便在真實機器人上訓練之前測試強化學習堆疊（test the RL stack）
 
@@ -26,7 +26,7 @@ pip install -e ".[hilserl]"
 
 ## 設定（configuration）[[configuration]]
 
-若要搭配 LeRobot 使用 `gym_hil`，您需要建立一個設定檔（configuration file）。範例請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/env_config.json)。主要設定片段（configuration sections）包括：
+若要搭配 LeRobot 使用 `gym_hil`，你需要建立一個設定檔（configuration file）。範例請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/env_config.json)。主要設定片段（configuration sections）包括：
 
 ### 環境類型與任務（environment type and task）[[environment-type-and-task]]
 
@@ -135,12 +135,12 @@ python -m lerobot.rl.actor --config_path path/to/train_gym_hil_env.json
 python -m lerobot.rl.learner --config_path path/to/train_gym_hil_env.json
 ```
 
-模擬環境（simulation environment）提供了一個安全且可重複的方式，讓您在部署（deployment）到真實機器人之前，開發和測試人在迴圈中的強化學習（Human-In-the-Loop reinforcement learning）的各個元件（components）。
+模擬環境（simulation environment）提供了一個安全且可重複的方式，讓你在部署（deployment）到真實機器人之前，開發和測試人在迴圈中的強化學習（Human-In-the-Loop reinforcement learning）的各個元件（components）。
 
-恭喜 🎉，您已完成本教學！
+恭喜 🎉，你已完成本教學！
 
 > [!TIP]
-> 如果您有任何問題或需要協助，請透過 [Discord](https://discord.com/invite/s3KuuzsPFb) 與我們聯繫。
+> 如果你有任何問題或需要協助，請透過 [Discord](https://discord.com/invite/s3KuuzsPFb) 與我們聯繫。
 
 論文引用：
 

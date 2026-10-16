@@ -37,7 +37,7 @@ LIBERO-plus 涵蓋與 LIBERO 相同的五個套件（suites）：
 <Tip warning={true}>
   安裝 LIBERO-plus 會**取代**原生（vanilla）的 LIBERO，它會解除安裝
   `hf-libero`， 讓 `import libero` 指向 LIBERO-plus 這個
-  fork。您無法同時安裝兩者。 若要切換回原生 LIBERO，請解除安裝該 fork， 並以
+  fork。你無法同時安裝兩者。 若要切換回原生 LIBERO，請解除安裝該 fork， 並以
   `pip install -e ".[libero]"` 重新安裝。
 </Tip>
 
@@ -128,7 +128,7 @@ lerobot-eval \
 
 ### 控制模式（control mode）[[control-mode]]
 
-LIBERO-plus 支援兩種控制模式（modes）：`relative`（預設）與 `absolute`。不同的 VLA 檢查點（checkpoint）使用不同的動作參數化（action parameterization）進行訓練（training），因此請確保模式（mode）與您的策略（policy）相符：
+LIBERO-plus 支援兩種控制模式（modes）：`relative`（預設）與 `absolute`。不同的 VLA 檢查點（checkpoint）使用不同的動作參數化（action parameterization）進行訓練（training），因此請確保模式（mode）與你的策略（policy）相符：
 
 ```bash
 --env.control_mode=relative   # 或 "absolute"
@@ -137,7 +137,7 @@ LIBERO-plus 支援兩種控制模式（modes）：`relative`（預設）與 `abs
 ### 重設效能（reset performance）[[reset-performance]]
 
 根據預設，LeRobot 會保留 LIBERO 的硬重設（hard-reset）行為。啟用固定初始
-狀態（fixed initial states）後，您可以選擇採用軟重設（soft resets），以略過
+狀態（fixed initial states）後，你可以選擇採用軟重設（soft resets），以略過
 在每個回合（episode）重新建構模擬器模型（simulator model）與渲染器（renderer）：
 
 ```bash

@@ -68,7 +68,7 @@ python -m lerobot.async_inference.robot_client \
 - `aggregate_fn_name` 是在重疊部分彙整動作（aggregate actions on overlapping portions）的函式（function）。你可以將新函式加入函式登錄表（registry of functions），或在 `robot_client.py` 中加入你自己的（見[此處](https://github.com/huggingface/lerobot/blob/main/src/lerobot/async_inference/robot_client.py#L224)）
 - `debug_visualize_queue_size` 是調校 `CLIENT` 參數（parameters）的實用工具（tool）。
 
-## 完成！您現在應該看到您的機器人開始活動了 😉[[done-you-should-see-your-robot-moving-around-by-now-]]
+## 完成！你現在應該看到你的機器人開始活動了 😉[[done-you-should-see-your-robot-moving-around-by-now-]]
 
 ## 非同步 vs. 同步推論（async vs. synchronous inference）[[async-vs-synchronous-inference]]
 
@@ -176,9 +176,9 @@ from lerobot.async_inference.robot_client import RobotClient
 from lerobot.async_inference.helpers import visualize_action_queue_size
 
 # 1. 建立機器人實例
-"""執行 `python lerobot/find_cameras.py` 以查看您的設定中可用的相機"""
+"""執行 `python lerobot/find_cameras.py` 以查看你的設定中可用的相機"""
 # 這些相機必須與策略預期的相符
-# 請查看您所使用策略在 Hub 上的 config.json
+# 請查看你所使用策略在 Hub 上的 config.json
 camera_cfg = {
     "top": OpenCVCameraConfig(index_or_path=0, width=640, height=480, fps=30),
     "side": OpenCVCameraConfig(index_or_path=1, width=640, height=480, fps=30)
@@ -270,7 +270,7 @@ if client.start():
 
 我們發現 `actions_per_chunk` 與 `chunk_size_threshold` 的預設值在我們為 [SmolVLA 論文](https://huggingface.co/papers/2506.01844)開發的實驗中運作良好，但我們建議嘗試不同的值，以找到最適合你設定的組合。
 
-### 為您的設定調校非同步推論（tuning async inference for your setup）[[tuning-async-inference-for-your-setup]]
+### 為你的設定調校非同步推論（tuning async inference for your setup）[[tuning-async-inference-for-your-setup]]
 
 1. **謹慎選擇你的運算資源。** [PI0](https://huggingface.co/lerobot/pi0) 在推論（inference）時佔用 14GB 記憶體，而 [SmolVLA](https://huggingface.co/lerobot/smolvla_base) 只需約 2GB。你應為你的使用情境找出最佳的運算資源，並謹記較小的策略（policy）需要較少的運算資源。所用策略與裝置的組合（CPU 密集、使用 MPS，或特定 NVIDIA GPU 上的 CUDA 核心數量）會直接影響你應預期的平均推論延遲。
 2. **根據推論（inference）延遲調整你的 `fps`。** 當伺服器產生新的動作區塊（action chunk）時，用戶端並非閒置，而是逐步執行其目前的動作佇列。若兩個程序以根本不同的速度進行，用戶端可能最終會佇列為空。因此，若你持續耗盡佇列中的動作，你應降低你的 fps。

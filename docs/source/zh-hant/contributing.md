@@ -2,11 +2,11 @@
 
 歡迎所有人貢獻，我們重視每個人的貢獻。撰寫程式碼並非協助社群的唯一方式。回答問題、協助他人、積極聯繫，以及改善文件說明，都是極具價值的貢獻。
 
-無論您選擇以何種方式貢獻，請遵守我們的[行為準則（code of conduct）](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)與 [AI 政策](https://github.com/huggingface/lerobot/blob/main/AI_POLICY.md)。
+無論你選擇以何種方式貢獻，請遵守我們的[行為準則（code of conduct）](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)與 [AI 政策](https://github.com/huggingface/lerobot/blob/main/AI_POLICY.md)。
 
 ## 貢獻方式（ways to contribute）
 
-您可以透過多種方式做出貢獻：
+你可以透過多種方式做出貢獻：
 
 - **修復問題（fixing issues）：** 解決錯誤或改善現有的程式碼。
 - **新功能（new features）：** 開發新功能。
@@ -14,15 +14,15 @@
 - **文件（documentation）：** 改善範例、指南與文件字串（docstrings）。
 - **意見回饋（feedback）：** 提交與錯誤（bugs）或所需新功能（new features）相關的工單（tickets）。
 
-若您不確定從何開始，歡迎加入我們的 [Discord Channel](https://discord.gg/q8Dzzpym3f)。
+若你不確定從何開始，歡迎加入我們的 [Discord Channel](https://discord.gg/q8Dzzpym3f)。
 
 ## 開發環境設定（development setup）
 
-若要貢獻程式碼，您需要建立一個開發環境。
+若要貢獻程式碼，你需要建立一個開發環境。
 
 ### 1. Fork 與 Clone
 
-在 GitHub 上 fork 儲存庫（repository），然後 clone 您的 fork：
+在 GitHub 上 fork 儲存庫（repository），然後 clone 你的 fork：
 
 ```bash
 git clone https://github.com/<your-handle>/lerobot.git
@@ -52,7 +52,7 @@ pre-commit run --all-files
 
 ### 執行測試（running tests）
 
-我們使用 `pytest`。首先，請安裝 **git-lfs** 以確保您擁有所需的測試構件（test artifacts）：
+我們使用 `pytest`。首先，請安裝 **git-lfs** 以確保你擁有所需的測試構件（test artifacts）：
 
 ```bash
 git lfs install
@@ -81,6 +81,6 @@ pytest -sv tests/test_specific_feature.py
 > [!IMPORTANT]
 > 社群審查政策（community review policy）：為了擴大我們的工作效能並培養協作環境，我們要求貢獻者在自己的 PR 得到關注之前，先審查至少一個其他人的開放 PR。這項共同責任能倍增我們的審查能量，並幫助每個人的程式碼更快被合併（merged）！
 
-在您提交 PR 並完成同儕審查（peer review）後，LeRobot 團隊的成員將會審查您的貢獻。
+在你提交 PR 並完成同儕審查（peer review）後，LeRobot 團隊的成員將會審查你的貢獻。
 
-感謝您為 LeRobot 做出的貢獻！
+感謝你為 LeRobot 做出的貢獻！

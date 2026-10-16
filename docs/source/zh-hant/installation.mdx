@@ -1,6 +1,6 @@
 # 安裝[[installation]]
 
-本指南使用 `conda`（透過 miniforge）來管理環境（推薦）。若您偏好其他環境管理工具（例如 `uv`、`venv`），請確保您使用 Python >=3.12 並支援 PyTorch >= 2.10，然後直接跳至下方的[環境設定](#step-2-environment-setup)。
+本指南使用 `conda`（透過 miniforge）來管理環境（推薦）。若你偏好其他環境管理工具（例如 `uv`、`venv`），請確保你使用 Python >=3.12 並支援 PyTorch >= 2.10，然後直接跳至下方的[環境設定](#step-2-environment-setup)。
 
 ## 步驟 1（僅限 `conda`）：安裝 [`miniforge`](https://conda-forge.org/download/)[[step-1-conda-only-install-miniforge]]
 
@@ -29,7 +29,7 @@ uv venv --python 3.12
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-接著啟動您的虛擬環境（virtual environment），每次開啟新的 shell 要使用 lerobot 時都需要執行此步驟：
+接著啟動你的虛擬環境（virtual environment），每次開啟新的 shell 要使用 lerobot 時都需要執行此步驟：
 
 <!-- prettier-ignore-start -->
 
@@ -72,25 +72,25 @@ source .venv/bin/activate
 LeRobot 預設使用 [TorchCodec](https://github.com/meta-pytorch/torchcodec) 進行影片解碼（video decoding），而它需要 `ffmpeg`。
 
 > [!NOTE]
-> **平台支援：** TorchCodec 在 macOS Intel（x86_64）、Linux ARM（aarch64、arm64、armv7l），或搭配 PyTorch < 2.8 的 Windows 上**無法使用**。在這些平台上，LeRobot 會自動回退（fall back）到 `pyav`，因此您不需要安裝 `ffmpeg`，可直接跳到步驟 3。
+> **平台支援：** TorchCodec 在 macOS Intel（x86_64）、Linux ARM（aarch64、arm64、armv7l），或搭配 PyTorch < 2.8 的 Windows 上**無法使用**。在這些平台上，LeRobot 會自動回退（fall back）到 `pyav`，因此你不需要安裝 `ffmpeg`，可直接跳到步驟 3。
 >
 > **Jetson（aarch64 + CUDA）：** 上述的 `pyav` 回退（fallback）表示預設沒有 GPU 加速的影片解碼。[`docker/Dockerfile.jetson`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.jetson) 會針對 JetPack 6.2 從原始碼建置具備 CUDA 支援的 `torch`／`torchcodec`——由社群維護，預建置映像（prebuilt image）請見 [`ravediamond/lerobot-jetson`](https://github.com/ravediamond/lerobot-jetson)，背景說明請見 issue [#819](https://github.com/huggingface/lerobot/issues/819)。
 
-若您的平台支援 TorchCodec，請使用下列其中一種方式安裝 `ffmpeg`：
+若你的平台支援 TorchCodec，請使用下列其中一種方式安裝 `ffmpeg`：
 
 <!-- prettier-ignore-start -->
 
 <hfoptions id="install_ffmpeg">
 <hfoption id="conda (any PyTorch version)">
 
-在您的 conda 環境中安裝 `ffmpeg`。此方式適用於**所有 PyTorch 版本**，且**在 PyTorch < 2.10 時為必要**：
+在你的 conda 環境中安裝 `ffmpeg`。此方式適用於**所有 PyTorch 版本**，且**在 PyTorch < 2.10 時為必要**：
 
 ```bash
 conda install ffmpeg -c conda-forge
 ```
 
 > [!TIP]
-> 此指令通常會安裝帶有 `libsvtav1` 編碼器（encoder）的 `ffmpeg 8.X`。若您遇到問題（例如缺少 `libsvtav1`，可用 `ffmpeg -encoders` 查看，或與 `torchcodec` 版本不相符），可以明確安裝 `ffmpeg 7.1.1`：
+> 此指令通常會安裝帶有 `libsvtav1` 編碼器（encoder）的 `ffmpeg 8.X`。若你遇到問題（例如缺少 `libsvtav1`，可用 `ffmpeg -encoders` 查看，或與 `torchcodec` 版本不相符），可以明確安裝 `ffmpeg 7.1.1`：
 >
 > ```bash
 > conda install ffmpeg=7.1.1 -c conda-forge
@@ -110,7 +110,7 @@ brew install ffmpeg
 ```
 
 > [!IMPORTANT]
-> 系統層級的 `ffmpeg` **只在 PyTorch >= 2.10**（TorchCodec ≥ 0.10）時受支援。對於較舊的 PyTorch 版本，您**必須**改用 `conda install ffmpeg -c conda-forge`。
+> 系統層級的 `ffmpeg` **只在 PyTorch >= 2.10**（TorchCodec ≥ 0.10）時受支援。對於較舊的 PyTorch 版本，你**必須**改用 `conda install ffmpeg -c conda-forge`。
 
 </hfoption>
 </hfoptions>
@@ -118,7 +118,7 @@ brew install ffmpeg
 
 ## 步驟 3：安裝 LeRobot 🤗[[step-3-install-lerobot]]
 
-基本的 `lerobot` 安裝刻意保持**輕量（lightweight）**——只包含核心 ML 相依套件（PyTorch、torchvision、numpy、opencv、einops、draccus、huggingface-hub、gymnasium、safetensors）。較重的相依套件則以可選的額外套件（extras）把關，讓您只安裝需要的部分。
+基本的 `lerobot` 安裝刻意保持**輕量（lightweight）**——只包含核心 ML 相依套件（PyTorch、torchvision、numpy、opencv、einops、draccus、huggingface-hub、gymnasium、safetensors）。較重的相依套件則以可選的額外套件（extras）把關，讓你只安裝需要的部分。
 
 ### 以原始碼安裝（from source）[[from-source]]
 
@@ -129,7 +129,7 @@ git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 ```
 
-接著，以可編輯模式（editable mode）安裝此函式庫。如果您打算對程式碼做出貢獻，這種方式會非常有幫助。
+接著，以可編輯模式（editable mode）安裝此函式庫。如果你打算對程式碼做出貢獻，這種方式會非常有幫助。
 
 <!-- prettier-ignore-start -->
 <hfoptions id="install_lerobot_src">
@@ -173,7 +173,7 @@ uv pip install lerobot
 _此方式只會安裝核心 ML 相依套件。大多數工作流程都需要額外加裝額外套件（extras）。_
 
 **功能額外套件（feature extras）：**
-LeRobot 提供對應常見工作流程的**功能導向額外套件（feature-scoped extras）**。若您使用 `uv`，請將下列指令中的 `pip install` 替換為 `uv pip install`。
+LeRobot 提供對應常見工作流程的**功能導向額外套件（feature-scoped extras）**。若你使用 `uv`，請將下列指令中的 `pip install` 替換為 `uv pip install`。
 
 | 額外套件（extra） | 新增內容                                    | 典型使用情境                                                |
 | ----------------- | ------------------------------------------- | ----------------------------------------------------------- |
@@ -211,7 +211,7 @@ _多個額外套件（extras）可以組合（例如 `.[core_scripts,pi,pusht]`�
 
 ### PyTorch 的 CUDA 版本（僅限 Linux）[[pytorch-cuda-variant-linux-only]]
 
-在 Linux 上，安裝方式會決定您取得哪個 CUDA wheel。macOS 與 Windows 的安裝使用 PyPI 預設（分別為 MPS／CPU／CUDA-Windows wheel），可跳過本節。
+在 Linux 上，安裝方式會決定你取得哪個 CUDA wheel。macOS 與 Windows 的安裝使用 PyPI 預設（分別為 MPS／CPU／CUDA-Windows wheel），可跳過本節。
 
 <!-- prettier-ignore-start -->
 
@@ -253,7 +253,7 @@ pip install lerobot              # 從 PyPI
 uv pip install --torch-backend cu128 lerobot
 ```
 
-支援的值包括 `auto`、`cpu`、`cu126`、`cu128`、`cu129`、`cu130`，以及各種 `rocm*` 與 `xpu`。請依您的驅動程式自行替換。
+支援的值包括 `auto`、`cpu`、`cu126`、`cu128`、`cu129`、`cu130`，以及各種 `rocm*` 與 `xpu`。請依你的驅動程式自行替換。
 
 </hfoption>
 </hfoptions>
@@ -261,7 +261,7 @@ uv pip install --torch-backend cu128 lerobot
 
 ### 疑難排解[[troubleshooting]]
 
-若您遇到建置錯誤，可能需要安裝額外的系統相依套件（system dependencies）：`cmake`、`build-essential` 以及 `ffmpeg libs`。
+若你遇到建置錯誤，可能需要安裝額外的系統相依套件（system dependencies）：`cmake`、`build-essential` 以及 `ffmpeg libs`。
 若要在 Linux 上安裝這些套件，請執行：
 
 ```bash
@@ -272,7 +272,7 @@ sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-de
 
 ## 可選的相依套件（optional dependencies）[[optional-dependencies]]
 
-LeRobot 為特定功能提供可選的額外套件（optional extras）。多個額外套件（multiple extras）可以組合使用（例如 `.[aloha,feetech]`）。如需所有可用的額外套件，請參閱 `pyproject.toml`。若您使用 `uv`，請將下列指令中的 `pip install` 替換為 `uv pip install`。
+LeRobot 為特定功能提供可選的額外套件（optional extras）。多個額外套件（multiple extras）可以組合使用（例如 `.[aloha,feetech]`）。如需所有可用的額外套件，請參閱 `pyproject.toml`。若你使用 `uv`，請將下列指令中的 `pip install` 替換為 `uv pip install`。
 
 ### 模擬（simulations）[[simulations]]
 
@@ -299,4 +299,4 @@ Weights and Biases 已包含在 `training` 額外套件（extra）中。若要�
 wandb login
 ```
 
-如果您的機器人尚未組裝完成，現在可以開始組裝了。請在左側找到您的機器人型號，然後點擊連結，搭配您的機器人使用 LeRobot。
+如果你的機器人尚未組裝完成，現在可以開始組裝了。請在左側找到你的機器人型號，然後點擊連結，搭配你的機器人使用 LeRobot。

@@ -32,7 +32,7 @@ EVO1 是一個用於機器人控制的視覺-語言-動作策略（Vision-Langua
    pip install -e ".[training,evo1,libero]"
    ```
 
-3. 只有在 `flash-attn` wheel 與您的 Python、PyTorch、CUDA 和 GPU 堆疊（stack）相容時才安裝它。當 `flash_attn` 無法使用時，EVO1 會回退（fallback）到標準注意力機制（standard attention）。
+3. 只有在 `flash-attn` wheel 與你的 Python、PyTorch、CUDA 和 GPU 堆疊（stack）相容時才安裝它。當 `flash_attn` 無法使用時，EVO1 會回退（fallback）到標準注意力機制（standard attention）。
 
 EVO1 使用原生的 Hugging Face `transformers` InternVL 實作，因此 `policy.vlm_model_name` 必須指向一個原生轉換過的檢查點（natively converted checkpoint），例如 `OpenGVLab/InternVL3-1B-hf`（注意 `-hf` 後綴）。首次執行會下載所設定的 VLM 檢查點，之後的執行會從 Hugging Face 快取（cache）重複使用它。
 
@@ -115,7 +115,7 @@ lerobot-train \
 檢查點（checkpoint）開始階段 2 時，這一點很重要，因為階段 1 的檢查點設定（checkpoint config）會將 VLM
 微調旗標（finetuning flags）儲存為停用狀態（disabled）。除非設定
 `policy.apply_training_stage_defaults=false`，否則這些階段預設值會優先於已儲存或手動提供的
-`policy.finetune_*` 旗標；因此只有在您要手動控制每一個微調旗標時才設定該旗標。
+`policy.finetune_*` 旗標；因此只有在你要手動控制每一個微調旗標時才設定該旗標。
 
 ### 關鍵訓練參數（key training parameters）[[key-training-parameters]]
 

@@ -20,7 +20,7 @@ LeRobot 策略（policy）。
 uv sync --locked --extra molmoact2
 ```
 
-要執行此儲存庫（repository）中的模型（models），您需要一張 NVIDIA GPU。目前的
+要執行此儲存庫（repository）中的模型（models），你需要一張 NVIDIA GPU。目前的
 混合精度路徑（mixed-precision path）會將完整的 action expert 以 fp32 儲存，並將大型 VLM
 矩陣以 bf16 儲存。`policy.compile_model=true` 可選擇編譯 action
 expert 區塊，同時讓 VLM、vision tower、connector 與策略包裝器（policy wrapper）
@@ -123,7 +123,7 @@ accelerate launch \
 從 LeRobot 已儲存的 MolmoAct2 檢查點（checkpoint）開始時，不論是來自本機（local）的
 `pretrained_model` 目錄（directory）或來自 Hub，請使用 `policy.path`。這會
 還原已儲存的 LeRobot 策略設定（policy config）、模型權重（model weights）、處理器（processor）與
-正規化統計量（normalization statistics）。您仍可覆寫訓練時的選項（override training-time options），例如
+正規化統計量（normalization statistics）。你仍可覆寫訓練時的選項（override training-time options），例如
 `batch_size`、`steps` 或 `policy.action_mode`。檢查點載入是嚴格的，並會
 保留已儲存的 FFT 或 LoRA 拓撲（topology），因此使用 `policy.path` 時請勿覆寫
 `policy.train_mode_vlm`。若要開始新的 LoRA 執行（run），
@@ -265,7 +265,7 @@ MolmoAct2 使用參數群組學習率（parameter-group learning rates），以�
 - `policy.optimizer_grad_clip_norm` 會獨立套用於 LLM、vision tower、影像 connector 與 action-expert
   參數群組，符合原始 MolmoAct2 優化器（optimizer）。它不是單一全域模型梯度範數（global-model gradient norm）。
 
-您可以透過 `policy.optimizer_lr`、`policy.optimizer_vit_lr`、
+你可以透過 `policy.optimizer_lr`、`policy.optimizer_vit_lr`、
 `policy.optimizer_connector_lr` 與 `policy.optimizer_action_expert_lr`
 覆寫完整微調（override the full fine-tuning）與 action expert 的學習率（action-expert learning rates）。
 排程器設定（scheduler settings）可透過 `policy.scheduler_warmup_steps`、
@@ -277,7 +277,7 @@ MolmoAct2 使用參數群組學習率（parameter-group learning rates），以�
 ### 資料集分位數統計量（dataset quantile statistics）[[dataset-quantile-statistics]]
 
 MolmoAct2 預設對狀態與動作特徵採用分位數正規化（quantile normalization for state and action features）。如果
-您的資料集（dataset）尚未轉換為含分位數統計量（quantile statistics），可以透過以下方式
+你的資料集（dataset）尚未轉換為含分位數統計量（quantile statistics），可以透過以下方式
 加入：
 
 ```bash
@@ -341,7 +341,7 @@ lerobot-eval \
 
 ### 使用原始 MolmoAct2 權重評估（evaluation with original MolmoAct2 weight）[[evaluation-with-original-molmoact2-weight]]
 
-您可以直接評估已發布的 Hugging Face 檢查點（checkpoint），而無須先將其
+你可以直接評估已發布的 Hugging Face 檢查點（checkpoint），而無須先將其
 轉換為 LeRobot 檢查點。在此情況下，請將
 `policy.checkpoint_path` 設為該 HF 模型 repo，並提供 `policy.norm_tag`。
 對於 LIBERO，`policy.norm_tag=libero` 會從檢查點的 `norm_stats.json`
@@ -398,7 +398,7 @@ lerobot-eval \
   時域（action horizon）。直接評估（evaluation）原始 HF 檢查點（original-HF checkpoint）時
   必填。
 - `policy.dtype`：模型儲存／autocast 設定檔（model storage/autocast profile）。一般 GPU
-  評估（evaluation）請使用 `bfloat16`。只有在您明確想要完整 fp32 推論（full-fp32 inference）時，才使用 `float32`。
+  評估（evaluation）請使用 `bfloat16`。只有在你明確想要完整 fp32 推論（full-fp32 inference）時，才使用 `float32`。
 - `policy.enable_inference_cuda_graph`：啟用 MolmoAct2 推論（inference）的 CUDA
   graph 路徑，以加速重複的連續動作（repeated continuous-action）rollout。
 - `policy.per_episode_seed` 與 `policy.eval_seed`：讓隨機的連續
@@ -440,12 +440,12 @@ MolmoAct2 在 LIBERO 基準測試套件（benchmark suite）上展現了優異�
 
 LeRobot 格式的檢查點（checkpoint）可在 Hub 上取得，供
 `lerobot-rollout` 直接使用。每個檢查點都使用特定的相機名稱（camera names），必須
-與您機器人的相機設定（robot’s camera configuration）相符。
+與你機器人的相機設定（robot’s camera configuration）相符。
 
 ### 相機命名慣例（camera naming convention）[[camera-naming-convention]]
 
 每個檢查點（checkpoint）都預期特定的 `observation.images.*` key。
-如果您機器人的相機名稱（camera names）不同，請使用 `--rename_map` 來對應（map）：
+如果你機器人的相機名稱（camera names）不同，請使用 `--rename_map` 來對應（map）：
 
 | 檢查點（checkpoint）          | 相機鍵值（camera keys） | 描述（description）                         |
 | ----------------------------- | ----------------------- | ------------------------------------------- |
@@ -487,7 +487,7 @@ MolmoAct2-SO100_101 檢查點（checkpoint）是在使用與 LeRobot >= 0.5.0
 所有關節資料（joint data，觀測 observations 與動作 action）都必須轉換以相符（be transformed to match）。
 
 已轉換的（converted） LeRobot 檢查點（`lerobot/MolmoAct2-SO100_101-LeRobot`）
-已在其處理器管線（processor pipeline）中包含此修正（correction）。如果您自行轉換
+已在其處理器管線（processor pipeline）中包含此修正（correction）。如果你自行轉換
 或微調檢查點（convert or fine-tune the checkpoint），請在策略設定（policy config, `configuration_molmoact2.py`）中設定以下項目：
 
 - `joint_signs`：`[1, -1, 1, 1, 1, 1]`（翻轉 shoulder_lift 方向）

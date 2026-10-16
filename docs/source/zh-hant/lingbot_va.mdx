@@ -76,7 +76,7 @@ LingBot-VA 的串流推論（KV 快取 + 觀測關鍵影格回饋）是為單一
 
 ## 評估：RoboTwin（evaluation on RoboTwin）[[evaluation-robotwin]]
 
-RoboTwin 2.0 需要 SAPIEN + CuRobo 模擬器堆疊（simulator stack）。您可以使用基準測試 Docker 映像檔
+RoboTwin 2.0 需要 SAPIEN + CuRobo 模擬器堆疊（simulator stack）。你可以使用基準測試 Docker 映像檔
 （benchmark Docker image, `docker/Dockerfile.benchmark.robotwin`，它還需要 `warp-lang==1.3.1`，
 以及在 `TORCH_CUDA_ARCH_LIST` 中以 GPU 運算能力建置的 CuRobo）。RoboTwin 使用**末端執行器姿態控制（end-effector-pose control）**，
 因此請以 `--env.action_mode=ee` 執行：策略（policy）會預測每隻手臂的 `xyz+quaternion+gripper` 增量
@@ -128,7 +128,7 @@ lerobot-train \
 ## 資料格式（動作通道 & 相機順序，action channels & camera order）[[data-format-action-channels-camera-order]]
 
 LingBot-VA 是一個**末端執行器（笛卡兒）姿態（end-effector Cartesian pose）**策略，它預測 EEF 姿態（EEF poses） + 夾爪（gripper），而非關節位置（joint positions）。
-動作採用固定的多具身（multi-embodiment）**30 維（30-dim）**佈局（layout）；請將您機器人的動作維度（action dimensions）
+動作採用固定的多具身（multi-embodiment）**30 維（30-dim）**佈局（layout）；請將你機器人的動作維度（action dimensions）
 對映到這些通道（channels），其餘以 `0` 填補（`used_action_channel_ids` 會選出某個檢查點 checkpoint
 實際使用的通道 channels）：
 

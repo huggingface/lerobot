@@ -146,7 +146,7 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
 
 ### 預期結果（what to expect）[[what-to-expect]]
 
-評估期間，您將看到進度條顯示當前的成功率：
+評估期間，你將看到進度條顯示當前的成功率：
 
 ```
 Stepping through eval batches:   8%|██████▍    | 4/50 [00:45<08:06, 10.58s/it, running_success_rate=25.0%]
@@ -312,16 +312,16 @@ python test_env_load_arena.py \
 git clone https://huggingface.co/nvidia/isaaclab-arena-envs
 ```
 
-根據您的新環境修改 `example_envs.yaml` 檔案。
+根據你的新環境修改 `example_envs.yaml` 檔案。
 將修改後的儲存庫（repository）[上傳](./envhub#step-3-upload-to-the-hub)至 HuggingFace EnvHub。
 
 <Tip>
-  您的 IsaacLab Arena 環境程式碼必須在評估（evaluation）期間可於本機取得。
-  使用者可以另外複製（clone）您的環境儲存庫，
-  或者您也可以將環境程式碼和資產（assets）直接打包在您的 EnvHub 儲存庫中。
+  你的 IsaacLab Arena 環境程式碼必須在評估（evaluation）期間可於本機取得。
+  使用者可以另外複製（clone）你的環境儲存庫，
+  或者你也可以將環境程式碼和資產（assets）直接打包在你的 EnvHub 儲存庫中。
 </Tip>
 
-然後在評估（evaluating）時使用您的新環境（new environment）：
+然後在評估（evaluating）時使用你的新環境（new environment）：
 
 ```bash
 lerobot-eval \
@@ -330,7 +330,7 @@ lerobot-eval \
     ...其他旗標...
 ```
 
-我們期待您的貢獻！
+我們期待你的貢獻！
 
 ## 疑難排解[[troubleshooting]]
 
@@ -361,7 +361,7 @@ export PRIVACY_CONSENT=Y
 
 ### 策略輸出維度不匹配（policy output dimension mismatch）[[policy-output-dimension-mismatch]]
 
-確保 `action_dim` 與您的策略（policy）匹配：
+確保 `action_dim` 與你的策略（policy）匹配：
 
 ```bash
 --env.action_dim=36
@@ -389,7 +389,7 @@ LW-BenchHub 透過遙操作（teleoperation）收集並生成符合 LeRobot 規�
 
 ### 安裝（install）[[install]]
 
-假設您已按照[安裝](#installation)步驟完成設定，您可以透過以下方式安裝 LW-BenchHub：
+假設你已按照[安裝](#installation)步驟完成設定，你可以透過以下方式安裝 LW-BenchHub：
 
 ```bash
 conda install pinocchio -c conda-forge -y

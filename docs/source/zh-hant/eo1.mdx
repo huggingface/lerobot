@@ -33,13 +33,13 @@ EO-1 使用 Qwen2.5-VL 骨幹網路（backbone）進行視覺與語言理解（v
    pip install -e ".[eo1]"
    ```
 
-3. 如果您想在 LIBERO 上訓練（training）或評估，也請安裝 LIBERO 相依套件（dependencies）：
+3. 如果你想在 LIBERO 上訓練（training）或評估，也請安裝 LIBERO 相依套件（dependencies）：
 
    ```bash
    pip install -e ".[eo1,libero]"
    ```
 
-EO-1 可以透過 `policy.attn_implementation=sdpa` 使用標準的 PyTorch scaled-dot-product attention 後端（backend）。如果您的環境已安裝相容的 `flash_attn`，可以指定 `policy.attn_implementation=flash_attention_2`。
+EO-1 可以透過 `policy.attn_implementation=sdpa` 使用標準的 PyTorch scaled-dot-product attention 後端（backend）。如果你的環境已安裝相容的 `flash_attn`，可以指定 `policy.attn_implementation=flash_attention_2`。
 
 ## 資料需求（data requirements）[[data-requirements]]
 
@@ -50,7 +50,7 @@ EO-1 需要一個包含以下內容的 LeRobot 資料集（dataset）：
 - `action`
 - 透過資料集（dataset） `task` 欄位（field）提供的語言任務指令（language task instruction）
 
-如果您的資料集（dataset）使用不同的觀測名稱（observation names），請使用 `rename_map` 將它們對齊到您的訓練或評估設定（training or evaluation setup）所預期的名稱（names）。
+如果你的資料集（dataset）使用不同的觀測名稱（observation names），請使用 `rename_map` 將它們對齊到你的訓練或評估設定（training or evaluation setup）所預期的名稱（names）。
 
 ## 使用方式（usage）[[usage]]
 
@@ -220,7 +220,7 @@ EO-1 使用 Qwen2.5-VL 處理器（processor）。`policy.image_min_pixels` 與 
 
 ### Attention 後端（attention Backend）[[attention-backend]]
 
-若要可攜性佳的設定（portable setup），請使用 `policy.attn_implementation=sdpa`。只有在 `flash_attn` 已安裝且與您的環境相容時，才使用 `flash_attention_2`。
+若要可攜性佳的設定（portable setup），請使用 `policy.attn_implementation=sdpa`。只有在 `flash_attn` 已安裝且與你的環境相容時，才使用 `flash_attention_2`。
 
 ## 參考資料[[references]]
 

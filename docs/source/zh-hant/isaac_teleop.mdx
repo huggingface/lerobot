@@ -1,6 +1,6 @@
 # Isaac Teleop[[isaac-teleop]]
 
-使用 NVIDIA [Isaac Teleop](https://github.com/NVIDIA/IsaacTeleop) 控制您的機器人，這是一個
+使用 NVIDIA [Isaac Teleop](https://github.com/NVIDIA/IsaacTeleop) 控制你的機器人，這是一個
 多模態遙操作框架（multi-modal teleoperation framework）。Isaac Teleop 從各種輸入裝置驅動單一的 `TeleopSession`，
 包括 XR（VR）控制器、手部追蹤（hand tracking）、全身追蹤（full-body tracking）、Manus 手套、腳踏板（foot
 pedals）等。
@@ -14,7 +14,7 @@ pedals）等。
 自然的下一批裝置（natural next devices）。本指南聚焦於 XR 控制器；SO-101 leader 則在
 [執行範例](#step-3-run-the-example)中摘要說明。
 
-**在本指南中，您將學到：**
+**在本指南中，你將學到：**
 
 - Isaac Teleop 裝置如何驅動機器人末端執行器（end-effector, EE）目標（target）
 - _離合器（clutch）_（XR 控制器上的擠壓／握把）如何在不使手臂猛動（without jerking the arm）的情況下啟動遙操作
@@ -39,7 +39,7 @@ uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131" "scipy>=1.14"
 執行期綁定；`retargeters-lite` 是以 scipy 為基礎的重定向器路徑（retargeter path），
 可在 x86_64 與 ARM 上解析（在 aarch64 上，例如 DGX Spark，完整的 `retargeters` 額外套件因其 `dex-retargeting`/`nlopt` 版本釘選而無法解析，
 這也是它在此非預設的原因）。在 x86_64 上，
-您還可以額外安裝完整的重定向器堆疊（full retargeter stack）：
+你還可以額外安裝完整的重定向器堆疊（full retargeter stack）：
 
 ```bash
 uv pip install "isaacteleop[retargeters]~=1.3.131"
@@ -47,11 +47,11 @@ uv pip install "isaacteleop[retargeters]~=1.3.131"
 
 ### 設定 CloudXR 並連接頭戴裝置（set up CloudXR and connect a headset）[[set-up-cloudxr-and-connect-a-headset]]
 
-Isaac Teleop 透過 **NVIDIA CloudXR** 將頭戴裝置串流（streams）到您的機器，CloudXR 提供工作階段所連接的 OpenXR 執行期。
-預設情況下，當您呼叫 `teleop_device.connect()` 時，
-LeTeleop 會**為您自動啟動 CloudXR 執行期（auto-launches the CloudXR runtime）**，
-您不再需要在另一個 shell 中執行 `python -m isaacteleop.cloudxr` 與 `source cloudxr.env`。
-您所需的只是連接一個支援的頭戴裝置，並開放 CloudXR 的防火牆連接埠。
+Isaac Teleop 透過 **NVIDIA CloudXR** 將頭戴裝置串流（streams）到你的機器，CloudXR 提供工作階段所連接的 OpenXR 執行期。
+預設情況下，當你呼叫 `teleop_device.connect()` 時，
+LeTeleop 會**為你自動啟動 CloudXR 執行期（auto-launches the CloudXR runtime）**，
+你不再需要在另一個 shell 中執行 `python -m isaacteleop.cloudxr` 與 `source cloudxr.env`。
+你所需的只是連接一個支援的頭戴裝置，並開放 CloudXR 的防火牆連接埠。
 頭戴裝置配對與防火牆的細節，請按照 Isaac Teleop 的
 [快速入門](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html)。
 
@@ -72,8 +72,8 @@ python -m isaacteleop.cloudxr --accept-eula   # one-time: accept the CloudXR EUL
   當 CloudXR 已在外部執行（running externally）時設為 `False`。
 - `cloudxr_env_file`（預設 `None`）— 一個可選的 CloudXR 裝置設定檔 `.env`，用於選擇
   頭戴裝置傳輸方式（例如 Apple Vision Pro 設定檔）。這是啟動器的**輸入**；
-  並非舊的手動流程要您 `source` 的那個 `~/.cloudxr/run/cloudxr.env` **輸出**檔。
-  `None` 會保留預設的 auto-WebRTC 設定檔，不過除非您傳入 `--teleop.cloudxr_env_file`，
+  並非舊的手動流程要你 `source` 的那個 `~/.cloudxr/run/cloudxr.env` **輸出**檔。
+  `None` 會保留預設的 auto-WebRTC 設定檔，不過除非你傳入 `--teleop.cloudxr_env_file`，
   否則 SO-101 範例會將它覆寫為與 `teleoperate.py` 放在一起的 `default.env`。
 
 **選擇不使用（opting out）。** 若要跳過自動啟動（CloudXR 已在執行），可設定
@@ -89,7 +89,7 @@ export LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1
 **每個行程一個遙操作器（one teleoperator per process）。** CloudXR 執行期會以行程為範圍（process-wide）設定環境（environment，單例 singleton），因此每個行程（process）請只執行一個 Isaac Teleop 遙操作器（teleoperator）。
 
 **關閉（shutting down）。** 離開時請務必呼叫 `teleop_device.disconnect()`，包括在 Ctrl-C 時。請將
-您的遙操作迴圈包（teleoperation loop）在 `try/finally` 中，並在 `finally` 中呼叫 `disconnect()`。這會在 CloudXR 執行期（runtime）**之前**先拆除 OpenXR 工作階段（session），這是必要的順序；啟動器的
+你的遙操作迴圈包（teleoperation loop）在 `try/finally` 中，並在 `finally` 中呼叫 `disconnect()`。這會在 CloudXR 執行期（runtime）**之前**先拆除 OpenXR 工作階段（session），這是必要的順序；啟動器的
 `atexit` hook（hook）只會回收執行期，而不會執行工作階段的 `__exit__`，因此若沒有
 明確的 `disconnect()`，被中斷的執行會以錯誤的順序關閉。
 
@@ -183,7 +183,7 @@ home *方向（orientation）*則保留最後下達的旋轉（rotation）：5 �
 ## 控制方式（controls）[[controls]]
 
 - **擠壓（squeeze）／握把（grip）** — **clutch**（deadman）。將它按住並超過 `clutch_threshold` 以啟動
-  遙操作（engage teleoperation）；放開則暫停。每次啟動都會重新擷取原點（re‑captures the origin），因此您可以在暫停時重新擺放
+  遙操作（engage teleoperation）；放開則暫停。每次啟動都會重新擷取原點（re‑captures the origin），因此你可以在暫停時重新擺放
   手部並重新啟動（re‑engage），而手臂不會跳動（index/clutch 風格）。
 - **扳機（trigger）** — **夾爪（gripper）**，以**類比**方式控制。夾爪（jaw）與扳機
   成比例追蹤，扳機半按會讓夾爪（jaw）維持半閉，透過 `[0, 1]` 範圍的 closedness
@@ -216,18 +216,18 @@ teleop_device = XRController(teleop_config)
 
 ### 步驟 2：連接（connect）[[step-2-connect]]
 
-呼叫 `teleop_device.connect()` 會先自動啟動（auto-launches） CloudXR 執行期（runtime，除非您選擇不使用 —
+呼叫 `teleop_device.connect()` 會先自動啟動（auto-launches） CloudXR 執行期（runtime，除非你選擇不使用 —
 見[設定 CloudXR 並連接頭戴裝置](#set-up-cloudxr-and-connect-a-headset)；這會阻塞
 約 30 秒，且首次執行會在 stdin 上提示 EULA），接著啟動 Isaac Teleop 的
 [`TeleopSession`](https://nvidia.github.io/IsaacTeleop/main/getting_started/teleop_session.html)
 （開啟 OpenXR 工作階段並尋找控制器）。XR 控制器會自我校正（self-calibrating），因此
-沒有手動校正（manual calibration）步驟，clutch 會在您每次啟動（engage）時處理重新置中。請將
+沒有手動校正（manual calibration）步驟，clutch 會在你每次啟動（engage）時處理重新置中。請將
 `connect()` 與呼叫 `disconnect()` 的 `try/finally` 配對，好讓工作階段（session）在離開／Ctrl-C 時先於
 執行期（runtime）拆除。
 
 ### 步驟 3：執行範例（run the example）[[step-3-run-the-example]]
 
-此範例假設您已設定好機器人（SO-101 follower）並設定正確的序列埠（serial port）。
+此範例假設你已設定好機器人（SO-101 follower）並設定正確的序列埠（serial port）。
 
 **機器人 URDF 與其網格（mesh）會在首次執行時自動抓取**：
 XR 裝置會從 [`lerobot/robot-urdfs` Hugging Face bucket](https://huggingface.co/buckets/lerobot/robot-urdfs/tree/so101)
@@ -249,13 +249,13 @@ python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower
 好讓第一次啟動不跳動（jump-free）；follower 只會在 clutch 啟動（engaged）時被下達命令。
 
 **自訂重置姿態（customizing the reset pose）。** 重置姿態（reset pose）以內建預設值
-（一個舒適的中段姿態 mid-range pose）提供並開箱即用，您**不需要**錄製任何東西。
-若要依您的設定量身打造，請將手臂反向驅動（back-drive）到您想要的姿態，
+（一個舒適的中段姿態 mid-range pose）提供並開箱即用，你**不需要**錄製任何東西。
+若要依你的設定量身打造，請將手臂反向驅動（back-drive）到你想要的姿態，
 並執行 `python -m examples.isaac_teleop_to_so101.override_reset_pose --id <robot.id>`；
 它會將目前的關節（current joints）寫入 LeRobot 快取中每隻手臂的檔案
 （`HF_LEROBOT_HOME/reset_poses/<robot.name>/<robot.id>.json`，鍵值方式與校正相同），
 下次執行時便會優先於內建預設值。因為它位於使用者本機快取（而非儲存庫），
-您的覆寫會留在您的機器上，且以相同 `--robot.id` 啟動時，
+你的覆寫會留在你的機器上，且以相同 `--robot.id` 啟動時，
 `teleoperate` 與 `record` 都會遵循它。
 
 另一個裝置 `--teleop.type=so101_leader`，會從一支可反向驅動（back-drivable）的
@@ -263,9 +263,9 @@ SO-101 _leader 手臂_ 以 1:1 鏡射到從臂（follower），其關節由 Isaa
 clutch、沒有 IK，主臂 leader 與從臂 follower 共用 SO-101 運動學 kinematics）。
 
 `so101_leader_plugin` 二進位檔是一個 C++ 外掛（plugin），**並非** `isaacteleop` pip
-套件（package）的一部分，您要從 Isaac Teleop 原始碼樹（source tree）建置它。請按照
+套件（package）的一部分，你要從 Isaac Teleop 原始碼樹（source tree）建置它。請按照
 [從原始碼建置 Isaac Teleop](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html)
-（簡而言之，在您的 Isaac Teleop 簽出 checkout 中：`cmake -B build && cmake --build build --parallel &&
+（簡而言之，在你的 Isaac Teleop 簽出 checkout 中：`cmake -B build && cmake --build build --parallel &&
 cmake --install build`）；建置會將外掛安裝在 `<IsaacTeleop>/install/plugins/` 底下，因此
 二進位檔會落在 `install/plugins/so101_leader/so101_leader_plugin`，即下方的 `--launch_plugin` 路徑。
 其序列（serial）／校正（calibration）細節請見外掛自己的 `README.md`（就在二進位檔旁）。
@@ -296,7 +296,7 @@ URDF 抓取使用 `huggingface_hub`（本就是 LeRobot 的相依套件）對公
 `lerobot/robot-urdfs` bucket 進行，因此不需登入。它會快取在
 `HF_LEROBOT_HOME/robot-urdfs/so101/` 底下；刪除該資料夾可強制重新下載。
 
-接著，在您的頭戴裝置中：擠壓（squeeze）並按住（hold）握把以啟動，移動控制器來驅動
+接著，在你的頭戴裝置中：擠壓（squeeze）並按住（hold）握把以啟動，移動控制器來驅動
 手臂，扭轉（twist）／傾斜（tilt）它來調整手腕方向（orient），並按下扳機（trigger）來關閉夾爪
 （按比例，放開則開啟）。
 
@@ -370,11 +370,11 @@ clutch 會讓手臂原地凍結（freezes）。
   自動啟動 auto-launch 會在 stdin 上提示並在無頭環境卡住），
   或執行期已在外部執行（設定 `LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1` 或
   `auto_launch_cloudxr=False` 以跳過自動啟動）。
-- **手臂不動（arm does not move）** — clutch 是 deadman：您必須按住擠壓（squeeze）／握把（grip）並超過
-  `clutch_threshold`。若您控制器的擠壓回報偏弱（reported softly），請調低門檻。
+- **手臂不動（arm does not move）** — clutch 是 deadman：你必須按住擠壓（squeeze）／握把（grip）並超過
+  `clutch_threshold`。若你控制器的擠壓回報偏弱（reported softly），請調低門檻。
 - **運動感覺不對齊（motion feels misaligned）** — 請確認頭戴裝置／遊玩的空間方向（space orientation）。控制器串流
   會由 `XRControllerConfig` 上的 `base_T_anchor` 轉換重新定基（rebased）到機器人基座座標系
-  （robot base frame，預設：標準 OpenXR → 機器人軸慣例 robot axis convention）；若您的錨點座標系（anchor frame）不同，請調整它。
+  （robot base frame，預設：標準 OpenXR → 機器人軸慣例 robot axis convention）；若你的錨點座標系（anchor frame）不同，請調整它。
 
 ## 深入了解（learn more）[[learn-more]]
 

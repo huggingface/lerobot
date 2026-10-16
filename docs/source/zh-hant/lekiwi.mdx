@@ -11,11 +11,11 @@
 ## 採購零件（source the parts）[[source-the-parts]]
 
 請依照這份 [README](https://github.com/SIGRobotics-UIUC/LeKiwi) 操作。它包含物料清單（bill of materials），並附有採購零件的連結，以及 3D 列印零件的說明。
-如果這是您第一次列印，或您沒有 3D 印表機，也會提供建議。
+如果這是你第一次列印，或你沒有 3D 印表機，也會提供建議。
 
 ### 有線版本（wired version）[[wired-version]]
 
-若您擁有**有線**的 LeKiwi 版本，可以跳過 Raspberry Pi 的安裝與 SSH 設定。您也可以在您的 PC 上直接執行 LeKiwi 腳本與用於遙操作（teleoperating）的主臂腳本（leader arm script）的所有指令。
+若你擁有**有線**的 LeKiwi 版本，可以跳過 Raspberry Pi 的安裝與 SSH 設定。你也可以在你的 PC 上直接執行 LeKiwi 腳本與用於遙操作（teleoperating）的主臂腳本（leader arm script）的所有指令。
 
 ## 在 Pi 上安裝軟體（install software on Pi）[[install-software-on-pi]]
 
@@ -27,13 +27,13 @@
 
 ### 設定 SSH（setup SSH）[[setup-ssh]]
 
-設定好您的 Pi 後，您應該啟用並設定 [SSH](https://www.raspberrypi.com/news/coding-on-raspberry-pi-remotely-with-visual-studio-code/)（Secure Shell Protocol），這樣您就能從筆電登入 Pi，而不需要在 Pi 上接螢幕、鍵盤和滑鼠。可在[這裡](https://www.raspberrypi.com/documentation/computers/remote-access.html#ssh)找到一份很棒的操作教學。登入您的 Pi 可以在命令提示字元（cmd）中進行，或者，若您使用 VSCode，可以使用[這個](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh)擴充功能。
+設定好你的 Pi 後，你應該啟用並設定 [SSH](https://www.raspberrypi.com/news/coding-on-raspberry-pi-remotely-with-visual-studio-code/)（Secure Shell Protocol），這樣你就能從筆電登入 Pi，而不需要在 Pi 上接螢幕、鍵盤和滑鼠。可在[這裡](https://www.raspberrypi.com/documentation/computers/remote-access.html#ssh)找到一份很棒的操作教學。登入你的 Pi 可以在命令提示字元（cmd）中進行，或者，若你使用 VSCode，可以使用[這個](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh)擴充功能。
 
 ### 在 Pi 上安裝 LeRobot（install LeRobot on Pi） 🤗[[install-lerobot-on-pi]]
 
-在您的 Raspberry Pi 上，使用我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
+在你的 Raspberry Pi 上，使用我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 
-除了這些說明之外，您還需要在 Pi 上安裝 Feetech SDK 與 ZeroMQ：
+除了這些說明之外，你還需要在 Pi 上安裝 Feetech SDK 與 ZeroMQ：
 
 ```bash
 pip install -e ".[lekiwi]"
@@ -41,18 +41,18 @@ pip install -e ".[lekiwi]"
 
 ## 在本機安裝 LeRobot（install LeRobot locally）[[install-lerobot-locally]]
 
-若您已經在筆電/PC 上安裝了 LeRobot，可以跳過此步驟；否則，請跟著我們執行與在 Pi 上相同的步驟。
+若你已經在筆電/PC 上安裝了 LeRobot，可以跳過此步驟；否則，請跟著我們執行與在 Pi 上相同的步驟。
 
 請依照我們的[安裝指南（Installation Guide）](./installation)操作。
 
-除了這些說明之外，您還需要在您的筆電/PC 上安裝 Feetech SDK 與 ZeroMQ：
+除了這些說明之外，你還需要在你的筆電/PC 上安裝 Feetech SDK 與 ZeroMQ：
 
 ```bash
 pip install -e ".[lekiwi]"
 ```
 
-太好了 🤗！您現在已完成 LeRobot 的安裝，我們可以開始組裝 SO100/SO101 手臂與移動底座 🤖。
-從現在起，每次您想使用 LeRobot 時，都可以進入我們安裝 LeRobot 的 `~/lerobot` 資料夾並執行其中一個命令。
+太好了 🤗！你現在已完成 LeRobot 的安裝，我們可以開始組裝 SO100/SO101 手臂與移動底座 🤖。
+從現在起，每次你想使用 LeRobot 時，都可以進入我們安裝 LeRobot 的 `~/lerobot` 資料夾並執行其中一個命令。
 
 # 逐步組裝說明（step-by-step assembly instructions）[[step-by-step-assembly-instructions]]
 
@@ -85,12 +85,12 @@ The port of this MotorsBus is /dev/tty.usbmodem575E0032081
 Reconnect the USB cable.
 ```
 
-其中找到的連接埠（found port）為：`/dev/tty.usbmodem575E0032081`，對應到您的板子。
+其中找到的連接埠（found port）為：`/dev/tty.usbmodem575E0032081`，對應到你的板子。
 
 </hfoption>
 <hfoption id="Linux">
 
-在 Linux 上，您可能需要執行以下指令來授予 USB 連接埠（ports）的存取權：
+在 Linux 上，你可能需要執行以下指令來授予 USB 連接埠（ports）的存取權：
 
 ```bash
 sudo chmod 666 /dev/ttyACM0
@@ -110,7 +110,7 @@ The port of this MotorsBus is /dev/ttyACM0
 Reconnect the USB cable.
 ```
 
-其中找到的連接埠（found port）為：`/dev/ttyACM0`，對應到您的板子。
+其中找到的連接埠（found port）為：`/dev/ttyACM0`，對應到你的板子。
 
 </hfoption>
 </hfoptions>
@@ -119,7 +119,7 @@ Reconnect the USB cable.
 
 設定馬達的說明可在 SO101 [文件](./so101#configure-the-motors)中找到。除了手臂馬達的 id 之外，我們還需要為移動底座設定馬達 id。這些 id 需要依特定順序才能運作。下方是移動底座的馬達 id 與馬達安裝位置的圖片。請注意，LeKiwi 上我們只使用一塊馬達控制板。這表示車輪的馬達 id 為 7、8 和 9。
 
-您可以執行此指令來為 LeKiwi 設定馬達。它會先設定手臂的馬達（id 6..1），然後設定車輪的馬達（9,8,7）
+你可以執行此指令來為 LeKiwi 設定馬達。它會先設定手臂的馬達（id 6..1），然後設定車輪的馬達（9,8,7）
 
 ```bash
 lerobot-setup-motors \
@@ -131,11 +131,11 @@ lerobot-setup-motors \
 
 ### 疑難排解通訊問題（troubleshoot communication）[[troubleshoot-communication]]
 
-若您連接 Mobile SO100 時遇到困難，請依照以下步驟診斷並解決問題。
+若你連接 Mobile SO100 時遇到困難，請依照以下步驟診斷並解決問題。
 
 #### 1. 驗證 IP 位址設定（verify IP address configuration）[[1-verify-ip-address-configuration]]
 
-請確認命令或您的程式碼中使用了正確的 Pi IP。若要檢查 Raspberry Pi 的 IP 位址，請執行（在 Pi 命令列上）：
+請確認命令或你的程式碼中使用了正確的 Pi IP。若要檢查 Raspberry Pi 的 IP 位址，請執行（在 Pi 命令列上）：
 
 ```bash
 hostname -I
@@ -143,7 +143,7 @@ hostname -I
 
 #### 2. 檢查 Pi 是否能從筆電/PC 連線（check if Pi is reachable from laptop/pc）[[2-check-if-pi-is-reachable-from-laptoppc]]
 
-嘗試從您的筆電 ping Raspberry Pi：
+嘗試從你的筆電 ping Raspberry Pi：
 
 ```bash
 ping <your_pi_ip_address>
@@ -156,13 +156,13 @@ ping <your_pi_ip_address>
 
 #### 3. 嘗試 SSH 連線（try SSH connection）[[3-try-ssh-connection]]
 
-若您無法 SSH 進入 Pi，它可能未正確連接。使用：
+若你無法 SSH 進入 Pi，它可能未正確連接。使用：
 
 ```bash
 ssh <your_pi_user_name>@<your_pi_ip_address>
 ```
 
-若您遇到連線錯誤：
+若你遇到連線錯誤：
 
 - 執行以下指令以確認 Pi 上已啟用 SSH：
   ```bash
@@ -189,11 +189,11 @@ lerobot-calibrate \
 
 ### 有線版本（wired version）[[wired-version]]
 
-若您擁有**有線**的 LeKiwi 版本，請在您的筆電上執行所有指令。
+若你擁有**有線**的 LeKiwi 版本，請在你的筆電上執行所有指令。
 
 ### 校正主臂（calibrate leader arm）[[calibrate-leader-arm]]
 
-接著，校正主臂（leader arm，它連接到筆電/PC）。在您的筆電上執行以下指令或 API 範例：
+接著，校正主臂（leader arm，它連接到筆電/PC）。在你的筆電上執行以下指令或 API 範例：
 
 <hfoptions id="calibrate_leader">
 <hfoption id="Command">
@@ -201,7 +201,7 @@ lerobot-calibrate \
 ```bash
 lerobot-calibrate \
     --teleop.type=so100_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 您機器人的連接埠
+    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 你機器人的連接埠
     --teleop.id=my_awesome_leader_arm # <- 為機器人取一個唯一的名稱
 ```
 
@@ -230,21 +230,21 @@ leader.disconnect()
 ## 遙操作 LeKiwi（teleoperate LeKiwi）[[teleoperate-lekiwi]]
 
 > [!TIP]
-> 若您使用 Mac，可能需要授予「終端機」存取鍵盤的權限以進行遙操作（teleoperation）。前往「系統偏好設定 > 安全性與隱私 > 輸入監控」，並勾選「終端機」的核取方塊。
+> 若你使用 Mac，可能需要授予「終端機」存取鍵盤的權限以進行遙操作（teleoperation）。前往「系統偏好設定 > 安全性與隱私 > 輸入監控」，並勾選「終端機」的核取方塊。
 
-若要遙操作（teleoperation），請 SSH 進入您的 Raspberry Pi，執行 `conda activate lerobot` 與此指令：
+若要遙操作（teleoperation），請 SSH 進入你的 Raspberry Pi，執行 `conda activate lerobot` 與此指令：
 
 ```bash
 python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi
 ```
 
-然後在您的筆電上，同樣執行 `conda activate lerobot` 並執行 API 範例，請確認您在 `examples/lekiwi/teleoperate.py` 中設定了正確的 `remote_ip` 與 `port`。
+然後在你的筆電上，同樣執行 `conda activate lerobot` 並執行 API 範例，請確認你在 `examples/lekiwi/teleoperate.py` 中設定了正確的 `remote_ip` 與 `port`。
 
 ```bash
 python examples/lekiwi/teleoperate.py
 ```
 
-您應該會在筆電上看到類似這樣的訊息：`[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.`。現在您可以移動主臂（leader arm），並使用鍵盤（w,a,s,d）來向前、向左、向後、向右駕駛。並使用（z,x）來左轉或右轉。您可以使用（r,f）來增加與降低移動機器人的速度。共有三種速度模式，請見下表：
+你應該會在筆電上看到類似這樣的訊息：`[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.`。現在你可以移動主臂（leader arm），並使用鍵盤（w,a,s,d）來向前、向左、向後、向右駕駛。並使用（z,x）來左轉或右轉。你可以使用（r,f）來增加與降低移動機器人的速度。共有三種速度模式，請見下表：
 
 | 速度模式 | 線速度（m/s） | 旋轉速度（deg/s） |
 | -------- | ------------- | ----------------- |
@@ -264,32 +264,32 @@ python examples/lekiwi/teleoperate.py
 | F    | 降低速度       |
 
 > [!TIP]
-> 若您使用不同的鍵盤，可以在 [`LeKiwiClientConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/lekiwi/config_lekiwi.py) 中變更每個指令的按鍵。
+> 若你使用不同的鍵盤，可以在 [`LeKiwiClientConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/lekiwi/config_lekiwi.py) 中變更每個指令的按鍵。
 
 ### 有線版本（wired version）[[wired-version]]
 
-若您擁有**有線**的 LeKiwi 版本，請在您的筆電上執行所有指令。
+若你擁有**有線**的 LeKiwi 版本，請在你的筆電上執行所有指令。
 
 ## 錄製資料集（record a dataset）[[record-a-dataset]]
 
-一旦您熟悉了遙操作（teleoperation），就可以錄製（record）您的第一個資料集（dataset）。
+一旦你熟悉了遙操作（teleoperation），就可以錄製（record）你的第一個資料集（dataset）。
 
-我們使用 Hugging Face hub 功能來上傳您的資料集（dataset）。若您先前未曾使用過 Hub，請確認您可以使用具寫入權限的 token 透過 cli 登入，此 token 可從 [Hugging Face 設定](https://huggingface.co/settings/tokens)產生。
+我們使用 Hugging Face hub 功能來上傳你的資料集（dataset）。若你先前未曾使用過 Hub，請確認你可以使用具寫入權限的 token 透過 cli 登入，此 token 可從 [Hugging Face 設定](https://huggingface.co/settings/tokens)產生。
 
-執行此指令將您的 token 加入 CLI：
+執行此指令將你的 token 加入 CLI：
 
 ```bash
 hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 ```
 
-然後將您的 Hugging Face 儲存庫（repository）名稱儲存在變數中：
+然後將你的 Hugging Face 儲存庫（repository）名稱儲存在變數中：
 
 ```bash
 HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
 echo $HF_USER
 ```
 
-現在您可以錄製資料集（record a dataset）了。若要錄製回合（episode）並將您的資料集上傳到 hub，請執行這個為 LeKiwi 量身打造的 API 範例。請務必先在腳本中調整 `remote_ip`、`repo_id`、`port` 與 `task`。若您想讓腳本執行更久，可以增加 `NB_CYCLES_CLIENT_CONNECTION`。
+現在你可以錄製資料集（record a dataset）了。若要錄製回合（episode）並將你的資料集上傳到 hub，請執行這個為 LeKiwi 量身打造的 API 範例。請務必先在腳本中調整 `remote_ip`、`repo_id`、`port` 與 `task`。若你想讓腳本執行更久，可以增加 `NB_CYCLES_CLIENT_CONNECTION`。
 
 ```bash
 python examples/lekiwi/record.py
@@ -297,29 +297,29 @@ python examples/lekiwi/record.py
 
 #### 資料集上傳（dataset upload）[[dataset-upload]]
 
-在本機，您的資料集（dataset）儲存在此資料夾：`~/.cache/huggingface/lerobot/{repo-id}`。資料錄製（data recording）結束時，您的資料集會上傳到您的 Hugging Face 頁面（例如 <https://huggingface.co/datasets/cadene/so101_test>），您可以透過執行以下指令取得：
+在本機，你的資料集（dataset）儲存在此資料夾：`~/.cache/huggingface/lerobot/{repo-id}`。資料錄製（data recording）結束時，你的資料集會上傳到你的 Hugging Face 頁面（例如 <https://huggingface.co/datasets/cadene/so101_test>），你可以透過執行以下指令取得：
 
 ```bash
 echo https://huggingface.co/datasets/${HF_USER}/so101_test
 ```
 
-您的資料集（dataset）會自動被標記為 `LeRobot`，方便社群找到它，您也可以新增自訂標籤（在這個例子中，例如 `tutorial`）。
+你的資料集（dataset）會自動被標記為 `LeRobot`，方便社群找到它，你也可以新增自訂標籤（在這個例子中，例如 `tutorial`）。
 
-您可以在 hub 上搜尋 `LeRobot` [標籤](https://huggingface.co/datasets?other=LeRobot)來尋找其他 LeRobot 資料集（dataset）。
+你可以在 hub 上搜尋 `LeRobot` [標籤](https://huggingface.co/datasets?other=LeRobot)來尋找其他 LeRobot 資料集（dataset）。
 
 #### 收集資料的訣竅（tips for gathering data）[[tips-for-gathering-data]]
 
-一旦您熟悉了資料錄製（data recording），就可以建立一個更大的資料集（dataset）用於訓練（training）。一個很好的入門任務（task）是在不同位置抓取一個物體，並將它放入箱子。我們建議至少錄製 50 個回合（episode），每個位置錄製 10 個回合。在整個錄製過程中，保持相機固定並維持一致的抓取行為。同時也要確保您操作的物體在相機上是可見的。一個好的經驗法則是：您應該能夠只看著相機影像就自行完成該任務。
+一旦你熟悉了資料錄製（data recording），就可以建立一個更大的資料集（dataset）用於訓練（training）。一個很好的入門任務（task）是在不同位置抓取一個物體，並將它放入箱子。我們建議至少錄製 50 個回合（episode），每個位置錄製 10 個回合。在整個錄製過程中，保持相機固定並維持一致的抓取行為。同時也要確保你操作的物體在相機上是可見的。一個好的經驗法則是：你應該能夠只看著相機影像就自行完成該任務。
 
-在接下來的章節中，您將訓練（training）您的神經網路（neural network）。在達成可靠的抓取表現後，您可以開始在資料收集期間引入更多變化，例如額外的抓取位置、不同的抓取技巧，以及改變相機位置。
+在接下來的章節中，你將訓練（training）你的神經網路（neural network）。在達成可靠的抓取表現後，你可以開始在資料收集期間引入更多變化，例如額外的抓取位置、不同的抓取技巧，以及改變相機位置。
 
-避免過快加入太多變化，因為這可能會妨礙您的結果。
+避免過快加入太多變化，因為這可能會妨礙你的結果。
 
-若您想更深入了解這個重要主題，可以查看我們撰寫的關於什麼構成好資料集（dataset）的[部落格文章](https://huggingface.co/blog/lerobot-datasets#what-makes-a-good-dataset)。
+若你想更深入了解這個重要主題，可以查看我們撰寫的關於什麼構成好資料集（dataset）的[部落格文章](https://huggingface.co/blog/lerobot-datasets#what-makes-a-good-dataset)。
 
 #### 疑難排解（troubleshooting）[[troubleshooting]]
 
-- 在 Linux 上，只要您從互動式終端機執行錄製（保持其為焦點），錄製的控制流程按鍵（recording control-flow keys，方向鍵、Escape）在 X11、Wayland 與無頭/SSH 工作階段上都能運作，不需要設定 `$DISPLAY`；對應的字母按鍵 `n` / `r` / `q` 也可使用。請注意，**LeKiwi 底座的鍵盤遙操作（keyboard teleoperation of the LeKiwi base）**則不同：它依賴一個全域按鍵後端（global key backend），因此只能在 X11 工作階段、Windows 桌面，或已授予輔助使用/輸入監控權限的 macOS 上運作，無法在 Wayland 或無頭機器（headless machines）上使用。請參閱 [pynput 限制](https://pynput.readthedocs.io/en/latest/limitations.html#linux)。
+- 在 Linux 上，只要你從互動式終端機執行錄製（保持其為焦點），錄製的控制流程按鍵（recording control-flow keys，方向鍵、Escape）在 X11、Wayland 與無頭/SSH 工作階段上都能運作，不需要設定 `$DISPLAY`；對應的字母按鍵 `n` / `r` / `q` 也可使用。請注意，**LeKiwi 底座的鍵盤遙操作（keyboard teleoperation of the LeKiwi base）**則不同：它依賴一個全域按鍵後端（global key backend），因此只能在 X11 工作階段、Windows 桌面，或已授予輔助使用/輸入監控權限的 macOS 上運作，無法在 Wayland 或無頭機器（headless machines）上使用。請參閱 [pynput 限制](https://pynput.readthedocs.io/en/latest/limitations.html#linux)。
 
 ## 重播一個回合（replay an episode）[[replay-an-episode]]
 
@@ -329,15 +329,15 @@ echo https://huggingface.co/datasets/${HF_USER}/so101_test
 python examples/lekiwi/replay.py
 ```
 
-恭喜 🎉，您的機器人已準備就緒，可以開始自行學習任務（learn a task）。依照本教學的訓練（training）部分開始訓練它：[開始使用真實世界機器人（Getting started with real-world robots）](./il_robots)
+恭喜 🎉，你的機器人已準備就緒，可以開始自行學習任務（learn a task）。依照本教學的訓練（training）部分開始訓練它：[開始使用真實世界機器人（Getting started with real-world robots）](./il_robots)
 
-## 評估您的策略（evaluate your policy）[[evaluate-your-policy]]
+## 評估你的策略（evaluate your policy）[[evaluate-your-policy]]
 
-若要評估您的策略（evaluate your policy），請執行 `evaluate.py` API 範例，並務必變更 `remote_ip`、`port`、model 等。
+若要評估你的策略（evaluate your policy），請執行 `evaluate.py` API 範例，並務必變更 `remote_ip`、`port`、model 等。
 
 ```bash
 python examples/lekiwi/evaluate.py
 ```
 
 > [!TIP]
-> 若您有任何問題或需要協助，請至 [Discord](https://discord.com/invite/s3KuuzsPFb) 與我們聯繫。
+> 若你有任何問題或需要協助，請至 [Discord](https://discord.com/invite/s3KuuzsPFb) 與我們聯繫。

@@ -6,9 +6,9 @@
 
 ## 先決條件（prerequisites）[[prerequisites]]
 
-- 您的機器人有暴露的通訊介面（communication interface，例如序列埠 serial port、CAN、TCP）
-- 能以程式化方式讀取感測器資料（sensor data）並傳送馬達指令（motor commands）的方式，例如製造商提供的 SDK 或 API，或是您自行實作的通訊協定（protocol）。
-- 已在您的環境中安裝 LeRobot。請依照我們的[安裝指南](./installation)進行。
+- 你的機器人有暴露的通訊介面（communication interface，例如序列埠 serial port、CAN、TCP）
+- 能以程式化方式讀取感測器資料（sensor data）並傳送馬達指令（motor commands）的方式，例如製造商提供的 SDK 或 API，或是你自行實作的通訊協定（protocol）。
+- 已在你的環境中安裝 LeRobot。請依照我們的[安裝指南](./installation)進行。
 
 ## 選擇你的馬達（choose your motors）[[choose-your-motors]]
 
@@ -65,7 +65,7 @@ class MyCoolRobotConfig(RobotConfig):
 ```
 <!-- prettier-ignore-end -->
 
-[相機教學](./cameras)以了解如何偵測並新增您的相機。
+[相機教學](./cameras)以了解如何偵測並新增你的相機。
 
 接下來，我們將建立繼承（inherits）自 `Robot` 的實際機器人類別（actual robot class）。這個抽象類別（abstract class）定義了一個規範（contract），你的機器人必須遵循它才能與 LeRobot 的其餘工具配合使用。
 
@@ -349,7 +349,7 @@ def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
 
 #### 1\. 建立具有特定前綴的可安裝套件（create an installable package with a specific prefix）[[1-create-an-installable-package-with-a-specific-prefix]]
 
-您的專案必須是一個標準、可安裝的 Python 套件（package）。至關重要的是，您套件的名稱（定義於 `pyproject.toml` 或 `setup.py` 中）必須以下列前綴（prefixes）之一開頭：
+你的專案必須是一個標準、可安裝的 Python 套件（package）。至關重要的是，你套件的名稱（定義於 `pyproject.toml` 或 `setup.py` 中）必須以下列前綴（prefixes）之一開頭：
 
 - `lerobot_robot_` 用於機器人。
 - `lerobot_camera_` 用於相機。

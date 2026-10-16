@@ -79,7 +79,7 @@ PR [#777](https://github.com/huggingface/lerobot/pull/777) 改善了 LeRobot 的
 ### 使用舊版校正系統建立的資料集（datasets created with the legacy calibration system）[[using-datasets-made-with-the-previous-calibration-system]]
 
 我們在此提供一個遷移範例腳本，用於重播（replay）以先前校正（calibration）方式錄製（record）的片段： `examples/backward_compatibility/replay.py`.
-以下將帶您了解範例腳本中所進行的修改，以使先前校正（calibration）的資料集（dataset）能夠正常運作。
+以下將帶你了解範例腳本中所進行的修改，以使先前校正（calibration）的資料集（dataset）能夠正常運作。
 
 ```diff
 +   key = f"{name.removeprefix('main_')}.pos"
@@ -129,8 +129,8 @@ python examples/backward_compatibility/replay.py \
 
 策略輸出的動作（action）格式與資料集（dataset）相同（`torch.Tensors`），因此應套用相同的轉換。
 
-若要找出這些轉換，建議先依照上方章節的說明，重播（replay）您的策略訓練時所用資料集（dataset）中的某個回合（episode）。
-接著，將這些相同的轉換加入您的推論（inference）腳本（此處以 `record.py` 腳本為例）：
+若要找出這些轉換，建議先依照上方章節的說明，重播（replay）你的策略訓練時所用資料集（dataset）中的某個回合（episode）。
+接著，將這些相同的轉換加入你的推論（inference）腳本（此處以 `record.py` 腳本為例）：
 
 ```diff
 action_values = predict_action(

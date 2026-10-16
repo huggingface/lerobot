@@ -4,13 +4,13 @@
 
 ## 採購零件（source the parts）[[source-the-parts]]
 
-請依照這份 [README](https://github.com/TheRobotStudio/SO-ARM100/blob/main/SO100.md) 操作。它包含物料清單（bill of materials），並附有採購零件的連結，以及 3D 列印零件的說明。如果這是您第一次列印，或您沒有 3D 印表機，也會提供建議。
+請依照這份 [README](https://github.com/TheRobotStudio/SO-ARM100/blob/main/SO100.md) 操作。它包含物料清單（bill of materials），並附有採購零件的連結，以及 3D 列印零件的說明。如果這是你第一次列印，或你沒有 3D 印表機，也會提供建議。
 
 ## 安裝 LeRobot（install LeRobot） 🤗[[install-lerobot]]
 
 若要安裝 LeRobot，請依照我們的[安裝指南（Installation Guide）](./installation)操作。
 
-除了這些說明之外，您還需要安裝 Feetech SDK：
+除了這些說明之外，你還需要安裝 Feetech SDK：
 
 ```bash
 pip install -e ".[feetech]"
@@ -45,12 +45,12 @@ The port of this MotorsBus is /dev/tty.usbmodem575E0032081
 Reconnect the USB cable.
 ```
 
-其中找到的連接埠（found port）為：`/dev/tty.usbmodem575E0032081`，對應到您的主臂（leader）或從臂（follower）。
+其中找到的連接埠（found port）為：`/dev/tty.usbmodem575E0032081`，對應到你的主臂（leader）或從臂（follower）。
 
 </hfoption>
 <hfoption id="Linux">
 
-在 Linux 上，您可能需要執行以下指令來授予 USB 連接埠（ports）的存取權：
+在 Linux 上，你可能需要執行以下指令來授予 USB 連接埠（ports）的存取權：
 
 ```bash
 sudo chmod 666 /dev/ttyACM0
@@ -70,7 +70,7 @@ The port of this MotorsBus is /dev/ttyACM1
 Reconnect the USB cable.
 ```
 
-其中找到的連接埠（found port）為：`/dev/ttyACM1`，對應到您的主臂（leader）或從臂（follower）。
+其中找到的連接埠（found port）為：`/dev/ttyACM1`，對應到你的主臂（leader）或從臂（follower）。
 
 </hfoption>
 </hfoptions>
@@ -81,11 +81,11 @@ Reconnect the USB cable.
 
 為此，我們首先需要用控制器（controller）逐一連接每個馬達（motor）來設定這些值。由於我們會將這些參數（parameter）寫入馬達內部記憶體的非揮發性區段（non-volatile section, EEPROM），因此只需要做一次即可。
 
-如果您是要重新利用來自其他機器人的馬達（motors），您可能也需要執行此步驟，因為 id 與鮑率（baudrate）很可能不相符。
+如果你是要重新利用來自其他機器人的馬達（motors），你可能也需要執行此步驟，因為 id 與鮑率（baudrate）很可能不相符。
 
 #### 從臂（follower）[[follower]]
 
-將電腦的 USB 線與電源供應器連接到從臂的控制板（follower arm’s controller board）。然後，使用您在上一步取得的連接埠（port），執行以下指令或執行 API 範例。您還需要搭配 `id` 參數（parameter）為您的從臂（follower arm）命名。
+將電腦的 USB 線與電源供應器連接到從臂的控制板（follower arm’s controller board）。然後，使用你在上一步取得的連接埠（port），執行以下指令或執行 API 範例。你還需要搭配 `id` 參數（parameter）為你的從臂（follower arm）命名。
 
 若需要如何設定馬達 id 的視覺化參考，請參閱[這部影片](https://huggingface.co/docs/lerobot/zh-hant/so101#setup-motors-video)，我們在其中示範了 SO101 手臂的流程。
 
@@ -117,18 +117,18 @@ follower.setup_motors()
 </hfoption>
 </hfoptions>
 
-您應該會看到以下指示（instruction）
+你應該會看到以下指示（instruction）
 
 ```
 Connect the controller board to the 'gripper' motor only and press enter.
 ```
 
-依照指示，插上夾爪的馬達（gripper’s motor）。確認它是唯一連接到控制板（board）的馬達（motor），且該馬達本身尚未與任何其他馬達串接（the motor itself is not yet daisy-chained to any other motor）。當您按下 `[Enter]` 時，腳本會自動為該馬達設定 id 與鮑率（baudrate）。
+依照指示，插上夾爪的馬達（gripper’s motor）。確認它是唯一連接到控制板（board）的馬達（motor），且該馬達本身尚未與任何其他馬達串接（the motor itself is not yet daisy-chained to any other motor）。當你按下 `[Enter]` 時，腳本會自動為該馬達設定 id 與鮑率（baudrate）。
 
 <details>
 <summary>疑難排解</summary>
 
-若您在此時遇到錯誤，請檢查您的線材並確認它們已正確插好：
+若你在此時遇到錯誤，請檢查你的線材並確認它們已正確插好：
 
 <ul>
   <li>電源供應器</li>
@@ -136,11 +136,11 @@ Connect the controller board to the 'gripper' motor only and press enter.
   <li>控制板（controller board）到馬達（motor）的 3-pin 線（3-pin cable）</li>
 </ul>
 
-若您使用的是 Waveshare 控制板（controller board），請確認兩個跳線（jumper）都設在 `B` 通道（`B` channel, USB）上。
+若你使用的是 Waveshare 控制板（controller board），請確認兩個跳線（jumper）都設在 `B` 通道（`B` channel, USB）上。
 
 </details>
 
-接著您應該會看到以下訊息：
+接著你應該會看到以下訊息：
 
 ```
 'gripper' motor id set to 6
@@ -152,14 +152,14 @@ Connect the controller board to the 'gripper' motor only and press enter.
 Connect the controller board to the 'wrist_roll' motor only and press enter.
 ```
 
-您可以從控制板拔除 3-pin 線（3-pin cable），但另一端可以保持連接在夾爪馬達（gripper motor）上，因為它已經在正確的位置。現在，將另一條 3-pin 線插到腕部滾轉馬達（wrist roll motor）上，並將它連接到控制板（controller board）。與前一個馬達（motor）一樣，確認它是唯一連接到控制板的馬達，且該馬達本身沒有連接到任何其他馬達（the motor itself isn’t connected to any other one）。
+你可以從控制板拔除 3-pin 線（3-pin cable），但另一端可以保持連接在夾爪馬達（gripper motor）上，因為它已經在正確的位置。現在，將另一條 3-pin 線插到腕部滾轉馬達（wrist roll motor）上，並將它連接到控制板（controller board）。與前一個馬達（motor）一樣，確認它是唯一連接到控制板的馬達，且該馬達本身沒有連接到任何其他馬達（the motor itself isn’t connected to any other one）。
 
 依照指示對每個馬達重複此操作（repeat the operation）。
 
 > [!TIP]
-> 在按下 Enter 前，每一步都請檢查您的接線（cabling）。舉例來說，電源供應線可能會在您操作控制板時鬆脫。
+> 在按下 Enter 前，每一步都請檢查你的接線（cabling）。舉例來說，電源供應線可能會在你操作控制板時鬆脫。
 
-完成後，腳本就會結束，此時馬達（motors）即可使用。您現在可以將每個馬達的 3-pin 線（3-pin cable）插到下一個馬達，並將第一個馬達（id=1 的 '肩部平移 shoulder pan'）的線連接到控制板（controller board），接著就可以將控制板固定到手臂的底座上。
+完成後，腳本就會結束，此時馬達（motors）即可使用。你現在可以將每個馬達的 3-pin 線（3-pin cable）插到下一個馬達，並將第一個馬達（id=1 的 '肩部平移 shoulder pan'）的線連接到控制板（controller board），接著就可以將控制板固定到手臂的底座上。
 
 #### 主臂（leader）[[leader]]
 
@@ -209,7 +209,7 @@ leader.setup_motors()
 
 </details>
 
-依照影片移除齒輪（gears）。您需要移除主臂馬達的齒輪（gear for the motors of the leader arm）。如此一來，您將只使用馬達的位置編碼（position encoding），並降低摩擦力，以便更輕鬆地操作主臂（leader arm）。
+依照影片移除齒輪（gears）。你需要移除主臂馬達的齒輪（gear for the motors of the leader arm）。如此一來，你將只使用馬達的位置編碼（position encoding），並降低摩擦力，以便更輕鬆地操作主臂（leader arm）。
 
 ### 清理零件（clean parts）[[clean-parts]]
 
@@ -232,7 +232,7 @@ leader.setup_motors()
 </details>
 
 **注意：**
-這部影片提供了組裝手臂的視覺化指引，但並未說明何時或如何接線。事先插入線材會比事後接線容易許多。第一支手臂可能需要 1 小時多一點才能組裝完成，但一旦您上手後，第二支手臂可以在 1 小時內組裝完成。
+這部影片提供了組裝手臂的視覺化指引，但並未說明何時或如何接線。事先插入線材會比事後接線容易許多。第一支手臂可能需要 1 小時多一點才能組裝完成，但一旦你上手後，第二支手臂可以在 1 小時內組裝完成。
 
 ---
 
@@ -287,7 +287,7 @@ leader.setup_motors()
 
 **步驟 7：裝上肩部零件**
 
-- 將一條線引至機器人的後方，另一條引至左方或朝向您（見照片）。
+- 將一條線引至機器人的後方，另一條引至左方或朝向你（見照片）。
 - 裝上肩部（shoulder part）零件。
 
 <img
@@ -317,7 +317,7 @@ leader.setup_motors()
 
 - 加上肩部馬達固定座（shoulder motor holder）。
 - 確保馬達 1 到馬達 2 的線走在固定座（holder）後方，而另一條線則向上引出（見照片）。
-- 這個部分組裝起來可能很緊，您可以像圖片那樣使用工作檯或類似的設置，將零件推到馬達周圍。
+- 這個部分組裝起來可能很緊，你可以像圖片那樣使用工作檯或類似的設置，將零件推到馬達周圍。
 
 <div style="display: flex;">
   <img
@@ -502,7 +502,7 @@ _組裝完成，接著進行主臂（leader arm）的組裝。_
 
 ### 主臂設定（leader configuration）[[leader-configuration]]
 
-進行主臂設定（leader configuration）時，請執行**步驟 1 到 23**。請確認您已移除馬達的齒輪（motor gears）。
+進行主臂設定（leader configuration）時，請執行**步驟 1 到 23**。請確認你已移除馬達的齒輪（motor gears）。
 
 **步驟 24：裝上主臂固定座**
 
@@ -557,7 +557,7 @@ _組裝完成，接著進行主臂（leader arm）的組裝。_
 
 ## 校正（calibrate）[[calibrate]]
 
-接下來，您需要校正（calibrate）您的機器人，以確保主臂（leader arm）與從臂（follower arm）在相同的物理位置（physical position）時具有相同的位置值（position values）。
+接下來，你需要校正（calibrate）你的機器人，以確保主臂（leader arm）與從臂（follower arm）在相同的物理位置（physical position）時具有相同的位置值（position values）。
 校正過程（calibration process）非常重要，因為它能讓在某一台機器人上訓練（training）的神經網路（neural network），也能在另一台機器人上運作。
 
 #### 從臂（follower）[[calibrate-follower]]
@@ -570,7 +570,7 @@ _組裝完成，接著進行主臂（leader arm）的組裝。_
 ```bash
 lerobot-calibrate \
     --robot.type=so100_follower \
-    --robot.port=/dev/tty.usbmodem58760431551 \ # <- 您機器人的連接埠
+    --robot.port=/dev/tty.usbmodem58760431551 \ # <- 你機器人的連接埠
     --robot.id=my_awesome_follower_arm # <- 為機器人取一個唯一的名稱
 ```
 
@@ -608,7 +608,7 @@ follower.disconnect()
 ```bash
 lerobot-calibrate \
     --teleop.type=so100_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 您機器人的連接埠
+    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 你機器人的連接埠
     --teleop.id=my_awesome_leader_arm # <- 為機器人取一個唯一的名稱
 ```
 
@@ -634,7 +634,7 @@ leader.disconnect()
 </hfoption>
 </hfoptions>
 
-恭喜 🎉，您的機器人已準備就緒，可以開始自行學習任務（learn a task）。依照這份教學開始訓練（training）它：[開始使用真實世界機器人（Getting started with real-world robots）](./il_robots)
+恭喜 🎉，你的機器人已準備就緒，可以開始自行學習任務（learn a task）。依照這份教學開始訓練（training）它：[開始使用真實世界機器人（Getting started with real-world robots）](./il_robots)
 
 > [!TIP]
-> 若您有任何問題或需要協助，請至 [Discord](https://discord.com/invite/s3KuuzsPFb) 與我們聯繫。
+> 若你有任何問題或需要協助，請至 [Discord](https://discord.com/invite/s3KuuzsPFb) 與我們聯繫。
