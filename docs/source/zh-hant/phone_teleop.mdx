@@ -1,4 +1,4 @@
-# 手機（Phone）
+# 手機（Phone）[[phone]]
 
 使用您的手機（iOS 或 Android）來控制您的機器人。
 
@@ -14,9 +14,9 @@
 pip install lerobot[phone]
 ```
 
-## 開始使用（get started）
+## 開始使用（get started）[[get-started]]
 
-### 支援的平台（supported platforms）
+### 支援的平台（supported platforms）[[supported-platforms]]
 
 - iOS：使用 HEBI Mobile I/O app（ARKit 姿態 pose + 按鈕）。請先下載該 app 並開啟，範例會在您的網路上探索到它，並串流（stream）手機姿態（phone pose）與輸入。
 - Android：使用 `teleop` 套件（WebXR）。當您啟動 Python 程序（process）時，它會印出一個本機 URL。在手機上開啟該連結，點擊 Start，然後使用 Move 來串流姿態（stream pose）。
@@ -26,7 +26,7 @@ pip install lerobot[phone]
 - Android WebXR 函式庫：[PyPI 上的 `teleop`](https://pypi.org/project/teleop/)
 - iOS app：[HEBI Mobile I/O](https://docs.hebi.us/tools.html#mobile-io)
 
-### 手機方向與控制（phone orientation and controls）
+### 手機方向與控制（phone orientation and controls）[[phone-orientation-and-controls]]
 
 - 方向（orientation）：手持手機，螢幕朝上，頂部邊緣指向與機器人夾爪（gripper）相同的方向。這能確保校正（calibration）時將手機的座標系（phone’s frame）與機器人座標系（robot frame）對齊，使動作感覺自然，請參考下方圖片。
 - 啟用/停用（enable/disable）：
@@ -38,7 +38,7 @@ pip install lerobot[phone]
 
 <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/phone_teleop.webp" alt="Phone teleop orientation" title="Phone teleop orientation" width="40%">
 
-### 步驟 1：選擇平台（choose the platform）
+### 步驟 1：選擇平台（choose the platform）[[step-1-choose-the-platform]]
 
 修改範例，在 `PhoneConfig` 中使用 `PhoneOS.IOS` 或 `PhoneOS.ANDROID`。跨平台的 API 完全相同，只有輸入來源不同。所有範例都在 `examples/` 底下，並且有 `phone_so100_*.py` 的變體（variants）。
 
@@ -52,7 +52,7 @@ teleop_config = PhoneConfig(phone_os=PhoneOS.IOS)  # 或 PhoneOS.ANDROID
 teleop_device = Phone(teleop_config)
 ```
 
-### 步驟 2：連接與校正（connect and calibrate）
+### 步驟 2：連接與校正（connect and calibrate）[[step-2-connect-and-calibrate]]
 
 當 `Phone(teleop_config)` 被建立且呼叫 `connect()` 時，會自動提示校正（calibration）。以上述方向（orientation）手持手機，然後：
 
@@ -61,7 +61,7 @@ teleop_device = Phone(teleop_config)
 
 為什麼要校正（calibration）？我們擷取當前姿態（current pose），使後續的姿態（subsequent poses）都以一個與機器人對齊的座標系（robot aligned frame）來表示。當您再次按下按鈕以啟用控制（enable control）時，會重新擷取位置（position），以避免在停用期間重新擺放手機所造成的漂移（drift）。
 
-### 步驟 3：執行範例（run an example）
+### 步驟 3：執行範例（run an example）[[step-3-run-an-example]]
 
 執行其中一個範例腳本來遙操作（teleoperation）、錄製資料集（record a dataset）、重播資料集（replay a dataset）或評估策略（evaluate a policy）。
 
@@ -104,7 +104,7 @@ teleop_device = Phone(teleop_config)
   python evaluate.py
   ```
 
-### 重要的管線步驟與選項（important pipeline steps and options）
+### 重要的管線步驟與選項（important pipeline steps and options）[[important-pipeline-steps-and-options]]
 
 - 運動學（kinematics）會用於多個步驟中。我們使用 [Placo](https://github.com/Rhoban/placo)，它是 Pinocchio 的包裝器，用於處理我們的運動學。我們透過傳入機器人的 URDF 與目標座標系（target frame）來建構運動學物件（kinematics object）。我們將 `target_frame_name` 設為夾爪座標系（gripper frame）。
 
@@ -156,7 +156,7 @@ teleop_device = Phone(teleop_config)
   GripperVelocityToJoint(speed_factor=20.0)
   ```
 
-#### 不同的 IK 初始猜測（different IK initial guesses）
+#### 不同的 IK 初始猜測（different IK initial guesses）[[different-ik-initial-guesses]]
 
 我們在運動學步驟中使用不同的 IK 初始猜測（IK initial guesses）。作為初始猜測，會使用當前實測的關節（current measured joints），或前一次的 IK 解（IK solution）。
 
@@ -180,7 +180,7 @@ teleop_device = Phone(teleop_config)
   )
   ```
 
-### 管線步驟說明（pipeline steps explained）
+### 管線步驟說明（pipeline steps explained）[[pipeline-steps-explained]]
 
 - MapPhoneActionToRobotAction：將校正後的手機姿態（calibrated phone pose）與輸入轉換為目標增量（target deltas）與夾爪命令（gripper command）。動作由啟用訊號（iOS 上的 B1、Android 上的 Move）控制。
 - EEReferenceAndDelta：在啟用時鎖存一個參考 EE 姿態（reference EE pose），並將其與目標增量（target deltas）結合，於每一影格（frame）產生絕對的期望 EE 姿態（absolute desired EE pose）。停用時，它會持續送出最後下達的姿態（last commanded pose）。
@@ -189,7 +189,7 @@ teleop_device = Phone(teleop_config)
 - GripperVelocityToJoint：利用當前的實測狀態（current measured state），將類速度的夾爪輸入（velocity‑like gripper input）積分為絕對的夾爪位置（absolute gripper position）。
 - ForwardKinematicsJointsToEE：從觀測到的關節（observed joints）計算 `observation.state.ee.*`，用於記錄（logging）與在 EE 狀態（EE state）上訓練（training）。
 
-### 疑難排解
+### 疑難排解[[troubleshooting]]
 
 - iOS 未被探索到：確認 HEBI Mobile I/O 已開啟，且您的筆電/手機位於同一網路上。
 - Android URL 無法連線：檢查您本機使用的是 `https` 而非 `http`，使用腳本印出的確切 IP，並允許您的瀏覽器進入並忽略憑證問題（ignore the certificate issue）。

@@ -1,4 +1,4 @@
-# HIL-SERL 實體機器人訓練工作流程指南（HIL-SERL real robot training workflow guide）
+# HIL-SERL 實體機器人訓練工作流程指南（HIL-SERL real robot training workflow guide）[[hil-serl-real-robot-training-workflow-guide]]
 
 在本教學中，您將使用 LeRobot 完整體驗人在迴圈（human-in-the-loop）中的樣本高效強化學習（Human-in-the-Loop Sample-Efficient Reinforcement Learning，HIL-SERL）工作流程。您將在短短幾小時內，掌握透過強化學習（RL）在實體機器人上訓練一個策略（training a policy）。
 
@@ -29,14 +29,14 @@ HIL-SERL 是一種樣本高效的強化學習（sample-efficient reinforcement l
 
 本指南提供逐步說明，教您如何使用 LeRobot 的 HilSerl 實作在實體機器人上訓練（training）機器人策略（policy）。
 
-## 我需要什麼？（What do I need?）
+## 我需要什麼？（What do I need?）[[what-do-i-need]]
 
 - 一個遊戲手把（建議）或鍵盤來控制機器人
 - 一張 Nvidia GPU
 - 一個配備從動臂和主動臂（follower and leader arm）的實體機器人（如果使用鍵盤或遊戲手把則為可選）
 - 機器人的 URDF 檔案，供運動學套件（kinematics package）使用（請參考 `lerobot/model/kinematics.py`）
 
-## 我可以訓練什麼類型的任務?（What kind of tasks can I train?）
+## 我可以訓練什麼類型的任務?（What kind of tasks can I train?）[[what-kind-of-tasks-can-i-train]]
 
 您可以使用 HIL-SERL 訓練（train）各種操作任務（manipulation tasks）。以下是一些建議：
 
@@ -50,7 +50,7 @@ HIL-SERL 是一種樣本高效的強化學習（sample-efficient reinforcement l
   - 從一隻手臂轉移物體到另一隻手臂的交接任務（hand-over task）
   - 盡情發揮！
 
-## 安裝帶有 HIL-SERL 的 LeRobot（install LeRobot with HIL-SERL）
+## 安裝帶有 HIL-SERL 的 LeRobot（install LeRobot with HIL-SERL）[[install-lerobot-with-hil-serl]]
 
 要安裝帶有 HIL-SERL 的 LeRobot，您需要安裝 `hilserl` 額外套件（extra）。
 
@@ -58,9 +58,9 @@ HIL-SERL 是一種樣本高效的強化學習（sample-efficient reinforcement l
 pip install -e ".[hilserl]"
 ```
 
-## 實體機器人訓練工作流程（real robot training workflow）
+## 實體機器人訓練工作流程（real robot training workflow）[[real-robot-training-workflow]]
 
-### 了解配置（understanding configuration）
+### 了解配置（understanding configuration）[[understanding-configuration]]
 
 訓練過程（training process）從 HILSerl 環境的正確配置（proper configuration）開始。主要的配置類（main configuration class）是 `lerobot/rl/gym_manipulator.py` 中的 `GymManipulatorConfig`，其中包含巢狀（nested）的 `HILSerlRobotEnvConfig` 和 `DatasetConfig`。配置（configuration）被組織成清晰的巢狀子配置（nested sub-configs）：
 
@@ -134,11 +134,11 @@ class DatasetConfig:
 ```
 <!-- prettier-ignore-end -->
 
-### 處理器管線架構（processor pipeline architecture）
+### 處理器管線架構（processor pipeline architecture）[[processor-pipeline-architecture]]
 
 HIL-SERL 使用模組化的處理器管線架構（modular processor pipeline architecture），透過一系列可組合的步驟（composable steps）來處理機器人觀測（observations）和動作（actions）。管線（pipeline）分為兩個主要組件（two main components）：
 
-#### 環境處理器管線（environment processor pipeline）
+#### 環境處理器管線（environment processor pipeline）[[environment-processor-pipeline]]
 
 環境處理器（environment processor, `env_processor`）處理傳入的觀測（observations）和環境狀態（environment state）：
 
@@ -153,7 +153,7 @@ HIL-SERL 使用模組化的處理器管線架構（modular processor pipeline ar
 9. **AddBatchDimensionProcessorStep**：將資料轉換為批次格式（batch format）以供神經網路處理（neural network processing）
 10. **DeviceProcessorStep**：將資料移至指定的計算裝置（CPU/GPU）
 
-#### 動作處理器管線（action processor pipeline）
+#### 動作處理器管線（action processor pipeline）[[action-processor-pipeline]]
 
 動作處理器（action processor, `action_processor`）處理輸出的動作（outgoing actions）和人類介入（human interventions）：
 
@@ -167,7 +167,7 @@ HIL-SERL 使用模組化的處理器管線架構（modular processor pipeline ar
    - **InverseKinematicsEEToJoints**：將末端執行器動作（end-effector actions）轉換為關節目標（joint targets）
    - **GripperVelocityToJoint**：處理夾爪（gripper）控制命令
 
-#### 配置範例（configuration examples）
+#### 配置範例（configuration examples）[[configuration-examples]]
 
 **基本的觀測處理（basic observation processing）**：
 
@@ -227,11 +227,11 @@ HIL-SERL 使用模組化的處理器管線架構（modular processor pipeline ar
 }
 ```
 
-### 進階的觀測處理（advanced observation processing）
+### 進階的觀測處理（advanced observation processing）[[advanced-observation-processing]]
 
 HIL-SERL 框架支援額外的觀測處理（observation processing）功能，可以改善策略的學習（policy learning）：
 
-#### 關節速度處理（joint velocity processing）
+#### 關節速度處理（joint velocity processing）[[joint-velocity-processing]]
 
 啟用關節速度估計（joint velocity estimation），為策略（policy）提供運動資訊（motion information）：
 
@@ -253,7 +253,7 @@ HIL-SERL 框架支援額外的觀測處理（observation processing）功能，�
 - 將速度資訊（velocity information）加入觀測狀態向量（observation state vector）
 - 對於需要運動感知（motion awareness）的動態任務（dynamic tasks）的策略（policies）很有用
 
-#### 馬達電流處理（motor current processing）
+#### 馬達電流處理（motor current processing）[[motor-current-processing]]
 
 監控馬達電流（motor currents）以偵測接觸力（contact forces）和負載條件（load conditions）：
 
@@ -276,7 +276,7 @@ HIL-SERL 框架支援額外的觀測處理（observation processing）功能，�
 - 有助於偵測接觸事件（contact events）、物體重量（object weights）和機械阻力（mechanical resistance）
 - 對於接觸充分的操作任務（contact-rich manipulation tasks）很有用
 
-#### 組合觀測處理（combined observation processing）
+#### 組合觀測處理（combined observation processing）[[combined-observation-processing]]
 
 您可以同時啟用多個觀測處理功能（observation processing features）：
 
@@ -296,7 +296,7 @@ HIL-SERL 框架支援額外的觀測處理（observation processing）功能，�
 
 **注意**：啟用額外的觀測功能（observation features）會增加狀態空間的維度（state space dimensionality），這可能需要調整您的策略網路（policy network）架構，並可能需要收集更多訓練資料（training data）。
 
-### 尋找機器人工作空間邊界（finding robot workspace bounds）
+### 尋找機器人工作空間邊界（finding robot workspace bounds）[[finding-robot-workspace-bounds]]
 
 在收集示範（collecting demonstrations）之前，您需要確定機器人的適當操作邊界（operational bounds）。
 
@@ -346,7 +346,7 @@ lerobot-find-joint-limits \
 }
 ```
 
-### 收集示範（collecting demonstrations）
+### 收集示範（collecting demonstrations）[[collecting-demonstrations]]
 
 定義好邊界（bounds）後，您可以安全地收集訓練示範（demonstrations for training）。使用 off-policy 演算法進行強化學習（RL） 訓練允許我們使用離線收集的資料集（offline datasets）來提高學習的效率。
 
@@ -406,7 +406,7 @@ lerobot-find-joint-limits \
 }
 ```
 
-### 使用遙操作裝置（using a teleoperation device）
+### 使用遙操作裝置（using a teleoperation device）[[using-a-teleoperation-device]]
 
 除了機器人之外，您還需要一個遙操作裝置（teleoperation device）來控制它，以便收集任務（task）的資料集（dataset）並在線上訓練（training）期間進行介入（interventions）。
 我們支援使用遊戲手把、鍵盤或機器人的主臂（leader arm）。
@@ -531,7 +531,7 @@ python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/env_confi
 6. 流程會自動繼續到下一個回合（episode）
 7. 錄製（record）完所有回合（episodes）後，資料集（dataset）會推送到 Hugging Face Hub（可選）並儲存在本地（locally）
 
-### 處理資料集（processing the dataset）
+### 處理資料集（processing the dataset）[[processing-the-dataset]]
 
 收集示範（collecting demonstrations）後，處理它們以確定最佳的攝影機裁切（optimal camera crops）。
 強化學習（reinforcement learning, RL）對背景干擾（background distractions）很敏感，因此將影像裁切（crop）到相關的工作空間區域（relevant workspace area）非常重要。
@@ -601,7 +601,7 @@ observation.images.front: [180, 250, 120, 150]
 
 大多數基於視覺的策略（vision-based policies）已在 **128×128**（預設）或 **64×64** 像素的方形輸入上驗證。因此，我們建議將 resize_size 參數（parameter）設為 [128, 128]——如果您需要節省 GPU 記憶體和頻寬（bandwidth），則設為 [64, 64]。其他解析度是可行的，但尚未經過充分測試。
 
-### 訓練獎勵分類器（training a reward classifier）
+### 訓練獎勵分類器（training a reward classifier）[[training-a-reward-classifier]]
 
 獎勵分類器（reward classifier）在 HIL-SERL 工作流程中扮演重要角色，透過自動化獎勵分配（automating reward assignment）和自動偵測回合成功（automatically detecting episode success）。與其手動定義獎勵函數（reward functions）或每個時間步（timestep）都依賴人類回饋（human feedback），獎勵分類器（reward classifier）學習從視覺觀測中預測成功（success）/失敗（failure）。這使得強化學習（RL）演算法能夠根據機器人攝影機輸入（camera inputs）提供一致且自動化的獎勵訊號（consistent and automated reward signals），從而高效學習。
 
@@ -814,7 +814,7 @@ python -m lerobot.rl.gym_manipulator --config_path path/to/env_config.json
    python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/env_config.json
    ```
 
-### 使用執行者-學習者架構進行訓練（training with actor-learner）
+### 使用執行者-學習者架構進行訓練（training with actor-learner）[[training-with-actor-learner]]
 
 LeRobot 系統使用分散式執行者-學習者（distributed actor-learner）架構進行訓練（training）。此架構將機器人互動與學習過程解耦（decouples），使它們能夠並行執行而不互相阻塞（run concurrently without blocking eachother）。執行者伺服器（actor server）處理機器人觀測（observations）和動作（actions），將互動資料（interaction data）發送給學習者伺服器（learner server）。學習者伺服器（learner server）執行梯度下降（gradient descent）並定期更新（periodically updates）執行者的策略權重（actor’s policy weights）。您需要啟動兩個處理程序（processes）：一個學習者（learner）和一個執行者（actor）。
 
@@ -897,7 +897,7 @@ python -m lerobot.rl.actor --config_path src/lerobot/configs/train_config_hilser
 
 如果您在配置中將 `wandb.enable` 設為 `true`，您可以透過 [Weights & Biases](https://wandb.ai/site/) 儀表板即時監控訓練進度（training progress）。
 
-### 人為介入指南（guide to human interventions）
+### 人為介入指南（guide to human interventions）[[guide-to-human-interventions]]
 
 學習過程對介入策略（intervention strategy）非常敏感。需要幾次嘗試才能理解如何有效地介入（intervene effectivel）。一些提示和建議：
 
@@ -923,7 +923,7 @@ python -m lerobot.rl.actor --config_path src/lerobot/configs/train_config_hilser
   </i>
 </p>
 
-### 需要調整的關鍵超參數（key hyperparameters to tune）
+### 需要調整的關鍵超參數（key hyperparameters to tune）[[key-hyperparameters-to-tune]]
 
 某些配置值（configuration values）對訓練（training）穩定性和速度具有不成比例的影響：
 

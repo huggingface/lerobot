@@ -52,7 +52,7 @@ uv pip install natten==0.21.6+torch2110cu128 --find-links https://whl.natten.org
 --rename_map='{"observation.images.top":"observation.images.scene","observation.images.gripper_cam":"observation.images.wrist"}'
 ```
 
-rollout 時請使用相同的對應；鍵已相符則不需要對應表。請參閱[重新命名對應表](https://huggingface.co/docs/lerobot/main/en/rename_map)。
+rollout 時請使用相同的對應；鍵已相符則不需要對應表。請參閱[重新命名對應表](https://huggingface.co/docs/lerobot/main/zh-hant/rename_map)。
 
 ### 載入與訓練[[load-and-train]]
 
@@ -122,8 +122,8 @@ accelerate launch --num_processes=4 --multi_gpu -m lerobot.scripts.lerobot_train
 選擇預算與檢查點；較大的批次並不保證更好的結果。
 
 此預設組態會保留每個任務最後 20% 的回合（episodes）用於評估。請依你的硬體調整批次大小與累積步數；
-請參閱[多 GPU 訓練](https://huggingface.co/docs/lerobot/main/en/multi_gpu_training)
-與 [PEFT 訓練](https://huggingface.co/docs/lerobot/main/en/peft_training)。
+請參閱[多 GPU 訓練](https://huggingface.co/docs/lerobot/main/zh-hant/multi_gpu_training)
+與 [PEFT 訓練](https://huggingface.co/docs/lerobot/main/zh-hant/peft_training)。
 
 ## DROID 任務調適[[droid-task-adaptation]]
 

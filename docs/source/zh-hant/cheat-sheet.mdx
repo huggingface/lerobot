@@ -1,4 +1,4 @@
-# 小抄（Cheat sheet）
+# 小抄（Cheat sheet）[[cheat-sheet]]
 
 所有 LeRobot 指令集中在此處。如果您忘記了如何使用某個特定指令，或想了解一個新指令，都可以在這裡查閱。
 
@@ -8,13 +8,13 @@
 > [!TIP]
 > 另一個查看所有指令並針對您的特定設置進行配置的好方法，是使用這個 [Jupyter Notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb)。
 
-### 設定與安裝（setup and installation）
+### 設定與安裝（setup and installation）[[setup-and-installation]]
 
-安裝方式請參閱 [LeRobot 安裝指南](https://huggingface.co/docs/lerobot/main/en/installation)。
+安裝方式請參閱 [LeRobot 安裝指南](https://huggingface.co/docs/lerobot/main/zh-hant/installation)。
 
-### 實用工具（useful tools）
+### 實用工具（useful tools）[[useful-tools]]
 
-###### 尋找連接埠（find port）
+###### 尋找連接埠（find port）[[find-port]]
 
 使用此工具來識別您的機器人連接到哪個序列埠（serial port）。請依照終端機（terminal）中的指示操作：系統會要求您拔除 USB 線並按下 Enter。腳本接著會偵測並印出該機器人的正確序列埠。
 
@@ -22,7 +22,7 @@
 lerobot-find-port
 ```
 
-###### 尋找攝影機（find cameras）
+###### 尋找攝影機（find cameras）[[find-cameras]]
 
 快速找到攝影機索引並驗證其輸出。此指令會將攝影機資訊印到終端機（terminal），並將每個偵測到的攝影機的測試畫面儲存到 `lerobot/outputs/captured_images`
 
@@ -30,7 +30,7 @@ lerobot-find-port
 lerobot-find-cameras
 ```
 
-### 校正（calibration）
+### 校正（calibration）[[calibration]]
 
 在大多數情況下，您只需要對每個機器人和遙操作裝置（teleoperation device）執行一次校正（calibration）。在執行校正之前，請確保所有關節（joints）大致處於中間位置（middle position）。
 
@@ -43,7 +43,7 @@ lerobot-calibrate \
 
 請確保在後續其他腳本中使用與校正（calibration）時相同的 ID。LeRobot 就是透過這些 ID 來找到校正檔案的。
 
-### 遙操作（teleoperation）
+### 遙操作（teleoperation）[[teleoperation]]
 
 使用兩個攝影機進行遙操作，並透過 Rerun 顯示資料。
 
@@ -59,7 +59,7 @@ lerobot-teleoperate \
     --display_data=true
 ```
 
-### 錄製資料集（recording a dataset）
+### 錄製資料集（recording a dataset）[[recording-a-dataset]]
 
 資料集（dataset）會自動上傳到伺服器（server）並儲存到 repo_id 下，請確保您已透過 CLI 登入 HF 帳號：
 `hf auth login`
@@ -89,7 +89,7 @@ lerobot-record \
 - 按下 **左方向鍵 (`←`)**：刪除當前回合（episode）並重新錄製。
 - 按下 **Escape (`ESC`)**：停止錄製、編碼影片（encode videos）並上傳。
 
-### 錄製深度（recording depth）
+### 錄製深度（recording depth）[[recording-depth]]
 
 Intel RealSense 攝影機（`type: intelrealsense`）在您設定 `use_depth: true` 時會錄製深度串流（record a depth stream）。深度會量化為 12 位元編碼（quantized to 12-bit codes），並儲存為獨立的影片。
 
@@ -105,7 +105,7 @@ lerobot-record \
     --dataset.depth_encoder.use_log=true
 ```
 
-### 影片編碼參數（video encoding parameters）
+### 影片編碼參數（video encoding parameters）[[video-encoding-parameters]]
 
 RGB 與深度串流（stream）會透過 `--dataset.rgb_encoder.*` 和 `--dataset.depth_encoder.*` 這些鍵各自獨立編碼。
 
@@ -119,7 +119,7 @@ lerobot-record \
     --dataset.depth_encoder.extra_options='{"x265-params": "lossless=1"}'
 ```
 
-### 訓練（training）
+### 訓練（training）[[training]]
 
 根據您的硬體配置，訓練策略（train the policy）可能需要數小時。以下是訓練簡單 `ACT` 策略的方式：
 
@@ -158,7 +158,7 @@ lerobot-train \
 lerobot-train --config_path=${HF_USER}/policy_test --resume=true --job.target=a10g-small
 ```
 
-### 推論（inference）
+### 推論（inference）[[inference]]
 
 推論（inference）是指在機器人上運行已訓練的策略/模型（trained policy/model）。為此我們使用 `lerobot-rollout`。您需要提供策略的路徑（path to your policy），可以是本機路徑或 Hugging Face 上的路徑，例如 "lerobot/folding_latest"。您的攝影機配置（cameras configuration）需要與收集資料集（collecting the dataset）時使用的一致。持續時間以秒為單位，若未指定則會無限期運行。
 

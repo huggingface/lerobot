@@ -1,6 +1,6 @@
-# X-VLA：首個適用於任何機器人、任何任務的軟提示機器人基礎模型（the first soft-prompted robot foundation model for any robot, any task）
+# X-VLA：首個適用於任何機器人、任何任務的軟提示機器人基礎模型（the first soft-prompted robot foundation model for any robot, any task）[[x-vla-the-first-soft-prompted-robot-foundation-model-for-any-robot-any-task]]
 
-## 概覽（overview）
+## 概覽（overview）[[overview]]
 
 多年來，機器人學一直致力於構建能夠遵循自然人類指令（natural human instructions）、並在多種環境（environments）和機器人本體（robot bodies）上進行靈巧操作（operate dexterously）的代理（agent）。近期大型語言模型（LLMs）和視覺語言模型（VLMs）的突破性進展指出了一條前進道路：透過將這些基礎模型架構（foundation-model architectures）扎根於動作（grounding them in actions），將其擴展至具身控制（embodied control）。這催生了視覺-語言-動作（Vision-Language-Action, VLA）模型的興起，期望單一的通用模型（generalist model）能夠結合廣泛的語義理解（semantic understanding ）與穩健的操控技能（robust manipulation skills）。
 
@@ -40,7 +40,7 @@ X-VLA 完全由純 Transformer 編碼器（encoder）構建，能隨模型規模
 
 X-VLA 表明，通用機器人智慧（generalist robot intelligence）不需要越來越複雜的架構（architectures），只需要正確的方式來吸收異質性（absorb heterogeneity）。軟提示（Soft Prompts）提供了一種簡單、可擴展的機制（simple, scalable mechanism），用於統一多樣化的機器人資料（unifying diverse robotic data），為可適配的跨具身形態機器人基礎模型（adaptable, cross-embodiment robot foundation models）鋪平了道路。
 
-## 安裝（installation）
+## 安裝（installation）[[installation]]
 
 安裝 LeRobot 後，安裝 X-VLA 的依賴項（dependencies）：
 
@@ -54,9 +54,9 @@ pip install -e .[xvla]
 pip install lerobot[xvla]
 ```
 
-## 快速開始（quick start）
+## 快速開始（quick start）[[quick-start]]
 
-### 基本用法（basic usage）
+### 基本用法（basic usage）[[basic-usage]]
 
 要在 LeRobot 配置中使用 X-VLA，請將策略類型（policy type）指定為：
 
@@ -64,7 +64,7 @@ pip install lerobot[xvla]
 policy.type=xvla
 ```
 
-### 評估預訓練檢查點（evaluating pre-trained checkpoints）
+### 評估預訓練檢查點（evaluating pre-trained checkpoints）[[evaluating-pre-trained-checkpoints]]
 
 以 LIBERO 為例的評估（evaluation）：
 
@@ -80,9 +80,9 @@ lerobot-eval \
   --seed=142
 ```
 
-## 可用的檢查點（available checkpoints）
+## 可用的檢查點（available checkpoints）[[available-checkpoints]]
 
-### 🎯 基礎模型（base model）
+### 🎯 基礎模型（base model）[[base-model]]
 
 **[lerobot/xvla-base](https://huggingface.co/lerobot/xvla-base)**
 
@@ -92,7 +92,7 @@ X-VLA 的 0.9B 參數實例（parameter instantiation），使用精心設計的
 
 - **第二階段（Phase II）：領域適配（domain adaptation）** - 針對目標領域（target domains）適配為可部署的策略（deployable policies）。引入一組新的軟提示（soft prompts）並進行最佳化，以編碼（encode）新領域（novel domain）的硬體配置（hardware configuration），同時保持預訓練主幹網路（pretrained backbone）凍結（frozen）。
 
-### 模擬任務的檢查點（simulation checkpoints）
+### 模擬任務的檢查點（simulation checkpoints）[[simulation-checkpoints]]
 
 **[lerobot/xvla-libero](https://huggingface.co/lerobot/xvla-libero)**
 
@@ -102,7 +102,7 @@ X-VLA 的 0.9B 參數實例（parameter instantiation），使用精心設計的
 
 在 BridgeData 上微調（fine-tune），用於小型 WidowX 平台（platforms）的抓取放置（pick-and-place）實驗。展示了穩健的操控能力（robust manipulation capabilities）。
 
-### 🤖 真實世界的檢查點（real-world checkpoints）
+### 🤖 真實世界的檢查點（real-world checkpoints）[[real-world-checkpoints]]
 
 **[lerobot/xvla-folding](https://huggingface.co/lerobot/xvla-folding)**
 
@@ -116,9 +116,9 @@ X-VLA 的 0.9B 參數實例（parameter instantiation），使用精心設計的
 
 適配 Google Robot 平台（platforms）。
 
-## 訓練 X-VLA（training X-VLA）
+## 訓練 X-VLA（training X-VLA）[[training-x-vla]]
 
-### 建議的訓練配置（recommended training configuration）
+### 建議的訓練配置（recommended training configuration）[[recommended-training-configuration]]
 
 在為新的具身形態或任務（embodiment or task）微調（fine-tuning） X-VLA 時，我們建議不要凍結（freezing）VLM，並設置 `policy.dtype=bfloat16` 以避免記憶體不足錯誤（OOM error）。
 
@@ -139,7 +139,7 @@ lerobot-train \
   --policy.train_soft_prompts=true \
 ```
 
-### 訓練參數說明（training parameters explained）
+### 訓練參數說明（training parameters explained）[[training-parameters-explained]]
 
 | 參數（parameter）          | 預設值（default） | 描述（description）                                                         |
 | -------------------------- | ----------------- | --------------------------------------------------------------------------- |
@@ -150,7 +150,7 @@ lerobot-train \
 
 **💡 最佳實踐**：對於第二階段（Phase II）適配新的具身形態（embodiments），不要凍結（freeze）VLM 編碼器（encoder），同時訓練策略（train the policy）Transformer 和軟提示（soft prompts）。
 
-### 範例：在雙臂機器人上訓練（training on bimanual robot）
+### 範例：在雙臂機器人上訓練（training on bimanual robot）[[example-training-on-bimanual-robot]]
 
 ```bash
 lerobot-train \
@@ -180,13 +180,13 @@ lerobot-train \
 要完全匹配官方報告的效能，可能需要為軟提示（soft-prompts）額外設置預熱學習率（learning rate）排程（warm-up LR schedule），這能帶來微小的改善。
 我們鼓勵在您自訂的訓練管線（customized training pipeline）中實現此功能以獲得最佳結果。
 
-## 核心概念（core concepts）
+## 核心概念（core concepts）[[core-concepts]]
 
-### 1. 動作模式（action modes）
+### 1. 動作模式（action modes）[[1-action-modes]]
 
 X-VLA 使用**動作註冊表（Action Registry）**系統來處理不同的動作空間（action spaces）和具身形態（embodiments）。`action_mode` 參數（parameter）定義了動作（actions）的處理方式、使用的損失函數（loss functions），以及預測（predictions）的後處理（post-processed）方式。
 
-#### 可用的動作模式（available action modes）
+#### 可用的動作模式（available action modes）[[available-action-modes]]
 
 | 動作模式（action mode） | 動作維度（action dim）              | 描述（description）                                                    | 使用場景（use case）                                     |
 | ----------------------- | ----------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------- |
@@ -196,7 +196,7 @@ X-VLA 使用**動作註冊表（Action Registry）**系統來處理不同的動�
 | `so101_bimanual`        | 20（模型 model）、12（實際 real）   | SO101 雙臂機器人（bimanual robot）                                     | 雙臂操控任務（bimanual manipulation tasks）              |
 | `auto`                  | 20（模型 model）、自動（實際 real） | 自動從資料集偵測動作維度（auto-detects action dim from dataset）       | **推薦**用於新機器人                                     |
 
-#### 動作模式的重要性（why action modes matter）
+#### 動作模式的重要性（why action modes matter）[[why-action-modes-matter]]
 
 當您擁有一個以 `action_dim=20` 訓練的預訓練檢查點（pretrained checkpoint，如 `lerobot/xvla-base`），並希望在具有不同動作維度（action dimension，例如雙臂 bimanual arms 的 14 維）的資料集（dataset）上訓練時，您不能簡單地裁剪動作維度（trim the action dimension）。動作模式（action mode）負責協調：
 
@@ -204,7 +204,7 @@ X-VLA 使用**動作註冊表（Action Registry）**系統來處理不同的動�
 2. **前處理（preprocessing）**：將夾爪通道（gripper channels）歸零、填充維度（padding dimensions）
 3. **後處理（postprocessing）**：對夾爪（gripper） logits 應用 sigmoid、裁剪填充（trimming padding）
 
-#### 範例：BimanualSO101 動作空間（BimanualSO101 action space）
+#### 範例：BimanualSO101 動作空間（BimanualSO101 action space）[[example-bimanualso101-action-space]]
 
 `so101_bimanual` 動作模式（action mode）處理了模型輸出（model output, 20D）與真實機器人控制（real robot control, 12D）之間的不匹配（mismatch）：
 
@@ -222,7 +222,7 @@ REAL_DIM = 12
 
 詳情請參閱 [action_hub.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/xvla/action_hub.py) 的實作。
 
-#### 推薦：Auto 的動作模式（auto action mode）
+#### 推薦：Auto 的動作模式（auto action mode）[[auto-action-mode-recommended]]
 
 `auto` 動作模式（action mode）是在任何機器人上使用 X-VLA 最簡單的方式。它會自動偵測您資料集的動作維度（dataset’s action dimension）並處理填充/裁剪（padding/trimming）：
 
@@ -243,7 +243,7 @@ lerobot-train \
 
 這使得大多數機器人無需建立自訂動作模式（custom action modes）。
 
-### 2. 領域 ID（domain IDs）
+### 2. 領域 ID（domain IDs）[[2-domain-ids]]
 
 領域 ID 是針對不同機器人配置（robot configurations）和攝影機設置（camera setups）的可學習識別符（learnable identifiers）。它們使 X-VLA 能夠區分：
 
@@ -251,7 +251,7 @@ lerobot-train \
 - 不同的攝影機配置（cam1 vs cam2）
 - 不同的組合（Robot1-cam1-cam2 vs Robot1-cam1 vs Robot2-cam1）
 
-#### 設置領域 ID（setting domain IDs）
+#### 設置領域 ID（setting domain IDs）[[setting-domain-ids]]
 
 **訓練過程中（during training）**：預設情況下，domain_id 設為 0 用於一般訓練（training）。
 
@@ -266,7 +266,7 @@ domain_id 會由前處理管線（preprocessing pipeline）中的 `XVLAAddDomain
 
 `lerobot/xvla-base` 模型（model）已在以下領域 ID 上進行訓練（training）。建議選擇一個與您的機器人/配置（robot/configuration）最相似的：
 
-#### 微調資料集（fine-tuning datasets）
+#### 微調資料集（fine-tuning datasets）[[fine-tuning-datasets]]
 
 | 資料集名稱（dataset name） | 領域 ID（domain ID） |
 | -------------------------- | -------------------- |
@@ -284,17 +284,17 @@ domain_id 會由前處理管線（preprocessing pipeline）中的 `XVLAAddDomain
 | AIR-AGILEX                 | 10                   |
 | AIRBOT                     | 18                   |
 
-### 3. 處理器的步驟（processor steps）
+### 3. 處理器的步驟（processor steps）[[3-processor-steps]]
 
 X-VLA 需要特定的前處理和後處理步驟（preprocessing and postprocessing steps）才能正常運作。
 
-#### 必要的前處理步驟（required preprocessing steps）
+#### 必要的前處理步驟（required preprocessing steps）[[required-preprocessing-steps]]
 
 1. **XVLAImageToFloatProcessorStep**：將影像（images）從 [0, 255] 轉換為 [0, 1] 範圍（range）
 2. **XVLAImageNetNormalizeProcessorStep**：應用 ImageNet 正規化（normalization，VLM 主幹網路 backbone 所需）
 3. **XVLAAddDomainIdProcessorStep**：將 domain_id 加入觀測（observations）中
 
-#### 自訂處理器範例（example custom processor）
+#### 自訂處理器範例（example custom processor）[[example-custom-processor]]
 
 對於 LIBERO 環境（environments），自訂處理器（custom processor）處理特定的觀測格式（observation format）：
 
@@ -306,7 +306,7 @@ processor = LiberoProcessorStep()
 # 應用 180° 影像旋轉以符合相機慣例
 ```
 
-### 4. 配置參數（configuration parameters）
+### 4. 配置參數（configuration parameters）[[4-configuration-parameters]]
 
 X-VLA 的關鍵配置參數（configuration parameters）：
 
@@ -337,11 +337,11 @@ resize_imgs_with_padding: tuple[int, int] | None  # 帶填充的目標影像尺�
 num_denoising_steps: int = 10  # 流匹配去噪步數
 ```
 
-## 建立自訂動作模式（creating custom action modes）
+## 建立自訂動作模式（creating custom action modes）[[creating-custom-action-modes]]
 
 如果您的機器人擁有獨特的動作空間（unique action space），您可以建立自訂動作模式（custom action mode）：
 
-### 步驟 1：定義您的動作空間（define your action space）
+### 步驟 1：定義您的動作空間（define your action space）[[step-1-define-your-action-space]]
 
 ```python
 from lerobot.policies.xvla.action_hub import BaseActionSpace, register_action
@@ -388,7 +388,7 @@ class MyCustomActionSpace(BaseActionSpace):
         return action
 ```
 
-### 步驟 2：使用您的自訂動作模式（use your custom action mode）
+### 步驟 2：使用您的自訂動作模式（use your custom action mode）[[step-2-use-your-custom-action-mode]]
 
 ```bash
 lerobot-train \
@@ -398,9 +398,9 @@ lerobot-train \
   ...
 ```
 
-## 進階主題（advanced topics）
+## 進階主題（advanced topics）[[advanced-topics]]
 
-### 多攝影機支援（multi-camera support）
+### 多攝影機支援（multi-camera support）[[multi-camera-support]]
 
 X-VLA 透過 `num_image_views` 參數（parameter）支援多攝影機視角（multiple camera views）：
 
@@ -412,7 +412,7 @@ policy.num_image_views=3
 policy.empty_cameras=1  # Adds 1 zero-padded camera view
 ```
 
-### 自訂前處理管線 （custom preprocessing pipeline）
+### 自訂前處理管線 （custom preprocessing pipeline）[[custom-preprocessing-pipeline]]
 
 為您的環境（environment）建立自訂前處理管線（custom preprocessing pipeline）：
 
@@ -435,7 +435,7 @@ preprocessor = PolicyProcessorPipeline(
 )
 ```
 
-### 處理不同的動作維度（handling different action dimensions）
+### 處理不同的動作維度（handling different action dimensions）[[handling-different-action-dimensions]]
 
 當您的資料集（dataset）動作維度（action dimensions）少於預訓練模型（pretrained model）時：
 
@@ -469,9 +469,9 @@ class MappedActionSpace(BaseActionSpace):
         ...
 ```
 
-## 疑難排解
+## 疑難排解[[troubleshooting]]
 
-### 常見問題
+### 常見問題[[common-issues]]
 
 **問題**：「動作維度不匹配（Action dimension mismatch）」
 
@@ -501,7 +501,7 @@ class MappedActionSpace(BaseActionSpace):
   3. 減少批次大小（batch size）
   4. 凍結（freeze）更多組件（components）
 
-## 引用
+## 引用[[citation]]
 
 如果您在研究中使用了 X-VLA，請引用：
 
@@ -515,7 +515,7 @@ class MappedActionSpace(BaseActionSpace):
 }
 ```
 
-## 其他資源
+## 其他資源[[additional-resources]]
 
 - [X-VLA 論文](https://arxiv.org/pdf/2510.10274)
 - [LeRobot 文件](https://github.com/huggingface/lerobot)
@@ -523,6 +523,6 @@ class MappedActionSpace(BaseActionSpace):
 - [處理器實作](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/xvla/processor_xvla.py)
 - [模型配置](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/xvla/configuration_xvla.py)
 
-## 貢獻
+## 貢獻[[contributing]]
 
 我們歡迎貢獻！如果您為您的機器人實作了新的動作模式（action mode）或處理器（processor），請考慮提交 PR 以幫助社群。

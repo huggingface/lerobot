@@ -1,4 +1,4 @@
-# LeLab - LeRobot 指南
+# LeLab - LeRobot 指南[[lelab---lerobot-guide]]
 
 LeLab 是一個建構在 LeRobot 函式庫之上的圖形化使用者介面（graphical user interface），目的是讓機器人技術更容易上手，無須記憶各種 CLI 指令。在單一應用程式（app）中，您就可以設定機器人（configure your robot）、進行遙操作（teleoperate）、收集資料集（collect datasets）、在本機或透過 HF Jobs 使用雲端 GPU 訓練策略（train policies），並將訓練好的模型（trained models）重新部署（deploy）回機器人。它是從剛開箱的 SO-101 走到可運作策略最簡單的途徑，也是任何正在學習 LeRobot 工作流程者的絕佳夥伴。原始碼與問題回報都在 GitHub 上：[huggingface/leLab](https://github.com/huggingface/leLab)。
 
@@ -7,7 +7,7 @@ LeLab 是一個建構在 LeRobot 函式庫之上的圖形化使用者介面（gr
 
 <Youtube id="VqyKUuW9V1g" />
 
-### 安裝（installation）
+### 安裝（installation）[[installation]]
 
 需要 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)。以單一指令安裝並啟動：
 
@@ -17,7 +17,7 @@ uv tool install git+https://github.com/huggingface/leLab.git && lelab
 
 安裝完成後，隨時在終端機執行 `lelab` 即可啟動應用程式。
 
-### 功能（features）
+### 功能（features）[[features]]
 
 - **新增機器人（add robots）** — 選擇手臂類型（leader/follower）、從中間位置（middle position）校正每個關節（calibrate each joint），並接上攝影機。
 - **遙操作（teleoperation）** — 用 leader 手臂控制 follower 手臂，並即時檢視手臂的 3D 視覺化畫面。

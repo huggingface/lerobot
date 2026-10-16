@@ -440,22 +440,22 @@ lerobot_teleoperator_my_awesome_teleop/
 
 1.  **在你的 Python 環境中安裝你的新外掛（plugin）。** 你可以使用 `pip` 的可編輯模式（editable mode）或從 PyPi 安裝你的本地外掛程式套件（local plugin package）。
 
-```bash
-# 本地安裝
-# 導航到你的外掛程式根目錄並安裝
-cd lerobot_teleoperator_my_awesome_teleop
-pip install -e .
+    ```bash
+    # 本地安裝
+    # 導航到你的外掛程式根目錄並安裝
+    cd lerobot_teleoperator_my_awesome_teleop
+    pip install -e .
 
-# 從 PyPi 安裝
-pip install lerobot_teleoperator_my_awesome_teleop
-```
+    # 從 PyPi 安裝
+    pip install lerobot_teleoperator_my_awesome_teleop
+    ```
 
 2.  **直接從命令列（command line）使用它。** 現在，你可以透過引用其型別（type）來使用你的自訂裝置（custom device）。
 
-```bash
-lerobot-teleoperate --teleop.type=my_awesome_teleop \
-# 其他參數
-```
+    ```bash
+    lerobot-teleoperate --teleop.type=my_awesome_teleop \
+    # 其他參數
+    ```
 
 就是這樣！你的自訂裝置（custom device）現在已完全整合。
 

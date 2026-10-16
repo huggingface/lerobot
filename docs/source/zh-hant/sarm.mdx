@@ -1,4 +1,4 @@
-# SARM：階段感知獎勵建模（Stage-Aware Reward Modeling）
+# SARM：階段感知獎勵建模（Stage-Aware Reward Modeling）[[sarm-stage-aware-reward-modeling]]
 
 SARM（Stage-Aware Reward Modeling，階段感知獎勵建模）是一個以影片為基礎（video-based）、用於長水平機器人操作任務（long-horizon robot manipulation tasks）的獎勵建模框架（reward modeling framework）。本指南涵蓋如何訓練（training） SARM 獎勵模型（reward models），以及選擇性地將其與獎勵對齊行為複製（Reward-Aligned Behavior Cloning，RA-BC）一起使用。
 
@@ -10,11 +10,11 @@ SARM（Stage-Aware Reward Modeling，階段感知獎勵建模）是一個以影�
   width="80%"
 />
 
-## 為什麼需要獎勵模型？（why reward models?）
+## 為什麼需要獎勵模型？（why reward models?）[[why-reward-models]]
 
 標準的行為複製（behavior cloning）將所有示範影格（demonstration frames）一視同仁，但真實世界的機器人資料集（real-world robot datasets）是雜亂的。它們包含猶豫（hesitations）、修正（corrections），以及品質參差的軌跡（variable-quality trajectories）。獎勵模型（reward models）透過從示範（demonstrations）中學習一個可泛化（generalizable）的**任務進度（task progress）**概念來解決此問題：給定影片影格（video frames）與任務描述（task description），它們會預測機器人距離完成任務有多近（predict how close the robot is to completing the task, 0→1）。這個學到的「進度訊號（progress signal）」可以有多種用法，兩個有前景的應用是：（1）**加權模仿學習（imitation learning, RA-BC）**，其中高進度影格（high-progress frames）在策略訓練（policy training）期間獲得更多權重（weight）；以及（2）**強化學習（reinforcement learning, RL）**，其中獎勵模型（reward model）為線上或離線的策略改進（online or offline policy）提供密集獎勵（dense rewards）。
 
-## 概觀（overview）
+## 概觀（overview）[[overview]]
 
 SARM 具有以下特點（features）：
 
@@ -44,7 +44,7 @@ progress_t = P_{k-1} + α̅_k × τ_t
 
 這確保了相同的任務狀態（identical task states）會對映到一致的進度值（progress values），即使跨不同長度的示範（demonstrations of different lengths）也是如此。
 
-## 輸入與目標（inputs and targets, what the new code expects）
+## 輸入與目標（inputs and targets, what the new code expects）[[inputs-and-targets-what-the-new-code-expects]]
 
 SARM 透過其處理器（`src/lerobot/rewards/sarm/processor_sarm.py`）進行訓練（training），該處理器（processor）會：
 
@@ -60,7 +60,7 @@ SARM 透過其處理器（`src/lerobot/rewards/sarm/processor_sarm.py`）進行�
 
 ---
 
-## 標註模式（annotation modes）
+## 標註模式（annotation modes）[[annotation-modes]]
 
 您可以從決定進度標籤（progress labels）如何計算的 **3 種標註模式（3 annotation modes）**中選擇：
 
@@ -70,7 +70,7 @@ SARM 透過其處理器（`src/lerobot/rewards/sarm/processor_sarm.py`）進行�
 | `dense_only`   | Dense（VLM）           | 雙頭（sparse 自動產生） | 進行詳細子任務追蹤（retailed subtask tracking）而無需定義高階階段（high-level stages） |
 | `dual`         | Sparse + Dense（VLM）  | 雙頭                    | 完整的 SARM 論文設定，兼具兩種粒度（granularities）                                    |
 
-### 模式細節（mode details）
+### 模式細節（mode details）[[mode-details]]
 
 <hfoptions id="mode_explanation">
 <hfoption id="single_stage">
@@ -81,7 +81,7 @@ SARM 透過其處理器（`src/lerobot/rewards/sarm/processor_sarm.py`）進行�
 - **dense 頭（dense head）**：不使用
 - **最適合**：簡單任務（simple tasks）、快速實驗，或當 VLM 標註（annotation）不可用時
 
-## 設定您的環境（set up your environment）
+## 設定您的環境（set up your environment）[[set-up-your-environment]]
 
 1. 依照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 2. 執行以下指令安裝 SARM 相依套件（dependencies）：
@@ -131,7 +131,7 @@ pip install -e ".[sarm]"
 
 ---
 
-## 步驟 1：子任務標註（subtask annotation）
+## 步驟 1：子任務標註（subtask annotation）[[step-1-subtask-annotation]]
 
 <hfoptions id="annotation_mode">
 <hfoption id="single_stage">
@@ -188,7 +188,7 @@ python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
 </hfoption>
 </hfoptions>
 
-### 標註引數（annotation arguments）
+### 標註引數（annotation arguments）[[annotation-arguments]]
 
 | 引數（argument）       | 描述（description）                                                                  |
 | ---------------------- | ------------------------------------------------------------------------------------ |
@@ -207,7 +207,7 @@ python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
 
 ---
 
-## 步驟 2：驗證標註（verify annotations）
+## 步驟 2：驗證標註（verify annotations）[[step-2-verify-annotations]]
 
 <hfoptions id="verify_mode">
 <hfoption id="single_stage">
@@ -249,7 +249,7 @@ python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
 
 這會產生視覺化，顯示疊上子任務（task）邊界的影片影格（frame）以及子任務的時間軸。
 
-### 視覺化引數（visualization arguments）
+### 視覺化引數（visualization arguments）[[visualization-arguments]]
 
 | 引數（argument）       | 描述（description）                                           |
 | ---------------------- | ------------------------------------------------------------- |
@@ -261,7 +261,7 @@ python src/lerobot/data_processing/sarm_annotations/subtask_annotation.py \
 
 ---
 
-## 步驟 3：訓練 SARM（Train SARM）
+## 步驟 3：訓練 SARM（Train SARM）[[step-3-train-sarm]]
 
 <hfoptions id="train_mode">
 <hfoption id="single_stage">
@@ -323,11 +323,11 @@ lerobot-train \
 </hfoption>
 </hfoptions>
 
-### 多 GPU 訓練（multi-gpu training）
+### 多 GPU 訓練（multi-gpu training）[[multi-gpu-training]]
 
 加上 `accelerate launch --multi_gpu --num_processes=4` 以使用多個 GPU 進行訓練（training）。
 
-### 訓練引數（training arguments）
+### 訓練引數（training arguments）[[training-arguments]]
 
 | 引數（argument）           | 描述（description）                                                                     | 預設（default）          |
 | -------------------------- | --------------------------------------------------------------------------------------- | ------------------------ |
@@ -339,7 +339,7 @@ lerobot-train \
 
 ---
 
-## 步驟 4：視覺化預測（visualize predictions）
+## 步驟 4：視覺化預測（visualize predictions）[[step-4-visualize-predictions]]
 
 使用帶 `--visualize-only` 的 `compute_rabc_weights.py` 來視覺化模型預測（model predictions）（以及若可用，標註推導出的目標 annotation-derived targets），而不寫入 parquet 檔案。
 
@@ -391,7 +391,7 @@ python -m lerobot.rewards.sarm.compute_rabc_weights \
 - **階段機率（stage probabilities）**：預測階段機率（predicted stage probabilities）的堆疊面積圖（stacked area plot）
 - **樣本影格（sample frames）**：來自回合（episode）、帶有進度/階段標籤（progress/stage labels）的關鍵影格（key frames）
 
-### 視覺化引數（visualization arguments）
+### 視覺化引數（visualization arguments）[[visualization-arguments-1]]
 
 | 引數（argument）       | 描述（description）                                                     |
 | ---------------------- | ----------------------------------------------------------------------- |
@@ -402,14 +402,14 @@ python -m lerobot.rewards.sarm.compute_rabc_weights \
 
 ---
 
-## 步驟 5（可選）：以 RA-BC 訓練策略（train policy with RA-BC）
+## 步驟 5（可選）：以 RA-BC 訓練策略（train policy with RA-BC）[[step-5-optional-train-policy-with-ra-bc]]
 
 獎勵對齊行為複製（Reward-Aligned Behavior Cloning, RA-BC）使用訓練好的 SARM 模型（trained SARM model），根據預測的進度（predicted progress）改善來為訓練樣本加權（weight training samples）。這需要兩個步驟：
 
 1. 使用訓練好的 SARM 模型（trained SARM model）**預先計算（precompute）**所有影格（frames）的**進度值（progress values）**
 2. 使用預先計算的值（precomputed values）以 RA-BC 加權（weighting）**訓練策略（train a policy）**
 
-### RA-BC 如何運作（how RA-BC works）
+### RA-BC 如何運作（how RA-BC works）[[how-ra-bc-works]]
 
 對每個訓練樣本（training sample），RA-BC 會計算進度差（progress delta）：
 
@@ -424,7 +424,7 @@ r_i = φ(o_{t+Δ}) - φ(o_t)
 - **軟權重**：`w̃_i = clip((r_i − (μ − 2σ)) / (4σ + ε), 0, 1)`
 - **最終權重**：`w_i = 𝟙{r_i > κ} + 𝟙{0 ≤ r_i ≤ κ} × w̃_i`
 
-### 步驟 5a：計算 SARM 進度值（compute sarm progress values）
+### 步驟 5a：計算 SARM 進度值（compute sarm progress values）[[step-5a-compute-sarm-progress-values]]
 
 首先，在您資料集（dataset）中的所有影格（frames）上執行 SARM 模型（model）以計算進度值（progress values）：
 
@@ -463,7 +463,7 @@ python -m lerobot.rewards.sarm.compute_rabc_weights \
 | `progress_sparse` | sparse 頭（head）進度值 [0, 1]                           |
 | `progress_dense`  | dense 頭（head）進度值 [0, 1]（若有計算）                |
 
-### 步驟 5b：以 RA-BC 訓練策略（train policy with ra-bc）
+### 步驟 5b：以 RA-BC 訓練策略（train policy with ra-bc）[[step-5b-train-policy-with-ra-bc]]
 
 一旦有了進度檔案（progress file），就以 RA-BC 加權訓練您的策略（train your policy）。若未明確提供，進度檔案會從資料集路徑（dataset path）自動偵測（`sarm_progress.parquet`）。目前 PI0、PI0.5 與 SmolVLA 支援 RA-BC：
 
@@ -496,7 +496,7 @@ lerobot-train \
 | `--sample_weighting.kappa`         | 高品質樣本（high-quality samples）的閾值 κ                            | `0.01`                  |
 | `--sample_weighting.epsilon`       | 數值穩定性（numerical stability）的微小常數                           | `1e-6`                  |
 
-### 調校 RA-BC 的 Kappa（tuning RA-BC Kappa）
+### 調校 RA-BC 的 Kappa（tuning RA-BC Kappa）[[tuning-ra-bc-kappa]]
 
 `kappa` 參數（parameter）是決定哪些樣本（samples）獲得完整權重（w=1）的閾值（threshold）。理解如何調校它對於 RA-BC 有效運作至關重要。
 
@@ -542,7 +542,7 @@ lerobot-train \
 
 若您的資料集（dataset）已經是高品質（所有示範的進度皆一致），RA-BC 不會提供太多益處，因為沒有東西可以過濾。
 
-### 以 RA-BC 進行多 GPU 訓練（multi-gpu training with RA-BC）
+### 以 RA-BC 進行多 GPU 訓練（multi-gpu training with RA-BC）[[multi-gpu-training-with-ra-bc]]
 
 ```bash
 accelerate launch \
@@ -560,28 +560,28 @@ accelerate launch \
 
 ---
 
-## 提示與最佳實務（tips & best practices）
+## 提示與最佳實務（tips & best practices）[[tips-best-practices]]
 
-### 選擇模式（choosing a mode）
+### 選擇模式（choosing a mode）[[choosing-a-mode]]
 
 - **從 `single_stage` 開始**進行快速實驗 - 沒有標註開銷（annotation overhead）
 - 當您想要詳細的進度追蹤（progress tracking）但任務（task）沒有明確的高階階段（high-level stages）時，使用 **`dense_only`**
 - 對於粗粒度與細粒度進度（coarse and fine-grained progress）皆有意義的複雜任務（complex tasks），使用 **`dual`**
 
-### 標註品質（annotation quality）
+### 標註品質（annotation quality）[[annotation-quality]]
 
 1. **子任務名稱要具體（be specific with subtask names）**：不要用「fold」，改用「grab near side and fold toward center」
 2. **以視覺化驗證（verify with visualization）**：訓練（training）前務必檢查幾個回合（few episodes）
 3. **命名一致（consistent naming）**：在所有回合（episode）中使用相同的子任務名稱（same subtask names）
 
-### RA-BC
+### RA-BC[[ra-bc]]
 
 1. **先訓練SARM（train SARM first）**：RA-BC 的品質完全取決於 SARM 的品質
-2. **監控（monitor） `sample_weight_mean_weight`**：若它 ≈ 1.0，請提高 kappa（請參閱[調校 RA-BC 的 Kappa](#%E8%AA%BF%E6%A0%A1-ra-bc-%E7%9A%84-kappatuning-ra-bc-kappa)）
+2. **監控（monitor） `sample_weight_mean_weight`**：若它 ≈ 1.0，請提高 kappa（請參閱[調校 RA-BC 的 Kappa](#tuning-ra-bc-kappa)）
 
 ---
 
-## 引用
+## 引用[[citation]]
 
 ```bibtex
 @article{chen2025sarm,

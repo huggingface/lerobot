@@ -1,8 +1,8 @@
-# 從 Hub 載入環境（loading environments from the Hub）
+# 從 Hub 載入環境（loading environments from the Hub）[[loading-environments-from-the-hub]]
 
 **EnvHub** 功能讓你可以透過單行程式碼，直接從 Hugging Face Hub 載入模擬環境（simulation environment）。這解鎖了一種強大的協作新模式（model for collaboration）：環境（environments）不再被鎖在龐大的單體函式庫（monolithic libraries）中，任何人都可以發布自訂環境（publish custom environments）並與社群分享。
 
-## 什麼是 EnvHub（what is EnvHub）？
+## 什麼是 EnvHub（what is EnvHub）？[[what-is-envhub]]
 
 EnvHub 讓你可以使用自己的機器人模型（robot models）與場景來建立自訂的機器人模擬環境（custom robotics simulation environments），並透過 LeRobot 框架讓任何人都能輕鬆使用。
 
@@ -29,7 +29,7 @@ EnvHub 套件儲存在 Hugging Face Hub 上，可以透過 LeRobot 以單行程�
 
 最後，你的環境必須實作標準的 `gym.vector.VectorEnv` 介面（interface）才能與 LeRobot 配合使用，包括 `reset` 和 `step` 等方法（methods）。
 
-## 快速開始（quick start）
+## 快速開始（quick start）[[quick-start]]
 
 從 Hub 載入環境（loading an environment）非常簡單：
 
@@ -48,11 +48,11 @@ env = make_env("lerobot/cartpole-env", trust_remote_code=True)
   以確保可重現性（reproducibility）與安全性（security）。
 </Tip>
 
-## 儲存庫結構（repository structure）
+## 儲存庫結構（repository structure）[[repository-structure]]
 
 要讓你的環境（environment）可以從 Hub 載入，你的儲存庫（repository）至少必須包含：
 
-### 必要檔案（required files）
+### 必要檔案（required files）[[required-files]]
 
 **`env.py`**（或自訂 Python 檔案）
 
@@ -62,7 +62,7 @@ env = make_env("lerobot/cartpole-env", trust_remote_code=True)
   - 一個單一的 `gym.Env`（將被自動包裝）
   - 一個對應 `{suite_name: {task_id: VectorEnv}}` 的字典（用於多任務（task）基準測試（benchmark））
 
-### 可選檔案（optional files）
+### 可選檔案（optional files）[[optional-files]]
 
 **`requirements.txt`**
 
@@ -78,7 +78,7 @@ env = make_env("lerobot/cartpole-env", trust_remote_code=True)
 
 - 從你的儲存庫（repository）中排除不必要的檔案
 
-### 儲存庫結構範例（example repository structure）
+### 儲存庫結構範例（example repository structure）[[example-repository-structure]]
 
 ```
 my-environment-repo/
@@ -91,9 +91,9 @@ my-environment-repo/
     └── task_config.yaml
 ```
 
-## 建立您的環境儲存庫（creating your environment repository）
+## 建立您的環境儲存庫（creating your environment repository）[[creating-your-environment-repository]]
 
-### 步驟 1：定義您的環境（define your environment）
+### 步驟 1：定義您的環境（define your environment）[[step-1-define-your-environment]]
 
 建立一個包含 `make_env` 函式（function）的 `env.py` 檔案：
 
@@ -125,7 +125,7 @@ def make_env(n_envs: int = 1, use_async_envs: bool = False):
     return vec_env
 ```
 
-### 步驟 2：本地測試（test locally）
+### 步驟 2：本地測試（test locally）[[step-2-test-locally]]
 
 上傳之前，先在本地測試你的環境（environment）：
 
@@ -147,7 +147,7 @@ print(f"Observation shape: {obs.shape if hasattr(obs, 'shape') else type(obs)}")
 env.close()
 ```
 
-### 步驟 3：上傳到 Hub（upload to the Hub）
+### 步驟 3：上傳到 Hub（upload to the Hub）[[step-3-upload-to-the-hub]]
 
 將你的儲存庫（repository）上傳到 Hugging Face：
 
@@ -187,9 +187,9 @@ api.upload_folder(
 )
 ```
 
-## 從 Hub 載入環境（loading environments from the Hub）
+## 從 Hub 載入環境（loading environments from the Hub）[[loading-environments-from-the-hub-1]]
 
-### 基本用法（basic usage）
+### 基本用法（basic usage）[[basic-usage]]
 
 ```python
 from lerobot.envs import make_env
@@ -211,7 +211,7 @@ action = env.action_space.sample()
 obs, reward, terminated, truncated, info = env.step(action)
 ```
 
-### 進階：固定到特定版本（pinning to specific versions）
+### 進階：固定到特定版本（pinning to specific versions）[[advanced-pinning-to-specific-versions]]
 
 為了可重現性（reproducibility）與安全性（security），固定到特定的 Git 修訂版本（revision）：
 
@@ -226,7 +226,7 @@ env = make_env("username/my-env@abc123def456", trust_remote_code=True)
 env = make_env("username/my-env@v1.0.0", trust_remote_code=True)
 ```
 
-### 自訂檔案路徑（custom file paths）
+### 自訂檔案路徑（custom file paths）[[custom-file-paths]]
 
 如果你的環境定義（environment definition）不在 `env.py` 中：
 
@@ -238,7 +238,7 @@ env = make_env("username/my-env:custom_env.py", trust_remote_code=True)
 env = make_env("username/my-env@v1.0:envs/task_a.py", trust_remote_code=True)
 ```
 
-### 非同步環境（async environments）
+### 非同步環境（async environments）[[async-environments]]
 
 使用多個環境（multiple environments）時提升效能：
 
@@ -251,7 +251,7 @@ envs_dict = make_env(
 )
 ```
 
-## URL 格式參考（URL format reference）
+## URL 格式參考（URL format reference）[[url-format-reference]]
 
 Hub URL 格式支援多種模式（several patterns）：
 
@@ -262,7 +262,7 @@ Hub URL 格式支援多種模式（several patterns）：
 | `user/repo:path`     | 載入自訂檔案              | `make_env("lerobot/envs:pusht.py")`    |
 | `user/repo@rev:path` | 修訂版本 + 自訂檔案       | `make_env("lerobot/envs@v1:pusht.py")` |
 
-## 多任務環境（multi-task environments）
+## 多任務環境（multi-task environments）[[multi-task-environments]]
 
 對於包含多個任務（multiple tasks）的基準測試（benchmarks，如 LIBERO），回傳（return）巢狀字典（nested dictionary）：
 
@@ -282,7 +282,7 @@ def make_env(n_envs: int = 1, use_async_envs: bool = False):
     }
 ```
 
-## 安全性考量（security considerations）
+## 安全性考量（security considerations）[[security-considerations]]
 
 <Tip warning={true}>
   **重要**：`trust_remote_code=True` 旗標（flag）是執行來自 Hub
@@ -310,7 +310,7 @@ env = make_env("random-user/untrusted-env", trust_remote_code=True)
 env = make_env("trusted-org/verified-env@a1b2c3d4", trust_remote_code=True)
 ```
 
-## 範例：從 Hub 載入 CartPole
+## 範例：從 Hub 載入 CartPole[[example-cartpole-from-the-hub]]
 
 以下是使用參考 CartPole 環境（environment）的完整範例：
 
@@ -341,9 +341,9 @@ print(f"Average reward: {total_reward.mean():.2f}")
 env.close()
 ```
 
-## EnvHub 的優點（benefits of EnvHub）
+## EnvHub 的優點（benefits of EnvHub）[[benefits-of-envhub]]
 
-### 對環境作者而言（for environment authors）
+### 對環境作者而言（for environment authors）[[for-environment-authors]]
 
 - **輕鬆發布（easy distribution）**：無需 PyPI 打包
 - **版本控制（version control）**：使用 Git 進行環境版本管理（environment versioning）
@@ -351,23 +351,23 @@ env.close()
 - **文件撰寫（documentation）**：Hub README 有精美的渲染效果
 - **社群（community）**：直接觸及 LeRobot 使用者
 
-### 對研究人員而言（for researchers）
+### 對研究人員而言（for researchers）[[for-researchers]]
 
 - **快速實驗（quick experiments）**：一行程式碼載入任何環境（environment）
 - **可重現性（reproducibility）**：固定（pin）到特定 commit
 - **探索（discovery）**：在 Hub 上瀏覽環境（environments）
 - **無衝突（no conflicts）**：無需安裝互相衝突的套件（conflicting packages）
 
-### 對社群而言（for the community）
+### 對社群而言（for the community）[[for-the-community]]
 
 - **成長中的生態系統（growing ecosystem）**：更多元的模擬任務（simulation tasks）
 - **標準化（standardization）**：共同的 `make_env` API
 - **協作（collaboration）**：Fork 並改進現有環境（environments）
 - **可及性（accessibility）**：降低分享研究的門檻（barrier）
 
-## 疑難排解
+## 疑難排解[[troubleshooting]]
 
-### "Refusing to execute remote code"
+### "Refusing to execute remote code"[[refusing-to-execute-remote-code]]
 
 你必須明確傳遞 `trust_remote_code=True`：
 
@@ -375,7 +375,7 @@ env.close()
 env = make_env("user/repo", trust_remote_code=True)
 ```
 
-### "Module X not found"
+### "Module X not found"[[module-x-not-found]]
 
 Hub 環境（environment）有你需要安裝的相依套件（dependency）：
 
@@ -384,7 +384,7 @@ Hub 環境（environment）有你需要安裝的相依套件（dependency）：
 pip install gymnasium numpy
 ```
 
-### "make_env not found in module"
+### "make_env not found in module"[[makeenv-not-found-in-module]]
 
 你的 `env.py` 必須暴露一個 `make_env` 函式（function）：
 
@@ -394,7 +394,7 @@ def make_env(n_envs: int, use_async_envs: bool):
     pass
 ```
 
-### 環境回傳了錯誤的類型（environment returns wrong type）
+### 環境回傳了錯誤的類型（environment returns wrong type）[[environment-returns-wrong-type]]
 
 `make_env` 函式（function）必須回傳（return）：
 
@@ -402,7 +402,7 @@ def make_env(n_envs: int, use_async_envs: bool):
 - 一個單一的 `gym.Env`，或
 - 一個字典 `{suite_name: {task_id: VectorEnv}}`
 
-## 最佳實踐（best practices）
+## 最佳實踐（best practices）[[best-practices]]
 
 1. **為你的環境撰寫文件（document your environment）**：在 README 中包含觀測/動作空間描述（observation/action space descriptions）、獎勵結構（reward structure）和終止條件（termination conditions）
 2. **加入 requirements.txt（add requirements.txt）**：列出所有相依套件（dependencies）及其版本（versions）
@@ -412,7 +412,7 @@ def make_env(n_envs: int, use_async_envs: bool):
 6. **保持簡潔（keep it simple）**：盡可能減少相依套件（dependency）
 7. **為你的作品授權（license your work）**：加入 LICENSE 檔案以釐清使用條款（usage terms）
 
-## 未來方向（future directions）
+## 未來方向（future directions）[[future-directions]]
 
 EnvHub 生態系統（ecosystem）開啟了令人興奮的可能性：
 
@@ -425,7 +425,7 @@ EnvHub 生態系統（ecosystem）開啟了令人興奮的可能性：
 
 隨著更多研究人員和開發者的貢獻，可用環境的多樣性和品質將不斷提升，惠及整個機器人學習社群。
 
-## 另請參閱
+## 另請參閱[[see-also]]
 
 - [Hugging Face Hub 文件](https://huggingface.co/docs/hub/en/index)
 - [Gymnasium 文件](https://gymnasium.farama.org/index.html)

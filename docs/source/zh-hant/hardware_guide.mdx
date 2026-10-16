@@ -24,10 +24,10 @@
 機器人模仿學習（imitation learning）通常在**對資料集進行 5–10 個 epoch（5–10 epochs over the dataset）** 後收斂，而非數十萬個原始步數（raw steps）。一旦確定回合數量（epoch count），實際耗時（wall-clock）基本上就是：
 
 ```text
-total_frames = 所有回合（episode）的總幀數 # 50 ep × 30 fps × 30 s ≈ 45,000
+total_frames    = sum of frames over all episodes      # 50 ep × 30 fps × 30 s ≈ 45,000
 steps_per_epoch = ceil(total_frames / (num_gpus × batch_size))
-total_steps = epochs × steps_per_epoch
-wall_clock ≈ total_steps × per_step_time
+total_steps     = epochs × steps_per_epoch
+wall_clock      ≈ total_steps × per_step_time
 ```
 
 每步時間（per-step time）取決於策略（policy）和 GPU。下表中的數字是參考錨點（anchors）——選擇最接近你設置的那一行，如果訓練（training）更長或更短，則按 `total_steps` 線性縮放。

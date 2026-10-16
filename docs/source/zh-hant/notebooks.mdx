@@ -1,10 +1,10 @@
-# 🤗 LeRobot Notebooks
+# 🤗 LeRobot Notebooks[[lerobot-notebooks]]
 
 本儲存庫（repository）包含使用 LeRobot 的範例 notebook。這些 notebook 示範如何使用標準化的策略（standardized policies），在真實或模擬資料集（real or simulation datasets）上訓練策略（train policies）。
 
 ---
 
-### 訓練 ACT（training ACT）
+### 訓練 ACT（training ACT）[[training-act]]
 
 [ACT](https://huggingface.co/papers/2304.13705)（Action Chunking Transformer）是一種為模仿學習（imitation learning），基於 transformer 的策略架構（transformer-based policy architecture），會處理機器人狀態（robot states）與攝影機輸入（camera inputs），以產生流暢且分塊的動作序列（smooth, chunked action sequences）。
 
@@ -16,7 +16,7 @@
 
 100k 步（steps）的預期訓練時間（training time）：在 NVIDIA A100 GPU 上、批次大小（batch size）為 `64` 時約 1.5 小時。
 
-### 訓練 SmolVLA（training SmolVLA）
+### 訓練 SmolVLA（training SmolVLA）[[training-smolvla]]
 
 [SmolVLA](https://huggingface.co/papers/2506.01844) 是一個小巧但高效的視覺語言動作模型（Vision-Language-Action model）。它體積精簡，僅有 450 M 參數（parameter），由 Hugging Face 開發。
 
