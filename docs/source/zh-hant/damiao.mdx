@@ -1,12 +1,12 @@
 # Damiao 馬達與 CAN 匯流排[[damiao-motors-and-can-bus]]
 
-本指南說明如何透過 CAN 匯流排通訊（bus communication），在 LeRobot 中設定與使用 Damiao 馬達。
+本指南說明如何在 LeRobot 中，透過 CAN 匯流排（bus）通訊設定並使用 Damiao 馬達。
 
-目前僅支援 Linux，因為 OpenArms 的 CAN 轉接器只有 Linux 驅動程式（drivers）。
+目前只支援 Linux，因為 OpenArms 的 CAN 轉接器只有 Linux 的驅動程式。
 
 ## Linux CAN 設定[[linux-can-setup]]
 
-使用 Damiao 馬達前，你需要在 Linux 系統上設定 CAN 介面（interface）。
+使用 Damiao 馬達前，你需要在 Linux 系統上設定 CAN 介面。
 
 ### 安裝 CAN 工具[[install-can-utilities]]
 
@@ -34,16 +34,16 @@ sudo ip link set can0 up
 
 ### 使用 LeRobot 設定 CAN 介面[[configure-can-interface-using-lerobot]]
 
-LeRobot 提供一個工具腳本來設定與測試 CAN 介面（interfaces）：
+LeRobot 提供一個工具腳本，用來設定與測試 CAN 介面：
 
 ```bash
-# 設定多個介面（例如：使用 2 條 CAN 匯流排的 OpenArms Followers）
+# 設定多個介面（例如：使用 2 條 CAN 匯流排的 OpenArms 從臂）
 lerobot-setup-can --mode=setup --interfaces=can0,can1
 ```
 
 ## 除錯 CAN 通訊[[debugging-can-communication]]
 
-使用內建的除錯工具測試馬達通訊（motor communication）：
+使用內建的除錯工具測試馬達通訊：
 
 ```bash
 # 測試所有介面上的馬達
@@ -53,7 +53,7 @@ lerobot-setup-can --mode=test --interfaces=can0,can1
 lerobot-setup-can --mode=speed --interfaces=can0
 ```
 
-測試模式會掃描馬達（ID 0x01-0x08）並回報哪些有回應（respond）。範例輸出：
+測試模式會掃描馬達（ID 0x01-0x08），並回報哪些馬達有回應。範例輸出：
 
 ```
 can0: UP (CAN FD)
@@ -127,36 +127,36 @@ bus.disable_torque()
 
 ## 設定選項[[configuration-options]]
 
-| 參數（parameter） | 預設值（default） | 說明（description）                                                       |
-| ----------------- | ----------------- | ------------------------------------------------------------------------- |
-| `port`            | -                 | CAN 介面（interface, `can0`）或序列埠（serial port, `/dev/cu.usbmodem*`） |
-| `use_can_fd`      | `True`            | 啟用 CAN FD 以獲得更高的資料傳輸率（data rates）                          |
-| `bitrate`         | `1000000`         | 標稱位元率（1 Mbps）                                                      |
-| `data_bitrate`    | `5000000`         | CAN FD 資料位元率（5 Mbps）                                               |
+| 參數           | 預設值    | 說明                                              |
+| -------------- | --------- | ------------------------------------------------- |
+| `port`         | -         | CAN 介面（`can0`）或序列埠（`/dev/cu.usbmodem*`） |
+| `use_can_fd`   | `True`    | 啟用 CAN FD，以取得更高的資料傳輸率               |
+| `bitrate`      | `1000000` | 標稱位元率（1 Mbps）                              |
+| `data_bitrate` | `5000000` | CAN FD 資料位元率（5 Mbps）                       |
 
 ## 馬達設定[[motor-configuration]]
 
 每個馬達需要：
 
-- `id`：用於發送命令的 CAN ID
-- `motor_type`：其中一種支援的馬達類型（motor types，例如 `"dm8009"`、`"dm4340"`）
-- `recv_id`：用於接收回應（responses）的 CAN ID
+- `id`：用於傳送命令的 CAN ID
+- `motor_type`：支援的馬達類型之一（例如 `"dm8009"`、`"dm4340"`）
+- `recv_id`：用於接收回應的 CAN ID
 
-OpenArms 的預設 ID 遵循以下模式：發送 ID `0x0N`、接收 ID `0x1N`，其中 N 為關節編號（joint number）。
+OpenArms 的預設 ID 遵循以下規則：傳送 ID 為 `0x0N`、接收 ID 為 `0x1N`，其中 N 為關節編號。
 
 ## 疑難排解[[troubleshooting]]
 
 ### 馬達沒有回應[[no-response-from-motors]]
 
-1. **檢查電源（check power）**
-2. **確認 CAN 接線（verify CAN wiring）**：檢查 CAN-H、CAN-L 與 GND 的連接
-3. **檢查馬達 ID（check motor IDs）**：使用 Damiao 除錯工具驗證/設定 ID
-4. **測試 CAN 介面（test CAN interface）**：執行 `candump can0` 查看是否有收到訊息
-5. **執行診斷（run diagnostics）**：`lerobot-setup-can --mode=test --interfaces=can0`
+1. **檢查電源**
+2. **確認 CAN 接線**：檢查 CAN-H、CAN-L 與 GND 的連接
+3. **檢查馬達 ID**：使用 Damiao Debugging Tools 確認或設定 ID
+4. **測試 CAN 介面**：執行 `candump can0`，查看是否有收到訊息
+5. **執行診斷**：`lerobot-setup-can --mode=test --interfaces=can0`
 
 ### 馬達逾時參數[[motor-timeout-parameter]]
 
-若馬達設定的 timeout=0，它們將不會回應命令。請使用 Damiao 除錯工具（Damiao Debugging Tools）設定非零的逾時值（non-zero timeout value）。
+如果馬達設定為 timeout=0，就不會回應命令。請使用 Damiao Debugging Tools 設定非零的逾時值。
 
 ### 確認 CAN FD 狀態[[verify-can-fd-status]]
 
