@@ -131,6 +131,10 @@ class ACTConfig(PreTrainedConfig):
         super().__post_init__()
 
         """Input validation (not exhaustive)."""
+        if self.chunk_size <= 0:
+            raise ValueError(f"`chunk_size` must be positive. Got {self.chunk_size}.")
+        if self.n_action_steps <= 0:
+            raise ValueError(f"`n_action_steps` must be positive. Got {self.n_action_steps}.")
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
