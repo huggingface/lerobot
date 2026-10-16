@@ -24,6 +24,7 @@ This module provides utilities for:
 """
 
 import logging
+import math
 import shutil
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -636,6 +637,110 @@ def _copy_and_reindex_data(
     return episode_data_metadata
 
 
+def _try_keep_episodes_from_video_by_stream_copy(
+    input_path: Path,
+    output_path: Path,
+    episodes_to_keep: list[tuple[int, int]],
+    fps: float,
+) -> bool:
+    """Keep specified episodes by copying encoded packets without re-encoding.
+
+    Validate cut points before writing; return False if re-encoding is needed.
+    Two demux passes avoid holding encoded payloads in memory.
+
+    Args:
+        input_path: Source video file path.
+        output_path: Destination video file path.
+        episodes_to_keep: List of (start_frame, end_frame) tuples for episodes to keep.
+            Ranges are half-open intervals: [start_frame, end_frame), where start_frame
+            is inclusive and end_frame is exclusive.
+        fps: Frame rate of the video.
+
+    Returns:
+        True if the output was written, False if the file cannot be cut without re-encoding.
+    """
+    import av
+
+    frame_ranges = sorted(episodes_to_keep)
+    if any(
+        prev_end > start for (_, prev_end), (start, _) in zip(frame_ranges, frame_ranges[1:], strict=False)
+    ):
+        return False
+
+    with av.open(str(input_path)) as in_container:
+        if not in_container.streams.video:
+            return False
+        v_in = in_container.streams.video[0]
+        if v_in.time_base is None:
+            return False
+        ticks_per_frame = round((1 / fps) / v_in.time_base)
+        if ticks_per_frame <= 0:
+            return False
+
+        pts: list[int] = []
+        is_keyframe: list[bool] = []
+        for packet in in_container.demux(v_in):
+            if packet.size == 0:
+                continue
+            if packet.pts is None:
+                return False
+            pts.append(packet.pts)
+            is_keyframe.append(packet.is_keyframe)
+
+    num_packets = len(pts)
+    prefix_max = [-math.inf] * (num_packets + 1)
+    for i in range(num_packets):
+        prefix_max[i + 1] = max(prefix_max[i], pts[i])
+    suffix_min = [math.inf] * (num_packets + 1)
+    for i in reversed(range(num_packets)):
+        suffix_min[i] = min(suffix_min[i + 1], pts[i])
+
+    # Demuxing yields packets in decode order, so a packet index is only a frame index at a cut
+    # where decode and presentation order agree: a keyframe that is presented before every later
+    # packet and after every earlier one. A keyframe followed by leading pictures (open GOP) fails
+    # this, because those pictures are presented before it and reference the previous GOP.
+    def is_clean_cut(i: int) -> bool:
+        if i == num_packets:
+            return True
+        return 0 <= i < num_packets and is_keyframe[i] and prefix_max[i] < pts[i] == suffix_min[i]
+
+    if any(not (is_clean_cut(start) and is_clean_cut(end)) for start, end in frame_ranges):
+        return False
+
+    pts_offsets = []
+    out_start = 0
+    for start, end in frame_ranges:
+        pts_offsets.append(out_start - pts[start])
+        out_start += (end - start) * ticks_per_frame
+
+    with av.open(str(input_path)) as in_container, av.open(str(output_path), mode="w") as out_container:
+        v_in = in_container.streams.video[0]
+        # `opaque` copies codec parameters without looking up an encoder named after the input's
+        # decoder, which does not exist for e.g. AV1 decoded by libdav1d.
+        v_out = out_container.add_stream_from_template(v_in, opaque=True)
+
+        segment_idx = 0
+        packet_idx = 0
+        for packet in in_container.demux(v_in):
+            if packet.size == 0:
+                continue
+            while segment_idx < len(frame_ranges) and packet_idx >= frame_ranges[segment_idx][1]:
+                segment_idx += 1
+            if segment_idx == len(frame_ranges):
+                break
+            if packet_idx >= frame_ranges[segment_idx][0]:
+                # Shift both timestamps to preserve the decode/presentation delay for B-frames.
+                offset = pts_offsets[segment_idx]
+                packet.pts += offset
+                if packet.dts is not None:
+                    packet.dts += offset
+                packet.stream = v_out
+                out_container.mux(packet)
+            packet_idx += 1
+
+    return True
+
+
 def _keep_episodes_from_video_with_av(
     input_path: Path,
     output_path: Path,
@@ -645,8 +750,8 @@ def _keep_episodes_from_video_with_av(
 ) -> None:
     """Keep only specified episodes from a video file using PyAV.
 
-    This function decodes frames from specified frame ranges and re-encodes them with
-    properly reset timestamps to ensure monotonic progression.
+    Copy encoded packets when cut points are safe; otherwise re-encode the selected
+    frames. Both paths reset timestamps onto a continuous output timeline.
 
     Args:
         input_path: Source video file path.
@@ -664,6 +769,10 @@ def _keep_episodes_from_video_with_av(
     if not episodes_to_keep:
         raise ValueError("No episodes to keep")
 
+    if _try_keep_episodes_from_video_by_stream_copy(input_path, output_path, episodes_to_keep, fps):
+        return
+
+    logger.info(f"Re-encoding {input_path} with {len(episodes_to_keep)} episodes")
     in_container = av.open(str(input_path))
 
     # Check if video stream exists.
@@ -838,7 +947,7 @@ def _copy_and_reindex_videos(
                     )
                     episodes_to_keep_ranges.append((from_frame, to_frame))
 
-                # Use PyAV filters to efficiently re-encode only the desired segments.
+                # Keep the desired segments using stream copy or re-encoding.
                 assert src_dataset.meta.video_path is not None
                 src_video_path = src_dataset.root / src_dataset.meta.video_path.format(
                     video_key=video_key, chunk_index=src_chunk_idx, file_index=src_file_idx
@@ -848,10 +957,6 @@ def _copy_and_reindex_videos(
                 )
                 dst_video_path.parent.mkdir(parents=True, exist_ok=True)
 
-                logger.info(
-                    f"Re-encoding {video_key} (chunk {src_chunk_idx}, file {src_file_idx}) "
-                    f"with {len(episodes_to_keep_ranges)} episodes"
-                )
                 _keep_episodes_from_video_with_av(
                     src_video_path,
                     dst_video_path,
