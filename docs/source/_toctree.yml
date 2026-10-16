@@ -111,6 +111,8 @@
     title: Real-Time Chunking (RTC)
   title: "Inference"
 - sections:
+  - local: simulator_server
+    title: "Simulation: In-Process or Served"
   - local: envhub
     title: Environments from the Hub
   - local: envhub_leisaac
@@ -118,7 +120,7 @@
   title: "Simulation"
 - sections:
   - local: adding_benchmarks
-    title: Adding a New Benchmark
+    title: Adding a Benchmark
   - local: libero
     title: LIBERO
   - local: libero_plus

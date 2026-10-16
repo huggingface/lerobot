@@ -13,10 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib.util
-import os
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from functools import singledispatch
 from typing import Any
 
@@ -24,33 +22,24 @@ import einops
 import gymnasium as gym
 import numpy as np
 import torch
-from huggingface_hub import hf_hub_download, snapshot_download
 from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
+
+# Compatibility exports of the torch-free Hub loader, shared with the simulator server.
+from lerobot.sims.native.envhub import (
+    _call_make_env as _call_make_env,
+    _download_hub_file as _download_hub_file,
+    _import_hub_module as _import_hub_module,
+    _load_module_from_path as _load_module_from_path,
+    _normalize_hub_result as _normalize_hub_result,
+    _parse_hub_url as _parse_hub_url,
+)
+from lerobot.sims.native.utils import parse_camera_names as parse_camera_names
 from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 
 from .configs import EnvConfig
-
-
-def parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:
-    """Normalize ``camera_name`` into a non-empty list of strings.
-
-    Accepts a comma-separated string (``"cam_a,cam_b"``) or a sequence of
-    strings (tuples/lists). Whitespace is stripped; empty entries are
-    dropped. Raises ``TypeError`` for unsupported input types and
-    ``ValueError`` when the normalized list is empty.
-    """
-    if isinstance(camera_name, str):
-        cams = [c.strip() for c in camera_name.split(",") if c.strip()]
-    elif isinstance(camera_name, (list | tuple)):
-        cams = [str(c).strip() for c in camera_name if str(c).strip()]
-    else:
-        raise TypeError(f"camera_name must be str or sequence[str], got {type(camera_name).__name__}")
-    if not cams:
-        raise ValueError("camera_name resolved to an empty list.")
-    return cams
 
 
 def _convert_nested_dict(d):
@@ -177,144 +166,6 @@ def _sub_env_has_attr(env: gym.vector.VectorEnv, attr: str) -> bool:
         return False
 
 
-# Passed in `reset(options=...)` by `rollout()` to mark the start of a new rollout.
-# FreezeAfterEpisodeEnd thaws only on this, so Gymnasium's argument-less autoreset
-# cannot be mistaken for a genuine new episode.
-NEW_ROLLOUT_OPTION = "lerobot_new_rollout"
-
-
-class FreezeAfterEpisodeEnd(gym.Wrapper):
-    """Stop doing simulator work once a sub-env's episode has ended.
-
-    `rollout()` runs `while not np.all(done)` with `done` latched, so a sub-env that
-    terminates early keeps being stepped -- physics and offscreen rendering included --
-    until the slowest sub-env in the batch finishes. The batch runs for
-    `max(episode_lengths)` iterations to complete work that only needs
-    `mean(episode_lengths)`.
-
-    This caches the terminal transition and replays it for any further `step()` or
-    autoreset, so a finished sub-env costs nothing. The rollout already ignores those
-    transitions.
-
-    The freeze survives Gymnasium's autoreset deliberately. Under
-    `AutoresetMode.NEXT_STEP` the vector env resets a terminated sub-env on the
-    following step and runs it through an entire extra episode that the rollout
-    discards, because `done` stays latched. Absorbing that reset is most of the saving.
-
-    Only an explicit reset carrying `NEW_ROLLOUT_OPTION` thaws it, so the signal is
-    explicit rather than inferred: Gymnasium's autoreset calls `reset()` with no
-    arguments, but so would a caller passing `seeds=None`, and confusing the two would
-    strand an env frozen for a whole rollout.
-
-    `AutoresetMode.DISABLED` is not an alternative here — Gymnasium asserts that no
-    terminated env is ever stepped in that mode, so the wrapper is never reached.
-    """
-
-    def __init__(self, env: gym.Env):
-        super().__init__(env)
-        self._frozen: tuple | None = None
-
-    def reset(self, *, seed=None, options=None):
-        if self._frozen is not None and not (options or {}).get(NEW_ROLLOUT_OPTION):
-            # Gymnasium's autoreset for a sub-env the rollout has already finished with.
-            # Replay the terminal observation instead of rebuilding the simulation.
-            obs, _, _, _, info = self._frozen
-            return obs, info
-        self._frozen = None
-        return self.env.reset(seed=seed, options=options)
-
-    def step(self, action):
-        if self._frozen is not None:
-            return self._frozen
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        if terminated or truncated:
-            # Zero the reward on replay so a frozen sub-env cannot inflate a return if a
-            # caller sums rewards over the padded tail.
-            self._frozen = (obs, 0.0, terminated, truncated, info)
-        return obs, reward, terminated, truncated, info
-
-    @property
-    def is_frozen(self) -> bool:
-        return self._frozen is not None
-
-
-def freeze_after_episode_end(env_fn: Callable[[], gym.Env]) -> Callable[[], gym.Env]:
-    """Wrap an env factory so the built env freezes once its episode ends."""
-
-    def _fn() -> gym.Env:
-        return FreezeAfterEpisodeEnd(env_fn())
-
-    return _fn
-
-
-class _LazyAsyncVectorEnv:
-    """Defers AsyncVectorEnv creation until first use.
-
-    Creating all tasks' AsyncVectorEnvs upfront spawns N_tasks × n_envs worker
-    processes, all of which allocate EGL/GPU resources immediately. Since tasks
-    are evaluated sequentially, only one task's workers need to be alive at a
-    time. This wrapper stores the factory functions and creates the real
-    AsyncVectorEnv on first reset()/step()/call(), keeping peak process count = n_envs.
-    """
-
-    def __init__(
-        self,
-        env_fns: list[Callable],
-        observation_space=None,
-        action_space=None,
-        metadata=None,
-    ):
-        self._env_fns = env_fns
-        self._env: gym.vector.AsyncVectorEnv | None = None
-        self.num_envs = len(env_fns)
-        if observation_space is not None and action_space is not None and metadata is not None:
-            self.observation_space = observation_space
-            self.action_space = action_space
-            self.metadata = metadata
-        else:
-            tmp = env_fns[0]()
-            self.observation_space = tmp.observation_space
-            self.action_space = tmp.action_space
-            self.metadata = tmp.metadata
-            tmp.close()
-        self.single_observation_space = self.observation_space
-        self.single_action_space = self.action_space
-
-    def _ensure(self) -> None:
-        if self._env is None:
-            self._env = gym.vector.AsyncVectorEnv(
-                [freeze_after_episode_end(fn) for fn in self._env_fns],
-                context="forkserver",
-                shared_memory=True,
-                autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP,
-            )
-
-    @property
-    def unwrapped(self):
-        return self
-
-    def reset(self, **kwargs):
-        self._ensure()
-        return self._env.reset(**kwargs)
-
-    def step(self, actions):
-        self._ensure()
-        return self._env.step(actions)
-
-    def call(self, name, *args, **kwargs):
-        self._ensure()
-        return self._env.call(name, *args, **kwargs)
-
-    def get_attr(self, name):
-        self._ensure()
-        return self._env.get_attr(name)
-
-    def close(self) -> None:
-        if self._env is not None:
-            self._env.close()
-            self._env = None
-
-
 def check_env_attributes_and_types(env: gym.vector.VectorEnv) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("once", UserWarning)
@@ -363,136 +214,3 @@ def _(envs: Sequence) -> None:
 @close_envs.register
 def _(env: gym.Env) -> None:
     _close_single_env(env)
-
-
-# helper to safely load a python file as a module
-def _load_module_from_path(path: str, module_name: str | None = None):
-    module_name = module_name or f"hub_env_{os.path.basename(path).replace('.', '_')}"
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load module spec for {module_name} from {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-# helper to parse hub string (supports "user/repo", "user/repo@rev", optional path)
-# examples:
-#   "user/repo" -> will look for env.py at repo root
-#   "user/repo@main:envs/my_env.py" -> explicit revision and path
-def _parse_hub_url(hub_uri: str):
-    # very small parser: [repo_id][@revision][:path]
-    # repo_id is required (user/repo or org/repo)
-    revision = None
-    file_path = "env.py"
-    if "@" in hub_uri:
-        repo_and_rev, *rest = hub_uri.split(":", 1)
-        repo_id, rev = repo_and_rev.split("@", 1)
-        revision = rev
-        if rest:
-            file_path = rest[0]
-    else:
-        repo_id, *rest = hub_uri.split(":", 1)
-        if rest:
-            file_path = rest[0]
-    return repo_id, revision, file_path
-
-
-def _download_hub_file(
-    cfg_str: str,
-    trust_remote_code: bool,
-    hub_cache_dir: str | None,
-) -> tuple[str, str, str, str]:
-    """
-    Parse `cfg_str` (hub URL), enforce `trust_remote_code`, and return
-    (repo_id, file_path, local_file, revision).
-    """
-    if not trust_remote_code:
-        raise RuntimeError(
-            f"Refusing to execute remote code from the Hub for '{cfg_str}'. "
-            "Executing hub env modules runs arbitrary Python code from third-party repositories. "
-            "If you trust this repo and understand the risks, call `make_env(..., trust_remote_code=True)` "
-            "and prefer pinning to a specific revision: 'user/repo@<commit-hash>:env.py'."
-        )
-
-    repo_id, revision, file_path = _parse_hub_url(cfg_str)
-
-    try:
-        local_file = hf_hub_download(
-            repo_id=repo_id, filename=file_path, revision=revision, cache_dir=hub_cache_dir
-        )
-    except Exception as e:
-        # fallback to snapshot download
-        snapshot_dir = snapshot_download(repo_id=repo_id, revision=revision, cache_dir=hub_cache_dir)
-        local_file = os.path.join(snapshot_dir, file_path)
-        if not os.path.exists(local_file):
-            raise FileNotFoundError(
-                f"Could not find {file_path} in repository {repo_id}@{revision or 'main'}"
-            ) from e
-
-    return repo_id, file_path, local_file, revision
-
-
-def _import_hub_module(local_file: str, repo_id: str) -> Any:
-    """
-    Import the downloaded file as a module and surface helpful import error messages.
-    """
-    module_name = f"hub_env_{repo_id.replace('/', '_')}"
-    try:
-        module = _load_module_from_path(local_file, module_name=module_name)
-    except ModuleNotFoundError as e:
-        missing = getattr(e, "name", None) or str(e)
-        raise ModuleNotFoundError(
-            f"Hub env '{repo_id}:{os.path.basename(local_file)}' failed to import because the dependency "
-            f"'{missing}' is not installed locally.\n\n"
-        ) from e
-    except ImportError as e:
-        raise ImportError(
-            f"Failed to load hub env module '{repo_id}:{os.path.basename(local_file)}'. Import error: {e}\n\n"
-        ) from e
-    return module
-
-
-def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: EnvConfig | None) -> Any:
-    """
-    Ensure module exposes make_env and call it.
-    """
-    if not hasattr(module, "make_env"):
-        raise AttributeError(
-            f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
-        )
-    entry_fn = module.make_env
-    # Only pass cfg if it's not None (i.e., when an EnvConfig was provided, not a string hub ID)
-    if cfg is not None:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
-    else:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs)
-
-
-def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """
-    Normalize possible return types from hub `make_env` into the mapping:
-      { suite_name: { task_id: vector_env } }
-    Accepts:
-      - dict (assumed already correct)
-      - gym.vector.VectorEnv
-      - gym.Env (will be wrapped into SyncVectorEnv)
-    """
-    if isinstance(result, dict):
-        return result
-
-    # VectorEnv: use its spec.id if available
-    if isinstance(result, gym.vector.VectorEnv):
-        suite_name = getattr(result, "spec", None) and getattr(result.spec, "id", None) or "hub_env"
-        return {suite_name: {0: result}}
-
-    # Single Env: wrap into SyncVectorEnv
-    if isinstance(result, gym.Env):
-        vec = gym.vector.SyncVectorEnv([lambda: result])
-        suite_name = getattr(result, "spec", None) and getattr(result.spec, "id", None) or "hub_env"
-        return {suite_name: {0: vec}}
-
-    raise ValueError(
-        "Hub `make_env` must return either a mapping {suite: {task_id: vec_env}}, "
-        "a gym.vector.VectorEnv, or a single gym.Env."
-    )

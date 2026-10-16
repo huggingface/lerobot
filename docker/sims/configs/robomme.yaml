@@ -1,0 +1,13 @@
+# Conventions (fps, control, semantics, component names) come from lerobot/sims/conventions.py.
+deployment: robomme
+sim:
+  type: robomme
+  task: PickXtimes,BinFill,StopCube,MoveCube,InsertPeg,SwingXtimes,VideoUnmask,ButtonUnmask,PickHighlight,PatternLock
+  kwargs:
+    action_space_type: joint_angle
+    dataset: test
+    episode_length: 300
+    task_ids:
+    - 0
+    front_camera_name: camera1
+    wrist_camera_name: camera2

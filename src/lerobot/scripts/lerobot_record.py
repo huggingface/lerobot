@@ -129,9 +129,11 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
+    sim,
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
+from lerobot.robots.sim import check_teleop_clock
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -401,6 +403,7 @@ def record(
         else cfg.display_compressed_images
     )
 
+    check_teleop_clock(cfg.robot, cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 

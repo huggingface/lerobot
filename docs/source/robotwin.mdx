@@ -1,5 +1,13 @@
 # RoboTwin 2.0
 
+<Tip>
+  The commands below run the simulator in-process. To keep its dependencies away
+  from your policy's, serve it instead with `lerobot-env-server --docker
+  --config=docker/sims/configs/robotwin.yaml` and add
+  `--env.endpoint=tcp/127.0.0.1:7448` to the same commands (see [Simulation:
+  in-process or served](./simulator_server)).
+</Tip>
+
 RoboTwin 2.0 is a **large-scale dual-arm manipulation benchmark** built on the SAPIEN physics engine. It provides a standardized evaluation protocol for bimanual robotic policies across 50 tasks (as of upstream `main`) with strong domain randomization (clutter, lighting, background, tabletop height, and language instructions).
 
 - Paper: [RoboTwin 2.0: A Scalable Data Generator and Benchmark with Strong Domain Randomization for Robust Bimanual Robotic Manipulation](https://arxiv.org/abs/2506.18088)

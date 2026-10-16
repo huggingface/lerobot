@@ -1,5 +1,13 @@
 # LIBERO-plus
 
+<Tip>
+  The commands below run the simulator in-process. To keep its dependencies away
+  from your policy's, serve it instead with `lerobot-env-server --docker
+  --config=docker/sims/configs/libero_plus.yaml` and add
+  `--env.endpoint=tcp/127.0.0.1:7448` to the same commands (see [Simulation:
+  in-process or served](./simulator_server)).
+</Tip>
+
 LIBERO-plus is a **robustness benchmark** for Vision-Language-Action (VLA) models built on top of [LIBERO](./libero). It systematically stress-tests policies by applying **seven independent perturbation dimensions** to the original LIBERO task set, exposing failure modes that standard benchmarks miss.
 
 - Paper: [In-depth Robustness Analysis of Vision-Language-Action Models](https://arxiv.org/abs/2510.13626)
@@ -58,7 +66,7 @@ cd LIBERO-plus && pip install --no-deps -e .
 pip uninstall -y hf-libero  # so `import libero` resolves to the fork
 ```
 
-LIBERO-plus is installed from its GitHub fork rather than a pyproject extra — the fork ships as a namespace package that pip can't handle, so it must be cloned and added to `PYTHONPATH`. See `docker/Dockerfile.benchmark.libero_plus` for the canonical install. MuJoCo is required, so only Linux is supported.
+LIBERO-plus is installed from its GitHub fork rather than a pyproject extra — the fork ships as a namespace package that pip can't handle, so it must be cloned and added to `PYTHONPATH`. See the `libero_plus_native` stage of `docker/Dockerfile.sim` for the canonical install. MuJoCo is required, so only Linux is supported.
 
 <Tip>
 Set the MuJoCo rendering backend before running evaluation:
@@ -81,7 +89,7 @@ python -c "import libero; print(libero.__file__)"
 
 ## Evaluation
 
-### Default evaluation (recommended)
+### Default in-process evaluation
 
 Evaluate across the four standard suites (10 episodes per task):
 
@@ -194,7 +202,7 @@ lerobot-train \
 
 LIBERO-plus is a drop-in extension of LIBERO:
 
-- Same Python gym interface (`LiberoEnv`, `LiberoProcessorStep`)
+- Same Python gym interface (`LiberoEnv`) and canonical observations
 - Same camera names and observation/action format
 - Same task suite names
 - Installs under the same `libero` Python package name (different GitHub repo)
