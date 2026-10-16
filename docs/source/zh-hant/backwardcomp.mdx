@@ -1,26 +1,26 @@
 # 向下相容性[[backward-compatibility]]
 
-## 策略正規化遷移[[policy-normalization-migration-pr-1452]]
+## 策略正規化遷移（PR #1452）[[policy-normalization-migration-pr-1452]]
 
-**重大變更**：LeRobot 策略（policy）的權重中不再內建正規化（normalization）層。正規化現在由外部的 `PolicyProcessorPipeline` 元件負責處理。
+**破壞性變更**：LeRobot 策略的權重中不再內嵌正規化（normalization）層，正規化現在改由外部的 `PolicyProcessorPipeline` 元件處理。
 
 ### 有什麼改變？[[what-changed]]
 
-| 項目                                 | PR #1452 之前                                    | PR #1452 之後                                                |
-| ------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------ |
-| **正規化（normalization）的位置**    | 嵌入於模型（model）權重中 (`normalize_inputs.*`) | 外部的 `PolicyProcessorPipeline` 元件                        |
-| **模型（model）狀態（state）的字典** | 包含正規化（normalization）的統計資料            | **僅含乾淨的權重**——不含正規化參數（parameter）              |
-| **使用方式**                         | `policy(batch)` 處理全部                         | `preprocessor(batch)` → `policy(...)` → `postprocessor(...)` |
+| 項目                  | PR #1452 之前                            | PR #1452 之後                                                |
+| --------------------- | ---------------------------------------- | ------------------------------------------------------------ |
+| **正規化的位置**      | 嵌入在模型權重中（`normalize_inputs.*`） | 外部的 `PolicyProcessorPipeline` 元件                        |
+| **模型的 state dict** | 包含正規化統計量                         | **只有乾淨的權重**，不含正規化參數                           |
+| **使用方式**          | `policy(batch)` 處理所有事情             | `preprocessor(batch)` → `policy(...)` → `postprocessor(...)` |
 
 ### 對現有模型的影響[[impact-on-existing-models]]
 
-- 在 PR #1452 **之前**訓練（training）的模型（model），其正規化（normalization）已嵌入於權重中。
-- 這些模型（model）需要進行遷移，才能與新的 `PolicyProcessorPipeline` 系統相容。
-- 此遷移會擷取正規化（normalization）統計數據，並建立獨立的處理器管線（pipeline）。
+- 在 PR #1452 **之前**訓練的模型，權重中內嵌了正規化
+- 這些模型需要遷移，才能搭配新的 `PolicyProcessorPipeline` 系統使用
+- 遷移會擷取正規化統計量，並建立獨立的處理器管線
 
 ### 遷移舊模型[[migrating-old-models]]
 
-使用遷移腳本將內嵌正規化（normalization）的模型（model）進行轉換：
+使用遷移腳本轉換內嵌正規化的模型：
 
 ```shell
 python src/lerobot/processor/migrate_policy_normalization.py \
@@ -29,13 +29,13 @@ python src/lerobot/processor/migrate_policy_normalization.py \
     --branch migrated
 ```
 
-此腳本將會：
+這個腳本會：
 
-1. **提取**模型（model）權重中的正規化（normalization）統計數據
-2. **建立**外部預處理器與後處理器的管線（pipeline）
-3. **移除**模型（model）權重中的正規化（normalization）層
-4. **儲存**乾淨模型（model） + 處理器管線（pipeline）
-5. **推送**至 Hub 並自動建立 PR
+1. **擷取**模型權重中的正規化統計量
+2. **建立**外部的前處理器與後處理器管線
+3. **移除**模型權重中的正規化層
+4. **儲存**乾淨的模型與處理器管線
+5. **推送**到 Hub，並自動建立 PR
 
 ### 使用已遷移的模型[[using-migrated-models]]
 
@@ -58,28 +58,28 @@ final_action = postprocessor(action)
 
 ## 硬體 API 重新設計[[hardware-api-redesign]]
 
-PR [#777](https://github.com/huggingface/lerobot/pull/777) 改善了 LeRobot 的校正（calibration）功能，但**不向下相容**。以下概述了變更內容，以及如何繼續使用此 PR 之前所建立的資料集（dataset）。
+PR [#777](https://github.com/huggingface/lerobot/pull/777) 改善了 LeRobot 的校正（calibration），但**不具向下相容性**。以下說明變更內容，以及如何繼續使用在這個 PR 之前建立的資料集。
 
-### 有什麼改變？[[what-changed]]
+### 有什麼改變？[[what-changed-1]]
 
-| 項目                      | PR #777 之前                        | PR #777 之後                                                                  |
-| ------------------------- | ----------------------------------- | ----------------------------------------------------------------------------- |
-| **關節（joint）範圍**     | 角度 `-180...180°`                  | **正規化（normalization）範圍** 關節：`–100...100` 夾爪（gripper）：`0...100` |
-| **零位（SO100 / SO101）** | 手臂完全水平伸展                    | **位於各關節（joint）範圍的中點**                                             |
-| **邊界處理**              | 以軟體防護機制偵測 ±180° 的跨越情形 | 因零位位於範圍中點，無需跨越邏輯                                              |
+| 項目                          | PR #777 之前                    | PR #777 之後                                      |
+| ----------------------------- | ------------------------------- | ------------------------------------------------- |
+| **關節範圍**                  | 角度 `-180...180°`              | **正規化範圍**：關節 `–100...100`、夾爪 `0...100` |
+| **零點位置（SO100 / SO101）** | 手臂完全水平伸直                | **位於各關節活動範圍的中間**                      |
+| **邊界處理**                  | 以軟體保護機制偵測 ±180° 的繞回 | 零點位於範圍中間，因此不需要繞回處理              |
 
 ---
 
 ### 對現有資料集的影響[[impact-on-existing-datasets]]
 
-- PR #777 **之前**所錄製（record）的軌跡（trajectory），若直接載入將無法正確重播（replay）：
-  - 關節（joint）角度產生偏移且正規化（normalization）不正確。
-- 任何直接以舊資料進行微調（fine-tune）或訓練（training）的模型（model）需對其輸入與輸出進行轉換。
+- 在 PR #777 **之前**錄製的軌跡，如果直接載入，重播時會不正確：
+  - 關節角度會有偏移，且正規化方式不正確。
+- 任何直接以舊資料微調（fine-tune）或訓練的模型，都需要轉換其輸入與輸出。
 
 ### 使用舊版校正系統建立的資料集[[using-datasets-made-with-the-previous-calibration-system]]
 
-我們在此提供一個遷移範例腳本，用於重播（replay）以先前校正（calibration）方式錄製（record）的片段： `examples/backward_compatibility/replay.py`.
-以下將帶你了解範例腳本中所進行的修改，以使先前校正（calibration）的資料集（dataset）能夠正常運作。
+我們提供一個遷移範例腳本，用來重播以舊版校正錄製的回合（episode）：`examples/backward_compatibility/replay.py`。
+以下說明範例腳本中做了哪些修改，讓舊版校正的資料集能夠正常運作。
 
 ```diff
 +   key = f"{name.removeprefix('main_')}.pos"
@@ -88,8 +88,8 @@ PR [#777](https://github.com/huggingface/lerobot/pull/777) 改善了 LeRobot 的
 +   action["elbow_flex.pos"] -= 90
 ```
 
-逐一說明如下。
-新版程式碼使用 `.pos` 後綴表示位置觀測值（observation values），並已移除 `main_` 前綴：
+以下逐一說明。
+新版程式碼以 `.pos` 後綴表示位置觀測，並移除了 `main_` 前綴：
 
 <!-- prettier-ignore-start -->
 ```python
@@ -97,7 +97,7 @@ key = f"{name.removeprefix('main_')}.pos"
 ```
 <!-- prettier-ignore-end -->
 
-對於 `"shoulder_lift"`（id = 2），與舊版校正（calibration）／程式碼相比，零位偏移了 -90 度，且方向相反。
+對於 `"shoulder_lift"`（id = 2），與舊版的校正／程式碼相比，零點位置改變了 -90 度，方向也相反。
 
 <!-- prettier-ignore-start -->
 ```python
@@ -105,7 +105,7 @@ action["shoulder_lift.pos"] = -(action["shoulder_lift.pos"] - 90)
 ```
 <!-- prettier-ignore-end -->
 
-對於 `"elbow_flex"`（id = 3），與舊版校正（calibration）／程式碼相比，零位偏移了 -90 度。
+對於 `"elbow_flex"`（id = 3），與舊版的校正／程式碼相比，零點位置改變了 -90 度。
 
 <!-- prettier-ignore-start -->
 ```python
@@ -113,7 +113,7 @@ action["elbow_flex.pos"] -= 90
 ```
 <!-- prettier-ignore-end -->
 
-若要使用角度正規化（normalization），請將 `--robot.use_degrees` 選項設為 `true`。
+接著，將 `--robot.use_degrees` 選項設為 `true`，以使用角度的正規化。
 
 ```diff
 python examples/backward_compatibility/replay.py \
@@ -127,10 +127,10 @@ python examples/backward_compatibility/replay.py \
 
 ### 使用舊版校正系統訓練的策略[[using-policies-trained-with-the-previous-calibration-system]]
 
-策略輸出的動作（action）格式與資料集（dataset）相同（`torch.Tensors`），因此應套用相同的轉換。
+策略輸出的動作格式與資料集相同（`torch.Tensors`），因此應套用相同的轉換。
 
-若要找出這些轉換，建議先依照上方章節的說明，重播（replay）你的策略訓練時所用資料集（dataset）中的某個回合（episode）。
-接著，將這些相同的轉換加入你的推論（inference）腳本（此處以 `record.py` 腳本為例）：
+若要找出這些轉換，建議先依照上一節的說明，重播策略訓練時所用資料集中的一個回合。
+接著，將這些相同的轉換加入你的推論腳本（此處以 `record.py` 腳本為例）：
 
 ```diff
 action_values = predict_action(
@@ -148,4 +148,4 @@ action_values = predict_action(
     robot.send_action(action)
 ```
 
-若有任何問題或在遷移過程中遇到困難，歡迎至 [Discord](https://discord.gg/s3KuuzsPFb) 上提問。
+如果有任何問題，或在遷移時遇到困難，歡迎到 [Discord](https://discord.gg/s3KuuzsPFb) 提問。
