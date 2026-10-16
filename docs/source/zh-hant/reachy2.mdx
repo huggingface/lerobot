@@ -67,7 +67,7 @@ docker run --rm -it \
 
 ### 事前準備[[prerequisites]]
 
-- 在你的機器人上，檢查**服務映像（service images）**是否符合最低版本：
+- 在你的機器人上，檢查**服務映像**（service images）是否符合最低版本：
   - **reachy2-core >= 1.7.5.2**
   - **webrtc >= 2.0.1.1**
 
@@ -93,7 +93,7 @@ pip install -e ".[reachy2]"
 ### 取得 Reachy 2 的 IP 位址[[get-reachy-2-ip-address]]
 
 在開始遙操作（teleoperation）與資料錄製（data recording）之前，請先找出[機器人的 IP 位址](https://docs.pollen-robotics.com/getting-started/setup-reachy2/connect-reachy2/)。
-我們強烈建議透過**乙太網路（Ethernet）**連接所有裝置（PC 與機器人）。
+我們強烈建議透過**乙太網路**（Ethernet）連接所有裝置（PC 與機器人）。
 
 ### 啟動錄製[[launch-recording]]
 
@@ -212,7 +212,7 @@ lerobot-record \
 
 ##### 使用相關的相機[[use-the-relevant-cameras]]
 
-你可以對**相機（cameras）**做相同的事。使用以下方式以預設參數（default parameters）啟用或停用每台相機：
+你可以對**相機**（cameras）做相同的事。使用以下方式以預設參數（default parameters）啟用或停用每台相機：
 
 ```bash
 --robot.with_left_teleop_camera=<true|false> \

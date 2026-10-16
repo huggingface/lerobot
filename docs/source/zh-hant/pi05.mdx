@@ -285,7 +285,7 @@ lerobot-train \
 ```
 
 `memory_frames` 包含當前的觀測（observation）。`memory_stride` 是以
-**資料集影格（dataset frames）**為單位，而非秒，因此請依資料集的 `fps` 調整：MEM
+**資料集影格**（dataset frames）為單位，而非秒，因此請依資料集的 `fps` 調整：MEM
 以相隔一秒的六個觀測進行預訓練，對
 30 fps 的資料集（預設值）而言是 `memory_stride=30`，但對 10 fps 的資料集（例如
 `lerobot/robomme`）則是 `memory_stride=10`。

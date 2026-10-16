@@ -473,7 +473,7 @@ class DiffusionPolicy(PreTrainedPolicy):
 
 **至少挑選一個 in-tree 基準測試（pick at least one in-tree benchmark）。** LeRobot 提供了附帶各自 Docker images 的模擬基準測試（sim benchmarks: LIBERO、LIBERO-plus、Meta-World、RoboTwin 2.0、RoboCasa365、RoboCerebra、RoboMME、VLABench 等）。挑選符合你策略模態（policy’s modality）的那一個：VLA 通常選 LIBERO 或 VLABench；純影像的 BC 選 LIBERO 或 Meta-World。完整清單位於文件側邊欄的 [Benchmarks](./libero) 底下。
 
-**將檢查點與處理器推送（push the checkpoint & processors）**到 Hub 的 `lerobot/<policy>_<benchmark>`（若你沒有寫入權限，可用自己的命名空間；維護者可以鏡像過去）。最簡單的方式是在訓練時加上 `--policy.repo_id=<namespace>/<repo>` 與 `--policy.push_to_hub=true`：`lerobot-train` 會在執行結束時發布模型、兩個處理器（processors）與一張模型卡（model card）。若要事後發布既有的檢查點，請上傳其 `pretrained_model/` 目錄（例如 `huggingface-cli upload`），或對分片格式（sharded-format）的檢查點使用 `lerobot-convert-dcp --push_to_hub=...`。
+**將檢查點與處理器推送**（push the checkpoint & processors）到 Hub 的 `lerobot/<policy>_<benchmark>`（若你沒有寫入權限，可用自己的命名空間；維護者可以鏡像過去）。最簡單的方式是在訓練時加上 `--policy.repo_id=<namespace>/<repo>` 與 `--policy.push_to_hub=true`：`lerobot-train` 會在執行結束時發布模型、兩個處理器（processors）與一張模型卡（model card）。若要事後發布既有的檢查點，請上傳其 `pretrained_model/` 目錄（例如 `huggingface-cli upload`），或對分片格式（sharded-format）的檢查點使用 `lerobot-convert-dcp --push_to_hub=...`。
 
 **在你策略的 MDX 中回報結果（report results in your policy’s MDX）**，附上確切的 `lerobot-eval` 指令與硬體（hardware），讓任何人都能重新執行：
 

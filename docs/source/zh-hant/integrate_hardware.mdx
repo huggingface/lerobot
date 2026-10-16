@@ -369,8 +369,8 @@ def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
 
 裝置類別（device class, `MyAwesomeTeleop`）必須位於相對於其設定類別（configuration class, `MyAwesomeTeleopConfig`）的可預測模組（predictable module）中。`lerobot` 將自動在以下位置搜尋：
 
-- 與設定類別（config class）**相同的模組（same module）**中。
-- 在一個**以裝置命名的子模組（submodule named after the device）**中（例如 `my_awesome_teleop.py`）。
+- 與設定類別（config class）**相同的模組**（same module）中。
+- 在一個**以裝置命名的子模組**（submodule named after the device）中（例如 `my_awesome_teleop.py`）。
 
 建議且最簡單的結構是將它們放在同一目錄中清楚命名的獨立檔案中。
 

@@ -176,7 +176,7 @@ lerobot-edit-dataset \
 變更回合所對應的自然語言任務描述。這適合用來修正錯字、統一用語，或重新標註回合。
 
 > [!WARNING]
-> `modify_tasks` 會**就地（in-place）**修改資料集（更新 `meta/tasks.parquet`、資料檔案中的 `task_index` 欄位、回合中繼資料中的 `tasks` 欄位，以及 `meta/info.json` 中的 `total_tasks`）。此操作會忽略 `--new_repo_id` 與 `--new_root` 參數。
+> `modify_tasks` 會**就地**（in-place）修改資料集（更新 `meta/tasks.parquet`、資料檔案中的 `task_index` 欄位、回合中繼資料中的 `tasks` 欄位，以及 `meta/info.json` 中的 `total_tasks`）。此操作會忽略 `--new_repo_id` 與 `--new_root` 參數。
 
 ```bash
 # 為所有回合設定單一任務

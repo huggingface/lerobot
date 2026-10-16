@@ -201,7 +201,7 @@ lerobot-train \
 ## 推論[[inference]]
 
 將 LeRobot 執行器（runner）的 `--policy.path` 指向訓練好的轉接器檢查點；它會載入所參照的
-基礎模型與儲存的處理器。若要搭配**完整基礎模型（complete base）**直接呼叫，請一併載入處理器：
+基礎模型與儲存的處理器。若要搭配**完整基礎模型**（complete base）直接呼叫，請一併載入處理器：
 
 ```python
 from lerobot.policies.factory import make_pre_post_processors

@@ -110,7 +110,7 @@ finally:
 
 XR 控制器是 Isaac Teleop 的一個**輸入**裝置。
 `XRController` 是一個刻意設計得很薄的
-讀取器（thin reader）：它公開**原始（raw）**的控制器握把姿態（controller grip pose
+讀取器（thin reader）：它公開**原始**（raw）的控制器握把姿態（controller grip pose
 ，已靜態重新定基 rebased 到機器人基座座標系 robot base frame）加上擠壓（squeeze）
 與扳機（trigger）的類比值。它**沒有**重定向器（retargeters），也**沒有**
 自己的 clutch logic。clutch（engage latch + delta rebasing onto the EE）與夾爪
@@ -168,13 +168,13 @@ XR 控制器是 Isaac Teleop 的一個**輸入**裝置。
 
 與手機管線（phone pipeline，將 clutch 拆分於 `MapPhoneActionToRobotAction` 與
 `EEReferenceAndDelta` 之間）不同，XR clutch 完全存在於範例迴圈的 `Clutch` 類別中。它發出
-**絕對（absolute）**的 EE 姿態（EE pose），因此沒有 `EEReferenceAndDelta` 階段，處理器（processor）中也沒有增量累積（delta accumulation），
+**絕對**（absolute）的 EE 姿態（EE pose），因此沒有 `EEReferenceAndDelta` 階段，處理器（processor）中也沒有增量累積（delta accumulation），
 `MapXRControllerActionToRobotAction` 是一個純粹（pure），無狀態逐影格的對映（stateless per‑frame mapping）。
 
 clutch 在擠壓（squeeze）的**啟動邊緣（engage edge）**（擠壓越過 `clutch_threshold` 的那一刻）latches 其啟動原點（engage origin），
 並以相對於該原點的運動驅動 EE，因此手臂在啟動時不會瞬移。
 在**每次**啟動時，無論是開機或任務中途（mid‑task）re‑clutch，
-home *位置（position）*都會從手臂**量測到的關節（measured joints）**以正向運動學（forward kinematics）latched，
+home *位置（position）*都會從手臂**量測到的關節**（measured joints）以正向運動學（forward kinematics）latched，
 因此 home 等於手臂實體所在的位置，即使它在脫離狀態（disengaged）下移動過，啟動也不會跳動（jump‑free）。
 home *方向（orientation）*則保留最後下達的旋轉（rotation）：5 自由度手臂只會軟性（softly）追蹤方向（tracks orientation），
 因此 latching 量測到的手腕方向（wrist orientation），
@@ -208,7 +208,7 @@ teleop_config = XRControllerConfig(
 teleop_device = XRController(teleop_config)
 ```
 
-`XRController.get_action()` 回傳**原始（raw）**的基座座標系控制器姿態（base‑frame controller pose），而非經 clutch-rebased
+`XRController.get_action()` 回傳**原始**（raw）的基座座標系控制器姿態（base‑frame controller pose），而非經 clutch-rebased
 的目標（target）：機器人基座座標系（robot base frame）中的 `grip_pos` (3,) `[x, y, z]` [m] 與 `grip_quat` (4,) `[qx, qy, qz, qw]`
 ，外加 `[0, 1]` 範圍內的純量 `squeeze` 與 `trigger` 類比值。範例迴圈的 `Clutch`
 會將這些轉成絕對（absolute） `ee_pose`，而擠壓則由迴圈以
@@ -308,7 +308,7 @@ URDF 抓取使用 `huggingface_hub`（本就是 LeRobot 的相依套件）對公
 ## 重要的管線步驟與選項[[important-pipeline-steps-and-options]]
 
 clutch 已經產生絕對的基座座標系姿態（absolute base‑frame pose），因此處理器端是一條薄的
-**絕對姿態（absolute‑pose）**路徑，沒有座標系重新對映（frame remap）、沒有增量累積（delta accumulation），也沒有
+**絕對姿態**（absolute‑pose）路徑，沒有座標系重新對映（frame remap）、沒有增量累積（delta accumulation），也沒有
 `EEReferenceAndDelta` 階段（stage）。
 
 - `MapXRControllerActionToRobotAction` 是一個從裝置輸出到 IK 輸入契約的無狀態逐影格對映（stateless per‑frame mapping）。
@@ -327,7 +327,7 @@ clutch 已經產生絕對的基座座標系姿態（absolute base‑frame pose�
   並對逐影格的跳動做速率限制（rate‑limits per‑frame jumps）。
   clutch 的不瞬移特性使影格保持微小，因此 `max_ee_step_m` 大多是攔截控制器追蹤的短暫故障（glitches）。z 底板為 `0.0`（桌面平面），因此偏離的目標（stray target）無法將 EE 驅動到
   桌面之下；x/y 則維持在寬鬆的 `[-1, 1]` m 方框。請設定 `raise_on_jump=False`，讓超限的框（over‑limit frame）改為
-  **夾制並警告（clamped and warned）**而非拋出例外，因為迴圈中途的當機會讓手臂失控：
+  **夾制並警告**（clamped and warned）而非拋出例外，因為迴圈中途的當機會讓手臂失控：
 
   ```python
   EEBoundsAndSafety(
@@ -342,7 +342,7 @@ clutch 已經產生絕對的基座座標系姿態（absolute base‑frame pose�
   `orientation_weight` 讓它軟性追蹤 `ee.w*` 中攜帶的方向目標（orientation target），好讓手腕（wrist）
   跟隨手部，而欠定的滾轉（roll）依設計維持部分。**沒有**
   `GripperVelocityToJoint`：絕對的 `ee.gripper_pos` 會直接傳給 `gripper.pos`。
-  `initial_guess_current_joints=False` 會從**上一個 IK 解（previous IK solution）**暖啟動（warm‑starts）每次求解，
+  `initial_guess_current_joints=False` 會從**上一個 IK 解**（previous IK solution）暖啟動（warm‑starts）每次求解，
   而非從量測到的關節（measured joints）重新植入（re‑seeding），因此關節軌跡（joint trajectory）在影格之間（frame‑to‑frame）保持連續
   。請在硬體上調校 `orientation_weight`，太高會與位置追蹤（position tracking）衝突，太
   低則忽略方向命令（orientation command）。

@@ -1,6 +1,6 @@
 # 重新命名對應表與空相機[[rename-map-and-empty-cameras]]
 
-使用機器人策略（policy）進行訓練、評估或錄製時，你的**資料集**或**環境**提供的觀測使用一組鍵名（例如 `observation.images.front`、`observation.images.eagle`），而你的**策略**預期的卻是另一組鍵名（例如 `observation.images.image`、`observation.images.image2`）。**重新命名對應表（rename map）**能在不修改策略或資料來源的情況下，填補這個落差。
+使用機器人策略（policy）進行訓練、評估或錄製時，你的**資料集**或**環境**提供的觀測使用一組鍵名（例如 `observation.images.front`、`observation.images.eagle`），而你的**策略**預期的卻是另一組鍵名（例如 `observation.images.image`、`observation.images.image2`）。**重新命名對應表**（rename map）能在不修改策略或資料來源的情況下，填補這個落差。
 
 > **適用範圍：** 重新命名對應表只會重新命名**觀測**的鍵名（影像與狀態），動作的鍵名不受影響。
 
