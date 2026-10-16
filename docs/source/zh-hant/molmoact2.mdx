@@ -313,7 +313,7 @@ python src/lerobot/scripts/augment_dataset_quantile_stats.py \
 ## 評估[[evaluation]]
 
 評估同樣支援 LeRobot 儲存的檢查點（checkpoint）與原始 MolmoAct2
-HF 檢查點。若要重現 LIBERO 的結果，請固定 EGL 算繪環境，
+HF 檢查點。若要重現 LIBERO 的結果，請固定 EGL 渲染環境，
 並使用 `policy.per_episode_seed=true`。
 
 **重要：** 我們發現 `num_steps_wait=10` 無法穩定地讓
@@ -502,7 +502,7 @@ MolmoAct2-SO100_101 檢查點的訓練資料，所使用的關節校正慣例
 - `joint_offsets`：`[0, 90, 90, 0, 0, 0]`（將 shoulder_lift 與 elbow_flex 偏移 90°）
 
 關於校正方式變更的詳細說明，請參閱
-[向後相容性指南](./backwardcomp)。
+[向下相容性指南](./backwardcomp)。
 
 </Tip>
 

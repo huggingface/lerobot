@@ -505,7 +505,7 @@ Reproduce: `lerobot-eval --policy.path=lerobot/<policy>_libero --env.type=libero
 - [ ] `policies/__init__.py` 已重新匯出設定類別（這會註冊該策略；工廠會依命名慣例解析 modeling／processor）。
 - [ ] `make_my_policy_pre_post_processors` 遵循命名慣例。
 - [ ] 可選的相依套件放在 `[project.optional-dependencies]` 的額外套件中，並以 `TYPE_CHECKING + require_package` 把關。
-- [ ] 已更新 `tests/policies/`；已提交向後相容性的測試檔案與策略專屬的測試。
+- [ ] 已更新 `tests/policies/`；已提交向下相容性的測試檔案與策略專屬的測試。
 - [ ] `src/lerobot/policies/<name>/README.md` 已以符號連結指向 `docs/source/policy_<name>_README.md`；已撰寫給使用者看的 `docs/source/<name>.mdx`，並加入 `_toctree.yml`。
 - [ ] `lerobot-train --policy.type my_policy ...` 能端到端跑完至少幾步，並儲存一個可由 `lerobot-eval` 或 `lerobot-rollout` 載入並執行的檢查點。
 - [ ] `templates/lerobot_modelcard_template.md` 已有你的策略的描述項目與 `policy_docs` 連結。
