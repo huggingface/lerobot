@@ -41,7 +41,7 @@
 #                      binary every time the cache moves.
 #
 #                      To test the link with no robot in the way:
-#                        ./config/video-test.sh
+#                        ./config/video.sh synthetic
 #
 #   --watch=web        serve Foxglove from the cart on :8765 and open a
 #                      browser on the Pi. No viewer install needed, but it
@@ -132,7 +132,7 @@ parse_watch() {
         echo "           Already running? Then it is reachability, not rerun:" >&2
         echo "           on macOS, System Settings > Network > Firewall blocks" >&2
         echo "           incoming connections to new binaries by default." >&2
-        echo "           Isolate it with:   ./config/video-test.sh" >&2
+        echo "           Isolate it with:   ./config/video.sh synthetic" >&2
         echo "           Or run without --watch." >&2
         echo
       fi

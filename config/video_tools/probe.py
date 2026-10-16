@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure a V4L2 camera's capture latency and buffer depth. No lerobot, no network.
 
-    ./config/cam-probe.sh /dev/cam_left
+    ./config/video.sh probe /dev/cam_left
 
 Opens the device the way lerobot does (MJPG, 640x480, 30 fps) and runs
 three measurements:

@@ -16,7 +16,7 @@ moving anything. It is a hardware question, not a machine question, and
 knowing the answer changes every later step.
 
 ```bash
-./config/scan-motors.sh
+./config/servo.sh scan
 ```
 
 It pings every id at every supported baud rate on both buses and maps what
@@ -31,10 +31,10 @@ The three outcomes:
 
 - **Arms, head and base all present** → the full `xlerobot` path works.
   Continue through this document as written.
-- **Arms only** → `--robot.type=xlerobot` will fail on connect. It reads
-  every motor unconditionally, base velocity included, so a missing head
-  servo stops the arms too. Use `config/bi-arms.yaml` until the rest is
-  wired, and skip the calibration step below in favour of the per-arm one.
+- **Arms only, head missing** → the robot fails on connect: it reads the
+  head on the same bus as the left arm, so a missing head servo stops the
+  arms too. Wire it before going on. (A missing *base* is fine:
+  `BASE=none` runs arms and head alone.)
 - **Something at the wrong baud rate** → `lerobot-setup-motors` for those
   servos. lerobot talks at 1000000 and will not find them otherwise.
 
@@ -393,8 +393,8 @@ three, so two correct wheels can mask a third spinning backwards.
 
 ## 7. Then, and only then
 
-- `config/bi-arms.yaml` — arms and leaders on this one machine, to confirm
-  teleoperation itself works before adding the network.
+- `BASE=none ./config/cart-selftest.sh --head --arms` — arms and head on
+  their own, before the base or the network is in the picture.
 - `config/operator-leader-host.sh` on the Pi and `config/cart-teleop.sh`
   here — the split.
 - `config/cart-record.sh` — recording.

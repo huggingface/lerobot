@@ -6,7 +6,7 @@ is a loose connector or a supply that sags when the last few servos
 energize. The servos themselves can tell you which: every STS3215 reports
 its own bus voltage, temperature and load.
 
-    uv run --project ../XLeRobot python config/power_check.py
+    uv run --project ../XLeRobot python config/servo_tools/power.py
 
 Three phases:
 
@@ -36,19 +36,12 @@ from lerobot.motors.feetech import FeetechMotorsBus
 
 M = MotorNormMode.RANGE_M100_100
 
-BUS1 = {
-    "left_arm_shoulder_pan": 1, "left_arm_shoulder_lift": 2, "left_arm_elbow_flex": 3,
-    "left_arm_wrist_flex": 4, "left_arm_wrist_roll": 5, "left_arm_gripper": 6,
-    "head_motor_1": 7, "head_motor_2": 8,
-}
-BUS2 = {
-    "right_arm_shoulder_pan": 1, "right_arm_shoulder_lift": 2, "right_arm_elbow_flex": 3,
-    "right_arm_wrist_flex": 4, "right_arm_wrist_roll": 5, "right_arm_gripper": 6,
-    "base_left_wheel": 7, "base_back_wheel": 8, "base_right_wheel": 9,
-}
+from .hw import JOINTS, PORTS
 
-P1 = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00"
-P2 = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00"
+BUS1 = {name: mid for mid, name in JOINTS[1].items()}
+BUS2 = {name: mid for mid, name in JOINTS[2].items()}
+P1 = PORTS[1]
+P2 = PORTS[2]
 
 # STS3215 reports voltage in tenths of a volt. Nominal supply is 12 V; the
 # datasheet floor is around 9. Current is in raw counts - the scaling is not

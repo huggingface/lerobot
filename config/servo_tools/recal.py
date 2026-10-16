@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Recalibrate ONE joint after a servo swap. Every other joint keeps its calibration.
 
-    ./config/recal-joint.sh right_arm_wrist_roll
+    ./config/servo.sh recal right_arm_wrist_roll
 
 lerobot-calibrate redoes the whole robot - both arms, the head, and two
 rounds of moving every joint through its range - and any small difference
@@ -33,17 +33,7 @@ from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus, OperatingMode
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, ROBOTS
 
-PORTS = {
-    1: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00",
-    2: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00",
-}
-JOINTS = {
-    "left_arm_shoulder_pan": (1, 1), "left_arm_shoulder_lift": (1, 2), "left_arm_elbow_flex": (1, 3),
-    "left_arm_wrist_flex": (1, 4), "left_arm_wrist_roll": (1, 5), "left_arm_gripper": (1, 6),
-    "head_motor_1": (1, 7), "head_motor_2": (1, 8),
-    "right_arm_shoulder_pan": (2, 1), "right_arm_shoulder_lift": (2, 2), "right_arm_elbow_flex": (2, 3),
-    "right_arm_wrist_flex": (2, 4), "right_arm_wrist_roll": (2, 5), "right_arm_gripper": (2, 6),
-}
+from .hw import CALIBRATED as JOINTS, PORTS
 
 
 def ask(prompt: str) -> bool:
@@ -84,7 +74,7 @@ def main() -> int:
     try:
         model = bus.ping(motor_id, num_retry=3)
         if model is None:
-            print(f"\nid {motor_id} does not answer on bus {bus_n}. Run ./config/scan-motors.sh.")
+            print(f"\nid {motor_id} does not answer on bus {bus_n}. Run ./config/servo.sh scan.")
             return 1
 
         bus.write("Torque_Enable", name, 0, num_retry=3)

@@ -62,7 +62,7 @@ somewhere else — not an instruction to go and run something. Ignore it.
 arriving. Prove the link on its own, from elroy, with no robot in the way:
 
 ```bash
-./config/video-test.sh          # moving test pattern, 3 fake cameras
+./config/video.sh synthetic          # moving test pattern, 3 fake cameras
 ```
 
 Nothing appears? Then it is the link, in this order:
@@ -223,7 +223,7 @@ pixel-bound.
 | **Gamepad does nothing** | `emit_head`/`emit_base` false on rosie. Check the 17-key count. |
 | `No action from the leader host ... within 10.0s` | leader host not running, or the wrong IP in `cart-remote.yaml` |
 | `Leader link stalled` | wifi. Arms hold, base zeroes. Occasional is normal; constant is not. |
-| `Failed to write 'Torque_Enable' on id_=N` | a dropped packet; `configure()` retries three times now. If it persists, run `./config/power-check.sh` before suspecting a servo. |
+| `Failed to write 'Torque_Enable' on id_=N` | a dropped packet; `configure()` retries three times now. If it persists, run `./config/servo.sh power` before suspecting a servo. |
 | `Failed to open OpenCVCamera(/dev/cam_left)` | usually a stale process: `pkill -f lerobot-teleoperate`. If the symlink is missing instead, `sudo udevadm trigger --action=add --subsystem-match=video4linux`. |
 | **Script prints the header and exits silently** | `set -e` on a non-zero return. Shout about it; it is a bug. |
 | **A fresh calibration starts** | you are on the arms-only config without one. It should refuse now — if it does not, Ctrl-C before the range-recording phase or you lose `robots/xlerobot/xlerobot.json`. |
@@ -231,28 +231,38 @@ pixel-bound.
 | **`Leader link stalled ... base stopped, arms holding` about once a second, only with `--watch`** | the cart's TCP ACKs to rosie queued behind video on the wifi uplink. Both sockets now set `TOS 0xC0` (voice queue) — see `link.py`. If it persists: `iperf3 -c 192.168.1.52` from elroy for the real uplink goodput, and cap the send buffer so back-pressure reaches rerun instead of the kernel: `sudo sysctl -w net.ipv4.tcp_wmem='4096 16384 262144'` (not persistent; put it in `/etc/sysctl.d/` if it helps). The stall line now prints sequence gaps, and recovery prints apparent one-way delay. |
 | **Picture seconds behind, loop healthy** | same queue as the row above. Frames are now stamped with capture time, so the lag shows as an offset in the viewer's timeline rather than looking fresh. `LEROBOT_RERUN_JPEG_QUALITY` (default 70) and `LEROBOT_RERUN_IMAGE_FPS` (default 10) are the two levers; `tcp_wmem` above is the third. |
 | **Head jerky, arms smooth** | `head_goal_velocity` / `head_acceleration` in the robot config give the head servos a motion profile; defaults 600 / 40. Lower acceleration = smoother, slower to start. |
-| **Viewer draws the grid, then stops responding as soon as frames arrive** | `rerun_visualization.py` logging images with `static=True`. Fixed here — but it is upstream's file, so a merge from upstream will bring it back. One 160x120 frame a second is enough to trigger it, so do not read it as a bandwidth problem. `./config/video-test.sh --no-static` is the control. |
+| **Viewer draws the grid, then stops responding as soon as frames arrive** | `rerun_visualization.py` logging images with `static=True`. Fixed here — but it is upstream's file, so a merge from upstream will bring it back. One 160x120 frame a second is enough to trigger it, so do not read it as a bandwidth problem. `./config/video.sh synthetic --no-static` is the control. |
 
 ---
 
 ## Diagnostics
 
+Grouped by what they look at. Each multi-command script prints its own
+list with `--help`.
+
 | | |
 |---|---|
-| `./config/cart-selftest.sh` | the cart alone: rate, 17 joint values, a frame per camera. `--head --arms --base` to move things. |
-| `./config/leader-tap.sh` | the leader stream with no robot attached. Says which keys ever changed. |
-| `./config/leader-soak.sh` | the leader link for N minutes, graded: stalls, lost messages, gap histogram. Run quiet, then with `video-test.sh` going; both must PASS. |
-| `./config/odrive-check.sh` | the ODESC: config vs the cart's bus limits, `--apply` to write them, `--watch` for the XH-M609 relay-drop test. No motors needed. |
-| `./config/cam-probe.sh` | how many stale frames a camera hands back after a pause; `--buffersize 1` is the fix if it is more than one |
-| `./config/scan-motors.sh` | which motor ids answer, at which baud rate |
-| `./config/servo-regs.sh [--bus 1]` | every config and status register, servo by servo, flagging the one that differs. For a servo that answers a scan but will not move. Read-only. |
-| `./config/set-servo-id.sh --bus N --id M` | set a replacement servo's id and baud rate. It must be the only servo on that bus board; refuses otherwise. Then recalibrate that arm. |
-| `./config/recal-joint.sh <joint>` | recalibrate one joint after a servo swap (homing offset + range), leaving the other thirteen alone. Backs up the calibration file first. |
-| `./config/dataset-check.sh <repo_id>` | read a recording back: frames, features, one decoded frame per camera as a PNG in `./readback/`, video files. Picks the newest `<repo_id>_<date>_<time>`. |
-| `./config/power-check.sh` | voltage, temperature and load per servo, with torque applied one at a time |
-| `./config/viewer.sh` | the rerun viewer, at the version uv.lock says. Run it on the Mac. |
-| `./config/video-test.sh` | a synthetic camera feed to the viewer, no robot. Separates the video link from everything else. |
-| `./config/cam-view.sh` | the real cameras to the viewer, no motor bus touched (arms may be off). Loop rate and display cost, PASS/FAIL; `--help` for the glass-to-glass lag test with `ms_clock.py` on the Mac. |
+| **the cart** | |
+| `./config/cart-selftest.sh` | the cart alone: rate, joint values, a frame per camera. `--head --arms --base` to move things; `BASE=none` without wheels. |
+| **servos** - `./config/servo.sh` | |
+| `servo.sh scan` | which ids answer on each bus, at which baud rate |
+| `servo.sh power` | voltage, temperature and load per servo, torque on one at a time |
+| `servo.sh regs [--bus 1]` | every config and status register side by side; flags the servo that differs or runs hot. For one that answers a scan but will not move. Read-only. |
+| `servo.sh set-id --bus N --id M [--port ...]` | give a replacement servo its id. It must be the only servo on that bus board (it refuses otherwise); any board works, rosie's included. |
+| `servo.sh recal <joint>` | recalibrate one joint after a swap (homing offset + range), leaving the other thirteen. Backs up the calibration file first. |
+| **cameras and video** - `./config/video.sh` | |
+| `video.sh probe /dev/cam_left [--buffersize 2]` | how many stale frames the driver hands back after a pause |
+| `video.sh view` | the real cameras to the viewer, no motor bus touched (arms may be off). Loop rate and display cost, PASS/FAIL; `--help` for the glass-to-glass lag test with `python3 config/ms_clock.py` on the Mac. |
+| `video.sh synthetic` | a generated feed to the viewer: the network and viewer with the cameras taken out |
+| `./config/viewer.sh` | the rerun viewer, at the version uv.lock says. On the Mac. |
+| **leader link** - `./config/leader-link.sh` | |
+| `leader-link.sh tap` | the leader stream with no robot: which keys ever changed |
+| `leader-link.sh soak [--minutes 5]` | the link for N minutes, graded: stalls, lost messages, histogram. Run quiet, then with `video.sh synthetic` going; both must PASS. |
+| **data** | |
+| `./config/dataset-check.sh <repo_id>` | read a recording back: frames, features, a decoded frame per camera as PNG, video files. Picks the newest `<repo_id>_<date>_<time>`. |
+| **base** | |
+| `./config/odrive-check.sh` | the ODESC: config vs the bus limits, `--apply` to write them, `--watch` through a power cut. No motors needed. |
+| **environment** | |
 | `./config/sync.sh` | sync with the right extras for this machine |
 
 ---

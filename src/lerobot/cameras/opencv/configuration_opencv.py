@@ -55,7 +55,7 @@ class OpenCVCameraConfig(CameraConfig):
                      4 on V4L2). Each buffer is one frame of hidden latency when the reader falls behind:
                      4 buffers at 30 fps can hand back a frame 133 ms old. 2 keeps the full rate with the
                      staleness capped at one frame; 1 halves the rate on UVC cameras (nowhere to put the
-                     next frame while one is being decoded). Measure with config/cam-probe.sh.
+                     next frame while one is being decoded). Measure with config/video.sh probe.
 
     Note:
         - Only 3-channel color output (RGB/BGR) is currently supported.

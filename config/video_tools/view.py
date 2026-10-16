@@ -7,9 +7,9 @@ camera classes, read the way the robot reads them (async_read, latest
 frame), and handed to the same log_rerun_data at the same image rate. What
 it does not do is touch a motor bus, so it runs with the arms unpowered.
 
-    ./config/cam-view.sh                    to the Mac viewer, 60 s
-    ./config/cam-view.sh --seconds 300
-    ./config/cam-view.sh --only left_wrist  one camera
+    ./config/video.sh view                    to the Mac viewer, 60 s
+    ./config/video.sh view --seconds 300
+    ./config/video.sh view --only left_wrist  one camera
 
 It answers two questions.
 
@@ -109,7 +109,7 @@ def main() -> int:
 
     # Same yaml parsing as the self-test, so the cameras are configured
     # exactly as a run would configure them (buffer_size, fourcc, ...).
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # config/, for cart_selftest
     from cart_selftest import load_config
     from lerobot.cameras.utils import make_cameras_from_configs
     from lerobot.utils.visualization_utils import init_rerun, log_rerun_data, shutdown_rerun
@@ -216,7 +216,7 @@ def main() -> int:
           "(was ~55 ms when it ran inside the loop)")
     if not rate_ok and log_ok:
         print("      The display is not the cost; `observe` is - a camera is slow to deliver.")
-    print("\nNow the lag: the screenshot test in this script's header (./config/cam-view.sh --help).")
+    print("\nNow the lag: the screenshot test in this script's header (./config/video.sh view --help).")
     return 0 if (rate_ok and log_ok) else 1
 
 

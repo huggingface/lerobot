@@ -6,7 +6,7 @@
 Make the terminal font as large as you can (Cmd-+), point a wrist camera
 at it, put the terminal beside the rerun viewer, and screenshot both at
 once. Live clock minus the clock in the camera's picture = end-to-end lag.
-See config/cam_view.py.
+See config/video_tools/view.py.
 """
 import sys
 import time

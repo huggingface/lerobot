@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Read every configuration and status register on one bus, side by side.
 
-    ./config/servo-regs.sh            bus 2 (right arm)
-    ./config/servo-regs.sh --bus 1    bus 1 (left arm + head)
+    ./config/servo.sh regs            bus 2 (right arm)
+    ./config/servo.sh regs --bus 1    bus 1 (left arm + head)
 
 Read-only. Nothing is written, torque is not touched.
 
-scan-motors asks one question - does an id answer a ping? - and a servo can
+`servo.sh scan` asks one question - does an id answer a ping? - and a servo can
 answer perfectly while refusing to move: torque off, a torque limit of 0
 left behind by its overload protection, position limits collapsed onto each
 other by a corrupted EEPROM write during a brownout, an error bit in Status.
@@ -22,10 +22,7 @@ from collections import Counter
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus
 
-PORTS = {
-    1: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00",
-    2: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00",
-}
+from .hw import PORTS
 NAMES = {
     1: ["l_pan", "l_lift", "l_elbow", "l_wflex", "l_wroll", "l_grip", "head_1", "head_2"],
     2: ["r_pan", "r_lift", "r_elbow", "r_wflex", "r_wroll", "r_grip"],

@@ -330,7 +330,7 @@ def test_base(robot: XLerobot, speed: float = 0.08, turn: float = 25.0) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config_path", default="config/cart.yaml",
+    ap.add_argument("--config_path", default="config/cart-remote.yaml",
                     help="an XLerobotConfig, top-level or nested under robot:")
     ap.add_argument("--out", default="selftest-frames", help="where camera frames are written")
     ap.add_argument("--head", action="store_true")

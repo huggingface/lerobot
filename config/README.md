@@ -6,17 +6,37 @@
 | `ORIN-SETUP.md` | one-time bring-up of a cart machine |
 | this file | what the fork changes and why |
 
-Configs for the two SO-101 arms, their leaders, and the head RealSense.
-Run them with stock lerobot CLIs:
+Everything here runs through `uv run --project ../XLeRobot` (see `_common.sh`),
+so no virtualenv needs activating. The robot types come from the XLeRobot
+plugins, not from this repo - see below.
 
-```bash
-lerobot-teleoperate --config_path=config/left-arm.yaml
-lerobot-teleoperate --config_path=config/right-arm.yaml
-lerobot-teleoperate --config_path=config/bi-arms.yaml   # both, one machine
-```
+## What is in this directory
 
-`cart.yaml` uses `--robot.type=xlerobot`, which comes from the XLeRobot
-plugin rather than from this repo — see below.
+**Run every session** (order and details in `RUNNING.md`):
+
+| file | where | what |
+|---|---|---|
+| `operator-leader-host.sh` + `.yaml` | rosie | serves the leader arms and gamepad |
+| `viewer.sh` | Mac | the rerun viewer, at the version the cart sends |
+| `cart-teleop.sh` | elroy | drive the robot, record nothing |
+| `cart-record.sh` | elroy | record a dataset |
+| `cart-remote.yaml` | elroy | **the** robot: ports, cameras, base, plus the leader link. Everything on the cart reads its `robot:` block; `BASE=none\|omniwheels\|odrive` overrides the base per run |
+
+**Check and diagnose** (all on elroy unless noted):
+
+| file | what |
+|---|---|
+| `cart-selftest.sh` | the cart alone: rate, joints, a frame per camera; `--head --arms --base` to move things |
+| `servo.sh scan\|power\|regs\|set-id\|recal` | the servo buses: who answers, voltage under load, every register, replace a servo, recalibrate one joint. Ports and ids in `servo_tools/hw.py` |
+| `video.sh probe\|view\|synthetic` | a camera's buffer depth; the real cameras to the viewer; a synthetic feed for the network alone |
+| `leader-link.sh tap\|soak` | the leader stream with no robot: which keys arrive; a graded N-minute link test |
+| `dataset-check.sh` | read a recording back |
+| `odrive-check.sh` | the ODESC: config, apply limits, watch through a power cut |
+| `ms_clock.py` | **Mac**: millisecond clock for the glass-to-glass lag test |
+
+**Setup and plumbing:** `sync.sh` (the right `uv sync` for this machine),
+`_common.sh` / `_video.sh` (sourced by the scripts), `99-cameras-elroy.rules`
+and `99-odrive-elroy.rules` (udev, see `ORIN-SETUP.md`).
 
 ## Which machine runs what
 
@@ -58,14 +78,6 @@ episode keys (right arrow = end episode, left = re-record, escape = stop)
 are read by the process on the cart, and it falls back to a terminal
 listener when pynput cannot capture, so an SSH TTY puts them under the
 operator's hands.
-
-| file | runs on |
-| --- | --- |
-| `operator-leader-host.{sh,yaml}` | operator station |
-| `cart-teleop.sh`, `cart-record.sh` | cart |
-| `cart-remote.yaml` | cart — arms + head + base, once those motors exist |
-| `_video.sh` | sourced by the cart scripts; `--watch` lives here |
-| `left-arm.yaml`, `right-arm.yaml`, `bi-arms.yaml` | one machine, everything local |
 
 ### The two settings that fail silently
 
@@ -217,7 +229,7 @@ sudo udevadm trigger --action=add --subsystem-match=tty
 `--action=add` matters; see `ORIN-SETUP.md`. If the machine has no cellular
 modem at all, `sudo systemctl disable --now ModemManager` is simpler.
 
-`config/scan-motors.sh` diagnoses both of these for you now.
+`./config/servo.sh scan` diagnoses both of these for you now.
 
 ## Python version
 

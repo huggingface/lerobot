@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Give ONE new STS3215 its id and lerobot's baud rate. Nothing else is touched.
 
-    ./config/set-servo-id.sh --bus 2 --id 5      right wrist roll
-    ./config/set-servo-id.sh --bus 1 --id 7      head_motor_1, and so on
+    ./config/servo.sh set-id --bus 2 --id 5      right wrist roll
+    ./config/servo.sh set-id --bus 1 --id 7      head_motor_1, and so on
 
     # on rosie, on a leader arm's bus board (its leader unplugged):
-    ./config/set-servo-id.sh --bus 2 --id 5 --port /dev/serial/by-id/usb-1a86_...
+    ./config/servo.sh set-id --bus 2 --id 5 --port /dev/serial/by-id/usb-1a86_...
 
 Any bus board will do - the id lives in the servo, not the board. A
 leader board supplies a lower voltage than the followers', which is fine
@@ -31,17 +31,7 @@ import sys
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus
 
-PORTS = {
-    1: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00",
-    2: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00",
-}
-NAMES = {
-    1: {1: "left_arm_shoulder_pan", 2: "left_arm_shoulder_lift", 3: "left_arm_elbow_flex",
-        4: "left_arm_wrist_flex", 5: "left_arm_wrist_roll", 6: "left_arm_gripper",
-        7: "head_motor_1", 8: "head_motor_2"},
-    2: {1: "right_arm_shoulder_pan", 2: "right_arm_shoulder_lift", 3: "right_arm_elbow_flex",
-        4: "right_arm_wrist_flex", 5: "right_arm_wrist_roll", 6: "right_arm_gripper"},
-}
+from .hw import JOINTS as NAMES, PORTS
 
 
 def main() -> int:
@@ -114,7 +104,7 @@ def main() -> int:
 
     print("\n  Next:")
     print("    1. Plug the arm's chain back into the bus board and fit the new servo.")
-    print("    2. ./config/scan-motors.sh       - every id should be present")
+    print("    2. ./config/servo.sh scan       - every id should be present")
     print("    3. Recalibrate this arm (the new servo's offset is not the old one's).")
     return 0
 

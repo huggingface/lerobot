@@ -6,8 +6,8 @@ new machine. It is the only way to tell "the head servos are not wired yet"
 apart from "the head servos are wired and one is dead" - both of which
 surface later as the same unhelpful "no status packet" during connect.
 
-    uv run --project ../XLeRobot python config/scan_motors.py
-    uv run --project ../XLeRobot python config/scan_motors.py --port1 /dev/ttyACM0
+    uv run --project ../XLeRobot python config/servo_tools/scan.py
+    uv run --project ../XLeRobot python config/servo_tools/scan.py --port1 /dev/ttyACM0
 
 Nothing is written. The scan only pings, and it sweeps every supported baud
 rate, so a motor left on the wrong baud rate shows up here rather than
@@ -22,30 +22,12 @@ import sys
 from lerobot.motors.feetech import FeetechMotorsBus
 
 # What XLerobot expects, from xlerobot.py. Keep in step with it.
-BUS1 = {
-    1: "left_arm_shoulder_pan",
-    2: "left_arm_shoulder_lift",
-    3: "left_arm_elbow_flex",
-    4: "left_arm_wrist_flex",
-    5: "left_arm_wrist_roll",
-    6: "left_arm_gripper",
-    7: "head_motor_1",
-    8: "head_motor_2",
-}
-BUS2 = {
-    1: "right_arm_shoulder_pan",
-    2: "right_arm_shoulder_lift",
-    3: "right_arm_elbow_flex",
-    4: "right_arm_wrist_flex",
-    5: "right_arm_wrist_roll",
-    6: "right_arm_gripper",
-    7: "base_left_wheel",
-    8: "base_back_wheel",
-    9: "base_right_wheel",
-}
+from .hw import JOINTS, PORTS
 
-DEFAULT_PORT1 = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A058116-if00"
-DEFAULT_PORT2 = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A68009991-if00"
+BUS1 = JOINTS[1]
+BUS2 = JOINTS[2]
+DEFAULT_PORT1 = PORTS[1]
+DEFAULT_PORT2 = PORTS[2]
 
 # What lerobot configures motors to. A motor answering anywhere else needs
 # setting up, not calibrating. Read from the class rather than hardcoded so
@@ -186,11 +168,10 @@ def main() -> int:
         print("\n  Then: ./config/cart-selftest.sh")
     elif have_arms:
         print(f"  Arms only - head (bus1 ids {sorted(head - ids1)}) not responding.")
-        print("  Both robot types read the head unconditionally and will fail on connect.")
-        print("\n  Use the arms-only path until it is wired:")
-        print("    config/bi-arms.yaml")
-        print("\n  To bring a new servo onto a bus, set its id first:")
-        print("    lerobot-setup-motors --robot.type=xlerobot --robot.port1=... --robot.port2=...")
+        print("  The robot reads the head with the left arm and will fail on connect.")
+        print("  Wire it first. (A missing base is fine: BASE=none.)")
+        print("\n  To bring a new servo onto a bus, set its id first, with it alone on the bus:")
+        print("    ./config/servo.sh set-id --bus N --id M")
     else:
         print("  Arms incomplete. Fix that before anything else.")
         print("  A whole bus silent is usually the cable or power; one id")

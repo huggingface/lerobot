@@ -9,9 +9,9 @@ moving. This touches no hardware and goes through the same two lerobot
 functions a real run does, so if a pattern appears here, video works, and
 anything still missing during a run is lerobot's arguments and nothing else.
 
-    ./config/video-test.sh                 # to the default viewer host
-    ./config/video-test.sh 192.168.1.52    # somewhere else
-    ./config/video-test.sh --local         # this machine's own desktop
+    ./config/video.sh synthetic                 # to the default viewer host
+    ./config/video.sh synthetic 192.168.1.52    # somewhere else
+    ./config/video.sh synthetic --local         # this machine's own desktop
 
 It is also a bisection tool. A viewer that wedges has several possible
 causes tangled together - frame rate, pixel count, how many streams, JPEG
