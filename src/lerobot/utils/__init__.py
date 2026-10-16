@@ -20,7 +20,8 @@ to ``lerobot.common``. ``visualization_utils`` remains here but is
 intentionally NOT re-exported to avoid pulling in optional dependencies.
 """
 
-from .action_interpolator import ActionInterpolator
+from typing import TYPE_CHECKING
+
 from .constants import (
     ACTION,
     DEFAULT_FEATURES,
@@ -36,10 +37,24 @@ from .constants import (
     REWARD,
 )
 from .decorators import check_if_already_connected, check_if_not_connected
-from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
 from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from .import_utils import is_package_available, register_third_party_plugins, require_package
+from .import_utils import is_package_available, lazy_exports, register_third_party_plugins, require_package
 from .utils import init_logging
+
+# These import torch, so each is imported the first time it is used.
+if TYPE_CHECKING:
+    from .action_interpolator import ActionInterpolator
+    from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
+else:
+    __getattr__, __dir__ = lazy_exports(
+        __name__,
+        {
+            "ActionInterpolator": ".action_interpolator.ActionInterpolator",
+            "auto_select_torch_device": ".device_utils.auto_select_torch_device",
+            "get_safe_torch_device": ".device_utils.get_safe_torch_device",
+            "is_torch_device_available": ".device_utils.is_torch_device_available",
+        },
+    )
 
 __all__ = [
     # Constants
