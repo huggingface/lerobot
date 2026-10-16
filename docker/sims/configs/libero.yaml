@@ -1,0 +1,19 @@
+# Conventions (fps, control, semantics, component names) come from lerobot/sims/conventions.py.
+deployment: libero
+sim:
+  type: libero
+  task: libero_spatial
+  kwargs:
+    gym_kwargs:
+      obs_type: pixels_agent_pos
+      render_mode: rgb_array
+      observation_height: 360
+      observation_width: 360
+      control_freq: 20
+      hard_reset: true
+    camera_name: agentview_image,robot0_eye_in_hand_image
+    init_states: true
+    control_mode: relative
+    episode_length: null
+    camera_name_mapping: null
+    is_libero_plus: false

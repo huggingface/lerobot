@@ -1,0 +1,17 @@
+# Conventions (fps, control, semantics, component names) come from lerobot/sims/conventions.py.
+deployment: robocasa
+sim:
+  type: robocasa
+  task: CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle
+  kwargs:
+    gym_kwargs:
+      obs_type: pixels_agent_pos
+      render_mode: rgb_array
+      observation_height: 256
+      observation_width: 256
+      visualization_height: 512
+      visualization_width: 512
+    camera_name: robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right
+    episode_length: null
+    obj_registries:
+    - lightwheel
