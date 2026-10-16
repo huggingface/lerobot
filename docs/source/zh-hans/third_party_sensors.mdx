@@ -1,0 +1,99 @@
+# 第三方摄像头与传感器
+
+LeRobot 生态远不止原生支持的摄像头（OpenCV、Intel RealSense、ZMQ、Reachy 2）。得益于 LeRobot 的插件架构，社区开发了即装即用的摄像头和传感器集成，从深度摄像头到基于视觉的触觉传感器。本页介绍由社区维护的摄像头和传感器集成，可用于遥操作、数据采集和策略部署。
+
+> [!IMPORTANT]
+> 这些项目由第三方开发和维护。安装说明、硬件要求和支持信息请参阅各项目的仓库。
+
+即装即用的插件会按包名自动发现：LeRobot 会导入所有已安装且名称以 `lerobot_camera_` 开头的包。安装后，可在任意 LeRobot 命令中直接使用插件注册的摄像头 `type`（请参阅插件的 README；它可能与包名不同）：
+
+```bash
+pip install lerobot_camera_<name>
+
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: <name>, width: 640, height: 480, fps: 30} }" \
+    --dataset.repo_id=${HF_USER}/my-dataset \
+    --dataset.num_episodes=5
+```
+
+## 触觉传感器
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/xensedyl/lerobot-camera-xense">lerobot-camera-xense</a></td>
+      <td>用于 <a href="https://www.xenserobotics.com/">Xense</a> 视觉触觉传感器的插件，提供校正图像、差分图像、深度信息和二维标记。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 深度摄像头
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/hexfellow/hex_lerobot_drivers/tree/main/lerobot_camera_berxel">lerobot_camera_berxel</a></td>
+      <td>用于 <a href="https://www.berxel.com/">Berxel</a> 深度摄像头的插件，属于更广泛的 <a href="https://hexfellow.com/">HEXFELLOW</a> 驱动套件。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 网络摄像头
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/F-Fer/lerobot_ur5e_gello">lerobot_camera_zmq</a></td>
+      <td>通过网络传输树莓派上的 <a href="https://www.stereolabs.com/">Stereolabs ZED</a> 和 USB 摄像头画面的插件。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 虚拟摄像头
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/hexfellow/hex_lerobot_drivers/tree/main/lerobot_camera_dummy">lerobot_camera_dummy</a></td>
+      <td>模拟摄像头的插件，无需硬件即可录制，适合调试！</td>
+    </tr>
+  </tbody>
+</table>
+
+## 参与贡献
+
+自己开发了 LeRobot 摄像头或传感器集成？将它打包成可安装的 `lerobot_camera_<name>` 插件，LeRobot CLI 就会自动发现它。请参阅[接入自己的硬件](./integrate_hardware)指南和[摄像头](./cameras)参考文档开始操作，然后与社区分享你的项目！
