@@ -15,7 +15,7 @@
 # limitations under the License.
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast, overload
 
@@ -487,11 +487,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return reader.hf_dataset
 
     @property
-    def absolute_to_relative_idx(self) -> dict[int, int] | None:
+    def absolute_to_relative_idx(self) -> Mapping[int, int] | None:
         """Mapping from absolute frame indices to relative row positions.
 
         Non-None only for episode-filtered datasets where absolute indices
-        (from metadata) differ from row positions in the filtered view.
+        (from metadata) differ from row positions in the filtered view. The
+        concrete type depends on the storage backend (a plain ``dict`` for the
+        default reader, a compact on-the-fly index for the Lance reader);
+        callers should rely only on ``in`` and ``[]``.
         """
         return self._ensure_reader().absolute_to_relative_idx
 
