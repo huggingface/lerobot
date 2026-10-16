@@ -12,12 +12,7 @@ To that end, we provide the [`Robot`](https://github.com/huggingface/lerobot/blo
 
 ## Choose your motors
 
-If you're using Feetech or Dynamixel motors, LeRobot provides built-in bus interfaces:
-
-- [`FeetechMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/feetech/feetech.py) – for controlling Feetech servos
-- [`DynamixelMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/dynamixel/dynamixel.py) – for controlling Dynamixel servos
-
-Please refer to the [`MotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py) abstract class to learn about its API.
+If you're using Feetech or Dynamixel motors, LeRobot provides a built-in bus interface, [`SerialMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py), which drives either family: each motor's model tells it which. Refer to it to learn about its API. It needs the `serial-motors` extra, which installs rustypot: `pip install 'lerobot[serial-motors]'`, or `pip install -e ".[serial-motors]"` from a source checkout.
 For a good example of how it can be used, you can have a look at our own [SO101 follower implementation](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/so_follower/so_follower.py)
 
 Use these if compatible. Otherwise, you'll need to find or write a Python interface (not covered in this tutorial):
@@ -27,11 +22,19 @@ Use these if compatible. Otherwise, you'll need to find or write a Python interf
 
 You're not alone—many community contributions use custom boards or firmware!
 
-For Feetech and Dynamixel, we currently support these servos: - Feetech: - STS & SMS series (protocol 0): `sts3215`, `sts3250`, `sm8512bl` - SCS series (protocol 1): `scs0009` - Dynamixel (protocol 2.0 only): `xl330-m077`, `xl330-m288`, `xl430-w250`, `xm430-w350`, `xm540-w270`, `xc430-w150`
+For Feetech and Dynamixel, we currently support these servos:
 
-If you are using Feetech or Dynamixel servos that are not in this list, you can add those in the [Feetech table](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/feetech/tables.py) or [Dynamixel table](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/dynamixel/tables.py). Depending on the model, this will require you to add model-specific information. In most cases though, there shouldn't be a lot of additions to do.
+- Feetech STS & SMS series: `sts3215`, `sts3250`, `sm8512bl`
+- Feetech SCS series: `scs0009`
+- Dynamixel X series (protocol 2.0): `xl330-m077`, `xl330-m288`, `xc330-t181`, `xc330-t288`, `xl430-w250`, `xl430-w250-2`, `xc430-w150`, `xm430-w350`, `xm540-w270`, `xh540-w150`
 
-In the next sections, we'll use a `FeetechMotorsBus` as the motors interface for the examples. Replace it and adapt to your motors if necessary.
+Models can share a bus, STS/SMS and SCS servos or XL430 and XL330: each motor is read and written through its own model's definition, byte order and sign encoding included. The differences between families come from the same definitions: which operating mode value means position control (`bus.set_operating_mode("position")`), whether the homing offset adds to the position or subtracts from it, which registers exist.
+
+Supporting a model does not mean every calibration helper works on it: the Feetech SCS0009 has neither an operating mode nor a homing offset, so `set_operating_mode()` and `set_half_turn_homings()` refuse it. The calibration recipe below is for servos that have both, such as the STS; an SCS servo is calibrated by its range alone.
+
+If you are using Feetech or Dynamixel servos that are not in this list, add them to [rustypot](https://github.com/pollen-robotics/rustypot), which holds the control tables the buses read: a model sharing an existing control table only needs its model number registered, a new one needs a servo definition (see the [servo contribution guide](https://github.com/pollen-robotics/rustypot/blob/v1.13.1/src/servo/README.md)). LeRobot reads the models from the installed rustypot Python package, so it must include the new model: a rustypot release with it, or rustypot built from source.
+
+In the next sections, the examples use Feetech motors. Change the models and adapt to your motors if necessary.
 
 ## Step 1: Subclass the `Robot` Interface
 
@@ -53,7 +56,7 @@ from lerobot.robots import RobotConfig
 class MyCoolRobotConfig(RobotConfig):
     port: str
     cameras: dict[str, CameraConfig] = field(
-        default_factory={
+        default_factory=lambda: {
             "cam_1": OpenCVCameraConfig(
                 index_or_path=2,
                 fps=30,
@@ -73,9 +76,10 @@ Here we'll create a simple 5-DoF robot with one camera. It could be a simple arm
 
 <!-- prettier-ignore-start -->
 ```python
+from typing import Any
+
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.motors import Motor, MotorNormMode
-from lerobot.motors.feetech import FeetechMotorsBus
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.robots import Robot
 
 class MyCoolRobot(Robot):
@@ -84,7 +88,8 @@ class MyCoolRobot(Robot):
 
     def __init__(self, config: MyCoolRobotConfig):
         super().__init__(config)
-        self.bus = FeetechMotorsBus(
+        self.config = config
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "joint_1": Motor(1, "sts3250", MotorNormMode.RANGE_M100_100),
@@ -146,6 +151,7 @@ Here, we simply use the same joints proprioceptive features (`self._motors_ft`) 
 
 <!-- prettier-ignore-start -->
 ```python
+@property
 def action_features(self) -> dict:
     return self._motors_ft
 ```
@@ -189,7 +195,7 @@ def connect(self, calibrate: bool = True) -> None:
 
 This method should gracefully terminate communication with the hardware: free any related resources (threads or processes), close ports, etc.
 
-Here, we already handle this in our `MotorsBus` and `Camera` classes so we just need to call their own `disconnect()` methods:
+Here, we already handle this in our `SerialMotorsBus` and `Camera` classes so we just need to call their own `disconnect()` methods:
 
 <!-- prettier-ignore-start -->
 ```python
@@ -243,7 +249,7 @@ It should implement the logic for calibration (if relevant) and update the `self
 def calibrate(self) -> None:
     self.bus.disable_torque()
     for motor in self.bus.motors:
-        self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        self.bus.set_operating_mode("position", motor)
 
     input(f"Move {self} to the middle of its range of motion and press ENTER....")
     homing_offsets = self.bus.set_half_turn_homings()
@@ -280,7 +286,7 @@ def configure(self) -> None:
     with self.bus.torque_disabled():
         self.bus.configure_motors()
         for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+            self.bus.set_operating_mode("position", motor)
             self.bus.write("P_Coefficient", motor, 16)
             self.bus.write("I_Coefficient", motor, 0)
             self.bus.write("D_Coefficient", motor, 32)
@@ -330,6 +336,29 @@ def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
     return action
 ```
 <!-- prettier-ignore-end -->
+
+### Waiting between predictions
+
+Ordinary local RTC remains usable without a new robot capability. Remote rollout, planned asynchronous language pauses and recoverable action starvation require a retained-target waiting contract. Opt in with `supports_position_hold = True` only when refreshing every action field through `send_action()` is safe for the controller. Usually those fields are actual position targets. A controller may instead opt in with a separately validated retained command, such as SONIC's latent motion token, when repeating it keeps the onboard controller balancing. Torque enable or a `.pos` suffix alone does not establish this; velocity/effort and locomotion commands remain unsuitable.
+
+The shared rollout implementation refreshes the last complete finite action returned by `send_action()`, including the gripper and any driver clipping. Return the target actually applied, not the original request, when your driver modifies it. Subsequent observation updates do not replace that target. Before any command has been applied, a validated measured position snapshot initializes it. The robot may settle toward its retained target; this contract stops trajectory advancement rather than guaranteeing an instantaneous physical stop. Validate load support, grip and command-refresh behavior on hardware for each deployment.
+
+When holding is enabled, custom action processors and teleoperation corrections must preserve a complete position command, including the gripper. The driver must return every action component with finite applied values. An incomplete/invalid return is a contract failure after command application: rollout stops and suppresses homing instead of reusing an older target. Command failures also suppress homing in synchronous rollout.
+
+Remote rollout checks this driver capability automatically; no additional hold-mode CLI flag is needed. Generic observation failures use the normal rollout cleanup path. Returning to the initial position still needs a complete observation, and may fail if a camera remains unavailable.
+
+| Robot implementation                                    | Position-target waiting support                                                                                                                                                                                                                                            |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SO followers (SO-100/SO-101), OMX, Koch                 | Supported.                                                                                                                                                                                                                                                                 |
+| HopeJr arm and hand                                     | Supported.                                                                                                                                                                                                                                                                 |
+| Rebot B601                                              | Supported across the existing absolute-position arm/gripper modes.                                                                                                                                                                                                         |
+| OpenArm                                                 | Supported with `use_velocity_and_torque=false`; mixed action schemas are excluded.                                                                                                                                                                                         |
+| BiSO, BiOpenArm, BiRebot B601                           | Supported when both underlying arms support it; their applied targets retain the left/right prefixes.                                                                                                                                                                      |
+| Reachy2                                                 | Supported only with `with_mobile_base=false`, `use_external_commands=false` and `max_relative_target=null`. Mobile-base commands are velocities, external mode does not transmit targets, and the clipping path currently returns the original rather than applied values. |
+| LeKiwi (including network client), EarthRover Mini Plus | Unsupported: actions include mobile-base velocities, which cannot be retained as position targets.                                                                                                                                                                         |
+| Unitree G1                                              | Supported only with `SonicWholeBodyController`: waiting repeats the last complete 64-D motion token while the onboard decoder continues balancing. GR00T/Holosoma locomotion and raw `.q` control remain unsupported.                                                      |
+
+These declarations reflect the driver command contract, not physical validation of every embodiment or controller configuration. The generic `Robot` default remains false. Capability checks do not establish checkpoint compatibility, controller tuning, load support or hardware health.
 
 ## Adding a Teleoperator
 

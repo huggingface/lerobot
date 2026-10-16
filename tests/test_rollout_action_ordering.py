@@ -109,6 +109,7 @@ class _StubRelativePolicy:
     def __init__(self, action_dim: int = 16):
         self.action_dim = action_dim
         self.config = SimpleNamespace(
+            n_obs_steps=1,
             action_feature_names=list(CKPT_ORDER),
             use_amp=False,
             chunk_size=30,
@@ -134,6 +135,10 @@ class _StubRelativePolicy:
     _action_queue_attrs = PreTrainedPolicy._action_queue_attrs
     drop_queued_actions = PreTrainedPolicy.drop_queued_actions
     count_queued_actions = PreTrainedPolicy.count_queued_actions
+    chunk_inference_spec = PreTrainedPolicy.chunk_inference_spec
+
+    def supports_rtc(self):
+        return True
 
     def supports_text_generation(self):
         return False
@@ -247,7 +252,7 @@ def _remap_like_pre_4416(action_tensor, dataset_features, ordered_action_keys):
 
 def _run_sync_tick(*, align_state, align_action, remap):
     """One control tick through the real sync engine and ``send_next_action``."""
-    from lerobot.rollout.inference.sync import SyncInferenceEngine
+    from lerobot.inference import SyncInferenceEngine
     from lerobot.rollout.strategies.core import send_next_action
     from lerobot.utils.action_interpolator import ActionInterpolator
 
@@ -393,7 +398,7 @@ def test_sync_grippers_swap_with_each_other_but_never_run_away():
 
 def test_sync_anchor_is_pinned_across_a_chunk():
     """A cached action must keep the anchor from the tick that predicted its chunk."""
-    from lerobot.rollout.inference.sync import SyncInferenceEngine
+    from lerobot.inference import SyncInferenceEngine
 
     dataset_features, ordered_action_keys = _build_features(align_state=True, align_action=True)
     preprocessor, postprocessor = _make_pipelines()
@@ -462,9 +467,8 @@ def test_sync_anchor_is_pinned_across_a_chunk():
 
 def _seed_rtc_engine(dataset_features, state_names):
     """An RTC engine whose queue holds the chunk this variant's postprocessor would emit."""
-    from lerobot.policies.rtc import ActionQueue
+    from lerobot.inference import ActionProvenance, RTCInferenceEngine
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
-    from lerobot.rollout.inference import RTCInferenceEngine
 
     preprocessor, postprocessor = _make_pipelines()
     engine = RTCInferenceEngine(
@@ -489,8 +493,9 @@ def _seed_rtc_engine(dataset_features, state_names):
         ],
         dtype=torch.float32,
     )
-    engine._action_queue = ActionQueue(RTCConfig(enabled=True, execution_horizon=8))
-    engine._action_queue.merge(absolute.clone(), absolute.clone(), 0, None, task="fold the t-shirt")
+    engine._runtime.activate()
+    provenance = ActionProvenance(engine._runtime.clock(), "fold the t-shirt")
+    engine.action_queue.replace_future(absolute, [provenance], snapshot=engine.action_queue.snapshot())
     return engine
 
 

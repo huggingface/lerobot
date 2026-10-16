@@ -198,6 +198,9 @@ class UnitreeG1(Robot):
 
         # Controller loaded dynamically
         self.controller: RobotController | None = make_robot_controller(config.controller)
+        # Only a token controller (SONIC) can be held: re-sending the last token keeps the
+        # decoder balancing. Locomotion controllers take joystick velocities, which cannot.
+        self.supports_position_hold = getattr(self.controller, "action_ft", None) is not None
         # Controller thread state
         self._controller_thread: threading.Thread | None = None
         self._controller_action_lock = threading.Lock()

@@ -171,6 +171,7 @@ diffusers-dep = ["diffusers>=0.38.0,<0.40.0"]
 qwen-vl-utils-dep = ["qwen-vl-utils>=0.0.11,<0.1.0"]
 matplotlib-dep = ["matplotlib>=3.10.3,<4.0.0", "contourpy>=1.3.0,<2.0.0"] # NOTE: Explicitly listing contourpy helps the resolver converge faster.
 pyserial-dep = ["pyserial>=3.5,<4.0"]
+rustypot-dep = ["rustypot>=1.13.1,<2.0.0"]
 deepdiff-dep = ["deepdiff>=7.0.1,<9.0.0"]
 pynput-dep = ["pynput>=1.7.8,<1.9.0"]
 pyzmq-dep = ["pyzmq>=26.2.1,<28.0.0"]
@@ -179,8 +180,11 @@ motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
 timm-dep = ["timm>=1.0.0,<1.1.0"]
 
 # Motors
-feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
-dynamixel = ["dynamixel-sdk>=3.7.31,<3.9.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
+# rustypot drives Feetech and Dynamixel motors; pyserial is for `lerobot-find-port`, the first step of every
+# arm setup guide. `feetech` and `dynamixel` are the names the setup guides use.
+serial-motors = ["lerobot[rustypot-dep]", "lerobot[pyserial-dep]"]
+feetech = ["lerobot[serial-motors]"]
+dynamixel = ["lerobot[serial-motors]"]
 damiao = ["lerobot[can-dep]"]
 robstride = ["lerobot[can-dep]"]
 
@@ -271,7 +275,8 @@ lawam = [
 ]
 
 # Features
-async = ["lerobot[grpcio-dep]", "lerobot[matplotlib-dep]"]
+# Remote inference transport and serialization.
+remote = ["eclipse-zenoh>=1.9.0,<1.11.0", "msgpack>=1.1.0,<2.0.0"]
 peft = ["lerobot[transformers-dep]", "lerobot[peft-dep]"]
 
 # Annotation pipeline (lerobot-annotate). The only backend is ``openai``,
@@ -297,8 +302,8 @@ video_benchmark = ["scikit-image>=0.23.2,<0.26.0", "pandas>=2.2.2,<2.4.0"]
 
 # Simulation
 # NOTE: Explicitly listing scipy helps flatten the dependecy tree.
-aloha = ["lerobot[dataset]", "gym-aloha>=0.1.4,<0.2.0", "lerobot[scipy-dep]"]
-pusht = ["lerobot[dataset]", "gym-pusht>=0.1.5,<0.2.0", "pymunk>=6.6.0,<7.0.0"] # TODO: Fix pymunk version in gym-pusht instead
+aloha = ["lerobot[dataset]", "gym-aloha>=0.1.5,<0.2.0", "lerobot[scipy-dep]"]
+pusht = ["lerobot[dataset]", "gym-pusht>=0.1.8,<0.2.0"]
 libero = ["lerobot[dataset]", "lerobot[transformers-dep]", "hf-libero>=0.1.4,<0.2.0; sys_platform == 'linux'", "lerobot[scipy-dep]"]
 metaworld = ["lerobot[dataset]", "metaworld==3.0.0", "lerobot[scipy-dep]"]
 # NOTE: vlabench is NOT exposed as a `lerobot` extra. Its only distribution
@@ -358,7 +363,7 @@ all = [
     "lerobot[vla_jepa]",
     "lerobot[lingbot_va]",
     "lerobot[lawam]",
-    "lerobot[async]",
+    "lerobot[remote]",
     "lerobot[dev]",
     "lerobot[test]",
     "lerobot[video_benchmark]",
@@ -395,6 +400,7 @@ lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
+lerobot-policy-server="lerobot.scripts.lerobot_policy_server:main"
 
 # ---------------- Tool Configurations ----------------
 
@@ -407,9 +413,16 @@ name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
+# LeRobot decodes videos on CPU; avoid GPU-only TorchCodec dependencies without changing GPU training.
+torchcodec = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')" }]
 
 [tool.setuptools.package-data]
 lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt", "configs/recipes/*.yaml"]
@@ -468,7 +481,6 @@ ignore = [
 "src/lerobot/policies/molmoact2/molmoact2_hf_model/**" = ["D"]
 # Awaiting conversion, one PR per module.
 "src/lerobot/annotations/**" = ["D"]
-"src/lerobot/async_inference/**" = ["D"]
 "src/lerobot/cameras/**" = ["D"]
 "src/lerobot/common/**" = ["D"]
 "src/lerobot/configs/**" = ["D"]
