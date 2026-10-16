@@ -33,6 +33,21 @@ from lerobot.envs.utils import (
 )
 from tests.utils import require_env
 
+
+class _DictObservationEnv(gym.Env):
+    """A Gymnasium env with the dict observations LeRobot environments provide."""
+
+    observation_space = gym.spaces.Dict({"agent_pos": gym.spaces.Box(-1, 1, (2,), np.float32)})
+    action_space = gym.spaces.Box(-1, 1, (2,), np.float32)
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        return {"agent_pos": np.zeros(2, np.float32)}, {}
+
+    def step(self, action):
+        return {"agent_pos": np.zeros(2, np.float32)}, 0.0, False, False, {}
+
+
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
 
 ENV_TASK_PAIRS = [
@@ -106,11 +121,11 @@ def test_factory_custom_gym_id():
             return {}
 
     try:
-        register(id=gym_id, entry_point="gymnasium.envs.classic_control:CartPoleEnv")
+        register(id=gym_id, entry_point=_DictObservationEnv)
 
         cfg = DummyEnv()
         envs_dict = make_env(cfg, n_envs=1)
-        dummy_envs = envs_dict["dummy"]
+        dummy_envs = envs_dict["DummyTask-v0"]
         assert len(dummy_envs) == 1
         env = next(iter(dummy_envs.values()))
         assert env is not None and isinstance(env, gym.vector.VectorEnv)

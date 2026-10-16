@@ -55,6 +55,22 @@ def make_env_pre_post_processors(
     return env_cfg.get_env_processors()
 
 
+def make_hub_envs(
+    hub_path: str,
+    n_envs: int,
+    use_async_envs: bool,
+    trust_remote_code: bool,
+    hub_cache_dir: str | None = None,
+    cfg: EnvConfig | None = None,
+) -> dict[str, dict[int, gym.vector.VectorEnv]]:
+    """The vector envs a Hub repository's ``make_env`` returns, as it returns them."""
+    # _download_hub_file raises unless trust_remote_code is set.
+    repo_id, _, local_file, _ = _download_hub_file(hub_path, trust_remote_code, hub_cache_dir)
+    module = _import_hub_module(local_file, repo_id)
+    raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
+    return _normalize_hub_result(raw_result)
+
+
 def make_env(
     cfg: EnvConfig | str,
     n_envs: int = 1,
@@ -62,14 +78,13 @@ def make_env(
     hub_cache_dir: str | None = None,
     trust_remote_code: bool = False,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-    """Makes a gym vector environment according to the config or Hub reference.
+    """Makes the vector environments of a config, or of a Hub repository's ``make_env``.
 
     Args:
-        cfg (EnvConfig | str): Either an `EnvConfig` object describing the environment to build locally,
-            or a Hugging Face Hub repository identifier (e.g. `"username/repo"`). In the latter case,
-            the repo must include a Python file (usually `env.py`).
+        cfg (EnvConfig | str): Either an `EnvConfig` object describing the environment, or a Hugging Face
+            Hub repository identifier (e.g. `"username/repo"`), whose `env.py` builds the environments.
         n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
-        use_async_envs (bool, optional): Whether to return an AsyncVectorEnv or a SyncVectorEnv. Defaults to
+        use_async_envs (bool, optional): Whether to step the worlds in parallel processes. Defaults to
             False.
         hub_cache_dir (str | None): Optional cache path for downloaded hub files.
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.
@@ -82,41 +97,14 @@ def make_env(
         dict[str, dict[int, gym.vector.VectorEnv]]:
             A mapping from suite name to indexed vectorized environments.
             - For multi-task benchmarks (e.g., LIBERO): one entry per suite, and one vec env per task_id.
-            - For single-task environments: a single suite entry (cfg.type) with task_id=0.
+            - For single-task environments: a single suite entry with task_id=0.
 
     """
-    # if user passed a hub id string (e.g., "username/repo", "username/repo@main:env.py")
-    # simplified: only support hub-provided `make_env`
-    # TODO: (jadechoghari): deprecate string API and remove this check
-    if isinstance(cfg, str):
-        hub_path: str | None = cfg
-    elif isinstance(cfg, HubEnvConfig):
-        hub_path = cfg.hub_path
-    else:
-        hub_path = None
-
-    # If hub_path is set, download and call hub-provided `make_env`
-    if hub_path:
-        # _download_hub_file will raise the same RuntimeError if trust_remote_code is False
-        repo_id, file_path, local_file, revision = _download_hub_file(
-            hub_path, trust_remote_code, hub_cache_dir
-        )
-
-        # import and surface clear import errors
-        module = _import_hub_module(local_file, repo_id)
-
-        # call the hub-provided make_env
-        env_cfg = None if isinstance(cfg, str) else cfg
-        raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=env_cfg)
-
-        # normalize the return into {suite: {task_id: vec_env}}
-        return _normalize_hub_result(raw_result)
-
-    # At this point, cfg must be an EnvConfig (not a string) since hub_path would have been set otherwise
-    if isinstance(cfg, str):
-        raise TypeError("cfg should be an EnvConfig at this point")
-
     if n_envs < 1:
         raise ValueError("`n_envs` must be at least 1")
-
+    # TODO: (jadechoghari): deprecate string API and remove this check
+    if isinstance(cfg, str):
+        return make_hub_envs(cfg, n_envs, use_async_envs, trust_remote_code, hub_cache_dir)
+    if isinstance(cfg, HubEnvConfig) and trust_remote_code:
+        cfg.trust_remote_code = True
     return cfg.create_envs(n_envs=n_envs, use_async_envs=use_async_envs)
