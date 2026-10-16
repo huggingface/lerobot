@@ -1,6 +1,6 @@
 # GR00T 策略[[gr00t-policy]]
 
-GR00T 是 NVIDIA 為通用人形機器人的推理與技能所打造的基礎模型（foundation model）系列。它是一個跨機器人形態（cross-embodiment）的策略（policy），接受語言、影像與本體感覺（proprioception）等多模態輸入，在多樣的環境中執行操作任務。
+GR00T 是 NVIDIA 為通用人形機器人的推理與技能所打造的基礎模型（foundation model）系列。它是一個跨具身（cross-embodiment）的策略（policy），接受語言、影像與本體感覺（proprioception）等多模態輸入，在多樣的環境中執行操作任務。
 
 LeRobot 透過 `groot` 策略類型整合 GR00T N1.7。
 
@@ -27,7 +27,7 @@ GR00T 使用預訓練的視覺與語言編碼器，搭配以流匹配（flow mat
 - 使用 NVIDIA Isaac GR00T Blueprint 產生的合成資料。
 - 網際網路規模的影片資料。
 
-這種做法讓模型能透過後訓練，高度適應特定的機器人形態、任務與環境。
+這種做法讓模型能透過後訓練，高度適應特定的具身形態、任務與環境。
 
 ## 安裝需求[[installation-requirements]]
 
@@ -57,7 +57,7 @@ pip install -e ".[groot]"
 
 以下是在你自己的資料集上微調（fine-tune）GR00T 基礎模型的完整訓練指令：
 
-這個指令使用了 `new_embodiment` 旗標，用於 SO-101 機器人。[進一步了解 GR00T 如何處理不同的機器人形態。](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/policy.md#--embodiment-tag)
+這個指令使用了 `new_embodiment` 旗標，用於 SO-101 機器人。[進一步了解 GR00T 如何處理不同的具身形態。](https://github.com/NVIDIA/Isaac-GR00T/blob/main/getting_started/policy.md#--embodiment-tag)
 
 ```bash
 # 安裝訓練所需的額外相依套件

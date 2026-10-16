@@ -2,13 +2,13 @@
 
 ## 概覽[[overview]]
 
-多年來，機器人學一直希望打造出能依循人類自然語言指令、在多種環境與機器人形態（embodiment）上靈巧操作的代理（agent）。大型語言模型（LLM）與視覺語言模型（VLM）近期的突破指出了一條可行的路：將這些基礎模型（foundation model）的架構延伸到具身控制（embodied control），讓它們以動作為依歸。視覺-語言-動作（Vision-Language-Action，VLA）模型因此興起，期望單一的通用模型能同時具備廣泛的語義理解與穩健的操作技能。
+多年來，機器人學一直希望打造出能依循人類自然語言指令、在多種環境與具身形態（embodiment）上靈巧操作的代理（agent）。大型語言模型（LLM）與視覺語言模型（VLM）近期的突破指出了一條可行的路：將這些基礎模型（foundation model）的架構延伸到具身控制（embodied control），讓它們以動作為依歸。視覺-語言-動作（Vision-Language-Action，VLA）模型因此興起，期望單一的通用模型能同時具備廣泛的語義理解與穩健的操作技能。
 
-然而，訓練這類模型並不容易。機器人資料分散在不同的平台、感測器、機器人形態與收集流程之間，異質性無所不在：不同的機械臂配置、不同的動作空間、不同的相機設定、不同的視覺領域，以及不同的任務分布。這些不一致造成了嚴重的分布偏移（distribution shift），使預訓練不穩定，適應新環境的效果也不可靠。
+然而，訓練這類模型並不容易。機器人資料分散在不同的平台、感測器、具身形態與收集流程之間，異質性無所不在：不同的機械臂配置、不同的動作空間、不同的相機設定、不同的視覺領域，以及不同的任務分布。這些不一致造成了嚴重的分布偏移（distribution shift），使預訓練不穩定，適應新環境的效果也不可靠。
 
 受到元學習（meta-learning）與提示學習（prompt learning）的啟發，我們提出一個問題：**「如果 VLA 模型能像 LLM 透過提示學習任務一樣，學會每個機器人與資料集的結構，會怎麼樣？」**
 
-**X-VLA** 是一個採用軟提示（soft prompt）與流匹配（flow matching）的 VLA 框架，它將每種硬體設定視為一個「任務」，並以一小組可學習的嵌入向量（embedding）加以編碼。這些**軟提示**捕捉了機器人形態與領域特有的差異，從多模態融合的最早階段就開始引導 Transformer。藉由這個機制，X-VLA 能在單一的統一架構中，兼容各式各樣的機器人形態、資料類型與感測器設定。
+**X-VLA** 是一個採用軟提示（soft prompt）與流匹配（flow matching）的 VLA 框架，它將每種硬體設定視為一個「任務」，並以一小組可學習的嵌入向量（embedding）加以編碼。這些**軟提示**捕捉了具身形態與領域特有的差異，從多模態融合的最早階段就開始引導 Transformer。藉由這個機制，X-VLA 能在單一的統一架構中，兼容各式各樣的具身形態、資料類型與感測器設定。
 
 <p align="center">
   <img
@@ -18,7 +18,7 @@
   />
 </p>
 
-X-VLA 完全由 Transformer 編碼器構成，能隨著模型規模與資料集多樣性自然擴展。在 6 個模擬基準測試與 3 台真實機器人上，軟提示在處理硬體與領域差異方面，都穩定優於現有方法。X-VLA-0.9B 以涵蓋七種機器人平台的 290K 個回合（episode）訓練，在第一階段學習與機器人形態無關的通用策略（policy）；到了第二階段，只需學習一組新的提示，就能有效率地適應新的機器人，同時保持骨幹網路（backbone）凍結。
+X-VLA 完全由 Transformer 編碼器構成，能隨著模型規模與資料集多樣性自然擴展。在 6 個模擬基準測試與 3 台真實機器人上，軟提示在處理硬體與領域差異方面，都穩定優於現有方法。X-VLA-0.9B 以涵蓋七種機器人平台的 290K 個回合（episode）訓練，在第一階段學習與具身形態無關的通用策略（policy）；到了第二階段，只需學習一組新的提示，就能有效率地適應新的機器人，同時保持骨幹網路（backbone）凍結。
 
 <p align="center">
   <img
@@ -38,7 +38,7 @@ X-VLA 完全由 Transformer 編碼器構成，能隨著模型規模與資料集�
   />
 </p>
 
-X-VLA 證明了通用的機器人智慧不需要越來越複雜的架構，只需要正確的方式來吸收異質性。軟提示提供了一種簡單且可擴展的機制，用來統一多樣的機器人資料，為可適應、跨機器人形態的機器人基礎模型鋪路。
+X-VLA 證明了通用的機器人智慧不需要越來越複雜的架構，只需要正確的方式來吸收異質性。軟提示提供了一種簡單且可擴展的機制，用來統一多樣的機器人資料，為可適應、跨具身的機器人基礎模型鋪路。
 
 ## 安裝[[installation]]
 
@@ -88,7 +88,7 @@ lerobot-eval \
 
 X-VLA 的 0.9B 參數版本，以精心設計的資料處理流程與學習配方（recipe）訓練而成。訓練流程包含兩個階段：
 
-- **第一階段：預訓練**——以來自 Droid、Robomind 與 Agibot 的 290K 個回合預訓練，涵蓋五種機械臂（從單臂到雙臂設定）、共七種平台。藉由軟提示（soft prompt）吸收各機器人形態（embodiment）特有的差異，模型學到一個與機器人形態無關的通用策略。
+- **第一階段：預訓練**——以來自 Droid、Robomind 與 Agibot 的 290K 個回合預訓練，涵蓋五種機械臂（從單臂到雙臂設定）、共七種平台。藉由軟提示（soft prompt）吸收各具身形態（embodiment）特有的差異，模型學到一個與具身形態無關的通用策略。
 
 - **第二階段：領域適應（domain adaptation）**——針對目標領域，適應為可部署的策略。這個階段會引入一組新的軟提示並加以最佳化，用來編碼新領域的硬體配置，同時保持預訓練的骨幹網路（backbone）凍結。
 
@@ -120,7 +120,7 @@ X-VLA 的 0.9B 參數版本，以精心設計的資料處理流程與學習配�
 
 ### 建議的訓練設定[[recommended-training-configuration]]
 
-為新的機器人形態（embodiment）或任務微調（fine-tune）X-VLA 時，我們建議不要凍結 VLM，並設定 `policy.dtype=bfloat16`，以免發生記憶體不足（OOM）錯誤。
+為新的具身形態（embodiment）或任務微調（fine-tune）X-VLA 時，我們建議不要凍結 VLM，並設定 `policy.dtype=bfloat16`，以免發生記憶體不足（OOM）錯誤。
 
 ```bash
 lerobot-train \
@@ -148,7 +148,7 @@ lerobot-train \
 | `train_policy_transformer` | `true`  | 讓策略 Transformer 層參與訓練 |
 | `train_soft_prompts`       | `true`  | 讓軟提示參與訓練              |
 
-**💡 最佳實務**：在第二階段適應新的機器人形態時，不要凍結 VLM 編碼器，同時訓練策略 Transformer 與軟提示（soft prompt）。
+**💡 最佳實務**：在第二階段適應新的具身形態時，不要凍結 VLM 編碼器，同時訓練策略 Transformer 與軟提示（soft prompt）。
 
 ### 範例：在雙臂機器人上訓練[[example-training-on-bimanual-robot]]
 
@@ -184,7 +184,7 @@ lerobot-train \
 
 ### 1. 動作模式[[1-action-modes]]
 
-X-VLA 使用**動作註冊表**（action registry）系統，處理不同的動作空間與機器人形態（embodiment）。`action_mode` 參數定義了動作的處理方式、使用哪些損失函數，以及預測結果如何後處理。
+X-VLA 使用**動作註冊表**（action registry）系統，處理不同的動作空間與具身形態（embodiment）。`action_mode` 參數定義了動作的處理方式、使用哪些損失函數，以及預測結果如何後處理。
 
 #### 可用的動作模式[[available-action-modes]]
 
@@ -485,7 +485,7 @@ class MappedActionSpace(BaseActionSpace):
 
 - **解決方法**：確認你的前處理管線中有 `XVLAAddDomainIdProcessorStep`，且設定了正確的 domain_id。
 
-**問題**：「Low success rate on new embodiment」（在新的機器人形態上成功率偏低）
+**問題**：「Low success rate on new embodiment」（在新的具身形態上成功率偏低）
 
 - **解決方法**：
   1. 確認你的 action_mode 是否正確
