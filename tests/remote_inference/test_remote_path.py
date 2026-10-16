@@ -26,6 +26,7 @@ pytest.importorskip("zenoh")
 pytest.importorskip("datasets")
 pytest.importorskip("msgpack")
 
+from lerobot.processor import transition_to_robot_action
 from lerobot.remote_inference.client import RemoteClient, RequestCancelled
 from lerobot.remote_inference.codec import encode_message
 from lerobot.remote_inference.protocol import AdmissionDeniedError
@@ -222,7 +223,8 @@ def test_remote_context_without_weights_dispatches_and_holds_fake_robot(remote_s
         while canonical is None and time.monotonic() < deadline:
             obs = ctx.hardware.robot_wrapper.get_observation()
             engine.notify_observation(obs)
-            canonical = send_next_action(obs, obs, ctx, interpolator)
+            step = send_next_action(obs, obs, ctx, interpolator)
+            canonical = None if step is None else transition_to_robot_action(step)
             if canonical is None:
                 Event().wait(0.002)
         assert canonical == {"joint_0.pos": 1.0, "joint_1.pos": 4.0, "joint_2.pos": 7.0}
