@@ -123,6 +123,7 @@ from lerobot.teleoperators import (  # noqa: F401
 )
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.motor_temperature import MotorTemperatureMonitor, make_temperature_monitor
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import (
     init_visualization,
@@ -150,6 +151,8 @@ class TeleoperateConfig:
     display_port: int | None = None
     # Whether to display compressed (JPEG) images instead of raw frames
     display_compressed_images: bool = False
+    # Read temperatures once a second and warn/plot at 50, 55 and 65 Celsius.
+    monitor_motor_temperature: bool = False
 
 
 def teleop_loop(
@@ -163,6 +166,7 @@ def teleop_loop(
     display_mode: str = "rerun",
     duration: float | None = None,
     display_compressed_images: bool = False,
+    temperature_monitor: MotorTemperatureMonitor | None = None,
 ):
     """
     This function continuously reads actions from a teleoperation device, processes them through optional
@@ -181,6 +185,7 @@ def teleop_loop(
         teleop_action_processor: An optional pipeline to process raw actions from the teleoperator.
         robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
         robot_observation_processor: An optional pipeline to process raw observations from the robot.
+        temperature_monitor: Optional monitor sharing the robot's already-open motor bus.
     """
 
     display_len = max(len(key) for key in robot.action_features)
@@ -204,6 +209,8 @@ def teleop_loop(
                 if robot.name == "unitree_g1":
                     teleop.send_feedback(obs)
 
+            temperatures = temperature_monitor.poll() if temperature_monitor else {}
+
             with timer.section("teleop"):
                 # Get teleop action
                 raw_action = teleop.get_action()
@@ -225,7 +232,7 @@ def teleop_loop(
 
                     log_visualization_data(
                         display_mode,
-                        observation=obs_transition,
+                        observation={**obs_transition, **temperatures} if temperatures else obs_transition,
                         action=teleop_action,
                         compress_images=display_compressed_images,
                     )
@@ -236,6 +243,8 @@ def teleop_loop(
                     for motor, value in robot_action_to_send.items():
                         print(f"{motor:<{display_len}} | {value:>7.2f}")
                     move_cursor_up(len(robot_action_to_send) + 3)
+            elif temperatures:
+                log_visualization_data(display_mode, observation=temperatures)
 
             timer.wait()
             loop_s = time.perf_counter() - loop_start
@@ -253,7 +262,7 @@ def teleop_loop(
 def teleoperate(cfg: TeleoperateConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
-    if cfg.display_data:
+    if cfg.display_data or cfg.monitor_motor_temperature:
         init_visualization(
             cfg.display_mode, session_name="teleoperation", ip=cfg.display_ip, port=cfg.display_port
         )
@@ -270,7 +279,10 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop.connect()
     robot.connect()
 
+    temperature_monitor = None
     try:
+        if cfg.monitor_motor_temperature:
+            temperature_monitor = make_temperature_monitor(robot)
         teleop_loop(
             teleop=teleop,
             robot=robot,
@@ -282,11 +294,14 @@ def teleoperate(cfg: TeleoperateConfig):
             robot_action_processor=robot_action_processor,
             robot_observation_processor=robot_observation_processor,
             display_compressed_images=display_compressed_images,
+            temperature_monitor=temperature_monitor,
         )
     except KeyboardInterrupt:
         pass
     finally:
-        if cfg.display_data:
+        if temperature_monitor:
+            temperature_monitor.close()
+        if cfg.display_data or cfg.monitor_motor_temperature:
             shutdown_visualization(cfg.display_mode)
         teleop.disconnect()
         robot.disconnect()
