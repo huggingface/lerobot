@@ -46,7 +46,7 @@ from lerobot.streaming.sidecar import SidecarSpec
 av = pytest.importorskip("av")
 
 
-@pytest.mark.parametrize("duration,version", [(0xFFFFFFFF, 0), (0x100000000, 1)])
+@pytest.mark.parametrize("duration,version", [(0xFFFFFFFF, 0), (0x100000000, 1), (0xFFFFFFFFFFFFFFFF, 1)])
 def test_duration_headers_select_version_for_duration_range(duration: int, version: int) -> None:
     assert _duration_header_version(duration) == version
     mvhd, tkhd, mdhd = _mvhd(1000, duration, 2), _tkhd(1, duration, 64, 48), _mdhd(1000, duration)
@@ -56,9 +56,10 @@ def test_duration_headers_select_version_for_duration_range(duration: int, versi
     assert _parse_mdhd(mdhd[8:]) == (1000, duration)
 
 
-def test_duration_headers_reject_values_outside_version_one_range() -> None:
+@pytest.mark.parametrize("duration", [-1, 0x10000000000000000])
+def test_duration_headers_reject_values_outside_version_one_range(duration: int) -> None:
     with pytest.raises(ValueError, match="outside.*version-1"):
-        _duration_header_version(0x10000000000000000)
+        _duration_header_version(duration)
 
 
 def test_long_duration_mp4_synthesis_decodes_source_frames(tmp_path: Path) -> None:
