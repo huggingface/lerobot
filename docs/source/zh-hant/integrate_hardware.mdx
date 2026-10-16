@@ -187,7 +187,7 @@ def connect(self, calibrate: bool = True) -> None:
 
 ### `disconnect()`[[disconnect]]
 
-這個方法應妥善地結束與硬體的通訊：釋放所有相關資源（執行緒或行程）、關閉連接埠等。
+這個方法應妥善地結束與硬體的通訊：釋放所有相關的資源，例如執行緒或行程（process），並關閉連接埠等。
 
 這裡 `MotorsBus` 與 `Camera` 類別已經處理好這些工作，所以只需要呼叫它們各自的 `disconnect()` 方法：
 

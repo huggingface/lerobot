@@ -465,7 +465,7 @@ Cadence summary — whole run, 2 episodes · target 30 Hz × 2 (16.7 ms tick slo
 
 這裡的一個 _cycle_ 是相當於一個策略動作的控制週期數（`--interpolation_multiplier` 個）。只有整個 cycle 超出 `1/fps` 預算時才會讓你掉影格（frame）；單一控制週期超出其時槽只會讓內插後的動作較不平順，這也是兩者分開計算的原因。若未使用內插，一個 cycle 就是單一控制週期，因此報告會省略這項區分，全程以控制週期計算。
 
-在[互動工作階段](#interactive-sessions)中，每個 `/start` 區段都有自己的計時器，因此報告會在每個區段結束時（`/reset`、`/stop` 或 `--duration`）出現在對話中，而不是每個行程只出現一次。
+在[互動工作階段](#interactive-sessions)中，每個 `/start` 區段都有自己的計時器，因此報告會在每個區段結束時（`/reset`、`/stop` 或 `--duration`）出現在對話中，而不是每個行程（process）只出現一次。
 
 ---
 

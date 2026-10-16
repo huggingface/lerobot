@@ -88,7 +88,7 @@ export LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1
 `ISAACLAB_CXR_SKIP_AUTOLAUNCH` **彼此獨立**，設定其中一個不會影響
 另一個。
 
-**每個行程只能有一個遙操作器。** CloudXR 執行環境會以整個行程為範圍設定環境（單例），
+**每個行程（process）只能有一個遙操作器。** CloudXR 執行環境會以整個行程為範圍設定環境（單例），
 因此每個行程只能執行一個 Isaac Teleop 遙操作器。
 
 **結束程式。** 結束時務必呼叫 `teleop_device.disconnect()`，按下 Ctrl-C 時也一樣。請將

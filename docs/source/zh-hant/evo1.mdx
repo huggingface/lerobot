@@ -178,7 +178,7 @@ lerobot-rollout \
 
 已發布的檢查點在
 [`train_config.json`](https://huggingface.co/zuoxingdong/evo1_libero/blob/515921f4a2c1d3f3ad523721eafa26fdf2af315b/train_config.json) 中，記錄了完整解析後的階段 2 設定。
-這次量測的訓練使用兩張 H100 GPU、兩個 DDP 行程，每個行程的批次大小為 64，因此全域批次大小為 128。兩個階段使用相同的拓撲。基礎 VLM 來自 `OpenGVLab/InternVL3-1B-hf` 的版本
+這次量測的訓練使用兩張 H100 GPU、兩個 DDP 行程（process），每個行程的批次大小為 64，因此全域批次大小為 128。兩個階段使用相同的拓撲。基礎 VLM 來自 `OpenGVLab/InternVL3-1B-hf` 的版本
 `014c0583a0d4bedf29fbe2dbff4f865eb998e171`。
 已發布的檔案並未記錄確切的 LeRobot 訓練 commit，也沒有原始的相依套件鎖定檔，
 因此以下指令是在目前的 checkout 上重現所記錄的設定與拓撲，

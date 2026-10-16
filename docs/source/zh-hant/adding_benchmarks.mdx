@@ -161,7 +161,7 @@ class MyBenchmarkEnv(gym.Env):
         ...
 ```
 
-**以 GPU 運作的模擬器（例如使用 EGL 渲染的 MuJoCo）：** 如果你的模擬器會在 `__init__` 期間配置 GPU/EGL context，請把這段配置延後到 `_ensure_env()` 輔助函式中，並在第一次 `reset()`/`step()` 時才呼叫。這樣可以避免 `AsyncVectorEnv` 啟動 worker 行程時，繼承到已失效的 GPU handle。具體做法請參考 `LiberoEnv._ensure_env()`。
+**以 GPU 運作的模擬器（例如使用 EGL 渲染的 MuJoCo）：** 如果你的模擬器會在 `__init__` 期間配置 GPU/EGL context，請把這段配置延後到 `_ensure_env()` 輔助函式中，並在第一次 `reset()`/`step()` 時才呼叫。這樣可以避免 `AsyncVectorEnv` 啟動 worker 行程（process）時，繼承到已失效的 GPU handle。具體做法請參考 `LiberoEnv._ensure_env()`。
 
 另外也要提供一個回傳巢狀字典結構的工廠函式：
 

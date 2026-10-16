@@ -44,14 +44,14 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
   --wandb.enable=true
 ```
 
-若未使用任何 `--parallelism.*` 旗標，多行程啟動會執行單純的 DDP。多節點執行會使用標準的 `torchrun --nnodes/--node-rank/--rdzv-endpoint` 旗標（或 `accelerate launch --num_machines/--machine_rank/--main_process_ip`）。
+若未使用任何 `--parallelism.*` 旗標，多行程（process）啟動會執行單純的 DDP。多節點執行會使用標準的 `torchrun --nnodes/--node-rank/--rdzv-endpoint` 旗標（或 `accelerate launch --num_machines/--machine_rank/--main_process_ip`）。
 
 > [!WARNING]
 > 不支援 Accelerate 的 YAML 設定檔（`accelerate launch --config_file some.yaml`、`accelerate config`）。它們會透過環境變數設定引擎，繞過 LeRobot 的設定系統，因此 `train_config.json` 將不再描述某次執行實際使用的設定。因此，當設定了 [accelerate 環境變數](https://huggingface.co/docs/accelerate/usage_guides/fsdp) 時，`lerobot-train` 會拒絕啟動。請改將設定放入 `--parallelism.*` / `--accelerator.*` 旗標，或設定 `LEROBOT_ALLOW_ACCELERATE_ENV=1` 以確認此覆寫並繼續執行。
 
 ## 批次語意、學習率與步數[[batch-semantics-learning-rate-and-steps]]
 
-每個 `dp_replicate × dp_shard` 的資料平行工作行程會在每一步載入自己的 `--batch_size` 微批次，因此一次訓練步驟會消耗 `batch_size × dp_world_size` 個樣本，而每次優化器更新會納入其中 `× gradient_accumulation_steps` 個樣本：
+每個 `dp_replicate × dp_shard` 的資料平行工作行程（process）會在每一步載入自己的 `--batch_size` 微批次，因此一次訓練步驟會消耗 `batch_size × dp_world_size` 個樣本，而每次優化器更新會納入其中 `× gradient_accumulation_steps` 個樣本：
 
 ```
 effective_batch_size = batch_size × dp_world_size × gradient_accumulation_steps
@@ -81,7 +81,7 @@ torchrun --nproc-per-node=4 $(which lerobot-train) \
   --output_dir=outputs/train/my_policy_fsdp
 ```
 
-`--parallelism.dp_shard=-1` 會依啟動器啟動的行程數量進行分片。
+`--parallelism.dp_shard=-1` 會依啟動器啟動的行程（process）數量進行分片。
 
 `--accelerator.mixed_precision` 同時支援 `bf16` 和 `fp16`。詳情請參閱[混合精度](./torch_accelerators#mixed-precision)。
 
@@ -150,7 +150,7 @@ torchrun --nnodes=2 --nproc-per-node=8 ... $(which lerobot-train) \
 關於分片執行所產生、經收集的（`safetensors`）檢查點，有兩件事需要知道：
 
 - **它們會儲存 fp32 權重。** 在混合精度訓練下，FSDP 會保留一份 fp32 主複本，而檢查點會儲存該主複本，以確保訓練能一致地接續。
-- 收集是集體操作（所有 rank 都會參與），但只有主行程會寫入。
+- 收集是集體操作（所有 rank 都會參與），但只有主行程（process）會寫入。
 
 ### 轉換 DCP 檢查點[[converting-dcp-checkpoints]]
 
@@ -172,7 +172,7 @@ lerobot-convert-dcp --checkpoint_dir=... --delete_dcp=true --push_to_hub=${HF_US
 
 ## 注意事項[[notes]]
 
-- 檢查點儲存和訓練結束時的發布都是集體操作（每個 rank 都會參與）。收集後的權重、sidecar 檔案和 Hub 上傳僅由主行程寫入。
+- 檢查點儲存和訓練結束時的發布都是集體操作（每個 rank 都會參與）。收集後的權重、sidecar 檔案和 Hub 上傳僅由主行程（process）寫入。
 - 指標會在記錄前跨 rank 進行歸約：損失會取平均，而 `samples/s` 會回報整個叢集的吞吐量。
 - 無論行程數量為何，學習率排程都會在每個訓練步驟推進一次（內建 `step_scheduler_with_optimizer=False`）。
 
