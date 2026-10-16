@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -45,33 +44,7 @@ from lerobot.annotations.steerable_pipeline.reader import iter_episodes  # noqa:
 from lerobot.annotations.steerable_pipeline.staging import EpisodeStaging  # noqa: E402
 from lerobot.annotations.steerable_pipeline.vlm_client import StubVlmClient  # noqa: E402
 
-from ._helpers import make_canned_responder  # noqa: E402
-
-
-@dataclass
-class _StubFrameProvider:
-    """Returns one sentinel object per requested timestamp."""
-
-    # A real (tiny) PIL image so the contact-sheet builder, which resizes and
-    # tiles frames, has something to draw. VQA still passes it through by
-    # identity via ``to_image_blocks``.
-    sentinel: Any = field(default_factory=lambda: PIL.Image.new("RGB", (32, 24)))
-    cameras: tuple[str, ...] = ("observation.images.top",)
-    calls: list[tuple[int, tuple[float, ...], str | None]] = field(default_factory=list)
-    video_calls: list[tuple[int, int, str | None]] = field(default_factory=list)
-
-    @property
-    def camera_keys(self) -> list[str]:
-        return list(self.cameras)
-
-    def frames_at(self, record, timestamps, camera_key=None):
-        self.calls.append((record.episode_index, tuple(timestamps), camera_key))
-        return [self.sentinel] * len(timestamps)
-
-    def video_for_episode(self, record, max_frames, camera_key=None):
-        self.video_calls.append((record.episode_index, max_frames, camera_key))
-        n = min(max_frames, len(record.frame_timestamps))
-        return [self.sentinel] * n
+from ._helpers import StubFrameProvider as _StubFrameProvider, make_canned_responder  # noqa: E402
 
 
 def _spy_responder(captured: list[list[dict[str, Any]]], reply: Any):

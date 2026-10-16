@@ -20,28 +20,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lerobot.annotations.runtime.configs import RuntimeConfig
 from lerobot.configs.default import JobConfig
 
-# The annotation pipeline boots its own vLLM server, so the pod starts from the
-# official vLLM runtime rather than the prebuilt `lerobot-gpu` training image;
-# `lerobot` is pip-installed on top (see `lerobot.jobs.annotate`).
-DEFAULT_ANNOTATE_JOB_IMAGE = "vllm/vllm-openai:latest"
+# No floating/default runtime: supply a dependency-complete image@sha256:digest.
+DEFAULT_ANNOTATE_JOB_IMAGE = ""
 
 
 @dataclass
 class AnnotationJobConfig(JobConfig):
     """`JobConfig` with the annotation runtime's defaults.
 
-    Adds `lerobot_ref` because the vLLM image ships no lerobot: the pod installs
-    it from git, and the ref decides which code actually annotates. Point it at a
-    branch/tag/SHA to try unmerged changes remotely.
+    The image provides dependencies; the pod installs only LeRobot source from
+    an immutable 40-character Git commit SHA (not a branch or tag).
     """
 
     image: str = DEFAULT_ANNOTATE_JOB_IMAGE
     # Annotation is a bounded pass over a dataset; a tighter cap than training's
     # "2d" keeps a wedged vLLM server from burning a day of GPU time.
     timeout: str | None = "2h"
-    lerobot_ref: str = "main"
+    lerobot_ref: str | None = None
 
 
 @dataclass
@@ -49,6 +47,8 @@ class PlanConfig:
     """``plan`` module: subtasks + plan + memory + task augmentation."""
 
     enabled: bool = True
+    # Retry model-dependent empty outputs locally before caching a final rejection.
+    rejection_max_retries: int = 2
 
     # ``task_aug`` rephrasings at t=0 (renderer rotates ${task} among them); 0 disables.
     n_task_rephrasings: int = 10
@@ -76,6 +76,8 @@ class PlanConfig:
     # per-window spans are merged + stitched into one contiguous cover. So an
     # episode of any length is always covered at the full sampling density.
     max_frames_per_prompt: int = 60
+    # Context on each side of the owned output window for long episodes.
+    window_overlap_seconds: float = 1.0
     contact_sheet_columns: int = 5
     contact_sheet_frames_per_sheet: int = 20
     contact_sheet_frame_width: int = 224
@@ -107,6 +109,10 @@ class PlanConfig:
 
     # Optional EgoMimic-style 5-axis task augmentation; replaces n_task_rephrasings.
     task_aug_axes: TaskAugAxesConfig = field(default_factory=lambda: TaskAugAxesConfig())
+
+    def __post_init__(self):
+        if self.rejection_max_retries < 0:
+            raise ValueError("rejection_max_retries must be nonnegative")
 
 
 @dataclass
@@ -168,25 +174,35 @@ class VlmConfig:
     # auto_serve=True); ``stub`` is for tests.
     backend: str = "openai"
     model_id: str = "Qwen/Qwen3.6-27B"
+    model_revision: str | None = None
+    # Pin to a model commit SHA for reproducible runs. Externally owned endpoints
+    # must independently attest that they serve that revision.
 
     # OpenAI-compatible endpoint; ``EMPTY`` key works for local servers.
     api_base: str = "http://localhost:8000/v1"
+    api_bases: tuple[str, ...] = ()
     api_key: str = "EMPTY"
     # Read the key from this environment variable (e.g. HF_TOKEN) so it stays out of commands and logs.
     api_key_env: str | None = None
     request_timeout_s: float = 600.0
-    request_max_retries: int = 2
 
     # Spawn a server if none answers api_base; False = fail fast on a remote.
     auto_serve: bool = True
     serve_port: int = 8000
-    # Override the auto-serve command; ``{port}`` substituted per replica.
+    # Override auto-serve; ``{port}`` / ``{revision}`` substituted per replica.
     serve_command: str | None = None
 
     # Independent servers for round-robin routing (one per GPU). num_gpus=0 = one each.
     parallel_servers: int = 1
     num_gpus: int = 0
     client_concurrency: int = 16
+    # Explicit retries reacquire shared endpoint admission; SDK retries stay disabled.
+    request_max_retries: int = 2
+    # All clients of this endpoint/model must share one coordinator and key.
+    endpoint_limit_url: str | None = None
+    endpoint_limit_key: str | None = None
+    endpoint_limit_token_env: str = "LEROBOT_ENDPOINT_LIMIT_TOKEN"
+    endpoint_limit_timeout_s: float = 300
     serve_ready_timeout_s: float = 600.0
 
     max_new_tokens: int = 512
@@ -218,11 +234,11 @@ class ExecutorConfig:
 class AnnotationPipelineConfig:
     """Top-level config for ``lerobot-annotate`` (rewrites data shards in place)."""
 
-    # Hub dataset: download source when ``root`` unset; push target when push_to_hub
-    # is on and ``new_repo_id`` unset.
+    # Hub source. Publication never implicitly selects a publisher-owned target.
     repo_id: str | None = None
+    revision: str | None = None
 
-    # Separate push target (matches the LeRobot edit tools). Unset → push in place.
+    # Explicit processed target; same repo requires processed lineage and an expected revision.
     new_repo_id: str | None = None
 
     root: Path | None = None
@@ -238,6 +254,7 @@ class AnnotationPipelineConfig:
 
     vlm: VlmConfig = field(default_factory=VlmConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
     # Where the annotation runs: omitted / "local" annotates on this machine, any
     # other value is an HF Jobs flavor (e.g. "h200") and submits the run there.
@@ -252,10 +269,17 @@ class AnnotationPipelineConfig:
     # ``"torchcodec"`` / ``"pyav"`` explicitly.
     video_backend: str | None = None
 
-    # Upload to the Hub (new_repo_id if set, else repo_id; one must be set).
+    # Publication requires an explicit new_repo_id, permission and release tag.
     push_to_hub: bool = False
-    push_private: bool = False
+    # Inherit Hub source visibility; local-only sources default to private.
+    push_private: bool | None = None
+    allow_public_from_private: bool = False
     push_commit_message: str | None = None
+    release_tag: str | None = None
+    expected_target_revision: str | None = None
+    redistribution_permission: str | None = None
+    max_publish_files: int = 512
+    max_publish_bytes: int = 5_000_000_000
 
     def resolved_staging_dir(self, root: Path) -> Path:
         return self.staging_dir if self.staging_dir is not None else root / ".annotate_staging"

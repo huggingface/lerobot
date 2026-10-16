@@ -157,6 +157,7 @@ def _tail_logs(
     done: threading.Event,
     success_marker: str | None = None,
     success_event: threading.Event | None = None,
+    namespace: str | None = None,
 ) -> None:
     """Stream job logs to stdout, reconnecting on dropped streams until done is set.
 
@@ -172,7 +173,9 @@ def _tail_logs(
     while not done.is_set():
         try:
             seen = 0
-            for line in fetch_job_logs(job_id=job_id, follow=True):
+            for line in fetch_job_logs(
+                job_id=job_id, follow=True, **({"namespace": namespace} if namespace else {})
+            ):
                 seen += 1
                 if seen <= printed:
                     continue  # already shown on a previous connection
@@ -201,6 +204,7 @@ def _poll_until_done(
     poll_interval: float = 5.0,
     status_holder: dict | None = None,
     max_failures: int = 6,
+    namespace: str | None = None,
 ) -> str | None:
     """Poll inspect_job until a terminal stage or until `done` is set.
 
@@ -212,7 +216,7 @@ def _poll_until_done(
     failures = 0
     while not done.is_set():
         try:
-            info = inspect_job(job_id=job_id)
+            info = inspect_job(job_id=job_id, **({"namespace": namespace} if namespace else {}))
             failures = 0
             # `stage` is an enum in some huggingface_hub versions and a plain str in others.
             stage = getattr(info.status.stage, "value", info.status.stage)
@@ -230,7 +234,9 @@ def _poll_until_done(
     return None
 
 
-def follow_job(job_id: str, *, detach: bool = False, success_marker: str | None = None) -> bool:
+def follow_job(
+    job_id: str, *, detach: bool = False, success_marker: str | None = None, namespace: str | None = None
+) -> bool:
     """Watch a submitted job to the end, streaming its logs to stdout.
 
     Returns True when the job finished successfully and False when we stopped watching
@@ -251,12 +257,20 @@ def follow_job(job_id: str, *, detach: bool = False, success_marker: str | None 
     stage_holder: dict[str, str | None] = {}
 
     def _poll() -> None:
-        stage_holder["stage"] = _poll_until_done(job_id, done, status_holder=stage_holder)
+        if namespace:
+            stage_holder["stage"] = _poll_until_done(
+                job_id, done, status_holder=stage_holder, namespace=namespace
+            )
+        else:
+            stage_holder["stage"] = _poll_until_done(job_id, done, status_holder=stage_holder)
 
     poll_thread = threading.Thread(target=_poll, daemon=True)
     poll_thread.start()
     log_thread = threading.Thread(
-        target=_tail_logs, args=(job_id, done, success_marker, marker_seen), daemon=True
+        target=_tail_logs,
+        args=(job_id, done, success_marker, marker_seen),
+        kwargs={"namespace": namespace} if namespace else {},
+        daemon=True,
     )
     log_thread.start()
 
