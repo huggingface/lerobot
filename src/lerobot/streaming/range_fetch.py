@@ -46,14 +46,15 @@ class ThreadLocalRangeFetcher:
         cache_type: str = "none",
         max_open_files: int = 8,
         token: str | bool | None = None,
+        storage_options: dict[str, str] | None = None,
     ) -> None:
         """Keep at most max_open_files source handles per fetch worker."""
         if max_open_files <= 0:
             raise ValueError("max_open_files must be positive")
         self.max_open_files = max_open_files
         self.data_root = str(data_root).rstrip("/")
-        storage_options = StorageLocation.parse(self.data_root).storage_options(token)
-        self.fs, self._root_path = fsspec.core.url_to_fs(self.data_root, **storage_options)
+        options = StorageLocation.parse(self.data_root).storage_options(token, storage_options)
+        self.fs, self._root_path = fsspec.core.url_to_fs(self.data_root, **options)
         self._is_local = self.fs.protocol in ("file", "local") or (
             isinstance(self.fs.protocol, tuple) and "file" in self.fs.protocol
         )
@@ -364,10 +365,12 @@ def make_range_fetcher(
     native_http_retries: int = 4,
     native_http_subranges: int = 1,
     token: str | bool | None = None,
+    storage_options: dict[str, str] | None = None,
 ) -> ThreadLocalRangeFetcher | NativeHTTPRangeFetcher:
     """Construct the configured local/fsspec or native-HTTP range reader."""
-    if range_backend == "fsspec":
-        return ThreadLocalRangeFetcher(data_root, token=token)
+    # Custom connection options belong to fsspec; the native Hub reader does not consume them.
+    if range_backend == "fsspec" or (range_backend == "native-http" and storage_options):
+        return ThreadLocalRangeFetcher(data_root, token=token, storage_options=storage_options)
     if range_backend == "native-http":
         max_connections = native_http_connections or max(8, workers)
         return NativeHTTPRangeFetcher(

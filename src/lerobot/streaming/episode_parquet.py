@@ -34,6 +34,7 @@ class EpisodeParquetReader:
         *,
         columns: Sequence[str],
         token: str | bool | None = None,
+        storage_options: dict[str, str] | None = None,
         max_retries: int = 4,
         retry_backoff_s: float = 0.05,
     ) -> None:
@@ -54,7 +55,7 @@ class EpisodeParquetReader:
         location = StorageLocation.parse(data_root_str)
         self._open_lock = threading.Lock() if location.is_hf else None
         self._filesystem, self._root_path = fsspec.core.url_to_fs(
-            data_root_str, **location.storage_options(token)
+            data_root_str, **location.storage_options(token, storage_options)
         )
 
     def read_episode(

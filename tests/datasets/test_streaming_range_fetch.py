@@ -14,12 +14,40 @@ import weakref
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from unittest.mock import Mock
 
+import fsspec
 import httpx
 import pytest
 from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.streaming.range_fetch import NativeHTTPRangeFetcher
+from lerobot.streaming.range_fetch import NativeHTTPRangeFetcher, ThreadLocalRangeFetcher, make_range_fetcher
+
+
+@pytest.mark.parametrize("range_backend", ["fsspec", "native-http"])
+@pytest.mark.parametrize("token", [None, "hf_test_token", False])
+def test_connection_options_select_fsspec_and_preserve_hub_auth(
+    monkeypatch: pytest.MonkeyPatch, range_backend: str, token: str | bool | None
+) -> None:
+    filesystem = Mock(protocol="hf")
+    url_to_fs = Mock(return_value=(filesystem, "datasets/test/data"))
+    monkeypatch.setattr(fsspec.core, "url_to_fs", url_to_fs)
+    options = {"endpoint": "https://storage.example.com"}
+
+    reader = make_range_fetcher(
+        "hf://datasets/test/data",
+        range_backend=range_backend,
+        workers=1,
+        token=token,
+        storage_options=options,
+    )
+    try:
+        assert isinstance(reader, ThreadLocalRangeFetcher)
+        expected = {**options, **({"token": token} if token is not None else {})}
+        url_to_fs.assert_called_once_with("hf://datasets/test/data", **expected)
+        assert options == {"endpoint": "https://storage.example.com"}
+    finally:
+        reader.close()
 
 
 @pytest.fixture
