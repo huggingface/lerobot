@@ -26,6 +26,7 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -34,10 +35,11 @@ from PIL import Image
 
 from lerobot.annotations.steerable_pipeline.config import VlmConfig
 from lerobot.annotations.steerable_pipeline.vlm_client import VlmClient, make_vlm_client
-from lerobot.datasets.utils import DEFAULT_TASKS_PATH
 from lerobot.inference import EXTERNAL_HISTORY_DEFAULT, PlannerReply, PolicyQuery, QueryKind
-from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.utils.constants import MESSAGES_RENDERED, QUERY_KIND, QUERY_TEXT
+
+if TYPE_CHECKING:
+    from lerobot.processor import RenderRuntimeMessagesStep
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +114,7 @@ class VlmPlanner:
         self,
         config: PlannerConfig,
         robot_type: str,
-        runtime_messages: RenderRuntimeMessagesStep | None = None,
+        runtime_messages: "RenderRuntimeMessagesStep | None" = None,
         client: VlmClient | None = None,
     ) -> None:
         self.config = config
@@ -287,6 +289,9 @@ def training_vocabulary(pretrained_path: str) -> list[str]:
     dataset's ``meta/tasks.parquet``. This is an inference, not a contract: task labels are
     examples of what the policy saw, not a proof of everything it follows.
     """
+    # lerobot.datasets imports torch, which the rollout command must not load at startup.
+    from lerobot.datasets.utils import DEFAULT_TASKS_PATH
+
     path = Path(pretrained_path)
     config_file = (
         path / "train_config.json"
