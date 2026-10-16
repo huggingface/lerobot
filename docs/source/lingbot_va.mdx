@@ -76,9 +76,10 @@ single-environment eval; use `--eval.batch_size=1`.
 
 ## Evaluation (RoboTwin)
 
-RoboTwin 2.0 needs the SAPIEN + CuRobo simulator stack. You can use the benchmark Docker image
-(`docker/Dockerfile.benchmark.robotwin`, which also needs `warp-lang==1.3.1` and CuRobo built
-with the GPU's compute capability in `TORCH_CUDA_ARCH_LIST`). RoboTwin uses **end-effector-pose
+RoboTwin 2.0 needs the SAPIEN + CuRobo simulator stack; the `robotwin_native` stage of
+`docker/Dockerfile.sim` is the pinned install recipe (LingBot-VA also needs `warp-lang==1.3.1`, and
+CuRobo built with the GPU's compute capability in `TORCH_CUDA_ARCH_LIST`). The simulator server's
+RoboTwin config uses joint control, so the end-effector mode below runs in-process. RoboTwin uses **end-effector-pose
 control**, so run with `--env.action_mode=ee`: the policy predicts per-arm `xyz+quaternion+gripper`
 deltas (`robotwin_tshape` latent layout) that are composed onto the episode's initial eef pose and
 executed via CuRobo IK.
