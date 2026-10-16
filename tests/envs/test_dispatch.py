@@ -46,6 +46,31 @@ def test_libero_rejects_nonpositive_fps():
         LiberoEnv(fps=0)
 
 
+def test_libero_create_envs_without_simulator_raises_clear_error(monkeypatch):
+    """When the LIBERO simulator package is absent — the stock situation on non-Linux
+    installs, where ``hf-libero``'s ``sys_platform == 'linux'`` marker makes
+    ``pip install 'lerobot[libero]'`` silently omit it — ``create_envs()`` must fail
+    fast with an actionable message instead of a cryptic ``ModuleNotFoundError`` raised
+    deep inside the ``lerobot.envs.libero`` import. Regression test for #4388."""
+    import importlib.util as importlib_util
+
+    real_find_spec = importlib_util.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == "libero":
+            return None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib_util, "find_spec", fake_find_spec)
+
+    with pytest.raises(ModuleNotFoundError, match="Linux") as exc_info:
+        LiberoEnv().create_envs(n_envs=1)
+
+    message = str(exc_info.value)
+    assert "hf-libero" in message
+    assert "lerobot[libero]" in message
+
+
 def test_identity_processors():
     """Base class get_env_processors() returns identity pipelines."""
     cfg = make_env_config("aloha")
