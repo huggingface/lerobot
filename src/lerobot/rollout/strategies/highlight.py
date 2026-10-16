@@ -32,7 +32,7 @@ from lerobot.utils.utils import log_say
 from ..configs import HighlightStrategyConfig, RolloutConfig
 from ..context import RolloutContext
 from ..ring_buffer import RolloutRingBuffer
-from .core import RolloutStrategy, safe_push_to_hub, send_next_action
+from .core import RolloutStrategy, safe_push_to_hub, send_next_action, world_finished
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,7 @@ class HighlightStrategy(RolloutStrategy):
 
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
 
+        self._reset_sim_world(ctx)
         engine.resume()
         play_sounds = cfg.play_sounds
 
@@ -121,6 +122,8 @@ class HighlightStrategy(RolloutStrategy):
 
                     with timer.section("observe"):
                         obs = robot.get_observation()
+                    if world_finished(robot):
+                        break
                     with timer.section("process_obs"):
                         obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 

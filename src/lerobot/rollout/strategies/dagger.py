@@ -77,6 +77,7 @@ from .core import (
     estimate_max_episode_seconds,
     safe_push_to_hub,
     send_next_action,
+    world_finished,
 )
 
 logger = logging.getLogger(__name__)
@@ -367,6 +368,8 @@ class DAggerStrategy(RolloutStrategy):
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
+        # Correction frames carry the simulated world's task, like the autonomous frames.
+        task_str = self._reset_sim_world(ctx) or task_str
         engine.reset()
         interpolator.reset()
         events.reset()
@@ -417,6 +420,8 @@ class DAggerStrategy(RolloutStrategy):
                     phase = events.phase
                     with timer.section("observe"):
                         obs = robot.get_observation()
+                    if world_finished(robot):
+                        break
 
                     # --- CORRECTING: human teleop control ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To
@@ -556,6 +561,8 @@ class DAggerStrategy(RolloutStrategy):
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
+        # Correction frames carry the simulated world's task, like the autonomous frames.
+        task_str = self._reset_sim_world(ctx) or task_str
         engine.reset()
         interpolator.reset()
         events.reset()
@@ -631,6 +638,8 @@ class DAggerStrategy(RolloutStrategy):
                     phase = events.phase
                     with timer.section("observe"):
                         obs = robot.get_observation()
+                    if world_finished(robot):
+                        break
 
                     # --- CORRECTING: human teleop control + recording ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To
