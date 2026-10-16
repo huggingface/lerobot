@@ -1,34 +1,34 @@
 # 非同步推論[[asynchronous-inference]]
 
-透過我們的 [SmolVLA](https://huggingface.co/papers/2506.01844)，我們引入了一種在真實世界機器人上執行推論（inference）的新方式，**將動作預測與動作執行解耦（decoupling action prediction from action execution）**。
-在本教學中，我們將展示如何使用非同步推論（_async inference_），採用一個微調版（finetuned version）的 SmolVLA，以及所有 LeRobot 支援的策略（policy）。
-**用 LeRobot 支援的所有策略試試非同步推論**（asynchronous inference）吧！
+我們透過 [SmolVLA](https://huggingface.co/papers/2506.01844) 推出了一種在真實世界機器人上執行推論的新方式：**將動作預測與動作執行解耦**。
+本教學將示範如何以微調過的 SmolVLA，以及 LeRobot 支援的所有策略，使用非同步推論（_async inference_）。
+**用 LeRobot 支援的所有策略試試非同步推論**吧！
 
 **你將學到：**
 
-1. 為什麼非同步推論（asynchronous inference）很重要，以及它與較傳統的循序推論（sequential inference）相比如何。
-2. 如何在同一台機器上啟動一個 `PolicyServer` 並連接一個 `RobotClient`，甚至跨網路（over the network）連接。
-3. 如何為你的機器人與策略（policy）調校關鍵參數（key parameters, `actions_per_chunk`、`chunk_size_threshold`）。
+1. 為什麼非同步推論很重要，以及它與較傳統的循序推論有何不同。
+2. 如何在同一台機器上，甚至跨網路，啟動 `PolicyServer` 並連接 `RobotClient`。
+3. 如何依你的機器人與策略，調校關鍵參數（`actions_per_chunk`、`chunk_size_threshold`）。
 
-若你卡住了，歡迎加入我們的 [Discord 社群](https://discord.gg/s3KuuzsPFb)！
+如果遇到困難，歡迎到我們的 [Discord 社群](https://discord.gg/s3KuuzsPFb)尋求協助！
 
-簡而言之：有了 _非同步推論（async inference）_，你的機器人會持續動作（action），而策略伺服器（policy server）早已忙於計算下一個動作區塊（next chunk of actions），這消除了「等待推論（wait-for-inference）」的延遲，並解鎖了更平滑（smoother）、更具反應性（reactive）的行為（behaviours）。
-這與同步推論（synchronous inference, sync）有根本上的不同，在同步推論中，機器人在策略（policy）計算下一個動作區塊（next chunk of actions）時處於閒置狀態（idle）。
+簡單來說，使用 _非同步推論_ 時，策略伺服器（policy server）在計算下一個動作區塊（action chunk）的同時，機器人仍會持續動作，因此不會有「等待推論」造成的延遲，行為也會更流暢、反應更靈敏。
+這與同步推論（sync）有根本上的不同：同步推論時，策略在計算下一個動作區塊期間，機器人只能閒置等待。
 
 ---
 
 ## 開始使用非同步推論[[getting-started-with-async-inference]]
 
-你可以在我們的[部落格文章](https://huggingface.co/blog/async-robot-inference)中閱讀更多關於非同步推論（asynchronous inference）的資訊。本指南旨在協助你在你的環境中快速設定並執行非同步推論。
+關於非同步推論的更多資訊，請參閱我們的[部落格文章](https://huggingface.co/blog/async-robot-inference)。本指南的目的是協助你在自己的環境中快速設定並執行非同步推論。
 
-首先，以 `async` 標籤（tag）安裝 `lerobot`，以安裝執行非同步推論（async inference）所需的額外相依套件（extra dependencies）。
+首先，以 `async` 額外套件安裝 `lerobot`，以取得執行非同步推論所需的相依套件。
 
 ```shell
 pip install -e ".[async]"
 ```
 
-接著，啟動一個策略伺服器（policy server，在一個終端機 terminal 中，或在另一台機器上），指定供用戶端（client）連接的主機位址與埠（host address and port）。
-你可以執行以下指令啟動一個策略伺服器（policy server）：
+接著啟動策略伺服器（在一個終端機中，或在另一台機器上），並指定讓用戶端（client）連線的主機位址與連接埠。
+執行以下指令即可啟動策略伺服器：
 
 ```shell
 python -m lerobot.async_inference.policy_server \
@@ -36,13 +36,13 @@ python -m lerobot.async_inference.policy_server \
      --port=8080
 ```
 
-這會啟動一個監聽（listening） `127.0.0.1:8080`（`localhost`，埠 8080）的策略伺服器（policy server）。在此階段，策略伺服器是空的，因為所有關於要執行哪個策略以及使用哪些參數（parameters）的資訊，都是在與用戶端（client）的第一次握手（first handshake）期間指定的。以下列指令啟動一個用戶端：
+這會啟動一個在 `127.0.0.1:8080`（`localhost`，連接埠 8080）監聽的策略伺服器。此時策略伺服器還是空的，因為要執行哪個策略、使用哪些參數，都是在與用戶端第一次交握（handshake）時才指定的。以下列指令啟動用戶端：
 
 ```shell
 python -m lerobot.async_inference.robot_client \
-    --server_address=127.0.0.1:8080 \ # SERVER: 策略伺服器的主機位址與埠
+    --server_address=127.0.0.1:8080 \ # SERVER: 策略伺服器的主機位址與連接埠
     --robot.type=so100_follower \ # ROBOT: 你的機器人類型
-    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: 你的機器人埠
+    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: 你的機器人連接埠
     --robot.id=follower_so100 \ # ROBOT: 你的機器人 id，用於載入校正檔
     --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY: 用於取得影格的相機，其鍵需符合策略預期的鍵
     --task="dummy" \ # POLICY: 要讓策略執行的任務（`Fold my t-shirt`）。並非所有策略都需要定義，例如 `act`
@@ -55,26 +55,26 @@ python -m lerobot.async_inference.robot_client \
     --debug_visualize_queue_size=True # CLIENT: 是否在執行期視覺化佇列大小
 ```
 
-總結來說，你需要為以下項目指定指示（instructions）：
+總結來說，你需要指定以下各項的設定：
 
-- `SERVER`：策略伺服器（policy server）的位址與埠（address and port）
-- `ROBOT`：要連接的機器人類型（type of robot）、要連接的埠（port），以及機器人的本機（local） `id`
-- `POLICY`：要執行的策略類型（type of policy），以及伺服器（server）上要執行檢查點（checkpoint）的模型名稱/路徑（model name/path）。你也需要指定伺服器應使用哪個裝置（device），以及一次輸出多少個動作（actions，上限為策略的最大動作值 policy max actions value）。
-- `CLIENT`：在傳送新觀測（observation）給伺服器（server）之前的區塊大小（chunk size）閾值（threshold），以及在重疊部分彙整動作（aggregate actions on overlapping portions）的函式（function）。你也可以視需要在執行期（runtime）視覺化佇列大小（queue size），以協助你調校 `CLIENT` 參數（parameters）。
+- `SERVER`：策略伺服器的位址與連接埠
+- `ROBOT`：要連接的機器人類型、連接埠，以及機器人在本機的 `id`
+- `POLICY`：要執行的策略類型，以及伺服器上要執行的檢查點（checkpoint）的模型名稱／路徑。你也需要指定伺服器要使用哪個裝置，以及一次輸出多少個動作（上限為該策略的最大動作數）。
+- `CLIENT`：傳送新的觀測給伺服器之前的區塊大小閾值，以及在重疊部分彙整動作的函式。你也可以選擇在執行時將佇列大小視覺化，協助你調校 `CLIENT` 的參數。
 
-重要的是，
+要特別注意的是：
 
-- `actions_per_chunk` 與 `chunk_size_threshold` 是需要為你的設定調校的關鍵參數（key parameters）。
-- `aggregate_fn_name` 是在重疊部分彙整動作（aggregate actions on overlapping portions）的函式（function）。你可以將新函式加入函式登錄表（registry of functions），或在 `robot_client.py` 中加入你自己的（見[此處](https://github.com/huggingface/lerobot/blob/main/src/lerobot/async_inference/robot_client.py#L224)）
-- `debug_visualize_queue_size` 是調校 `CLIENT` 參數（parameters）的實用工具（tool）。
+- `actions_per_chunk` 與 `chunk_size_threshold` 是需要依你的設定調校的關鍵參數。
+- `aggregate_fn_name` 是在重疊部分彙整動作的函式。你可以將新的函式加入函式登錄表，或在 `robot_client.py` 中加入自己的函式（請見[這裡](https://github.com/huggingface/lerobot/blob/main/src/lerobot/async_inference/robot_client.py#L224)）
+- `debug_visualize_queue_size` 是調校 `CLIENT` 參數的實用工具。
 
-## 完成！你現在應該看到你的機器人開始活動了 😉[[done-you-should-see-your-robot-moving-around-by-now-]]
+## 完成！現在你應該會看到機器人開始動起來了 😉[[done-you-should-see-your-robot-moving-around-by-now-]]
 
-## 非同步 vs. 同步推論[[async-vs-synchronous-inference]]
+## 非同步推論與同步推論[[async-vs-synchronous-inference]]
 
-同步推論（synchronous inference）仰賴交錯進行動作（action）區塊預測與動作執行。這本質上會導致*閒置影格（frame）*，也就是機器人閒置等待策略（policy）輸出（一個新動作區塊）的影格。
-接著，推論（inference）會受到明顯的即延遲遲所困擾，機器人會因為缺乏可用動作（action）而乾脆停止動作。
-隨著機器人模型（model）的規模增大，這個問題有變得更嚴重的風險。
+同步推論是讓動作區塊的預測與動作的執行交替進行，這本質上就會產生*閒置影格*，也就是機器人閒置等待策略輸出新動作區塊的那些影格。
+因此，推論會出現明顯的即時延遲，機器人會因為沒有可用的動作而直接停下來。
+隨著機器人模型的規模越來越大，這個問題可能只會更嚴重。
 
 <p align="center">
   <img
@@ -83,13 +83,12 @@ python -m lerobot.async_inference.robot_client \
   ></img>
 </p>
 <p align="center">
-  <i>同步推論（synchronous inference）</i>
-  會使機器人在策略（policy）計算下一個動作（action）區塊時閒置。
+  <i>同步推論</i>會讓機器人在策略計算下一個 動作區塊時閒置。
 </p>
 
-為了克服此問題，我們設計了非同步推論（asynchronous inference），這是一種將動作（action）規劃與執行解耦的範式，帶來（1）更高的適應性，以及最重要的（2）沒有閒置影格（frame）。
-關鍵在於，有了非同步推論，下一個動作區塊（action chunk）會在目前的區塊耗盡*之前*就被計算出來，因此沒有閒置。
-更高的適應性透過在重疊部分彙整不同的動作區塊（action chunk）來確保，從而取得最新的計畫與更緊密的控制迴圈。
+為了解決這個問題，我們設計了非同步推論，這種做法將動作的規劃與執行解耦，帶來 (1) 更高的適應性，以及最重要的 (2) 沒有閒置影格。
+關鍵在於，使用非同步推論時，下一個動作區塊會在目前的區塊用完*之前*就計算好，因此不會閒置。
+藉由在重疊部分彙整不同的動作區塊，可以取得最新的規劃與更緊密的控制迴圈，這就是更高適應性的來源。
 
 <p align="center">
   <img
@@ -98,17 +97,16 @@ python -m lerobot.async_inference.robot_client \
   ></img>
 </p>
 <p align="center">
-  <i>非同步推論（asynchronous inference）</i>
-  因為下一個區塊在目前區塊耗盡之前就被計算出來，所以沒有閒置。
+  <i>非同步推論</i>不會閒置，因為下一個區塊 會在目前的區塊用完之前就計算好。
 </p>
 
 ---
 
 ## 啟動策略伺服器[[start-the-policy-server]]
 
-策略伺服器是 `PreTrainedPolicy` 的包裝，使其與來自機器人用戶端的觀測介接。
-策略伺服器被初始化為空的容器，並以機器人用戶端與策略伺服器之間初始握手時所指定的所請求策略來填充。
-因此，啟動一個策略伺服器就跟指定主機位址與埠一樣簡單。若你在與機器人用戶端相同的機器上執行策略伺服器，你可以使用 `localhost` 作為主機位址。
+策略伺服器是 `PreTrainedPolicy` 的包裝器，負責將它與來自機器人用戶端的觀測連接起來。
+策略伺服器初始化時是空的容器，會在機器人用戶端與策略伺服器初次交握時，載入用戶端所指定的策略。
+因此，啟動策略伺服器只需要指定主機位址與連接埠。如果策略伺服器與機器人用戶端在同一台機器上執行，可以使用 `localhost` 作為主機位址。
 
 <hfoptions id="start_policy_server">
 <hfoption id="Command">
@@ -136,22 +134,22 @@ serve(config)
 </hfoption>
 </hfoptions>
 
-這會在 `localhost:8080` 監聽來自相關 `RobotClient` 的傳入連線，它會在第一次用戶端與伺服器的握手期間傳達要執行哪個策略（policy）。
+這會在 `localhost:8080` 上監聽來自對應 `RobotClient` 的連線；`RobotClient` 會在用戶端與伺服器第一次交握時，告知要執行哪個策略。
 
 ---
 
 ## 啟動機器人用戶端[[launch-the-robot-client]]
 
-`RobotClient` 是 `Robot` 實例的包裝，`RobotClient` 會將其連接到（可能是遠端的）`PolicyServer`。
-`RobotClient` 將觀測串流（stream）到 `PolicyServer`，並接收在伺服器上執行推論（inference）所得的動作區塊（action chunk）（我們假設伺服器擁有比機器人控制器更好的運算資源）。
+`RobotClient` 是 `Robot` 實例的包裝器，負責將它連接到（可能位於遠端的）`PolicyServer`。
+`RobotClient` 會將觀測串流傳送給 `PolicyServer`，並接收在伺服器上執行推論所得到的動作區塊（我們假設伺服器的運算資源比機器人控制器更好）。
 
 <hfoptions id="start_robot_client">
 <hfoption id="Command">
 ```bash
 python -m lerobot.async_inference.robot_client \
-    --server_address=127.0.0.1:8080 \ # SERVER: 策略伺服器的主機位址與埠
+    --server_address=127.0.0.1:8080 \ # SERVER: 策略伺服器的主機位址與連接埠
     --robot.type=so100_follower \ # ROBOT: 你的機器人類型
-    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: 你的機器人埠
+    --robot.port=/dev/tty.usbmodem585A0076841 \ # ROBOT: 你的機器人連接埠
     --robot.id=follower_so100 \ # ROBOT: 你的機器人 id，用於載入校正檔
     --robot.cameras="{ laptop: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}, phone: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \ # POLICY: 用於取得影格的相機，其鍵需符合策略預期的鍵
     --task="dummy" \ # POLICY: 要讓策略執行的任務（`Fold my t-shirt`）。並非所有策略都需要定義，例如 `act`
@@ -227,13 +225,13 @@ if client.start():
 </hfoption>
 </hfoptions>
 
-以下兩個參數（parameters）在每個設定中都很關鍵：
+以下兩個參數在任何設定中都很關鍵：
 
 <table>
   <thead>
     <tr>
       <th>超參數</th>
-      <th>預設</th>
+      <th>預設值</th>
       <th>作用</th>
     </tr>
   </thead>
@@ -243,40 +241,38 @@ if client.start():
         <code>actions_per_chunk</code>
       </td>
       <td>50</td>
-      <td>策略（policy）一次輸出多少個動作（action）。典型值：10-50。</td>
+      <td>策略一次輸出的動作數量。常見的值：10-50。</td>
     </tr>
     <tr>
       <td>
         <code>chunk_size_threshold</code>
       </td>
       <td>0.7</td>
-      <td>
-        當佇列 ≤ 50% 滿時，用戶端會傳送一個新的觀測（observation）。 值介於 [0,
-        1]。
-      </td>
+      <td>當佇列只剩 ≤ 50% 時，用戶端會送出新的觀測。 值介於 [0, 1]。</td>
     </tr>
   </tbody>
 </table>
 
 <Tip>
-  不同的 `actions_per_chunk` 與 `chunk_size_threshold` 值確實會導致 不同的行為。
+  `actions_per_chunk` 與 `chunk_size_threshold` 的值不同，
+  確實會導致不同的行為。
 </Tip>
 
-一方面，提高 `actions_per_chunk` 的值會降低最終沒有動作（action）可執行的可能性，因為在新區塊被計算出來時會有更多動作可用。
-然而，較大的 `actions_per_chunk` 值也可能導致較不精確的動作（action），這是因為在較長時間跨度上預測動作會產生累積誤差。
+一方面，提高 `actions_per_chunk` 的值可以降低沒有動作可執行的機率，因為在計算新的區塊時，手上會有更多動作可用。
+不過，`actions_per_chunk` 的值較大時，也可能讓動作較不精確，因為預測的時間跨度越長，誤差就會不斷累積。
 
-另一方面，提高 `chunk_size_threshold` 的值會導致更頻繁地將觀測送出給 `PolicyServer` 進行推論（inference），從而產生更多的更新動作（action）區塊，並在相當大的部分上重疊。這帶來高適應性，在極限情況下為每個觀測預測一個動作區塊，而該區塊在新的區塊產生時只被稍微消耗。
-此選項也因為大量的請求而對推論管線（inference pipeline）造成更大的壓力。相反地，接近 0.0 的 `chunk_size_threshold` 值會退化為同步的邊界情況，也就是只在目前的區塊耗盡時才送出新的觀測（observation）。
+另一方面，提高 `chunk_size_threshold` 的值，會讓用戶端更頻繁地將觀測送往 `PolicyServer` 推論，產生更多次更新的動作區塊，而且彼此有很大部分重疊。這會帶來很高的適應性，極端情況下會為每個觀測預測一個動作區塊，而每個區塊在新的區塊產生之前只會用掉一小部分。
+這個選項也會因為請求次數多，而對推論管線造成更大的負擔。反之，`chunk_size_threshold` 的值接近 0.0 時，就會退化成同步推論的極端情況，也就是只有在目前的區塊用完時，才會送出新的觀測。
 
-我們發現 `actions_per_chunk` 與 `chunk_size_threshold` 的預設值在我們為 [SmolVLA 論文](https://huggingface.co/papers/2506.01844)開發的實驗中運作良好，但我們建議嘗試不同的值，以找到最適合你設定的組合。
+我們在 [SmolVLA 論文](https://huggingface.co/papers/2506.01844)的實驗中發現，`actions_per_chunk` 與 `chunk_size_threshold` 的預設值效果不錯，但仍建議你嘗試不同的值，找出最適合你的設定。
 
-### 為你的設定調校非同步推論[[tuning-async-inference-for-your-setup]]
+### 依你的設定調校非同步推論[[tuning-async-inference-for-your-setup]]
 
-1. **謹慎選擇你的運算資源。** [PI0](https://huggingface.co/lerobot/pi0) 在推論（inference）時佔用 14GB 記憶體，而 [SmolVLA](https://huggingface.co/lerobot/smolvla_base) 只需約 2GB。你應為你的使用情境找出最佳的運算資源，並謹記較小的策略（policy）需要較少的運算資源。所用策略與裝置的組合（CPU 密集、使用 MPS，或特定 NVIDIA GPU 上的 CUDA 核心數量）會直接影響你應預期的平均推論延遲。
-2. **根據推論（inference）延遲調整你的 `fps`。** 當伺服器產生新的動作區塊（action chunk）時，用戶端並非閒置，而是逐步執行其目前的動作佇列。若兩個程序以根本不同的速度進行，用戶端可能最終會佇列為空。因此，若你持續耗盡佇列中的動作，你應降低你的 fps。
+1. **謹慎選擇運算資源。** [PI0](https://huggingface.co/lerobot/pi0) 推論時會占用 14GB 記憶體，而 [SmolVLA](https://huggingface.co/lerobot/smolvla_base) 只需要約 2GB。請記得較小的策略需要的運算資源較少，並依你的使用情境找出最合適的運算資源。策略與裝置的組合（以 CPU 為主、使用 MPS，或特定 NVIDIA GPU 的 CUDA 核心數）會直接影響你可預期的平均推論延遲。
+2. **依推論延遲調整 `fps`。** 伺服器產生新的動作區塊時，用戶端並沒有閒著，而是持續執行目前佇列中的動作。如果兩者的速度相差太多，用戶端的佇列可能會被清空。因此，如果佇列中經常沒有動作可用，請調低 fps。
 3. **調整 `chunk_size_threshold`**。
-   - 越接近 `0.0` 的值會導致幾乎循序的行為。越接近 `1.0` 的值 → 每一步都傳送觀測（更多頻寬，仰賴良好的世界模型 world model）。
-   - 我們發現約 0.5-0.6 的值運作良好。若你想調整此值，請啟動一個 `RobotClient` 並將 `--debug_visualize_queue_size` 設為 `True`。這會在執行期繪製動作（action）佇列大小的演變，你可以用它來找出最適合你設定的 `chunk_size_threshold` 值。
+   - 接近 `0.0` 的值會讓行為幾乎變成循序執行；接近 `1.0` 的值 → 每一步都送出觀測（需要更多頻寬，也更依賴良好的世界模型）。
+   - 我們發現 0.5-0.6 左右的值效果不錯。如果你想微調這個值，可以在啟動 `RobotClient` 時將 `--debug_visualize_queue_size` 設為 `True`。這會在執行時繪製動作佇列大小的變化，你可以用它找出最適合你設定的 `chunk_size_threshold` 值。
 
 <p align="center">
   <img
@@ -286,9 +282,8 @@ if client.start():
 </p>
 <p align="center">
   <i>
-    當傳入 `--debug_visualize_queue_size`
-    旗標（flag）時，動作（action）佇列大小會在執行期 針對各種層級的
-    `chunk_size_threshold`（SmolVLA 論文中的 `g`）繪製。
+    傳入 `--debug_visualize_queue_size` 旗標時，會在執行時繪製 不同
+    `chunk_size_threshold`（SmolVLA 論文中的 `g`）設定下 動作佇列大小的變化。
   </i>
 </p>
 
@@ -296,15 +291,15 @@ if client.start():
 
 ## 結論[[conclusion]]
 
-非同步（asynchronous）推論（inference）代表了即時機器人控制的一大進展，解決了長久以來困擾機器人應用的根本挑戰：推論延遲。透過本教學，你已學會如何實作一個完整的非同步推論管線（pipeline），消除閒置影格（frame）並實現更平滑、更具反應性的機器人行為。
+非同步推論是即時機器人控制的一大進展，解決了長期困擾機器人應用的推論延遲問題。透過本教學，你已經學會如何實作完整的非同步推論管線，消除閒置影格，讓機器人的行為更流暢、反應更靈敏。
 
 **重點整理：**
 
-- **範式轉移（paradigm shift）**：非同步（asynchronous）推論（inference）將動作（action）預測與執行解耦，讓機器人能在新的動作區塊被平行計算時持續動作
-- **效能優勢（performance benefits）**：消除同步方法中固有的「等待推論（inference）」延遲，隨著策略（policy）模型（model）變大而變得越來越重要
-- **彈性架構（flexible architecture）**：伺服器-用戶端設計實現了分散式運算，推論（inference）可在強大的遠端硬體上執行，同時維持即時的機器人控制
-- **可調參數（tunable parameters）**：成功與否取決於為你特定的硬體、策略（policy）與任務（task）需求正確地設定 `actions_per_chunk` 與 `chunk_size_threshold`
-- **通用相容性（universal compatibility）**：適用於所有 LeRobot 支援的策略（policy），從輕量的 ACT 模型（model）到像 SmolVLA 這樣的視覺語言模型
+- **典範轉移**：非同步推論將動作預測與執行解耦，讓機器人在新的動作區塊平行計算時，仍能持續動作
+- **效能優勢**：消除同步做法本來就有的「等待推論」延遲，而策略模型越大，這一點就越重要
+- **彈性的架構**：伺服器與用戶端的設計可以進行分散式運算，讓推論在遠端的強大硬體上執行，同時維持即時的機器人控制
+- **可調校的參數**：成效取決於能否依你的硬體、策略與任務需求，適當設定 `actions_per_chunk` 與 `chunk_size_threshold`
+- **廣泛的相容性**：適用於所有 LeRobot 支援的策略，從輕量的 ACT 模型到 SmolVLA 這類視覺語言模型
 
-從預設參數（parameter）開始實驗，監控你的動作（action）佇列大小，並反覆改進你的設定，以為你特定的使用情境達成最佳效能。
-若你想進一步討論，歡迎加入我們的 [Discord 社群](https://discord.gg/s3KuuzsPFb)，或在我們的 [GitHub 儲存庫](https://github.com/huggingface/lerobot/issues)上開啟 issue。
+先從預設參數開始實驗，觀察動作佇列的大小，再逐步調整你的設定，在你的使用情境下達到最佳效能。
+如果想進一步討論，歡迎到我們的 [Discord 社群](https://discord.gg/s3KuuzsPFb)，或在我們的 [GitHub 儲存庫](https://github.com/huggingface/lerobot/issues)開 issue。
