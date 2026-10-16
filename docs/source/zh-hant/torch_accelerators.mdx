@@ -1,24 +1,24 @@
 # PyTorch 加速器[[pytorch-accelerators]]
 
-LeRobot 支援多種硬體加速選項，可用於訓練（training）和推論（inference）。
+LeRobot 的訓練與推論都支援多種硬體加速選項。
 
 這些選項包括：
 
-- **CPU**：所有計算由 CPU 執行，不使用專用加速器（dedicated accelerator）
+- **CPU**：所有運算都由 CPU 執行，不使用專用的加速器
 - **CUDA**：使用 NVIDIA 與 AMD GPU 加速
 - **MPS**：使用 Apple Silicon GPU 加速
 - **XPU**：使用 Intel 內建與獨立 GPU 加速
 
 ## 開始使用[[getting-started]]
 
-要使用特定加速器（particular accelerator），需安裝適合的 PyTorch 版本。
+要使用特定的加速器，需要安裝對應版本的 PyTorch。
 
-CPU、CUDA 和 MPS 後端請依照 [PyTorch 安裝頁面](https://pytorch.org/get-started/locally) 提供的指示操作。
-XPU 後端（backend）請依照 [PyTorch 文件](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html) 中的指示操作。
+CPU、CUDA 與 MPS 後端請依照 [PyTorch 安裝頁面](https://pytorch.org/get-started/locally)的說明操作。
+XPU 後端請依照 [PyTorch 文件](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html)的說明操作。
 
 ### 驗證安裝[[verifying-the-installation]]
 
-安裝完成後，可執行以下程式碼來驗證加速器（accelerator）是否可用
+安裝完成後，可以執行以下程式碼，確認加速器是否可用
 
 ```python
 import torch
@@ -27,7 +27,7 @@ print(torch.<backend_name>.is_available())  # <backend_name> 為 cuda、mps 或 
 
 ## 如何執行訓練或評估[[how-to-run-training-or-evaluation]]
 
-要選擇所需的加速器（accelerator），請在執行 `lerobot-train` 或 `lerobot-eval` 時使用 `--policy.device` 旗標（flag）。例如，要在 Apple Silicon 上使用 MPS，請執行：
+若要選擇想使用的加速器，請在執行 `lerobot-train` 或 `lerobot-eval` 時使用 `--policy.device` 旗標。例如，要在 Apple Silicon 上使用 MPS，請執行：
 
 ```bash
 lerobot-train
@@ -39,11 +39,11 @@ lerobot-eval \
     --policy.device=mps ...
 ```
 
-不過，在大多數情況下，系統會自動偵測加速器（accelerator）的存在，因此可以在 CLI 指令中省略 `policy.device` 參數（parameter）。
+不過在大多數情況下，系統會自動偵測是否有加速器，因此 CLI 指令中可以省略 `policy.device` 參數。
 
 ## 混合精度[[mixed-precision]]
 
-訓練精度（training precision）由 `--accelerator.mixed_precision` 控制，其可接受 `no`（預設）、`bf16` 與 `fp16`：
+訓練精度由 `--accelerator.mixed_precision` 控制，可接受 `no`（預設）、`bf16` 與 `fp16`：
 
 ```bash
 lerobot-train \
@@ -51,17 +51,17 @@ lerobot-train \
     --accelerator.mixed_precision=bf16 ...
 ```
 
-`fp16` 需要加速器（accelerator）：在 `--policy.device=cpu` 上會被拒絕，因為此時 accelerate 不會建立損失縮放器（loss scaler），執行作業會悄悄退回完整精度（full precision）。`bf16` 在 CPU 上也會自動轉型（autocast），因此不受此限制。
+`fp16` 需要加速器：在 `--policy.device=cpu` 上會被拒絕，因為這時 accelerate 不會建立損失縮放器（loss scaler），執行會在不知不覺中退回完整精度。`bf16` 在 CPU 上也能 autocast，因此不受此限制。
 
-`bf16` 需要硬體支援（NVIDIA GPU 上為 Ampere 或更新版本）。在較舊的加速器（accelerator）如 V100 或 T4 上，請使用 `fp16`。
+`bf16` 需要硬體支援（NVIDIA GPU 需為 Ampere 或更新的架構）。在 V100 或 T4 等較舊的加速器上，請使用 `fp16`。
 
 ### fp16 與損失縮放器[[fp16-and-the-loss-scaler]]
 
-`fp16` 的指數範圍（exponent range）遠小於 `bf16`，因此梯度（gradient）會在反向傳播（backward pass）前被放大，並在最佳化器步驟（optimizer step）前被縮回。LeRobot 將此工作交給 accelerate 的 `GradScaler`，它也會偵測溢出的梯度（overflowing gradient）並跳過那些最佳化器更新（optimizer updates）。在分片訓練（sharded training）下，梯度是 `DTensor`，PyTorch 會跨裝置網格（device mesh）縮減溢位旗標（overflow flag），因此某個 rank 發生溢位時，會跳過所有 rank 的更新。
+`fp16` 的指數範圍比 `bf16` 小得多，因此梯度會在反向傳播之前放大，並在優化器更新之前縮回。LeRobot 將這項工作交給 accelerate 的 `GradScaler`，它也會偵測溢位的梯度，並跳過那些優化器更新。在分片訓練下，梯度是 `DTensor`，PyTorch 會在整個裝置網格（device mesh）上歸約溢位旗標，因此只要有一個 rank 溢位，所有 rank 都會跳過該次更新。
 
-跳過更新是正常的，尤其是在最初的幾個步驟中，縮放值（scale）會從其初始值往下調整。這些情況在日誌中會以 `scale` 指標（metric）下降的形式呈現。縮放值會隨每個檢查點（checkpoint）一併儲存（`training_state/scaler_state.json`），並在恢復執行時還原，因此恢復後的執行作業不必重新調整。
+跳過更新是正常的，尤其是在最初幾步，縮放值會從初始值逐步往下調整。在記錄中，這會表現為 `scale` 指標下降。縮放值會隨每個檢查點一起儲存（`training_state/scaler_state.json`），並在接續訓練時還原，因此接續的訓練不必重新調整。
 
-如果預設值不適合某個策略（policy），可以調整縮放器（scaler）：
+如果預設值不適合某個策略，可以調整縮放器：
 
 ```bash
 lerobot-train \
