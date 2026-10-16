@@ -429,6 +429,23 @@ def rollout(
     return ret
 
 
+def _replan_horizon_metadata(policy, env: gym.vector.VectorEnv | None = None) -> dict[str, Any]:
+    """Record which action-chunking settings and env fps an eval run actually used.
+
+    Added to every aggregated eval output so that artifacts (`eval_info.json`) from the same
+    checkpoint stay comparable across these settings. Every field is defensive: policies whose
+    config defines no chunking attributes and envs without a `render_fps` metadata entry
+    serialize as `null`.
+    """
+    unwrapped = getattr(env, "unwrapped", None) if env is not None else None
+    metadata = getattr(unwrapped, "metadata", None)
+    return {
+        "chunk_size": getattr(getattr(policy, "config", None), "chunk_size", None),
+        "n_action_steps": getattr(getattr(policy, "config", None), "n_action_steps", None),
+        "env_fps": metadata.get("render_fps") if isinstance(metadata, dict) else None,
+    }
+
+
 def eval_policy(
     env: gym.vector.VectorEnv,
     policy: PreTrainedPolicy,
@@ -700,6 +717,7 @@ def eval_policy(
             "pc_success_ci95": success_stats["pc_success_ci95"],
             "eval_s": time.time() - start,
             "eval_ep_s": (time.time() - start) / n_episodes,
+            **_replan_horizon_metadata(policy, env),
         },
     }
 
@@ -1143,6 +1161,9 @@ def eval_policy_all(
             "pc_success_ci95": group_success["pc_success_ci95"],
             "video_paths": list(acc["video_paths"]),
             "predicted_video_paths": list(acc["predicted_video_paths"]),
+            # fps comes from the group's first env: groups can be different suites with
+            # different render fps.
+            **_replan_horizon_metadata(policy, next(iter(envs[group].values()), None)),
         }
 
     # overall aggregates
@@ -1158,6 +1179,7 @@ def eval_policy_all(
         "eval_ep_s": (time.time() - start_t) / max(1, len(overall["sum_rewards"])),
         "video_paths": list(overall["video_paths"]),
         "predicted_video_paths": list(overall["predicted_video_paths"]),
+        **_replan_horizon_metadata(policy, tasks[0][2] if tasks else None),
     }
 
     return {
