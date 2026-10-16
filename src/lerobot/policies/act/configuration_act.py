@@ -30,13 +30,12 @@ class ACTConfig(PreTrainedConfig):
     Those are: `input_features` and `output_features`.
 
     Notes on the inputs and outputs:
-        - Either:
-            - At least one key starting with "observation.image is required as an input.
-              AND/OR
-            - The key "observation.environment_state" is required as input.
+        - Must include at least one of:
+            - At least one key starting with "observation.image" (for visual inputs).
+            - The key "observation.environment_state" (for environment state).
+            - The key "observation.state" (for proprioceptive robot state).
         - If there are multiple keys beginning with "observation.images." they are treated as multiple camera
           views. Right now we only support all images having the same shape.
-        - May optionally work without an "observation.state" key for the proprioceptive robot state.
         - "action" is required as an output key.
 
     Args:
@@ -160,8 +159,10 @@ class ACTConfig(PreTrainedConfig):
         return None
 
     def validate_features(self) -> None:
-        if not self.image_features and not self.env_state_feature:
-            raise ValueError("You must provide at least one image or the environment state among the inputs.")
+        if not self.image_features and not self.env_state_feature and not self.robot_state_feature:
+            raise ValueError(
+                "You must provide at least one image, environment state, or robot state among the inputs."
+            )
 
     @property
     def observation_delta_indices(self) -> None:
