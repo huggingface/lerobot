@@ -26,6 +26,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import logging
+import os
 import time
 from collections.abc import Callable, Iterator
 
@@ -226,6 +227,16 @@ class CycleTimer:
         self._group_ticks = 0
         self._group_work = 0.0
         self._groups_closed = 0
+        # FORK-LOCAL: the slow-loop warning is rate-limited. A loop paced by
+        # 30 fps cameras runs at ~29.5 Hz and overruns a 33.3 ms budget by a
+        # fraction of a millisecond on one tick in five; warning on each of
+        # those buried the teleop display under a warning a second. The
+        # counts are unchanged - the run summary still reports every overrun.
+        # LEROBOT_SLOW_LOOP_WARN_S=0 restores a warning per slow cycle.
+        self._slow_warn_interval_s = float(os.getenv("LEROBOT_SLOW_LOOP_WARN_S", "10"))
+        self._slow_last_warn: float | None = None
+        self._slow_since_warn = 0
+        self._slow_worst_work = 0.0
         # Wall-clock anchor + last closed group's work, for the achieved-cadence
         # telemetry that covers what the work sum cannot see.
         self._group_start: float | None = None
@@ -399,16 +410,32 @@ class CycleTimer:
                 if group_work > self.cycle_interval:
                     stats.groups_over += 1
                     warned = True
-                    consequence = (
-                        "Dataset frames might be dropped and robot control might be unstable."
-                        if self.records_data
-                        else "Robot control might be unstable."
-                    )
-                    logger.warning(
-                        f"Control loop is running slower ({1 / group_work:.1f} Hz) than the target FPS "
-                        f"({self.fps:g} Hz). {consequence} Common causes are: 1) Camera FPS not keeping up "
-                        "2) Policy inference (action or text) taking too long 3) CPU starvation"
-                    )
+                    self._slow_since_warn += 1
+                    self._slow_worst_work = max(self._slow_worst_work, group_work)
+                    t_now = time.perf_counter()
+                    if (
+                        self._slow_last_warn is None
+                        or t_now - self._slow_last_warn >= self._slow_warn_interval_s
+                    ):
+                        consequence = (
+                            "Dataset frames might be dropped and robot control might be unstable."
+                            if self.records_data
+                            else "Robot control might be unstable."
+                        )
+                        since = (
+                            ""
+                            if self._slow_last_warn is None
+                            else f" {self._slow_since_warn} slow cycles in the last "
+                            f"{t_now - self._slow_last_warn:.0f}s, worst {1 / self._slow_worst_work:.1f} Hz."
+                        )
+                        logger.warning(
+                            f"Control loop is running slower ({1 / group_work:.1f} Hz) than the target FPS "
+                            f"({self.fps:g} Hz).{since} {consequence} Common causes are: 1) Camera FPS not "
+                            "keeping up 2) Policy inference (action or text) taking too long 3) CPU starvation"
+                        )
+                        self._slow_last_warn = t_now
+                        self._slow_since_warn = 0
+                        self._slow_worst_work = 0.0
         # A late tick that did not blow the cycle budget costs only interpolation
         # smoothness, so it is a DEBUG note — and at multiplier 1 there is no
         # smoothness to lose, the warning above is the whole story.  Group-closing
