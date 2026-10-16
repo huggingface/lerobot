@@ -36,13 +36,20 @@ class EnvClient:
         deployment: str | None = None,
         timeout_s: float = 120,
         setup_timeout_s: float | None = None,
+        encoding: str = "raw",
+        jpeg_quality: int = 90,
     ):
         """Initialize owned resources without advancing simulation time.
 
         ``timeout_s`` bounds per-tick operations; ``setup_timeout_s`` (default: the same)
         bounds describe/open/reset, which may build or rebuild native simulators. Without a
-        ``deployment``, the client uses whichever deployment the endpoint serves.
+        ``deployment``, the client uses whichever deployment the endpoint serves. ``encoding="jpeg"``
+        asks the server to send camera frames as JPEG at ``jpeg_quality``, a bandwidth for fidelity tradeoff.
         """
+        if encoding not in {"raw", "jpeg"} or not 1 <= jpeg_quality <= 100:
+            raise ValueError("Image encoding must be raw or jpeg, with jpeg_quality in [1, 100]")
+        self.encoding = encoding
+        self.jpeg_quality = jpeg_quality
         self.transport = ZenohTransport(ZenohConfig(connect_endpoints=[endpoint]))
         self.deployment = deployment
         self.timeout_s = timeout_s
@@ -110,6 +117,8 @@ class EnvClient:
                     "task_id": task_id,
                     "seeds": seeds,
                     "async_worlds": async_worlds,
+                    "encoding": self.encoding,
+                    "jpeg_quality": self.jpeg_quality,
                 },
                 self.setup_timeout_s,
             )

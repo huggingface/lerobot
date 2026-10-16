@@ -35,7 +35,7 @@ Observation names come from the environment (`observation.images.<camera>`, `obs
 
 Before the first step, every checkpoint input must exist in the environment after renaming, with matching state and action dimensions and RGB channel count. Image height and width may differ: policy preprocessing owns resizing. Controller conventions (delta vs absolute actions, rotation format) are not checked; use a checkpoint trained on the environment's convention.
 
-The worlds of a batch advance in lockstep. A world that ends keeps its terminal observation until the next reset; stepping the others never restarts it. With `--eval.use_async_envs=true` (the default), each world runs in its own process, in-process or on the server, and the batch steps in parallel. A server admits up to `max_envs` worlds per batch (32 by default).
+The worlds of a batch advance in lockstep. A world that ends keeps its terminal observation until the next reset; stepping the others never restarts it. With `--eval.use_async_envs=true` (the default), each world runs in its own process, in-process or on the server, and the batch steps in parallel. A server admits up to `max_envs` worlds per batch (32 by default). `--env.encoding=jpeg` (or `--robot.encoding=jpeg`, with `--*.jpeg_quality`, 90 by default) sends served camera frames as JPEG: smaller replies for a remote server and larger batches, at the cost of encoding time and lossy frames. On localhost, raw frames are faster.
 
 ## Run a sim robot
 
