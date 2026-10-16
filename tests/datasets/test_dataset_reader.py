@@ -18,7 +18,9 @@
 import json
 import sys
 import types
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
@@ -134,6 +136,51 @@ def test_get_item_returns_expected_keys(tmp_path, lerobot_dataset_factory):
     # Standard keys that must always be present
     for key in ["index", "episode_index", "frame_index", "timestamp", "task_index", "task"]:
         assert key in item, f"Missing key: {key}"
+
+
+def test_video_query_timestamps_use_frame_indices_when_float32_rounds():
+    """Video queries use the exact FPS grid, even when the stored timestamp rounded."""
+    from datasets import Dataset, Features, Value
+
+    fps = 30
+    frame_indices = [100004, 100005]
+    timestamps = [float(np.float32(frame_index / fps)) for frame_index in frame_indices]
+    assert abs(timestamps[0] - frame_indices[0] / fps) > 1e-4
+
+    reader = object.__new__(DatasetReader)
+    reader._meta = SimpleNamespace(video_keys=["observation.images.camera"], fps=fps)
+    reader.hf_dataset = Dataset.from_dict(
+        {"frame_index": frame_indices, "timestamp": timestamps},
+        features=Features({"frame_index": Value("int64"), "timestamp": Value("float32")}),
+    )
+    reader._absolute_to_relative_idx = None
+    reader._column_views = {}
+    reader._column_views_source = None
+    reader._column_views_transform = None
+
+    current = reader._get_query_timestamps([frame_indices[0]], [None])
+    delta = reader._get_query_timestamps([frame_indices[0]], [{"observation.images.camera": [0, 1]}])
+
+    assert current == [{"observation.images.camera": [frame_indices[0] / fps]}]
+    assert delta == [{"observation.images.camera": [frame_indices[0] / fps, frame_indices[1] / fps]}]
+
+
+def test_lance_video_query_timestamps_use_frame_indices():
+    from lerobot.datasets.lance_backend import LanceDatasetReader
+
+    fps = 30
+    frame_index = 100004
+    reader = object.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(video_keys=["camera"], fps=fps)
+    reader._video_locator = {"camera": (np.array([0]), np.array([0]), np.array([7.0]))}
+
+    requests = reader._build_video_requests(
+        [{"abs_idx": frame_index, "ep_idx": 0, "windows": {}}],
+        np.array([frame_index], dtype=np.int64),
+        {frame_index: 0},
+    )
+
+    assert requests[("camera", 0, 0)] == [(0, [7.0 + frame_index / fps])]
 
 
 def test_get_item_values_are_correct(tmp_path, lerobot_dataset_factory):

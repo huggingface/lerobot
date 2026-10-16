@@ -165,6 +165,16 @@ def shift_timestamps(timestamps: Sequence[float], offset: float) -> list[float]:
     return [offset + timestamp for timestamp in timestamps]
 
 
+def frame_indices_to_timestamps(frame_indices: Sequence[int], fps: int) -> list[float]:
+    """Convert episode-local frame indices to exact timestamps on the dataset FPS grid.
+
+    The persisted ``timestamp`` column is float32, which can lose enough precision in long
+    episodes to exceed the video decoder's default synchronization tolerance. Frame indices
+    retain the exact position on the dataset's fixed-FPS timeline.
+    """
+    return [int(frame_index) / fps for frame_index in frame_indices]
+
+
 def task_name(tasks: "pd.DataFrame", task_index: int | torch.Tensor) -> str:
     """Look up a task string from the metadata tasks table by its integer ``task_index``."""
     return tasks.iloc[int(task_index)].name
