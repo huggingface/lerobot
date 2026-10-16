@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from dataclasses import dataclass, field
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
@@ -19,6 +20,15 @@ from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES
 
 from ..rtc.configuration_rtc import RTCConfig
+
+# Backbones the SmolVLA action-expert wiring has been validated against. The construction in
+# smolvlm_with_expert.py assumes the SmolVLM architecture (`.text_model.layers`, nested
+# `config.text_config`), so other VLMs are not yet supported for from-scratch training.
+# See https://github.com/huggingface/lerobot/issues/2104
+SUPPORTED_VLM_BACKBONES = (
+    "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+    "HuggingFaceTB/SmolVLM2-2.2B-Instruct",
+)
 
 
 @PreTrainedConfig.register_subclass("smolvla")
@@ -118,6 +128,14 @@ class SmolVLAConfig(PreTrainedConfig):
         if self.use_delta_joint_actions_aloha:
             raise NotImplementedError(
                 "`use_delta_joint_actions_aloha` is used by smolvla for aloha real models. It is not ported yet in LeRobot."
+            )
+        if self.vlm_model_name not in SUPPORTED_VLM_BACKBONES:
+            logging.warning(
+                f"`vlm_model_name={self.vlm_model_name!r}` is not a validated SmolVLA backbone. "
+                f"The action-expert construction currently assumes the SmolVLM architecture "
+                f"(`.text_model.layers`, `config.text_config`), so non-SmolVLM VLMs (e.g. "
+                f"PaliGemma) may fail during model init. Validated backbones: "
+                f"{SUPPORTED_VLM_BACKBONES}. See issue #2104 and the SmolVLA README."
             )
 
     def validate_features(self) -> None:
