@@ -56,7 +56,14 @@
 #                                      headless Orin may not have; a missing
 #                                      binary ends the run before tick one.
 #
-# The dataset lands in ~/.cache/huggingface/lerobot/<repo_id>.
+# The dataset lands in ~/.cache/huggingface/lerobot/<repo_id>_YYYYMMDD_HHMMSS:
+# lerobot stamps every new dataset with the date and time
+# (--dataset.no_stamp=true to stop it). The path is printed when the run
+# ends; ./config/dataset-check.sh <repo_id> reads back the newest.
+#
+# ENDING: right arrow ends an episode and saves it, left re-records it,
+# Escape ends AND SAVES the current one, then stops. Ctrl-C loses the
+# episode in progress.
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/_video.sh"
@@ -116,10 +123,14 @@ echo "dataset : $REPO_ID"
 echo "task    : $TASK"
 echo "episodes: $NUM_EPISODES x ${EPISODE_TIME_S}s (reset ${RESET_TIME_S}s) at ${FPS}fps"
 echo "upload  : ${PUSH_TO_HUB:-false}   codec: ${VCODEC:-h264}"
-echo "saved to: ${HF_LEROBOT_HOME:-$HOME/.cache/huggingface/lerobot}/$REPO_ID"
+DATA_ROOT="${HF_LEROBOT_HOME:-$HOME/.cache/huggingface/lerobot}"
+echo "saved to: $DATA_ROOT/${REPO_ID}_<date>_<time>"
 echo
 
-# Not exec: the trap above has to run to remove the temporary yaml.
+# Not exec: the trap above has to run to remove the temporary yaml, and the
+# dataset's stamped path is reported afterwards. `|| rc=$?` because _common.sh
+# sets -e, which would otherwise end the script on a non-zero exit here.
+rc=0
 "${RUN[@]}" lerobot-record \
   --config_path="$RECORD_CONFIG" \
   "${BASE_ARGS[@]+"${BASE_ARGS[@]}"}" \
@@ -134,4 +145,14 @@ echo
   --dataset.episode_time_s="$EPISODE_TIME_S" \
   --dataset.reset_time_s="$RESET_TIME_S" \
   "${DISPLAY_ARGS[@]+"${DISPLAY_ARGS[@]}"}" \
-  "$@"
+  "$@" || rc=$?
+
+newest="$(ls -dt "$DATA_ROOT/${REPO_ID}"_* 2>/dev/null | head -1 || true)"
+echo
+if [[ -n "$newest" ]]; then
+  echo "dataset : $newest"
+  echo "check it: ./config/dataset-check.sh $REPO_ID"
+else
+  echo "no dataset found under $DATA_ROOT/${REPO_ID}_*"
+fi
+exit $rc

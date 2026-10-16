@@ -161,7 +161,7 @@ listener when pynput cannot capture, so an SSH TTY works.
 The script records **locally** (`PUSH_TO_HUB=true` to upload; `hf auth login`
 once first), encodes **h264** (`VCODEC=` to change; lerobot's AV1 default is
 slow on the Orin), writes frames in 2 processes, and turns lerobot's spoken
-prompts off. Datasets land in `~/.cache/huggingface/lerobot/<repo_id>`. The
+prompts off. Datasets land in `~/.cache/huggingface/lerobot/<repo_id>_YYYYMMDD_HHMMSS` - lerobot stamps every new one - and the script prints the path at the end. **Escape saves the current episode and stops; Ctrl-C loses it.** The
 Jetson needs the `dataset` extra, which `./config/sync.sh` adds and checks.
 
 The shared yaml's top-level `fps:` is a teleop field that `lerobot-record`
@@ -248,6 +248,7 @@ pixel-bound.
 | `./config/servo-regs.sh [--bus 1]` | every config and status register, servo by servo, flagging the one that differs. For a servo that answers a scan but will not move. Read-only. |
 | `./config/set-servo-id.sh --bus N --id M` | set a replacement servo's id and baud rate. It must be the only servo on that bus board; refuses otherwise. Then recalibrate that arm. |
 | `./config/recal-joint.sh <joint>` | recalibrate one joint after a servo swap (homing offset + range), leaving the other thirteen alone. Backs up the calibration file first. |
+| `./config/dataset-check.sh <repo_id>` | read a recording back: frames, features, one decoded frame per camera as a PNG in `./readback/`, video files. Picks the newest `<repo_id>_<date>_<time>`. |
 | `./config/power-check.sh` | voltage, temperature and load per servo, with torque applied one at a time |
 | `./config/viewer.sh` | the rerun viewer, at the version uv.lock says. Run it on the Mac. |
 | `./config/video-test.sh` | a synthetic camera feed to the viewer, no robot. Separates the video link from everything else. |
