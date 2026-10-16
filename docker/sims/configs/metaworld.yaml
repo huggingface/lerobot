@@ -1,0 +1,9 @@
+# Conventions (fps, control, semantics, component names) come from lerobot/sims/conventions.py.
+deployment: metaworld
+sim:
+  type: metaworld
+  task: metaworld-push-v3
+  kwargs:
+    gym_kwargs:
+      obs_type: pixels_agent_pos
+      render_mode: rgb_array
