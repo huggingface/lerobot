@@ -1,0 +1,25 @@
+# Third-party reliability reporters
+
+After `lerobot-eval` finishes, it writes evaluation artifacts (commonly including `eval_info.json`) under the chosen output directory. Those artifacts are enough for **external postprocessors** to compare a baseline checkpoint run against a candidate run without changing LeRobot internals.
+
+> EnvHub environments and `lerobot-eval` produce the rollouts. Reliability reporters only consume eval outputs.
+
+## Example: Arisole `arisole-eval`
+
+[`arisole-eval`](https://pypi.org/project/arisole-eval/) is an independent Apache-2.0 CLI that post-processes LeRobot evaluation directories into a paired reliability comparison. It is **built by [Arisole](https://www.arisole.com/developers/lerobot)** and is **not** an official LeRobot / Hugging Face partnership or endorsement.
+
+```bash
+pip install arisole-eval
+
+# Point at two lerobot-eval output directories that each contain eval_info.json
+arisole evaluate --baseline ./runs/policy-v1 --candidate ./runs/policy-v2 --out result.json
+arisole report result.json
+```
+
+Notes:
+
+- Works locally without an Arisole API key; cloud upload is optional.
+- Does not invent success labels — it reports limited evidence as insufficient when episode counts are too small.
+- Compatible with common `eval_info.json` shapes (`per_episode` / `aggregated` and multi-task layouts LeRobot already emits).
+
+Developer docs: [https://www.arisole.com/developers/lerobot](https://www.arisole.com/developers/lerobot)
