@@ -1,4 +1,4 @@
-# MolmoAct2 策略（MolmoAct2 Policy）[[molmoact2-policy]]
+# MolmoAct2 策略[[molmoact2-policy]]
 
 MolmoAct2 是
 [MolmoAct2](https://allenai.org/blog/molmoact2) 的 LeRobot 策略（policy）實作，
@@ -12,7 +12,7 @@ LeRobot 策略（policy）。
 論文中所回報實驗使用的原始 MolmoAct2 訓練程式碼（training code），
 請參閱 [allenai/molmoact2](https://github.com/allenai/molmoact2)。
 
-## 安裝需求（installation requirements）[[installation-requirements]]
+## 安裝需求[[installation-requirements]]
 
 安裝帶有 MolmoAct2 可選相依套件（optional dependency）的 LeRobot：
 
@@ -36,7 +36,7 @@ LeRobot 移植版（port）並未公開原始 MolmoAct2 的 `fsdp_devices`
 
 此儲存庫（repo）已在 Ubuntu 22.04 上測試。
 
-## 使用方式（usage）[[usage]]
+## 使用方式[[usage]]
 
 要在 LeRobot 訓練設定（training config）中使用 MolmoAct2，請設定：
 
@@ -44,7 +44,7 @@ LeRobot 移植版（port）並未公開原始 MolmoAct2 的 `fsdp_devices`
 --policy.type=molmoact2
 ```
 
-## 訓練（training）[[training]]
+## 訓練[[training]]
 
 MolmoAct2 可以從已發布的 MolmoAct2 Hugging Face
 檢查點格式（checkpoint format），或從 LeRobot 已儲存的檢查點進行微調（fine-tune）。兩種途徑都使用
@@ -59,7 +59,7 @@ LeRobot 預設會停用資料集影像擴增（dataset image augmentation）。�
 LeRobot 的通用 `RandomSubsetApply` 設定無法
 表達這個可選的第四個轉換，除非有時捨棄三個必要轉換中的一個。
 
-### 使用原始 MolmoAct2 權重進行訓練（training with original MolmoAct2 weight）[[training-with-original-molmoact2-weight]]
+### 使用原始 MolmoAct2 權重進行訓練[[training-with-original-molmoact2-weight]]
 
 從已發布的 MolmoAct2 檢查點（checkpoint）開始時，例如 `allenai/MolmoAct2` 或
 `allenai/MolmoAct2-LIBERO`，請使用 `policy.checkpoint_path`。LeRobot 會載入
@@ -118,7 +118,7 @@ accelerate launch \
   --save_freq=2000
 ```
 
-### 使用 LeRobot MolmoAct2 權重進行訓練（training with LeRobot MolmoAct2 weight）[[training-with-lerobot-molmoact2-weight]]
+### 使用 LeRobot MolmoAct2 權重進行訓練[[training-with-lerobot-molmoact2-weight]]
 
 從 LeRobot 已儲存的 MolmoAct2 檢查點（checkpoint）開始時，不論是來自本機（local）的
 `pretrained_model` 目錄（directory）或來自 Hub，請使用 `policy.path`。這會
@@ -164,7 +164,7 @@ accelerate launch \
   --save_freq=2000
 ```
 
-### 常見做法（common practices）[[common-practices]]
+### 常見做法[[common-practices]]
 
 對於在相對較小的資料集（dataset）上微調（fine-tune），例如單一 LIBERO 任務套件（suite）
 或少於 200 筆示範的真實世界資料集（dataset），全域批次大小（global batch size）
@@ -176,7 +176,7 @@ accelerate launch \
 全域批次大小（global batch sizes）與完整 VLM 微調（full VLM fine-tuning）
 （`policy.train_mode_vlm=fft`）。
 
-### 常見策略選項（common policy options）[[common-policy-options]]
+### 常見策略選項[[common-policy-options]]
 
 - `policy.checkpoint_path`：用於初始化（initialize）的原始 MolmoAct2 HF 檢查點（checkpoint）。
   請將此用於已發布的 MolmoAct2 權重（weights）。
@@ -248,7 +248,7 @@ accelerate launch \
   從影像（images）、狀態維度（state dimension）、動作維度（action dimension）、動作時域（action horizon）與
   離散動作模式（discrete-action mode）推得。
 
-### 學習率（learning rates）[[learning-rates]]
+### 學習率[[learning-rates]]
 
 MolmoAct2 使用參數群組學習率（parameter-group learning rates），以與原始 MolmoAct2
 微調實驗（fine-tuning experiments）相符。
@@ -274,7 +274,7 @@ MolmoAct2 使用參數群組學習率（parameter-group learning rates），以�
 [`train_lerobot.py`](https://github.com/allenai/molmoact2/blob/5aac8f8a1180d79757ce500f819a02217079811c/experiments/launch_scripts/train_lerobot.py#L867-L868)
 配方（recipe）。
 
-### 資料集分位數統計量（dataset quantile statistics）[[dataset-quantile-statistics]]
+### 資料集分位數統計量[[dataset-quantile-statistics]]
 
 MolmoAct2 預設對狀態與動作特徵採用分位數正規化（quantile normalization for state and action features）。如果
 你的資料集（dataset）尚未轉換為含分位數統計量（quantile statistics），可以透過以下方式
@@ -302,7 +302,7 @@ python src/lerobot/scripts/augment_dataset_quantile_stats.py \
 --policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
 ```
 
-## 評估（evaluation）[[evaluation]]
+## 評估[[evaluation]]
 
 評估（evaluation）同樣支援 LeRobot 已儲存的檢查點（checkpoint）與原始 MolmoAct2
 HF 檢查點。若要重現 LIBERO，請將 EGL 渲染環境（rendering environment）保持
@@ -312,7 +312,7 @@ HF 檢查點。若要重現 LIBERO，請將 EGL 渲染環境（rendering environ
 LIBERO 場景穩定下來，並可能使測得的成功下降（degrade measured success）。此處回報的所有 LIBERO 評估
 結果（evaluation results）都使用 `num_steps_wait=50`。
 
-### 使用 LeRobot MolmoAct2 權重評估（evaluation with LeRobot MolmoAct2 weight）[[evaluation-with-lerobot-molmoact2-weight]]
+### 使用 LeRobot MolmoAct2 權重評估[[evaluation-with-lerobot-molmoact2-weight]]
 
 對於 LeRobot 已儲存的檢查點（checkpoint），請使用 `policy.path`。已儲存的處理器（processor）與
 正規化統計量（normalization statistics）會與模型（model）一併還原（restored）。
@@ -339,7 +339,7 @@ lerobot-eval \
   --seed=1000
 ```
 
-### 使用原始 MolmoAct2 權重評估（evaluation with original MolmoAct2 weight）[[evaluation-with-original-molmoact2-weight]]
+### 使用原始 MolmoAct2 權重評估[[evaluation-with-original-molmoact2-weight]]
 
 你可以直接評估已發布的 Hugging Face 檢查點（checkpoint），而無須先將其
 轉換為 LeRobot 檢查點。在此情況下，請將
@@ -383,7 +383,7 @@ lerobot-eval \
 檢查點（checkpoint）的 `norm_stats.json` 中，同一個指令也適用於其他已發布的 MolmoAct2
 檢查點（checkpoint）。
 
-### 常見評估選項（common evaluation options）[[common-evaluation-options]]
+### 常見評估選項[[common-evaluation-options]]
 
 - `policy.inference_action_mode`：rollout 時必填。流匹配推論（flow-matching inference）請使用 `continuous`，
   action-token 推論（inference）請使用 `discrete`。它必須
@@ -408,9 +408,9 @@ lerobot-eval \
 - `env.camera_name_mapping`：將 LIBERO 相機名稱（camera names）對應到策略處理器（policy processor）所預期的
   影像鍵值（image keys）。
 
-## 效能結果（performance results）[[performance-results]]
+## 效能結果[[performance-results]]
 
-### LIBERO 基準測試結果（LIBERO benchmark results）[[libero-benchmark-results]]
+### LIBERO 基準測試結果[[libero-benchmark-results]]
 
 MolmoAct2 在 LIBERO 基準測試套件（benchmark suite）上展現了優異的效能。為了
 比較並測試其 LeRobot 實作，我們在 LIBERO 資料集（dataset）上以每 GPU 批次大小（batch size） 32、
@@ -436,13 +436,13 @@ MolmoAct2 在 LIBERO 基準測試套件（benchmark suite）上展現了優異�
 效能。若要重現（reproduce）它們，請依照 LIBERO
 評估章節（LIBERO evaluation section）中的指示。
 
-## 硬體部署（hardware deployment, lerobot-rollout）[[hardware-deployment-lerobot-rollout]]
+## 硬體部署[[hardware-deployment-lerobot-rollout]]
 
 LeRobot 格式的檢查點（checkpoint）可在 Hub 上取得，供
 `lerobot-rollout` 直接使用。每個檢查點都使用特定的相機名稱（camera names），必須
 與你機器人的相機設定（robot’s camera configuration）相符。
 
-### 相機命名慣例（camera naming convention）[[camera-naming-convention]]
+### 相機命名慣例[[camera-naming-convention]]
 
 每個檢查點（checkpoint）都預期特定的 `observation.images.*` key。
 如果你機器人的相機名稱（camera names）不同，請使用 `--rename_map` 來對應（map）：
@@ -475,7 +475,7 @@ lerobot-rollout \
 --rename_map='{"observation.images.top": "observation.images.cam0", "observation.images.wrist": "observation.images.cam1"}'
 ```
 
-### 關節座標系轉換（joint frame transform, SO-100/101 zero-shot）[[joint-frame-transform-so-100101-zero-shot]]
+### 關節座標系轉換[[joint-frame-transform-so-100101-zero-shot]]
 
 <Tip warning={true}>
 MolmoAct2-SO100_101 檢查點（checkpoint）是在使用與 LeRobot >= 0.5.0
@@ -498,7 +498,7 @@ MolmoAct2-SO100_101 檢查點（checkpoint）是在使用與 LeRobot >= 0.5.0
 
 </Tip>
 
-## 與原始實作的差異（differences from the original implementation）[[differences-from-the-original-implementation]]
+## 與原始實作的差異[[differences-from-the-original-implementation]]
 
 此 LeRobot 移植版（port）旨在在使用 LeRobot 的資料集（dataset）、訓練（training）、評估（evaluation）、檢查點（checkpoint）與記錄
 基礎設施（logging infrastructure）的同時，符合 MolmoAct2 的行為。與原始訓練儲存庫（original training repository）的主要
@@ -528,7 +528,7 @@ MolmoAct2-SO100_101 檢查點（checkpoint）是在使用與 LeRobot >= 0.5.0
   實作。對此混合時程路徑（mixed-horizon path）的支援
   已在規劃中。
 
-## 引用（Citation）[[citation]]
+## 引用[[citation]]
 
 ```bibtex
 @misc{fang2026molmoact2actionreasoningmodels,
@@ -542,7 +542,7 @@ MolmoAct2-SO100_101 檢查點（checkpoint）是在使用與 LeRobot >= 0.5.0
 }
 ```
 
-## 授權（License）[[license]]
+## 授權[[license]]
 
 本模型以 Apache 2.0 授權。它旨在依照
 [Ai2's Responsible Use Guidelines](https://allenai.org/responsible-use)

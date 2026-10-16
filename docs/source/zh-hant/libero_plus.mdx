@@ -8,7 +8,7 @@ LIBERO-plus 是一個建構在 [LIBERO](./libero) 之上、針對視覺-語言-�
 
 ![An overview of the LIBERO-plus benchmark perturbation dimensions](https://github.com/sylvestf/LIBERO-plus/raw/main/static/images/libero-plus.jpg)
 
-## 擾動維度（perturbation dimensions）[[perturbation-dimensions]]
+## 擾動維度[[perturbation-dimensions]]
 
 LIBERO-plus 透過沿以下各軸（axes）擾動（perturbing）每個原始 LIBERO 任務（tasks），建立了約 10,000 個任務變體（task variants）：
 
@@ -22,7 +22,7 @@ LIBERO-plus 透過沿以下各軸（axes）擾動（perturbing）每個原始 LI
 | 背景材質（background textures）        | 場景表面（scene surface）與物件外觀（object appearance）                                  |
 | 感測器雜訊（sensor noise）             | 光度失真（photometric distortions）與影像劣化（image degradation）                        |
 
-## 可用的任務組（available task suites）[[available-task-suites]]
+## 可用的任務組[[available-task-suites]]
 
 LIBERO-plus 涵蓋與 LIBERO 相同的五個套件（suites）：
 
@@ -41,15 +41,15 @@ LIBERO-plus 涵蓋與 LIBERO 相同的五個套件（suites）：
   `pip install -e ".[libero]"` 重新安裝。
 </Tip>
 
-## 安裝（installation）[[installation]]
+## 安裝[[installation]]
 
-### 系統相依套件（system dependencies，僅限 Linux）[[system-dependencies-linux-only]]
+### 系統相依套件（僅限 Linux）[[system-dependencies-linux-only]]
 
 ```bash
 sudo apt install libexpat1 libfontconfig1-dev libmagickwand-dev
 ```
 
-### Python 套件（Python package）[[python-package]]
+### Python 套件[[python-package]]
 
 ```bash
 pip install -e ".[libero]" "robosuite==1.4.1" bddl easydict mujoco wand scikit-image gym
@@ -69,7 +69,7 @@ export MUJOCO_GL=egl   # headless / HPC / cloud
 
 </Tip>
 
-### 下載 LIBERO-plus 資產（download LIBERO-plus assets）[[download-libero--assets]]
+### 下載 LIBERO-plus 資產[[download-libero-plus-assets]]
 
 LIBERO-plus 的擴充資產包（asset pack）另外提供。請從 [Hugging Face 資料集](https://huggingface.co/datasets/Sylvest/LIBERO-plus/tree/main)下載 `assets.zip`，並解壓縮到 LIBERO-plus 套件目錄（package directory）中：
 
@@ -79,9 +79,9 @@ python -c "import libero; print(libero.__file__)"
 # 然後將 assets.zip 解壓縮到 <package_root>/libero/assets/
 ```
 
-## 評估（evaluation）[[evaluation]]
+## 評估[[evaluation]]
 
-### 建議：預設評估（default evaluation）[[default-evaluation-recommended]]
+### 建議：預設評估[[default-evaluation-recommended]]
 
 在四個標準套件（standard suites）上評估（evaluate，每個任務 task 10 個回合 episode）：
 
@@ -95,7 +95,7 @@ lerobot-eval \
   --env.max_parallel_tasks=1
 ```
 
-### 單一任務組評估（single task-suite evaluation）[[single-suite-evaluation]]
+### 單一任務組評估[[single-suite-evaluation]]
 
 在單一 LIBERO-plus 套件（suite）上評估（evaluation）：
 
@@ -113,7 +113,7 @@ lerobot-eval \
 - `--eval.batch_size` 控制平行執行（run in parallel）的環境（environments）數量。
 - `--eval.n_episodes` 設定每個任務要執行的回合數量（how many episodes to run per task）。
 
-### 多任務組評估（multi task-suite evaluation）[[multi-suite-evaluation]]
+### 多任務組評估[[multi-suite-evaluation]]
 
 透過傳入以逗號分隔的清單（comma-separated list），可一次在多個套件（multiple suites）上對策略（policy）進行基準測試（benchmark）：
 
@@ -126,7 +126,7 @@ lerobot-eval \
   --eval.n_episodes=10
 ```
 
-### 控制模式（control mode）[[control-mode]]
+### 控制模式[[control-mode]]
 
 LIBERO-plus 支援兩種控制模式（modes）：`relative`（預設）與 `absolute`。不同的 VLA 檢查點（checkpoint）使用不同的動作參數化（action parameterization）進行訓練（training），因此請確保模式（mode）與你的策略（policy）相符：
 
@@ -134,7 +134,7 @@ LIBERO-plus 支援兩種控制模式（modes）：`relative`（預設）與 `abs
 --env.control_mode=relative   # 或 "absolute"
 ```
 
-### 重設效能（reset performance）[[reset-performance]]
+### 重設效能[[reset-performance]]
 
 根據預設，LeRobot 會保留 LIBERO 的硬重設（hard-reset）行為。啟用固定初始
 狀態（fixed initial states）後，你可以選擇採用軟重設（soft resets），以略過
@@ -146,7 +146,7 @@ LIBERO-plus 支援兩種控制模式（modes）：`relative`（預設）與 `abs
 
 軟重設（soft resets）速度較快，但在環境的穩定步驟（settling steps）之後，與硬重設（hard resets）並非位元完全相同（not bit-identical），因此相機觀測（camera observations）與策略（policy）結果可能略有差異。重現基準測試（benchmark）結果時，請使用硬重設。
 
-### 策略輸入與輸出（policy inputs and outputs）[[policy-inputs-and-outputs]]
+### 策略輸入與輸出[[policy-inputs-and-outputs]]
 
 **觀測（observations）：**
 
@@ -158,19 +158,19 @@ LIBERO-plus 支援兩種控制模式（modes）：`relative`（預設）與 `abs
 
 - 在 `Box(-1, 1, shape=(7,))` 中的連續控制——6D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
 
-### 建議的評估回合數（recommended evaluation episodes）[[recommended-evaluation-episodes]]
+### 建議的評估回合數[[recommended-evaluation-episodes]]
 
 為了可重現的基準測試（reproducible benchmarking），請在四個標準套件（suites，Spatial、Object、Goal、Long）上使用**每個任務 10 個回合（10 episodes per task）**。這總共會有 400 個回合（episodes），並與已發表結果所使用的協定（protocol）一致。
 
-## 訓練（training）[[training]]
+## 訓練[[training]]
 
-### 資料集（dataset）[[dataset]]
+### 資料集[[dataset]]
 
 LIBERO-plus 的 LeRobot 格式訓練資料集（training dataset）可於此取得：
 
 - [lerobot/libero_plus](https://huggingface.co/datasets/lerobot/libero_plus)
 
-### 訓練指令範例（example training command）[[example-training-command]]
+### 訓練指令範例[[example-training-command]]
 
 ```bash
 lerobot-train \
@@ -188,7 +188,7 @@ lerobot-train \
     --env_eval_freq=1000
 ```
 
-## 與 LIBERO 的關係（relationship to LIBERO）[[relationship-to-libero]]
+## 與 LIBERO 的關係[[relationship-to-libero]]
 
 LIBERO-plus 是 LIBERO 的即插即用擴充（drop-in extension）：
 

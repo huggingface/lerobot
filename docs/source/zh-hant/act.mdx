@@ -16,11 +16,11 @@ ACT 是一種**輕量且高效的模仿學習策略（lightweight and efficient 
 
 _觀看 LeRobot 團隊的教學影片，了解 ACT 的運作方式：[LeRobot ACT 教學](https://www.youtube.com/watch?v=ft73x0LfGpM)_
 
-## 模型概覽（model overview）[[model-overview]]
+## 模型概覽[[model-overview]]
 
 Action Chunking with Transformers（ACT）由 Zhao 等人在論文 [Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware](https://arxiv.org/abs/2304.13705) 中提出。該策略（policy）旨在使用平價硬體和最少的示範資料（demonstration data）來實現精確且充分接觸（contact-rich）的操作任務（task）。
 
-### 為什麼 ACT 非常適合初學者（why ACT is great for beginners）[[why-act-is-great-for-beginners]]
+### 為什麼 ACT 非常適合初學者[[why-act-is-great-for-beginners]]
 
 ACT 作為絕佳的入門選擇，有以下幾個原因：
 
@@ -28,7 +28,7 @@ ACT 作為絕佳的入門選擇，有以下幾個原因：
 - **輕量（lightweight）**：僅約 8,000 萬個參數（parameters），高效且易於使用
 - **資料效率高（data efficient）**：通常僅需 50 筆示範（demonstrations）即可達到高成功率（high success rates）
 
-### 架構（architecture）[[architecture]]
+### 架構[[architecture]]
 
 ACT 使用基於 Transformer 的架構（transformer-based architecture），包含三個主要元件（components）：
 
@@ -44,12 +44,12 @@ ACT 使用基於 Transformer 的架構（transformer-based architecture），包
 
 輸出（outputs）為一個包含 `k` 個未來動作序列的區塊（chunk of `k` future action sequences）。
 
-## 安裝需求（installation requirements）[[installation-requirements]]
+## 安裝需求[[installation-requirements]]
 
 1. 按照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 2. ACT 已包含在 LeRobot 的基礎安裝中，無需額外的相依套件（additional dependencies）！
 
-## 訓練 ACT（training ACT）[[training-act]]
+## 訓練 ACT[[training-act]]
 
 ACT 可與標準的 LeRobot 訓練管線（training pipeline）無縫整合。以下是在你的資料集（dataset）上訓練 ACT 的完整範例：
 
@@ -64,13 +64,13 @@ lerobot-train \
   --policy.repo_id=${HF_USER}/act_policy
 ```
 
-### 訓練技巧（training tips）[[training-tips]]
+### 訓練技巧[[training-tips]]
 
 1. **從預設值開始（start with defaults）**：ACT 的預設超參數（default hyperparameters）對大多數任務（task）都能良好運作
 2. **訓練時長（training duration）**：在單張 GPU 上進行 100k 訓練步驟（training steps）預計需要幾小時
 3. **批次大小（batch size）**：建議從批次大小（batch size） 8 開始，再根據你的 GPU 記憶體進行調整
 
-### 使用 Google Colab 訓練（training with Google Colab）[[train-using-google-colab]]
+### 使用 Google Colab 訓練[[train-using-google-colab]]
 
 如果你的本機電腦沒有強大的 GPU，可以按照 [ACT 訓練筆記本（ACT training notebook）](./notebooks#training-act) 使用 Google Colab 來訓練（training）你的模型（model）。
 

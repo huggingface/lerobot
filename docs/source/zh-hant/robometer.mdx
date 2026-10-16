@@ -7,7 +7,7 @@ ROBOMETER 是一個**通用的影片語言機器人獎勵模型（general-purpos
 **原始程式碼**：[github.com/robometer/robometer](https://github.com/robometer/robometer)
 **檢查點（checkpoint）**：[lerobot/Robometer-4B](https://huggingface.co/lerobot/Robometer-4B)
 
-## 概觀（overview）[[overview]]
+## 概觀[[overview]]
 
 ROBOMETER 建立在 `Qwen/Qwen3-VL-4B-Instruct` 之上，並新增三個輕量的預測頭（lightweight prediction heads）：
 
@@ -23,7 +23,7 @@ L = L_pref + L_prog + L_succ
 
 LeRobot 整合目前**僅供推論（inference-only）**。它保留偏好頭（preference head），使已發布的 `Robometer-4B` 檢查點（checkpoint）無需重新對映即可載入（loads without remapping），但 `compute_reward()` 只查詢進度頭或成功頭（queries the progress or success head）。
 
-## LeRobot 整合涵蓋的內容（what the LeRobot integration covers）[[what-the-lerobot-integration-covers]]
+## LeRobot 整合涵蓋的內容[[what-the-lerobot-integration-covers]]
 
 - 透過 LeRobot 使用標準的 `reward_model.type=robometer` 設定（configuration）。
 - 透過 `RobometerEncoderProcessorStep` 進行 Qwen3-VL 影像與文字預處理（image and text preprocessing）。
@@ -33,7 +33,7 @@ LeRobot 整合目前**僅供推論（inference-only）**。它保留偏好頭（
 
 本頁著重於將已發布的 ROBOMETER 檢查點（checkpoint）作為零樣本獎勵模型（zero-shot reward model）使用。從頭訓練（training） ROBOMETER 不在目前的 LeRobot 整合範圍內。
 
-## 安裝需求（installation requirements）[[installation-requirements]]
+## 安裝需求[[installation-requirements]]
 
 1. 依照[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 2. 安裝 ROBOMETER 相依套件（dependencies）：
@@ -50,7 +50,7 @@ uv sync --extra robometer
 
 ROBOMETER 使用 Qwen3-VL-4B 骨幹（backbone），因此強烈建議使用 GPU 推論（inference）。
 
-## 模型輸入與輸出（model inputs and outputs）[[model-inputs-and-outputs]]
+## 模型輸入與輸出[[model-inputs-and-outputs]]
 
 ROBOMETER 預期：
 
@@ -70,9 +70,9 @@ ROBOMETER 預期：
 - `reward_output="progress"`（預設）：回傳（return）最後一個影格的進度（last-frame progress），鉗制（clamped）到 `[0, 1]`。
 - `reward_output="success"`：若最後一個影格的成功機率（last-frame success probability）高於 `success_threshold`，回傳（return） `1.0`，否則回傳 `0.0`。
 
-## 用法（usage）[[usage]]
+## 用法[[usage]]
 
-### 直接載入獎勵模型（loading the reward model directly）[[load-the-reward-model-directly]]
+### 直接載入獎勵模型[[load-the-reward-model-directly]]
 
 ```python
 from lerobot.rewards.robometer import RobometerConfig, RobometerRewardModel
@@ -85,7 +85,7 @@ cfg = RobometerConfig(
 reward_model = RobometerRewardModel.from_pretrained(cfg.pretrained_path, config=cfg)
 ```
 
-### 編碼影格並計算獎勵（encode frames and compute a reward）[[encode-frames-and-compute-a-reward]]
+### 編碼影格並計算獎勵[[encode-frames-and-compute-a-reward]]
 
 若要直接以 Python 呼叫（call），請以形狀（shape）為 `(T, H, W, C)` 的 `uint8` 陣列（arrays）提供影格（frames），並提供一個任務字串（task string）：
 
@@ -110,7 +110,7 @@ reward = reward_model.compute_reward(batch)
 
 `reward` 是一個形狀（shape）為 `(batch_size,)` 的張量（tensor）。
 
-### 使用獎勵工廠（use the reward factory）[[use-the-reward-factory]]
+### 使用獎勵工廠[[use-the-reward-factory]]
 
 你也可以透過獎勵工廠（reward factory）實例化（instantiate） ROBOMETER：
 
@@ -129,9 +129,9 @@ preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
 
 預處理器（preprocessor）會將 Qwen-VL 張量（tensors）寫入 `observation.robometer.*` 命名空間（namespace）下，而 `compute_reward()` 會讀取那些已編碼的張量（encoded tensors）。
 
-## 設定注意事項（configuration notes）[[configuration-notes]]
+## 設定注意事項[[configuration-notes]]
 
-### 骨幹與詞彙表（backbone and vocabulary）[[backbone-and-vocabulary]]
+### 骨幹與詞彙表[[backbone-and-vocabulary]]
 
 已發布的檢查點（checkpoint）使用 Qwen3-VL-4B 骨幹（backbone）。ROBOMETER 以固定順序（fixed order）在 tokenizer 中新增五個特殊 token：
 
@@ -147,15 +147,15 @@ preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
 
 LeRobot 設定會儲存一份帶有調整大小後詞彙表（post-resize vocabulary）的序列化（serialized） `vlm_config`，使模型（model）能從 `config.json` 重新載入，而無需先下載基礎的 Qwen 權重（weights）。對於 `Qwen/Qwen3-VL-4B-Instruct`，tokenizer 長度為 `151669`，而這五個 ROBOMETER token 產生了檢查點詞彙表（checkpoint vocabulary）大小 `151674`。
 
-### 進度預測（progress prediction）[[progress-prediction]]
+### 進度預測[[progress-prediction]]
 
 在已發布的檢查點（checkpoint）中，進度是離散的（progress is discrete）。進度頭（progress head）輸出在 `[0, 1]` 之間 `progress_discrete_bins=10` 個均勻分布的區間中心（uniformly spaced bin centers）上的 logits。LeRobot 透過套用 softmax 並對區間中心（bin centers）取期望值，將這些 logits 轉換為連續值（continuous value），與上游的 ROBOMETER 實作相符。
 
-### 成功預測（success prediction）[[success-prediction]]
+### 成功預測[[success-prediction]]
 
 成功頭（success head）為每個影格（frame）輸出原始（raw） logits。LeRobot 以 `sigmoid` 將它們轉換為機率。當 `reward_output="success"` 時，`compute_reward()` 會使用 `success_threshold` 對最後一個影格的成功機率（last-frame success probability）設閾值（thresholds）。
 
-## 限制（limitations）[[limitations]]
+## 限制[[limitations]]
 
 - 目前的 LeRobot 整合僅供推論（inference）；它並未實作 ROBOMETER 訓練（training）或偏好配對訓練（preference-pair training）。
 - 儘管 ROBOMETER 在內部預測每個影格的進度與成功（per-frame progress and success），`compute_reward()` 仍為 LeRobot 獎勵模型（reward-model） API 為每個樣本（sample）回傳一個純量（return a scalar）。

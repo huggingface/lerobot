@@ -8,7 +8,7 @@ Meta-World 是一個用於**多任務與元強化學習（multi-task and meta re
 
 ![MetaWorld MT10 的演示](https://meta-world.github.io/figures/ml45.gif)
 
-## 可用任務（available tasks）[[available-tasks]]
+## 可用任務[[available-tasks]]
 
 Meta-World 提供 50 個任務（task），並按難度分組（difficulty groups）。在 LeRobot 中，你可以對個別任務（individual tasks）、難度群組（difficulty groups）或完整的 MT50 套件（suite）進行評估（evaluation）：
 
@@ -24,7 +24,7 @@ Meta-World 提供 50 個任務（task），並按難度分組（difficulty group
 
 我們在 HF Hub 上提供了適用於 LeRobot 的 Meta-World MT50 資料集（dataset）：[lerobot/metaworld_mt50](https://huggingface.co/datasets/lerobot/metaworld_mt50)。此資料集針對 MT50 評估（evaluation）進行格式化，使用所有 50 個任務（task），並搭配固定的物體/目標位置（fixed object/goal positions）和 one-hot 任務向量（task vectors）以確保一致性（consistency）。
 
-## 安裝（installation）[[installation]]
+## 安裝[[installation]]
 
 按照 LeRobot 安裝說明（installation instructions）完成後：
 
@@ -41,9 +41,9 @@ pip install "gymnasium==1.1.0"
 
 </Tip>
 
-## 評估（evaluation）[[evaluation]]
+## 評估[[evaluation]]
 
-### 建議：預設評估（default evaluation）[[default-evaluation-recommended]]
+### 建議：預設評估[[default-evaluation-recommended]]
 
 在中等難度分組（medium difficulty split）上進行評估（evaluation，在涵蓋範圍和運算量之間取得良好平衡）：
 
@@ -56,7 +56,7 @@ lerobot-eval \
   --eval.n_episodes=10
 ```
 
-### 單任務評估（single-task evaluation）[[single-task-evaluation]]
+### 單任務評估[[single-task-evaluation]]
 
 在特定任務（task）上進行評估（evaluation）：
 
@@ -69,7 +69,7 @@ lerobot-eval \
   --eval.n_episodes=10
 ```
 
-### 多任務評估（multi-task evaluation）[[multi-task-evaluation]]
+### 多任務評估[[multi-task-evaluation]]
 
 跨多個任務（multiple tasks）或難度群組（difficulty groups）進行評估（evaluation）：
 
@@ -86,7 +86,7 @@ lerobot-eval \
 - `--eval.batch_size` 控制同時並行執行（run in parallel）的環境（environments）數量。
 - `--eval.n_episodes` 設定每個任務要執行的回合數（how many episodes to run per task）。
 
-### 策略的輸入與輸出（policy inputs and outputs）[[policy-inputs-and-outputs]]
+### 策略的輸入與輸出[[policy-inputs-and-outputs]]
 
 **觀測值（observations）：**
 
@@ -97,13 +97,13 @@ lerobot-eval \
 
 - 在 `Box(-1, 1, shape=(4,))` 中連續控制——3D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
 
-### 建議評估回合數（recommended evaluation episodes）[[recommended-evaluation-episodes]]
+### 建議評估回合數[[recommended-evaluation-episodes]]
 
 為確保可重現的基準測試（reproducible benchmarking），建議使用**每個任務 10 個回合（10 episodes per task）**。對於完整的 MT50 套件（suite），這將產生共 500 個回合（episodes）。如果你關注泛化能力（generalization），請在完整的 MT50 上執行——它刻意設計得具有挑戰性，比起少數幾個特定任務更能揭示優勢與劣勢。
 
-## 訓練（training）[[training]]
+## 訓練[[training]]
 
-### 範例訓練指令（example training command）[[example-training-command]]
+### 範例訓練指令[[example-training-command]]
 
 在 Meta-World 任務子集（subset）上訓練（training）SmolVLA 策略（policy）：
 
@@ -123,7 +123,7 @@ lerobot-train \
   --env_eval_freq=1000
 ```
 
-## 實用提示（practical tips）[[practical-tips]]
+## 實用提示[[practical-tips]]
 
 - 在多任務訓練（multi-task training）中使用 one-hot 任務條件化（one-hot task conditioning，MT10/MT50 慣例），讓策略（policy）具有明確的任務上下文（explicit task context）。
 - 在撰寫後處理或日誌記錄時，檢查資料集任務描述（dataset task descriptions）和 `info["is_success"]` 鍵值（keys），以確保你的成功指標（success metrics）與基準測試（benchmark）一致。

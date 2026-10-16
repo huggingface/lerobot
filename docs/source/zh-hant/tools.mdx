@@ -1,4 +1,4 @@
-# 工具（Tools）[[tools]]
+# 工具[[tools]]
 
 LeRobot v3.1 支援策略（policy）中的**工具呼叫（tool calls）**，輔助訊息（assistant messages）可以
 發出結構化的叫用（emit structured invocations），例如 `say(text="OK, starting now")`，執行期（runtime）
@@ -10,7 +10,7 @@ LeRobot v3.1 支援策略（policy）中的**工具呼叫（tool calls）**，�
 2. 標註管線（annotation pipeline）如何產生 tool-call atoms。
 3. 如何新增你自己的工具（tools）。
 
-## 工具在何處宣告（where tools are declared）[[where-tools-are-declared]]
+## 工具在何處宣告[[where-tools-are-declared]]
 
 分成兩層（layers）。
 
@@ -72,7 +72,7 @@ prompt_str = tokenizer.apply_chat_template(
 並不屬於此處所述的目錄層（catalog layer）；如今這一層（layer）只提供
 schema 儲存與 `DEFAULT_TOOLS` 後備常數（fallback constant）。
 
-## 每列的工具叫用（per-row tool invocations）[[per-row-tool-invocations]]
+## 每列的工具叫用[[per-row-tool-invocations]]
 
 上述目錄（catalog）描述*可以呼叫什麼（what can be called）*。實際的*呼叫（call）*——即
 函式名稱（function name）加上引數值（argument values）——是逐列儲存（stored per-row）的，位於
@@ -114,7 +114,7 @@ user_interjection_response:
 產生的文字（generated text）解析（parses）回結構化的 `tool_calls`，並派送（dispatches）到
 相符的實作（implementation）。
 
-## 如何新增你自己的工具（how to add your own tool）[[how-to-add-your-own-tool]]
+## 如何新增你自己的工具[[how-to-add-your-own-tool]]
 
 > **注意：** 下方的步驟 2 與 3 描述的是執行期層
 > （runtime layer，`src/lerobot/tools/`、`Tool` 協定、`TOOL_REGISTRY`、
@@ -128,7 +128,7 @@ user_interjection_response:
 可呼叫它以在常規控制迴圈之外（outside the regular control loop）
 擷取額外的觀測（capture an extra observation）。
 
-### 步驟 1——宣告 schema（declare the schema）[[step-1-declare-the-schema]]
+### 步驟 1——宣告 schema[[step-1-declare-the-schema]]
 
 在 `meta/info.json["tools"]` 下新增一個項目（entry）。你可以在執行標註管線（annotation pipeline）
 *之前*直接編輯磁碟上的檔案（它會被保留），
@@ -162,7 +162,7 @@ user_interjection_response:
 此 schema 完全遵循 OpenAI 的函式呼叫慣例（OpenAI’s function-calling convention），因此
 聊天範本（chat template）可以原生地渲染它（render it）。
 
-### 步驟 2——實作呼叫（implement the call）[[step-2-implement-the-call]]
+### 步驟 2——實作呼叫[[step-2-implement-the-call]]
 
 建立 `src/lerobot/tools/record_observation.py`：
 
@@ -190,7 +190,7 @@ class RecordObservationTool:
 可能會引入 `pillow`，而 `say` 則引入 `pocket-tts`。使用者只安裝
 所需的工具，即可避免沉重的遞移相依（transitive deps）。
 
-### 步驟 3——註冊它（register it）[[step-3-register-it]]
+### 步驟 3——註冊它[[step-3-register-it]]
 
 新增到 `src/lerobot/tools/registry.py`：
 

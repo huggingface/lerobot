@@ -14,7 +14,7 @@
 - 將既有的 `v2.1` 資料集（dataset）遷移至 `v3.0`
 - 實驗其他 `LeRobotDataset` 格式（formats）與實作（implementations），例如 Lance
 
-## `v3` 有哪些新功能（what's new in v3）[[whats-new-in-v3]]
+## `v3` 有哪些新功能[[whats-new-in-v3]]
 
 - **以檔案為基礎的儲存（file-based storage）**：每個 Parquet/MP4 檔案包含多個回合（many episodes，v2 為每個回合一個檔案）。
 - **關聯式中繼資料（relational metadata）**：回合邊界（episode boundaries）與查找（lookups）是透過中繼資料（metadata）解析，而非檔名。
@@ -23,13 +23,13 @@
 - **統一的組織方式（unified organization）**：乾淨的目錄結構（directory layout），資料與影片皆採用一致的路徑範本（path templates）。
 - **資料集儲存後端（dataset storage backends）**：資料集也可以儲存為 [LanceDB](https://lancedb.com) 資料表（tables），以直接從物件儲存（object storage）進行隨機存取與索引（indexing）（參見 [LanceDB 資料集後端](#lancedb-dataset-backend)）。
 
-## 安裝（installation）[[installation]]
+## 安裝[[installation]]
 
 `LeRobotDataset v3.0` 將包含在 `lerobot >= 0.4.0` 中。
 
 在該穩定版本（stable release）釋出之前，你可以依照[從原始碼建置的說明](./installation#from-source)使用 main 分支。
 
-## 錄製資料集（record a dataset）[[record-a-dataset]]
+## 錄製資料集[[record-a-dataset]]
 
 執行以下指令，使用 SO-101 錄製資料集（record a dataset）並推送到 Hub：
 
@@ -53,7 +53,7 @@ lerobot-record \
 
 更多細節請參閱[錄製指南](./il_robots#record-a-dataset)。
 
-## 格式設計（format design）[[format-design]]
+## 格式設計[[format-design]]
 
 v3 的核心原則是**將儲存與使用者 API 解耦（decoupling storage from the user API）**：資料以高效方式儲存（少量大型檔案），而公開 API 則提供直覺的回合層級存取（intuitive episode-level access）。
 
@@ -78,7 +78,7 @@ v3 的核心原則是**將儲存與使用者 API 解耦（decoupling storage fro
   </figure>
 </div>
 
-### 目錄結構（directory layout，簡化版）[[directory-layout-simplified]]
+### 目錄結構（簡化版）[[directory-layout-simplified]]
 
 - **`meta/info.json`**：標準結構定義（canonical schema，特徵 feature、shape/dtype）、FPS、程式碼庫版本（codebase version），以及用來定位資料/影片分片（shard）的**路徑範本（path templates）**。
 - **`meta/stats.json`**：用於正規化（normalization）的全域特徵統計（global feature statistics, mean/std/min/max）；透過 `dataset.meta.stats` 公開。
@@ -87,7 +87,7 @@ v3 的核心原則是**將儲存與使用者 API 解耦（decoupling storage fro
 - **`data/`**：逐影格的 **Parquet** 分片（frame‑by‑frame Parquet shards）；每個檔案通常包含**多個回合（many episodes）**。
 - **`videos/`**：每個相機的 **MP4** 分片（shards）；每個檔案通常包含**多個回合（many episodes）**。
 
-## 載入資料集以進行訓練（load a dataset for training）[[load-a-dataset-for-training]]
+## 載入資料集以進行訓練[[load-a-dataset-for-training]]
 
 `LeRobotDataset` 回傳 PyTorch 張量（tensors）的 Python 字典（dictionaries）並與 `torch.utils.data.DataLoader` 整合。以下是展示其用法的程式碼範例：
 
@@ -134,7 +134,7 @@ for batch in data_loader:
     # model.forward(batch)
 ```
 
-## 串流資料集，無需下載（stream a dataset without download）[[stream-a-dataset-no-downloads]]
+## 串流資料集，無需下載[[stream-a-dataset-no-downloads]]
 
 使用 `StreamingLeRobotDataset` 直接從 Hub 迭代（iterate），而無需本地複本（local copies）。這讓你能串流大型資料集（stream large datasets），而不必將其下載到磁碟或載入記憶體，這也是新資料集格式的關鍵功能。
 
@@ -174,15 +174,15 @@ lerobot-train \
   </figure>
 </div>
 
-## 影像轉換（image transforms）[[image-transforms]]
+## 影像轉換[[image-transforms]]
 
 影像轉換（image transforms）是在訓練（training）期間套用於相機影格（camera frames）的資料增強（data augmentations），用以提升模型的穩健性（model robustness）與泛化能力（generalization）。LeRobot 支援多種轉換（transforms），包括亮度（brightness）、對比（contrast）、飽和度（saturation）、色相（hue）與銳利度（sharpness）的調整。
 
-### 在資料集建立/錄製期間使用轉換（using transforms during dataset creation/recording）[[using-transforms-during-dataset-creationrecording]]
+### 在資料集建立/錄製期間使用轉換[[using-transforms-during-dataset-creationrecording]]
 
 目前轉換**僅在訓練時（training time only）**套用，而非在錄製（recording）時。當你建立或錄製資料集（create or record a dataset）時，原始影像（raw images）會在不經轉換（without transforms）的情況下儲存。這讓你日後能試驗不同的增強方式（augmentations），而無需重新錄製資料（re-recording data）。
 
-### 為既有資料集加入轉換（adding transforms to existing datasets, API）[[adding-transforms-to-existing-datasets-api]]
+### 為既有資料集加入轉換[[adding-transforms-to-existing-datasets-api]]
 
 在載入資料集（loading a dataset）進行訓練（training）時使用 `image_transforms` 參數（parameter）：
 
@@ -246,7 +246,7 @@ dataset = LeRobotDataset(
 )
 ```
 
-### 可用的轉換類型（available transform types）[[available-transform-types]]
+### 可用的轉換類型[[available-transform-types]]
 
 LeRobot 提供數種轉換類型（transform types）：
 
@@ -256,7 +256,7 @@ LeRobot 提供數種轉換類型（transform types）：
 
 你也可以將任何 `torchvision.transforms.v2` 轉換（transform）直接傳給 `image_transforms` 參數（parameter）使用。
 
-### 設定選項（configuration options）[[configuration-options]]
+### 設定選項[[configuration-options]]
 
 - **`enable`**：啟用/停用轉換（enable/disable transforms，預設：`False`）
 - **`max_num_transforms`**：每個影格（frame）套用的最大轉換數量（maximum number of transforms，預設：`3`）
@@ -264,7 +264,7 @@ LeRobot 提供數種轉換類型（transform types）：
 - **`weight`**：每個轉換（transform）的取樣機率（sampling probability，越高 = 越可能，若權重總和不為 1，會被正規化 normalization）
 - **`kwargs`**：轉換特定的參數（transform-specific parameters，例如亮度範圍 brightness range）
 
-### 視覺化轉換（visualizing transforms）[[visualizing-transforms]]
+### 視覺化轉換[[visualizing-transforms]]
 
 使用視覺化腳本（visualization script）預覽轉換如何影響你的資料：
 
@@ -277,7 +277,7 @@ lerobot-imgtransform-viz \
 
 這會儲存範例影像（example images），展示每個轉換的效果，協助你調整參數（parameters）。
 
-### 最佳實務（best practices）[[best-practices]]
+### 最佳實務[[best-practices]]
 
 - **從保守開始（start conservative）**：先使用小範圍（例如亮度 0.9-1.1），再逐步增加
 - **先測試（test first）**：使用視覺化腳本（visualization script）確保轉換看起來合理
@@ -285,7 +285,7 @@ lerobot-imgtransform-viz \
 - **符合你的領域（match your domain）**：若你的機器人在變動的光照（varying lighting）下運作，請使用亮度/對比轉換（brightness/contrast transforms）
 - **明智地組合（combine wisely）**：同時使用太多轉換可能使訓練（training）不穩定
 
-## 遷移（migrate） `v2.1` → `v3.0`[[migrate-v21-v30]]
+## 遷移 `v2.1` → `v3.0`[[migrate-v21-v30]]
 
 轉換器（converter）會將每個回合的檔案（per‑episode files）彙整成更大的分片（larger shards），並寫入回合偏移量/中繼資料（episode offsets/metadata）。請依照以下說明轉換你的資料集（dataset）。
 
@@ -303,9 +303,9 @@ python -m lerobot.scripts.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DATASET_
 - 彙整 mp4 檔案：`episode-0000.mp4`、`episode-0001.mp4`、… → **`file-0000.mp4`**、…
 - 更新 `meta/episodes/*`（分塊 chunked Parquet），寫入每個回合的長度（per‑episode lengths）、任務（task），以及位元組/影格偏移量（byte/frame offsets）。
 
-## 常見問題（common issues）[[common-issues]]
+## 常見問題[[common-issues]]
 
-### 推送前務必呼叫 `finalize()`（always call finalize() before pushing）[[always-call-finalize-before-pushing]]
+### 推送前務必呼叫 `finalize()`[[always-call-finalize-before-pushing]]
 
 在建立或錄製資料集（creating or recording datasets）時，你**必須**呼叫 `dataset.finalize()` 以正確關閉 parquet writer。更多細節請參閱 [PR #1903](https://github.com/huggingface/lerobot/pull/1903)。
 
@@ -336,7 +336,7 @@ dataset.push_to_hub()
 
 若不呼叫 `finalize()`，你的 parquet 檔案會不完整，資料集（dataset）也無法正常載入。
 
-## 其他格式與實作（other formats and implementations）[[other-formats-and-implementations]]
+## 其他格式與實作[[other-formats-and-implementations]]
 
 ### LanceDB 資料集後端[[lancedb-dataset-backend]]
 

@@ -1,4 +1,4 @@
-# 即時分塊（Real-Time Chunking, RTC）[[real-time-chunking-rtc]]
+# 即時分塊[[real-time-chunking-rtc]]
 
 即時分塊（Real-Time Chunking, RTC）讓大型、以流匹配為基礎的機器人策略（flow-matching based robotic policies），例如 [Pi0](./pi0)、[Pi0.5](./pi05) 與 [SmolVLA](./smolvla)，即使具有高推論延遲（high inference latency），仍能產生平滑、連續且具反應性的動作（smooth, continuous, and reactive motion）。LeRobot 提供原本的推論時引導模式（inference-time guided mode），並且針對相容的 Pi05 檢查點（checkpoint），提供訓練時動作條件化（training-time action conditioning）與低成本的硬式前綴推論（cheap hard-prefix inference）。
 
@@ -18,9 +18,9 @@ RTC 讓機器人在仍在移動時就先想好下一步。當機器人正在執�
 
 以技術術語來說，RTC 在流匹配去噪過程（flow-matching denoising process）中加入一個引導項（guidance term），強迫新區塊（new chunk）的重疊時間步（overlapping timesteps）保持接近先前區塊已執行的部分（stay close to the executed portion of the previous chunk），通常會使用一個柔性的轉換遮罩（soft transition mask）。
 
-## 快速開始（quick start）[[quick-start]]
+## 快速開始[[quick-start]]
 
-### 安裝（installation）[[installation]]
+### 安裝[[installation]]
 
 RTC 已內建於 LeRobot 中。只需安裝你需要的策略相依套件（policy dependencies）：
 
@@ -32,7 +32,7 @@ pip install -e ".[pi]"
 pip install -e ".[smolvla]"
 ```
 
-### 將 RTC 與 Pi0 一起使用（using RTC with Pi0）[[using-rtc-with-pi0]]
+### 將 RTC 與 Pi0 一起使用[[using-rtc-with-pi0]]
 
 你可以使用 `lerobot-rollout --strategy.type=base --inference.type=rtc` 在真實機器人（real robots）上部署（deployment） RTC。
 以下程式碼片段提供一個簡化的偽範例，說明 RTC 如何在你的管線（pipeline）中與 Pi0 一起運作：
@@ -88,7 +88,7 @@ for step in range(num_steps):
     execute_actions(action)
 ```
 
-## 關鍵參數（key parameters）[[key-parameters]]
+## 關鍵參數[[key-parameters]]
 
 `RTCConfig` 有以下可調參數（parameters）：
 
@@ -122,7 +122,7 @@ RTCConfig(execution_horizon=10)
 
 **`inference_delay`**：你的系統有多少個時間步的推論（inference）延遲。此值會傳給 `predict_action_chunk()` 而非設定，因為它在執行期可能會變動。
 
-## 離線測試 RTC（testing RTC offline）[[testing-rtc-offline]]
+## 離線測試 RTC[[testing-rtc-offline]]
 
 在真實機器人（real robot）上執行之前，先以資料集樣本（dataset samples）測試 RTC 以視覺化它如何運作：
 
@@ -149,7 +149,7 @@ guided RTC。
   />
 </p>
 
-## 以真實機器人測試 RTC（testing RTC with a real robot）[[testing-rtc-with-a-real-robot]]
+## 以真實機器人測試 RTC[[testing-rtc-with-a-real-robot]]
 
 ```bash
 lerobot-rollout \
@@ -185,7 +185,7 @@ lerobot-rollout \
     --device=cuda
 ```
 
-## 與 LeRobot 非同步推論的差異（how it differs from the async inference in LeRobot）[[how-it-differs-from-the-async-inference-in-lerobot]]
+## 與 LeRobot 非同步推論的差異[[how-it-differs-from-the-async-inference-in-lerobot]]
 
 RTC 與[非同步推論（async inference）](./async)都能改善即時機器人控制（real-time robot control），但它們解決不同的問題。
 
@@ -198,7 +198,7 @@ RTC 與[非同步推論（async inference）](./async)都能改善即時機器�
 
 **兩者一起使用**以達成最大的平滑度（smoothness）與反應性（reactivity）！
 
-## 進階：除錯追蹤（debug tracking）[[advanced-debug-tracking]]
+## 進階：除錯追蹤[[advanced-debug-tracking]]
 
 RTC 內建除錯追蹤（built-in debug tracking），協助你理解推論（inference）期間發生了什麼：
 

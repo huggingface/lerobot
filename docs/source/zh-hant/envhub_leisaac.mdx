@@ -12,7 +12,7 @@ LeRobot EnvHub 現已支援透過 LeIsaac 進行**模擬環境中的模仿學習
 
 以下是目前透過 LeRobot EnvHub 提供的 LeIsaac 任務（task）。
 
-# 可用環境（available environments）[[available-environments]]
+# 可用環境[[available-environments]]
 
 下表列出了 LeIsaac x LeRobot EnvHub 中所有可用的任務（task）與環境（environment）。你也可以透過執行以下指令來取得最新的環境清單：
 
@@ -27,7 +27,7 @@ python scripts/environments/list_envs.py
 | <video src="https://github.com/user-attachments/assets/e49d8f1c-dcc9-412b-a88f-100680d8a45b" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-CleanToyTable-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/clean_toy_table_env_cfg.py)<br /><br />[LeIsaac-SO101-CleanToyTable-BiArm-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/clean_toy_table_bi_arm_env_cfg.py)<br /><br />[LeIsaac-SO101-CleanToyTable-BiArm-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/clean_toy_table/direct/clean_toy_table_bi_arm_env.py) | 將兩個字母 e 物件撿起放入盒中，然後將手臂重設（reset）為休息狀態（rest state）。                                               | 單臂 SO101 Follower<br /><br />雙臂 SO101 Follower |
 | <video src="https://github.com/user-attachments/assets/e29a0f8a-9286-4ce6-b45d-342c3d3ba754" autoplay loop muted playsinline style="max-width: 300px;"></video> | [LeIsaac-SO101-FoldCloth-BiArm-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/fold_cloth/fold_cloth_bi_arm_env_cfg.py)<br /><br />[LeIsaac-SO101-FoldCloth-BiArm-Direct-v0](https://github.com/LightwheelAI/leisaac/blob/main/source/leisaac/leisaac/tasks/fold_cloth/direct/fold_cloth_bi_arm_env.py)                                                                                                                                                                                                    | 摺疊布料，然後將手臂重設（reset）為休息狀態（rest state）。<br /><br />_注意：此任務（task）僅 DirectEnv 支援 check_success。_ | 雙臂 SO101 Follower                                |
 
-# 在 LeRobot 中一行程式碼直接載入 LeIsaac（load LeIsaac directly in LeRobot with one line of code）[[load-leisaac-directly-in-lerobot-with-one-line-of-code]]
+# 在 LeRobot 中一行程式碼直接載入 LeIsaac[[load-leisaac-directly-in-lerobot-with-one-line-of-code]]
 
 > EnvHub：透過 HuggingFace 分享 LeIsaac 環境
 
@@ -41,7 +41,7 @@ LeIsaac 提供 EnvHub 支援，讓你只需幾個指令即可使用或分享任�
   style={{ width: "100%", maxWidth: "960px", borderRadius: "8px" }}
 />
 
-## 如何開始使用，環境設定（how to get started, environment setup）[[how-to-get-started-environment-setup]]
+## 如何開始使用，環境設定[[how-to-get-started-environment-setup]]
 
 執行以下指令來設定你的程式環境（code environments）：
 
@@ -61,11 +61,11 @@ pip install lerobot==0.4.1
 pip install numpy==1.26.0
 ```
 
-## 使用範例（usage example）[[usage-example]]
+## 使用範例[[usage-example]]
 
 EnvHub 以統一介面（uniform interface）公開所有 LeIsaac 支援的任務（task）。以下範例載入 `so101_pick_orange`，示範隨機動作 rollout（random-action rollout）與互動式遙操作（interactive teleoperation）。
 
-### 隨機動作（random action）[[random-action]]
+### 隨機動作[[random-action]]
 
 <details>
 <summary>點擊展開程式碼範例</summary>
@@ -105,7 +105,7 @@ python envhub_random_action.py
 
 你應該會看到 SO101 手臂在純隨機指令（random commands）下擺動。
 
-### 遙操作（teleoperation）[[teleoperation]]
+### 遙操作[[teleoperation]]
 
 LeRobot 的遙操作堆疊（teleoperation stack）可以驅動模擬（simulation）手臂。
 
@@ -246,7 +246,7 @@ python envhub_teleop_example.py
 
 執行此腳本（script）後，你可以使用實體 Leader 裝置來操控模擬手臂（operate the simulated arm）。
 
-## ☁️ 雲端模擬（Cloud Simulation，無需 GPU）[[cloud-simulation-no-gpu-required]]
+## ☁️ 雲端模擬（無需 GPU）[[cloud-simulation-no-gpu-required]]
 
 沒有本機 GPU 或正確的驅動程式（drivers）？沒問題！你可以在雲端完全執行 LeIsaac，無需任何設定。
 LeIsaac 可在 **NVIDIA Brev** 上開箱即用，直接在瀏覽器中提供完整設定好的環境（fully configured environment）。
@@ -257,7 +257,7 @@ LeIsaac 可在 **NVIDIA Brev** 上開箱即用，直接在瀏覽器中提供完�
 
 **無需 GPU、無需驅動程式、無需本機安裝。只需點擊即可執行。**
 
-## 補充說明（additional notes）[[additional-notes]]
+## 補充說明[[additional-notes]]
 
 我們持續將 EnvHub 的涵蓋範圍與 LeIsaac 任務（task）保持同步。目前支援：
 

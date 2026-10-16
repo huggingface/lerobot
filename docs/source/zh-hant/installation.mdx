@@ -120,7 +120,7 @@ brew install ffmpeg
 
 基本的 `lerobot` 安裝刻意保持**輕量（lightweight）**——只包含核心 ML 相依套件（PyTorch、torchvision、numpy、opencv、einops、draccus、huggingface-hub、gymnasium、safetensors）。較重的相依套件則以可選的額外套件（extras）把關，讓你只安裝需要的部分。
 
-### 以原始碼安裝（from source）[[from-source]]
+### 以原始碼安裝[[from-source]]
 
 首先，複製儲存庫（clone the repository）並進入該目錄（directory）：
 
@@ -150,7 +150,7 @@ uv pip install -e ".[all]"           # 全部（所有策略 policy、環境 env
 </hfoptions>
 <!-- prettier-ignore-end -->
 
-### 從 PyPI 安裝（installation from PyPI）[[installation-from-pypi]]
+### 從 PyPI 安裝[[installation-from-pypi]]
 
 **核心函式庫（core library）：**
 使用以下指令安裝基本套件：
@@ -270,11 +270,11 @@ sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-de
 
 對於其他作業系統請參閱：[編譯 PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
 
-## 可選的相依套件（optional dependencies）[[optional-dependencies]]
+## 可選的相依套件[[optional-dependencies]]
 
 LeRobot 為特定功能提供可選的額外套件（optional extras）。多個額外套件（multiple extras）可以組合使用（例如 `.[aloha,feetech]`）。如需所有可用的額外套件，請參閱 `pyproject.toml`。若你使用 `uv`，請將下列指令中的 `pip install` 替換為 `uv pip install`。
 
-### 模擬（simulations）[[simulations]]
+### 模擬[[simulations]]
 
 安裝環境套件：`aloha`（[gym-aloha](https://github.com/huggingface/gym-aloha)）或 `pusht`（[gym-pusht](https://github.com/huggingface/gym-pusht)）。
 這些會自動包含 `dataset` 額外套件（extra）。
@@ -283,7 +283,7 @@ LeRobot 為特定功能提供可選的額外套件（optional extras）。多個
 pip install -e ".[aloha]" # 或例如 "[pusht]"
 ```
 
-### 馬達控制（motor control）[[motor-control]]
+### 馬達控制[[motor-control]]
 
 針對 Koch v1.1 請安裝 Dynamixel SDK，對於 SO100/SO101/Moss 則安裝 Feetech SDK。
 
@@ -291,7 +291,7 @@ pip install -e ".[aloha]" # 或例如 "[pusht]"
 pip install -e ".[feetech]" # 或例如 "[dynamixel]"
 ```
 
-### 實驗追蹤（experiment tracking）[[experiment-tracking]]
+### 實驗追蹤[[experiment-tracking]]
 
 Weights and Biases 已包含在 `training` 額外套件（extra）中。若要使用 [Weights and Biases](https://docs.wandb.ai/quickstart) 進行實驗追蹤（experiment tracking），請使用以下指令登入：
 

@@ -4,7 +4,7 @@
 
 無論你選擇以何種方式貢獻，請遵守我們的[行為準則（code of conduct）](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)與 [AI 政策](https://github.com/huggingface/lerobot/blob/main/AI_POLICY.md)。
 
-## 貢獻方式（ways to contribute）
+## 貢獻方式
 
 你可以透過多種方式做出貢獻：
 
@@ -16,7 +16,7 @@
 
 若你不確定從何開始，歡迎加入我們的 [Discord Channel](https://discord.gg/q8Dzzpym3f)。
 
-## 開發環境設定（development setup）
+## 開發環境設定
 
 若要貢獻程式碼，你需要建立一個開發環境。
 
@@ -30,13 +30,13 @@ cd lerobot
 git remote add upstream https://github.com/huggingface/lerobot.git
 ```
 
-### 2. 環境安裝（environment installation）
+### 2. 環境安裝
 
 請參閱我們的[安裝指南](https://huggingface.co/docs/lerobot/installation)，進行環境設定並以原始碼安裝（installation from source）。
 
-## 執行測試 & 品質檢查（running tests & quality checks）
+## 執行測試 & 品質檢查
 
-### 程式碼風格（code style, pre-commit）
+### 程式碼風格
 
 安裝 `pre-commit` hooks，以在提交前自動執行檢查：
 
@@ -50,7 +50,7 @@ pre-commit install
 pre-commit run --all-files
 ```
 
-### 執行測試（running tests）
+### 執行測試
 
 我們使用 `pytest`。首先，請安裝 **git-lfs** 以確保你擁有所需的測試構件（test artifacts）：
 

@@ -7,7 +7,7 @@ TOPReward 是一個**零樣本獎勵模型（zero-shot reward model）**，它�
 **原始程式碼**：[github.com/TOPReward/TOPReward](https://github.com/TOPReward/TOPReward)
 **預設骨幹**：[Qwen/Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct)
 
-## 概觀（overview）[[overview]]
+## 概觀[[overview]]
 
 TOPReward 詢問一個通用 VLM，**在機器人嘗試完成某任務的影片作為條件下（conditioned on the video of a robot trying to complete that task）**，一段任務指令有多可能為真（how likely a task instruction is）。具體而言，給定：
 
@@ -27,7 +27,7 @@ TOPReward 詢問一個通用 VLM，**在機器人嘗試完成某任務的影片�
 
 由於此方法只依賴一個凍結（frozen）的 VLM，TOPReward 是**零樣本（zero-shot）**的：沒有需要託管的微調權重（no fine-tuned weights）。LeRobot 中的「模型（model）」是圍繞 `transformers` 的 `Qwen3VLForConditionalGeneration` 加上標籤遮罩邏輯（label-masking logic）的一個小型封裝（wrapper）。處理器（processor）擁有 tokenizer 並建構完整的聊天提示（chat prompt，EO-1/Robometer 模式）。
 
-## LeRobot 整合涵蓋的內容（what the LeRobot integration covers）[[what-the-lerobot-integration-covers]]
+## LeRobot 整合涵蓋的內容[[what-the-lerobot-integration-covers]]
 
 - 透過 LeRobot 使用標準的 `reward_model.type=topreward` 設定（configuration）。
 - 透過 `transformers` 的 `Qwen3VLForConditionalGeneration` API 載入 VLM。
@@ -38,7 +38,7 @@ TOPReward 詢問一個通用 VLM，**在機器人嘗試完成某任務的影片�
 
 目前的 LeRobot 移植**僅支援 Qwen3-VL 用戶端（client）**。其他上游（upstream）用戶端（Gemini、OpenAI、Gemma、Molmo）可作為後續的額外功能（follow-up extras）加入。
 
-## 安裝需求（installation requirements）[[installation-requirements]]
+## 安裝需求[[installation-requirements]]
 
 1. 依照[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 2. 安裝 TOPReward 可選的額外套件（extra）：
@@ -55,7 +55,7 @@ uv sync --extra topreward
 
 這會引入 `transformers`。你第一次執行 TOPReward 時，Hugging Face 也會從 Hub 下載 VLM 權重（weights，Qwen3-VL-8B-Instruct 約 16 GB）。強烈建議使用 GPU。
 
-## 模型輸入與輸出（model inputs and outputs）[[model-inputs-and-outputs]]
+## 模型輸入與輸出[[model-inputs-and-outputs]]
 
 TOPReward 預期：
 
@@ -76,9 +76,9 @@ TOPReward 預期：
 
 - `compute_reward(batch)`：每個樣本一個對數機率（one log-probability per sample）。越高 = 任務與影片對齊（task-video alignment）得越好。當 `success_threshold` 為有限值時，則改為回傳（returns）二元閾值（binary thresholded value）。
 
-## 用法（usage）[[usage]]
+## 用法[[usage]]
 
-### 直接載入獎勵模型（loading the reward model directly）[[load-the-reward-model-directly]]
+### 直接載入獎勵模型[[load-the-reward-model-directly]]
 
 ```python
 from lerobot.rewards.topreward import TOPRewardConfig, TOPRewardModel
@@ -90,7 +90,7 @@ cfg = TOPRewardConfig(
 reward_model = TOPRewardModel(cfg)
 ```
 
-### 使用獎勵工廠（use the reward factory）[[use-the-reward-factory]]
+### 使用獎勵工廠[[use-the-reward-factory]]
 
 ```python
 from lerobot.rewards import make_reward_model, make_reward_model_config, make_reward_pre_post_processors
@@ -107,7 +107,7 @@ preprocessor, postprocessor = make_reward_pre_post_processors(cfg)
 
 預處理器（preprocessor）會將完整的提示（prompt，影片 video + 前綴 prefix + 指令後綴 instruction suffix）tokenise，並將 Qwen-VL 張量（tensors） + `prompt_length` 寫入 `observation.topreward.*` 之下。模型（model）會讀取那些張量，根據 `prompt_length` 進行標籤遮罩（label-masks），並擷取對數機率獎勵（log-prob）。
 
-### 離線資料集標註（offline dataset labeling）[[offline-dataset-labeling]]
+### 離線資料集標註[[offline-dataset-labeling]]
 
 為 RA-BC 訓練（RA-BC training）與疊加影片（overlay videos）寫入一個 `topreward_progress.parquet`：
 
@@ -129,9 +129,9 @@ uv run examples/dataset/create_progress_videos.py \
     --gif
 ```
 
-## 設定注意事項（configuration notes）[[configuration-notes]]
+## 設定注意事項[[configuration-notes]]
 
-### 提示詞控制項（prompt knobs）[[prompt-knobs]]
+### 提示詞控制項[[prompt-knobs]]
 
 預設提示（prompt）反映（mirror）了上游論文：
 
@@ -142,11 +142,11 @@ prompt_suffix_template = "{instruction} Decide whether the above statement is Tr
 
 兩者皆在 `TOPRewardConfig` 上公開以供消融（ablation）。後綴範本（suffix template）**必須**包含 `{instruction}`。
 
-### 聊天範本（chat template）[[chat-template]]
+### 聊天範本[[chat-template]]
 
 `add_chat_template=True` 會在 tokenisation 之前，以 tokenizer 的聊天範本（tokenizer’s chat template）包裝完整提示（prompt，包括指令 instruction）。預設為 `False`，與上游論文的主要實驗相符。
 
-## 限制（limitations）[[limitations]]
+## 限制[[limitations]]
 
 - 目前的 LeRobot 移植是**僅供推論且零樣本（inference-only and zero-shot）**的；`forward()` 未被覆寫，且 `is_trainable` 回傳（returns） `False`。
 - 只支援 **Qwen3-VL 家族（family）**；其他上游用戶端（upstream clients）不在範圍內。

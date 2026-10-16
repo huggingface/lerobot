@@ -1,8 +1,8 @@
-# 多任務 DiT Policy（Multitask DiT Policy）[[multitask-dit-policy]]
+# 多任務 DiT Policy[[multitask-dit-policy]]
 
 多任務擴散 Transformer（Multitask Diffusion Transformer, DiT）策略（policy）是原始擴散策略架構（Diffusion Policy architecture）的進化版本，利用大型 DiT 搭配文字（text）與視覺條件化（vision conditioning）來實現多任務機器人學習（multitask robot learning）。此實作支援擴散（diffusion）和流匹配（flow matching）兩種目標函數（objectives）來生成動作（action generation），使機器人能以語言指令（language instructions）為條件執行多樣化的操作任務（manipulation tasks）。
 
-## 模型概覽（model overview）[[model-overview]]
+## 模型概覽[[model-overview]]
 
 此模型（model）使用：
 
@@ -14,7 +14,7 @@
 這個模型（model）令人興奮之處在於，你僅需約 4.5 億參數（~450M parameter）就能實現極高的靈巧度（dexterity），
 其表現可與數十億參數的 VLA 模型競爭，且所需的訓練（training）量顯著更少。
 
-## 安裝需求（installation requirements）[[installation-requirements]]
+## 安裝需求[[installation-requirements]]
 
 多任務DiT 策略（Multitask DiT Policy）有額外的相依套件（dependencies）。請使用以下指令安裝：
 
@@ -24,7 +24,7 @@ pip install lerobot[multi_task_dit]
 
 這將安裝所有必要的相依套件（dependencies），包括用於 CLIP 模型（models）的 HuggingFace Transformers 函式庫。
 
-## 使用方式（usage）[[usage]]
+## 使用方式[[usage]]
 
 若要在 LeRobot 設定中使用多任務 DiT（Multitask DiT），請將策略類型（policy type）指定為：
 
@@ -32,9 +32,9 @@ pip install lerobot[multi_task_dit]
 policy.type=multi_task_dit
 ```
 
-## 訓練（training）[[training]]
+## 訓練[[training]]
 
-### 基本訓練指令（basic training command）[[basic-training-command]]
+### 基本訓練指令[[basic-training-command]]
 
 以下是在你的資料集（dataset）上訓練多任務 DiT （training Multitask DiT）的完整訓練指令：
 
@@ -52,7 +52,7 @@ lerobot-train \
   --wandb.enable=true
 ```
 
-### 建議的超參數與資料集細節（recommended hyperparameters and dataset details，30Hz 控制頻率）[[recommended-hyperparameters-and-dataset-details-30hz-control-frequency]]
+### 建議的超參數與資料集細節（30 Hz 控制頻率）[[recommended-hyperparameters-and-dataset-details-30hz-control-frequency]]
 
 為獲得可靠的效能，建議從以下預設超參數（hyperparameters）開始：
 
@@ -81,9 +81,9 @@ lerobot-train \
 - **Objective**：`diffusion` - 建議先從擴散（diffusion）開始，若生成品質（generation quality）不佳再嘗試流匹配（flow matching）
 - **Training Steps**：單一任務（single task）建議 >30k 步（steps）
 
-### 訓練設定參數（training configuration parameters）[[training-configuration-parameters]]
+### 訓練設定參數[[training-configuration-parameters]]
 
-#### 目標函數選擇（objective selection）[[objective-selection]]
+#### 目標函數選擇[[objective-selection]]
 
 在擴散（diffusion）和流匹配（flow matching）之間選擇：
 
@@ -106,7 +106,7 @@ lerobot-train \
 --policy.sigma_min=0.0  # 流插值路徑中的最小噪聲
 ```
 
-#### Transformer 架構（Transformer architecture）[[transformer-architecture]]
+#### Transformer 架構[[transformer-architecture]]
 
 根據資料集大小（dataset size）調整模型容量（model capacity）：
 
@@ -147,7 +147,7 @@ lerobot-train \
 --policy.timestep_embed_dim=256  # 時間步嵌入維度
 ```
 
-#### 視覺編碼器設定（vision encoder configuration）[[vision-encoder-configuration]]
+#### 視覺編碼器設定[[vision-encoder-configuration]]
 
 ```bash
 # 使用不同的 CLIP 模型以獲得更強的表達力，但會犧牲推論速度
@@ -165,7 +165,7 @@ lerobot-train \
 --policy.image_crop_is_random=true  # 訓練時隨機裁剪，推論時中心裁剪
 ```
 
-#### 文字編碼器設定（text encoder configuration）[[text-encoder-configuration]]
+#### 文字編碼器設定[[text-encoder-configuration]]
 
 ```bash
 # 使用不同的 CLIP 文字編碼器模型
@@ -174,7 +174,7 @@ lerobot-train \
 --policy.text_encoder_name=openai/clip-vit-large-patch14
 ```
 
-#### 學習率設定（learning rate configuration）[[learning-rate-configuration]]
+#### 學習率設定[[learning-rate-configuration]]
 
 視覺編碼器（vision encoder）使用獨立的學習率倍率（learning rate multiplier），建議以 1/10 作為理想的起始點：
 
@@ -183,9 +183,9 @@ lerobot-train \
 --policy.vision_encoder_lr_multiplier=0.1  # 視覺編碼器學習率 = 0.1 * optimizer_lr
 ```
 
-### 訓練調校指南（training tuning guidelines）[[training-tuning-guidelines]]
+### 訓練調校指南[[training-tuning-guidelines]]
 
-#### 1. 搭配 Beta 取樣的流匹配（Flow Matching with Beta sampling）[[1-flow-matching-with-beta-sampling]]
+#### 1. 搭配 Beta 取樣的流匹配[[1-flow-matching-with-beta-sampling]]
 
 此處的原始擴散實作（original diffusion implementation）基於 [TRI 的 LBM 論文](https://arxiv.org/abs/2507.05331) 中描述的工作。
 
@@ -203,14 +203,14 @@ lerobot-train \
 
 這並未被證明是適用於所有使用情境的銀色子彈（silver bullet），但在某些情況下確實能帶來更流暢且更一致的動作（actions）。
 
-#### 2. Transformer 層數（number of Transformer layers）[[2-number-of-transformer-layers]]
+#### 2. Transformer 層數[[2-number-of-transformer-layers]]
 
 根據資料集大小（dataset size）匹配模型容量（model capacity）：
 
 - **小型資料集（dataset）**（< 100 個範例）：減少至 4 層（layers）
 - **大型資料集（dataset）**（> 5k 個範例）：增加至 8 層（layers）
 
-#### 3. `horizon` 調校（horizon tuning）[[3-horizon-tuning]]
+#### 3. `horizon` 調校[[3-horizon-tuning]]
 
 模型（model）對你選擇的時域（horizon）可能相當敏感。建議根據控制頻率（control frequency），從大約 1 秒的時域（horizon）開始：
 
@@ -219,14 +219,14 @@ lerobot-train \
 
 然後實驗從此基礎逐步增加。時域（horizon）決定了模型預測未來動作的時間範圍（how far into the future the model predicts actions）。
 
-#### 4. `n_action_steps` 敏感度（n_action_steps sensitivity）[[4-nactionsteps-sensitivity]]
+#### 4. `n_action_steps` 敏感度[[4-nactionsteps-sensitivity]]
 
 模型（model）對 `n_action_steps` 也可能非常敏感。建議根據控制頻率（control frequency），從大約 0.8 秒開始調整：
 
 - **較低值（lower values）**：反應更靈敏，但在長時程任務（long-horizon tasks）中可能較不穩定
 - **較高值（higher values）**：長時程執行（long-horizon execution）效果更好，但開迴路失敗（open-loop failures）的恢復（recovery）能力受限
 
-### 推論調校（inference tuning）[[inference-tuning]]
+### 推論調校[[inference-tuning]]
 
 為加速推論（inference），使用 DDIM 搭配較少的取樣步數（sampling steps）：
 
@@ -235,7 +235,7 @@ lerobot-train \
 --policy.num_inference_steps=10
 ```
 
-### 接續訓練（resuming training）[[resuming-training]]
+### 接續訓練[[resuming-training]]
 
 從檢查點（checkpoint）接續訓練（resume training）：
 
@@ -247,11 +247,11 @@ lerobot-train \
 
 檢查點目錄應包含 `model.safetensors` 和 `config.json` 檔案（訓練過程中自動儲存）。接續訓練（resuming training）時，設定（configuration）會從檢查點（checkpoint）載入，因此不需要指定其他參數（parameters）。
 
-## 常見失敗模式與除錯（common failure modes and debugging）[[common-failure-modes-and-debugging]]
+## 常見失敗模式與除錯[[common-failure-modes-and-debugging]]
 
 訓練這些模型（training these models）可能相當棘手。以下是常見的失敗模式（failure modes）與除錯方法（debugging approaches）：
 
-### 靜止不動／無動作（idling / no motion）[[idling-no-motion]]
+### 靜止不動／無動作[[idling-no-motion]]
 
 模型（model）可能在推論（inference）時「崩潰（collapse）」，導致靜止或無動作（static or no motion）輸出。這可能發生在：
 
@@ -265,7 +265,7 @@ lerobot-train \
 - 延長訓練（training）時間，最多至 100k 步（steps），即使損失已趨平穩（loss flatlines）
 - 檢查模型（model）是否接收到正確的語言指令（proper language instructions），或增加指令（instruction）的多樣性
 
-### 執行錯誤的任務（executing the wrong task）[[executing-the-wrong-task]]
+### 執行錯誤的任務[[executing-the-wrong-task]]
 
 有時機器人會完全忽略你的指令（instruction）而執行其他任務（task）。這通常只在你訓練（training）了多個任務（multiple tasks）時才會發生。
 
@@ -281,7 +281,7 @@ lerobot-train \
 - 檢查訓練資料集中的任務分佈（task distribution in your training dataset），並對失敗/被忽略的任務（failing/ignored task）增加權重（weighting）
 - 考慮針對特定任務進行微調（task-specific fine-tuning）
 
-### 訓練不穩定（training instability）[[training-instability]]
+### 訓練不穩定[[training-instability]]
 
 如果訓練損失（training loss）不穩定或發散（unstable or diverging）：
 
@@ -290,7 +290,7 @@ lerobot-train \
 - 檢查資料集的正規化（dataset normalization）是否正確
 - 驗證影像前處理（image preprocessing）是否正常運作
 
-## 效能考量（performance considerations）[[performance-considerations]]
+## 效能考量[[performance-considerations]]
 
 ### GPU 需求[[gpu-requirements]]
 
@@ -302,7 +302,7 @@ lerobot-train \
 - **最小值**：64（低於此值可能導致訓練（training）不穩定）
 - **建議值**：256-320（最佳效能，需要較大的 GPU）
 
-## 範例：在自訂資料集上訓練（training on custom dataset）[[example-training-on-custom-dataset]]
+## 範例：在自訂資料集上訓練[[example-training-on-custom-dataset]]
 
 以下是在自訂資料集（custom dataset）上訓練（training）的完整範例：
 
@@ -331,7 +331,7 @@ lerobot-train \
   --wandb.project=multitask_dit
 ```
 
-## Libero 的結果（Libero results）[[libero-results]]
+## Libero 的結果[[libero-results]]
 
 ```
 python -m lerobot.scripts.lerobot_train \

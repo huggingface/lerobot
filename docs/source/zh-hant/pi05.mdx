@@ -2,11 +2,11 @@
 
 π₀.₅ 是一個**具備開放世界泛化能力的視覺-語言-動作模型（Vision-Language-Action model with open-world generalization）**，來自 Physical Intelligence。LeRobot 的實作改寫自他們的開源 [OpenPI](https://github.com/Physical-Intelligence/openpi) 儲存庫（repository）。
 
-## 模型概覽（model overview）[[model-overview]]
+## 模型概覽[[model-overview]]
 
 π₀.₅ 代表了 π₀ 的重大演進，由 [Physical Intelligence](https://www.physicalintelligence.company/blog/pi05) 開發，旨在解決機器人領域的一大挑戰：**開放世界泛化（open-world generalization）**。雖然機器人能在受控環境中執行令人印象深刻的任務（tasks），但 π₀.₅ 的設計目標是能夠泛化（generalize）到訓練（training）期間從未見過的全新環境與情境（new environments and situations）。
 
-### 泛化挑戰（the generalization challenge）[[the-generalization-challenge]]
+### 泛化挑戰[[the-generalization-challenge]]
 
 正如 Physical Intelligence 所解釋的，根本挑戰不在於執行靈巧或敏捷的任務（tasks of agility or dexterity），而在於泛化（generalization），在新設定中使用新物件（new settings with new objects）正確執行任務的能力。以清潔不同住家的機器人為例：每個家庭都有不同的物品放在不同的位置（different objects in different places）。泛化（generalization）必須在多個層面上實現：
 
@@ -14,7 +14,7 @@
 - **語義層面（semantic level）**：理解任務語義（task semantics），衣物和鞋子該放哪裡（洗衣籃，而非床上），以及哪些工具適合清理溢出的液體
 - **環境層面（environmental level）**：適應「混亂的（messy）」真實世界環境（real-world environments），如住家、雜貨店、辦公室和醫院
 
-### 異質資料協同訓練（co-training on heterogeneous data）[[co-training-on-heterogeneous-data]]
+### 異質資料協同訓練[[co-training-on-heterogeneous-data]]
 
 π₀.₅ 的突破性創新在於**異質資料來源的協同訓練（co-training on heterogeneous data sources）**。該模型（model）從以下來源學習：
 
@@ -27,7 +27,7 @@
 
 這種多樣化的訓練混合（diverse training mixture）形成了一套「課程（curriculum）」，使得模型（model）能在物理（physical）、視覺（visual）和語義層面（semantic levels）同時實現泛化。
 
-## 安裝需求（installation requirements）[[installation-requirements]]
+## 安裝需求[[installation-requirements]]
 
 1. 依照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 2. 執行以下指令安裝 Pi0.5 的相依套件（dependencies）：
@@ -42,7 +42,7 @@
    pip install 'lerobot[pi]'
    ```
 
-## 使用方式（Usage）[[usage]]
+## 使用方式[[usage]]
 
 若要在 LeRobot 設定中使用 π₀.₅，請將策略類型（policy type）指定為：
 
@@ -50,9 +50,9 @@
 policy.type=pi05
 ```
 
-## 訓練（training）[[training]]
+## 訓練[[training]]
 
-### LIBERO 快速入門（Quickstart on LIBERO）[[quickstart-on-libero]]
+### LIBERO 快速入門[[quickstart-on-libero]]
 
 在 [lerobot/libero](https://huggingface.co/datasets/lerobot/libero) 上微調 LIBERO 基礎模型，這是[下方結果](#libero-benchmark-results)背後示範資料的約 1.9 GB 影片編碼副本。
 
@@ -105,7 +105,7 @@ lerobot-train \
 
 接著使用 `lerobot-eval` 評估檢查點，並與參考成功率（success rates）比較——請參閱 [LIBERO](./libero)。
 
-### 分位數統計（Quantile statistics）[[quantile-statistics]]
+### 分位數統計[[quantile-statistics]]
 
 π₀.₅ 使用分位數（quantiles）對 `STATE` 與 `ACTION` 進行正規化，因此你資料集的 `meta/stats.json` 需要 `q01` 與 `q99`。較舊的資料集僅有 `min`/`max`/`mean`/`std`，會在第一批次（batch）就失敗：
 
@@ -138,7 +138,7 @@ python src/lerobot/scripts/augment_dataset_quantile_stats.py \
 
 `--skip-images` 會保留既有的影像統計量，並在只需重新計算 `STATE`/`ACTION` 時避免下載或解碼影片資料；而 `--root` 則會讀取本機資料集而非 Hub。這些值是直方圖估計值，會受到離散化與重新分箱誤差（rebinning error）的影響，因此可能與保守值不同——這會改變 π₀.₅ 的正規化目標（normalized targets），進而改變其損失尺度（loss scale）。已儲存於現有檢查點內的統計量則不受影響。
 
-### 訓練指令範例（training command example）[[training-command-example]]
+### 訓練指令範例[[training-command-example]]
 
 同樣的微調，但凍結 VLM：記憶體用量較低，但成功率（success rate）會有所犧牲。請將 `--dataset.repo_id` 替換為你自己的資料集。
 
@@ -165,7 +165,7 @@ lerobot-train \
     --seed=1000
 ```
 
-### 關鍵訓練參數（key training parameters）[[key-training-parameters]]
+### 關鍵訓練參數[[key-training-parameters]]
 
 - **`--policy.compile_model=true`**：啟用模型編譯（model compilation）以加速訓練（training）
 - **`--policy.gradient_checkpointing=true`**：在訓練（training）過程中顯著降低記憶體使用量
@@ -175,7 +175,7 @@ lerobot-train \
   - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
   - [lerobot/pi05_libero_base](https://huggingface.co/lerobot/pi05_libero_base)（專門針對 Libero 資料集訓練）
 
-### 可選的訓練時 RTC（Optional training-time RTC）[[optional-training-time-rtc]]
+### 可選的訓練時 RTC[[optional-training-time-rtc]]
 
 Pi05 可以選擇學習動作前綴條件化（action-prefix conditioning），以實現高效率的
 [即時區塊化（Real-Time Chunking）](./rtc)，其做法遵循
@@ -224,7 +224,7 @@ lerobot-rollout \
 rollout 才會以明確的錯誤停止。預設的
 `--inference.rtc.mode=guided` 仍可用於一般檢查點。
 
-### 載入檢查點（Loading a checkpoint）[[loading-a-checkpoint]]
+### 載入檢查點[[loading-a-checkpoint]]
 
 這兩種形式不可互換：
 
@@ -240,7 +240,7 @@ rollout 才會以明確的錯誤停止。預設的
 例如，RoboMME 微調指令會對應其原始的 `image`、`wrist_image`、
 `state` 與 `actions` 欄位，同時以 `--policy.pretrained_path` 初始化權重。
 
-### 訓練參數說明（training parameters explained）[[training-parameters-explained]]
+### 訓練參數說明[[training-parameters-explained]]
 
 | 參數（parameter）       | 預設值（default） | 說明（description）                                                       |
 | ----------------------- | ----------------- | ------------------------------------------------------------------------- |
@@ -249,7 +249,7 @@ rollout 才會以明確的錯誤停止。預設的
 
 **💡 提示**：設定 `train_expert_only=true` 會凍結（freezes） VLM，僅訓練動作專家模組和投影層（trains only the action expert and projections），從而以較低的記憶體使用量進行微調（fine-tune）。
 
-## 短時域觀測記憶（Short-Horizon Observation Memory, MEM）[[short-horizon-observation-memory-mem]]
+## 短時域觀測記憶[[short-horizon-observation-memory-mem]]
 
 Pi05 可以選擇使用基於
 [MEM](https://arxiv.org/abs/2603.03596) 的短時域視覺與本體感覺（proprioceptive）上下文。兩條
@@ -322,7 +322,7 @@ attention）：在對應的 patch token 之間進行因果時間注意力（caus
 讓各列獨立自動重設；請開始新的 rollout，讓完整的策略與動作佇列
 一起被重設。
 
-## 相對動作（relative actions）[[relative-actions]]
+## 相對動作[[relative-actions]]
 
 預設情況下，π₀.₅ 預測絕對動作（predicts absolute actions）。你可以啟用**相對動作（relative actions）**，讓模型（model）預測相對於當前機器人狀態（current robot state）的偏移量（offsets）。這對於某些設定可以提升訓練穩定性（training stability）。
 
@@ -361,9 +361,9 @@ lerobot-train \
     ...
 ```
 
-## 效能結果（performance results）[[performance-results]]
+## 效能結果[[performance-results]]
 
-### Libero 基準測試結果（Libero benchmark results）[[libero-benchmark-results]]
+### Libero 基準測試結果[[libero-benchmark-results]]
 
 π₀.₅ 在 Libero 基準測試套件（benchmark suite）上展現了優異的效能。為了比較和測試其 LeRobot 實作，我們在 Libero 資料集（dataset）上對 libero 基礎模型（libero base model）額外微調（finetuned）了 6k 步，並將結果與 OpenPI 參考結果進行比較。
 

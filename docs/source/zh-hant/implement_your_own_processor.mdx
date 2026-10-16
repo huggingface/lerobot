@@ -1,9 +1,9 @@
-# 實作你自己的機器人處理器（implementing your own robot processor）[[implement-your-own-robot-processor]]
+# 實作你自己的機器人處理器[[implement-your-own-robot-processor]]
 
 在本教學中，你將學習如何實作自己的機器人處理器（Robot Processor）。
 首先會探討為何需要自訂處理器（custom processor），接著以 `NormalizerProcessorStep` 作為貫穿全文的範例，說明如何實作（implement）、設定（configure）及序列化處理器（serialize a processor）。最後，列出 LeRobot 內建的所有 helper 處理器（processors）。
 
-## 為什麼你會需要自訂處理器？（why you might need a custom processor）[[why-would-you-need-a-custom-processor]]
+## 為什麼你會需要自訂處理器？[[why-would-you-need-a-custom-processor]]
 
 在大多數情況下，從感測器讀取原始資料（raw data）或模型輸出動作（models output actions）時，你需要處理這些資料以使其與目標系統（target system）相容。例如，一個常見的需求是正規化資料範圍（normalizing data ranges），使其適用於神經網路（neural networks）。
 
@@ -39,7 +39,7 @@ pipeline = PolicyProcessorPipeline([
 
 LeRobot 提供了管線機制（pipeline mechanism），用於對輸入資料（input data）和輸出動作（output actions）實作一系列處理步驟（sequences of processing steps），讓你能輕鬆地以正確順序（order）組合這些轉換（transformations），以達到最佳效能。
 
-## 如何實作你自己的處理器？（how to implement your own processor）[[how-to-implement-your-own-processor]]
+## 如何實作你自己的處理器？[[how-to-implement-your-own-processor]]
 
 我們將以 `NormalizerProcessorStep` 作為主要範例，因為它展示了你經常會需要的核心處理器模式（processor patterns），包括狀態管理（state management）、設定序列化（configuration serialization），以及張量處理（tensor handling）。
 
@@ -52,7 +52,7 @@ LeRobot 提供了管線機制（pipeline mechanism），用於對輸入資料（
 - `reset`：重置處理步驟（processing step）的狀態（state）。
 - `feature_contract`：顯示在處理步驟（processing step）期間對特徵空間（feature space）的修改（modification）。
 
-### 實作 `__call__` 方法（implement the **call** method）[[implement-the-call-method]]
+### 實作 `__call__` 方法[[implement-the-call-method]]
 
 `__call__` 方法（method）是你的處理步驟（processing step）的核心。它接收一個 `EnvTransition` 並回傳（returns）一個修改後的 `EnvTransition`。以下是 `NormalizerProcessorStep` 的運作方式：
 
@@ -92,7 +92,7 @@ class NormalizerProcessorStep(ProcessorStep):
 - **將設定與狀態分離（separate config from state）**：`get_config()` 回傳可 JSON 序列化的參數（JSON-serializable params），`state_dict()` 回傳張量（returns tensors）
 - **在 `__post_init__()` 中將統計量（stats）轉換為張量（tensors）**，以提高運算效率
 
-### 設定與狀態管理（configuration and state management）[[configuration-and-state-management]]
+### 設定與狀態管理[[configuration-and-state-management]]
 
 處理器（processors）透過三個方法（methods）支援序列化（serialization），將設定（configuration）與張量狀態（tensor state）分離。`NormalizerProcessorStep` 完美地展示了這一點——它在狀態（state）中攜帶資料集統計量（dataset statistics，張量 tensors），並在設定（config）中攜帶超參數（hyperparameters）：
 
@@ -141,7 +141,7 @@ new_normalizer.load_state_dict(tensors)
 # 現在 new_normalizer 擁有相同的統計量和設定
 ```
 
-### 轉換特徵（transforming features）[[transform-features]]
+### 轉換特徵[[transform-features]]
 
 `transform_features` 方法定義了你的處理器（processor）如何轉換特徵名稱（feature names）和形狀（shapes）。這對策略設定（policy configuration）和除錯（debugging）至關重要。
 
@@ -179,7 +179,7 @@ def transform_features(self, features: dict[str, PolicyFeature]) -> dict[str, Po
 - 始終回傳（return）修改後的特徵字典（modified features dictionary）
 - 在 docstring 中清楚記錄轉換內容（document transformations）
 
-### 使用 overrides（using overrides）[[using-overrides]]
+### 使用 overrides[[using-overrides]]
 
 你可以在載入時（load-time）使用 `overrides` 覆寫步驟參數（override step parameters）。這對於不可序列化的物件（non-serializable objects）或特定環境的設定（site-specific settings）非常方便。它在策略工廠（policy factories）和 `DataProcessorPipeline.from_pretrained(...)` 中都能使用。
 
@@ -207,11 +207,11 @@ processor = RobotProcessorPipeline.from_pretrained(
 )
 ```
 
-## 最佳實踐（best practices）[[best-practices]]
+## 最佳實踐[[best-practices]]
 
 根據對所有 LeRobot 處理器實作（processor implementations）的分析，以下是關鍵的模式與實踐（key patterns and practices）：
 
-### 1. **安全的資料處理（safe data handling）**[[1-safe-data-handling]]
+### 1. **安全的資料處理**[[1-safe-data-handling]]
 
 務必建立輸入資料的副本（copies of input data），以避免非預期的副作用（unintended side effects）。使用 `transition.copy()` 和 `observation.copy()`，而不是就地修改資料（modifying data in-place）。這可以防止你的處理器（processor）意外影響管線（pipeline）中的其他元件（components）。
 
@@ -219,19 +219,19 @@ processor = RobotProcessorPipeline.from_pretrained(
 
 當資料驗證失敗（data validation fails）時，提供清楚且可操作的錯誤訊息（error messages），幫助使用者理解出了什麼問題以及如何修正。
 
-### 2. **選擇適當的基底類別（choose appropriate base classes）**[[2-choose-appropriate-base-classes]]
+### 2. **選擇適當的基底類別**[[2-choose-appropriate-base-classes]]
 
 LeRobot 提供了專門的基底類別（base classes），可減少樣板程式碼（boilerplate code）並確保一致性。當你只需修改觀測（observations）時使用 `ObservationProcessorStep`，僅處理動作（action-only）時使用 `ActionProcessorStep`，專門用於字典式機器人動作（dictionary-based robot actions）時使用 `RobotActionProcessorStep`。
 
 只有在你需要完全控制整個轉換（transition），或需要同時處理多個轉換組成部分（transition components）時，才直接繼承 `ProcessorStep`。專門的基底類別（base class）會為你處理轉換管理（transition management）並提供型別安全（type safety）。
 
-### 3. **註冊與命名（registration and naming）**[[3-registration-and-naming]]
+### 3. **註冊與命名**[[3-registration-and-naming]]
 
 使用 `@ProcessorStepRegistry.register()` 以描述性的、帶命名空間的名稱（namespaced names）註冊（register）你的處理器（processor）。使用組織前綴（organization prefixes）如 `"robotics_lab/safety_clipper"` 或 `"acme_corp/vision_enhancer"` 以避免命名衝突（naming conflicts）。避免使用通用名稱如 `"processor"` 或 `"step"`，因為它們可能與其他實作（other implementations）衝突。
 
 良好的註冊（registration）使你的處理器（processor）易於被發現（discoverable），並在儲存和載入管線（pipeline）時實現乾淨的序列化/反序列化（serialization/deserialization）。
 
-### 4. **狀態管理模式（state management patterns）**[[4-state-management-patterns]]
+### 4. **狀態管理模式**[[4-state-management-patterns]]
 
 區分設定參數（configuration parameters, JSON-serializable values）和內部狀態（張量 tensors、緩衝區 buffers）。對不應出現在建構子（constructor）或字串表示（string representation）中的內部狀態（state），使用帶有 `init=False, repr=False` 的 dataclass 欄位（fields）。
 
@@ -239,19 +239,19 @@ LeRobot 提供了專門的基底類別（base classes），可減少樣板程式
 
 請記住，`get_config()` 應僅回傳（return）可 JSON 序列化的設定（JSON-serializable configuration），而 `state_dict()` 則單獨處理張量狀態（tensor state）。
 
-### 5. **輸入驗證與錯誤處理（input validation and error handling）**[[5-input-validation-and-error-handling]]
+### 5. **輸入驗證與錯誤處理**[[5-input-validation-and-error-handling]]
 
 在處理前驗證輸入的型別和形狀（input types and shapes）。檢查張量屬性（tensor properties）如 `dtype` 和維度（dimensions），以確保與你的演算法相容。對於機器人動作（actions），驗證所需的姿態組成（pose components）部分或關節值（joint values）是否存在且在預期範圍內（expected ranges）。
 
 對不需要處理的邊界情況（edge cases）使用提前返回（early returns）。提供清楚、描述性的錯誤訊息，包含預期與實際的資料型別或形狀（expected vs. actual data types or shapes）。這使使用者的除錯工作更加容易。
 
-### 6. **裝置與資料型別感知（device and dtype awareness）**[[6-device-and-dtype-awareness]]
+### 6. **裝置與資料型別感知**[[6-device-and-dtype-awareness]]
 
 設計你的處理器（processor）使其自動適配（automatically adapt）輸入張量的裝置和資料型別（device and dtype of input tensors）。內部張量（internal tensors，如正規化統計量 normalization statistics）應與輸入張量的裝置和資料型別一致，以確保與多 GPU 訓練（multi-GPU training）、混合精度（mixed precision）及分散式設定（distributed setups）相容。
 
 實作 `to()` 方法，將你的處理器內部狀態（processor’s internal state）移動到指定的裝置（device）。在執行期檢查裝置/資料型別的相容性（device/dtype compatibility），並在需要時自動遷移內部狀態（migrate internal state）。此模式使你的處理器（processor）能在不同硬體配置之間無縫運作，而無需手動介入（manual intervention）。
 
-## 結論（conclusion）[[conclusion]]
+## 結論[[conclusion]]
 
 你現在已具備在 LeRobot 中實作自訂處理器（custom processors）的所有工具！關鍵步驟如下：
 

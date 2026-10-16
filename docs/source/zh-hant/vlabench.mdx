@@ -13,7 +13,7 @@
   width="85%"
 />
 
-## 可用任務（available tasks）[[available-tasks]]
+## 可用任務[[available-tasks]]
 
 VLABench 提供兩個任務套件（task suites），在 LeRobot 的 `--env.task` 介面中涵蓋 **43 個任務類別（task categories）**：
 
@@ -32,7 +32,7 @@ VLABench 提供兩個任務套件（task suites），在 LeRobot 的 `--env.task
 - 以逗號分隔的列表（a comma-separated list, `select_fruit,heat_food`）
 - 套件捷徑（a suite shortcut, `primitive`、`composite` 或 `primitive,composite`）
 
-## 安裝（installation）[[installation]]
+## 安裝[[installation]]
 
 VLABench **不在 PyPI 上**——其唯一的發行管道是 [OpenMOSS/VLABench](https://github.com/OpenMOSS/VLABench) GitHub 儲存庫（repo）——因此 LeRobot 不提供 `vlabench` 附加套件（extra）。請手動以可編輯模式（editable） clone 安裝，同時安裝 VLABench 所需的 MuJoCo / dm_control 指定版本，然後下載網格資源（mesh assets）：
 
@@ -57,11 +57,11 @@ export MUJOCO_GL=egl  # 適用於無頭伺服器（HPC、雲端）
 
 </Tip>
 
-## 評估（evaluation）[[evaluation]]
+## 評估[[evaluation]]
 
 以下所有評估指令片段（eval snippets）與 CI 執行的指令一致（請參閱 `.github/workflows/benchmark_tests.yml`）。`--rename_map` 參數（parameter）用於將 VLABench 的 `image` / `second_image` / `wrist_image` 相機鍵值（camera keys）對應到已發布的 `smolvla_vlabench` 策略訓練（policy training）時所使用的三相機（`camera1` / `camera2` / `camera3`）輸入布局（input layout）。
 
-### 單任務評估（single-task evaluation，建議用於快速迭代）[[single-task-evaluation-recommended-for-quick-iteration]]
+### 單任務評估（建議用於快速迭代）[[single-task-evaluation-recommended-for-quick-iteration]]
 
 ```bash
 lerobot-eval \
@@ -75,7 +75,7 @@ lerobot-eval \
   '--rename_map={"observation.images.image": "observation.images.camera1", "observation.images.second_image": "observation.images.camera2", "observation.images.wrist_image": "observation.images.camera3"}'
 ```
 
-### 多任務評估（multi-task evaluation）[[multi-task-evaluation]]
+### 多任務評估[[multi-task-evaluation]]
 
 傳入以逗號分隔的任務列表（comma-separated list）：
 
@@ -91,7 +91,7 @@ lerobot-eval \
   '--rename_map={"observation.images.image": "observation.images.camera1", "observation.images.second_image": "observation.images.camera2", "observation.images.wrist_image": "observation.images.camera3"}'
 ```
 
-### 全套件評估（suite-wide evaluation）[[suite-wide-evaluation]]
+### 全套件評估[[suite-wide-evaluation]]
 
 執行整個套件（entire suite，全部 21 個基本 primitive 任務或全部 22 個組合 composites 任務）：
 
@@ -123,11 +123,11 @@ lerobot-eval \
   '--rename_map={"observation.images.image": "observation.images.camera1", "observation.images.second_image": "observation.images.camera2", "observation.images.wrist_image": "observation.images.camera3"}'
 ```
 
-### 建議評估回合數（recommended evaluation episodes）[[recommended-evaluation-episodes]]
+### 建議評估回合數[[recommended-evaluation-episodes]]
 
 建議**每個任務10 個回合（10 episodes per task）**以確保可重現的基準測試（reproducible benchmarking）結果（完整基本套件 primitive suite 共 210 個回合，組合套件 composite suite 共 220 個回合）。此設定與 VLABench 論文中的實驗協定（protocol）一致。
 
-## 策略的輸入與輸出（policy inputs and outputs）[[policy-inputs-and-outputs]]
+## 策略的輸入與輸出[[policy-inputs-and-outputs]]
 
 **觀測（observations）：**
 
@@ -140,16 +140,16 @@ lerobot-eval \
 
 - 在 `Box(-1, 1, shape=(7,))` 中連續控制（continuous control）——3D 位置（position）+ 3D 歐拉角方向（Euler orientation）+ 1D 夾爪（gripper）。
 
-## 訓練（training）[[training]]
+## 訓練[[training]]
 
-### 資料集（datasets）[[datasets]]
+### 資料集[[datasets]]
 
 Hub 上已預先收集的 LeRobot 格式 VLABench 資料集（dataset）：
 
 - [`VLABench/vlabench_primitive_ft_lerobot_video`](https://huggingface.co/datasets/VLABench/vlabench_primitive_ft_lerobot_video)——5,000 個回合（episodes），128 個任務（tasks），480×480 影像。
 - [`VLABench/vlabench_composite_ft_lerobot_video`](https://huggingface.co/datasets/VLABench/vlabench_composite_ft_lerobot_video)——5,977 個回合（episodes），167 個任務（tasks），224×224 影像。
 
-### 訓練指令範例（example training command）[[example-training-command]]
+### 訓練指令範例[[example-training-command]]
 
 在基本套件（primitive suite）上微調（fine-tune） SmolVLA base：
 
@@ -171,6 +171,6 @@ lerobot-train \
   --save_freq=10000
 ```
 
-## 重現已發表結果（reproducing published results）[[reproducing-published-results]]
+## 重現已發表結果[[reproducing-published-results]]
 
 已發布的檢查點（released checkpoint） [`lerobot/smolvla_vlabench`](https://huggingface.co/lerobot/smolvla_vlabench) 使用上述基本套件資料集（primitive-suite dataset）訓練（training）而成，並以[單任務（single-task）](#single-task-evaluation-recommended-for-quick-iteration) / [全套件（suite-wide）](#suite-wide-evaluation)指令進行評估。CI 會在每個涉及基準測試（benchmark）的 PR 上執行 10 個基本任務（primitive-task）的冒煙評估（smoke eval，每個任務 task 一個回合 episode）。

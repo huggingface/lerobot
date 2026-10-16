@@ -2,11 +2,11 @@
 
 EVO1 是一個用於機器人控制的視覺-語言-動作策略（Vision-Language-Action policy），圍繞 InternVL3 骨幹網路（backbone）與連續流匹配動作頭（continuous flow-matching action head）建構而成。此 LeRobot 整合將 EVO1 以標準策略類型（standard policy type）公開，讓它能透過一般的 LeRobot 資料集（dataset）、檢查點（checkpoint）與處理器（processor）API 進行訓練與評估（training and evaluation）。
 
-## 模型概覽（model overview）[[model-overview]]
+## 模型概覽[[model-overview]]
 
 此策略（policy）以 InternVL3 嵌入（embeds）一或多張相機影像（camera images）與語言任務提示詞（language task prompt），將機器人狀態／動作向量（state/action vectors）填補（pad）到固定的最大維度（fixed maximum dimensions），並以流匹配動作頭（flow-matching action head）預測未來的動作區塊（predicts future action chunks）。在推論（inference）期間，策略會取樣（samples）一個動作區塊（action chunk），並在再次取樣之前，從該區塊（chunk）回傳 `n_action_steps` 個動作（actions）。
 
-### LeRobot 整合涵蓋的內容（what the LeRobot integration covers）[[what-the-lerobot-integration-covers]]
+### LeRobot 整合涵蓋的內容[[what-the-lerobot-integration-covers]]
 
 - 透過 LeRobot 的標準 `policy.type=evo1` 設定（configuration）
 - 具備可選 FlashAttention 回退（fallback）的 InternVL3 影像／文字嵌入（image/text embedding）
@@ -17,7 +17,7 @@ EVO1 是一個用於機器人控制的視覺-語言-動作策略（Vision-Langua
 
 更廣泛的 EVO1 專案可能包含額外的訓練腳本（additional training scripts）與資料集工具（dataset tooling）。本頁聚焦於 LeRobot 的機器人控制策略路徑（control policy path）。
 
-## 安裝需求（installation requirements）[[installation-requirements]]
+## 安裝需求[[installation-requirements]]
 
 1. 按照[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 2. 安裝 EVO1 的相依套件（dependencies）：
@@ -36,7 +36,7 @@ EVO1 是一個用於機器人控制的視覺-語言-動作策略（Vision-Langua
 
 EVO1 使用原生的 Hugging Face `transformers` InternVL 實作，因此 `policy.vlm_model_name` 必須指向一個原生轉換過的檢查點（natively converted checkpoint），例如 `OpenGVLab/InternVL3-1B-hf`（注意 `-hf` 後綴）。首次執行會下載所設定的 VLM 檢查點，之後的執行會從 Hugging Face 快取（cache）重複使用它。
 
-## 資料需求（data requirements）[[data-requirements]]
+## 資料需求[[data-requirements]]
 
 EVO1 預期一個具備以下內容的 LeRobot 資料集（dataset）：
 
@@ -47,7 +47,7 @@ EVO1 預期一個具備以下內容的 LeRobot 資料集（dataset）：
 
 狀態與動作向量（state and action vectors）會被填補（padded）到 `policy.max_state_dim` 與 `policy.max_action_dim`。預測結果在回傳（returned）之前，會被裁切回（cropped back）資料集的動作維度（dataset action dimension）。
 
-## 使用方式（usage）[[usage]]
+## 使用方式[[usage]]
 
 若要在 LeRobot 設定（configuration）中使用 EVO1，請指定：
 
@@ -67,9 +67,9 @@ policy.vlm_model_name=OpenGVLab/InternVL3-1B-hf
 policy.path=your-org/your-evo1-checkpoint
 ```
 
-## 訓練（training）[[training]]
+## 訓練[[training]]
 
-### 階段 1（stage 1）[[stage-1]]
+### 階段 1[[stage-1]]
 
 階段 1 會凍結 VLM 並訓練（train）動作頭（action head）：
 
@@ -90,7 +90,7 @@ lerobot-train \
   --output_dir=./outputs/evo1_stage1
 ```
 
-### 階段 2（stage 2）[[stage-2]]
+### 階段 2[[stage-2]]
 
 階段 2 會載入階段 1 的策略，但會啟動全新的最佳化器（optimizer）與排程器（scheduler）：
 
@@ -117,7 +117,7 @@ lerobot-train \
 `policy.apply_training_stage_defaults=false`，否則這些階段預設值會優先於已儲存或手動提供的
 `policy.finetune_*` 旗標；因此只有在你要手動控制每一個微調旗標時才設定該旗標。
 
-### 關鍵訓練參數（key training parameters）[[key-training-parameters]]
+### 關鍵訓練參數[[key-training-parameters]]
 
 | 參數（parameter）                             | 預設（default）             | 描述（description）                                                                             |
 | --------------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------- |
@@ -137,7 +137,7 @@ lerobot-train \
 | `policy.binarize_gripper`                     | `false`                     | 為 LIBERO 風格評估將後處理的夾爪通道（postprocessed gripper channel）二值化（binarizes）        |
 | `policy.task_field`                           | `task`                      | 用作語言提示詞（language prompt）的批次欄位（batch field）                                      |
 
-## 推論（inference）[[inference]]
+## 推論[[inference]]
 
 用訓練好的 EVO1 檢查點（checkpoint）試試看：
 
@@ -148,11 +148,11 @@ lerobot-rollout \
   ...
 ```
 
-## 結果（results）[[results]]
+## 結果[[results]]
 
-### LIBERO 評估（LIBERO evaluation）[[libero-evaluation]]
+### LIBERO 評估[[libero-evaluation]]
 
-#### 參考結果（reference result）[[reference-result]]
+#### 參考結果[[reference-result]]
 
 > [!NOTE]
 > 已發布的階段 2 檢查點（Stage-2 checkpoint）通過了乾淨下載（clean-download）與 rollout 驗證：
@@ -173,7 +173,7 @@ lerobot-rollout \
 
 這些結果使用一個訓練好的檢查點與評估種子（seed）`1000`；它們不是多重種子平均或信賴度估計。
 
-#### 參考訓練配方（reference training recipe）[[reference-training-recipe]]
+#### 參考訓練配方[[reference-training-recipe]]
 
 已發布的檢查點在
 [`train_config.json`](https://huggingface.co/zuoxingdong/evo1_libero/blob/515921f4a2c1d3f3ad523721eafa26fdf2af315b/train_config.json)
@@ -291,7 +291,7 @@ uv run accelerate launch --num_processes=2 -m lerobot.scripts.lerobot_train \
   --output_dir=./outputs/evo1-libero-stage2-g128-80k
 ```
 
-#### 作者格式評估設定檔（author-format evaluation profile）[[author-format-evaluation-profile]]
+#### 作者格式評估設定檔[[author-format-evaluation-profile]]
 
 作者格式的 EVO1 LIBERO 設定檔使用原始的 LIBERO 相機特徵名稱
 （`observation.images.agentview_image` 與 `observation.images.robot0_eye_in_hand_image`），每 14 個動作
@@ -318,7 +318,7 @@ lerobot-eval \
   --eval.n_episodes=1
 ```
 
-#### 原生 `lerobot/libero` v3 設定檔（profile）[[native-lerobotlibero-v3-profile]]
+#### 原生 `lerobot/libero` v3 設定檔[[native-lerobotlibero-v3-profile]]
 
 修訂版 `a1aaacb7f6cd6ee5fb43120f673cebb0cfea7dd4` 會將相機特徵儲存為 `image` 與
 `image2`。此範例會評估全部十個 LIBERO Object 任務，並在全新的行程中啟動每個任務：
@@ -387,11 +387,11 @@ done
 為每一列設定 `suite` 與 `horizon`。這會為每個套件提供 500 個回合，總計 2,000 個回合，而
 迴圈為每個任務啟動全新程序的方式，符合實際測量的 RNG 重置拓撲。
 
-## 參考資料（references）[[references]]
+## 參考資料[[references]]
 
 - [EVO1 儲存庫](https://github.com/MINT-SJTU/Evo-1)
 - [InternVL3-1B-hf](https://huggingface.co/OpenGVLab/InternVL3-1B-hf)
 
-## 授權條款（license）[[license]]
+## 授權條款[[license]]
 
 此 LeRobot 整合遵循 LeRobot 所使用的 Apache 2.0 授權條款。已發布的檢查點與資料的授權，請查閱上游 EVO1 與 InternVL3 的模型頁面。

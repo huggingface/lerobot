@@ -1,4 +1,4 @@
-# 相機（cameras）[[cameras]]
+# 相機[[cameras]]
 
 LeRobot 提供多種影像擷取選項（video capture）：
 
@@ -12,7 +12,7 @@ LeRobot 提供多種影像擷取選項（video capture）：
 > [!TIP]
 > 關於 `OpenCVCamera` 的相容性細節，請參閱 [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html)。
 
-### 找到你的相機（find your camera）[[find-your-camera]]
+### 找到你的相機[[find-your-camera]]
 
 每個相機（camera）都需要一個唯一識別碼（unique identifier）才能建立實例（instantiated），讓你能夠區分多個已連接的裝置（connected devices）。
 
@@ -45,9 +45,9 @@ Camera #0:
 
 `ZMQCamera` 和 `Reachy2Camera` 不支援自動探索（auto-discovery）。它們必須手動設定，提供其網路位址與連接埠（network address and port）或機器人 SDK 設定。
 
-## 使用相機（use cameras）[[use-cameras]]
+## 使用相機[[use-cameras]]
 
-### 影格存取模式（frame access modes）[[frame-access-modes]]
+### 影格存取模式[[frame-access-modes]]
 
 所有相機類別都實作了三種擷取影格的存取模式（access modes for capturing frames）：
 
@@ -57,7 +57,7 @@ Camera #0:
 | `async_read(timeout_ms)`  | 從背景執行緒（background thread）回傳（returns）最新尚未取用的影格（latest unconsumed frame）。僅在緩衝區為空時才阻塞（blocks only if buffer is empty），最多阻塞 `timeout_ms`。若沒有影格（frame）到達則拋出 `TimeoutError`。 | 有逾時限制（with a timeout） | 與相機 FPS 同步的控制迴圈（control loops synchronized to camera FPS） |
 | `read_latest(max_age_ms)` | 窺看（peeks）緩衝區中最新的影格（most recent frame in buffer，可能已過時）。若影格（frame）比 `max_age_ms` 更舊則拋出 `TimeoutError`。                                                                                         | 否                           | UI 視覺化（visualization）、記錄（logging）、監控（monitoring）       |
 
-### 使用範例（usage examples）[[usage-examples]]
+### 使用範例[[usage-examples]]
 
 以下範例示範如何使用相機 API（camera API），針對不同相機類型（camera types）進行設定（configure）與擷取影格（capture frames）。
 
@@ -165,7 +165,7 @@ finally:
 </hfoption>
 </hfoptions>
 
-### 使用深度（working with depth）[[working-with-depth]]
+### 使用深度[[working-with-depth]]
 
 Intel RealSense 和 Reachy 2 相機（cameras）可以同步擷取彩色與深度（capture both color and depth in lockstep）。呼叫 `read()` 會回傳（returns）形狀為 `(H, W, 3)` 的 `uint8` **彩色**影格（color frame）。呼叫 `read_depth()` 會回傳（returns）形狀為 `(H, W, 1)` 的 `uint16` **深度圖（depth map）**，其中每個像素值（pixel value）代表距離感測器的距離（distance from the sensor），以**毫米（millimetres）**表示。像素值為 `0` 通常表示「無可用測量值（no measurement available）」（超出範圍 out-of-range、被遮蔽 occluded 或低信心度 low-confidence）。
 

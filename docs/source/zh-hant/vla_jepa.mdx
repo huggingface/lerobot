@@ -4,7 +4,7 @@
 
 ---
 
-## 架構概覽（architecture overview）[[architecture-overview]]
+## 架構概覽[[architecture-overview]]
 
 VLA-JEPA 有三個主要元件（components）：
 
@@ -14,7 +14,7 @@ VLA-JEPA 有三個主要元件（components）：
 | **DiT-B 動作頭（action head）**     | `VLAJEPAActionHead`               | 對動作區塊（action chunk）進行流匹配擴散（flow-matching diffusion）                   |
 | **V-JEPA2 世界模型（world model）** | `ActionConditionedVideoPredictor` | 自監督式影片預測損失（self-supervised video prediction loss，僅訓練 training 時使用） |
 
-### 資料流（data flow）[[data-flow]]
+### 資料流[[data-flow]]
 
 **訓練（training）：**
 
@@ -26,7 +26,7 @@ VLA-JEPA 有三個主要元件（components）：
 **推論（inference）：**
 只會用到 Qwen 與動作頭（action head）。推論時（inference time）不需要世界模型（world model）。
 
-### 動作頭細節（action head details）[[action-head-details]]
+### 動作頭細節[[action-head-details]]
 
 透過 `action_model_type` 可可選的預設值：
 
@@ -44,7 +44,7 @@ VLA-JEPA 有三個主要元件（components）：
 
 因此 `DiT-B` 執行的是寬度 768 的 Transformer，並投影至 1024。兩者彼此獨立。
 
-### 世界模型細節（world model details）[[world-model-details]]
+### 世界模型細節[[world-model-details]]
 
 影片預測器（video predictor）是一個 ViT 風格的 Transformer（ViT-style transformer, `ActionConditionedVideoPredictor`），輸入包含：
 
@@ -55,7 +55,7 @@ VLA-JEPA 有三個主要元件（components）：
 
 ---
 
-## 預訓練檢查點（pretrained checkpoints）[[pretrained-checkpoints]]
+## 預訓練檢查點[[pretrained-checkpoints]]
 
 有三個檢查點（checkpoints）可直接在 LeRobot 組織（org）中取得：[`lerobot/VLA-JEPA`](https://huggingface.co/collections/lerobot/vla-jepa)，由 [ginwind/VLA-JEPA](https://huggingface.co/ginwind/VLA-JEPA) 轉換而來：
 
@@ -69,7 +69,7 @@ VLA-JEPA 有三個主要元件（components）：
 
 ---
 
-## 設定（configuration）[[configuration]]
+## 設定[[configuration]]
 
 `VLAJEPAConfig` 中的主要參數（parameters）：
 
@@ -108,11 +108,11 @@ LIBERO 的動作慣例下才正確。`pre_snap` 會將 {0, 1} 寫入
 
 ---
 
-## 訓練（training）[[training]]
+## 訓練[[training]]
 
 訓練步數（number of training steps）可能因資料集（dataset）大小與運算預算（compute budget）而異。原始論文在 ssv2 + droid 上聯合預訓練（pretrained）了 50k 步，接著為 LIBERO 額外訓練 30k 步，但從提供的預訓練檢查點（pretrained checkpoints）進行微調（fine-tune）時，較少的步數仍可能有良好表現。
 
-### 從頭完整訓練（full training from scratch）[[full-training-from-scratch]]
+### 從頭完整訓練[[full-training-from-scratch]]
 
 ```bash
 lerobot-train \
@@ -121,7 +121,7 @@ lerobot-train \
   dataset.repo_id=your_org/your_dataset
 ```
 
-### 從預訓練檢查點微調（fine-tuning from a pretrained checkpoint）[[fine-tuning-from-a-pretrained-checkpoint]]
+### 從預訓練檢查點微調[[fine-tuning-from-a-pretrained-checkpoint]]
 
 ```bash
 lerobot-train \
@@ -140,7 +140,7 @@ lerobot-train \
   --dataset.repo_id=your_org/your_dataset
 ```
 
-### 在不同具身上微調（fine-tuning on a different embodiment）[[fine-tuning-on-a-different-embodiment]]
+### 在不同具身上微調[[fine-tuning-on-a-different-embodiment]]
 
 當目標機器人（target robot）的動作或狀態維度（action or state dimensionality）與預訓練檢查點（pretrained checkpoint）不同時，動作頭（action head）的輸入/輸出投影層（input/output projection layers）會有不相符的形狀（shapes），無法直接載入。`reinit_modules` 讓你列出允許形狀不符的鍵值前綴（key prefixes），這些層（layers）會被隨機重新初始化（randomly re-initialised），而其餘所有權重（weight）則沿用檢查點（checkpoint）的值。所列前綴（listed prefixes）以外的任何形狀不符（shape mismatch）都會引發錯誤（raises an error）。
 
@@ -163,7 +163,7 @@ lerobot-train \
 
 如果你的機器人沒有本體感覺狀態（proprioceptive state），請從列表中省略 `model.action_model.state_encoder`。
 
-### 重現 LIBERO 結果（reproducing the LIBERO results）[[reproducing-the-libero-results]]
+### 重現 LIBERO 結果[[reproducing-the-libero-results]]
 
 **在 LIBERO 上訓練（training on LIBERO）：**
 從預訓練檢查點（pretrained checkpoint）開始訓練（training），在 LIBERO 資料集（dataset）上訓練 30k 步（steps）。
@@ -212,7 +212,7 @@ lerobot-eval \
 
 ---
 
-## 在相機數量不同的資料集上微調（fine-tuning on datasets with a different number of cameras）[[fine-tuning-on-datasets-with-a-different-number-of-cameras]]
+## 在相機數量不同的資料集上微調[[fine-tuning-on-datasets-with-a-different-number-of-cameras]]
 
 預訓練世界模型預測器（pretrained world model predictor）是以 `embed_dim = world_model_num_views × 1024` 訓練（training）而成，亦即兩個相機視角。
 

@@ -3,14 +3,14 @@
 Reachy 2 是由 Pollen Robotics 製造的開源人形機器人，專為具身 AI（embodied AI）與真實世界應用（real-world applications）的開發而設計。
 請查看 [Pollen Robotics 網站](https://www.pollen-robotics.com/reachy/)，或存取 [Reachy 2 文件](https://docs.pollen-robotics.com/)以取得更多有關此平台的資訊！
 
-## 遙操作 Reachy 2（teleoperate Reachy 2）[[teleoperate-reachy-2]]
+## 遙操作 Reachy 2[[teleoperate-reachy-2]]
 
 目前有兩種方式可遙操作（teleoperate） Reachy 2：
 
 - Pollen Robotics 的 VR 遙操作（teleoperation，不包含在 LeRobot 中）。
 - 機器人對機器人遙操作（robot-to-robot teleoperation，使用一台 Reachy 2 控制另一台）。
 
-## Reachy 2 模擬（simulation）[[reachy-2-simulation]]
+## Reachy 2 模擬[[reachy-2-simulation]]
 
 **（僅限 Linux）** 你可以使用所提供的 [Docker 映像](https://hub.docker.com/r/pollenrobotics/reachy2_core)，在模擬（Gazebo 或 MuJoCo）中執行 Reachy 2。
 
@@ -63,9 +63,9 @@ docker run --rm -it \
 >   start_rviz:=true start_sdk_server:=true mujoco:=true
 > ```
 
-## 設定（setup）[[setup]]
+## 設定[[setup]]
 
-### 事前準備（prerequisites）[[prerequisites]]
+### 事前準備[[prerequisites]]
 
 - 在你的機器人上，檢查**服務映像（service images）**是否符合最低版本：
   - **reachy2-core >= 1.7.5.2**
@@ -78,7 +78,7 @@ docker run --rm -it \
 
 我們建議使用兩台電腦：一台用於遙操作（需要 Windows），另一台用於以 LeRobot 錄製（recording）。
 
-### 安裝 LeRobot（install LeRobot）[[install-lerobot]]
+### 安裝 LeRobot[[install-lerobot]]
 
 請依照[安裝說明（installation instructions）](https://github.com/huggingface/lerobot#installation)安裝 LeRobot。
 
@@ -88,14 +88,14 @@ docker run --rm -it \
 pip install -e ".[reachy2]"
 ```
 
-## 步驟 1：錄製（recording）[[step-1-recording]]
+## 步驟 1：錄製[[step-1-recording]]
 
-### 取得 Reachy 2 的 IP 位址（get Reachy 2 IP address）[[get-reachy-2-ip-address]]
+### 取得 Reachy 2 的 IP 位址[[get-reachy-2-ip-address]]
 
 在開始遙操作（teleoperation）與資料錄製（data recording）之前，請先找出[機器人的 IP 位址](https://docs.pollen-robotics.com/getting-started/setup-reachy2/connect-reachy2/)。
 我們強烈建議透過**乙太網路（Ethernet）**連接所有裝置（PC 與機器人）。
 
-### 啟動錄製（launch recording）[[launch-recording]]
+### 啟動錄製[[launch-recording]]
 
 使用 LeRobot 的 `lerobot-record` 指令來管理錄製工作階段。先前記錄於此的 `pollen_data_acquisition_server` 工作流程已不再提供。
 
@@ -132,7 +132,7 @@ lerobot-record \
     --display_data=true
 ```
 
-#### 特定選項（specific options）[[specific-options]]
+#### 特定選項[[specific-options]]
 
 **完整設定總覽（包含所有選項）：**
 
@@ -184,7 +184,7 @@ lerobot-record \
 決定遙操作器（teleoperator）讀取的是機器人的目標位置還是當前位置（goal or present position）。
 若使用一台順應（compliant）的 Reachy 2 來控制另一台，則必須設為 true。
 
-##### 使用相關的部件（use the relevant parts）[[use-the-relevant-parts]]
+##### 使用相關的部件[[use-the-relevant-parts]]
 
 從我們的初步測試來看，在只有部分關節在移動時仍錄製（recording）**所有**關節（joints），可能會使某些策略（policy）的模型品質（model quality）下降。
 為避免這種情況，你可以使用以下方式將特定部件（specific parts）排除在錄製（recording）與重播（replay）之外：
@@ -210,7 +210,7 @@ lerobot-record \
 > **重要：** 在同一個工作階段中，機器人與遙操作器（robot and the teleoperator）兩邊**啟用的部件必須相符**。
 > 例如，若機器人以 `--robot.with_mobile_base=false` 執行，則遙操作器（teleoperator）也必須停用相同的部件 `--teleoperator.with_mobile_base=false`。
 
-##### 使用相關的相機（use the relevant cameras）[[use-the-relevant-cameras]]
+##### 使用相關的相機[[use-the-relevant-cameras]]
 
 你可以對**相機（cameras）**做相同的事。使用以下方式以預設參數（default parameters）啟用或停用每台相機：
 
@@ -236,7 +236,7 @@ lerobot-record \
 --robot.cameras="{ extra: {type: opencv, index_or_path: 42, width: 640, height: 480, fps: 30}}" \
 ```
 
-## 步驟 2：重播（replay）[[step-2-replay]]
+## 步驟 2：重播[[step-2-replay]]
 
 請確認機器人設定的部件與資料集相同（configured with the same parts as the dataset）：
 
@@ -250,7 +250,7 @@ lerobot-replay \
     --dataset.episode=0
 ```
 
-## 步驟 3：訓練（training）[[step-3-train]]
+## 步驟 3：訓練[[step-3-train]]
 
 ```bash
 lerobot-train \
@@ -263,7 +263,7 @@ lerobot-train \
   --policy.repo_id=pollen_robotics/record_test_policy
 ```
 
-## 步驟 4：評估（evaluate）[[step-4-evaluate]]
+## 步驟 4：評估[[step-4-evaluate]]
 
 ```bash
 lerobot-eval \

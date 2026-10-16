@@ -11,7 +11,7 @@ FLUX 3 Action 根據相機觀測（observation）、狀態（state）與任務�
 若要從基礎模型訓練新的機器人具身形態（embodiment），或進行完整微調（full finetuning），請使用我們獨立的
 [flux-action](https://github.com/black-forest-labs/flux-action) 儲存庫。
 
-## 安裝（installation）[[installation]]
+## 安裝[[installation]]
 
 在 LeRobot 的原始碼目錄中，安裝訓練、策略、PEFT 與 EMA 相依套件：
 
@@ -28,13 +28,13 @@ uv pip install natten==0.21.6+torch2110cu128 --find-links https://whl.natten.org
 
 若使用 torch 2.10，請改用 `natten==0.21.6+torch2100cu128`，或針對你的環境自行建置。
 
-## SO-101 任務調適（task adaptation）[[so-101-task-adaptation]]
+## SO-101 任務調適[[so-101-task-adaptation]]
 
 請使用 **30 Hz** 的 LeRobot v3 資料集，包含六個絕對指令動作通道（absolute commanded-action channels）與六個量測狀態
 通道（measured-state channels），兩者的關節順序與單位需一致，夾爪（gripper）位於最後。請提供原始值（raw values）、一致的機器人
 校正（calibration），並將指令寫在 `task` 中。
 
-### 相機（cameras）[[cameras]]
+### 相機[[cameras]]
 
 相機的名稱、數量與排列方式都可以設定。SO-101 套件依照兩台相機拍攝的內容
 為其命名：
@@ -152,7 +152,7 @@ GPU 啟動，並加上 `--batch_size=8 --steps=14000`。
 15 Hz 的絕對關節位置指令（absolute joint-position commands）。如有需要，請用 `--rename_map` 對應相機名稱。
 兩種機器人使用相同的訓練範例；載入或推論時都不需要針對特定機器人的配方（recipe）。
 
-## 預設值與正規化（defaults and normalization）[[defaults-and-normalization]]
+## 預設值與正規化[[defaults-and-normalization]]
 
 新的設定會使用以下 PEFT 預設值。以 `--policy.path` 載入時則使用檢查點中儲存的設定；
 明確指定的設定檔／CLI 覆寫優先。DROID 檢查點會保留其自身的設定。
@@ -186,7 +186,7 @@ SO-101 檢查點讓最後一個通道維持絕對值（`delta_absolute_dims=[-1]
 訓練會儲存轉接器（adapters）與訓練過的 heads，並附上指向完整基礎模型的參照。重新載入時，請確保該基礎模型與
 其凍結的編碼器檔案仍可存取；轉接器不會自動合併到基礎模型中。
 
-## 恢復訓練（resume）[[resume]]
+## 恢復訓練[[resume]]
 
 ```bash
 lerobot-train \
@@ -198,7 +198,7 @@ lerobot-train \
 若已啟用 EMA，你可以改用與其同層的 `pretrained_model_ema`。請保留每個轉接器（adapter）原本的基礎模型
 與處理器；新下載的基礎模型無法取代舊轉接器所使用的那一個。
 
-## 推論（inference）[[inference]]
+## 推論[[inference]]
 
 將 LeRobot 執行器（runner）的 `--policy.path` 指向訓練好的轉接器檢查點；它會載入所參照的
 基礎模型與儲存的處理器。若要搭配**完整基礎模型（complete base）**直接呼叫，請一併載入處理器：
@@ -241,7 +241,7 @@ policy.frozen.text_encoder.cpu()
 嵌入向量（embeddings）仍會傳送到策略所在裝置並加以快取。這不會降低載入期間的峰值記憶體，
 而且之後再呼叫 `policy.to(...)` 時，Qwen 會隨策略一起被移回。
 
-## 訓練其他具身形態（training other embodiments）[[training-other-embodiments]]
+## 訓練其他具身形態[[training-other-embodiments]]
 
 對於我們尚未提供微調檢查點的具身形態，請從
 [flux-action](https://github.com/black-forest-labs/flux-action) 中的基礎模型開始。該工作流程需要定義
@@ -262,7 +262,7 @@ policy.frozen.text_encoder.cpu()
 或形狀錯誤的權重都會引發錯誤。明確指定 `strict=False` 只允許初始化缺少的具身頭部（embodiment heads），或
 調整不相符的具身頭部大小；主幹（trunk）權重仍為必要，且會檢查形狀。
 
-## 驗證（validation）[[validation]]
+## 驗證[[validation]]
 
 CPU 測試涵蓋封裝（packing）、處理器（processors）、PEFT 更新與檢查點／恢復訓練。先前在 H200 上以真實權重進行的檢查
 早於目前的處理器重構。這個確切的版本仍需要 GPU 與

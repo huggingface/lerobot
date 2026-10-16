@@ -9,7 +9,7 @@ RoboTwin 2.0 是一個基於 SAPIEN 物理引擎建構的**大規模雙臂操作
 
 ![RoboTwin 2.0 基準測試概覽](https://www.aitntnews.com/pictures/2025/7/8/9a7f79cb-5ba9-11f0-8581-fa163e47d677.png)
 
-## 概覽（overview）[[overview]]
+## 概覽[[overview]]
 
 | 屬性（property）           | 值（value）                                                             |
 | -------------------------- | ----------------------------------------------------------------------- |
@@ -21,7 +21,7 @@ RoboTwin 2.0 是一個基於 SAPIEN 物理引擎建構的**大規模雙臂操作
 | 評估協議（eval protocol）  | 100 任務/回合（episodes/task），50 個 demo_clean 示範（demonstrations） |
 | 評估設定（eval settings ） | **簡單**（`demo_clean`）和**困難**（`demo_randomized`）                 |
 
-## 可用任務（available tasks）[[available-tasks]]
+## 可用任務[[available-tasks]]
 
 RoboTwin 2.0 在上游（upstream）`envs/` 目錄中提供了 50 項雙臂操作任務（dual-arm manipulation tasks）。規範的任務列表定義在 `src/lerobot/envs/robotwin.py` 中的 `ROBOTWIN_TASKS` 元組，與上游儲存庫（upstream repo）完全一致。範例任務：
 
@@ -48,7 +48,7 @@ RoboTwin 2.0 在上游（upstream）`envs/` 目錄中提供了 50 項雙臂操�
   `load_actors()` 中預設 `self.arm_tag = "left"`。
 </Tip>
 
-## 資料集（dataset）[[dataset]]
+## 資料集[[dataset]]
 
 RoboTwin 2.0 資料集（dataset）以 **LeRobot v3.0 格式**發佈在 Hugging Face Hub 上：
 
@@ -65,18 +65,18 @@ from datasets import load_dataset
 ds = load_dataset("lerobot/robotwin_unified", split="train")
 ```
 
-## 安裝（installation）[[installation]]
+## 安裝[[installation]]
 
 RoboTwin 2.0 需要 **Linux** 系統搭配 NVIDIA GPU（建議 CUDA 12.1）。安裝大約需要 20 分鐘。
 
-### 1. 建立 conda 環境（create a conda environment）[[1-create-a-conda-environment]]
+### 1. 建立 conda 環境[[1-create-a-conda-environment]]
 
 ```bash
 conda create -n robotwin python=3.10 -y
 conda activate robotwin
 ```
 
-### 2. 安裝 LeRobot（install LeRobot）[[2-install-lerobot]]
+### 2. 安裝 LeRobot[[2-install-lerobot]]
 
 ```bash
 git clone https://github.com/huggingface/lerobot.git
@@ -84,7 +84,7 @@ cd lerobot
 pip install -e "."
 ```
 
-### 3. 安裝 RoboTwin 2.0（install RoboTwin 2.0）[[3-install-robotwin-20]]
+### 3. 安裝 RoboTwin 2.0[[3-install-robotwin-20]]
 
 ```bash
 git clone https://github.com/RoboTwin-Platform/RoboTwin.git
@@ -119,9 +119,9 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 將此行加入你的 shell 設定檔（profile）以使其永久生效。
 
-## 評估（evaluation）[[evaluation]]
+## 評估[[evaluation]]
 
-### 建議：標準評估（standard evaluation）[[standard-evaluation-recommended]]
+### 建議：標準評估[[standard-evaluation-recommended]]
 
 使用官方協議（official protocol，100 個回合 episodes）以單一任務（task）評估策略（evaluate a policy）：
 
@@ -134,7 +134,7 @@ lerobot-eval \
   --eval.n_episodes=100
 ```
 
-### 單一任務快速檢查（single-task quick check）[[single-task-quick-check]]
+### 單一任務快速檢查[[single-task-quick-check]]
 
 ```bash
 lerobot-eval \
@@ -145,7 +145,7 @@ lerobot-eval \
   --eval.n_episodes=5
 ```
 
-### 多任務批次評估（multi-task sweep）[[multi-task-sweep]]
+### 多任務批次評估[[multi-task-sweep]]
 
 在一次執行中評估（evaluate）多項任務（several tasks）：
 
@@ -158,7 +158,7 @@ lerobot-eval \
   --eval.n_episodes=100
 ```
 
-### 完整基準測試：全部 50 項任務（full benchmark, all 50 tasks）[[full-benchmark-all-50-tasks]]
+### 完整基準測試：全部 50 項任務[[full-benchmark-all-50-tasks]]
 
 ```bash
 lerobot-eval \
@@ -176,7 +176,7 @@ lerobot-eval \
   待上游修復後再重新加入。
 </Tip>
 
-## 相機設定（camera configuration）[[camera-configuration]]
+## 相機設定[[camera-configuration]]
 
 預設包含全部三個相機：
 
@@ -198,7 +198,7 @@ lerobot-eval \
   --eval.n_episodes=10
 ```
 
-## 環境設定參考（environment config reference）[[environment-config-reference]]
+## 環境設定參考[[environment-config-reference]]
 
 `RoboTwinEnvConfig` 的關鍵參數（parameters）：
 
@@ -212,7 +212,7 @@ lerobot-eval \
 | `observation_height` | `240`                                    | 相機像素高度（camera pixel height）                    |
 | `observation_width`  | `320`                                    | 相機像素寬度（camera pixel width）                     |
 
-## 排行榜提交（leaderboard submission）[[leaderboard-submission]]
+## 排行榜提交[[leaderboard-submission]]
 
 評估結果可提交至 [RoboTwin 2.0 排行榜（leaderboard）](https://robotwin-platform.github.io/leaderboard)。官方協議（official protocol）要求：
 

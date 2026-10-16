@@ -1,4 +1,4 @@
-# PyTorch 加速器（PyTorch accelerators）[[pytorch-accelerators]]
+# PyTorch 加速器[[pytorch-accelerators]]
 
 LeRobot 支援多種硬體加速選項，可用於訓練（training）和推論（inference）。
 
@@ -9,14 +9,14 @@ LeRobot 支援多種硬體加速選項，可用於訓練（training）和推論�
 - **MPS**：使用 Apple Silicon GPU 加速
 - **XPU**：使用 Intel 內建與獨立 GPU 加速
 
-## 開始使用（getting started）[[getting-started]]
+## 開始使用[[getting-started]]
 
 要使用特定加速器（particular accelerator），需安裝適合的 PyTorch 版本。
 
 CPU、CUDA 和 MPS 後端請依照 [PyTorch 安裝頁面](https://pytorch.org/get-started/locally) 提供的指示操作。
 XPU 後端（backend）請依照 [PyTorch 文件](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html) 中的指示操作。
 
-### 驗證安裝（verifying installation）[[verifying-the-installation]]
+### 驗證安裝[[verifying-the-installation]]
 
 安裝完成後，可執行以下程式碼來驗證加速器（accelerator）是否可用
 
@@ -25,7 +25,7 @@ import torch
 print(torch.<backend_name>.is_available())  # <backend_name> 為 cuda、mps 或 xpu
 ```
 
-## 如何執行訓練或評估（how to run training or evaluation）[[how-to-run-training-or-evaluation]]
+## 如何執行訓練或評估[[how-to-run-training-or-evaluation]]
 
 要選擇所需的加速器（accelerator），請在執行 `lerobot-train` 或 `lerobot-eval` 時使用 `--policy.device` 旗標（flag）。例如，要在 Apple Silicon 上使用 MPS，請執行：
 
@@ -41,7 +41,7 @@ lerobot-eval \
 
 不過，在大多數情況下，系統會自動偵測加速器（accelerator）的存在，因此可以在 CLI 指令中省略 `policy.device` 參數（parameter）。
 
-## 混合精度（mixed precision）[[mixed-precision]]
+## 混合精度[[mixed-precision]]
 
 訓練精度（training precision）由 `--accelerator.mixed_precision` 控制，其可接受 `no`（預設）、`bf16` 與 `fp16`：
 
@@ -55,7 +55,7 @@ lerobot-train \
 
 `bf16` 需要硬體支援（NVIDIA GPU 上為 Ampere 或更新版本）。在較舊的加速器（accelerator）如 V100 或 T4 上，請使用 `fp16`。
 
-### fp16 與損失縮放器（loss scaler）[[fp16-and-the-loss-scaler]]
+### fp16 與損失縮放器[[fp16-and-the-loss-scaler]]
 
 `fp16` 的指數範圍（exponent range）遠小於 `bf16`，因此梯度（gradient）會在反向傳播（backward pass）前被放大，並在最佳化器步驟（optimizer step）前被縮回。LeRobot 將此工作交給 accelerate 的 `GradScaler`，它也會偵測溢出的梯度（overflowing gradient）並跳過那些最佳化器更新（optimizer updates）。在分片訓練（sharded training）下，梯度是 `DTensor`，PyTorch 會跨裝置網格（device mesh）縮減溢位旗標（overflow flag），因此某個 rank 發生溢位時，會跳過所有 rank 的更新。
 

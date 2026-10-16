@@ -1,4 +1,4 @@
-# 在模擬環境中訓練 RL（train RL in simulation）[[train-rl-in-simulation]]
+# 在模擬環境中訓練 RL[[train-rl-in-simulation]]
 
 本指南說明如何使用 gym_hil 模擬環境（simulation environments）作為真實機器人的替代方案，搭配 LeRobot 框架進行人在迴圈中（Human-In-the-Loop, HIL）的強化學習（reinforcement learning）。
 
@@ -11,7 +11,7 @@
 
 目前，主要環境（main environment）是基於 MuJoCo 的 Franka Panda 機器人模擬（simulation），包含撿取方塊等任務（task）。
 
-## 安裝（installation）[[installation]]
+## 安裝[[installation]]
 
 先，在 LeRobot 環境中安裝 `gym_hil` 套件（package）：
 
@@ -19,16 +19,16 @@
 pip install -e ".[hilserl]"
 ```
 
-## 我需要什麼？（what do I need?）[[what-do-i-need]]
+## 我需要什麼？[[what-do-i-need]]
 
 - 一個遊戲手把或鍵盤來控制機器人
 - 一張 Nvidia GPU
 
-## 設定（configuration）[[configuration]]
+## 設定[[configuration]]
 
 若要搭配 LeRobot 使用 `gym_hil`，你需要建立一個設定檔（configuration file）。範例請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/env_config.json)。主要設定片段（configuration sections）包括：
 
-### 環境類型與任務（environment type and task）[[environment-type-and-task]]
+### 環境類型與任務[[environment-type-and-task]]
 
 ```json
 {
@@ -48,7 +48,7 @@ pip install -e ".[hilserl]"
 - `PandaPickCubeGamepad-v0`：搭配遊戲手把控制
 - `PandaPickCubeKeyboard-v0`：搭配鍵盤控制
 
-### 處理器設定（processor configuration）[[processor-configuration]]
+### 處理器設定[[processor-configuration]]
 
 ```json
 {
@@ -84,9 +84,9 @@ pip install -e ".[hilserl]"
 - `inverse_kinematics.end_effector_step_sizes`：末端執行器（end-effector）在 x、y、z 軸的步進大小（size of the steps in the x,y,z axes）
 - `control_mode`：設定為 `"gamepad"` 以使用遊戲手把控制器
 
-## 搭配 LeRobot 的 HILRL 執行（running with HIL RL of LeRobot）[[running-with-hil-rl-of-lerobot]]
+## 搭配 LeRobot 的 HILRL 執行[[running-with-hil-rl-of-lerobot]]
 
-### 基本用法（basic usage）[[basic-usage]]
+### 基本用法[[basic-usage]]
 
 若要執行環境（environment），將 mode 設為 null：
 
@@ -94,7 +94,7 @@ pip install -e ".[hilserl]"
 python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 ```
 
-### 錄製資料集（recording a dataset）[[recording-a-dataset]]
+### 錄製資料集[[recording-a-dataset]]
 
 若要收集資料集（dataset），將 mode 設為 `record`，同時定義 repo_id 和要錄製的回合數（number of episodes to record）：
 
@@ -121,7 +121,7 @@ python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 python -m lerobot.rl.gym_manipulator --config_path path/to/gym_hil_env.json
 ```
 
-### 訓練策略（training a policy）[[training-a-policy]]
+### 訓練策略[[training-a-policy]]
 
 若要訓練策略（train a policy），請參考[此處](https://huggingface.co/datasets/lerobot/config_examples/resolve/main/rl/gym_hil/train_config.json)提供的設定範例，然後跑執行者與學習者伺服器（actor and learner servers）：
 

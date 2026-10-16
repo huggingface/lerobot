@@ -39,7 +39,7 @@ export MUJOCO_GL=egl  # 用於無顯示器的伺服器（HPC、雲端）
 
 ## 評估[[evaluation]]
 
-### 建議方式：預設評估（default evaluation）[[default-evaluation-recommended]]
+### 建議方式：預設評估[[default-evaluation-recommended]]
 
 在四個標準套件（standard suites）上進行評估（evaluation，每個任務 task 10 個回合 episode）：
 
@@ -53,7 +53,7 @@ lerobot-eval \
   --env.max_parallel_tasks=1
 ```
 
-### 單一套件評估（single-suite evaluation）[[single-suite-evaluation]]
+### 單一套件評估[[single-suite-evaluation]]
 
 在一個 LIBERO 套件（suite）上進行評估（evaluation）：
 
@@ -71,7 +71,7 @@ lerobot-eval \
 - `--eval.batch_size` 控制同時並行執行（run in parallel）的環境（environments）數量。
 - `--eval.n_episodes` 設定每個任務執行的回合數（how many episodes to run per task）。
 
-### 多套件評估（multi-suite evaluation）[[multi-suite-evaluation]]
+### 多套件評估[[multi-suite-evaluation]]
 
 透過傳入以逗號分隔的清單（comma-separated list），一次在多個套件（suites）上對策略（policy）進行基準測試（benchmark）：
 
@@ -84,7 +84,7 @@ lerobot-eval \
   --eval.n_episodes=2
 ```
 
-### 控制模式（control mode）[[control-mode]]
+### 控制模式[[control-mode]]
 
 LIBERO 支援兩種控制模式（control modes）——`relative`（預設）和 `absolute`。不同的 VLA 檢查點（checkpoint）使用不同的動作參數化（action parameterization）方式進行訓練（training），因此請確保模式（mode）與你的策略（policy）相符：
 
@@ -92,7 +92,7 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 --env.control_mode=relative   # or "absolute"
 ```
 
-### 重置效能（reset performance）[[reset-performance]]
+### 重置效能[[reset-performance]]
 
 預設情況下，LeRobot 會保留 LIBERO 的硬重置（hard-reset）行為。在啟用固定初始狀態（fixed initial states）後，你可以選擇改用軟重置（soft reset），以跳過每個回合重建模擬器模型（simulator model）與渲染器（renderer）的步驟：
 
@@ -102,7 +102,7 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 
 軟重置較快，但在環境的穩定步驟（settling steps）之後，並不會與硬重置逐位元完全相同（bit-identical），因此相機觀測（camera observations）與策略結果（policy results）可能略有差異。重現基準測試結果時，請使用硬重置。
 
-### 策略的輸入與輸出（policy inputs and outputs）[[policy-inputs-and-outputs]]
+### 策略的輸入與輸出[[policy-inputs-and-outputs]]
 
 **觀測（observations）：**
 
@@ -123,7 +123,7 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 
 - 在 `Box(-1, 1, shape=(7,))` 連續控制（continuous control）——6D 末端執行器增量（end-effector delta） + 1D 夾爪（gripper）
 
-### 建議的評估回合數（recommended evaluation episodes）[[recommended-evaluation-episodes]]
+### 建議的評估回合數[[recommended-evaluation-episodes]]
 
 為了可重現的基準測試（reproducible benchmarking），建議在所有四個標準套件（standard suites, Spatial、Object、Goal、Long）上**每個任務執行 10 個回合（10 episodes per task）**。這將產生共 400 個回合，與已發表結果所使用的協定（protocol）一致。成功率可能因評估種子（evaluation seeds）不同而有幾個百分點的變動，因此建議對 3 個種子取平均。
 
@@ -135,9 +135,9 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
   等於每個任務的回合數）。
 </Tip>
 
-## 訓練（training）[[training]]
+## 訓練[[training]]
 
-### 資料集（dataset）[[dataset]]
+### 資料集[[dataset]]
 
 有兩個預處理的 LIBERO 資料集（dataset）與 LeRobot 完全相容。它們包含相同的示範（demonstration）與相同的結構描述（schema），差別僅在於相機影格（camera frame）的儲存方式：
 
@@ -161,7 +161,7 @@ LIBERO 支援兩種控制模式（control modes）——`relative`（預設）�
 在回報結果時，請固定 `--dataset.revision=<commit-sha>`——Hub 資料集可能被重新上傳，成功率只有在相同的資料修訂版本（data revision）下才具可比性。
 </Tip>
 
-### 訓練指令範例（example training command）[[example-training-command]]
+### 訓練指令範例[[example-training-command]]
 
 在推薦的資料集上訓練 SmolVLA：
 
@@ -179,13 +179,13 @@ lerobot-train \
 
 若要在 Hub 上分享結果，請將 `--policy.push_to_hub=false` 取代為 `--policy.repo_id=${HF_USER}/libero-smolvla`。使用 `lerobot-eval` 評估儲存的檢查點（checkpoint），方式如[評估](#evaluation)一節所示。
 
-## 重現已發表的結果（reproducing published results）[[reproducing-published-results]]
+## 重現已發表的結果[[reproducing-published-results]]
 
 我們在 LIBERO 基準測試（benchmark）上重現（reproduce）了 Pi0.5 的結果。我們取用 Physical Intelligence 的 LIBERO 基礎模型（base model, `pi05_libero`），並以 bfloat16 精度額外微調（fine-tune） 6k 步（steps），批次大小（batch size）為 256，使用 8 張 H100 GPU 和 [HuggingFace LIBERO 資料集](https://huggingface.co/datasets/HuggingFaceVLA/libero)進行訓練（training）。
 
 微調後的模型（finetuned model）：[lerobot/pi05_libero_finetuned](https://huggingface.co/lerobot/pi05_libero_finetuned)
 
-### 評估指令（evaluation command）[[evaluation-command]]
+### 評估指令[[evaluation-command]]
 
 ```bash
 lerobot-eval \
@@ -201,7 +201,7 @@ lerobot-eval \
 
 我們設定 `n_action_steps=10`，與原始 OpenPI 實作一致。
 
-### 結果（results）[[results]]
+### 結果[[results]]
 
 | 模型（model）       | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | 平均     |
 | ------------------- | -------------- | ------------- | ----------- | --------- | -------- |

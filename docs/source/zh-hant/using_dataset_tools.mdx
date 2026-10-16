@@ -1,8 +1,8 @@
-# 使用資料集工具（using dataset tools）[[using-dataset-tools]]
+# 使用資料集工具[[using-dataset-tools]]
 
 本指南說明如何在線上或本機探索 LeRobot 資料集（dataset），接著介紹 LeRobot 提供用於修改與編輯既有資料集的工具。
 
-## 在瀏覽器中探索資料集（explore a dataset in the browser）[[explore-a-dataset-in-the-browser]]
+## 在瀏覽器中探索資料集[[explore-a-dataset-in-the-browser]]
 
 要查看 LeRobot 資料集（dataset）包含哪些內容，最快的方式是使用 [LeRobot Dataset Visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset)，這是一個 Hugging Face Space，無需安裝任何東西，就能播放 Hub 上的任何 LeRobot 資料集。除非你選擇排除（opt out），否則使用 `lerobot` 錄製的資料集都會被推送到 Hub，因此你自己的錄製內容也能在那裡開啟。
 
@@ -46,7 +46,7 @@
 
 </Tip>
 
-## 在本機視覺化資料集（visualize a dataset locally）[[visualize-a-dataset-locally]]
+## 在本機視覺化資料集[[visualize-a-dataset-locally]]
 
 你也可以使用我們的命令列工具（command-line tool）在本機視覺化資料集（dataset）中的回合（episode）。
 
@@ -83,7 +83,7 @@ lerobot-dataset-viz \
 lerobot-dataset-viz --help
 ```
 
-## 編輯資料集（editing datasets）[[editing-datasets]]
+## 編輯資料集[[editing-datasets]]
 
 LeRobot 提供數種操作資料集（dataset）的工具：
 
@@ -100,15 +100,15 @@ LeRobot 提供數種操作資料集（dataset）的工具：
 核心實作位於 `lerobot.datasets.dataset_tools`。
 一個詳細說明如何使用工具 API 的範例腳本可在 `examples/dataset/use_dataset_tools.py` 取得。
 
-## 命令列工具（command-line tool）：lerobot-edit-dataset[[command-line-tool-lerobot-edit-dataset]]
+## 命令列工具：lerobot-edit-dataset[[command-line-tool-lerobot-edit-dataset]]
 
 `lerobot-edit-dataset` 是一個用於編輯資料集（datasets）的命令列腳本（command-line script）。它可用來刪除回合（delete episodes）、分割資料集（split datasets）、合併資料集（merge datasets）、新增特徵（add features）、移除特徵（remove features），以及將影像資料集（image datasets）轉換為影片格式（video format）。
 
 執行 `lerobot-edit-dataset --help` 以取得每個操作（operation）設定（configuration）相關資訊。
 
-### 使用範例（usage examples）[[usage-examples]]
+### 使用範例[[usage-examples]]
 
-#### 刪除回合（deleting episodes）[[delete-episodes]]
+#### 刪除回合[[delete-episodes]]
 
 從資料集（dataset）中移除特定的回合（episodes）。這對於過濾掉不需要的資料（undesired data）很有用。
 
@@ -127,7 +127,7 @@ lerobot-edit-dataset \
     --operation.episode_indices "[0, 2, 5]"
 ```
 
-#### 分割資料集（splitting datasets）[[split-dataset]]
+#### 分割資料集[[split-dataset]]
 
 將一個資料集（dataset）切分為多個子集（subsets）。
 
@@ -147,7 +147,7 @@ lerobot-edit-dataset \
 
 分割名稱沒有限制，可由使用者自行決定。產生的資料集（dataset）會以 repo id 加上分割名稱後綴儲存，例如 `lerobot/pusht_train`、`lerobot/pusht_task1`、`lerobot/pusht_task2`。
 
-#### 合併資料集（merging datasets）[[merge-datasets]]
+#### 合併資料集[[merge-datasets]]
 
 將多個資料集（datasets）組合成單一資料集。
 
@@ -159,7 +159,7 @@ lerobot-edit-dataset \
     --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 ```
 
-#### 移除特徵（removing features）[[remove-features]]
+#### 移除特徵[[remove-features]]
 
 從資料集（dataset）移除特徵（features）。
 
@@ -171,7 +171,7 @@ lerobot-edit-dataset \
     --operation.feature_names "['observation.images.top']"
 ```
 
-#### 修改任務（modify tasks）[[modify-tasks]]
+#### 修改任務[[modify-tasks]]
 
 變更附加於回合（episode）的自然語言任務描述（natural-language task descriptions）。這對於修正錯字、統一用語或重新標記回合很有用。
 
@@ -218,7 +218,7 @@ lerobot-edit-dataset \
 
 至少必須指定 `new_task`、`episode_tasks` 或 `task_replacements` 其中一個。若某個回合最終沒有任務，會引發錯誤。
 
-#### 轉換為影片（convert to video）[[convert-to-video]]
+#### 轉換為影片[[convert-to-video]]
 
 將以影像為基礎的資料集（image-based dataset）轉換為影片格式（video format），建立一個新的 LeRobotDataset，其中影像以影片形式儲存。這對於降低儲存需求與提升資料載入效能很有用。新資料集的結構（structure）與原始資料集完全相同，但影像會以正確的 LeRobot 格式編碼為 MP4 影片。
 
@@ -293,7 +293,7 @@ lerobot-edit-dataset \
 
 **注意：** 產生的資料集（dataset）會是一個完整的 LeRobotDataset，所有相機皆以影片形式編碼於 `videos/` 目錄中，而 parquet 檔案只包含中繼資料（metadata，不含原始影像資料）。深度圖相機（depth-map cameras）會被自動偵測並導向 `depth_encoder`，而 RGB 相機則使用 `rgb_encoder`。所有回合（episode）、統計（stats）與任務（task）都會被保留。
 
-#### 重新編碼影片（re-encode videos）[[re-encode-videos]]
+#### 重新編碼影片[[re-encode-videos]]
 
 以不同的編碼器（encoder）設定重新編碼（re-encode）既有影片資料集（existing video dataset）的影片，而無需回到原始影格（raw frames）。RGB 影片使用 `rgb_encoder`，深度影片使用 `depth_encoder`。只需提供你想要重新編碼的編碼器；另一種串流類型（stream type）會維持不變。
 
@@ -323,7 +323,7 @@ lerobot-edit-dataset \
 > [!NOTE]
 > 在重新編碼深度影片（re-encoding depth videos）時，既有的深度量化參數（depth quantization parameters, `depth_min`、`depth_max`、`shift`、`use_log`）與 `is_depth_map` 旗標（flag）會被**保留**，重新編碼只會改變已儲存串流（stored stream）的編解碼器/品質（codec/quality），而不會改變載入時如何反量化（dequantized）深度。
 
-### 顯示資料集的資訊（showing the information of datasets）[[show-the-information-of-datasets]]
+### 顯示資料集的資訊[[show-the-information-of-datasets]]
 
 顯示資料集的資訊（information of datasets），例如回合數量（number of episode）、影格數量（number of frame）、檔案大小等等。
 不會對資料集（dataset）做任何變更

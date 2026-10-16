@@ -2,11 +2,11 @@
 
 在以下步驟中，我們將說明如何組裝 SO-100 機器人。
 
-## 採購零件（source the parts）[[source-the-parts]]
+## 採購零件[[source-the-parts]]
 
 請依照這份 [README](https://github.com/TheRobotStudio/SO-ARM100/blob/main/SO100.md) 操作。它包含物料清單（bill of materials），並附有採購零件的連結，以及 3D 列印零件的說明。如果這是你第一次列印，或你沒有 3D 印表機，也會提供建議。
 
-## 安裝 LeRobot（install LeRobot） 🤗[[install-lerobot]]
+## 安裝 LeRobot 🤗[[install-lerobot]]
 
 若要安裝 LeRobot，請依照我們的[安裝指南（Installation Guide）](./installation)操作。
 
@@ -16,12 +16,12 @@
 pip install -e ".[feetech]"
 ```
 
-## 設定馬達（configure the motors）[[configure-the-motors]]
+## 設定馬達[[configure-the-motors]]
 
 **注意：**
 與 SO-101 不同，SO-100 的手臂一旦組裝完成，馬達接頭（motor connectors）就不容易存取，因此設定步驟（configuration step）必須事先完成。
 
-### 1. 找出與每支手臂相關聯的 USB 連接埠（find the USB ports associated with each arm）[[1-find-the-usb-ports-associated-with-each-arm]]
+### 1. 找出與每支手臂相關聯的 USB 連接埠[[1-find-the-usb-ports-associated-with-each-arm]]
 
 若要找出每個匯流排伺服轉接器（bus servo adapter）的連接埠（port），請執行此工具腳本：
 
@@ -83,7 +83,7 @@ Reconnect the USB cable.
 
 如果你是要重新利用來自其他機器人的馬達（motors），你可能也需要執行此步驟，因為 id 與鮑率（baudrate）很可能不相符。
 
-#### 從臂（follower）[[follower]]
+#### 從臂[[follower]]
 
 將電腦的 USB 線與電源供應器連接到從臂的控制板（follower arm’s controller board）。然後，使用你在上一步取得的連接埠（port），執行以下指令或執行 API 範例。你還需要搭配 `id` 參數（parameter）為你的從臂（follower arm）命名。
 
@@ -161,7 +161,7 @@ Connect the controller board to the 'wrist_roll' motor only and press enter.
 
 完成後，腳本就會結束，此時馬達（motors）即可使用。你現在可以將每個馬達的 3-pin 線（3-pin cable）插到下一個馬達，並將第一個馬達（id=1 的 '肩部平移 shoulder pan'）的線連接到控制板（controller board），接著就可以將控制板固定到手臂的底座上。
 
-#### 主臂（leader）[[leader]]
+#### 主臂[[leader]]
 
 對主臂（leader arm）執行相同的步驟。
 
@@ -191,9 +191,9 @@ leader.setup_motors()
 </hfoption>
 </hfoptions>
 
-## 逐步組裝說明（step-by-step assembly instructions）[[step-by-step-assembly-instructions]]
+## 逐步組裝說明[[step-by-step-assembly-instructions]]
 
-## 移除 6 個主臂馬達的齒輪（remove the gears of the 6 leader motors）[[remove-the-gears-of-the-6-leader-motors]]
+## 移除 6 個主臂馬達的齒輪[[remove-the-gears-of-the-6-leader-motors]]
 
 <details>
 <summary><strong>移除齒輪的影片（video removing gears）</strong></summary>
@@ -211,11 +211,11 @@ leader.setup_motors()
 
 依照影片移除齒輪（gears）。你需要移除主臂馬達的齒輪（gear for the motors of the leader arm）。如此一來，你將只使用馬達的位置編碼（position encoding），並降低摩擦力，以便更輕鬆地操作主臂（leader arm）。
 
-### 清理零件（clean parts）[[clean-parts]]
+### 清理零件[[clean-parts]]
 
 移除 3D 列印零件上的所有支撐材料。最簡單的方法是使用小螺絲起子伸到支撐材料下方。
 
-### 額外指引（additional guidance）[[additional-guidance]]
+### 額外指引[[additional-guidance]]
 
 <details>
 <summary><strong>組裝手臂的影片（video assembling arms）</strong></summary>
@@ -236,7 +236,7 @@ leader.setup_motors()
 
 ---
 
-### 第一個馬達（first motor）[[first-motor]]
+### 第一個馬達[[first-motor]]
 
 **步驟 2：插入線材**
 
@@ -302,7 +302,7 @@ leader.setup_motors()
 
 ---
 
-### 第二個馬達組裝（second motor assembly）[[second-motor-assembly]]
+### 第二個馬達組裝[[second-motor-assembly]]
 
 **步驟 9：安裝馬達 2**
 
@@ -356,7 +356,7 @@ leader.setup_motors()
 
 ---
 
-### 第三個馬達組裝（third motor assembly）[[third-motor-assembly]]
+### 第三個馬達組裝[[third-motor-assembly]]
 
 **步驟 15：安裝馬達 3**
 
@@ -382,7 +382,7 @@ leader.setup_motors()
 
 ---
 
-### 第四個馬達組裝（fourth motor assembly）[[fourth-motor-assembly]]
+### 第四個馬達組裝[[fourth-motor-assembly]]
 
 **步驟 18：安裝馬達 4**
 
@@ -419,7 +419,7 @@ leader.setup_motors()
 
 ---
 
-### 腕部組裝（wrist assembly）[[wrist-assembly]]
+### 腕部組裝[[wrist-assembly]]
 
 **步驟 21：安裝馬達 5**
 
@@ -451,7 +451,7 @@ leader.setup_motors()
 
 ---
 
-### 從臂設定（follower configuration）[[follower-configuration]]
+### 從臂設定[[follower-configuration]]
 
 **步驟 24：裝上夾爪（gripper）**
 
@@ -500,7 +500,7 @@ _組裝完成，接著進行主臂（leader arm）的組裝。_
 
 ---
 
-### 主臂設定（leader configuration）[[leader-configuration]]
+### 主臂設定[[leader-configuration]]
 
 進行主臂設定（leader configuration）時，請執行**步驟 1 到 23**。請確認你已移除馬達的齒輪（motor gears）。
 
@@ -555,12 +555,12 @@ _組裝完成，接著進行主臂（leader arm）的組裝。_
   />
 </div>
 
-## 校正（calibrate）[[calibrate]]
+## 校正[[calibrate]]
 
 接下來，你需要校正（calibrate）你的機器人，以確保主臂（leader arm）與從臂（follower arm）在相同的物理位置（physical position）時具有相同的位置值（position values）。
 校正過程（calibration process）非常重要，因為它能讓在某一台機器人上訓練（training）的神經網路（neural network），也能在另一台機器人上運作。
 
-#### 從臂（follower）[[calibrate-follower]]
+#### 從臂[[calibrate-follower]]
 
 執行以下指令或 API 範例來校正從臂（calibrate the follower arm）：
 
@@ -598,7 +598,7 @@ follower.disconnect()
 
 我們統一了大多數機器人的校正（calibration）方法。因此，這支 SO100 手臂的校正步驟與 Koch 和 SO101 的步驟相同。首先，我們必須將機器人移動到每個關節（joint）都位於其活動範圍中間的位置（middle of their ranges），然後按下 `Enter`。其次，我們讓所有關節都走完其完整的活動範圍（full range of motion）。可在[這裡](https://huggingface.co/docs/lerobot/zh-hant/so101#calibration-video)找到 SO101 相同過程的影片作為參考
 
-#### 主臂（leader）[[calibrate-leader]]
+#### 主臂[[calibrate-leader]]
 
 執行相同的步驟來校正主臂（calibrate the leader arm），執行以下指令或 API 範例：
 

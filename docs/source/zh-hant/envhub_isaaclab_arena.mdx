@@ -18,9 +18,9 @@ LeRobot EnvHub 現已支援透過 IsaacLab Arena 進行 **GPU 加速模擬（GPU
 - 📦 **LeRobot 相容資料集（LeRobot-compatible datasets）**：可直接用於 GR00T N1x、PI0、SmolVLA、ACT 和 Diffusion 策略（policies）的訓練（training）
 - 🔄 **EnvHub 整合（EnvHub integration）**：一行程式碼即可從 HuggingFace EnvHub 載入環境（environments）
 
-## 安裝（installation）[[installation]]
+## 安裝[[installation]]
 
-### 先決條件（prerequisites）[[prerequisites]]
+### 先決條件[[prerequisites]]
 
 硬體需求與 Isaac Sim 相同，詳見 [Isaac Sim 系統需求（Isaac Sim Requirements）](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html)。
 
@@ -28,7 +28,7 @@ LeRobot EnvHub 現已支援透過 IsaacLab Arena 進行 **GPU 加速模擬（GPU
 - 與 IsaacSim 5.1.0 相容的 NVIDIA 驅動程式（driver）
 - Linux（Ubuntu 22.04 / 24.04）
 
-### 設定（setup）[[setup]]
+### 設定[[setup]]
 
 ```bash
 # 1. 建立 conda 環境
@@ -70,9 +70,9 @@ pip install onnxruntime==1.23.2 lightwheel-sdk==1.0.1 vuer[all]==0.0.70 qpsolver
 pip install numpy==1.26.0 # Isaac Sim 5.1 需要 numpy==1.26.0，這將在下一版修正
 ```
 
-## 評估策略（evaluating policies）[[evaluating-policies]]
+## 評估策略[[evaluating-policies]]
 
-### 預訓練策略（pre-trained policies）[[pre-trained-policies]]
+### 預訓練策略[[pre-trained-policies]]
 
 以下為可用的已訓練策略（trained policy）：
 
@@ -81,7 +81,7 @@ pip install numpy==1.26.0 # Isaac Sim 5.1 需要 numpy==1.26.0，這將在下一
 | pi05-arena-gr1-microwave    | PI0.5                | GR1 微波爐   | [HuggingFace](https://huggingface.co/nvidia/pi05-arena-gr1-microwave)    |
 | smolvla-arena-gr1-microwave | SmolVLA              | GR1 微波爐   | [HuggingFace](https://huggingface.co/nvidia/smolvla-arena-gr1-microwave) |
 
-### 評估 SmolVLA（evaluate SmolVLA）[[evaluate-smolvla]]
+### 評估 SmolVLA[[evaluate-smolvla]]
 
 ```bash
 pip install -e ".[smolvla]"
@@ -109,7 +109,7 @@ lerobot-eval \
     --eval.batch_size=1
 ```
 
-### 評估 PI0.5（evaluate PI0.5）[[evaluate-pi05]]
+### 評估 PI0.5[[evaluate-pi05]]
 
 ```bash
 pip install -e ".[pi]"
@@ -144,7 +144,7 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
   `--eval.batch_size` 旗標（flag）。
 </Tip>
 
-### 預期結果（what to expect）[[what-to-expect]]
+### 預期結果[[what-to-expect]]
 
 評估期間，你將看到進度條顯示當前的成功率：
 
@@ -152,7 +152,7 @@ TORCH_COMPILE_DISABLE=1 TORCHINDUCTOR_DISABLE=1 lerobot-eval \
 Stepping through eval batches:   8%|██████▍    | 4/50 [00:45<08:06, 10.58s/it, running_success_rate=25.0%]
 ```
 
-### 影片錄製（video recording）[[video-recording]]
+### 影片錄製[[video-recording]]
 
 若要在評估（evaluation）期間啟用影片錄製（video recording），請在指令中加入以下旗標（flag）：
 
@@ -173,7 +173,7 @@ Stepping through eval batches:   8%|██████▍    | 4/50 [00:45<08:06
 
 </Tip>
 
-### 輸出目錄（output directory）[[output-directory]]
+### 輸出目錄[[output-directory]]
 
 評估影片（evaluation videos）會儲存至輸出目錄（output directory），結構（structure）如下：
 
@@ -187,7 +187,7 @@ outputs/eval/<date>/<timestamp>_<env>_<policy>/videos/<task>_<env_id>/eval_episo
 outputs/eval/2026-01-02/14-38-01_isaaclab_arena_smolvla/videos/gr1_microwave_0/eval_episode_0.mp4
 ```
 
-## 訓練策略（training policies）[[training-policies]]
+## 訓練策略[[training-policies]]
 
 若要瞭解更多使用 LeRobot 訓練策略（train a policy）的資訊，請參閱訓練文件（training documentation）：
 
@@ -202,9 +202,9 @@ HuggingFace Hub 上提供 IsaacLab Arena 範例資料集（dataset）供實驗�
 | [Arena-GR1-Manipulation-Task](https://huggingface.co/datasets/nvidia/Arena-GR1-Manipulation-Task-v3)      | GR1 微波爐操作      | ~4K              |
 | [Arena-G1-Loco-Manipulation-Task](https://huggingface.co/datasets/nvidia/Arena-G1-Loco-Manipulation-Task) | G1 移動操作         | ~4K              |
 
-## 環境設定（environment configuration）[[environment-configuration]]
+## 環境設定[[environment-configuration]]
 
-### 完整設定選項（full configuration options）[[full-configuration-options]]
+### 完整設定選項[[full-configuration-options]]
 
 ```python
 from lerobot.envs.configs import IsaaclabArenaEnv
@@ -243,7 +243,7 @@ config = IsaaclabArenaEnv(
 )
 ```
 
-### 直接使用 Environment Hub 進行進階用途（using Environment Hub directly for advanced usage）[[using-environment-hub-directly-for-advanced-usage]]
+### 直接使用 Environment Hub 進行進階用途[[using-environment-hub-directly-for-advanced-usage]]
 
 建立一個名為 `test_env_load_arena.py` 的檔案，或[從 EnvHub 下載](https://huggingface.co/nvidia/isaaclab-arena-envs/blob/main/tests/test_env_load_arena.py)：
 
@@ -302,7 +302,7 @@ python test_env_load_arena.py \
     --env.type=isaaclab_arena
 ```
 
-## 建立新環境（creating new environments）[[creating-new-environments]]
+## 建立新環境[[creating-new-environments]]
 
 首先按照 [IsaacLab Arena 文件](https://isaac-sim.github.io/IsaacLab-Arena/release/0.1.1/index.html) 建立新的 IsaacLab Arena 環境（environment）。
 
@@ -334,7 +334,7 @@ lerobot-eval \
 
 ## 疑難排解[[troubleshooting]]
 
-### CUDA 記憶體不足（CUDA out of memory）[[cuda-out-of-memory]]
+### CUDA 記憶體不足[[cuda-out-of-memory]]
 
 減少 `batch_size` 或使用擁有更多 VRAM 的 GPU：
 
@@ -342,7 +342,7 @@ lerobot-eval \
 --eval.batch_size=1
 ```
 
-### EULA 未接受（EULA not accepted）[[eula-not-accepted]]
+### EULA 未接受[[eula-not-accepted]]
 
 執行前設定環境變數（environment variables）：
 
@@ -351,7 +351,7 @@ export ACCEPT_EULA=Y
 export PRIVACY_CONSENT=Y
 ```
 
-### 影片錄製無法運作（video recording not working）[[video-recording-not-working]]
+### 影片錄製無法運作[[video-recording-not-working]]
 
 以無頭模式（headless）執行時啟用相機（enable cameras）：
 
@@ -359,7 +359,7 @@ export PRIVACY_CONSENT=Y
 --env.video=true --env.enable_cameras=true --env.headless=true
 ```
 
-### 策略輸出維度不匹配（policy output dimension mismatch）[[policy-output-dimension-mismatch]]
+### 策略輸出維度不匹配[[policy-output-dimension-mismatch]]
 
 確保 `action_dim` 與你的策略（policy）匹配：
 
@@ -387,7 +387,7 @@ sudo apt update && sudo apt install -y libglu1-mesa libxt6
 LW-BenchHub 透過遙操作（teleoperation）收集並生成符合 LeRobot 規範的大規模資料集（large-scale datasets），實現開箱即用的訓練與評估工作流程（out-of-the-box training and evaluation workflows）。
 藉由 EnvHub 提供的統一介面（unified interface），開發者可以快速建立端到端的實驗管線（end-to-end experimental pipelines）。
 
-### 安裝（install）[[install]]
+### 安裝[[install]]
 
 假設你已按照[安裝](#installation)步驟完成設定，你可以透過以下方式安裝 LW-BenchHub：
 
@@ -406,7 +406,7 @@ pip install -e .
 
 更詳細的說明請參閱 [LW-BenchHub 文件](https://docs.lightwheel.net/lw_benchhub/usage/Installation)。
 
-### Lightwheel 任務資料集（Lightwheel task dataset）[[lightwheel-tasks-dataset]]
+### Lightwheel 任務資料集[[lightwheel-tasks-dataset]]
 
 LW-BenchHub 資料集（dataset）可在 HuggingFace Hub 上取得：
 
@@ -419,9 +419,9 @@ LW-BenchHub 資料集（dataset）可在 HuggingFace Hub 上取得：
 
 如需訓練策略（train a policy），請參閱[訓練策略](#training-policies)章節。
 
-### 評估策略（evaluating a policies）[[evaluating-policies-1]]
+### 評估策略[[evaluating-policies-1]]
 
-#### 預訓練策略（pretrained policies）[[pre-trained-policies-1]]
+#### 預訓練策略[[pre-trained-policies-1]]
 
 以下為可用的已訓練策略（trained policy）：
 
@@ -429,7 +429,7 @@ LW-BenchHub 資料集（dataset）可在 HuggingFace Hub 上取得：
 | :----------------------- | :------------------- | :----------------------------- | :------------- | :-------------- | :------------------------------------------------------------------------------------ |
 | smolvla-double-piper-pnp | SmolVLA              | L90K1PutTheBlackBowlOnThePlate | libero-1-1     | DoublePiper-Abs | [HuggingFace](https://huggingface.co/LightwheelAI/smolvla-double-piper-pnp/tree/main) |
 
-#### 評估 SmolVLA（evaluate SmolVLA）[[evaluate-smolvla-1]]
+#### 評估 SmolVLA[[evaluate-smolvla-1]]
 
 ```bash
 lerobot-eval \
@@ -447,11 +447,11 @@ lerobot-eval \
   --eval.n_episodes=100
 ```
 
-### 環境設定（environment configuration）[[environment-configuration-1]]
+### 環境設定[[environment-configuration-1]]
 
 可透過修改設定檔（configuration file）中的 `robot`、`task` 和 `layout` 設定快速啟動評估（evaluation）。
 
-#### 完整設定選項（full configuration options）[[full-configuration-options-1]]
+#### 完整設定選項[[full-configuration-options-1]]
 
 ```yml
 # =========================

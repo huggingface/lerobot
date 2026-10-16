@@ -1,8 +1,8 @@
-# 策略部署（policy deployment, lerobot-rollout）[[policy-deployment-lerobot-rollout]]
+# 策略部署[[policy-deployment-lerobot-rollout]]
 
 `lerobot-rollout` 是在真實機器人上部署訓練好的策略（deploying trained policies）的單一 CLI。它支援多種執行策略（execution strategies）與推論後端（inference backends），從快速評估（evaluation）到連續錄製（recording），以及人在迴圈的資料收集（human-in-the-loop data collection）。
 
-## 快速開始（quick start）[[quick-start]]
+## 快速開始[[quick-start]]
 
 除了你的機器人與策略額外套件（policy extras）之外，不需要額外的相依套件（extra dependencies）。
 
@@ -30,7 +30,7 @@ lerobot-rollout \
 
 ---
 
-## 策略（strategies）[[strategies]]
+## 策略[[strategies]]
 
 以 `--strategy.type=<name>` 選擇執行策略（strategy）。每種執行策略定義一個不同的控制迴圈（control loop），具有其自身的錄製（recording）與互動語意（interaction semantics）。
 
@@ -207,7 +207,7 @@ lerobot-rollout \
 | `--strategy.smooth_leader_to_follower_handover` | 是否開啟或關閉主臂（leader）-> 從臂（follower）的平滑交接行為。                                                                                      |
 | `--strategy.smooth_handover`                    | 在重設開始時平滑地將控制權移交給遙操（預設：true）。對於在接合時會以目前機器人姿勢重新建立參考的離合器式遙操作（clutch-style teleops），請停用此選項 |
 
-### 自帶策略（Bring your own strategy）[[bring-your-own-strategy]]
+### 自帶策略[[bring-your-own-strategy]]
 
 `--strategy.type` 接受環境中註冊的任何策略（strategy），不限於上述內建項目。一個策略是位於可用 pip 安裝之套件中的兩個類別：一個註冊在 `RolloutStrategyConfig` 上的設定（config），以及一個名稱去掉 `Config` 尾綴的 `RolloutStrategy` 子類別（subclass）——與[自訂硬體（custom hardware）](./integrate_hardware#the-4-core-conventions)相同的 `SomethingConfig`/`Something` 慣例，會從設定所屬的模組或套件解析。
 
@@ -261,11 +261,11 @@ lerobot-rollout \
 
 ---
 
-## 推論後端（inference backends）[[inference-backends]]
+## 推論後端[[inference-backends]]
 
 以 `--inference.type=<name>` 選擇後端（backend）。所有策略（policy）皆可搭配兩種後端運作。
 
-### 預設：同步（sync）[[sync-default]]
+### 預設：同步[[sync-default]]
 
 每個控制週期（control tick）一次策略呼叫（policy call）。主迴圈會阻塞（main loop blocks），直到動作（action）被計算出來。
 
@@ -304,7 +304,7 @@ lerobot-rollout \
 
 ---
 
-## 互動工作階段（interactive sessions）[[interactive-sessions]]
+## 互動工作階段[[interactive-sessions]]
 
 加入 `--interactive=true`，即可從終端機驅動 rollout，而不是立即啟動。硬體會照常連線，策略（policy）也會照常載入，但**在你輸入 `/start` 之前機器人會保持靜止**——當你想先擺設場景、在多次嘗試之間重新下指令給策略，或在不重複付出載入時間的情況下執行多次拍攝時，這很實用。
 
@@ -382,7 +382,7 @@ lerobot-rollout \
 
 其他錄製策略（episodic、DAgger、highlight）不支援此模式：它們會綁定自己的鍵盤控制，並在 `run()` 結束時完成資料集（finalize），因此無法逐區段重新啟動。
 
-### 程式化控制（Programmatic control）[[programmatic-control]]
+### 程式化控制[[programmatic-control]]
 
 `RolloutController` 以函式庫 API 的形式提供相同的操作——執行緒安全的（thread-safe）`start()` / `reset()` / `stop()` / `set_task()`，外加一個 `RolloutEvent` 回呼（callback），且不附帶 stdin、輸出或日誌靜音功能：
 
@@ -419,7 +419,7 @@ strategy.teardown(ctx)  # 收尾（teardown）仍由呼叫端負責
 
 ---
 
-## 常用旗標（common flags）[[common-flags]]
+## 常用旗標[[common-flags]]
 
 | 旗標（flag）                      | 描述（description）                                                          | 預設（default） |
 | --------------------------------- | ---------------------------------------------------------------------------- | --------------- |
@@ -441,7 +441,7 @@ strategy.teardown(ctx)  # 收尾（teardown）仍由呼叫端負責
 
 ---
 
-## 節奏回報（cadence reporting）[[cadence-reporting]]
+## 節奏回報[[cadence-reporting]]
 
 每個策略（strategy）都會回報其控制迴圈（control loop）實際達到的成果，`lerobot-record`、`lerobot-teleoperate` 與 `lerobot-replay` 亦然——它們全都透過同一個計時器（timer）來調整節奏。每個儲存的回合都會有一行摘要，而當迴圈結束時——包括按下 `Ctrl-C`——則會有一個涵蓋整次執行的區塊：
 
@@ -469,7 +469,7 @@ Cadence summary — whole run, 2 episodes · target 30 Hz × 2 (16.7 ms tick slo
 
 ---
 
-## 程式化用法（programmatic usage）[[programmatic-usage]]
+## 程式化用法[[programmatic-usage]]
 
 對於自訂部署（custom deployments，例如搭配運動學處理器 kinematics processors），請直接使用 rollout 模組 API（rollout module API）：
 

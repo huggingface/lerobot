@@ -1,4 +1,4 @@
-# 影片編碼參數（video encoding parameters）[[video-encoding-parameters]]
+# 影片編碼參數[[video-encoding-parameters]]
 
 當啟用影片儲存（video storage）時，LeRobot 會將每個相機串流（camera stream）儲存為 **MP4** 檔案，而不是為每個時間步（timestep）儲存一個影像檔案。影片編碼（video encoding）會跨時間進行壓縮，相較於一堆 PNG，通常能縮減資料集（dataset）大小與 I/O，同時保留 MP4 這種每個播放器與載入器都懂的格式。
 
@@ -17,7 +17,7 @@
 
 ---
 
-## 範例（example）[[example]]
+## 範例[[example]]
 
 ```bash
 lerobot-record \
@@ -41,7 +41,7 @@ lerobot-record \
 
 ---
 
-## 調校參數（tuning parameters）[[tuning-parameters]]
+## 調校參數[[tuning-parameters]]
 
 > [!WARNING]
 > 預設值是為了在典型機器人資料集（typical robotics datasets）上平衡**壓縮比（compression ratio）**、**視覺品質（visual quality）**與**解碼/搜尋速度（decoding/seek speed）**而調校的。變更它們可能同時影響錄製（CPU 負載、掉影格 frame drops）與訓練（解碼吞吐量 decoding throughput、影像品質 image quality）。
@@ -63,7 +63,7 @@ lerobot-record \
 
 ---
 
-## 深度串流（depth streams）[[depth-streams]]
+## 深度串流[[depth-streams]]
 
 深度圖（depth maps，Intel RealSense、Reachy 2）會與 RGB 串流（stream）並排儲存為其**自身的影片串流（own video streams）**。原始深度（`uint16` 毫米或 `float32` 公尺）無法在 8 位元編解碼器（codec）中存活，因此 LeRobot 會將每張深度圖**量化（quantizes）**為一個 12 位元的碼（`[0, 4095]`），預設以對數（logarithmically）方式進行，以符合深度感測器（depth sensors）的 `1/depth` 誤差特性（error profile），接著將其打包成高位元深度的像素格式（high-bit-depth pixel format, `gray12le`），並以 12 位元編解碼器編碼。
 
@@ -181,7 +181,7 @@ lerobot-record \
 
 深度特徵（depth feature）在 `meta/info.json` 中會以 `"is_depth_map": true` 標記，且其量化器設定（quantizer settings，`video.depth_min`、`video.depth_max`、`video.shift`、`video.use_log`）會被儲存，這正是讓深度能在載入時**反量化回實體單位（dequantized back to physical units）**的關鍵。
 
-### 載入時的輸出單位（output unit at load time）[[output-unit-at-load-time]]
+### 載入時的輸出單位[[output-unit-at-load-time]]
 
 `depth_encoder` 是一個**錄製時（record-time）**的考量。深度圖在*載入*時（例如訓練 training 期間）反量化（dequantization）所使用的單位，是由讀取時的旗標（read-time flag） `--dataset.depth_output_unit` 另外設定的：
 
@@ -201,7 +201,7 @@ lerobot-train \
 
 ---
 
-## 資料集中繼資料中的持久化（persistence in dataset metadata）[[persistence-in-dataset-metadata]]
+## 資料集中繼資料中的持久化[[persistence-in-dataset-metadata]]
 
 在某個影片串流（video stream）的第一個回合（episode）被編碼後，編碼器設定（encoder configuration）會**被儲存到資料集中繼資料（dataset metadata）**（`meta/info.json`）中每個影片特徵（video feature）之下，與從檔案本身探測到的值並列。對於影片特徵 `observation.images.<camera>`，在 `info.json` 中的佈局為：
 
@@ -246,7 +246,7 @@ lerobot-train \
 
 ---
 
-## 合併資料集（merging datasets）[[merging-datasets]]
+## 合併資料集[[merging-datasets]]
 
 當以 `merge_datasets` 彙整資料集（dataset）時，影片檔案會原樣串接（concatenated as-is，不重新編碼 re-encoding），而 `info.json` 中的編碼器欄位（encoder fields）會依鍵合併（merged per-key）：
 

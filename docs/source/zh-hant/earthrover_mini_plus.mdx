@@ -8,15 +8,15 @@
 
 EarthRover Mini Plus 是一款完全開源的移動機器人（mobile robot），透過 Frodobots SDK 經由雲端連線。這讓你能夠控制機器人並錄製資料集（record datasets）以訓練 AI 模型（training AI models）。
 
-## 你需要準備的東西（what you need）[[what-you-need]]
+## 你需要準備的東西[[what-you-need]]
 
-### 硬體（hardware）[[hardware]]
+### 硬體[[hardware]]
 
 - EarthRover Mini 機器人
 - 具備 Python 3.12 或更新版本的電腦
 - 網際網路連線
 
-### 設定 Frodobots SDK（setting up the Frodobots SDK）[[setting-up-the-frodobots-sdk]]
+### 設定 Frodobots SDK[[setting-up-the-frodobots-sdk]]
 
 機器人需要在你的電腦上執行 [Frodobots SDK](https://github.com/frodobots-org/earth-rovers-sdk)。方法如下：
 
@@ -62,7 +62,7 @@ SDK 提供：
 > [!IMPORTANT]
 > SDK 必須先執行，你才能使用機器人。
 
-## 安裝 LeRobot（install LeRobot）[[install-lerobot]]
+## 安裝 LeRobot[[install-lerobot]]
 
 請依照我們的[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 
@@ -72,7 +72,7 @@ SDK 提供：
 pip install -e ".[hardware]"
 ```
 
-## 運作原理（how it works）[[how-it-works]]
+## 運作原理[[how-it-works]]
 
 機器人使用網際網路（internet）進行通訊：
 
@@ -82,15 +82,15 @@ pip install -e ".[hardware]"
 
 你不需要插上任何東西（plug anything in），一切都透過 SDK 運作。
 
-## 校正（calibration）[[calibration]]
+## 校正[[calibration]]
 
 不需要校正！只要 SDK 在執行中，機器人即可使用。
 
-## 控制機器人（controlling the robot）[[controlling-the-robot]]
+## 控制機器人[[controlling-the-robot]]
 
 你可以使用鍵盤控制機器人，就像用 WASD 鍵玩電玩遊戲一樣。
 
-### 鍵盤控制（keyboard controls）[[keyboard-controls]]
+### 鍵盤控制[[keyboard-controls]]
 
 | 按鍵 | 動作（action）     |
 | ---- | ------------------ |
@@ -105,7 +105,7 @@ pip install -e ".[hardware]"
 | -    | 降低速度           |
 | ESC  | 中斷連線           |
 
-### 速度設定（speed settings）[[speed-settings]]
+### 速度設定[[speed-settings]]
 
 你可以調整機器人的移動速度：
 
@@ -113,7 +113,7 @@ pip install -e ".[hardware]"
 - **轉向速度（turning speed）**：預設為全速（1.0）
 - **速度變更（speed changes）**：使用 +/- 鍵每次調整 0.1
 
-### 試試看（try it out）[[try-it-out]]
+### 試試看[[try-it-out]]
 
 在錄製資料（recording data）前先試駕（test driving）機器人：
 
@@ -152,7 +152,7 @@ finally:
 > [!TIP]
 > 若你使用 Mac，可能需要授予「終端機（Terminal）」存取鍵盤的權限以進行遙操作（teleoperation）。前往「系統偏好設定 > 安全性與隱私 > 輸入監控」，並勾選「終端機」的核取方塊。
 
-## 錄製資料（recording data）[[recording-data]]
+## 錄製資料[[recording-data]]
 
 一旦你能好好駕駛機器人，就可以開始錄製資料來訓練 AI 模型。系統會記錄：
 
@@ -165,7 +165,7 @@ finally:
   - 其他感測器資料
 - **發生的時間**：所有內容的時間戳
 
-### 設定 Hugging Face（setting up Hugging Face）[[setting-up-hugging-face]]
+### 設定 Hugging Face[[setting-up-hugging-face]]
 
 我們使用 Hugging Face 將你的資料儲存在線上。首先，使用你從 [Hugging Face 設定](https://huggingface.co/settings/tokens)取得的 token 登入：
 
@@ -180,7 +180,7 @@ HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
 echo $HF_USER
 ```
 
-### 開始錄製（start recording）[[start-recording]]
+### 開始錄製[[start-recording]]
 
 使用標準的錄製指令：
 
@@ -200,7 +200,7 @@ lerobot-record \
 
 將 `your_username/dataset_name` 替換為你的 Hugging Face 使用者名稱與資料集的名稱。
 
-### 儲存的內容（what gets saved）[[what-gets-saved]]
+### 儲存的內容[[what-gets-saved]]
 
 你的資料集包含：
 
@@ -225,7 +225,7 @@ lerobot-record \
 - 磁力計（x、y、z）
 - 車輪轉速 RPM（4 個車輪）
 
-### 你的資料會存放在哪裡（where your data goes）[[where-your-data-goes]]
+### 你的資料會存放在哪裡[[where-your-data-goes]]
 
 在你的電腦上：`~/.cache/huggingface/lerobot/{repo-id}`
 

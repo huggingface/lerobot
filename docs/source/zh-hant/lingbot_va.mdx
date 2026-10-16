@@ -6,7 +6,7 @@ LingBot-VA 是一個建構於 **Wan2.2** 影片擴散堆疊（video-diffusion st
 **影片潛在表徵（video latent）**與**機器人動作（robot actions）**（「VA」＝ Video-Action）。
 此 LeRobot 整合將 LingBot-VA 接入標準的訓練（training）、評估（evaluation）與處理器介面（processor interfaces）。
 
-## 模型概覽（model overview）[[model-overview]]
+## 模型概覽[[model-overview]]
 
 LingBot-VA 是一個**雙串流 transformer 混合體（dual-stream “mixture-of-transformers”）**：一個影片／潛在表徵串流
 （video/latent stream, `patch_embedding_mlp → blocks → proj_out`）與一個動作串流
@@ -24,7 +24,7 @@ LingBot-VA 是一個**雙串流 transformer 混合體（dual-stream “mixture-o
 並跨塊維持一個 KV 快取（KV cache）。在執行區塊（chunk）的過程中，真實觀測到的關鍵影格（Real observed keyframes）
 會被回饋到 KV 快取中（閉迴路世界建模，closed-loop world modeling）。
 
-### LeRobot 整合涵蓋的內容（what the LeRobot integration covers）[[what-the-lerobot-integration-covers]]
+### LeRobot 整合涵蓋的內容[[what-the-lerobot-integration-covers]]
 
 - 透過 LeRobot 的標準 `policy.type=lingbot_va` 設定（configuration）。
 - Hub 上即用的 LeRobot 格式檢查點（checkpoints，由已發布的上游 released upstream 版本轉換而來）。
@@ -34,7 +34,7 @@ LingBot-VA 是一個**雙串流 transformer 混合體（dual-stream “mixture-o
 - 以 `lerobot-eval` 在 LIBERO 與 RoboTwin 上進行評估（evaluation）。
 - 透過雙串流流匹配損失（dual-stream flow-matching loss, `policy.forward`）進行訓練／微調（training / fine-tuning），詳見下文。
 
-## 安裝（installation）[[installation]]
+## 安裝[[installation]]
 
 1. 按照[安裝指南（Installation Guide）](./installation)安裝 LeRobot。
 2. 安裝 LingBot-VA 額外套件（extra）：
@@ -43,7 +43,7 @@ LingBot-VA 是一個**雙串流 transformer 混合體（dual-stream “mixture-o
 pip install -e ".[lingbot_va]"
 ```
 
-## 檢查點（checkpoints）[[checkpoints]]
+## 檢查點[[checkpoints]]
 
 已發布的上游檢查點（released upstream checkpoints）已轉換為 LeRobot 格式（format）並推送到 Hub：
 
@@ -59,7 +59,7 @@ tokenizer（約 20 GB）會在載入時從 `config.wan_pretrained_path` 拉取
 （`config.text_encoder_device`），因此 50 億（5B）參數 transformer + VAE 可容納於單張
 24–32 GB GPU。
 
-## 評估：LIBERO（evaluation on LIBERO）[[evaluation-libero]]
+## 評估：LIBERO[[evaluation-libero]]
 
 ```bash
 lerobot-eval \
@@ -74,7 +74,7 @@ lerobot-eval \
 LingBot-VA 的串流推論（KV 快取 + 觀測關鍵影格回饋）是為單一環境評估而實作的；
 請使用 `--eval.batch_size=1`。
 
-## 評估：RoboTwin（evaluation on RoboTwin）[[evaluation-robotwin]]
+## 評估：RoboTwin[[evaluation-robotwin]]
 
 RoboTwin 2.0 需要 SAPIEN + CuRobo 模擬器堆疊（simulator stack）。你可以使用基準測試 Docker 映像檔
 （benchmark Docker image, `docker/Dockerfile.benchmark.robotwin`，它還需要 `warp-lang==1.3.1`，
@@ -92,13 +92,13 @@ lerobot-eval \
     --output_dir=outputs/eval/lingbot_va_robotwin
 ```
 
-### 儲存預測（想像）影片（saving predicted, imagined videos）[[saving-predicted-imagined-videos]]
+### 儲存預測（想像）影片[[saving-predicted-imagined-videos]]
 
 設定 `--policy.save_predicted_video=true` 可額外將預測的影片潛在表徵（latent）以 VAE 解碼，
 並在環境渲染的 `eval_episode_*.mp4` 影片旁寫入 `pred_episode_*.mp4`。
 同一個旗標（flag）也適用於 `lerobot-train` 期間的週期性評估。
 
-## 訓練／微調（training / fine-tuning）[[training-fine-tuning]]
+## 訓練／微調[[training-fine-tuning]]
 
 `LingBotVAPolicy.forward(batch)` 實作了論文中的雙串流**流匹配**損失（dual-stream flow-matching loss,
 `latent_loss + action_loss`，以時間步加權 timestep-weighted、動作遮罩 action-masked）：它將相機片段（camera clips）
@@ -125,7 +125,7 @@ lerobot-train \
 資料集（dataset）必須提供相機片段（camera clips，每個相機一個時間視窗 temporal window，經 VAE 編碼為 `frame_chunk_size` 個潛在影格 latent frames），
 以及每個項目（item） `frame_chunk_size * action_per_frame` 個動作步（action steps）。
 
-## 資料格式（動作通道 & 相機順序，action channels & camera order）[[data-format-action-channels-camera-order]]
+## 資料格式（動作通道與相機順序）[[data-format-action-channels-camera-order]]
 
 LingBot-VA 是一個**末端執行器（笛卡兒）姿態（end-effector Cartesian pose）**策略，它預測 EEF 姿態（EEF poses） + 夾爪（gripper），而非關節位置（joint positions）。
 動作採用固定的多具身（multi-embodiment）**30 維（30-dim）**佈局（layout）；請將你機器人的動作維度（action dimensions）
@@ -159,7 +159,7 @@ LingBot-VA 是一個**末端執行器（笛卡兒）姿態（end-effector Cartes
 
 第一個相機是外部／頭部視角（exterior/head view），其餘為手腕視角（wrist views）。
 
-## 推論超參數（LIBERO）（inference hyperparameters on LIBERO）[[inference-hyperparameters-libero]]
+## 推論超參數（LIBERO）[[inference-hyperparameters-libero]]
 
 | 鍵（key）                              | 值（value）                                                                         |
 | -------------------------------------- | ----------------------------------------------------------------------------------- |
@@ -174,14 +174,14 @@ LingBot-VA 是一個**末端執行器（笛卡兒）姿態（end-effector Cartes
 
 這些是 `LingBotVAConfig` 的預設值；可透過 `--policy.<name>=...` 覆寫其中任何一項。
 
-## 注意事項（notes）[[notes]]
+## 注意事項[[notes]]
 
 - **注意力後端（attention backend）：** 推論（inference）使用 `torch` SDPA 後端（backend；一律可用）。
   `flashattn` 與 `flex` 後端為可選；`flex` 只有訓練（training）時需要。
 - **模型大小（model size）：** DiT 約有 50 億（5B）參數，凍結的（frozen） VAE+UMT5 再增加約 20 GB；
   推論（inference）大約需要 18–24 GB 的 VRAM。
 
-## 授權條款（license）[[license]]
+## 授權條款[[license]]
 
 LingBot-VA 依據 Apache-2.0 發布。請參閱
 [上游儲存庫（upstream repository）](https://github.com/Robbyant/lingbot-va)。
