@@ -248,8 +248,8 @@ def register_third_party_plugins() -> None:
 
     This function uses `importlib.metadata` to find packages installed in the environment
     (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
-    'lerobot_teleoperator_', 'lerobot_policy_', 'lerobot_env_' or 'lerobot_strategy_' and
-    imports them.
+    'lerobot_teleoperator_', 'lerobot_policy_', 'lerobot_env_', 'lerobot_strategy_' or
+    'lerobot_processor_' and imports them.
     """
     prefixes = (
         "lerobot_robot_",
@@ -258,6 +258,7 @@ def register_third_party_plugins() -> None:
         "lerobot_policy_",
         "lerobot_env_",
         "lerobot_strategy_",
+        "lerobot_processor_",
     )
     imported: list[str] = []
     failed: list[str] = []
