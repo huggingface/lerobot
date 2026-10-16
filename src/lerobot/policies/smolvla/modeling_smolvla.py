@@ -54,35 +54,37 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 import math
 from collections import deque
-from typing import TypedDict, Unpack
+from typing import Any, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
+from lerobot.configs import FeatureType
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
-from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
+from ..chunk import FeatureSpec
+from ..common.flow_matching import (
+    FlowConvention,
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_noise,
+    sample_time_beta,
+)
 from ..common.vla_utils import (
     create_sinusoidal_pos_embedding,
     make_att_2d_masks,
     pad_vector,
     resize_with_pad,
 )
-from ..pretrained import PreTrainedPolicy
+from ..pretrained import PreTrainedPolicy, RTCActionSelectKwargs
 from ..rtc.modeling_rtc import RTCProcessor
 from ..utils import (
     populate_queues,
 )
 from .configuration_smolvla import SmolVLAConfig
 from .smolvlm_with_expert import SmolVLMWithExpertModel
-
-
-class ActionSelectKwargs(TypedDict, total=False):
-    inference_delay: int | None
-    prev_chunk_left_over: Tensor | None
-    execution_horizon: int | None
 
 
 def normalize(x, min_val, max_val):
@@ -193,7 +195,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return self.parameters()
 
     def _get_action_chunk(
-        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[RTCActionSelectKwargs]
     ) -> Tensor:
         # TODO: Check if this for loop is needed.
         # Context: In fact, self.queues contains only ACTION field, and in inference, we don't have action in the batch
@@ -214,8 +216,10 @@ class SmolVLAPolicy(PreTrainedPolicy):
         )
 
         # Unpad actions
-        original_action_dim = self.config.action_feature.shape[0]
-        actions = actions[:, :, :original_action_dim]
+        action_feature = self.config.action_feature
+        if action_feature is None:
+            raise ValueError("SmolVLA requires an action output feature.")
+        actions = actions[:, :, : action_feature.shape[0]]
 
         if self.config.adapt_to_pi_aloha:
             actions = self._pi_aloha_encode_actions(actions)
@@ -230,7 +234,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(
-        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[RTCActionSelectKwargs]
     ) -> Tensor:
         self.eval()
 
@@ -242,7 +246,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def select_action(
-        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[ActionSelectKwargs]
+        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[RTCActionSelectKwargs]
     ) -> Tensor:
         """Select a single action given environment observations.
 
@@ -275,8 +279,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
     def forward(
-        self, batch: dict[str, Tensor], noise=None, time=None, reduction: str = "mean"
-    ) -> dict[str, Tensor]:
+        self,
+        batch: dict[str, Tensor],
+        noise: Tensor | None = None,
+        time: Tensor | None = None,
+        reduction: str = "mean",
+    ) -> tuple[Tensor, dict[str, float]]:
         """Do a full training forward pass to compute the loss.
 
         Args:
@@ -297,10 +305,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("action_is_pad")
-        loss_dict = {}
+        loss_dict: dict[str, float] = {}
         losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
-        original_action_dim = self.config.action_feature.shape[0]
-        losses = losses[:, :, :original_action_dim]
+        action_feature = self.config.action_feature
+        if action_feature is None:
+            raise ValueError("SmolVLA requires an action output feature.")
+        losses = losses[:, :, : action_feature.shape[0]]
         loss_dict["losses_after_forward"] = losses.clone().mean().item()
 
         if actions_is_pad is not None:
@@ -330,6 +340,35 @@ class SmolVLAPolicy(PreTrainedPolicy):
                 loss = losses.sum() / num_valid
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Preserve prepare_images' camera subset, resizing and padding semantics.
+
+        The deployment explicitly selects physical cameras. Missing visual slots
+        remain missing; prepare_images applies the checkpoint's empty-camera limit
+        and masks exactly as in local inference. Never synthesize unmasked cameras.
+        """
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        required = {name for name, feature in expected.items() if feature.type != FeatureType.VISUAL}
+        if not required <= supplied.keys() or not supplied.keys() <= expected.keys():
+            raise ValueError("SmolVLA requires all nonvisual inputs and only known camera features.")
+        if not any(expected[name].type == FeatureType.VISUAL for name in supplied):
+            raise ValueError("SmolVLA requires at least one camera.")
+        for name, feature in supplied.items():
+            policy_feature = expected[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                shape = policy_feature.shape
+                if len(shape) != 3 or shape[0] != 3 or feature.kind != "rgb":
+                    raise ValueError(f"SmolVLA requires RGB camera inputs: {name}.")
+                if self.config.resize_imgs_with_padding is None and feature.shape != (
+                    shape[1],
+                    shape[2],
+                    shape[0],
+                ):
+                    raise ValueError(f"RGB feature shape differs without policy resizing: {name}.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
     def prepare_images(self, batch):
         """Apply SmolVLA preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and
@@ -417,7 +456,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
-    def _get_default_peft_targets(self) -> dict[str, any]:
+    def _get_default_peft_targets(self) -> dict[str, Any]:
         """Return default PEFT target modules for SmolVLA fine-tuning."""
         common_projections = (
             "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
@@ -533,8 +572,8 @@ class VLAFlowMatching(nn.Module):
         # Compile model if requested
         if config.compile_model:
             torch.set_float32_matmul_precision("high")
-            self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)
-            self.forward = torch.compile(self.forward, mode=config.compile_mode)
+            self.sample_actions = torch.compile(self.sample_actions, mode=config.compile_mode)  # type: ignore[method-assign]
+            self.forward = torch.compile(self.forward, mode=config.compile_mode)  # type: ignore[method-assign]
 
     def _rtc_enabled(self):
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
@@ -696,9 +735,7 @@ class VLAFlowMatching(nn.Module):
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
 
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
+        x_t, u_t, _ = make_flow_matching_inputs(actions, noise, time, convention=FlowConvention.NOISE_AT_ONE)
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, state=state
         )
@@ -731,7 +768,7 @@ class VLAFlowMatching(nn.Module):
         lang_masks,
         state,
         noise=None,
-        **kwargs: Unpack[ActionSelectKwargs],
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = state.shape[0]

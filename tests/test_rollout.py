@@ -47,10 +47,10 @@ def test_rollout_top_level_imports():
 
 
 def test_inference_submodule_imports():
-    import lerobot.rollout.inference
+    import lerobot.inference
 
-    for name in lerobot.rollout.inference.__all__:
-        assert hasattr(lerobot.rollout.inference, name), f"Missing export: {name}"
+    for name in lerobot.inference.__all__:
+        assert hasattr(lerobot.inference, name), f"Missing export: {name}"
 
 
 def test_strategies_submodule_imports():
@@ -98,7 +98,7 @@ def test_dagger_config_defaults():
 
 
 def test_inference_config_types():
-    from lerobot.rollout import RTCInferenceConfig, SyncInferenceConfig
+    from lerobot.inference import RTCInferenceConfig, SyncInferenceConfig
 
     assert SyncInferenceConfig().type == "sync"
 
@@ -109,69 +109,36 @@ def test_inference_config_types():
 
 
 def test_trained_rtc_retries_chunk_when_measured_delay_exceeds_conditioning():
-    from lerobot.rollout.inference.rtc import _trained_rtc_chunk_can_merge
+    from lerobot.inference import trained_overlap_valid
 
-    assert not _trained_rtc_chunk_can_merge(
-        conditioned_delay=2,
-        measured_delay=3,
-        training_max_delay=4,
-        has_previous_actions=True,
-    )
-    assert _trained_rtc_chunk_can_merge(
-        conditioned_delay=2,
-        measured_delay=5,
-        training_max_delay=4,
-        has_previous_actions=False,
-    )
+    assert not trained_overlap_valid(conditioned=2, measured=3, maximum=4, has_previous=True)
+    assert trained_overlap_valid(conditioned=2, measured=5, maximum=4, has_previous=False)
 
 
 def test_trained_rtc_bootstraps_first_overlap_with_checkpoint_capacity():
-    from lerobot.rollout.inference.rtc import _estimate_rtc_delay
+    from lerobot.inference import ExecutionMode, estimate_delay
 
-    assert (
-        _estimate_rtc_delay(
-            latency=0,
-            time_per_step=1 / 30,
-            mode="trained",
-            training_max_delay=10,
-            has_previous_actions=False,
-        )
-        == 0
-    )
-    assert (
-        _estimate_rtc_delay(
-            latency=0,
-            time_per_step=1 / 30,
-            mode="trained",
-            training_max_delay=10,
-            has_previous_actions=True,
-        )
-        == 10
-    )
+    assert estimate_delay(0, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=0) == 0
+    assert estimate_delay(0, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=20) == 10
 
 
 def test_trained_rtc_discards_chunk_measured_above_checkpoint_support():
     """A latency spike past the trained delay discards the chunk; it must not kill the rollout."""
-    from lerobot.rollout.inference.rtc import _trained_rtc_chunk_can_merge
+    from lerobot.inference import trained_overlap_valid
 
-    assert not _trained_rtc_chunk_can_merge(
-        conditioned_delay=3,
-        measured_delay=5,
-        training_max_delay=4,
-        has_previous_actions=True,
-    )
+    assert not trained_overlap_valid(conditioned=3, measured=5, maximum=4, has_previous=True)
 
 
 def test_trained_rtc_clamps_prefix_to_checkpoint_and_queue():
     """Conditioning past the queue tail would hard-inpaint zero padding, so clamp instead."""
-    from lerobot.rollout.inference.rtc import _clamp_trained_rtc_delay
+    from lerobot.inference import ExecutionMode, estimate_delay
 
     # Queue tail is the binding limit.
-    assert _clamp_trained_rtc_delay(conditioned_delay=4, available_steps=2, training_max_delay=10) == 2
+    assert estimate_delay(4 / 30, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=2) == 2
     # Trained capacity is the binding limit.
-    assert _clamp_trained_rtc_delay(conditioned_delay=12, available_steps=30, training_max_delay=10) == 10
+    assert estimate_delay(12 / 30, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=30) == 10
     # Neither binds.
-    assert _clamp_trained_rtc_delay(conditioned_delay=4, available_steps=30, training_max_delay=10) == 4
+    assert estimate_delay(4 / 30, 1 / 30, ExecutionMode.RTC_TRAINED, 10, available=30) == 4
 
 
 @pytest.mark.parametrize(
@@ -179,14 +146,14 @@ def test_trained_rtc_clamps_prefix_to_checkpoint_and_queue():
     [
         (3, 4, "execution_horizon"),
         (4, 3, "queue_threshold"),
-        # RTC needs d <= s <= H - d; s = 17 exceeds chunk_size - max_delay = 16.
+        # Preserve the conservative admission bound on configured prefix capacity.
         (17, 20, "at most"),
     ],
 )
 def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, queue_threshold, match):
+    from lerobot.inference import RTCInferenceConfig
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
     from lerobot.rollout.context import _validate_trained_rtc_rollout_config
-    from lerobot.rollout.inference import RTCInferenceConfig
 
     policy_config = SimpleNamespace(type="pi05", rtc_training_max_delay=4, chunk_size=20)
     inference_config = RTCInferenceConfig(
@@ -199,9 +166,9 @@ def test_trained_rtc_rollout_requires_capacity_for_max_delay(execution_horizon, 
 
 
 def test_trained_rtc_rollout_accepts_valid_capacity():
+    from lerobot.inference import RTCInferenceConfig
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
     from lerobot.rollout.context import _validate_trained_rtc_rollout_config
-    from lerobot.rollout.inference import RTCInferenceConfig
 
     policy_config = SimpleNamespace(type="pi05", rtc_training_max_delay=4, chunk_size=50)
     inference_config = RTCInferenceConfig(
@@ -341,6 +308,45 @@ def test_build_rollout_context_uses_resolved_device(
     finally:
         if robot.is_connected:
             robot.disconnect()
+
+
+@pytest.mark.parametrize("failure_stage", ["observation", "processors", "engine"])
+def test_local_setup_failure_disconnects_hardware(monkeypatch, failure_stage):
+    import lerobot.rollout.context as rollout_context
+    from lerobot.policies import ACTConfig
+    from lerobot.processor import PolicyProcessorPipeline
+    from lerobot.rollout import RolloutConfig
+    from tests.mocks.mock_robot import MockRobot, MockRobotConfig
+
+    cfg = RolloutConfig(
+        robot=MockRobotConfig(random_values=False, static_values=[0.0, 0.0, 0.0]),
+        policy=ACTConfig(device="cpu", pretrained_path=Path("unused-checkpoint")),
+        device="cpu",
+    )
+    robot = MockRobot(cfg.robot)
+    failure = RuntimeError("setup failed")
+    monkeypatch.setattr(rollout_context, "_load_pretrained_policy", lambda _: torch.nn.Linear(3, 3))
+    monkeypatch.setattr(rollout_context, "make_robot_from_config", lambda _: robot)
+    if failure_stage == "observation":
+        monkeypatch.setattr(robot, "get_observation", MagicMock(side_effect=failure))
+    elif failure_stage == "processors":
+        monkeypatch.setattr(rollout_context, "make_pre_post_processors", MagicMock(side_effect=failure))
+    else:
+        monkeypatch.setattr(
+            rollout_context,
+            "make_pre_post_processors",
+            lambda **_: (PolicyProcessorPipeline([]), PolicyProcessorPipeline([])),
+        )
+
+        def fail_engine(*args, **kwargs):
+            assert robot.is_connected, "the engine is constructed after hardware is connected"
+            raise failure
+
+        monkeypatch.setattr(rollout_context, "create_inference_engine", fail_engine)
+    with pytest.raises(RuntimeError) as raised:
+        rollout_context.build_rollout_context(cfg, threading.Event())
+    assert raised.value is failure
+    assert not robot.is_connected
 
 
 def test_load_pretrained_policy_passes_revision(monkeypatch):
@@ -627,7 +633,7 @@ def test_setup_defaults_to_starting_the_engine():
 
 
 def test_create_inference_engine_sync():
-    from lerobot.rollout import SyncInferenceConfig, SyncInferenceEngine, create_inference_engine
+    from lerobot.inference import SyncInferenceConfig, SyncInferenceEngine, create_inference_engine
 
     engine = create_inference_engine(
         SyncInferenceConfig(),
@@ -635,7 +641,6 @@ def test_create_inference_engine_sync():
         preprocessor=MagicMock(),
         postprocessor=MagicMock(),
         robot_wrapper=MagicMock(robot_type="mock"),
-        hw_features={},
         dataset_features={},
         ordered_action_keys=["k"],
         task="test",
@@ -645,13 +650,32 @@ def test_create_inference_engine_sync():
     assert isinstance(engine, SyncInferenceEngine)
 
 
+def test_create_inference_engine_remote_explains_session_construction():
+    from lerobot.inference import RemoteInferenceConfig, create_inference_engine
+
+    config = RemoteInferenceConfig(deployment="test", semantics="radians-v1")
+    with pytest.raises(ValueError, match="connected RemoteClient; use build_rollout_context"):
+        create_inference_engine(
+            config,
+            policy=MagicMock(),
+            preprocessor=MagicMock(),
+            postprocessor=MagicMock(),
+            robot_wrapper=MagicMock(),
+            dataset_features={},
+            ordered_action_keys=[],
+            task="test",
+            fps=30.0,
+            device="cpu",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Pure functions
 # ---------------------------------------------------------------------------
 
 
-def test_align_state_feature_order_matches_checkpoint_and_preserves_cameras(caplog):
-    from lerobot.rollout.context import _align_state_feature_order
+def test_align_to_checkpoint_order_reorders_motors_and_preserves_cameras(caplog):
+    from lerobot.rollout.context import _align_to_checkpoint_order
     from lerobot.utils.feature_utils import build_dataset_frame, hw_to_dataset_features
 
     features = {
@@ -660,7 +684,7 @@ def test_align_state_feature_order_matches_checkpoint_and_preserves_cameras(capl
         "joint_a.pos": float,
     }
 
-    aligned = _align_state_feature_order(features, ["joint_a.pos", "joint_b.pos"])
+    aligned = _align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="state")
 
     assert list(aligned) == ["joint_a.pos", "joint_b.pos", "wrist_camera"]
     assert aligned["wrist_camera"] == (480, 640, 3)
@@ -675,17 +699,31 @@ def test_align_state_feature_order_matches_checkpoint_and_preserves_cameras(capl
     assert frame["observation.state"].tolist() == [1.0, 2.0]
 
 
+def test_align_to_checkpoint_order_aligns_the_action_side_by_the_same_rule(caplog):
+    """One primitive serves both sides; the action dict simply has no camera entries."""
+    from lerobot.rollout.context import _align_to_checkpoint_order
+
+    features = {"joint_b.pos": float, "joint_a.pos": float}
+
+    aligned = _align_to_checkpoint_order(features, ["joint_a.pos", "joint_b.pos"], what="action")
+
+    assert list(aligned) == ["joint_a.pos", "joint_b.pos"]
+    assert "reordering action" in caplog.text
+
+
+@pytest.mark.parametrize("what", ["state", "action"])
 @pytest.mark.parametrize(
-    ("policy_action_names", "feature_names"),
+    "policy_action_names",
     [
-        (None, ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
-        (["joint_b.pos", "joint_a.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
-        (["joint_a.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
-        (["joint_a.pos", "gripper.pos"], ["joint_b.pos", "joint_a.pos", "wrist_camera"]),
+        None,
+        ["joint_b.pos", "joint_a.pos"],  # already in this order
+        ["joint_a.pos"],  # subset
+        ["joint_a.pos", "gripper.pos"],  # different set
     ],
 )
-def test_align_state_feature_order_is_noop_without_an_exact_name_match(policy_action_names, feature_names):
-    from lerobot.rollout.context import _align_state_feature_order
+def test_align_to_checkpoint_order_is_noop_without_an_exact_name_match(policy_action_names, what):
+    """A set mismatch means the two describe different things: keep the robot's own order."""
+    from lerobot.rollout.context import _align_to_checkpoint_order
 
     features = {
         "joint_b.pos": float,
@@ -693,10 +731,53 @@ def test_align_state_feature_order_is_noop_without_an_exact_name_match(policy_ac
         "wrist_camera": (480, 640, 3),
     }
 
-    aligned = _align_state_feature_order(features, policy_action_names)
+    aligned = _align_to_checkpoint_order(features, policy_action_names, what=what)
 
     assert aligned is features
-    assert list(aligned) == feature_names
+    assert list(aligned) == ["joint_b.pos", "joint_a.pos", "wrist_camera"]
+
+
+def test_assert_state_matches_action_order_rejects_a_permutation():
+    """A permuted state layout must fail at context-build time."""
+    from lerobot.rollout.context import _assert_state_matches_action_order
+
+    dataset_features = {
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["b.pos", "a.pos"]},
+    }
+
+    with pytest.raises(ValueError, match="is a permutation of the action dispatch order"):
+        _assert_state_matches_action_order(dataset_features, ["a.pos", "b.pos"])
+
+
+@pytest.mark.parametrize(
+    ("state_names", "ordered_action_keys"),
+    [
+        (["a.pos", "b.pos"], ["a.pos", "b.pos"]),  # aligned
+        (["a.pos", "b.pos", "x.vel"], ["a.pos", "b.pos"]),  # extra state channel
+        (["a.pos"], ["a.pos", "base.vel"]),  # policy commands a base the state omits
+    ],
+)
+def test_assert_state_matches_action_order_allows_non_permutations(state_names, ordered_action_keys):
+    """Differing *sets* are legitimate: extra state channels, an uncommanded base."""
+    from lerobot.rollout.context import _assert_state_matches_action_order
+
+    dataset_features = {
+        "observation.state": {
+            "dtype": "float32",
+            "shape": (len(state_names),),
+            "names": state_names,
+        },
+    }
+
+    _assert_state_matches_action_order(dataset_features, ordered_action_keys)
+
+
+def test_assert_state_matches_action_order_tolerates_missing_state():
+    """A vision-only policy has no state to check."""
+    from lerobot.rollout.context import _assert_state_matches_action_order
+
+    _assert_state_matches_action_order({}, ["a.pos"])
+    _assert_state_matches_action_order({"observation.state": {"names": ["a.pos"]}}, [])
 
 
 def test_estimate_max_episode_seconds_no_video():
@@ -804,7 +885,7 @@ _TIMER_LOGGER = "lerobot.utils.cycle_timer"
 
 
 def _timer_warnings(caplog):
-    return [r for r in caplog.records if r.levelno >= logging.WARNING]
+    return [r for r in caplog.records if r.levelno >= logging.WARNING and r.name == _TIMER_LOGGER]
 
 
 def _info_messages(caplog):
@@ -823,7 +904,7 @@ def test_handle_warmup_paces_then_flushes_and_exempts_the_reprimed_group(caplog,
     # budget, so `timer.restart()` must re-arm the start-up exemption; without it
     # every torch.compile run would warn once right after warm-up.
     fps, multiplier = 20.0, 2  # 25 ms slots, 50 ms cycle budget
-    engine = MagicMock(ready=False)
+    engine = MagicMock(ready=False, failed=False)
     strategy = BaseStrategy(BaseStrategyConfig())
     strategy._engine = engine
     strategy._interpolator = ActionInterpolator(multiplier=multiplier)
@@ -1076,7 +1157,6 @@ def test_episodic_records_once_per_interpolation_cycle():
         timer=CycleTimer(200.0, 2),
         control_time_s=10.0,
         dataset=dataset,
-        single_task="task",
     )
 
     assert dataset.add_frame.call_count == 4
@@ -1251,7 +1331,7 @@ def test_starved_engine_is_counted_through_the_real_dispatch_path(caplog):
     assert dataset.add_frame.call_count == 0
 
 
-def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
+def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog, clock):
     from lerobot.rollout import EpisodicStrategyConfig
     from lerobot.rollout.strategies import EpisodicStrategy
     from lerobot.utils.action_interpolator import ActionInterpolator
@@ -1259,6 +1339,8 @@ def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
     # Episodic owns one timer across the whole session (episodes used to get a
     # fresh one each), so this also covers the `restart()` that keeps a
     # re-primed interpolator from being reported as a slow episode.
+    # Use the virtual clock so the no-warning assertion below is independent of
+    # scheduler delays on a loaded CI runner.
     ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
     ctx.runtime.cfg.dataset = SimpleNamespace(
         single_task="task",
@@ -1284,3 +1366,153 @@ def test_episodic_run_reports_a_summary_per_episode_and_for_the_run(caplog):
     # Recording still lands once per interpolation cycle over the 8 ticks.
     assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
     assert not _timer_warnings(caplog)
+
+
+# ---------------------------------------------------------------------------
+# Sync engine: relative-action anchoring (drift-free chunk execution)
+# ---------------------------------------------------------------------------
+
+_REL_ACTION_NAMES = ["j0.pos", "j1.pos", "j2.pos", "gripper.pos"]
+_REL_ACTION_DIM = len(_REL_ACTION_NAMES)
+
+
+def _relative_pre_post():
+    """Pre/post processors wrapping the real relative (caches anchor) and absolute
+    (relative + cached state) steps, mirroring what the sync engine feeds them."""
+    from lerobot.processor import (
+        AbsoluteActionsProcessorStep,
+        RelativeActionsProcessorStep,
+        TransitionKey,
+        create_transition,
+    )
+    from lerobot.utils.constants import OBS_STATE
+
+    relative_step = RelativeActionsProcessorStep(enabled=True, action_names=list(_REL_ACTION_NAMES))
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+
+    class _Pre:
+        steps = [relative_step]
+
+        def __call__(self, observation):
+            # Run the relative step so it caches the anchor, then pass the batch through.
+            transition = create_transition(observation={OBS_STATE: observation[OBS_STATE]})
+            relative_step(transition)
+            return observation
+
+        def reset(self):
+            pass
+
+    class _Post:
+        def __call__(self, action):
+            transition = create_transition(action=action)
+            return absolute_step(transition)[TransitionKey.ACTION]
+
+        def reset(self):
+            pass
+
+    return _Pre(), _Post(), relative_step
+
+
+def _fake_relative_policy(chunk_rel, n_action_steps):
+    """Fake chunking relative-action policy for the sync engine (pi0/fastwam/lingbot/act shape).
+
+    Buffers a chunk and serves it one action per tick, computing a fresh chunk only on refill.
+    ``count_queued_actions()`` mirrors the real ``PreTrainedPolicy`` contract: it reads the same
+    queue ``select_action`` drains, so the bound step sees an accurate depth *before* this
+    tick's call runs.
+    """
+    from collections import deque
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    policy.config.action_feature_names = list(_REL_ACTION_NAMES)
+    state = {"predict_calls": 0}
+    queue = deque(maxlen=n_action_steps)
+
+    def predict_action_chunk(_batch=None, **_kwargs):
+        state["predict_calls"] += 1
+        return chunk_rel.unsqueeze(0)  # [B=1, n, dim]
+
+    def select_action(_observation):
+        if len(queue) == 0:
+            actions = policy.predict_action_chunk(_observation)
+            queue.extend(actions.transpose(0, 1))  # [n, 1, dim]
+        return queue.popleft()
+
+    policy.predict_action_chunk.side_effect = predict_action_chunk
+    policy.select_action.side_effect = select_action
+    policy.reset.side_effect = queue.clear
+    policy.count_queued_actions.side_effect = lambda: len(queue)
+    policy._predict_state = state
+    return policy
+
+
+def _build_sync_engine(policy, pre, post):
+    """Build the engine the way ``build_rollout_context`` does.
+
+    The engine itself knows nothing about relative actions; the anchor hold lives in
+    ``RelativeActionsProcessorStep`` and is armed once, here, by ``bind_relative_anchor``.
+    """
+    from lerobot.inference import SyncInferenceEngine
+    from lerobot.processor import bind_relative_anchor
+
+    bind_relative_anchor(policy, pre)
+    return SyncInferenceEngine(
+        policy=policy,
+        preprocessor=pre,
+        postprocessor=post,
+        dataset_features={"action": {"names": list(_REL_ACTION_NAMES)}},
+        ordered_action_keys=list(_REL_ACTION_NAMES),
+        task="test",
+        device="cpu",
+        robot_type="mock",
+    )
+
+
+def _obs_frame(state_values):
+    import numpy as np
+
+    return {"observation.state": np.asarray(state_values, dtype=np.float32)}
+
+
+def test_sync_relative_holds_anchor_across_chunk():
+    """Every action popped within a chunk must anchor to the tick-0 state (no drift)."""
+    n = 4
+    # A distinct relative offset per chunk step so a wrong anchor would be visible.
+    chunk_rel = torch.stack([torch.full((_REL_ACTION_DIM,), 0.1 * (i + 1)) for i in range(n)])
+    pre, post, relative_step = _relative_pre_post()
+    policy = _fake_relative_policy(chunk_rel, n_action_steps=n)
+    engine = _build_sync_engine(policy, pre, post)
+
+    assert relative_step._count_queued_actions == policy.count_queued_actions  # binding wired up
+
+    s0 = [1.0, 2.0, 3.0, 4.0]
+    outputs = []
+    for tick in range(n):
+        # Feed a *different* state each tick; a drifting anchor would use it.
+        state = [v + tick for v in s0]
+        outputs.append(engine.get_action(_obs_frame(state)))
+
+    # Exactly one chunk was predicted across the n ticks.
+    assert policy._predict_state["predict_calls"] == 1
+    for tick in range(n):
+        expected = torch.tensor(s0) + chunk_rel[tick]
+        torch.testing.assert_close(outputs[tick], expected)
+
+    # Next tick empties the queue -> fresh chunk -> anchor advances to the new state.
+    s_next = [10.0, 20.0, 30.0, 40.0]
+    out = engine.get_action(_obs_frame(s_next))
+    assert policy._predict_state["predict_calls"] == 2
+    torch.testing.assert_close(out, torch.tensor(s_next) + chunk_rel[0])
+    # The anchor now reflects the fresh-chunk state, not the held one.
+    torch.testing.assert_close(relative_step.get_cached_state(), torch.tensor([s_next]))
+
+
+def test_sync_engine_without_a_relative_step_binds_nothing():
+    """A pipeline with no enabled relative step has nothing to bind, and the engine still runs."""
+    from lerobot.processor import bind_relative_anchor
+
+    policy = MagicMock()
+    policy.config.use_amp = False
+    assert bind_relative_anchor(policy, MagicMock(steps=[])) is None
+    _build_sync_engine(policy, MagicMock(steps=[]), MagicMock())  # must not raise

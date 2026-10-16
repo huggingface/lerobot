@@ -43,7 +43,7 @@ However, in most cases, presence of an accelerator is detected automatically and
 
 ## Mixed precision
 
-Training precision is owned by `--accelerator.mixed_precision`, which accepts `no` (default) and `bf16`:
+Training precision is owned by `--accelerator.mixed_precision`, which accepts `no` (default), `bf16` and `fp16`:
 
 ```bash
 lerobot-train \
@@ -51,4 +51,22 @@ lerobot-train \
     --accelerator.mixed_precision=bf16 ...
 ```
 
-`bf16` requires an accelerator that supports it.
+`fp16` requires an accelerator: it is rejected on `--policy.device=cpu`, where accelerate builds no loss scaler and the run would silently fall back to full precision. `bf16` autocasts on CPU too, so it is not restricted.
+
+`bf16` requires hardware support (Ampere or newer on NVIDIA GPUs). On older accelerators such as V100 or T4, use `fp16`.
+
+### fp16 and the loss scaler
+
+`fp16` has a much smaller exponent range than `bf16`, so gradients are scaled up before the backward pass and scaled back down before the optimizer step. LeRobot delegates this to accelerate's `GradScaler`, which also detects overflowing gradients and skips those optimizer updates. Under sharded training the gradients are `DTensor`s and PyTorch reduces the overflow flag across the device mesh, so an overflow on one rank skips the update on all of them.
+
+Skipped updates are normal, especially in the first few steps while the scale calibrates down from its initial value. They are visible in the logs as the `scale` metric dropping. The scale is saved with every checkpoint (`training_state/scaler_state.json`) and restored on resume, so a resumed run does not have to recalibrate.
+
+The scaler can be tuned if the defaults do not suit a policy:
+
+```bash
+lerobot-train \
+    --policy.type=act \
+    --accelerator.mixed_precision=fp16 \
+    --accelerator.grad_scaler.init_scale=1024 \
+    --accelerator.grad_scaler.growth_interval=2000 ...
+```

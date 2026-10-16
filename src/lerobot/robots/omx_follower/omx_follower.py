@@ -18,7 +18,7 @@ import logging
 import time
 from functools import cached_property
 
-from lerobot.cameras import make_cameras_from_configs
+from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
@@ -43,6 +43,8 @@ class OmxFollower(Robot):
 
     config_class = OmxFollowerConfig
     name = "omx_follower"
+    # All commands, including the current-limited gripper, are position targets.
+    supports_position_hold = True
 
     def __init__(self, config: OmxFollowerConfig):
         super().__init__(config)
@@ -186,7 +188,7 @@ class OmxFollower(Robot):
                 dt_ms = (time.perf_counter() - start) * 1e3
                 logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 
-            if getattr(cam, "use_depth", False):
+            if isinstance(cam, DepthCamera) and cam.use_depth:
                 start = time.perf_counter()
                 obs_dict[f"{cam_key}_depth"] = cam.read_latest_depth()
                 dt_ms = (time.perf_counter() - start) * 1e3

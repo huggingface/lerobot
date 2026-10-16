@@ -21,6 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import torch
+
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import CosineDecayWithWarmupSchedulerConfig, XVLAAdamWConfig
 from lerobot.utils.constants import OBS_IMAGES
@@ -88,7 +90,7 @@ class XVLAConfig(PreTrainedConfig):
     n_obs_steps: int = 1
     chunk_size: int = 32
     n_action_steps: int = 32
-    dtype: str = "float32"  # Options: "bfloat16", "float32"
+    dtype: torch.dtype | None = torch.float32
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -161,7 +163,7 @@ class XVLAConfig(PreTrainedConfig):
             )
         if self.num_image_views is not None and self.num_image_views <= 0:
             raise ValueError("`num_image_views` must be > 0 when specified.")
-        if self.dtype not in ["bfloat16", "float32"]:
+        if self.dtype not in [torch.bfloat16, torch.float32]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
         self._florence_config_obj: Florence2Config | None = None
 
@@ -205,7 +207,7 @@ class XVLAConfig(PreTrainedConfig):
         return self._florence_config_obj
 
     def validate_features(self) -> None:
-        if not self.image_features:
+        if not self.input_features or not self.image_features:
             raise ValueError("XVLA requires at least one visual feature in the inputs.")
         if self.use_proprio and self.robot_state_feature is None:
             raise ValueError("`use_proprio=True` requires a proprioceptive state feature.")

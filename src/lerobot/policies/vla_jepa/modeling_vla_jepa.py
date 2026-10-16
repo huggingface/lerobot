@@ -23,11 +23,14 @@ import torch.nn.functional as F  # noqa: N812
 from safetensors.torch import load_file
 from torch import Tensor, nn
 
+from lerobot.configs import FeatureType
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.utils import log_model_loading_keys, populate_queues
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.device_utils import get_autocast_context, resolve_safetensors_device
 from lerobot.utils.import_utils import _transformers_available, require_package
+
+from ..chunk import ChunkPolicySpec, FeatureSpec
 
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoModel, AutoVideoProcessor
@@ -88,7 +91,7 @@ class VLAJEPAModel(nn.Module):
         if config.enable_world_model:
             self.video_encoder = AutoModel.from_pretrained(
                 config.jepa_encoder_name,
-                torch_dtype=self.qwen._get_torch_dtype(config.torch_dtype),
+                torch_dtype=config.dtype,
             )
             self.video_processor = AutoVideoProcessor.from_pretrained(config.jepa_encoder_name)
             num_views = config.num_world_model_views
@@ -97,7 +100,7 @@ class VLAJEPAModel(nn.Module):
             if image_size is None:
                 first_image_shape = next(iter(config.image_features.values())).shape
                 image_size = first_image_shape[-1]
-            self.video_predictor = ActionConditionedVideoPredictor(
+            self.video_predictor: ActionConditionedVideoPredictor | None = ActionConditionedVideoPredictor(
                 num_frames=config.num_video_frames // tubelet_size,
                 img_size=(image_size, image_size),
                 patch_size=16,
@@ -227,6 +230,8 @@ class VLAJEPAModel(nn.Module):
         `reduction="none"` returns a per-sample loss (B,) for sample weighting (RA-BC);
         "mean" returns the scalar loss.
         """
+        if self.video_predictor is None:
+            raise RuntimeError("The world model loss requires `enable_world_model=True`.")
         # Match the world model's expected view count: pad with the first view, or trim extras.
         num_views = self.config.num_world_model_views
         if videos.shape[1] < num_views:
@@ -395,7 +400,38 @@ class VLAJEPAPolicy(PreTrainedPolicy):
         self.reset()
 
     def reset(self) -> None:
-        self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
+        self._queues: dict[str, deque[Tensor]] = {ACTION: deque(maxlen=self.config.n_action_steps)}
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Serve current frames; future video observations are training targets only.
+
+        The world model stays configured as trained. ``_prepare_model_inputs``
+        builds its video targets only for training, while direct prediction uses
+        current images, language and state without reading the playback queue.
+        """
+        if self.config.n_obs_steps != 1:
+            raise ValueError("VLA-JEPA chunk serving requires n_obs_steps=1.")
+        return ChunkPolicySpec(
+            prediction_steps=self.config.chunk_size,
+            execution_steps=self.config.n_action_steps,
+        )
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Allow the same configured image resizing as direct local inference."""
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        if supplied.keys() != expected.keys():
+            raise ValueError("Canonical feature names must exactly match policy input_features.")
+        for name, policy_feature in expected.items():
+            feature = supplied[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                shape = policy_feature.shape
+                if len(shape) != 3 or shape[0] != 3 or feature.kind != "rgb":
+                    raise ValueError(f"VLA-JEPA requires RGB camera inputs: {name}.")
+                if not self.config.resize_images_to and feature.shape != (shape[1], shape[2], shape[0]):
+                    raise ValueError(f"RGB feature shape differs from checkpoint: {name}.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
     # ---- Format Conversion: LeRobot → Native ----
 
