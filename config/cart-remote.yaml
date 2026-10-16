@@ -84,7 +84,9 @@ robot:
       width: 640
       height: 480
       fps: 30
-      color_mode: BGR
+      # color_mode: RGB (the default), like the wrists. It was BGR, which put the
+      # head camera in the dataset with red and blue swapped relative to the
+      # wrists; the zero-copy fix in camera_realsense.py made RGB safe.
       use_depth: false
 
 # The leaders are at the operator station. This end only opens a socket.

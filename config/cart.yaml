@@ -56,5 +56,7 @@ robot:
       fps: 30
       width: 1280
       height: 720
-      color_mode: BGR
+      # color_mode: RGB (the default), like the wrists. It was BGR, which put the
+      # head camera in the dataset with red and blue swapped relative to the
+      # wrists; the zero-copy fix in camera_realsense.py made RGB safe.
       use_depth: True

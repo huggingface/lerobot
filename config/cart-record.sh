@@ -41,10 +41,22 @@
 # lerobot falls back to a terminal listener when pynput cannot capture, so
 # an SSH session with a TTY is enough.
 #
-# UPLOAD
-# push_to_hub defaults to true, so the dataset uploads when recording ends.
-# Authenticate first, once:   hf auth login
-# To stay local:              --dataset.push_to_hub=false
+# DEFAULTS THIS SCRIPT SETS (each overridable by passing it again)
+#   --dataset.push_to_hub=false        local only. PUSH_TO_HUB=true to upload
+#                                      (hf auth login once, first).
+#   --dataset.rgb_encoder.vcodec=h264  VCODEC=. lerobot's default is AV1
+#                                      (libsvtav1), several times slower to
+#                                      encode on the Orin's CPU; h264 keeps the
+#                                      between-episode encode inside reset_time.
+#   --dataset.num_image_writer_processes=2
+#                                      frame PNGs written in 2 processes, not
+#                                      12 threads competing with the control
+#                                      loop for the GIL.
+#   --play_sounds=false                lerobot speaks through spd-say, which a
+#                                      headless Orin may not have; a missing
+#                                      binary ends the run before tick one.
+#
+# The dataset lands in ~/.cache/huggingface/lerobot/<repo_id>.
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/_video.sh"
@@ -68,6 +80,21 @@ fi
 REPO_ID="$1"; shift
 TASK="$1"; shift
 
+# A flag in the repo-id slot - a typo, or one this script does not parse -
+# would otherwise become the dataset's name.
+if [[ "$REPO_ID" == -* || "$REPO_ID" != */* ]]; then
+  echo "error: repo id must look like <user>/<name>, got '$REPO_ID'" >&2
+  echo "       (flags go after the task, except --watch and BASE=)" >&2
+  exit 2
+fi
+
+# The yaml is shared with cart-teleop.sh, and its top-level `fps:` is a
+# TeleoperateConfig field. RecordConfig has none - its rate is dataset.fps -
+# and draccus rejects unknown fields, so record from a copy without it.
+RECORD_CONFIG="$(mktemp --suffix=.yaml)"
+trap 'rm -f "$RECORD_CONFIG"' EXIT
+grep -v '^fps:' "$CONFIG" > "$RECORD_CONFIG"
+
 FPS="${FPS:-30}"
 NUM_EPISODES="${NUM_EPISODES:-5}"
 EPISODE_TIME_S="${EPISODE_TIME_S:-30}"
@@ -88,11 +115,18 @@ echo "leaders : $OPERATOR:5557"
 echo "dataset : $REPO_ID"
 echo "task    : $TASK"
 echo "episodes: $NUM_EPISODES x ${EPISODE_TIME_S}s (reset ${RESET_TIME_S}s) at ${FPS}fps"
+echo "upload  : ${PUSH_TO_HUB:-false}   codec: ${VCODEC:-h264}"
+echo "saved to: ${HF_LEROBOT_HOME:-$HOME/.cache/huggingface/lerobot}/$REPO_ID"
 echo
 
-exec "${RUN[@]}" lerobot-record \
-  --config_path="$CONFIG" \
+# Not exec: the trap above has to run to remove the temporary yaml.
+"${RUN[@]}" lerobot-record \
+  --config_path="$RECORD_CONFIG" \
   "${BASE_ARGS[@]+"${BASE_ARGS[@]}"}" \
+  --dataset.push_to_hub="${PUSH_TO_HUB:-false}" \
+  --dataset.rgb_encoder.vcodec="${VCODEC:-h264}" \
+  --dataset.num_image_writer_processes=2 \
+  --play_sounds=false \
   --dataset.repo_id="$REPO_ID" \
   --dataset.single_task="$TASK" \
   --dataset.fps="$FPS" \

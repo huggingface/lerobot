@@ -28,9 +28,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 EXTRA_ARGS=()
 if is_jetson; then
-  EXTRA_ARGS=(--extra jetson)
+  # dataset: the cart records, and lerobot-record needs lerobot[dataset]
+  # (datasets, pyarrow, av, torchcodec). rosie never records, so it stays
+  # out there - torchcodec on aarch64 is pinned to a torch version.
+  EXTRA_ARGS=(--extra jetson --extra dataset)
   echo "machine : Jetson ($(tr -d '\0' < /proc/device-tree/model 2>/dev/null))"
   echo "extras  : jetson  (torch from the cu132 index - GPU)"
+  echo "          dataset (this machine records)"
 else
   echo "machine : not a Jetson"
   echo "extras  : none    (torch from PyPI - CPU)"
@@ -43,3 +47,19 @@ uv sync "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" "$@" || exit $?
 
 echo
 torch_report
+if is_jetson; then
+  # The dataset stack has to agree with torch: torchcodec is built against a
+  # specific torch release. Recording writes video through PyAV and survives
+  # a mismatch; reading the dataset back (training, replay) does not.
+  "${RUN[@]}" --no-sync python - <<'PY' 2>/dev/null || echo "dataset : NOT importable - lerobot-record will fail"
+import importlib.metadata as m
+v = {p: m.version(p) for p in ("datasets", "av", "torchcodec")}
+print("dataset : " + "  ".join(f"{k} {x}" for k, x in v.items()))
+try:
+    import torchcodec.decoders  # noqa: F401  loads the native library against this torch
+    print("          torchcodec loads against this torch")
+except Exception as e:
+    print(f"          torchcodec does NOT load against this torch: {type(e).__name__}: {str(e)[:120]}")
+    print("          recording still works (PyAV encodes); reading back needs video_backend=pyav")
+PY
+fi

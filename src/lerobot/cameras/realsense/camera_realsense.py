@@ -686,12 +686,17 @@ class RealSenseCamera(Camera):
 
                 if self.use_rgb:
                     color_frame_raw = frame.get_color_frame()
-                    color_frame = np.asanyarray(color_frame_raw.get_data())
+                    # FORK-LOCAL: copy. get_data() is a view into librealsense's
+                    # frame buffer, which is recycled once `frame` is released;
+                    # with color_mode RGB nothing downstream copies it before it
+                    # is queued for the dataset writer. (BGR hid this: cvtColor
+                    # allocates.) 640x480x3 is 0.9 MB, ~0.2 ms.
+                    color_frame = np.array(color_frame_raw.get_data(), copy=True)
                     processed_color_frame = self._postprocess_image(color_frame)
 
                 if self.use_depth:
                     depth_frame_raw = frame.get_depth_frame()
-                    depth_frame = np.asanyarray(depth_frame_raw.get_data())
+                    depth_frame = np.array(depth_frame_raw.get_data(), copy=True)  # FORK-LOCAL: as above
                     processed_depth_frame = self._postprocess_image(depth_frame, depth_frame=True)
                     if processed_depth_frame.ndim == 2:  # (H, W) -> (H, W, 1)
                         processed_depth_frame = processed_depth_frame[..., np.newaxis]

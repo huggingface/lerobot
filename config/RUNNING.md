@@ -158,8 +158,15 @@ episode, left re-records it, escape stops. Run it from an SSH session you
 are attached to, inside tmux if you like — lerobot falls back to a terminal
 listener when pynput cannot capture, so an SSH TTY works.
 
-`push_to_hub` defaults to true. `hf auth login` once; `--dataset.push_to_hub=false`
-to stay local.
+The script records **locally** (`PUSH_TO_HUB=true` to upload; `hf auth login`
+once first), encodes **h264** (`VCODEC=` to change; lerobot's AV1 default is
+slow on the Orin), writes frames in 2 processes, and turns lerobot's spoken
+prompts off. Datasets land in `~/.cache/huggingface/lerobot/<repo_id>`. The
+Jetson needs the `dataset` extra, which `./config/sync.sh` adds and checks.
+
+The shared yaml's top-level `fps:` is a teleop field that `lerobot-record`
+rejects; the script records from a copy without it, so the yaml stays
+shared. The head camera is RGB now, like the wrists (it was BGR).
 
 ---
 
