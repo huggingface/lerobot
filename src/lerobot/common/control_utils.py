@@ -17,6 +17,7 @@ from __future__ import annotations
 ########################################################################################
 # Utilities
 ########################################################################################
+import logging
 import time
 from contextlib import nullcontext
 from copy import copy
@@ -39,6 +40,11 @@ if TYPE_CHECKING:
 from lerobot.lerobot_types import PolicyAction, RobotAction
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.robots import Robot
+
+logger = logging.getLogger(__name__)
+
+# Below this share of the recording rate, more than 1 in 20 recorded frames repeats the one before.
+_MIN_CAMERA_FPS_RATIO = 0.95
 
 
 def predict_action(
@@ -161,6 +167,45 @@ def sanity_check_dataset_robot_compatibility(
         raise ValueError(
             "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
         )
+
+
+def sanity_check_camera_fps(robot: Robot, fps: int) -> list[str]:
+    """Warn about connected cameras that deliver fewer frames per second than the recording rate.
+
+    A camera configured without `fps` runs in its own default mode, which on some webcams is far below
+    a typical recording rate (5 fps has been seen on macOS). The dataset is still written at `fps`, so
+    each camera frame is repeated several times and nothing else reports it.
+
+    A camera is reported when it delivers less than 95% of `fps`, i.e. when more than 1 in 20 recorded
+    frames would repeat the one before (29.97 fps for a 30 fps recording passes). Call this after
+    `robot.connect()`: only then do the cameras report the rate they actually run at. Cameras that
+    report no rate are skipped.
+
+    Args:
+        robot (`Robot`):
+            The connected robot whose cameras are checked.
+        fps (`int`):
+            The recording rate, in frames per second.
+
+    Returns:
+        `list[str]`: One message per camera that runs slower than `fps`, each also logged as a warning.
+        Empty when every camera keeps up.
+    """
+    problems = []
+    for name, camera in getattr(robot, "cameras", {}).items():
+        camera_fps = getattr(camera, "fps", None)
+        if not camera_fps or camera_fps <= 0:
+            continue
+        if camera_fps < _MIN_CAMERA_FPS_RATIO * fps:
+            repeats = 1 - camera_fps / fps
+            problems.append(
+                f"Camera '{name}' runs at {camera_fps:g} fps, below the recording rate of {fps} fps: "
+                f"about {repeats:.0%} of its frames in the dataset will repeat the frame before. "
+                f"Set `fps: {fps}` in its camera config, or record at a rate it supports."
+            )
+    for problem in problems:
+        logger.warning(problem)
+    return problems
 
 
 ########################################################################################

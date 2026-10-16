@@ -219,6 +219,34 @@ def test_record_forwards_compressed_images_setting_to_reset_phase(tmp_path):
     ] == [True, True, True]
 
 
+def test_record_checks_camera_fps_once_the_robot_is_connected(tmp_path):
+    robot_cfg = MockRobotConfig()
+    teleop_cfg = MockTeleopConfig()
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "camera_fps",
+        num_episodes=1,
+        episode_time_s=0.1,
+        reset_time_s=0,
+        push_to_hub=False,
+    )
+    cfg = RecordConfig(robot=robot_cfg, dataset=dataset_cfg, teleop=teleop_cfg, play_sounds=False)
+    connected_at_check = []
+
+    def spy(robot, fps):
+        # Only a connected camera reports the rate it actually runs at.
+        connected_at_check.append(robot.is_connected)
+        return []
+
+    with patch("lerobot.scripts.lerobot_record.sanity_check_camera_fps", side_effect=spy) as check:
+        record(cfg)
+
+    check.assert_called_once()
+    assert check.call_args.args[1] == dataset_cfg.fps
+    assert connected_at_check == [True]
+
+
 def test_record_loop_without_a_teleoperator_paces_and_terminates():
     # Regression: the no-teleop branch used to `continue` past both the pacing sleep and
     # the `timestamp` update, so a reset phase with no teleop device spun as fast as the
