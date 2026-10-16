@@ -26,8 +26,13 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.policies.eo1.configuration_eo1 import EO1Config
 
+# The public package also exports inference settings such as RTCConfig.
 POLICY_CONFIGS = [
-    getattr(lerobot.policies, name) for name in lerobot.policies.__all__ if name.endswith("Config")
+    config_cls
+    for name in lerobot.policies.__all__
+    if isinstance(config_cls := getattr(lerobot.policies, name), type)
+    and issubclass(config_cls, PreTrainedConfig)
+    and config_cls is not PreTrainedConfig
 ]
 
 
