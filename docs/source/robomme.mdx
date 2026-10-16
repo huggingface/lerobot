@@ -1,5 +1,13 @@
 # RoboMME
 
+<Tip>
+  The commands below run the simulator in-process. To keep its dependencies away
+  from your policy's, serve it instead with `lerobot-env-server --docker
+  --config=docker/sims/configs/robomme.yaml` and add
+  `--env.endpoint=tcp/127.0.0.1:7448` to the same commands (see [Simulation:
+  in-process or served](./simulator_server)).
+</Tip>
+
 [RoboMME](https://robomme.github.io) is a memory-augmented manipulation benchmark built on ManiSkill (SAPIEN). It evaluates a robot's ability to retain and use information across an episode — counting, object permanence, reference, and imitation.
 
 - **16 tasks** across 4 memory-skill suites
@@ -34,12 +42,13 @@ pip install --override <(printf 'gymnasium==0.29.1\nnumpy==1.26.4\n') \
 
 ### Docker (recommended)
 
+Run RoboMME in its own simulator image, so its `numpy`/`gymnasium` pins never meet LeRobot's:
+
 ```bash
-# Build the RoboMME evaluation image from the repo root
-docker build -f docker/Dockerfile.benchmark.robomme -t lerobot-benchmark-robomme .
+lerobot-env-server --docker --config=docker/sims/configs/robomme.yaml
 ```
 
-The benchmark Dockerfile extends the published `huggingface/lerobot-gpu:latest` image, then overrides `gymnasium==0.29.1` and `numpy==1.26.4`. Both versions are runtime-safe for lerobot's actual API usage.
+Then evaluate with `--env.type=robomme --env.endpoint=tcp/127.0.0.1:7448` (see [Simulation: in-process or served](./simulator_server)).
 
 ## Running Evaluation
 
@@ -106,7 +115,7 @@ dataset = LeRobotDataset("lerobot/robomme")
 
 ### Feature key alignment (training)
 
-The env wrapper exposes its cameras under `pixels/<camera_name>`, named by `RoboMMEEnv.front_camera_name` and `RoboMMEEnv.wrist_camera_name` (`camera1` and `camera2` by default). The `features_map` in `RoboMMEEnv` maps these to `observation.images.camera1` and `observation.images.camera2` for the policy. State is exposed as `agent_pos` and maps to `observation.state`.
+The env wrapper exposes its cameras under `pixels/<camera_name>`, named by `RoboMMEEnv.front_camera_name` and `RoboMMEEnv.wrist_camera_name` (`camera1` and `camera2` by default). The policy receives them as `observation.images.camera1` and `observation.images.camera2`, and the state (`agent_pos`) as `observation.state`.
 
 The dataset's raw columns do not match those policy keys, so pass a `--rename_map` when fine-tuning:
 

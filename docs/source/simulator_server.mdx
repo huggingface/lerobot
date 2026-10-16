@@ -1,0 +1,103 @@
+# Simulation: in-process or served
+
+A simulated environment can be driven in two ways:
+
+- as a **batched env** (`--env.*`): many worlds of one task, stepped together in lockstep. `lerobot-eval` and evaluation during training use it.
+- as a **sim robot** (`--robot.type=sim`): one world behind the `Robot` interface, swappable with real hardware. `lerobot-rollout`, `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay` use it.
+
+Either runs **in-process**, in the policy's Python environment, or **served** by `lerobot-env-server`, usually in its own Docker image, so that the simulator's dependencies never meet the policy's. Setting an `endpoint` is the only difference: both run the same session code, with the same canonical observations (HWC uint8 images, flat float32 state), the same episode ends and the same control conventions.
+
+## Evaluate a checkpoint
+
+In-process, with the simulator installed next to LeRobot (see [LIBERO](./libero)):
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_libero \
+  --policy.pretrained_revision=a24f1f380461b665158d52acd140152c79e8b36d \
+  --policy.device=cuda \
+  --env.type=libero --env.task=libero_spatial --env.task_ids='[0]' \
+  --rename_map='{"observation.images.image": "observation.images.camera1", "observation.images.image2": "observation.images.camera2"}' \
+  --eval.n_episodes=1 --eval.batch_size=1 \
+  --output_dir=outputs/eval_libero
+```
+
+Served: start the server with the same environment (see [Serve an environment](#serve-an-environment)), and add its endpoint:
+
+```bash
+lerobot-env-server --docker --config=docker/sims/configs/libero.yaml
+lerobot-eval ... --env.endpoint=tcp/127.0.0.1:7448
+```
+
+The server must run the environment the command describes: the same type, task and control conventions, or the evaluation refuses to start and lists the differences. Other options that differ (resolution, episode length) are logged as warnings.
+
+Observation names come from the environment (`observation.images.<camera>`, `observation.state`). When a checkpoint was trained with other camera names, map them with `--rename_map`, as for any robot, and preserve each camera's identity even when several have the same shape. Placeholder cameras (`empty_cameras`) are a policy setting saved with the checkpoint; override it with `--policy.empty_cameras` only when needed.
+
+Before the first step, every checkpoint input must exist in the environment after renaming, with matching state and action dimensions and RGB channel count. Image height and width may differ: policy preprocessing owns resizing. Controller conventions (delta vs absolute actions, rotation format) are not checked; use a checkpoint trained on the environment's convention.
+
+The worlds of a batch advance in lockstep. A world that ends keeps its terminal observation until the next reset; stepping the others never restarts it. With `--eval.use_async_envs=true` (the default), each world runs in its own process, in-process or on the server, and the batch steps in parallel. A server admits up to `max_envs` worlds per batch (32 by default).
+
+## Run a sim robot
+
+```bash
+lerobot-rollout \
+  --robot.type=sim --robot.env.type=libero --robot.env.task=libero_spatial --robot.task_id=0 \
+  --policy.path=lerobot/smolvla_libero \
+  --policy.pretrained_revision=a24f1f380461b665158d52acd140152c79e8b36d \
+  --rename_map='{"observation.images.image": "observation.images.camera1", "observation.images.image2": "observation.images.camera2"}' \
+  --device=cuda --fps=20 --inference.type=sync \
+  --display_data=true --display_mode=rerun \
+  --return_to_initial_position=false --play_sounds=false
+```
+
+- `--robot.env.*` takes the same options as `--env.*` in evaluation. EnvHub environments are `--robot.env.type=envhub --robot.env.hub_path=<user/repo> --robot.env.trust_remote_code=true`.
+- `--robot.endpoint=tcp/...` drives the world on an env server instead. With `--robot.env.*` too, the robot checks that the server runs that environment; with the endpoint alone, it drives whatever the server serves.
+- `--robot.clock=realtime` (the default) advances the world at its control rate, also while the policy computes, as hardware does. `--robot.clock=lockstep` advances it exactly one step per action, which makes a rollout reproducible.
+- `--fps` must equal the environment's control rate; rollout refuses to start otherwise.
+
+A sim robot is a robot: swap `--robot.type=sim --robot.env.*` for the real follower's `--robot.*`, and everything else stays. A teleoperator drives it as it drives the real follower (`--teleop.type=so101_leader` for an SO-101 twin), when the environment declares the follower's action names and units; a mismatch is reported at the first action. Teleoperation needs the realtime clock.
+
+The episodic rollout strategy resets the world between episodes and stops on success or termination. The policy follows, and recordings use, the world's task description. In interactive mode, an instruction set with `/subtask` survives the world reset of the next `/start`; `/reset` restores the world's task.
+
+For remote inference, keep the same `--robot.*` options and replace the local policy and inference options with:
+
+```bash
+--inference.type=remote \
+--inference.endpoint=tcp/127.0.0.1:7447 \
+--inference.deployment=libero \
+--inference.semantics=libero-delta-v1
+```
+
+Start the policy server separately using [remote inference setup](./remote_inference). Its schema must match the robot's observations after `--rename_map`. `docker/sims/policy_libero.yaml` provides the LIBERO policy-server configuration. Omit `--policy.path` from the rollout command because the policy server loads the checkpoint. For local RTC, use `--inference.type=rtc` with the policy's RTC settings.
+
+Delta-controller hold sends zero motion while retaining the gripper command; position hold retains applied targets. Simulator failures propagate to rollout shutdown.
+
+## Serve an environment
+
+From a LeRobot source checkout (the image is built from it), run from the repository root:
+
+```bash
+lerobot-env-server --docker --config=docker/sims/configs/libero.yaml
+```
+
+`--docker` uses `docker/sims/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Swap the YAML to select another simulator. Each simulator's control rate, action convention and component names come from `src/lerobot/sims/conventions.py`, so a YAML only names the task and the simulator's options.
+
+`--set` overrides keys of the YAML (values parsed as YAML) and leaves the file unchanged:
+
+```bash
+lerobot-env-server --docker --config=docker/sims/configs/libero.yaml \
+  --set sim.kwargs.gym_kwargs.observation_height=256 \
+  --set sim.kwargs.gym_kwargs.observation_width=256
+```
+
+The effective configuration is kept in a temporary cache for container restarts; rerun the command after a host reboot. Switching configuration recreates the server and ends active sessions. The image is built when missing; add `--build` to rebuild it after changing the simulator or LeRobot source, or `--stop` to shut down the server. The container requires Docker GPU access for EGL rendering. [EnvHub](./envhub) repositories are served with `--envhub=<user/repo>`; see [EnvHub and the simulator server](./envhub#envhub-and-the-simulator-server).
+
+Without `--docker`, the same command runs the server in the current environment: install the simulator's native dependencies in an isolated environment, install LeRobot with `--no-deps`, and install `docker/sims/requirements.txt`.
+
+LIBERO runtime images use converted NumPy initial-state files. The image build converts trusted upstream assets with `scripts/ci/convert_sim_assets.py`; the server rejects missing converted files. RoboTwin and RoboMME require their own torch for native planning and ManiSkill, respectively; their torch installations are isolated from the policy environment.
+
+Server requests are never retried. After an ambiguous timeout, the client fails; close it and open a new session.
+
+## Add a benchmark
+
+See [Adding a benchmark](./adding_benchmarks) for simulator modules, conventions, images, and CI integration.
