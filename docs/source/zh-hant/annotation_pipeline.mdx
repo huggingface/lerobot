@@ -110,7 +110,7 @@ VLM 溝通。每個模組會先把輸出暫存到磁碟，經過驗證器檢查�
 
 ## 在 Hugging Face Jobs 上執行[[running-on-hugging-face-jobs]]
 
-標註真實的資料集，需要一張大到足以運行 VLM 的 GPU，因此
+標註真實的資料集，需要一張大到足以執行 VLM 的 GPU，因此
 `lerobot-annotate` 可以把自己交給
 [Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs)——與
 `lerobot-train` 相同。在你原本要在本機執行的指令上加上
@@ -204,7 +204,7 @@ pod 結束時被丟棄。
 
 | 旗標                       | 預設值             | 作用                                                                              |
 | -------------------------- | ------------------ | --------------------------------------------------------------------------------- |
-| `--vlm.model_id`           | `Qwen/Qwen3.6-27B` | 要運行並送出提示的模型。                                                          |
+| `--vlm.model_id`           | `Qwen/Qwen3.6-27B` | 要執行並送出提示的模型。                                                          |
 | `--vlm.camera_key`         | 第一個 `images.*`  | 所有提示要依據的相機畫面。                                                        |
 | `--vlm.serve_command`      | 自動               | 完整的 `vllm serve …` 指令（在這裡設定 TP 大小、GPU 記憶體、`--max-model-len`）。 |
 | `--vlm.parallel_servers`   | `1`                | 以輪流分派方式使用的獨立伺服器數量（每張 GPU 一個）。                             |
