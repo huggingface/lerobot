@@ -16,6 +16,7 @@
 
 """Tests for Unitree G1 teleoperator. Meant to be run in an environment where the Unitree SDK is installed."""
 
+import struct
 from unittest.mock import MagicMock
 
 import pytest
@@ -30,10 +31,53 @@ from lerobot.teleoperators.unitree_g1.config_unitree_g1 import (
     ExoskeletonArmPortConfig,
     UnitreeG1TeleoperatorConfig,
 )
-from lerobot.teleoperators.unitree_g1.unitree_g1 import RemoteController, UnitreeG1Teleoperator
+from lerobot.teleoperators.unitree_g1.exo_serial import ExoJoystick
+from lerobot.teleoperators.unitree_g1.unitree_g1 import RemoteInput, UnitreeG1Teleoperator, WirelessRemote
+
+
+def _wireless_bytes(lx=0.0, ly=0.0, rx=0.0, ry=0.0, buttons=0) -> bytes:
+    """Builds a 40-byte wireless_remote payload: button bits in bytes 2-3, stick floats after."""
+    data = bytearray(40)
+    data[2:4] = buttons.to_bytes(2, "little")
+    data[4:8] = struct.pack("f", lx)
+    data[8:12] = struct.pack("f", rx)
+    data[12:16] = struct.pack("f", ry)
+    data[20:24] = struct.pack("f", ly)
+    return bytes(data)
+
 
 # ---------------------------------------------------------------------------
-# Tests for RemoteController
+# Tests for RemoteInput
+# ---------------------------------------------------------------------------
+
+
+def test_remote_input_defaults():
+    remote = RemoteInput()
+    assert not remote.is_active
+    assert len(remote.buttons) == 16
+    assert remote.to_action() == dict.fromkeys(REMOTE_AXES, 0.0)
+
+
+def test_remote_input_to_action():
+    remote = RemoteInput(lx=0.5, ly=-0.3, rx=0.1, ry=0.0)
+    assert remote.to_action() == {
+        "remote.lx": 0.5,
+        "remote.ly": -0.3,
+        "remote.rx": 0.1,
+        "remote.ry": 0.0,
+    }
+
+
+def test_remote_input_is_active():
+    assert not RemoteInput(lx=5e-4).is_active  # below the noise threshold
+    assert RemoteInput(ry=-0.2).is_active
+    buttons = [0] * 16
+    buttons[8] = 1
+    assert RemoteInput(buttons=buttons).is_active
+
+
+# ---------------------------------------------------------------------------
+# Tests for WirelessRemote
 # ---------------------------------------------------------------------------
 
 
@@ -52,111 +96,61 @@ def _make_joystick_mock():
 
 
 @pytest.fixture
-def remote_controller():
-    """Create a RemoteController with a mocked Joystick."""
+def wireless_remote():
+    """Create a WirelessRemote with a mocked Joystick."""
     mock_joystick = _make_joystick_mock()
 
-    rc = RemoteController()
-    rc._joystick = mock_joystick
-    yield rc, mock_joystick
+    remote = WirelessRemote()
+    remote._joystick = mock_joystick
+    yield remote, mock_joystick
 
 
-def test_remote_controller_init(remote_controller):
-    rc, _ = remote_controller
-    assert rc.lx == 0.0
-    assert rc.ly == 0.0
-    assert rc.rx == 0.0
-    assert rc.ry == 0.0
-    assert len(rc.button) == 16
-    assert all(b == 0 for b in rc.button)
-
-
-def test_sync_remote_action(remote_controller):
-    rc, _ = remote_controller
-    rc.lx = 0.5
-    rc.ly = -0.3
-    rc.rx = 0.1
-    rc.ry = 0.0
-    rc._sync_remote_action()
-
-    assert rc.remote_action["remote.lx"] == 0.5
-    assert rc.remote_action["remote.ly"] == -0.3
-    assert rc.remote_action["remote.rx"] == 0.1
-    assert rc.remote_action["remote.ry"] == 0.0
-
-
-def test_set_from_wireless_calls_extract(remote_controller):
-    rc, mock_joystick = remote_controller
-    # Set up the mock to populate data after extract
+def test_parse_calls_extract(wireless_remote):
+    remote, mock_joystick = wireless_remote
     mock_joystick.lx.data = 0.5
     mock_joystick.ly.data = -0.3
     mock_joystick.rx.data = 0.1
     mock_joystick.ry.data = 0.0
 
     wireless_data = b"\x00" * 40
-    rc.set_from_wireless(wireless_data)
+    parsed = remote.parse(wireless_data)
 
     mock_joystick.extract.assert_called_once_with(wireless_data)
-    assert rc.lx == 0.5
-    assert rc.ly == -0.3
+    assert parsed is not None
+    assert parsed.lx == 0.5
+    assert parsed.ly == -0.3
 
 
-def test_set_from_wireless_short_data(remote_controller):
-    rc, mock_joystick = remote_controller
-    rc.set_from_wireless(b"\x00" * 10)  # Too short
+def test_parse_short_data(wireless_remote):
+    remote, mock_joystick = wireless_remote
+    assert remote.parse(b"\x00" * 10) is None  # Too short
     mock_joystick.extract.assert_not_called()
 
 
-def test_set_from_wireless_buttons(remote_controller):
-    rc, mock_joystick = remote_controller
-    # Simulate RB pressed
+def test_parse_buttons(wireless_remote):
+    remote, mock_joystick = wireless_remote
     mock_joystick.RB.data = 1
-    mock_joystick.lx.data = 0.0
-    mock_joystick.ly.data = 0.0
-    mock_joystick.rx.data = 0.0
-    mock_joystick.ry.data = 0.0
+    mock_joystick.A.data = 1
 
-    rc.set_from_wireless(b"\x00" * 40)
-    assert rc.button[0] == 1  # RB maps to button[0]
-
-
-def test_set_from_exo_left(remote_controller):
-    rc, _ = remote_controller
-    rc.use_left_exo_joystick = True
-    rc.left_center_x = 2048
-    rc.left_center_y = 2048
-
-    raw16 = [0] * 16
-    raw16[11] = 3048  # X axis: (3048 - 2048) / 2047.5 ≈ 0.488
-    raw16[13] = 1048  # Y axis: (1048 - 2048) / 2047.5 ≈ -0.488
-    raw16[12] = 0  # Button pressed (below ADC_HALF)
-
-    rc.set_from_exo(raw16, "left")
-    assert rc.lx == pytest.approx((3048 - 2048) / 2047.5, abs=1e-3)
-    assert rc.ly == pytest.approx((1048 - 2048) / 2047.5, abs=1e-3)
-    assert rc.button[4] == 1  # Left button maps to button[4]
+    parsed = remote.parse(b"\x00" * 40)
+    assert parsed is not None
+    assert parsed.buttons[0] == 1  # RB maps to button[0]
+    assert parsed.buttons[8] == 1  # A maps to button[8]
+    assert sum(parsed.buttons) == 2
 
 
-def test_set_from_exo_clears_button(remote_controller):
-    rc, _ = remote_controller
-    rc.use_left_exo_joystick = True
-    rc.button[4] = 1  # Pre-set
-
-    raw16 = [0] * 16
-    raw16[12] = 4000  # Button NOT pressed (above ADC_HALF)
-
-    rc.set_from_exo(raw16, "left")
-    assert rc.button[4] == 0  # Should be cleared
-
-
-def test_set_from_exo_ignored_when_not_enabled(remote_controller):
-    rc, _ = remote_controller
-    rc.use_left_exo_joystick = False
-    raw16 = [0] * 16
-    raw16[11] = 3000
-
-    rc.set_from_exo(raw16, "left")
-    assert rc.lx == 0.0  # Unchanged
+def test_parse_raw_bytes():
+    """Decodes a real payload with the SDK parser, smoothing and deadzone disabled."""
+    parsed = WirelessRemote().parse(_wireless_bytes(lx=0.25, ly=-0.5, rx=0.75, ry=-1.0, buttons=0b1 | 1 << 8))
+    assert parsed is not None
+    assert parsed.to_action() == {
+        "remote.lx": 0.25,
+        "remote.ly": -0.5,
+        "remote.rx": 0.75,
+        "remote.ry": -1.0,
+    }
+    assert parsed.buttons[0] == 1  # RB
+    assert parsed.buttons[8] == 1  # A
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +217,21 @@ def test_remote_only_get_action(teleop_remote_only):
     assert all(isinstance(v, float) for v in action.values())
 
 
+def test_remote_only_action_follows_wireless(teleop_remote_only):
+    teleop = teleop_remote_only
+    teleop.connect()
+    teleop.on_observation({"wireless_remote": _wireless_bytes(lx=0.5, ly=-0.25)})
+    assert teleop.get_action() == {"remote.lx": 0.5, "remote.ly": -0.25, "remote.rx": 0.0, "remote.ry": 0.0}
+
+
+def test_on_observation_ignores_short_payload(teleop_remote_only):
+    teleop = teleop_remote_only
+    teleop.connect()
+    teleop.on_observation({"wireless_remote": _wireless_bytes(lx=0.5)})
+    teleop.on_observation({"wireless_remote": b"\x00" * 10})
+    assert teleop.get_action()["remote.lx"] == 0.5
+
+
 def test_send_feedback(teleop_remote_only):
     teleop = teleop_remote_only
     teleop.connect()
@@ -245,6 +254,63 @@ def test_asymmetric_exo_ports_raises():
     )
     with pytest.raises(ValueError, match="set both left/right"):
         UnitreeG1Teleoperator(cfg)
+
+
+@pytest.fixture
+def teleop_with_exo(tmp_path):
+    """A UnitreeG1Teleoperator with exo arms whose serial, IK and thumbsticks are mocked."""
+    cfg = UnitreeG1TeleoperatorConfig(
+        left_arm_config=ExoskeletonArmPortConfig(port="/dev/ttyACM0"),
+        right_arm_config=ExoskeletonArmPortConfig(port="/dev/ttyACM1"),
+        calibration_dir=tmp_path,
+    )
+    teleop = UnitreeG1Teleoperator(cfg)
+    teleop.ik_helper = MagicMock(compute_g1_joints_from_exo=MagicMock(return_value={"left_shoulder.q": 0.1}))
+    teleop.left_arm = MagicMock(read_raw=MagicMock(return_value=[0] * 16), angles_from_raw=MagicMock())
+    teleop.right_arm = MagicMock(read_raw=MagicMock(return_value=[0] * 16), angles_from_raw=MagicMock())
+    teleop.left_arm.joystick_from_raw.return_value = ExoJoystick(x=0.0, y=0.0, pressed=False)
+    teleop.right_arm.joystick_from_raw.return_value = ExoJoystick(x=0.0, y=0.0, pressed=False)
+    yield teleop
+
+
+def test_exo_joystick_drives_when_wireless_idle(teleop_with_exo):
+    teleop = teleop_with_exo
+    teleop.left_arm.joystick_from_raw.return_value = ExoJoystick(x=0.4, y=-0.2, pressed=False)
+    teleop.on_observation({"wireless_remote": _wireless_bytes()})
+
+    action = teleop.get_action()
+    assert action["left_shoulder.q"] == 0.1
+    assert action["remote.lx"] == pytest.approx(0.4)
+    assert action["remote.ly"] == pytest.approx(-0.2)
+
+
+def test_wireless_overrides_exo_joystick(teleop_with_exo):
+    teleop = teleop_with_exo
+    teleop.left_arm.joystick_from_raw.return_value = ExoJoystick(x=0.4, y=-0.2, pressed=False)
+    teleop.on_observation({"wireless_remote": _wireless_bytes(rx=0.6)})
+
+    action = teleop.get_action()
+    assert action["remote.lx"] == 0.0
+    assert action["remote.rx"] == pytest.approx(0.6)
+
+
+def test_exo_joystick_returns_to_rest_without_wireless_data(teleop_with_exo):
+    """Without wireless_remote in the observation, a released exo stick must read zero again."""
+    teleop = teleop_with_exo
+    teleop.left_arm.joystick_from_raw.return_value = ExoJoystick(x=0.4, y=0.0, pressed=False)
+    assert teleop.get_action()["remote.lx"] == pytest.approx(0.4)
+
+    teleop.left_arm.joystick_from_raw.return_value = ExoJoystick(x=0.0, y=0.0, pressed=False)
+    assert teleop.get_action()["remote.lx"] == 0.0
+
+
+def test_missing_exo_sample_keeps_last_joystick_reading(teleop_with_exo):
+    teleop = teleop_with_exo
+    teleop.left_arm.joystick_from_raw.return_value = ExoJoystick(x=0.4, y=0.0, pressed=False)
+    teleop.get_action()
+
+    teleop.left_arm.joystick_from_raw.return_value = None
+    assert teleop.get_action()["remote.lx"] == pytest.approx(0.4)
 
 
 # ---------------------------------------------------------------------------
@@ -307,3 +373,41 @@ class TestExoskeletonArm:
             side="left",
         )
         assert arm.read_raw() is None
+
+    def _arm_reading(self, raw):
+        from lerobot.teleoperators.unitree_g1.exo_serial import ExoskeletonArm
+
+        arm = ExoskeletonArm(
+            port="/dev/null",
+            calibration_fpath=MagicMock(is_file=MagicMock(return_value=False)),
+            side="left",
+        )
+        arm.read_raw = MagicMock(return_value=raw)
+        return arm
+
+    def test_detect_joystick(self):
+        raw = [0] * 16
+        raw[11], raw[12], raw[13] = 2000, 4000, 2100  # X, button (released = high), Y
+        arm = self._arm_reading(raw)
+        assert arm.detect_joystick()
+
+        raw[11] = 3048  # X: (3048 - 2000) / 2047.5
+        raw[13] = 1100  # Y: (1100 - 2100) / 2047.5
+        raw[12] = 0  # Button pressed (below ADC_HALF)
+        stick = arm.joystick_from_raw(raw)
+        assert stick is not None
+        assert stick.x == pytest.approx((3048 - 2000) / 2047.5, abs=1e-3)
+        assert stick.y == pytest.approx((1100 - 2100) / 2047.5, abs=1e-3)
+        assert stick.pressed
+
+    def test_detect_joystick_absent(self):
+        raw = [0] * 16
+        raw[12] = 100  # No stick fitted: the button channel reads low
+        arm = self._arm_reading(raw)
+        assert not arm.detect_joystick()
+        assert arm.joystick_from_raw(raw) is None
+
+    def test_detect_joystick_no_data(self):
+        arm = self._arm_reading(None)
+        assert not arm.detect_joystick()
+        assert arm.joystick_from_raw(None) is None

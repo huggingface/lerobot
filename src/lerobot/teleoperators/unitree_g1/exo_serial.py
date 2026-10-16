@@ -33,6 +33,12 @@ from .exo_calib import ExoskeletonCalibration, exo_raw_to_angles, run_exo_calibr
 
 logger = logging.getLogger(__name__)
 
+# Optional thumbstick, read on three channels of the 12-bit ADC sample.
+ADC_HALF = 4095 / 2
+JOYSTICK_X_IDX = 11
+JOYSTICK_BTN_IDX = 12
+JOYSTICK_Y_IDX = 13
+
 
 def parse_raw16(line: bytes) -> list[int] | None:
     try:
@@ -65,6 +71,15 @@ def read_raw_from_serial(ser) -> list[int] | None:
         return None
 
 
+@dataclass(frozen=True)
+class ExoJoystick:
+    """Thumbstick deflection in [-1, 1] around its rest position, and whether it is pushed in."""
+
+    x: float
+    y: float
+    pressed: bool
+
+
 @dataclass
 class ExoskeletonArm:
     port: str
@@ -74,6 +89,8 @@ class ExoskeletonArm:
 
     _ser: serial.Serial | None = None
     calibration: ExoskeletonCalibration | None = None
+    # Thumbstick rest position (x, y), set by detect_joystick(); None when no stick is fitted.
+    _joystick_center: tuple[int, int] | None = None
 
     def __post_init__(self):
         require_package("pyserial", extra="unitree_g1", import_name="serial")
@@ -122,10 +139,38 @@ class ExoskeletonArm:
         return read_raw_from_serial(self._ser)
 
     def get_angles(self) -> dict[str, float]:
+        return self.angles_from_raw(self.read_raw())
+
+    def angles_from_raw(self, raw: list[int] | None) -> dict[str, float]:
         if not self.calibration:
             raise RuntimeError("exoskeleton not calibrated")
-        raw = self.read_raw()
         return {} if raw is None else exo_raw_to_angles(raw, self.calibration)
+
+    def detect_joystick(self) -> bool:
+        """Records the thumbstick's rest position. A fitted stick holds its button channel high."""
+        raw = self.read_raw()
+        if raw is None:
+            logger.info(f"{self.side.capitalize()} exo joystick: no data available")
+            return False
+
+        btn_val = raw[JOYSTICK_BTN_IDX]
+        if btn_val <= ADC_HALF:
+            logger.info(f"{self.side.capitalize()} exo joystick not detected (button ADC: {btn_val})")
+            return False
+
+        self._joystick_center = (raw[JOYSTICK_X_IDX], raw[JOYSTICK_Y_IDX])
+        logger.info(f"{self.side.capitalize()} exo joystick enabled, center: {self._joystick_center}")
+        return True
+
+    def joystick_from_raw(self, raw: list[int] | None) -> ExoJoystick | None:
+        if raw is None or self._joystick_center is None:
+            return None
+        center_x, center_y = self._joystick_center
+        return ExoJoystick(
+            x=(raw[JOYSTICK_X_IDX] - center_x) / ADC_HALF,
+            y=(raw[JOYSTICK_Y_IDX] - center_y) / ADC_HALF,
+            pressed=raw[JOYSTICK_BTN_IDX] < ADC_HALF,
+        )
 
     def calibrate(self) -> None:
         if not self.is_connected:
