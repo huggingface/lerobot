@@ -121,6 +121,22 @@ def test_add_frame_increments_buffer_size(tmp_path):
     assert dataset.writer.episode_buffer["size"] == 2
 
 
+
+def test_add_frame_accepts_list_declared_shapes(tmp_path):
+    """add_frame() accepts features whose "shape" is declared as a list (as loaded
+    from a hub dataset info.json); validation must not compare that list against
+    np.ndarray.shape, which is always a tuple."""
+    features = {
+        "state": {"dtype": "float32", "shape": [6], "names": None},
+        "action": {"dtype": "float32", "shape": [6], "names": None},
+    }
+    dataset = LeRobotDataset.create(
+        repo_id=DUMMY_REPO_ID, fps=DEFAULT_FPS, features=features, root=tmp_path / "ds"
+    )
+    dataset.add_frame(_make_frame(features))
+    assert dataset.writer.episode_buffer["size"] == 1
+
+
 def test_add_frame_rejects_missing_feature(tmp_path):
     """add_frame() raises ValueError when a required feature is missing."""
     dataset = LeRobotDataset.create(
