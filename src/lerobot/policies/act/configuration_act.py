@@ -160,8 +160,10 @@ class ACTConfig(PreTrainedConfig):
         return None
 
     def validate_features(self) -> None:
-        if not self.image_features and not self.env_state_feature:
-            raise ValueError("You must provide at least one image or the environment state among the inputs.")
+        if not self.image_features and not self.env_state_feature and not self.robot_state_feature:
+            raise ValueError(
+                "You must provide at least one image, the environment state, or the robot state among the inputs."
+            )
 
     @property
     def observation_delta_indices(self) -> None:
