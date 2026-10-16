@@ -14,9 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Custom rotation utilities to replace scipy.spatial.transform.Rotation."""
+"""Custom rotation utilities to replace scipy.spatial.transform.Rotation.
+
+The `Rotation` class is NumPy and follows scipy's `[x, y, z, w]` quaternion order. The
+functions below it are torch: they run inside processor steps on batched GPU tensors, which
+must keep their device and dtype. The torch quaternions use `[w, x, y, z]`.
+"""
 
 import numpy as np
+import torch
+from torch import Tensor
 
 
 class Rotation:
@@ -271,3 +278,78 @@ class Rotation:
         )
 
         return Rotation(composed_quat)
+
+
+def rotvec_to_quaternion(rotvec: Tensor) -> Tensor:
+    angle = torch.linalg.vector_norm(rotvec, dim=-1, keepdim=True)
+    angle_sq = angle.square()
+    small_scale = 0.5 - angle_sq / 48.0 + angle_sq.square() / 3840.0
+    scale = torch.where(angle > 1e-6, torch.sin(angle / 2.0) / angle.clamp_min(1e-12), small_scale)
+    return torch.cat((torch.cos(angle / 2.0), rotvec * scale), dim=-1)
+
+
+def quaternion_to_rotvec(quaternion: Tensor) -> Tensor:
+    quaternion = quaternion / torch.linalg.vector_norm(quaternion, dim=-1, keepdim=True).clamp_min(1e-12)
+    quaternion = quaternion * torch.where(quaternion[..., :1] < 0, -1.0, 1.0)
+    vector = quaternion[..., 1:]
+    sin_half_angle = torch.linalg.vector_norm(vector, dim=-1, keepdim=True)
+    angle = 2.0 * torch.atan2(sin_half_angle, quaternion[..., :1].clamp_min(0.0))
+    small_scale = 2.0 + sin_half_angle.square() / 3.0
+    scale = torch.where(
+        sin_half_angle > 1e-6,
+        angle / sin_half_angle.clamp_min(1e-12),
+        small_scale,
+    )
+    return vector * scale
+
+
+def quaternion_multiply(left: Tensor, right: Tensor) -> Tensor:
+    left_w, left_xyz = left[..., :1], left[..., 1:]
+    right_w, right_xyz = right[..., :1], right[..., 1:]
+    return torch.cat(
+        (
+            left_w * right_w - (left_xyz * right_xyz).sum(dim=-1, keepdim=True),
+            left_w * right_xyz + right_w * left_xyz + torch.linalg.cross(left_xyz, right_xyz, dim=-1),
+        ),
+        dim=-1,
+    )
+
+
+def quaternion_conjugate(quaternion: Tensor) -> Tensor:
+    return torch.cat((quaternion[..., :1], -quaternion[..., 1:]), dim=-1)
+
+
+def quaternion_rotate(quaternion: Tensor, vector: Tensor) -> Tensor:
+    quaternion_xyz = quaternion[..., 1:]
+    uv = torch.linalg.cross(quaternion_xyz, vector, dim=-1)
+    uuv = torch.linalg.cross(quaternion_xyz, uv, dim=-1)
+    return vector + 2.0 * (quaternion[..., :1] * uv + uuv)
+
+
+def rotation_6d_to_matrix(rotation_6d: torch.Tensor) -> torch.Tensor:
+    """Build rotation matrices from the continuous 6-D representation (its first two rows).
+
+    Gram-Schmidt orthonormalization, as in Zhou et al., "On the Continuity of Rotation
+    Representations in Neural Networks". A predicted pair of 3-vectors is generally neither unit
+    length nor orthogonal; this is what makes the representation usable as a network output.
+    """
+    if rotation_6d.shape[-1] != 6:
+        raise ValueError(f"A 6-D rotation has six values, got shape {tuple(rotation_6d.shape)}")
+    first, second = rotation_6d[..., :3], rotation_6d[..., 3:]
+    first_norm = torch.linalg.vector_norm(first, dim=-1, keepdim=True)
+    second = second - (first / first_norm.clamp_min(1e-12) * second).sum(dim=-1, keepdim=True) * (
+        first / first_norm.clamp_min(1e-12)
+    )
+    second_norm = torch.linalg.vector_norm(second, dim=-1, keepdim=True)
+    if bool(torch.any(first_norm <= 1e-8)) or bool(torch.any(second_norm <= 1e-8)):
+        raise ValueError("Cannot build a rotation from a degenerate 6-D representation")
+    row1 = first / first_norm
+    row2 = second / second_norm
+    return torch.stack((row1, row2, torch.linalg.cross(row1, row2, dim=-1)), dim=-2)
+
+
+def matrix_to_rotation_6d(matrix: torch.Tensor) -> torch.Tensor:
+    """Drop a rotation matrix down to its first two rows, the inverse of `rotation_6d_to_matrix`."""
+    if matrix.shape[-2:] != (3, 3):
+        raise ValueError(f"Rotation matrices have shape (..., 3, 3), got {tuple(matrix.shape)}")
+    return matrix[..., :2, :].reshape(matrix.shape[:-2] + (6,))
