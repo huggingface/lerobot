@@ -77,8 +77,8 @@ def main() -> int:
     vel = [n for n in state_names if isinstance(n, str) and n.endswith(".vel")]
     print(f"  base velocities: {', '.join(vel) if vel else 'none (base: none)'}")
 
-    out = Path(args.out)
-    out.mkdir(exist_ok=True)
+    out = Path(args.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
     f = ds[ds.num_frames // 2]
     backend = getattr(ds, "video_backend", getattr(ds, "_video_backend", "?"))
     print(f"\nframe {ds.num_frames // 2} decoded (backend: {backend}):")
@@ -89,10 +89,11 @@ def main() -> int:
         dst = out / f"{name}.png"
         cv2.imwrite(str(dst), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         r, g, b = (img[..., i].mean() for i in range(3))
-        print(f"  {name:<12} {img.shape[1]}x{img.shape[0]}  mean R {r:5.1f} G {g:5.1f} B {b:5.1f}  -> {dst}")
+        print(f"  {name:<12} {img.shape[1]}x{img.shape[0]}  mean R {r:5.1f} G {g:5.1f} B {b:5.1f}  -> {dst.name}")
         if img.max() == 0:
             print("               ALL BLACK - camera or decode problem")
             ok = False
+    print(f"  written to {out}")
     print("  look at the PNGs: same colour balance on all three. A head image with")
     print("  red and blue swapped is still recording BGR.")
 
