@@ -169,7 +169,7 @@ class OpenCVCamera(Camera):
             self.videocapture.release()
             self.videocapture = None
             raise ConnectionError(
-                f"Failed to open {self}.Run `lerobot-find-cameras opencv` to find available cameras."
+                f"Failed to open {self}. Run `lerobot-find-cameras opencv` to find available cameras."
             )
 
         try:
