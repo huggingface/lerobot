@@ -73,6 +73,7 @@ class SimRobotConfig(RobotConfig):
     ``env`` names the environment (``--robot.env.type=libero``); its ``task`` selects the suite and
     ``task_id`` the task in it. With ``endpoint`` set, the world runs behind ``lerobot-env-server``, which
     must serve that environment; with only ``endpoint``, the robot uses whatever the server serves.
+    A simulated world needs no calibration: ``calibration_dir`` is unused.
     """
 
     env: SimulatedEnvConfig | None = None
