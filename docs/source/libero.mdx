@@ -1,5 +1,13 @@
 # LIBERO
 
+<Tip>
+  The commands below run the simulator in-process. To keep its dependencies away
+  from your policy's, serve it instead with `lerobot-env-server --docker
+  --config=docker/sims/configs/libero.yaml` and add
+  `--env.endpoint=tcp/127.0.0.1:7448` to the same commands (see [Simulation:
+  in-process or served](./simulator_server)).
+</Tip>
+
 LIBERO is a benchmark designed to study **lifelong robot learning** — the idea that robots need to keep learning and adapting with their users over time, not just be pretrained once. It provides a set of standardized manipulation tasks that focus on **knowledge transfer**: how well a robot can apply what it has already learned to new situations. By evaluating on LIBERO, different algorithms can be compared fairly and researchers can build on each other's work.
 
 - Paper: [Benchmarking Knowledge Transfer for Lifelong Robot Learning](https://arxiv.org/abs/2306.03310)
@@ -39,7 +47,7 @@ export MUJOCO_GL=egl  # for headless servers (HPC, cloud)
 
 ## Evaluation
 
-### Default evaluation (recommended)
+### Default in-process evaluation
 
 Evaluate across the four standard suites (10 episodes per task):
 

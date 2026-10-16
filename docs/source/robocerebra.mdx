@@ -1,5 +1,13 @@
 # RoboCerebra
 
+<Tip>
+  The commands below run the simulator in-process. To keep its dependencies away
+  from your policy's, serve it instead with `lerobot-env-server --docker
+  --config=docker/sims/configs/robocerebra.yaml` and add
+  `--env.endpoint=tcp/127.0.0.1:7448` to the same commands (see [Simulation:
+  in-process or served](./simulator_server)).
+</Tip>
+
 [RoboCerebra](https://robocerebra.github.io/) is a long-horizon manipulation benchmark that evaluates **high-level reasoning, planning, and memory** in VLAs. Episodes chain multiple sub-goals with language-grounded intermediate instructions, built on top of LIBERO's simulator stack (MuJoCo + robosuite, Franka Panda 7-DOF).
 
 - Paper: [RoboCerebra: A Large-scale Benchmark for Long-horizon Robotic Manipulation Evaluation](https://arxiv.org/abs/2506.06677)
