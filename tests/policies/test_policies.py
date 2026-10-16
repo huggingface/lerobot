@@ -31,8 +31,9 @@ from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets import make_dataset
+from lerobot.envs.batched import prepare_canonical_observation
 from lerobot.envs.factory import make_env, make_env_config
-from lerobot.envs.utils import close_envs, preprocess_observation
+from lerobot.envs.utils import close_envs
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
@@ -221,7 +222,7 @@ def test_policy(ds_repo_id, env_name, env_kwargs, policy_name, policy_kwargs):
     observation, _ = env.reset(seed=train_cfg.seed)
 
     # apply transform to normalize the observations
-    observation = preprocess_observation(observation)
+    observation = prepare_canonical_observation(observation)
 
     # send observation to device/gpu
     observation = {key: observation[key].to(DEVICE, non_blocking=True) for key in observation}
