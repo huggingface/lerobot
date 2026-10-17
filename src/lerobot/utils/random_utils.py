@@ -60,7 +60,7 @@ def serialize_numpy_rng_state() -> dict[str, torch.Tensor]:
         "np_rng_state_values": torch.tensor(np_state[1], dtype=torch.int64),
         "np_rng_state_index": torch.tensor([np_state[2]], dtype=torch.int64),
         "np_rng_has_gauss": torch.tensor([np_state[3]], dtype=torch.int64),
-        "np_rng_cached_gaussian": torch.tensor([np_state[4]], dtype=torch.float32),
+        "np_rng_cached_gaussian": torch.tensor([np_state[4]], dtype=torch.float64),
     }
 
 
