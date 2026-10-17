@@ -357,6 +357,106 @@ def test_fourcc_with_camera():
         assert isinstance(img, np.ndarray)
 
 
+def _fourcc_code_to_str(code: int) -> str:
+    """Decode a CAP_PROP_FOURCC integer the same way OpenCVCamera does."""
+    return "".join(chr((code >> 8 * i) & 0xFF) for i in range(4))
+
+
+def _scripted_capture_class(fourcc: str, accepts_mjpg: bool):
+    """Build a fake VideoCapture class with a scripted FOURCC negotiation.
+
+    `get(CAP_PROP_FOURCC)` reports `fourcc`. `set(CAP_PROP_FOURCC, code)` succeeds
+    and switches the reported format, unless the requested code is MJPG and
+    `accepts_mjpg` is False (simulating a camera that only streams uncompressed).
+    All `set` calls are recorded for assertions.
+    """
+
+    class ScriptedFourccVideoCapture:
+        def __init__(self, *_args, **_kwargs):
+            self.set_calls: list[tuple[int, float]] = []
+            self._fourcc = fourcc
+            self._accepts_mjpg = accepts_mjpg
+
+        def isOpened(self) -> bool:  # noqa: N802 (matches cv2.VideoCapture API)
+            return True
+
+        def get(self, prop: int) -> float:
+            if prop == cv2.CAP_PROP_FOURCC:
+                return float(int.from_bytes(self._fourcc.encode("ascii"), "little"))
+            if prop == cv2.CAP_PROP_FRAME_WIDTH:
+                return 160.0
+            if prop == cv2.CAP_PROP_FRAME_HEIGHT:
+                return 120.0
+            if prop == cv2.CAP_PROP_FPS:
+                return 30.0
+            return 0.0
+
+        def set(self, prop: int, value: float) -> bool:
+            self.set_calls.append((prop, float(value)))
+            if prop == cv2.CAP_PROP_FOURCC:
+                requested = _fourcc_code_to_str(int(value))
+                if requested == "MJPG" and not self._accepts_mjpg:
+                    return False
+                self._fourcc = requested
+            return True
+
+        def read(self):
+            return True, np.zeros((120, 160, 3), dtype=np.uint8)
+
+        def release(self):
+            pass
+
+    return ScriptedFourccVideoCapture
+
+
+def _connect_with_scripted_capture(config, capture_cls):
+    """Connect an OpenCVCamera against a scripted capture and return the capture."""
+    module_path = OpenCVCamera.__module__
+    with patch(f"{module_path}.cv2.VideoCapture", new=capture_cls), OpenCVCamera(config) as camera:
+        assert camera.is_connected
+        capture = camera.videocapture
+    return capture
+
+
+def _fourcc_set_requests(capture) -> list[str]:
+    """Return the FOURCC codes the capture was asked to switch to, in order."""
+    return [
+        _fourcc_code_to_str(int(value)) for prop, value in capture.set_calls if prop == cv2.CAP_PROP_FOURCC
+    ]
+
+
+def test_connect_unset_fourcc_requests_mjpg():
+    """Without an explicit fourcc, MJPG is attempted to save USB bandwidth (#4084)."""
+    capture_cls = _scripted_capture_class(fourcc="YUYV", accepts_mjpg=True)
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=0)
+
+    capture = _connect_with_scripted_capture(config, capture_cls)
+
+    assert _fourcc_set_requests(capture) == ["MJPG"]
+    assert _fourcc_code_to_str(int(capture.get(cv2.CAP_PROP_FOURCC))) == "MJPG"
+
+
+def test_connect_unset_fourcc_keeps_camera_format_when_mjpg_rejected():
+    """A camera that rejects MJPG keeps its own negotiated format and connect still succeeds."""
+    capture_cls = _scripted_capture_class(fourcc="YUYV", accepts_mjpg=False)
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, warmup_s=0)
+
+    capture = _connect_with_scripted_capture(config, capture_cls)
+
+    assert _fourcc_set_requests(capture) == ["MJPG"]
+    assert _fourcc_code_to_str(int(capture.get(cv2.CAP_PROP_FOURCC))) == "YUYV"
+
+
+def test_connect_explicit_fourcc_still_honored():
+    """An explicit fourcc wins and no implicit MJPG request is made."""
+    capture_cls = _scripted_capture_class(fourcc="YUYV", accepts_mjpg=True)
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, fourcc="YUYV", warmup_s=0)
+
+    capture = _connect_with_scripted_capture(config, capture_cls)
+
+    assert _fourcc_set_requests(capture) == ["YUYV"]
+
+
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
 @pytest.mark.parametrize(
     "rotation",
