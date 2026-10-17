@@ -14,7 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import re
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -30,7 +32,7 @@ from lerobot.scripts.lerobot_record import RecordConfig, record, record_loop
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
 from tests.fixtures.constants import DUMMY_REPO_ID
-from tests.mocks.mock_robot import MockRobotConfig
+from tests.mocks.mock_robot import MockRobot, MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleopConfig
 
 
@@ -281,3 +283,42 @@ def test_record_loop_without_a_teleoperator_paces_and_terminates():
 
     # 0.1 s at 30 Hz is 3 ticks; the upper bound is what proves the phase was paced.
     assert 1 <= calls <= 6
+
+
+@pytest.mark.parametrize("camera_fps,expected_count", [(5.0, 1), (30.0, 0)])
+def test_record_emits_real_camera_rate_warning(tmp_path, camera_fps, expected_count):
+    original_connect = MockRobot.connect
+
+    def connect_with_rate(robot, *args, **kwargs):
+        original_connect(robot, *args, **kwargs)
+        # Only expose a reported rate after connect; this is not a real image source.
+        robot.cameras = {"review_camera": SimpleNamespace(fps=camera_fps)}
+
+    cfg = RecordConfig(
+        robot=MockRobotConfig(),
+        teleop=MockTeleopConfig(),
+        play_sounds=False,
+        dataset=DatasetRecordConfig(
+            repo_id=DUMMY_REPO_ID,
+            single_task="test",
+            root=tmp_path / "rate-test",
+            fps=30,
+            num_episodes=1,
+            episode_time_s=0.1,
+            reset_time_s=0,
+            push_to_hub=False,
+        ),
+    )
+    with (
+        patch.object(MockRobot, "connect", connect_with_rate),
+        patch(
+            "lerobot.common.control_utils.logger.warning",
+            wraps=logging.getLogger("lerobot.common.control_utils").warning,
+        ) as warning,
+    ):
+        record(cfg)
+    warnings = [call.args[0] for call in warning.call_args_list if "review_camera" in call.args[0]]
+    assert len(warnings) == expected_count
+    if warnings:
+        assert "5 fps" in warnings[0]
+        assert "83%" in warnings[0]
