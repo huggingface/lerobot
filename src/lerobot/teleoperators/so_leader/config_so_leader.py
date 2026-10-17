@@ -24,7 +24,7 @@ class SOLeaderConfig:
     """Base configuration class for SO Leader teleoperators."""
 
     # Port to connect to the arm
-    port: str
+    port: str = "COM10"
 
     # Whether to use degrees for angles
     use_degrees: bool = True

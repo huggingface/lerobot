@@ -26,7 +26,7 @@ class SOFollowerConfig:
     """Base configuration class for SO Follower robots."""
 
     # Port to connect to the arm
-    port: str
+    port: str = "COM9"
 
     disable_torque_on_disconnect: bool = True
 
