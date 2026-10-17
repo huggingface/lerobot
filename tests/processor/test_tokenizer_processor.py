@@ -31,6 +31,9 @@ from lerobot.processor import ActionTokenizerProcessorStep, DataProcessorPipelin
 from lerobot.processor.converters import create_transition, identity_transition
 from lerobot.utils.constants import (
     ACTION,
+    ACTION_CODE_TOKEN_MASK,
+    ACTION_TOKEN_MASK,
+    ACTION_TOKENS,
     OBS_IMAGE,
     OBS_LANGUAGE,
     OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
@@ -1551,6 +1554,418 @@ def test_subtask_tokenization_integration_with_pipeline(mock_auto_tokenizer):
     # Check shapes
     assert observation[f"{OBS_LANGUAGE}.tokens"].shape == (6,)
     assert observation[OBS_LANGUAGE_SUBTASK_TOKENS].shape == (6,)
+
+
+# ---------------------------------------------------------------------------
+# Tests for ActionTokenizerProcessorStep
+# ---------------------------------------------------------------------------
+
+
+class MockActionTokenizer:
+    """Mock FAST-style action tokenizer: returns a fixed sequence of token ids per call,
+    regardless of the input action values (deterministic for testing).
+
+    ``raw_tokens`` controls the returned type/shape directly, so tests can exercise
+    either the list-output path or the tensor-output path of ``_tokenize_action``.
+    """
+
+    def __init__(self, raw_tokens: list[int] | torch.Tensor | None = None):
+        self.raw_tokens = raw_tokens if raw_tokens is not None else [5, 6, 7]
+
+    def __call__(self, action_cpu: torch.Tensor) -> list[int] | torch.Tensor:
+        assert action_cpu.device.type == "cpu"
+        if isinstance(self.raw_tokens, torch.Tensor):
+            return self.raw_tokens.clone()
+        return list(self.raw_tokens)
+
+
+class MockPaliGemmaTokenizer:
+    """Mock PaliGemma tokenizer providing just what ActionTokenizerProcessorStep needs."""
+
+    def __init__(self, vocab_size: int = 1000, bos_token_id: int = 1):
+        self.vocab_size = vocab_size
+        self.bos_token_id = bos_token_id
+
+    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+        if text == "Action: ":
+            return [10, 11]
+        if text == "|":
+            return [99]
+        raise ValueError(f"Unexpected text encoded in test: {text!r}")
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_padding_shapes_and_mask(mock_auto_tokenizer):
+    """Chunk shorter than max_action_tokens: padded with zeros, mask marks real vs. padded."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=MockActionTokenizer(),
+        fast_skip_tokens=128,
+        max_action_tokens=10,
+    )
+    action = torch.zeros(1, 7)  # single sample, (1, action_dim)
+
+    tokens, mask, code_mask = step._tokenize_action(action)
+
+    # prefix [bos, "Action: "] + 3 transformed action tokens + suffix ["|"] = 7 real tokens
+    # transformed: vocab_size - 1 - fast_skip_tokens - raw = 1000 - 1 - 128 - {5,6,7} = {866,865,864}
+    expected_real = torch.tensor([1, 10, 11, 866, 865, 864, 99], dtype=torch.long)
+    assert tokens.shape == (1, 10)
+    assert mask.shape == (1, 10)
+    assert torch.equal(tokens[0, :7], expected_real)
+    assert torch.equal(tokens[0, 7:], torch.zeros(3, dtype=torch.long))
+    assert mask[0, :7].all()
+    assert not mask[0, 7:].any()
+    assert tokens.dtype == torch.long
+    assert mask.dtype == torch.bool
+    # code mask selects only the 3 action-code positions (3-5): no BOS, prompt, suffix or padding
+    assert code_mask.shape == (1, 10)
+    assert code_mask.dtype == torch.bool
+    assert code_mask[0].nonzero().flatten().tolist() == [3, 4, 5]
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_truncation(mock_auto_tokenizer):
+    """Chunk longer than max_action_tokens: truncated, mask is all True (no padding)."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=MockActionTokenizer(),
+        fast_skip_tokens=128,
+        max_action_tokens=5,
+    )
+    action = torch.zeros(1, 7)
+
+    tokens, mask, code_mask = step._tokenize_action(action)
+
+    # Full sequence would be 7 tokens (see padding test); truncated to first 5.
+    expected = torch.tensor([1, 10, 11, 866, 865], dtype=torch.long)
+    assert tokens.shape == (1, 5)
+    assert torch.equal(tokens[0], expected)
+    assert mask.shape == (1, 5)
+    assert mask.all()
+    # only the action-code positions that survive truncation (3-4) remain selected
+    assert code_mask.shape == (1, 5)
+    assert code_mask[0].nonzero().flatten().tolist() == [3, 4]
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_batch(mock_auto_tokenizer):
+    """Batched input: each sample in the batch gets tokenized independently."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=MockActionTokenizer(),
+        fast_skip_tokens=128,
+        max_action_tokens=10,
+    )
+    action = torch.zeros(4, 7)  # batch_size=4
+
+    tokens, mask, code_mask = step._tokenize_action(action)
+
+    assert tokens.shape == (4, 10)
+    assert mask.shape == (4, 10)
+    expected_real = torch.tensor([1, 10, 11, 866, 865, 864, 99], dtype=torch.long)
+    for i in range(4):
+        assert torch.equal(tokens[i, :7], expected_real)
+        assert mask[i, :7].all()
+        assert not mask[i, 7:].any()
+        assert code_mask[i].nonzero().flatten().tolist() == [3, 4, 5]
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_single_sample_no_batch_dim(mock_auto_tokenizer):
+    """Input with no batch dimension (action_dim,) gets a batch dim added and squeezed back off."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=MockActionTokenizer(),
+        fast_skip_tokens=128,
+        max_action_tokens=10,
+    )
+    action = torch.zeros(7)  # (action_dim,), single_sample path
+
+    tokens, mask, code_mask = step._tokenize_action(action)
+
+    assert tokens.shape == (10,)
+    assert mask.shape == (10,)
+    expected_real = torch.tensor([1, 10, 11, 866, 865, 864, 99], dtype=torch.long)
+    assert torch.equal(tokens[:7], expected_real)
+    assert mask[:7].all()
+    assert not mask[7:].any()
+    assert code_mask.shape == (10,)
+    assert code_mask.nonzero().flatten().tolist() == [3, 4, 5]
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_accepts_tensor_output(mock_auto_tokenizer):
+    """action_tokenizer returning an already-flat Tensor (not a list) is handled correctly."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=MockActionTokenizer(raw_tokens=torch.tensor([5, 6, 7])),
+        fast_skip_tokens=128,
+        max_action_tokens=10,
+    )
+    action = torch.zeros(1, 7)
+
+    tokens, mask, code_mask = step._tokenize_action(action)
+
+    expected_real = torch.tensor([1, 10, 11, 866, 865, 864, 99], dtype=torch.long)
+    assert torch.equal(tokens[0, :7], expected_real)
+    assert mask[0, :7].all()
+    assert code_mask[0].nonzero().flatten().tolist() == [3, 4, 5]
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_flattens_multidim_tensor_output(mock_auto_tokenizer):
+    """action_tokenizer returning a multi-dim Tensor (e.g. (1, 3)) gets flattened before use."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=MockActionTokenizer(raw_tokens=torch.tensor([[5, 6, 7]])),
+        fast_skip_tokens=128,
+        max_action_tokens=10,
+    )
+    action = torch.zeros(1, 7)
+
+    tokens, mask, code_mask = step._tokenize_action(action)
+
+    expected_real = torch.tensor([1, 10, 11, 866, 865, 864, 99], dtype=torch.long)
+    assert torch.equal(tokens[0, :7], expected_real)
+    assert mask[0, :7].all()
+    assert code_mask[0].nonzero().flatten().tolist() == [3, 4, 5]
+
+
+@skip_if_package_missing("transformers")
+def test_action_tokenizer_tokenize_action_raises_on_none():
+    """_tokenize_action must reject a None action explicitly rather than fail deeper in the pipeline."""
+    with patch("lerobot.processor.tokenizer_processor.AutoTokenizer") as mock_auto_tokenizer:
+        mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+        step = ActionTokenizerProcessorStep(
+            action_tokenizer_input_object=MockActionTokenizer(),
+            fast_skip_tokens=128,
+            max_action_tokens=10,
+        )
+
+    with pytest.raises(ValueError, match="Action cannot be None"):
+        step._tokenize_action(None)
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_call_stores_tokens_and_mask_in_complementary_data(mock_auto_tokenizer):
+    """__call__ should store both tokens and mask under the expected complementary_data keys."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=MockActionTokenizer(),
+        fast_skip_tokens=128,
+        max_action_tokens=10,
+    )
+    transition = create_transition(action=torch.zeros(1, 7))
+
+    result = step(transition)
+
+    complementary_data = result[TransitionKey.COMPLEMENTARY_DATA]
+    assert ACTION_TOKENS in complementary_data
+    assert ACTION_TOKEN_MASK in complementary_data
+    assert complementary_data[ACTION_TOKENS].shape == (1, 10)
+    assert complementary_data[ACTION_TOKEN_MASK].shape == (1, 10)
+    assert ACTION_CODE_TOKEN_MASK in complementary_data
+    assert complementary_data[ACTION_CODE_TOKEN_MASK].shape == (1, 10)
+    assert complementary_data[ACTION_CODE_TOKEN_MASK][0].nonzero().flatten().tolist() == [3, 4, 5]
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_call_handles_explicit_none_complementary_data(mock_auto_tokenizer):
+    """__call__ should tolerate complementary_data explicitly set to None, not just missing."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=MockActionTokenizer(),
+        fast_skip_tokens=128,
+        max_action_tokens=10,
+    )
+    transition = create_transition(action=torch.zeros(1, 7))
+    transition[TransitionKey.COMPLEMENTARY_DATA] = None
+
+    result = step(transition)
+
+    complementary_data = result[TransitionKey.COMPLEMENTARY_DATA]
+    assert ACTION_TOKENS in complementary_data
+    assert ACTION_TOKEN_MASK in complementary_data
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_call_skips_when_no_action(mock_auto_tokenizer):
+    """__call__ should be a no-op (no tokenization) when the transition has no action (e.g. inference)."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    step = ActionTokenizerProcessorStep(
+        action_tokenizer_input_object=MockActionTokenizer(),
+        fast_skip_tokens=128,
+        max_action_tokens=10,
+    )
+    transition = create_transition()  # no action
+
+    result = step(transition)
+
+    complementary_data = result.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+    assert ACTION_TOKENS not in complementary_data
+    assert ACTION_TOKEN_MASK not in complementary_data
+
+
+class MockSavableActionTokenizer(MockActionTokenizer):
+    """Action tokenizer that records `save_pretrained` calls."""
+
+    def __init__(self):
+        super().__init__()
+        self.saved_to = None
+
+    def save_pretrained(self, path):
+        self.saved_to = path
+
+
+def _make_action_step(mock_auto_tokenizer, **kwargs):
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    kwargs.setdefault("action_tokenizer_input_object", MockActionTokenizer())
+    kwargs.setdefault("fast_skip_tokens", 128)
+    kwargs.setdefault("max_action_tokens", 10)
+    return ActionTokenizerProcessorStep(**kwargs)
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_raises_when_truncation_not_allowed(mock_auto_tokenizer):
+    """allow_truncation=False must raise instead of silently cutting a sequence that is too long."""
+    step = _make_action_step(mock_auto_tokenizer, max_action_tokens=5, allow_truncation=False)
+
+    with pytest.raises(ValueError, match="exceeding max_action_tokens=5"):
+        step._tokenize_action(torch.zeros(1, 7))  # full sequence is 7 tokens
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_no_error_when_sequence_fits_and_truncation_not_allowed(mock_auto_tokenizer):
+    """allow_truncation=False only matters for sequences that are too long."""
+    step = _make_action_step(mock_auto_tokenizer, max_action_tokens=7, allow_truncation=False)
+
+    tokens, mask, _ = step._tokenize_action(torch.zeros(1, 7))  # exactly 7 tokens
+
+    assert tokens.shape == (1, 7)
+    assert mask.all()
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_requires_a_tokenizer_or_a_name(mock_auto_tokenizer):
+    """Without an object or a name there is nothing to tokenize with: fail at construction."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+
+    with pytest.raises(ValueError, match="Either 'action_tokenizer' or 'action_tokenizer_name'"):
+        ActionTokenizerProcessorStep(action_tokenizer_input_object=None, action_tokenizer_name=None)
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoProcessor")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_loads_action_tokenizer_by_name(mock_auto_tokenizer, mock_auto_processor):
+    """When only a name is given, the action tokenizer is loaded from the Hub with trust_remote_code."""
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    loaded = MockActionTokenizer()
+    mock_auto_processor.from_pretrained.return_value = loaded
+
+    step = ActionTokenizerProcessorStep(action_tokenizer_name="org/fast-tokenizer", trust_remote_code=False)
+
+    mock_auto_processor.from_pretrained.assert_called_once_with("org/fast-tokenizer", trust_remote_code=False)
+    assert step.action_tokenizer is loaded
+
+
+def test_action_tokenizer_raises_import_error_without_transformers():
+    """The step needs transformers, and says so clearly instead of failing deeper in."""
+    with (
+        patch("lerobot.processor.tokenizer_processor._transformers_available", False),
+        pytest.raises(ImportError, match="transformers"),
+    ):
+        ActionTokenizerProcessorStep(action_tokenizer_input_object=MockActionTokenizer())
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_action_method_returns_tokens(mock_auto_tokenizer):
+    """`action()` is the ActionProcessorStep entry point: it returns the token ids only."""
+    step = _make_action_step(mock_auto_tokenizer)
+    action = torch.zeros(1, 7)
+
+    tokens, _, _ = step._tokenize_action(action)
+
+    assert torch.equal(step.action(action), tokens)
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_get_config_with_input_object_omits_tokenizer_name(mock_auto_tokenizer):
+    """A tokenizer object cannot be serialized, so get_config must not claim a name for it."""
+    step = _make_action_step(
+        mock_auto_tokenizer, max_action_tokens=64, fast_skip_tokens=100, allow_truncation=False
+    )
+
+    assert step.get_config() == {
+        "trust_remote_code": True,
+        "max_action_tokens": 64,
+        "fast_skip_tokens": 100,
+        "paligemma_tokenizer_name": "google/paligemma-3b-pt-224",
+        "allow_truncation": False,
+    }
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoProcessor")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_get_config_includes_tokenizer_name_when_loaded_by_name(
+    mock_auto_tokenizer, mock_auto_processor
+):
+    mock_auto_tokenizer.from_pretrained.return_value = MockPaliGemmaTokenizer()
+    mock_auto_processor.from_pretrained.return_value = MockActionTokenizer()
+
+    step = ActionTokenizerProcessorStep(action_tokenizer_name="org/fast-tokenizer")
+
+    assert step.get_config()["action_tokenizer_name"] == "org/fast-tokenizer"
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_save_artifacts_saves_the_tokenizer(mock_auto_tokenizer, tmp_path):
+    """save_artifacts stores the action tokenizer next to the pipeline and returns its relative path."""
+    tokenizer = MockSavableActionTokenizer()
+    step = _make_action_step(mock_auto_tokenizer, action_tokenizer_input_object=tokenizer)
+
+    saved = step.save_artifacts(tmp_path)
+
+    assert saved == {"action_tokenizer_name": "action_tokenizer"}
+    assert tokenizer.saved_to == tmp_path / "action_tokenizer"
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_save_artifacts_requires_save_pretrained(mock_auto_tokenizer, tmp_path):
+    """A tokenizer that cannot be saved would make the pipeline non-portable: fail loudly."""
+    step = _make_action_step(mock_auto_tokenizer)  # MockActionTokenizer has no save_pretrained
+
+    with pytest.raises(TypeError, match="save_pretrained"):
+        step.save_artifacts(tmp_path)
+
+
+@skip_if_package_missing("transformers")
+@patch("lerobot.processor.tokenizer_processor.AutoTokenizer")
+def test_action_tokenizer_transform_features_is_identity(mock_auto_tokenizer):
+    step = _make_action_step(mock_auto_tokenizer)
+    features = {
+        PipelineFeatureType.ACTION: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,))},
+    }
+
+    assert step.transform_features(features) == features
 
 
 @skip_if_package_missing("transformers")
