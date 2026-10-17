@@ -535,6 +535,8 @@ def eval_policy(
     # we dont want progress bar when we use slurm, since it clutters the logs
     progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
     for batch_ix in progbar:
+        n_batch_episodes = min(env.num_envs, n_episodes - batch_ix * env.num_envs)
+
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
         # step.
         if max_episodes_rendered > 0:
@@ -595,6 +597,7 @@ def eval_policy(
                 start_episode_index=batch_ix * env.num_envs,
                 start_data_index=(0 if episode_data is None else (episode_data["index"][-1].item() + 1)),
                 fps=env.unwrapped.metadata["render_fps"],
+                n_episodes=n_batch_episodes,
             )
             if episode_data is None:
                 episode_data = this_episode_data
@@ -718,17 +721,30 @@ def eval_policy(
 
 
 def _compile_episode_data(
-    rollout_data: dict, done_indices: Tensor, start_episode_index: int, start_data_index: int, fps: float
+    rollout_data: dict,
+    done_indices: Tensor,
+    start_episode_index: int,
+    start_data_index: int,
+    fps: float,
+    n_episodes: int | None = None,
 ) -> dict:
-    """Convenience function for `eval_policy(return_episode_data=True)`
+    """Convenience function for `eval_policy(return_episode_data=True)`.
 
-    Compiles all the rollout data into a Hugging Face dataset.
+    Compiles the requested leading episodes from a vector rollout. The final
+    evaluation batch can contain extra vector slots when `n_episodes` is not
+    divisible by `env.num_envs`; those slots must not enter returned episode data.
 
     Similar logic is implemented when datasets are pushed to hub (see: `push_to_hub`).
     """
+    batch_size = rollout_data[ACTION].shape[0]
+    if n_episodes is None:
+        n_episodes = batch_size
+    if not 1 <= n_episodes <= batch_size:
+        raise ValueError(f"n_episodes must be in [1, {batch_size}], got {n_episodes}.")
+
     ep_dicts = []
     total_frames = 0
-    for ep_ix in range(rollout_data[ACTION].shape[0]):
+    for ep_ix in range(n_episodes):
         # + 2 to include the first done frame and the last observation frame.
         num_frames = done_indices[ep_ix].item() + 2
         total_frames += num_frames
