@@ -47,10 +47,10 @@ if TYPE_CHECKING:
     from .device_utils import auto_select_torch_device, get_safe_torch_device, is_torch_device_available
 
 _LAZY_EXPORTS = {
-    "ActionInterpolator": (".action_interpolator", "ActionInterpolator"),
-    "auto_select_torch_device": (".device_utils", "auto_select_torch_device"),
-    "get_safe_torch_device": (".device_utils", "get_safe_torch_device"),
-    "is_torch_device_available": (".device_utils", "is_torch_device_available"),
+    "ActionInterpolator": ".action_interpolator",
+    "auto_select_torch_device": ".device_utils",
+    "get_safe_torch_device": ".device_utils",
+    "is_torch_device_available": ".device_utils",
 }
 
 
@@ -59,8 +59,7 @@ def __getattr__(name: str) -> Any:
     if name not in _LAZY_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-    module_name, attribute_name = _LAZY_EXPORTS[name]
-    value = getattr(import_module(module_name, __name__), attribute_name)
+    value = getattr(import_module(_LAZY_EXPORTS[name], __name__), name)
     globals()[name] = value
     return value
 
