@@ -26,7 +26,18 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("torchcodec", reason="torchcodec is required (install lerobot[dataset])")
+try:
+    import torchcodec  # noqa: F401
+except (ImportError, OSError, RuntimeError) as exc:
+    # torchcodec ships native libraries that need a system ffmpeg. When those cannot be
+    # loaded, importing it raises RuntimeError/OSError rather than ImportError, which
+    # pytest.importorskip does not catch -- the module-level failure then aborts collection
+    # of the whole test session. `get_safe_default_video_backend()` guards the same three
+    # exception types before falling back to pyav.
+    pytest.skip(
+        f"torchcodec is not usable (install lerobot[dataset] and a system ffmpeg): {exc}",
+        allow_module_level=True,
+    )
 
 from lerobot.datasets.video_utils import VideoDecoderCache  # noqa: E402
 
