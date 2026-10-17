@@ -550,3 +550,68 @@ def test_vqbet_discretize_keeps_buffers_on_device():
         "vq_layer.freeze_codebook was moved off the model device after discretize(). "
         "Use .fill_(True) instead of = torch.tensor(True) to keep the buffer on device."
     )
+
+
+def test_act_validate_features_state_only():
+    """Verify that ACTConfig accepts state-only input configurations (#4921)."""
+    config = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+        },
+        output_features={
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
+        },
+    )
+    # Must not raise ValueError
+    config.validate_features()
+
+
+def test_act_validate_features_missing_all_raises():
+    """Verify that ACTConfig raises ValueError when none of visual, env state, or robot state are provided."""
+    config = ACTConfig(
+        input_features={},
+        output_features={
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
+        },
+    )
+    with pytest.raises(
+        ValueError,
+        match="You must provide at least one image, environment state, or robot state among the inputs.",
+    ):
+        config.validate_features()
+
+
+def test_act_policy_state_only_forward_and_select_action():
+    """Verify that ACTPolicy forward pass and select_action run on state-only batches without KeyError (#4921)."""
+    from lerobot.policies.act.modeling_act import ACTPolicy
+
+    config = ACTConfig(
+        input_features={
+            OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,)),
+        },
+        output_features={
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
+        },
+        dim_model=64,
+        n_encoder_layers=1,
+        n_decoder_layers=1,
+        chunk_size=10,
+        n_action_steps=10,
+    )
+    policy = ACTPolicy(config).to(DEVICE)
+    batch_size = 2
+    batch = {
+        OBS_STATE: torch.randn(batch_size, 6, device=DEVICE),
+        ACTION: torch.randn(batch_size, 10, 2, device=DEVICE),
+        "action_is_pad": torch.zeros(batch_size, 10, dtype=torch.bool, device=DEVICE),
+    }
+
+    # Training forward pass
+    loss, _ = policy.forward(batch)
+    assert loss is not None and torch.isfinite(loss)
+
+    # Evaluation select_action
+    policy.eval()
+    policy.reset()
+    action = policy.select_action(batch)
+    assert action.shape == (batch_size, 2)
