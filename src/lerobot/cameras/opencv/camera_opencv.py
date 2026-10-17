@@ -46,6 +46,12 @@ from .configuration_opencv import ColorMode, OpenCVCameraConfig
 # treat the same cameras as new devices. Thus we select a higher bound to search indices.
 MAX_OPENCV_INDEX = 60
 
+# FOURCC attempted when the config does not specify one. Most UVC cameras auto-negotiate an
+# uncompressed format (e.g. YUYV), which consumes an order of magnitude more USB bandwidth than
+# camera-side JPEG (e.g. ~147 Mbps vs ~9 Mbps at 640x480@30) and silently caps the achievable fps
+# on shared USB 2.0 buses. An explicit `fourcc` in the config always takes precedence over this.
+PREFERRED_DEFAULT_FOURCC = "MJPG"
+
 logger = logging.getLogger(__name__)
 
 
@@ -201,13 +207,8 @@ class OpenCVCamera(Camera):
 
         This method attempts to set the camera properties via OpenCV. It checks if
         the camera successfully applied the settings and raises an error if not.
-        FOURCC is set first (if specified) as it can affect the available FPS and resolution options.
-
-        Args:
-            fourcc: The desired FOURCC code (e.g., "MJPG", "YUYV"). If None, auto-detect.
-            fps: The desired frames per second. If None, the setting is skipped.
-            width: The desired capture width. If None, the setting is skipped.
-            height: The desired capture height. If None, the setting is skipped.
+        FOURCC is set first (explicitly requested or, when none is configured, the
+        preferred MJPG default) as it can affect the available FPS and resolution options.
 
         Raises:
             RuntimeError: If the camera fails to set any of the specified properties
@@ -219,7 +220,7 @@ class OpenCVCamera(Camera):
             raise DeviceNotConnectedError(f"{self} videocapture is not initialized")
 
         set_fourcc_after_size_and_fps = platform.system() == "Windows"
-        if self.config.fourcc is not None and not set_fourcc_after_size_and_fps:
+        if not set_fourcc_after_size_and_fps:
             self._validate_fourcc()
 
         default_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
@@ -239,7 +240,7 @@ class OpenCVCamera(Camera):
         else:
             self._validate_fps()
 
-        if self.config.fourcc is not None and set_fourcc_after_size_and_fps:
+        if set_fourcc_after_size_and_fps:
             # On Windows with DSHOW, changing the resolution can silently override the FOURCC setting.
             # Set FOURCC last to make sure the requested pixel format is actually enforced.
             self._validate_fourcc()
@@ -260,11 +261,17 @@ class OpenCVCamera(Camera):
             raise RuntimeError(f"{self} failed to set fps={self.fps} ({actual_fps=}).")
 
     def _validate_fourcc(self) -> None:
-        """Validates and sets the camera's FOURCC code."""
+        """Sets the camera's FOURCC code, preferring MJPG when none is configured.
 
-        fourcc = self.config.fourcc
-        if fourcc is None:
-            raise ValueError(f"{self} has no fourcc configured to validate.")
+        When `fourcc` is unset in the config, `PREFERRED_DEFAULT_FOURCC` is attempted: cameras
+        that support it consume far less USB bandwidth than their auto-negotiated uncompressed
+        format. If the camera does not accept it, its own negotiation is kept and this is logged
+        at info level (nothing user-requested failed). An explicit `fourcc` is honored as before:
+        failure to apply it is logged as a warning and capture continues with the camera format.
+        """
+
+        prefer_default = self.config.fourcc is None
+        fourcc = self.config.fourcc or PREFERRED_DEFAULT_FOURCC
         fourcc_code = cv2.VideoWriter_fourcc(*fourcc)
 
         if self.videocapture is None:
@@ -277,11 +284,17 @@ class OpenCVCamera(Camera):
         actual_fourcc_code_int = int(actual_fourcc_code)
         actual_fourcc = "".join([chr((actual_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
 
-        if not success or actual_fourcc != self.config.fourcc:
-            logger.warning(
-                f"{self} failed to set fourcc={self.config.fourcc} (actual={actual_fourcc}, success={success}). "
-                f"Continuing with default format."
-            )
+        if not success or actual_fourcc != fourcc:
+            if prefer_default:
+                logger.info(
+                    f"{self} fourcc={fourcc} not applied (actual={actual_fourcc}, success={success}). "
+                    f"Keeping the camera's default format."
+                )
+            else:
+                logger.warning(
+                    f"{self} failed to set fourcc={self.config.fourcc} (actual={actual_fourcc}, success={success}). "
+                    f"Continuing with default format."
+                )
 
     def _validate_width_and_height(self) -> None:
         """Validates and sets the camera's frame capture width and height."""
