@@ -15,11 +15,21 @@
 # limitations under the License.
 
 from .motors_bus import (
+    CustomRegister,
     DriveMode,
     Motor,
     MotorCalibration,
     MotorNormMode,
     SerialMotorsBus,
 )
+from .registers import RegisterName
 
-__all__ = ["DriveMode", "Motor", "MotorCalibration", "MotorNormMode", "SerialMotorsBus"]
+__all__ = [
+    "CustomRegister",
+    "DriveMode",
+    "Motor",
+    "MotorCalibration",
+    "MotorNormMode",
+    "RegisterName",
+    "SerialMotorsBus",
+]

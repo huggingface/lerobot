@@ -25,8 +25,11 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
 from pprint import pformat
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic, NewType
 
+from typing_extensions import TypeVar
+
+from lerobot.motors.registers import RegisterName
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _rustypot_available, require_package
@@ -44,10 +47,25 @@ _TRANSPORT_ERRORS = (RuntimeError, OSError)
 type NameOrID = str | int
 type Value = int | float
 
+# The register names a bus method accepts. Serial buses check them statically
+# (`RegisterName`), so mypy rejects a typo before the program reaches the motors; CAN
+# buses take any `str`. The default keeps an unparametrised `MotorsBusBase` — a custom
+# bus of either kind — on plain `str`.
+RegisterT = TypeVar("RegisterT", bound=str, default=str)
+
+CustomRegister = NewType("CustomRegister", str)
+"""A register name the static check skips.
+
+Wrap a name mypy cannot verify, typically one read from a configuration file or a
+calibration, to pass it where a [`RegisterName`][lerobot.motors.registers.RegisterName]
+is expected. At run time a `CustomRegister` is an ordinary `str`: rustypot still looks
+the name up, and refuses an unknown one as before.
+"""
+
 logger = logging.getLogger(__name__)
 
 
-class MotorsBusBase(abc.ABC):
+class MotorsBusBase(abc.ABC, Generic[RegisterT]):
     """
     Base class for all motor bus implementations.
 
@@ -82,22 +100,22 @@ class MotorsBusBase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def read(self, data_name: str, motor: str) -> Value:
+    def read(self, data_name: RegisterT, motor: str) -> Value:
         """Read a value from a single motor."""
         pass
 
     @abc.abstractmethod
-    def write(self, data_name: str, motor: str, value: Value) -> None:
+    def write(self, data_name: RegisterT, motor: str, value: Value) -> None:
         """Write a value to a single motor."""
         pass
 
     @abc.abstractmethod
-    def sync_read(self, data_name: str, motors: str | list[str] | None = None) -> dict[str, Value]:
+    def sync_read(self, data_name: RegisterT, motors: str | list[str] | None = None) -> dict[str, Value]:
         """Read a value from multiple motors."""
         pass
 
     @abc.abstractmethod
-    def sync_write(self, data_name: str, values: dict[str, Value]) -> None:
+    def sync_write(self, data_name: RegisterT, values: dict[str, Value]) -> None:
         """Write values to multiple motors."""
         pass
 
@@ -153,12 +171,17 @@ class Motor:
     recv_id: int | None = None
 
 
-class SerialMotorsBus(MotorsBusBase):
+class SerialMotorsBus(MotorsBusBase[RegisterName | CustomRegister]):
     """Read and write a chain of servos daisy-chained on one serial port, Feetech or Dynamixel.
 
     rustypot handles each model's metadata (control table, resolution, baud rates, operating
     modes) and the serial I/O; LeRobot handles normalisation, calibration and the recommended
     settings. Motors of several models, such as STS and SCS or XL430 and XL330, share the port.
+
+    A register name is matched without case and checked statically: mypy rejects one that no
+    rustypot servo has, e.g. a typo of [`RegisterName`][lerobot.motors.registers.RegisterName].
+    Wrap a name mypy cannot verify, typically read from a configuration, in
+    [`CustomRegister`][lerobot.motors.motors_bus.CustomRegister] to skip that check.
 
     To find the port, run:
     ```bash
@@ -580,7 +603,7 @@ class SerialMotorsBus(MotorsBusBase):
 
             # STS3215: clear Phase bit 4 to keep positions within [0, resolution - 1].
             if self.motors[motor].model == "sts3215":
-                phase = self.read("Phase", motor, normalize=False)
+                phase = int(self.read("Phase", motor, normalize=False))
                 if phase & 0x10:
                     self.write("Phase", motor, phase & ~0x10)
 
@@ -753,7 +776,7 @@ class SerialMotorsBus(MotorsBusBase):
             for motor, m in self.motors.items()
         }
 
-    def _sync_read_where(self, data_name: str) -> dict[str, Value]:
+    def _sync_read_where(self, data_name: RegisterName | CustomRegister) -> dict[str, Value]:
         """`data_name` of the motors that have the register."""
         motors = [motor for motor in self.motors if self._has_register(motor, data_name)]
         return self.sync_read(data_name, motors, normalize=False) if motors else {}
@@ -851,7 +874,8 @@ class SerialMotorsBus(MotorsBusBase):
         half_turn_homings = {}
         for motor, position in positions.items():
             offset = signs[motor] * ((self.resolution(self.motors[motor].model) - 1) // 2 - int(position))
-            if (sign_bit := self._definition(motor).register("homing_offset").sign_bit) is not None:
+            homing = self._definition(motor).register("homing_offset")
+            if homing is not None and (sign_bit := homing.sign_bit) is not None:
                 max_magnitude = (1 << sign_bit) - 1
                 offset = max(-max_magnitude, min(max_magnitude, offset))
             half_turn_homings[motor] = offset
@@ -995,7 +1019,7 @@ class SerialMotorsBus(MotorsBusBase):
     @check_if_not_connected
     def read(
         self,
-        data_name: str,
+        data_name: RegisterName | CustomRegister,
         motor: str,
         *,
         normalize: bool = True,
@@ -1004,8 +1028,9 @@ class SerialMotorsBus(MotorsBusBase):
         """Read a register of one motor.
 
         Args:
-            data_name (`str`):
-                Register name, e.g. `"Present_Position"`; the case does not matter.
+            data_name (`RegisterName | CustomRegister`):
+                Register name, e.g. `"Present_Position"`; the case does not matter, and mypy
+                rejects a name no rustypot servo has.
             motor (`str`):
                 Motor name.
             normalize (`bool`, *optional*, defaults to `True`):
@@ -1050,7 +1075,13 @@ class SerialMotorsBus(MotorsBusBase):
 
     @check_if_not_connected
     def write(
-        self, data_name: str, motor: str, value: Value, *, normalize: bool = True, num_retry: int = 0
+        self,
+        data_name: RegisterName | CustomRegister,
+        motor: str,
+        value: Value,
+        *,
+        normalize: bool = True,
+        num_retry: int = 0,
     ) -> None:
         """Write a register of one motor, and wait for its answer.
 
@@ -1058,8 +1089,9 @@ class SerialMotorsBus(MotorsBusBase):
         reported: slower, but suited to configuring motors.
 
         Args:
-            data_name (`str`):
-                Register name, e.g. `"Goal_Position"`; the case does not matter.
+            data_name (`RegisterName | CustomRegister`):
+                Register name, e.g. `"Goal_Position"`; the case does not matter, and mypy
+                rejects a name no rustypot servo has.
             motor (`str`):
                 Motor name.
             value (`int | float`):
@@ -1098,7 +1130,7 @@ class SerialMotorsBus(MotorsBusBase):
     @check_if_not_connected
     def sync_read(
         self,
-        data_name: str,
+        data_name: RegisterName | CustomRegister,
         motors: NameOrID | Sequence[NameOrID] | None = None,
         *,
         normalize: bool = True,
@@ -1111,8 +1143,9 @@ class SerialMotorsBus(MotorsBusBase):
         one after the other. The values are therefore not one simultaneous snapshot.
 
         Args:
-            data_name (`str`):
-                Register name, e.g. `"Present_Position"`; the case does not matter.
+            data_name (`RegisterName | CustomRegister`):
+                Register name, e.g. `"Present_Position"`; the case does not matter, and mypy
+                rejects a name no rustypot servo has.
             motors (`str | int | Sequence[str | int]`, *optional*):
                 Motors to read, by name or id. `None` reads every motor.
             normalize (`bool`, *optional*, defaults to `True`):
@@ -1158,7 +1191,7 @@ class SerialMotorsBus(MotorsBusBase):
     @check_if_not_connected
     def sync_write(
         self,
-        data_name: str,
+        data_name: RegisterName | CustomRegister,
         values: Value | dict[str, Value],
         *,
         normalize: bool = True,
@@ -1171,8 +1204,9 @@ class SerialMotorsBus(MotorsBusBase):
         of motors sharing a protocol and the register's address and size.
 
         Args:
-            data_name (`str`):
-                Register name, e.g. `"Goal_Position"`; the case does not matter.
+            data_name (`RegisterName | CustomRegister`):
+                Register name, e.g. `"Goal_Position"`; the case does not matter, and mypy
+                rejects a name no rustypot servo has.
             values (`int | float | dict[str, int | float]`):
                 One value for every motor, or a value per motor name.
             normalize (`bool`, *optional*, defaults to `True`):
