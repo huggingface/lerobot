@@ -56,6 +56,7 @@ from .compute_stats import (
     compute_relative_action_stats,
 )
 from .dataset_metadata import LeRobotDatasetMetadata
+from .dataset_reader import DatasetReader
 from .image_writer import write_image
 from .io_utils import (
     get_parquet_file_size_in_mb,
@@ -1607,6 +1608,10 @@ def modify_tasks(
     # Reload metadata to reflect changes
     dataset.meta.tasks = new_task_df
     dataset.meta.episodes = load_episodes(root)
+
+    # Refresh cached task indices while preserving the reader's episode selection.
+    if isinstance(dataset.reader, DatasetReader):
+        dataset.reader.load_and_activate()
 
     logger.info(f"Tasks: {unique_tasks}")
 
