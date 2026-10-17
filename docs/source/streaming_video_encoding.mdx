@@ -16,7 +16,7 @@ This makes `save_episode()` near-instant (the video is already encoded by the ti
 
 | Parameter               | CLI Flag                          | Type          | Default       | Description                                                       |
 | ----------------------- | --------------------------------- | ------------- | ------------- | ----------------------------------------------------------------- |
-| `streaming_encoding`    | `--dataset.streaming_encoding`    | `bool`        | `True`        | Enable real-time encoding during capture                          |
+| `streaming_encoding`    | `--dataset.streaming_encoding`    | `bool`        | `False`       | Enable real-time encoding during capture                          |
 | `vcodec`                | `--dataset.rgb_encoder.vcodec`    | `str`         | `"libsvtav1"` | Video codec. `"auto"` detects best HW encoder                     |
 | `encoder_threads`       | `--dataset.encoder_threads`       | `int \| None` | `None` (auto) | Threads per encoder instance. `None` will leave the vcoded decide |
 | `encoder_queue_maxsize` | `--dataset.encoder_queue_maxsize` | `int`         | `30`          | Max buffered frames per camera (~1s at 30fps). Consumes RAM       |
@@ -46,7 +46,7 @@ This parameter controls how many threads each encoder instance uses internally:
 - **Lower values** (e.g., 1-2): Less CPU per camera, freeing cores for capture and visualization. Good for low-res images and capable CPUs.
 - **`None` (default)**: Lets the codec decide. Information available in the codec logs.
 
-### Backpressure and Frame Dropping
+### Frame Dropping and Backpressure
 
 Each camera has a bounded queue (`encoder_queue_maxsize`, default 30 frames). When the encoder can't keep up:
 
@@ -54,6 +54,22 @@ Each camera has a bounded queue (`encoder_queue_maxsize`, default 30 frames). Wh
 2. New frames are **dropped** (not blocked) — the capture loop continues uninterrupted
 3. A warning is logged: `"Encoder queue full for {camera}, dropped N frame(s)"`
 4. At episode end, total dropped frames per camera are reported
+
+Dropping, rather than blocking, is what keeps a live capture loop on schedule: a stalled `add_frame` would delay the next robot command, and some rollout strategies rely on it never blocking. The cost is that a dropped frame leaves the video shorter than the recorded data.
+
+Offline dataset conversion has no such deadline, and there a dropped frame is silent data loss. Pass `encoder_drop_on_full=False` to `LeRobotDataset.create()` or `.resume()` to get real backpressure instead — feeding a frame then waits for the encoder to free a slot, so no frame is ever lost:
+
+```python
+dataset = LeRobotDataset.create(
+    repo_id="user/converted_dataset",
+    fps=30,
+    features=features,
+    streaming_encoding=True,
+    encoder_drop_on_full=False,
+)
+```
+
+This option is deliberately not exposed as a CLI flag, since live recording should keep the default. With it enabled, `encoder_queue_maxsize` no longer has to be large enough to absorb the encoder falling behind, so it can stay small to keep peak memory down.
 
 ### Symptoms of Encoder Falling Behind
 
