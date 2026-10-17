@@ -862,6 +862,8 @@ class PI0Policy(PreTrainedPolicy):
                 original_state_dict = load_file(resolved_file)
                 print("✓ Loaded state dict from model.safetensors")
             except Exception as e:
+                if strict:
+                    raise
                 print(f"Could not load state dict from remote files: {e}")
                 print("Returning model without loading pretrained weights")
                 return model
@@ -911,6 +913,8 @@ class PI0Policy(PreTrainedPolicy):
                 print("All keys loaded successfully!")
 
         except Exception as e:
+            if strict:
+                raise
             print(f"Warning: Could not load state dict: {e}")
 
         return model
