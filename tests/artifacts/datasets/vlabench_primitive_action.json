@@ -1,0 +1,25 @@
+{
+  "source": {
+    "repo_id": "VLABench/vlabench_primitive_ft_lerobot_video",
+    "revision": "9846a2f6bead3873251dc4fe3079359d57326b7c",
+    "path": "data/chunk-000/file-000.parquet",
+    "sha256": "869e4ce8984637b1a061c28d99178c40bd6650544a27f957638f19f0f628abb2",
+    "row_index": 0
+  },
+  "row": {
+    "actions": [
+      0.0002038589445874095,
+      0.24172714352607727,
+      0.4662196636199951,
+      3.1411995887756348,
+      0.024139920249581337,
+      -1.6076942682266235,
+      1.0
+    ],
+    "episode_index": 0,
+    "frame_index": 0,
+    "index": 0,
+    "task_index": 0,
+    "timestamp": 0.0
+  }
+}
