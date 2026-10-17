@@ -549,9 +549,12 @@ class ForwardKinematicsJointsToEE(ProcessorStep):
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        if features[PipelineFeatureType.ACTION] is not None:
+        # features[...] is a dict, never None -- these guards are dead by the declared type.
+        # Known issue (tracked separately, not a typing fix): this looks like it meant to check
+        # `PipelineFeatureType.ACTION in features` rather than the value at that key.
+        if features[PipelineFeatureType.ACTION] is not None:  # type: ignore[comparison-overlap]
             features = self.joints_to_ee_action_processor.transform_features(features)
-        if features[PipelineFeatureType.OBSERVATION] is not None:
+        if features[PipelineFeatureType.OBSERVATION] is not None:  # type: ignore[comparison-overlap]
             features = self.joints_to_ee_observation_processor.transform_features(features)
         return features
 

@@ -464,7 +464,7 @@ def get_frame_instruction(
                 start_frame, end_frame = map(int, frame_range.split(" "))
                 if start_frame <= frame_idx < end_frame or (start_frame == frame_idx):
                     instruction_for_frame[key] = frame_instruction
-                    if truncate_keys is not None and split_end is None and key in truncate_keys:
+                    if split_end is None and key in truncate_keys:
                         split_end = end_frame + 1
                     break
         else:
