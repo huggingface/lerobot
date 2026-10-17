@@ -588,6 +588,25 @@ def _copy_and_reindex_data(
     for src_path in tqdm(sorted(file_to_episodes.keys()), desc="Processing data files"):
         df = pd.read_parquet(src_dataset.root / src_path)
 
+        # Episodes kept for the output must actually have rows in the file their episode
+        # metadata points at. Rows whose `episode_index` is NaN (or otherwise missing from
+        # the file) would silently vanish in the `isin` mask below and only surface later
+        # as `int(nan)` while writing the episode bounds (#2302). Fail fast instead, naming
+        # the episode and the offending file, before this file is re-indexed and written.
+        present_episode_indices = set(df["episode_index"].dropna().unique().tolist())
+        missing_episodes = sorted(
+            episode_idx
+            for episode_idx in file_to_episodes[src_path]
+            if episode_idx not in present_episode_indices
+        )
+        if missing_episodes:
+            raise ValueError(
+                f"Cannot edit dataset: episode(s) {missing_episodes} are declared in the episode "
+                f"metadata but have no rows with a matching `episode_index` in {src_path}. "
+                "The dataset's data files are inconsistent with its episode metadata; "
+                "repair the source dataset before editing."
+            )
+
         all_episodes_in_file = set(df["episode_index"].unique())
         episodes_to_keep = file_to_episodes[src_path]
 
