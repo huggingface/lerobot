@@ -90,7 +90,7 @@ def _load_tokenizer_from_pretrained(tokenizer_name: str, **kwargs) -> Any:
         local_snapshot = _resolve_local_snapshot(tokenizer_name)
         if local_snapshot is None:
             raise
-        logging.info(
+        logger.info(
             "Hub resolution of tokenizer '%s' failed; loading from local snapshot %s.",
             tokenizer_name,
             local_snapshot,
