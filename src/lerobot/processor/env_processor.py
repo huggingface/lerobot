@@ -44,6 +44,9 @@ class LiberoProcessorStep(ObservationProcessorStep):
     **Image Processing:**
     -   Rotates images by 180 degrees by flipping both height and width dimensions.
     -   This accounts for the HuggingFaceVLA/libero camera orientation convention.
+    -   Depth maps (`observation.images.<camera>_depth`) are left as they are: the env
+        already puts them in the standard top-left origin that their intrinsics assume,
+        and rotating them would no longer match those intrinsics.
     """
 
     def _process_observation(self, observation):
@@ -52,7 +55,7 @@ class LiberoProcessorStep(ObservationProcessorStep):
         """
         processed_obs = observation.copy()
         for key in list(processed_obs.keys()):
-            if key.startswith(f"{OBS_IMAGES}."):
+            if key.startswith(f"{OBS_IMAGES}.") and not key.endswith("_depth"):
                 img = processed_obs[key]
 
                 # Flip both H and W

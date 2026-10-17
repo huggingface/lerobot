@@ -334,6 +334,9 @@ class LiberoEnv(EnvConfig):
     observation_height: int = 360
     observation_width: int = 360
     is_libero_plus: bool = False
+    # Off by default: rendering depth costs time and no existing policy reads
+    # it, so only a 3D policy should pay for it.
+    use_depth: bool = False
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
@@ -421,6 +424,7 @@ class LiberoEnv(EnvConfig):
             "observation_width": self.observation_width,
             "control_freq": self.fps,
             "hard_reset": self.hard_reset,
+            "use_depth": self.use_depth,
         }
         if self.task_ids is not None:
             kwargs["task_ids"] = self.task_ids
