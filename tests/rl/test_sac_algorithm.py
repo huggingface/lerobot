@@ -268,6 +268,40 @@ def test_update_with_discrete_critic():
     assert "discrete_critic" in stats.grad_norms
 
 
+def _single_update_discrete_critic_loss(penalty_value: float) -> float:
+    """One deterministic utd_ratio=1 update; returns the discrete-critic loss.
+
+    Everything (init weights, batch tensors) is drawn from the same seed, so the penalty is
+    the only difference between two calls with different ``penalty_value``.
+    """
+    set_seed(1234)
+    algorithm, _ = _make_algorithm(num_discrete_actions=3, action_dim=6)
+    batch = _make_batch(action_dim=7)
+    # Overwrite the discrete action column with valid action indices (the randn default can
+    # round to negative values, which are invalid indices for the discrete critic's gather).
+    batch[ACTION] = torch.cat(
+        [batch[ACTION][:, :-1], torch.randint(0, 3, (batch[ACTION].shape[0], 1)).float()], dim=-1
+    )
+    batch["complementary_info"] = {"discrete_penalty": torch.full((batch[ACTION].shape[0],), penalty_value)}
+    stats = algorithm.update(iter([batch]))
+    return stats.losses["loss_discrete_critic"]
+
+
+def test_update_applies_discrete_penalty_at_default_utd_ratio():
+    """The discrete penalty recorded by the actor must shape the discrete critic's target.
+
+    The actor sends ``complementary_info["discrete_penalty"]`` with every transition and the
+    replay buffer stores it; the canonical utd_ratio=1 update path must not drop it, or the
+    gripper cost shaping never reaches the discrete critic at all.
+    """
+    unpenalised = _single_update_discrete_critic_loss(0.0)
+    penalised = _single_update_discrete_critic_loss(100.0)
+    assert abs(penalised - unpenalised) > 1.0, (
+        "discrete-critic loss did not react to the discrete penalty: the penalty is being "
+        "dropped before reaching the Bellman target"
+    )
+
+
 # ===========================================================================
 # update with UTD ratio > 1
 # ===========================================================================
