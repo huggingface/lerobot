@@ -249,8 +249,8 @@ def _load_n1_7_embodiment_mapping(checkpoint_path: Path) -> dict[str, int] | Non
         return None
     parsed: dict[str, int] = {}
     for key, value in mapping.items():
-        if not isinstance(key, str):
-            continue
+        # read_json() returns dict[str, Any]; JSON object keys are always strings, so `key`
+        # is never anything else here.
         try:
             parsed[key] = int(value)
         except (TypeError, ValueError):
@@ -440,7 +440,10 @@ def _apply_groot_step_overrides(
                 raise TypeError(
                     f"Cannot apply overrides to step '{override_key}': it is not a dataclass step."
                 )
-            init_field_names = {f.name for f in fields(step) if f.init}
+            # dataclasses.is_dataclass()'s TypeIs narrows `step` to an intersection of ProcessorStep
+            # and DataclassInstance that mypy treats as uninhabited, so it marks the guarded code
+            # unreachable even though every concrete step used here is a real @dataclass at runtime.
+            init_field_names = {f.name for f in fields(step) if f.init}  # type: ignore[unreachable]
             for field_name, value in dict(step_overrides).items():
                 if field_name not in init_field_names:
                     raise TypeError(
@@ -467,8 +470,9 @@ def _set_groot_preprocessor_training(
     this helper enumerating them.
     """
     for step in preprocessor.steps:
-        if is_dataclass(step) and any(f.name == "training" for f in fields(step)):
-            step.training = training
+        # Same is_dataclass() TypeIs narrowing quirk as _apply_groot_step_overrides above.
+        if is_dataclass(step) and any(f.name == "training" for f in fields(step)):  # type: ignore[unreachable]
+            step.training = training  # type: ignore[unreachable]
 
 
 def make_groot_pre_post_processors_from_pretrained(

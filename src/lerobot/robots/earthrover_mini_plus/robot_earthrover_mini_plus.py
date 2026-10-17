@@ -108,11 +108,11 @@ class EarthRoverMiniPlus(Robot):
         self._is_connected = False
 
         # Cache for camera frames (fallback when requests fail)
-        self._last_front_frame = None
-        self._last_rear_frame = None
+        self._last_front_frame: np.ndarray | None = None
+        self._last_rear_frame: np.ndarray | None = None
 
         # Cache for robot telemetry data (fallback when requests fail)
-        self._last_robot_data = None
+        self._last_robot_data: dict | None = None
 
         logger.info(f"Initialized {self.name} with SDK at {self.sdk_base_url}")
 
