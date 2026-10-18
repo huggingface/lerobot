@@ -83,6 +83,7 @@ import numpy as np
 import torch
 import torch.utils.data
 import tqdm
+from PIL import Image
 
 from lerobot.configs import DEPTH_MILLIMETER_UNIT
 from lerobot.datasets import LeRobotDataset
@@ -132,6 +133,14 @@ def to_hwc_float32_numpy(chw_float32_torch: torch.Tensor) -> np.ndarray:
     return hwc_float32_numpy
 
 
+def _validate_image_options(image_max_size: int | None, jpeg_quality: int) -> None:
+    """Check the Rerun RGB image size and JPEG quality limits."""
+    if image_max_size is not None and image_max_size <= 0:
+        raise ValueError("image_max_size must be greater than 0")
+    if not 0 <= jpeg_quality <= 100:
+        raise ValueError("jpeg_quality must be between 0 and 100")
+
+
 def build_blueprint_from_dataset(dataset: LeRobotDataset):
     """Build a Rerun blueprint laying out camera images and time series for the given dataset.
 
@@ -171,8 +180,17 @@ def visualize_dataset(
     display_mode: str = "rerun",
     host: str = "127.0.0.1",
     autoplay: bool = True,
+    image_max_size: int | None = None,
+    jpeg_quality: int = 95,
     **kwargs,
 ) -> Path | None:
+    """Visualize an episode in Rerun or serve it to Foxglove.
+
+    Rerun uses `image_max_size` to limit the longest RGB image edge and preserve the aspect ratio.
+    `jpeg_quality` controls JPEG compression when `display_compressed_images` is enabled.
+    These options affect the displayed RGB images only.
+    """
+    _validate_image_options(image_max_size, jpeg_quality)
     if display_mode == "foxglove":
         from lerobot.utils.foxglove_visualization import serve_foxglove_dataset_playback
 
@@ -269,7 +287,24 @@ def visualize_dataset(
                     rr.log(key, entity=depth_entity)
                 else:
                     img = to_hwc_uint8_numpy(batch[key][i])
-                    img_entity = rr.Image(img).compress() if display_compressed_images else rr.Image(img)
+                    if image_max_size is not None and max(img.shape[:2]) > image_max_size:
+                        image = Image.fromarray(img[..., 0] if img.shape[-1] == 1 else img)
+                        image.thumbnail((image_max_size, image_max_size), resample=Image.Resampling.LANCZOS)
+                        # Pass dimensions to preserve RGB when a resized edge is one pixel.
+                        rgb_entity = rr.Image(
+                            bytes=np.asarray(image),
+                            width=image.width,
+                            height=image.height,
+                            datatype=np.uint8,
+                            color_model=image.mode,
+                        )
+                    else:
+                        rgb_entity = rr.Image(img)
+                    img_entity = (
+                        rgb_entity.compress(jpeg_quality=jpeg_quality)
+                        if display_compressed_images
+                        else rgb_entity
+                    )
                     rr.log(key, entity=img_entity)
 
             # display the action space (e.g. actuators command)
@@ -400,6 +435,19 @@ def main():
     )
 
     parser.add_argument(
+        "--image-max-size",
+        type=int,
+        default=None,
+        help="Maximum RGB image edge in pixels for Rerun. Preserves aspect ratio without upscaling. Must be positive.",
+    )
+    parser.add_argument(
+        "--jpeg-quality",
+        type=int,
+        default=95,
+        help="JPEG quality from 0 to 100 for Rerun with --display-compressed-images (default 95).",
+    )
+
+    parser.add_argument(
         "--display-mode",
         type=str,
         default="rerun",
@@ -431,8 +479,22 @@ def main():
 
     args = parser.parse_args()
 
+    try:
+        _validate_image_options(args.image_max_size, args.jpeg_quality)
+    except ValueError as error:
+        parser.error(str(error))
+
     if args.display_mode == "foxglove":
-        rerun_only = ("mode", "save", "output_dir", "grpc_port", "batch_size", "num_workers")
+        rerun_only = (
+            "mode",
+            "save",
+            "output_dir",
+            "grpc_port",
+            "batch_size",
+            "num_workers",
+            "image_max_size",
+            "jpeg_quality",
+        )
         ignored = [name for name in rerun_only if getattr(args, name) != parser.get_default(name)]
         if ignored:
             logging.warning(
