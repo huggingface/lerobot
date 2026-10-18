@@ -34,7 +34,8 @@
       "title": "環境（Environments）"
     },
     "api/motors.mdx": {
-      "source_version": "22ff6156665f5321066458f4365678753bd6a23b",
+      "source_title": "Motors",
+      "source_version": "0a2540f1360a6c01d98317b1e1d071aa7f707fc6",
       "title": "馬達（Motors）"
     },
     "api/policies.mdx": {
@@ -52,10 +53,6 @@
     "api/teleoperators.mdx": {
       "source_version": "b890b73c2ef29d379249b39ab79a37311a3a3e51",
       "title": "遙操作器（Teleoperators）"
-    },
-    "async.mdx": {
-      "source_version": "af255511336055774047ec97891612e6148106fa",
-      "title": "使用非同步推論（Async Inference）"
     },
     "backwardcomp.mdx": {
       "source_version": "e42099814722b0fb95b3ee0049ecb6278a7cd738",
@@ -81,6 +78,11 @@
     "debug_processor_pipeline.mdx": {
       "source_version": "4826c947ecc2df9a7dfc5184d5847cf1029ec63c",
       "title": "除錯你的處理器管線（debugging your processor pipeline）"
+    },
+    "dm05.mdx": {
+      "source_title": "DM05",
+      "source_version": "7ee6762a6f9da939dfec00d9def08dee3aaadf33",
+      "title": "DM05"
     },
     "earthrover_mini_plus.mdx": {
       "source_version": "9a632656747aa874543e7ae3a358782dddb663d2",
@@ -121,6 +123,11 @@
       "source_version": "8012d62bc6e723c7e275ba5d4c944437eef63234",
       "title": "更新 Feetech 韌體（Updating Feetech Firmware）"
     },
+    "fineart_vla.mdx": {
+      "source_title": "FineART-VLA",
+      "source_version": "8125bd5de6389fe8bfaa4069e1408bd3f618d492",
+      "title": "FineART-VLA"
+    },
     "flux3.mdx": {
       "source_title": "FLUX 3 Action (flux3)",
       "source_version": "13faddbab8614b52d816c7d78e43048a4b1a65b2",
@@ -135,7 +142,8 @@
       "title": "運算硬體指南（Compute Hardware Guide）"
     },
     "hil_data_collection.mdx": {
-      "source_version": "90e39a28d185e8715c5f92f5de2b94e335250412",
+      "source_title": "Human In the Loop Data Collection",
+      "source_version": "2975b3e6461a00d3a937938a1ef0bdddfb00903f",
       "title": "人在迴圈中的資料收集（Human In the Loop Data Collection）"
     },
     "hilserl.mdx": {
@@ -166,15 +174,17 @@
     },
     "inference.mdx": {
       "source_title": "Policy Deployment (lerobot-rollout)",
-      "source_version": "2b2268774aedef4bcd8f1b295efd5cc066a9bc96",
+      "source_version": "f6eae06a6ff4507760ab3c4572314cf8948e7f35",
       "title": "策略部署（Policy Deployment, lerobot-rollout）"
     },
     "installation.mdx": {
-      "source_version": "d3eb221d3339e931e0af72a9f482c10b0a4c9b6b",
+      "source_title": "Installation",
+      "source_version": "1b6fcc8270cc37a3d12236dcbfe3a10b2ca9b3e4",
       "title": "安裝（Installation）"
     },
     "integrate_hardware.mdx": {
-      "source_version": "ffd744b43c38f352c0c8b69201a77df56610609a",
+      "source_title": "Bring Your Own Hardware",
+      "source_version": "2f8d541e54e1660f7a62762762ae7abb033ea42b",
       "title": "整合自己的硬體（Bring Your Own Hardware）"
     },
     "introduction_processors.mdx": {
@@ -186,11 +196,13 @@
       "title": "Isaac Teleop"
     },
     "koch.mdx": {
-      "source_version": "813b9bd67d5ede9b6c400daee56c81ae1770f154",
+      "source_title": "Koch v1.1",
+      "source_version": "7ebc17ad7e078b1490639ec8f0ce4fe7f5d6928d",
       "title": "Koch v1.1"
     },
     "language_and_recipes.mdx": {
-      "source_version": "06a6b2c586dc3f2f5a0161fbd79c85c1e11e80d8",
+      "source_title": "Language Columns and Recipes",
+      "source_version": "4487636d06f957c753b1ebcc5536e47144066ba2",
       "title": "語言欄位與配方（Language Columns and Recipes）"
     },
     "lawam.mdx": {
@@ -198,7 +210,8 @@
       "title": "LaWAM"
     },
     "lekiwi.mdx": {
-      "source_version": "5700b192f9df7d9cde5ae65ffc9fd5a3301f7e53",
+      "source_title": "LeKiwi",
+      "source_version": "720b263b3e49f056697874a9220c89b9d8206998",
       "title": "LeKiwi"
     },
     "lelab.mdx": {
@@ -207,7 +220,7 @@
     },
     "lerobot-dataset-v3.mdx": {
       "source_title": "Using LeRobotDataset",
-      "source_version": "975cc6b64576d83f6daa73edcd81c37d47bb8aa0",
+      "source_version": "56fbaa1a2166cc48c241e7b0dee597a97a6958c1",
       "title": "使用 LeRobotDataset（Using LeRobotDataset）"
     },
     "libero.mdx": {
@@ -227,7 +240,8 @@
       "title": "Meta-World"
     },
     "molmoact2.mdx": {
-      "source_version": "98d1c3762b4fb866d11f2e572122b3d13c35b09b",
+      "source_title": "MolmoAct2",
+      "source_version": "d79e8710ffe91143482fd1e894e6579bd1186e43",
       "title": "MolmoAct2"
     },
     "multi_gpu_training.mdx": {
@@ -244,7 +258,8 @@
       "title": "Notebooks"
     },
     "omx.mdx": {
-      "source_version": "e547df21c771213c875031709918c246f2e92522",
+      "source_title": "OMX",
+      "source_version": "75548e7e9f30c49eb9bae29330485d51aa87aa5e",
       "title": "OMX"
     },
     "openarm.mdx": {
@@ -288,6 +303,11 @@
       "source_version": "16dd1a0aac0cfaacc2ef2d4c2521f6b52352a687",
       "title": "reBot B601"
     },
+    "remote_inference.mdx": {
+      "source_title": "Remote Inference",
+      "source_version": "03a126ea1569139635e2a673aefd7250584ac9ab",
+      "title": "遠端推論"
+    },
     "rename_map.mdx": {
       "source_version": "16ee6344a8d7320236cb444332dd9b3c7e507808",
       "title": "使用重新命名對應表與空相機（Using Rename Map and Empty Cameras）"
@@ -314,7 +334,8 @@
       "title": "RoboTwin 2.0"
     },
     "rtc.mdx": {
-      "source_version": "5c8154ad0f380555877db24ba51c9c6df5f1bf89",
+      "source_title": "Real-Time Chunking (RTC)",
+      "source_version": "dffb3bc51f8349350513af34a874c34ed7511b88",
       "title": "即時分塊（Real-Time Chunking, RTC）"
     },
     "sarm.mdx": {
@@ -326,11 +347,13 @@
       "title": "SmolVLA"
     },
     "so100.mdx": {
-      "source_version": "399781ef4bcb07875f24628f593397b03bcd7b68",
+      "source_title": "SO-100",
+      "source_version": "e8d436ac845cbbeeb9d7c25f70143f8a036d132c",
       "title": "SO-100"
     },
     "so101.mdx": {
-      "source_version": "85e363b1b87273eafc0e98752a14ec4e0a943cc1",
+      "source_title": "SO-101",
+      "source_version": "57bffaa10b730d4cade0cf642e3b4135016200ac",
       "title": "SO-101"
     },
     "streaming_video_encoding.mdx": {
@@ -342,7 +365,8 @@
       "title": "第三方機器人與遙操作器（Third-Party Robots & Teleoperators）"
     },
     "third_party_sensors.mdx": {
-      "source_version": "34ca8c42e1fce1603e0d5d4c9c55aeed0734e388",
+      "source_title": "Third-Party Cameras & Sensors",
+      "source_version": "128102caf346e57f5a5d8c7c5e0fa2d8c449a4a9",
       "title": "第三方相機與感測器（Third-Party Cameras & Sensors）"
     },
     "tools.mdx": {
@@ -358,9 +382,14 @@
       "source_version": "a84c69378e02baff6c1877f53a73844a47afd3b7",
       "title": "PyTorch 加速器（PyTorch accelerators）"
     },
+    "training_dataset_streaming.mdx": {
+      "source_title": "Training Dataset Streaming",
+      "source_version": "b791f6d4dc98641183f04c1e561e761d49854dab",
+      "title": "訓練資料集串流（Training Dataset Streaming）"
+    },
     "unitree_g1.mdx": {
       "source_title": "Unitree G1",
-      "source_version": "64aa535f393297155c6a078c4530a3fd3a459ebf",
+      "source_version": "b11fea207bdeae4e479e3acb83537855db6104f8",
       "title": "Unitree G1"
     },
     "using_dataset_tools.mdx": {
@@ -385,7 +414,8 @@
       "title": "WALL-OSS"
     },
     "writing_docstrings.mdx": {
-      "source_version": "c19d7059555cd54e85d1a645f42132001697cfc0",
+      "source_title": "Writing docstrings",
+      "source_version": "92ca85d9a929de785d39851a3905c9f8702e2106",
       "title": "撰寫 docstring（Writing docstrings）"
     },
     "xvla.mdx": {

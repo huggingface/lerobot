@@ -1,0 +1,274 @@
+# FineART-VLA[[fineart-vla]]
+
+FineART-VLA 建構在 **Physical Intelligence 的 π0.5** 及其
+[openpi 實作](https://github.com/Physical-Intelligence/openpi)之上，
+並以 LeRobot 的 [Pi05](./pi05) 策略（policy）為基礎。它在這個基礎上加入可訓練的 PaliGemma language head，以及一個
+讓語言生成與動作（action）生成交替進行的執行環境（runtime）。單一
+檢查點（checkpoint）就能預測低階子任務（subtask）、選擇性地更新記憶或回答
+視覺問題，並讓其流匹配（flow matching）action expert 以該文字為條件。
+
+若只需要以任務為條件的動作，請使用 Pi05。若策略在 rollout 期間
+必須生成或使用中間語言，請使用 FineART-VLA。
+
+## FineART-VLA 與 Pi05 的差異[[how-fineart-vla-differs-from-pi05]]
+
+| 能力          | Pi05                                          | FineART-VLA                                                    |
+| ------------- | --------------------------------------------- | -------------------------------------------------------------- |
+| 動作模型      | PaliGemma 視覺-語言前綴 + Gemma action expert | 相同的基礎架構                                                 |
+| Language head | 未針對執行期生成進行訓練                      | 重新啟用，並以文字交叉熵（cross-entropy）訓練                  |
+| 動作條件      | 回合（episode）任務                           | 目前的低階子任務（subtask），加上正規化後的機器人狀態（state） |
+| 訓練目標      | 以流匹配（flow matching）產生的動作           | 流動作、由配方（recipe）選取的文字，以及可選的 FAST 動作 token |
+| 資料集需求    | 標準的影像、狀態、動作與任務                  | 相同欄位，再加上你要訓練的每項語言能力所需的語言標註           |
+| Rollout       | 直接從任務到動作的策略                        | 階層式的任務 → 子任務 → 動作迴圈，可選擇加入記憶與 VQA         |
+
+FineART-VLA 可以從 Pi05 檢查點（checkpoint）初始化。策略架構維持
+相容，而 FineART-VLA 會建立自己的處理器，因此配方標籤與 FAST
+標籤不會在不知不覺中被 Pi05 的處理器堆疊取代。
+
+## 安裝[[install]]
+
+安裝包含 FineART-VLA 相依套件的 LeRobot：
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[fineart_vla]"
+```
+
+`fineart_vla` 額外套件包含 PaliGemma/FAST 的相依套件。若要使用可選的
+融合訓練 kernel（需要 Linux 與 CUDA GPU），請改為安裝 `".[fineart_vla_kernels]"`。
+它會加入 `liger-kernel`，以及 FlashRT 後端所使用的 Hugging Face `kernels`
+套件。Liger 需要以 `--policy.use_liger_kernels=true` 明確啟用：它會為整個行程修補
+transformers 的 PaliGemma RoPE/GeGLU，因此在同一個行程中載入、以 PaliGemma 為基礎的
+其他策略，也會以融合 kernel 執行。
+
+## 準備帶有語言標註的資料[[prepare-language-annotated-data]]
+
+FineART-VLA 不會在訓練期間，從一般的 LeRobot 資料集推斷出監督用的子任務（subtask）。
+資料集必須在可選的 `language_persistent` 與 `language_events` 欄位中，
+包含所選配方（recipe）使用的語言目標。
+
+至少要標註一條連續的 `subtask` 時間軸，讓每個訓練影格都有
+一個作用中的低階指令。只有在配方要訓練這些能力時，才需要加入 `memory`、VQA、插話與語音
+標註。
+
+FineART-VLA 與 EO-1 一樣，會將預設配方內嵌在 `FineARTVLAConfig` 中。它的取樣比例為
+30% 的高階任務 → 子任務預測，以及 70% 以低階子任務為條件的
+動作訓練。每個設定都擁有自己的配方字典，而儲存的
+檢查點（checkpoint）會把該字典帶到推論階段。
+
+使用 `--policy.recipe_path=/path/to/custom.yaml` 覆寫預設值。
+`src/lerobot/configs/recipes/` 中的共用配方保留了 main 分支的語意；
+FineART-VLA 不會取代它們。若只想以目標進行訓練，請使用內嵌配方（inline recipe），其中只包含
+一則含有 `${task}` 的低階使用者訊息，或是設定 `recipe=None`，並
+停用文字/FAST 損失，以使用一般的 PI05 管線。
+
+預設配方會把推論分解為 π(a|o, subtask)·π(subtask|o, task)。
+自訂的聯合序列配方需要一個相符的執行期處理器，以與訓練時相同的因果標記，
+渲染任務與生成的 assistant 片段。
+rollout 已不再使用舊的策略端聯合提示詞建構器。
+
+Rollout 負責規劃節奏（`--autosteer_interval_s=3`）、互動指令，
+以及同步/RTC 排程。FineART-VLA 只會在被查詢時生成文字；一般的
+動作呼叫絕不會在執行環境不知情的情況下，另外生成子任務。
+
+結合記憶與子任務的 scratchpad 並非預設，需要自訂
+配方，以及能感知記憶的執行期控制器。一般的子任務生成請保持 `memory_scratchpad=false`；
+較舊的 scratchpad 檢查點仍保留其
+明確的防護，避免將合併後的回應直接傳給動作控制。
+
+使用 `lerobot-annotate` 生成這些欄位。儲存庫中包含一個
+Hugging Face Jobs 啟動器，你可以依自己的來源與目的地資料集
+進行編輯。若要在本機執行標註，請先安裝
+`pip install -e ".[annotations]"`：
+
+```bash
+HF_TOKEN=hf_... uv run python examples/annotations/run_hf_job.py
+```
+
+在長時間訓練之前，請檢查幾個回合，確認子任務
+在時間上正確，且涵蓋完整的示範。請參閱
+[標註管線](./annotation_pipeline)了解生成與驗證，並參閱
+[語言欄位與配方](./language_and_recipes)了解結構描述與
+配方解析器。
+
+<Tip>
+  若資料集沒有語言欄位，配方渲染就不會有任何作用，而 FineART-VLA 會退回一般的
+  Pi05 提示詞路徑。這有助於維持相容性，但不會訓練語言規劃器。
+</Tip>
+
+## 訓練 FineART-VLA[[train-fineart-vla]]
+
+這個範例會從 `lerobot/fineart_vla_base` 初始化 FineART-VLA，這是
+在 FineART 上經過中期訓練（mid-training）、能預測自身下一個子任務（subtask）的檢查點（checkpoint），並訓練
+內嵌的 70/30 子任務配方。`--policy.path` 會載入基礎檢查點自己的
+設定，因此微調時會保留 FAST token 的排列方式（`fast_skip_tokens`）以及
+基礎模型訓練時使用的配方；其他 `--policy.*` 旗標則會覆寫它。
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
+    --policy.path=lerobot/fineart_vla_base \
+    --policy.tokenizer_max_length=256 \
+    --policy.dtype=bfloat16 \
+    --policy.device=cuda \
+    --policy.freeze_vision_encoder=false \
+    --policy.gradient_checkpointing=true \
+    --batch_size=8 \
+    --steps=30000 \
+    --output_dir=outputs/fineart_vla \
+    --job_name=fineart_vla \
+    --wandb.enable=true
+```
+
+先進行小規模的執行，確認 W&B 範例顯示
+預期的提示詞、文字目標與動作端點，再擴大規模。
+
+若要改從一般的 PI0.5 檢查點開始，請保留 FineART-VLA 的預設
+設定，並將 `--policy.pretrained_path` 指向它：
+`--policy.type=fineart_vla --policy.pretrained_path=lerobot/pi05_base`。
+OpenPI 格式的權重會在載入時轉換，文字與 FAST 損失則會
+從 PaliGemma 的 language head 開始，而不是從 FineART 中期訓練的結果開始。
+
+### 主要訓練控制項[[main-training-controls]]
+
+| 選項                             | 預設值 | 用途                                                              |
+| -------------------------------- | -----: | ----------------------------------------------------------------- |
+| `policy.recipe_path`             | `None` | 可選，用來覆寫內嵌的 70/30 子任務配方                             |
+| `policy.text_loss_weight`        |  `1.0` | Language head 的交叉熵（cross-entropy）權重；`0` 會停用文字訓練   |
+| `policy.flow_loss_weight`        | `10.0` | 連續動作流損失（flow loss）的權重                                 |
+| `policy.enable_fast_action_loss` | `true` | 加入離散 FAST 動作 token 的監督                                   |
+| `policy.fast_action_loss_weight` |  `1.0` | FAST 交叉熵權重                                                   |
+| `policy.knowledge_insulation`    | `true` | 阻擋動作損失的梯度經由 VLM K/V 路徑回傳                           |
+| `policy.flow_num_repeats`        |    `5` | 讓多個獨立的去雜訊目標重複使用同一個 VLM 前綴                     |
+| `policy.lm_head_lr_scale`        |  `1.0` | 縮放 language head 的學習率；`1.0` 代表使用基礎學習率             |
+| `policy.fast_skip_tokens`        | `1152` | FAST id 偏移量；略過 `<seg>`+`<loc>`，讓 VQA 與 FAST 永遠不會衝突 |
+
+`fast_skip_tokens=1152` 會把 FAST 編碼放在 PaliGemma 的 `<loc>` 範圍之下。
+openpi 的 pi0-FAST 慣例是 `128`（FAST 佔用 `<loc>` 的 id）；只有在需要與以該方式訓練的
+檢查點維持權重相容時才使用該值，並且
+避免與 VQA 配方一起使用，因為該配方的 `<loc>` 目標會與 FAST 編碼
+共用嵌入向量的列。
+
+這些損失權重是起始值，而不是與資料集無關的常數。請分別追蹤
+流損失與文字/FAST 損失，並檢查生成的子任務，而不是
+只依據總損失來挑選檢查點。
+
+### 資料集專屬的 FAST tokenizer[[dataset-specific-fast-tokenizer]]
+
+預設情況下（`--policy.auto_fit_fast_tokenizer=true`），訓練會在訓練資料集上擬合一個 FAST
+tokenizer，並以 `--policy.action_tokenizer_name` 為起點，
+然後快取在 `--policy.fast_tokenizer_cache_dir` 中。從 `lerobot/fineart_vla_base` 這類檢查點
+微調時也同樣適用，因此 FAST
+目標會符合新機器人的動作分布。擬合後的 tokenizer 會儲存在
+檢查點的處理器產物中，因此推論時會重複使用它。設定
+`--policy.auto_fit_fast_tokenizer=false` 即可直接使用未經修改的 `action_tokenizer_name`。
+
+## 訓練效能[[training-performance]]
+
+FineART-VLA 預設會使用最佳化的訓練路徑：
+
+- 將重複的流目標與後綴投影批次處理，而不是在 Python 中重複執行
+  小型運算；
+- 快取固定的動作遮罩，並在每次前向傳遞只計算一次 RoPE 位置；
+- 根據目標的形狀與
+  稀疏度，選擇文字/FAST 交叉熵（cross-entropy）的實作方式；
+- 在經過知識隔離（knowledge insulation）、只有流損失的批次上，略過數學上無作用的
+  VLM/視覺反向傳遞；
+- 啟用梯度檢查點（gradient checkpointing）時，使用原生的非重入式 SigLIP 逐層
+  檢查點；以及
+- 保留 Liger 的 RoPE/GeGLU kernel，同時避免在 SigLIP 形狀上套用較慢的 LayerNorm
+  修補。
+
+可選的訓練後端預設為停用：
+
+| 選項                                   | 何時嘗試                                                                                        |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `policy.use_flashrt_adarms=true`       | 在受支援的 CUDA GPU 上使用融合的自適應 RMSNorm 與閘控殘差                                       |
+| `policy.use_compiled_text_ce=true`     | 編譯後的具體化 logit CE 分桶                                                                    |
+| `policy.use_compiled_vision=true`      | 只在視覺前向傳遞沒有梯度時編譯視覺部分                                                          |
+| `policy.use_flex_attention=true`       | 經過效能分析（profiling）的 CUDA 環境，並啟用知識隔離且 `flow_num_repeats > 1`；否則會使用 SDPA |
+| `policy.use_manual_attention=true`     | 經過明確效能分析、且具體化注意力較快的形狀                                                      |
+| `policy.manual_attention_scope=action` | 將手動注意力限制在動作查詢上                                                                    |
+
+不要盲目啟用所有後端。Flex 與手動注意力互斥，
+而注意力/AdaRMS 的替代實作需要知識隔離。
+基準測試中表現最佳的設定使用了編譯後的文字 CE 與 FlashRT AdaRMS，
+並停用 Flex/手動注意力與編譯後的視覺部分。
+
+## 推論效能[[inference-performance]]
+
+FineART-VLA 有兩個推論迴圈，兩者都會避免重複編碼成本高昂的
+多模態前綴：
+
+1. **動作去雜訊**會對影像／語言前綴編碼一次，在各個流步驟之間重複使用其 KV
+   快取，在裝置上建構動作後綴遮罩，並
+   裁剪暫時的後綴 K/V，而不是複製前綴快取。它會在每個區塊（chunk）於裝置上建立一次
+   時間步排程，並保留歷來的
+   時間步算術。這項實作細節在未經基準測試的情況下，並不代表
+   端對端的速度提升。
+2. **語言解碼**使用自迴歸的 KV 快取，因此每個新 token 只需
+   將取樣出的 token 與快取的影像／語言鍵進行運算，而不必
+   重新執行完整的前綴。
+
+共用的執行環境會以不同的頻率執行語言與動作。當子任務能維持有效較久時，請提高
+`--autosteer_interval_s`，或使用 `/subtask`
+直接提供指令，而不經過語言生成。較長的間隔
+可以降低生成成本，但也會讓重新規劃變慢。
+
+## 執行檢查點[[run-a-checkpoint]]
+
+使用 `lerobot-rollout`，並搭配與檢查點（checkpoint）相符的機器人／相機設定、
+`--interactive=true` 與 `--autosteer_interval_s=3`。選擇
+`--inference.type=sync` 或 `--inference.type=rtc`。在互動式終端機中，
+`/autosteer <goal>` 會啟用生成的子任務，`/subtask <instruction>` 可手動提供
+一個子任務，而 `/start` 會開始控制機器人。請參閱
+[互動式語言控制](./inference#interactive-language-control)，了解完整的硬體設定、
+安全行為與錄製控制。先前 adapter 的 `--sim`、`--mode` 與
+`--high_level_hz` CLI 選項不屬於這個介面。
+
+## 疑難排解[[troubleshooting]]
+
+- **流損失梯度過大：** FineART-VLA 在關閉知識隔離（KI-off）時，會執行前綴／動作的聯合注意力，
+  並使用 PyTorch SDPA 的 math 後端與 FP32 注意力運算，再將輸出轉回
+  模型的 dtype（原版 PI0.5 則保留其 eager 注意力）。這可避免降低精度的注意力，因為它可能在
+  流時間步較低、query/key activation 較大時讓梯度不穩定。既有的檢查點與
+  正規化層都不會改變；KI-off 仍會透過 VLM 的鍵與
+  值進行訓練。請分別監控 `flow_loss`、`text_loss` 與裁剪前的梯度
+  範數，而不要只看有限的總損失。
+- **沒有文字損失或生成的子任務：** 確認所選配方能在取樣的影格上綁定
+  標註，且 `policy.text_loss_weight > 0`。
+- **子任務看似合理，但動作失敗：** 檢查子任務的邊界、
+  正規化後的狀態／動作統計量，並確認低階配方的樣本
+  確實存在。
+- **文字退化成重複的 token 或位置 token：** 檢查文字目標的
+  涵蓋範圍、language head 的學習率，以及流、FAST
+  與文字損失之間的平衡。
+- **記憶體不足：** 先降低批次大小，再啟用梯度
+  檢查點。在未針對你的相機數量分析記憶體用量之前，
+  不要啟用編譯後或替代的注意力後端。
+- **Rollout 很慢：** 將動作延遲與語言延遲分開來看，再調整
+  `--autosteer_interval_s`（生成新子任務的頻率）與
+  `--policy.num_inference_steps`（流去雜訊的步數）。
+
+## 引用[[citation]]
+
+如果你使用 FineART-VLA 或 FineART 資料集，請引用：
+
+```bibtex
+@misc{choghari2026fineart,
+  title  = {FineART: Fine-Grained Annotated Robotic Trajectory Dataset and Vision-Language-Action Model for Bimanual Manipulation},
+  author = {Choghari, Jade and Kooijmans, Pepijn and Agarwal, Mansi and Ciftci, Yusuf Umut and Doriwala, Aseem and Weaver, Catherine and Sivapurapu, Mouli and Yang, Kai and Lee, Jackson and Wolf, Thomas and Mannam, Pragna},
+  year   = {2026},
+}
+```
+
+FineART-VLA 建構在 Physical Intelligence 的 [π₀.₅](https://arxiv.org/abs/2504.16054) 與
+[知識隔離](https://arxiv.org/abs/2505.23705)之上。
+
+## 授權[[license]]
+
+此模型採用 **Apache 2.0 授權**，與 PI0.5 骨幹網路所改寫自的原始
+[OpenPI 儲存庫](https://github.com/Physical-Intelligence/openpi)一致。

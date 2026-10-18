@@ -83,7 +83,7 @@ lerobot-rollout \
 
 ### Highlight（`--strategy.type=highlight`）[[highlight---strategytypehighlight]]
 
-自主執行 rollout，並透過有記憶體上限的環形緩衝區（ring buffer）按需錄製。機器人會持續執行，緩衝區則保留最近 N 秒的遙測資料。按下儲存鍵會寫出緩衝區內容並開始即時錄製；再按一次即可儲存該回合。
+自主執行 rollout，並透過有記憶體上限的環形緩衝區（ring buffer）按需錄製。緩衝區會保留最近 N 秒的遙測資料。按下儲存鍵會寫出緩衝區內容並開始即時錄製；再按一次即可儲存該回合。使用非同步後端時，每次切換都會暫停推論、使佇列中與內插中的動作失效，並在阻塞式的寫出或儲存之前，要求機器人在本機進行受支援的位置保持。健康的執行會在之後從全新的擷取畫面繼續。
 
 ```bash
 lerobot-rollout \
@@ -108,8 +108,8 @@ lerobot-rollout \
 
 | 旗標                                   | 說明                                 |
 | -------------------------------------- | ------------------------------------ |
-| `--strategy.ring_buffer_seconds`       | 緩衝遙測的時長（預設：30）           |
-| `--strategy.ring_buffer_max_memory_mb` | 環形緩衝區的記憶體上限（預設：2048） |
+| `--strategy.ring_buffer_seconds`       | 緩衝遙測的時長（預設：10）           |
+| `--strategy.ring_buffer_max_memory_mb` | 環形緩衝區的記憶體上限（預設：1024） |
 | `--strategy.save_key`                  | 切換錄製的按鍵（預設：`s`）          |
 | `--strategy.push_key`                  | 推送到 Hub 的按鍵（預設：`h`）       |
 
@@ -158,6 +158,8 @@ lerobot-rollout \
 | `ESC`   | 停止工作階段                         |
 
 也可以透過 `--strategy.input_device=pedal` 使用腳踏板輸入，並以 `--strategy.pedal.*` 旗標設定踏板的按鍵代碼。
+
+若機器人支援 rollout 的位置保持，暫停時會更新驅動程式實際套用的最後一個位置目標，包含其截斷（clipping）處理與夾爪目標。在送出第一個命令之前，則由一個經過驗證的量測姿態提供目標。這會保留命令位置的誤差，而不是把目標改成量測到的姿態；機器人可以繼續朝該目標穩定下來，同時策略的軌跡推進會停止。請在實際機器人上驗證負載下的手臂與夾爪行為；這種軟體位置保持並不保證能維持抓握或讓機器人完全靜止。
 
 | 旗標                                 | 說明                                                                                                                                                       |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -259,11 +261,17 @@ lerobot-rollout \
 
 `SentryStrategy`（會錄製，可安全用於互動模式）與 `BaseStrategy`（不錄製）是可以直接參考的實作；它們所使用的輔助函式是 `lerobot.rollout.strategies` 中的 `send_next_action`、`safe_push_to_hub` 與 `estimate_max_episode_seconds`。
 
+使用非同步後端時，必須遵守派送契約（dispatch contract）。以 `engine.notify_observation(obs_processed)` 發布每個擷取到的觀測，在**每一個自主馬達週期**（包含內插與位置保持的週期）呼叫 `send_next_action(...)`，然後呼叫 `engine.pump_query(obs_processed)`。只呼叫 `engine.get_action()` 會略過許可與位置保持的交握：已規劃的文字查詢可能會無限期等待，終止性故障也可能永遠不會發出關機訊號。
+
+`send_next_action` 建構在 `lerobot.inference.dispatch_tick` 及其組成部分（`next_interpolated_action`、`commit_action`、`dispatch_permitted`）之上，它們一次性地編碼了這個順序：在取出動作之前與之後、以及送出之前都呼叫 `dispatch_allowed()`；被拒絕時使內插失效、要求受支援的本機位置保持並呼叫 `acknowledge_hold()`；送出之後呼叫 `record_dispatch()`。失敗的位置保持永遠不會被確認。請使用這些輔助函式，而不是自行重新實作這個順序；`send_next_action` 只額外加入資料集影格、機器人端的動作處理器與節奏統計。遠端情境中的 `ctx.policy.policy`、`preprocessor` 與 `postprocessor` 都設為 `None`；請改用 `ctx.policy.inference` 以及 `ctx.processors` 中的機器人端管線。
+
+將已知會在執行中阻塞的錄製工作（包含環形緩衝區的寫出與回合的完成處理）包在 `self._pause_for_recording(ctx)` 中。這會在錄製造成停頓之前使非同步的動作失效，並且只在執行仍然健康且處於啟用狀態時才繼續。具有由操作者控制之階段的執行策略，必須把目前的動作許可傳入 `resume_allowed`。下一個動作必須來自全新的觀測；已儲存的工作不得讓已暫停、已停止或已故障的執行重新啟動。
+
 ---
 
 ## 推論後端[[inference-backends]]
 
-以 `--inference.type=<name>` 選擇後端。所有執行策略都能搭配這兩種後端使用。
+以 `--inference.type=<name>` 選擇後端。本機的同步與 RTC 推論會使用下方設定的策略。[遠端後端](./remote_inference)則從伺服器取得其策略契約，不會在機器人電腦上載入權重。
 
 ### 預設：同步[[sync-default]]
 
@@ -275,7 +283,7 @@ lerobot-rollout \
 
 由背景執行緒以非同步的方式產生動作區塊（action chunk）。主控制迴圈會輪詢下一個已就緒的動作，同時策略會平行計算下一個區塊。
 
-對於大型、速度較慢的 VLA 模型（Pi0、Pi0.5、SmolVLA），使用 RTC 可以在推論延遲很高的情況下，仍維持平滑、連續的動作。
+對於相容的 VLA 模型（Pi0、Pi0.5、SmolVLA），使用 RTC 可以讓推論與動作執行重疊進行。要持續不中斷地執行，仍需要足夠的可用動作播放時間，來涵蓋推論延遲及其變動。
 
 ```bash
 lerobot-rollout \
@@ -292,15 +300,70 @@ lerobot-rollout \
     --device=cuda
 ```
 
-| 旗標                                        | 說明                                                                   |
-| ------------------------------------------- | ---------------------------------------------------------------------- |
-| `--inference.rtc.execution_horizon`         | 與前一個區塊混合的步數（預設：依策略而異）                             |
-| `--inference.rtc.mode`                      | `guided`（預設），或適用於相容 Pi05 檢查點、使用已訓練前綴的 `trained` |
-| `--inference.rtc.max_guidance_weight`       | 一致性約束的強度（預設：依策略而異）                                   |
-| `--inference.rtc.prefix_attention_schedule` | 混合排程：`LINEAR`、`EXP`、`ONES`、`ZEROS`                             |
-| `--inference.queue_threshold`               | 背壓（backpressure）閾值；已訓練的 RTC 至少需要設為其最大延遲          |
+| 旗標                                        | 說明                                                                                       |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `--inference.rtc.execution_horizon`         | 與前一個區塊混合的步數（預設：依策略而異）                                                 |
+| `--inference.rtc.mode`                      | `guided`（預設），或適用於相容 Pi05 檢查點、使用已訓練前綴的 `trained`                     |
+| `--inference.rtc.max_guidance_weight`       | 一致性約束的強度（預設：依策略而異）                                                       |
+| `--inference.rtc.prefix_attention_schedule` | 混合排程：`LINEAR`、`EXP`、`ONES`、`ZEROS`                                                 |
+| `--inference.queue_threshold`               | 背壓（backpressure）閾值；已訓練的 RTC 至少需要設為其最大延遲                              |
+| `--inference.action_starvation_grace_s`     | 在受支援的機器人上，動作耗盡（starvation）後等待新動作的時間（預設 `1.0`；`0` 會立即故障） |
 
 調校 RTC 參數的細節請參閱[即時分塊](./rtc)指南。
+
+本機 RTC 在 rollout 行程中的背景執行緒執行，不經過任何傳輸層。
+若伺服器與用戶端位於同一台電腦，請改用 `--inference.type=remote`。
+區塊對齊／混合，請參閱[遠端指南](./remote_inference)；非同步後端共用的
+[等待行為](./remote_inference#what-the-robot-does-while-waiting-or-stopping)，
+也記載於該指南。
+
+**等待需要受支援的機器人。** 沒有這項能力時，一般的本機 RTC 仍可使用，
+但已規劃的文字／指令變更暫停，以及可復原的動作耗盡，
+都需要這項能力。以位置控制的 SO、OMX、Koch、HopeJr 與 Rebot 從臂支援此功能；
+OpenArm、Reachy2 與雙臂包裝器有設定上的限制，列於
+[機器人支援表](./integrate_hardware#waiting-between-predictions)。
+有支援時，空的緩衝區可以保留最後套用的目標，持續
+`action_starvation_grace_s`（預設 1 秒），這段時間也包含排空舊推論，
+以及從全新擷取畫面進行預測所需的時間。動作開始之後，
+若寬限為零或機器人不受支援，動作耗盡時會立即故障；啟動階段則有自己的期限。
+與先前的本機 RTC 路徑不同，動作耗盡不再是無限期略過的控制週期。
+寬限絕不會延長已過期的請求或新鮮度限制。
+
+本機 RTC 透過 `--inference.` 提供以下額外的時間預算：
+
+| 參數                    | 預設值  | 意義                           |
+| ----------------------- | ------- | ------------------------------ |
+| `max_observation_age_s` | `5 s`   | 直到動作執行為止的最大來源年齡 |
+| `action_timeout_s`      | `10 s`  | 尚未完成的動作請求             |
+| `startup_timeout_s`     | `120 s` | 初始準備與以全新動作啟動       |
+| `language_timeout_s`    | `120 s` | 已規劃的語言操作               |
+
+這些是起始值，而不是經過量測的硬體保證。RTC 必須保留足夠的
+**裁剪後播放**時間，以容納下一次推論與時間餘裕。若推論經常耗盡可用的預測時域（horizon），
+提高 `queue_threshold` 並沒有幫助；
+請降低延遲，或驗證更長的時域／不同的動作頻率。
+
+終止性故障絕不會自動恢復策略的動作。在觀測擷取與致動器控制都可用的情況下，
+關機程序會遵循 `--return_to_initial_position`（預設 true），然後中斷連線。
+返回初始位置需要讀取一次完整的觀測，因此持續的相機故障可能會使其無法進行。
+命令套用失敗時，所有後端（包含同步）都會停止後續的關機移動。
+這不會改變同步預測，
+也不會引入針對相機的復原機制。
+
+<details>
+<summary>編譯與指令變更</summary>
+
+RTC 編譯會在動作開始前暖機初始呼叫與帶前綴的呼叫，包含一個具代表性的
+非零延遲。雖然 `--compile_warmup_inferences` 預設為 2，
+但啟用 RTC 時至少需要 3；啟動日誌會回報實際生效的次數。暖機必須
+在 `startup_timeout_s` 內完成。之後若指令改變了張量形狀，可能會觸發
+重新編譯，並超出播放時間或操作期限。
+
+推論期間的任務變更會捨棄過時的結果。受支援的機器人會暫停
+並請求全新的動作；沒有這項等待能力時，剩餘的動作可能會
+耗盡。在這些機器人上，建議在兩次執行之間變更任務。
+
+</details>
 
 ---
 
@@ -319,15 +382,15 @@ lerobot-rollout \
     --interactive=true
 ```
 
-| 指令                | 動作                                                                                                                  |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `/start`            | 開始（或重新開始）策略控制迴圈                                                                                        |
-| `/subtask <text>`   | 在不停止的情況下，變更策略要遵循的指令。不帶引數時會印出目前的任務。只會影響以語言為條件的策略（SmolVLA、π0/π0.5 等） |
-| `/vqa <text>`       | 針對策略目前看到的畫面提問。只能在執行期間使用，且僅適用於具有 text head 的策略                                       |
-| `/autosteer <goal>` | 交給策略一個高階目標，讓它自行選擇子任務。`/autosteer off` 會交還控制權；不帶引數時會回報目前的目標                   |
-| `/reset`            | 停止移動，讓機器人回到啟動時的位置，並恢復 `--task` 的指令                                                            |
-| `/stop`             | 結束工作階段並執行一般的關閉程序                                                                                      |
-| `/help`             | 列出指令                                                                                                              |
+| 指令                | 動作                                                                                                                                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/start`            | 開始（或重新開始）策略控制迴圈                                                                                                                                                                                             |
+| `/subtask <text>`   | 在目前的執行中變更指令；非同步推論可能會進入已規劃的位置保持。不帶引數時會印出目前的任務。只會影響以語言為條件的策略（SmolVLA、π0/π0.5 等）。搭配[外部規劃器](#external-planner)時，`/subtask` 也會從 autosteer 交還控制權 |
+| `/vqa <text>`       | 針對機器人目前看到的畫面提問。只能在執行期間使用，且需要策略具有 text head，或使用[外部規劃器](#external-planner)                                                                                                          |
+| `/autosteer <goal>` | 交出一個高階目標，讓策略的 text head 或[外部規劃器](#external-planner)選擇子任務。`/autosteer off` 會交還控制權；不帶引數時會回報目前的目標                                                                                |
+| `/reset`            | 停止移動，讓機器人回到啟動時的位置，並恢復 `--task` 的指令                                                                                                                                                                 |
+| `/stop`             | 結束工作階段並執行一般的關閉程序                                                                                                                                                                                           |
+| `/help`             | 列出指令                                                                                                                                                                                                                   |
 
 ```text
 > /start
@@ -353,13 +416,13 @@ Robot reset — holding at initial position. /start to run.
 (printf '/start\n'; sleep 60; printf '/stop\n') | lerobot-rollout ... --interactive=true
 ```
 
-**`/subtask`** 會從下一次推論開始生效。使用 `--inference.type=sync` 時，預先算好的區塊動作會被捨棄，因此切換會發生在下一個控制週期（control tick）；使用 `rtc` 時，新區塊會與前一個區塊剩下的前綴混合，因此會在一次推論內生效，動作也能保持連續（若設定 `--inference.rtc.enabled=false`，佇列中的區塊會先執行完，切換最多會延遲一個區塊）。
+**`/subtask`** 會更新後續推論使用的任務。使用 `--inference.type=sync` 時，預先算好的區塊動作會被捨棄。使用本機 RTC 或遠端推論時，若在動作請求期間變更，過時的結果會被捨棄。在支援本機位置保持的機器人上，引擎會使佇列中與內插中的動作失效，等待控制迴圈確認位置保持，然後在新任務下請求全新的動作。預期這段轉換期間機器人會停下來；它並不保證能連續混合。若在兩次請求之間變更，則可以保留已接受的動作以維持連續性。在不支援位置保持的機器人上，本機 RTC 仍會捨棄過時的結果，但可能耗盡剩餘的動作而終止。如果該機器人無法適當地保持位置，請在兩次執行之間變更指令。
 
-使用 `--use_torch_compile=true` 時，若新指令切分為 token 後的長度不同，可能會觸發重新編譯，讓推論暫停，時間與最初暖機（warm-up）一樣長。如果你預期會經常更換指令，請不要開啟編譯。
+使用本機 `--use_torch_compile=true` 時，若新指令改變了處理後的張量形狀，可能會觸發重新編譯。填充（padding）可能讓某些任務變更維持相同的形狀，但之後的編譯不保證能在剩餘的播放時間或指令變更期限內完成：它可能造成終止性故障。除非已驗證過這些轉換，否則在嘗試不同指令時請不要開啟編譯。在初始編譯暖機（warm-up）期間的變更不會要求位置保持，因為策略的動作尚未開始。
 
-`/vqa` 與 `/autosteer` 需要具有 text head 的策略（也就是實作了 `PreTrainedPolicy.generate_text()`）；目前 LeRobot 內建的策略都還沒有，所以除非你的策略有實作，否則這兩個指令都會被拒絕。
+`/vqa` 與 `/autosteer` 需要宣告支援文字生成並實作 `PreTrainedPolicy.generate_text()` 的策略，例如經過適當訓練的 EO1 檢查點，或使用[外部規劃器](#external-planner)。系統會在接受查詢之前檢查這項能力；個別檢查點的行為仍需要驗證。
 
-**`/vqa`** 會依據下一次的觀測作答，準備好就會印出，所以你可以同時繼續輸入；同一時間只會處理一個問題（autosteer 自己的查詢也共用這個名額）。文字生成比一個控制週期慢得多，因此機器人會先執行完佇列中的動作，再保持原位直到答案產生，這段時間也會計入 `--duration`。只有在執行期間才接受提問——閒置的引擎沒有目前的畫面；若某個區段結束時仍有問題未回答，該問題會被捨棄並回報。
+**`/vqa`** 會依據下一次的觀測作答，準備好就會印出，所以你可以同時繼續輸入；同一時間只會處理一個問題（autosteer 自己的查詢也共用這個名額）。使用外部規劃器時，問題會在工作執行緒上回答，機器人則繼續動作，以下內容都不適用。非同步後端會先進入經確認的本機位置保持，並使佇列中與內插中的動作失效，再將全新的觀測提交給文字路徑。健康且啟用中的執行會在答案產生後，從全新的動作區塊繼續；已暫停或已停止的執行則維持非啟用狀態。同步文字生成會在控制執行緒上直接執行，並捨棄策略預先算好的動作，因此下一個控制週期會從全新的推論繼續。查詢時間會計入 `--duration`。只有在執行期間才接受提問——閒置的引擎沒有目前的畫面。若指令或執行情境使非同步答案失效，該問題會收到一則取消通知，而不是過時的答案。區段結束時也會回報尚未回答的問題，包括仍在生成中的問題；回報取消並不會中斷執行中的模型呼叫，也不會提早釋放其查詢名額。
 
 **`/autosteer`** 會交給策略一個目標，並每隔 `--autosteer_interval_s` 秒（預設 10）向它要下一個子任務，以與 `/subtask` 相同的方式套用，並在對話中公告。每次查詢都是一次完整的文字生成，所以這個間隔就是調整成本的旋鈕：數值越低，重新規劃得越快，但迴圈也會花更多時間在生成文字，而不是執行動作。規劃的進度保存在策略中，而不是 rollout 中，因此區段結束時規劃也會跟著結束；遇到 `/reset`、`/subtask`、`/autosteer off`，或第一次規劃失敗時，排程器也會停止。
 
@@ -368,6 +431,8 @@ Robot reset — holding at initial position. /start to run.
 工作階段可以透過 SSH 使用，也能在無頭（headless）機器上執行——不需要顯示伺服器。
 
 **在互動模式下錄製。** `--strategy.type=sentry` 也接受 `--interactive=true`，會在你操控期間持續錄製：每個 `/start`…`/reset` 區段都會儲存完整的回合（episode），外加最後一個不完整的回合，資料集則會一直保持開啟直到關閉。每個影格都會記錄實際送出的動作屬於哪個任務，因此已在舊任務下排入佇列或內插的動作，會保留舊任務的標籤。
+
+執行中阻塞式的回合儲存會暫停非同步推論、使佇列中與內插中的動作失效，並要求受支援的本機位置保持。只有在執行仍處於啟用且健康的狀態時，才會從全新的擷取畫面繼續。DAgger 的儲存，以及 Highlight 環形緩衝區的寫出與儲存，也都受到相同的保護。錄製暫停與一般的動作耗盡共用相同的實體等待行為，但兩者的期限與恢復條件仍各自獨立。
 
 ```bash
 lerobot-rollout \
@@ -381,6 +446,40 @@ lerobot-rollout \
 ```
 
 其他會錄製的執行策略（episodic、DAgger、highlight）不支援互動模式：它們會綁定自己的鍵盤控制，並在 `run()` 結束時完成（finalize）資料集，因此無法逐區段重新啟動。
+
+### 外部規劃器[[external-planner]]
+
+`--planner.model_id=<name>` 會讓 `/vqa` 與 `/autosteer` 改經由標註管線的 VLM 用戶端（`annotations` 額外套件），而不是策略的 text head。呼叫會在工作執行緒上執行，機器人則繼續動作，而且不會為這些呼叫要求語言位置保持，只有一個刻意的例外：`/autosteer` 開始時，推論後端會暫停，直到規劃器第一次回覆為止，因為目標是給規劃器的情境，而不是給策略的指令。非同步後端（`rtc`、`remote`）會捨棄已在佇列中或正為先前指令計算中的動作；同步後端則會讓機器人保持位置。第一個子任務套用之後，後端會從全新的觀測繼續。`/subtask` 仍會直接套用你的指令並取消自動規劃；較晚抵達的規劃器回覆無法覆寫它。
+
+規劃器可以搭配每一種推論後端使用。使用本機推論時，若已載入的處理器有子任務配方，就會重複使用它，否則會要求一個簡短的指令；這並不代表檢查點能夠遵循該指令。`--planner.instructions='["pick up the cup","open the drawer"]'` 會限制規劃器的輸出：系統會要求 VLM 從這些字串中挑選一個，若下一個子任務的回覆不在清單中，就會視為錯誤。大小寫、多餘的空格與結尾的句點都會被忽略，而送給策略的是清單本身的措辭。若未提供此旗標，清單會從檢查點訓練資料集的任務標籤中讀取（透過其 `train_config.json`）。每個標籤都會放進提示詞中，因此對於任務很多的資料集，請傳入此旗標並提供較短的清單。若無法讀取資料集，系統會記錄一則警告，規劃器的輸出則維持自由格式。遠端推論擁有策略，因此本機無法取得配方與訓練詞彙：請明確傳入 `--planner.instructions`，否則答案會維持自由格式。規劃器只在搭配本機推論時於硬體上測試過。
+
+外部規劃器會收到最近 `--planner.history` 組觀測／命令配對（預設 4），接著是目前的影像。每一組配對都包含用來請求指令的觀測，以及引擎隨後接受的指令；被接受並不代表執行成功。重複的指令會保留在歷史中，讓 VLM 能夠判斷是否缺乏進展。手動接管、重設、停止、區段結束或設定新的 autosteer 目標時，歷史都會清除。設定 `--planner.history=0` 即可停用。`/vqa` 可以檢視這段歷史，但不會新增項目。對於下一個子任務的請求，VLM 必須先描述場景，並說明前一個命令是已完成、進行中還是失敗，然後才能指定下一個指令。回覆 `done` 代表目標已完成：autosteer 會停止、執行會結束，機器人會保持姿態直到 `/reset` 或 `/start`。在 `/subtask`、`/reset` 或新目標之前產生、較晚抵達的 `done` 會被捨棄。每個套用的子任務都會連同模型的場景評估與請求延遲一起印出。
+
+另外啟動一個相容 OpenAI 的 VLM 伺服器，然後連線：
+
+```bash
+transformers serve Qwen/Qwen3-VL-8B-Instruct --port 8000
+# 或者：vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8000
+lerobot-rollout ... --task="pick up the cup" --interactive=true \
+    --planner.model_id=Qwen/Qwen3-VL-8B-Instruct \
+    --planner.api_base=http://localhost:8000/v1
+> /start
+> /vqa What is the next short instruction to clear the table?
+> /subtask put the cup in the sink
+> /autosteer clear the table
+```
+
+託管模型的使用方式相同。這個範例使用 Hugging Face Inference Providers，搭配具有「Make calls to Inference Providers」權限的權杖：
+
+```bash
+export HF_TOKEN=hf_...
+lerobot-rollout ... --task="put all colored cubes in the green bin" --interactive=true \
+    --planner.model_id=Qwen/Qwen3.8-27B:novita \
+    --planner.api_base=https://router.huggingface.co/v1 \
+    --planner.api_key_env=HF_TOKEN
+```
+
+`/vqa` 只會回報答案；`/autosteer` 則會套用指令。以 `--planner.api_base` 設定端點，並以 `--planner.api_key_env=<variable>`（建議做法，金鑰不會出現在指令與日誌中）或 `--planner.api_key` 設定金鑰。`--planner.request_timeout_s`（預設 600）與 `--planner.request_max_retries`（預設 2）會限制每個請求；`--planner.camera_key` 用來選擇一台相機；`--planner.log_path` 會將每次交換附加為一行 JSON。模型服務的相依套件屬於伺服器環境。`--autosteer_interval_s` 量測的是套用回覆之後的機器人動作時間，請求延遲則另外累加。多層級操控與自動場景盤點不在這個 adapter 的範圍內。
 
 ### 程式化控制[[programmatic-control]]
 
@@ -471,11 +570,13 @@ Cadence summary — whole run, 2 episodes · target 30 Hz × 2 (16.7 ms tick slo
 
 ## 程式化用法[[programmatic-usage]]
 
+若要進行擴充，`lerobot.inference` 是提供後端設定、本機引擎與共用排程契約的公開套件。`lerobot.remote_inference` 負責遠端引擎、通訊協定、部署與工作階段的實作；`lerobot.rollout` 則負責機器人迴圈、執行策略、內插與錄製。請從各自的套件匯入公開符號，而不是從實作檔案匯入。只有在使用遠端後端或伺服器時，才需要可選的遠端相依套件。
+
 若要進行自訂部署（例如搭配運動學處理器），請直接使用 rollout 模組的 API：
 
 ```python
 from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
-from lerobot.rollout.inference import SyncInferenceConfig
+from lerobot.inference import SyncInferenceConfig
 from lerobot.rollout.strategies import BaseStrategy
 from lerobot.utils.process import ProcessSignalHandler
 

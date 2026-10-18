@@ -37,6 +37,8 @@
 - sections:
   - local: lerobot-dataset-v3
     title: 使用 LeRobotDataset（Using LeRobotDataset）
+  - local: training_dataset_streaming
+    title: 訓練資料集串流（Training Dataset Streaming）
   - local: porting_datasets_v3
     title: 移植大型資料集（Porting Large Datasets）
   - local: using_dataset_tools
@@ -63,6 +65,8 @@
     title: π₀-FAST (Pi0Fast)
   - local: pi05
     title: π₀.₅ (Pi05)
+  - local: fineart_vla
+    title: FineART-VLA
   - local: molmoact2
     title: MolmoAct2
   - local: vla_jepa
@@ -87,6 +91,8 @@
     title: 多任務 DiT 策略（Multitask DiT Policy）
   - local: walloss
     title: WALL-OSS
+  - local: dm05
+    title: DM05
   title: 策略（Policies）
 - sections:
   - local: sarm
@@ -99,8 +105,8 @@
 - sections:
   - local: inference
     title: 策略部署（Policy Deployment, lerobot-rollout）
-  - local: async
-    title: 使用非同步推論（Async Inference）
+  - local: remote_inference
+    title: 遠端推論
   - local: rtc
     title: 即時分塊（Real-Time Chunking, RTC）
   title: 推論（Inference）

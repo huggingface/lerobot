@@ -69,12 +69,13 @@
 
 ## 腳本[[script]]
 
-使用 `lerobot-rollout` 搭配 `--strategy.type=dagger` 進行 HIL 資料收集，並以 `--inference.type=sync|rtc` 選擇推論後端：
+使用 `lerobot-rollout` 搭配 `--strategy.type=dagger` 進行 HIL 資料收集，並以 `--inference.type=sync|rtc|remote` 選擇推論後端：
 
-| 模式            | 旗標                   | 模型                  |
-| --------------- | ---------------------- | --------------------- |
-| 標準（預設）    | _（不需要旗標）_       | ACT、Diffusion Policy |
-| 即時分塊（RTC） | `--inference.type=rtc` | Pi0、Pi0.5、SmolVLA   |
+| 模式                                | 旗標                      | 模型                                                                                            |
+| ----------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
+| 標準（預設）                        | _（不需要旗標）_          | ACT、Diffusion Policy                                                                           |
+| 即時分塊（Real-Time Chunking, RTC） | `--inference.type=rtc`    | Pi0、Pi0.5、SmolVLA                                                                             |
+| 遠端 (Remote)                       | `--inference.type=remote` | 由 `lerobot-policy-server` 提供的檢查點（checkpoint）；請參閱[遠端部署需求](./remote_inference) |
 
 ---
 

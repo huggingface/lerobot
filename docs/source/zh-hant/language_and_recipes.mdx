@@ -13,7 +13,6 @@
 1. **資料集中的資料**——語言標註與影格（frame）一起存放在
    `data/chunk-*/file-*.parquet` 中，作為兩個可選欄位（`language_persistent`
    與 `language_events`）。沒有這些欄位的資料集，行為維持不變。
-   行為。
 2. **配方**——一個 YAML 檔案，宣告要綁定哪些標註列，以及
    如何把它們排成聊天回合（`role`、`content`、可選的影像、
    可選的工具呼叫）。配方純粹是設定檔，新增一個配方
@@ -149,7 +148,7 @@ sample["target_message_indices"]
 混合配方會依據樣本索引，以確定性的方式選出一個加權的子配方。
 `recipes/subtask_mem.yaml` 訓練精簡的核心混合——高階的子任務預測、低階執行與記憶。`recipes/subtask_mem_vqa_speech.yaml` 則是更完整的版本，另外加入了 VQA 與對插話的語音回應。
 
-`recipes/subtask_joint.yaml` 示範的是聯合序列訓練，而不是加權混合。對同一個樣本，助理輸出的子任務會在 `low_level` 串流上以文字交叉熵進行監督，同時動作預測仍持續運作，與 π0.5 論文中的聯合設定一致。啟用 `--policy.joint_subtask_conditioning=true`，即可在推論時以該子任務作為條件。
+`recipes/subtask_joint.yaml` 示範的是聯合序列訓練，而不是加權混合。對同一個樣本，助理輸出的子任務會在 `low_level` 串流上以文字交叉熵進行監督，同時動作預測仍持續運作，與 π0.5 論文中的聯合設定一致。目前僅供訓練：執行環境尚未在推論時重建這個聯合前綴。
 
 ## 缺少語言欄位時的處理[[graceful-absence]]
 

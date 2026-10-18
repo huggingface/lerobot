@@ -1,21 +1,40 @@
 # 馬達[[motors]]
 
-`MotorsBus` 是串接在序列匯流排（serial bus）上一連串伺服馬達的低階介面（low-level interface）。機器人用它讀取位置並寫入目標位置；除非你要新增硬體，否則很少需要直接操作它。
+`SerialMotorsBus` 是序列匯流排（serial bus）上一連串 Feetech 或 Dynamixel 伺服馬達的低階介面。機器人用它讀取位置並寫入目標位置；除非你要新增硬體，否則很少需要直接操作它。每個馬達的型號都會在 [rustypot](https://github.com/pollen-robotics/rustypot) 中查詢，它保存了控制表以及各系列之間相異的資訊，同時也擁有序列埠。`FeetechMotorsBus` 與 `DynamixelMotorsBus` 是它的已棄用別名，會保留一個發行版本。
+
+### 從以 SDK 為基礎的匯流排遷移[[migrating-from-the-sdk-based-buses]]
+
+這些別名只保留類別名稱，並不保留舊有的 SDK 屬性與型號表：
+
+- `bus.model_resolution_table[model]` 改為 `bus.resolution(model)`；其他型號表（`model_ctrl_table`、`model_number_table`、……）現在是 rustypot 的伺服馬達定義。
+- 運作模式改以名稱選取，例如 `bus.set_operating_mode("position")`，而不再將 `OperatingMode` 值寫入 `Operating_Mode` 暫存器。
+- SDK 的連接埠與封包處理程式不再公開：序列埠由 rustypot 擁有。
+- `protocol_version` 會被忽略：每個馬達的型號即決定其通訊協定。
 
 新增匯流排請參閱[整合自己的硬體](../integrate_hardware)；特定裝置的說明請參閱[更新 Feetech 韌體](../feetech)與 [Damiao 馬達與 CAN 匯流排](../damiao)。
 
-## MotorsBus
+## SerialMotorsBus[[serialmotorsbus]]
 
-[[autodoc]] lerobot.motors.motors_bus.MotorsBus
+[[autodoc]] lerobot.motors.motors_bus.SerialMotorsBus
 
-## Motor
+## Motor[[motor]]
 
 [[autodoc]] lerobot.motors.Motor
 
-## MotorCalibration
+## MotorCalibration[[motorcalibration]]
 
 [[autodoc]] lerobot.motors.MotorCalibration
 
-## MotorNormMode
+## MotorNormMode[[motornormmode]]
 
 [[autodoc]] lerobot.motors.MotorNormMode
+
+## DriveMode[[drivemode]]
+
+`DriveMode` 有兩個成員，`NON_INVERTED = 0` 與 `INVERTED = 1`。在需要整數的地方，例如 `Drive_Mode` 暫存器或 `MotorCalibration.drive_mode` 中，請使用 `.value`：
+
+```python
+bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
+```
+
+[[autodoc]] lerobot.motors.DriveMode

@@ -286,7 +286,7 @@ python src/lerobot/scripts/lerobot_train.py \
 
 ### 使用 RTC 進行推論[[inference-with-rtc]]
 
-訓練完成後，建議使用推論時的 RTC 部署策略：
+相容的已訓練策略可以使用本機推論階段的 RTC：
 
 ```bash
 lerobot-rollout \
@@ -302,6 +302,8 @@ lerobot-rollout \
   --fps=30 \
   --inference.type=rtc
 ```
+
+G1 的移動控制器未宣告 rollout 的可恢復等待機制所使用的保留目標契約。動作開始後，若其動作緩衝區耗盡，會造成終止性故障，而不是寬限期等待。請求期限與觀測資料的時效上限（observation-age limits）同樣適用。使用此做法前，請先驗證策略可用的區塊能涵蓋推論延遲；參見[本機 RTC 等待與預算](./inference#inference-backends)。SONIC 有另一套保留 token 契約，說明如下。
 
 ---
 
@@ -328,58 +330,58 @@ lerobot-rollout \
 
 ### 在實體機器人上執行[[run-on-the-physical-robot]]
 
-在實體硬體上，請以[非同步推論](./async)執行策略，而不是單一的 `lerobot-rollout` 迴圈。從筆電驅動的 rollout 會讓網路夾在控制迴圈中間：每一步都要等推論完成，只要卡一下，機器人站立時所依賴的 50 Hz 平衡迴圈就會停頓。非同步推論將兩者分開：策略在你的 GPU 機器上執行，機器人用戶端則在 G1 的 Jetson 上執行，因此 SONIC 控制器的執行緒與 `rt/lowcmd` 都留在機器人上，只有 64 維的 token 區塊會經過網路傳送。
+在 GPU 機器上執行[遠端推論](./remote_inference)策略伺服器，並將機器人橋接器、SONIC 解碼器與 rollout 用戶端留在 G1 Jetson 上。只有 64 維的 token 區塊會經過網路；解碼器與 50 Hz 的 `rt/lowcmd` 迴圈仍留在機器人上。
 
-共有三個行程（process），第 2 部分的機器人伺服器要全程保持執行：
-
-```text
-GPU machine                     G1 (Jetson)
-policy_server  ◄── gRPC ──►  robot_client: UnitreeG1 + SONIC decoder @ 50 Hz
-  checkpoint                        │ ZMQ (lowcmd 6000, lowstate 6001, camera 5555)
-                                    ▼
-                             run_g1_server.py  ◄──► rt/lowcmd, rt/lowstate (DDS)
-```
-
-請先在 GPU 機器上啟動策略伺服器：
+在兩台機器上安裝 remote 額外套件。在 G1 上則保留 Unitree 額外套件：
 
 ```bash
-python -m lerobot.async_inference.policy_server \
-  --host=0.0.0.0 \
-  --port=8080 \
-  --fps=30
+# GPU 機器
+python -m pip install -e '.[remote]'
+
+# G1 Jetson
+python -m pip install -e '.[unitree_g1,remote]'
 ```
 
-在機器人上啟動伺服器（橋接器 + 相機）：
+在 GPU 機器上，從儲存庫根目錄啟動策略伺服器。維護中的設定檔對應 `nepyope/sonic_walk`；若要改用其他策略，請一併複製並更新其檢查點與特徵契約。
+
+```bash
+lerobot-policy-server \
+  --config_path=examples/remote_inference/unitree_g1_sonic.yaml
+```
+
+在 G1 上，讓橋接器與相機保持執行：
 
 ```bash
 python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 ```
 
-接著在機器人上的第二個終端機中啟動用戶端。由於橋接器在同一台機器上執行，機器人端的所有通訊都走本機回送（loopback）：
+接著在 G1 的第二個終端機中啟動 rollout 使用者端，並將 `<GPU_MACHINE_IP>` 替換掉：
 
 ```bash
-python -m lerobot.async_inference.robot_client \
-  --server_address=<GPU_MACHINE_IP>:8080 \
-  --policy_type=pi05 \
-  --pretrained_name_or_path=nepyope/sonic_walk \
-  --policy_device=cuda \
-  --actions_per_chunk=50 \
-  --fps=30 \
-  --task="walk forward" \
+lerobot-rollout \
+  --strategy.type=base \
+  --inference.type=remote \
+  --inference.endpoint=tcp/<GPU_MACHINE_IP>:7447 \
+  --inference.deployment=g1-sonic \
+  --inference.semantics=unitree-g1-sonic-motion-token-v1 \
+  --inference.encoding=jpeg \
+  --inference.action_starvation_grace_s=1.0 \
   --robot.type=unitree_g1 \
   --robot.is_simulation=false \
   --robot.robot_ip=127.0.0.1 \
   --robot.controller=SonicWholeBodyController \
-  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "127.0.0.1", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}'
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "127.0.0.1", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
+  --task='walk forward' \
+  --fps=30 \
+  --return_to_initial_position=false \
+  --interactive=true
 ```
 
-有幾點請留意：
+只有在 G1 可安全移動後，才輸入 `/start`。SONIC 宣告支援等待，因為重新傳送最後一個完整 token 可讓機上解碼器維持平衡。在第一個策略結果出現之前，rollout 會傳送解碼器的中性 token。如果動作緩衝區耗盡，它會重複最後套用的 token，最多持續 `action_starvation_grace_s`（上述為一秒）；如果沒有新的預測送達，rollout 會發生故障，並依照其設定的關閉／中斷連線路徑處理。G1 移動控制器仍不受支援，因為其搖桿速度無法以這種方式保留。
 
-- `--policy_device` 是*伺服器*載入策略時使用的裝置，用戶端會在交握時傳送這項資訊。
-- `--actions_per_chunk` 不得超過檢查點的區塊大小（`nepyope/sonic_walk` 為 50）。
-- 使用 `SonicWholeBodyController` 時，觀測狀態（observation state）是 64 維的 token 回傳值，而不是 29 個關節位置，因此檢查點必須以同樣的狀態訓練。
+此做法會停用返回初始位置：透過 SONIC 的 latent token 空間進行插值，並不是經過驗證的實體歸位軌跡。基於相同理由，請避免使用 `/reset`，因為它會將 token 掃回連線時的值。`/stop` 仍會關閉遠端工作階段，並透過一般控制器關閉路徑中斷與機器人的連線。
 
-連線時，機器人會先讓每個關節平順地移動到解碼器的 `default_angles`，控制器才接手，因此最初的策略命令不會從連線時的姿態突然跳動。
+使用 `SonicWholeBodyController` 時，觀測狀態是 64 維的 token 回傳值，而不是 29 個關節位置，因此相容的檢查點必須以該狀態訓練。連線時，機器人會先讓關節平順地移動到解碼器的 `default_angles`，控制器才接手。
 
 ---
 

@@ -1,0 +1,221 @@
+# 訓練資料集串流[[training-dataset-streaming]]
+
+訓練時的資料集串流讓 `lerobot-train` 能直接使用 LeRobotDataset v3，而不必先
+下載完整的 Parquet 與影片酬載（payload）。透過既有的公開開關啟用它：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=OWNER/DATASET \
+  --dataset.streaming=true \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+這項功能與 `--dataset.streaming_encoding=true` 無關。`streaming_encoding` 控制的是
+錄製時如何寫入影片；`dataset.streaming` 控制的則是如何讀取既有的資料集
+進行訓練。這條訓練路徑不會使用錄製與 rollout 的編碼器。
+
+## 如何讀取一個 epoch[[how-an-epoch-is-read]]
+
+每個分散式 rank 都擁有一組確定性、依影格數平衡、由完整回合（episode）組成的集合。每個
+DataLoader worker 各有一個精確覆蓋池（exact-coverage pool），用來混合該 worker 負責的那部分回合，同時在
+每個覆蓋 epoch 中恰好造訪每個選定的影格一次。Parquet 欄位與壓縮後的 MP4 位元組範圍，會從
+同一個考量位元組數的准入前緣（admission frontier）預先擷取（prefetch）。時間上的歷史與未來視窗都會在
+完整回合內解析，包含與 map-style 載入相同的邊界填充遮罩。
+
+當 `--dataset.streaming=false` 時，預設的 map-style `LeRobotDataset` 行為不變。
+
+## Worker、分片與並行度[[workers-shards-and-concurrency]]
+
+每個 rank 擁有一個依影格數平衡、由完整回合組成的分片（shard）。在 rank 內，`--num_workers` 設定
+DataLoader worker 行程的數量，與 map-style 資料集相同。每個 worker 擁有 rank 回合中互不重疊、
+依影格數平衡的一部分，並擁有自己的精確覆蓋池、自己那一份
+位元組預算，以及自己的執行緒池：
+
+| 階段              | 並行度                                       | 設定                                      |
+| ----------------- | -------------------------------------------- | ----------------------------------------- |
+| Rank 分片         | 每個 rank 一個互不重疊、由完整回合組成的分片 | 分散式的 world size                       |
+| DataLoader worker | 每個 worker 負責 rank 分片中互不重疊的一部分 | `--num_workers`                           |
+| 回合擷取          | Parquet 列與 MP4 位元組範圍，平行進行        | `max_num_shards`，由 `--num_workers` 設定 |
+| 樣本組裝與解碼    | 時間視窗與影片影格，平行進行                 | `--dataset.streaming_decode_threads`      |
+| 有序樣本緩衝區    | 預先保留的已解碼樣本，依規劃器順序排列       | `--dataset.streaming_decoded_queue_size`  |
+
+**為什麼要用多個 worker。** 樣本組裝與批次交接都會執行 Python 程式碼，而一個行程
+同一時間只能在一個執行緒上執行 Python 程式碼（GIL）。只有一個 worker 時，rank 的解碼執行緒
+會彼此等待，因此該 rank 只會用到大約 2 個 CPU 核心。每個 worker 都是獨立的行程，因此
+N 個 worker 能平行組裝與解碼樣本。
+
+**池大小與批次多樣性。** `streaming_episode_pool_size` 設定每個 worker 的池。若
+你沒有設定，rank 會混合 32 個回合，N 個 worker 各分到 32/N 個。每個
+worker 也會預先擷取（prefetch）`streaming_prefetch_episodes` 個回合，並且是獨立的 Python 行程，因此
+worker 越多，使用的記憶體也越多：在一個有 3 台相機的資料集上，4 個 worker 總共使用約 8 GB，
+而一個 worker 約為 3 GB。DataLoader 的每個批次都取自同一個
+worker，因此一個批次只會混合單一 worker 池中的回合。池越大，每個
+批次混合的回合越多，但會使用更多記憶體，並在第一個樣本之前擷取更多資料。
+
+**限制。** 位元組預算（`streaming_byte_budget_gb`）與明確設定的 `video_decoder_cache_size`
+都是以 rank 為單位：每個 worker 分到其中的 1/N。每個 worker 至少需要一個回合，因此 `lerobot-train`
+使用的 worker 數最多等於該 rank 擁有的回合數。`--num_workers=0` 會讓資料集留在
+訓練行程中。
+
+## MP4 sidecar 與第一次執行[[mp4-sidecars-and-the-first-run]]
+
+影片串流會使用 MP4 索引 sidecar。資料集初始化時會先檢查
+以修訂版本（revision）為鍵的本機快取，再尋找有效的已發布 sidecar。若兩者都沒有，
+LeRobot 會在持有行程鎖的情況下於本機建立 sidecar，並以原子方式安裝它。
+建立失敗或中斷時，不會取代先前的有效檔案。
+
+Hub 酬載（payload）的讀取會固定在中繼資料快照的 commit。Bucket 索引會
+與最新的物件清單（包含內容雜湊）進行比對，因此在相同
+路徑替換影片時，即使檔案大小不變，也會使其 sidecar 失效。這份清單會增加啟動時的工作，
+但不會下載影片酬載。執行期間請保持中繼資料與酬載不變。
+沒有穩定物件識別的一般遠端檔案系統，每次開啟時都會重建索引。
+沒有物件指紋的既有 Bucket sidecar 會在本機重建一次；
+發布更新後的 sidecar 仍需由維護者明確執行。
+
+訓練是唯讀的：它絕不會上傳 sidecar 或修改資料集儲存庫。在使用
+節點本機快取的叢集上，第一個工作可能會在每個節點各建立一次。共用的 LeRobot 快取可以避免這種
+重複。
+
+壓縮的 v3 sidecar 會轉換一次，成為唯讀的記憶體映射（memory-mapped）索引，位於
+`$HF_LEROBOT_HOME/streaming-indexes` 下。轉換過程會上鎖，並以原子方式發布；
+共用該快取的 rank 會重複使用相同的檔案支援陣列頁面，而不是各自解壓縮
+每個陣列的私有副本。每個 rank 只會為其回合所使用的來源檔案建構紀錄。
+衍生的索引需要容納**未壓縮樣本表**的磁碟空間，但不會儲存影片
+酬載。第一次轉換會有成本；之後的開啟會重複使用它。替換 sidecar
+會建立新的不可變映射索引世代，而不會使正在讀取的讀取器失效。
+
+這並不會讓所有中繼資料都維持固定大小：回合中繼資料與區段表仍會隨著
+資料集成長，而打亂後的 rank 分片可能會碰到重疊的來源檔案。常駐於作業系統的映射
+頁面也會計入 RSS；測量 rank 之間共用的記憶體時，請使用比例集大小（PSS）。
+Parquet 讀取會利用回合統計資訊修剪 row group，再篩選出完整的回合。
+沒有統計資訊的 group 仍會是候選，因此沒有有效邊界的檔案仍可能需要
+對整個檔案進行投影讀取。
+
+資料集維護者可以事先建立 sidecar：
+
+```bash
+lerobot-build-mp4-sidecar \
+  --repo-id=OWNER/DATASET \
+  --revision=COMMIT_SHA \
+  --data-root=hf://datasets/OWNER/DATASET@COMMIT_SHA \
+  --output=/tmp/dataset-mp4-sidecar.npz
+```
+
+發布一律需要明確操作。只有在驗證過完整資料集的 sidecar 之後，才加上 `--push`。
+子集的 sidecar 無法發布。
+
+對於資料集儲存庫，`--push` 會建立或更新專用的 `lerobot-sidecars` 分支。
+來源資料集的分支／標籤不會改變。訓練會在那裡尋找以
+固定的影片來源 commit 為鍵的索引，並在使用前驗證它。標籤與其解析出的 commit 共用
+同一個已發布的索引；既有以修訂版本為鍵的本機快取仍可重複使用。Bucket 仍會
+直接發布在 `meta/mp4-sidecars/` 下。發布需要儲存庫或 bucket 的寫入權限；
+訓練只需要讀取權限，而且絕不會建立分支或上傳檔案。
+
+Sidecar 結構描述 v3 會保留 MP4 的組合時序（composition timing）與編碼器延遲的編輯，包括 B-frame
+影片。較舊的 sidecar 會自動重建到另一個以修訂版本為鍵的快取項目中；
+在明確發布之前，它們也必須重建。重新排序的影片會在每個擷取的區段中包含
+最後一個 GOP 的結尾，讓解碼後的影格索引保持連續。重複或非單位速率的
+MP4 編輯時間軸會被拒絕，而不是默默回傳對齊錯誤的影格。
+
+## 設定[[configuration]]
+
+正式環境的預設值如下：
+
+| 選項                                |      預設值 | 意義                                               |
+| ----------------------------------- | ----------: | -------------------------------------------------- |
+| `streaming_episode_pool_size`       |   各 32 / N | 每個 worker 混合的完整回合數上限                   |
+| `streaming_sampling_strategy`       | `remaining` | 依剩餘影格數加權，或打亂的 `round_robin`           |
+| `streaming_prefetch_episodes`       |           8 | 在每個 worker 的池之前預先擷取（prefetch）的回合數 |
+| `streaming_byte_budget_gb`          |           8 | 每個 rank 合成 MP4 位元組的上限                    |
+| `streaming_decode_threads`          |           2 | 平行的樣本組裝與影片解碼 worker                    |
+| `streaming_decoded_queue_size`      |           8 | 依規劃器順序預先緩衝的已解碼樣本                   |
+| `video_decoder_cache_size`          | 池 × 相機數 | 每個 worker 開啟的影片解碼器 LRU 上限              |
+| `streaming_native_http_connections` |      未設定 | 每個 rank 的原生 HTTP 連線上限                     |
+| `streaming_native_http_subranges`   |           1 | 每次原生 HTTP 範圍讀取的並行子範圍數               |
+| `max_num_shards`（`--num_workers`） |          16 | 每個 worker 並行擷取的回合數                       |
+
+除了 `max_num_shards` 之外，所有選項都是 `--dataset.*` 旗標。`max_num_shards` 是
+`StreamingLeRobotDataset` 的引數；`lerobot-train` 會依 `--num_workers` 設定它（至少為 1）。
+
+若要讓回合混合得更平均，可以透過 `--dataset.streaming_sampling_strategy=round_robin` 選擇啟用。
+每一輪會打亂目前常駐的回合，並從每個回合取樣一個打亂後的影格；
+在某一輪中准入的回合會加入下一輪。兩種取樣方式都保有每個 epoch 恰好一次的
+覆蓋，以及相同的資源上限。兩者都不是全域均勻的排列：round-robin
+在有限前綴中會偏向較短的回合，並可能增加解碼器的頻繁替換、降低吞吐量。
+順序來自 `--seed`（預設 1000），與策略（policy）的初始化以及
+其他使用種子的隨機產生器相同。不同的種子會產生不同的回合與錨點順序，而
+相同的種子會重現相同的順序。`--seed=null` 會使用固定的串流種子 42。接續訓練檢查點（checkpoint）時，請保持相同的取樣方式、
+`--seed` 與池設定。檢查點會儲存種子，因此單純的
+`--resume` 會保留順序。若檢查點來自 `--seed` 尚未套用到
+串流資料集之前就開始的執行，其順序使用的是種子 42：接續該檢查點時請傳入 `--seed=42`，以保留該順序。
+
+作用中的回合集合同時受到回合數，以及從 sidecar 計算出的精確合成迷你 MP4 大小
+所限制。大於整個 rank 預算的回合，會在訓練
+擷取其酬載（payload）之前就失敗。保留量涵蓋待處理的擷取、已完成的預先擷取，以及仍在
+解碼中的回合。預算滿載時，推測性的預先擷取會暫停，替換的准入則會等待
+最後一次解碼釋放其位元組。`EpisodeByteCache.reserved_bytes` 會回報這些保留量；
+`resident_bytes` 則會回報所有已完成的酬載，即使其第一個樣本尚未被請求。
+
+這是壓縮酬載的預算，而不是行程的 RSS 上限：範圍擷取／合成的暫存緩衝區、
+解碼器狀態、Parquet 表格與解碼後的張量都需要額外的記憶體。解碼器 LRU 與
+已解碼樣本佇列另有各自的上限。
+在記憶體受限的主機上，請先從較小的池或預算開始：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=OWNER/DATASET \
+  --dataset.streaming=true \
+  --dataset.streaming_episode_pool_size=16 \
+  --dataset.streaming_prefetch_episodes=4 \
+  --dataset.streaming_byte_budget_gb=4 \
+  --dataset.streaming_decode_threads=2 \
+  --dataset.streaming_decoded_queue_size=8 \
+  --num_workers=4 \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+若完整資料集儲存在 HF Storage Bucket 中，請使用該 bucket 的識別碼與儲存庫
+類型，或將 bucket URI 傳入 `--dataset.root=hf://buckets/OWNER/BUCKET`。中繼資料（`meta/`）、
+Parquet 與影片檔案都必須位於該 bucket 的根目錄：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=OWNER/BUCKET \
+  --dataset.repo_type=bucket \
+  --dataset.streaming=true \
+  --policy.type=act \
+  --output_dir=outputs/train/act_bucket_streaming
+```
+
+Hub 資料集預設使用 `repo_type=dataset`。若是完整的本機資料集，請將 `--dataset.root` 設為
+其目錄。訓練會從同一個來源解析中繼資料與酬載；不需要另外的
+串流酬載位置旗標。
+
+## 接續訓練與打亂方式的遷移[[resume-and-shuffle-migration]]
+
+較早的串流讀取器使用有上限的列打亂緩衝區。新的回合讀取器則改為
+根據種子與 epoch 推導出確定性的精確覆蓋順序。接續訓練檢查點（checkpoint）時，會使用檢查點的批次大小來還原
+每個 rank 的樣本偏移量。有多個 worker 時，每個 worker 會從中推導出
+自己的偏移量，因為 DataLoader 會輪流從各個 worker 取得批次。變更
+分散式的 world size、批次大小或 `--num_workers`，都會改變擁有權或批次邊界。
+若要進行逐樣本完全一致的比較，請使用相同的 world size、批次大小與 worker 數接續訓練。比較效能時，請保持相同的內部擷取並行度。
+
+檢查點中繼資料無法識別較早的多 worker 取樣器。它的檢查點
+無法透過 world size 與批次大小的檢查可靠地區分，因此不得用於
+逐樣本完全一致的串流接續訓練。請改為從其儲存的策略權重開始新的執行。
+接續訓練的保證涉及的是錨點順序，而不是隨機影像轉換的逐位元重播。
+隨機影像轉換在解碼執行緒上執行，與解碼平行進行，因此固定的種子
+並不會在每次執行時重現相同的資料增強。
+
+## 疑難排解[[troubleshooting]]
+
+| 症狀                     | 處理方式                                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------ |
+| 第一個批次花了很長的時間 | 檢查日誌中是否有 sidecar 建立。重複使用共用快取，或明確發布一個經過驗證的完整 sidecar。          |
+| sidecar 鎖逾時           | 可能有另一個行程仍在為同一個修訂版本建立索引。移除過時的鎖之前，請先確認該行程運作正常。         |
+| 某個 rank 沒有任何資料   | 減少 rank 數量，讓每個 rank 至少擁有一個選定的回合。                                             |
+| 超出位元組預算           | 縮小回合池、提高每個 rank 的位元組預算，或使用回合範圍較小的酬載（payload）排列方式。            |
+| 遠端讀取無法驗證身分     | 讓每個 worker 都能取得 Hugging Face 權杖或 fsspec 憑證。Sidecar 絕不會內嵌憑證。                 |
+| 重新填充的停頓過高       | 比較 p95/p99 的批次等待時間、降低網路競爭、逐步提高預先擷取量，並檢查 sidecar 是否符合修訂版本。 |

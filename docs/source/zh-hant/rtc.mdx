@@ -97,11 +97,10 @@ for step in range(num_steps):
 - `guided`（預設）在去雜訊過程中套用原始的 Jacobian 引導，可搭配一般的流匹配檢查點使用。
 - `trained` 會以每個動作各自的 flow timestep，對前一個區塊的前綴進行硬性修補（hard inpainting）。目前需要以 `policy.rtc_training_max_delay > 0` 訓練的 Pi05 檢查點，而且不需要為引導執行反向傳播。
 
-使用 trained 模式時，`execution_horizon` 與 rollout 後端的
-`inference.queue_threshold` 都必須至少為檢查點的
-`rtc_training_max_delay`，且 `execution_horizon` 不得超過
-`chunk_size - rtc_training_max_delay`（即 RTC 論文中的 `d <= s <= H - d`
-界限）；rollout 會在連接機器人之前檢查這一點。
+本機 rollout 與策略伺服器會套用相同的保守 trained 模式准入規則（admission rule）：`rtc_training_max_delay <= execution_horizon <= prediction_steps - rtc_training_max_delay`。
+對 Pi05 而言，`prediction_steps` 是檢查點的 `chunk_size`。這保留了既有的本機限制：所設定的前綴會涵蓋最大訓練延遲，並在其之外留下至少相同數量的預測步驟。本機 rollout 在連接機器人之前，還要求 `inference.queue_threshold >= rtc_training_max_delay`；遠端請求的時序則使用自己的 refill 設定。
+
+這裡的 `execution_horizon` 是提供的前綴容量，而非請求之間的播放量。Pi05 只會對 `inference_delay` 前綴進行硬性條件化。此准入規則不是延遲保證，也不代表較大的容量在執行時必然會失敗；實際測得的重疊、剩餘動作與新鮮度（freshness）檢查仍會決定回傳的區塊是否能執行。一般區塊與 guided RTC 不受這項僅適用於 trained 模式的規則影響。
 
 **`execution_horizon`**：要與前一個區塊保持一致的時間步數。數值越高，過渡越順暢，但反應可能會變慢。
 
@@ -185,18 +184,22 @@ lerobot-rollout \
     --device=cuda
 ```
 
-## 與 LeRobot 非同步推論的差異[[how-it-differs-from-the-async-inference-in-lerobot]]
+## RTC 與遠端推論的關係[[how-rtc-relates-to-remote-inference]]
 
-RTC 與[非同步推論](./async)都能改善即時的機器人控制，但它們解決的是不同的問題。
+`--inference.type=rtc` 是本機 RTC：推論會在 rollout 行程中的背景執行緒執行，且不使用任何傳輸。若要在同一台機器上以獨立行程執行策略伺服器與機器人客戶端，則需改用遠端後端。
 
-| 面向         | 非同步推論             | RTC                            |
-| ------------ | ---------------------- | ------------------------------ |
-| **問題**     | 等待推論時出現閒置影格 | 動作區塊之間不連續             |
-| **解法**     | 將預測與執行解耦       | 引導新區塊從前一個區塊順暢延續 |
-| **效益**     | 不需等待，動作連續     | 順暢的過渡，自然的動作         |
-| **最適用於** | 推論延遲高的大型模型   | 以流匹配為基礎的策略           |
+兩種非同步後端在支援的機器人上，都採用相同的[有界等待與關閉行為](./remote_inference#what-the-robot-does-while-waiting-or-stopping)。關於其逾時預設值，請參閱[本機 RTC 預算](./inference#inference-backends)。等待並不會放寬 RTC 的前綴、延遲或新鮮度（freshness）檢查。
 
-**兩者一起使用**，就能得到最好的流暢度與反應速度！
+RTC 與[遠端推論（remote inference）](./remote_inference)都能改善即時機器人控制，但它們解決的是不同的問題。
+
+| 面向     | 遠端推論                                 | RTC                                       |
+| -------- | ---------------------------------------- | ----------------------------------------- |
+| **目的** | 在另一個行程或另一台電腦上執行推論       | 以剩餘軌跡為條件進行預測                  |
+| **執行** | 本機緩衝播放，可選的對齊與混合           | 為支援的策略提供 guided 或 trained 的延續 |
+| **關係** | 可以提供一般區塊或 RTC                   | 可在本機執行，或透過遠端後端執行          |
+| **限制** | 延遲、新鮮度與緩衝區覆蓋範圍仍會限制動作 | 需要策略所宣告的 RTC 契約（contract）     |
+
+當檢查點支援協商出的 RTC 模式時，遠端推論就能使用 RTC。一般區塊也支援可選的播放位置對齊與混合；關於模式、相容性與調校，請參閱[遠端推論指南](./remote_inference)。
 
 ## 進階：除錯追蹤[[advanced-debug-tracking]]
 

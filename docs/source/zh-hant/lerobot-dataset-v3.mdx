@@ -134,32 +134,30 @@ for batch in data_loader:
     # model.forward(batch)
 ```
 
-## 串流資料集，無需下載[[stream-a-dataset-no-downloads]]
+## 在訓練期間串流資料集[[stream-a-dataset-during-training]]
 
-使用 `StreamingLeRobotDataset` 可以直接從 Hub 迭代讀取資料，不需要本機副本。這讓你能串流大型資料集，不必下載到磁碟或載入記憶體，這也是新資料集格式的關鍵功能。
+設定 `--dataset.streaming=true`，即可在訓練時不必先下載資料集的 Parquet 與影片檔案。回合會即時抓取到有限的記憶體池中，而且在每個 epoch 中，每個被選取的影格仍只會被造訪一次：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=yaak-ai/L2D-v3 \
+  --dataset.streaming=true \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+同樣的讀取器也可以在 Python 中使用，適用於 Hub 資料集，以及儲存在 [HF Storage Bucket](https://huggingface.co/docs/hub/storage-buckets) 中的資料集：
 
 ```python
 from lerobot.datasets import StreamingLeRobotDataset
 
-repo_id = "yaak-ai/L2D-v3"
-dataset = StreamingLeRobotDataset(repo_id)  # 直接從 Hub 串流
+dataset = StreamingLeRobotDataset("yaak-ai/L2D-v3")
+bucket_dataset = StreamingLeRobotDataset("my-org/my-bucket", repo_type="bucket")
 ```
 
-儲存在 [HF Storage Bucket](https://huggingface.co/docs/hub/storage-buckets)（`hf://buckets/`）中的資料集，只要傳入 `repo_type="bucket"`，也能以相同方式串流：
+在命令列介面上，可以使用 `--dataset.repo_type=bucket` 或 `--dataset.root=hf://buckets/my-org/my-bucket` 來選擇 bucket。
 
-```python
-dataset = StreamingLeRobotDataset("my-org/my-bucket", repo_type="bucket")
-```
-
-在 `lerobot-train` 中，可以透過 `--dataset.streaming=true` 使用這兩種方式；加上 `--dataset.repo_type=bucket` 即可改從 bucket 串流，而不是從 Hub 的資料集儲存庫：
-
-```bash
-lerobot-train \
-  --dataset.repo_id=my-org/my-bucket \
-  --dataset.repo_type=bucket \
-  --dataset.streaming=true \
-  ...
-```
+關於 worker 與分片（shards）如何對應到串流的並行處理、MP4 sidecar 索引、記憶體設定、接續訓練與疑難排解，請參閱[訓練資料集串流](./training_dataset_streaming)。
 
 <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
   <figure style="margin:0; text-align:center;">
@@ -252,9 +250,19 @@ LeRobot 提供以下幾種轉換類型：
 
 - **`ColorJitter`**：調整亮度、對比、飽和度與色相
 - **`SharpnessJitter`**：隨機調整影像銳利度
+- **`RandomAffine`**、**`RandomRotation`**：幾何擾動
+- **`GaussianNoise`**、**`MotionBlur`**、**`JPEGCompression`**、**`GaussianPatchBrightness`**、**`RandomShadow`**、**`CoarseDropout`**、**`GammaCorrection`**、**`PlanckianJitter`**：真實機器人上會看到的相機與光線效果
 - **`Identity`**：不做任何轉換（適合測試使用）
 
-你也可以將任何 `torchvision.transforms.v2` 的轉換直接傳給 `image_transforms` 參數。
+其他任何 `torchvision.transforms.v2` 類別也可以指定為 `type`（例如 `RandomResizedCrop` 或 `GaussianBlur`）；它會一次套用一個樣本。你也可以直接把 torchvision 轉換傳給 `image_transforms` 參數。
+
+現在每個轉換都會以批次方式處理，而且兩個後端都會執行相同的批次轉換。以單一樣本為單位的類別（`SharpnessJitter`、`GaussianNoise`、`MotionBlur`、`GaussianPatchBrightness`、`RandomShadow`、`CoarseDropout`、`GammaCorrection`、`PlanckianJitter`、`RandomSubsetApply`）與 `make_transform_from_config` 仍可匯入，但已棄用，只是其 `Batched*` 替代版本的前端，使用時會發出警告；它們將在未來的版本中移除。`ImageTransforms` 是單純的 `torch.nn.Module`，接受 `(C, H, W)` 或 `(T, C, H, W)` 張量。以 `type` 指定轉換的設定不受影響。
+
+<Tip warning={true}>
+
+**既有 recipe 的行為變更。** 訓練會以 `uint8` 讀取影格，而 LeRobot 中除了 `ColorJitter`、`RandomAffine` 與 `RandomRotation` 之外的轉換，過去會將非浮點數的輸入原樣回傳。因此，啟用 `GaussianNoise`、`MotionBlur`、`GaussianPatchBrightness`、`RandomShadow`、`CoarseDropout`、`GammaCorrection` 或 `PlanckianJitter` 的 recipe，實際上是在沒有套用這些轉換的情況下進行訓練。現在它們在兩個後端上都會生效，因此這類 recipe 的訓練結果會與以往不同：它會得到自己所要求的資料增強。已經在套用的轉換除了捨入之外沒有改變，因為批次路徑以浮點數計算，且只在最後捨入一次，而不是在每次轉換之後都捨入。
+
+</Tip>
 
 ### 設定選項[[configuration-options]]
 
@@ -263,27 +271,32 @@ LeRobot 提供以下幾種轉換類型：
 - **`random_order`**：以隨機順序或標準順序套用轉換（預設：`False`）
 - **`weight`**：每種轉換被選中的機率（數值越高越容易被選中；若權重總和不為 1，會自動正規化）
 - **`kwargs`**：各轉換專屬的參數（例如亮度範圍）
+- **`backend`**：轉換在訓練期間的執行位置，可為 `"dataloader"`（預設）或 `"gpu"`；詳見下文
+- **`gpu_compile`**：在 `"gpu"` 後端上，對批次轉換使用 `torch.compile`（預設：`True`）
+- **`gpu_chunk_size`**：在 `"gpu"` 後端上，一次增強這麼多個樣本，以限制暫時性的記憶體用量（預設：`32`）
 
-### 視覺化轉換[[visualizing-transforms]]
+### 在 GPU 上執行轉換[[running-transforms-on-the-gpu]]
 
-使用視覺化腳本預覽轉換對資料的影響：
+預設情況下，轉換會在 DataLoader worker 中逐樣本執行。當相機數量較多時，這往往是 worker 最耗費資源的工作，GPU 也因此閒置等待資料。設定 `backend=gpu`，讓 worker 只負責解碼，並在策略裝置上對每個批次套用相同的轉換：
 
 ```bash
-lerobot-imgtransform-viz \
-  --repo-id=your-username/your-dataset \
-  --output-dir=./transform_examples \
-  --n-examples=5
+lerobot-train \
+  --dataset.repo_id=your-username/your-dataset \
+  --dataset.image_transforms.enable=true \
+  --dataset.image_transforms.backend=gpu \
+  --policy.type=act \
+  --policy.device=cuda
 ```
 
-這會儲存展示每種轉換效果的範例影像，協助你調整參數。
+隨機化的方式維持不變：每個樣本會自行抽選轉換與參數，而同一台相機歷史中的影格則共用這些轉換與參數。資料增強只會套用到訓練批次，且在策略的前處理器之前進行；評估批次、rollout 與已儲存的檢查點都不受影響。
 
-### 最佳實務[[best-practices]]
+需要注意的事項：
 
-- **先保守一點**：從小範圍開始（例如亮度 0.9-1.1），再逐步擴大
-- **先測試**：使用視覺化腳本確認轉換的效果看起來合理
-- **觀察訓練狀況**：增強太強烈可能會降低效能
-- **配合你的使用環境**：若機器人在光線變化大的環境中運作，請使用亮度／對比轉換
-- **謹慎搭配**：同時使用太多轉換可能讓訓練不穩定
+- 需要加速器；`--policy.device=cpu` 會被拒絕。以手工建立、帶有自己 `image_transforms` 可呼叫物件的資料集也會被拒絕，因為那些會在 worker 中執行。
+- 支援 dataloader 後端所支援的每一種轉換類型。沒有批次實作的類型（`JPEGCompression`，以及 `ColorJitter`、`RandomAffine`、`RandomRotation` 與 `Identity` 以外的 torchvision 類別）會在批次內一次套用一個樣本，因此無法獲得加速；`JPEGCompression` 還會經過 CPU 來回處理。會改變影格大小的轉換，在超過一個樣本的批次上會被拒絕。
+- 可透過 `--seed` 重現，每個行程會使用不同的種子。資料增強不會消耗策略的隨機串流，而 `gpu_compile` 與 `gpu_chunk_size` 也不會改變實際套用的內容。
+- 兩個後端都會以浮點數執行相同的批次轉換，並在最後取整數（round）一次，因此在相同參數下，同一個樣本在其中一個後端增強的結果，會等於在另一個後端增強的結果。
+- `gpu_compile` 每種影像尺寸會花費 15-30 秒（僅一次）。尖峰記憶體約為批次影像的兩份浮點副本，再加上一個區塊的數份副本；若記憶體吃緊，請調低 `gpu_chunk_size`。`random_order=true` 會讓轉換時間乘以 `max_num_transforms`。
 
 ## 遷移 `v2.1` → `v3.0`[[migrate-v21-v30]]
 

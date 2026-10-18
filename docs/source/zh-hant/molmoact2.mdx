@@ -58,7 +58,7 @@ LeRobot 預設會停用資料集的影像擴增（image augmentation）。在 Mo
 原始 MolmoAct2 的轉換配方（recipe）並不是 LeRobot 通用的預設轉換，
 因此第一個指令也明確固定了它的 95% 裁切、5 度旋轉與色彩
 抖動（color jitter）。原始配方還會另外套用高斯模糊（Gaussian blur），
-機率為 0.2；而 LeRobot 通用的 `RandomSubsetApply` 設定
+機率為 0.2；而 LeRobot 通用的轉換子集設定
 無法表達這個可選的第四種轉換，除非有時捨棄
 三種必要轉換中的某一種。
 
