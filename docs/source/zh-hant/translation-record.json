@@ -6,78 +6,78 @@
     },
     "action_representations.mdx": {
       "source_version": "4c54098a5e06ccbb106775ce1eb5b55220e10f78",
-      "title": "動作表示法（Action Representations）"
+      "title": "動作表示法"
     },
     "adding_benchmarks.mdx": {
       "source_version": "4267939b6f42cbcdf538bae74b79ddefebd69f14",
-      "title": "新增基準測試（Adding a New Benchmark）"
+      "title": "新增基準測試"
     },
     "annotation_pipeline.mdx": {
       "source_title": "Annotation Pipeline",
       "source_version": "611ebb000f96eaa772ab492088c23295e1979a39",
-      "title": "標註管線（Annotation Pipeline）"
+      "title": "標註管線"
     },
     "api/cameras.mdx": {
       "source_version": "2b8c83b96ac42020485f5b4d4507cac9f0275680",
-      "title": "相機（Cameras）"
+      "title": "相機"
     },
     "api/configs.mdx": {
       "source_version": "4a4a9a9f5ae193c020c7f75a9626054dcc583ced",
-      "title": "設定（Configuration）"
+      "title": "設定"
     },
     "api/datasets.mdx": {
       "source_version": "5dcba75453b85a4468fa56d280748f0d49771cc1",
-      "title": "資料集（Datasets）"
+      "title": "資料集"
     },
     "api/envs.mdx": {
       "source_version": "1552e55b39a86dac7446603961c1e671e345aed3",
-      "title": "環境（Environments）"
+      "title": "環境"
     },
     "api/motors.mdx": {
       "source_title": "Motors",
       "source_version": "0a2540f1360a6c01d98317b1e1d071aa7f707fc6",
-      "title": "馬達（Motors）"
+      "title": "馬達"
     },
     "api/policies.mdx": {
       "source_version": "e21a5cc9ebc691f601a65ac64c083cacc227ab6c",
-      "title": "策略（Policies）"
+      "title": "策略"
     },
     "api/processor.mdx": {
       "source_version": "daacc877d6e913dbdb6716800f002b673255e52b",
-      "title": "處理器（Processors）"
+      "title": "處理器"
     },
     "api/robots.mdx": {
       "source_version": "84a051a6173c08b21feb6cfe12ac64e8f4ea3f8e",
-      "title": "機器人（Robots）"
+      "title": "機器人"
     },
     "api/teleoperators.mdx": {
       "source_version": "b890b73c2ef29d379249b39ab79a37311a3a3e51",
-      "title": "遙操作器（Teleoperators）"
+      "title": "遙操作器"
     },
     "backwardcomp.mdx": {
       "source_version": "e42099814722b0fb95b3ee0049ecb6278a7cd738",
-      "title": "向下相容性（Backward compatibility）"
+      "title": "向下相容性"
     },
     "bring_your_own_policies.mdx": {
       "source_title": "Adding a Policy",
       "source_version": "3924eeb615237a1565be036c04620fed609633f9",
-      "title": "新增策略（Adding a Policy）"
+      "title": "新增策略"
     },
     "cameras.mdx": {
       "source_version": "1d6b1b0f2d6882088ef0a67b4443608a9e0c7780",
-      "title": "相機（Cameras）"
+      "title": "相機"
     },
     "cheat-sheet.mdx": {
       "source_version": "0531c95bf434bab4217642bb18986a6a54741663",
-      "title": "速查表（Cheat sheet）"
+      "title": "速查表"
     },
     "damiao.mdx": {
       "source_version": "45388ab9b815b1b0821b9e25b45b63d20091bb6d",
-      "title": "Damiao 馬達與 CAN 匯流排（Damiao Motors and CAN Bus）"
+      "title": "Damiao 馬達與 CAN 匯流排"
     },
     "debug_processor_pipeline.mdx": {
       "source_version": "4826c947ecc2df9a7dfc5184d5847cf1029ec63c",
-      "title": "除錯你的處理器管線（debugging your processor pipeline）"
+      "title": "除錯你的處理器管線"
     },
     "dm05.mdx": {
       "source_title": "DM05",
@@ -90,19 +90,19 @@
     },
     "env_processor.mdx": {
       "source_version": "a82dff6e506d6f832a864022de95e7b7699ea0bd",
-      "title": "環境處理器（Environment Processors）"
+      "title": "環境處理器"
     },
     "envhub.mdx": {
       "source_version": "47f5567a8a84fca9e93e1c138e524bd3888479c1",
-      "title": "來自 Hub 的環境（Environments from the Hub）"
+      "title": "來自 Hub 的環境"
     },
     "envhub_isaaclab_arena.mdx": {
       "source_version": "cd077806de4cb464ed4d18caad4816287bc80ab0",
-      "title": "NVIDIA IsaacLab Arena 環境（NVIDIA IsaacLab Arena Environments）"
+      "title": "NVIDIA IsaacLab Arena 環境"
     },
     "envhub_leisaac.mdx": {
       "source_version": "91bb6a8715f96c51c944781ac3df798c46ceb78e",
-      "title": "在模擬中控制與訓練機器人（LeIsaac）"
+      "title": "在模擬環境中控制與訓練機器人（LeIsaac）"
     },
     "eo1.mdx": {
       "source_title": "EO-1",
@@ -121,7 +121,7 @@
     },
     "feetech.mdx": {
       "source_version": "8012d62bc6e723c7e275ba5d4c944437eef63234",
-      "title": "更新 Feetech 韌體（Updating Feetech Firmware）"
+      "title": "更新 Feetech 韌體"
     },
     "fineart_vla.mdx": {
       "source_title": "FineART-VLA",
@@ -131,7 +131,7 @@
     "flux3.mdx": {
       "source_title": "FLUX 3 Action (flux3)",
       "source_version": "13faddbab8614b52d816c7d78e43048a4b1a65b2",
-      "title": "FLUX 3 Action（flux3）"
+      "title": "FLUX 3 Action (flux3)"
     },
     "groot.mdx": {
       "source_version": "12d67f62db09f2b70b70a267f17e613ec55e6190",
@@ -139,20 +139,20 @@
     },
     "hardware_guide.mdx": {
       "source_version": "e4a786d4cb6c9ac8ca2bdceea4d699c240ed8893",
-      "title": "運算硬體指南（Compute Hardware Guide）"
+      "title": "運算硬體指南"
     },
     "hil_data_collection.mdx": {
       "source_title": "Human In the Loop Data Collection",
       "source_version": "2975b3e6461a00d3a937938a1ef0bdddfb00903f",
-      "title": "人在迴圈中的資料收集（Human In the Loop Data Collection）"
+      "title": "人在迴圈（HIL）資料收集"
     },
     "hilserl.mdx": {
       "source_version": "62d9b17d9bc6ae36c38139a8f52ee637cf2abd0f",
-      "title": "使用強化學習訓練機器人（Train a Robot with RL）"
+      "title": "使用強化學習訓練機器人"
     },
     "hilserl_sim.mdx": {
       "source_version": "e2dddd9edb116cdcd215eaec4db323c801d46e7c",
-      "title": "在模擬環境中訓練強化學習（Train RL in Simulation）"
+      "title": "在模擬環境中使用強化學習訓練"
     },
     "hope_jr.mdx": {
       "source_version": "d18ea47fd91fe28805e0e97bc2c8ccd1b07df900",
@@ -161,11 +161,11 @@
     "il_robots.mdx": {
       "source_title": "Imitation Learning for Robots",
       "source_version": "61de0a3cb0990980bb9db97a660f69575c633cb6",
-      "title": "機器人的模仿學習（Imitation Learning）"
+      "title": "機器人的模仿學習"
     },
     "implement_your_own_processor.mdx": {
       "source_version": "5b7d4f78ac1e2d355dc14ba2a37f3484204b936c",
-      "title": "實作你自己的處理器（implementing your own processor）"
+      "title": "實作你自己的處理器"
     },
     "index.mdx": {
       "source_title": "LeRobot",
@@ -175,21 +175,21 @@
     "inference.mdx": {
       "source_title": "Policy Deployment (lerobot-rollout)",
       "source_version": "f6eae06a6ff4507760ab3c4572314cf8948e7f35",
-      "title": "策略部署（Policy Deployment, lerobot-rollout）"
+      "title": "策略部署（lerobot-rollout）"
     },
     "installation.mdx": {
       "source_title": "Installation",
       "source_version": "1b6fcc8270cc37a3d12236dcbfe3a10b2ca9b3e4",
-      "title": "安裝（Installation）"
+      "title": "安裝"
     },
     "integrate_hardware.mdx": {
       "source_title": "Bring Your Own Hardware",
       "source_version": "2f8d541e54e1660f7a62762762ae7abb033ea42b",
-      "title": "整合自己的硬體（Bring Your Own Hardware）"
+      "title": "整合你自己的硬體"
     },
     "introduction_processors.mdx": {
       "source_version": "f3e63e3c6d7965388573b93838294c28f13aef34",
-      "title": "處理器簡介（introduction to processors）"
+      "title": "處理器簡介"
     },
     "isaac_teleop.mdx": {
       "source_version": "6236a5ebc338802e61522bf9255664cbdd0f01b0",
@@ -203,7 +203,7 @@
     "language_and_recipes.mdx": {
       "source_title": "Language Columns and Recipes",
       "source_version": "4487636d06f957c753b1ebcc5536e47144066ba2",
-      "title": "語言欄位與配方（Language Columns and Recipes）"
+      "title": "語言欄位與配方"
     },
     "lawam.mdx": {
       "source_version": "23a7a4a66d68334e972942d472ed0f5faeabbd3a",
@@ -216,12 +216,12 @@
     },
     "lelab.mdx": {
       "source_version": "a9f28e57b94700d209822ab2bb773ac09ca5a34a",
-      "title": "LeLab - LeRobot GUI"
+      "title": "LeLab：LeRobot 圖形介面"
     },
     "lerobot-dataset-v3.mdx": {
       "source_title": "Using LeRobotDataset",
       "source_version": "56fbaa1a2166cc48c241e7b0dee597a97a6958c1",
-      "title": "使用 LeRobotDataset（Using LeRobotDataset）"
+      "title": "使用 LeRobotDataset"
     },
     "libero.mdx": {
       "source_version": "c701a496bc27315a2d4e133d457f7daec4b29a38",
@@ -247,11 +247,11 @@
     "multi_gpu_training.mdx": {
       "source_title": "Multi GPU training",
       "source_version": "e5d01cc3613f088ef61fcff20d7bd127a3aed3a0",
-      "title": "多 GPU 訓練（Multi GPU training）"
+      "title": "多 GPU 訓練"
     },
     "multi_task_dit.mdx": {
       "source_version": "ebe46489a76d3fbfabc6454690473fdb80ac138f",
-      "title": "多任務 DiT 策略（Multitask DiT Policy）"
+      "title": "多任務 DiT 策略"
     },
     "notebooks.mdx": {
       "source_version": "6a9c3b103ce264011ceee732f0530219c4ba2cd6",
@@ -272,7 +272,7 @@
     },
     "phone_teleop.mdx": {
       "source_version": "ae79531efc9c21dc03016b22e87577b98d821dd8",
-      "title": "手機（Phone）"
+      "title": "手機"
     },
     "pi0.mdx": {
       "source_version": "a8934efd2b2a0d7b1afa815ac1ffc853a59a936b",
@@ -288,11 +288,11 @@
     },
     "porting_datasets_v3.mdx": {
       "source_version": "b2c3c15a0a991dc6fe7b7fd0c6643d6a6b6bca1d",
-      "title": "移植大型資料集（Porting Large Datasets）"
+      "title": "移植大型資料集"
     },
     "processors_robots_teleop.mdx": {
       "source_version": "359b37aff3a1582b828167524e6f74cae7b7c2f8",
-      "title": "用於機器人與遙操作器的處理器（processors for robots and teleoperators）"
+      "title": "機器人與遙操作器的處理器"
     },
     "reachy2.mdx": {
       "source_version": "f4f9f5c3e37a82a274efd9a63b62db0213b0dc09",
@@ -310,7 +310,7 @@
     },
     "rename_map.mdx": {
       "source_version": "16ee6344a8d7320236cb444332dd9b3c7e507808",
-      "title": "使用重新命名對應表與空相機（Using Rename Map and Empty Cameras）"
+      "title": "重新命名對應表與空相機"
     },
     "robocasa.mdx": {
       "source_version": "2a3ddb39c59f7519672f83df96fcc8d3078e4e49",
@@ -336,7 +336,7 @@
     "rtc.mdx": {
       "source_title": "Real-Time Chunking (RTC)",
       "source_version": "dffb3bc51f8349350513af34a874c34ed7511b88",
-      "title": "即時分塊（Real-Time Chunking, RTC）"
+      "title": "即時分塊（RTC）"
     },
     "sarm.mdx": {
       "source_version": "b5e63a07e02651dba333664ba9f89e8fbaca6def",
@@ -358,20 +358,20 @@
     },
     "streaming_video_encoding.mdx": {
       "source_version": "0be32b7174930f3238aa65839c07305decd8b6e9",
-      "title": "串流影片編碼（Streaming Video Encoding）"
+      "title": "串流影片編碼"
     },
     "third_party_robots.mdx": {
       "source_version": "c96612bf408ee7cc878e5a5c95ab80ce4deb107b",
-      "title": "第三方機器人與遙操作器（Third-Party Robots & Teleoperators）"
+      "title": "第三方機器人與遙操作器"
     },
     "third_party_sensors.mdx": {
       "source_title": "Third-Party Cameras & Sensors",
       "source_version": "128102caf346e57f5a5d8c7c5e0fa2d8c449a4a9",
-      "title": "第三方相機與感測器（Third-Party Cameras & Sensors）"
+      "title": "第三方相機與感測器"
     },
     "tools.mdx": {
       "source_version": "d888811842c644f3a16640f8fb7a45ec8cf7dba4",
-      "title": "工具（Tools）"
+      "title": "工具"
     },
     "topreward.mdx": {
       "source_version": "f84fbed49941cddc341dc0d91abab162c968ee5f",
@@ -380,12 +380,12 @@
     "torch_accelerators.mdx": {
       "source_title": "PyTorch accelerators",
       "source_version": "a84c69378e02baff6c1877f53a73844a47afd3b7",
-      "title": "PyTorch 加速器（PyTorch accelerators）"
+      "title": "PyTorch 加速器"
     },
     "training_dataset_streaming.mdx": {
       "source_title": "Training Dataset Streaming",
       "source_version": "b791f6d4dc98641183f04c1e561e761d49854dab",
-      "title": "訓練資料集串流（Training Dataset Streaming）"
+      "title": "訓練資料集串流"
     },
     "unitree_g1.mdx": {
       "source_title": "Unitree G1",
@@ -395,11 +395,11 @@
     "using_dataset_tools.mdx": {
       "source_title": "Using the Dataset Tools",
       "source_version": "e566c4ad70eb2386a2d217a347ad952cb83d0991",
-      "title": "使用資料集工具（Using the Dataset Tools）"
+      "title": "使用資料集工具"
     },
     "video_encoding_parameters.mdx": {
       "source_version": "27811a89ba5fbcbd49dadfde86e87100250dbbdf",
-      "title": "影片編碼參數（Video encoding parameters）"
+      "title": "影片編碼參數"
     },
     "vla_jepa.mdx": {
       "source_version": "44695eeaa13ac34036368bc8e9f25a394e8e6151",
@@ -416,7 +416,7 @@
     "writing_docstrings.mdx": {
       "source_title": "Writing docstrings",
       "source_version": "92ca85d9a929de785d39851a3905c9f8702e2106",
-      "title": "撰寫 docstring（Writing docstrings）"
+      "title": "撰寫 docstring"
     },
     "xvla.mdx": {
       "source_version": "be686512b13c61dce16521a65a1c3f591d3aef98",
@@ -425,20 +425,20 @@
   },
   "section_titles": {
     "API Reference": "API 參考",
-    "About": "關於（About）",
-    "Benchmarks": "基準測試（Benchmarks）",
-    "Compute & Hardware": "運算與硬體（Compute & Hardware）",
-    "Datasets": "資料集（Datasets）",
-    "Get started": "開始使用（Get started）",
-    "Inference": "推論（Inference）",
-    "Policies": "策略（Policies）",
-    "Resources": "資源（Resources）",
-    "Reward Models": "獎勵模型（Reward Models）",
-    "Robot Processors": "機器人處理器（Robot Processors）",
-    "Robots": "機器人（Robots）",
-    "Sensors": "感測器（Sensors）",
-    "Simulation": "模擬（Simulation）",
-    "Teleoperators": "遙操作器（Teleoperators）",
-    "Tutorials": "教學（Tutorials）"
+    "About": "關於",
+    "Benchmarks": "基準測試",
+    "Compute & Hardware": "運算與硬體",
+    "Datasets": "資料集",
+    "Get started": "開始使用",
+    "Inference": "推論",
+    "Policies": "策略",
+    "Resources": "資源",
+    "Reward Models": "獎勵模型",
+    "Robot Processors": "機器人處理器",
+    "Robots": "機器人",
+    "Sensors": "感測器",
+    "Simulation": "模擬",
+    "Teleoperators": "遙操作器",
+    "Tutorials": "教學"
   }
 }
