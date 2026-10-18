@@ -270,33 +270,25 @@ class SmolVLMWithExpertModel(nn.Module):
         key_states = apply_rope(key_states, position_ids_)
 
         if use_cache:
-<<<<<<< HEAD
             if past_key_values is None:
                 raise ValueError(
                     "`use_cache=True` requires a `past_key_values` cache (forward() creates one on prefill)."
                 )
-            # `DynamicCache` stores tensors as [batch, heads, seq, head_dim]; this module works with
-            # [batch, seq, heads, head_dim]. During prefix prefill this stores the (post-RoPE) K/V and
-            # returns them unchanged; during denoising it appends the suffix K/V and returns
-            # [prefix; suffix], exactly like the previous hand-rolled dict cache.
-            key_states, value_states = past_key_values.update(
-                key_states.transpose(1, 2), value_states.transpose(1, 2), layer_idx
-            )
-            key_states = key_states.transpose(1, 2)
-            value_states = value_states.transpose(1, 2)
-=======
             if isinstance(past_key_values, tuple):
                 # Static immutable KV cache: no in-place mutation or dynamic allocations
                 prefix_k, prefix_v = past_key_values[layer_idx]
                 key_states = torch.cat([prefix_k, key_states.transpose(1, 2)], dim=2).transpose(1, 2)
                 value_states = torch.cat([prefix_v, value_states.transpose(1, 2)], dim=2).transpose(1, 2)
             else:
+                # `DynamicCache` stores tensors as [batch, heads, seq, head_dim]; this module works with
+                # [batch, seq, heads, head_dim]. During prefix prefill this stores the (post-RoPE) K/V and
+                # returns them unchanged; during denoising it appends the suffix K/V and returns
+                # [prefix; suffix], exactly like the previous hand-rolled dict cache.
                 key_states, value_states = past_key_values.update(
                     key_states.transpose(1, 2), value_states.transpose(1, 2), layer_idx
                 )
                 key_states = key_states.transpose(1, 2)
                 value_states = value_states.transpose(1, 2)
->>>>>>> ae221131 (perf(smolvla): static immutable prefix KV cache and torch.compile support (#4633))
 
         attention_interface = self.get_attention_interface()
 
