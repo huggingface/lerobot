@@ -299,4 +299,10 @@ Weights and Biases is included in the `training` extra. To use [Weights and Bias
 wandb login
 ```
 
+Then add `--wandb.enable=true` to `lerobot-train`. LeRobot passes the run's `output_dir` to `wandb.init`, so WandB writes its local run files to `<output_dir>/wandb` and the `WANDB_DIR` environment variable has no effect. `--resume=true` reads the previous run ID from that folder, so keep it next to the checkpoints. On a machine without internet access, train with `--wandb.mode=offline` and upload the run later:
+
+```bash
+wandb sync <output_dir>/wandb/offline-run-*
+```
+
 You can now assemble your robot if it's not ready yet, look for your robot type on the left. Then follow the link below to use Lerobot with your robot.
