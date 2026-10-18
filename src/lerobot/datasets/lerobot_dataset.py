@@ -506,6 +506,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         Args:
             frame: Dict mapping feature names to their values for this frame.
                 Must include a ``'task'`` key. Torch tensors are converted to numpy.
+                Numeric arrays are copied into the episode buffer, so the caller can
+                reuse them after this call without changing earlier frames.
 
         Raises:
             RuntimeError: If the dataset is read-only (no writer).
