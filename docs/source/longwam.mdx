@@ -1,0 +1,452 @@
+<!-- Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Long-WAM
+
+[Long-WAM](https://nvlabs.github.io/LongLive/Long-WAM/) is a world-action model
+that conditions action prediction on an extended observation history. This
+integration exposes it as `policy.type=longwam` through LeRobot's training,
+pretrained-policy, and processor interfaces.
+
+Both **IDM** (video imagination followed by action denoising) and **COD**
+(joint video/action denoising) use native LeRobot training and checkpoint APIs.
+Inference supports Long-WAM's synchronous/asynchronous scheduling and optional
+streaming VAE encoding. Convert existing `model.pt` bundles before using
+`--policy.path`.
+
+## Installation
+
+Use Python 3.12 and a clean virtual environment. From this LeRobot checkout:
+
+```bash
+pip install -e ".[longwam,training]"
+# Add the simulator dependencies when evaluating LIBERO:
+pip install -e ".[longwam,libero]"
+```
+
+No external Long-WAM checkout is needed at runtime. Initial model downloads use
+the Hugging Face cache. Configure authentication yourself if an asset requires
+it; no credentials are included in this integration.
+
+## Data and configuration
+
+The initial adapter targets LIBERO-style, horizontally concatenated cameras.
+Datasets must include the configured RGB cameras, `observation.state`, `action`,
+and a language `task`. Camera order is explicit in `camera_keys`; it must match
+the checkpoint. Use LeRobot v3-format data; convert older datasets with LeRobot's
+dataset tools first. Images enter the processor as floats in `[0,1]`.
+
+| Parameter                  | Meaning                                         | Default          |
+| -------------------------- | ----------------------------------------------- | ---------------- |
+| `past_obs_steps`           | History in raw dataset/control ticks            | `48`             |
+| `video_stride`             | Raw ticks between sampled video frames          | `4`              |
+| `future_video_steps`       | Future video supervision in raw ticks           | `32`             |
+| `action_horizon`           | Supervised action chunk length                  | `32`             |
+| `inference_action_horizon` | Optional inference-only chunk length            | Training horizon |
+| `n_action_steps`           | Control ticks before chunk handoff              | `10`             |
+| `camera_size`              | Height and width of each resized camera         | `[224,224]`      |
+| `denoising`                | IDM or co-denoising                             | `idm`            |
+| `execution`                | Long-WAM action scheduler                       | `sync`           |
+| `streaming_vae`            | Incremental encoding of each observation window | `false`          |
+
+History duration is `past_obs_steps / dataset_fps` seconds. Training requests raw
+observations from `-past_obs_steps` through `future_video_steps`, inclusive, and
+actions from `0` through `action_horizon - 1`. Padding masks are retained.
+Inference receives only the current observation and maintains its own history.
+
+State/action MIN_MAX normalization, constant-channel handling, and clipping
+match the reference implementation. Statistics are saved with the processors.
+`toggle_action_dimensions` must match the checkpoint's action convention; it is
+not inferred from the environment name. Non-LIBERO camera layouts and
+embodiment-specific transforms require separate validation.
+
+## Training
+
+### Fine-tune a native checkpoint
+
+Convert a release bundle as described below, then load its saved experts without
+reinitializing them:
+
+```bash
+lerobot-train \
+  --policy.path=/path/to/native-libero-checkpoint \
+  --policy.device=cuda \
+  --policy.use_gradient_checkpointing=true \
+  --policy.push_to_hub=false \
+  --dataset.repo_id=your-org/your-dataset \
+  --dataset.video_backend=pyav \
+  --batch_size=1 \
+  --steps=1000 \
+  --save_freq=1000 \
+  --env_eval_freq=0 \
+  --wandb.enable=false \
+  --save_checkpoint_to_hub=false \
+  --output_dir=outputs/longwam
+```
+
+For local data, also pass `--dataset.root=/path/to/dataset`. The converted LIBERO
+checkpoint uses `observation.images.image` and `observation.images.image2`.
+If the dataset calls the second camera `observation.images.wrist_image`, add
+`--rename_map='{"observation.images.wrist_image":"observation.images.image2"}'`.
+Dataset statistics are updated for fine-tuning; resume retains the saved statistics.
+
+```bash
+lerobot-train \
+  --config_path=outputs/longwam/checkpoints/001000/pretrained_model/train_config.json \
+  --resume=true \
+  --steps=2000
+```
+
+Batch size 1, BF16 weights, and gradient checkpointing used about 68.6 GB of peak
+allocated GPU memory in the short full-weight check below. These values are an
+interface example, not a benchmark recipe or a memory guarantee. Single-process
+training and resume are the configuration exercised in this guide.
+
+Both modes also have CPU training/save/resume tests with LeRobot's map-style
+and streaming dataset readers. Select the latter with `--dataset.streaming=true`.
+
+### Fresh initialization
+
+Fresh initialization uses **LongLive2.0-Robot-S** for the video expert. Wan assets
+supply the frozen VAE/text encoder and tokenizer, not the video initialization.
+The default mapped ActionDiT requires an explicit compatible weight file:
+
+```bash
+lerobot-train \
+  --policy.type=longwam \
+  --policy.device=cuda \
+  --policy.action_init_path=/path/to/mapped-action-dit.pt \
+  --policy.camera_keys='[observation.images.image,observation.images.wrist_image]' \
+  --policy.action_dim=7 \
+  --policy.proprio_dim=8 \
+  --policy.past_obs_steps=48 \
+  --policy.action_horizon=32 \
+  --dataset.repo_id=your-org/your-dataset \
+  --batch_size=1 \
+  --steps=1000 \
+  --env_eval_freq=0 \
+  --policy.push_to_hub=false \
+  --wandb.enable=false \
+  --output_dir=outputs/longwam-fresh
+```
+
+These batch-size/step values illustrate the interface, not a benchmark
+reproduction recipe. A missing mapped-action file fails explicitly;
+`--policy.action_init=random` is an opt-in alternative, not an automatic fallback.
+
+Full-weight training validation used converted LIBERO-IDM and LIBERO-COD
+checkpoints, separately from the fresh-initialization example above.
+
+## Inference and evaluation
+
+### Convert a released LIBERO checkpoint
+
+The converter reads a local release bundle containing `model.pt`, `config.yaml`,
+and `dataset_stats.json`. It validates the supported camera/normalization layout
+and strictly loads the released experts, without reinitializing them. Conversion
+runs on CPU and includes the frozen VAE, text encoder, tokenizer, and saved
+processors in a native checkpoint; allow approximately 120 GB of host RAM and
+24 GB of output storage. The output directory must not already exist.
+
+```bash
+python examples/longwam/convert_checkpoint.py \
+  --bundle /path/to/released-libero-bundle \
+  --backbone /path/to/Wan2.2-TI2V-5B \
+  --tokenizer-model /path/to/Wan2.1-T2V-1.3B \
+  --output /path/to/native-libero-checkpoint
+```
+
+The backbone directory must contain `Wan2.2_VAE.pth` and
+`models_t5_umt5-xxl-enc-bf16.pth`; the tokenizer directory must contain
+`google/umt5-xxl/`. Conversion does not upload any artifacts.
+
+### Synchronous inference
+
+**IDM is the default:** video imagination in latent space is followed by action
+denoising conditioned on the video features. COD jointly denoises video and action.
+
+Use `select_action` on **every control tick**, including ticks that consume a
+previously predicted chunk. Call `reset()` between episodes. The initial
+integration requires one environment per policy and a fixed instruction within
+each episode.
+
+```python
+from lerobot.policies import make_pre_post_processors
+from lerobot.policies.longwam.modeling_longwam import LongWAMPolicy
+
+checkpoint = "/path/to/native-checkpoint"
+with LongWAMPolicy.from_pretrained(checkpoint) as policy:
+    policy.eval()
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy.config, pretrained_path=checkpoint
+    )
+    policy.reset()
+    # observation contains camera tensors, observation.state, and task.
+    action = postprocessor(policy.select_action(preprocessor(observation)))
+```
+
+For a compatible native LIBERO checkpoint, the standard evaluation interface is:
+
+```bash
+lerobot-eval \
+  --policy.path=/path/to/native-libero-checkpoint \
+  --policy.device=cuda \
+  --policy.execution=sync \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false
+```
+
+Use the checkpoint's camera, action, horizon, and denoising settings. Conversion
+preserves its published `eval_num_inference_steps` (LIBERO-IDM: 10; COD: 4).
+COD requires
+both `denoising=cod` and `imagine_sigma=0`. Changing these is not a substitute for
+loading the corresponding weights. The command above uses LeRobot's default
+simulator settings, not the paired validation protocol below. Its standard CLI
+path has been checked on the 12 cases listed below. LeRobot's evaluator records
+sample videos in the output directory; remove unwanted recordings after review.
+
+### Asynchronous scheduling and streaming VAE
+
+The same per-tick `select_action` interface supports both options:
+
+```bash
+lerobot-eval \
+  --policy.path=/path/to/native-libero-checkpoint \
+  --policy.device=cuda \
+  --policy.execution=async \
+  --policy.streaming_vae=true \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.max_parallel_tasks=1 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false
+```
+
+The scheduler requests the next chunk before handoff and selects the correct
+elapsed offset. A late result waits at the handoff boundary. Streaming VAE
+incrementally encodes each planning window with the same causal padding as
+full-window encoding; it works with both IDM and COD, in either scheduler mode.
+For robot control, retain LeRobot's inline `--inference.type=sync` engine and
+select the Long-WAM scheduler with `--policy.execution`.
+
+### Paired reference evaluation
+
+For the validated comparison, use the same release bundle and frozen assets as
+conversion, plus a reference Long-WAM checkout:
+
+```bash
+python examples/longwam/evaluate_libero.py \
+  --native-checkpoint /path/to/native-libero-checkpoint \
+  --bundle /path/to/released-libero-bundle \
+  --reference-root /path/to/LongLive/Long-WAM \
+  --backbone /path/to/Wan2.2-TI2V-5B \
+  --tokenizer-model /path/to/Wan2.1-T2V-1.3B \
+  --output outputs/longwam-libero-sync/paired \
+  --all-suites --episodes 5 --task-limit 10 --trace-steps 61
+```
+
+This requires a CUDA GPU and working EGL rendering. Under Slurm, the script
+shards tasks using `SLURM_PROCID` and `SLURM_NTASKS`; allocate one GPU per task.
+It saves progress after every episode and resumes only an identical protocol
+and implementation. It does not record videos or upload artifacts. A separate
+reference checkout is needed only for this comparison, not normal inference.
+Add `--execution async` and/or `--streaming-vae` to compare those modes.
+The reference uses an inline transport with the original scheduler; separate
+scripted and CUDA lifecycle tests cover genuinely pending worker requests.
+
+### Runtime boundaries
+
+Synchronous chunk scheduling is the default. The optional Long-WAM scheduler
+(`execution=async`) preserves its observation anchors and elapsed chunk offsets;
+it is **not** LeRobot's generic async/RTC interface. `predict_action_chunk`,
+generic RTC, and mid-episode task changes are explicitly unsupported.
+
+One ordered worker thread shares the policy's parameters, preserving observation
+ordering without a duplicate model in a subprocess.
+`close()` waits for running work; a timed-out thread cannot forcibly terminate
+a hung inference. Use the context manager above or call `close()` explicitly.
+`train()` closes an existing inference worker before optimization.
+
+## Validation and provenance
+
+The starting revisions are:
+
+- LeRobot: `146d8474932c8b566717eb2738ba459337ab71c4`.
+- NVlabs/LongLive reference: `1b9e348897cafa206fc6dd6feb80b59e2a8b1aa9`.
+- Robot-S initialization: `9f23acf1a619afe69d866f105c17209880851894`.
+
+Local CPU validation uses Python 3.12.3, PyTorch 2.11.0+cpu, NumPy 2.2.6,
+Transformers 5.5.4, and Accelerate 1.15.0. Tests use synthetic data, a tiny VAE,
+and reduced-size **real** video/action transformer experts; they do not download
+full weights or move a robot.
+
+On 2026-10-18, the targeted CPU suite passed 222 tests, including eight reference
+scheduler comparisons, exact PIL/BF16 image preprocessing, per-episode text
+caching, fresh-environment reset and fingerprint checks, and the existing
+factory/interactive-contract/processor-loading regressions. It also includes
+LeRobot inference/streaming-data regressions, real causal VAE comparisons, and
+IDM/COD training/save/resume with map-style and streaming readers. These are the
+targeted integration suites, not the complete upstream CI suite.
+
+```bash
+pytest tests/policies/longwam -q
+# Optional independent scheduler comparison against a reference checkout:
+LONGWAM_REFERENCE_ROOT=/path/to/LongLive/Long-WAM \
+  pytest tests/policies/longwam/test_longwam_reference.py -q
+# Related upstream interface regressions:
+pytest tests/policies/test_factory_dataset_feature_hook.py \
+  tests/policies/test_pretrained_interactive_contracts.py \
+  tests/processor/test_pipeline_from_pretrained_helpers.py \
+  tests/inference tests/datasets/test_streaming_factory.py \
+  tests/datasets/test_streaming_numeric_columns.py \
+  tests/test_streaming_core_imports.py -q
+```
+
+Trace assertions identify the episode, inference anchor, selected offset, and
+all observations consumed at each anchor, including late handoff and reset with
+an in-flight request. The standard training CLI test covers optimization,
+save/load, processor persistence, inference, and resume.
+
+### Standard CLI checks with released weights
+
+On 2026-10-18, `lerobot-eval` completed **12/12 successful episodes per model**
+using converted LIBERO-IDM and LIBERO-COD checkpoints, synchronous inference,
+seed 1, one environment, and one episode per selected task. IDM used 20
+denoising steps in this CLI check; COD used 4.
+
+| Suite        | Task IDs   | Episode limit | IDM | COD |
+| ------------ | ---------- | ------------- | --- | --- |
+| Spatial      | 0, 1, 4, 8 | 400 ticks     | 4/4 | 4/4 |
+| Object       | 0, 1, 4, 8 | 400 ticks     | 4/4 | 4/4 |
+| Goal         | 0, 4       | 700 ticks     | 2/2 | 2/2 |
+| Long Horizon | 0, 4       | 700 ticks     | 2/2 | 2/2 |
+
+This used LeRobot's default 360-pixel rendering and 10 settling steps. It is a
+CLI smoke check, not a score comparable to the paired protocol or the paper.
+
+`lerobot-train` fine-tuned each full checkpoint on one real LIBERO trajectory
+(98 frames, 20 FPS), with batch size 1, P48 history, a 32-action chunk, BF16
+weights, gradient checkpointing, and AdamW at `1e-4`. It saved step 2, resumed
+to step 3, and restored the sampler position. All 1,651 optimizer state counters
+advanced from 2 to 3 for each model. Sampled video/action parameters changed;
+sampled frozen VAE/text parameters did not. The COD check additionally verified
+all 438 frozen tensors bitwise against the starting checkpoint at both saved
+steps. Peak allocated GPU memory was 68.54 GB for IDM and 68.55 GB for COD.
+
+Each resumed checkpoint then completed 20 control ticks through `lerobot-eval`
+without inference errors. Each deliberately truncated episode only checks
+reload functionality; it is not a success-rate evaluation. Three training steps
+do not establish convergence or benchmark performance. Temporary training
+checkpoints and videos were removed after validation.
+
+These CLI checks used GB200 GPUs, Python 3.12.13, PyTorch 2.10.0+cu128, NumPy
+2.2.6, Transformers 5.5.4, Accelerate 1.13.0, PyAV 15.1.0, Pillow 12.3.0,
+MuJoCo 3.3.2, and robosuite 1.4.0.
+
+### Paired numerical and closed-loop checks
+
+The released `Efficient-Large-Model/Long-WAM-LIBERO-IDM` bundle at revision
+`eca2710140fc0d03a2b0259db1d49d5ca60d5122` has passed CPU conversion with strict
+expert-weight loading. Its `model.pt` SHA-256 is
+`2596885d07af089e83ebaf2e1cfc6cee9dc4001e5cfd90b279e60d02a32aaf17`.
+GPU validation uses
+`examples/longwam/evaluate_libero.py`: the native policy and original
+synchronous scheduler/core receive identical observations before paired
+closed-loop episodes. Both use LeRobot's simulator wrapper, seed 1, the first
+five provided initial states per task, 256-pixel rendering, PIL resizing to
+224 pixels per camera, 30 settling steps, BF16 inference, 20 denoising steps,
+an action horizon of 80, and replanning every 10 ticks. Episode limits are
+400 ticks for Spatial/Object/Goal and 700 for Long Horizon.
+
+Each episode creates a fresh simulator. Paired initial observations and
+MuJoCo states must have identical fingerprints before inference starts.
+Reusing an environment with `hard_reset=True` did not reliably reproduce the
+drawer fixture state in a diagnostic run; those results are excluded.
+
+The completed 2026-10-18 run on four GB200 GPUs produced:
+
+| Suite               | Native LeRobot | Reference    | Episodes per implementation |
+| ------------------- | -------------- | ------------ | --------------------------- |
+| LIBERO-Spatial      | 50/50 (100%)   | 50/50 (100%) | 50                          |
+| LIBERO-Object       | 50/50 (100%)   | 50/50 (100%) | 50                          |
+| LIBERO-Goal         | 48/50 (96%)    | 48/50 (96%)  | 50                          |
+| LIBERO-Long Horizon | 50/50 (100%)   | 50/50 (100%) | 50                          |
+
+All 200 paired episodes agree on initial conditions, success, and termination
+step. Separately, all 40 tasks passed a 61-tick same-observation comparison
+(2,440 action comparisons, maximum absolute error **0**), exercising the full
+P48 history. The run used PyTorch 2.10.0+cu128, NumPy 2.2.6, Transformers 5.5.4,
+MuJoCo 3.3.2, robosuite 1.4.0, and Pillow 13.0.0. Per-worker JSON records retain
+the protocol, implementation/configuration hashes, traces, and episode results.
+
+These are small-sample **synchronous LIBERO-IDM integration results**, not the
+full 50-initial-state benchmark or a paper score. Both implementations use the
+same LeRobot simulator wrapper, so this does not independently validate the
+original simulator harness.
+
+The released `Efficient-Large-Model/Long-WAM-LIBERO-COD` bundle at revision
+`b73f1c20bbdf7611f4a180c6117dbdbb8416cd54` also passed strict CPU conversion.
+Its `model.pt` SHA-256 is
+`03815c5bec95740f6aeed933dd9bf9bcb2a894fa3e291b54327f174ce6d655a2`.
+The same synchronous protocol, with the released **4 denoising steps** and
+Pillow 12.3.0, produced:
+
+| Suite               | Native LeRobot | Reference    | Episodes per implementation |
+| ------------------- | -------------- | ------------ | --------------------------- |
+| LIBERO-Spatial      | 50/50 (100%)   | 50/50 (100%) | 50                          |
+| LIBERO-Object       | 50/50 (100%)   | 50/50 (100%) | 50                          |
+| LIBERO-Goal         | 47/50 (94%)    | 47/50 (94%)  | 50                          |
+| LIBERO-Long Horizon | 47/50 (94%)    | 47/50 (94%)  | 50                          |
+
+All 200 COD pairs matched initial conditions, success, and termination steps.
+All 2,440 COD action comparisons had maximum absolute error **0**. These scores
+check migration fidelity for each checkpoint, not an IDM-versus-COD ranking.
+
+### Scheduler and streaming-mode coverage
+
+The same reference harness covered both schedulers and VAE modes. Additional
+checks used task IDs 0 and 1 from each suite, one initial state per task, and
+61-tick action traces. IDM used its released **10-step** denoising setting;
+COD used **4 steps**. Asynchronous scheduling used a trigger stride of 5.
+
+| Model | Scheduler | Streaming VAE | Paired episodes | Action comparisons |
+| ----- | --------- | ------------- | --------------- | ------------------ |
+| IDM   | Sync      | Off           | 8               | 488                |
+| IDM   | Sync      | On            | 8               | 488                |
+| IDM   | Async     | Off           | 8               | 488                |
+| IDM   | Async     | On            | 8               | 488                |
+| COD   | Sync      | Off           | 200 (above)     | 2,440 (above)      |
+| COD   | Sync      | On            | 8               | 488                |
+| COD   | Async     | Off           | 8               | 488                |
+| COD   | Async     | On            | 8               | 488                |
+
+Every additional mode check passed: 56 paired episodes matched on initial
+conditions, success, and termination steps, with 56/56 successful episodes for
+each implementation. All 3,416 additional action comparisons had maximum
+absolute error **0**. The reference transport is inline for reproducible
+scheduling; the tests below separately exercise genuinely pending CUDA work.
+
+### CUDA worker lifecycle and streaming VAE
+
+The released IDM and COD checkpoints each passed three CUDA tests: exact
+streaming/full-window VAE latent agreement (maximum absolute error 0), delayed
+asynchronous handoff selecting the correct chunk offset, and reset while a
+request was pending. Reset reproduced the new episode's first action exactly;
+closing the policy left no Long-WAM worker thread running.
+
+```bash
+LONGWAM_NATIVE_CHECKPOINT=/path/to/native-checkpoint \
+  pytest tests/policies/longwam/test_longwam_gpu.py -q -s
+```
+
+Run this command for each checkpoint. These opt-in tests require CUDA and local
+weights; CPU-only runs skip them without downloading assets. They do not move
+physical hardware. The wheel was also built and installed in isolation to verify
+policy registration and inclusion of source notices and license texts.
+Source notices and third-party licenses are retained under
+`policies/longwam/_core/` and included in the built wheel.

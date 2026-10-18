@@ -246,6 +246,7 @@ robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot
 topreward = ["lerobot[transformers-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
+longwam = ["lerobot[transformers-dep]", "lerobot[sentencepiece-dep]", "ftfy>=6.3,<7"]
 fastwam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -355,6 +356,7 @@ all = [
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
     "lerobot[fastwam]",
+    "lerobot[longwam]",
     "lerobot[flux3]",
     "lerobot[groot]",
     "lerobot[xvla]",
@@ -426,6 +428,7 @@ torchcodec = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' and (pl
 
 [tool.setuptools.package-data]
 lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt", "configs/recipes/*.yaml"]
+"lerobot.policies.longwam._core" = ["NOTICE.md", "licenses/*.txt"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -462,6 +465,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403", "E402", "D104"]
+# Preserve reference-core class names, mathematical symbols, and torch F aliases
+# for checkpoint/provenance review; native Long-WAM interfaces use normal naming.
+"src/lerobot/policies/longwam/_core/**" = ["N801", "N806", "N812"]
 # E402: conditional-import guards (TYPE_CHECKING / is_package_available) must precede the imports they protect
 "src/lerobot/scripts/convert_dataset_v21_to_v30.py" = ["E402"]
 
@@ -549,6 +555,9 @@ default.extend-ignore-identifiers-re = [
     "OT_VALUE",
     "VanderBilt",
     "seperated_timestep",
+    # Preserve the reference Wan VAE constructor/attribute spellings.
+    "temperal_downsample",
+    "temperal_upsample",
     "nd",  # einsum output axes "...nd" in the vendored FLUX 3 Action transformer
     "EmbedND",
 ]
