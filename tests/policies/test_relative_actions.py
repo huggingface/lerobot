@@ -552,6 +552,12 @@ def test_se3_pose_groups_are_validated():
         )
     with pytest.raises(ValueError, match="excluded from the relative conversion"):
         to_relative_actions(actions, state, [True] * 5 + [False, True], se3_pose_groups=[[0, 1, 2, 3, 4, 5]])
+    # A mask shorter than the action leaves the trailing dimensions absolute, so a group reaching
+    # past it is a layout error rather than an IndexError deep in the conversion.
+    with pytest.raises(ValueError, match="beyond the relative mask"):
+        to_relative_actions(actions, state, [True] * 3, se3_pose_groups=[[0, 1, 2, 3, 4, 5]])
+    with pytest.raises(ValueError, match="beyond the relative mask"):
+        to_absolute_actions(actions, state, [True] * 3, se3_pose_groups=[[0, 1, 2, 3, 4, 5]])
     # The group addresses the state too, so a state that does not reach index 5 is a layout error,
     # not a broadcast error.
     with pytest.raises(ValueError, match="outside the state"):

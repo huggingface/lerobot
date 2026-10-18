@@ -209,15 +209,16 @@ policy.relative_se3_pose_groups = [[0, 1, 2, 3, 4, 5]]
 policy.relative_exclude_joints = ["gripper"]
 ```
 
-Recompute the action statistics with the same groups, so the normalizer sees the
-distribution the model is trained on:
+Recompute the action statistics with the same groups and the same excluded joints, so the
+normalizer sees the distribution the model is trained on:
 
 ```bash
 lerobot-edit-dataset --repo_id=${HF_USER}/my_dataset \
     --operation.type=recompute_stats \
     --operation.relative_action=true \
     --operation.chunk_size=50 \
-    --operation.relative_se3_pose_groups="[[0, 1, 2, 3, 4, 5]]"
+    --operation.relative_se3_pose_groups="[[0, 1, 2, 3, 4, 5]]" \
+    --operation.relative_exclude_joints='["gripper"]'
 ```
 
 Dimensions outside a pose group stay component-wise, and SE(3) composition returns the

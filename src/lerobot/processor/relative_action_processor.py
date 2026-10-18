@@ -115,7 +115,12 @@ def _resolve_se3_pose_groups(
                 )
             if index in seen:
                 raise ValueError(f"Action index {index} appears in more than one SE(3) pose group")
-            if index < len(mask) and not mask[index]:
+            if index >= len(mask):
+                raise ValueError(
+                    f"SE(3) pose index {index} is beyond the relative mask of length {len(mask)}. "
+                    "Dimensions past the mask stay absolute, so a pose group must lie inside it."
+                )
+            if not mask[index]:
                 raise ValueError(
                     f"Action index {index} is excluded from the relative conversion, so it cannot "
                     "be part of an SE(3) pose group"
