@@ -19,6 +19,7 @@ Provides the RealSenseCamera class for capturing frames from Intel RealSense cam
 import logging
 import sys
 import time
+from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
 
@@ -193,11 +194,17 @@ class RealSenseCamera(Camera):
         """Initializes the RealSense pipeline, starts it, and starts the background read thread.
 
         Raises:
+            OSError: If the configured JSON preset cannot be read.
             ValueError: If the configuration is invalid, a requested sensor option is unsupported,
                 or a requested sensor value is invalid.
             ConnectionError: If the camera is found but fails to start the pipeline or no RealSense devices are detected at all.
-            RuntimeError: If the pipeline starts but fails to apply requested settings.
+            RuntimeError: If the SDK rejects a JSON preset or the pipeline fails to apply requested settings.
         """
+        # Read before opening the device so an unreadable preset has no camera side effects.
+        json_config = None
+        if self.config.json_config_path is not None:
+            json_config = Path(self.config.json_config_path).expanduser().read_text(encoding="utf-8")
+
         rs_pipeline = rs.pipeline()
         rs_config = rs.config()
         self._configure_rs_pipeline_config(rs_config)
@@ -213,6 +220,13 @@ class RealSenseCamera(Camera):
         self.rs_profile = rs_profile
 
         try:
+            if json_config is not None:
+                try:
+                    rs.serializable_device(rs_profile.get_device()).load_json(json_config)
+                except RuntimeError as error:
+                    raise RuntimeError(
+                        f"{self}: failed to load RealSense JSON preset '{self.config.json_config_path}': {error}"
+                    ) from error
             self._configure_capture_settings()
             self._configure_sensor_options()
             self._start_read_thread()
