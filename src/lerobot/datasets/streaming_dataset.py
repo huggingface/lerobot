@@ -392,6 +392,10 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         )
         self.root = self.meta.root
         self.revision = self.meta.revision
+        if self.meta.audio_keys:
+            raise NotImplementedError(
+                f"Streaming a dataset with audio features is not supported yet: {self.meta.audio_keys}."
+            )
         self.meta.rescale_depth_stats(self._depth_output_unit)
         # Check version
         check_version_compatibility(self.repo_id, self.meta._version, CODEBASE_VERSION)

@@ -43,6 +43,7 @@ def test_streaming_dataset_forwards_token_to_metadata_and_remote_worker_io(
         video_keys=[],
         depth_keys=[],
         image_keys=[],
+        audio_keys=[],
         rescale_depth_stats=Mock(),
     )
     metadata_cls = Mock(return_value=metadata)
