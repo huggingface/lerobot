@@ -148,7 +148,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         # Canonical keys reach the policy unchanged; --rename_map aliases them like any env.
         self.features_map = {name: name for name in self.features}
         self.descriptor = descriptor
-        groups = self.task.split(",") if self.task else list(descriptor.tasks)
+        groups = [t.strip() for t in self.task.split(",")] if self.task else list(descriptor.tasks)
         result = {}
         for group in groups:
             if group not in descriptor.tasks:
@@ -611,6 +611,8 @@ class IsaaclabArenaEnv(HubEnvConfig):
         from .factory import make_hub_envs
 
         assert self.hub_path is not None
+        if self.endpoint is not None:
+            raise ValueError(f"--env.type={self.type} runs in-process only; --env.endpoint is not supported")
         return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
 
     def get_env_processors(self):
@@ -679,6 +681,8 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
         from .factory import make_hub_envs
 
         assert self.hub_path is not None
+        if self.endpoint is not None:
+            raise ValueError(f"--env.type={self.type} runs in-process only; --env.endpoint is not supported")
         return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
 
 

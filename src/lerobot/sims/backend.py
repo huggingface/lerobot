@@ -18,6 +18,7 @@ import contextlib
 import importlib
 import importlib.metadata
 import multiprocessing
+import traceback
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from multiprocessing.connection import Connection
@@ -64,7 +65,6 @@ class BackendConfig:
 
 class _Factories:
     def __init__(self, env_fns):
-        """Initialize owned resources without advancing simulation time."""
         self.env_fns = env_fns
 
 
@@ -76,8 +76,8 @@ def _world_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
     """Build one world and run its reset/step commands until told to close."""
     try:
         env = make()
-    except BaseException as exc:
-        pipe.send((False, repr(exc)))
+    except BaseException:
+        pipe.send((False, traceback.format_exc()))
         return
     pipe.send((True, None))
     try:
@@ -95,8 +95,8 @@ def _world_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
                 else:
                     result = {name: getattr(env, name) for name in _WORLD_ATTRS if hasattr(env, name)}
                 pipe.send((True, result))
-            except Exception as exc:
-                pipe.send((False, repr(exc)))
+            except Exception:
+                pipe.send((False, traceback.format_exc()))
     finally:
         env.close()
         pipe.close()
@@ -347,17 +347,18 @@ class Backend:
         return [v[0][key].copy() for v in self.last]
 
     def close(self) -> None:
-        """Release owned simulator resources and transport declarations."""
-        for env in self.envs:
-            env.close()
-        self.envs.clear()
+        """Close every world, even when one of them fails to close."""
+        envs, self.envs = self.envs, []
+        with contextlib.ExitStack() as stack:
+            for env in envs:
+                stack.callback(env.close)
 
 
 class ToyEnv:
     """Deterministic lightweight backend for protocol and rollout integration tests."""
 
     def __init__(self):
-        """Initialize owned resources without advancing simulation time."""
+        """A 2-D point that starts near the origin and succeeds past x = 1."""
         self.observation_space = spaces.Dict(
             {
                 "agent_pos": spaces.Box(-100, 100, (2,), np.float32),
@@ -374,20 +375,19 @@ class ToyEnv:
         return {"agent_pos": self.state.copy(), "pixels": self.render()}
 
     def reset(self, seed=None):
-        """Reset selected worlds with explicit seeds and clear terminal latches."""
+        """Place the point near the origin, from ``seed``."""
         self.state = np.random.default_rng(seed).uniform(-0.1, 0.1, 2).astype(np.float32)
         return self._obs(), {}
 
     def step(self, action):
-        """Advance each unfinished world once and retain terminal transitions."""
+        """Move the point by ``action``."""
         self.state += action
         success = bool(self.state[0] >= 1)
         return self._obs(), float(success), success, False, {"is_success": success}
 
     def render(self):
-        """Return cached canonical RGB frames, including terminal frames."""
+        """An 8x8 image whose brightness encodes x."""
         return np.full((8, 8, 3), int(np.clip(self.state[0] * 10 + 100, 0, 255)), dtype=np.uint8)
 
     def close(self) -> None:
-        """Release owned simulator resources and transport declarations."""
-        pass
+        """Nothing to release."""

@@ -52,7 +52,7 @@ class Robot(abc.ABC):
     supports_position_hold: bool = False
 
     def hold(self) -> None:
-        """Retain a safe controller command when command hold is explicitly supported."""
+        """Retain a safe controller command when command hold is explicitly supported (only SimRobot today)."""
         raise NotImplementedError(f"{self.name} does not implement command hold")
 
     def __init__(self, config: RobotConfig):

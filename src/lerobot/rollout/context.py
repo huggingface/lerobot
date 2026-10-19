@@ -22,7 +22,6 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
-import math
 from collections import deque
 from collections.abc import Callable
 from copy import copy
@@ -66,7 +65,7 @@ from lerobot.processor import (
 )
 from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
 from lerobot.robots import Robot, make_robot_from_config
-from lerobot.robots.sim import SimRobot, check_teleop_clock
+from lerobot.robots.sim import SimRobot, check_control_rate, check_teleop_clock
 from lerobot.robots.sim.world import get_world
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.transport.wire.features import feature_mismatch
@@ -343,12 +342,8 @@ def _connect_rollout_hardware(
     wrapper = ThreadSafeRobot(robot)
     teleop = None
     try:
+        check_control_rate(robot, cfg.fps)
         if isinstance(robot, SimRobot):
-            # The simulator ticks at its own rate; a different control rate replays actions too fast or slow.
-            if not math.isclose(cfg.fps, robot.descriptor.fps):
-                raise ValueError(
-                    f"--fps={cfg.fps} differs from the simulator control rate ({robot.descriptor.fps} Hz)"
-                )
             if simulator_admission is not None:
                 simulator_admission(robot)
             elif cfg.policy is not None:

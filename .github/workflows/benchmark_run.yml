@@ -36,7 +36,6 @@ jobs:
       BENCHMARK_NAME: ${{ inputs.name }}
       SIM_IMAGE: lerobot-sim-${{ inputs.name }}:${{ inputs.sim_tag }}
       POLICY_IMAGE: lerobot-policy:${{ github.sha }}-${{ inputs.name }}
-      ARTIFACTS: ${{ runner.temp }}/sim-${{ inputs.name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,8 +67,6 @@ jobs:
                   f.write(f'{key}={value}\n')
               f.write('ARGS\n')
           PY
-      - name: Prepare persistent build cache
-        run: mkdir -p /tmp/lerobot-buildkit
       - name: Build simulator
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -79,42 +76,24 @@ jobs:
           build-args: ${{ steps.arguments.outputs.args }}
           load: true
           push: false
-          cache-from: type=local,src=/tmp/lerobot-buildkit/sim-cache-${{ inputs.name }}
-          cache-to: type=local,dest=/tmp/lerobot-buildkit/sim-cache-next-${{ inputs.name }},mode=max
-      - name: Retain simulator cache
-        if: always()
-        run: |
-          if [ -d "/tmp/lerobot-buildkit/sim-cache-next-${BENCHMARK_NAME}" ]; then
-            rm -rf "/tmp/lerobot-buildkit/sim-cache-${BENCHMARK_NAME}"
-            mv "/tmp/lerobot-buildkit/sim-cache-next-${BENCHMARK_NAME}" "/tmp/lerobot-buildkit/sim-cache-${BENCHMARK_NAME}"
-          fi
       - name: Build policy from tested checkout
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile.policy
           tags: ${{ env.POLICY_IMAGE }}
-          cache-from: type=local,src=/tmp/lerobot-buildkit/policy-cache-${{ inputs.name }}
-          cache-to: type=local,dest=/tmp/lerobot-buildkit/policy-cache-next-${{ inputs.name }},mode=max
           build-args: POLICY_EXTRAS=${{ inputs.policy_extras }}
           load: true
           push: false
-      - name: Retain policy cache
-        if: always()
-        run: |
-          if [ -d "/tmp/lerobot-buildkit/policy-cache-next-${BENCHMARK_NAME}" ]; then
-            rm -rf "/tmp/lerobot-buildkit/policy-cache-${BENCHMARK_NAME}"
-            mv "/tmp/lerobot-buildkit/policy-cache-next-${BENCHMARK_NAME}" "/tmp/lerobot-buildkit/policy-cache-${BENCHMARK_NAME}"
-          fi
       - name: Run evaluation and training smoke
         run: |
           python3 -m pip install 'PyYAML>=6,<7'
           python3 scripts/ci/run_sim_benchmark.py --name "$BENCHMARK_NAME" \
-            --sim-image "$SIM_IMAGE" --policy-image "$POLICY_IMAGE" --artifacts "$ARTIFACTS"
+            --sim-image "$SIM_IMAGE" --policy-image "$POLICY_IMAGE" --artifacts "$RUNNER_TEMP/sim-$BENCHMARK_NAME"
       - name: Upload metrics, videos, training artifacts and server logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ inputs.name }}-benchmark
-          path: ${{ env.ARTIFACTS }}/
+          path: ${{ runner.temp }}/sim-${{ inputs.name }}/
           if-no-files-found: warn

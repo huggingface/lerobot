@@ -175,6 +175,7 @@ def main():
                 "--eval.use_async_envs=false",
                 "--save_freq=1",
                 "--policy.push_to_hub=false",
+                f"--rename_map={json.dumps(entry['rename_map'])}",
             ]
             try:
                 run(common + ["--name", training, args.policy_image] + train_command)

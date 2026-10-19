@@ -42,6 +42,10 @@ docker build -f docker/Dockerfile.jetson -t lerobot-jetson .
 docker run -it --rm --runtime nvidia lerobot-jetson
 ```
 
+### `Dockerfile.sim` and `Dockerfile.policy` (simulation benchmarks)
+
+`Dockerfile.sim --build-arg SIM=<name>` builds one simulator behind `lerobot-env-server`, without torch; it replaces the former `Dockerfile.benchmark.*` images, inside which `lerobot-eval` used to run. `Dockerfile.policy` builds the policy side, which runs `lerobot-eval --env.endpoint=...` against it. `lerobot-env-server --docker --config=docker/sims/configs/<name>.yaml` builds and starts a simulator image (see [Simulation: in-process or served](https://huggingface.co/docs/lerobot/simulator_server)).
+
 ## Usage
 
 ### Running a pre-built image

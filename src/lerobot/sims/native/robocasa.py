@@ -303,7 +303,6 @@ class RoboCasaEnv(gym.Env):
                 "done": bool(done),
                 "is_success": bool(is_success),
             }
-            self.reset()
 
         return observation, reward, terminated, truncated, info
 

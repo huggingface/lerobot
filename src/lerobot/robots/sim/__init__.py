@@ -13,4 +13,4 @@
 # limitations under the License.
 
 from .configuration_sim import SimRobotConfig as SimRobotConfig, check_teleop_clock as check_teleop_clock
-from .sim_robot import SimRobot as SimRobot
+from .sim_robot import SimRobot as SimRobot, check_control_rate as check_control_rate

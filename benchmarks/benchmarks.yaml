@@ -23,8 +23,8 @@ benchmarks:
   revision: f7af588d11e30b0069f200792fb285904b74c80b
   rename_map:
     observation.images.robot0_agentview_left: observation.images.camera1
-    observation.images.robot0_eye_in_hand: observation.images.camera3
-    observation.images.robot0_agentview_right: observation.images.camera2
+    observation.images.robot0_eye_in_hand: observation.images.camera2
+    observation.images.robot0_agentview_right: observation.images.camera3
 - name: robocerebra
   task: libero_10
   revision: b0538da48c480803662adf724471f7a585dbbd73

@@ -14,6 +14,7 @@
 
 """One simulated world driven through the Robot interface, in this process or served."""
 
+import math
 from typing import Any
 
 import numpy as np
@@ -184,3 +185,11 @@ class SimRobot(Robot):
 
     def disconnect(self) -> None:
         self.client.close()
+
+
+def check_control_rate(robot: Robot, fps: float) -> None:
+    """A sim robot ticks at its env's rate: a loop at another fps would play or record at the wrong speed."""
+    if isinstance(robot, SimRobot) and not math.isclose(fps, robot.descriptor.fps):
+        raise ValueError(
+            f"The control loop runs at {fps} fps but the simulator control rate is {robot.descriptor.fps} Hz"
+        )
