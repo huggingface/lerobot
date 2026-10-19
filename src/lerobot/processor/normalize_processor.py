@@ -308,6 +308,11 @@ class _NormalizationMixin:
         The configured ``eps`` (default ``1e-8``) underflows to zero in float16, so
         constant features would still divide by zero after stats are adapted to the
         input dtype. Floor at ``torch.finfo(dtype).tiny`` for floating-point dtypes.
+
+        The floor only guarantees a finite result when the input equals the constant
+        training value. In float16 the denominator is still small (``~6.1e-5``), so
+        inputs that move away from that value can overflow to ``inf``, as they would
+        with any epsilon that small.
         """
         if dtype.is_floating_point:
             return max(self.eps, torch.finfo(dtype).tiny)
