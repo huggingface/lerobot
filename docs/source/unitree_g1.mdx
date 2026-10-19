@@ -191,7 +191,7 @@ ssh unitree@<ROBOT_WIFI_IP>
 
 Here, **controller** refers to the robot's whole-body control policy selected with `--robot.controller`, such as GR00T, Holosoma, or SONIC. The Unitree wireless remote and the exoskeleton thumbsticks are **input devices**.
 
-The G1 teleoperator represents their axes and buttons as `JoystickState`. `WirelessRemote` decodes the wireless remote's bytes, while `ExoskeletonArm` reads each exo thumbstick as an `ExoJoystickState`. Wireless and exo state are stored separately: active wireless input takes priority, and otherwise the exo thumbsticks provide the joystick axes. Only the four axes are emitted as `remote.*` actions; buttons are not currently sent as action keys.
+The G1 teleoperator represents their axes and buttons as `JoystickState`.
 
 ### Run the Robot Server
 
