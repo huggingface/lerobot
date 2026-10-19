@@ -15,6 +15,7 @@ ARCHITECTURES = {
     "temporal_decoder_instruction",
     "temporal_decoder_text_crossattn",
     "temporal_decoder_grounded_grasp_v2",
+    "temporal_decoder_grounded_grasp_v3",
     "temporal_decoder_grounded_grasp_v2_5",
 }
 
@@ -131,6 +132,41 @@ class SafeDiffVLAConfig(PreTrainedConfig):
     #       reopening) -- this behavior is EXPERIMENTAL and specific to `select_poker`'s
     #       grasp/lift-only validation; a place task would need a separate release phase this does
     #       not implement.
+    #   "temporal_decoder_grounded_grasp_v3": experimental. v2's held-out eval (canonical baseline
+    #       2/10 success vs. v2 1/10; baseline wrong_object_grounding 8/10 vs. v2 5/10; mean
+    #       target-xyz error 0.205m vs. 0.145m) showed v2's single `TargetPointHead` MLP improved
+    #       grounding/localization but never reached grasp-relevant precision, and did not move
+    #       task success. This architecture splits v2's single "grounded feature -> direct xyz"
+    #       regression into two stages (see `grounded_grasp_v3.py`):
+    #         `TargetQueryExtractor` (v2's own module, reused unchanged) -> target_language_query
+    #           -> `SharpenedVisualGrounding`: an EXPLICIT target-query -> image-token similarity,
+    #              sharpened via temperature-scaled softmax (`grounded_grasp_v3_temperature`) and
+    #              an optional hard top-k restriction (`grounded_grasp_v3_top_k`) -- replacing v2's
+    #              4-head `nn.MultiheadAttention` (`VisualGroundingCrossAttention`), whose per-head
+    #              weights are never exposed and whose head-averaged output can stay diffuse even
+    #              when individual heads are peaked. Selection statistics (entropy, top-1 mass,
+    #              top-k mass) are always computed and surfaced (see `_plan_temporal_decoder`'s
+    #              metrics) so how concentrated the selection actually is can be inspected directly.
+    #              -> coarse_grounded_feature [B, D]
+    #         `CoarseTargetHead` (same small-MLP shape as `TargetPointHead`, separately
+    #           parameterized -- v1/v2's `TargetPointHead` is untouched) -> coarse_xyz [B, 3]
+    #         `FineResidualHead`, conditioned on [coarse_grounded_feature, coarse_xyz,
+    #           current_state, target_language_query] -> a BOUNDED local correction:
+    #           `delta_xyz = grounded_grasp_v3_max_refine_offset * tanh(raw_delta)`
+    #         final_target_xyz = coarse_xyz + delta_xyz
+    #       Supervision (`utils.find_grasp_target`, identical label/masking rule to v1/v2):
+    #       `loss_target = lambda_target_coarse * MSE(coarse_xyz, gt) + lambda_target_refine *
+    #       MSE(final_target_xyz, gt)`, both terms masked to samples with a valid transition,
+    #       exactly like v1/v2's single `loss_target`. `TemporalActionDecoder` conditioning reuses
+    #       `use_grounded_grasp_v2`'s existing wiring UNCHANGED (grounded_target_feature +
+    #       final_target_xyz via the same `target_xyz_encoder` + binary grasp phase) -- the decoder
+    #       cannot tell v2's and v3's `grounded_target_feature`/`target_xyz` apart, by design, since
+    #       this experiment's only variable is the grounding/localization head. Reactive close
+    #       (`SafeDiffVLAPolicy._grounded_grasp_v3_reactive_close`) is a straight copy of v2's
+    #       proximity-trigger/phase-flip/one-shot-latch behavior, evaluated against
+    #       `final_target_xyz` instead of v2's single predicted xyz -- threshold value and
+    #       phase/close logic are deliberately UNCHANGED from v2 for this pilot (see
+    #       `grounded_grasp_close_threshold_m`); this experiment isolates the grounding head only.
     #   "temporal_decoder_grounded_grasp_v2_5": experimental. v2's `TemporalActionDecoder` regresses
     #       one 50-step chunk end to end, including the final centimeters of the approach where
     #       diagnostic oracle experiments found close-TIMING (not just target-xyz accuracy) is a
@@ -156,7 +192,7 @@ class SafeDiffVLAConfig(PreTrainedConfig):
     #           masked-mean image-token pooling, and `current_state`. `delta_xyz`/`delta_rotation`
     #           are `tanh`-bounded by `local_grasp_max_delta_xyz_m`/`local_grasp_max_delta_rot_rad`
     #           so each step can only ever nudge the arm by a few cm/degrees. `gripper` is predicted
-    #           directly by the refiner (NOT v1/v2's proximity-based forced close, which rarely
+    #           directly by the refiner (NOT v1/v2/v3's proximity-based forced close, which rarely
     #           fired in v2's own held-out reproduction) -- once it first reads "closed", a one-shot
     #           latch holds it closed (preventing open/close chatter) and the SAME event ends
     #           LOCAL_GRASP.
@@ -298,6 +334,32 @@ class SafeDiffVLAConfig(PreTrainedConfig):
     # coupled together under a single architecture. Has no effect on any other architecture.
     grounded_grasp_condition_decoder_on_target: bool = True
 
+    # -- `temporal_decoder_grounded_grasp_v3` only (see `grounded_grasp_v3.py`) --
+    # Weight of the coarse-stage (`CoarseTargetHead`) target-xyz regression loss. Left at parity
+    # (1.0) with `lambda_target_refine` for this first pilot -- no sweep.
+    lambda_target_coarse: float = 1.0
+    # Weight of the final-stage (coarse + bounded residual) target-xyz regression loss. Left at
+    # parity (1.0) with `lambda_target_coarse` for this first pilot -- no sweep.
+    lambda_target_refine: float = 1.0
+    # Softmax temperature for `SharpenedVisualGrounding`'s query-to-image-token similarity logits
+    # (divides the scaled-dot-product logits before softmax -- smaller = sharper/more concentrated
+    # selection). 0.5 is a moderate, untuned default -- sharper than a plain temperature=1
+    # scaled-dot-product attention, but far short of near-one-hot selection -- left for a later,
+    # data-audit-driven sweep this pilot deliberately does not run.
+    grounded_grasp_v3_temperature: float = 0.5
+    # Optional hard top-k restriction on `SharpenedVisualGrounding`'s image-token logits (keep only
+    # the k highest-scoring per sample, `-inf` out the rest, before the softmax). `None` (default)
+    # disables it, relying on `grounded_grasp_v3_temperature` alone -- left off rather than
+    # hard-coding a token count until real per-scene image-token geometry has been audited.
+    grounded_grasp_v3_top_k: int | None = None
+    # Hard bound on `FineResidualHead`'s residual magnitude, in the same MEAN_STD-normalized
+    # action-position space as `action[..., :3]` / `TargetPointHead`'s output -- NOT physical
+    # meters: `delta_xyz = grounded_grasp_v3_max_refine_offset * tanh(raw_delta)`. Conservative
+    # first-cut default so the fine head can only ever locally perturb the coarse estimate, never
+    # re-regress the target from scratch; revisit once a data audit characterizes the actual
+    # coarse-stage error distribution -- not optimized here.
+    grounded_grasp_v3_max_refine_offset: float = 0.5
+
     # -- `temporal_decoder_grounded_grasp_v2_5` only (see `local_grasp_refiner.py`) --
     # Inference-only: physical distance (meters, robot-base frame) between the current EE position
     # and v2's own predicted grasp target below which `SafeDiffVLAPolicy.select_action` switches
@@ -343,6 +405,94 @@ class SafeDiffVLAConfig(PreTrainedConfig):
     # controller's own effect from any drift in v2's already-checkpointed global behavior. Setting
     # this False (a full-model finetune) is a separate, later experiment, not run by this pilot.
     local_grasp_freeze_global_modules: bool = True
+
+    # -- grasp-phase-aware `LocalGraspRefiner` loss (loss-ONLY ablation, no new module -- see
+    # `modeling_safediff_vla.py`'s `has_target_head_v2_5` branch, guarded by this flag right after
+    # `loss_local_grip`) -- opt-in (default False): existing v2_5 configs/checkpoints/loss values
+    # are byte-for-byte unaffected unless this is explicitly turned on. Supersedes the
+    # `LocalGraspCorrectionHead` direction below (discontinued after its first 5k-step experiment
+    # showed the learned correction was ~10x too small to matter -- see that module's docstring):
+    # instead of adding a new spatial-anchor head, this reshapes `LocalGraspRefiner`'s OWN existing
+    # training objective to be aware of WHEN (not just where) the grasp happens.
+    local_grasp_use_phase_aware_loss: bool = False
+    # Weight of the terminal grasp-position term: `Huber(predicted_terminal_xyz, p_grasp_gt)`,
+    # where `p_grasp_gt` is `find_grasp_target`'s own first-open->close-transition commanded xyz
+    # (the SAME label `loss_target` regresses `TargetPointHead` against -- deliberately NOT object
+    # center) and `predicted_terminal_xyz` is `LocalGraspRefiner`'s own predicted xyz at that
+    # sample's close step WITHIN the predicted horizon (clamped to the last horizon step if the
+    # real transition is farther out than `local_grasp_action_horizon` can see). First-experiment
+    # value from the requested ablation design; NOT swept.
+    lambda_local_terminal_xyz: float = 2.0
+    # Weight of the grasp-window approach term: every predicted horizon step (not just the terminal
+    # one) regressed toward the SAME `p_grasp_gt`, weighted by a fixed linear-in-horizon-position
+    # schedule (`local_grasp_approach_weight_min` -> `_max`) so later (closer-to-close) steps count
+    # more. First-experiment value; NOT swept.
+    lambda_local_approach_xyz: float = 1.0
+    # `local_grasp_approach_weight_min`/`_max`: the linear schedule above, evaluated across
+    # `local_grasp_action_horizon` steps (position 0 -> `_min`, last position -> `_max`). First
+    # experiment: simple linear 0.1 -> 1.0, NOT swept.
+    local_grasp_approach_weight_min: float = 0.1
+    local_grasp_approach_weight_max: float = 1.0
+    # Weight of the gripper-timing-reweighted term: the SAME `gt_gripper` target `loss_local_grip`
+    # already uses, but per-step-weighted by `local_grasp_grip_close_weight` within +/-1 horizon
+    # step of the close step (else weight 1.0) -- `loss_local_grip` itself (uniform weight) stays
+    # always computed too, unchanged, purely for metrics/comparability. First-experiment value; NOT
+    # swept.
+    lambda_local_grip_weighted: float = 2.0
+    local_grasp_grip_close_weight: float = 3.0
+    # `delta` for every `torch.nn.functional.huber_loss` call in this block (terminal + approach
+    # terms). Not requested explicitly by the ablation design; exposed for completeness rather than
+    # hard-coding PyTorch's own default inline. NOT swept.
+    local_grasp_huber_delta: float = 1.0
+
+    # -- `LocalGraspCorrectionHead` (see `grasp_correction_head.py`), `temporal_decoder_grounded_
+    # grasp_v2_5` only -- opt-in (default False): existing v2_5 checkpoints/configs are unaffected
+    # unless this is explicitly turned on. DISCONTINUED after its first 5k-step experiment (see
+    # `train_grounded_grasp_v2_5_correction_head_5k.py`'s RESULT note): the learned correction was
+    # ~10x too small to matter (mean 1.2cm vs. the ~13-16cm gap it needed to close) because its
+    # supervision came from offline i.i.d. training frames where `target_point_head` is already
+    # well-fit, not from the rollout-time distribution where the real bias lives. Kept in the
+    # codebase (still opt-in, still False by default) as a documented negative result, not deleted
+    # -- `local_grasp_use_phase_aware_loss` above is the follow-up direction instead. Adds ONE
+    # bounded spatial correction on top of
+    # `TargetPointHead`'s own `target_xyz`, LOCAL_GRASP-phase only -- see that module's docstring
+    # and the manual 18-episode review (`examples/safediff_vla/local_grasp_correction_manual_review.py`)
+    # motivating it. `TargetQueryExtractor`/`VisualGroundingCrossAttention`/`TargetPointHead`/
+    # `TemporalActionDecoder`/`LocalGraspRefiner` are none of them modified by this flag; only what
+    # `LocalGraspRefiner` is CALLED WITH changes (its own forward signature/weights do not).
+    local_grasp_use_correction_head: bool = False
+    # Hard bound (physical meters) on `LocalGraspCorrectionHead`'s single spatial correction:
+    # `delta_grasp_xyz = local_grasp_max_grasp_correction_m * tanh(raw_delta)`. Set from the manual
+    # review's A_FINE_GRASP_ERROR-class residual distribution's p90 (~15.6cm over n=4, 2 tasks --
+    # SMALL SAMPLE, see the review's own caveats), rounded up slightly (not a round number picked
+    # without that data). Deliberately NOT sized to cover the B_WRONG_OBJECT class's much larger
+    # observed residuals (~20-22cm in that same review) -- see `grasp_correction_head.py`'s
+    # docstring on why this module must not be able to attempt that class of correction.
+    local_grasp_max_grasp_correction_m: float = 0.16
+    # A training frame's own `||gt_target_xyz - target_xyz||` (i.e. what `LocalGraspCorrectionHead`
+    # would need to predict as `delta_grasp_gt` for that frame) above this is excluded from
+    # `loss_grasp_correction` entirely -- a proxy for "this frame's frozen `TargetPointHead`
+    # grounding already looks B_WRONG_OBJECT-like (wrong object entirely), not a fine-grasp
+    # correction this bounded head should be trained to attempt." Set just above the manual
+    # review's A-class max (16.4cm) and below its smaller B-class observations (21.7cm/22.5cm) --
+    # see that review's notes on why this proxy is imperfect (a B-class error can be SMALLER than
+    # this in a tightly-packed scene, e.g. adjacent mahjong tiles/playing cards) and is only ever a
+    # partial mitigation, not a guarantee.
+    local_grasp_correction_outlier_clip_m: float = 0.20
+    # Weight of `loss_grasp_correction` (masked MSE against `gt_target_xyz - target_xyz`, only over
+    # `local_eligible & (frame's own residual <= local_grasp_correction_outlier_clip_m)`) added to
+    # the total loss. Initial value, no sweep.
+    lambda_grasp_correction: float = 1.0
+    # Hidden width of `LocalGraspCorrectionHead`'s small MLP (mirrors `local_grasp_hidden_dim`).
+    local_grasp_correction_hidden_dim: int = 256
+    # First-experiment ablation (default True, requested explicitly for this pilot): ALSO freeze
+    # `LocalGraspRefiner` (on top of `local_grasp_freeze_global_modules`'s existing global-module
+    # freeze) so `LocalGraspCorrectionHead` is the ONLY trainable module -- isolating whether the
+    # new head alone learns a real spatial-anchor correction, uncontaminated by any simultaneous
+    # drift in `LocalGraspRefiner`'s own already-checkpointed control policy. Only meaningful when
+    # `local_grasp_use_correction_head=True`; setting this False (joint finetune of both) is a
+    # separate, later experiment.
+    local_grasp_correction_freeze_refiner: bool = True
 
     # Per-sample squared-L2 gap (in normalized state units) between what the subgoal predictor
     # expected `execute_horizon` steps after the previous chunk and the state actually observed
@@ -425,6 +575,16 @@ class SafeDiffVLAConfig(PreTrainedConfig):
             raise ValueError("grounded_grasp_gripper_open_threshold must be in (0, 1)")
         if self.grounded_grasp_close_threshold_m <= 0:
             raise ValueError("grounded_grasp_close_threshold_m must be positive")
+        if self.lambda_target_coarse < 0:
+            raise ValueError("lambda_target_coarse must be non-negative")
+        if self.lambda_target_refine < 0:
+            raise ValueError("lambda_target_refine must be non-negative")
+        if self.grounded_grasp_v3_temperature <= 0:
+            raise ValueError("grounded_grasp_v3_temperature must be positive")
+        if self.grounded_grasp_v3_top_k is not None and self.grounded_grasp_v3_top_k <= 0:
+            raise ValueError("grounded_grasp_v3_top_k must be a positive integer or None")
+        if self.grounded_grasp_v3_max_refine_offset <= 0:
+            raise ValueError("grounded_grasp_v3_max_refine_offset must be positive")
         if self.local_grasp_radius_m <= 0:
             raise ValueError("local_grasp_radius_m must be positive")
         if self.local_grasp_max_delta_xyz_m <= 0:
@@ -439,6 +599,24 @@ class SafeDiffVLAConfig(PreTrainedConfig):
             raise ValueError("local_grasp_window_k must be positive")
         if self.lambda_local_grasp < 0:
             raise ValueError("lambda_local_grasp must be non-negative")
+        if self.lambda_local_terminal_xyz < 0:
+            raise ValueError("lambda_local_terminal_xyz must be non-negative")
+        if self.lambda_local_approach_xyz < 0:
+            raise ValueError("lambda_local_approach_xyz must be non-negative")
+        if self.lambda_local_grip_weighted < 0:
+            raise ValueError("lambda_local_grip_weighted must be non-negative")
+        if self.local_grasp_grip_close_weight <= 0:
+            raise ValueError("local_grasp_grip_close_weight must be positive")
+        if self.local_grasp_approach_weight_min > self.local_grasp_approach_weight_max:
+            raise ValueError("local_grasp_approach_weight_min must be <= local_grasp_approach_weight_max")
+        if self.local_grasp_huber_delta <= 0:
+            raise ValueError("local_grasp_huber_delta must be positive")
+        if self.local_grasp_max_grasp_correction_m <= 0:
+            raise ValueError("local_grasp_max_grasp_correction_m must be positive")
+        if self.local_grasp_correction_outlier_clip_m <= 0:
+            raise ValueError("local_grasp_correction_outlier_clip_m must be positive")
+        if self.lambda_grasp_correction < 0:
+            raise ValueError("lambda_grasp_correction must be non-negative")
         backbone_chunk_size = self._backbone_native_chunk_size()
         if backbone_chunk_size is not None and backbone_chunk_size != self.action_horizon:
             logger.warning(
@@ -497,6 +675,7 @@ class SafeDiffVLAConfig(PreTrainedConfig):
                 "temporal_decoder_instruction",
                 "temporal_decoder_text_crossattn",
                 "temporal_decoder_grounded_grasp_v2",
+                "temporal_decoder_grounded_grasp_v3",
                 "temporal_decoder_grounded_grasp_v2_5",
             )
             and self.robot_state_feature.shape[0] != 7

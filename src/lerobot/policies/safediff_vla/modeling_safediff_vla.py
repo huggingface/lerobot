@@ -42,7 +42,9 @@ from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LAN
 from .configuration_safediff_vla import SafeDiffVLAConfig
 from .domain_adapter import LiberoBackboneDomainAdapter, load_processor_normalization_stats
 from .execution import ActionExecutor
+from .grasp_correction_head import LocalGraspCorrectionHead
 from .grounded_grasp_v2 import TargetQueryExtractor, VisualGroundingCrossAttention
+from .grounded_grasp_v3 import CoarseTargetHead, FineResidualHead, SharpenedVisualGrounding
 from .language_grounded_target_pooling import LanguageGroundedTargetPooling
 from .local_grasp_refiner import LOCAL_GRASP, POST_GRASP, PRE_GRASP, LocalGraspRefiner
 from .rotation_encoding import (
@@ -74,7 +76,7 @@ def _first_grasp_transition_idx(
 ) -> Tensor:
     """`temporal_decoder_grounded_grasp_v2_5` only: the SAME open->close transition-finding formula
     `utils.find_grasp_target` uses internally, duplicated here (not imported, not refactored out of
-    that function) specifically so `find_grasp_target` itself -- shared by v1/v2 -- is never
+    that function) specifically so `find_grasp_target` itself -- shared by v1/v2/v3 -- is never
     touched by this architecture. Returns `[B]`, the index (within `action`'s own horizon) of each
     row's first open->close transition -- meaningless where `find_grasp_target`'s own returned
     `valid_mask` is False for that row (see its docstring); used by v2_5 to gate which samples fall
@@ -128,6 +130,7 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             "temporal_decoder_instruction",
             "temporal_decoder_text_crossattn",
             "temporal_decoder_grounded_grasp_v2",
+            "temporal_decoder_grounded_grasp_v3",
             "temporal_decoder_grounded_grasp_v2_5",
         ):
             use_subgoal = self.architecture == "temporal_decoder_subgoal"
@@ -135,17 +138,19 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             use_instruction = self.architecture == "temporal_decoder_instruction"
             use_text_crossattn = self.architecture == "temporal_decoder_text_crossattn"
             has_target_head_v2 = self.architecture == "temporal_decoder_grounded_grasp_v2"
+            has_target_head_v3 = self.architecture == "temporal_decoder_grounded_grasp_v3"
             has_target_head_v2_5 = self.architecture == "temporal_decoder_grounded_grasp_v2_5"
             # Ablation switch (`grounded_grasp_condition_decoder_on_target`, default True):
             # `TargetPointHead` (below) is built whenever this architecture is used, regardless of
             # this flag -- the auxiliary target-regression loss is always trainable. Only the
             # DECODER's own conditioning input depends on it -- see
             # `SafeDiffVLAConfig.grounded_grasp_condition_decoder_on_target`'s docstring.
-            # `temporal_decoder_grounded_grasp_v2`/`_v2_5` have no such ablation toggle -- target
-            # conditioning is always on for them.
+            # `temporal_decoder_grounded_grasp_v2`/`_v3`/`_v2_5` have no such ablation toggle --
+            # target conditioning is always on for them.
             use_target_xyz = (
                 (has_target_head and config.grounded_grasp_condition_decoder_on_target)
                 or has_target_head_v2
+                or has_target_head_v3
                 or has_target_head_v2_5
             )
             self._register_rotation_stats(dataset_stats)
@@ -169,13 +174,13 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
                 use_target_xyz=use_target_xyz,
                 use_instruction=use_instruction,
                 use_text_crossattn=use_text_crossattn,
-                # v2_5 reuses this exact conditioning wiring (grounded_target_feature + target_xyz +
-                # binary phase) UNCHANGED from v2 -- see `local_grasp_refiner.py`'s module
-                # docstring; the decoder cannot tell v2's and v2_5's `grounded_target_feature`/
-                # `target_xyz` apart, by design. v2_5 only ever calls this decoder for its
-                # PRE_GRASP/POST_GRASP stages -- LOCAL_GRASP uses `LocalGraspRefiner` instead and
-                # never touches this decoder at all.
-                use_grounded_grasp_v2=has_target_head_v2 or has_target_head_v2_5,
+                # v3/v2_5 both reuse this exact conditioning wiring (grounded_target_feature +
+                # target_xyz + binary phase) UNCHANGED from v2 -- see `grounded_grasp_v3.py`'s and
+                # `local_grasp_refiner.py`'s module docstrings; the decoder cannot tell v2's, v3's,
+                # and v2_5's `grounded_target_feature`/`target_xyz` apart, by design. v2_5 only ever
+                # calls this decoder for its PRE_GRASP/POST_GRASP stages -- LOCAL_GRASP uses
+                # `LocalGraspRefiner` instead and never touches this decoder at all.
+                use_grounded_grasp_v2=has_target_head_v2 or has_target_head_v3 or has_target_head_v2_5,
             )
             if use_subgoal:
                 # `_pooled_latent`'s modality-aware pooling concatenates image/text-masked-mean +
@@ -208,6 +213,28 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
                 self.visual_grounding_cross_attn = VisualGroundingCrossAttention(self._multimodal_latent_dim())
                 self.target_point_head = TargetPointHead(self._multimodal_latent_dim(), config.target_head_hidden_dim)
                 self._register_position_and_gripper_stats(dataset_stats)
+            if has_target_head_v3:
+                # Coarse-then-refine target localization (see `grounded_grasp_v3.py`'s module
+                # docstring): same `TargetQueryExtractor` class as v2 (a fresh, independently
+                # trained instance -- weights are NOT shared with a v2 checkpoint), but the visual
+                # grounding stage is `SharpenedVisualGrounding` (explicit, sharpened, loggable
+                # attention over image tokens) instead of v2's 4-head `VisualGroundingCrossAttention`,
+                # and target-xyz regression is split into `CoarseTargetHead` + `FineResidualHead`
+                # instead of v1/v2's single `TargetPointHead` (untouched, not built here).
+                self.target_query_extractor = TargetQueryExtractor(self._multimodal_latent_dim())
+                self.sharpened_visual_grounding = SharpenedVisualGrounding(
+                    self._multimodal_latent_dim(),
+                    temperature=config.grounded_grasp_v3_temperature,
+                    top_k=config.grounded_grasp_v3_top_k,
+                )
+                self.coarse_target_head = CoarseTargetHead(self._multimodal_latent_dim(), config.target_head_hidden_dim)
+                self.fine_residual_head = FineResidualHead(
+                    self._multimodal_latent_dim(),
+                    ENCODED_DIM,
+                    config.target_head_hidden_dim,
+                    config.grounded_grasp_v3_max_refine_offset,
+                )
+                self._register_position_and_gripper_stats(dataset_stats)
             if has_target_head_v2_5:
                 # v2's EXACT modules, own instances (fresh weights, or a v2 checkpoint's weights
                 # loaded in afterwards -- see `local_grasp_freeze_global_modules`'s docstring). This
@@ -234,6 +261,21 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
                     self.visual_grounding_cross_attn.requires_grad_(False)
                     self.target_point_head.requires_grad_(False)
                     self.decoder.requires_grad_(False)
+                if config.local_grasp_use_correction_head:
+                    # See `grasp_correction_head.py`'s module docstring. Opt-in, `local_grasp_
+                    # refiner` itself is never modified -- only what it's called WITH (below, in
+                    # the `has_target_head_v2_5` forward branch and `_plan_local_grasp_step`).
+                    self.local_grasp_correction_head = LocalGraspCorrectionHead(
+                        latent_dim=self._multimodal_latent_dim(),
+                        state_dim=ENCODED_DIM,
+                        hidden_dim=config.local_grasp_correction_hidden_dim,
+                        max_grasp_correction_m=config.local_grasp_max_grasp_correction_m,
+                    )
+                    if config.local_grasp_correction_freeze_refiner:
+                        # First-experiment ablation (requested explicitly): isolate whether
+                        # `local_grasp_correction_head` alone learns a real correction, with
+                        # `local_grasp_refiner`'s own already-checkpointed control held fixed.
+                        self.local_grasp_refiner.requires_grad_(False)
         elif self.architecture not in ("smolvla_nominal", "smolvla_finetune"):
             raise ValueError(f"Unknown architecture {self.architecture!r}")
         # "smolvla_nominal" / "smolvla_finetune": nothing to build -- both just call the backbone's
@@ -439,6 +481,13 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         self._v2_grasp_phase = 0
         self._v2_close_triggered = False
         self._v2_last_target_xyz = None
+        # Harmless no-ops for every other architecture -- only
+        # `_grounded_grasp_v3_reactive_close`/`_plan_temporal_decoder` (guarded on
+        # `architecture == "temporal_decoder_grounded_grasp_v3"`) ever read these. Same semantics
+        # as `_v2_*` above, tracked independently since v3 is evaluated as its own checkpoint.
+        self._v3_grasp_phase = 0
+        self._v3_close_triggered = False
+        self._v3_last_target_xyz = None
         # Harmless no-ops for every other architecture -- only v2_5's `select_action`/
         # `_plan_temporal_decoder` branches (guarded on
         # `architecture == "temporal_decoder_grounded_grasp_v2_5"`) ever read these.
@@ -677,11 +726,54 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
                 ~_state_gripper_is_open(state_for_grasp[..., GRIPPER_INDEX_RAW], self.config.grounded_grasp_gripper_open_threshold)
             ).long()
 
+        loss_target_coarse = clean.new_zeros(())
+        loss_target_final = clean.new_zeros(())
+        residual_xyz = None
+        visual_selection_stats = None
+        if self.architecture == "temporal_decoder_grounded_grasp_v3":
+            target_language_query = self.target_query_extractor(latent_tokens, latent_pad_mask, latent_modality_ids)
+            grounded_target_feature, visual_selection_stats = self.sharpened_visual_grounding(
+                target_language_query, latent_tokens, latent_pad_mask, latent_modality_ids
+            )
+            coarse_xyz = self.coarse_target_head(grounded_target_feature)
+            residual_xyz = self.fine_residual_head(grounded_target_feature, coarse_xyz, current_state, target_language_query)
+            target_xyz = coarse_xyz + residual_xyz  # final_target_xyz
+            state_for_grasp, action_for_grasp = self._degrip_for_transition_detection(current_state_raw, clean_raw)
+            gt_target_xyz, target_valid_mask = find_grasp_target(
+                state_for_grasp,
+                action_for_grasp,
+                gripper_index=GRIPPER_INDEX_RAW,
+                gripper_open_threshold=self.config.grounded_grasp_gripper_open_threshold,
+                action_is_pad=action_is_pad_h,
+            )
+            loss_target_coarse = masked_mse(
+                coarse_xyz.unsqueeze(1), gt_target_xyz.unsqueeze(1), target_valid_mask.unsqueeze(1)
+            )
+            loss_target_final = masked_mse(
+                target_xyz.unsqueeze(1), gt_target_xyz.unsqueeze(1), target_valid_mask.unsqueeze(1)
+            )
+            loss_target = (
+                self.config.lambda_target_coarse * loss_target_coarse
+                + self.config.lambda_target_refine * loss_target_final
+            )
+            # Same phase-label formula as v2 (`_state_gripper_is_open`, read off the CURRENT
+            # observation's own gripper channel) -- unchanged for this pilot.
+            grasp_phase = (
+                ~_state_gripper_is_open(state_for_grasp[..., GRIPPER_INDEX_RAW], self.config.grounded_grasp_gripper_open_threshold)
+            ).long()
+
         loss_local_pos = clean.new_zeros(())
         loss_local_rot = clean.new_zeros(())
         loss_local_grip = clean.new_zeros(())
+        loss_local_terminal_xyz = clean.new_zeros(())
+        loss_local_approach_xyz = clean.new_zeros(())
+        loss_local_grip_weighted = clean.new_zeros(())
+        terminal_grasp_distance_m = clean.new_zeros(())
+        predicted_local_residual_magnitude_m = clean.new_zeros(())
         loss_local = clean.new_zeros(())
+        loss_grasp_correction = clean.new_zeros(())
         local_eligible_frac = None
+        grasp_correction_eligible_frac = None
         if self.architecture == "temporal_decoder_grounded_grasp_v2_5":
             # ---- v2's OWN pipeline, verbatim (a straight copy of the `has_target_head_v2` branch
             # above, deliberately NOT shared code with it -- see this architecture's own docstring
@@ -721,8 +813,33 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             predicted_target_xyz_m = target_xyz * self.action_pos_std + self.action_pos_mean
             relative_xyz = predicted_target_xyz_m - current_ee_xyz_m
 
+            # ---- LocalGraspCorrectionHead supervision (new, opt-in) -- see `grasp_correction_
+            # head.py`. `target_xyz`/`relative_xyz` stay exactly what they were above (v2's own,
+            # unmodified) unless this flag is on; `refiner_target_xyz`/`refiner_relative_xyz` are
+            # what actually get passed to `local_grasp_refiner` just below -- the ONLY thing this
+            # flag ever changes about that call.
+            refiner_target_xyz, refiner_relative_xyz = target_xyz, relative_xyz
+            if self.config.local_grasp_use_correction_head:
+                delta_grasp_xyz_m = self.local_grasp_correction_head(
+                    grounded_target_feature, image_feature, current_state, target_xyz, relative_xyz
+                )
+                gt_target_xyz_m = gt_target_xyz * self.action_pos_std + self.action_pos_mean
+                gt_delta_grasp_xyz_m = gt_target_xyz_m - predicted_target_xyz_m
+                # Excludes frames whose OWN frozen-TargetPointHead error already looks
+                # B_WRONG_OBJECT-scale (see `local_grasp_correction_outlier_clip_m`'s docstring on
+                # why this is a partial, not complete, mitigation).
+                not_outlier = gt_delta_grasp_xyz_m.norm(dim=-1) <= self.config.local_grasp_correction_outlier_clip_m
+                grasp_correction_valid = local_eligible & not_outlier
+                grasp_correction_eligible_frac = grasp_correction_valid.float().mean().item()
+                loss_grasp_correction = masked_mse(
+                    delta_grasp_xyz_m.unsqueeze(1), gt_delta_grasp_xyz_m.unsqueeze(1), grasp_correction_valid.unsqueeze(1)
+                )
+                corrected_target_xyz_m = predicted_target_xyz_m + delta_grasp_xyz_m
+                refiner_target_xyz = (corrected_target_xyz_m - self.action_pos_mean) / self.action_pos_std
+                refiner_relative_xyz = corrected_target_xyz_m - current_ee_xyz_m
+
             pred_delta_xyz, pred_delta_rot, pred_gripper = self.local_grasp_refiner(
-                grounded_target_feature, image_feature, current_state, target_xyz, relative_xyz
+                grounded_target_feature, image_feature, current_state, refiner_target_xyz, refiner_relative_xyz
             )  # each [B, local_grasp_action_horizon, *]
 
             local_h = self.config.local_grasp_action_horizon
@@ -752,15 +869,102 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             loss_local_pos = masked_mse(pred_delta_xyz, gt_delta_xyz, local_valid_mask_h)
             loss_local_rot = masked_mse(pred_delta_rot, gt_delta_rot, local_valid_mask_h)
             loss_local_grip = masked_mse(pred_gripper, gt_gripper, local_valid_mask_h)
+
+            # ---- grasp-phase-aware LocalGraspRefiner loss (new, opt-in) -- loss-ONLY ablation, no
+            # new module, `LocalGraspRefiner` itself untouched (see this flag's own config
+            # docstring). Adds 3 terms on top of the EXISTING `loss_local_pos`/`loss_local_rot`/
+            # `loss_local_grip` above (all three still always computed, unchanged, for metrics/
+            # comparability) -- `loss_local_rot` is NEVER touched by this block, per instructions.
+            if self.config.local_grasp_use_phase_aware_loss:
+                delta = self.config.local_grasp_huber_delta
+                batch_idx = torch.arange(clean.shape[0], device=clean.device)
+                # Per-sample index, WITHIN the local_h-wide predicted horizon, of "the grasp/close
+                # step": the real detected transition (`first_transition_idx`, raw steps from NOW,
+                # already computed above for `local_eligible` against `local_grasp_window_k=10` --
+                # a DIFFERENT, usually-wider window than `local_h`, default 5) when it actually
+                # falls inside this call's short horizon, else clamped to the LAST horizon step
+                # (the best available proxy when the real event is farther out than this horizon
+                # can see -- still `local_eligible`, since that only requires <= window_k, not <=
+                # local_h). This one index drives all 3 terms below, instead of three separate ad
+                # hoc conventions.
+                close_idx_in_horizon = first_transition_idx.clamp(0, local_h - 1)  # [B]
+
+                predicted_xyz_all = current_ee_xyz_m.unsqueeze(1) + pred_delta_xyz  # [B, local_h, 3], meters
+                # `p_grasp_gt`: the SAME first-open->close-transition commanded xyz `loss_target`
+                # already regresses `target_xyz` against (`gt_target_xyz`, see `find_grasp_target`'s
+                # docstring) -- explicitly NOT object-center, per instructions -- just converted to
+                # meters here to match `predicted_xyz_all`'s own space.
+                p_grasp_gt_m = gt_target_xyz * self.action_pos_std + self.action_pos_mean  # [B, 3]
+
+                # 1. Terminal grasp position loss: only the SINGLE predicted step at each sample's
+                # own `close_idx_in_horizon` is supervised against `p_grasp_gt_m`.
+                predicted_terminal_xyz = predicted_xyz_all[batch_idx, close_idx_in_horizon]  # [B, 3]
+                terminal_err = F.huber_loss(predicted_terminal_xyz, p_grasp_gt_m, reduction="none", delta=delta).mean(-1)  # [B]
+                terminal_mask = local_eligible.to(terminal_err.dtype)
+                loss_local_terminal_xyz = (terminal_err * terminal_mask).sum() / terminal_mask.sum().clamp_min(1.0)
+
+                # 2. Grasp-window approach loss: EVERY predicted horizon step (not just the terminal
+                # one) regressed toward the SAME `p_grasp_gt_m`, weighted by a fixed linear-in-time
+                # schedule (`local_grasp_approach_weight_min` -> `_max`, first pilot: 0.1 -> 1.0,
+                # NOT swept) -- a schedule over horizon POSITION, same for every sample, deliberately
+                # simpler than trying to weight by each sample's own (differing) distance to close.
+                approach_weights = torch.linspace(
+                    self.config.local_grasp_approach_weight_min, self.config.local_grasp_approach_weight_max,
+                    local_h, device=clean.device, dtype=clean.dtype,
+                )  # [local_h]
+                p_grasp_gt_m_h = p_grasp_gt_m.unsqueeze(1).expand(-1, local_h, -1)  # [B, local_h, 3]
+                approach_err = F.huber_loss(predicted_xyz_all, p_grasp_gt_m_h, reduction="none", delta=delta).mean(-1)  # [B, local_h]
+                approach_mask = local_valid_mask_h.to(approach_err.dtype)  # same pad/eligibility mask as loss_local_pos
+                approach_weight_mask = approach_weights.unsqueeze(0) * approach_mask
+                loss_local_approach_xyz = (approach_err * approach_weight_mask).sum() / approach_weight_mask.sum().clamp_min(1e-8)
+
+                # 3. Gripper timing weighting: same `gt_gripper` target as `loss_local_grip` above,
+                # just weighted `local_grasp_grip_close_weight` (default 3.0) within +/-1 horizon
+                # step of `close_idx_in_horizon`, else 1.0 -- samples/steps excluded by
+                # `local_valid_mask_h` (ineligible or padded) contribute 0 either way, so this
+                # weighting only ever redistributes emphasis among already-valid steps.
+                step_idx = torch.arange(local_h, device=clean.device).unsqueeze(0)  # [1, local_h]
+                near_close = (step_idx - close_idx_in_horizon.unsqueeze(1)).abs() <= 1  # [B, local_h]
+                grip_weight = torch.where(
+                    near_close,
+                    clean.new_full((), self.config.local_grasp_grip_close_weight).expand_as(near_close),
+                    clean.new_ones(()).expand_as(near_close),
+                )
+                grip_err = F.mse_loss(pred_gripper, gt_gripper, reduction="none").squeeze(-1)  # [B, local_h]
+                grip_weight_mask = grip_weight * local_valid_mask_h.to(grip_weight.dtype)
+                loss_local_grip_weighted = (grip_err * grip_weight_mask).sum() / grip_weight_mask.sum().clamp_min(1e-8)
+
+                # ---- pure observability (never affects loss/training) -- raw-meters counterparts
+                # of the Huber terms above, for offline checkpoint-to-checkpoint comparison (a
+                # Huber loss value alone isn't directly interpretable as "how many cm off").
+                terminal_dist_err = (predicted_terminal_xyz - p_grasp_gt_m).norm(dim=-1)  # [B], meters
+                terminal_grasp_distance_m = (terminal_dist_err * terminal_mask).sum() / terminal_mask.sum().clamp_min(1.0)
+                residual_norms = pred_delta_xyz.norm(dim=-1)  # [B, local_h], meters
+                residual_mask = local_valid_mask_h.to(residual_norms.dtype)
+                predicted_local_residual_magnitude_m = (residual_norms * residual_mask).sum() / residual_mask.sum().clamp_min(1.0)
+
             local_action_dim = 3 + 3 + 1
-            loss_local = (3 * loss_local_pos + 3 * loss_local_rot + 1 * loss_local_grip) / local_action_dim
+            if self.config.local_grasp_use_phase_aware_loss:
+                # Gripper is pulled out into its own explicitly-coefficented term below (item 4's
+                # `2.0 * L_grip_weighted`) instead of the small implicit "1/7" share it had in the
+                # old blend -- pos/rot keep their EXISTING 3:3 relative weighting, renormalized over
+                # 6 (not 7) now that gripper is no longer part of this particular sum.
+                loss_local_action = (3 * loss_local_pos + 3 * loss_local_rot) / 6
+                loss_local = (
+                    loss_local_action
+                    + self.config.lambda_local_terminal_xyz * loss_local_terminal_xyz
+                    + self.config.lambda_local_approach_xyz * loss_local_approach_xyz
+                    + self.config.lambda_local_grip_weighted * loss_local_grip_weighted
+                )
+            else:
+                loss_local = (3 * loss_local_pos + 3 * loss_local_rot + 1 * loss_local_grip) / local_action_dim
 
         # `target_xyz` is always predicted and trained (above) whenever `temporal_decoder_
-        # grounded_grasp`/`temporal_decoder_grounded_grasp_v2`/`_v2_5` is used, but for the v1
+        # grounded_grasp`/`temporal_decoder_grounded_grasp_v2`/`_v3`/`_v2_5` is used, but for the v1
         # architecture only reaches the decoder as conditioning when
         # `grounded_grasp_condition_decoder_on_target` is True (see that field's docstring) -- the
         # ablation-B path (auxiliary loss only, no conditioning) computes `target_xyz` for the loss
-        # but the decoder itself never sees it. v2/v2_5 have no such ablation toggle -- target
+        # but the decoder itself never sees it. v2/v3/v2_5 have no such ablation toggle -- target
         # conditioning is always on for them.
         decoder_target_xyz = target_xyz
         if self.architecture == "temporal_decoder_grounded_grasp" and not self.config.grounded_grasp_condition_decoder_on_target:
@@ -807,12 +1011,21 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             + self.config.lambda_rot * rotation_dim * loss_rot
             + self.config.lambda_grip * gripper_dim * loss_grip
         ) / action_dim
+        # v3's `loss_target` is already the weighted `lambda_target_coarse * loss_target_coarse +
+        # lambda_target_refine * loss_target_final` combination (see above) -- applying
+        # `lambda_target` to it again here would double-weight it (and silently do so only when
+        # `lambda_target` is changed from its default of 1.0, since 1.0 is a no-op multiplier), so
+        # v3 adds its already-weighted term directly instead of going through `lambda_target`.
+        target_loss_term = (
+            loss_target if self.architecture == "temporal_decoder_grounded_grasp_v3" else self.config.lambda_target * loss_target
+        )
         loss = (
             loss_action
             + self.config.lambda_subgoal * loss_subgoal
             + self.config.lambda_smooth * loss_smooth
-            + self.config.lambda_target * loss_target
+            + target_loss_term
             + self.config.lambda_local_grasp * loss_local
+            + self.config.lambda_grasp_correction * loss_grasp_correction
         )
         metrics = {
             "loss": loss.item(),
@@ -825,12 +1038,28 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             "loss_local_pos": loss_local_pos.item(),
             "loss_local_rot": loss_local_rot.item(),
             "loss_local_grip": loss_local_grip.item(),
+            "loss_local_terminal_xyz": loss_local_terminal_xyz.item(),
+            "loss_local_approach_xyz": loss_local_approach_xyz.item(),
+            "loss_local_grip_weighted": loss_local_grip_weighted.item(),
+            "terminal_grasp_distance_m": terminal_grasp_distance_m.item(),
+            "predicted_local_residual_magnitude_m": predicted_local_residual_magnitude_m.item(),
             "loss_target": loss_target.item(),
+            "loss_target_coarse": loss_target_coarse.item(),
+            "loss_target_final": loss_target_final.item(),
+            "loss_grasp_correction": loss_grasp_correction.item(),
             "action_mean": clean_raw.mean().item(),
             "action_std": clean_raw.std().item(),
         }
+        if residual_xyz is not None:
+            metrics["residual_xyz_magnitude_mean"] = residual_xyz.norm(dim=-1).mean().item()
+        if visual_selection_stats is not None:
+            metrics["visual_selection_entropy_mean"] = visual_selection_stats["entropy"].mean().item()
+            metrics["visual_selection_top1_mass_mean"] = visual_selection_stats["top1_mass"].mean().item()
+            metrics["visual_selection_topk_mass_mean"] = visual_selection_stats["topk_mass"].mean().item()
         if local_eligible_frac is not None:
             metrics["local_eligible_frac"] = local_eligible_frac
+        if grasp_correction_eligible_frac is not None:
+            metrics["grasp_correction_eligible_frac"] = grasp_correction_eligible_frac
         return loss, metrics
 
     def _plan_temporal_decoder(self, batch: dict[str, Tensor]) -> tuple[Tensor, dict[str, Tensor | float]]:
@@ -872,6 +1101,29 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             # sample in the batch -- inference calls this with batch size 1 in practice, but this
             # stays correct for any batch size.
             grasp_phase = latent_tokens.new_full((latent_tokens.shape[0],), self._v2_grasp_phase, dtype=torch.long)
+        if self.architecture == "temporal_decoder_grounded_grasp_v3":
+            target_language_query = self.target_query_extractor(latent_tokens, latent_pad_mask, latent_modality_ids)
+            grounded_target_feature, visual_selection_stats = self.sharpened_visual_grounding(
+                target_language_query, latent_tokens, latent_pad_mask, latent_modality_ids
+            )
+            coarse_xyz = self.coarse_target_head(grounded_target_feature)
+            residual_xyz = self.fine_residual_head(grounded_target_feature, coarse_xyz, current_state, target_language_query)
+            target_xyz = coarse_xyz + residual_xyz  # final_target_xyz
+            metrics["predicted_target_xyz"] = target_xyz
+            metrics["predicted_coarse_target_xyz"] = coarse_xyz
+            metrics["predicted_residual_xyz"] = residual_xyz
+            metrics["visual_selection_entropy"] = visual_selection_stats["entropy"]
+            metrics["visual_selection_top1_mass"] = visual_selection_stats["top1_mass"]
+            metrics["visual_selection_topk_mass"] = visual_selection_stats["topk_mass"]
+            # Cached (normalized ACTION-position space) for `_grounded_grasp_v3_reactive_close`,
+            # called every env step from `select_action` -- not just on the (much rarer) steps this
+            # method itself runs, i.e. chunk replans. This is the FINAL (coarse + residual) target,
+            # exactly like `_v2_last_target_xyz` caches v2's single predicted target.
+            self._v3_last_target_xyz = target_xyz.detach()
+            # The policy's own persistent per-episode phase (flipped by
+            # `_grounded_grasp_v3_reactive_close`, cleared by `reset()`), broadcast to every sample
+            # in the batch -- same convention as v2's `_v2_grasp_phase` above.
+            grasp_phase = latent_tokens.new_full((latent_tokens.shape[0],), self._v3_grasp_phase, dtype=torch.long)
         if self.architecture == "temporal_decoder_grounded_grasp_v2_5":
             # v2's OWN pipeline, verbatim -- this method only ever runs v2_5's PRE_GRASP/POST_GRASP
             # GLOBAL stage (LOCAL_GRASP bypasses it entirely via `select_action`'s own dispatch, see
@@ -934,6 +1186,7 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             "temporal_decoder_instruction",
             "temporal_decoder_text_crossattn",
             "temporal_decoder_grounded_grasp_v2",
+            "temporal_decoder_grounded_grasp_v3",
             "temporal_decoder_grounded_grasp_v2_5",
         ):
             return self._forward_temporal_decoder(batch)
@@ -977,6 +1230,8 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             action = self._grounded_grasp_reactive_close(action, current_state)
         elif self.architecture == "temporal_decoder_grounded_grasp_v2":
             action = self._grounded_grasp_v2_reactive_close(action, current_state)
+        elif self.architecture == "temporal_decoder_grounded_grasp_v3":
+            action = self._grounded_grasp_v3_reactive_close(action, current_state)
         elif self.architecture == "temporal_decoder_grounded_grasp_v2_5":
             action = self._maybe_enter_local_grasp(action, current_state)
         return action
@@ -1047,16 +1302,43 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         action[..., GRIPPER_INDEX_RAW] = closed_value.to(action.dtype)
         return action
 
+    def _grounded_grasp_v3_reactive_close(self, action: Tensor, current_state: Tensor) -> Tensor:
+        """`temporal_decoder_grounded_grasp_v3` only: a straight copy of
+        `_grounded_grasp_v2_reactive_close`'s proximity-trigger/phase-flip/one-shot-latch behavior
+        -- same threshold (`grounded_grasp_close_threshold_m`), same one-shot latch, same
+        queue-clear-forces-replan mechanism -- evaluated against `_v3_last_target_xyz` (v3's
+        FINAL, coarse-plus-residual target, cached by `_plan_temporal_decoder`) instead of v2's
+        single predicted target. Deliberately UNCHANGED threshold/phase/close logic for this
+        pilot: v3's only experimental variable is the grounding/localization head upstream of this
+        method, never this method itself (see `grounded_grasp_v3.py`'s module docstring).
+        """
+        if self._v3_last_target_xyz is None:
+            return action
+        if not self._v3_close_triggered:
+            ee_pos_m = current_state[..., :3] * self.state_pos_std + self.state_pos_mean
+            target_pos_m = self._v3_last_target_xyz * self.action_pos_std + self.action_pos_mean
+            distance_m = (ee_pos_m - target_pos_m).norm(dim=-1)
+            if bool((distance_m <= self.config.grounded_grasp_close_threshold_m).any()):
+                self._v3_close_triggered = True
+                self._v3_grasp_phase = 1
+                self._executor._action_queue.clear()
+        if not self._v3_close_triggered:
+            return action
+        closed_value = (0.0 - self.action_grip_mean) / self.action_grip_std
+        action = action.clone()
+        action[..., GRIPPER_INDEX_RAW] = closed_value.to(action.dtype)
+        return action
+
     def _maybe_enter_local_grasp(self, action: Tensor, current_state: Tensor) -> Tensor:
         """`temporal_decoder_grounded_grasp_v2_5`'s PRE_GRASP stage only: proximity-based mode
-        switch -- unlike v1/v2's reactive close, this does NOT force the gripper; it only flips
+        switch -- unlike v1/v2/v3's reactive close, this does NOT force the gripper; it only flips
         `self._v25_stage` from PRE_GRASP to LOCAL_GRASP (one-shot per episode, gated on
         `self._v25_stage == PRE_GRASP` so it can never re-fire once past it -- `reset()` is the only
         thing that puts it back to PRE_GRASP) and clears the executor's action queue so the very
         next `select_action` call routes to `_select_action_local_grasp` instead of continuing to
         pop a chunk planned under stale PRE_GRASP conditioning. `action` itself (already computed
         by v2's own global decoder for THIS step) is returned unmodified -- the switch takes effect
-        starting the NEXT call, exactly like v1/v2's own reactive-close pattern.
+        starting the NEXT call, exactly like v1/v2/v3's own reactive-close pattern.
         """
         if self._v25_stage != PRE_GRASP or self._v25_last_target_xyz is None:
             return action
@@ -1094,8 +1376,18 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
         predicted_target_xyz_m = predicted_target_xyz * self.action_pos_std + self.action_pos_mean
         relative_xyz = predicted_target_xyz_m - current_ee_xyz_m
 
+        refiner_target_xyz, refiner_relative_xyz = predicted_target_xyz, relative_xyz
+        delta_grasp_xyz_m = None
+        if self.config.local_grasp_use_correction_head:
+            delta_grasp_xyz_m = self.local_grasp_correction_head(
+                grounded_target_feature, image_feature, current_state, predicted_target_xyz, relative_xyz
+            )
+            corrected_target_xyz_m = predicted_target_xyz_m + delta_grasp_xyz_m
+            refiner_target_xyz = (corrected_target_xyz_m - self.action_pos_mean) / self.action_pos_std
+            refiner_relative_xyz = corrected_target_xyz_m - current_ee_xyz_m
+
         delta_xyz, delta_rot, gripper = self.local_grasp_refiner(
-            grounded_target_feature, image_feature, current_state, predicted_target_xyz, relative_xyz
+            grounded_target_feature, image_feature, current_state, refiner_target_xyz, refiner_relative_xyz
         )
         # This pilot always replans every step (`local_grasp_execute_horizon=1`), so only the first
         # predicted residual step is ever used -- `local_grasp_execute_horizon>1` would need its own
@@ -1118,6 +1410,11 @@ class SafeDiffVLAPolicy(PreTrainedPolicy):
             "delta_rot_rad": delta_rot0,
             "gripper_norm": gripper0,
         }
+        if delta_grasp_xyz_m is not None:
+            # Logged so eval/diagnostic scripts can plot the corrected anchor against v2's raw
+            # `predicted_target_xyz` and the GT object center (see `grasp_correction_head.py`).
+            metrics["delta_grasp_xyz_m"] = delta_grasp_xyz_m
+            metrics["corrected_target_xyz_m"] = predicted_target_xyz_m + delta_grasp_xyz_m
         return action, metrics
 
     def _select_action_local_grasp(self, batch: dict[str, Tensor], current_state: Tensor) -> Tensor:

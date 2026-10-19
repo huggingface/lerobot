@@ -504,6 +504,248 @@ def test_other_architectures_never_build_v2_5_modules() -> None:
         "temporal_decoder_instruction",
         "temporal_decoder_text_crossattn",
         "temporal_decoder_grounded_grasp_v2",
+        "temporal_decoder_grounded_grasp_v3",
     ):
         policy = make_policy(architecture=arch)
         assert not hasattr(policy, "local_grasp_refiner")
+
+
+# ---- LocalGraspCorrectionHead (opt-in, see `grasp_correction_head.py`) -------------------------
+
+
+def test_correction_head_opt_in_default_off() -> None:
+    """`local_grasp_use_correction_head` defaults to False -- existing v2_5 configs/checkpoints
+    must be byte-for-byte unaffected unless explicitly turned on."""
+    policy = make_policy(architecture=ARCH)
+    assert not hasattr(policy, "local_grasp_correction_head")
+    batch = make_grounded_batch()
+    batch[OBS_STATE][:, GRIPPER_INDEX_RAW] = 0.0
+    batch[ACTION][:, :, GRIPPER_INDEX_RAW] = 1.0
+    _, metrics = policy(batch)
+    assert "loss_grasp_correction" in metrics  # zero-valued placeholder, always present
+    assert metrics["loss_grasp_correction"] == pytest.approx(0.0)
+    assert "grasp_correction_eligible_frac" not in metrics
+
+
+def test_correction_head_builds_and_freezes_refiner_by_default() -> None:
+    policy = make_policy(architecture=ARCH, local_grasp_use_correction_head=True)
+    assert hasattr(policy, "local_grasp_correction_head")
+    # First-experiment default: refiner ALSO frozen, only the new head trainable.
+    assert all(not p.requires_grad for p in policy.local_grasp_refiner.parameters())
+    assert any(p.requires_grad for p in policy.local_grasp_correction_head.parameters())
+    assert all(p.requires_grad for p in policy.local_grasp_correction_head.parameters())
+    optim_params = list(policy.get_optim_params())
+    head_params = list(policy.local_grasp_correction_head.parameters())
+    assert len(optim_params) == len(head_params)
+    assert all(any(p is hp for hp in head_params) for p in optim_params)
+
+
+def test_correction_head_freeze_refiner_toggle_off() -> None:
+    policy = make_policy(
+        architecture=ARCH, local_grasp_use_correction_head=True, local_grasp_correction_freeze_refiner=False
+    )
+    assert any(p.requires_grad for p in policy.local_grasp_refiner.parameters())
+
+
+def test_correction_head_trains_and_gradient_isolated_to_head_only() -> None:
+    policy = make_policy(
+        architecture=ARCH, action_horizon=20, execute_horizon=2, local_grasp_window_k=10,
+        local_grasp_use_correction_head=True,
+        # This synthetic batch's xyz is unit-scale `torch.randn`, not real meters -- a huge clip
+        # keeps the outlier-exclusion mechanism (tested separately, below) out of this test's way.
+        local_grasp_correction_outlier_clip_m=1e6,
+    )
+    batch = _batch_with_transition_at(step=3, horizon=20)
+    loss, metrics = policy(batch)
+    assert {"loss_grasp_correction", "grasp_correction_eligible_frac"} <= metrics.keys()
+    assert metrics["grasp_correction_eligible_frac"] == pytest.approx(1.0)
+    loss.backward()
+    assert any(p.grad is not None and torch.any(p.grad != 0) for p in policy.local_grasp_correction_head.parameters())
+    # First-experiment default: refiner frozen -- backward() must not populate its grads.
+    assert all(p.grad is None for p in policy.local_grasp_refiner.parameters())
+    assert all(p.grad is None for p in policy.target_query_extractor.parameters())
+
+
+def test_correction_head_outlier_clip_excludes_large_residual_frames() -> None:
+    """A frame whose own `gt_target_xyz - target_xyz` exceeds `local_grasp_correction_outlier_clip_m`
+    must not contribute to `loss_grasp_correction` -- the B_WRONG_OBJECT mitigation."""
+    policy = make_policy(
+        architecture=ARCH, action_horizon=20, execute_horizon=2, local_grasp_window_k=10,
+        local_grasp_use_correction_head=True, local_grasp_correction_outlier_clip_m=1e-6,
+    )
+    batch = _batch_with_transition_at(step=3, horizon=20)
+    _, metrics = policy(batch)
+    # An essentially-zero clip excludes every real (non-degenerate) sample.
+    assert metrics["grasp_correction_eligible_frac"] == pytest.approx(0.0)
+    assert metrics["loss_grasp_correction"] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_correction_head_bounds_delta_and_shifts_corrected_target() -> None:
+    from lerobot.policies.safediff_vla.grasp_correction_head import LocalGraspCorrectionHead
+
+    max_corr = 0.16
+    head = LocalGraspCorrectionHead(latent_dim=8, state_dim=6, hidden_dim=16, max_grasp_correction_m=max_corr)
+    with torch.no_grad():
+        for p in head.net[-1].parameters():
+            p.mul_(0.0)
+            p.add_(50.0)
+    grounded = torch.randn(4, 8)
+    image_feature = torch.randn(4, 8)
+    current_state = torch.randn(4, 6)
+    coarse_target_xyz = torch.randn(4, 3)
+    relative_xyz = torch.randn(4, 3)
+    delta = head(grounded, image_feature, current_state, coarse_target_xyz, relative_xyz)
+    assert delta.shape == (4, 3)
+    assert torch.all(delta.abs() < max_corr + 1e-6)
+    assert delta.abs().mean() > 0.9 * max_corr
+
+
+def test_correction_head_rejects_invalid_config() -> None:
+    with pytest.raises(ValueError, match="local_grasp_max_grasp_correction_m"):
+        make_config(architecture=ARCH, local_grasp_max_grasp_correction_m=0.0)
+    with pytest.raises(ValueError, match="local_grasp_correction_outlier_clip_m"):
+        make_config(architecture=ARCH, local_grasp_correction_outlier_clip_m=0.0)
+    with pytest.raises(ValueError, match="lambda_grasp_correction"):
+        make_config(architecture=ARCH, lambda_grasp_correction=-1.0)
+
+
+def test_correction_head_plan_local_grasp_step_logs_corrected_target() -> None:
+    policy = make_policy(architecture=ARCH, local_grasp_use_correction_head=True, local_grasp_correction_freeze_refiner=False)
+    policy.eval()
+    batch = make_grounded_batch(batch_size=1)
+    with torch.no_grad():
+        action_before, metrics_before = policy._plan_local_grasp_step(batch)
+        assert "delta_grasp_xyz_m" in metrics_before
+        assert "corrected_target_xyz_m" in metrics_before
+        assert metrics_before["delta_grasp_xyz_m"].shape == (1, 3)
+        for p in policy.local_grasp_correction_head.parameters():
+            p.add_(1.0)
+        action_after, metrics_after = policy._plan_local_grasp_step(batch)
+    # Perturbing ONLY the correction head must still change the emitted action -- proves it's
+    # actually wired into what `local_grasp_refiner` is called with, not a dead computation.
+    assert not torch.allclose(metrics_before["corrected_target_xyz_m"], metrics_after["corrected_target_xyz_m"])
+    assert not torch.allclose(action_before, action_after)
+
+
+# ---- grasp-phase-aware LocalGraspRefiner loss (loss-ONLY ablation, no new module -- the
+# CorrectionHead direction's follow-up, see `local_grasp_use_phase_aware_loss`'s config docstring) ----
+
+
+def test_phase_aware_loss_opt_in_default_off_matches_old_formula() -> None:
+    policy_old = make_policy(architecture=ARCH, action_horizon=20, execute_horizon=2, local_grasp_window_k=10)
+    policy_new = make_policy(
+        architecture=ARCH, action_horizon=20, execute_horizon=2, local_grasp_window_k=10,
+        local_grasp_use_phase_aware_loss=False,
+    )
+    policy_new.load_state_dict(policy_old.state_dict())
+    batch = _batch_with_transition_at(step=3, horizon=20)
+    with torch.no_grad():
+        _, metrics_old = policy_old(batch)
+        _, metrics_new = policy_new(batch)
+    assert metrics_new["loss_local"] == pytest.approx(metrics_old["loss_local"])
+    assert metrics_new["loss_local_terminal_xyz"] == pytest.approx(0.0)
+    assert metrics_new["loss_local_approach_xyz"] == pytest.approx(0.0)
+    assert metrics_new["loss_local_grip_weighted"] == pytest.approx(0.0)
+
+
+def test_phase_aware_loss_enabled_adds_new_terms_but_leaves_rot_and_old_grip_unchanged() -> None:
+    policy_off = make_policy(
+        architecture=ARCH, action_horizon=20, execute_horizon=2, local_grasp_window_k=10,
+        local_grasp_use_phase_aware_loss=False,
+    )
+    policy_on = make_policy(
+        architecture=ARCH, action_horizon=20, execute_horizon=2, local_grasp_window_k=10,
+        local_grasp_use_phase_aware_loss=True,
+    )
+    policy_on.load_state_dict(policy_off.state_dict())
+    batch = _batch_with_transition_at(step=3, horizon=20)
+    with torch.no_grad():
+        _, metrics_off = policy_off(batch)
+        _, metrics_on = policy_on(batch)
+    # rotation and the (still-always-computed) unweighted pos/grip terms are untouched by the flag.
+    assert metrics_on["loss_local_rot"] == pytest.approx(metrics_off["loss_local_rot"])
+    assert metrics_on["loss_local_pos"] == pytest.approx(metrics_off["loss_local_pos"])
+    assert metrics_on["loss_local_grip"] == pytest.approx(metrics_off["loss_local_grip"])
+    assert metrics_on["loss_local_terminal_xyz"] > 0
+    assert metrics_on["loss_local_approach_xyz"] > 0
+    assert metrics_on["loss_local_grip_weighted"] > 0
+    assert metrics_on["loss_local"] != pytest.approx(metrics_off["loss_local"])
+
+
+def test_phase_aware_loss_observability_metrics_present_and_raw_meters() -> None:
+    """`terminal_grasp_distance_m`/`predicted_local_residual_magnitude_m` are pure observability
+    (never affect any loss) -- present and positive when enabled/eligible, absent-as-zero when
+    off, added for offline checkpoint-to-checkpoint comparison during the 100k-step long run."""
+    policy_off = make_policy(architecture=ARCH, local_grasp_use_phase_aware_loss=False)
+    policy_on = make_policy(
+        architecture=ARCH, action_horizon=20, execute_horizon=2, local_grasp_window_k=10,
+        local_grasp_use_phase_aware_loss=True,
+    )
+    batch_off = make_grounded_batch()
+    batch_off[OBS_STATE][:, GRIPPER_INDEX_RAW] = 0.0
+    batch_off[ACTION][:, :, GRIPPER_INDEX_RAW] = 1.0
+    _, metrics_off = policy_off(batch_off)
+    assert metrics_off["terminal_grasp_distance_m"] == pytest.approx(0.0)
+    assert metrics_off["predicted_local_residual_magnitude_m"] == pytest.approx(0.0)
+
+    batch_on = _batch_with_transition_at(step=3, horizon=20)
+    _, metrics_on = policy_on(batch_on)
+    assert metrics_on["terminal_grasp_distance_m"] > 0
+    assert metrics_on["predicted_local_residual_magnitude_m"] > 0
+
+
+def test_phase_aware_loss_gradient_isolated_to_refiner() -> None:
+    policy = make_policy(
+        architecture=ARCH, action_horizon=20, execute_horizon=2, local_grasp_window_k=10,
+        local_grasp_use_phase_aware_loss=True,
+    )
+    batch = _batch_with_transition_at(step=3, horizon=20)
+    loss, metrics = policy(batch)
+    assert metrics["loss_local_terminal_xyz"] > 0
+    loss.backward()
+    assert any(p.grad is not None and torch.any(p.grad != 0) for p in policy.local_grasp_refiner.parameters())
+    assert all(p.grad is None for p in policy.target_query_extractor.parameters())
+    assert all(p.grad is None for p in policy.decoder.parameters())
+    assert all(p.grad is None for p in policy.backbone.parameters())
+
+
+def test_phase_aware_loss_zero_when_no_transition() -> None:
+    policy = make_policy(architecture=ARCH, local_grasp_use_phase_aware_loss=True)
+    batch = make_grounded_batch()
+    batch[OBS_STATE][:, GRIPPER_INDEX_RAW] = 0.0
+    batch[ACTION][:, :, GRIPPER_INDEX_RAW] = 1.0  # never closes
+    _, metrics = policy(batch)
+    assert metrics["loss_local_terminal_xyz"] == pytest.approx(0.0, abs=1e-8)
+    assert metrics["loss_local_approach_xyz"] == pytest.approx(0.0, abs=1e-8)
+    assert metrics["loss_local_grip_weighted"] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_phase_aware_terminal_loss_uses_clamped_close_index_beyond_horizon() -> None:
+    """`close_idx_in_horizon` must clamp to `local_h - 1` when the real transition is farther out
+    than the predicted horizon can see (but still within `local_grasp_window_k`) -- proven by
+    forcing a transition beyond a short `local_grasp_action_horizon=3` and checking the terminal
+    loss still contributes (not silently skipped just because the exact step isn't in-horizon)."""
+    policy = make_policy(
+        architecture=ARCH, action_horizon=20, execute_horizon=2, local_grasp_window_k=10,
+        local_grasp_action_horizon=3, local_grasp_use_phase_aware_loss=True,
+    )
+    batch = _batch_with_transition_at(step=7, horizon=20)  # beyond local_h=3, within window_k=10
+    _, metrics = policy(batch)
+    assert metrics["local_eligible_frac"] == pytest.approx(1.0)
+    assert metrics["loss_local_terminal_xyz"] > 0
+    assert metrics["loss_local_approach_xyz"] > 0
+
+
+def test_config_phase_aware_loss_rejects_invalid_fields() -> None:
+    with pytest.raises(ValueError, match="lambda_local_terminal_xyz"):
+        make_config(architecture=ARCH, lambda_local_terminal_xyz=-1.0)
+    with pytest.raises(ValueError, match="lambda_local_approach_xyz"):
+        make_config(architecture=ARCH, lambda_local_approach_xyz=-1.0)
+    with pytest.raises(ValueError, match="lambda_local_grip_weighted"):
+        make_config(architecture=ARCH, lambda_local_grip_weighted=-1.0)
+    with pytest.raises(ValueError, match="local_grasp_grip_close_weight"):
+        make_config(architecture=ARCH, local_grasp_grip_close_weight=0.0)
+    with pytest.raises(ValueError, match="local_grasp_approach_weight_min"):
+        make_config(architecture=ARCH, local_grasp_approach_weight_min=1.0, local_grasp_approach_weight_max=0.5)
+    with pytest.raises(ValueError, match="local_grasp_huber_delta"):
+        make_config(architecture=ARCH, local_grasp_huber_delta=0.0)
