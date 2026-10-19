@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, cast, overload
 
 import datasets
+import numpy as np
 import torch
 import torch.utils
 from huggingface_hub import HfApi, snapshot_download
@@ -29,6 +30,7 @@ from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderCo
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
+from .audio_utils import DEFAULT_AUDIO_WINDOW_S
 from .dataset_metadata import CODEBASE_VERSION, LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader, DatasetReader
 from .dataset_writer import DatasetWriter
@@ -75,6 +77,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         repo_type: str = "dataset",
         token: str | bool | None = None,
         video_decoder_cache_size: int | None = None,
+        audio_window_s: float = DEFAULT_AUDIO_WINDOW_S,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -106,6 +109,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                   task-conditioned training.
             - data (backed by datasets.Dataset), which reads values from parquet files.
             - videos (optional) from which frames are loaded to be synchronous with data from parquet files.
+            - audio (optional), stored as FLAC files under 'audio/' with the same chunk/file layout as
+              videos, from which a window of samples ending at each frame is loaded.
 
         A typical LeRobotDataset looks like this from its root path:
         .
@@ -222,6 +227,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 number of open video decoders each DataLoader worker keeps. Larger values cut
                 re-reads under a shuffled sampler at the cost of RAM. Defaults to the reader's own
                 default (256 for ``"lance"``).
+            audio_window_s (float, optional): Duration of the audio window returned for each audio feature,
+                ending at the frame's timestamp. Each item holds a tensor of shape
+                ``(num_channels, round(audio_window_s * sample_rate))``, zero-padded where the window extends
+                past the episode's audio. Defaults to 0.5.
 
         Note:
             Write-mode parameters (``streaming_encoding``, ``batch_encoding_size``) passed to
@@ -248,6 +257,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
+        self._audio_window_s = audio_window_s
         self._batch_encoding_size = batch_encoding_size
         self._encoder_threads = encoder_threads
 
@@ -295,6 +305,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.reader: BaseDatasetReader | None
         self.writer: DatasetWriter | None
         if self.meta.storage_format != DEFAULT_STORAGE_FORMAT:
+            if self.meta.audio_keys:
+                raise NotImplementedError(
+                    f"Audio features are not supported for storage_format={self.meta.storage_format!r}."
+                )
             # non-default formats read the data in place at its root
             reader_kwargs: dict[str, Any] = {
                 "meta": self.meta,
@@ -329,6 +343,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_transforms=image_transforms,
             return_uint8=return_uint8,
             depth_output_unit=depth_output_unit,
+            audio_window_s=audio_window_s,
         )
         self.reader = reader
 
@@ -419,6 +434,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 image_transforms=self.image_transforms,
                 return_uint8=self._return_uint8,
                 depth_output_unit=self._depth_output_unit,
+                audio_window_s=self._audio_window_s,
             )
         return self.reader
 
@@ -511,6 +527,26 @@ class LeRobotDataset(torch.utils.data.Dataset):
             RuntimeError: If the dataset is read-only (no writer).
         """
         self._require_writer("add_frame").add_frame(frame)
+
+    def add_episode_audio(
+        self, audio_key: str, audio: np.ndarray | str | Path, start_time_s: float = 0.0
+    ) -> None:
+        """Set the audio of the current episode for one audio feature.
+
+        Delegates to :meth:`DatasetWriter.add_episode_audio`. Audio is passed once per episode and per
+        audio feature, before :meth:`save_episode`, rather than frame by frame.
+
+        Args:
+            audio_key: The audio feature, e.g. ``"observation.audio.wrist"``.
+            audio: Float samples in ``[-1, 1]`` of shape ``(num_samples, num_channels)``, or the path of an
+                audio file with the feature's sample rate and number of channels.
+            start_time_s: Time of the episode's first frame on the audio's timeline, in seconds from the
+                first sample. Positive when the recording started before the first frame.
+
+        Raises:
+            RuntimeError: If the dataset is read-only (no writer).
+        """
+        self._require_writer("add_episode_audio").add_episode_audio(audio_key, audio, start_time_s)
 
     def save_episode(self, episode_data: dict | None = None, parallel_encoding: bool = True) -> None:
         """Save the current episode buffer to disk.
@@ -789,6 +825,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         encoder_threads: int | None = None,
         video_files_size_in_mb: int | None = None,
         data_files_size_in_mb: int | None = None,
+        audio_files_size_in_mb: int | None = None,
     ) -> "LeRobotDataset":
         """Create a new LeRobotDataset from scratch for recording data.
 
@@ -825,6 +862,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 during capture instead of writing images first.
             encoder_queue_maxsize: Max buffered frames per camera when using
                 streaming encoding.
+            video_files_size_in_mb: Max video file size in MB. ``None`` uses the default.
+            data_files_size_in_mb: Max parquet file size in MB. ``None`` uses the default.
+            audio_files_size_in_mb: Max audio file size in MB. ``None`` uses the default.
 
         Returns:
             A new :class:`LeRobotDataset` in write mode.
@@ -840,6 +880,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             metadata_buffer_size=metadata_buffer_size,
             video_files_size_in_mb=video_files_size_in_mb,
             data_files_size_in_mb=data_files_size_in_mb,
+            audio_files_size_in_mb=audio_files_size_in_mb,
         )
         obj.repo_id = obj.meta.repo_id
         obj._requested_root = obj.meta.root
@@ -852,6 +893,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._video_backend = video_backend if video_backend is not None else get_safe_default_video_backend()
         obj._return_uint8 = False
         obj._depth_output_unit = DEFAULT_DEPTH_UNIT
+        obj._audio_window_s = DEFAULT_AUDIO_WINDOW_S
         obj._batch_encoding_size = batch_encoding_size
         obj._encoder_threads = encoder_threads
         obj._storage_root = None
@@ -956,6 +998,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj._video_backend = video_backend if video_backend else get_safe_default_video_backend()
         obj._return_uint8 = False
         obj._depth_output_unit = DEFAULT_DEPTH_UNIT
+        obj._audio_window_s = DEFAULT_AUDIO_WINDOW_S
         obj._batch_encoding_size = batch_encoding_size
 
         if obj._requested_root is not None:
