@@ -302,7 +302,6 @@ class _NormalizationMixin:
         processed_action = self._apply_transform(action, ACTION, FeatureType.ACTION, inverse=inverse)
         return processed_action
 
-
     def _eps_for_dtype(self, dtype: torch.dtype) -> float:
         """Return an epsilon that stays representable in ``dtype``.
 
@@ -391,7 +390,9 @@ class _NormalizationMixin:
             # to prevent division by zero. This consistently maps an input equal to
             # min_val to -1, ensuring a stable transformation.
             denom = torch.where(
-                denom == 0, torch.tensor(self._eps_for_dtype(tensor.dtype), device=tensor.device, dtype=tensor.dtype), denom
+                denom == 0,
+                torch.tensor(self._eps_for_dtype(tensor.dtype), device=tensor.device, dtype=tensor.dtype),
+                denom,
             )
             if inverse:
                 # Map from [-1, 1] back to [min, max]
@@ -410,7 +411,9 @@ class _NormalizationMixin:
             denom = q99 - q01
             # Avoid division by zero by adding epsilon when quantiles are identical
             denom = torch.where(
-                denom == 0, torch.tensor(self._eps_for_dtype(tensor.dtype), device=tensor.device, dtype=tensor.dtype), denom
+                denom == 0,
+                torch.tensor(self._eps_for_dtype(tensor.dtype), device=tensor.device, dtype=tensor.dtype),
+                denom,
             )
             if inverse:
                 return (tensor + 1.0) * denom / 2.0 + q01
@@ -427,7 +430,9 @@ class _NormalizationMixin:
             denom = q90 - q10
             # Avoid division by zero by adding epsilon when quantiles are identical
             denom = torch.where(
-                denom == 0, torch.tensor(self._eps_for_dtype(tensor.dtype), device=tensor.device, dtype=tensor.dtype), denom
+                denom == 0,
+                torch.tensor(self._eps_for_dtype(tensor.dtype), device=tensor.device, dtype=tensor.dtype),
+                denom,
             )
             if inverse:
                 return (tensor + 1.0) * denom / 2.0 + q10
