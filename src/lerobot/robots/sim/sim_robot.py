@@ -32,7 +32,7 @@ from .world import EpisodeStatus
 class SimRobot(Robot):
     """A simulated world as a robot: swappable with hardware, plus the ``World`` episode controls.
 
-    The world runs in this process, or behind ``lerobot-env-server`` when ``endpoint`` is set; both run
+    The world runs in this process, or behind ``lerobot-env-server`` when ``env.endpoint`` is set; both run
     the same session code. In lockstep, each sent action advances the world exactly one step.
     """
 
@@ -43,26 +43,25 @@ class SimRobot(Robot):
         super().__init__(config)
         self.config = config
         env = config.env
+        assert env is not None
         # The env's suite, when it names exactly one; otherwise the simulator's first.
-        self._task_group = env.task if env is not None and env.task and "," not in env.task else None
+        self._task_group = env.task if env.task and "," not in env.task else None
         self.client: EnvClient | InProcessEnvClient
-        if config.endpoint is None:
-            assert env is not None
+        if env.endpoint is None:
             self.client = InProcessEnvClient(env.backend_config())
         else:
-            deployment = env.type if env is not None else None
             self.client = EnvClient(
-                config.endpoint,
-                deployment,
+                env.endpoint,
+                env.type,
                 config.timeout_s,
                 config.setup_timeout_s,
-                encoding=config.encoding,
-                jpeg_quality=config.jpeg_quality,
+                encoding=env.encoding,
+                jpeg_quality=env.jpeg_quality,
             )
         try:
             self.descriptor = self.client.describe()
-            if env is not None and config.endpoint is not None:
-                check_served(self.descriptor.config, env.sim_settings(), config.endpoint)
+            if env.endpoint is not None:
+                check_served(self.descriptor.config, env.sim_settings(), env.endpoint)
             self.supports_position_hold = self.descriptor.hold == "position"
             self.supports_command_hold = self.descriptor.hold == "command"
             self.latest: StepResult | None = None

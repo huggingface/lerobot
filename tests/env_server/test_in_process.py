@@ -22,28 +22,9 @@ import pytest
 
 from lerobot.env_server.client import EnvClient
 from lerobot.env_server.in_process import InProcessEnvClient
-from lerobot.envs.configs import EnvConfig
 from lerobot.robots.sim import SimRobot, SimRobotConfig
 from lerobot.sims.backend import BackendConfig
-
-
-@EnvConfig.register_subclass("toy_test")
-@dataclass
-class ToyEnvConfig(EnvConfig):
-    fps: int = 20
-
-    @property
-    def gym_kwargs(self) -> dict:
-        return {}
-
-    def sim_settings(self) -> dict:
-        return {
-            "type": "toy",
-            "task": "reach",
-            "fps": self.fps,
-            "control": "delta",
-            "semantics": "toy-delta-v1",
-        }
+from tests.env_server.toy_env import ToyEnvConfig
 
 
 def _episode(client: EnvClient | InProcessEnvClient) -> list[dict]:
@@ -85,7 +66,9 @@ def test_in_process_realtime_world_keeps_ticking_while_idle(tmp_path):
 @pytest.mark.parametrize("where", ["in_process", "served"])
 def test_lockstep_sim_robot_advances_once_per_action(where, request, tmp_path):
     if where == "served":
-        config = SimRobotConfig(endpoint=request.getfixturevalue("server")[1], clock="lockstep")
+        config = SimRobotConfig(
+            env=ToyEnvConfig(endpoint=request.getfixturevalue("server")[1]), clock="lockstep"
+        )
     else:
         config = SimRobotConfig(env=ToyEnvConfig(), clock="lockstep")
     config.calibration_dir = tmp_path
