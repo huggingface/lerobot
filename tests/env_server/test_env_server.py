@@ -25,6 +25,7 @@ from lerobot.env_server.client import EnvClient
 from lerobot.sims.adapters import canonical_observation, hold_action
 from lerobot.transport.wire.protocol import ErrorCode, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig
+from tests.env_server.toy_env import ToyEnvConfig
 
 
 def test_torch_free_import():
@@ -151,7 +152,7 @@ def test_robot_and_command_hold(server, tmp_path):
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 
     _, endpoint = server
-    robot = SimRobot(SimRobotConfig(endpoint=endpoint, calibration_dir=tmp_path))
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=endpoint), calibration_dir=tmp_path))
     assert isinstance(robot, World)
     wrapper = ThreadSafeRobot(robot)
     wrapper.configure_hold()
@@ -172,7 +173,9 @@ def test_sim_robot_registration_and_optional_world(server, tmp_path):
     from lerobot.robots.sim import SimRobot, SimRobotConfig
     from lerobot.robots.sim.world import get_world
 
-    robot = make_robot_from_config(SimRobotConfig(endpoint=server[1], calibration_dir=tmp_path))
+    robot = make_robot_from_config(
+        SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path)
+    )
     try:
         assert isinstance(robot, SimRobot)
         assert get_world(robot) is robot
@@ -236,7 +239,9 @@ def test_failed_robot_stays_connected_until_disconnect(server, tmp_path):
     from lerobot.robots.sim import SimRobot, SimRobotConfig
 
     running, endpoint = server
-    robot = SimRobot(SimRobotConfig(endpoint=endpoint, calibration_dir=tmp_path, timeout_s=0.1))
+    robot = SimRobot(
+        SimRobotConfig(env=ToyEnvConfig(endpoint=endpoint), calibration_dir=tmp_path, timeout_s=0.1)
+    )
     robot.connect()
     session = robot.client.session
     with pytest.raises(ValueError):
@@ -272,7 +277,7 @@ def test_client_loss_releases_ownership(server):
 def test_sim_robot_actions_follow_controller_order(server, tmp_path):
     from lerobot.robots.sim import SimRobot, SimRobotConfig
 
-    robot = SimRobot(SimRobotConfig(endpoint=server[1], calibration_dir=tmp_path))
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path))
     try:
         assert (
             tuple(robot.action_features)
@@ -393,7 +398,7 @@ def test_sim_robot_local_inference_engines(server, tmp_path, mode):
     from tests.inference.rtc_helpers import ControlledPolicy, Pipeline
     from tests.utils import wait_for
 
-    robot = SimRobot(SimRobotConfig(endpoint=server[1], calibration_dir=tmp_path))
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path))
     wrapper = ThreadSafeRobot(robot)
     names = list(robot.action_features)
     state_names = list(robot._state.names)
@@ -463,7 +468,7 @@ def test_sim_robot_remote_inference_engine(server, tmp_path):
     from tests.inference.test_policy_runner import ConformingPolicy, tiny_config
     from tests.utils import wait_for
 
-    robot = SimRobot(SimRobotConfig(endpoint=server[1], calibration_dir=tmp_path))
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path))
     wrapper = ThreadSafeRobot(robot)
     state = next(f for f in robot.descriptor.features if f.name == "observation.state")
     config = tiny_config()
@@ -579,7 +584,7 @@ def test_rollout_rejects_checkpoint_schema_before_opening_world(server, tmp_path
     from lerobot.robots.sim import SimRobot, SimRobotConfig
     from lerobot.rollout import context
 
-    robot = SimRobot(SimRobotConfig(endpoint=server[1], calibration_dir=tmp_path))
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path))
     monkeypatch.setattr(context, "make_robot_from_config", lambda _: robot)
     cfg = SimpleNamespace(
         robot=robot.config,
@@ -611,7 +616,9 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
     from lerobot.rollout.configs import EpisodicStrategyConfig
     from lerobot.utils.feature_utils import build_dataset_frame
 
-    robot = SimRobot(SimRobotConfig(endpoint=server[1], calibration_dir=tmp_path / "calibration"))
+    robot = SimRobot(
+        SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path / "calibration")
+    )
     dataset = None
     try:
         robot.connect()

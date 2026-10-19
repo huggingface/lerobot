@@ -30,7 +30,11 @@ def server():
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     endpoint = f"tcp/127.0.0.1:{port}"
-    server = EnvServer(ServerConfig(zenoh=ZenohConfig(listen_endpoints=[endpoint]), presence_grace_s=0.5))
+    server = EnvServer(
+        ServerConfig(
+            deployment="toy_test", zenoh=ZenohConfig(listen_endpoints=[endpoint]), presence_grace_s=0.5
+        )
+    )
     thread = threading.Thread(target=server.serve)
     thread.start()
     assert server.ready.wait(5)

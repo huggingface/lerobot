@@ -68,19 +68,15 @@ else:
 @RobotConfig.register_subclass("sim")
 @dataclass
 class SimRobotConfig(RobotConfig):
-    """One simulated world driven as a robot, in this process or served at ``endpoint``.
+    """One simulated world driven as a robot, in this process or served.
 
     ``env`` names the environment (``--robot.env.type=libero``); its ``task`` selects the suite and
-    ``task_id`` the task in it. With ``endpoint`` set, the world runs behind ``lerobot-env-server``, which
-    must serve that environment; with only ``endpoint``, the robot uses whatever the server serves.
+    ``task_id`` the task in it. With ``--robot.env.endpoint`` set, the world runs behind
+    ``lerobot-env-server``, which must serve that environment, as for a batched env.
     A simulated world needs no calibration: ``calibration_dir`` is unused.
     """
 
     env: SimulatedEnvConfig | None = None
-    endpoint: str | None = None
-    # Served only: "jpeg" sends camera frames as JPEG at jpeg_quality, a bandwidth for fidelity tradeoff.
-    encoding: str = "raw"
-    jpeg_quality: int = 90
     task_id: int = 0
     # realtime: the world advances at its control rate, also while the policy computes, as hardware does.
     # lockstep: each sent action advances the world exactly one step.
@@ -94,8 +90,8 @@ class SimRobotConfig(RobotConfig):
         super().__post_init__()
         if self.clock not in CLOCKS:
             raise ValueError(f"--robot.clock must be one of {CLOCKS}, got {self.clock!r}")
-        if self.env is None and self.endpoint is None:
-            raise ValueError("A sim robot needs --robot.env.type, --robot.endpoint, or both")
+        if self.env is None:
+            raise ValueError("A sim robot needs --robot.env.type")
 
 
 def check_teleop_clock(robot: RobotConfig | None, teleop: object | None) -> None:
