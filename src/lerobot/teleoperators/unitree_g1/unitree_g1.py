@@ -297,13 +297,15 @@ class UnitreeG1Teleoperator(Teleoperator):
         return {**joint_action, **rc.remote_action}
 
     def on_observation(self, observation: RobotObservation) -> None:
-        # The robot's wireless remote arrives in its observation and drives the locomotion commands.
         wireless_remote = observation.get("wireless_remote")
         if wireless_remote is not None:
             self.remote_controller.set_from_wireless(wireless_remote)
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        # Kept for callers that pushed the observation through `send_feedback` before `on_observation`.
+        """Deprecated for observation delivery; use :meth:`on_observation` before :meth:`get_action`.
+
+        Kept as a compatibility alias for callers that send wireless-remote observations here.
+        """
         self.on_observation(feedback)
 
     def disconnect(self) -> None:

@@ -73,7 +73,7 @@ Example driving a mobile robot's base from the keyboard, with no leader arm (the
 lerobot-teleoperate \
   --robot.type=lekiwi_client \
   --robot.remote_ip=172.18.134.136 \
-  --base_teleop.type=keyboard
+  --base_teleop.type=keyboard_base
 ```
 
 """
@@ -130,7 +130,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.teleoperators.mobile_base import MobileBaseTeleop
+from lerobot.teleoperators.mobile_base import MobileBaseTeleop, make_mobile_base_teleop
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging, move_cursor_up
@@ -146,9 +146,11 @@ class TeleoperateConfig:
     robot: RobotConfig
     # Teleoperator to control the robot. Optional when `base_teleop` drives a mobile robot alone.
     teleop: TeleoperatorConfig | None = None
-    # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard`, alongside `teleop`
+    # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard_base`, alongside `teleop`
     # for the arms. Without `teleop`, the arms hold the position they had when teleoperation started.
     base_teleop: TeleoperatorConfig | None = None
+    # With base-only control, hold other joints at their first measured positions.
+    hold_uncommanded: bool = True
     # Limit the maximum frames per second.
     fps: int = 60
     teleop_time_s: float | None = None
@@ -282,7 +284,12 @@ def teleoperate(cfg: TeleoperateConfig):
     teleop: Teleoperator | MobileBaseTeleop
     if cfg.base_teleop is not None:
         arm = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
-        teleop = MobileBaseTeleop(robot, base=make_teleoperator_from_config(cfg.base_teleop), arm=arm)
+        teleop = make_mobile_base_teleop(
+            robot,
+            base=make_teleoperator_from_config(cfg.base_teleop),
+            arm=arm,
+            hold_uncommanded=cfg.hold_uncommanded,
+        )
     else:
         assert cfg.teleop is not None  # enforced by TeleoperateConfig.__post_init__
         teleop = make_teleoperator_from_config(cfg.teleop)

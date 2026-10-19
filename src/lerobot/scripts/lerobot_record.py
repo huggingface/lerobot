@@ -150,7 +150,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.teleoperators.mobile_base import MobileBaseTeleop
+from lerobot.teleoperators.mobile_base import MobileBaseTeleop, make_mobile_base_teleop
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
@@ -173,7 +173,7 @@ class RecordConfig:
     dataset: DatasetRecordConfig
     # Teleoperator to control the robot. Optional when `base_teleop` drives a mobile robot alone.
     teleop: TeleoperatorConfig | None = None
-    # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard`, alongside `teleop`
+    # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard_base`, alongside `teleop`
     # for the arms. Without `teleop`, the arms hold the position they had when recording started.
     base_teleop: TeleoperatorConfig | None = None
     # Display all cameras on screen
@@ -374,7 +374,12 @@ def record(
     arm_teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
     teleop: Teleoperator | MobileBaseTeleop | None = arm_teleop
     if cfg.base_teleop is not None:
-        teleop = MobileBaseTeleop(robot, base=make_teleoperator_from_config(cfg.base_teleop), arm=arm_teleop)
+        teleop = make_mobile_base_teleop(
+            robot,
+            base=make_teleoperator_from_config(cfg.base_teleop),
+            arm=arm_teleop,
+            hold_uncommanded=True,
+        )
 
     # Fall back to identity pipelines when the caller doesn't supply processors.
     if (

@@ -15,20 +15,25 @@
 # limitations under the License.
 
 import re
-from unittest.mock import patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
+import draccus
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 pytest.importorskip("deepdiff", reason="deepdiff is required (install lerobot[hardware])")
 
 from lerobot.configs.dataset import DatasetRecordConfig
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.processor import make_default_processors
 from lerobot.robots import make_robot_from_config
+from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
 from lerobot.scripts.lerobot_record import RecordConfig, record, record_loop
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
+from lerobot.teleoperators.keyboard import KeyboardBaseTeleop, KeyboardTeleop
+from lerobot.teleoperators.so_leader import SO100Leader
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
@@ -127,7 +132,11 @@ def test_mobile_control_delivers_fresh_observations_to_each_device(
         observation = pending.pop(self)
         assert observation
         action_counts[self] = action_counts.get(self, 0) + 1
-        return {key: observation[key] for key in self.action_features}
+        return {
+            key: observation[key]
+            for key in self.action_features
+            if self.config.n_motors == 1 or key != "motor_1.pos"
+        }
 
     monkeypatch.setattr(MockTeleop, "on_observation", on_observation)
     monkeypatch.setattr(MockTeleop, "get_action", get_action)
@@ -157,6 +166,7 @@ def test_mobile_control_delivers_fresh_observations_to_each_device(
 def test_record_disconnects_arm_after_base_disconnects(tmp_path):
     arm_cfg, base_cfg = MockTeleopConfig(), MockTeleopConfig(n_motors=1)
     arm, base = MockTeleop(arm_cfg), MockTeleop(base_cfg)
+    arm.motors = ["motor_2", "motor_3"]
     dataset_cfg = DatasetRecordConfig(
         repo_id=DUMMY_REPO_ID,
         single_task="Dummy task",
@@ -233,6 +243,69 @@ def test_record_hands_the_observation_to_the_teleop(tmp_path):
     with spy:
         record(cfg)
     assert _observed_before_every_action(calls)
+
+
+def test_record_multi_teleop_receives_fresh_observations_before_actions() -> None:
+    # Exercise the legacy list entry point through the new wrapper without connecting hardware.
+    robot = MagicMock(spec=LeKiwiClient)
+    robot.name = "lekiwi_client"
+    robot.config = LeKiwiClientConfig(remote_ip="unused", cameras={})
+    arm = MagicMock(spec=SO100Leader)
+    keyboard = MagicMock(spec=KeyboardBaseTeleop)
+    keyboard.name = "keyboard_base"
+    observations = [{"arm_shoulder.pos": float(tick)} for tick in range(3)]
+    robot.get_observation.side_effect = observations
+    events = {"exit_early": False}
+    pending: dict[str, RobotObservation] = {}
+    received: dict[str, list[RobotObservation]] = {"arm": [], "keyboard": []}
+    sent: list[RobotAction] = []
+
+    def observe(device: str, observation: RobotObservation) -> None:
+        assert device not in pending
+        pending[device] = observation
+        received[device].append(observation)
+
+    def arm_action() -> RobotAction:
+        observation = pending.pop("arm")
+        return {"shoulder.pos": observation["arm_shoulder.pos"] + 10.0}
+
+    def keyboard_action() -> RobotAction:
+        observation = pending.pop("keyboard")
+        assert observation is received["arm"][-1]
+        return {"x.vel": 0.2}
+
+    def send_action(action: RobotAction) -> RobotAction:
+        sent.append(action)
+        if len(sent) == len(observations):
+            events["exit_early"] = True
+        return action
+
+    arm.on_observation.side_effect = lambda obs: observe("arm", obs)
+    keyboard.on_observation.side_effect = lambda obs: observe("keyboard", obs)
+    arm.get_action.side_effect = arm_action
+    keyboard.get_action.side_effect = keyboard_action
+    robot.send_action.side_effect = send_action
+    teleop_processor, action_processor, observation_processor = make_default_processors()
+
+    record_loop(
+        robot=robot,
+        events=events,
+        fps=200,
+        teleop_action_processor=teleop_processor,
+        robot_action_processor=action_processor,
+        robot_observation_processor=observation_processor,
+        teleop=[arm, keyboard],
+        control_time_s=10.0,
+    )
+
+    assert not pending
+    for device in received:
+        assert len(received[device]) == len(observations)
+        assert all(
+            actual is expected for actual, expected in zip(received[device], observations, strict=True)
+        )
+    assert sent == [{"arm_shoulder.pos": float(tick) + 10.0, "x.vel": 0.2} for tick in range(3)]
+    assert arm.get_action.call_count == keyboard.get_action.call_count == 3
 
 
 def test_record_and_resume(tmp_path):
@@ -419,3 +492,45 @@ def test_record_loop_without_a_teleoperator_paces_and_terminates():
 
     # 0.1 s at 30 Hz is 3 ticks; the upper bound is what proves the phase was paced.
     assert 1 <= calls <= 6
+
+
+@pytest.mark.parametrize("keyboard_type", ["keyboard", "keyboard_base"])
+@pytest.mark.parametrize("hold_uncommanded", [False, True])
+def test_lekiwi_keyboard_cli_uses_teleop_mapping(keyboard_type, hold_uncommanded) -> None:
+    cfg = draccus.parse(
+        TeleoperateConfig,
+        args=[
+            "--robot.type=lekiwi_client",
+            "--robot.remote_ip=unused",
+            f"--base_teleop.type={keyboard_type}",
+            f"--hold_uncommanded={str(hold_uncommanded).lower()}",
+            "--fps=200",
+            "--teleop_time_s=0.02",
+        ],
+    )
+    robot = MagicMock(spec=LeKiwiClient)
+    robot.config = cfg.robot
+    robot.name = "lekiwi_client"
+    obs = {"arm_shoulder.pos": 10.0, "x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0}
+    robot.action_features = dict.fromkeys(obs, float)
+    robot.get_observation.return_value = obs
+    robot._from_keyboard_to_base_action.side_effect = AssertionError("Robot must not map keyboard input")
+
+    def connect_keyboard(self, calibrate=True):
+        self.event_queue.put(("w", True))
+
+    with (
+        patch("lerobot.scripts.lerobot_teleoperate.make_robot_from_config", return_value=robot),
+        patch("lerobot.teleoperators.keyboard.teleop_keyboard.require_package"),
+        patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=True),
+        patch.object(KeyboardTeleop, "connect", connect_keyboard),
+        patch.object(KeyboardBaseTeleop, "connect", connect_keyboard),
+    ):
+        teleoperate(cfg)
+
+    expected = {"x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0}
+    if hold_uncommanded:
+        expected["arm_shoulder.pos"] = 10.0
+    assert robot.send_action.call_count > 0
+    assert all(call.args[0] == expected for call in robot.send_action.call_args_list)
+    robot._from_keyboard_to_base_action.assert_not_called()
