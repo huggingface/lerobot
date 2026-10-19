@@ -36,7 +36,13 @@ If the state stream stops, `get_observation` and `send_action` raise `DeviceNotC
    ssh -N -L /tmp/robotd.sock:/run/robotd.sock -L /tmp/updaterd.sock:/run/updaterd.sock microduck@<ip>
    ```
 
-4. Install LeRobot with keyboard support: `pip install 'lerobot[pynput-dep]'`.
+4. From a LeRobot source checkout, install the recording, keyboard, and visualization dependencies:
+
+   ```bash
+   uv sync --locked --extra core_scripts --extra test
+   ```
+
+   Use `uv run --no-sync` before the commands below to use this environment.
 
 ## Teleoperate
 
@@ -99,6 +105,120 @@ Dataset timestamps come from the frame index divided by the dataset rate. They d
 - `action`: the commanded intents, `vx`, `vy` (m/s), `vyaw` (rad/s), and `{neck_pitch,head_pitch,head_yaw,head_roll}.pos` (rad).
 
 Set `--robot.use_camera=false` to record state only.
+
+## Test on a Real Microduck
+
+Use the stock onboard walking policy for this test. Connecting enables the robot and can start its homing motion. Start with the robot supported in its normal stand, then use a clear floor area for walking. Keep `relax_on_disconnect=false`: disconnect should stop movement without cutting torque.
+
+On macOS, allow the terminal running LeRobot to monitor keyboard input in System Settings if prompted. The keyboard teleoperator starts at its highest speed preset, so the commands below explicitly reduce the command limits.
+
+### Connect and Check the Keyboard
+
+In a dedicated terminal, replace the IP and keep this SSH tunnel running. TCP forwarding avoids stale local Unix socket files after restarting the tunnel:
+
+```bash
+export DUCK_IP=192.168.1.42
+ssh "microduck@$DUCK_IP" sudo systemctl stop padd
+ssh -N -o ExitOnForwardFailure=yes \
+    -L 127.0.0.1:7000:/run/robotd.sock "microduck@$DUCK_IP"
+```
+
+In another terminal, from the source checkout:
+
+```bash
+export DUCK_IP=192.168.1.42
+curl --fail --max-time 5 "http://$DUCK_IP:8080/frame" -o /tmp/microduck-frame.png
+uv run --no-sync lerobot-teleoperate \
+    --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
+    --robot.robotd_address=127.0.0.1:7000 \
+    --robot.max_vx=0.1 --robot.max_vy=0.1 --robot.max_vyaw=0.5 \
+    --teleop.type=keyboard_microduck \
+    --teleop.vx=0.1 --teleop.vy=0.1 --teleop.vyaw=0.5 \
+    --fps=15 --teleop_time_s=60 --display_data=true
+```
+
+Check that the camera view updates when you move an object in front of it. Once homing completes, briefly test W/S, A/D, and Z/X on the floor. Releasing a movement key should stop that command; holding Space should zero the body twist. Briefly test each head key and C to recenter, checking the actual signs against the table above. Stop with Ctrl-C and confirm that the duck stops without going limp.
+
+### Record, Read Back, and Replay
+
+Choose a fresh local dataset directory for each test run. This test does not upload to the Hub:
+
+```bash
+export DUCK_DATASET_ROOT="$PWD/outputs/microduck-smoke-$(date +%Y%m%d-%H%M%S)"
+uv run --no-sync lerobot-record \
+    --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
+    --robot.robotd_address=127.0.0.1:7000 \
+    --robot.max_vx=0.1 --robot.max_vy=0.1 --robot.max_vyaw=0.5 \
+    --teleop.type=keyboard_microduck \
+    --teleop.vx=0.1 --teleop.vy=0.1 --teleop.vyaw=0.5 \
+    --dataset.repo_id=local/microduck-smoke --dataset.root="$DUCK_DATASET_ROOT" \
+    --dataset.no_stamp=true --dataset.push_to_hub=false \
+    --dataset.single_task="Test short walking and head movements" \
+    --dataset.num_episodes=2 --dataset.episode_time_s=20 --dataset.reset_time_s=10 \
+    --dataset.fps=15 --dataset.rgb_encoder.vcodec=h264 \
+    --display_data=true --play_sounds=false
+```
+
+Use short, easily repeatable movements and end each episode stationary. Test the next/re-record/quit controls separately; they should not command the head or base. If both episodes run for their full duration, expect roughly 600 rows. Inspect the timing summary for missed deadlines; the number of rows alone does not prove real-time performance or camera freshness.
+
+Read every saved frame, including decoding the camera video:
+
+```bash
+uv run --no-sync python - <<'PY'
+import os
+
+import torch
+
+from lerobot.datasets import LeRobotDataset
+
+dataset = LeRobotDataset(
+    "local/microduck-smoke",
+    root=os.environ["DUCK_DATASET_ROOT"],
+    video_backend="pyav",
+)
+assert dataset.num_episodes == 2, dataset.num_episodes
+assert len(dataset) > 0
+for sample in dataset:
+    assert sample["observation.images.front"].shape == (3, 640, 360)
+    assert torch.isfinite(sample["observation.state"]).all()
+    assert torch.isfinite(sample["action"]).all()
+print(f"Read back {dataset.num_episodes} episodes and {len(dataset)} frames successfully")
+PY
+```
+
+To test resume, rerun the recording command with `--resume=true --dataset.num_episodes=1` using the same root. It should append one episode; change the readback assertion to three episodes.
+
+Replay physically moves the robot. Return it to the initial position with clear space around it, then run:
+
+```bash
+uv run --no-sync lerobot-replay \
+    --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
+    --robot.robotd_address=127.0.0.1:7000 \
+    --robot.max_vx=0.1 --robot.max_vy=0.1 --robot.max_vyaw=0.5 \
+    --dataset.repo_id=local/microduck-smoke --dataset.root="$DUCK_DATASET_ROOT" \
+    --dataset.episode=0 --play_sounds=false
+```
+
+This repeats the recorded intents, not an exact physical trajectory: the onboard walking policy and floor contact still determine the motion.
+
+### Check Failure Handling
+
+- **Connection failure:** stop the SSH tunnel and run the recording command with a fresh dataset root. It should raise a connection error and exit without hanging on image workers. Restart the tunnel afterward.
+- **Connection loss during operation:** while stationary in teleoperation, stop the SSH tunnel. The loop should fail and exit rather than keep returning cached state. Restart the tunnel and rerun teleoperation; fresh observations should arrive. This checks loss of both connections; the automated state-stream test below separately checks loss of only the subscription connection while the command connection stays open.
+- **Camera reconnect and delayed responses:** the automated tests below exercise both reuse of the same robot instance and an old HTTP response arriving after reconnection. During a live camera outage, the current connection intentionally retains its last image, so do not treat a frozen image as a successful camera test.
+
+```bash
+uv run --no-sync pytest \
+    tests/robots/test_microduck.py \
+    tests/teleoperators/test_keyboard_microduck.py \
+    tests/test_record_image_streams.py -q
+```
+
+After all LeRobot processes have disconnected, restore gamepad control:
+
+```bash
+ssh "microduck@$DUCK_IP" sudo systemctl start padd
+```
 
 ## Load an RL Policy from the Hub
 
