@@ -132,9 +132,10 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
                 ],
                 dtype=float,
             )
+            # Both deltas are in the base frame: the rotation is applied about base axes, at the EE.
             r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
             desired = np.eye(4, dtype=float)
-            desired[:3, :3] = ref[:3, :3] @ r_abs
+            desired[:3, :3] = r_abs @ ref[:3, :3]
             desired[:3, 3] = ref[:3, 3] + delta_p
 
             self._command_when_disabled = desired.copy()
