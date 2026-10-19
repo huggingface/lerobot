@@ -114,13 +114,13 @@ On macOS, allow the terminal running LeRobot to monitor keyboard input in System
 
 ### Connect and Check the Keyboard
 
-In a dedicated terminal, replace the IP and keep this SSH tunnel running. TCP forwarding avoids stale local Unix socket files after restarting the tunnel:
+In a dedicated terminal, replace the IP and keep this SSH tunnel running. TCP forwarding avoids stale local Unix socket files after restarting the tunnel. Use port 17000 rather than 7000, which macOS Control Center can already occupy. If SSH reports that the local port is in use, choose another free port and update `robotd_address` in every command:
 
 ```bash
 export DUCK_IP=192.168.1.42
 ssh "microduck@$DUCK_IP" sudo systemctl stop padd
 ssh -N -o ExitOnForwardFailure=yes \
-    -L 127.0.0.1:7000:/run/robotd.sock "microduck@$DUCK_IP"
+    -L 127.0.0.1:17000:/run/robotd.sock "microduck@$DUCK_IP"
 ```
 
 In another terminal, from the source checkout:
@@ -130,7 +130,7 @@ export DUCK_IP=192.168.1.42
 curl --fail --max-time 5 "http://$DUCK_IP:8080/frame" -o /tmp/microduck-frame.png
 uv run --no-sync lerobot-teleoperate \
     --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
-    --robot.robotd_address=127.0.0.1:7000 \
+    --robot.robotd_address=127.0.0.1:17000 \
     --robot.max_vx=0.1 --robot.max_vy=0.1 --robot.max_vyaw=0.5 \
     --teleop.type=keyboard_microduck \
     --teleop.vx=0.1 --teleop.vy=0.1 --teleop.vyaw=0.5 \
@@ -147,7 +147,7 @@ Choose a fresh local dataset directory for each test run. This test does not upl
 export DUCK_DATASET_ROOT="$PWD/outputs/microduck-smoke-$(date +%Y%m%d-%H%M%S)"
 uv run --no-sync lerobot-record \
     --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
-    --robot.robotd_address=127.0.0.1:7000 \
+    --robot.robotd_address=127.0.0.1:17000 \
     --robot.max_vx=0.1 --robot.max_vy=0.1 --robot.max_vyaw=0.5 \
     --teleop.type=keyboard_microduck \
     --teleop.vx=0.1 --teleop.vy=0.1 --teleop.vyaw=0.5 \
@@ -193,7 +193,7 @@ Replay physically moves the robot. Return it to the initial position with clear 
 ```bash
 uv run --no-sync lerobot-replay \
     --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
-    --robot.robotd_address=127.0.0.1:7000 \
+    --robot.robotd_address=127.0.0.1:17000 \
     --robot.max_vx=0.1 --robot.max_vy=0.1 --robot.max_vyaw=0.5 \
     --dataset.repo_id=local/microduck-smoke --dataset.root="$DUCK_DATASET_ROOT" \
     --dataset.episode=0 --play_sounds=false
