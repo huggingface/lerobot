@@ -19,11 +19,7 @@ import time
 from typing import Any
 
 from lerobot.lerobot_types import RobotAction
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.feetech import (
-    FeetechMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..teleoperator import Teleoperator
@@ -72,7 +68,7 @@ class OpenArmMini(Teleoperator):
             "gripper": Motor(8, "sts3215", MotorNormMode.RANGE_0_100),
         }
 
-        self.bus = FeetechMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors=motors,
             calibration=self.calibration,
@@ -115,17 +111,8 @@ class OpenArmMini(Teleoperator):
         4. Interactive gripper calibration (open/close positions)
         5. Save calibration
         """
-        if self.calibration:
-            user_input = input(
-                f"Press ENTER to use existing calibration for {self.id}, "
-                f"or type 'c' and press ENTER to run new calibration: "
-            )
-            if user_input.strip().lower() != "c":
-                logger.info(f"Using existing calibration for {self.id}")
-                self.bus.write_calibration(self.calibration)
-                return
-
-        logger.info(f"\nRunning calibration for {self}")
+        if self._keep_calibration_file(self.bus):
+            return
 
         self.bus.disable_torque()
 
@@ -133,8 +120,7 @@ class OpenArmMini(Teleoperator):
         for motor_name in self.bus.motors:
             self.bus.write("Phase", motor_name, 12)
 
-        for motor_name in self.bus.motors:
-            self.bus.write("Operating_Mode", motor_name, OperatingMode.POSITION.value)
+        self.bus.set_operating_mode("position")
 
         input(
             "\nCalibration: Zero Position\n"
@@ -149,7 +135,7 @@ class OpenArmMini(Teleoperator):
 
         print("\nSetting motor ranges\n")
 
-        motor_resolution = self.bus.model_resolution_table[list(self.bus.motors.values())[0].model]
+        motor_resolution = self.bus.resolution(next(iter(self.bus.motors.values())).model)
         max_res = motor_resolution - 1
 
         for motor_name, motor in self.bus.motors.items():
@@ -200,14 +186,10 @@ class OpenArmMini(Teleoperator):
     def configure(self) -> None:
         self.bus.disable_torque()
         self.bus.configure_motors()
-        for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        self.bus.set_operating_mode("position")
 
     def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors()
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:

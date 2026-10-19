@@ -203,9 +203,8 @@ class RTCProcessor:
             padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
             prev_chunk_left_over = padded
 
-        assert prev_chunk_left_over.shape == x_t.shape, (
-            "The padded previous chunk must be the same size as the input tensor"
-        )
+        if prev_chunk_left_over.shape != x_t.shape:
+            raise ValueError("The padded previous chunk must be the same size as the input tensor")
 
         weights = (
             self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
