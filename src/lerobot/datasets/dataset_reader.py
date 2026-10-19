@@ -21,10 +21,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import datasets
+import numpy as np
 import torch
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT
 
+from .audio_utils import DEFAULT_AUDIO_WINDOW_S, get_audio_sample_rate, read_audio_file
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import (
     check_delta_timestamps,
@@ -109,7 +111,7 @@ class BaseDatasetReader(ABC):
 
 
 class DatasetReader(BaseDatasetReader):
-    """Default reader serving the parquet/mp4 storage format.
+    """Default reader serving the parquet/mp4/flac storage format.
 
     Owns: hf_dataset, _absolute_to_relative_idx, delta_indices.
     """
@@ -125,6 +127,7 @@ class DatasetReader(BaseDatasetReader):
         image_transforms: Callable | None,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        audio_window_s: float = DEFAULT_AUDIO_WINDOW_S,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -146,7 +149,11 @@ class DatasetReader(BaseDatasetReader):
                 instead of normalized float32.
             depth_output_unit: Physical unit depth maps are dequantized to
                 (``"m"`` or ``"mm"``). Defaults to ``"mm"``.
+            audio_window_s: Duration of the audio window returned for each
+                audio feature, ending at the frame's timestamp.
         """
+        if audio_window_s <= 0:
+            raise ValueError(f"audio_window_s must be positive, got {audio_window_s}.")
         self._meta = meta
         self.root = root
         self.episodes = resolve_episode_indices(episodes, meta.total_episodes)
@@ -155,6 +162,7 @@ class DatasetReader(BaseDatasetReader):
         self.set_image_transforms(image_transforms)
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
+        self._audio_window_s = audio_window_s
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
@@ -251,7 +259,7 @@ class DatasetReader(BaseDatasetReader):
             )
 
     def _check_cached_episodes_sufficient(self) -> bool:
-        """Check if the cached dataset contains all requested episodes and their video files."""
+        """Check if the cached dataset contains all requested episodes and their video and audio files."""
         if self.hf_dataset is None or len(self.hf_dataset) == 0:
             return False
 
@@ -275,10 +283,15 @@ class DatasetReader(BaseDatasetReader):
                     if not video_path.exists():
                         return False
 
+        for ep_idx in requested_episodes:
+            for audio_key in self._meta.audio_keys:
+                if not (self.root / self._meta.get_audio_file_path(ep_idx, audio_key)).exists():
+                    return False
+
         return True
 
     def get_episodes_file_paths(self) -> list[str]:
-        """Return deduplicated relative file paths (data + video) for selected episodes.
+        """Return deduplicated relative file paths (data + video + audio) for selected episodes.
 
         Used to build the ``allow_patterns`` list for ``snapshot_download``.
         """
@@ -291,6 +304,11 @@ class DatasetReader(BaseDatasetReader):
                 for ep_idx in episodes
             ]
             fpaths += video_files
+        fpaths += [
+            str(self._meta.get_audio_file_path(ep_idx, audio_key))
+            for audio_key in self._meta.audio_keys
+            for ep_idx in episodes
+        ]
         # episodes are stored in the same files, so we return unique paths only
         fpaths = list(set(fpaths))
         return fpaths
@@ -350,24 +368,27 @@ class DatasetReader(BaseDatasetReader):
         self,
         current_ts: list[float],
         query_indices_per_item: list[dict[str, list[int]] | None],
+        keys: list[str] | None = None,
     ) -> list[dict[str, list[float]]]:
-        """Timestamps to decode for each requested item, as one ``{video_key: [timestamp, ...]}`` dict.
+        """Timestamps to decode for each requested item, as one ``{key: [timestamp, ...]}`` dict.
 
-        Per video key: the referenced rows' timestamps if the item has a delta
+        ``keys`` are the video keys by default. Per key: the referenced rows' timestamps if the item has a delta
         window on it, else the item's own ``current_ts``. Timestamps are read
         through the cached single-column view (see :meth:`_column_view`).
         ``current_ts`` and ``query_indices_per_item`` are batch-aligned (indices
         ABSOLUTE), so every referenced row is read from Arrow in a single shot.
         """
-        # Pass 1: per item, collect the relative rows each video key needs a
+        if keys is None:
+            keys = self._meta.video_keys
+        # Pass 1: per item, collect the relative rows each key needs a
         # timestamp for.
         rel_per_item: list[dict[str, list[int]]] = []
         needed: set[int] = set()
         for q_idx in query_indices_per_item:
             rel: dict[str, list[int]] = {}
             if q_idx is not None:
-                for key in self._meta.video_keys:
-                    if key in q_idx:  # this item has a delta window on this video key
+                for key in keys:
+                    if key in q_idx:  # this item has a delta window on this key
                         rel[key] = self._to_relative(q_idx[key])
                         needed.update(rel[key])
             rel_per_item.append(rel)
@@ -381,17 +402,14 @@ class DatasetReader(BaseDatasetReader):
 
         # Pass 2: assemble per item; keys without a delta window fall back to current_ts.
         return [
-            {
-                key: [ts_lookup[r] for r in rel[key]] if key in rel else [current_ts[i]]
-                for key in self._meta.video_keys
-            }
+            {key: [ts_lookup[r] for r in rel[key]] if key in rel else [current_ts[i]] for key in keys}
             for i, rel in enumerate(rel_per_item)
         ]
 
     def _query_hf_dataset(self, query_indices_per_item: list[dict[str, list[int]] | None]) -> list[dict]:
         """Tabular columns to gather for each requested item, as one ``{key: stacked tensor}`` dict.
 
-        Per non-video key: the referenced rows stacked into the item's delta window.
+        Per tabular (non-video, non-audio) key: the referenced rows stacked into the item's delta window.
         ``query_indices_per_item`` are batch-aligned (indices ABSOLUTE). Each key
         is read through its cached single-column view (see :meth:`_column_view`),
         so only that column is decoded — never the embedded camera images of the
@@ -405,7 +423,7 @@ class DatasetReader(BaseDatasetReader):
             rel = {
                 key: self._to_relative(q_idx)
                 for key, q_idx in (query_indices or {}).items()
-                if key not in self._meta.video_keys
+                if key not in self._meta.video_keys and key not in self._meta.audio_keys
             }
             rel_per_item.append(rel)
             for key, q in rel.items():
@@ -460,6 +478,43 @@ class DatasetReader(BaseDatasetReader):
         with ThreadPoolExecutor(max_workers=len(items)) as pool:
             futures = [pool.submit(_decode_single, k, ts) for k, ts in items]
             return dict(f.result() for f in futures)
+
+    def _query_audio(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
+        """Read the audio window ending at each query timestamp, per audio key.
+
+        Returns one tensor per key, of shape ``(num_channels, window_size)``, or
+        ``(num_timestamps, num_channels, window_size)`` for a delta window. Samples outside the
+        episode's audio are zeros. All windows of a key are read from the FLAC file in one call.
+        """
+        ep = self._meta.episodes[ep_idx]
+        audio = {}
+        for audio_key, query_ts in query_timestamps.items():
+            feature = self._meta.features[audio_key]
+            sample_rate = get_audio_sample_rate(feature)
+            window_size = round(self._audio_window_s * sample_rate)
+            # Timestamps in the episode metadata are multiples of the sample period.
+            ep_start = round(ep[f"audio/{audio_key}/from_timestamp"] * sample_rate)
+            ep_num_samples = round(ep[f"audio/{audio_key}/to_timestamp"] * sample_rate) - ep_start
+            start_time_s = ep[f"audio/{audio_key}/start_time_s"]
+
+            # Window ends, as sample indices relative to the episode's first sample.
+            ends = [round((ts + start_time_s) * sample_rate) for ts in query_ts]
+            read_start = max(min(ends) - window_size, 0)
+            read_stop = min(max(ends), ep_num_samples)
+
+            windows = np.zeros((len(ends), window_size, feature["shape"][0]), dtype=np.float32)
+            if read_start < read_stop:
+                audio_path = self.root / self._meta.get_audio_file_path(ep_idx, audio_key)
+                samples = read_audio_file(audio_path, ep_start + read_start, ep_start + read_stop)
+                for window, end in zip(windows, ends, strict=True):
+                    start = max(end - window_size, read_start)
+                    stop = min(end, read_stop)
+                    if start < stop:
+                        window[start - end + window_size : stop - end + window_size] = samples[
+                            start - read_start : stop - read_start
+                        ]
+            audio[audio_key] = torch.from_numpy(windows.transpose(0, 2, 1).copy()).squeeze(0)
+        return audio
 
     def get_item(self, idx: int) -> dict:
         """Return one fully assembled frame dict for a single *relative* index.
@@ -522,6 +577,14 @@ class DatasetReader(BaseDatasetReader):
             query_timestamps = self._get_query_timestamps(current_ts, query_indices_per_item)
             for item, query_ts, ep_idx in zip(items, query_timestamps, ep_idxs, strict=True):
                 item.update(self._query_videos(query_ts, ep_idx))
+
+        if len(self._meta.audio_keys) > 0:
+            current_ts = [float(items[i]["timestamp"]) for i in range(n)]
+            query_timestamps = self._get_query_timestamps(
+                current_ts, query_indices_per_item, keys=self._meta.audio_keys
+            )
+            for item, query_ts, ep_idx in zip(items, query_timestamps, ep_idxs, strict=True):
+                item.update(self._query_audio(query_ts, ep_idx))
 
         for item in items:
             apply_rgb_transforms(item, self._image_transforms, self._meta.camera_keys, self._meta.depth_keys)
