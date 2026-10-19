@@ -382,15 +382,15 @@ lerobot-rollout \
     --interactive=true
 ```
 
-| Command             | Action                                                                                                                                                                                                                |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/start`            | Start (or restart) the policy control loop                                                                                                                                                                            |
-| `/subtask <text>`   | Change the instruction within the current run; asynchronous inference may enter a planned hold. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar) |
-| `/vqa <text>`       | Ask the policy a question about what it currently sees. Only while a run is in progress, and only for policies with a text head                                                                                       |
-| `/autosteer <goal>` | Hand the policy a high-level goal and let it choose its own subtasks. `/autosteer off` hands control back; no argument reports the current goal                                                                       |
-| `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                                                         |
-| `/stop`             | End the session and run the normal shutdown routines                                                                                                                                                                  |
-| `/help`             | List the commands                                                                                                                                                                                                     |
+| Command             | Action                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/start`            | Start (or restart) the policy control loop                                                                                                                                                                                                                                                                              |
+| `/subtask <text>`   | Change the instruction within the current run; asynchronous inference may enter a planned hold. No argument prints the current task. Only affects policies that condition on language (SmolVLA, π0/π0.5, and similar). With an [external planner](#external-planner), `/subtask` also hands control back from autosteer |
+| `/vqa <text>`       | Ask a question about what the robot currently sees. Only while a run is in progress, and only with a policy text head or an [external planner](#external-planner)                                                                                                                                                       |
+| `/autosteer <goal>` | Hand over a high-level goal and let the policy's text head or the [external planner](#external-planner) choose the subtasks. `/autosteer off` hands control back; no argument reports the current goal                                                                                                                  |
+| `/reset`            | Stop movement, return the robot to its startup position, and restore the `--task` instruction                                                                                                                                                                                                                           |
+| `/stop`             | End the session and run the normal shutdown routines                                                                                                                                                                                                                                                                    |
+| `/help`             | List the commands                                                                                                                                                                                                                                                                                                       |
 
 ```text
 > /start
@@ -420,9 +420,9 @@ Lines starting with `>` are what you type; the session renders no prompt of its 
 
 With local `--use_torch_compile=true`, an instruction that changes processed tensor shapes can trigger recompilation. Padding may keep some task changes at the same shape, but later compilation is not guaranteed to fit the remaining playback or the instruction-change deadline: it can cause a terminal fault. Leave compilation off when exploring instructions unless those transitions have been validated. Changes during initial compile warmup do not request a motion hold, because policy motion has not started yet.
 
-`/vqa` and `/autosteer` require a policy that declares text generation support and implements `PreTrainedPolicy.generate_text()`, such as an appropriately trained EO1 checkpoint. Capability is checked before accepting a query; checkpoint-specific behavior still needs validation.
+`/vqa` and `/autosteer` require a policy that declares text generation support and implements `PreTrainedPolicy.generate_text()`, such as an appropriately trained EO1 checkpoint, or an [external planner](#external-planner). Capability is checked before accepting a query; checkpoint-specific behavior still needs validation.
 
-**`/vqa`** answers from the next observation and prints when ready, so you can keep typing meanwhile; only one question is in flight at a time (autosteer's own queries share that slot). Asynchronous backends first enter an acknowledged local hold and invalidate queued/interpolated motion, then submit a fresh observation to the text path. A healthy active run resumes from a fresh action chunk after the answer; paused or stopped runs stay inactive. Synchronous text generation runs inline on the control thread and drops the policy's precomputed actions, so the next tick resumes from fresh inference. Query time counts against `--duration`. Questions are only accepted while a run is in progress — an idle engine has no current view. If the instruction or execution context invalidates an asynchronous answer, the question receives one cancellation notice instead of the obsolete answer. Segment end also reports unanswered questions, including generation still in progress; reporting cancellation does not interrupt a running model call or free its query slot early.
+**`/vqa`** answers from the next observation and prints when ready, so you can keep typing meanwhile; only one question is in flight at a time (autosteer's own queries share that slot). With an external planner the question is answered on a worker thread while the robot keeps acting, and nothing below applies. Asynchronous backends first enter an acknowledged local hold and invalidate queued/interpolated motion, then submit a fresh observation to the text path. A healthy active run resumes from a fresh action chunk after the answer; paused or stopped runs stay inactive. Synchronous text generation runs inline on the control thread and drops the policy's precomputed actions, so the next tick resumes from fresh inference. Query time counts against `--duration`. Questions are only accepted while a run is in progress — an idle engine has no current view. If the instruction or execution context invalidates an asynchronous answer, the question receives one cancellation notice instead of the obsolete answer. Segment end also reports unanswered questions, including generation still in progress; reporting cancellation does not interrupt a running model call or free its query slot early.
 
 **`/autosteer`** hands the policy a goal and asks it for the next subtask every `--autosteer_interval_s` seconds (default 10), applying each one through the same path as `/subtask` and announcing it in the chat. Every query is a full text generation, so the interval is a cost knob: lower values re-plan sooner but spend more of the loop generating text instead of acting. Plan progress lives in the policy, not the rollout, so the plan dies with the segment; the sequencer also stops on `/reset`, `/subtask`, `/autosteer off`, and the first planning failure.
 
@@ -446,6 +446,40 @@ lerobot-rollout \
 ```
 
 The other recording strategies (episodic, DAgger, highlight) are not supported: they bind their own keyboard controls and finalize the dataset when `run()` exits, so they cannot be restarted segment by segment.
+
+### External planner
+
+`--planner.model_id=<name>` routes `/vqa` and `/autosteer` through the annotation pipeline's VLM client (`annotations` extra) instead of the policy's text head. Calls run on a worker thread while the robot keeps acting, and no language hold is requested for them, with one deliberate exception: when `/autosteer` starts, the inference backend is paused until the planner's first reply, because the goal is context for the planner, not an instruction for the policy. Asynchronous backends (`rtc`, `remote`) drop actions already queued or being computed for the previous instruction; the synchronous backend holds the robot. Once the first subtask is applied the backend resumes from a fresh observation. `/subtask` still applies your instruction directly and cancels automatic planning; late planner replies cannot override it.
+
+The planner works with every inference backend. With local inference it reuses the loaded processor's subtask recipe when there is one, and otherwise requests a short instruction; this does not establish that a checkpoint can follow it. `--planner.instructions='["pick up the cup","open the drawer"]'` restricts planner output: the VLM is asked to pick one of these strings, and a next-subtask reply outside the list is an error. Case, extra spaces and a trailing period are ignored, and the list's own wording is sent to the policy. Without this flag, the list is read from the task labels of the checkpoint's training dataset (via its `train_config.json`). Every label goes into the prompt, so pass the flag with a shorter list for datasets with many tasks. If the dataset cannot be read, a warning is logged and planner output stays free-form. Remote inference owns the policy, so neither the recipe nor the training vocabulary is available locally: pass `--planner.instructions` explicitly or answers stay free-form. The planner has been exercised on hardware with local inference only.
+
+The external planner receives the last `--planner.history` observation/command pairs (default 4), followed by the current images. Each pair contains the observation used to request an instruction and the instruction subsequently accepted by the engine; acceptance does not imply successful execution. Repeated instructions remain in history so the VLM can assess lack of progress. The history clears on manual takeover, reset, stop, segment end, or a new autosteer goal. Set `--planner.history=0` to disable it. `/vqa` can inspect this history but does not add entries. For a next-subtask request the VLM must first describe the scene and state whether the previous command is completed, in progress or failed, and only then name the next instruction. A reply of `done` means the goal is complete: autosteer stops, the run ends, and the robot holds its pose until `/reset` or `/start`. A late `done` from before a `/subtask`, `/reset` or new goal is discarded. Each applied subtask is printed with the model's scene assessment and the request latency.
+
+Start an OpenAI-compatible VLM server separately, then connect:
+
+```bash
+transformers serve Qwen/Qwen3-VL-8B-Instruct --port 8000
+# Alternatively: vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8000
+lerobot-rollout ... --task="pick up the cup" --interactive=true \
+    --planner.model_id=Qwen/Qwen3-VL-8B-Instruct \
+    --planner.api_base=http://localhost:8000/v1
+> /start
+> /vqa What is the next short instruction to clear the table?
+> /subtask put the cup in the sink
+> /autosteer clear the table
+```
+
+A hosted model works the same way. This example uses Hugging Face Inference Providers, with a token that has the "Make calls to Inference Providers" permission:
+
+```bash
+export HF_TOKEN=hf_...
+lerobot-rollout ... --task="put all colored cubes in the green bin" --interactive=true \
+    --planner.model_id=Qwen/Qwen3.8-27B:novita \
+    --planner.api_base=https://router.huggingface.co/v1 \
+    --planner.api_key_env=HF_TOKEN
+```
+
+`/vqa` only reports an answer; `/autosteer` applies instructions. Configure the endpoint with `--planner.api_base`, and the key with `--planner.api_key_env=<variable>` (preferred, the key stays out of commands and logs) or `--planner.api_key`. `--planner.request_timeout_s` (default 600) and `--planner.request_max_retries` (default 2) bound each request; `--planner.camera_key` selects one camera; `--planner.log_path` appends every exchange as one JSON line. Model serving dependencies belong in the server environment. `--autosteer_interval_s` measures robot-motion time after a reply is applied, in addition to request latency. Multi-level steering and automatic scene inventory are outside this adapter's scope.
 
 ### Programmatic control
 

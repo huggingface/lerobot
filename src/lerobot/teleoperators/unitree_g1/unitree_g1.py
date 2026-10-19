@@ -302,6 +302,10 @@ class UnitreeG1Teleoperator(Teleoperator):
             self.remote_controller.set_from_wireless(wireless_remote)
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
+        """Deprecated for observation delivery; use :meth:`on_observation` before :meth:`get_action`.
+
+        Kept as a compatibility alias for callers that send wireless-remote observations here.
+        """
         self.on_observation(feedback)
 
     def disconnect(self) -> None:

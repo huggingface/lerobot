@@ -327,8 +327,10 @@ def record_loop(
 
             elif multi_teleop is not None:
                 arm_teleop, keyboard_teleop = multi_teleop
+                arm_teleop.on_observation(obs)
                 arm_action = arm_teleop.get_action()
                 arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+                keyboard_teleop.on_observation(obs)
                 keyboard_action = keyboard_teleop.get_action()
                 base_action = robot._from_keyboard_to_base_action(keyboard_action)  # type: ignore[attr-defined]
                 act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
