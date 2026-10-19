@@ -68,8 +68,6 @@ class MapPhoneActionToRobotAction(RobotActionProcessorStep):
         rotvec = rot.as_rotvec()  # Absolute orientation as rotvec
 
         # Phone axes -> robot base axes (phone top edge = robot +x, phone left = robot +y).
-        # The rotation vector goes through the same permutation as the position, so both
-        # deltas are expressed in the robot base frame.
         action["enabled"] = enabled
         action["target_x"] = pos[1] if enabled else 0.0
         action["target_y"] = -pos[0] if enabled else 0.0
