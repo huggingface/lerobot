@@ -47,6 +47,7 @@ class BackendConfig:
     action_names: tuple[str, ...] = ()
     gripper_indices: tuple[int, ...] = ()
     command_retention_indices: tuple[int, ...] = ()
+    robot_type: str = ""
 
     def __post_init__(self) -> None:
         """Normalize component order and reject invalid controller declarations."""
@@ -260,6 +261,7 @@ class Backend:
             {"numpy": np.__version__, **{name: importlib.metadata.version(name) for name in ("gymnasium",)}},
             self.config.gripper_indices,
             self.config.command_retention_indices,
+            self.config.robot_type,
             asdict(self.config),
         )
 

@@ -180,6 +180,29 @@ def test_served_env_must_be_the_env_the_command_describes():
         thread.join(5)
 
 
+def test_sim_robot_records_the_body_its_env_declares(tmp_path):
+    from lerobot.env_server.contracts import EnvDescriptor
+
+    for declared, expected in ((None, "sim"), ("so_follower", "so_follower")):
+        robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(robot_type=declared), calibration_dir=tmp_path))
+        try:
+            assert (robot.name, robot.robot_type) == ("sim", expected)
+            # A newer server may declare more: this client keeps what it knows.
+            wire = {**robot.descriptor.to_dict(), "joint_units": ["rad", "rad"]}
+            assert EnvDescriptor.from_dict(wire).robot_type == robot.descriptor.robot_type
+        finally:
+            robot.disconnect()
+    # Served, a server simulating another body is refused: its datasets would record the wrong robot.
+    config = ToyEnvConfig(robot_type="so_follower")
+    server, thread, config.endpoint = _served(config.type)
+    try:
+        with pytest.raises(ValueError, match="robot_type: server ''"):
+            SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
+    finally:
+        server.stop.set()
+        thread.join(5)
+
+
 def test_worlds_in_their_own_processes_match_sequential_worlds():
     from lerobot.sims.backend import Backend
 

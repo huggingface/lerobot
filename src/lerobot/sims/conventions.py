@@ -16,6 +16,10 @@
 
 Importable without the simulators themselves, so a client of a served simulator can resolve them too.
 A configuration's explicit values win; the ones left null come from here.
+
+``robot_type`` names the simulated body, recorded as a sim robot's dataset ``robot_type``: the one a
+lerobot robot class records on hardware when the body has one (``so_follower``), else the body's short
+name. Left empty, a sim robot records ``sim``.
 """
 
 from typing import Any
@@ -45,6 +49,7 @@ _LIBERO = {
     "state_names": _LIBERO_STATE,
     "action_names": _LIBERO_ACTION,
     "gripper_indices": (6,),
+    "robot_type": "panda",
 }
 _VLABENCH_NAMES = ("eef.x", "eef.y", "eef.z", "eef.euler.x", "eef.euler.y", "eef.euler.z", "gripper.opening")
 
@@ -56,7 +61,13 @@ def _joints(count: int) -> tuple[str, ...]:
 def _robotwin(kwargs: dict[str, Any]) -> dict[str, Any]:
     # Joint mode commands and observes the 14 joints; ee mode commands 16-D poses, left unnamed.
     names = _joints(14) if kwargs.get("action_mode", "joint") == "joint" else ()
-    return {"fps": 25, "control": "position", "state_names": _joints(14), "action_names": names}
+    return {
+        "fps": 25,
+        "control": "position",
+        "state_names": _joints(14),
+        "action_names": names,
+        "robot_type": "aloha_agilex",
+    }
 
 
 def _robomme(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -79,6 +90,7 @@ CONVENTIONS: dict[str, Any] = {
         "state_names": ("eef.x", "eef.y", "eef.z", "gripper.opening"),
         "action_names": ("eef.delta.x", "eef.delta.y", "eef.delta.z", "gripper.command"),
         "gripper_indices": (3,),
+        "robot_type": "sawyer",
     },
     "robocasa": {
         "fps": 20,
@@ -100,6 +112,7 @@ CONVENTIONS: dict[str, Any] = {
         ),
         "gripper_indices": (11,),
         "command_retention_indices": (4,),
+        "robot_type": "panda_omron",
     },
     "vlabench": {
         "fps": 10,
@@ -120,6 +133,7 @@ DEFAULTS: dict[str, Any] = {
     "action_names": (),
     "gripper_indices": (),
     "command_retention_indices": (),
+    "robot_type": "",
 }
 
 

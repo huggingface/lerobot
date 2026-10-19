@@ -14,7 +14,7 @@
 
 """Canonical simulator descriptors and transitions."""
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any
 
 import numpy as np
@@ -39,6 +39,8 @@ class EnvDescriptor:
     sim_build: dict[str, str]
     gripper_indices: tuple[int, ...] = ()
     command_retention_indices: tuple[int, ...] = ()
+    # The simulated body, recorded as a sim robot's robot_type; empty when the simulator does not declare one.
+    robot_type: str = ""
     # The resolved simulator configuration served, so a client can check it runs the env it expects.
     config: dict[str, Any] = field(default_factory=dict)
 
@@ -69,8 +71,12 @@ class EnvDescriptor:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EnvDescriptor":
-        """Reconstruct validated declarations from decoded wire fields."""
-        data = dict(data)
+        """Reconstruct validated declarations from decoded wire fields.
+
+        Fields this version does not know are dropped, so a newer server can add declarations.
+        """
+        known = {f.name for f in fields(cls)}
+        data = {key: value for key, value in data.items() if key in known}
         data["features"] = tuple(FeatureSpec(**f) for f in data["features"])
         data["action_feature"] = FeatureSpec(**data["action_feature"])
         data["clocks"] = tuple(data["clocks"])

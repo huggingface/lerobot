@@ -33,6 +33,7 @@ SIM_DEFAULTS: dict[str, Any] = {
     "state_names": [],
     "action_names": [],
     "gripper_indices": [],
+    "robot_type": "",
 }
 
 

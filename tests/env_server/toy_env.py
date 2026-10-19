@@ -23,6 +23,7 @@ from lerobot.envs.configs import EnvConfig
 @dataclass
 class ToyEnvConfig(EnvConfig):
     fps: int = 20
+    robot_type: str | None = None
 
     @property
     def gym_kwargs(self) -> dict:
@@ -35,4 +36,5 @@ class ToyEnvConfig(EnvConfig):
             "fps": self.fps,
             "control": "delta",
             "semantics": "toy-delta-v1",
+            "robot_type": self.robot_type,
         }

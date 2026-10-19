@@ -33,7 +33,8 @@ class SimRobot(Robot):
     """A simulated world as a robot: swappable with hardware, plus the ``World`` episode controls.
 
     The world runs in this process, or behind ``lerobot-env-server`` when ``env.endpoint`` is set; both run
-    the same session code. In lockstep, each sent action advances the world exactly one step.
+    the same session code. In lockstep, each sent action advances the world exactly one step. Its
+    ``robot_type`` is the simulated body the env declares, else ``sim``; ``name`` stays ``sim``.
     """
 
     config_class = SimRobotConfig
@@ -60,6 +61,7 @@ class SimRobot(Robot):
             )
         try:
             self.descriptor = self.client.describe()
+            self.robot_type = self.descriptor.robot_type or self.name
             if env.endpoint is not None:
                 check_served(self.descriptor.config, env.sim_settings(), env.endpoint)
             self.supports_position_hold = self.descriptor.hold == "position"
