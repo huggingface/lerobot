@@ -615,3 +615,45 @@ def test_act_policy_state_only_forward_and_select_action():
     policy.reset()
     action = policy.select_action(batch)
     assert action.shape == (batch_size, 2)
+
+
+@pytest.mark.parametrize("use_vae", [False, True])
+def test_act_state_only_observation_deployment_and_gradients(use_vae):
+    from lerobot.policies.act.modeling_act import ACTPolicy
+
+    torch.manual_seed(0)
+    config = ACTConfig(
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(6,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
+        dim_model=32,
+        dim_feedforward=64,
+        n_encoder_layers=1,
+        n_decoder_layers=1,
+        n_vae_encoder_layers=1,
+        chunk_size=3,
+        n_action_steps=2,
+        dropout=0.0,
+        use_vae=use_vae,
+        device="cpu",
+    )
+    policy = ACTPolicy(config)
+    state = torch.randn(2, 6)
+    loss, _ = policy(
+        {OBS_STATE: state, ACTION: torch.randn(2, 3, 2), "action_is_pad": torch.zeros(2, 3, dtype=torch.bool)}
+    )
+    loss.backward()
+    grads = [p.grad for p in policy.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+    assert any(torch.count_nonzero(g) for g in grads)
+    policy.eval()
+    policy.reset()
+    # Deployment has observations only: no ground-truth action or padding mask.
+    with torch.no_grad():
+        chunk = policy.predict_action_chunk({OBS_STATE: state})
+        outputs = [policy.select_action({OBS_STATE: state}) for _ in range(5)]
+    assert chunk.shape == (2, 3, 2)
+    for i, output in enumerate(outputs):
+        assert torch.isfinite(output).all()
+        torch.testing.assert_close(output, chunk[:, i % 2])
+    policy.reset()
+    torch.testing.assert_close(policy.select_action({OBS_STATE: state}), chunk[:, 0])
