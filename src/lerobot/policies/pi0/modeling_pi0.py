@@ -18,7 +18,7 @@ import builtins
 import logging
 from collections import deque
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Unpack, cast
+from typing import TYPE_CHECKING, Any, Unpack, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -54,7 +54,13 @@ from lerobot.utils.constants import (
     OBS_STATE,
 )
 
-from ..common.flow_matching import euler_integrate, sample_noise, sample_time_beta
+from ..common.flow_matching import (
+    FlowConvention,
+    euler_integrate,
+    make_flow_matching_inputs,
+    sample_noise,
+    sample_time_beta,
+)
 from ..common.vla_utils import (
     clone_past_key_values,
     create_sinusoidal_pos_embedding,
@@ -186,7 +192,7 @@ class PaliGemmaWithExpertModel(
         vlm_config,
         action_expert_config,
         use_adarms=None,
-        precision: Literal["bfloat16", "float32"] = "bfloat16",
+        precision: torch.dtype = torch.bfloat16,
         image_size: int = DEFAULT_IMAGE_SIZE,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
@@ -239,10 +245,10 @@ class PaliGemmaWithExpertModel(
         self.to_bfloat16_for_selected_params(precision)
         self._set_requires_grad()
 
-    def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
-        if precision == "bfloat16":
+    def to_bfloat16_for_selected_params(self, precision: torch.dtype = torch.bfloat16):
+        if precision == torch.bfloat16:
             self.to(dtype=torch.bfloat16)
-        elif precision == "float32":
+        elif precision == torch.float32:
             self.to(dtype=torch.float32)
             return
         else:
@@ -297,7 +303,7 @@ class PaliGemmaWithExpertModel(
 
     def _vision_autocast(self, image: torch.Tensor) -> bool:
         """Whether to run the vision tower in bfloat16 for this call."""
-        return not self.training and self.precision == "bfloat16" and image.device.type == "cuda"
+        return not self.training and self.precision == torch.bfloat16 and image.device.type == "cuda"
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.model.language_model.get_input_embeddings()(tokens)
@@ -427,7 +433,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             paligemma_config,
             action_expert_config,
             use_adarms=[False, False],
-            precision=cast(Literal["bfloat16", "float32"], config.dtype),
+            precision=cast(torch.dtype, config.dtype),
             image_size=config.image_resolution[0],
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
@@ -570,7 +576,6 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             max_period=self.config.max_period,
             device=timestep.device,
         )
-        time_emb = time_emb.type(dtype=timestep.dtype)
 
         # Fuse timestep + action information using an MLP
         def action_proj_func(noisy_actions):
@@ -578,6 +583,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
 
+        time_emb = time_emb.to(dtype=action_emb.dtype)
         time_emb = time_emb[:, None, :].expand_as(action_emb)
         action_time_emb = torch.cat([action_emb, time_emb], dim=2)
 
@@ -606,9 +612,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def forward(self, images, img_masks, lang_tokens, lang_masks, state, actions, noise, time) -> Tensor:
         """Do a full training forward pass and compute the loss."""
-        time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
-        u_t = noise - actions
+        x_t, u_t, _ = make_flow_matching_inputs(actions, noise, time, convention=FlowConvention.NOISE_AT_ONE)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks

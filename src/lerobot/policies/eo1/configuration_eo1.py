@@ -16,9 +16,12 @@
 
 from __future__ import annotations
 
+import warnings
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
+
+import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -103,12 +106,10 @@ class EO1Config(PreTrainedConfig):
     supervise_padding_action_dims: bool = True
     supervise_padding_actions: bool = True
 
-    # Policy-level dtype request for the Qwen backbone.
-    # - "auto": follow the backbone config/checkpoint default dtype. For Qwen2.5-VL this resolves to bf16.
-    #           The EO1 flow-matching head still keeps its own parameters in fp32.
-    # - "bfloat16": force the backbone to initialize/load in bf16 regardless of the saved config default.
-    # - "float32": force the backbone to initialize/load in fp32 for maximum numerical conservatism.
-    dtype: str = "auto"  # Options: "auto", "bfloat16", "float32"
+    # Policy-level dtype request for the Qwen backbone. `torch.bfloat16` is set as the default because
+    # `Qwen/Qwen2.5-VL-3B-Instruct` is published in bf16. The EO1 flow-matching head still keeps its own
+    # parameters in fp32. `Literal["auto"]` is introduced only for backward compatibility.
+    dtype: torch.dtype | Literal["auto"] | None = torch.bfloat16
     force_fp32_autocast: bool = True
 
     # Optional attention backend request passed through to the Qwen backbone.
@@ -153,6 +154,16 @@ class EO1Config(PreTrainedConfig):
     scheduler_decay_lr: float = 0.0
 
     def __post_init__(self):
+        # Resolve the legacy sentinel before the base class validates `dtype`. "auto" meant "follow the
+        # `Qwen/Qwen2.5-VL-3B-Instruct` checkpoint dtype".
+        if self.dtype == "auto":
+            warnings.warn(
+                "`dtype='auto'` is deprecated; use `--policy.dtype` instead.",
+                FutureWarning,
+                stacklevel=3,
+            )
+            self.dtype = torch.bfloat16
+
         super().__post_init__()
 
         if self.recipe_path is not None:

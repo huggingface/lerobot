@@ -20,12 +20,7 @@ from functools import cached_property
 
 from lerobot.cameras import DepthCamera, make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors import Motor, MotorCalibration, MotorNormMode
-from lerobot.motors.dynamixel import (
-    DriveMode,
-    DynamixelMotorsBus,
-    OperatingMode,
-)
+from lerobot.motors import DriveMode, Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from ..robot import Robot
@@ -43,12 +38,14 @@ class OmxFollower(Robot):
 
     config_class = OmxFollowerConfig
     name = "omx_follower"
+    # All commands, including the current-limited gripper, are position targets.
+    supports_position_hold = True
 
     def __init__(self, config: OmxFollowerConfig):
         super().__init__(config)
         self.config = config
         norm_mode_body = MotorNormMode.DEGREES if config.use_degrees else MotorNormMode.RANGE_M100_100
-        self.bus = DynamixelMotorsBus(
+        self.bus = SerialMotorsBus(
             port=self.config.port,
             motors={
                 "shoulder_pan": Motor(11, "xl430-w250", norm_mode_body),
@@ -119,8 +116,7 @@ class OmxFollower(Robot):
         self.bus.disable_torque()
         logger.info(f"\nUsing factory default calibration values for {self}")
         logger.info(f"\nWriting default configuration of {self} to the motors")
-        for motor in self.bus.motors:
-            self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+        self.bus.set_operating_mode("extended_position")
 
         for motor in self.bus.motors:
             self.bus.write("Drive_Mode", motor, DriveMode.NON_INVERTED.value)
@@ -132,7 +128,7 @@ class OmxFollower(Robot):
                 drive_mode=0,
                 homing_offset=0,
                 range_min=0,
-                range_max=4095,
+                range_max=self.bus.resolution(m.model) - 1,
             )
 
         self.bus.write_calibration(self.calibration)
@@ -147,7 +143,7 @@ class OmxFollower(Robot):
             # the arm, you could end up with a servo with a position 0 or 4095 at a crucial point
             for motor in self.bus.motors:
                 if motor != "gripper":
-                    self.bus.write("Operating_Mode", motor, OperatingMode.EXTENDED_POSITION.value)
+                    self.bus.set_operating_mode("extended_position", motor)
 
             # Use 'position control current based' for gripper to be limited by the limit of the current. For
             # the follower gripper, it means it can grasp an object without forcing too much even tho, its
@@ -155,7 +151,7 @@ class OmxFollower(Robot):
             # For the leader gripper, it means we can use it as a physical trigger, since we can force with
             # our finger to make it move, and it will move back to its original target position when we
             # release the force.
-            self.bus.write("Operating_Mode", "gripper", OperatingMode.CURRENT_POSITION.value)
+            self.bus.set_operating_mode("current_based_position", "gripper")
 
             # Set better PID values to close the gap between recorded states and actions
             # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
@@ -164,10 +160,7 @@ class OmxFollower(Robot):
             self.bus.write("Position_D_Gain", "elbow_flex", 600)
 
     def setup_motors(self) -> None:
-        for motor in reversed(self.bus.motors):
-            input(f"Connect the controller board to the '{motor}' motor only and press enter.")
-            self.bus.setup_motor(motor)
-            print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
+        self.bus.setup_motors()
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:

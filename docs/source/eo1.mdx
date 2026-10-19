@@ -169,7 +169,7 @@ to the rendered messages before Qwen formatting and tokenization.
 | -------------------------------------- | ----------------------------- | ----------------------------------------------------------------------- |
 | `policy.path`                          | `lerobot/eo1-base`            | Released EO-1 weights converted to native LeRobot format                |
 | `policy.vlm_base`                      | `Qwen/Qwen2.5-VL-3B-Instruct` | Qwen processor/backbone used only when training without `policy.path`   |
-| `policy.dtype`                         | `auto`                        | Backbone dtype request: `auto`, `bfloat16`, or `float32`                |
+| `policy.dtype`                         | `bfloat16`                    | Backbone dtype request: a torch dtype name, e.g. `bfloat16`, `float32`  |
 | `policy.attn_implementation`           | `None`                        | Optional Qwen attention backend, such as `sdpa`                         |
 | `policy.gradient_checkpointing`        | `false`                       | Reduces memory usage during training                                    |
 | `policy.chunk_size`                    | `8`                           | Number of future actions predicted per chunk                            |
