@@ -87,3 +87,52 @@ def test_legacy_aliases_and_lazy_utility_exports():
         """
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_lightweight_utils_remain_usable_after_tensor_export_fails():
+    result = _run_python(
+        """
+        import sys
+
+        sys.modules["torch"] = None
+        import lerobot.utils as utils
+
+        assert "ActionInterpolator" in dir(utils)
+        assert callable(utils.init_logging)
+        assert not hasattr(utils, "not_a_public_utility")
+        for name in ("ActionInterpolator", "get_safe_torch_device"):
+            try:
+                getattr(utils, name)
+            except ModuleNotFoundError as exc:
+                assert exc.name == "torch", str(exc)
+            else:
+                raise AssertionError(f"{name} unexpectedly loaded without torch")
+        # A failed tensor-dependent import must not break direct hardware imports.
+        from lerobot.robots.so_follower import SO101FollowerConfig
+        assert SO101FollowerConfig(port="unused").port == "unused"
+        assert callable(utils.init_logging)
+        assert sys.modules["torch"] is None
+        """
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_tensor_export_loads_on_first_use_in_fresh_process():
+    result = _run_python(
+        """
+        import sys
+        import lerobot.utils as utils
+
+        assert "torch" not in sys.modules
+        assert "ActionInterpolator" in dir(utils)
+        assert "torch" not in sys.modules
+        from lerobot.utils import ActionInterpolator, get_safe_torch_device
+        from lerobot.utils.action_interpolator import ActionInterpolator as direct_class
+        from lerobot.utils.device_utils import get_safe_torch_device as direct_function
+        assert ActionInterpolator is direct_class
+        assert get_safe_torch_device is direct_function
+        assert str(get_safe_torch_device("cpu")) == "cpu"
+        assert utils.ActionInterpolator is ActionInterpolator
+        """
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
