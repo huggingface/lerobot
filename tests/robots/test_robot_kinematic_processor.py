@@ -17,6 +17,7 @@
 import pytest
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.processor import TransitionKey
 from lerobot.processor.converters import create_transition
 from lerobot.robots.so_follower.robot_kinematic_processor import (
     EEReferenceAndDelta,
@@ -83,3 +84,27 @@ def test_missing_observation_raises_value_error(step, action):
 
     with pytest.raises(ValueError, match="Joints observation"):
         step(transition)
+
+
+class _RecordingKinematics:
+    def __init__(self):
+        self.q_init = None
+
+    def inverse_kinematics(self, q_init, t_des, **kwargs):
+        self.q_init = q_init
+        return q_init
+
+
+def test_joints_are_read_by_motor_name_not_observation_order():
+    """Joint vectors must follow `motor_names`, whatever the order of the observation dict."""
+    joints = {name: float(i) for i, name in enumerate(MOTOR_NAMES)}
+    observation = {f"{name}.pos": joints[name] for name in reversed(MOTOR_NAMES)}
+
+    kinematics = _RecordingKinematics()
+    step = InverseKinematicsEEToJoints(kinematics=kinematics, motor_names=MOTOR_NAMES)
+    step(create_transition(observation=observation, action=dict(EE_ACTION)))
+    assert list(kinematics.q_init) == [joints[name] for name in MOTOR_NAMES]
+
+    step = GripperVelocityToJoint(speed_factor=1.0)
+    out = step(create_transition(observation=observation, action={**EE_ACTION, "ee.gripper_vel": 0.0}))
+    assert out[TransitionKey.ACTION]["ee.gripper_pos"] == joints["gripper"]
