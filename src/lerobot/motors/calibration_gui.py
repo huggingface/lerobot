@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 
-from .motors_bus import MotorCalibration, SerialMotorsBus
+from .motors_bus import MotorCalibration, MotorsBus
 
 BAR_LEN, BAR_THICKNESS = 450, 8
 HANDLE_R = 10
@@ -216,7 +216,7 @@ class RangeSlider:
 
 
 class RangeFinderGUI:
-    def __init__(self, bus: SerialMotorsBus, groups: dict[str, list[str]] | None = None):
+    def __init__(self, bus: MotorsBus, groups: dict[str, list[str]] | None = None):
         import pygame
 
         self.bus = bus
@@ -228,6 +228,7 @@ class RangeFinderGUI:
             bus.connect()
 
         self.calibration = bus.read_calibration()
+        self.res_table = bus.model_resolution_table
         self.present_cache = {
             m: bus.read("Present_Position", m, normalize=False)
             for motors in self.groups.values()
@@ -274,7 +275,7 @@ class RangeFinderGUI:
                 RangeSlider(
                     motor=m,
                     idx=i,
-                    res=self.bus.resolution(self.bus.motors[m].model) - 1,
+                    res=self.res_table[self.bus.motors[m].model] - 1,
                     calibration=self.calibration[m],
                     present=self.present_cache[m],
                     label_pad=self.label_pad,

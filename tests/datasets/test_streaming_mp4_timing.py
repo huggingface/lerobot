@@ -19,7 +19,6 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from lerobot.streaming import episode_cache
 from lerobot.streaming.episode_cache import EpisodeByteCache
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import (
@@ -104,6 +103,8 @@ def test_real_pyav_and_fallback_enforce_requested_tolerance(
     fallback: bool,
 ) -> None:
     """Fallback uses the requested timestamps/tolerance, not index-to-average-fps guesses."""
+    from lerobot.streaming import episode_cache
+
     original = episode_cache.open_video_decoder
 
     def open_decoder(source, *, backend="torchcodec"):

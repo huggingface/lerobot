@@ -14,8 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from . import jaka_zu7_follower
 from .config import RobotConfig
 from .robot import Robot
 from .utils import make_robot_from_config
 
-__all__ = ["Robot", "RobotConfig", "make_robot_from_config"]
+__all__ = ["Robot", "RobotConfig", "jaka_zu7_follower", "make_robot_from_config"]
