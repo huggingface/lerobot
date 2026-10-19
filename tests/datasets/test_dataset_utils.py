@@ -23,6 +23,7 @@ from packaging.version import Version
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import pandas as pd  # noqa: E402
 from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
 
@@ -236,8 +237,6 @@ def test_delta_window_clamps_and_marks_padding(anchor, start, end, indices, padd
 
 
 def test_shift_timestamps_and_task_name():
-    import pandas as pd
-
     assert dataset_utils.shift_timestamps([0.0, 0.5], 10.0) == [10.0, 10.5]
     tasks = pd.DataFrame({"task_index": [0, 1]}, index=["pick", "place"])
     assert dataset_utils.task_name(tasks, torch.tensor(1)) == "place"
