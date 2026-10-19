@@ -17,10 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from lerobot.configs.default import DatasetConfig
-from lerobot.policies.gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
-from lerobot.rl.algorithms.sac import SACAlgorithmConfig
-from lerobot.rl.train_rl import TrainRLServerPipelineConfig
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
+from lerobot.configs.default import DatasetConfig  # noqa: E402
+from lerobot.policies.gaussian_actor.configuration_gaussian_actor import GaussianActorConfig  # noqa: E402
+from lerobot.rl.algorithms.sac import SACAlgorithmConfig  # noqa: E402
+from lerobot.rl.train_rl import TrainRLServerPipelineConfig  # noqa: E402
 
 
 @pytest.fixture
