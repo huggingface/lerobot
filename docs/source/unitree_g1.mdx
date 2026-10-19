@@ -6,7 +6,45 @@
   style={{ width: "100%" }}
 />
 
-The Unitree G1 humanoid is now supported in LeRobot! You can teleoperate, train locomanipulation policies, test in sim, and more. Both 29 and 23 DoF variants are supported.
+The Unitree G1 humanoid is supported in LeRobot. You can teleoperate, train
+locomanipulation policies, test in simulation, and more. Both 29 and 23 DoF variants
+are supported.
+
+## Embodiment Selection
+
+One `UnitreeG1` class selects its joint definitions through `UnitreeG1Config.embodiment`.
+The default is `g1_29`; existing configurations therefore retain G1-29 behavior. Select
+the 23-DoF layout with `--robot.embodiment=g1_23` or in Python:
+
+```python
+from lerobot.robots.unitree_g1 import UnitreeG1Config
+
+config = UnitreeG1Config(embodiment="g1_23", is_simulation=False)
+```
+
+| Capability                                          | G1-29                         | G1-23                                        |
+| --------------------------------------------------- | ----------------------------- | -------------------------------------------- |
+| Joint configuration and action/observation features | 29 body joints, 14 arm joints | 23 body joints, 10 arm joints                |
+| DDS command/feedback layout                         | 29 active slots               | 29 slots with absent joints left inactive    |
+| MuJoCo simulation                                   | Supported                     | Not yet supported; native model planned      |
+| Locomotion controllers                              | GR00T and Holosoma            | GR00T and Holosoma                           |
+| SONIC whole-body controller                         | Supported                     | Not supported; the policy requires 29 DoF    |
+| Gravity compensation                                | Supported, off by default     | Not yet supported; native kinematics planned |
+
+Both variants use the same 29-slot DDS message layout. G1-29 uses all 29 slots, while
+G1-23 uses 23 and leaves the six nonexistent-joint slots inactive. The `kp`, `kd`, and
+`default_positions` vectors therefore remain 29 elements long and are indexed by DDS slot.
+G1-23's active arm slots are `15..19` and `22..26`. Slots `13, 14, 20, 21, 27, 28` have no
+active joint; their config values must be zero. They are omitted from action/observation
+features, not renumbered.
+Inactive and reserved command entries are cleared before publishing a G1-23 message.
+Explicit gain overrides must be finite, nonnegative, and use the same sparse layout.
+Default gains are shared by joint name across both variants, so identical physical joints
+use identical gains while absent G1-23 slots remain zero.
+
+Native G1-23 MuJoCo simulation is not supported yet. Selecting the G1-23 embodiment with
+simulation enabled fails before transport initialization. A native G1-23 MuJoCo model is
+planned for a future version.
 
 ---
 
