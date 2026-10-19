@@ -847,7 +847,7 @@ def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
 
     declared = (
         'LEROBOT_SIM = {"fps": 15, "control": "delta", "semantics": "reach-delta-v1",'
-        ' "state_names": ["x", "y"], "action_names": ["dx", "dy"]}\n'
+        ' "state_names": ["x", "y"], "action_names": ["dx", "dy"], "robot_type": "so_follower"}\n'
     )
     env_file = tmp_path / "env.py"
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
@@ -865,6 +865,7 @@ def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
         ["dx", "dy"],
         [],
     )
+    assert resolved["robot_type"] == "so_follower"
     # Repositories without LEROBOT_SIM keep working with the defaults.
     env_file.write_text(_ENVHUB_ENV)
     assert {key: envhub.resolve_envhub_sim(sim)[key] for key in envhub.SIM_DEFAULTS} == envhub.SIM_DEFAULTS

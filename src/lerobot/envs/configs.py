@@ -235,7 +235,7 @@ class AlohaEnv(EnvConfig):
         }
 
     def sim_settings(self) -> dict[str, Any]:
-        return _gym_settings(self, tuple(f"joint_{i}.pos" for i in range(14)))
+        return {**_gym_settings(self, tuple(f"joint_{i}.pos" for i in range(14))), "robot_type": "aloha"}
 
 
 @EnvConfig.register_subclass("pusht")

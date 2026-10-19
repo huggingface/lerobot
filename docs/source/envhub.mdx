@@ -72,6 +72,7 @@ To make your environment loadable from the Hub, your repository must contain at 
 
 - A module-level dictionary that describes the environment when it is served by the [simulator server](#envhub-and-the-simulator-server), so it starts with a single command
 - Every key is optional; repositories without `LEROBOT_SIM` keep working with the defaults
+- `robot_type` is the type the real robot records (`so_follower`, `omx_follower`) when lerobot has a class for the body, so simulated and real datasets match
 
 | Key               | Meaning                                                        | Default                               |
 | ----------------- | -------------------------------------------------------------- | ------------------------------------- |
@@ -81,6 +82,7 @@ To make your environment loadable from the Hub, your repository must contain at 
 | `state_names`     | Names of the `observation.state` components, in order          | generic `state_0`, `state_1`, ...     |
 | `action_names`    | Names of the action components, in order                       | generic `command_0`, `command_1`, ... |
 | `gripper_indices` | Action components kept while the robot holds its command       | none                                  |
+| `robot_type`      | Simulated body, recorded as a sim robot's dataset `robot_type` | none (datasets record `sim`)          |
 
 **`README.md`**
 

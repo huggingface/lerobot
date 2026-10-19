@@ -29,7 +29,7 @@ lerobot-env-server --docker --config=docker/sims/configs/libero.yaml
 lerobot-eval ... --env.endpoint=tcp/127.0.0.1:7448
 ```
 
-The server must run the environment the command describes: the same type, task and control conventions, or the evaluation refuses to start and lists the differences. Other options that differ (resolution, episode length) are logged as warnings.
+The server must run the environment the command describes: the same type, task, control conventions and simulated body (`robot_type`), or the evaluation refuses to start and lists the differences. Other options that differ (resolution, episode length) are logged as warnings.
 
 Observation names come from the environment (`observation.images.<camera>`, `observation.state`). When a checkpoint was trained with other camera names, map them with `--rename_map`, as for any robot, and preserve each camera's identity even when several have the same shape. Placeholder cameras (`empty_cameras`) are a policy setting saved with the checkpoint; override it with `--policy.empty_cameras` only when needed.
 
@@ -55,7 +55,7 @@ lerobot-rollout \
 - `--robot.clock=realtime` (the default) advances the world at its control rate, also while the policy computes, as hardware does. `--robot.clock=lockstep` advances it exactly one step per action, which makes a rollout reproducible.
 - `--fps` must equal the environment's control rate; rollout refuses to start otherwise.
 
-A sim robot is a robot: swap `--robot.type=sim --robot.env.*` for the real follower's `--robot.*`, and everything else stays. A teleoperator drives it as it drives the real follower (`--teleop.type=so101_leader` for an SO-101 twin), when the environment declares the follower's action names and units; a mismatch is reported at the first action. Teleoperation needs the realtime clock.
+A sim robot is a robot: swap `--robot.type=sim --robot.env.*` for the real follower's `--robot.*`, and everything else stays. A teleoperator drives it as it drives the real follower (`--teleop.type=so101_leader` for an SO-101 twin), when the environment declares the follower's action names and units; a mismatch is reported at the first action. Teleoperation needs the realtime clock. `lerobot-record` stores the body the environment declares as the dataset's `robot_type` (`panda` for LIBERO), or `sim` when it declares none.
 
 The episodic rollout strategy resets the world between episodes and stops on success or termination. The policy follows, and recordings use, the world's task description. In interactive mode, an instruction set with `/subtask` survives the world reset of the next `/start`; `/reset` restores the world's task.
 
