@@ -525,7 +525,6 @@ class RoboTwinEnv(gym.Env):
                 "task": self.task_name,
                 "is_success": is_success,
             }
-            self.reset()
 
         return obs, reward, terminated, truncated, info
 

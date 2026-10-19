@@ -31,9 +31,9 @@ def main():
         raise ValueError("Pinned LIBERO benchmark module was not found")
     for path in benchmarks:
         source = path.read_text()
-        if "import torch" not in source:
-            raise ValueError(f"Expected pinned LIBERO torch import: {path}")
-        source = source.replace("import torch", "import numpy as np")
+        if source.count("import torch\n") != 1:
+            raise ValueError(f"Expected one pinned LIBERO torch import: {path}")
+        source = source.replace("import torch\n", "import numpy as np\n")
         source = source.replace("torch.load(", "_load_numpy_states(")
         source += '\n\ndef _load_numpy_states(path, *args, **kwargs):\n    return np.load(str(path) + ".npy", allow_pickle=False)\n'
         path.write_text(source)

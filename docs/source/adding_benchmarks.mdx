@@ -24,7 +24,7 @@ native simulator → canonical NumPy observations → session (in-process client
   → policy → saved action postprocessing → session → native simulator
 ```
 
-Put image orientation, quaternion conversion and state ordering in the canonical adapter, and control conventions in `conventions.py`, so that evaluation and rollout agree. There are no environment-specific processors: observations reach the policy's own processors already canonical.
+Put image orientation, quaternion conversion and state ordering in the canonical adapter, and control conventions in `conventions.py`, so that evaluation and rollout agree. A new benchmark needs no [environment processor](./env_processor): observations reach the policy's own processors already canonical.
 
 ## What your environment must provide
 

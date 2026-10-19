@@ -233,3 +233,42 @@ def test_sim_robot_names_the_actions_it_takes(tmp_path):
             robot.send_action({"command_0": 0.0, "shoulder.pos": 0.0})
     finally:
         robot.disconnect()
+
+
+def test_batched_env_works_under_gymnasium_vector_wrappers():
+    from gymnasium.wrappers.vector import RecordEpisodeStatistics
+
+    env = RecordEpisodeStatistics(ToyEnvConfig().create_envs(n_envs=2)["reach"][0])
+    try:
+        env.reset(seed=[1, 2])
+        env.step(np.zeros((2, 2), np.float32))
+    finally:
+        env.close()
+
+
+def test_recording_a_sim_robot_ends_the_episode_with_the_world(tmp_path):
+    from lerobot.scripts.lerobot_record import record_loop
+    from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
+
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
+    teleop = MockTeleop(MockTeleopConfig(n_motors=2))
+    try:
+        robot.connect()
+        teleop.connect()
+        start = time.perf_counter()
+        record_loop(
+            robot=robot,
+            events={"exit_early": False},
+            fps=20,
+            # The toy succeeds once x passes 1: one step of 2 ends the episode.
+            teleop_action_processor=lambda _: {"command_0": 2.0, "command_1": 0.0},
+            robot_action_processor=lambda transition: transition[0],
+            robot_observation_processor=lambda obs: obs,
+            teleop=teleop,
+            control_time_s=30,
+        )
+        assert time.perf_counter() - start < 5
+        assert robot.episode_status.terminated
+    finally:
+        teleop.disconnect()
+        robot.disconnect()

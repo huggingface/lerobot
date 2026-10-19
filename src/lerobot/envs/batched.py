@@ -47,7 +47,10 @@ class BatchedEnv(gym.vector.VectorEnv):
         self.num_envs = num_envs
         self.task_group = task_group or next(iter(self.descriptor.tasks))
         self.task_id = task_id
-        self.metadata = {"render_fps": self.descriptor.fps, "autoreset_mode": "Disabled"}
+        self.metadata = {
+            "render_fps": self.descriptor.fps,
+            "autoreset_mode": gym.vector.AutoresetMode.DISABLED,
+        }
         self.render_mode = "rgb_array"
         self.single_observation_space = gym.spaces.Dict(
             {

@@ -3,9 +3,9 @@
 <Tip>
   The commands below run the simulator in-process. To keep its dependencies away
   from your policy's, serve it instead with `lerobot-env-server --docker
-  --config=docker/sims/configs/metaworld.yaml` and add
-  `--env.endpoint=tcp/127.0.0.1:7448` to the same commands (see [Simulation:
-  in-process or served](./simulator_server)).
+  --config=docker/sims/configs/metaworld.yaml --set sim.task=<task>`, where `<task>`
+  is the command's `--env.task`, and add `--env.endpoint=tcp/127.0.0.1:7448` to
+  the command. A server runs the task it was started with (see [Simulation: in-process or served](./simulator_server)).
 </Tip>
 
 Meta-World is an open-source simulation benchmark for **multi-task and meta reinforcement learning** in continuous-control robotic manipulation. It bundles 50 diverse manipulation tasks using everyday objects and a common tabletop Sawyer arm, providing a standardized playground to test whether algorithms can learn many different tasks and generalize quickly to new ones.
