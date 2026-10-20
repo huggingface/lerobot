@@ -469,8 +469,10 @@ def eval_policy(
         getattr(getattr(policy, "config", None), "save_predicted_video", False)
     )
 
+    # `policy` is typed `PreTrainedPolicy`, but a PEFT/LoRA fine-tuning caller may pass a
+    # `peft.PeftModel`-wrapped policy instead; this guards that real, non-subclassing case.
     if not isinstance(policy, PreTrainedPolicy):
-        exc = ValueError(
+        exc = ValueError(  # type: ignore[unreachable]
             f"Policy of type 'PreTrainedPolicy' is expected, but type '{type(policy)}' was provided."
         )
         if not _peft_available:

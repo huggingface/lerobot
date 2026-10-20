@@ -59,12 +59,7 @@ class EvalPipelineConfig:
             )
 
         if not self.job_name:
-            if self.env is None:
-                self.job_name = f"{self.policy.type if self.policy is not None else 'scratch'}"
-            else:
-                self.job_name = (
-                    f"{self.env.type}_{self.policy.type if self.policy is not None else 'scratch'}"
-                )
+            self.job_name = f"{self.env.type}_{self.policy.type if self.policy is not None else 'scratch'}"
 
             logger.warning(f"No job name provided, using '{self.job_name}' as job name.")
 

@@ -330,7 +330,9 @@ class InteractiveSession:
         elif result is AskResult.INVALID:
             self._print(f"Question rejected — {self.controller.text_input_error(question)}")
         else:  # a future AskResult variant must not be mislabeled as busy
-            logger.error("Unhandled AskResult %r for /vqa", result)
+            # Currently unreachable: AskResult's 4 members are exhaustively covered above.
+            # Kept as a forward-compatible guard for a variant added later without updating this chain.
+            logger.error("Unhandled AskResult %r for /vqa", result)  # type: ignore[unreachable]
             self._print(f"Could not queue the question ({result.value}).")
 
     def _cmd_autosteer(self, cmd: InteractiveCommand) -> None:

@@ -140,7 +140,7 @@ class VLABenchEnv(gym.Env):
         # We never cache `env.physics`: dm_control exposes it as a weakref
         # proxy that goes stale across resets (rebuilds the sim), so we always
         # refetch it via `self._env.physics` at the call site.
-        self._env = None
+        self._env: Any | None = None
         self.task_description = ""  # populated on first reset
         # Cached world-frame XYZ of the robot base link. The VLABench datasets
         # log both `observation.state` positions and `actions` positions in
