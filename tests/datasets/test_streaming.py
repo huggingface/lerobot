@@ -16,6 +16,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import fsspec
 import pytest
 import torch
 
@@ -50,7 +51,10 @@ def test_streaming_dataset_forwards_token_to_metadata_and_remote_worker_io(
     monkeypatch.setattr(streaming_dataset_module, "LeRobotDatasetMetadata", metadata_cls)
     monkeypatch.setattr(streaming_dataset_module, "ensure_dataset_mp4_sidecar", ensure_sidecar)
 
-    dataset = StreamingLeRobotDataset(DUMMY_REPO_ID, root=requested_root, token=token)
+    storage_options = {"endpoint": "https://storage.example.com"}
+    dataset = StreamingLeRobotDataset(
+        DUMMY_REPO_ID, root=requested_root, token=token, storage_options=storage_options
+    )
 
     metadata_cls.assert_called_once_with(
         DUMMY_REPO_ID,
@@ -65,6 +69,65 @@ def test_streaming_dataset_forwards_token_to_metadata_and_remote_worker_io(
     assert dataset._data_root == (
         str(requested_root) if from_local else f"hf://datasets/{DUMMY_REPO_ID}@{'a' * 40}"
     )
+    storage_options["endpoint"] = "changed-after-construction"
+    assert ensure_sidecar.call_args.kwargs["storage_options"] == {"endpoint": "https://storage.example.com"}
+    assert dataset._storage_options == {"endpoint": "https://storage.example.com"}
+
+
+@pytest.mark.parametrize("revision_key", ["revision", "REVISION"])
+def test_streaming_storage_options_rejects_revision(revision_key: str) -> None:
+    with pytest.raises(ValueError, match="storage_options.*revision"):
+        StreamingLeRobotDataset(DUMMY_REPO_ID, storage_options={revision_key: "main"})
+
+
+def test_streaming_storage_options_reach_sidecar_parquet_and_video_reads(
+    tmp_path, monkeypatch, lerobot_dataset_factory
+) -> None:
+    root = tmp_path / "dataset"
+    map_dataset = lerobot_dataset_factory(
+        root=root, repo_id=DUMMY_REPO_ID, total_episodes=2, total_frames=20, video_backend="pyav"
+    )
+    remote_root = f"memory://{tmp_path.name}/dataset"
+    storage_options = {"endpoint": "https://storage.example.com", "region": "eu-west-1"}
+    expected_options = storage_options.copy()
+    url_to_fs = fsspec.core.url_to_fs
+    calls = []
+
+    def remote_filesystem(url, **kwargs):
+        if str(url).startswith(remote_root):
+            for key, value in expected_options.items():
+                assert kwargs.pop(key) == value
+            calls.append(str(url))
+            return url_to_fs(str(root) + str(url)[len(remote_root) :], **kwargs)
+        return url_to_fs(url, **kwargs)
+
+    monkeypatch.setattr(fsspec.core, "url_to_fs", remote_filesystem)
+    dataset = StreamingLeRobotDataset(
+        DUMMY_REPO_ID,
+        root=root,
+        data_root=remote_root,
+        storage_options=storage_options,
+        video_backend="pyav",
+    )
+    # Construction probes object identity, looks for a published sidecar and builds its index.
+    assert calls.count(remote_root) == 2
+    assert any("/meta/mp4-sidecars/" in url for url in calls)
+    calls.clear()
+    storage_options["region"] = "changed-after-construction"
+
+    samples = list(dataset)
+
+    # Iteration opens independent Parquet and video readers with the original options.
+    assert calls == [remote_root, remote_root]
+    assert sorted(int(sample["index"]) for sample in samples) == list(range(len(map_dataset)))
+    for sample in samples:
+        expected = map_dataset[int(sample["index"])]
+        assert sample.keys() == expected.keys()
+        for key, value in sample.items():
+            if isinstance(value, torch.Tensor):
+                torch.testing.assert_close(value, expected[key])
+            else:
+                assert value == expected[key]
 
 
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
