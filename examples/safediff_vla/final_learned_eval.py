@@ -74,6 +74,8 @@ def main() -> None:
 
     def step(self, action):
         r = orig_step(self, action)
+        if self._env is None:  # logging-only guard: env already torn down after episode end
+            return r
         s = C25.snapshot(self._env)
         all_snaps[-1].append({"others": _others(self), **{k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in s.items()}})
         return r
