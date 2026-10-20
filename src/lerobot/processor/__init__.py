@@ -67,6 +67,7 @@ from .hil_processor import (
     TimeLimitProcessorStep,
 )
 from .image_augmentation_processor import ImageAugmentationProcessorStep
+from .image_undistort_processor import ImageUndistortProcessorStep
 from .newline_task_processor import NewLineTaskProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
 from .observation_processor import VanillaObservationProcessorStep
@@ -109,6 +110,7 @@ __all__ = [
     "AddTeleopEventsAsInfoStep",
     "ComplementaryDataProcessorStep",
     "ImageAugmentationProcessorStep",
+    "ImageUndistortProcessorStep",
     "batch_to_transition",
     "create_transition",
     "from_tensor_to_numpy",
