@@ -29,6 +29,7 @@ from .configuration_fastwam import FastWAMConfig
 from .wan import (
     ActionDiT,
     FastWAM,
+    LiteKVFusion,
     MoT,
     WanVideoDiT,
     build_wan_tokenizer,
@@ -271,9 +272,22 @@ class FastWAMPolicy(PreTrainedPolicy):
             raise ValueError("`FastWAMConfig.video_dit_config` and `action_dit_config` must be resolved.")
         video_expert = WanVideoDiT(**video_dit_config).to(device=device, dtype=dtype)
         action_expert = ActionDiT(**action_dit_config).to(device=device, dtype=dtype)
+        # Faster-WAM (arXiv 2608.02365) options, all opt-in. The fusion module exists only
+        # when enabled so default checkpoints keep their exact key layout.
+        lite_kv_fusion = (
+            LiteKVFusion(
+                num_action_layers=int(action_dit_config["num_layers"]),
+                num_heads=int(action_dit_config["num_heads"]),
+                num_video_layers=int(video_dit_config["num_layers"]),
+            ).to(device=device)
+            if config.lite_kv_fusion
+            else None
+        )
         mot = MoT(
             mixtures={"video": video_expert, "action": action_expert},
             mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
+            lite_kv_fusion=lite_kv_fusion,
+            retracted_1d_rope=config.retracted_1d_rope,
         )
         text_encoder = (
             load_pretrained_wan_text_encoder(
@@ -303,6 +317,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             action_num_train_timesteps=int(config.action_scheduler["num_train_timesteps"]),
             loss_lambda_video=float(config.loss["lambda_video"]),
             loss_lambda_action=float(config.loss["lambda_action"]),
+            world_model_only_conditioning=config.world_model_only_conditioning,
         )
 
 
