@@ -197,7 +197,7 @@ class SafeDiffVLAStagePlanPolicy(SafeDiffVLAPolicy):
         self.stageplan_head.load_state_dict(load_file(head_dir / "stageplan_head.safetensors"))
         dev = device or next(self.parameters()).device
         self.stageplan_head.to(dev).eval()
-        self.stage_controller = StageController(StageConstants(**cfg["constants"]))
+        self.stage_controller = StageController(StageConstants(**{k: v for k, v in cfg["constants"].items() if k in StageConstants.__dataclass_fields__}))
         self._sp_plan = None
 
     def reset(self) -> None:
