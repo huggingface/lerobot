@@ -42,10 +42,14 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
     """Convert a LeRobot features dictionary to a `datasets.Features` object.
 
     Args:
-        features (dict): A LeRobot-style feature dictionary.
+        features (`dict`):
+            A LeRobot-style feature dictionary. One-dimensional numerical features
+            with shape `(0,)` use a variable-length Arrow list because the
+            NumPy-to-Arrow conversion requires positive fixed-size list lengths.
+            LeRobot metadata and frame validation still require the declared empty shape.
 
     Returns:
-        datasets.Features: The corresponding Hugging Face `datasets.Features` object.
+        `datasets.Features`: The corresponding Hugging Face feature schema.
 
     Raises:
         ValueError: If a feature has an unsupported shape.
@@ -66,7 +70,8 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
             hf_features[key] = datasets.Value(dtype=ft["dtype"])
         elif len(ft["shape"]) == 1:
             hf_features[key] = datasets.Sequence(
-                length=ft["shape"][0], feature=datasets.Value(dtype=ft["dtype"])
+                length=-1 if ft["shape"][0] == 0 else ft["shape"][0],
+                feature=datasets.Value(dtype=ft["dtype"]),
             )
         elif len(ft["shape"]) == 2:
             hf_features[key] = datasets.Array2D(shape=ft["shape"], dtype=ft["dtype"])

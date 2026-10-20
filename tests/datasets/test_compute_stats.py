@@ -201,6 +201,34 @@ def test_compute_episode_stats():
     np.testing.assert_allclose(stats[OBS_IMAGE]["max"], 1.0)
 
 
+@pytest.mark.parametrize("dtype", ["float32", "float64", "int64"])
+@pytest.mark.parametrize("shape", [(0,), (0, 3), (5, 0), (2, 0, 3), (2, 0, 3, 1), (1, 2, 0, 3, 1)])
+def test_compute_episode_stats_skips_zero_width_without_changing_other_stats(
+    dtype: str, shape: tuple[int, ...]
+) -> None:
+    """Empty features have no statistics; ordinary features retain every statistic."""
+    action = np.arange(14, dtype=np.float32).reshape(7, 2)
+    action_features = {"action": {"dtype": "float32", "shape": (2,)}}
+    expected = compute_episode_stats({"action": action}, action_features)
+    result = compute_episode_stats(
+        {"empty": np.empty((7, *shape), dtype=dtype), "action": action},
+        {"empty": {"dtype": dtype, "shape": shape}, **action_features},
+    )
+
+    assert result.keys() == expected.keys()
+    assert result["action"].keys() == expected["action"].keys()
+    for stat, value in expected["action"].items():
+        np.testing.assert_array_equal(result["action"][stat], value)
+
+
+def test_compute_episode_stats_only_zero_width_features() -> None:
+    result = compute_episode_stats(
+        {"empty": np.empty((3, 0), dtype=np.float32)},
+        {"empty": {"dtype": "float32", "shape": (0,)}},
+    )
+    assert result == {}
+
+
 def test_assert_type_and_shape_valid():
     valid_stats = [
         {
