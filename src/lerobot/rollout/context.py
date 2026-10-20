@@ -22,6 +22,7 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
+from collections import deque
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass, field
@@ -53,6 +54,7 @@ from lerobot.policies import (
 )
 from lerobot.processor import (
     PolicyProcessorPipeline,
+    RenderRuntimeMessagesStep,
     RobotAction,
     RobotObservation,
     RobotProcessorPipeline,
@@ -68,6 +70,7 @@ from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_fea
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .configs import RolloutConfig
+from .planner import PlannerConfig, VlmPlanner, training_vocabulary
 from .robot_wrapper import ThreadSafeRobot
 
 if TYPE_CHECKING or _peft_available:
@@ -599,6 +602,7 @@ def build_rollout_context(
             compile_warmup_inferences=cfg.compile_warmup_inferences,
             shutdown_event=shutdown_event,
         )
+        _attach_planner(cfg, inference_strategy, robot_wrapper, preprocessor, policy_config)
 
         logger.info("Rollout context assembled successfully")
         return RolloutContext(
@@ -633,6 +637,57 @@ def _feature_spec(name: str, feature: dict, semantics: str) -> FeatureSpec:
         names=() if image else tuple(feature.get("names") or ()),
         semantics=semantics,
     )
+
+
+def _attach_planner(
+    cfg: RolloutConfig,
+    engine: InferenceEngine,
+    robot_wrapper: ThreadSafeRobot,
+    preprocessor: PolicyProcessorPipeline | None = None,
+    policy_config: PreTrainedConfig | None = None,
+) -> None:
+    """Route the engine's text queries to an external VLM planner when ``--planner`` is set.
+
+    The planner reuses the loaded preprocessor's subtask recipe when there is one, and
+    reads its closed vocabulary from the checkpoint's training dataset unless
+    ``--planner.instructions`` is given.  Remote inference owns the policy, so neither is
+    available there: pass the vocabulary explicitly or planner answers stay free-form.
+    """
+    planner_cfg: PlannerConfig | None = getattr(cfg, "planner", None)
+    if planner_cfg is None:
+        return
+    pretrained_path = None if policy_config is None else str(policy_config.pretrained_path)
+    runtime_messages = None
+    if preprocessor is not None:
+        runtime_messages = next(
+            (
+                step
+                for step in preprocessor.steps
+                if isinstance(step, RenderRuntimeMessagesStep) and step.recipe
+            ),
+            None,
+        )
+    if not planner_cfg.instructions:
+        if pretrained_path is None:
+            logger.warning(
+                "Planner vocabulary cannot be inferred from a remote deployment — pass "
+                "--planner.instructions or planner answers stay free-form"
+            )
+        else:
+            try:
+                planner_cfg.instructions = training_vocabulary(pretrained_path)
+                logger.info(
+                    "Planner vocabulary: %d instructions inferred from the checkpoint's training dataset",
+                    len(planner_cfg.instructions),
+                )
+            except Exception:
+                logger.warning(
+                    "Could not infer the planner vocabulary from the checkpoint's training "
+                    "dataset — planner answers stay free-form",
+                    exc_info=True,
+                )
+    engine.external_text = VlmPlanner(planner_cfg, robot_wrapper.robot_type, runtime_messages)
+    engine.external_history = deque(maxlen=planner_cfg.history)
 
 
 def build_remote_rollout_context(
@@ -725,6 +780,7 @@ def build_remote_rollout_context(
             task=task,
             shutdown_event=shutdown_event,
         )
+        _attach_planner(cfg, engine, wrapper)
         logger.info(
             "Remote rollout admitted: deployment=%s instance=%s mode=%s",
             config.deployment,
