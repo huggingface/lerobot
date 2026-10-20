@@ -1,21 +1,22 @@
 # Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""LeRobot processor persistence with the released Long-WAM normalization rules."""
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import torch
+from PIL import Image
+from torch.nn import functional
+from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 
-from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
+from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     ActionProcessorStep,
-    NormalizerProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
-    UnnormalizerProcessorStep,
+    TokenizerProcessorStep,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
@@ -23,46 +24,83 @@ from lerobot.processor import (
 from .configuration_longwam import LongWAMConfig
 
 FeatureMap = dict[PipelineFeatureType, dict[str, PolicyFeature]]
-Stats = dict[str, dict[str, torch.Tensor]]
 
 
-class _LongWAMNormalization:
-    norm_map: dict[FeatureType, NormalizationMode] | dict[str, NormalizationMode]
-    _tensor_stats: Stats
-
-    def _apply_transform(
-        self, tensor: torch.Tensor, key: str, feature_type: FeatureType, *, inverse: bool = False
-    ) -> torch.Tensor:
-        mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
-        if mode == NormalizationMode.IDENTITY:
-            return tensor
-        if mode != NormalizationMode.MIN_MAX:
-            raise ValueError("The first Long-WAM port supports checkpoint MIN_MAX normalization only")
-        if key not in self._tensor_stats:
-            raise ValueError(f"Missing Long-WAM normalization statistics for {key}")
-        stats = self._tensor_stats[key]
-        if "min" not in stats or "max" not in stats:
-            raise ValueError(f"Missing min/max statistics for {key}")
-        low, high = (stats[name].to(tensor) for name in ("min", "max"))
-        width = high - low
-        constant = width < 1e-4
-        scale = 2 / torch.where(constant, 2.0, width)
-        offset = torch.where(constant, -low, -1 - scale * low)
-        # Match the release: constant channels map to zero, and only the forward
-        # transformation clips to [-5,5]. The generic MIN_MAX step differs here.
-        return (tensor - offset) / scale if inverse else (tensor * scale + offset).clamp(-5, 5)
-
-
-@ProcessorStepRegistry.register(name="longwam_normalizer")
+@ProcessorStepRegistry.register(name="longwam_inputs")
 @dataclass
-class LongWAMNormalizer(_LongWAMNormalization, NormalizerProcessorStep):
-    pass
+class LongWAMInputs(ProcessorStep):
+    camera_keys: tuple[str, ...]
+    camera_size: tuple[int, int]
+    prompt_template: str
+    image_dtype: str = "float32"
 
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        transition = transition.copy()
+        raw_observation = transition[TransitionKey.OBSERVATION]
+        complementary_data = transition[TransitionKey.COMPLEMENTARY_DATA]
+        if raw_observation is None or complementary_data is None:
+            raise ValueError("Long-WAM requires observations and a task")
+        observation = dict(raw_observation)
+        for key in self.camera_keys:
+            image = observation[key]
+            if image.ndim not in (4, 5) or image.shape[-3] != 3:
+                raise ValueError(f"{key} must be [B,3,H,W] or [B,T,3,H,W]")
+            if not image.is_floating_point():
+                raise ValueError("Camera images must be floating point in [0,1]")
+            shape = image.shape[:-3]
+            height, width = self.camera_size
+            if image.ndim == 4:
+                # Preserve released inference pixels, before the pipeline's device transfer.
+                frames = []
+                for frame in image:
+                    pil = to_pil_image(frame.mul(255).round().to(torch.uint8))
+                    scale = max(width / pil.width, height / pil.height)
+                    pil = pil.resize(
+                        (round(pil.width * scale), round(pil.height * scale)), Image.Resampling.BILINEAR
+                    )
+                    left, top = (pil.width - width) // 2, (pil.height - height) // 2
+                    frames.append(pil_to_tensor(pil.crop((left, top, left + width, top + height))))
+                observation[key] = (
+                    torch.stack(frames).to(getattr(torch, self.image_dtype)).mul(2 / 255).sub(1)
+                )
+                continue
+            image = image.reshape(-1, *image.shape[-3:]).float()
+            image = functional.interpolate(
+                image,
+                size=self.camera_size,
+                mode="bilinear",
+                align_corners=False,
+                antialias=True,
+            )
+            observation[key] = image.reshape(*shape, 3, height, width).mul(2).sub(1)
+        observation["observation.state"] = observation["observation.state"].clamp(-5, 5)
+        transition[TransitionKey.OBSERVATION] = observation
+        action = transition.get(TransitionKey.ACTION)
+        if isinstance(action, torch.Tensor):
+            transition[TransitionKey.ACTION] = action.clamp(-5, 5)
+        complementary = dict(complementary_data)
+        tasks = complementary["task"]
+        tasks = [tasks] if isinstance(tasks, str) else tasks
+        complementary["task"] = [self.prompt_template.format(task=" ".join(task.split())) for task in tasks]
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
 
-@ProcessorStepRegistry.register(name="longwam_unnormalizer")
-@dataclass
-class LongWAMUnnormalizer(_LongWAMNormalization, UnnormalizerProcessorStep):
-    pass
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "camera_keys": self.camera_keys,
+            "camera_size": self.camera_size,
+            "prompt_template": self.prompt_template,
+            "image_dtype": self.image_dtype,
+        }
+
+    def transform_features(self, features: FeatureMap) -> FeatureMap:
+        features = {kind: dict(values) for kind, values in features.items()}
+        for key in self.camera_keys:
+            feature = features[PipelineFeatureType.OBSERVATION][key]
+            features[PipelineFeatureType.OBSERVATION][key] = PolicyFeature(
+                type=feature.type, shape=(3, *self.camera_size)
+            )
+        return features
 
 
 @ProcessorStepRegistry.register(name="longwam_action_toggle")
@@ -72,10 +110,7 @@ class LongWAMActionToggle(ActionProcessorStep):
 
     def action(self, action: torch.Tensor) -> torch.Tensor:
         result = action.clone()
-        for dim in self.dimensions:
-            if not -result.shape[-1] <= dim < result.shape[-1]:
-                raise ValueError("Invalid gripper action dimension")
-            result[..., dim] = torch.sign(1 - 2 * result[..., dim])
+        result[..., self.dimensions] = torch.sign(1 - 2 * result[..., self.dimensions])
         return result
 
     def get_config(self) -> dict[str, Any]:
@@ -86,69 +121,28 @@ class LongWAMActionToggle(ActionProcessorStep):
 
 
 def make_longwam_pre_post_processors(
-    config: LongWAMConfig, dataset_stats: Stats | None = None
+    config: LongWAMConfig, dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    steps = make_default_policy_processor_steps(config, dataset_stats, normalizer_device=config.device)
+    steps = make_default_policy_processor_steps(config, dataset_stats)
     pre = [
         steps.rename_observations,
         steps.add_batch_dim,
-        steps.to_device,
-        LongWAMNormalizer(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-            device=config.device,
+        steps.normalize,
+        LongWAMInputs(
+            config.camera_keys,
+            config.camera_size,
+            config.prompt_template,
+            str(config.dtype or torch.float32).removeprefix("torch."),
         ),
+        TokenizerProcessorStep(
+            tokenizer_name=config.tokenizer_name,
+            max_length=config.tokenizer_max_length,
+            padding="max_length",
+        ),
+        steps.to_device,
     ]
-    post: list[ProcessorStep] = [
-        LongWAMUnnormalizer(
-            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
-        )
-    ]
+    post: list[ProcessorStep] = [steps.unnormalize]
     if config.toggle_action_dimensions:
         post.append(LongWAMActionToggle(config.toggle_action_dimensions))
     post.append(steps.to_cpu)
     return make_policy_processor_pipelines(input_steps=pre, output_steps=post)
-
-
-def make_longwam_pre_post_processors_from_pretrained(
-    config: LongWAMConfig,
-    pretrained_path: str | Path,
-    *,
-    revision: str | None = None,
-    dataset_stats: Stats | None = None,
-    dataset_meta: Any = None,
-    preprocessor_overrides: dict[str, Any] | None = None,
-    postprocessor_overrides: dict[str, Any] | None = None,
-    preprocessor_config_filename: str = "policy_preprocessor.json",
-    postprocessor_config_filename: str = "policy_postprocessor.json",
-) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Translate LeRobot's standard train/resume overrides to our registered steps.
-
-    Resume does not supply new statistics: the saved processor state remains
-    authoritative. Fine-tuning supplies dataset_stats and updates both sides.
-    """
-    from lerobot.processor import load_pretrained_policy_processors
-
-    def overrides(values: dict[str, Any] | None, standard: str, custom: str) -> dict[str, Any]:
-        result = {key: dict(value) for key, value in (values or {}).items()}
-        if standard in result:
-            if custom in result:
-                raise ValueError("Conflicting standard and Long-WAM normalizer overrides")
-            result[custom] = dict(result.pop(standard))
-        if dataset_stats is not None:
-            result.setdefault(custom, {})["stats"] = dataset_stats
-        return result
-
-    return load_pretrained_policy_processors(
-        pretrained_path,
-        revision=revision,
-        preprocessor_overrides=overrides(
-            preprocessor_overrides, "normalizer_processor", "longwam_normalizer"
-        ),
-        postprocessor_overrides=overrides(
-            postprocessor_overrides, "unnormalizer_processor", "longwam_unnormalizer"
-        ),
-        preprocessor_config_filename=preprocessor_config_filename,
-        postprocessor_config_filename=postprocessor_config_filename,
-    )

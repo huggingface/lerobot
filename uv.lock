@@ -1886,18 +1886,6 @@ http = [
 ]
 
 [[package]]
-name = "ftfy"
-version = "6.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "wcwidth" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec", size = 308927, upload-time = "2024-10-26T00:50:35.149Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/6e/81d47999aebc1b155f81eca4477a616a70f238a2549848c38983f3c22a82/ftfy-6.3.1-py3-none-any.whl", hash = "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083", size = 44821, upload-time = "2024-10-26T00:50:33.425Z" },
-]
-
-[[package]]
 name = "future"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3185,7 +3173,6 @@ all = [
     { name = "faker" },
     { name = "fastapi" },
     { name = "foxglove-sdk" },
-    { name = "ftfy" },
     { name = "grpcio" },
     { name = "grpcio-tools" },
     { name = "gym-aloha" },
@@ -3470,7 +3457,7 @@ lingbot-va = [
     { name = "transformers" },
 ]
 longwam = [
-    { name = "ftfy" },
+    { name = "diffusers" },
     { name = "sentencepiece" },
     { name = "transformers" },
 ]
@@ -3687,7 +3674,6 @@ requires-dist = [
     { name = "filelock", specifier = ">=3.12.0,<4.0.0" },
     { name = "foxglove-sdk", marker = "extra == 'viz'", specifier = ">=0.25.1,<0.26.0" },
     { name = "fsspec", specifier = ">=2023.5.0,<2027.0.0" },
-    { name = "ftfy", marker = "extra == 'longwam'", specifier = ">=6.3,<7" },
     { name = "grpcio", marker = "extra == 'grpcio-dep'", specifier = ">=1.73.1,<2.0.0" },
     { name = "grpcio", marker = "extra == 'reachy2'", specifier = "<=1.73.1" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.73.1,<2.0.0" },
@@ -3734,6 +3720,7 @@ requires-dist = [
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'groot'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'lawam'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'lingbot-va'" },
+    { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'longwam'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'multi-task-dit'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'vla-jepa'" },
     { name = "lerobot", extras = ["diffusion"], marker = "extra == 'all'" },
