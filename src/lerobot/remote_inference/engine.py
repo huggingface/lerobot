@@ -277,8 +277,8 @@ class RemoteInferenceEngine(InferenceEngine):
 
     @property
     def supports_text_queries(self) -> bool:
-        """Whether this admitted deployment advertises serialized language work."""
-        return self.client.capabilities.language
+        """True with an external text backend, or a deployment advertising serialized language work."""
+        return super().supports_text_queries or self.client.capabilities.language
 
     @property
     def ready(self) -> bool:
