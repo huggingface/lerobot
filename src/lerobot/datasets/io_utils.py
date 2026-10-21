@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import io
 from pathlib import Path
 from typing import Any
 
@@ -220,27 +221,37 @@ def load_episodes(local_dir: Path) -> datasets.Dataset:
 
 
 def load_image_as_numpy(
-    fpath: str | Path, dtype: DTypeLike = np.float32, channel_first: bool = True
+    source: str | Path | bytes,
+    dtype: DTypeLike = np.float32,
+    channel_first: bool = True,
+    is_depth: bool | None = None,
 ) -> np.ndarray:
-    """Load an image from a file into a numpy array.
+    """Load an image into a numpy array from a file path or raw encoded bytes.
 
     Args:
-        fpath (str | Path): Path to the image file.
+        source (str | Path | bytes): Path to the image file, or in-memory encoded
+            image bytes (e.g. JPEG/PNG bytes from an mcap message).
         dtype (DTypeLike): The desired data type of the output array. If floating,
             pixels are scaled to [0, 1]. Only used for RGB images.
         channel_first (bool): If True, converts the image to (C, H, W) format.
             Otherwise, it remains in (H, W, C) format.
+        is_depth (bool | None): Whether the image is a depth map, whose native dtype
+            is preserved (uint16 -> "I;16", float32 -> "F"). When None, it is sniffed
+            from the file extension (.tif/.tiff); raw bytes have no extension, so
+            callers that know their depth keys (e.g. from ``meta.depth_keys``) pass it
+            explicitly.
 
     Returns:
         np.ndarray: The image as a numpy array.
     """
-    is_depth = str(fpath).endswith((".tiff", ".tif"))
+    if is_depth is None:
+        is_depth = isinstance(source, (str, Path)) and str(source).endswith((".tiff", ".tif"))
+    pil_source = io.BytesIO(source) if isinstance(source, bytes) else source
     if is_depth:
-        # Preserve the native depth dtype (uint16 -> "I;16", float32 -> "F").
-        img = PILImage.open(fpath)
+        img = PILImage.open(pil_source)
         img_array = np.array(img)
     else:
-        img = PILImage.open(fpath).convert("RGB")
+        img = PILImage.open(pil_source).convert("RGB")
         img_array = np.array(img, dtype=dtype)
         if np.issubdtype(dtype, np.floating):
             img_array /= 255.0
