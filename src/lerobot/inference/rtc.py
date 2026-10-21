@@ -421,8 +421,10 @@ class RTCInferenceEngine(InferenceEngine):
 
     @property
     def supports_text_queries(self) -> bool:
-        """True when both the policy text head and a local position hold are available."""
-        return self._policy.supports_text_generation() and bool(getattr(self._robot, "supports_hold", False))
+        """True with an external text backend, or a policy text head plus a local position hold."""
+        return super().supports_text_queries or (
+            self._policy.supports_text_generation() and bool(getattr(self._robot, "supports_hold", False))
+        )
 
     def _queue_query(self, query: PolicyQuery) -> bool:
         if self._policy.supports_text_generation() and not getattr(self._robot, "supports_hold", False):
