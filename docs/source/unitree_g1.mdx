@@ -1,12 +1,53 @@
 # Unitree G1
 
-<img
-  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/unitree_thumbnail.jpg"
-  alt="Unitree G1 locomanipulation demo"
+<video
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/unitree_g1_passing_can.mp4"
+  autoplay
+  loop
+  muted
+  playsinline
   style={{ width: "100%" }}
 />
 
-The Unitree G1 humanoid is now supported in LeRobot! You can teleoperate, train locomanipulation policies, test in sim, and more. Both 29 and 23 DoF variants are supported.
+The Unitree G1 humanoid is supported in LeRobot. You can teleoperate, train
+locomanipulation policies, test in simulation, and more. Both 29 and 23 DoF variants
+are supported.
+
+## Embodiment Selection
+
+One `UnitreeG1` class selects its joint definitions through `UnitreeG1Config.embodiment`.
+The default is `g1_29`; existing configurations therefore retain G1-29 behavior. Select
+the 23-DoF layout with `--robot.embodiment=g1_23` or in Python:
+
+```python
+from lerobot.robots.unitree_g1 import UnitreeG1Config
+
+config = UnitreeG1Config(embodiment="g1_23", is_simulation=False)
+```
+
+| Capability                                          | G1-29                         | G1-23                                        |
+| --------------------------------------------------- | ----------------------------- | -------------------------------------------- |
+| Joint configuration and action/observation features | 29 body joints, 14 arm joints | 23 body joints, 10 arm joints                |
+| DDS command/feedback layout                         | 29 active slots               | 29 slots with absent joints left inactive    |
+| MuJoCo simulation                                   | Supported                     | Not yet supported; native model planned      |
+| Locomotion controllers                              | GR00T and Holosoma            | GR00T and Holosoma                           |
+| SONIC whole-body controller                         | Supported                     | Not supported; the policy requires 29 DoF    |
+| Gravity compensation                                | Supported, off by default     | Not yet supported; native kinematics planned |
+
+Both variants use the same 29-slot DDS message layout. G1-29 uses all 29 slots, while
+G1-23 uses 23 and leaves the six nonexistent-joint slots inactive. The `kp`, `kd`, and
+`default_positions` vectors therefore remain 29 elements long and are indexed by DDS slot.
+G1-23's active arm slots are `15..19` and `22..26`. Slots `13, 14, 20, 21, 27, 28` have no
+active joint; their config values must be zero. They are omitted from action/observation
+features, not renumbered.
+Inactive and reserved command entries are cleared before publishing a G1-23 message.
+Explicit gain overrides must be finite, nonnegative, and use the same sparse layout.
+Default gains are shared by joint name across both variants, so identical physical joints
+use identical gains while absent G1-23 slots remain zero.
+
+Native G1-23 MuJoCo simulation is not supported yet. Selecting the G1-23 embodiment with
+simulation enabled fails before transport initialization. A native G1-23 MuJoCo model is
+planned for a future version.
 
 ---
 
@@ -286,7 +327,7 @@ python src/lerobot/scripts/lerobot_train.py \
 
 ### Inference with RTC
 
-Once trained, we recommend deploying policies using inference-time RTC:
+A compatible trained policy can use local inference-time RTC:
 
 ```bash
 lerobot-rollout \
@@ -302,6 +343,13 @@ lerobot-rollout \
   --fps=30 \
   --inference.type=rtc
 ```
+
+G1 locomotion controllers do not declare the retained-target contract used by rollout's
+recoverable waiting. After motion begins, exhausting their action buffer therefore causes
+a terminal fault rather than a grace-period wait. Request deadlines and observation-age
+limits also apply. Validate that the policy's usable chunk covers inference latency before
+using this recipe; see [local RTC waiting and budgets](./inference#inference-backends).
+SONIC has a separate retained-token contract described below.
 
 ---
 
@@ -328,58 +376,61 @@ lerobot-rollout \
 
 ### Run on the Physical Robot
 
-On hardware, run the policy with [async inference](./async) rather than a single `lerobot-rollout` loop. A rollout driven from your laptop puts the network in the middle of the control loop: every step blocks on inference, and one hiccup stalls the 50 Hz balance loop while the robot is standing on it. Async inference splits the two — the policy runs on your GPU machine, while the robot client runs on the G1's Jetson, so the SONIC controller thread and `rt/lowcmd` stay onboard and only 64-D token chunks cross the network.
+Run the [remote inference](./remote_inference) policy server on the GPU machine and keep the robot bridge, SONIC decoder and rollout client on the G1 Jetson. Only 64-D token chunks cross the network; the decoder and 50 Hz `rt/lowcmd` loop remain onboard.
 
-Three processes, with the robot server from Part 2 running the whole time:
-
-```text
-GPU machine                     G1 (Jetson)
-policy_server  ◄── gRPC ──►  robot_client: UnitreeG1 + SONIC decoder @ 50 Hz
-  checkpoint                        │ ZMQ (lowcmd 6000, lowstate 6001, camera 5555)
-                                    ▼
-                             run_g1_server.py  ◄──► rt/lowcmd, rt/lowstate (DDS)
-```
-
-Start the policy server on the GPU machine first:
+Install the remote extra on both machines. Keep the Unitree extra on the G1:
 
 ```bash
-python -m lerobot.async_inference.policy_server \
-  --host=0.0.0.0 \
-  --port=8080 \
-  --fps=30
+# GPU machine
+python -m pip install -e '.[remote]'
+
+# G1 Jetson
+python -m pip install -e '.[unitree_g1,remote]'
 ```
 
-On the robot, start the server (bridge + camera):
+On the GPU machine, start the policy server from the repository root. The maintained profile matches `nepyope/sonic_walk`; copy and update its checkpoint and feature contract together for another policy.
+
+```bash
+lerobot-policy-server \
+  --config_path=examples/remote_inference/unitree_g1_sonic.yaml
+```
+
+On the G1, keep the bridge and camera running:
 
 ```bash
 python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 ```
 
-Then, in a second terminal on the robot, start the client. Everything robot-side is loopback, since the bridge runs on the same machine:
+Then start the rollout client in a second G1 terminal, replacing `<GPU_MACHINE_IP>`:
 
 ```bash
-python -m lerobot.async_inference.robot_client \
-  --server_address=<GPU_MACHINE_IP>:8080 \
-  --policy_type=pi05 \
-  --pretrained_name_or_path=nepyope/sonic_walk \
-  --policy_device=cuda \
-  --actions_per_chunk=50 \
-  --fps=30 \
-  --task="walk forward" \
+lerobot-rollout \
+  --strategy.type=base \
+  --inference.type=remote \
+  --inference.endpoint=tcp/<GPU_MACHINE_IP>:7447 \
+  --inference.deployment=g1-sonic \
+  --inference.semantics=unitree-g1-sonic-motion-token-v1 \
+  --inference.encoding=jpeg \
+  --inference.action_starvation_grace_s=1.0 \
   --robot.type=unitree_g1 \
   --robot.is_simulation=false \
   --robot.robot_ip=127.0.0.1 \
   --robot.controller=SonicWholeBodyController \
-  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "127.0.0.1", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}'
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "127.0.0.1", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
+  --task='walk forward' \
+  --fps=30 \
+  --return_to_initial_position=false \
+  --interactive=true
 ```
 
-A few things to keep in mind:
+Type `/start` only after the G1 is clear to move. SONIC declares waiting support because re-sending the last complete token keeps the onboard decoder balancing. Before the first policy result, rollout sends the decoder's neutral token. If the action buffer runs dry, it repeats the last applied token for at most `action_starvation_grace_s` (one second above); if no fresh prediction arrives, rollout faults and follows its configured shutdown/disconnect path. G1 locomotion controllers remain unsupported because their joystick velocities cannot be retained this way.
 
-- `--policy_device` is the device the _server_ loads the policy onto — the client sends it during the handshake.
-- `--actions_per_chunk` must not exceed the checkpoint's chunk size (50 for `nepyope/sonic_walk`).
-- With `SonicWholeBodyController` the observation state is the 64-D token echo instead of the 29 joint positions, so the checkpoint has to be trained against that same state.
+The recipe disables return-to-initial-position: interpolating through SONIC's latent-token space is
+not a validated physical homing trajectory. Avoid `/reset` for the same reason, since it would sweep
+the token back to its connect-time value. `/stop` still closes the remote session and disconnects
+the robot through the normal controller shutdown path.
 
-On connect, the robot eases every joint to the decoder's `default_angles` before the controller takes over, so the first policy commands don't snap from the connect-time pose.
+With `SonicWholeBodyController`, the observation state is the 64-D token echo rather than the 29 joint positions, so a compatible checkpoint must be trained against that state. On connect, the robot eases joints to the decoder's `default_angles` before the controller takes over.
 
 ---
 
