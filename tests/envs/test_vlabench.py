@@ -71,3 +71,46 @@ def test_missing_instruction_raises(monkeypatch, instruction):
 
     with pytest.raises(ValueError, match="select_fruit' produced no language instruction"):
         env._ensure_env()
+
+
+@pytest.mark.parametrize("instruction", [None, ""])
+def test_missing_instruction_reset_can_be_retried(monkeypatch, instruction):
+    _stub_vlabench(monkeypatch, _make_task(instruction))
+    loader = sys.modules["VLABench.envs"].load_env
+    inner = loader.return_value
+    env = VLABenchEnv(task="select_fruit")
+    get_obs = MagicMock(return_value={})
+    monkeypatch.setattr(env, "_get_obs", get_obs)
+
+    for _ in range(2):
+        with pytest.raises(ValueError, match="produced no language instruction"):
+            env.reset()
+
+    assert env._env is None
+    assert inner.close.call_count == 2
+    assert loader.call_count == 2
+    inner.reset.assert_not_called()
+    get_obs.assert_not_called()
+
+
+@pytest.mark.parametrize("instruction", [None, ""])
+def test_missing_instruction_can_recover_with_a_new_environment(monkeypatch, instruction):
+    _stub_vlabench(monkeypatch, _make_task(instruction))
+    loader = sys.modules["VLABench.envs"].load_env
+    rejected = loader.return_value
+    valid = MagicMock()
+    valid.task = _make_task("Put the pear into the plate")
+    valid.get_robot_frame_position.return_value = [0.0, -0.4, 0.78]
+    loader.side_effect = [rejected, valid]
+    env = VLABenchEnv(task="select_fruit")
+    monkeypatch.setattr(env, "_get_obs", lambda: {})
+
+    with pytest.raises(ValueError, match="produced no language instruction"):
+        env.reset()
+    assert env.reset() == ({}, {"is_success": False})
+    assert env._env is valid
+    assert env.task_description == "Put the pear into the plate"
+    rejected.close.assert_called_once()
+    rejected.reset.assert_not_called()
+    valid.reset.assert_called_once()
+    valid.close.assert_not_called()

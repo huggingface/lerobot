@@ -251,6 +251,9 @@ class VLABenchEnv(gym.Env):
         # exposes it via `get_instruction()`; `reset()` does not change it.
         instruction = self._env.task.get_instruction()
         if not instruction:
+            with contextlib.suppress(Exception):
+                self._env.close()
+            self._env = None
             raise ValueError(
                 f"VLABench task '{self.task}' produced no language instruction, so it cannot be "
                 "evaluated with a language-conditioned policy."
