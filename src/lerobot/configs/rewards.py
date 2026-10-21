@@ -81,15 +81,15 @@ class RewardModelConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         return choice_name
 
     @property
-    def observation_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+    def observation_delta_indices(self) -> list[int] | None:
         return None
 
     @property
-    def action_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+    def action_delta_indices(self) -> list[int] | None:
         return None
 
     @property
-    def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]
+    def reward_delta_indices(self) -> list[int] | None:
         return None
 
     def get_optimizer_preset(self) -> OptimizerConfig | None:

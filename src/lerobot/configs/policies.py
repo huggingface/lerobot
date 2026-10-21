@@ -16,12 +16,14 @@ import builtins
 import json
 import os
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
 from typing import Any, TypeVar
 
 import draccus
+import torch
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
@@ -38,7 +40,7 @@ logger = getLogger(__name__)
 
 
 @dataclass
-class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: ignore[misc,name-defined] #TODO: draccus issue
+class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     """
     Base configuration class for policy models.
 
@@ -60,6 +62,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     output_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
 
     device: str | None = None  # e.g. "cuda", "cuda:0", "cpu", or "mps"
+    # Parameter storage dtype. None uses PyTorch's default when constructing a policy.
+    dtype: torch.dtype | None = None  # e.g. torch.float32, torch.bfloat16
     # `use_amp` determines whether to use Automatic Mixed Precision (AMP) for training and evaluation. With AMP,
     # automatic gradient scaling is used.
     use_amp: bool = False
@@ -67,7 +71,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # Whether the policy employed PEFT for training.
     use_peft: bool = False
 
-    push_to_hub: bool = True  # type: ignore[assignment] # TODO: use a different name to avoid override
+    push_to_hub: bool = True  # TODO: rename; shadows HubMixin.push_to_hub()
     repo_id: str | None = None
 
     # Upload on private repository on the Hugging Face hub.
@@ -82,7 +86,31 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained model version.
     pretrained_revision: str | None = None
 
+    # Register draccus encode/decode functions for the torch.dtype values held by dtype fields.
+    @staticmethod
+    @draccus.decode.register(torch.dtype)
+    def _decode_dtype(value: Any, path: Sequence[str] = ()) -> torch.dtype:
+        """Resolve a dtype name coming from config.json or the command line.
+
+        Args:
+            value: The raw serialized value, e.g. "bfloat16".
+            path: The field breadcrumb draccus prefixes onto error messages, e.g. ("policy", "dtype").
+        """
+        dtype = getattr(torch, str(value).removeprefix("torch."), None)
+        if not isinstance(dtype, torch.dtype):
+            raise ValueError(f"Invalid dtype {value!r}: expected a torch dtype name.")
+        return dtype
+
+    @staticmethod
+    @draccus.encode.register(torch.dtype)
+    def _encode_dtype(value: torch.dtype, declared_type: type | None = None) -> str:
+        """Serialize a dtype to its bare name, e.g. torch.bfloat16 -> "bfloat16"."""
+        return str(value).removeprefix("torch.")
+
     def __post_init__(self) -> None:
+        if self.dtype is not None and not isinstance(self.dtype, torch.dtype):
+            raise ValueError(f"config.dtype must be a torch.dtype or None, got {self.dtype!r}.")
+
         if not self.device or not is_torch_device_available(self.device):
             auto_device = auto_select_torch_device()
             logger.warning(f"Device '{self.device}' is not available. Switching to '{auto_device}'.")
@@ -104,17 +132,17 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
 
     @property
     @abc.abstractmethod
-    def observation_delta_indices(self) -> list | None:  # type: ignore[type-arg] #TODO: No implementation
+    def observation_delta_indices(self) -> list[int] | None:
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def action_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
+    def action_delta_indices(self) -> list[int] | None:
         raise NotImplementedError
 
     @property
     @abc.abstractmethod
-    def reward_delta_indices(self) -> list | None:  # type: ignore[type-arg]    #TODO: No implementation
+    def reward_delta_indices(self) -> list[int] | None:
         raise NotImplementedError
 
     @abc.abstractmethod

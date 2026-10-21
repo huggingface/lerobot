@@ -161,6 +161,10 @@ class WallXConfig(PreTrainedConfig):
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
+        if self.input_features is None or self.output_features is None:
+            raise ValueError(
+                "`input_features` and `output_features` must be resolved before `validate_features()` is called."
+            )
         image_features = [key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL]
         if not image_features:
             raise ValueError(
@@ -216,7 +220,7 @@ class WallXConfig(PreTrainedConfig):
         )
 
     @property
-    def observation_delta_indices(self) -> list:
+    def observation_delta_indices(self) -> None:
         return None
 
     @property

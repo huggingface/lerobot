@@ -142,7 +142,7 @@ class TrainPipelineConfig(HubMixin):
     steps: int = 100_000
     # Run policy in the simulation environment every N steps to measure reward/success (0 = disabled).
     env_eval_freq: int = 20_000
-    log_freq: int = 200
+    log_freq: int = 200  # 0 or negative disables periodic logging
     # Compute eval loss on held-out episodes every N steps (0 = disabled). Requires eval_split > 0.
     eval_steps: int = 0
     # Cap on total eval samples, split uniformly across tasks (0 = use all held-out data).
@@ -220,7 +220,7 @@ class TrainPipelineConfig(HubMixin):
             self._resolve_resume_checkpoint()
 
     def _resolve_resume_checkpoint(self) -> None:
-        """Point the trainable config at the checkpoint named by `--config_path`.
+        """Resolve the checkpoint named by `--config_path` into `checkpoint_path`.
 
         `config_path` is either a local path (to a checkpoint's train_config.json or its
         pretrained_model/ dir) or a Hub repo id. For a Hub repo, the latest checkpoint is downloaded
@@ -256,12 +256,8 @@ class TrainPipelineConfig(HubMixin):
                 now = dt.datetime.now()
                 self.output_dir = Path("outputs/train") / f"{now:%Y-%m-%d}/{now:%H-%M-%S}_resume"
             self.checkpoint_path = resolve_resume_checkpoint(config_path, self.output_dir)
-            policy_dir = self.checkpoint_path / PRETRAINED_MODEL_DIR
-
-        if self.policy is not None:
-            self.policy.pretrained_path = policy_dir
-        if self.reward_model is not None:
-            self.reward_model.pretrained_path = str(policy_dir)
+        # `pretrained_path` keeps naming the model the run started from (the model card's
+        # `base_model`); the resumed weights and processors load from `checkpoint_path`.
 
     def validate(self) -> None:
         available_contexts = multiprocessing.get_all_start_methods()
@@ -284,7 +280,7 @@ class TrainPipelineConfig(HubMixin):
             )
 
         active_cfg = self.trainable_config
-        if self.rename_map and active_cfg.pretrained_path is None:
+        if self.rename_map and active_cfg.pretrained_path is None and not self.resume:
             raise ValueError(
                 "`rename_map` requires a pretrained policy checkpoint. "
                 "Fresh initialization derives feature names from the current dataset, so no rename is applied."
@@ -315,6 +311,13 @@ class TrainPipelineConfig(HubMixin):
             self.optimizer = active_cfg.get_optimizer_preset()
             self.scheduler = active_cfg.get_scheduler_preset()
 
+        image_transforms = self.dataset.image_transforms
+        if image_transforms.enable and image_transforms.backend == "gpu" and active_cfg.device == "cpu":
+            raise ValueError(
+                "dataset.image_transforms.backend='gpu' needs an accelerator device, but policy.device is 'cpu'. "
+                "Use image_transforms.backend='dataloader' to augment in the DataLoader workers."
+            )
+
         if self.eval_steps > 0 and self.dataset.eval_split == 0.0:
             raise ValueError("eval_steps > 0 requires dataset.eval_split > 0.0 to hold out eval data.")
 
@@ -340,7 +343,7 @@ class TrainPipelineConfig(HubMixin):
             ValueError: If the config requests anything outside the verified scope: context
                 parallelism or CFG parallelism (reserved placeholders), the compile or
                 activation-checkpointing placeholders, a DCP checkpoint format on a
-                non-sharded run, or — under sharded training — fp16 mixed precision, PEFT,
+                non-sharded run, fp16 on a CPU device, or — under sharded training — PEFT,
                 reward-model training, in-training environment evaluation, or multi-optimizer
                 configs.
         """
@@ -363,12 +366,20 @@ class TrainPipelineConfig(HubMixin):
                 f"checkpoint_format={self.checkpoint_format.value} requires a sharded run "
                 "(--parallelism.dp_shard != 1); non-sharded checkpoints are always safetensors."
             )
+        # `getattr`, not attribute access: `validate()` guarantees a trainable config before
+        # calling this, but the fail-fasts are also exercised on bare configs in isolation.
+        if self.accelerator.mixed_precision == "fp16" and (
+            getattr(self.trainable_config, "device", None) == "cpu"
+        ):
+            # accelerate skips the whole fp16 branch on CPU (no autocast, no GradScaler), so
+            # the run would silently execute in fp32. Say so instead of quietly downgrading.
+            raise ValueError(
+                "mixed_precision=fp16 requires an accelerator device; on CPU accelerate "
+                "builds no GradScaler and the run silently falls back to full precision. "
+                "Use --policy.device=cuda, or --accelerator.mixed_precision=bf16 "
+                "(which does autocast on CPU) or =no."
+            )
         if self.parallelism.is_sharded:
-            if self.accelerator.mixed_precision == "fp16":
-                raise ValueError(
-                    "fp16 is not supported under sharded training (GradScaler over DTensor "
-                    "gradients is unverified); use bf16 or full precision."
-                )
             if self.peft is not None:
                 raise ValueError("PEFT is not supported under sharded training yet.")
             if self.is_reward_model_training:
@@ -391,7 +402,7 @@ class TrainPipelineConfig(HubMixin):
         return ["policy", "reward_model"]
 
     def to_dict(self) -> dict[str, Any]:
-        return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
+        return draccus.encode(self)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):
