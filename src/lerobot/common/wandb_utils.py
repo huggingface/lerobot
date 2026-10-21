@@ -108,7 +108,8 @@ class WandBLogger:
             # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
             job_type="train_eval",
             resume=self.cfg.resume or ("must" if cfg.resume else None),
-            mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
+            # Leave mode unset unless configured, so wandb can honor WANDB_MODE (default: online).
+            mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else None,
             settings=wandb.Settings(
                 console=self.cfg.console,
                 console_multipart=self.cfg.console_multipart,
