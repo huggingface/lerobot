@@ -300,9 +300,22 @@ def make_policy(
     if rename_map:
         features = {rename_map.get(key, key): feature for key, feature in features.items()}
 
+    # Check the original contract before refreshing inherited defaults. Otherwise the
+    # check would compare the dataset to itself and hide missing/incorrect rename maps.
+    if cfg.input_features:
+        validate_visual_features_consistency(cfg, features)
+
     cfg.output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    if not cfg.input_features:
-        cfg.input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+    if not cfg.input_features or getattr(cfg, "_input_features_from_pretrained", False):
+        input_features = {key: ft for key, ft in features.items() if key not in cfg.output_features}
+        if cfg.input_features and cfg.input_features != input_features:
+            logging.warning(
+                "Refreshing input_features inherited from the pretrained config using dataset/environment "
+                "features. Previous: %s; resolved: %s. Explicit input_features selections are preserved.",
+                cfg.input_features,
+                input_features,
+            )
+        cfg.input_features = input_features
 
     # Store action feature names for relative_exclude_joints support
     if ds_meta is not None and hasattr(cfg, "action_feature_names"):
@@ -408,10 +421,6 @@ def make_policy(
     assert isinstance(policy, torch.nn.Module)
 
     # policy = torch.compile(policy, mode="reduce-overhead")
-
-    if not rename_map:
-        validate_visual_features_consistency(cfg, features)
-        # TODO: (jadechoghari) - add a check_state(cfg, features) and check_action(cfg, features)
 
     return policy
 

@@ -57,6 +57,11 @@ def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
         if key in (PATH_KEY, draccus.CHOICE_TYPE_KEY):
             continue
         full_key = f"{prefix}.{key}" if prefix else key
+        if key in ("input_features", "output_features"):
+            # These are mappings with literal dotted keys, not nested dataclasses.
+            # Preserve the whole selection, including explicit null/empty mappings.
+            args.append(f"--{full_key}={json.dumps(value)}")
+            continue
         if isinstance(value, bool):
             value = str(value).lower()
         if isinstance(value, dict):
@@ -361,8 +366,11 @@ def extract_path_fields_from_config(config_path: str, path_fields: list[str]) ->
 
     modified = False
     for field in path_fields:
-        if field in config_data and isinstance(config_data[field], dict) and PATH_KEY in config_data[field]:
-            _config_path_args[field] = str(config_data[field].pop(PATH_KEY))
+        if field in config_data and isinstance(config_data[field], dict):
+            if PATH_KEY not in config_data[field] and parse_arg(f"{field}.{PATH_KEY}") is None:
+                continue
+            if PATH_KEY in config_data[field]:
+                _config_path_args[field] = str(config_data[field].pop(PATH_KEY))
             remaining = config_data[field]
             if remaining:
                 _config_yaml_overrides[field] = _flatten_to_cli_args(remaining)
@@ -416,10 +424,12 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                 config_path_cli = parse_arg("config_path", cli_args)
                 if has_method(argtype, "__get_path_fields__"):
                     path_fields = argtype.__get_path_fields__()
-                    cli_args = filter_path_args(path_fields, cli_args)
                     # Also extract path fields from the YAML/JSON config file
                     if config_path_cli:
                         config_path_cli = extract_path_fields_from_config(config_path_cli, path_fields)
+                    # YAML may supply the path while the CLI supplies overrides.
+                    # Extract it first so those overrides are deferred too.
+                    cli_args = filter_path_args(path_fields, cli_args)
                 try:
                     if has_method(argtype, "from_pretrained") and config_path_cli:
                         cli_args = filter_arg("config_path", cli_args)

@@ -17,6 +17,7 @@ import json
 import os
 import tempfile
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
@@ -57,7 +58,8 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
 
     n_obs_steps: int = 1
 
-    # `input_features` can be set to None/null in order to infer those values from the dataset.
+    # Explicit selections take precedence over dataset/env features. Unmodified features
+    # inherited by from_pretrained() are refreshed by make_policy(). None/{} also infer features.
     input_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
     output_features: dict[str, PolicyFeature] | None = field(default_factory=dict)
 
@@ -182,6 +184,21 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         return {key: ft for key, ft in self.input_features.items() if ft.type is FeatureType.VISUAL}
 
     @property
+    def _input_features_from_pretrained(self) -> bool:
+        """Whether the loaded feature mapping is still untouched by the caller.
+
+        Runtime-only provenance is deliberately not a dataclass field: saved configs
+        contain the resolved features, not the origin of a previous process's settings.
+        Identity detects replacement (even with equal values); the snapshot detects
+        in-place changes to the mapping or its PolicyFeature values.
+        """
+        return (
+            self.input_features is not None
+            and self.input_features is getattr(self, "_pretrained_input_features", None)
+            and self.input_features == getattr(self, "_pretrained_input_features_snapshot", None)
+        )
+
+    @property
     def action_feature(self) -> PolicyFeature | None:
         if not self.output_features:
             return None
@@ -255,10 +272,23 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                 f"Available policy types: {cls.get_known_choices()}"
             ) from e
 
+        cli_overrides = policy_kwargs.pop("cli_overrides", []) or []
+        explicit_inputs = "input_features" in policy_kwargs
+        if explicit_inputs:
+            config["input_features"] = draccus.encode(policy_kwargs["input_features"])
+        if any(arg.split("=", 1)[0] == "--input_features" for arg in cli_overrides):
+            # draccus deep-merges config dictionaries. A camera/state selection must
+            # replace the checkpoint mapping, not retain its unselected cameras.
+            config.pop("input_features", None)
+            explicit_inputs = True
+
         with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
             json.dump(config, f)
             config_file = f.name
 
-        cli_overrides = policy_kwargs.pop("cli_overrides", [])
         with draccus.config_type("json"):
-            return draccus.parse(config_cls, config_file, args=cli_overrides)
+            loaded = draccus.parse(config_cls, config_file, args=cli_overrides)
+        if not explicit_inputs:
+            loaded._pretrained_input_features = loaded.input_features
+            loaded._pretrained_input_features_snapshot = deepcopy(loaded.input_features)
+        return loaded
