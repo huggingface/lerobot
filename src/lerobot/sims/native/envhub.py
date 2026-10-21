@@ -154,9 +154,9 @@ def _load_hub_module(hub_path: str, trust_remote_code: bool, hub_cache_dir: str 
     return repo_id, _MODULES[key]
 
 
-def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: Any | None) -> Any:
+def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: Any | None, **kwargs: Any) -> Any:
     """
-    Ensure module exposes make_env and call it.
+    Ensure module exposes make_env and call it, with ``kwargs`` as the repository's own options.
     """
     if not hasattr(module, "make_env"):
         raise AttributeError(
@@ -165,9 +165,9 @@ def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: Any | No
     entry_fn = module.make_env
     # Only pass cfg if it's not None (i.e., when an EnvConfig was provided, not a string hub ID)
     if cfg is not None:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
+        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg, **kwargs)
     else:
-        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs)
+        return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, **kwargs)
 
 
 def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorEnv]]:
@@ -215,18 +215,20 @@ def create_envhub_envs(
     hub_path: str,
     trust_remote_code: bool = False,
     hub_cache_dir: str | None = None,
+    make_env_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, dict[int, Any]]:
-    """Serve the worlds of a Hub repository's ``make_env``.
+    """Serve the worlds of a Hub repository's ``make_env``, called with ``make_env_kwargs``.
 
     ``task`` is unused: suites and task ids come from the repository, and clients select them.
     """
     _, module = _load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
-    result = _call_make_env(module, n_envs=n_envs, use_async_envs=False, cfg=None)
+    options = make_env_kwargs or {}
+    result = _call_make_env(module, n_envs=n_envs, use_async_envs=False, cfg=None, **options)
     if isinstance(result, gym.Env):
         # A single env has no reusable factory, so each world calls make_env again.
         suite = getattr(result.spec, "id", None) if result.spec else None
         result.close()
-        fns = [lambda: _call_make_env(module, n_envs=1, use_async_envs=False, cfg=None)] * n_envs
+        fns = [lambda: _call_make_env(module, n_envs=1, use_async_envs=False, cfg=None, **options)] * n_envs
         return {suite or "hub_env": {0: env_cls(fns)}}
     return {
         suite: {task_id: env_cls(_world_factories(vec, n_envs)) for task_id, vec in tasks.items()}

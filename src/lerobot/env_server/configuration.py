@@ -30,7 +30,7 @@ ENVHUB_CONFIG: dict[str, Any] = {
         "fps": None,
         "control": None,
         "semantics": None,
-        "kwargs": {"hub_path": "", "trust_remote_code": False},
+        "kwargs": {"hub_path": "", "trust_remote_code": False, "make_env_kwargs": {}},
         "state_names": None,
         "action_names": None,
         "gripper_indices": None,
