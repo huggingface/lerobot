@@ -1595,16 +1595,25 @@ class FineARTVLAPolicy(PI05Policy):
 
     @torch.no_grad()
     def predict_action_chunk(
-        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         marks = batch.get(OBS_LANGUAGE_CAUSAL_MARKS)
         if marks is None:
-            return super().predict_action_chunk(batch, **kwargs)
-        return self._predict_action_chunk_with_marks(batch, marks, **kwargs)
+            return super().predict_action_chunk(batch, noise=noise, **kwargs)
+        return self._predict_action_chunk_with_marks(batch, marks, noise=noise, **kwargs)
 
     @torch.no_grad()
     def _predict_action_chunk_with_marks(
-        self, batch: dict[str, Tensor], marks: Tensor, **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        marks: Tensor,
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         """Base ``predict_action_chunk`` plus causal marks on the generated-subtask span."""
         self.eval()
@@ -1612,7 +1621,7 @@ class FineARTVLAPolicy(PI05Policy):
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
         actions = self.model.sample_actions(
-            images, img_masks, tokens, masks, lang_causal_marks=marks, **kwargs
+            images, img_masks, tokens, masks, lang_causal_marks=marks, noise=noise, **kwargs
         )
         if self.config.output_features is None:
             raise ValueError("output_features must be configured before computing actions")
