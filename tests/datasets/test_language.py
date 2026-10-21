@@ -11,10 +11,8 @@ import pyarrow as pa  # noqa: E402
 
 from lerobot.datasets import LeRobotDataset  # noqa: E402
 from lerobot.datasets.io_utils import write_info  # noqa: E402
-from lerobot.datasets.language import (  # noqa: E402
+from lerobot.datasets.language import (
     EVENT_ONLY_STYLES,
-    LANGUAGE_EVENTS,
-    LANGUAGE_PERSISTENT,
     PERSISTENT_STYLES,
     STYLE_REGISTRY,
     VIEW_DEPENDENT_STYLES,
@@ -25,7 +23,9 @@ from lerobot.datasets.language import (  # noqa: E402
     language_persistent_arrow_type,
     validate_camera_field,
 )
+from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset  # noqa: E402
 from lerobot.datasets.utils import DEFAULT_DATA_PATH  # noqa: E402
+from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 
 
 def test_language_arrow_schema_has_expected_fields():
@@ -171,3 +171,16 @@ def test_lerobot_dataset_passes_language_columns_through(tmp_path, empty_lerobot
     assert first[LANGUAGE_EVENTS] == [event]
     assert second[LANGUAGE_PERSISTENT] == persistent
     assert second[LANGUAGE_EVENTS] == []
+
+    streamed = {
+        int(item["index"]): item
+        for item in StreamingLeRobotDataset(
+            repo_id=dataset.repo_id,
+            root=root,
+            shuffle=False,
+        )
+    }
+    assert streamed[0][LANGUAGE_PERSISTENT] == persistent
+    assert streamed[0][LANGUAGE_EVENTS] == [event]
+    assert streamed[1][LANGUAGE_PERSISTENT] == persistent
+    assert streamed[1][LANGUAGE_EVENTS] == []

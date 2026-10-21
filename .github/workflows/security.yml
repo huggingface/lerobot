@@ -14,8 +14,6 @@
 
 # This workflow handles secret scanning using TruffleHog to detect sensitive information in the codebase.
 name: Security
-permissions:
-  contents: read
 
 on:
   # Allows running this workflow manually from the Actions tab
@@ -36,9 +34,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   # This job runs TruffleHog to scan the full history of the repository for secrets.
   trufflehog:
+    permissions:
+      contents: read
     name: Secret Leaks Scan
     runs-on: ubuntu-latest
     steps:

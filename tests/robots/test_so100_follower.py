@@ -66,7 +66,7 @@ def follower(tmp_path):
 
     with (
         patch(
-            "lerobot.robots.so_follower.so_follower.FeetechMotorsBus",
+            "lerobot.robots.so_follower.so_follower.SerialMotorsBus",
             side_effect=_bus_side_effect,
         ),
         patch.object(SO100Follower, "configure", lambda self: None),
@@ -97,6 +97,19 @@ def test_get_observation(follower):
 
     for idx, motor in enumerate(follower.bus.motors, 1):
         assert obs[f"{motor}.pos"] == idx
+
+
+def test_observation_keys_match_features_with_mock_camera(follower):
+    # `observation_features` and `get_observation()` must use the same depth predicate:
+    # a bare mock camera is not a `DepthCamera`, so neither side may advertise `<cam>_depth`.
+    cam = MagicMock(name="CameraMock")
+    cam.height, cam.width = 480, 640
+    follower.cameras = {"wrist": cam}
+    follower.connect()
+
+    obs = follower.get_observation()
+    assert set(obs) == set(follower.observation_features)
+    assert "wrist" in obs and "wrist_depth" not in obs
 
 
 def test_get_observation_uses_read_retries(follower):

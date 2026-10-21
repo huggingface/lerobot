@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -25,9 +26,11 @@ from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PR
 
 from .batch_processor import AddBatchDimensionProcessorStep
 from .converters import (
+    batch_to_transition,
     observation_to_transition,
     policy_action_to_transition,
     robot_action_observation_to_transition,
+    transition_to_batch,
     transition_to_observation,
     transition_to_policy_action,
     transition_to_robot_action,
@@ -40,6 +43,7 @@ from .pipeline import (
     ProcessorStep,
     RobotProcessorPipeline,
 )
+from .relative_action_processor import AbsoluteActionsProcessorStep, RelativeActionsProcessorStep
 from .rename_processor import RenameObservationsProcessorStep
 
 
@@ -112,6 +116,11 @@ def make_default_policy_processor_steps(
         normalizer_device: Device passed to `NormalizerProcessorStep` (some policies pin
             their normalization stats to the policy device; most leave it unset).
     """
+    if config.device is None or config.input_features is None or config.output_features is None:
+        raise ValueError(
+            "PreTrainedConfig.device, input_features and output_features must be resolved before "
+            "building the default policy processor steps."
+        )
     return DefaultPolicyProcessorSteps(
         rename_observations=RenameObservationsProcessorStep(rename_map={}),
         add_batch_dim=AddBatchDimensionProcessorStep(),
@@ -173,3 +182,54 @@ def make_default_pre_post_processors(
         input_steps=[s.rename_observations, s.add_batch_dim, s.to_device, s.normalize],
         output_steps=[s.unnormalize, s.to_cpu],
     )
+
+
+def _reconnect_relative_absolute_steps(
+    preprocessor: PolicyProcessorPipeline, postprocessor: PolicyProcessorPipeline
+) -> None:
+    """Wire AbsoluteActionsProcessorStep.relative_step to the RelativeActionsProcessorStep after deserialization.
+
+    After a policy is loaded from disk, the preprocessor and postprocessor are reconstructed
+    independently from their configs. AbsoluteActionsProcessorStep needs a live reference to
+    the RelativeActionsProcessorStep so it can read the cached state at inference time.
+    That reference is not serializable, so we re-establish it here after loading.
+    """
+    relative_step = next((s for s in preprocessor.steps if isinstance(s, RelativeActionsProcessorStep)), None)
+    if relative_step is None:
+        return
+    for step in postprocessor.steps:
+        if isinstance(step, AbsoluteActionsProcessorStep) and step.relative_step is None:
+            step.relative_step = relative_step
+
+
+def load_pretrained_policy_processors(
+    pretrained_path: str | Path,
+    *,
+    revision: str | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """Load a serialized policy pipeline pair and re-establish links that do not survive saving."""
+    preprocessor = PolicyProcessorPipeline.from_pretrained(
+        pretrained_model_name_or_path=pretrained_path,
+        config_filename=preprocessor_config_filename,
+        overrides=preprocessor_overrides,
+        to_transition=batch_to_transition,
+        to_output=transition_to_batch,
+        revision=revision,
+    )
+    postprocessor = PolicyProcessorPipeline.from_pretrained(
+        pretrained_model_name_or_path=pretrained_path,
+        config_filename=postprocessor_config_filename,
+        overrides=postprocessor_overrides,
+        to_transition=policy_action_to_transition,
+        to_output=transition_to_policy_action,
+        revision=revision,
+    )
+    _reconnect_relative_absolute_steps(preprocessor, postprocessor)
+    return preprocessor, postprocessor

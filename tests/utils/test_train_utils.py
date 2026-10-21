@@ -15,24 +15,27 @@
 # limitations under the License.
 
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
+import torch
 
+from lerobot.common import train_utils
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
-    load_training_batch_size,
-    load_training_num_processes,
-    load_training_state,
-    load_training_step,
+    load_training_metadata,
     push_checkpoint_to_hub,
-    save_checkpoint,
+    save_training_metadata,
     save_training_state,
-    save_training_step,
     should_save_checkpoint,
     update_last_checkpoint,
 )
+from lerobot.configs.default import DatasetConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
@@ -43,6 +46,10 @@ from lerobot.utils.constants import (
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
+from lerobot.utils.import_utils import _datasets_available
+
+if TYPE_CHECKING or _datasets_available:
+    from lerobot.scripts.lerobot_train import make_dataloaders
 
 
 def test_get_step_identifier():
@@ -69,38 +76,23 @@ def test_get_step_checkpoint_dir():
     assert step_dir == output_dir / CHECKPOINTS_DIR / "000005"
 
 
-def test_save_load_training_step(tmp_path):
-    save_training_step(5000, tmp_path)
+def make_cfg(batch_size: int = 32) -> TrainPipelineConfig:
+    cfg = TrainPipelineConfig(dataset=DatasetConfig(repo_id="lerobot/dummy"), batch_size=batch_size)
+    cfg.parallelism.resolve(1)
+    return cfg
+
+
+def test_save_training_metadata_writes_the_step_file(tmp_path):
+    save_training_metadata(5000, tmp_path, make_cfg())
     assert (tmp_path / TRAINING_STEP).is_file()
 
 
-def test_load_training_step(tmp_path):
-    step = 5000
-    save_training_step(step, tmp_path)
-    loaded_step = load_training_step(tmp_path)
-    assert loaded_step == step
-
-
-def test_save_training_state_records_num_processes(tmp_path, optimizer, scheduler):
-    save_training_state(tmp_path, 10, optimizer, scheduler, num_processes=4)
-    assert load_training_num_processes(tmp_path) == 4
-
-
-def test_load_training_num_processes_absent_returns_none(tmp_path, optimizer, scheduler):
-    # Checkpoints written before the world size was recorded must still load (back-compat).
-    save_training_state(tmp_path, 10, optimizer, scheduler)
-    assert load_training_num_processes(tmp_path) is None
-
-
-def test_save_training_state_records_batch_size(tmp_path, optimizer, scheduler):
-    save_training_state(tmp_path, 10, optimizer, scheduler, batch_size=32)
-    assert load_training_batch_size(tmp_path) == 32
-
-
-def test_load_training_batch_size_absent_returns_none(tmp_path, optimizer, scheduler):
-    # Checkpoints written before the batch size was recorded must still load (back-compat).
-    save_training_state(tmp_path, 10, optimizer, scheduler)
-    assert load_training_batch_size(tmp_path) is None
+def test_save_training_state_records_topology(tmp_path, optimizer, scheduler):
+    save_training_state(tmp_path, 10, make_cfg(batch_size=32), optimizer, scheduler)
+    metadata = load_training_metadata(tmp_path / TRAINING_STATE_DIR)
+    assert metadata["step"] == 10
+    assert metadata["dp_world_size"] == 1
+    assert metadata["batch_size"] == 32
 
 
 def test_update_last_checkpoint(tmp_path):
@@ -112,32 +104,12 @@ def test_update_last_checkpoint(tmp_path):
     assert last_checkpoint.resolve() == checkpoint
 
 
-@patch("lerobot.common.train_utils.save_training_state")
-def test_save_checkpoint(mock_save_training_state, tmp_path, optimizer):
-    policy = Mock()
-    cfg = Mock()
-    save_checkpoint(tmp_path, 10, cfg, policy, optimizer)
-    policy.save_pretrained.assert_called_once()
-    cfg.save_pretrained.assert_called_once()
-    mock_save_training_state.assert_called_once()
+# save_checkpoint round-trips (all formats, real policies) live in
+# tests/common/test_checkpoint_save_resume.py.
 
 
-@patch("lerobot.common.train_utils.save_training_state")
-def test_save_checkpoint_peft(mock_save_training_state, tmp_path, optimizer):
-    policy = Mock()
-    policy.config = Mock()
-    policy.config.save_pretrained = Mock()
-    cfg = Mock()
-    cfg.use_peft = True
-    save_checkpoint(tmp_path, 10, cfg, policy, optimizer)
-    policy.save_pretrained.assert_called_once()
-    cfg.save_pretrained.assert_called_once()
-    policy.config.save_pretrained.assert_called_once()
-    mock_save_training_state.assert_called_once()
-
-
-def test_save_training_state(tmp_path, optimizer, scheduler):
-    save_training_state(tmp_path, 10, optimizer, scheduler)
+def test_save_training_state_layout(tmp_path, optimizer, scheduler):
+    save_training_state(tmp_path, 10, make_cfg(), optimizer, scheduler)
     assert (tmp_path / TRAINING_STATE_DIR).is_dir()
     assert (tmp_path / TRAINING_STATE_DIR / TRAINING_STEP).is_file()
     assert (tmp_path / TRAINING_STATE_DIR / RNG_STATE).is_file()
@@ -146,27 +118,8 @@ def test_save_training_state(tmp_path, optimizer, scheduler):
     assert (tmp_path / TRAINING_STATE_DIR / SCHEDULER_STATE).is_file()
 
 
-def test_save_load_training_state(tmp_path, optimizer, scheduler):
-    save_training_state(tmp_path, 10, optimizer, scheduler)
-    loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(tmp_path, optimizer, scheduler)
-    assert loaded_step == 10
-    assert loaded_optimizer is optimizer
-    assert loaded_scheduler is scheduler
-
-
-def test_load_training_state_skip_optimizer(tmp_path, optimizer, scheduler):
-    # FSDP loads optimizer separately (after accelerator.prepare)
-    # load_training_state(load_optimizer=False) must restore step + scheduler but leave the
-    # optimizer untouched and never touch the on-disk optimizer state.
-    save_training_state(tmp_path, 10, optimizer, scheduler)
-    with patch("lerobot.common.train_utils.load_optimizer_state") as mock_load_optimizer_state:
-        loaded_step, loaded_optimizer, loaded_scheduler = load_training_state(
-            tmp_path, optimizer, scheduler, load_optimizer=False
-        )
-    mock_load_optimizer_state.assert_not_called()
-    assert loaded_step == 10
-    assert loaded_optimizer is optimizer
-    assert loaded_scheduler is scheduler
+# The two-phase resume (resume_before_prepare / resume_after_prepare) is covered in
+# tests/common/test_checkpoint_save_resume.py with real policies and optimizer state.
 
 
 def test_push_checkpoint_to_hub_creates_repo_and_uploads(tmp_path, monkeypatch):
@@ -206,8 +159,6 @@ def test_push_checkpoint_to_hub_defaults_to_hub_default_visibility(tmp_path, mon
 
 
 def test_resolve_resume_checkpoint_downloads_latest_and_links(tmp_path, monkeypatch):
-    from lerobot.common import train_utils
-
     out = tmp_path / "run"
 
     def fake_snapshot_download(repo_id, repo_type, allow_patterns, local_dir):
@@ -231,8 +182,88 @@ def test_resolve_resume_checkpoint_downloads_latest_and_links(tmp_path, monkeypa
 
 
 def test_resolve_resume_checkpoint_raises_without_checkpoints(tmp_path, monkeypatch):
-    from lerobot.common import train_utils
-
     monkeypatch.setattr("lerobot.common.train_utils.find_latest_hub_checkpoint", lambda repo_id: None)
     with pytest.raises(FileNotFoundError, match="No checkpoint"):
         train_utils.resolve_resume_checkpoint("u/run", tmp_path / "run")
+
+
+@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+@pytest.mark.parametrize("frames,drop_first,drop_last,max_eval_samples", [(12, 2, 3, 3), (64, 0, 32, 0)])
+def test_dataloaders_filter_boundaries_without_consuming_policy_rng(
+    frames, drop_first, drop_last, max_eval_samples
+):
+    policy = SimpleNamespace(drop_n_first_frames=drop_first, drop_n_last_frames=drop_last)
+    expected = list(range(drop_first, frames - drop_last))
+
+    class Dataset(torch.utils.data.Dataset):
+        episodes = [0]
+        absolute_to_relative_idx = None
+        meta = SimpleNamespace(
+            episodes={"dataset_from_index": [0], "dataset_to_index": [frames]},
+            has_language_columns=False,
+        )
+        hf_dataset = SimpleNamespace(
+            data=SimpleNamespace(column=lambda name: SimpleNamespace(to_numpy=lambda: np.zeros(frames)))
+        )
+
+        def __len__(self):
+            return frames
+
+        def __getitem__(self, index):
+            return index
+
+    cfg = SimpleNamespace(
+        trainable_config=policy,
+        dataset=SimpleNamespace(streaming=False),
+        resume=False,
+        seed=42,
+        num_workers=0,
+        batch_size=2,
+        prefetch_factor=None,
+        persistent_workers=False,
+        dataloader_multiprocessing_context=None,
+        max_eval_samples=max_eval_samples,
+    )
+    train, evaluation = make_dataloaders(cfg, Dataset(), Dataset(), 0, SimpleNamespace(device_type="cpu"))
+    assert sorted(train.sampler) == expected
+    rng = torch.get_rng_state().clone()
+    next(iter(train))
+    assert torch.equal(rng, torch.get_rng_state())
+    assert torch.cat(list(evaluation)).tolist() == (
+        expected[:max_eval_samples] if max_eval_samples else expected
+    )
+    assert torch.equal(rng, torch.get_rng_state())
+
+
+@pytest.mark.skipif(not _datasets_available, reason="requires datasets")
+@pytest.mark.parametrize(("num_workers", "expected"), [(0, 0), (1, 1), (4, 4), (16, 8)])
+def test_streaming_dataloader_uses_num_workers_capped_by_rank_episodes(num_workers, expected):
+    class Dataset(torch.utils.data.IterableDataset):
+        meta = SimpleNamespace(has_language_columns=False)
+
+        def num_episodes_for_rank(self, rank, world_size):
+            return 8
+
+        def num_frames_for_rank(self, rank, world_size, num_workers):
+            assert num_workers <= 8
+            return 80
+
+        def __iter__(self):
+            return iter(())
+
+    cfg = SimpleNamespace(
+        trainable_config=None,
+        dataset=SimpleNamespace(streaming=True),
+        resume=False,
+        seed=42,
+        num_workers=num_workers,
+        batch_size=2,
+        prefetch_factor=2,
+        persistent_workers=False,
+        dataloader_multiprocessing_context=None,
+        max_eval_samples=0,
+    )
+    parallel_dims = SimpleNamespace(device_type="cpu", dp_rank=0, dp_world_size=1)
+    train, _ = make_dataloaders(cfg, Dataset(), None, 0, parallel_dims)
+
+    assert train.num_workers == expected

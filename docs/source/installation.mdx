@@ -73,6 +73,8 @@ LeRobot uses [TorchCodec](https://github.com/meta-pytorch/torchcodec) for video 
 
 > [!NOTE]
 > **Platform support:** TorchCodec is **not available** on macOS Intel (x86_64), Linux ARM (aarch64, arm64, armv7l), or Windows with PyTorch < 2.8. On these platforms, LeRobot automatically falls back to `pyav` — so you do not need to install `ffmpeg` and can skip to Step 3.
+>
+> **Jetson (aarch64 + CUDA):** the `pyav` fallback above means no GPU-accelerated video decode by default. [`docker/Dockerfile.jetson`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.jetson) builds `torch`/`torchcodec` from source with CUDA support for JetPack 6.2 — community-maintained, see [`ravediamond/lerobot-jetson`](https://github.com/ravediamond/lerobot-jetson) for the prebuilt image and issue [#819](https://github.com/huggingface/lerobot/issues/819) for background.
 
 If your platform supports TorchCodec, install `ffmpeg` using one of the methods below:
 
@@ -283,7 +285,7 @@ pip install -e ".[aloha]" # or "[pusht]" for example
 
 ### Motor Control
 
-For Koch v1.1 install the Dynamixel SDK, for SO100/SO101/Moss install the Feetech SDK.
+Install the extra for your motors: `dynamixel` for Koch v1.1, `feetech` for SO100/SO101/Moss. Both talk to the motors through [rustypot](https://github.com/pollen-robotics/rustypot).
 
 ```bash
 pip install -e ".[feetech]" # or "[dynamixel]" for example

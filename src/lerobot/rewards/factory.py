@@ -16,6 +16,7 @@
 
 import importlib
 import logging
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -104,7 +105,9 @@ def make_reward_model_config(reward_type: str, **kwargs) -> RewardModelConfig:
             raise ValueError(f"Reward model type '{reward_type}' is not available.") from e
 
 
-def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel:
+def make_reward_model(
+    cfg: RewardModelConfig, pretrained_path: str | Path | None = None, **kwargs
+) -> PreTrainedRewardModel:
     """
     Instantiate a reward model from its configuration.
 
@@ -112,6 +115,8 @@ def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel
         cfg: The configuration for the reward model to be created. If
              `cfg.pretrained_path` is set, the model will be loaded with weights
              from that path.
+        pretrained_path: Load the weights from here instead of `cfg.pretrained_path`, which keeps
+            naming the model this one was fine-tuned from once it is built. Used when resuming.
         **kwargs: Additional keyword arguments forwarded to the model constructor
             (e.g., ``dataset_stats``, ``dataset_meta``).
 
@@ -121,6 +126,10 @@ def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel
     reward_cls = get_reward_model_class(cfg.type)
 
     kwargs["config"] = cfg
+    # As in `make_policy`: the weight source while building, the parent again afterwards.
+    parent_path = cfg.pretrained_path
+    if pretrained_path is not None:
+        cfg.pretrained_path = str(pretrained_path)
 
     if cfg.pretrained_path:
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
@@ -128,6 +137,9 @@ def make_reward_model(cfg: RewardModelConfig, **kwargs) -> PreTrainedRewardModel
         reward_model = reward_cls.from_pretrained(**kwargs)
     else:
         reward_model = reward_cls(**kwargs)
+    if pretrained_path is not None:
+        cfg.pretrained_path = parent_path
+        reward_model.config.pretrained_path = parent_path
 
     reward_model.to(cfg.device)
     assert isinstance(reward_model, torch.nn.Module)
