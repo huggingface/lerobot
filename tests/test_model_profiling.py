@@ -205,6 +205,8 @@ def test_recipes_normalize_dataset_without_quantile_stats(benchmark, policy):
 
 
 def test_flux_preparation_uses_command_deltas_not_raw_action_stats(benchmark, monkeypatch, tmp_path):
+    pytest.importorskip("diffusers")
+    pytest.importorskip("transformers")
     import draccus
     import numpy as np
     from datasets import Dataset
@@ -283,6 +285,7 @@ def test_unavailable_checkpoint_fails_before_policy_allocation(benchmark, monkey
 
 
 def test_xvla_recipe_loads_required_backbone_architecture(benchmark, monkeypatch, tmp_path):
+    pytest.importorskip("transformers")
     import draccus
 
     architecture = tmp_path / "config.json"

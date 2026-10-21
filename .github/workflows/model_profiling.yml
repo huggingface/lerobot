@@ -89,7 +89,7 @@ jobs:
           if-no-files-found: warn
 
   publish:
-    if: always() && needs.matrix.result == 'success'
+    if: always() && !cancelled() && needs.matrix.result == 'success'
     needs: [matrix, profile]
     runs-on: ubuntu-latest
     permissions:
