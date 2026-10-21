@@ -83,6 +83,7 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "snapshot_download", download)
     monkeypatch.setattr(launcher.tempfile, "gettempdir", lambda: str(tmp_path))
     argv = ["lerobot-env-server", "--docker", "--envhub=User/My-Env@v1", "--set", "sim.fps=50", "--build"]
+    argv[-1:-1] = ["--set", "sim.kwargs.make_env_kwargs={episode_length: 900}"]
     monkeypatch.setattr(sys, "argv", argv)
     lerobot_env_server.main()
     command, options = calls[-1]
@@ -94,7 +95,11 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     assert (Path(env["ENVHUB_DIR"]) / "env.py").is_file() and Path(env["ENVHUB_DIR"]) != snapshot
     # The server loads the copy baked into the image.
     sim = yaml.safe_load(Path(env["SIM_CONFIG"]).read_text())["sim"]
-    assert sim["kwargs"] == {"hub_path": launcher.ENVHUB_IMAGE_DIR, "trust_remote_code": True}
+    assert sim["kwargs"] == {
+        "hub_path": launcher.ENVHUB_IMAGE_DIR,
+        "trust_remote_code": True,
+        "make_env_kwargs": {"episode_length": 900},
+    }
     assert sim["fps"] == 50
 
 

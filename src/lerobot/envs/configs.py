@@ -186,6 +186,8 @@ class HubEnvConfig(EnvConfig):
 
     hub_path: str | None = None  # required: e.g., "username/repo" or "username/repo@branch:file.py"
     trust_remote_code: bool = False
+    # Keyword arguments of the repository's make_env, e.g. '{"episode_length": 9000}'.
+    make_env_kwargs: dict[str, Any] = field(default_factory=dict)
 
     @property
     def gym_kwargs(self) -> dict:
@@ -199,7 +201,11 @@ class HubEnvConfig(EnvConfig):
         return {
             "type": "envhub",
             "task": "",
-            "kwargs": {"hub_path": self.hub_path, "trust_remote_code": self.trust_remote_code},
+            "kwargs": {
+                "hub_path": self.hub_path,
+                "trust_remote_code": self.trust_remote_code,
+                "make_env_kwargs": self.make_env_kwargs,
+            },
         }
 
 
@@ -613,6 +619,8 @@ class IsaaclabArenaEnv(HubEnvConfig):
         assert self.hub_path is not None
         if self.endpoint is not None:
             raise ValueError(f"--env.type={self.type} runs in-process only; --env.endpoint is not supported")
+        if self.make_env_kwargs:
+            raise ValueError(f"--env.type={self.type} is configured by its own options, not make_env_kwargs")
         return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
 
     def get_env_processors(self):
@@ -683,6 +691,8 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
         assert self.hub_path is not None
         if self.endpoint is not None:
             raise ValueError(f"--env.type={self.type} runs in-process only; --env.endpoint is not supported")
+        if self.make_env_kwargs:
+            raise ValueError(f"--env.type={self.type} is configured by its own options, not make_env_kwargs")
         return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
 
 

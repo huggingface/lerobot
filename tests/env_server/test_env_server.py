@@ -777,6 +777,40 @@ def test_envhub_backend_serves_a_hub_repository(tmp_path, monkeypatch):
         backend_module.Backend(config, num_envs=1)
 
 
+def test_envhub_make_env_takes_the_options_of_the_command(tmp_path, monkeypatch):
+    from lerobot.envs.configs import HubEnvConfig
+    from lerobot.sims import backend as backend_module
+    from lerobot.sims.native import envhub
+
+    # The repository's make_env sizes its camera from an option of its own.
+    env_file = tmp_path / "env.py"
+    env_file.write_text(
+        _ENVHUB_ENV
+        + """
+class SizedReach(Reach):
+    def __init__(self, size):
+        self.observation_space = spaces.Dict(
+            {
+                "pixels": spaces.Dict({"front": spaces.Box(0, 255, (size, size, 3), np.uint8)}),
+                "agent_pos": spaces.Box(-10, 10, (2,), np.float32),
+            }
+        )
+
+
+def make_env(n_envs=1, use_async_envs=False, size=8):
+    return {"reach_suite": {0: gym.vector.SyncVectorEnv([lambda: SizedReach(size)] * n_envs)}}
+"""
+    )
+    monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
+    config = HubEnvConfig(hub_path="user/reach", trust_remote_code=True, make_env_kwargs={"size": 4})
+    backend = backend_module.Backend(backend_module.BackendConfig(**config.sim_settings()), num_envs=1)
+    try:
+        shapes = {f.name: f.shape for f in backend.descriptor().features}
+        assert shapes["observation.images.front"] == (4, 4, 3)
+    finally:
+        backend.close()
+
+
 def test_envhub_backend_serves_a_local_directory(tmp_path, monkeypatch):
     from lerobot.sims import backend as backend_module
     from lerobot.sims.native import envhub
