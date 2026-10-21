@@ -132,16 +132,17 @@ def require_package(pkg_name: str, extra: str, import_name: str | None = None) -
 _lancedb_available = is_package_available("lancedb")
 _transformers_available = is_package_available("transformers")
 _peft_available = is_package_available("peft")
+_accelerate_available = is_package_available("accelerate")
 _scipy_available = is_package_available("scipy")
 _diffusers_available = is_package_available("diffusers")
 _natten_available = is_package_available("natten")
-_torchdiffeq_available = is_package_available("torchdiffeq")
+_liger_kernel_available = is_package_available("liger-kernel", import_name="liger_kernel")
+_kernels_available = is_package_available("kernels")
 
 # Hardware SDKs
 _serial_available = is_package_available("pyserial", import_name="serial")
 _deepdiff_available = is_package_available("deepdiff")
-_dynamixel_sdk_available = is_package_available("dynamixel-sdk", import_name="dynamixel_sdk")
-_feetech_sdk_available = is_package_available("feetech-servo-sdk", import_name="scservo_sdk")
+_rustypot_available = is_package_available("rustypot")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
 _can_available = is_package_available("python-can", "can")
 _motorbridge_available = is_package_available("motorbridge")
@@ -162,6 +163,8 @@ _hidapi_available = is_package_available("hidapi", import_name="hid")
 _datasets_available = is_package_available("datasets")
 _pandas_available = is_package_available("pandas")
 _faker_available = is_package_available("faker")
+_msgpack_available = is_package_available("msgpack")
+_zenoh_available = is_package_available("eclipse-zenoh", import_name="zenoh")
 
 # Video encoding / decoding
 _av_available = is_package_available("av")
@@ -171,9 +174,7 @@ _pynput_available = is_package_available("pynput")
 _pygame_available = is_package_available("pygame")
 _qwen_vl_utils_available = is_package_available("qwen-vl-utils", import_name="qwen_vl_utils")
 _grpc_available = is_package_available("grpcio", import_name="grpc")
-_wallx_deps_available = (
-    _transformers_available and _peft_available and _torchdiffeq_available and _qwen_vl_utils_available
-)
+_wallx_deps_available = _transformers_available and _peft_available and _qwen_vl_utils_available
 
 
 def make_device_from_device_class(config: ChoiceRegistry) -> Any:

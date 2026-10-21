@@ -62,6 +62,7 @@ class _Harness(torch.nn.Module):
         self.gradient_checkpointing_enabled = False
         self.config = _Config()
 
+    checkpoint_vision_embeddings = PI05Pytorch.checkpoint_vision_embeddings
     _apply_checkpoint = PI05Pytorch._apply_checkpoint
     _embed_one_image = PI05Pytorch._embed_one_image
     _embed_images = PI05Pytorch._embed_images
