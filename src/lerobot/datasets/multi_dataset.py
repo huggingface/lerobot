@@ -48,6 +48,8 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         tolerances_s: dict | None = None,
         download_videos: bool = True,
         video_backend: str | None = None,
+        *,
+        token: str | bool | None = None,
     ):
         super().__init__()
         self.repo_ids = repo_ids
@@ -65,6 +67,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 tolerance_s=self.tolerances_s[repo_id],
                 download_videos=download_videos,
                 video_backend=video_backend,
+                token=token,
             )
             for repo_id in repo_ids
         ]
@@ -123,7 +126,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
         NOTE: Fow now, this relies on a check in __init__ to make sure all sub-datasets have the same info.
         """
-        return self._datasets[0].meta.info["fps"]
+        return self._datasets[0].meta.info.fps
 
     @property
     def video(self) -> bool:
@@ -133,7 +136,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
         NOTE: Fow now, this relies on a check in __init__ to make sure all sub-datasets have the same info.
         """
-        return self._datasets[0].meta.info.get("video", False)
+        return len(self._datasets[0].meta.video_keys) > 0
 
     @property
     def features(self) -> datasets.Features:

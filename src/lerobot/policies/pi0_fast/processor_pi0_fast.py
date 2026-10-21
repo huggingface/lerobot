@@ -22,29 +22,20 @@ import numpy as np
 import torch
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     ActionTokenizerProcessorStep,
-    AddBatchDimensionProcessorStep,
-    DeviceProcessorStep,
-    NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
     RelativeActionsProcessorStep,
-    RenameObservationsProcessorStep,
     TokenizerProcessorStep,
-    UnnormalizerProcessorStep,
-    policy_action_to_transition,
-    transition_to_policy_action,
+    make_default_policy_processor_steps,
+    make_policy_processor_pipelines,
 )
-from lerobot.types import EnvTransition, TransitionKey
-from lerobot.utils.constants import (
-    OBS_STATE,
-    POLICY_POSTPROCESSOR_DEFAULT_NAME,
-    POLICY_PREPROCESSOR_DEFAULT_NAME,
-)
+from lerobot.utils.constants import OBS_STATE
 
 from .configuration_pi0_fast import PI0FastConfig
 
@@ -62,10 +53,14 @@ class Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
 
-        state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
+        observation = transition.get(TransitionKey.OBSERVATION)
+        state = observation.get(OBS_STATE) if observation is not None else None
         if state is None:
             raise ValueError("State is required for PI0Fast")
-        tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            raise ValueError("Complementary data is required for PI0Fast")
+        tasks = complementary_data.get(self.task_key)
         if tasks is None:
             raise ValueError("No task found in complementary data")
 
@@ -84,7 +79,7 @@ class Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(ProcessorStep):
             full_prompt = f"Task: {cleaned_text}, State: {state_str};\n"
             full_prompts.append(full_prompt)
 
-        transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
+        complementary_data[self.task_key] = full_prompts
         # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
         return transition
@@ -135,6 +130,8 @@ def make_pi0_fast_pre_post_processors(
         action_names=getattr(config, "action_feature_names", None),
     )
 
+    steps = make_default_policy_processor_steps(config, dataset_stats)
+
     # Pi0Fast order: relative → normalize → tokenize → model → unnormalize → absolute
     # This matches pi0/pi0.5: RelativeActionsProcessorStep runs first on raw absolute actions,
     # caching the raw state. NormalizerProcessorStep then normalizes the raw relative actions,
@@ -144,14 +141,10 @@ def make_pi0_fast_pre_post_processors(
     # before Pi0FastPrepareStateAndLanguageTokenizerProcessorStep, so the state tokenizer
     # continues to receive normalized state in [-1, 1] as expected.
     input_steps: list[ProcessorStep] = [
-        RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
-        AddBatchDimensionProcessorStep(),
+        steps.rename_observations,  # To mimic the same processor as pretrained one
+        steps.add_batch_dim,
         relative_step,
-        NormalizerProcessorStep(
-            features={**config.input_features, **config.output_features},
-            norm_map=config.normalization_mapping,
-            stats=dataset_stats,
-        ),
+        steps.normalize,
         Pi0FastPrepareStateAndLanguageTokenizerProcessorStep(max_state_dim=config.max_state_dim),
         TokenizerProcessorStep(
             tokenizer_name=config.text_tokenizer_name,
@@ -165,26 +158,13 @@ def make_pi0_fast_pre_post_processors(
             fast_skip_tokens=config.fast_skip_tokens,
             paligemma_tokenizer_name=config.text_tokenizer_name,
         ),
-        DeviceProcessorStep(device=config.device),
+        steps.to_device,
     ]
 
     output_steps: list[ProcessorStep] = [
-        UnnormalizerProcessorStep(
-            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
-        ),
+        steps.unnormalize,
         AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
-        DeviceProcessorStep(device="cpu"),
+        steps.to_cpu,
     ]
 
-    return (
-        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
-            steps=input_steps,
-            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
-        ),
-        PolicyProcessorPipeline[PolicyAction, PolicyAction](
-            steps=output_steps,
-            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        ),
-    )
+    return make_policy_processor_pipelines(input_steps=input_steps, output_steps=output_steps)

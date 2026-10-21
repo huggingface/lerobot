@@ -1,237 +1,142 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
-#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+# You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
 name: Model Profiling
 
 on:
   schedule:
     - cron: "0 0 * * 0"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - .github/workflows/model_profiling.yml
-      - src/lerobot/configs/train.py
-      - src/lerobot/scripts/lerobot_train.py
-      - src/lerobot/utils/model_profiling.py
-      - tests/test_model_profiling.py
   workflow_dispatch:
     inputs:
-      git_ref:
-        description: Git ref to profile when no commit SHA is provided
-        required: false
-        type: string
-        default: main
-      git_commit:
-        description: Optional exact commit SHA to profile
-        required: false
-        type: string
-        default: ""
       policies:
-        description: Optional comma-separated policy filter
-        required: false
+        description: Comma-separated policies (empty profiles every registered policy)
         type: string
         default: ""
-      profile_mode:
-        description: Torch profiler mode
-        required: false
+      mode:
+        description: Operations to profile
         type: choice
-        options:
-          - trace
-          - summary
-        default: trace
-      publish_results:
-        description: Publish results to the profiling dataset when a Hub token is available
-        required: false
+        options: [both, inference, training]
+        default: both
+      trace:
+        description: Collect a separate Torch trace after measuring latency
         type: boolean
-        default: true
-      results_repo:
-        description: Dataset repo name or fully qualified repo id
-        required: false
-        type: string
-        default: model-profiling-history
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.inputs.git_commit || github.event.inputs.git_ref || github.ref_name || github.run_id }}
-  cancel-in-progress: true
+  group: model-profiling-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  profile-models:
-    name: Weekly Model Profiling
-    runs-on:
-      group: aws-g6-4xlarge-plus
-    env:
-      HF_USER_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
-      PROFILE_MODE: ${{ github.event_name == 'pull_request' && 'summary' || github.event.inputs.profile_mode || 'trace' }}
-      POLICY_FILTER: ${{ github.event_name == 'pull_request' && 'act,diffusion,pi0,pi05,smolvla,groot,xvla,wall_x' || github.event.inputs.policies || '' }}
-      RESULTS_REPO: ${{ github.event.inputs.results_repo || 'model-profiling-history' }}
-      SHOULD_PUBLISH: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_results == 'true') }}
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      policies: ${{ steps.matrix.outputs.policies }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          lfs: true
-          ref: ${{ github.event.pull_request.head.sha || github.event.inputs.git_commit || github.event.inputs.git_ref || 'main' }}
-
-      - name: Pull GPU image
-        run: docker pull huggingface/lerobot-gpu:latest
-
-      - name: Run model profiling
+      - id: matrix
         env:
-          HOST_GIT_COMMIT: ${{ github.event.pull_request.head.sha || github.event.inputs.git_commit || github.sha }}
-          PROFILE_GIT_REF: ${{ github.head_ref || github.ref_name || github.event.inputs.git_ref || 'main' }}
-          PROFILE_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
-        run: |
-          set -eux
-          mkdir -p profiling-results
-          docker run --rm --gpus all \
-            --user "$(id -u):$(id -g)" \
-            --shm-size=16g \
-            -e HOME=/tmp/lerobot-home \
-            -e HF_HOME=/tmp/hf \
-            -e HF_LEROBOT_HOME=/tmp/hf-lerobot \
-            -e TORCH_HOME=/tmp/torch-home \
-            -e TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor-cache \
-            -e UV_PROJECT_ENVIRONMENT=/tmp/lerobot-venv \
-            -e UV_CACHE_DIR=/tmp/uv-cache \
-            -e UV_PYTHON_PREFERENCE=only-system \
-            -e XDG_DATA_HOME=/tmp/xdg-data \
-            -e XDG_CACHE_HOME=/tmp/xdg-cache \
-            -e HOST_GIT_COMMIT="${HOST_GIT_COMMIT}" \
-            -e PROFILE_GIT_REF="${PROFILE_GIT_REF}" \
-            -e PROFILE_PR_NUMBER="${PROFILE_PR_NUMBER}" \
-            -e HF_USER_TOKEN="${HF_USER_TOKEN}" \
-            -e HF_TOKEN="${HF_USER_TOKEN}" \
-            -e PROFILE_MODE="${PROFILE_MODE}" \
-            -e POLICY_FILTER="${POLICY_FILTER}" \
-            -e RESULTS_REPO="${RESULTS_REPO}" \
-            -e SHOULD_PUBLISH="${SHOULD_PUBLISH}" \
-            -v "${GITHUB_WORKSPACE}:/workspace" \
-            -w /workspace \
-            huggingface/lerobot-gpu:latest \
-            bash -c '
-              set -euxo pipefail
-              mkdir -p "${HOME}" "${HF_HOME}" "${HF_LEROBOT_HOME}" "${TORCH_HOME}" "${UV_CACHE_DIR}" "${XDG_CACHE_HOME}" "${XDG_DATA_HOME}" "${TORCHINDUCTOR_CACHE_DIR}"
-              rm -rf /tmp/lerobot-src
-              cp -a /workspace/. /tmp/lerobot-src
-              cd /tmp/lerobot-src
+          POLICIES: ${{ inputs.policies }}
+        run: echo "policies=$(python scripts/ci/model_profiling.py matrix)" >> "$GITHUB_OUTPUT"
 
-              if [[ -n "${HF_USER_TOKEN:-}" ]]; then
-                hf auth login --token "${HF_USER_TOKEN}" --add-to-git-credential 2>/dev/null || true
-              fi
-
-              policies_to_run=()
-              if [[ -n "${POLICY_FILTER}" ]]; then
-                IFS="," read -ra policies_to_run <<< "${POLICY_FILTER}"
-              else
-                policies_to_run=(act diffusion groot multi_task_dit pi0 pi0_fast pi05 smolvla wall_x xvla)
-              fi
-
-              policy_extras() {
-                case "$1" in
-                  act) ;;
-                  diffusion) echo "diffusion" ;;
-                  groot) echo "groot" ;;
-                  multi_task_dit) echo "multi_task_dit" ;;
-                  pi0|pi0_fast|pi05) echo "pi" ;;
-                  smolvla) echo "smolvla" ;;
-                  wall_x) echo "wallx" ;;
-                  xvla) echo "xvla" ;;
-                  *)
-                    echo "Unknown profiling policy $1" >&2
-                    return 1
-                    ;;
-                esac
-              }
-
-              # Policies whose dep-install may fail due to environment constraints
-              # (e.g. groot requires compiling flash-attn, which needs nvcc; the CI
-              # image only ships the CUDA runtime). Install failures for these are
-              # logged as warnings and do not fail the job. See the TODO next to
-              # `lerobot[groot]` in pyproject.toml.
-              is_install_failure_tolerated() {
-                case "$1" in
-                  groot) return 0 ;;
-                  *) return 1 ;;
-                esac
-              }
-
-              overall_status=0
-              for raw_policy in "${policies_to_run[@]}"; do
-                policy="$(echo "${raw_policy}" | xargs)"
-                [[ -z "${policy}" ]] && continue
-
-                echo "::group::Profile ${policy}"
-
-                extra="$(policy_extras "${policy}")" || { overall_status=1; echo "::endgroup::"; continue; }
-
-                # Fresh, isolated dependency resolution per policy so that
-                # incompatible extras (e.g. flash-attn for groot) never block
-                # the rest of the matrix.
-                sync_cmd=(uv sync --locked --extra training --extra test)
-                if [[ -n "${extra}" ]]; then
-                  sync_cmd+=(--extra "${extra}")
-                fi
-                # flash-attn does not declare torch as a build-time dep, so its
-                # isolated build env fails with ModuleNotFoundError. Torch is a
-                # core lerobot dep and is already resolved here, so we disable
-                # build isolation for flash-attn specifically.
-                sync_cmd+=(--no-build-isolation-package flash-attn)
-                if ! "${sync_cmd[@]}"; then
-                  if is_install_failure_tolerated "${policy}"; then
-                    echo "::warning::Dependency install failed for ${policy} (known-fragile); skipping."
-                  else
-                    echo "Dependency install failed for ${policy}; skipping." >&2
-                    overall_status=1
-                  fi
-                  echo "::endgroup::"
-                  continue
-                fi
-
-                cmd=(
-                  uv run python -m lerobot.utils.model_profiling
-                  --output_dir=/workspace/profiling-results
-                  --hub_org=lerobot
-                  --results_repo="${RESULTS_REPO}"
-                  --profile_mode="${PROFILE_MODE}"
-                  --git_commit="${HOST_GIT_COMMIT}"
-                  --git_ref="${PROFILE_GIT_REF}"
-                  --pr_number="${PROFILE_PR_NUMBER}"
-                  --policies "${policy}"
-                )
-                if [[ "${SHOULD_PUBLISH}" == "true" && -n "${HF_USER_TOKEN:-}" ]]; then
-                  cmd+=(--publish)
-                fi
-
-                if ! "${cmd[@]}"; then
-                  echo "Profiling failed for ${policy}." >&2
-                  overall_status=1
-                fi
-
-                echo "::endgroup::"
-              done
-
-              exit "${overall_status}"
-            '
-
-      - name: Upload profiling artifacts
-        if: always()
-        uses: actions/upload-artifact@v4 # zizmor: ignore[unpinned-uses]
+  profile:
+    needs: matrix
+    runs-on:
+      group: aws-g6-4xlarge-plus
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.matrix.outputs.policies) }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          name: model-profiling-results
-          path: profiling-results
+          persist-credentials: false
+      - name: Profile inference and training in an isolated environment
+        env:
+          POLICY: ${{ matrix.policy }}
+          EXTRA: ${{ matrix.extra }}
+          MODE: ${{ inputs.mode || 'both' }}
+          TRACE: ${{ inputs.trace || 'false' }}
+          HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+          PROFILE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python scripts/ci/model_profiling.py init --policy "$POLICY"
+          docker run --rm --gpus all --shm-size=16g \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e HF_HOME=/tmp/huggingface \
+            -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e UV_CACHE_DIR=/tmp/uv \
+            -e HF_TOKEN -e POLICY -e EXTRA -e MODE -e TRACE -e PROFILE_RUN_URL \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            huggingface/lerobot-gpu:latest bash -euo pipefail -c '
+              extras=(--extra training)
+              if [[ -n "$EXTRA" ]]; then extras+=(--extra "$EXTRA"); fi
+              uv sync --locked "${extras[@]}"
+              uv run --no-sync python scripts/ci/model_profiling.py run \
+                --policy "$POLICY" --profile_mode="$MODE" --trace="$TRACE"
+            '
+      - name: Upload results even when profiling fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: model-profiling-${{ matrix.policy }}
+          path: profiling-results/
           if-no-files-found: warn
+
+  publish:
+    if: always() && needs.matrix.result == 'success'
+    needs: [matrix, profile]
+    runs-on: ubuntu-latest
+    env:
+      CI_SLACK_CHANNEL: ${{ secrets.CI_SLACK_CHANNEL }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: model-profiling-*
+          path: profiling-results
+          merge-multiple: true
+      - name: Publish job summary
+        id: report
+        env:
+          POLICIES: ${{ inputs.policies }}
+        run: |
+          python scripts/ci/model_profiling.py summary >> "$GITHUB_STEP_SUMMARY"
+          echo "passed=$(jq '[.[] | select(.status == "success")] | length' profiling-results/results.json)" >> "$GITHUB_OUTPUT"
+          echo "total=$(jq 'length' profiling-results/results.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: model-profiling-report
+          path: profiling-results/
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        if: vars.MODEL_PROFILING_REPO != ''
+      - name: Save run to the Hugging Face dataset
+        if: vars.MODEL_PROFILING_REPO != ''
+        env:
+          HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+          RESULTS_REPO: ${{ vars.MODEL_PROFILING_REPO }}
+        run: |
+          uv run --no-project --with huggingface-hub python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+          HfApi().upload_folder(
+              repo_id=os.environ["RESULTS_REPO"], repo_type="dataset",
+              folder_path="profiling-results",
+              path_in_repo=f"runs/{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}",
+          )
+          PY
+      - name: Notify the existing CI Slack channel
+        if: always() && env.CI_SLACK_CHANNEL != ''
+        uses: huggingface/hf-workflows/.github/actions/post-slack@a88e7fa2eaee28de5a4d6142381b1fb792349b67 # main
+        with:
+          slack_channel: ${{ env.CI_SLACK_CHANNEL }}
+          slack_token: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
+          title: "LeRobot profiling: ${{ steps.report.outputs.passed || '0' }}/${{ steps.report.outputs.total || '?' }} policies passed"
+          status: ${{ needs.profile.result == 'success' && job.status == 'success' && 'success' || 'failure' }}

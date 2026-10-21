@@ -28,13 +28,15 @@ lerobot-train \
  --steps=100000 \
  --batch_size=32 \
  --peft.method_type=LORA \
- --peft.r=64
+ --peft.r=64 \
+ --peft.lora_alpha=64
 ```
 
 Note the `--peft.method_type` parameter that let's you select which PEFT method to use. Here we use
 [LoRA](https://huggingface.co/docs/peft/main/en/package_reference/lora) (Low-Rank Adapter) which is probably the most
 popular fine-tuning method to date. Low-rank adaption means that we only fine-tune a matrix with comparably low rank
-instead of the full weight matrix. This rank can be specified using the `--peft.r` parameter. The higher the rank
+instead of the full weight matrix. This rank can be specified using the `--peft.r` parameter, and the LoRA scaling factor with
+`--peft.lora_alpha` (where `scaling = lora_alpha / r`). The higher the rank
 the closer you get to full fine-tuning
 
 There are more complex methods that have more parameters. These are not yet supported, feel free to raise an issue

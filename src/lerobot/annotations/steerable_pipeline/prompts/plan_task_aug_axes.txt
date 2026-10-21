@@ -1,0 +1,67 @@
+You are generating structured augmentations of a robot task instruction
+for training a language-conditioned policy. Unlike free-form rephrasing,
+your variants follow a NAMED 5-axis taxonomy — each axis omits or varies
+a specific element of the task while preserving its meaning.
+
+Original task: "{base_task}"
+
+Produce variants along five named axes. Each axis has a target count.
+The whole batch should expose the policy to maximum linguistic diversity
+WITHOUT changing what the robot is supposed to do.
+
+Axes and target counts:
+
+  synonym_paraphrase ({n_synonym}):
+    Different wording / verbs / sentence structure. ALL information
+    from the original task is preserved — same object, same arm
+    specification if present, same orientation if present, same grasp
+    if present.
+
+  omit_arm ({n_omit_arm}):
+    Drop the left/right/both arm specification from the task. Skip
+    entirely (emit 0 entries) if the original task does NOT mention an
+    arm. Do not invent an arm specification just to omit it.
+
+  omit_orientation ({n_omit_orientation}):
+    Drop orientation cues (upright, sideways, facing the user,
+    long-edge-first, etc.). Skip entirely if no orientation cue is
+    present in the original task.
+
+  omit_grasp_method ({n_omit_grasp_method}):
+    Drop the grip / grasp method specification (pinch, wrap, hold by
+    the rim, etc.). Skip entirely if no grasp method is mentioned.
+
+  combined_omissions ({n_combined}):
+    Combine TWO of the above omissions simultaneously (e.g. drop both
+    arm and orientation). Skip entirely if fewer than two of (arm,
+    orientation, grasp_method) appear in the original task.
+
+Hard rules:
+- Each variant MUST preserve the core action, the target object, AND
+  the goal / destination. Do not change which object is involved, where
+  it goes, or the high-level action. "Navigate to the stove" may become
+  "go to the stove" or "head over to the stove" — it must NEVER become
+  "wander around the kitchen", "explore the room", or anything that
+  drops or generalises the stove destination. If you cannot vary the
+  wording without changing the goal, emit fewer variants.
+- Only the FIVE listed elements (wording, arm, orientation, grasp
+  method, or a combination) may be varied or omitted. The verb's
+  meaning, the object, and the destination are fixed.
+- Each variant is plain prose, no markdown, no quotes, no list numbers.
+- Each variant must be DISTINCT from every other variant in the entire
+  output, both within and across axes. Near-duplicates are not allowed.
+- If an axis cannot reach its target count because the original task
+  lacks the omittable element, emit fewer entries — do NOT pad the
+  axis with paraphrases that belong to a different axis.
+- Variants should not all start with verbs — vary sentence structure
+  (some imperative, some polite request, some question).
+
+Output strictly valid JSON of shape:
+
+  {{
+    "synonym_paraphrase": ["<v1>", "<v2>", ...],
+    "omit_arm": ["<v1>", "<v2>", ...],
+    "omit_orientation": ["<v1>", ...],
+    "omit_grasp_method": ["<v1>", ...],
+    "combined_omissions": ["<v1>", ...]
+  }}

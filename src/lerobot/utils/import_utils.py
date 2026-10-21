@@ -15,10 +15,29 @@
 # limitations under the License.
 import importlib
 import importlib.metadata
+import importlib.util
 import logging
-from typing import Any
+from typing import Any, Literal, overload
 
 from draccus.choice_types import ChoiceRegistry
+
+
+@overload
+def is_package_available(
+    pkg_name: str, import_name: str | None = None, return_version: Literal[False] = False
+) -> bool: ...
+
+
+@overload
+def is_package_available(
+    pkg_name: str, import_name: str | None = None, *, return_version: Literal[True]
+) -> tuple[bool, str]: ...
+
+
+@overload
+def is_package_available(
+    pkg_name: str, import_name: str | None = None, return_version: bool = False
+) -> tuple[bool, str] | bool: ...
 
 
 def is_package_available(
@@ -69,10 +88,19 @@ def is_package_available(
         return package_exists
 
 
-def get_safe_default_codec():
+def get_safe_default_video_backend():
     logger = logging.getLogger(__name__)
     if importlib.util.find_spec("torchcodec"):
-        return "torchcodec"
+        # Despite being installed, torchcodec may not be loadable at runtime.
+        try:
+            importlib.import_module("torchcodec")
+            return "torchcodec"
+        except (ImportError, OSError, RuntimeError) as e:
+            logger.warning(
+                f"{e}\n'torchcodec' is installed but cannot be loaded (see the error above). "
+                "Falling back to 'pyav' as a default decoder."
+            )
+            return "pyav"
     else:
         logger.warning(
             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
@@ -101,21 +129,30 @@ def require_package(pkg_name: str, extra: str, import_name: str | None = None) -
 # Do NOT define ad-hoc ``is_package_available(...)`` calls in other modules.
 
 # ML / training
+_lancedb_available = is_package_available("lancedb")
 _transformers_available = is_package_available("transformers")
 _peft_available = is_package_available("peft")
+_accelerate_available = is_package_available("accelerate")
 _scipy_available = is_package_available("scipy")
 _diffusers_available = is_package_available("diffusers")
-_torchdiffeq_available = is_package_available("torchdiffeq")
+_natten_available = is_package_available("natten")
+_liger_kernel_available = is_package_available("liger-kernel", import_name="liger_kernel")
+_kernels_available = is_package_available("kernels")
 
 # Hardware SDKs
 _serial_available = is_package_available("pyserial", import_name="serial")
 _deepdiff_available = is_package_available("deepdiff")
-_dynamixel_sdk_available = is_package_available("dynamixel-sdk", import_name="dynamixel_sdk")
-_feetech_sdk_available = is_package_available("feetech-servo-sdk", import_name="scservo_sdk")
+_rustypot_available = is_package_available("rustypot")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
 _can_available = is_package_available("python-can", "can")
+_motorbridge_available = is_package_available("motorbridge")
+_motorbridge_smart_servo_available = is_package_available(
+    "motorbridge-smart-servo", import_name="motorbridge_smart_servo"
+)
 _unitree_sdk_available = is_package_available("unitree-sdk2py", "unitree_sdk2py")
-_pyrealsense2_available = is_package_available("pyrealsense2")
+_pyrealsense2_available = is_package_available("pyrealsense2") or is_package_available(
+    "pyrealsense2-macosx", import_name="pyrealsense2"
+)
 _zmq_available = is_package_available("pyzmq", import_name="zmq")
 _hebi_available = is_package_available("hebi-py", import_name="hebi")
 _teleop_available = is_package_available("teleop")
@@ -123,16 +160,21 @@ _placo_available = is_package_available("placo")
 _hidapi_available = is_package_available("hidapi", import_name="hid")
 
 # Data / serialization
+_datasets_available = is_package_available("datasets")
 _pandas_available = is_package_available("pandas")
 _faker_available = is_package_available("faker")
+_msgpack_available = is_package_available("msgpack")
+_zenoh_available = is_package_available("eclipse-zenoh", import_name="zenoh")
+
+# Video encoding / decoding
+_av_available = is_package_available("av")
 
 # Misc
 _pynput_available = is_package_available("pynput")
 _pygame_available = is_package_available("pygame")
 _qwen_vl_utils_available = is_package_available("qwen-vl-utils", import_name="qwen_vl_utils")
-_wallx_deps_available = (
-    _transformers_available and _peft_available and _torchdiffeq_available and _qwen_vl_utils_available
-)
+_grpc_available = is_package_available("grpcio", import_name="grpc")
+_wallx_deps_available = _transformers_available and _peft_available and _qwen_vl_utils_available
 
 
 def make_device_from_device_class(config: ChoiceRegistry) -> Any:
@@ -162,6 +204,7 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
     parts = module_path.split(".")
     parent_module = ".".join(parts[:-1]) if len(parts) > 1 else module_path
     candidates = [
+        module_path,  # the config's own module (single-file plugins)
         parent_module,  # typical: lerobot_teleop_mydevice
         parent_module + "." + device_class_name.lower(),  # typical: lerobot_teleop_mydevice.mydevice
     ]
@@ -172,8 +215,7 @@ def make_device_from_device_class(config: ChoiceRegistry) -> Any:
         candidates.append(".".join(parts[:-1] + [last.replace("config_", "")]))
 
     # de-duplicate while preserving order
-    seen: set[str] = set()
-    candidates = [c for c in candidates if not (c in seen or seen.add(c))]
+    candidates = list(dict.fromkeys(candidates))
 
     tried: list[str] = []
     for candidate in candidates:
@@ -206,9 +248,17 @@ def register_third_party_plugins() -> None:
 
     This function uses `importlib.metadata` to find packages installed in the environment
     (including editable installs) starting with 'lerobot_robot_', 'lerobot_camera_',
-    'lerobot_teleoperator_', or 'lerobot_policy_' and imports them.
+    'lerobot_teleoperator_', 'lerobot_policy_', 'lerobot_env_' or 'lerobot_strategy_' and
+    imports them.
     """
-    prefixes = ("lerobot_robot_", "lerobot_camera_", "lerobot_teleoperator_", "lerobot_policy_")
+    prefixes = (
+        "lerobot_robot_",
+        "lerobot_camera_",
+        "lerobot_teleoperator_",
+        "lerobot_policy_",
+        "lerobot_env_",
+        "lerobot_strategy_",
+    )
     imported: list[str] = []
     failed: list[str] = []
 

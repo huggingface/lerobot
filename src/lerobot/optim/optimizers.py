@@ -52,6 +52,11 @@ class OptimizerConfig(draccus.ChoiceRegistry, abc.ABC):
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
 
+    @property
+    def builds_multiple_optimizers(self) -> bool:
+        """True when build() returns a dict of optimizers (unsupported under sharded training)."""
+        return False
+
     @classmethod
     def default_choice_name(cls) -> str | None:
         return "adam"
@@ -89,6 +94,7 @@ class AdamConfig(OptimizerConfig):
     eps: float = 1e-8
     weight_decay: float = 0.0
     grad_clip_norm: float = 10.0
+    fused: bool | None = None
 
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
         kwargs = asdict(self)
@@ -104,6 +110,7 @@ class AdamWConfig(OptimizerConfig):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     grad_clip_norm: float = 10.0
+    fused: bool | None = None
 
     def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
         kwargs = asdict(self)
@@ -245,6 +252,10 @@ class MultiAdamConfig(OptimizerConfig):
     grad_clip_norm: float = 10.0
     optimizer_groups: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    @property
+    def builds_multiple_optimizers(self) -> bool:
+        return True
+
     def build(self, params: OptimizerParams) -> dict[str, torch.optim.Optimizer]:
         """Build multiple Adam optimizers.
 
@@ -281,9 +292,10 @@ class MultiAdamConfig(OptimizerConfig):
 
 
 def save_optimizer_state(
-    optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer], save_dir: Path
+    optimizer: torch.optim.Optimizer | dict[str, torch.optim.Optimizer],
+    save_dir: Path,
 ) -> None:
-    """Save optimizer state to disk.
+    """Save optimizer state to disk (non-sharded runs; sharded runs use the DCP channel).
 
     Args:
         optimizer: Either a single optimizer or a dictionary of optimizers.

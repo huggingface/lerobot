@@ -30,7 +30,7 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
-from lerobot.types import RobotObservation
+from lerobot.lerobot_types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv, parse_camera_names
 
@@ -125,10 +125,16 @@ class LiberoEnv(gym.Env):
         n_envs: int = 1,
         camera_name_mapping: dict[str, str] | None = None,
         num_steps_wait: int = 10,
+        control_freq: int = 20,
         control_mode: str = "relative",
         is_libero_plus: bool = False,
+        hard_reset: bool = True,
     ):
         super().__init__()
+        if control_freq <= 0:
+            raise ValueError(f"control_freq must be positive, got {control_freq}")
+        if not hard_reset and not init_states:
+            raise ValueError("hard_reset=False requires init_states=True")
         self.task_id = task_id
         self.is_libero_plus = is_libero_plus
         self.obs_type = obs_type
@@ -154,6 +160,8 @@ class LiberoEnv(gym.Env):
             }
         self.camera_name_mapping = camera_name_mapping
         self.num_steps_wait = num_steps_wait
+        self.control_freq = control_freq
+        self.hard_reset = hard_reset
         self.episode_index = episode_index
         self.episode_length = episode_length
         # Load once and keep
@@ -260,6 +268,10 @@ class LiberoEnv(gym.Env):
             bddl_file_name=self._task_bddl_file,
             camera_heights=self.observation_height,
             camera_widths=self.observation_width,
+            control_freq=self.control_freq,
+            # Soft resets skip LIBERO's model and renderer rebuild. They are opt-in
+            # because settle steps can make their observations differ from hard resets.
+            hard_reset=self.hard_reset,
         )
         env.reset()
         self._env = env
@@ -372,14 +384,20 @@ class LiberoEnv(gym.Env):
             }
         )
         observation = self._format_raw_obs(raw_obs)
-        if terminated:
-            self.reset()
+        # Return the terminal observation unchanged. The caller owns resetting after
+        # termination; vector envs created below use NEXT_STEP autoreset. Resetting here
+        # would therefore reset twice and skip an initial state.
         truncated = False
         return observation, reward, terminated, truncated, info
 
     def close(self):
         if self._env is not None:
-            self._env.close()
+            try:
+                self._env.close()
+            finally:
+                # LIBERO deletes its inner env on close, so this wrapper must
+                # be recreated before the next reset.
+                self._env = None
 
 
 def _make_env_fns(
@@ -466,6 +484,7 @@ def create_libero_envs(
         print(f"Restricting to task_ids={task_ids_filter}")
 
     is_async = env_cls is gym.vector.AsyncVectorEnv
+    is_sync = env_cls is gym.vector.SyncVectorEnv
 
     out: dict[str, dict[int, Any]] = defaultdict(dict)
     for suite_name in suite_names:
@@ -502,6 +521,10 @@ def create_libero_envs(
                     cached_act_space = lazy.action_space
                     cached_metadata = lazy.metadata
                 out[suite_name][tid] = lazy
+            elif is_sync:
+                out[suite_name][tid] = gym.vector.SyncVectorEnv(
+                    fns, autoreset_mode=gym.vector.AutoresetMode.NEXT_STEP
+                )
             else:
                 out[suite_name][tid] = env_cls(fns)
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")

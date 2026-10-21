@@ -1,348 +1,294 @@
-#!/usr/bin/env python
-
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
-#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
+# You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
 
-from __future__ import annotations
-
-import argparse
 import json
 import subprocess
-from pathlib import Path
+import sys
+import tomllib
+from types import SimpleNamespace
 
 import pytest
-import torch
-from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.utils import model_profiling as mp
-
-# ---------------------------------------------------------------------------
-# Policy spec matrix
-# ---------------------------------------------------------------------------
+from scripts.ci import model_profiling as ci
 
 
-def test_policy_specs_cover_expected_policies():
-    assert set(mp.POLICY_SPECS) == {
-        "act",
-        "diffusion",
-        "groot",
-        "multi_task_dit",
-        "pi0",
-        "pi0_fast",
-        "pi05",
-        "smolvla",
-        "wall_x",
-        "xvla",
-    }
-    # Sanity: excluded policies should stay out of the matrix.
-    for excluded in ("sac", "sarm", "tdmpc", "vqbet", "reward_classifier"):
-        assert excluded not in mp.POLICY_SPECS
+def test_matrix_extras_exist():
+    extras = tomllib.loads((ci.ROOT / "pyproject.toml").read_text())["project"]["optional-dependencies"]
+    assert ci.policy_matrix()
+    assert all(not row["extra"] or row["extra"] in extras for row in ci.policy_matrix())
 
 
-def test_pretrained_libero_specs_match_expected_camera_keys_and_normalization():
-    base_rgb_rename = (
-        '--rename_map={"observation.images.front": "observation.images.base_0_rgb", '
-        '"observation.images.wrist": "observation.images.left_wrist_0_rgb"}'
+def test_matrix_discovers_new_policies_and_ignores_other_registries(tmp_path):
+    path = tmp_path / "src/lerobot/policies/new/configuration_new.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '@PreTrainedConfig.register_subclass("new")\nclass NewConfig: pass\n'
+        '@OptimizerConfig.register_subclass("optimizer")\nclass Optimizer: pass\n'
     )
-    for name in ("pi0", "pi0_fast", "pi05"):
-        assert base_rgb_rename in mp.POLICY_SPECS[name]["train_args"]
-    assert any(
-        arg.startswith('--policy.normalization_mapping={"ACTION": "MEAN_STD"')
-        for arg in mp.POLICY_SPECS["pi05"]["train_args"]
-    )
-    assert (
-        '--rename_map={"observation.images.front": "observation.images.camera1", '
-        '"observation.images.wrist": "observation.images.camera2"}'
-        in mp.POLICY_SPECS["smolvla"]["train_args"]
-    )
+    assert ci.policy_matrix(tmp_path) == [{"policy": "new", "extra": "new"}]
 
 
-# ---------------------------------------------------------------------------
-# CI orchestrator helpers
-# ---------------------------------------------------------------------------
-
-
-def test_build_train_command_includes_profiling_outputs(tmp_path):
-    cmd = mp.build_train_command("act", tmp_path / "run", "trace")
-    assert cmd[:3] == ["uv", "run", "lerobot-train"]
-    assert any(a.startswith("--output_dir=") for a in cmd)
-    assert any(a.startswith("--profile_output_dir=") for a in cmd)
-    assert "--profile_mode=trace" in cmd
-    assert "--eval_freq=0" in cmd
-
-
-def test_build_artifact_index_collects_tables_and_traces(tmp_path):
-    run_dir = tmp_path / "act" / "20260415T000000Z__act"
-    profiling = run_dir / "profiling"
-    (profiling / "torch_tables").mkdir(parents=True)
-    (profiling / "torch_traces").mkdir(parents=True)
-    (profiling / "step_timing_summary.json").write_text("{}")
-    (profiling / "deterministic_forward.json").write_text(
-        json.dumps({"operator_fingerprint": "ops", "output_fingerprint": "out"})
-    )
-    (profiling / "torch_tables" / "cpu_time_total.txt").write_text("cpu table")
-    (profiling / "torch_traces" / "trace_step_9.json").write_text("{}")
-    (run_dir / "stdout.txt").write_text("stdout")
-    (run_dir / "stderr.txt").write_text("stderr")
-
-    paths, urls, targets, row_in_repo = mp.build_artifact_index(
-        repo_id="lerobot/model-profiling-history",
-        run_dir=run_dir,
-        policy_name="act",
-        run_id="20260415T000000Z__act",
-    )
-
-    assert row_in_repo == "rows/act/20260415T000000Z__act.json"
-    assert paths["stdout"].endswith("/stdout.txt")
-    assert paths["step_timing_summary"].endswith("/profiling/step_timing_summary.json")
-    assert "cpu_time_total.txt" in paths["torch_tables"]
-    assert "trace_step_9.json" in paths["trace_files"]
-    assert urls["row"].startswith("https://huggingface.co/datasets/lerobot/model-profiling-history/")
-    # stdout + stderr + 4 profiling files
-    assert len(targets) == 6
-
-
-def test_upload_targets_batches_preview_publish_into_single_hf_pr(monkeypatch, tmp_path):
-    local_path = tmp_path / "profiling_row.json"
-    local_path.write_text("{}")
-    captured: dict[str, object] = {}
-
-    class _FakeCommit:
-        pr_url = "https://huggingface.co/datasets/lerobot/model-profiling-history/discussions/42"
-
-    class _FakeApi:
-        def __init__(self, token=None):
-            captured["token"] = token
-
-        def create_commit(self, **kwargs):
-            captured.update(kwargs)
-            return _FakeCommit()
-
-    monkeypatch.setattr(mp, "HfApi", _FakeApi)
-
-    result = mp.upload_targets(
-        repo_id="lerobot/model-profiling-history",
-        targets=[mp.UploadTarget(local_path, "rows/act/run.json")],
-        create_pr=True,
-        token="hf_test_token",
-    )
-
-    assert captured["repo_id"] == "lerobot/model-profiling-history"
-    assert captured["repo_type"] == "dataset"
-    assert captured["create_pr"] is True
-    assert result.pr_url == _FakeCommit.pr_url
-    assert result.uploaded_paths["rows/act/run.json"].endswith("/resolve/refs/pr/42/rows/act/run.json")
-
-
-def test_parse_discussion_num_handles_hf_discussion_urls():
-    assert (
-        mp.parse_discussion_num(
-            "https://huggingface.co/datasets/lerobot/model-profiling-history/discussions/42"
+def test_summary_retains_missing_and_failed_policies(tmp_path):
+    (tmp_path / "act").mkdir()
+    (tmp_path / "act/result.json").write_text(
+        json.dumps(
+            {
+                "policy": "act",
+                "status": "failed",
+                "inference": {"median_ms": 12.5},
+                "training": {"status": "failed", "error": "out of memory"},
+            }
         )
-        == 42
     )
-    assert mp.parse_discussion_num("https://huggingface.co/datasets/lerobot/model-profiling-history") is None
-    assert mp.parse_discussion_num(None) is None
+    report = ci.summary(tmp_path, ["act", "diffusion"])
+    assert "12.50" in report
+    assert "out of memory" in report
+    rows = json.loads((tmp_path / "results.json").read_text())
+    assert [row["policy"] for row in rows] == ["act", "diffusion"]
+    assert rows[1]["status"] == "failed"
 
 
-# ---------------------------------------------------------------------------
-# main() smoke tests
-# ---------------------------------------------------------------------------
+def test_unknown_policy_filter_fails(monkeypatch):
+    monkeypatch.setenv("POLICIES", "act,typo")
+    monkeypatch.setattr(sys, "argv", ["model_profiling.py", "matrix"])
+    with pytest.raises(SystemExit, match="2"):
+        ci.main()
+
+
+def test_runner_propagates_failure_and_writes_row(monkeypatch, tmp_path):
+    monkeypatch.setattr(ci.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess([], 2))
+    assert ci.run_policy("act", tmp_path, []) == 2
+    row = json.loads((tmp_path / "act/result.json").read_text())
+    assert row["status"] == "failed"
 
 
 @pytest.fixture
-def fake_args(tmp_path):
-    """Shared argparse namespace for main() smoke tests — overridden per-test."""
-    return argparse.Namespace(
-        policies=["act"],
-        output_dir=tmp_path / "results",
-        hub_org="lerobot",
-        results_repo="model-profiling-history",
-        publish=False,
-        profile_mode="summary",
-        git_commit="",
-        git_ref="codex/model-profiling",
-        pr_number="3389",
+def benchmark():
+    pytest.importorskip("datasets")
+    pytest.importorskip("accelerate")
+    from benchmarks import profile_policies
+
+    return profile_policies
+
+
+def test_matrix_matches_runtime_registry(benchmark):
+    from lerobot.configs import PreTrainedConfig
+
+    assert {row["policy"] for row in ci.policy_matrix()} == set(PreTrainedConfig.get_known_choices())
+
+
+@pytest.mark.parametrize("policy", [row["policy"] for row in ci.policy_matrix()])
+def test_every_recipe_parses_and_validates(benchmark, policy, tmp_path):
+    import draccus
+
+    cfg = draccus.parse(
+        benchmark.ProfileConfig, args=[*ci.policy_args(policy), f"--output_dir={tmp_path / policy}"]
+    )
+    cfg.validate()
+    assert cfg.policy.type == policy
+
+
+@pytest.mark.parametrize("policy", ["flux3", "lawam", "fastwam"])
+def test_world_model_recipes_accept_dataset_features(benchmark, policy, tmp_path):
+    import draccus
+
+    from lerobot.configs import FeatureType
+    from lerobot.utils.feature_utils import dataset_to_policy_features
+
+    cfg = draccus.parse(
+        benchmark.ProfileConfig, args=[*ci.policy_args(policy), f"--output_dir={tmp_path / policy}"]
+    )
+    cameras = (
+        ["observation.image"]
+        if policy == "flux3"
+        else ["observation.images.front", "observation.images.wrist"]
+    )
+    features = {
+        name: {"dtype": "video", "shape": [256, 256, 3], "names": ["height", "width", "channel"]}
+        for name in cameras
+    }
+    features.update(
+        {
+            "observation.state": {
+                "dtype": "float32",
+                "shape": [2 if policy == "flux3" else 8],
+                "names": None,
+            },
+            "action": {"dtype": "float32", "shape": [2 if policy == "flux3" else 7], "names": None},
+        }
+    )
+    parsed = dataset_to_policy_features(features)
+    cfg.policy.output_features = {k: v for k, v in parsed.items() if v.type is FeatureType.ACTION}
+    cfg.policy.input_features = {k: v for k, v in parsed.items() if v.type is not FeatureType.ACTION}
+    if hasattr(cfg.policy, "set_dataset_feature_metadata"):
+        cfg.policy.set_dataset_feature_metadata(features)
+    cfg.policy.validate_features()
+
+
+def test_measure_excludes_warmup_and_preserves_batch(benchmark, monkeypatch):
+    import torch
+
+    clock = iter([0, 0.01, 1, 1.02])
+    monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(clock))
+    original = {"value": torch.tensor([1.0])}
+    seen = []
+
+    def step(batch):
+        seen.append(batch["value"].item())
+        batch["value"].add_(1)
+
+    result = benchmark.measure(step, original, torch.device("cpu"), warmup=2, iterations=2)
+    assert seen == [1.0] * 4
+    assert result["samples_ms"] == pytest.approx([10, 20])
+    assert result["median_ms"] == pytest.approx(15)
+    assert result["p95_ms"] == pytest.approx(20)
+
+
+def test_trace_is_separate_from_latency_samples(benchmark, tmp_path):
+    import torch
+
+    calls = []
+
+    def step(batch):
+        calls.append(1)
+        return batch["value"].square()
+
+    trace = tmp_path / "trace.json"
+    result = benchmark.measure(step, {"value": torch.ones(4)}, torch.device("cpu"), 1, 2, trace)
+    assert len(calls) == 4
+    assert len(result["samples_ms"]) == 2
+    assert json.loads(trace.read_text())["traceEvents"]
+
+
+def test_current_observation_selects_present_not_last_future_frame(benchmark):
+    import torch
+
+    batch = {
+        "observation.images.front": torch.arange(4).reshape(1, 4, 1),
+        "observation.state": torch.arange(3).reshape(1, 3, 1),
+        "action": torch.ones(1, 2),
+    }
+    cfg = SimpleNamespace(observation_delta_indices=[-1, 0, 1], image_observation_delta_indices=[0, 1, 2, 3])
+    observation = benchmark.current_observation(batch, cfg)
+    assert observation["observation.images.front"].item() == 0
+    assert observation["observation.state"].item() == 1
+    assert "action" not in observation
+
+
+def test_real_act_inference_and_training_write_results(benchmark, monkeypatch, tmp_path):
+    import torch
+
+    from lerobot.configs import FeatureType, PolicyFeature
+    from lerobot.configs.default import DatasetConfig
+    from lerobot.policies import ACTConfig
+
+    features = {
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+        "observation.environment_state": PolicyFeature(FeatureType.ENV, (3,)),
+    }
+    policy_cfg = ACTConfig(
+        device="cpu",
+        push_to_hub=False,
+        input_features=features,
+        output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
+        chunk_size=2,
+        n_action_steps=2,
+        dim_model=16,
+        n_heads=2,
+        dim_feedforward=32,
+        n_encoder_layers=1,
+        n_decoder_layers=1,
+        use_vae=False,
+        optimizer_fused=False,
+        dropout=0.0,
     )
 
+    class Dataset(list):
+        num_episodes = 1
+        meta = SimpleNamespace(
+            camera_keys=[],
+            features={
+                key: {"dtype": "float32", "shape": feature.shape, "names": None}
+                for key, feature in {**features, **policy_cfg.output_features}.items()
+            },
+            stats={
+                key: {"mean": torch.zeros(2), "std": torch.ones(2)} for key in ("observation.state", "action")
+            },
+        )
 
-def _stub_train_subprocess(mp_module, *, returncode: int = 0, write_artifacts: bool = True):
-    """Build a fake subprocess.run that writes the profiling artifacts main() expects."""
-
-    def _fake_run(cmd, capture_output, text):
-        assert capture_output is True
-        assert text is True
-        profile_dir = Path(next(a.split("=", 1)[1] for a in cmd if a.startswith("--profile_output_dir=")))
-        profile_dir.mkdir(parents=True, exist_ok=True)
-        if write_artifacts:
-            (profile_dir / "torch_tables").mkdir(parents=True, exist_ok=True)
-            (profile_dir / "step_timing_summary.json").write_text(
-                json.dumps({"total_update_s": {"count": 1, "mean": 0.3}, "peak_memory_allocated_bytes": 1024})
-            )
-            (profile_dir / "deterministic_forward.json").write_text(
-                json.dumps(
-                    {"operator_fingerprint": "ops-fingerprint", "output_fingerprint": "output-fingerprint"}
-                )
-            )
-            (profile_dir / "torch_tables" / "cpu_time_total.txt").write_text("cpu time table")
-        return subprocess.CompletedProcess(cmd, returncode, "stdout ok", "")
-
-    return _fake_run
-
-
-def test_main_smoke_writes_row(monkeypatch, fake_args):
-    monkeypatch.setattr(mp, "parse_args", lambda: fake_args)
-    monkeypatch.setattr(mp.subprocess, "check_output", lambda *a, **k: "deadbeef\n")
-    monkeypatch.setattr(mp.subprocess, "run", _stub_train_subprocess(mp))
-
-    assert mp.main() == 0
-
-    row_paths = list(fake_args.output_dir.rglob("profiling_row.json"))
-    assert len(row_paths) == 1
-    row = json.loads(row_paths[0].read_text())
-    assert row["policy"] == "act"
-    assert row["status"] == "success"
-    assert row["git_commit"] == "deadbeef"
-    assert row["git_ref"] == "codex/model-profiling"
-    assert row["pr_number"] == 3389
-    assert row["step_timing_summary"]["total_update_s"]["mean"] == 0.3
-    assert row["deterministic_forward"]["operator_fingerprint"] == "ops-fingerprint"
-
-
-def test_main_records_publish_failure_without_failing(monkeypatch, fake_args):
-    fake_args.publish = True
-    fake_args.git_commit = "deadbeef"
-    monkeypatch.setattr(mp, "parse_args", lambda: fake_args)
-    monkeypatch.setattr(mp.subprocess, "run", _stub_train_subprocess(mp, write_artifacts=False))
-
-    def _fail_upload(**kwargs):
-        resp = type("Resp", (), {"status_code": 403, "headers": {}, "request": None})()
-        raise HfHubHTTPError("403 Forbidden: Authorization error.", response=resp)
-
-    monkeypatch.setattr(mp, "upload_profile_run", _fail_upload)
-
-    assert mp.main() == 0
-    row = json.loads(next(fake_args.output_dir.rglob("profiling_row.json")).read_text())
-    assert row["status"] == "success"
-    assert row["publish_status"] == "failed"
-    assert "Authorization error" in row["publish_error"]
-
-
-def test_main_returns_nonzero_when_training_subprocess_fails(monkeypatch, fake_args):
-    monkeypatch.setattr(mp, "parse_args", lambda: fake_args)
-    monkeypatch.setattr(mp.subprocess, "check_output", lambda *a, **k: "deadbeef\n")
-    monkeypatch.setattr(mp.subprocess, "run", _stub_train_subprocess(mp, returncode=3))
-
-    assert mp.main() == 1
-
-    row = json.loads(next(fake_args.output_dir.rglob("profiling_row.json")).read_text())
-    assert row["status"] == "failed"
-    assert row["return_code"] == 3
-
-
-# ---------------------------------------------------------------------------
-# TrainingProfiler behavior
-# ---------------------------------------------------------------------------
-
-
-def test_deterministic_forward_artifacts_preserve_policy_mode(tmp_path):
-    class _TrainingOnlyPolicy(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.forward_calls = 0
-
-        def forward(self, batch):
-            self.forward_calls += 1
-            assert self.training
-            return batch["value"].sum(), {"value": batch["value"]}
-
-    dataset = [{"value": torch.tensor([1.0, 2.0])}]
-    policy = _TrainingOnlyPolicy()
-    policy.train()
-
-    mp.write_deterministic_forward_artifacts(
-        policy=policy,
-        dataset=dataset,
-        batch_size=2,
-        preprocessor=lambda b: b,
-        output_dir=tmp_path,
-        device_type="cpu",
+    dataset = Dataset(
+        [
+            {
+                "observation.state": torch.randn(2),
+                "observation.environment_state": torch.randn(3),
+                "action": torch.randn(2, 2),
+                "action_is_pad": torch.zeros(2, dtype=torch.bool),
+                "episode_index": torch.tensor(0),
+            }
+        ]
+        * 2
     )
+    monkeypatch.setattr(benchmark, "make_dataset", lambda cfg: dataset)
+    captured = {}
+    real_make_policy = benchmark.make_policy
 
-    payload = json.loads((tmp_path / "deterministic_forward.json").read_text())
-    assert policy.training is True
-    assert policy.forward_calls == 1
-    assert payload["reference_batch_size"] == 2
-    assert "operator_fingerprint" in payload
-    assert payload["outputs"]["loss"]["numel"] == 1
+    def make_policy(*args, **kwargs):
+        policy = real_make_policy(*args, **kwargs)
+        captured["policy"] = policy
+        captured["before"] = {k: v.clone() for k, v in policy.state_dict().items()}
+        return policy
 
-
-def test_deterministic_forward_artifacts_infers_image_keys_without_dataset_meta(tmp_path):
-    class _ImagePolicy(torch.nn.Module):
-        def forward(self, batch):
-            image = batch["observation.images.front"]
-            assert image.dtype == torch.float32
-            assert torch.all((image >= 0.0) & (image <= 1.0))
-            return image.sum(), {"image": image}
-
-    dataset = [{"observation.images.front": torch.tensor([[[0, 255]]], dtype=torch.uint8)}]
-
-    mp.write_deterministic_forward_artifacts(
-        policy=_ImagePolicy(),
-        dataset=dataset,
+    monkeypatch.setattr(benchmark, "make_policy", make_policy)
+    cfg = benchmark.ProfileConfig(
+        dataset=DatasetConfig(repo_id="test/fixed"),
+        policy=policy_cfg,
+        output_dir=tmp_path / "act",
         batch_size=1,
-        preprocessor=lambda b: b,
-        output_dir=tmp_path,
-        device_type="cpu",
+        warmup=1,
+        iterations=2,
     )
-
-    payload = json.loads((tmp_path / "deterministic_forward.json").read_text())
-    assert payload["outputs"]["loss"]["numel"] == 1
-    assert payload["outputs"]["output_dict"]["image"]["dtype"] == "torch.float32"
-
-
-def test_training_profiler_section_records_forward_backward_optimizer(tmp_path):
-    profiler = mp.TrainingProfiler(mode="summary", output_dir=tmp_path, device=torch.device("cpu"))
-    profiler.start()
-    for _ in range(3):
-        with profiler.section("forward"):
-            pass
-        with profiler.section("backward"):
-            pass
-        with profiler.section("optimizer"):
-            pass
-    profiler.step(1, argparse.Namespace(update_s=0.5, dataloading_s=0.01))
-    profiler.finalize()
-
-    payload = json.loads((tmp_path / "step_timing_summary.json").read_text())
-    assert payload["forward_s"]["count"] == 3
-    assert payload["backward_s"]["count"] == 3
-    assert payload["optimizer_s"]["count"] == 3
-    assert payload["total_update_s"]["mean"] == 0.5
+    benchmark.main(cfg)
+    row = json.loads((cfg.output_dir / "result.json").read_text())
+    assert row["status"] == "success"
+    assert all(len(row[mode]["samples_ms"]) == 2 for mode in ("inference", "training"))
+    assert any(not torch.equal(captured["before"][k], v) for k, v in captured["policy"].state_dict().items())
 
 
-def test_training_profiler_accepts_metric_like_values(tmp_path):
-    class _MetricLike:
-        def __init__(self, v):
-            self.val = v
+def test_real_gaussian_actor_sac_update(benchmark, tmp_path):
+    import torch
 
-    profiler = mp.TrainingProfiler(mode="summary", output_dir=tmp_path, device=torch.device("cpu"))
-    profiler.start()
-    profiler.step(1, argparse.Namespace(update_s=_MetricLike(0.6), dataloading_s=_MetricLike(0.05)))
-    profiler.finalize()
+    from lerobot.configs import FeatureType, PolicyFeature
+    from lerobot.configs.default import DatasetConfig
+    from lerobot.policies import GaussianActorConfig, get_policy_class
 
-    payload = json.loads((tmp_path / "step_timing_summary.json").read_text())
-    assert payload["total_update_s"]["mean"] == 0.6
-    assert payload["dataloading_s"]["mean"] == 0.05
-
-
-def test_profiler_device_time_uses_generic_attr_first():
-    class _Event:
-        self_device_time_total = 12.3456
-
-    assert mp._get_profiler_device_time_us(_Event()) == 12.3456
+    policy_cfg = GaussianActorConfig(
+        device="cpu",
+        push_to_hub=False,
+        input_features={"observation.state": PolicyFeature(FeatureType.STATE, (2,))},
+        output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
+    )
+    cfg = benchmark.ProfileConfig(
+        dataset=DatasetConfig(repo_id="test/fixed"),
+        policy=policy_cfg,
+        output_dir=tmp_path / "sac",
+        batch_size=1,
+    )
+    cfg.validate()
+    policy = get_policy_class("gaussian_actor")(policy_cfg)
+    dataset = [
+        {
+            "observation.state": torch.randn(2),
+            "action": torch.randn(2).tanh(),
+            "next.reward": torch.tensor(0.5),
+            "episode_index": torch.tensor(0),
+        }
+    ] * 2
+    batch = benchmark.default_collate(dataset[:1])
+    before = policy.actor.mean_layer.weight.detach().clone()
+    step = benchmark.make_training_step(cfg, policy, dataset, lambda b: b, None)
+    result = step(batch)
+    assert "loss_actor" in result.losses
+    assert torch.isfinite(torch.tensor(result.losses["loss_critic"]))
+    assert not torch.equal(before, policy.actor.mean_layer.weight)

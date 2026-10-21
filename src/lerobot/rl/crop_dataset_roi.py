@@ -176,11 +176,11 @@ def convert_lerobot_dataset_to_cropped_lerobot_dataset(
 
     Args:
         original_dataset (LeRobotDataset): The source dataset.
-        crop_params_dict (Dict[str, Tuple[int, int, int, int]]):
+        crop_params_dict (dict[str, Tuple[int, int, int, int]]):
             A dictionary mapping observation keys to crop parameters (top, left, height, width).
         new_repo_id (str): Repository id for the new dataset.
         new_dataset_root (str): The root directory where the new dataset will be written.
-        resize_size (Tuple[int, int], optional): The target size (height, width) after cropping.
+        resize_size (tuple[int, int], optional): The target size (height, width) after cropping.
             Defaults to (128, 128).
 
     Returns:
@@ -193,15 +193,15 @@ def convert_lerobot_dataset_to_cropped_lerobot_dataset(
         fps=int(original_dataset.fps),
         root=new_dataset_root,
         robot_type=original_dataset.meta.robot_type,
-        features=original_dataset.meta.info["features"],
+        features=original_dataset.meta.info.features,
         use_videos=len(original_dataset.meta.video_keys) > 0,
     )
 
     # Update the metadata for every image key that will be cropped:
     # (Here we simply set the shape to be the final resize_size.)
     for key in crop_params_dict:
-        if key in new_dataset.meta.info["features"]:
-            new_dataset.meta.info["features"][key]["shape"] = [3] + list(resize_size)
+        if key in new_dataset.meta.info.features:
+            new_dataset.meta.info.features[key]["shape"] = (3, *resize_size)
 
     # TODO:  Directly modify the mp4 video + meta info features, instead of recreating a dataset
     prev_episode_index = 0

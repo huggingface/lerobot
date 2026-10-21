@@ -14,19 +14,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+import dataclasses
 import importlib.resources
 import json
 import logging
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import datasets
 import numpy as np
 import packaging.version
 import torch
 from huggingface_hub import DatasetCard, DatasetCardData, HfApi
-from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.utils.utils import flatten_dict, unflatten_dict
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 V30_MESSAGE = """
 The dataset you requested ({repo_id}) is in {version} format.
@@ -47,6 +52,17 @@ or open an [issue on GitHub](https://github.com/huggingface/lerobot/issues/new/c
 FUTURE_MESSAGE = """
 The dataset you requested ({repo_id}) is only available in {version} format.
 As we cannot ensure forward compatibility with it, please update your current version of lerobot.
+"""
+
+MISSING_VERSION_TAG_MESSAGE = """
+Your dataset must be tagged with a codebase version.
+Assuming _version_ is the codebase_version value in the info.json, you can run this:
+```python
+from huggingface_hub import HfApi
+
+hub_api = HfApi()
+hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
+```
 """
 
 
@@ -70,6 +86,9 @@ class ForwardCompatibilityError(CompatibilityError):
         super().__init__(message)
 
 
+logger = logging.getLogger(__name__)
+
+
 DEFAULT_CHUNK_SIZE = 1000  # Max number of files per chunk
 DEFAULT_DATA_FILE_SIZE_IN_MB = 100  # Max size per file
 DEFAULT_VIDEO_FILE_SIZE_IN_MB = 200  # Max size per file
@@ -82,16 +101,217 @@ DATA_DIR = "data"
 VIDEO_DIR = "videos"
 
 CHUNK_FILE_PATTERN = "chunk-{chunk_index:03d}/file-{file_index:03d}"
+IMAGE_FILE_PATTERN = "frame-{frame_index:06d}.png"
+
+
+def resolve_episode_indices(
+    episodes: Sequence[int] | None,
+    total_episodes: int,
+    exclude_episodes: Sequence[int] | None = None,
+) -> list[int] | None:
+    """Resolve an optional episode allowlist and exclusion list against dataset bounds.
+
+    ``None`` is preserved when no filtering is requested so callers can retain
+    their native "all episodes" fast path. Invalid indices are ignored with a
+    warning, and the input order is preserved.
+    """
+    if total_episodes < 0:
+        raise ValueError(f"total_episodes must be non-negative, got {total_episodes}")
+
+    if episodes is None and not exclude_episodes:
+        return None
+
+    candidates = list(range(total_episodes)) if episodes is None else list(episodes)
+    invalid = [episode for episode in candidates if not 0 <= episode < total_episodes]
+    if invalid:
+        logger.warning(
+            "Ignoring episode indices outside the dataset range [0, %d): %s",
+            total_episodes,
+            invalid,
+        )
+    candidates = [episode for episode in candidates if 0 <= episode < total_episodes]
+
+    excluded = set(exclude_episodes or [])
+    invalid_excluded = sorted(episode for episode in excluded if not 0 <= episode < total_episodes)
+    if invalid_excluded:
+        logger.warning(
+            "Ignoring excluded episode indices outside the dataset range [0, %d): %s",
+            total_episodes,
+            invalid_excluded,
+        )
+    excluded = {episode for episode in excluded if 0 <= episode < total_episodes}
+    return [episode for episode in candidates if episode not in excluded]
+
+
+def delta_window(
+    anchor: int, deltas: Sequence[int] | np.ndarray, start: int, end: int
+) -> tuple[list[int], torch.Tensor]:
+    """Clamp an anchor's temporal window to the episode rows ``[start, end)``.
+
+    Returns the clamped row indices and a boolean mask marking the positions that fell outside
+    the episode and were padded with its first or last row. Works with absolute dataset indices
+    (map-style) and episode-local indices (streaming) alike.
+
+    Uses NumPy rather than small torch ops: those release the GIL and must take it back, which
+    waits behind the other streaming decode threads.
+    """
+    positions = anchor + np.asarray(deltas, dtype=np.int64)
+    padding = (positions < start) | (positions >= end)
+    return np.clip(positions, start, end - 1).tolist(), torch.from_numpy(padding)
+
+
+def shift_timestamps(timestamps: Sequence[float], offset: float) -> list[float]:
+    """Move episode-relative timestamps onto a source video's timeline (``from_timestamp`` offset)."""
+    return [offset + timestamp for timestamp in timestamps]
+
+
+def task_name(tasks: "pd.DataFrame", task_index: int | torch.Tensor) -> str:
+    """Look up a task string from the metadata tasks table by its integer ``task_index``."""
+    return tasks.iloc[int(task_index)].name
+
+
+DEPTH_FILE_PATTERN = "frame-{frame_index:06d}.tiff"
 DEFAULT_TASKS_PATH = "meta/tasks.parquet"
-DEFAULT_SUBTASKS_PATH = "meta/subtasks.parquet"
 DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_DATA_PATH = DATA_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_VIDEO_PATH = VIDEO_DIR + "/{video_key}/" + CHUNK_FILE_PATTERN + ".mp4"
-DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/frame-{frame_index:06d}.png"
+DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/" + IMAGE_FILE_PATTERN
+DEFAULT_DEPTH_PATH = "images/{image_key}/episode-{episode_index:06d}/" + DEPTH_FILE_PATTERN
 
 LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
 LEGACY_TASKS_PATH = "meta/tasks.jsonl"
+
+
+@dataclass
+class DatasetInfo:
+    """Typed representation of the ``meta/info.json`` file for a LeRobot dataset.
+
+    Replaces the previously untyped ``dict`` returned by ``load_info()`` and
+    created by ``create_empty_dataset_info()``.  Using a dataclass provides
+    explicit field definitions, IDE auto-completion, and validation at
+    construction time.
+    """
+
+    codebase_version: str
+    fps: int
+    features: dict[str, dict]
+
+    # Episode / frame counters — start at zero for new datasets
+    total_episodes: int = 0
+    total_frames: int = 0
+    total_tasks: int = 0
+
+    # Storage settings
+    chunks_size: int = field(default=DEFAULT_CHUNK_SIZE)
+    data_files_size_in_mb: int = field(default=DEFAULT_DATA_FILE_SIZE_IN_MB)
+    video_files_size_in_mb: int = field(default=DEFAULT_VIDEO_FILE_SIZE_IN_MB)
+
+    # File path templates
+    data_path: str = field(default=DEFAULT_DATA_PATH)
+    video_path: str | None = field(default=DEFAULT_VIDEO_PATH)
+
+    # Format holding the underlying data files. ``None`` means the built-in
+    # parquet/mp4 layout; any other value (e.g. "lance") routes LeRobotDataset's
+    # data access through the storage backend registered for that format.
+    storage_format: str | None = None
+
+    # Optional metadata
+    robot_type: str | None = None
+    splits: dict[str, str] = field(default_factory=dict)
+    # OpenAI-style tool schemas declared by the dataset. ``None`` means the
+    # dataset doesn't declare any — readers fall back to ``DEFAULT_TOOLS``.
+    tools: list[dict] | None = None
+
+    def __post_init__(self) -> None:
+        # Coerce feature shapes from list to tuple — JSON deserialisation
+        # returns lists, but the rest of the codebase expects tuples.
+        for ft in self.features.values():
+            if isinstance(ft.get("shape"), list):
+                ft["shape"] = tuple(ft["shape"])
+
+        if self.fps <= 0:
+            raise ValueError(f"fps must be positive, got {self.fps}")
+        if self.chunks_size <= 0:
+            raise ValueError(f"chunks_size must be positive, got {self.chunks_size}")
+        if self.data_files_size_in_mb <= 0:
+            raise ValueError(f"data_files_size_in_mb must be positive, got {self.data_files_size_in_mb}")
+        if self.video_files_size_in_mb <= 0:
+            raise ValueError(f"video_files_size_in_mb must be positive, got {self.video_files_size_in_mb}")
+
+    def to_dict(self) -> dict:
+        """Return a JSON-serialisable dict.
+
+        Converts tuple shapes back to lists so ``json.dump`` can handle them.
+        Drops ``tools`` and ``storage_format`` when unset so existing datasets
+        keep a clean ``info.json``.
+        """
+        d = dataclasses.asdict(self)
+        for ft in d["features"].values():
+            if isinstance(ft.get("shape"), tuple):
+                ft["shape"] = list(ft["shape"])
+        if d.get("tools") is None:
+            d.pop("tools", None)
+        if d.get("storage_format") is None:
+            d.pop("storage_format", None)
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DatasetInfo":
+        """Construct from a raw dict (e.g. loaded directly from JSON).
+
+        Unknown keys are ignored for forward compatibility with datasets that
+        carry additional fields (e.g. ``total_videos`` from v2.x). A warning is
+        logged when such fields are present.
+        """
+        known = {f.name for f in dataclasses.fields(cls)}
+        unknown = sorted(k for k in data if k not in known)
+        if unknown:
+            logger.warning(f"Unknown fields in DatasetInfo: {unknown}. These will be ignored.")
+        return cls(**{k: v for k, v in data.items() if k in known})
+
+    # ---------------------------------------------------------------------------
+    # Temporary dict-style compatibility layer
+    # Allows existing ``info["key"]`` call-sites to keep working without changes.
+    # Once all callers have been migrated to attribute access, remove these.
+    # ---------------------------------------------------------------------------
+    def __getitem__(self, key: str):
+        import warnings
+
+        warnings.warn(
+            f"Accessing DatasetInfo with dict-style syntax info['{key}'] is deprecated. "
+            f"Use attribute access info.{key} instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        try:
+            return getattr(self, key)
+        except AttributeError as err:
+            raise KeyError(key) from err
+
+    def __setitem__(self, key: str, value) -> None:
+        import warnings
+
+        warnings.warn(
+            f"Setting DatasetInfo with dict-style syntax info['{key}'] = ... is deprecated. "
+            f"Use attribute assignment info.{key} = ... instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if not hasattr(self, key):
+            raise KeyError(f"DatasetInfo has no field '{key}'")
+        setattr(self, key, value)
+
+    def __contains__(self, key: str) -> bool:
+        """Check if a field exists (dict-like interface)."""
+        return hasattr(self, key)
+
+    def get(self, key: str, default=None):
+        """Get attribute value with default fallback (dict-like interface)."""
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            return default
 
 
 def has_legacy_hub_download_metadata(root: Path) -> bool:
@@ -175,8 +395,10 @@ def check_version_compatibility(
         enforce_breaking_major (bool): If True, raise an error on major version mismatch.
 
     Raises:
-        BackwardCompatibilityError: If the dataset version is from a newer, incompatible
-            major version of the codebase.
+        BackwardCompatibilityError: If the dataset is in an older, incompatible major
+            version of the codebase (e.g. a v2.1 dataset read by v3 code).
+        ForwardCompatibilityError: If the dataset is from a newer major version than the
+            codebase and ``enforce_breaking_major`` is True.
     """
     v_check = (
         packaging.version.parse(version_to_check)
@@ -190,20 +412,28 @@ def check_version_compatibility(
     )
     if v_check.major < v_current.major and enforce_breaking_major:
         raise BackwardCompatibilityError(repo_id, v_check)
-    elif v_check.minor < v_current.minor:
-        logging.warning(FUTURE_MESSAGE.format(repo_id=repo_id, version=v_check))
+    if v_check > v_current:
+        # The dataset was written by a newer release than this codebase. A newer
+        # major version cannot be read at all, so it is refused (unless major
+        # enforcement is off); a newer minor version still warns.
+        if v_check.major > v_current.major and enforce_breaking_major:
+            raise ForwardCompatibilityError(repo_id, v_check)
+        logger.warning(FUTURE_MESSAGE.format(repo_id=repo_id, version=v_check))
 
 
-def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
+def get_repo_versions(repo_id: str, *, token: str | bool | None = None) -> list[packaging.version.Version]:
     """Return available valid versions (branches and tags) on a given Hub repo.
 
     Args:
         repo_id (str): The repository ID on the Hugging Face Hub.
+        token: Authentication token used for Hub requests. Pass a string token,
+            ``True`` to require the locally stored token, ``False`` to disable
+            authentication, or ``None`` to use the Hugging Face Hub default.
 
     Returns:
         list[packaging.version.Version]: A list of valid versions found.
     """
-    api = HfApi()
+    api = HfApi() if token is None else HfApi(token=token)
     repo_refs = api.list_repo_refs(repo_id, repo_type="dataset")
     repo_refs = [b.name for b in repo_refs.branches + repo_refs.tags]
     repo_versions = []
@@ -214,7 +444,12 @@ def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
     return repo_versions
 
 
-def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> str:
+def get_safe_version(
+    repo_id: str,
+    version: str | packaging.version.Version,
+    *,
+    token: str | bool | None = None,
+) -> str:
     """Return the specified version if available on repo, or the latest compatible one.
 
     If the exact version is not found, it looks for the latest version with the
@@ -223,32 +458,23 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     Args:
         repo_id (str): The repository ID on the Hugging Face Hub.
         version (str | packaging.version.Version): The target version.
+        token: Authentication token forwarded to the Hub version lookup.
 
     Returns:
         str: The safe version string (e.g., "v1.2.3") to use as a revision.
 
     Raises:
-        RevisionNotFoundError: If the repo has no version tags.
+        RuntimeError: If the repo has no version tags.
         BackwardCompatibilityError: If only older major versions are available.
         ForwardCompatibilityError: If only newer major versions are available.
     """
     target_version = (
         packaging.version.parse(version) if not isinstance(version, packaging.version.Version) else version
     )
-    hub_versions = get_repo_versions(repo_id)
+    hub_versions = get_repo_versions(repo_id) if token is None else get_repo_versions(repo_id, token=token)
 
     if not hub_versions:
-        raise RevisionNotFoundError(
-            f"""Your dataset must be tagged with a codebase version.
-            Assuming _version_ is the codebase_version value in the info.json, you can run this:
-            ```python
-            from huggingface_hub import HfApi
-
-            hub_api = HfApi()
-            hub_api.create_tag("{repo_id}", tag="_version_", repo_type="dataset")
-            ```
-            """
-        )
+        raise RuntimeError(MISSING_VERSION_TAG_MESSAGE.format(repo_id=repo_id))
 
     if target_version in hub_versions:
         return f"v{target_version}"
@@ -259,7 +485,7 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     if compatibles:
         return_version = max(compatibles)
         if return_version < target_version:
-            logging.warning(f"Revision {version} for {repo_id} not found, using version v{return_version}")
+            logger.warning(f"Revision {version} for {repo_id} not found, using version v{return_version}")
         return f"v{return_version}"
 
     lower_major = [v for v in hub_versions if v.major < target_version.major]
@@ -294,7 +520,7 @@ def create_branch(repo_id: str, *, branch: str, repo_type: str | None = None) ->
 
 def create_lerobot_dataset_card(
     tags: list | None = None,
-    dataset_info: dict | None = None,
+    dataset_info: DatasetInfo | None = None,
     **kwargs,
 ) -> DatasetCard:
     """Create a `DatasetCard` for a LeRobot dataset.
@@ -305,7 +531,7 @@ def create_lerobot_dataset_card(
 
     Args:
         tags (list | None): A list of tags to add to the dataset card.
-        dataset_info (dict | None): The dataset's info dictionary, which will
+        dataset_info (DatasetInfo | None): The dataset's info object, which will
             be displayed on the card.
         **kwargs: Additional keyword arguments to populate the card template.
 
@@ -318,7 +544,7 @@ def create_lerobot_dataset_card(
         card_tags += tags
     if dataset_info:
         dataset_structure = "[meta/info.json](meta/info.json):\n"
-        dataset_structure += f"```json\n{json.dumps(dataset_info, indent=4)}\n```\n"
+        dataset_structure += f"```json\n{json.dumps(dataset_info.to_dict(), indent=4)}\n```\n"
         kwargs = {**kwargs, "dataset_structure": dataset_structure}
     card_data = DatasetCardData(
         license=kwargs.get("license"),
@@ -339,23 +565,3 @@ def create_lerobot_dataset_card(
         template_str=card_template,
         **kwargs,
     )
-
-
-def is_float_in_list(target, float_list, threshold=1e-6):
-    return any(abs(target - x) <= threshold for x in float_list)
-
-
-def find_float_index(target, float_list, threshold=1e-6):
-    for i, x in enumerate(float_list):
-        if abs(target - x) <= threshold:
-            return i
-    return -1
-
-
-def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -> datasets.Dataset:
-    """
-    Safe shards the dataset.
-    """
-    shard_idx = min(dataset.num_shards, index + 1) - 1
-
-    return dataset.shard(num_shards, index=shard_idx)

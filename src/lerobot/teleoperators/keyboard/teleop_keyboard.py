@@ -15,15 +15,14 @@
 # limitations under the License.
 
 import logging
-import os
-import sys
 import time
 from queue import Queue
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
-from lerobot.types import RobotAction
+from lerobot.lerobot_types import RobotAction
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _pynput_available, require_package
+from lerobot.utils.keyboard_input import pynput_can_capture
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
@@ -34,17 +33,16 @@ from .configuration_keyboard import (
 )
 
 PYNPUT_AVAILABLE = _pynput_available
-keyboard = None
-if PYNPUT_AVAILABLE:
-    try:
-        if ("DISPLAY" not in os.environ) and ("linux" in sys.platform):
-            logging.info("No DISPLAY set. Skipping pynput import.")
-            PYNPUT_AVAILABLE = False
-        else:
+if TYPE_CHECKING:
+    from pynput import keyboard
+else:
+    keyboard = None
+    if PYNPUT_AVAILABLE:
+        try:
             from pynput import keyboard
-    except Exception as e:
-        PYNPUT_AVAILABLE = False
-        logging.info(f"Could not import pynput: {e}")
+        except Exception as e:  # installed but not importable here, e.g. no reachable X display
+            PYNPUT_AVAILABLE = False
+            logging.info("Could not import pynput keyboard backend: %s", e)
 
 
 class KeyboardTeleop(Teleoperator):
@@ -61,18 +59,16 @@ class KeyboardTeleop(Teleoperator):
         self.config = config
         self.robot_type = config.type
 
-        self.event_queue = Queue()
-        self.current_pressed = {}
-        self.listener = None
-        self.logs = {}
+        # Key events are `(key, is_pressed)`; `key` is a character, a `keyboard.Key` member or `None` if unmapped.
+        self.event_queue: Queue[tuple[str | keyboard.Key | None, bool]] = Queue()
+        self.current_pressed: dict[str | keyboard.Key | None, bool] = {}
+        self.listener: keyboard.Listener | None = None
+        self.logs: dict[str, float] = {}
 
     @property
     def action_features(self) -> dict:
-        return {
-            "dtype": "float32",
-            "shape": (len(self.arm),),
-            "names": {"motors": list(self.arm.motors)},
-        }
+        # Pressed keys have no static feature layout; subclasses with a fixed action space override this.
+        raise NotImplementedError(f"{self.__class__.__name__} exposes no static action features.")
 
     @property
     def feedback_features(self) -> dict:
@@ -84,11 +80,12 @@ class KeyboardTeleop(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        pass
+        # Keyboard input needs no calibration.
+        return True
 
     @check_if_already_connected
-    def connect(self) -> None:
-        if PYNPUT_AVAILABLE:
+    def connect(self, calibrate: bool = True) -> None:
+        if PYNPUT_AVAILABLE and pynput_can_capture():
             logging.info("pynput is available - enabling local keyboard listener.")
             self.listener = keyboard.Listener(
                 on_press=self._on_press,
@@ -96,7 +93,13 @@ class KeyboardTeleop(Teleoperator):
             )
             self.listener.start()
         else:
-            logging.info("pynput not available - skipping local keyboard listener.")
+            logging.warning(
+                "Keyboard teleoperation is unavailable in this environment. pynput can only "
+                "capture key events on an X11 session (Linux), a Windows desktop, or macOS with "
+                "Accessibility / Input Monitoring granted - not on Wayland or headless machines. "
+                "This keyboard teleoperator will produce no actions; use an X11 session, a "
+                "gamepad, or a leader-arm teleoperator instead."
+            )
             self.listener = None
 
     def calibrate(self) -> None:
@@ -104,11 +107,14 @@ class KeyboardTeleop(Teleoperator):
 
     def _on_press(self, key):
         if hasattr(key, "char"):
-            self.event_queue.put((key.char, True))
+            key = key.char
+        self.event_queue.put((key, True))
 
     def _on_release(self, key):
         if hasattr(key, "char"):
-            self.event_queue.put((key.char, False))
+            key = key.char
+        self.event_queue.put((key, False))
+
         if key == keyboard.Key.esc:
             logging.info("ESC pressed, disconnecting.")
             self.disconnect()
@@ -131,7 +137,7 @@ class KeyboardTeleop(Teleoperator):
         action = {key for key, val in self.current_pressed.items() if val}
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
 
-        return dict.fromkeys(action, None)
+        return cast(RobotAction, dict.fromkeys(action, None))
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         pass
@@ -154,7 +160,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
     def __init__(self, config: KeyboardEndEffectorTeleopConfig):
         super().__init__(config)
         self.config = config
-        self.misc_keys_queue = Queue()
+        self.misc_keys_queue: Queue[str | keyboard.Key | None] = Queue()
 
     @property
     def action_features(self) -> dict:
@@ -204,8 +210,6 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
                 # this is useful for retrieving other events like interventions for RL, episode success, etc.
                 self.misc_keys_queue.put(key)
 
-        self.current_pressed.clear()
-
         action_dict = {
             "delta_x": delta_x,
             "delta_y": delta_y,
@@ -217,7 +221,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
         return action_dict
 
-    def get_teleop_events(self) -> dict[str, Any]:
+    def get_teleop_events(self) -> dict[TeleopEvents, bool]:
         """
         Get extra control events from the keyboard such as intervention status,
         episode termination, success indicators, etc.
@@ -255,6 +259,8 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             keyboard.Key.ctrl_l,
         ]
         is_intervention = any(self.current_pressed.get(key, False) for key in movement_keys)
+
+        self.current_pressed.clear()
 
         # Check for episode control commands from misc_keys_queue
         terminate_episode = False

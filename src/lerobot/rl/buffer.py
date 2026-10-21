@@ -18,7 +18,7 @@ import functools
 import threading
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -36,7 +36,7 @@ class BatchTransition(TypedDict):
     next_state: dict[str, torch.Tensor]
     done: torch.Tensor
     truncated: torch.Tensor
-    complementary_info: dict[str, torch.Tensor | float | int] | None = None
+    complementary_info: NotRequired[dict[str, torch.Tensor | float | int] | None]
 
 
 def random_crop_vectorized(images: torch.Tensor, output_size: tuple) -> torch.Tensor:
@@ -97,8 +97,8 @@ class ReplayBuffer:
         Args:
             capacity (int): Maximum number of transitions to store in the buffer.
             device (str): The device where the tensors will be moved when sampling ("cuda:0" or "cpu").
-            state_keys (List[str]): The list of keys that appear in `state` and `next_state`.
-            image_augmentation_function (Optional[Callable]): A function that takes a batch of images
+            state_keys (list[str]): The list of keys that appear in `state` and `next_state`.
+            image_augmentation_function (Callable | None): A function that takes a batch of images
                 and returns a batch of augmented images. If None, a default augmentation function is used.
             use_drq (bool): Whether to use the default DRQ image augmentation style, when sampling in the buffer.
             storage_device: The device (e.g. "cpu" or "cuda:0") where the data will be stored.
@@ -634,7 +634,7 @@ class ReplayBuffer:
                 If None, you must handle or define default keys.
 
         Returns:
-            transitions (List[Transition]):
+            transitions (list[Transition]):
                 A list of Transition dictionaries with the same length as `dataset`.
         """
         if state_keys is None:

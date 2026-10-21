@@ -40,10 +40,10 @@ This tutorial guides you through updating the firmware of Feetech motors using t
 For each motor you want to update:
 
 1. **Select the motor** from the list by clicking on it
-2. **Click on Upgrade tab**:
-3. **Click on Online button**:
-   - If an potential firmware update is found, it will be displayed in the box
-4. **Click on Upgrade button**:
+2. **Click the Upgrade tab**:
+3. **Click the Online button**:
+   - If a potential firmware update is found, it will be displayed in the box
+4. **Click the Upgrade button**:
    - The update progress will be displayed
 
 ## Step 6: Verify Update

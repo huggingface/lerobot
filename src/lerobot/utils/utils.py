@@ -24,7 +24,6 @@ import sys
 import time
 from collections.abc import Iterator
 from copy import copy, deepcopy
-from datetime import datetime
 from pathlib import Path
 from statistics import mean
 from typing import TYPE_CHECKING, Any
@@ -61,14 +60,16 @@ def init_logging(
         accelerator: Optional Accelerator instance (for multi-GPU detection)
     """
 
-    def custom_format(record: logging.LogRecord) -> str:
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        fnameline = f"{record.pathname}:{record.lineno}"
-        pid_str = f"[PID: {os.getpid()}] " if display_pid else ""
-        return f"{record.levelname} {pid_str}{dt} {fnameline[-15:]:>15} {record.getMessage()}"
+    class LeRobotFormatter(logging.Formatter):
+        def format(self, record: logging.LogRecord) -> str:
+            record.lerobot_location = f"{record.pathname}:{record.lineno}"[-15:]
+            record.lerobot_pid = f"[PID: {os.getpid()}] " if display_pid else ""
+            return super().format(record)
 
-    formatter = logging.Formatter()
-    formatter.format = custom_format
+    formatter = LeRobotFormatter(
+        "%(levelname)s %(lerobot_pid)s%(asctime)s %(lerobot_location)15s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     logger = logging.getLogger()
     logger.setLevel(logging.NOTSET)
@@ -111,7 +112,7 @@ def format_big_number(num, precision=0):
     return num
 
 
-def say(text: str, blocking: bool = False):
+def say(text: str, blocking: bool = False) -> None:
     system = platform.system()
 
     if system == "Darwin":
@@ -133,10 +134,16 @@ def say(text: str, blocking: bool = False):
     else:
         raise RuntimeError("Unsupported operating system for text-to-speech.")
 
-    if blocking:
-        subprocess.run(cmd, check=True)
-    else:
-        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW if system == "Windows" else 0)
+    try:
+        if blocking:
+            subprocess.run(cmd, check=True, timeout=5)
+        else:
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = subprocess.CREATE_NO_WINDOW
+            subprocess.Popen(cmd, creationflags=creationflags)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logging.warning("Text-to-speech command failed: %s | Error: %s", cmd, e)
 
 
 def log_say(text: str, play_sounds: bool = True, blocking: bool = False):
@@ -160,6 +167,25 @@ def has_method(cls: object, method_name: str) -> bool:
     return hasattr(cls, method_name) and callable(getattr(cls, method_name))
 
 
+def unwrap_scalar(value: Any) -> Any:
+    """Unwrap a tensor / numpy scalar / single-element list into a Python scalar.
+
+    Tensors and numpy scalars expose ``.item()``; single-element lists are
+    unwrapped recursively. Anything else is returned unchanged. Centralized
+    here so the language renderer and processor steps share one definition.
+
+    Raises:
+        ValueError: If ``value`` is a list with zero or multiple elements.
+    """
+    if hasattr(value, "item"):
+        return value.item()
+    if isinstance(value, list):
+        if len(value) != 1:
+            raise ValueError(f"Expected a scalar, got list of length {len(value)}: {value!r}")
+        return unwrap_scalar(value[0])
+    return value
+
+
 def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
     """
     Return True if a given string can be converted to a numpy dtype.
@@ -174,7 +200,7 @@ def is_valid_numpy_dtype_string(dtype_str: str) -> bool:
 
 
 def enter_pressed() -> bool:
-    if platform.system() == "Windows":
+    if sys.platform == "win32":
         import msvcrt
 
         if msvcrt.kbhit():
@@ -182,7 +208,8 @@ def enter_pressed() -> bool:
             return key in (b"\r", b"\n")  # enter key
         return False
     else:
-        return select.select([sys.stdin], [], [], 0)[0] and sys.stdin.readline().strip() == ""
+        ready, _, _ = select.select([sys.stdin], [], [], 0)
+        return bool(ready) and sys.stdin.readline().strip() == ""
 
 
 def move_cursor_up(lines):
@@ -200,7 +227,7 @@ def get_elapsed_time_in_days_hours_minutes_seconds(elapsed_time_s: float):
     return days, hours, minutes, seconds
 
 
-def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
+def flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = "/") -> dict[str, Any]:
     """Flatten a nested dictionary by joining keys with a separator.
 
     Example:
@@ -216,7 +243,7 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     Returns:
         dict: A flattened dictionary.
     """
-    items = []
+    items: list[tuple[str, Any]] = []
     for k, v in d.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
         if isinstance(v, dict):
@@ -226,7 +253,7 @@ def flatten_dict(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     return dict(items)
 
 
-def unflatten_dict(d: dict, sep: str = "/") -> dict:
+def unflatten_dict(d: dict[str, Any], sep: str = "/") -> dict[str, Any]:
     """Unflatten a dictionary with delimited keys into a nested dictionary.
 
     Example:
@@ -241,7 +268,7 @@ def unflatten_dict(d: dict, sep: str = "/") -> dict:
     Returns:
         dict: A nested dictionary.
     """
-    outdict = {}
+    outdict: dict[str, Any] = {}
     for key, value in d.items():
         parts = key.split(sep)
         d_inner = outdict

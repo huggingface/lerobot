@@ -19,17 +19,18 @@ on:
   issues:
     types: [opened, edited]
 
-permissions:
-  contents: read
-  issues: write
+
+permissions: {}
 
 jobs:
   label-issue:
+    permissions:
+      issues: write
     name: Auto Label Issue
     runs-on: ubuntu-latest
     if: github.repository == 'huggingface/lerobot'
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             // Setup Input Text
