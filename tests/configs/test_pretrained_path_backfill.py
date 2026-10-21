@@ -127,9 +127,7 @@ def test_reward_config_from_pretrained_backfills_path():
     # branch on it — e.g. RobometerRewardModel.__init__ takes the "fresh
     # model" branch instead of loading the checkpoint.
     with tempfile.TemporaryDirectory() as tmpdir:
-        Path(tmpdir, "config.json").write_text(
-            json.dumps({"type": "_dummy_reward_backfill", "lr": 0.1})
-        )
+        Path(tmpdir, "config.json").write_text(json.dumps({"type": "_dummy_reward_backfill", "lr": 0.1}))
         cfg = RewardModelConfig.from_pretrained(tmpdir)
         assert isinstance(cfg, _DummyRewardBackfillConfig)
         assert cfg.pretrained_path == tmpdir
