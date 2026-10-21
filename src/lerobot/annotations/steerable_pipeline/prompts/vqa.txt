@@ -9,7 +9,7 @@ Question types and the EXACT answer JSON shape required for each:
 
   bbox       => {{"detections": [{{"label": "<obj>", "bbox_format": "xyxy",
                                     "bbox": [x1, y1, x2, y2]}}, ...]}}
-                bbox is in pixel coordinates (x_min, y_min, x_max, y_max).
+                bbox is (x_min, y_min, x_max, y_max) {coordinate_space}.
                 ECoT example: "a white cup [124, 25, 176, 113]".
 
   keypoint   => {{"label": "<point>", "point_format": "xy",

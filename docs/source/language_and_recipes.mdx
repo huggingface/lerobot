@@ -153,8 +153,8 @@ Blend recipes select one weighted sub-recipe deterministically from the sample i
 `recipes/subtask_joint.yaml` demonstrates joint sequence training rather than a
 weighted blend. For the same sample, its assistant subtask is supervised with
 text cross-entropy on the `low_level` stream while action prediction remains
-active, matching the joint setup from the π0.5 paper. Enable
-`--policy.joint_subtask_conditioning=true` to use that subtask conditioning at inference.
+active, matching the joint setup from the π0.5 paper. It is training-only for now: the
+runtime does not yet rebuild this joint prefix at inference.
 
 ## Graceful absence
 
