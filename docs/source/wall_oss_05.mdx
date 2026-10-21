@@ -62,6 +62,10 @@ uv sync --extra wall_oss_05
 
 The policy is implemented natively in LeRobot. Its only policy-specific
 dependency is Transformers; no separate Wall-X checkout is required.
+Recipe-backed processing also requires the dataset extra. For language queries
+or training, install `uv sync --extra wall_oss_05 --extra training` (training
+includes dataset support). Set `--policy.recipe=null` for action-only processing
+without the dataset extra.
 
 ## Checkpoints
 
@@ -175,8 +179,8 @@ through your distributed training configuration.
 
 ### Train with language annotations
 
-Enable the recipe owned by `WallOSS05Config` to train from LeRobot's optional
-language columns. Its joint subtask recipe supervises the assistant response
+The recipe owned by `WallOSS05Config` uses LeRobot's optional language columns
+by default. Its joint subtask recipe supervises the assistant response
 and continuous action chunk in one causal sequence:
 
 ```bash
@@ -201,8 +205,12 @@ Recipe streams determine which objectives run for each sample:
 
 Only the targeted assistant payload and its `<|im_end|>` token are used as
 language labels. User prompts, padding, images, proprioception, and continuous
-action-query tokens are masked from text cross-entropy. If `use_language_recipe` is
-unset, training follows the original action-only path.
+action-query tokens are masked from text cross-entropy. Rows without annotations
+retain the original action-only prompt and loss. Set `use_language_recipe=false`
+to disable annotation rendering, or `recipe=null` to disable both recipe renderers.
+An explicit `recipe_path` overrides the built-in recipe. Fresh fine-tuning rebuilds
+processors from that recipe and the training statistics; resumed training and
+rollout restore the checkpoint's saved processors and statistics.
 
 See [Language columns and recipes](./language_and_recipes) for the annotation
 schema and recipe structure. `recipe_path` may point to an explicit external
@@ -216,7 +224,7 @@ YAML override; LeRobot does not provide shared default recipe files.
 | `chunk_size`              | `32`                       | Number of actions predicted per chunk                      |
 | `n_action_steps`          | `32`                       | Number of predicted actions executed before replanning     |
 | `camera_key_mapping`      | face and right-wrist views | Associates image feature keys with model camera slots      |
-| `use_language_recipe`     | `false`                    | Enables the recipe stored in the policy config             |
+| `use_language_recipe`     | `true`                     | Enables the recipe stored in the policy config             |
 | `recipe_path`             | `None`                     | Optional explicit external recipe override                 |
 | `text_loss_weight`        | `0.1`                      | Weight for supervised assistant-token cross-entropy        |
 | `flow_loss_weight`        | `1.0`                      | Weight for continuous flow-action loss                     |

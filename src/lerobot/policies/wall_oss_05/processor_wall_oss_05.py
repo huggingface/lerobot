@@ -17,14 +17,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 from PIL import Image
 
-from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     ComplementaryDataProcessorStep,
@@ -38,6 +40,7 @@ from lerobot.processor import (
     RenderRuntimeMessagesStep,
     RenderTrainingMessagesStep,
     UnnormalizerProcessorStep,
+    load_pretrained_policy_processors,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
@@ -135,7 +138,7 @@ class WallOSS05TokenizerStep(ProcessorStep):
         return prompt, WALL_OSS_ACTION_TOKEN * self.chunk_size
 
     @staticmethod
-    def _message_content(message: dict[str, Any]) -> str:
+    def _message_content(message: Mapping[str, Any]) -> str:
         content = semantic_message_content_text(message.get("content"))
         say_texts = []
         for call in message.get("tool_calls") or []:
@@ -155,7 +158,7 @@ class WallOSS05TokenizerStep(ProcessorStep):
 
     def _recipe_prompt(
         self,
-        messages: list[dict[str, Any]],
+        messages: Sequence[Mapping[str, Any]],
         streams: list[str | None],
         targets: list[int],
         task: str,
@@ -434,7 +437,7 @@ class WallOSS05PadActionProcessorStep(ProcessorStep):
         action = transition.get(TransitionKey.ACTION)
         if action is None:
             return transition
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError(f"Wall-OSS-0.5 action should be a PolicyAction tensor, got {type(action)}.")
         action_dim = action.shape[-1]
         if action_dim > self.max_action_dim:
@@ -512,7 +515,7 @@ class WallOSS05ClampNormalizedProcessorStep(ProcessorStep):
             observation[OBS_STATE] = observation[OBS_STATE].clamp(-1, 1)
             output[TransitionKey.OBSERVATION] = observation
         action = output.get(TransitionKey.ACTION)
-        if action is not None:
+        if isinstance(action, torch.Tensor):
             output[TransitionKey.ACTION] = action.clamp(-1, 1)
         return output
 
@@ -520,6 +523,18 @@ class WallOSS05ClampNormalizedProcessorStep(ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
+
+
+def _configure_wall_quantile_eps(step: NormalizerProcessorStep | UnnormalizerProcessorStep) -> None:
+    """Match the author's constant dimensions without changing their saved quantiles.
+
+    Wall divides by one when q01 == q99, while inverse normalization keeps
+    the original zero range. Other normalization modes retain LeRobot defaults.
+    """
+    if all(
+        mode in {NormalizationMode.IDENTITY, NormalizationMode.QUANTILES} for mode in step.norm_map.values()
+    ):
+        step.eps = 0.0 if isinstance(step, UnnormalizerProcessorStep) else 1.0
 
 
 def reconcile_wall_oss_05_processors(
@@ -534,6 +549,9 @@ def reconcile_wall_oss_05_processors(
     """
     native_dim_holder: dict[str, int] = {}
     pre_steps = list(preprocessor.steps)
+    for step in pre_steps:
+        if isinstance(step, NormalizerProcessorStep):
+            _configure_wall_quantile_eps(step)
     if not any(isinstance(step, WallOSS05PadStateProcessorStep) for step in pre_steps):
         insert_idx = next(
             (idx for idx, step in enumerate(pre_steps) if isinstance(step, NormalizerProcessorStep)),
@@ -553,6 +571,9 @@ def reconcile_wall_oss_05_processors(
                 break
 
     post_steps = list(postprocessor.steps)
+    for step in post_steps:
+        if isinstance(step, UnnormalizerProcessorStep):
+            _configure_wall_quantile_eps(step)
     crop_step = WallOSS05CropActionProcessorStep(
         action_dim=config.postprocess_action_dim,
         native_dim_holder=native_dim_holder,
@@ -574,6 +595,35 @@ def reconcile_wall_oss_05_processors(
     return preprocessor, postprocessor
 
 
+def make_wall_oss_05_pre_post_processors_from_pretrained(
+    config: WallOSS05Config,
+    pretrained_path: str | Path,
+    *,
+    revision: str | None,
+    dataset_stats: dict | None,
+    dataset_meta: Any | None,
+    preprocessor_overrides: dict[str, Any] | None,
+    postprocessor_overrides: dict[str, Any] | None,
+    preprocessor_config_filename: str,
+    postprocessor_config_filename: str,
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """Load saved statistics and reconnect Wall's state-padding/action-cropping pair.
+
+    Fresh language fine-tuning rebuilds processors in lerobot-train; checkpoint
+    loading here also serves rollout and resumed training.
+    """
+    del dataset_stats, dataset_meta
+    preprocessor, postprocessor = load_pretrained_policy_processors(
+        pretrained_path,
+        revision=revision,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
+    )
+    return reconcile_wall_oss_05_processors(config, preprocessor, postprocessor)
+
+
 def make_wall_oss_05_pre_post_processors(
     config: WallOSS05Config,
     dataset_stats: dict | None = None,
@@ -584,14 +634,19 @@ def make_wall_oss_05_pre_post_processors(
     """Build the serializable Wall input/output pipelines."""
 
     steps = make_default_policy_processor_steps(config, dataset_stats)
-    render_training = bool(config.use_language_recipe or config.recipe_path)
-    if render_training and config.recipe is None:
-        raise ValueError("Wall-OSS-0.5 language training requires a recipe in policy config.")
+    _configure_wall_quantile_eps(steps.normalize)
+    _configure_wall_quantile_eps(steps.unnormalize)
+    recipe = None
+    if config.recipe is not None:
+        from lerobot.datasets.recipe import TrainingRecipe
+
+        recipe = TrainingRecipe.from_dict(config.recipe)
+    render_training = config.recipe is not None and bool(config.use_language_recipe or config.recipe_path)
     native_dim_holder: dict[str, int] = {}
     return make_policy_processor_pipelines(
         input_steps=[
-            RenderRuntimeMessagesStep(config.recipe),
-            RenderTrainingMessagesStep(config.recipe if render_training else None),
+            RenderRuntimeMessagesStep(recipe),
+            RenderTrainingMessagesStep(recipe if render_training else None),
             steps.rename_observations,
             steps.add_batch_dim,
             WallOSS05TaskPassthrough(),

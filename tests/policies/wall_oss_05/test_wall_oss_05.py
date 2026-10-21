@@ -38,17 +38,26 @@ from lerobot.policies.wall_oss_05.processor_wall_oss_05 import (
     WallOSS05TokenizerStep,
 )
 from lerobot.processor import (
+    NormalizerProcessorStep,
     PolicyProcessorPipeline,
     RenderRuntimeMessagesStep,
+    UnnormalizerProcessorStep,
     batch_to_transition,
     transition_to_batch,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
+@pytest.fixture
+def dataset_dependencies():
+    pytest.importorskip("datasets", reason="language recipes require lerobot[dataset]")
+    pytest.importorskip("av", reason="language recipes require lerobot[dataset]")
+
+
 def _config(**overrides) -> WallOSS05Config:
     values = {
         "device": "cpu",
+        "recipe": None,
         "vlm_config": {"model_type": "qwen2_5_vl"},
         "input_features": {
             OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(26,)),
@@ -57,6 +66,8 @@ def _config(**overrides) -> WallOSS05Config:
         },
         "output_features": {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(26,))},
     }
+    if overrides.get("use_language_recipe"):
+        values.pop("recipe")
     values.update(overrides)
     return WallOSS05Config(**values)
 
@@ -69,7 +80,7 @@ def test_default_loss_weights_use_one_to_ten_text_flow_ratio():
 
 
 @pytest.mark.parametrize("query_kind", ["vqa", "next_subtask"])
-def test_runtime_query_reaches_tokenizer(query_kind):
+def test_runtime_query_reaches_tokenizer(query_kind, dataset_dependencies):
     config = _config(use_language_recipe=True)
     preprocessor, _ = make_pre_post_processors(config, dataset_stats=_stats())
     _stub_tokenizer(preprocessor)
@@ -80,6 +91,30 @@ def test_runtime_query_reaches_tokenizer(query_kind):
     assert processed["messages_rendered"] == [[{"role": "user", "content": expected}]]
     assert not processed[WALL_OSS_PREDICT_ACTIONS].any()
     assert "query_kind" not in processed
+
+
+def test_recipe_override_remains_portable_after_save(tmp_path, dataset_dependencies):
+    path = tmp_path / "recipe.yaml"
+    path.write_text(
+        "messages:\n"
+        '  - role: user\n    content: "${task}: choose a subtask"\n    stream: low_level\n'
+        '  - role: assistant\n    content: "${subtask}"\n    stream: low_level\n'
+        "    target: true\n    if_present: subtask\n"
+    )
+    config = _config(recipe_path=str(path))
+    output = tmp_path / "checkpoint"
+    output.mkdir()
+    config._save_pretrained(output)
+    path.unlink()
+
+    restored = WallOSS05Config.from_pretrained(output)
+    assert restored.recipe == config.recipe
+    preprocessor, _ = make_pre_post_processors(restored, dataset_stats=_stats())
+    _stub_tokenizer(preprocessor)
+    result = preprocessor(
+        {**_batch(batch_size=1), "query_kind": "next_subtask", "query_text": "clear the table"}
+    )
+    assert result["messages_rendered"] == [[{"role": "user", "content": "clear the table: choose a subtask"}]]
 
 
 class _TinyAuthorModel(nn.Module):
@@ -250,10 +285,8 @@ def test_lerobot_processors_match_wall_quantile_normalization_and_clipping():
     torch.testing.assert_close(postprocessor(processed[ACTION]), batch[ACTION])
 
 
-def test_recipe_processor_renders_joint_text_and_action_supervision():
-    pytest.importorskip("datasets", reason="language recipes require lerobot[dataset]")
-
-    config = _config(use_language_recipe=True)
+def test_recipe_processor_renders_joint_text_and_action_supervision(dataset_dependencies):
+    config = _config(recipe=WallOSS05Config(device="cpu").recipe)
     preprocessor, _ = make_pre_post_processors(config, dataset_stats=_stats())
     _stub_tokenizer(preprocessor)
     batch = _batch(batch_size=1)
@@ -585,6 +618,127 @@ def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path):
         reloaded_postprocessor(torch.zeros(1, 32, 26)),
         torch.full((1, 32, 26), 15.0),
     )
+
+
+def test_saved_processors_reconnect_native_state_width_and_action_crop(tmp_path):
+    config = _dimension_config(state_dim=6, action_dim=6)
+    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=_stats())
+    preprocessor.save_pretrained(tmp_path)
+    postprocessor.save_pretrained(tmp_path)
+
+    preprocessor, postprocessor = make_pre_post_processors(config, pretrained_path=tmp_path)
+    _stub_tokenizer(preprocessor)
+    batch = _batch(batch_size=1)
+    batch[OBS_STATE] = torch.ones(1, 6)
+    batch[ACTION] = torch.ones(1, 32, 6)
+    processed = preprocessor(batch)
+
+    assert processed[OBS_STATE].shape == (1, 26)
+    assert processed[ACTION].shape == (1, 32, 26)
+    assert postprocessor(torch.zeros(1, 32, 26)).shape == (1, 32, 6)
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_constant_quantiles_match_wall_normalization_and_inverse(tmp_path, reload):
+    config = _config()
+    stats = _stats(0.5, 0.5)
+    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=stats)
+    if reload:
+        # Published processors used LeRobot's default epsilon before this fix.
+        for pipeline in (preprocessor, postprocessor):
+            for step in pipeline.steps:
+                if isinstance(step, (NormalizerProcessorStep, UnnormalizerProcessorStep)):
+                    step.eps = 1e-8
+            pipeline.save_pretrained(tmp_path)
+        preprocessor, postprocessor = make_pre_post_processors(config, pretrained_path=tmp_path)
+    _stub_tokenizer(preprocessor)
+    batch = _batch(batch_size=1)
+    raw = torch.tensor([-0.5, 0.5, 0.75, 1.5] + [0.5] * 22)
+    batch[OBS_STATE] = raw[None]
+    batch[ACTION] = raw[None, None].expand(1, 32, -1)
+    processed = preprocessor(batch)
+    expected = torch.tensor([-1.0, -1.0, -0.5, 1.0] + [-1.0] * 22)
+    torch.testing.assert_close(processed[OBS_STATE], expected[None], atol=0, rtol=0)
+    torch.testing.assert_close(processed[ACTION], expected[None, None].expand(1, 32, -1), atol=0, rtol=0)
+    torch.testing.assert_close(
+        postprocessor(torch.ones(1, 32, 26)), torch.full((1, 32, 26), 0.5), atol=0, rtol=0
+    )
+
+
+@pytest.mark.parametrize("joint", [False, True], ids=["text-only", "joint-text-action"])
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_native_multimodal_model_trains_language_for_five_steps(joint, batch_size):
+    """Exercise the real vision encoder, routed decoder, tied head and flow expert on CPU."""
+    transformers = pytest.importorskip("transformers")
+    model_config = transformers.Qwen2_5_VLConfig(
+        text_config={
+            "vocab_size": 32,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "pad_token_id": 0,
+            "rope_parameters": {"rope_type": "default", "mrope_section": [2, 1, 1]},
+        },
+        vision_config={
+            "depth": 1,
+            "hidden_size": 32,
+            "intermediate_size": 64,
+            "num_heads": 4,
+            "out_hidden_size": 32,
+            "patch_size": 2,
+            "temporal_patch_size": 2,
+            "spatial_merge_size": 2,
+            "window_size": 8,
+            "fullatt_block_indexes": [0],
+        },
+        dim_inputs=[32, 16],
+        experts=[{"hidden_size": 32, "intermediate_size": 64}, {"hidden_size": 16, "intermediate_size": 32}],
+        action_hidden_size=16,
+        noise_scheduler={"s": 0.999},
+        image_token_id=28,
+        vision_start_token_id=29,
+        vision_end_token_id=30,
+    )
+    model_config.vision_config._attn_implementation = "sdpa"
+    processor = SimpleNamespace(tokenizer=SimpleNamespace(convert_tokens_to_ids=lambda _: 31))
+    with torch.random.fork_rng():
+        torch.manual_seed(7)
+        model = WallOSS05Model(model_config, processor)
+        policy = WallOSS05Policy(_config(chunk_size=2, n_action_steps=2), load_model=False)
+        policy.model = model
+        ids = [4, 29, 28, 30, 29, 28, 30, 6, 7, 8] + ([31, 31] if joint else [])
+        input_ids = torch.tensor([ids] * batch_size)
+        labels = torch.full_like(input_ids, -100)
+        labels[:, 8:10] = input_ids[:, 8:10]
+        batch = {
+            "input_ids": input_ids,
+            "attention_mask": torch.ones_like(input_ids),
+            "pixel_values": torch.randn(8 * batch_size, 24),
+            "image_grid_thw": torch.tensor([[1, 2, 2]] * (2 * batch_size)),
+            "moe_token_types": input_ids == 31,
+            "dof_mask": torch.ones(batch_size, 2, 26, dtype=torch.bool),
+            "text_labels": labels,
+            WALL_OSS_PREDICT_ACTIONS: torch.full((batch_size,), joint),
+            ACTION: torch.zeros(batch_size, 2, 26),
+        }
+        optimizer = torch.optim.AdamW(policy.parameters(), lr=0.01)
+        text_losses = []
+        for _ in range(5):
+            optimizer.zero_grad()
+            loss, metrics = policy(batch)
+            loss.backward()
+            assert torch.isfinite(loss)
+            assert model.lm_head.weight.grad is not None
+            assert model.lm_head.weight.grad.isfinite().all()
+            assert model.lm_head.weight.grad.norm() > 0
+            assert model.visual.patch_embed.proj.weight.grad is not None
+            assert model.visual.patch_embed.proj.weight.grad.norm() > 0
+            assert ("flow_loss" in metrics) is joint
+            text_losses.append(metrics["text_loss"])
+            optimizer.step()
+        assert text_losses[-1] < text_losses[0]
 
 
 def test_forward_backward_update_is_finite_and_tiny_batch_overfits():

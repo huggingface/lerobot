@@ -110,19 +110,21 @@ def test_ema_constant_decay_pins_the_schedule():
             assert ema.cur_decay_value == 0.99
 
 
-def test_ema_weights_context_swaps_and_restores():
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
+def test_ema_weights_context_swaps_and_restores(dtype):
     pytest.importorskip("diffusers")
     from diffusers.training_utils import EMAModel
 
     from lerobot.scripts.lerobot_train import _ema_weights
 
     torch.manual_seed(0)
-    model = torch.nn.Linear(4, 4)
+    model = torch.nn.Linear(4, 4).to(dtype=dtype)
     ema = EMAModel(model.parameters(), decay=0.9999, use_ema_warmup=True, inv_gamma=1.0, power=0.75)
+    ema.to(dtype=torch.float32)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
     for _ in range(3):
-        model(torch.randn(2, 4)).sum().backward()
+        model(torch.randn(2, 4, dtype=dtype)).sum().backward()
         optimizer.step()
         optimizer.zero_grad()
         ema.step(model.parameters())
@@ -134,6 +136,8 @@ def test_ema_weights_context_swaps_and_restores():
 
     assert any(not torch.equal(a, b) for a, b in zip(live, swapped, strict=True))
     assert all(torch.equal(a, b.detach()) for a, b in zip(live, restored, strict=True))
+    assert all(p.dtype == dtype for p in model.parameters())
+    assert all(p.dtype == torch.float32 for p in ema.shadow_params)
 
 
 def make_dummy_dataset(tmp_path):
@@ -253,6 +257,65 @@ def test_train_diffusion_with_ema_checkpoint_and_resume(tmp_path):
         weights_only=True,
     )
     assert resumed_state["optimization_step"] == 6
+
+
+@pytest.mark.parametrize("saved_shadow_dtype", [torch.float32, torch.bfloat16])
+def test_train_bf16_ema_preserves_small_updates_and_resume(tmp_path, monkeypatch, saved_shadow_dtype):
+    pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+    pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
+    trainer = pytest.importorskip("lerobot.scripts.lerobot_train")
+    make_policy = trainer.make_policy
+
+    def make_bf16_policy(*args, **kwargs):
+        return make_policy(*args, **kwargs).to(dtype=torch.bfloat16)
+
+    updates = 0
+
+    def controlled_update(metrics, policy, *args, **kwargs):
+        # Isolate EMA arithmetic from the optimizer and CPU BF16 model kernels.
+        nonlocal updates
+        updates += 1
+        with torch.no_grad():
+            for parameter in policy.parameters():
+                assert parameter.dtype == torch.bfloat16
+                parameter.fill_(1.0 if updates == 1 else 2.0)
+        return metrics, None
+
+    monkeypatch.setattr(trainer, "make_policy", make_bf16_policy)
+    monkeypatch.setattr(trainer, "update_policy", controlled_update)
+    root = make_dummy_dataset(tmp_path)
+    output_dir = tmp_path / "_output"
+    cfg = make_train_config(root, output_dir, steps=2, ema_enable=True, ema_decay=0.999)
+    assert cfg.peft is None
+    trainer.train(cfg)
+
+    checkpoint_dir = output_dir / "checkpoints" / "000002"
+    state_path = checkpoint_dir / TRAINING_STATE_DIR / trainer.EMA_STATE_FILENAME
+    state = torch.load(state_path, weights_only=True)
+    assert state["optimization_step"] == 2
+    assert all(p.dtype == torch.float32 for p in state["shadow_params"])
+    # BF16 would round 1.001 back to 1.0 and lose this update completely.
+    torch.testing.assert_close(state["shadow_params"][0], torch.full_like(state["shadow_params"][0], 1.001))
+    live = load_safetensors(checkpoint_dir / PRETRAINED_MODEL_DIR / "model.safetensors")
+    assert all(p.dtype == torch.bfloat16 for p in live.values() if p.is_floating_point())
+
+    # Cover both new FP32 checkpoints and older BF16 shadows without resetting their step.
+    state["shadow_params"] = [p.to(saved_shadow_dtype) for p in state["shadow_params"]]
+    torch.save(state, state_path)
+    previous = state["shadow_params"][0].float()
+    expected = previous - 0.001 * (previous - 2.0)
+    resume_cfg = make_train_config(root, output_dir, steps=3, ema_enable=True, ema_decay=0.999)
+    resume_cfg.resume = True
+    resume_cfg.checkpoint_path = checkpoint_dir
+    trainer.train(resume_cfg)
+
+    resumed = torch.load(
+        output_dir / "checkpoints" / "000003" / TRAINING_STATE_DIR / trainer.EMA_STATE_FILENAME,
+        weights_only=True,
+    )
+    assert resumed["optimization_step"] == 3
+    assert all(p.dtype == torch.float32 for p in resumed["shadow_params"])
+    torch.testing.assert_close(resumed["shadow_params"][0], expected)
 
 
 def test_train_with_constant_ema_decay(tmp_path):

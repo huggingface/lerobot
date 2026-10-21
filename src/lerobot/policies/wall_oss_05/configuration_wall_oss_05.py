@@ -73,15 +73,14 @@ class WallOSS05Config(PreTrainedConfig):
     postprocess_action_dim: int | None = None
     num_inference_timesteps: int = 10
     action_branch: str = "flow"
-    # The built-in recipe lives in this policy config. Enable it for annotated
-    # training with `use_language_recipe`; `recipe_path` is only an explicit
-    # external override.
-    use_language_recipe: bool = False
+    # Render the active recipe for annotated training, as in WALL-X. Retain the
+    # switch for saved configs that explicitly disabled language supervision.
+    use_language_recipe: bool = True
     recipe_path: str | None = None
     # Wall's language contract: defaults to the trained subtask wording; a
     # fine-tune with `recipe_path` replaces it, and the checkpoint then prompts
     # itself with the recipe it was trained on.
-    recipe: dict | None = field(default_factory=lambda: _wall_default_recipe())
+    recipe: dict | None = field(default_factory=_wall_default_recipe)
     tokenizer_max_length: int = 1000
     text_temperature: float = 0.0
     text_top_p: float = 1.0
@@ -118,7 +117,8 @@ class WallOSS05Config(PreTrainedConfig):
         if self.recipe_path is not None:
             from lerobot.datasets.recipe import resolve_recipe_override
 
-            self.recipe = asdict(resolve_recipe_override(self.recipe, self.recipe_path))
+            recipe = resolve_recipe_override(self.recipe, self.recipe_path)
+            self.recipe = asdict(recipe) if recipe is not None else None
         if self.max_action_dim != 26 or self.max_state_dim != 26:
             raise ValueError("Wall-OSS-0.5 has a fixed 26D action/state contract.")
         if self.n_action_steps > self.chunk_size:
@@ -149,6 +149,8 @@ class WallOSS05Config(PreTrainedConfig):
         return Qwen2_5_VLConfig.from_dict(deepcopy(self.vlm_config))
 
     def validate_features(self) -> None:
+        if self.input_features is None or self.output_features is None:
+            raise ValueError("Wall-OSS-0.5 input_features and output_features must be resolved first.")
         image_features = {key for key, feat in self.input_features.items() if feat.type == FeatureType.VISUAL}
         missing_cameras = sorted(set(self.camera_key_mapping) - image_features)
         if missing_cameras:

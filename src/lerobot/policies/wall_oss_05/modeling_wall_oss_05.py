@@ -158,6 +158,8 @@ class WallOSS05JointAttention(nn.Module):
             [nn.Linear(self.hidden_size, width, bias=False) for width in self.dim_inputs]
         )
         rope = getattr(text_config, "rope_parameters", None) or getattr(config, "rope_scaling", None)
+        if rope is None:
+            raise ValueError("Wall-OSS-0.5 requires multimodal rotary embedding parameters.")
         self.mrope_section = list(rope["mrope_section"])
 
     def forward(
@@ -410,7 +412,7 @@ class WallOSS05Model(nn.Module):
             image_count = int((active_ids[vision_starts + 1] == int(self.config.image_token_id)).sum())
             token_list = active_ids.tolist()
             start = 0
-            chunks = []
+            chunks: list[Tensor] = []
             for _ in range(image_count):
                 end = token_list.index(int(self.config.image_token_id), start)
                 temporal, height, width = image_grid_thw[image_index].tolist()

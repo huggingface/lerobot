@@ -19,6 +19,7 @@
 import warnings
 from collections import deque
 from collections.abc import Callable
+from typing import Any
 
 import einops
 import numpy as np
@@ -47,7 +48,7 @@ class VQBeTPolicy(PreTrainedPolicy):
 
     def __init__(
         self,
-        config: VQBeTConfig | None = None,
+        config: VQBeTConfig,
         **kwargs,
     ):
         """
@@ -65,7 +66,7 @@ class VQBeTPolicy(PreTrainedPolicy):
 
         self.reset()
 
-    def get_optim_params(self) -> dict:
+    def get_optim_params(self) -> list[dict[str, Any]]:
         vqvae_params = (
             list(self.vqbet.action_head.vqvae_model.encoder.parameters())
             + list(self.vqbet.action_head.vqvae_model.decoder.parameters())
@@ -321,9 +322,10 @@ class VQBeTModel(nn.Module):
         self.action_token = nn.Parameter(torch.randn(1, 1, self.config.gpt_input_dim))
 
         # To input state and observation features into GPT layers, we first project the features to fit the shape of input size of GPT.
-        self.state_projector = MLP(
-            config.robot_state_feature.shape[0], hidden_channels=[self.config.gpt_input_dim]
-        )
+        robot_state_feature = config.robot_state_feature
+        if robot_state_feature is None:
+            raise ValueError("VQ-BeT requires a robot state input feature (`observation.state`).")
+        self.state_projector = MLP(robot_state_feature.shape[0], hidden_channels=[self.config.gpt_input_dim])
         self.rgb_feature_projector = MLP(
             self.rgb_encoder.feature_dim, hidden_channels=[self.config.gpt_input_dim]
         )
@@ -375,8 +377,11 @@ class VQBeTModel(nn.Module):
         features = self.policy(input_tokens)
         # len(self.config.input_features) is the number of different observation modes.
         # this line gets the index of action prompt tokens.
-        historical_act_pred_index = np.arange(0, n_obs_steps) * (len(self.config.input_features) + 1) + len(
-            self.config.input_features
+        input_features = self.config.input_features
+        if input_features is None:
+            raise ValueError("`input_features` must be resolved before running VQ-BeT.")
+        historical_act_pred_index: np.ndarray = np.arange(0, n_obs_steps) * (len(input_features) + 1) + len(
+            input_features
         )
 
         # only extract the output tokens at the position of action query:
@@ -436,13 +441,16 @@ class VQBeTHead(nn.Module):
                 in_channels=config.gpt_output_dim,
                 hidden_channels=[self.vqvae_model.vqvae_num_layers * self.config.vqvae_n_embed],
             )
+        action_feature = config.action_feature
+        if action_feature is None:
+            raise ValueError("VQ-BeT requires an action output feature.")
         self.map_to_cbet_preds_offset = MLP(
             in_channels=config.gpt_output_dim,
             hidden_channels=[
                 self.vqvae_model.vqvae_num_layers
                 * self.config.vqvae_n_embed
                 * config.action_chunk_size
-                * config.action_feature.shape[0],
+                * action_feature.shape[0],
             ],
         )
         # loss
@@ -784,8 +792,11 @@ class VqVae(nn.Module):
             codebook_size=config.vqvae_n_embed,
         )
 
+        action_feature = config.action_feature
+        if action_feature is None:
+            raise ValueError("VQ-BeT requires an action output feature.")
         self.encoder = MLP(
-            in_channels=self.config.action_feature.shape[0] * self.config.action_chunk_size,
+            in_channels=action_feature.shape[0] * self.config.action_chunk_size,
             hidden_channels=[
                 config.vqvae_enc_hidden_dim,
                 config.vqvae_enc_hidden_dim,
@@ -797,7 +808,7 @@ class VqVae(nn.Module):
             hidden_channels=[
                 config.vqvae_enc_hidden_dim,
                 config.vqvae_enc_hidden_dim,
-                self.config.action_feature.shape[0] * self.config.action_chunk_size,
+                action_feature.shape[0] * self.config.action_chunk_size,
             ],
         )
 
