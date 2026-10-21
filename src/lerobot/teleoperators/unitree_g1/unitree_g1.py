@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, REMOTE_BUTTONS, G1_29_JointArmIndex
+from lerobot.robots.unitree_g1.g1_utils import REMOTE_BUTTONS, REMOTE_KEYS, G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _unitree_sdk_available
@@ -71,7 +71,7 @@ _RIGHT_EXO_BUTTON = 0  # RB
 
 @dataclass
 class JoystickState:
-    """Axes and buttons from the wireless remote or exo thumbsticks; axes become ``remote.*`` actions."""
+    """Axes and buttons from the wireless remote or exo thumbsticks; emitted as ``remote.*`` actions."""
 
     lx: float = 0.0
     ly: float = 0.0
@@ -85,7 +85,8 @@ class JoystickState:
         return any(abs(value) > 1e-3 for value in axes) or any(self.buttons)
 
     def to_action(self) -> dict[str, float]:
-        return dict(zip(REMOTE_AXES, (self.lx, self.ly, self.rx, self.ry), strict=True))
+        values = (self.lx, self.ly, self.rx, self.ry, *(float(button) for button in self.buttons))
+        return dict(zip(REMOTE_KEYS, values, strict=True))
 
 
 class WirelessRemote:
@@ -168,7 +169,7 @@ class UnitreeG1Teleoperator(Teleoperator):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        remote_features: dict[str, type] = dict.fromkeys(REMOTE_AXES, float)
+        remote_features: dict[str, type] = dict.fromkeys(REMOTE_KEYS, float)
         if not self._arm_control_enabled:
             return remote_features
         joint_features = {f"{name}.q": float for name in self._g1_arm_joint_names}

@@ -33,7 +33,7 @@ import pytest
 from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
 from lerobot.robots.unitree_g1.g1_utils import (
     NUM_MOTORS,
-    REMOTE_AXES,
+    REMOTE_KEYS,
     G1_29_JointArmIndex,
     G1_29_JointIndex,
 )
@@ -331,9 +331,9 @@ class TestActionFeatures:
         factory, _ = make_robot
         features = factory(controller=LocomotionOnlyController()).action_features
 
-        expected = {f"{joint.name}.q" for joint in G1_29_JointArmIndex} | set(REMOTE_AXES)
+        expected = {f"{joint.name}.q" for joint in G1_29_JointArmIndex} | set(REMOTE_KEYS)
         assert set(features) == expected
-        assert len(features) == len(G1_29_JointArmIndex) + len(REMOTE_AXES)
+        assert len(features) == len(G1_29_JointArmIndex) + len(REMOTE_KEYS)
 
     def test_token_spaces_match(self, make_robot):
         """A token policy consumes its own previous action as state; both must be 64-D."""

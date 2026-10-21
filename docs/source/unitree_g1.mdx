@@ -234,6 +234,8 @@ Here, **controller** refers to the robot's whole-body control policy selected wi
 
 The G1 teleoperator represents their axes and buttons as `JoystickState`.
 
+With GR00T, pressing the right exo thumbstick raises the waist (`remote.button.0`, R1), and pressing the left lowers it (`remote.button.4`, R2). Teleoperation actions include four axes and sixteen button values (0.0 or 1.0); recordings with a locomotion controller include these button keys in the action schema.
+
 ### Run the Robot Server
 
 On the robot (from `~/lerobot`):
