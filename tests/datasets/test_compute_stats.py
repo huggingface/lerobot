@@ -13,10 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pytest
+from PIL import Image
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
@@ -31,6 +33,7 @@ from lerobot.datasets.compute_stats import (
     sample_images,
     sample_indices,
 )
+from lerobot.datasets.io_utils import load_stats, write_stats
 from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 
 
@@ -199,6 +202,34 @@ def test_compute_episode_stats():
     # RGB is normalized to [0, 1].
     np.testing.assert_allclose(stats[OBS_IMAGE]["min"], 0.0)
     np.testing.assert_allclose(stats[OBS_IMAGE]["max"], 1.0)
+
+
+@pytest.mark.parametrize("feature_dtype", ["image", "video"])
+def test_image_stats_weight_sampled_frames_by_episode_length(tmp_path: Path, feature_dtype: str) -> None:
+    short_frame = tmp_path / "short.png"
+    long_frame = tmp_path / "long.png"
+    Image.new("RGB", (1, 1), color=(0, 0, 0)).save(short_frame)
+    Image.new("RGB", (1, 1), color=(255, 255, 255)).save(long_frame)
+    image_feature = {OBS_IMAGE: {"dtype": feature_dtype}}
+    # Repeating each real static frame removes sampling variance while preserving unequal lengths.
+    short_episode = compute_episode_stats({OBS_IMAGE: [str(short_frame)] * 100}, image_feature)
+    long_episode = compute_episode_stats({OBS_IMAGE: [str(long_frame)] * 1_000}, image_feature)
+    combined = aggregate_stats([short_episode, long_episode])[OBS_IMAGE]
+
+    np.testing.assert_allclose(combined["mean"], np.full((3, 1, 1), 10 / 11))
+    np.testing.assert_allclose(combined["std"], np.full((3, 1, 1), np.sqrt(10) / 11))
+    assert short_episode[OBS_IMAGE]["count"].item() == 100
+    assert long_episode[OBS_IMAGE]["count"].item() == 1_000
+    assert combined["count"].item() == 1_100
+
+    write_stats({OBS_IMAGE: combined}, tmp_path)
+    reloaded = load_stats(tmp_path)
+    for name in ("mean", "std", "count"):
+        np.testing.assert_array_equal(reloaded[OBS_IMAGE][name], combined[name])
+    resumed = aggregate_stats([reloaded, short_episode])[OBS_IMAGE]
+    np.testing.assert_allclose(resumed["mean"], np.full((3, 1, 1), 5 / 6))
+    np.testing.assert_allclose(resumed["std"], np.full((3, 1, 1), np.sqrt(5) / 6))
+    assert resumed["count"].item() == 1_200
 
 
 def test_assert_type_and_shape_valid():
@@ -574,6 +605,18 @@ def test_get_feature_stats_fixed_quantiles():
 
     expected_quantile_keys = {"q01", "q10", "q50", "q90", "q99"}
     assert expected_quantile_keys.issubset(set(stats.keys()))
+
+
+def test_get_feature_stats_custom_quantile_list():
+    """Test that a custom quantile_list is honoured when computing from multiple samples."""
+    data = np.random.default_rng(0).normal(0, 1, (1000, 3))
+
+    stats = get_feature_stats(data, axis=0, keepdims=False, quantile_list=[0.05, 0.95])
+
+    quantile_keys = {key for key in stats if key.startswith("q")}
+    assert quantile_keys == {"q05", "q95"}
+    np.testing.assert_allclose(stats["q05"], np.quantile(data, 0.05, axis=0), atol=0.05)
+    np.testing.assert_allclose(stats["q95"], np.quantile(data, 0.95, axis=0), atol=0.05)
 
 
 def test_get_feature_stats_unsupported_axis_error():
