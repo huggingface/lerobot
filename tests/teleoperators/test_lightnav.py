@@ -222,6 +222,20 @@ def test_only_the_newest_frame_is_sent_and_one_request_is_in_flight(server):
         teleop.disconnect()
 
 
+def test_a_repeated_camera_array_is_sent_once(server, teleop):
+    # A camera slower than the loop keeps returning its latest picture, as the same array.
+    cached = red_frame()
+    for _ in range(5):
+        teleop.on_observation({"front": cached})
+        time.sleep(0.02)
+    assert server.actions() == ["login", "reset", "next"]
+
+    teleop.on_observation({"front": red_frame()})
+    wait_until(lambda: len(server.requests) == 4)
+    time.sleep(0.05)
+    assert server.actions() == ["login", "reset", "next", "next"]
+
+
 def test_arrival_latches_a_stop_until_reset_episode(server, teleop):
     server.reply = lambda data: prediction((0.0, 0.0, 0.0), stop=True)
     teleop.on_observation({"front": red_frame()})
@@ -278,6 +292,6 @@ def test_drives_a_mobile_base_and_stops_it_when_the_server_goes_away(server, tel
     assert action["x.vel"] == pytest.approx(0.2)
 
     server.drop.set()
-    mobile.on_observation(observation)
+    mobile.on_observation({**observation, "front": red_frame()})
     wait_until(lambda: not teleop.is_connected)
     assert {key: mobile.get_action()[key] for key in BASE} == STOPPED

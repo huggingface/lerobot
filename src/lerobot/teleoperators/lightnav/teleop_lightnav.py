@@ -142,6 +142,8 @@ class LightNavTeleop(Teleoperator):
         self._prediction: LightNavPrediction | None = None
         self._arrived = False
         self._seq = 0
+        # The last camera object seen, to recognise a camera that repeats its latest picture.
+        self._last_image: Any = None
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -193,6 +195,7 @@ class LightNavTeleop(Teleoperator):
             self._reset_requested = False
             self._prediction = None
             self._arrived = False
+        self._last_image = None
         self._closing.clear()
         self._worker = threading.Thread(target=self._run, name="lightnav-client", daemon=True)
         self._worker.start()
@@ -205,15 +208,21 @@ class LightNavTeleop(Teleoperator):
         pass
 
     def on_observation(self, observation: RobotObservation) -> None:
-        """Queue the newest camera frame; an older frame that was not sent yet is dropped."""
+        """Queue the newest camera frame; an older frame that was not sent yet is dropped.
+
+        A camera slower than the control loop often returns the same cached array until its next
+        picture. That array is queued once: the server appends every frame it receives to the model's
+        history, so repeats would compress the time the history spans.
+        """
         key = self.config.camera_key
         if key not in observation:
             raise KeyError(
                 f"LightNav camera {key!r} is not in the robot observation. "
                 f"Set --base_teleop.camera_key to one of {sorted(observation)}."
             )
-        if observation[key] is None:
+        if observation[key] is None or observation[key] is self._last_image:
             return
+        self._last_image = observation[key]
         image = np.asarray(observation[key])
         if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
             raise ValueError(

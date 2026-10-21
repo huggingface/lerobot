@@ -55,7 +55,7 @@ Instructions work best with one action verb, an optional direction, and an unamb
 
 ## How the base is driven
 
-A background thread keeps one request in flight. It sends the newest camera frame to the server and waits for the reply, so the control loop never blocks on the network. Frames that arrive while a request is pending replace each other; only the newest one is sent. The server keeps the frame history, so the model sees as many frames as the round trip allows.
+A background thread keeps one request in flight. It sends the newest camera frame to the server and waits for the reply, so the control loop never blocks on the network. Frames that arrive while a request is pending replace each other; only the newest one is sent. A camera slower than the control loop usually returns the same array until its next picture, and that picture is sent once, so the model's history is not padded with repeats. The server keeps the frame history, so the model sees as many frames as the round trip allows.
 
 Each reply holds a chunk of cumulative `[forward_m, lateral_m, yaw_rad]` poses relative to the robot when its frame was captured. LeRobot replays the chunk from that moment, one row every `waypoint_dt_s` seconds, and replaces it with every new prediction. A command faster than `max_linear_speed` or `max_angular_speed` is slowed down as a whole, so the robot keeps the planned path and only follows it more slowly.
 
