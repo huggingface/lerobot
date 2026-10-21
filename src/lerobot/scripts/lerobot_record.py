@@ -99,7 +99,10 @@ from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.reachy2_camera import Reachy2CameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
-from lerobot.common.control_utils import sanity_check_dataset_robot_compatibility
+from lerobot.common.control_utils import (
+    sanity_check_camera_fps,
+    sanity_check_dataset_robot_compatibility,
+)
 from lerobot.configs import parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import (
@@ -488,6 +491,7 @@ def record(
         if teleop is not None:
             teleop.connect()
         robot.connect()
+        sanity_check_camera_fps(robot, cfg.dataset.fps)
 
         listener, events = init_keyboard_listener()
 
