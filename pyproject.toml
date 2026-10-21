@@ -189,6 +189,8 @@ openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]
+# The head camera over the duck's own WebRTC server; aiortc decodes H.264 with PyAV.
+microduck = ["aiortc>=1.10.0,<2.0.0", "lerobot[av-dep]", "websockets>=13.0,<18.0"]
 unitree_g1 = [
     # "unitree-sdk2==1.0.1",
     "lerobot[pyzmq-dep]",
@@ -336,6 +338,7 @@ all = [
     "lerobot[gamepad]",
     "lerobot[hopejr]",
     "lerobot[lekiwi]",
+    "lerobot[microduck]",
     "lerobot[openarms]",
     "lerobot[reachy2]",
     "lerobot[rebot]",

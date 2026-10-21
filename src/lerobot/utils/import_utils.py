@@ -167,6 +167,8 @@ _faker_available = is_package_available("faker")
 
 # Video encoding / decoding
 _av_available = is_package_available("av")
+_aiortc_available = is_package_available("aiortc")
+_websockets_available = is_package_available("websockets")
 
 # Misc
 _pynput_available = is_package_available("pynput")

@@ -117,7 +117,7 @@ jobs:
 
       # ── Tier 3: Hardware ─────────────────────────────────
       - name: "Tier 3 — Install: hardware"
-        run: uv sync --locked --extra test --extra hardware
+        run: uv sync --locked --extra test --extra hardware --extra microduck
 
       - name: "Tier 3 — Test: hardware"
         run: uv run pytest tests -vv --maxfail=10
