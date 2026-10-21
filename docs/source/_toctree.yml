@@ -181,6 +181,8 @@
 - sections:
   - local: phone_teleop
     title: Phone
+  - local: lightnav
+    title: LightNav-0 Navigation
   - local: isaac_teleop
     title: Isaac Teleop
   title: "Teleoperators"

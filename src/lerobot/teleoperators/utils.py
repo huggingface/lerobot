@@ -43,6 +43,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         from .keyboard import KeyboardBaseTeleop
 
         return KeyboardBaseTeleop(config)
+    elif config.type == "lightnav":
+        from .lightnav import LightNavTeleop
+
+        return LightNavTeleop(config)
     elif config.type == "koch_leader":
         from .koch_leader import KochLeader
 

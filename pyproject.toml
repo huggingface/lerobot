@@ -218,6 +218,8 @@ intelrealsense = [
     "pyrealsense2-macosx>=2.54,<2.57.0 ; sys_platform == 'darwin'",
 ]
 phone = ["hebi-py>=2.8.0,<2.12.0", "teleop>=0.1.0,<0.2.0", "fastapi<1.0", "lerobot[scipy-dep]"]
+# Client of a LightNav-0 navigation server (lightnav-serve); the model itself runs on the GPU host.
+lightnav = ["websockets>=13.0,<18.0"]
 
 # Policies
 diffusion = ["lerobot[diffusers-dep]"]
@@ -370,6 +372,7 @@ all = [
     "lerobot[aloha]",
     "lerobot[pusht]",
     "lerobot[phone]",
+    "lerobot[lightnav]",
     "lerobot[libero]; sys_platform == 'linux'",
     "lerobot[metaworld]",
     "lerobot[sarm]",

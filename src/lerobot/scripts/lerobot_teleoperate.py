@@ -121,6 +121,7 @@ from lerobot.teleoperators import (  # noqa: F401
     homunculus,
     keyboard,
     koch_leader,
+    lightnav,
     make_teleoperator_from_config,
     omx_leader,
     openarm_leader,

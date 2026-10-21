@@ -1,0 +1,116 @@
+# LightNav-0 navigation
+
+[LightNav-0](https://github.com/lightorigins/LightNav-0) is a vision-language navigation model built on Qwen3-VL-4B. From a robot's egocentric RGB history and an instruction such as _"Go to the chair on your right and stop."_, it predicts a short trajectory of waypoints in the robot's frame. One model covers instruction following, open-vocabulary object navigation, and visual tracking.
+
+LeRobot drives a mobile robot's base with it through `--base_teleop.type=lightnav`. The model runs on a GPU host behind LightNav's own server, `lightnav-serve`. LeRobot is the robot-side client: it streams one camera from the robot's observation and turns the predicted waypoints into base velocities. A leader arm can still drive the arm at the same time, and without one the arm holds its position.
+
+**In this guide you'll learn:**
+
+- How to start a LightNav server
+- How to drive LeKiwi's base with it, alone or alongside a leader arm, and record datasets
+- How waypoints become velocity commands, and what stops the base
+
+## Install
+
+The robot computer needs only a WebSocket client:
+
+```bash
+pip install 'lerobot[lightnav]'
+```
+
+## Start the server
+
+The server needs a CUDA GPU and its own Python 3.11 environment: LightNav pins vLLM and Transformers versions that LeRobot does not use. On the GPU host, follow the [LightNav-0 Quick Start](https://github.com/lightorigins/LightNav-0#-quick-start):
+
+```bash
+git clone https://github.com/lightorigins/LightNav-0.git && cd LightNav-0
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -e ".[vllm]"
+hf download LightOriginsHQ/LightNav-0 --local-dir checkpoints/LightNav-0
+
+PORT=8050 lightnav-serve --task vln --model_path checkpoints/LightNav-0 --backend vllm_local
+```
+
+Use `--task vln` for navigation instructions; `--task tracking` selects the follow-a-target prompt instead. The server warms up before it opens its port, so the first start takes a while. The GPU host can be the robot's onboard computer or any machine the robot can reach.
+
+## Drive a mobile base
+
+Pass the server address, the instruction, and the observation key of a forward-facing RGB camera:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=lekiwi_client \
+    --robot.remote_ip=<lekiwi-ip> \
+    --base_teleop.type=lightnav \
+    --base_teleop.server_url=ws://<gpu-host>:8050 \
+    --base_teleop.camera_key=front \
+    --base_teleop.instruction="Go to the chair on your right and stop."
+```
+
+Add `--teleop.type=so100_leader --teleop.port=<port>` to drive LeKiwi's arm from a leader arm while LightNav drives the base. The same flags work with `lerobot-record`, which records the navigation commands as `x.vel`, `y.vel`, and `theta.vel` actions next to the camera frames.
+
+LightNav emits the base actions of `keyboard_base`: `x.vel` and `y.vel` in m/s (+y is left) and `theta.vel` in deg/s (+ is counter-clockwise). Any robot whose base takes these actions can use it. Other conventions need a robot action processor.
+
+Instructions work best with one action verb, an optional direction, and an unambiguous object, for example _"Turn left and walk to the red lamppost"_ or _"Walk to the vase on the dining table ahead."_ See LightNav's [prompt guide](https://github.com/lightorigins/LightNav-0#%EF%B8%8F-prompt-guide).
+
+## How the base is driven
+
+A background thread keeps one request in flight. It sends the newest camera frame to the server and waits for the reply, so the control loop never blocks on the network. Frames that arrive while a request is pending replace each other; only the newest one is sent. The server keeps the frame history, so the model sees as many frames as the round trip allows.
+
+Each reply holds a chunk of cumulative `[forward_m, lateral_m, yaw_rad]` poses relative to the robot when its frame was captured. LeRobot replays the chunk from that moment, one row every `waypoint_dt_s` seconds, and replaces it with every new prediction. A command faster than `max_linear_speed` or `max_angular_speed` is slowed down as a whole, so the robot keeps the planned path and only follows it more slowly.
+
+The base stops when:
+
+- the model predicts the stop action: the goal is reached, and the base stays stopped until the episode is reset;
+- the current chunk runs out before a new prediction arrives;
+- the connection to the server fails or a reply takes longer than `response_timeout_s`. LeRobot logs the error and stops the base, and the arm keeps responding.
+
+A server error on one frame (`rc` 400 or 500) is logged, and the current chunk keeps running.
+
+## Python API
+
+`reset_episode()` clears the server's frame history and resumes after an arrival, optionally with a new instruction:
+
+```python
+from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+from lerobot.teleoperators.lightnav import LightNavTeleop, LightNavTeleopConfig
+from lerobot.teleoperators.mobile_base import make_mobile_base_teleop
+
+robot = LeKiwiClient(LeKiwiClientConfig(remote_ip="<lekiwi-ip>"))
+lightnav = LightNavTeleop(
+    LightNavTeleopConfig(server_url="ws://<gpu-host>:8050", instruction="Go to the front-left TV")
+)
+teleop = make_mobile_base_teleop(robot, base=lightnav)  # the arm holds its position
+
+robot.connect()
+teleop.connect()
+while not lightnav.arrived:
+    observation = robot.get_observation()
+    teleop.on_observation(observation)
+    robot.send_action(teleop.get_action())
+
+lightnav.reset_episode("Walk to the leftmost curtain")
+```
+
+A real loop also paces itself at the robot's control rate, as `lerobot-teleoperate` does.
+
+## Parameters
+
+| Parameter            | Default               | Meaning                                                              |
+| -------------------- | --------------------- | -------------------------------------------------------------------- |
+| `server_url`         | `ws://127.0.0.1:8050` | `lightnav-serve` address (`ws://` or `wss://`)                       |
+| `instruction`        | required              | Navigation instruction sent with every frame                         |
+| `camera_key`         | `front`               | Observation key of the HxWx3 `uint8` RGB camera, at any resolution   |
+| `waypoint_dt_s`      | `0.1`                 | Duration of one predicted waypoint row, as in LightNav's controllers |
+| `max_linear_speed`   | `0.3`                 | Linear speed cap in m/s                                              |
+| `max_angular_speed`  | `90.0`                | Angular speed cap in deg/s                                           |
+| `holonomic`          | `true`                | Command lateral motion; set to `false` for a base that cannot strafe |
+| `jpeg_quality`       | `90`                  | Quality of the JPEG frames sent to the server                        |
+| `connect_timeout_s`  | `10.0`                | Time allowed to open the connection                                  |
+| `response_timeout_s` | `5.0`                 | Time allowed for each reply before the base is stopped               |
+
+## Limitations
+
+- **Episodes.** Teleoperators are not told when a recording episode ends. The server history is cleared on connect and by `reset_episode()`, so with `lerobot-record` the model keeps the frames of earlier episodes, and it keeps driving during reset phases unless it has arrived.
+- **No odometry.** Between two predictions the chunk is replayed open loop. LightNav's own [ROS 2 stack](https://github.com/lightorigins/LightNav-0/tree/main/robot_deploy) tracks it with an MPC on odometry instead.
+- **Connection loss.** A failed connection is not reopened. Restart the command, or call `connect()` again from Python; the new session starts with an empty history.
