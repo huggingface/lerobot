@@ -29,6 +29,7 @@ from typing import Any, Literal
 
 import numpy as np
 import torch
+from huggingface_hub import hf_hub_download
 from torch.utils.data import default_collate
 
 from lerobot.configs import parser
@@ -150,6 +151,22 @@ def profiling_stats(cfg: ProfileConfig, policy: Any, dataset: Any) -> dict:
 
 
 def prepare_policy_config(cfg: ProfileConfig, dataset: Any) -> None:
+    if cfg.policy.type == "xvla" and not cfg.policy.pretrained_path and not cfg.policy.florence_config:
+        architecture = hf_hub_download(
+            "lerobot/xvla-base", "config.json", revision="cdb7964e4fe842935d671bfab5a5ebe00a96648c"
+        )
+        cfg.policy.florence_config = json.loads(Path(architecture).read_text())["florence_config"]
+    if (
+        cfg.policy.type == "pi0_fast"
+        and cfg.policy.pretrained_path
+        and not Path(cfg.policy.pretrained_path).is_dir()
+    ):
+        # Fail before allocation if the checkpoint is unavailable; the legacy loader can fall back silently.
+        weights = hf_hub_download(
+            str(cfg.policy.pretrained_path), "model.safetensors", revision=cfg.policy.pretrained_revision
+        )
+        # The legacy loader does not forward revision consistently. Pin the local snapshot exactly.
+        cfg.policy.pretrained_path = Path(weights).parent
     if (
         cfg.policy.type == "flux3"
         and not cfg.policy.pretrained_path
@@ -252,6 +269,7 @@ def main(cfg: ProfileConfig) -> None:
         "dataset_revision": cfg.dataset.revision,
         "dataset_episodes": cfg.dataset.episodes,
         "checkpoint": str(cfg.policy.pretrained_path) if cfg.policy.pretrained_path else None,
+        "checkpoint_revision": cfg.policy.pretrained_revision,
         "run_url": os.environ.get("PROFILE_RUN_URL"),
     }
     try:
@@ -265,6 +283,8 @@ def main(cfg: ProfileConfig) -> None:
         cfg.save_pretrained(cfg.output_dir)
         saved = json.loads((cfg.output_dir / "train_config.json").read_text())
         row["configuration"] = {key: saved.get(key) for key in ("policy", "optimizer", "accelerator")}
+        if row["checkpoint"]:
+            row["configuration"]["policy"]["pretrained_path"] = row["checkpoint"]
         row["config_fingerprint"] = hashlib.sha256(
             json.dumps(row["configuration"], sort_keys=True).encode()
         ).hexdigest()

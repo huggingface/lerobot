@@ -69,6 +69,12 @@ def policy_args(policy: str) -> list[str]:
         args += ["--compute_missing_quantiles=true"]
     if policy == "tdmpc":
         args += ["--policy.horizon=3", "--policy.n_action_steps=1"]
+    if policy == "pi0_fast":
+        # Autoregressive action decoding needs learned action tokens, not a random language model.
+        args += [
+            "--policy.pretrained_path=lerobot/pi0fast-base",
+            "--policy.pretrained_revision=308eb844dabdf46cd9dcd5138c1988b7a234f1d9",
+        ]
     if policy == "flux3":
         args += ["--policy.camera_layout=single"]
     if policy == "lawam":

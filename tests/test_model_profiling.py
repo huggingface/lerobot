@@ -242,6 +242,57 @@ def test_current_observation_preserves_singleton_video_channels(benchmark):
     assert torch.equal(result["observation.state"], batch["observation.state"][:, 0])
 
 
+def test_autoregressive_checkpoint_uses_exact_local_snapshot(benchmark, monkeypatch, tmp_path):
+    from pathlib import Path
+
+    weights = tmp_path / "pinned-snapshot" / "model.safetensors"
+    weights.parent.mkdir()
+    weights.write_bytes(b"")
+    cfg = SimpleNamespace(
+        policy=SimpleNamespace(
+            type="pi0_fast", pretrained_path=Path("lerobot/pi0fast-base"), pretrained_revision="revision"
+        )
+    )
+    calls = []
+
+    def download(repo, filename, revision):
+        calls.append((repo, filename, revision))
+        return str(weights)
+
+    monkeypatch.setattr(benchmark, "hf_hub_download", download)
+    benchmark.prepare_policy_config(cfg, None)
+    assert calls == [("lerobot/pi0fast-base", "model.safetensors", "revision")]
+    assert cfg.policy.pretrained_path == weights.parent
+
+
+def test_unavailable_checkpoint_fails_before_policy_allocation(benchmark, monkeypatch):
+    from pathlib import Path
+
+    cfg = SimpleNamespace(
+        policy=SimpleNamespace(
+            type="pi0_fast", pretrained_path=Path("lerobot/pi0fast-base"), pretrained_revision="revision"
+        )
+    )
+
+    def unavailable(*args, **kwargs):
+        raise PermissionError("checkpoint unavailable")
+
+    monkeypatch.setattr(benchmark, "hf_hub_download", unavailable)
+    with pytest.raises(PermissionError, match="checkpoint unavailable"):
+        benchmark.prepare_policy_config(cfg, None)
+
+
+def test_xvla_recipe_loads_required_backbone_architecture(benchmark, monkeypatch, tmp_path):
+    import draccus
+
+    architecture = tmp_path / "config.json"
+    architecture.write_text(json.dumps({"florence_config": {"vision_config": {}, "text_config": {}}}))
+    monkeypatch.setattr(benchmark, "hf_hub_download", lambda *args, **kwargs: str(architecture))
+    cfg = draccus.parse(benchmark.ProfileConfig, args=ci.policy_args("xvla"))
+    benchmark.prepare_policy_config(cfg, None)
+    assert cfg.policy.get_florence_config().vision_config is not None
+
+
 def test_measure_excludes_warmup_and_preserves_batch(benchmark, monkeypatch):
     import torch
 
