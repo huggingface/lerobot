@@ -282,14 +282,18 @@ def ingest_mcap_episodes(
         raise ValueError(f"tasks must have one entry per episode ({len(mcap_paths)}), got {len(tasks)}.")
 
     topics = [c.topic for c in channels]
-    features = {}
+    features: dict[str, dict] = {}
     for c in channels:
         if c.kind == "video":
             first = next((m for p in mcap_paths if (m := _peek_first_message(p, c.topic)) is not None), None)
             if first is None:
                 raise ValueError(f"No messages found on topic '{c.topic}' for channel '{c.key}'.")
             shape = c.shape or load_image_as_numpy(first, dtype=np.uint8, is_depth=False).shape
-            features[c.key] = {"dtype": "video", "shape": tuple(shape), "names": ["channels", "height", "width"]}
+            features[c.key] = {
+                "dtype": "video",
+                "shape": tuple(shape),
+                "names": ["channels", "height", "width"],
+            }
         else:
             if c.dtype is None or c.shape is None:
                 raise ValueError(f"Tabular channel '{c.key}' needs an explicit dtype and shape.")

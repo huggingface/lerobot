@@ -42,7 +42,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -184,7 +184,11 @@ class McapDatasetReader(BaseDatasetReader):
         missing_files = [
             (ep_idx, path)
             for ep_idx in episodes_to_check
-            if not (path := episode_mcap_path(self.root, int(self._mcap_chunk[ep_idx]), int(self._mcap_file[ep_idx]))).exists()
+            if not (
+                path := episode_mcap_path(
+                    self.root, int(self._mcap_chunk[ep_idx]), int(self._mcap_file[ep_idx])
+                )
+            ).exists()
         ]
         if missing_files:
             ep_idx, path = missing_files[0]
@@ -194,6 +198,8 @@ class McapDatasetReader(BaseDatasetReader):
                 "against a different root."
             )
 
+        self._rel_to_abs: np.ndarray | None
+        self._absolute_to_relative_idx: dict[int, int] | None
         if self.episodes is not None:
             self._rel_to_abs = np.concatenate(
                 [np.arange(self._ep_from[ep], self._ep_to[ep]) for ep in sorted(self.episodes)]
@@ -309,6 +315,8 @@ class McapDatasetReader(BaseDatasetReader):
     def get_items(self, indices: list[int]) -> list[dict]:
         """Batched fetch: one message scan per episode touched, deduplicated across the batch."""
         self._ensure_open()
+        assert self._decode_pool is not None  # set by _ensure_open() above
+        decode_pool = self._decode_pool
         plans = self._plan_batch(indices)
 
         # 1. Union, per episode and key, of the grid positions the whole batch needs.
@@ -332,7 +340,7 @@ class McapDatasetReader(BaseDatasetReader):
             keys_needed = {key: set(m.values()) for key, m in matched_ns[ep_idx].items()}
             return ep_idx, self._fetch_episode_messages(ep_idx, keys_needed)
 
-        futures = [self._decode_pool.submit(_fetch, ep_idx) for ep_idx in grid_needs]
+        futures = [decode_pool.submit(_fetch, ep_idx) for ep_idx in grid_needs]
         raw_by_ep = dict(future.result() for future in futures)
 
         # 4. Decode each (grid position, key) exactly once, even if requested by several samples.
@@ -357,7 +365,13 @@ class McapDatasetReader(BaseDatasetReader):
             abs_idx = self._resolve_abs_idx(idx)
             ep_idx = self._episode_index_for_abs_idx(abs_idx)
             start, end = self._episode_bounds(ep_idx)
-            plan = {"abs_idx": abs_idx, "ep_idx": ep_idx, "start": start, "windows": {}, "padding": {}}
+            plan: dict[str, Any] = {
+                "abs_idx": abs_idx,
+                "ep_idx": ep_idx,
+                "start": start,
+                "windows": {},
+                "padding": {},
+            }
             if self.delta_indices is not None:
                 for key, deltas in self.delta_indices.items():
                     window = [min(max(abs_idx + delta, start), end - 1) for delta in deltas]
