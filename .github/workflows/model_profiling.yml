@@ -51,7 +51,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.matrix.outputs.policies) }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -92,8 +92,6 @@ jobs:
     if: always() && needs.matrix.result == 'success'
     needs: [matrix, profile]
     runs-on: ubuntu-latest
-    env:
-      CI_SLACK_CHANNEL: ${{ secrets.CI_SLACK_CHANNEL }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -114,29 +112,6 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: model-profiling-report
-          path: profiling-results/
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
-        if: vars.MODEL_PROFILING_REPO != ''
-      - name: Save run to the Hugging Face dataset
-        if: vars.MODEL_PROFILING_REPO != ''
-        env:
-          HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
-          RESULTS_REPO: ${{ vars.MODEL_PROFILING_REPO }}
-        run: |
-          uv run --no-project --with huggingface-hub python - <<'PY'
-          import os
-          from huggingface_hub import HfApi
-          HfApi().upload_folder(
-              repo_id=os.environ["RESULTS_REPO"], repo_type="dataset",
-              folder_path="profiling-results",
-              path_in_repo=f"runs/{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}",
-          )
-          PY
-      - name: Notify the existing CI Slack channel
-        if: always() && env.CI_SLACK_CHANNEL != ''
-        uses: huggingface/hf-workflows/.github/actions/post-slack@a88e7fa2eaee28de5a4d6142381b1fb792349b67 # main
-        with:
-          slack_channel: ${{ env.CI_SLACK_CHANNEL }}
-          slack_token: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
-          title: "LeRobot profiling: ${{ steps.report.outputs.passed || '0' }}/${{ steps.report.outputs.total || '?' }} policies passed"
-          status: ${{ needs.profile.result == 'success' && job.status == 'success' && 'success' || 'failure' }}
+          path: |
+            profiling-results/results.json
+            profiling-results/README.md

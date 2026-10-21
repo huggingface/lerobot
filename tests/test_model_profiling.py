@@ -261,7 +261,7 @@ def test_real_gaussian_actor_sac_update(benchmark, tmp_path):
 
     from lerobot.configs import FeatureType, PolicyFeature
     from lerobot.configs.default import DatasetConfig
-    from lerobot.policies import GaussianActorConfig, get_policy_class
+    from lerobot.policies import GaussianActorConfig
 
     policy_cfg = GaussianActorConfig(
         device="cpu",
@@ -276,7 +276,14 @@ def test_real_gaussian_actor_sac_update(benchmark, tmp_path):
         batch_size=1,
     )
     cfg.validate()
-    policy = get_policy_class("gaussian_actor")(policy_cfg)
+    metadata = SimpleNamespace(
+        features={
+            key: {"dtype": "float32", "shape": feature.shape, "names": None}
+            for key, feature in {**policy_cfg.input_features, **policy_cfg.output_features}.items()
+        },
+        stats={},
+    )
+    policy = benchmark.make_policy(policy_cfg, ds_meta=metadata)
     dataset = [
         {
             "observation.state": torch.randn(2),
