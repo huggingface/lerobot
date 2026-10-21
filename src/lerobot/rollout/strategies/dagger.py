@@ -755,6 +755,7 @@ class DAggerStrategy(RolloutStrategy):
                 # does non-trivial key renaming (e.g. a rename_map on action keys), the interpolation in
                 # teleop_smooth_move_to silently no-ops and the arm doesn't move.
                 logger.info("Smooth handover: moving leader arm to follower position")
+                teleop.on_observation(robot.get_observation())
                 teleop_smooth_move_to(teleop, prev_action)
 
         elif old_phase == DAggerPhase.PAUSED and new_phase == DAggerPhase.CORRECTING:

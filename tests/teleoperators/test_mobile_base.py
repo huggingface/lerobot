@@ -14,16 +14,20 @@
 
 """Composition and legacy compatibility without a robot keyboard interface."""
 
+import gc
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
+from lerobot.common.control_utils import teleop_supports_feedback
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import TransitionKey
 from lerobot.processor.keyboard_base_processor import (
     KeyboardToBaseActionProcessorStep,
     make_keyboard_base_processor,
 )
 from lerobot.robots.lekiwi import LeKiwi, LeKiwiClient, LeKiwiClientConfig, LeKiwiConfig
+from lerobot.teleoperators import Teleoperator
 from lerobot.teleoperators.keyboard import (
     KeyboardBaseTeleop,
     KeyboardBaseTeleopConfig,
@@ -39,6 +43,7 @@ BASE = ("x.vel", "y.vel", "theta.vel")
 class FakeMobileRobot:
     name = "fake_mobile"
     action_features = dict.fromkeys(ARM + BASE, float)
+    observation_features = action_features
 
 
 class FakeTeleop:
@@ -47,6 +52,10 @@ class FakeTeleop:
         self.is_connected = True
         self.observations = []
         self.disconnect_calls = 0
+        self.is_calibrated = False
+        self.configure_calls = 0
+        self.feedback_features = {}
+        self.feedback = []
 
     @property
     def action_features(self):
@@ -58,8 +67,19 @@ class FakeTeleop:
     def on_observation(self, observation):
         self.observations.append(observation)
 
-    def connect(self):
+    def connect(self, calibrate=True):
         self.is_connected = True
+        if calibrate:
+            self.calibrate()
+
+    def calibrate(self):
+        self.is_calibrated = True
+
+    def configure(self):
+        self.configure_calls += 1
+
+    def send_feedback(self, feedback):
+        self.feedback.append(feedback)
 
     def disconnect(self):
         self.is_connected = False
@@ -297,3 +317,144 @@ def test_legacy_mapping_resets_on_keyboard_reconnect(raw_keyboard):
     ):
         raw_keyboard.connect()
     assert processor(({"w": None}, {}))["x.vel"] == 0.1
+
+
+@pytest.mark.parametrize("with_arm", [False, True])
+@pytest.mark.parametrize("hold", [False, True])
+def test_composite_implements_teleoperator_features(keyboard, with_arm, hold):
+    arm = FakeTeleop({"shoulder.pos": 1.0, "gripper.pos": 2.0}) if with_arm else None
+    teleop = MobileBaseTeleop(
+        FakeMobileRobot(), keyboard, arm, arm_action_prefix="arm_", hold_uncommanded=hold
+    )
+    assert isinstance(teleop, Teleoperator)
+    teleop.on_observation(observation())
+    with patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=False):
+        assert teleop.action_features == dict.fromkeys(ARM + BASE if with_arm or hold else BASE, float)
+    assert set(teleop.get_action()) == set(teleop.action_features)
+
+
+def test_raw_keyboard_features_describe_mapped_actions(raw_keyboard):
+    teleop = MobileBaseTeleop(
+        FakeMobileRobot(),
+        raw_keyboard,
+        base_action_processor=make_keyboard_base_processor(KeyboardToBaseActionProcessorStep()),
+        hold_uncommanded=True,
+    )
+    assert teleop.action_features == FakeMobileRobot.action_features
+
+
+def test_custom_processor_feature_mapping_is_respected(raw_keyboard):
+    class LiftMapper(KeyboardToBaseActionProcessorStep):
+        def action(self, action):
+            return {"lift.pos": 1.0}
+
+        def transform_features(self, features):
+            return {
+                **features,
+                PipelineFeatureType.ACTION: {"lift.pos": PolicyFeature(FeatureType.ACTION, (1,))},
+            }
+
+    teleop = MobileBaseTeleop(
+        FakeMobileRobot(), raw_keyboard, base_action_processor=make_keyboard_base_processor(LiftMapper())
+    )
+    assert teleop.action_features == {"lift.pos": float}
+
+
+def test_composite_delegates_calibration_and_configuration():
+    base, arm = FakeTeleop({}), FakeTeleop({})
+    teleop = MobileBaseTeleop(FakeMobileRobot(), base, arm)
+    assert not teleop.is_calibrated
+    teleop.connect(calibrate=False)
+    assert not base.is_calibrated and not arm.is_calibrated
+    teleop.calibrate()
+    assert teleop.is_calibrated
+    teleop.configure()
+    assert base.configure_calls == arm.configure_calls == 1
+    base.disconnect()
+    assert teleop.is_connected
+    teleop.disconnect()
+    assert not teleop.is_connected
+
+
+def test_composite_routes_feedback_and_torque_to_children():
+    base, arm = FakeTeleop({"x.vel": 0.0}), FakeTeleop({"shoulder.pos": 2.0})
+    base.feedback_features = {"base_force": float}
+    arm.feedback_features = {"shoulder.pos": float}
+    for device in (base, arm):
+        device.enable_torque = MagicMock()
+        device.disable_torque = MagicMock()
+    teleop = MobileBaseTeleop(FakeMobileRobot(), base, arm, arm_action_prefix="arm_")
+    assert teleop.feedback_features == {"base_force": float, "arm_shoulder.pos": float}
+    assert teleop_supports_feedback(teleop)
+    teleop.send_feedback({"base_force": 0.5, "arm_shoulder.pos": 12.0, "unused": 99.0})
+    assert base.feedback == [{"base_force": 0.5}]
+    assert arm.feedback == [{"shoulder.pos": 12.0}]
+    teleop.enable_torque()
+    teleop.disable_torque()
+    for device in (base, arm):
+        device.enable_torque.assert_called_once()
+        device.disable_torque.assert_called_once()
+
+
+def test_non_actuated_feedback_is_not_advertised_as_position_feedback():
+    base = FakeTeleop({})
+    base.feedback_features = {"wireless_remote": bytes}
+    teleop = MobileBaseTeleop(FakeMobileRobot(), base)
+    assert not teleop_supports_feedback(teleop)
+    teleop.send_feedback({"wireless_remote": b"remote"})
+    assert base.feedback == [{"wireless_remote": b"remote"}]
+    with pytest.raises(NotImplementedError, match="torque"):
+        teleop.enable_torque()
+
+
+def test_composite_features_reject_collisions_before_use():
+    base, arm = FakeTeleop({"x.vel": 0.0}), FakeTeleop({"x.vel": 1.0})
+    base.feedback_features = arm.feedback_features = {"x.vel": float}
+    teleop = MobileBaseTeleop(FakeMobileRobot(), base, arm)
+    for attr in ("action_features", "feedback_features"):
+        with pytest.raises(ValueError, match="overlapping"):
+            getattr(teleop, attr)
+    with pytest.raises(ValueError, match="overlapping"):
+        teleop.send_feedback({"x.vel": 0.0})
+    assert base.feedback == arm.feedback == []
+
+
+def test_borrowed_devices_survive_temporary_wrapper_collection(keyboard):
+    arm = FakeTeleop({"arm_shoulder.pos": 1.0})
+    wrapper = MobileBaseTeleop.from_list(FakeMobileRobot(), [arm, keyboard])
+    with patch.object(keyboard, "disconnect") as disconnect:
+        del wrapper
+        gc.collect()
+        disconnect.assert_not_called()
+    assert arm.is_connected and arm.disconnect_calls == 0
+
+
+def test_owned_devices_are_closed_after_partial_disconnect():
+    base, arm = FakeTeleop({}), FakeTeleop({})
+    wrapper = MobileBaseTeleop(FakeMobileRobot(), base, arm)
+    wrapper.connect()
+    base.disconnect()
+    del wrapper
+    gc.collect()
+    assert arm.disconnect_calls == 1
+
+
+def test_processor_passthrough_preserves_hardware_feature_types():
+    class DiscreteBase(FakeTeleop):
+        @property
+        def action_features(self):
+            return {"direction": int}
+
+    class Passthrough(KeyboardToBaseActionProcessorStep):
+        def action(self, action):
+            return action
+
+        def transform_features(self, features):
+            return features
+
+    teleop = MobileBaseTeleop(
+        FakeMobileRobot(),
+        DiscreteBase({"direction": 1}),
+        base_action_processor=make_keyboard_base_processor(Passthrough()),
+    )
+    assert teleop.action_features == {"direction": int}

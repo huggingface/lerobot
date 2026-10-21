@@ -65,6 +65,7 @@ from lerobot.processor import (
 from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
 from lerobot.robots import Robot, make_robot_from_config
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
+from lerobot.teleoperators.mobile_base import make_mobile_base_teleop
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
@@ -341,9 +342,15 @@ def _connect_rollout_hardware(cfg: RolloutConfig, *, require_hold: bool = False)
         initial_position = {key: value for key, value in initial_obs.items() if key.endswith(".pos")}
         logger.info("Captured initial robot position (%d keys)", len(initial_position))
         if cfg.teleop is not None:
-            logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
             teleop = make_teleoperator_from_config(cfg.teleop)
+        if cfg.base_teleop is not None:
+            teleop = make_mobile_base_teleop(
+                robot, base=make_teleoperator_from_config(cfg.base_teleop), arm=teleop
+            )
+        if teleop is not None:
+            logger.info("Connecting teleoperator (%s)...", teleop.name)
             teleop.connect()
+            teleop.on_observation(initial_obs)
             logger.info("Teleoperator connected")
         return HardwareContext(wrapper, teleop, initial_position)
     except BaseException:

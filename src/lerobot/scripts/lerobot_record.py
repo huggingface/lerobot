@@ -242,7 +242,7 @@ def record_loop(
         RobotObservation, RobotObservation
     ],  # runs after robot
     dataset: LeRobotDataset | None = None,
-    teleop: Teleoperator | MobileBaseTeleop | list[Teleoperator] | None = None,
+    teleop: Teleoperator | list[Teleoperator] | None = None,
     control_time_s: float | None = None,
     single_task: str | None = None,
     display_data: bool = False,
@@ -296,7 +296,7 @@ def record_loop(
 
         with timer.section("teleop"):
             # Get action from teleop
-            if isinstance(teleop, (Teleoperator, MobileBaseTeleop)):
+            if isinstance(teleop, Teleoperator):
                 teleop.on_observation(obs)
                 act = teleop.get_action()
 
@@ -372,7 +372,7 @@ def record(
 
     robot = make_robot_from_config(cfg.robot)
     arm_teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
-    teleop: Teleoperator | MobileBaseTeleop | None = arm_teleop
+    teleop: Teleoperator | None = arm_teleop
     if cfg.base_teleop is not None:
         teleop = make_mobile_base_teleop(
             robot,
@@ -547,7 +547,7 @@ def record(
 
         if robot.is_connected:
             robot.disconnect()
-        if teleop is not None and (isinstance(teleop, MobileBaseTeleop) or teleop.is_connected):
+        if teleop is not None and teleop.is_connected:
             teleop.disconnect()
 
         if listener is not None:

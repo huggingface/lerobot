@@ -280,13 +280,13 @@ lerobot-teleoperate \
     --base_teleop.type=keyboard_base
 ```
 
-The same `--teleop` / `--base_teleop` flags work with `lerobot-record`. With no leader, other joints hold their first observed positions. In standalone teleoperation, set `--hold_uncommanded=false` to send only base commands. Recording keeps the held targets so each dataset frame contains a complete action.
+The same `--teleop` / `--base_teleop` flags work with `lerobot-record` and `lerobot-rollout` (for example, DAgger corrections or episodic resets). With no leader, other joints hold their first observed positions. In standalone teleoperation, set `--hold_uncommanded=false` to send only base commands. Recording keeps the held targets so each dataset frame contains a complete action.
 
 `keyboard_base` translates keys into `x.vel`, `y.vel`, and `theta.vel` on the teleoperation side. For example, `--base_teleop.linear_speeds='[0.05,0.1,0.2]'` changes the linear speed presets. The robot only receives actions. A base teleoperator that already produces the required action keys can also be used. Base and arm actions must have distinct names; overlapping keys raise an error.
 
 Existing LeKiwi commands using `--base_teleop.type=keyboard` and Python lists `[arm, keyboard]` or `[keyboard]` remain supported. The client exposes its `LeKiwiClientConfig.teleop_keys` through `legacy_keyboard_bindings`, which setup converts into a teleoperation processor retained by the keyboard across recording and reset phases; the robot's private keyboard method is not called. These legacy bindings still use `r`/`f`, so remap `r` when recording to avoid the re-record shortcut. New code should use `keyboard_base`.
 
-For custom Python setups, `MobileBaseTeleop` accepts a `base_action_processor`, an `arm_action_prefix`, and `hold_uncommanded` (default `False`). The processor runs on `(base_action, observation)` before base and arm actions are combined. Setup reads the robot's optional `arm_action_prefix` and `legacy_keyboard_bindings` attributes without importing robot implementations. Both wired LeKiwi and LeKiwiClient expose the `arm_` prefix; legacy plain-keyboard bindings are provided by LeKiwiClient only.
+For custom Python setups, `MobileBaseTeleop` implements the standard `Teleoperator` interface, including combined action features, child calibration and cleanup, and prefixed feedback routing. It accepts a `base_action_processor`, an `arm_action_prefix`, and `hold_uncommanded` (default `False`). The processor runs on `(base_action, observation)` before base and arm actions are combined. Setup reads the robot's optional `arm_action_prefix` and `legacy_keyboard_bindings` attributes without importing robot implementations. Both wired LeKiwi and LeKiwiClient expose the `arm_` prefix; legacy plain-keyboard bindings are provided by LeKiwiClient only.
 
 ### Wired version
 
