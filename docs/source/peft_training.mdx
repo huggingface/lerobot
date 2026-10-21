@@ -39,6 +39,8 @@ instead of the full weight matrix. This rank can be specified using the `--peft.
 `--peft.lora_alpha` (where `scaling = lora_alpha / r`). The higher the rank
 the closer you get to full fine-tuning
 
+When loading `--policy.path`, input features inherited unchanged from the checkpoint are refreshed from the current dataset or environment. Camera names are checked before that refresh, so use `--rename_map` when the dataset uses different names. An explicit `--policy.input_features` dictionary takes precedence, allowing state-only training or a subset of cameras; the same applies to `policy.input_features` in a YAML/JSON configuration and feature selections supplied in Python. CLI selections override YAML/JSON selections. Setting input features to `null` or `{}` explicitly requests inference of all current inputs, as in the example above. The resolved features are saved in the new checkpoint's `config.json`.
+
 There are more complex methods that have more parameters. These are not yet supported, feel free to raise an issue
 if you want to see a specific PEFT method supported.
 
