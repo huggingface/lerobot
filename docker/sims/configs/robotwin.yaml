@@ -1,0 +1,14 @@
+# Conventions (fps, control, semantics, component names) come from lerobot/sims/conventions.py.
+deployment: robotwin
+sim:
+  type: robotwin
+  task: beat_block_hammer,click_bell,handover_block,stack_blocks_two,click_alarmclock,open_microwave,adjust_bottle,lift_pot,stamp_seal,turn_switch
+  kwargs:
+    camera_names:
+    - head_camera
+    - left_camera
+    - right_camera
+    observation_height: 240
+    observation_width: 320
+    episode_length: 1200
+    action_mode: joint

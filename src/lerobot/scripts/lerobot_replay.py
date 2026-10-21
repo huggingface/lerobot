@@ -66,9 +66,11 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
+    sim,
     so_follower,
     unitree_g1,
 )
+from lerobot.robots.sim import check_control_rate
 from lerobot.utils.constants import ACTION
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -109,6 +111,7 @@ def replay(cfg: ReplayConfig):
     dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
 
     actions = dataset.select_columns(ACTION)
+    check_control_rate(robot, dataset.fps)
 
     robot.connect()
 
