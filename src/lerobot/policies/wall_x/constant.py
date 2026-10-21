@@ -18,6 +18,8 @@
 Wall-X Constants and Configuration Data.
 """
 
+from collections import OrderedDict
+
 CAMERA_NAME_MAPPING = {
     "face_view": "front view",
     "left_wrist_view": "left wrist view",
@@ -34,7 +36,7 @@ RESOLUTION = 256
 MAX_PIXELS = 16384 * 28 * 28
 MIN_PIXELS = 4 * 28 * 28
 IMAGE_FACTOR = 28
-PRIORITY_ORDER = None
+PRIORITY_ORDER: OrderedDict[str, float] | None = None
 GENERATE_SUBTASK_RATIO = 0.0
 MODEL_TYPE = "qwen2_5"
 

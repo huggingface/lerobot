@@ -35,6 +35,8 @@ from .utils import (
     DatasetInfo,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def get_hf_features_from_features(features: dict) -> datasets.Features:
     """Convert a LeRobot features dictionary to a `datasets.Features` object.
@@ -401,7 +403,7 @@ def validate_feature_language(name: str, value) -> str:
         str: Always an empty string — language values are non-fatal.
     """
     if value is not None:
-        logging.warning(
+        logger.warning(
             f"The feature '{name}' is a 'language' column populated by the annotation pipeline, "
             f"not at record time. The provided value will be dropped."
         )

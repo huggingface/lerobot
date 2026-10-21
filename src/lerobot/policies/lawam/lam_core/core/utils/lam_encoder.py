@@ -62,8 +62,8 @@ class LAMEncoder(nn.Module):
         self.pos_embed = Fixed3DPositionalEncoding(context_dim, num_frames, self.grid_height, self.grid_width)
         self.pos_embed_2d = Fixed2DPositionalEncoding(context_dim, self.grid_height, self.grid_width)
         if add_state:
-            self.pos_state_embed = PositionalEncoding(context_dim)
-            self.state_project = CategorySpecificMLP(
+            self.pos_state_embed: PositionalEncoding | None = PositionalEncoding(context_dim)
+            self.state_project: CategorySpecificMLP | None = CategorySpecificMLP(
                 num_categories=self.num_embodiments,
                 input_dim=max_state_dim,
                 hidden_dim=context_dim,
@@ -138,6 +138,8 @@ class LAMEncoder(nn.Module):
             if emb.shape[0] != batch_size:
                 raise ValueError(f"embodiment_id batch mismatch: got {emb.shape[0]}, expected {batch_size}")
             emb = emb.to(device=states.device, dtype=torch.long)
+            if self.pos_state_embed is None or self.state_project is None:
+                raise RuntimeError("LAMEncoder(add_state=True) is missing its state embedding modules.")
             states = self.pos_state_embed(self.state_project(states, emb))
             x_ctx = torch.cat([x_ctx, states.unsqueeze(-2)], dim=-2)  # [B, T, (hw+1), D]
         latents = self.QFormer(x_ctx)  # [B, num_queries, context_dim]

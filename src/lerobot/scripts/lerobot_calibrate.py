@@ -76,18 +76,26 @@ class CalibrateConfig:
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if bool(self.teleop) == bool(self.robot):
             raise ValueError("Choose either a teleop or a robot.")
 
-        self.device = self.robot if self.robot else self.teleop
+    @property
+    def device(self) -> RobotConfig | TeleoperatorConfig:
+        """The one device config given on the CLI (`__post_init__` enforces exactly one)."""
+        if self.robot is not None:
+            return self.robot
+        if self.teleop is not None:
+            return self.teleop
+        raise ValueError("Choose either a teleop or a robot.")
 
 
 @draccus.wrap()
-def calibrate(cfg: CalibrateConfig):
+def calibrate(cfg: CalibrateConfig) -> None:
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
+    device: Robot | Teleoperator
     if isinstance(cfg.device, RobotConfig):
         device = make_robot_from_config(cfg.device)
     elif isinstance(cfg.device, TeleoperatorConfig):

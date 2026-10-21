@@ -15,6 +15,8 @@
 # limitations under the License.
 import os
 import platform
+import time
+from collections.abc import Callable
 from functools import wraps
 
 import pytest
@@ -187,3 +189,13 @@ def skip_if_package_missing(package_name, import_name=None):
         return wrapper
 
     return decorator
+
+
+def wait_for(predicate: Callable[[], bool], timeout: float = 3.0) -> bool:
+    """Wait for a test-observable transition without a fixed sleep."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return predicate()
