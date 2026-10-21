@@ -89,6 +89,24 @@ DUMMY_2 = DummyDefinition(
     supports_broadcast_ping=True,
     eeprom_lock=True,
 )
+# Calibration-capable, like a Dynamixel: operating modes, a homing offset that adds to the
+# position, position limits and a Drive_Mode register.
+DUMMY_3 = DummyDefinition(
+    "DUMMY3",
+    {"model_4": 4321},
+    (
+        "Model_Number",
+        "Present_Position",
+        "Goal_Position",
+        "Operating_Mode",
+        "Drive_Mode",
+        "Homing_Offset",
+        "Min_Position_Limit",
+        "Max_Position_Limit",
+    ),
+    operating_modes={"position": 3},
+    homing_offset_sign=1,
+)
 
 
 class MockBus:
@@ -225,7 +243,7 @@ class MockBus:
 
 
 def find_dummy_model(model: str) -> tuple[int, DummyDefinition]:
-    for definition in (DUMMY_1, DUMMY_2):
+    for definition in (DUMMY_1, DUMMY_2, DUMMY_3):
         if model in definition.models:
             return definition.models[model], definition
     raise ValueError(f"Unknown motor model '{model}'.")
