@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import math
 import threading
 from functools import cached_property
 from typing import Any
@@ -56,7 +57,10 @@ JOINT_NAMES = (
 # Order of `robot.head` params and of the `head` array in robot.state.
 HEAD_JOINTS = ("neck_pitch", "head_pitch", "head_yaw", "head_roll")
 
-TWIST_ACTIONS = ("vx", "vy", "vyaw")
+# Planar base actions shared with LeRobot's other mobile bases: m/s, m/s and deg/s.
+BASE_ACTIONS = ("x.vel", "y.vel", "theta.vel")
+# The same twist as robotd's `robot.move` params, in m/s, m/s and rad/s.
+TWIST_PARAMS = ("vx", "vy", "vyaw")
 HEAD_ACTIONS = tuple(f"{name}.pos" for name in HEAD_JOINTS)
 
 CAMERA = "front"
@@ -65,10 +69,12 @@ CAMERA = "front"
 class MicroDuck(Robot):
     """Pollen Robotics Microduck, a small biped walking with an onboard RL policy.
 
-    Actions are the policy's intents: a body twist (``vx``, ``vy`` in m/s, ``vyaw`` in rad/s, trunk frame,
-    x forward, y left, positive yaw turns left) and a head pose (rad). They are sent to ``robotd`` as
-    ``robot.move`` / ``robot.head`` notifications on every ``send_action``; robotd zeroes the twist if no
-    intent arrives for 500 ms, so the control loop must run at 2 Hz or more.
+    Actions are the policy's intents: a body twist (``x.vel``, ``y.vel`` in m/s, ``theta.vel`` in deg/s,
+    trunk frame, x forward, y left, positive turns left) and a head pose (rad). They are the planar base
+    actions of LeRobot's other mobile bases, so base teleoperators such as ``keyboard_base`` drive the duck
+    too. They are sent to ``robotd`` as ``robot.move`` (``vx``, ``vy``, ``vyaw`` in rad/s) / ``robot.head``
+    notifications on every ``send_action``; robotd zeroes the twist if no intent arrives for 500 ms, so the
+    control loop must run at 2 Hz or more.
 
     Observations come from robotd's ``robot.state`` stream (joints, IMU, odometry, applied twist) and from
     mediad's snapshot endpoint for the head camera.
@@ -103,7 +109,7 @@ class MicroDuck(Robot):
         keys += [f"gyro.{axis}" for axis in "xyz"]
         keys += [f"gravity.{axis}" for axis in "xyz"]
         keys += ["odom.x", "odom.y", "odom.yaw"]
-        keys += [f"{name}.applied" for name in TWIST_ACTIONS]
+        keys += [f"{name}.applied" for name in BASE_ACTIONS]
         return dict.fromkeys(keys, float)
 
     @cached_property
@@ -118,7 +124,7 @@ class MicroDuck(Robot):
 
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return dict.fromkeys(TWIST_ACTIONS + HEAD_ACTIONS, float)
+        return dict.fromkeys(BASE_ACTIONS + HEAD_ACTIONS, float)
 
     @property
     def is_connected(self) -> bool:
@@ -270,9 +276,10 @@ class MicroDuck(Robot):
         obs["odom.y"] = float(position[1])
         obs["odom.yaw"] = float(odom.get("yaw", 0.0))
 
-        applied = (state.get("move") or {}).get("applied") or [0.0, 0.0, 0.0]
-        for name, value in zip(TWIST_ACTIONS, applied, strict=True):
-            obs[f"{name}.applied"] = float(value)
+        vx, vy, vyaw = (state.get("move") or {}).get("applied") or [0.0, 0.0, 0.0]
+        obs["x.vel.applied"] = float(vx)
+        obs["y.vel.applied"] = float(vy)
+        obs["theta.vel.applied"] = math.degrees(float(vyaw))
         return obs
 
     @check_if_not_connected
@@ -292,14 +299,15 @@ class MicroDuck(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         self._check_state_stream()
         cfg = self.config
-        limits = {"vx": cfg.max_vx, "vy": cfg.max_vy, "vyaw": cfg.max_vyaw}
+        limits = {"x.vel": cfg.max_x_vel, "y.vel": cfg.max_y_vel, "theta.vel": cfg.max_theta_vel}
         sent: RobotAction = {}
-        for name in TWIST_ACTIONS:
+        for name in BASE_ACTIONS:
             sent[name] = float(np.clip(float(action.get(name, 0.0)), -limits[name], limits[name]))
         for key in HEAD_ACTIONS:
             sent[key] = float(np.clip(float(action.get(key, 0.0)), -cfg.max_head, cfg.max_head))
 
-        self._cmd.notify("robot.move", {name: sent[name] for name in TWIST_ACTIONS})
+        twist = (sent["x.vel"], sent["y.vel"], math.radians(sent["theta.vel"]))
+        self._cmd.notify("robot.move", dict(zip(TWIST_PARAMS, twist, strict=True)))
         self._cmd.notify("robot.head", {name: sent[f"{name}.pos"] for name in HEAD_JOINTS})
         return sent
 

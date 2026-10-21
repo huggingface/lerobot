@@ -99,7 +99,7 @@ def test_record_and_resume_image_streams(tmp_path, monkeypatch, video, camera, o
         lambda: (None, {"exit_early": False, "rerecord_episode": False, "stop_recording": False}),
     )
     action = dict.fromkeys(robot.action_features, 0.0)
-    action["vx"] = 0.1
+    action["x.vel"] = 0.1
     monkeypatch.setattr(MockTeleop, "get_action", lambda self: action.copy())
 
     writer_settings = []

@@ -101,8 +101,8 @@ Dataset timestamps come from the frame index divided by the dataset rate. They d
   - the 15 measured joint angles (`<joint>.pos`, rad),
   - trunk gyro (`gyro.{x,y,z}`, rad/s) and projected gravity (`gravity.{x,y,z}`),
   - contact odometry (`odom.{x,y,yaw}`),
-  - the twist the robot actually applied after its safety limits (`{vx,vy,vyaw}.applied`).
-- `action`: the commanded intents, `vx`, `vy` (m/s), `vyaw` (rad/s), and `{neck_pitch,head_pitch,head_yaw,head_roll}.pos` (rad).
+  - the twist the robot actually applied after its safety limits (`x.vel.applied`, `y.vel.applied` in m/s, `theta.vel.applied` in deg/s).
+- `action`: the commanded intents, `x.vel`, `y.vel` (m/s), `theta.vel` (deg/s), and `{neck_pitch,head_pitch,head_yaw,head_roll}.pos` (rad). The body twist uses the planar base actions of LeRobot's other mobile bases, such as LeKiwi; LeRobot converts `theta.vel` to rad/s for robotd's `robot.move`.
 
 Set `--robot.use_camera=false` to record state only.
 
@@ -131,9 +131,9 @@ curl --fail --max-time 5 "http://$DUCK_IP:8080/frame" -o /tmp/microduck-frame.pn
 uv run --no-sync lerobot-teleoperate \
     --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
     --robot.robotd_address=127.0.0.1:17000 \
-    --robot.max_vx=0.1 --robot.max_vy=0.1 --robot.max_vyaw=0.5 \
+    --robot.max_x_vel=0.1 --robot.max_y_vel=0.1 --robot.max_theta_vel=30 \
     --teleop.type=keyboard_microduck \
-    --teleop.vx=0.1 --teleop.vy=0.1 --teleop.vyaw=0.5 \
+    --teleop.x_vel=0.1 --teleop.y_vel=0.1 --teleop.theta_vel=30 \
     --fps=15 --teleop_time_s=60 --display_data=true
 ```
 
@@ -148,9 +148,9 @@ export DUCK_DATASET_ROOT="$PWD/outputs/microduck-smoke-$(date +%Y%m%d-%H%M%S)"
 uv run --no-sync lerobot-record \
     --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
     --robot.robotd_address=127.0.0.1:17000 \
-    --robot.max_vx=0.1 --robot.max_vy=0.1 --robot.max_vyaw=0.5 \
+    --robot.max_x_vel=0.1 --robot.max_y_vel=0.1 --robot.max_theta_vel=30 \
     --teleop.type=keyboard_microduck \
-    --teleop.vx=0.1 --teleop.vy=0.1 --teleop.vyaw=0.5 \
+    --teleop.x_vel=0.1 --teleop.y_vel=0.1 --teleop.theta_vel=30 \
     --dataset.repo_id=local/microduck-smoke --dataset.root="$DUCK_DATASET_ROOT" \
     --dataset.no_stamp=true --dataset.push_to_hub=false \
     --dataset.single_task="Test short walking and head movements" \
@@ -194,7 +194,7 @@ Replay physically moves the robot. Return it to the initial position with clear 
 uv run --no-sync lerobot-replay \
     --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
     --robot.robotd_address=127.0.0.1:17000 \
-    --robot.max_vx=0.1 --robot.max_vy=0.1 --robot.max_vyaw=0.5 \
+    --robot.max_x_vel=0.1 --robot.max_y_vel=0.1 --robot.max_theta_vel=30 \
     --dataset.repo_id=local/microduck-smoke --dataset.root="$DUCK_DATASET_ROOT" \
     --dataset.episode=0 --play_sounds=false
 ```
