@@ -23,8 +23,6 @@ import sys
 import uuid
 from pathlib import Path
 
-from benchmark_matrix import load_entries
-
 DOCKER = shutil.which("docker")
 if DOCKER is None:
     raise FileNotFoundError("Docker is required to run simulator benchmarks")
@@ -36,16 +34,24 @@ def run(args, **kwargs):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--name", required=True)
+    selected = parser.add_mutually_exclusive_group(required=True)
+    selected.add_argument("--name", help="A benchmarks/benchmarks.yaml entry; needs PyYAML")
+    # CI passes the matrix entry, so the GPU runner needs no packages beyond the standard library.
+    selected.add_argument("--entry", help="A resolved benchmark_matrix.py entry, as JSON")
     parser.add_argument("--policy-image", required=True)
     parser.add_argument("--sim-image", required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
     args = parser.parse_args()
-    entry = next(e for e in load_entries(Path(".")) if e["name"] == args.name)
+    if args.entry:
+        entry = json.loads(args.entry)
+    else:
+        from benchmark_matrix import load_entries
+
+        entry = next(e for e in load_entries(Path(".")) if e["name"] == args.name)
     args.artifacts.mkdir(parents=True, exist_ok=True)
     # Unique per run: concurrent jobs or leftovers on a persistent runner must not collide.
     run_id = os.environ.get("GITHUB_RUN_ID", "local") + "-" + uuid.uuid4().hex[:8]
-    network = f"sim-benchmark-{args.name}-{run_id}"
+    network = f"sim-benchmark-{entry['name']}-{run_id}"
     simulator = f"{network}-server"
     driver = f"{network}-driver"
     training = f"{network}-training"

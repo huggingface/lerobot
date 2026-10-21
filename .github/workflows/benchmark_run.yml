@@ -24,6 +24,9 @@ on:
       policy_extras:
         required: true
         type: string
+      entry:
+        required: true
+        type: string
 permissions: {}
 jobs:
   run:
@@ -86,9 +89,10 @@ jobs:
           load: true
           push: false
       - name: Run evaluation and training smoke
+        env:
+          BENCHMARK_ENTRY: ${{ inputs.entry }}
         run: |
-          python3 -m pip install 'PyYAML>=6,<7'
-          python3 scripts/ci/run_sim_benchmark.py --name "$BENCHMARK_NAME" \
+          python3 scripts/ci/run_sim_benchmark.py --entry "$BENCHMARK_ENTRY" \
             --sim-image "$SIM_IMAGE" --policy-image "$POLICY_IMAGE" --artifacts "$RUNNER_TEMP/sim-$BENCHMARK_NAME"
       - name: Upload metrics, videos, training artifacts and server logs
         if: always()
