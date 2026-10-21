@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -636,6 +637,76 @@ def test_saved_processors_reconnect_native_state_width_and_action_crop(tmp_path)
     assert processed[OBS_STATE].shape == (1, 26)
     assert processed[ACTION].shape == (1, 32, 26)
     assert postprocessor(torch.zeros(1, 32, 26)).shape == (1, 32, 6)
+
+
+@pytest.mark.parametrize("recipe_enabled", [False, True])
+def test_public_legacy_processors_upgrade_without_losing_stats_or_recipe(tmp_path, recipe_enabled):
+    if recipe_enabled:
+        pytest.importorskip("datasets")
+        pytest.importorskip("av")
+    config = _dimension_config(state_dim=6, action_dim=6)
+    pre, post = make_pre_post_processors(config, dataset_stats=_stats(10, 20))
+    pre.save_pretrained(tmp_path)
+    post.save_pretrained(tmp_path)
+    path = tmp_path / "policy_preprocessor.json"
+    saved = json.loads(path.read_text())
+    recipe = (
+        {
+            "messages": [
+                {"role": "user", "content": "${task}: saved checkpoint prompt", "stream": "low_level"},
+                {
+                    "role": "assistant",
+                    "content": "${subtask}",
+                    "stream": "low_level",
+                    "target": True,
+                    "if_present": "subtask",
+                },
+            ]
+        }
+        if recipe_enabled
+        else None
+    )
+    saved["steps"] = [
+        {
+            "registry_name": "render_messages_processor",
+            "config": {"recipe": recipe, "render_training": False},
+        },
+        *[
+            entry
+            for entry in saved["steps"]
+            if entry["registry_name"]
+            not in {
+                "render_runtime_messages_processor",
+                "render_training_messages_processor",
+                "wall_oss_05_tokenizer",
+                "wall_oss_05_pad_state",
+                "wall_oss_05_pad_action",
+            }
+        ],
+    ]
+    path.write_text(json.dumps(saved))
+
+    pre, post = make_pre_post_processors(config, pretrained_path=tmp_path)
+    _stub_tokenizer(pre)
+    batch = _batch(batch_size=1)
+    batch[OBS_STATE] = torch.full((1, 6), 15.0)
+    batch[ACTION] = torch.full((1, 32, 6), 15.0)
+    processed = pre(batch)
+    torch.testing.assert_close(processed[OBS_STATE][..., :6], torch.zeros(1, 6))
+    torch.testing.assert_close(processed[ACTION][..., :6], torch.zeros(1, 32, 6))
+    torch.testing.assert_close(post(torch.zeros(1, 32, 26)), torch.full((1, 32, 6), 15.0))
+    if recipe_enabled:
+        result = pre({**batch, "query_kind": "next_subtask", "query_text": "clear the table"})
+        assert result["messages_rendered"] == [
+            [{"role": "user", "content": "clear the table: saved checkpoint prompt"}]
+        ]
+    # The migrated pipelines are saved in the current format for future reloads.
+    pre.save_pretrained(tmp_path)
+    post.save_pretrained(tmp_path)
+    assert "render_messages_processor" not in path.read_text()
+    pre, post = make_pre_post_processors(config, pretrained_path=tmp_path)
+    _stub_tokenizer(pre)
+    torch.testing.assert_close(pre(batch)[OBS_STATE], processed[OBS_STATE])
 
 
 @pytest.mark.parametrize("reload", [False, True])

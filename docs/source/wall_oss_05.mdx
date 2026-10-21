@@ -41,7 +41,7 @@ dataset before deployment.
 - Continuous x-prediction flow training and 10-step Euler sampling.
 - Recipe-driven text cross-entropy and joint text/action fine-tuning.
 - Native text generation for VQA, grounding, captions, and language subtasks.
-- An adapter for LeRobot's interactive language runtime.
+- Direct text generation through LeRobot's interactive rollout.
 - Canonical 26D state and action inputs using LeRobot q01/q99 processors.
 - Fine-tuning with `lerobot-train` and inference through standard policy APIs.
 
@@ -136,10 +136,10 @@ general-purpose VLM.
 
 ## Data Requirements
 
-Wall-OSS-0.5 operates on a canonical 26D state and action layout. A dataset
-must already follow this layout to be used by the current integration.
-Non-canonical robot state and controller representations are not converted by
-the policy.
+Wall-OSS-0.5 operates internally on a canonical 26D state and action layout.
+Narrower features are zero-padded, and output actions are cropped to the input
+state width unless `postprocess_action_dim` is set. Padding does not remap joint
+coordinates or controller conventions; the caller must supply compatible values.
 
 Configure image inputs with `camera_key_mapping`. The mapping associates each
 LeRobot image feature with a Wall camera slot. The default checkpoint uses
@@ -153,6 +153,11 @@ preprocessor and postprocessor. Inference restores the statistics saved with
 the checkpoint. When fine-tuning with `lerobot-train`, the training dataset
 statistics replace the pretrained processor statistics and are saved with the
 new checkpoint.
+
+The public base checkpoint's older combined message renderer is upgraded when
+loading its processors. This preserves its saved recipe and quantile statistics
+and adds the current policy tokenizer. Saving the loaded processors writes the
+current split-renderer format.
 
 ## Training
 
