@@ -25,6 +25,7 @@ from lerobot.env_server.in_process import InProcessEnvClient
 from lerobot.robots.sim import SimRobot, SimRobotConfig
 from lerobot.sims.backend import BackendConfig
 from tests.env_server.toy_env import ToyEnvConfig
+from tests.utils import skip_if_package_missing
 
 
 def _episode(client: EnvClient | InProcessEnvClient) -> list[dict]:
@@ -252,6 +253,7 @@ def test_batched_env_works_under_gymnasium_vector_wrappers():
         env.close()
 
 
+@skip_if_package_missing("datasets")
 def test_recording_a_sim_robot_ends_the_episode_with_the_world(tmp_path):
     from lerobot.scripts.lerobot_record import record_loop
     from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig

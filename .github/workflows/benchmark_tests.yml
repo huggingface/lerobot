@@ -69,6 +69,7 @@ jobs:
       sim_tag: ${{ matrix.sim_tag }}
       build_args: ${{ toJSON(matrix.build_args) }}
       policy_extras: ${{ join(matrix.policy_extras, ' ') }}
+      entry: ${{ toJSON(matrix) }}
     secrets:
       LEROBOT_HF_USER: ${{ secrets.LEROBOT_HF_USER }}
       DOCKERHUB_LEROBOT_USERNAME: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}

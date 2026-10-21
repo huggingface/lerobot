@@ -76,7 +76,8 @@ RUN uv pip install --no-cache \
         "matplotlib==3.10.8" \
         "Wand==0.6.13" \
         "scikit-image==0.25.2" \
-        "gym==0.26.2"
+        "gym==0.26.2" \
+        future
 ARG LIBERO_PLUS_SHA=4976dc3
 ENV LIBERO_PLUS_ROOT=/home/user_lerobot/libero-plus/libero/libero
 # LIBERO-plus ships as a namespace package from a git fork: clone it and put it on PYTHONPATH.
@@ -253,7 +254,7 @@ p.write_text(t.replace( \
     'subdirs = os.listdir(xml_dir)', \
     'if not os.path.isdir(xml_dir): return []\n    subdirs = os.listdir(xml_dir)'))" && \
     uv pip install --no-cache -e ~/VLABench -e ~/rrt-algorithms \
-      mujoco==3.2.2 dm-control==1.0.22 \
+      mujoco==3.2.2 dm-control==1.0.22 "opencv-python==4.13.0.92" \
       open3d colorlog scikit-learn openai gdown
 ARG VLABENCH_ASSETS_REPO=""
 RUN ASSETS_DIR="$HOME/VLABench/VLABench/assets" && \
