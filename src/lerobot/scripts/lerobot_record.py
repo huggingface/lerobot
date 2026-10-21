@@ -141,6 +141,7 @@ from lerobot.teleoperators import (  # noqa: F401
     bi_so_leader,
     homunculus,
     koch_leader,
+    lightnav,
     make_teleoperator_from_config,
     omx_leader,
     openarm_leader,
@@ -150,7 +151,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.teleoperators.keyboard import KeyboardTeleop
+from lerobot.teleoperators.mobile_base import MobileBaseTeleop, make_mobile_base_teleop
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
@@ -171,8 +172,11 @@ from lerobot.utils.visualization_utils import (
 class RecordConfig:
     robot: RobotConfig
     dataset: DatasetRecordConfig
-    # Teleoperator to control the robot (required)
+    # Teleoperator to control the robot. Optional when `base_teleop` drives a mobile robot alone.
     teleop: TeleoperatorConfig | None = None
+    # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard_base`, alongside `teleop`
+    # for the arms. Without `teleop`, the arms hold the position they had when recording started.
+    base_teleop: TeleoperatorConfig | None = None
     # Display all cameras on screen
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
@@ -190,10 +194,10 @@ class RecordConfig:
     resume: bool = False
 
     def __post_init__(self):
-        if self.teleop is None:
+        if self.teleop is None and self.base_teleop is None:
             raise ValueError(
                 "A teleoperator is required for recording. "
-                "Use --teleop.type=... to specify one. "
+                "Use --teleop.type=... to specify one, or --base_teleop.type=... for a mobile base. "
                 "For policy-based deployment, use lerobot-rollout instead."
             )
 
@@ -261,32 +265,9 @@ def record_loop(
     if control_time_s is None:
         raise ValueError("`control_time_s` is required: it is how long the loop runs.")
 
-    # Multi-teleop is LeKiwi-only: one arm leader plus a keyboard that drives the base.
-    multi_teleop: tuple[Teleoperator, KeyboardTeleop] | None = None
+    # A list is the Python form of a mobile robot's teleop: `[arm, keyboard]` or `[keyboard]`.
     if isinstance(teleop, list):
-        teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
-        teleop_arm = next(
-            (
-                t
-                for t in teleop
-                if isinstance(
-                    t,
-                    (
-                        so_leader.SO100Leader
-                        | so_leader.SO101Leader
-                        | koch_leader.KochLeader
-                        | omx_leader.OmxLeader
-                    ),
-                )
-            ),
-            None,
-        )
-
-        if not (teleop_arm and teleop_keyboard and len(teleop) == 2 and robot.name == "lekiwi_client"):
-            raise ValueError(
-                "For multi-teleop, the list must contain exactly one KeyboardTeleop and one arm teleoperator. Currently only supported for LeKiwi robot."
-            )
-        multi_teleop = (teleop_arm, teleop_keyboard)
+        teleop = MobileBaseTeleop.from_list(robot, teleop)
 
     if timer is None:
         timer = CycleTimer(fps, records_data=dataset is not None)
@@ -317,25 +298,14 @@ def record_loop(
         with timer.section("teleop"):
             # Get action from teleop
             if isinstance(teleop, Teleoperator):
+                teleop.on_observation(obs)
                 act = teleop.get_action()
-                if robot.name == "unitree_g1":
-                    teleop.send_feedback(obs)
 
                 # Applies a pipeline to the raw teleop action, default is IdentityProcessor
                 act_processed_teleop = teleop_action_processor((act, obs))
                 action_values = act_processed_teleop
                 robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
 
-            elif multi_teleop is not None:
-                arm_teleop, keyboard_teleop = multi_teleop
-                arm_action = arm_teleop.get_action()
-                arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-                keyboard_action = keyboard_teleop.get_action()
-                base_action = robot._from_keyboard_to_base_action(keyboard_action)  # type: ignore[attr-defined]
-                act = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-                act_processed_teleop = teleop_action_processor((act, obs))
-                action_values = act_processed_teleop
-                robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
             else:
                 robot_action_to_send = None
                 no_action_count += 1
@@ -402,7 +372,15 @@ def record(
     )
 
     robot = make_robot_from_config(cfg.robot)
-    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+    arm_teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+    teleop: Teleoperator | None = arm_teleop
+    if cfg.base_teleop is not None:
+        teleop = make_mobile_base_teleop(
+            robot,
+            base=make_teleoperator_from_config(cfg.base_teleop),
+            arm=arm_teleop,
+            hold_uncommanded=True,
+        )
 
     # Fall back to identity pipelines when the caller doesn't supply processors.
     if (
@@ -570,7 +548,7 @@ def record(
 
         if robot.is_connected:
             robot.disconnect()
-        if teleop and teleop.is_connected:
+        if teleop is not None and teleop.is_connected:
             teleop.disconnect()
 
         if listener is not None:

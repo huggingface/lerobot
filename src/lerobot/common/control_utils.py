@@ -175,6 +175,8 @@ def sanity_check_dataset_robot_compatibility(
 class ActuatedTeleoperator(Protocol):
     """A teleoperator whose arm can be driven: position feedback plus torque control."""
 
+    def on_observation(self, observation: dict[str, Any]) -> None: ...
+
     def get_action(self) -> RobotAction: ...
 
     def send_feedback(self, feedback: dict[str, Any]) -> None: ...
@@ -189,11 +191,13 @@ def teleop_supports_feedback(teleop: Teleoperator) -> TypeGuard[ActuatedTeleoper
 
     Actuated teleops (e.g. SO-101, OpenArmMini) have non-empty ``feedback_features``
     and expose ``enable_torque`` / ``disable_torque`` motor-control methods.
+    Composites can opt out via ``supports_position_feedback`` when a child is not actuated.
 
     TODO(Maxime): See if it is possible to unify this interface across teleops instead of duck-typing.
     """
     return (
         bool(teleop.feedback_features)
+        and getattr(teleop, "supports_position_feedback", True)
         and hasattr(teleop, "disable_torque")
         and hasattr(teleop, "enable_torque")
     )

@@ -19,6 +19,7 @@ import time
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
+from lerobot.lerobot_types import RobotObservation
 from lerobot.robots.unitree_g1.g1_utils import REMOTE_AXES, G1_29_JointArmIndex
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -295,10 +296,17 @@ class UnitreeG1Teleoperator(Teleoperator):
         rc._sync_remote_action()
         return {**joint_action, **rc.remote_action}
 
-    def send_feedback(self, feedback: dict[str, Any]) -> None:
-        wireless_remote = feedback.get("wireless_remote")
+    def on_observation(self, observation: RobotObservation) -> None:
+        wireless_remote = observation.get("wireless_remote")
         if wireless_remote is not None:
             self.remote_controller.set_from_wireless(wireless_remote)
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        """Deprecated for observation delivery; use :meth:`on_observation` before :meth:`get_action`.
+
+        Kept as a compatibility alias for callers that send wireless-remote observations here.
+        """
+        self.on_observation(feedback)
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()

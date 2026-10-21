@@ -244,12 +244,12 @@ Then on your laptop, also run `conda activate lerobot` and run the API example, 
 python examples/lekiwi/teleoperate.py
 ```
 
-You should see on your laptop something like this: `[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (r,f) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
+You should see on your laptop something like this: `[INFO] Connected to remote robot at tcp://172.17.133.91:5555 and video stream at tcp://172.17.133.91:5556.` Now you can move the leader arm and use the keyboard (w,a,s,d) to drive forward, left, backwards, right. And use (z,x) to turn left or turn right. You can use (+,-) to increase and decrease the speed of the mobile robot. There are three speed modes, see the table below:
 
 | Speed Mode | Linear Speed (m/s) | Rotation Speed (deg/s) |
 | ---------- | ------------------ | ---------------------- |
-| Fast       | 0.4                | 90                     |
-| Medium     | 0.25               | 60                     |
+| Fast       | 0.3                | 90                     |
+| Medium     | 0.2                | 60                     |
 | Slow       | 0.1                | 30                     |
 
 | Key | Action         |
@@ -260,11 +260,33 @@ You should see on your laptop something like this: `[INFO] Connected to remote r
 | D   | Move right     |
 | Z   | Turn left      |
 | X   | Turn right     |
-| R   | Increase speed |
-| F   | Decrease speed |
+| +   | Increase speed |
+| -   | Decrease speed |
 
 > [!TIP]
-> If you use a different keyboard, you can change the keys for each command in the [`LeKiwiClientConfig`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/lekiwi/config_lekiwi.py).
+> The example uses `KeyboardBaseTeleopConfig`: change its `key_bindings`, `linear_speeds` (m/s), and `angular_speeds` (deg/s) to customize controls. Speed changes once per press of `+` or `-`.
+
+### From the command line
+
+`lerobot-teleoperate` drives LeKiwi too: `--teleop` takes the leader arm and `--base_teleop` the keyboard that drives the base. Leave out `--teleop` to drive the base from the keyboard alone; the arm then holds the position it had when teleoperation started.
+
+```bash
+lerobot-teleoperate \
+    --robot.type=lekiwi_client \
+    --robot.remote_ip=172.18.134.136 \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/tty.usbmodem585A0077581 \
+    --teleop.id=my_awesome_leader_arm \
+    --base_teleop.type=keyboard_base
+```
+
+The same `--teleop` / `--base_teleop` flags work with `lerobot-record` and `lerobot-rollout` (for example, DAgger corrections or episodic resets). With no leader, other joints hold their first observed positions. In standalone teleoperation, set `--hold_uncommanded=false` to send only base commands. Recording keeps the held targets so each dataset frame contains a complete action.
+
+`keyboard_base` translates keys into `x.vel`, `y.vel`, and `theta.vel` on the teleoperation side. For example, `--base_teleop.linear_speeds='[0.05,0.1,0.2]'` changes the linear speed presets. The robot only receives actions. A base teleoperator that already produces the required action keys can also be used. For example, [LightNav-0](./lightnav) drives the base toward a goal described in natural language. Base and arm actions must have distinct names; overlapping keys raise an error.
+
+Existing LeKiwi commands using `--base_teleop.type=keyboard` and Python lists `[arm, keyboard]` or `[keyboard]` remain supported. The client exposes its `LeKiwiClientConfig.teleop_keys` through `legacy_keyboard_bindings`, which setup converts into a teleoperation processor retained by the keyboard across recording and reset phases; the robot's private keyboard method is not called. These legacy bindings still use `r`/`f`, so remap `r` when recording to avoid the re-record shortcut. New code should use `keyboard_base`.
+
+For custom Python setups, `MobileBaseTeleop` implements the standard `Teleoperator` interface, including combined action features, child calibration and cleanup, and prefixed feedback routing. It accepts a `base_action_processor`, an `arm_action_prefix`, and `hold_uncommanded` (default `False`). The processor runs on `(base_action, observation)` before base and arm actions are combined. Setup reads the robot's optional `arm_action_prefix` and `legacy_keyboard_bindings` attributes without importing robot implementations. Both wired LeKiwi and LeKiwiClient expose the `arm_` prefix; legacy plain-keyboard bindings are provided by LeKiwiClient only.
 
 ### Wired version
 
