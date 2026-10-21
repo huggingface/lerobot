@@ -155,3 +155,11 @@ def test_default_config_state_dict_layout_is_unchanged():
     # The single action block lives in layer 0 only; deeper layers own video only.
     assert "layers.0.blocks.action.self_attn.q.weight" in dot_keys
     assert not any(key.startswith("layers.1.blocks.action") for key in dot_keys)
+
+
+@pytest.mark.parametrize("depth", [2.5, 2.0, True, False, "2", 0, -1])
+@pytest.mark.parametrize("field", ["action_expert_layers", "action_dit_config"])
+def test_action_depth_requires_positive_integer(depth, field):
+    kwargs = {field: depth if field == "action_expert_layers" else {"num_layers": depth}}
+    with pytest.raises(ValueError, match="positive integer"):
+        FastWAMConfig(lite_kv_fusion=True, base_model_id=None, **kwargs)

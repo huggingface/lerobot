@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import torch
 from torch import Tensor
 
+from lerobot.configs import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.import_utils import require_package
@@ -90,6 +92,50 @@ class FastWAMPolicy(PreTrainedPolicy):
                     if "video" in layer.blocks:
                         layer.blocks["video"].requires_grad_(False)
         self.reset()
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        pretrained_name_or_path: str | Path,
+        *,
+        config: PreTrainedConfig | None = None,
+        **kwargs: Any,
+    ) -> FastWAMPolicy:
+        """Load a checkpoint without silently changing its Faster-WAM architecture.
+
+        An explicit config can still change embodiment dimensions. Its Faster-WAM
+        options and resolved action depth must match the saved config, because the
+        lenient cross-embodiment weight loader cannot validate these semantics.
+        """
+        if config is not None:
+            if not isinstance(config, FastWAMConfig):
+                raise TypeError("FastWAM checkpoints require a FastWAMConfig.")
+            download_options = {
+                key: kwargs[key]
+                for key in (
+                    "force_download",
+                    "resume_download",
+                    "proxies",
+                    "token",
+                    "cache_dir",
+                    "local_files_only",
+                    "revision",
+                )
+                if key in kwargs
+            }
+            saved_config = FastWAMConfig.from_pretrained(pretrained_name_or_path, **download_options)
+            options = ("lite_kv_fusion", "retracted_1d_rope", "world_model_only_conditioning")
+            mismatched = [key for key in options if getattr(config, key) != getattr(saved_config, key)]
+            if config.action_dit_config is None or saved_config.action_dit_config is None:
+                raise ValueError("FastWAM action configs must be resolved before checkpoint loading.")
+            if config.action_dit_config["num_layers"] != saved_config.action_dit_config["num_layers"]:
+                mismatched.append("action_dit_config.num_layers")
+            if mismatched:
+                raise ValueError(
+                    "FastWAM checkpoint architecture conflicts with explicit config: "
+                    f"{', '.join(mismatched)}. Keep the checkpoint's Faster-WAM options and action depth."
+                )
+        return super().from_pretrained(pretrained_name_or_path, config=config, **kwargs)
 
     @classmethod
     def _load_as_safetensor(cls, model, model_file: str, map_location: str, strict: bool):

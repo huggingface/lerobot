@@ -298,7 +298,9 @@ class FastWAMConfig(PreTrainedConfig):
         self.video_dit_config["use_gradient_checkpointing"] = bool(self.use_gradient_checkpointing)
         self.action_dit_config["use_gradient_checkpointing"] = bool(self.use_gradient_checkpointing)
         if self.action_expert_layers is not None:
-            self.action_dit_config["num_layers"] = int(self.action_expert_layers)
+            if isinstance(self.action_expert_layers, bool) or not isinstance(self.action_expert_layers, int):
+                raise ValueError("`action_expert_layers` must be a positive integer.")
+            self.action_dit_config["num_layers"] = self.action_expert_layers
         # Faster-WAM world-model-only conditioning: the action expert is built without
         # text cross-attention modules and is never given a text/proprio context.
         self.action_dit_config["use_text_cross_attention"] = not self.world_model_only_conditioning
@@ -342,9 +344,9 @@ class FastWAMConfig(PreTrainedConfig):
             # __post_init__ resolves both before this validation runs.
             raise ValueError("`video_dit_config` and `action_dit_config` must be resolved first.")
         video_layers = int(video_config["num_layers"])
-        action_layers = int(action_config["num_layers"])
-        if action_layers < 1:
-            raise ValueError(f"`action_expert_layers` must be >= 1, got {action_layers}.")
+        action_layers = action_config["num_layers"]
+        if isinstance(action_layers, bool) or not isinstance(action_layers, int) or action_layers < 1:
+            raise ValueError(f"Action expert depth must be a positive integer, got {action_layers!r}.")
         if action_layers > video_layers:
             raise ValueError(
                 f"`action_expert_layers` ({action_layers}) cannot exceed the video backbone "
