@@ -1,0 +1,235 @@
+# Microduck
+
+[Microduck](https://github.com/pollen-robotics/microduck) is a small biped duck robot by Pollen Robotics. It walks with an onboard RL policy, and LeRobot drives it the way its gamepad does: by sending **intents** (a body twist and a head pose) to the robot's control daemon, `robotd`. LeRobot never writes joint targets. The onboard policy decides how the legs move.
+
+With this integration you can:
+
+- teleoperate the duck from your laptop keyboard,
+- record LeRobot datasets (head camera + proprioception + commanded intents) for imitation learning,
+- load onboard RL policies from the Hugging Face Hub.
+
+## How It Works
+
+| Data          | Source on the robot                                  | How LeRobot reaches it               |
+| ------------- | ---------------------------------------------------- | ------------------------------------ |
+| Commands      | `robotd`, JSON-RPC over `/run/robotd.sock`           | ssh-forwarded Unix socket            |
+| State (50 Hz) | `robotd` `robot.state` stream                        | same socket, second connection       |
+| Camera        | `mediad`, `GET http://<ip>:8080/frame` (upright PNG) | HTTP over the LAN                    |
+| Hub policies  | `updaterd`, JSON-RPC over `/run/updaterd.sock`       | ssh-forwarded Unix socket (optional) |
+
+`robotd` zeroes the twist if no command arrives for 500 ms, so the duck stops if LeRobot stops or the connection drops.
+
+If the state stream stops, `get_observation` and `send_action` raise `DeviceNotConnectedError`. Disconnect, then reconnect before you continue.
+
+## Setup
+
+1. Find the robot's IP with `duckctl ip` (mDNS hostnames are not reliable on these boards).
+2. Stop the onboard gamepad daemon so the two don't fight over the commands:
+
+   ```bash
+   ssh microduck@<ip> sudo systemctl stop padd
+   ```
+
+3. Forward `robotd`'s socket (and `updaterd`'s, to load Hub policies). Leave this terminal open:
+
+   ```bash
+   ssh -N -L /tmp/robotd.sock:/run/robotd.sock -L /tmp/updaterd.sock:/run/updaterd.sock microduck@<ip>
+   ```
+
+4. From a LeRobot source checkout, install the recording, keyboard, and visualization dependencies:
+
+   ```bash
+   uv sync --locked --extra core_scripts --extra test
+   ```
+
+   Use `uv run --no-sync` before the commands below to use this environment.
+
+## Teleoperate
+
+```bash
+lerobot-teleoperate \
+    --robot.type=microduck \
+    --robot.remote_ip=<ip> \
+    --teleop.type=keyboard_microduck \
+    --fps=30 \
+    --display_data=true
+```
+
+On connect, LeRobot asks the onboard policy to drive (`robot.enable`). The duck goes through its homing ramp (about 2 s) before it responds.
+
+### Keyboard Controls
+
+| Keys  | Action                       |
+| ----- | ---------------------------- |
+| W / S | Walk forward / backward      |
+| A / D | Strafe left / right          |
+| Z / X | Turn left / right            |
+| Space | Stop                         |
+| I / K | Head pitch down / up         |
+| J / L | Head yaw left / right        |
+| U / O | Head roll left / right       |
+| Y / H | Neck pitch down / up         |
+| C     | Recenter the head            |
+| + / - | Next / previous speed preset |
+
+The arrow keys, ESC and N / R / Q are left free for `lerobot-record`'s episode controls (next, re-record, stop).
+
+## Record a Dataset
+
+```bash
+lerobot-record \
+    --robot.type=microduck \
+    --robot.remote_ip=<ip> \
+    --teleop.type=keyboard_microduck \
+    --dataset.repo_id=<hf_username>/microduck_dataset \
+    --dataset.num_episodes=10 \
+    --dataset.fps=15 \
+    --dataset.single_task="Walk to the red ball" \
+    --display_data=true
+```
+
+The camera supplies its latest cached PNG image. Start with a dataset rate of 15 fps, then measure the camera update rate. If the recording loop runs faster than the camera, several dataset rows can use the same image.
+
+If a camera request fails, LeRobot keeps the cached image for that connection. A new connection clears the cache and supplies black images until the first valid image arrives.
+
+Dataset timestamps come from the frame index divided by the dataset rate. They describe the requested sample grid, not the camera capture time. The PNG endpoint supplies no capture timestamp, so the dataset rate and repeated pixels alone do not establish camera freshness.
+
+### What Gets Saved
+
+- `observation.images.front`: head camera, resized to `camera_height x camera_width` (640 x 360 by default)
+- `observation.state`:
+  - the 15 measured joint angles (`<joint>.pos`, rad),
+  - trunk gyro (`gyro.{x,y,z}`, rad/s) and projected gravity (`gravity.{x,y,z}`),
+  - contact odometry (`odom.{x,y,yaw}`),
+  - the twist the robot actually applied after its safety limits (`x.vel.applied`, `y.vel.applied` in m/s, `theta.vel.applied` in deg/s).
+- `action`: the commanded intents, `x.vel`, `y.vel` (m/s), `theta.vel` (deg/s), and `{neck_pitch,head_pitch,head_yaw,head_roll}.pos` (rad). The body twist uses the planar base actions of LeRobot's other mobile bases, such as LeKiwi; LeRobot converts `theta.vel` to rad/s for robotd's `robot.move`.
+
+Set `--robot.use_camera=false` to record state only.
+
+## Test on a Real Microduck
+
+Use the stock onboard walking policy for this test. Connecting enables the robot and can start its homing motion. Start with the robot supported in its normal stand, then use a clear floor area for walking. Keep `relax_on_disconnect=false`: disconnect should stop movement without cutting torque.
+
+On macOS, allow the terminal running LeRobot to monitor keyboard input in System Settings if prompted. The keyboard teleoperator starts at its highest speed preset, so the commands below explicitly reduce the command limits.
+
+### Connect and Check the Keyboard
+
+In a dedicated terminal, replace the IP and keep this SSH tunnel running. TCP forwarding avoids stale local Unix socket files after restarting the tunnel. Use port 17000 rather than 7000, which macOS Control Center can already occupy. If SSH reports that the local port is in use, choose another free port and update `robotd_address` in every command:
+
+```bash
+export DUCK_IP=192.168.1.42
+ssh "microduck@$DUCK_IP" sudo systemctl stop padd
+ssh -N -o ExitOnForwardFailure=yes \
+    -L 127.0.0.1:17000:/run/robotd.sock "microduck@$DUCK_IP"
+```
+
+In another terminal, from the source checkout:
+
+```bash
+export DUCK_IP=192.168.1.42
+curl --fail --max-time 5 "http://$DUCK_IP:8080/frame" -o /tmp/microduck-frame.png
+uv run --no-sync lerobot-teleoperate \
+    --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
+    --robot.robotd_address=127.0.0.1:17000 \
+    --robot.max_x_vel=0.1 --robot.max_y_vel=0.1 --robot.max_theta_vel=30 \
+    --teleop.type=keyboard_microduck \
+    --teleop.x_vel=0.1 --teleop.y_vel=0.1 --teleop.theta_vel=30 \
+    --fps=15 --teleop_time_s=60 --display_data=true
+```
+
+Check that the camera view updates when you move an object in front of it. Once homing completes, briefly test W/S, A/D, and Z/X on the floor. Releasing a movement key should stop that command; holding Space should zero the body twist. Briefly test each head key and C to recenter, checking the actual signs against the table above. Stop with Ctrl-C and confirm that the duck stops without going limp.
+
+### Record, Read Back, and Replay
+
+Choose a fresh local dataset directory for each test run. This test does not upload to the Hub:
+
+```bash
+export DUCK_DATASET_ROOT="$PWD/outputs/microduck-smoke-$(date +%Y%m%d-%H%M%S)"
+uv run --no-sync lerobot-record \
+    --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
+    --robot.robotd_address=127.0.0.1:17000 \
+    --robot.max_x_vel=0.1 --robot.max_y_vel=0.1 --robot.max_theta_vel=30 \
+    --teleop.type=keyboard_microduck \
+    --teleop.x_vel=0.1 --teleop.y_vel=0.1 --teleop.theta_vel=30 \
+    --dataset.repo_id=local/microduck-smoke --dataset.root="$DUCK_DATASET_ROOT" \
+    --dataset.no_stamp=true --dataset.push_to_hub=false \
+    --dataset.single_task="Test short walking and head movements" \
+    --dataset.num_episodes=2 --dataset.episode_time_s=20 --dataset.reset_time_s=10 \
+    --dataset.fps=15 --dataset.rgb_encoder.vcodec=h264 \
+    --display_data=true --play_sounds=false
+```
+
+Use short, easily repeatable movements and end each episode stationary. Test the next/re-record/quit controls separately; they should not command the head or base. If both episodes run for their full duration, expect roughly 600 rows. Inspect the timing summary for missed deadlines; the number of rows alone does not prove real-time performance or camera freshness.
+
+Read every saved frame, including decoding the camera video:
+
+```bash
+uv run --no-sync python - <<'PY'
+import os
+
+import torch
+
+from lerobot.datasets import LeRobotDataset
+
+dataset = LeRobotDataset(
+    "local/microduck-smoke",
+    root=os.environ["DUCK_DATASET_ROOT"],
+    video_backend="pyav",
+)
+assert dataset.num_episodes == 2, dataset.num_episodes
+assert len(dataset) > 0
+for sample in dataset:
+    assert sample["observation.images.front"].shape == (3, 640, 360)
+    assert torch.isfinite(sample["observation.state"]).all()
+    assert torch.isfinite(sample["action"]).all()
+print(f"Read back {dataset.num_episodes} episodes and {len(dataset)} frames successfully")
+PY
+```
+
+To test resume, rerun the recording command with `--resume=true --dataset.num_episodes=1` using the same root. It should append one episode; change the readback assertion to three episodes.
+
+Replay physically moves the robot. Return it to the initial position with clear space around it, then run:
+
+```bash
+uv run --no-sync lerobot-replay \
+    --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
+    --robot.robotd_address=127.0.0.1:17000 \
+    --robot.max_x_vel=0.1 --robot.max_y_vel=0.1 --robot.max_theta_vel=30 \
+    --dataset.repo_id=local/microduck-smoke --dataset.root="$DUCK_DATASET_ROOT" \
+    --dataset.episode=0 --play_sounds=false
+```
+
+This repeats the recorded intents, not an exact physical trajectory: the onboard walking policy and floor contact still determine the motion.
+
+### Check Failure Handling
+
+- **Connection failure:** stop the SSH tunnel and run the recording command with a fresh dataset root. It should raise a connection error and exit without hanging on image workers. Restart the tunnel afterward.
+- **Connection loss during operation:** while stationary in teleoperation, stop the SSH tunnel. The loop should fail and exit rather than keep returning cached state. Restart the tunnel and rerun teleoperation; fresh observations should arrive. This checks loss of both connections; the automated state-stream test below separately checks loss of only the subscription connection while the command connection stays open.
+- **Camera reconnect and delayed responses:** the automated tests below exercise both reuse of the same robot instance and an old HTTP response arriving after reconnection. During a live camera outage, the current connection intentionally retains its last image, so do not treat a frozen image as a successful camera test.
+
+```bash
+uv run --no-sync pytest \
+    tests/robots/test_microduck.py \
+    tests/teleoperators/test_keyboard_microduck.py \
+    tests/test_record_image_streams.py -q
+```
+
+After all LeRobot processes have disconnected, restore gamepad control:
+
+```bash
+ssh "microduck@$DUCK_IP" sudo systemctl start padd
+```
+
+## Load an RL Policy from the Hub
+
+The duck runs its locomotion and skill policies onboard as ONNX files. `MicroDuck.load_policy` asks `updaterd` to download a policy from the Hub onto the robot, then loads it into a slot (`walk`, `stand`, `sitstand`, `ground_pick`, `kick_left`, `kick_right`, `roulade`):
+
+```bash
+python examples/microduck/rollout_hub_policy.py --ip <ip> --policy RemiFabre/microduck-flamingo-cycle
+```
+
+Have the robot on its stand the first time you try a policy: nothing published on the Hub is verified by anybody. On the robot, `sudo robotctl policy reset walk` restores the stock policy.
+
+## Configuration
+
+See `MicroDuckConfig` in `src/lerobot/robots/microduck/config_microduck.py` for all options, including the twist and head limits, `robotd_address` (a Unix socket path or a TCP `host:port`), `relax_on_disconnect`, and the camera size.
