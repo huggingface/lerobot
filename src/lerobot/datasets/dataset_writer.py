@@ -208,7 +208,8 @@ class DatasetWriter:
 
         The caller must provide all user-defined features plus ``"task"``, and must
         not provide ``"timestamp"`` or ``"frame_index"``; those are computed
-        automatically.
+        automatically. If the async image queue raises ``queue.Full``, discard
+        the current episode with :meth:`clear_episode_buffer` before continuing.
         """
         # Convert torch to numpy if needed
         for name in frame:
@@ -606,12 +607,15 @@ class DatasetWriter:
 
         self.episode_buffer = self._create_episode_buffer()
 
-    def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
+    def start_image_writer(
+        self, num_processes: int = 0, num_threads: int = 4, queue_maxsize: int = 30
+    ) -> None:
         """Start an :class:`AsyncImageWriter` for background image persistence.
 
         Args:
             num_processes: Number of subprocesses. ``0`` means threads only.
             num_threads: Number of threads per process.
+            queue_maxsize: Maximum number of pending image writes.
         """
         if isinstance(self.image_writer, AsyncImageWriter):
             logger.warning(
@@ -621,6 +625,7 @@ class DatasetWriter:
         self.image_writer = AsyncImageWriter(
             num_processes=num_processes,
             num_threads=num_threads,
+            queue_maxsize=queue_maxsize,
         )
 
     def stop_image_writer(self) -> None:

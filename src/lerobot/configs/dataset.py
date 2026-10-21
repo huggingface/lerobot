@@ -54,6 +54,9 @@ class DatasetRecordConfig:
     # Too many threads might cause unstable teleoperation fps due to main thread being blocked.
     # Not enough threads might cause low camera fps.
     num_image_writer_threads_per_camera: int = 4
+    # Maximum number of pending PNG/TIFF writes across all image writer workers.
+    # If the queue remains full for 0.1s, recording raises queue.Full rather than dropping frames.
+    image_writer_queue_maxsize: int = 30
     # Number of episodes to record before batch encoding videos
     # Set to 1 for immediate encoding (default behavior), or higher for batched encoding
     video_encoding_batch_size: int = 1
