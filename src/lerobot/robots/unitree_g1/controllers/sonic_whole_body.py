@@ -44,6 +44,7 @@ from ..g1_utils import (
     NUM_MOTORS,
     G1_29_JointIndex,
     get_gravity_orientation,
+    make_ort_session_options,
 )
 from ..unitree_g1 import RobotController
 
@@ -53,9 +54,10 @@ CONTROL_DT = 0.02  # 50 Hz control period (s)
 TOKEN_DIM = 64  # decoder latent size
 HISTORY_LEN = 10  # proprioception frames the decoder conditions on
 
-# Latent-token feature-key prefixes: action carries the token, obs echoes it back.
+# Latent-token feature-key prefixes: action carries the token, obs echoes it back under the
+# same keys (like an arm's ``<joint>.pos``), so rollout can hold and home to an observed token.
 TOKEN_ACTION_PREFIX = "motion_token"  # nosec B105 - feature-key prefix, not a secret
-TOKEN_STATE_PREFIX = "motion_token_state"  # nosec B105 - feature-key prefix, not a secret
+TOKEN_STATE_PREFIX = TOKEN_ACTION_PREFIX
 
 # SONIC decoder checkpoint. Deploy constants (kp/kd, default_angles, action_scale,
 # neutral_token) are baked into the ONNX metadata; see upload_sonic_decoder.py.
@@ -91,7 +93,11 @@ def load_policy(
     logger.info(f"Loading {policy_type.upper()} SONIC decoder from: {repo_id}/{filename}")
     decoder_path = hf_hub_download(repo_id=repo_id, filename=filename)
 
-    decoder = ort.InferenceSession(decoder_path)
+    # Capped thread pool, same reasoning as GR00T: the decoder is stepped at 50 Hz from a
+    # background thread next to the torch VLA, and an ORT pool spanning every core
+    # starves both. One thread is lowest-latency for a model this size.
+    so = make_ort_session_options(intra_op_num_threads=1, inter_op_num_threads=1)
+    decoder = ort.InferenceSession(decoder_path, sess_options=so)
     logger.info(f"Decoder loaded: {decoder.get_inputs()[0].shape} → {decoder.get_outputs()[0].shape}")
 
     # Extract deploy constants from ONNX metadata
@@ -145,8 +151,9 @@ class SonicWholeBodyController(RobotController):
 
     def observation_state(self) -> dict[str, float]:
         """Echo the last decoded token as ``observation.state`` so a token-output VLA closes
-        the loop on its own previous token."""
-        token = self._last_token if self._last_token is not None else np.zeros(TOKEN_DIM, dtype=np.float32)
+        the loop on its own previous token. Before the first tick this is the neutral token the
+        decoder is about to hold; an all-zeros token decodes to a bent-over pose, not a stand."""
+        token = self._last_token if self._last_token is not None else self.neutral_token
         return {f"{TOKEN_STATE_PREFIX}.{i}.pos": float(v) for i, v in enumerate(token)}
 
     def run_step(self, action: dict, lowstate) -> dict:

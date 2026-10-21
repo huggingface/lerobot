@@ -82,6 +82,9 @@ class BiSOFollower(BimanualMixin, Robot):
 
         self.left_arm = SOFollower(left_arm_config)
         self.right_arm = SOFollower(right_arm_config)
+        self.supports_position_hold = (
+            self.left_arm.supports_position_hold and self.right_arm.supports_position_hold
+        )
 
         # Only for compatibility with other parts of the codebase that expect a `robot.cameras` attribute
         self.cameras = {**self.left_arm.cameras, **self.right_arm.cameras}

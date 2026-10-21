@@ -23,8 +23,25 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.lerobot_types import EnvTransition, PolicyAction, RobotAction, RobotObservation, TransitionKey
-from lerobot.utils.constants import ACTION, DONE, INFO, OBS_PREFIX, QUERY_KIND, QUERY_TEXT, REWARD, TRUNCATED
+from lerobot.lerobot_types import (
+    EnvAction,
+    EnvTransition,
+    PolicyAction,
+    RobotAction,
+    RobotObservation,
+    TransitionKey,
+)
+from lerobot.utils.constants import (
+    ACTION,
+    DONE,
+    INFO,
+    MESSAGES_RENDERED,
+    OBS_PREFIX,
+    QUERY_KIND,
+    QUERY_TEXT,
+    REWARD,
+    TRUNCATED,
+)
 
 
 @singledispatch
@@ -76,8 +93,7 @@ def _(
     # Check for numpy scalars (0-dimensional arrays) and treat them as scalars.
     if value.ndim == 0:
         # Numpy scalars should be converted to 0-dimensional tensors.
-        scalar_value = value.item()
-        return torch.tensor(scalar_value, dtype=dtype, device=device)
+        return torch.tensor(value.item(), dtype=dtype, device=device)
 
     # Create tensor from numpy array.
     tensor = torch.from_numpy(value)
@@ -158,10 +174,11 @@ _COMPLEMENTARY_KEYS = (
     "index",
     "task_index",
     "episode_index",
+    "frame_index",
     "timestamp",
     "language_persistent",
     "language_events",
-    "messages",
+    MESSAGES_RENDERED,
     "message_streams",
     "target_message_indices",
     # Text-generation request keys: carried into complementary_data so a prompt-formatting
@@ -185,10 +202,10 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
 
 def create_transition(
     observation: RobotObservation | None = None,
-    action: PolicyAction | RobotAction | None = None,
-    reward: float = 0.0,
-    done: bool = False,
-    truncated: bool = False,
+    action: PolicyAction | RobotAction | EnvAction | None = None,
+    reward: float | torch.Tensor = 0.0,
+    done: bool | torch.Tensor = False,
+    truncated: bool | torch.Tensor = False,
     info: dict[str, Any] | None = None,
     complementary_data: dict[str, Any] | None = None,
 ) -> EnvTransition:
@@ -197,8 +214,8 @@ def create_transition(
 
     Args:
         observation: Observation dictionary.
-        action: Action dictionary.
-        reward: Scalar reward value.
+        action: Policy, robot or environment action.
+        reward: Reward value, a scalar or a tensor (e.g. for a batch).
         done: Episode termination flag.
         truncated: Episode truncation flag.
         info: Additional info dictionary.
@@ -294,7 +311,7 @@ def transition_to_robot_action(transition: EnvTransition) -> RobotAction:
     action = transition.get(TransitionKey.ACTION)
     if not isinstance(action, dict):
         raise ValueError(f"Action should be a RobotAction type (dict) got {type(action)}")
-    return transition.get(TransitionKey.ACTION)
+    return action
 
 
 def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
@@ -305,7 +322,7 @@ def transition_to_policy_action(transition: EnvTransition) -> PolicyAction:
         raise ValueError(f"Transition should be a EnvTransition type (dict) got {type(transition)}")
 
     action = transition.get(TransitionKey.ACTION)
-    if not isinstance(action, PolicyAction):
+    if not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return action
 
@@ -327,7 +344,7 @@ def policy_action_to_transition(action: PolicyAction) -> EnvTransition:
     """
     Convert a `PolicyAction` to an `EnvTransition`.
     """
-    if not isinstance(action, PolicyAction):
+    if not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
     return create_transition(action=action)
 
@@ -354,7 +371,7 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
         raise ValueError(f"EnvTransition must be a dictionary. Got {type(batch).__name__}")
 
     action = batch.get(ACTION)
-    if action is not None and not isinstance(action, PolicyAction):
+    if action is not None and not isinstance(action, torch.Tensor):
         raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
     # Extract observation and complementary data keys.

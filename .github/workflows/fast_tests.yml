@@ -43,8 +43,6 @@ on:
       - "uv.lock"
       - "Makefile"
 
-permissions:
-  contents: read
 
 # Sets up the environment variables
 env:
@@ -56,11 +54,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   # This job runs pytests in isolated dependency tiers.
   # Each tier installs a different extra and runs the full suite;
   # tests gated behind other extras skip automatically.
   fast-pytest-tests:
+    permissions:
+      contents: read
     name: Fast Pytest Tests
     runs-on: ubuntu-latest
     env:
