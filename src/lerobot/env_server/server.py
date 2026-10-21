@@ -17,6 +17,7 @@
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from queue import Empty
 from threading import Event
@@ -127,8 +128,12 @@ class EnvServer:
         self.stop = Event()
         self.descriptor: EnvDescriptor
 
-    def serve(self) -> None:
-        """Pump bounded requests and realtime worlds until stopped."""
+    def serve(self, should_stop: Callable[[], bool] | None = None) -> None:
+        """Pump bounded requests and realtime worlds until stopped.
+
+        ``should_stop`` lets the owner check a signal flag without acquiring a lock
+        inside the signal handler. Other threads can continue to use ``stop.set()``.
+        """
         try:
             # Listen before probing: slow simulators must not exceed the clients' connect timeout.
             # Describe queries wait for the queryable declared below, within their own deadline.
@@ -153,7 +158,7 @@ class EnvServer:
             )
             self.transport.declare_token(instance + "/alive")
             self.ready.set()
-            while not self.stop.is_set():
+            while not self.stop.is_set() and not (should_stop is not None and should_stop()):
                 for channel in (describe, any_describe, requests):
                     for _ in range(8):
                         try:
