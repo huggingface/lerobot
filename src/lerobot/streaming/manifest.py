@@ -27,16 +27,17 @@ from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 import numpy as np
 from numpy.typing import NDArray
 
-from lerobot.streaming.mp4 import (
+from .mp4 import (
     DEFAULT_HEADER_PROBE_BYTES,
     Mp4Index,
     Mp4SampleSlice,
     fetch_mp4_index,
     synthesized_mp4_size,
 )
-from lerobot.streaming.range_fetch import make_range_fetcher
-from lerobot.streaming.sidecar_utils import (
+from .range_fetch import make_range_fetcher
+from .sidecar_utils import (
     ARRAY_NAMES,
+    SidecarSpec,
     mapped_arrays,
     mapped_sidecar,
     sidecar_payload,
@@ -45,7 +46,6 @@ from lerobot.streaming.sidecar_utils import (
 
 if TYPE_CHECKING:
     from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-    from lerobot.streaming.sidecar import SidecarSpec
 
 
 @dataclass(frozen=True)
@@ -422,8 +422,6 @@ class EpisodeVideoManifest:
     ) -> bool:
         """Return whether a sidecar matches its expected source specification."""
         try:
-            from lerobot.streaming.sidecar import SidecarSpec
-
             path = Path(sidecar_path).expanduser()
             payload = sidecar_payload(path)
             candidate = SidecarSpec.from_dict(payload["sidecar"])
