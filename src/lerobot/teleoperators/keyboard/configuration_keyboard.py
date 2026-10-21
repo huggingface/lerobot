@@ -77,17 +77,17 @@ class KeyboardMicroDuckTeleopConfig(TeleoperatorConfig):
     Arrow keys, ESC and N / R / Q are left free for ``lerobot-record``'s episode controls.
 
     Attributes:
-        vx: Forward/backward speed at full scale, m/s
-        vy: Lateral speed at full scale, m/s
-        vyaw: Turn rate at full scale, rad/s
+        x_vel: Forward/backward speed at full scale, m/s
+        y_vel: Lateral speed at full scale, m/s
+        theta_vel: Turn rate at full scale, deg/s
         speed_scales: Speed presets cycled with +/-, as fractions of full scale
         head_rate: Head target speed while a head key is held, rad/s
         max_head: Head target limit for every head joint, rad
     """
 
-    vx: float = 0.3
-    vy: float = 0.3
-    vyaw: float = 1.5
+    x_vel: float = 0.3
+    y_vel: float = 0.3
+    theta_vel: float = 86.0
     speed_scales: tuple[float, ...] = (0.33, 0.66, 1.0)
     head_rate: float = 0.8
     max_head: float = 0.8
