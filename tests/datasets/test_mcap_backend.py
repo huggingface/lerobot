@@ -29,7 +29,7 @@ pytest.importorskip("mcap")
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.mcap_backend import McapDatasetReader
 from lerobot.datasets.mcap_convert import convert_lerobot_dataset_to_mcap
-from lerobot.datasets.mcap_utils import EPISODE_START_TIME_COLUMN
+from lerobot.datasets.mcap_utils import EPISODE_START_TIME_COLUMN, log_time_column
 from lerobot.datasets.video_utils import FrameTimestampError
 
 REPO_ID = "dummy/mcap-test"
@@ -202,6 +202,47 @@ def test_tolerance_violation(video_dataset_roots):
     mcap_ds = LeRobotDataset(REPO_ID, root=mcap_root)
     with pytest.raises(FrameTimestampError):
         mcap_ds[0]
+
+
+def _drop_column(episodes_path: Path, column: str) -> None:
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(episodes_path)
+    table = table.drop([column])
+    pq.write_table(table, episodes_path)
+
+
+def test_missing_required_column_raises(dataset_roots):
+    """A dataset missing one of the base mcap columns (not just a sync-index column)
+    must fail with a clear, named error -- not a raw pyarrow KeyError."""
+    _, mcap_root = dataset_roots
+    episodes_path = next((mcap_root / "meta" / "episodes").rglob("*.parquet"))
+    _drop_column(episodes_path, EPISODE_START_TIME_COLUMN)
+
+    with pytest.raises(ValueError, match=EPISODE_START_TIME_COLUMN):
+        LeRobotDataset(REPO_ID, root=mcap_root)
+
+
+def test_missing_sync_index_column_raises(dataset_roots):
+    """A dataset missing one feature's mcap/{key}/log_time_ns column (the mcap
+    equivalent of lance's VIDEO_INDEX_COLUMNS) must fail with a clear, named error."""
+    _, mcap_root = dataset_roots
+    episodes_path = next((mcap_root / "meta" / "episodes").rglob("*.parquet"))
+    _drop_column(episodes_path, log_time_column("action"))
+
+    with pytest.raises(ValueError, match="sync-index column"):
+        LeRobotDataset(REPO_ID, root=mcap_root)
+
+
+def test_missing_episode_file_raises(dataset_roots):
+    """A dataset whose episode metadata references an .mcap file that isn't on disk
+    (incomplete download, wrong root, ...) must fail clearly, not with a raw open() error."""
+    _, mcap_root = dataset_roots
+    mcap_file = next((mcap_root / "data").rglob("*.mcap"))
+    mcap_file.unlink()
+
+    with pytest.raises(FileNotFoundError, match="missing on disk"):
+        LeRobotDataset(REPO_ID, root=mcap_root)
 
 
 def test_pickle_and_dataloader(dataset_roots):

@@ -77,6 +77,17 @@ if TYPE_CHECKING or _mcap_available:
 # they're never stored as mcap messages, just computed on read (see _build_item).
 _COMPUTED_KEYS = ("timestamp", "frame_index", "episode_index", "index")
 
+# meta/episodes columns every mcap dataset must carry, checked up front with a clear
+# error -- mirrors how the lance backend validates its own VIDEO_INDEX_COLUMNS/video
+# files instead of letting a missing column surface as a raw pyarrow KeyError.
+_REQUIRED_EPISODE_COLUMNS = (
+    "dataset_from_index",
+    "dataset_to_index",
+    EPISODE_START_TIME_COLUMN,
+    MCAP_CHUNK_INDEX_COLUMN,
+    MCAP_FILE_INDEX_COLUMN,
+)
+
 
 class McapDatasetReader(BaseDatasetReader):
     """Dataset reader serving mcap-formatted LeRobot datasets.
@@ -137,6 +148,15 @@ class McapDatasetReader(BaseDatasetReader):
         if self.episodes is not None and not self.episodes:
             raise ValueError("None of the requested episodes are in the dataset.")
 
+        missing_columns = [c for c in _REQUIRED_EPISODE_COLUMNS if c not in self.meta.episodes.column_names]
+        if missing_columns:
+            raise ValueError(
+                f"meta/episodes is missing column(s) required by the mcap reader: {missing_columns}. "
+                "Re-convert the dataset with a converter that writes the mcap sync index (see "
+                "lerobot.datasets.mcap_convert.convert_lerobot_dataset_to_mcap / ingest_mcap_episodes), "
+                "or confirm storage_format='mcap' is correct for this dataset."
+            )
+
         self.delta_indices = None
         if delta_timestamps is not None:
             check_delta_timestamps(delta_timestamps, self.meta.fps, tolerance_s)
@@ -156,6 +176,23 @@ class McapDatasetReader(BaseDatasetReader):
         self._episode_start_ns = self._episode_numpy(EPISODE_START_TIME_COLUMN, np.int64)
         self._mcap_chunk = self._episode_numpy(MCAP_CHUNK_INDEX_COLUMN, np.int64)
         self._mcap_file = self._episode_numpy(MCAP_FILE_INDEX_COLUMN, np.int64)
+
+        # Mirrors the lance backend's "videos table is missing N file(s) referenced by
+        # episode metadata" check -- only for the episodes actually selected, so a
+        # filtered `episodes=[...]` subset doesn't require every episode's file to exist.
+        episodes_to_check = self.episodes if self.episodes is not None else range(self.meta.total_episodes)
+        missing_files = [
+            (ep_idx, path)
+            for ep_idx in episodes_to_check
+            if not (path := episode_mcap_path(self.root, int(self._mcap_chunk[ep_idx]), int(self._mcap_file[ep_idx]))).exists()
+        ]
+        if missing_files:
+            ep_idx, path = missing_files[0]
+            raise FileNotFoundError(
+                f"{len(missing_files)} episode mcap file(s) referenced by episode metadata are missing "
+                f"on disk, e.g. episode {ep_idx} -> {path}. The dataset is incomplete or was converted "
+                "against a different root."
+            )
 
         if self.episodes is not None:
             self._rel_to_abs = np.concatenate(
@@ -202,6 +239,21 @@ class McapDatasetReader(BaseDatasetReader):
         topic_map = load_topic_map(self.root)
         self._topics = {key: topic_map.get(key, topic_for_key(key)) for key in self._stored_keys}
         self._key_for_topic = {topic: key for key, topic in self._topics.items()}
+
+        # Mirrors the lance backend's "videos table is missing byte-index columns... Re-convert
+        # the dataset with a converter that writes {VIDEO_INDEX_COLUMNS}" check: the sync-index
+        # column is this format's equivalent load-bearing, converter-computed data.
+        missing_log_time_columns = [
+            col
+            for key in self._stored_keys
+            if (col := log_time_column(key)) not in self.meta.episodes.column_names
+        ]
+        if missing_log_time_columns:
+            raise ValueError(
+                f"meta/episodes is missing {len(missing_log_time_columns)} sync-index column(s) required "
+                f"by the mcap reader: {missing_log_time_columns}. Re-convert the dataset with a converter "
+                "that writes these columns (see lerobot.datasets.mcap_convert)."
+            )
 
         # Per-episode sorted log_time_ns array for each stored key: self._log_time_ns[key][ep_idx].
         # Plain numpy arrays fetched from meta.episodes (already in RAM, no I/O) -- unlike lance's
