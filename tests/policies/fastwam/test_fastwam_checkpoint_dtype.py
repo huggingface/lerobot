@@ -172,3 +172,17 @@ def test_checkpoint_preserves_explicit_embodiment_overrides(offline_components, 
         loaded.model.video_expert.time_embedding[0].weight, policy.model.video_expert.time_embedding[0].weight
     )
     assert loaded.model.action_expert.action_dim == 2
+
+
+@pytest.mark.parametrize("flags", [{}, DOT_FLAGS], ids=["default", "fasterwam"])
+def test_weights_only_checkpoint_with_explicit_config(offline_components, tmp_path, caplog, flags):
+    policy = FastWAMPolicy(tiny_config(**flags))
+    policy.save_pretrained(tmp_path)
+    (tmp_path / "config.json").unlink()
+    config = deepcopy(policy.config)
+
+    loaded = FastWAMPolicy.from_pretrained(tmp_path, config=config, strict=True)
+
+    assert loaded.config is config
+    torch.testing.assert_close(loaded.state_dict(), policy.state_dict(), rtol=0, atol=0)
+    assert "skipping architecture validation" in caplog.text

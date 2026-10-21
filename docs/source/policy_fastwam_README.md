@@ -91,5 +91,7 @@ shallow expert. No Faster-WAM checkpoints are released here; the variant trains 
 action expert and fusion from scratch on your own data.
 
 The implementation is derived from the paper and the Apache-2.0 LeRobot fastwam code.
-The official Faster-WAM repository (TeamFasterwam/FasterWAM) declares no license; its
-code was not copied, translated, or adapted.
+The public repository [TeamFasterwam/FasterWAM](https://github.com/TeamFasterwam/FasterWAM)
+licenses its original contributions under the
+[PolyForm Noncommercial License 1.0.0](https://github.com/TeamFasterwam/FasterWAM/blob/main/LICENSE).
+Its code was not copied, translated, or adapted.

@@ -106,6 +106,7 @@ class FastWAMPolicy(PreTrainedPolicy):
         An explicit config can still change embodiment dimensions. Its Faster-WAM
         options and resolved action depth must match the saved config, because the
         lenient cross-embodiment weight loader cannot validate these semantics.
+        A weights-only checkpoint uses the explicit config without this comparison.
         """
         if config is not None:
             if not isinstance(config, FastWAMConfig):
@@ -123,7 +124,14 @@ class FastWAMPolicy(PreTrainedPolicy):
                 )
                 if key in kwargs
             }
-            saved_config = FastWAMConfig.from_pretrained(pretrained_name_or_path, **download_options)
+            try:
+                saved_config = FastWAMConfig.from_pretrained(pretrained_name_or_path, **download_options)
+            except FileNotFoundError:
+                logging.warning(
+                    "FastWAM checkpoint config is unavailable; skipping architecture validation "
+                    "and using the explicit config."
+                )
+                return super().from_pretrained(pretrained_name_or_path, config=config, **kwargs)
             options = ("lite_kv_fusion", "retracted_1d_rope", "world_model_only_conditioning")
             mismatched = [key for key in options if getattr(config, key) != getattr(saved_config, key)]
             if config.action_dit_config is None or saved_config.action_dit_config is None:

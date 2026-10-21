@@ -847,8 +847,6 @@ class MoT(nn.Module):
         """
         if "video" not in self.mixtures:
             raise ValueError("MoT requires `video` expert for `run_video_prefill`.")
-        if "video" not in self.mixtures:
-            raise ValueError("MoT requires `video` expert for `prefill_video_cache`.")
         if video_attention_mask.ndim != 2:
             raise ValueError(
                 f"`video_attention_mask` must be 2D [S,S], got shape {tuple(video_attention_mask.shape)}"
