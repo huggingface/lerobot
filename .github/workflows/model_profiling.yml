@@ -42,7 +42,7 @@ jobs:
       - id: matrix
         env:
           POLICIES: ${{ inputs.policies }}
-        run: echo "policies=$(python scripts/ci/model_profiling.py matrix)" >> "$GITHUB_OUTPUT"
+        run: echo "policies=$(python3 scripts/ci/model_profiling.py matrix)" >> "$GITHUB_OUTPUT"
 
   profile:
     needs: matrix
@@ -66,7 +66,7 @@ jobs:
           HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
           PROFILE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          python scripts/ci/model_profiling.py init --policy "$POLICY"
+          python3 scripts/ci/model_profiling.py init --policy "$POLICY"
           docker run --rm --gpus all --shm-size=16g \
             --user "$(id -u):$(id -g)" \
             -e HOME=/tmp -e HF_HOME=/tmp/huggingface \
@@ -108,7 +108,7 @@ jobs:
         env:
           POLICIES: ${{ inputs.policies }}
         run: |
-          python scripts/ci/model_profiling.py summary >> "$GITHUB_STEP_SUMMARY"
+          python3 scripts/ci/model_profiling.py summary >> "$GITHUB_STEP_SUMMARY"
           echo "passed=$(jq '[.[] | select(.status == "success")] | length' profiling-results/results.json)" >> "$GITHUB_OUTPUT"
           echo "total=$(jq 'length' profiling-results/results.json)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
