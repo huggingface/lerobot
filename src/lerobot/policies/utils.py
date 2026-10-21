@@ -140,10 +140,11 @@ def prepare_observation_for_inference(
             tensor = tensor.permute(2, 0, 1).contiguous()
         observation[name] = tensor.unsqueeze(0)
 
-    observation["task"] = task if task else ""
-    observation["robot_type"] = robot_type if robot_type else ""
+    processed_observation: RobotObservation = observation
+    processed_observation["task"] = task if task else ""
+    processed_observation["robot_type"] = robot_type if robot_type else ""
 
-    return observation
+    return processed_observation
 
 
 def build_inference_frame(

@@ -33,7 +33,7 @@ from ..unitree_g1 import RobotController
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ANGLES = np.zeros(29, dtype=np.float32)
+DEFAULT_ANGLES: np.ndarray = np.zeros(29, dtype=np.float32)
 DEFAULT_ANGLES[[0, 6]] = -0.312  # Hip pitch
 DEFAULT_ANGLES[[3, 9]] = 0.669  # Knee
 DEFAULT_ANGLES[[4, 10]] = -0.363  # Ankle pitch

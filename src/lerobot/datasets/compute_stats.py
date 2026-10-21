@@ -199,9 +199,9 @@ class RunningQuantileStats:
         idx = np.searchsorted(cumsum, target_count)
 
         if idx == 0:
-            return edges[0]
+            return float(edges[0])
         if idx >= len(cumsum):
-            return edges[-1]
+            return float(edges[-1])
 
         # If not edge case, interpolate within the bin
         count_before = cumsum[idx - 1]
@@ -209,11 +209,11 @@ class RunningQuantileStats:
 
         # If no samples in this bin, use the bin edge
         if count_in_bin == 0:
-            return edges[idx]
+            return float(edges[idx])
 
         # Linear interpolation within the bin
         fraction = (target_count - count_before) / count_in_bin
-        return edges[idx] + fraction * (edges[idx + 1] - edges[idx])
+        return float(edges[idx] + fraction * (edges[idx + 1] - edges[idx]))
 
 
 def estimate_num_samples(
