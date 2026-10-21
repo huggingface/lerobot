@@ -16,12 +16,23 @@
 
 """A mobile robot is driven from a base teleoperator, with or without a teleoperator for its arms."""
 
-from unittest.mock import PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
-from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
-from lerobot.teleoperators.mobile_base import MobileBaseTeleop
+from lerobot.lerobot_types import TransitionKey
+from lerobot.processor.keyboard_base_processor import (
+    KeyboardToBaseActionProcessorStep,
+    make_keyboard_base_processor,
+)
+from lerobot.robots.lekiwi import LeKiwi, LeKiwiClient, LeKiwiClientConfig, LeKiwiConfig
+from lerobot.teleoperators.keyboard import (
+    KeyboardBaseTeleop,
+    KeyboardBaseTeleopConfig,
+    KeyboardTeleop,
+    KeyboardTeleopConfig,
+)
+from lerobot.teleoperators.mobile_base import MobileBaseTeleop, make_mobile_base_teleop
 
 ARM = ("arm_shoulder.pos", "arm_gripper.pos")
 BASE = ("x.vel", "theta.vel")
@@ -133,8 +144,53 @@ def test_a_plain_keyboard_needs_the_robot_hook(keyboard):
         MobileBaseTeleop(FakeArmOnlyRobot(), base=keyboard)
 
 
-def test_holding_needs_the_held_actions_in_the_observation():
-    teleop = MobileBaseTeleop(FakeMobileRobot(), base=FakeTeleop({"x.vel": 0.0, "theta.vel": 0.0}))
+def test_disconnected_keyboard_stops_base(keyboard):
+    teleop = MobileBaseTeleop(FakeMobileRobot(), base=keyboard)
+    keyboard.event_queue.put(("w", True))
+    teleop.on_observation(observation())
+    assert teleop.get_action()["x.vel"] == 0.1
+    with patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=False):
+        assert teleop.get_action() == dict.fromkeys(BASE, 0.0)
+
+
+def test_base_actions_pass_through():
+    action = {"x.vel": 0.5, "theta.vel": -0.1}
+    teleop = MobileBaseTeleop(FakeMobileRobot(), base=FakeTeleop(action))
+    teleop.on_observation(observation())
+    assert teleop.get_action() == action
+
+
+def test_raw_keyboard_requires_a_processor(raw_keyboard):
+    with pytest.raises(ValueError, match="base_action_processor"):
+        MobileBaseTeleop(FakeMobileRobot(), base=raw_keyboard)
+    with pytest.raises(ValueError, match="keyboard_base"):
+        make_mobile_base_teleop(FakeMobileRobot(), base=raw_keyboard)
+
+
+def test_raw_keyboard_can_use_a_processor_on_any_robot(raw_keyboard):
+    processor = make_keyboard_base_processor(KeyboardToBaseActionProcessorStep())
+    teleop = MobileBaseTeleop(FakeMobileRobot(), base=raw_keyboard, base_action_processor=processor)
+    raw_keyboard.event_queue.put(("w", True))
+    teleop.on_observation(observation())
+    assert teleop.get_action()["x.vel"] == 0.1
+    with patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=False):
+        assert teleop.get_action() == dict.fromkeys(BASE, 0.0)
+
+
+def test_legacy_lekiwi_config_is_mapped_without_robot_methods(raw_keyboard):
+    robot = LeKiwiClient.__new__(LeKiwiClient)
+    robot.config = LeKiwiClientConfig(remote_ip="unused", cameras={})
+    robot.config.teleop_keys["forward"] = "i"
+    arm = FakeTeleop({"shoulder.pos": 1.0})
+    teleop = MobileBaseTeleop.from_list(robot, [arm, raw_keyboard])
+    raw_keyboard.event_queue.put(("i", True))
+    raw_keyboard.event_queue.put(("r", True))
+    teleop.on_observation(observation())
+    assert teleop.get_action() == {"arm_shoulder.pos": 1.0, "x.vel": 0.2, "y.vel": 0.0, "theta.vel": 0.0}
+
+
+def test_holding_requires_measurements():
+    teleop = MobileBaseTeleop(FakeMobileRobot(), FakeTeleop(dict.fromkeys(BASE, 0.0)), hold_uncommanded=True)
     teleop.on_observation({"arm_shoulder.pos": 0.0})
     with pytest.raises(ValueError, match="arm_gripper.pos"):
         teleop.get_action()
@@ -196,3 +252,67 @@ def test_disconnect_releases_arm_even_when_base_cleanup_fails():
         teleop.disconnect()
     assert arm.disconnect_calls == 1
     assert not arm.is_connected
+
+
+def test_base_processor_receives_fresh_observations(raw_keyboard):
+    class RelativeMapper(KeyboardToBaseActionProcessorStep):
+        def action(self, action):
+            return {"lift.pos": self.transition[TransitionKey.OBSERVATION]["lift.pos"] + 1.0}
+
+    teleop = MobileBaseTeleop(
+        FakeMobileRobot(),
+        raw_keyboard,
+        base_action_processor=make_keyboard_base_processor(RelativeMapper()),
+    )
+    for height in (10.0, 20.0):
+        obs = {"lift.pos": height}
+        teleop.on_observation(obs)
+        assert teleop.get_action() == {"lift.pos": height + 1.0}
+        assert obs == {"lift.pos": height}
+
+
+def test_robot_provided_defaults_work_without_a_known_config(raw_keyboard):
+    robot = FakeMobileRobot()
+    robot.arm_action_prefix = "arm_"
+    robot.legacy_keyboard_bindings = dict(KeyboardToBaseActionProcessorStep().key_bindings)
+    robot.legacy_keyboard_bindings["forward"] = "i"
+    arm = FakeTeleop({"shoulder.pos": 12.0})
+    teleop = make_mobile_base_teleop(robot, raw_keyboard, arm)
+    raw_keyboard.event_queue.put(("i", True))
+    teleop.on_observation(observation())
+    assert teleop.get_action() == {"arm_shoulder.pos": 12.0, "x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0}
+
+
+def test_wired_lekiwi_prefixes_arm_commands_for_the_motor_bus(keyboard, raw_keyboard):
+    robot = LeKiwi.__new__(LeKiwi)
+    robot.config = LeKiwiConfig(cameras={})
+    robot.bus = MagicMock()
+    robot.cameras = {}
+    arm = FakeTeleop({"shoulder_pan.pos": 12.0, "gripper.pos": 50.0})
+    teleop = make_mobile_base_teleop(robot, keyboard, arm)
+    teleop.on_observation({})
+    robot.send_action(teleop.get_action())
+    robot.bus.sync_write.assert_any_call("Goal_Position", {"arm_shoulder_pan": 12.0, "arm_gripper": 50.0})
+    with pytest.raises(ValueError, match="keyboard_base"):
+        make_mobile_base_teleop(robot, raw_keyboard)
+
+
+def test_legacy_mapping_restarts_when_bindings_change(raw_keyboard):
+    keys = dict(KeyboardToBaseActionProcessorStep().key_bindings)
+    processor = raw_keyboard.get_base_action_processor(keys)
+    assert processor(({"w": None, "+": None}, {}))["x.vel"] == 0.2
+    keys["forward"] = "i"
+    updated = raw_keyboard.get_base_action_processor(keys)
+    assert updated(({"w": None}, {}))["x.vel"] == 0.0
+    assert updated(({"i": None}, {}))["x.vel"] == 0.1
+
+
+def test_legacy_mapping_resets_on_keyboard_reconnect(raw_keyboard):
+    processor = raw_keyboard.get_base_action_processor(KeyboardToBaseActionProcessorStep().key_bindings)
+    assert processor(({"w": None, "+": None}, {}))["x.vel"] == 0.2
+    with (
+        patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=False),
+        patch("lerobot.teleoperators.keyboard.teleop_keyboard.PYNPUT_AVAILABLE", False),
+    ):
+        raw_keyboard.connect()
+    assert processor(({"w": None}, {}))["x.vel"] == 0.1

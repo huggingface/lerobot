@@ -24,6 +24,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.processor import RobotProcessorPipeline
 
 from .keyboard import KeyboardTeleop
 from .teleoperator import Teleoperator
@@ -156,4 +157,24 @@ class MobileBaseTeleop:
                 "A teleoperator list must hold exactly one keyboard for the base and at most one other "
                 f"teleoperator for the arms, got {[type(t).__name__ for t in teleops]}."
             )
-        return cls(robot, base=keyboards[0], arm=others[0] if others else None)
+        return make_mobile_base_teleop(robot, base=keyboards[0], arm=others[0] if others else None)
+
+
+def make_mobile_base_teleop(
+    robot: "Robot", base: Teleoperator, arm: Teleoperator | None = None, *, hold_uncommanded: bool = True
+) -> MobileBaseTeleop:
+    """Apply robot-provided arm prefixes and optional legacy keyboard bindings."""
+    processor = None
+    if isinstance(base, KeyboardTeleop) and base.name == "keyboard":
+        key_bindings = getattr(robot, "legacy_keyboard_bindings", None)
+        if key_bindings is None:
+            raise ValueError("Use keyboard_base or a base teleoperator that emits this robot's action keys.")
+        processor = base.get_base_action_processor(key_bindings)
+    return MobileBaseTeleop(
+        robot,
+        base,
+        arm,
+        base_action_processor=processor,
+        arm_action_prefix=getattr(robot, "arm_action_prefix", ""),
+        hold_uncommanded=hold_uncommanded,
+    )
