@@ -332,9 +332,7 @@ def test_save_and_load_pretrained():
         loaded_device_processor = loaded_processor.steps[0]
         assert isinstance(loaded_device_processor, DeviceProcessorStep)
         # Use getattr to access attributes safely
-        assert (
-            getattr(loaded_device_processor, "device", None) == device.split(":")[0]
-        )  # Device normalizes cuda:0 to cuda
+        assert getattr(loaded_device_processor, "device", None) == device
         assert getattr(loaded_device_processor, "float_dtype", None) == "float16"
 
 
@@ -1157,3 +1155,20 @@ def test_mps_serialization():
     # Test load_state_dict (should be no-op)
     processor.load_state_dict({})
     assert processor.device == "mps"
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda", "cuda:0", "cuda:1"])
+def test_save_load_preserves_device_index(device, monkeypatch, tmp_path):
+    """Serialized pipelines retain explicit device placement without needing a GPU."""
+    # Only device construction is tested; no CUDA tensors are allocated.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    processor = DeviceProcessorStep(device=device, float_dtype="float16")
+    pipeline = DataProcessorPipeline(steps=[processor], name="indexed_device")
+    pipeline.save_pretrained(tmp_path)
+
+    loaded = DataProcessorPipeline.from_pretrained(tmp_path, config_filename="indexed_device.json")
+    restored = loaded.steps[0]
+    assert isinstance(restored, DeviceProcessorStep)
+    assert restored.tensor_device == torch.device(device)
+    assert restored.get_config() == {"device": device, "float_dtype": "float16"}
+    assert restored.non_blocking == (torch.device(device).type == "cuda")
