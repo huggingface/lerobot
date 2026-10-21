@@ -29,6 +29,7 @@ from lerobot.policies.factory import get_policy_class, make_policy_config, make_
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.wall_oss_05.configuration_wall_oss_05 import WallOSS05Config
 from lerobot.policies.wall_oss_05.modeling_wall_oss_05 import (
+    WallOSS05ActionProcessor,
     WallOSS05Model,
     WallOSS05Policy,
     WallOSS05VisionMLP,
@@ -500,6 +501,40 @@ def test_fused_vision_mlp_matches_split_swiglu_math():
         mlp.down_proj.bias,
     )
     torch.testing.assert_close(mlp(inputs), expected)
+
+
+@pytest.mark.parametrize("mask", ["none", "padding", "all"])
+def test_flow_loss_averages_only_valid_action_elements(monkeypatch, mask):
+    model = WallOSS05Model.__new__(WallOSS05Model)
+    nn.Module.__init__(model)
+    model.config = SimpleNamespace(action_hidden_size=16)
+    model.action_token_id = 31
+    model.action_preprocessor = WallOSS05ActionProcessor(
+        SimpleNamespace(
+            action_hidden_size=16, text_config=SimpleNamespace(hidden_size=32), noise_scheduler={}
+        )
+    )
+    monkeypatch.setattr(model, "_hidden_states", lambda **kwargs: torch.zeros(1, 2, 32))
+    monkeypatch.setattr(torch, "randn_like", lambda tensor: torch.zeros_like(tensor))
+    dof_mask = torch.ones(1, 2, 26, dtype=torch.bool)
+    row_mask = torch.ones(1, 2, dtype=torch.bool)
+    if mask == "padding":
+        dof_mask[..., 13:] = False
+        row_mask[:, -1] = False
+    elif mask == "all":
+        row_mask[:] = False
+    output = model(
+        input_ids=torch.full((1, 2), 31),
+        attention_mask=torch.ones(1, 2),
+        moe_token_types=torch.ones(1, 2),
+        action_chunk=torch.full((1, 2, 26), 2.0),
+        dof_mask=dof_mask,
+        sample_time=torch.tensor([0.5]),
+        flow_loss_mask=row_mask,
+    )
+    # Zero noise and zero predicted velocity give x_prediction=1 against target=2.
+    # Each valid action element has squared error one, regardless of padding.
+    assert output.flow_loss.item() == pytest.approx(0.0 if mask == "all" else 1.0)
 
 
 def test_factory_uses_distinct_policy_type():

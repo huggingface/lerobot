@@ -672,10 +672,10 @@ class WallOSS05Model(nn.Module):
             expanded_time = active_sample_time[:, None, None].expand_as(active_action_chunk).reshape(-1, 26)
             prediction = (1 - expanded_time) * velocity + noisy_actions.reshape(-1, 26)
             loss = (prediction - active_action_chunk.reshape(-1, 26).float()).square()
-            loss = loss * active_dof_mask.reshape(-1, 26).float()
+            valid_mask = active_dof_mask.reshape(-1, 26).float()
             if flow_loss_mask is not None:
-                loss = loss * flow_loss_mask[action_rows].reshape(-1, 1).float()
-            flow_loss = loss.mean()
+                valid_mask = valid_mask * flow_loss_mask[action_rows].reshape(-1, 1).float()
+            flow_loss = (loss * valid_mask).sum() / valid_mask.sum().clamp_min(1)
 
         losses = [value for value in (flow_loss, text_loss) if value is not None]
         total_loss = sum(losses) if losses else None
