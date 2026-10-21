@@ -69,6 +69,7 @@ from lerobot.datasets import (
     compute_sampler_state,
 )
 from lerobot.datasets.factory import make_train_eval_datasets
+from lerobot.datasets.multi_dataset import MultiLeRobotDataset
 from lerobot.distributed import (
     ParallelDims,
     finalize_sharded_policy,
@@ -81,11 +82,17 @@ from lerobot.jobs import submit_to_hf
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.policies.factory import ProcessorConfigKwargs
+from lerobot.processor import ImageAugmentationProcessorStep
 from lerobot.processor.rename_processor import rename_batch_keys, rename_stats
 from lerobot.rewards import make_reward_pre_post_processors
 from lerobot.utils.collate import lerobot_collate_fn
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
-from lerobot.utils.import_utils import _peft_available, register_third_party_plugins, require_package
+from lerobot.utils.import_utils import (
+    _accelerate_available,
+    _peft_available,
+    register_third_party_plugins,
+    require_package,
+)
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.sample_weighting import SampleWeighter
@@ -101,6 +108,9 @@ if TYPE_CHECKING or _peft_available:
     from peft import PeftModel
 else:
     PeftModel = None
+
+if TYPE_CHECKING or _accelerate_available:
+    from accelerate.utils import send_to_device
 
 from .lerobot_eval import eval_policy_all
 
@@ -138,6 +148,40 @@ def _make_eval_envs(env_cfg: EnvConfig, eval_cfg: EvalConfig) -> Iterator[dict[s
         yield envs
     finally:
         close_envs(envs)
+
+
+def _make_image_augmentation(
+    cfg: TrainPipelineConfig,
+    dataset: LeRobotDataset | MultiLeRobotDataset,
+    device: torch.device,
+    process_index: int,
+) -> ImageAugmentationProcessorStep | None:
+    """Build the step that augments training batches on the device, or `None` on the dataloader backend.
+
+    Applied to training batches only, before the policy preprocessor; held-out evaluation batches never
+    pass through it and the policy's own preprocessor is not modified. The step is called on the batch
+    dict directly (`step.observation(batch)`) rather than through a `PolicyProcessorPipeline`: the
+    pipeline's batch-to-transition conversion keeps `observation.*` keys and a fixed list of others only,
+    which would drop un-prefixed camera keys (such as `image`) and custom columns before `rename_map`
+    gets to see them.
+    """
+    image_transforms = cfg.dataset.image_transforms
+    if not (image_transforms.enable and image_transforms.backend == "gpu"):
+        return None
+    if dataset.image_transforms is not None:
+        raise ValueError(
+            "image_transforms.backend='gpu' augments on the device, but the dataset already carries "
+            "image_transforms that run in the DataLoader workers. Use one or the other."
+        )
+    image_keys = [key for key in dataset.meta.camera_keys if key not in dataset.meta.depth_keys]
+    return ImageAugmentationProcessorStep(
+        config=image_transforms,
+        image_keys=image_keys,
+        device=str(device),
+        chunk_size=image_transforms.gpu_chunk_size,
+        compile_model=image_transforms.gpu_compile,
+        seed=None if cfg.seed is None else cfg.seed + process_index,
+    )
 
 
 def _preprocess_dataset_batch(
@@ -379,6 +423,44 @@ def make_dataloaders(
     else:
         shuffle = True
         sampler = None
+        # Each DataLoader worker owns a frame-balanced part of the rank's episodes, with its own
+        # pool and GIL. A worker needs at least one episode, so the rank's episode count caps them.
+        rank_episodes = dataset.num_episodes_for_rank(parallel_dims.dp_rank, parallel_dims.dp_world_size)
+        train_num_workers = min(cfg.num_workers, max(1, rank_episodes))
+        if train_num_workers < cfg.num_workers and is_main_process():
+            logging.info(
+                "Using %d streaming DataLoader workers per rank: a rank owns %d episodes.",
+                train_num_workers,
+                rank_episodes,
+            )
+        dataset.set_data_parallel_shard(parallel_dims.dp_rank, parallel_dims.dp_world_size)  # not RANK env
+        if (
+            dataset.num_frames_for_rank(parallel_dims.dp_rank, parallel_dims.dp_world_size, train_num_workers)
+            == 0
+        ):
+            raise ValueError("This rank owns no streaming episodes. Reduce the data-parallel world size.")
+        if cfg.resume and step > 0:
+            if cfg.checkpoint_path is None:
+                raise ValueError(
+                    "Resuming requires `checkpoint_path`; TrainPipelineConfig resolves it on --resume."
+                )
+            metadata = load_training_metadata(cfg.checkpoint_path / TRAINING_STATE_DIR)
+            saved_dp_world = metadata["dp_world_size"]
+            saved_batch_size = metadata["batch_size"]
+            if saved_dp_world not in (None, parallel_dims.dp_world_size):
+                raise ValueError(
+                    "Sample-exact streaming resume requires the checkpoint data-parallel world size "
+                    f"({saved_dp_world}) to match the current size ({parallel_dims.dp_world_size})."
+                )
+            if saved_batch_size not in (None, cfg.batch_size):
+                raise ValueError(
+                    "Sample-exact streaming resume requires the checkpoint batch size "
+                    f"({saved_batch_size}) to match the current batch size ({cfg.batch_size})."
+                )
+            stream_offset = step * (saved_batch_size or cfg.batch_size)
+            dataset.load_state_dict({"epoch": 0, "offset": stream_offset, "batch_size": cfg.batch_size})
+            if is_main_process():
+                logging.info("Resuming streaming data order at local sample %d", stream_offset)
 
     device_type = parallel_dims.device_type
     # Only swap in the language-aware collate when the dataset actually
@@ -387,7 +469,7 @@ def make_dataloaders(
     collate_fn = lerobot_collate_fn if dataset.meta.has_language_columns else None
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        num_workers=cfg.num_workers,
+        num_workers=train_num_workers if cfg.dataset.streaming else cfg.num_workers,
         batch_size=cfg.batch_size,
         shuffle=shuffle and not cfg.dataset.streaming,
         sampler=sampler,
@@ -397,9 +479,19 @@ def make_dataloaders(
         pin_memory=device_type == "cuda",
         drop_last=False,
         collate_fn=collate_fn,
-        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
-        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
-        multiprocessing_context=cfg.dataloader_multiprocessing_context if cfg.num_workers > 0 else None,
+        prefetch_factor=(
+            cfg.prefetch_factor
+            if (train_num_workers if cfg.dataset.streaming else cfg.num_workers) > 0
+            else None
+        ),
+        persistent_workers=(
+            cfg.persistent_workers and (train_num_workers if cfg.dataset.streaming else cfg.num_workers) > 0
+        ),
+        multiprocessing_context=(
+            cfg.dataloader_multiprocessing_context
+            if (train_num_workers if cfg.dataset.streaming else cfg.num_workers) > 0
+            else None
+        ),
     )
 
     # Build eval dataloader if a held-out split exists
@@ -520,6 +612,11 @@ def train(cfg: TrainPipelineConfig) -> None:
     # IS the recorded value: DCP-bearing formats skip the safetensors load here and stream the
     # sharded weights in after prepare (resume_after_prepare).
     defer_weight_load = cfg.resume and cfg.checkpoint_format.wants_dcp
+    # On resume the weights and processors come from the checkpoint, while `pretrained_path`
+    # keeps naming the model the run started from (the published card's `base_model`).
+    resume_pretrained_dir = (
+        cfg.checkpoint_path / PRETRAINED_MODEL_DIR if cfg.resume and cfg.checkpoint_path is not None else None
+    )
     # validate() guarantees exactly one of `policy` / `reward_model` is set.
     active_cfg = cfg.trainable_config
     if isinstance(active_cfg, RewardModelConfig):
@@ -529,6 +626,7 @@ def train(cfg: TrainPipelineConfig) -> None:
 
         policy = make_reward_model(
             cfg=active_cfg,
+            pretrained_path=resume_pretrained_dir,
             dataset_stats=dataset.meta.stats,
             dataset_meta=dataset.meta,
         )
@@ -545,6 +643,7 @@ def train(cfg: TrainPipelineConfig) -> None:
             ds_meta=dataset.meta,
             rename_map=cfg.rename_map,
             defer_weight_load=defer_weight_load,
+            pretrained_path=resume_pretrained_dir,
         )
 
     peft_model = None
@@ -564,7 +663,7 @@ def train(cfg: TrainPipelineConfig) -> None:
     accelerator.wait_for_everyone()
 
     # --- processors (overrides built once, as one typed mapping) -------------------------------
-    processor_pretrained_path = active_cfg.pretrained_path
+    processor_pretrained_path = resume_pretrained_dir or active_cfg.pretrained_path
     if not cfg.resume and getattr(active_cfg, "recipe", None) is not None:
         if processor_pretrained_path is not None and is_main_process():
             logging.warning(
@@ -626,6 +725,10 @@ def train(cfg: TrainPipelineConfig) -> None:
             **processor_kwargs,
         )
 
+    image_augmentation = _make_image_augmentation(cfg, dataset, device, accelerator.process_index)
+    if image_augmentation is not None and is_main_process():
+        logging.info(f"Image transforms run on {device} for {image_augmentation.image_keys}")
+
     # Created BEFORE prepare on the unsharded parameters — accelerate's FSDP2 path requires the
     # model and optimizer in one prepare() call and rebinds the param groups itself.
     if is_main_process():
@@ -647,7 +750,13 @@ def train(cfg: TrainPipelineConfig) -> None:
     # policy's _fsdp_wrap_modules declaration — root-only wrapping is never silently accepted.
     set_fsdp_wrap_modules(accelerator, accelerator.unwrap_model(policy) if peft_model else policy)
     accelerator.wait_for_everyone()
-    if eval_dataloader is not None:
+    if cfg.dataset.streaming and eval_dataloader is not None:
+        policy, optimizer, lr_scheduler, eval_dataloader = accelerator.prepare(
+            policy, optimizer, lr_scheduler, eval_dataloader
+        )
+    elif cfg.dataset.streaming:
+        policy, optimizer, lr_scheduler = accelerator.prepare(policy, optimizer, lr_scheduler)
+    elif eval_dataloader is not None:
         policy, optimizer, dataloader, lr_scheduler, eval_dataloader = accelerator.prepare(
             policy, optimizer, dataloader, lr_scheduler, eval_dataloader
         )
@@ -815,8 +924,12 @@ def train(cfg: TrainPipelineConfig) -> None:
     for _ in range(step, cfg.steps):
         step_start = time.perf_counter()
         batch = next(dl_iter)
+        if cfg.dataset.streaming:
+            batch = send_to_device(batch, device, non_blocking=device.type == "cuda")
         preprocessing_start = time.perf_counter()
         train_tracker.dataloading_s = preprocessing_start - step_start
+        if image_augmentation is not None:
+            batch = image_augmentation.observation(batch)
         batch = _preprocess_dataset_batch(batch, dataset.meta.camera_keys, cfg.rename_map, preprocessor)
         train_tracker.preprocessing_s = time.perf_counter() - preprocessing_start
 

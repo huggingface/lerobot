@@ -42,6 +42,7 @@ TRUNCATED = "next.truncated"
 DONE = "next.done"
 SUCCESS = "next.success"
 INFO = "info"
+TASK = "task"
 
 # Complementary-data keys describing a text-generation request, set by the rollout
 # inference engines before the preprocessor runs so a processor step can format the
@@ -108,10 +109,6 @@ IMAGENET_STATS = {
     "mean": [[[0.485]], [[0.456]], [[0.406]]],  # (c,1,1)
     "std": [[[0.229]], [[0.224]], [[0.225]]],  # (c,1,1)
 }
-
-# streaming datasets
-LOOKBACK_BACKTRACKTABLE = 100
-LOOKAHEAD_BACKTRACKTABLE = 100
 
 # openpi
 OPENPI_ATTENTION_MASK_VALUE = -2.3819763e38  # TODO(pepijn): Modify this when extending support to fp8 models

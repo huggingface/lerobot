@@ -134,32 +134,35 @@ for batch in data_loader:
     # model.forward(batch)
 ```
 
-## Stream a dataset (no downloads)
+## Stream a dataset during training
 
-Use `StreamingLeRobotDataset` to iterate directly from the Hub without local copies. This allows to stream large datasets without the need to downloading them onto disk or loading them onto memory, and is a key feature of the new dataset format.
+Set `--dataset.streaming=true` to train without first downloading the dataset's Parquet and video
+files. Episodes are fetched on the fly into a bounded in-memory pool, and every selected frame is
+still visited exactly once per epoch:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=yaak-ai/L2D-v3 \
+  --dataset.streaming=true \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+The same reader is available in Python, for Hub datasets and for datasets stored in an
+[HF Storage Bucket](https://huggingface.co/docs/hub/storage-buckets):
 
 ```python
 from lerobot.datasets import StreamingLeRobotDataset
 
-repo_id = "yaak-ai/L2D-v3"
-dataset = StreamingLeRobotDataset(repo_id)  # streams directly from the Hub
+dataset = StreamingLeRobotDataset("yaak-ai/L2D-v3")
+bucket_dataset = StreamingLeRobotDataset("my-org/my-bucket", repo_type="bucket")
 ```
 
-Datasets stored in an [HF Storage Bucket](https://huggingface.co/docs/hub/storage-buckets) (`hf://buckets/`) can be streamed the same way by passing `repo_type="bucket"`:
+From the CLI, select a bucket with `--dataset.repo_type=bucket` or
+`--dataset.root=hf://buckets/my-org/my-bucket`.
 
-```python
-dataset = StreamingLeRobotDataset("my-org/my-bucket", repo_type="bucket")
-```
-
-Both options are available in `lerobot-train` through `--dataset.streaming=true`, and `--dataset.repo_type=bucket` to stream from a bucket instead of a Hub dataset repo:
-
-```bash
-lerobot-train \
-  --dataset.repo_id=my-org/my-bucket \
-  --dataset.repo_type=bucket \
-  --dataset.streaming=true \
-  ...
-```
+See [Training Dataset Streaming](./training_dataset_streaming) for how workers and shards map to
+streaming concurrency, the MP4 sidecar index, memory settings, resume and troubleshooting.
 
 <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
   <figure style="margin:0; text-align:center;">
@@ -252,9 +255,19 @@ LeRobot provides several transform types:
 
 - **`ColorJitter`**: Adjusts brightness, contrast, saturation, and hue
 - **`SharpnessJitter`**: Randomly adjusts image sharpness
+- **`RandomAffine`**, **`RandomRotation`**: Geometric jitter
+- **`GaussianNoise`**, **`MotionBlur`**, **`JPEGCompression`**, **`GaussianPatchBrightness`**, **`RandomShadow`**, **`CoarseDropout`**, **`GammaCorrection`**, **`PlanckianJitter`**: Camera and lighting effects seen on real robots
 - **`Identity`**: No transformation (useful for testing)
 
-You can also use any `torchvision.transforms.v2` transform by passing it directly to the `image_transforms` parameter.
+Any other `torchvision.transforms.v2` class can be named as a `type` too (for example `RandomResizedCrop` or `GaussianBlur`); it is applied one sample at a time. You can also pass a torchvision transform directly to the `image_transforms` parameter.
+
+Every transform is now batched, and the same batched transforms run on both backends. The per-sample classes (`SharpnessJitter`, `GaussianNoise`, `MotionBlur`, `GaussianPatchBrightness`, `RandomShadow`, `CoarseDropout`, `GammaCorrection`, `PlanckianJitter`, `RandomSubsetApply`) and `make_transform_from_config` remain importable as deprecated front ends over their `Batched*` replacements and warn on use; they will be removed in a future release. `ImageTransforms` is a plain `torch.nn.Module` taking a `(C, H, W)` or `(T, C, H, W)` tensor. Configurations naming a transform by `type` are unaffected.
+
+<Tip warning={true}>
+
+**Behaviour change for existing recipes.** Training reads frames as `uint8`, and the LeRobot transforms other than `ColorJitter`, `RandomAffine` and `RandomRotation` used to return non-float input unchanged. Recipes enabling `GaussianNoise`, `MotionBlur`, `GaussianPatchBrightness`, `RandomShadow`, `CoarseDropout`, `GammaCorrection` or `PlanckianJitter` were therefore training without them. They now apply on both backends, so such a recipe trains differently than it did before: it gets the augmentation it asked for. Transforms that were already applying are unchanged apart from rounding, since the batched path computes in float and rounds once at the end rather than after every transform.
+
+</Tip>
 
 ### Configuration options
 
@@ -263,27 +276,32 @@ You can also use any `torchvision.transforms.v2` transform by passing it directl
 - **`random_order`**: Apply transforms in random order vs. standard order (default: `False`)
 - **`weight`**: Sampling probability for each transform (higher = more likely, if sum of weights is not 1, they will be normalized)
 - **`kwargs`**: Transform-specific parameters (e.g., brightness range)
+- **`backend`**: Where the transforms run during training, `"dataloader"` (default) or `"gpu"`; see below
+- **`gpu_compile`**: On the `"gpu"` backend, `torch.compile` the batched transforms (default: `True`)
+- **`gpu_chunk_size`**: On the `"gpu"` backend, augment this many samples at a time to bound transient memory (default: `32`)
 
-### Visualizing transforms
+### Running transforms on the GPU
 
-Use the visualization script to preview how transforms affect your data:
+By default the transforms run per sample in the DataLoader workers. With several cameras that is often the most expensive thing the workers do, and the GPU ends up waiting for data. Set `backend=gpu` to have the workers decode only and apply the same transforms to each batch on the policy device:
 
 ```bash
-lerobot-imgtransform-viz \
-  --repo-id=your-username/your-dataset \
-  --output-dir=./transform_examples \
-  --n-examples=5
+lerobot-train \
+  --dataset.repo_id=your-username/your-dataset \
+  --dataset.image_transforms.enable=true \
+  --dataset.image_transforms.backend=gpu \
+  --policy.type=act \
+  --policy.device=cuda
 ```
 
-This saves example images showing the effect of each transform, helping you tune parameters.
+The randomization is unchanged: each sample draws its own transforms and parameters, and the frames of one camera's history share them. Augmentation is applied to training batches only, before the policy preprocessor; eval batches, rollouts and saved checkpoints are untouched.
 
-### Best practices
+Things to know:
 
-- **Start conservative**: Begin with small ranges (e.g., brightness 0.9-1.1) and increase gradually
-- **Test first**: Use the visualization script to ensure transforms look reasonable
-- **Monitor training**: Strong augmentations can hurt performance if too aggressive
-- **Match your domain**: If your robot operates in varying lighting, use brightness/contrast transforms
-- **Combine wisely**: Using too many transforms simultaneously can make training unstable
+- Requires an accelerator; `--policy.device=cpu` is refused. A dataset built by hand with its own `image_transforms` callable is refused too, since those run in the workers.
+- Supports every transform type the dataloader backend does. Types without a batched implementation (`JPEGCompression`, and torchvision classes other than `ColorJitter`, `RandomAffine`, `RandomRotation` and `Identity`) are applied one sample at a time inside the batch, so they do not get the speed-up; `JPEGCompression` also round-trips through the CPU. A transform that changes the frame size is refused on a batch of more than one sample.
+- Reproducible from `--seed`, with each process seeded differently. Augmentation does not consume the policy's random stream, and `gpu_compile` and `gpu_chunk_size` do not change what is applied.
+- Both backends run the same batched transforms in float and round once at the end, so a sample augmented on one equals the same sample augmented on the other given the same parameters.
+- `gpu_compile` costs 15-30 s once per image shape. Peak memory is about two float copies of the batch images plus a few copies of one chunk; lower `gpu_chunk_size` if memory is tight. `random_order=true` multiplies the transform time by `max_num_transforms`.
 
 ## Migrate `v2.1` → `v3.0`
 
