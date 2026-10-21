@@ -239,6 +239,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         video_decoder_cache_size: int | None = None,
         native_http_connections: int | None = None,
         native_http_subranges: int = 1,
+        sidecar_lock_timeout_s: float = 30 * 60,
         sampling_strategy: StreamingSamplingStrategy | str = StreamingSamplingStrategy.REMAINING,
     ) -> None:
         """Initialize an episode-scoped streaming reader.
@@ -313,6 +314,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 Per-rank HTTP connection limit; None derives it from fetch concurrency.
             native_http_subranges (`int`, *optional*, defaults to `1`):
                 Maximum concurrent subrequests for one sufficiently large byte range.
+            sidecar_lock_timeout_s (`float`, *optional*, defaults to 30 minutes):
+                Seconds to wait for another process that builds the same MP4 sidecar.
             sampling_strategy (`StreamingSamplingStrategy | str`, *optional*, defaults to `"remaining"`):
                 Weight episodes by remaining anchors, or draw one anchor per episode each
                 shuffled round. Neither strategy is a global uniform shuffle.
@@ -430,13 +433,21 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
             token=self._streaming_io_token,
         )
         sidecar_backend = StorageLocation.parse(self._data_root).range_backend
-        self._sidecar_path = ensure_dataset_mp4_sidecar(
-            self.meta,
-            self._data_root,
-            workers=max_num_shards,
-            range_backend=sidecar_backend,
-            token=self._streaming_io_token,
-        )
+        try:
+            self._sidecar_path = ensure_dataset_mp4_sidecar(
+                self.meta,
+                self._data_root,
+                workers=max_num_shards,
+                range_backend=sidecar_backend,
+                lock_timeout_s=sidecar_lock_timeout_s,
+                token=self._streaming_io_token,
+            )
+        except TimeoutError as exc:
+            exc.add_note(
+                "Another process still builds this MP4 sidecar. To wait longer, raise "
+                "--dataset.streaming_sidecar_lock_timeout_s (sidecar_lock_timeout_s in Python)."
+            )
+            raise
         self._hf_features = get_hf_features_from_features(self.meta.features)
         self._projected_columns = tuple(self._hf_features)
         self.num_shards = min(max_num_shards, max(1, len(self._selected_episodes)))
@@ -485,6 +496,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         epoch = self._next_epoch if self.shuffle else 0
         self._active_epoch = epoch
 
+        # Random transforms draw from the global torch RNG. Without a DataLoader worker, the consumer
+        # thread applies them so the RNG advances in yield order, not in decode-thread timing order.
+        transform_on_consumer = torch.utils.data.get_worker_info() is None
         rank_episodes, _rank, _world_size = self._rank_episodes()
         share, resume_offset = self._worker_share(rank_episodes, self._resume_offset)
         consumer_episodes = share.episodes
@@ -585,6 +599,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                     episode_index,
                     frame_index,
                     video_cache=video_cache,
+                    apply_transforms=not transform_on_consumer,
                 )
 
             def update_frontier() -> None:
@@ -646,6 +661,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 if not decoded_futures:
                     continue
                 item = decoded_futures.popleft().result()
+                if transform_on_consumer:
+                    self._apply_image_transforms(item)
                 self._state_offset += 1
                 yield item
             self._active_epoch = epoch + 1 if self.shuffle else 0
@@ -868,6 +885,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         frame_index: int,
         *,
         video_cache: EpisodeByteCache | None,
+        apply_transforms: bool = True,
     ) -> dict[str, Any]:
         """Assemble an anchor's temporal windows, padding masks and decoded camera frames."""
         episode_length = len(episode_data.dataset)
@@ -910,8 +928,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                     )
                 item[video_key] = frames.squeeze(0)
 
-        # Runs on the decode thread, so augmentation parallelizes with decoding.
-        self._apply_image_transforms(item)
+        # In a DataLoader worker this runs on the decode thread, in parallel with decoding.
+        if apply_transforms:
+            self._apply_image_transforms(item)
         convert_image_depth_units(item, self._image_depth_units, self._depth_output_unit)
         item["task"] = self._task_names[episode_data.row_int("task_index", frame_index, item)]
         if episode_data.row_int("episode_index", frame_index, item) != episode_index:

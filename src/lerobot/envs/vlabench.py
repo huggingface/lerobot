@@ -247,14 +247,18 @@ class VLABenchEnv(gym.Env):
                 f"from the eval set. Last physics error: {last_exc}"
             ) from last_exc
 
-        # Extract task description from the dm_control task
-        task_obj = self._env.task
-        if hasattr(task_obj, "task_description"):
-            self.task_description = task_obj.task_description
-        elif hasattr(task_obj, "language_instruction"):
-            self.task_description = task_obj.language_instruction
-        else:
-            self.task_description = self.task
+        # VLABench builds the language instruction once per task build and
+        # exposes it via `get_instruction()`; `reset()` does not change it.
+        instruction = self._env.task.get_instruction()
+        if not instruction:
+            with contextlib.suppress(Exception):
+                self._env.close()
+            self._env = None
+            raise ValueError(
+                f"VLABench task '{self.task}' produced no language instruction, so it cannot be "
+                "evaluated with a language-conditioned policy."
+            )
+        self.task_description = instruction
 
         # Cache robot base world position so `_build_ctrl_from_action` and
         # `_get_obs` can translate between robot-frame (dataset) and
