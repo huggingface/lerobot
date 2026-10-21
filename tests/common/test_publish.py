@@ -150,6 +150,22 @@ class TestGenerateModelCard:
         policy.config.license = "mit"
         assert generate_model_card(policy.config, cfg=make_cfg(), dataset_meta=None).data.license == "mit"
 
+    def test_peft_policy_is_an_adapter_of_its_parent(self, monkeypatch):
+        monkeypatch.setattr(train_utils.ModelCard, "validate", lambda self: None)
+        monkeypatch.setattr(train_utils, "is_offline_mode", lambda: False)
+        monkeypatch.setattr(train_utils, "model_info", lambda repo_id: SimpleNamespace(id=repo_id, tags=[]))
+        policy = make_dummy_policy(repo_id="user/policy")
+        policy.config.pretrained_path = Path("user/parent")
+        assert "base_model_relation" not in str(
+            generate_model_card(policy.config, cfg=make_cfg(), dataset_meta=None)
+        )
+
+        policy.config.use_peft = True
+        card = generate_model_card(policy.config, cfg=make_cfg(), dataset_meta=None)
+        assert card.data.base_model == "user/parent"
+        assert card.data.base_model_relation == "adapter"
+        assert "base_model_relation: adapter" in str(card)
+
     @pytest.mark.parametrize(
         "stale_path",
         ["outputs/train/run/checkpoints/000002/pretrained_model", "/home/user/run", "outputs/run"],
