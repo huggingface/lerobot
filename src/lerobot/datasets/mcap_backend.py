@@ -153,8 +153,8 @@ class McapDatasetReader(BaseDatasetReader):
             raise ValueError(
                 f"meta/episodes is missing column(s) required by the mcap reader: {missing_columns}. "
                 "Re-convert the dataset with a converter that writes the mcap sync index (see "
-                "lerobot.datasets.mcap_convert.convert_lerobot_dataset_to_mcap / ingest_mcap_episodes), "
-                "or confirm storage_format='mcap' is correct for this dataset."
+                "lerobot.datasets.mcap_convert.convert_lerobot_dataset_to_mcap), or confirm "
+                "storage_format='mcap' is correct for this dataset."
             )
 
         self.delta_indices = None
@@ -207,22 +207,12 @@ class McapDatasetReader(BaseDatasetReader):
 
         self._task_names = list(self.meta.tasks.index)
 
-        # task_index is usually a real per-message channel (multi-task-per-episode
-        # recordings, e.g. from convert_lerobot_dataset_to_mcap). Raw external ingestion
-        # (mcap_convert.ingest_mcap_episodes) instead stores one constant task_index per
-        # episode -- there's no native "task label" topic in a robot's own recording --
-        # as a plain int column, and _build_item treats it like frame_index/timestamp.
-        self._task_index_is_channel = log_time_column("task_index") in self.meta.episodes.column_names
-        if not self._task_index_is_channel:
-            self._task_index_per_episode = self._episode_numpy("task_index", np.int64)
-
         self._tabular_keys = [
             key
             for key in self.meta.features
             if key not in _COMPUTED_KEYS
             and key not in self.meta.video_keys
             and key not in self.meta.image_keys
-            and (key != "task_index" or self._task_index_is_channel)
         ]
         self._stored_keys = self._tabular_keys + list(self.meta.video_keys)
         # A declared shape of (1,) means "scalar-per-frame" throughout this codebase
@@ -528,8 +518,6 @@ class McapDatasetReader(BaseDatasetReader):
             "index": torch.tensor(abs_idx),
             "timestamp": torch.tensor(idx_within_episode / fps, dtype=torch.float32),
         }
-        if not self._task_index_is_channel:
-            item["task_index"] = torch.tensor(int(self._task_index_per_episode[ep_idx]))
 
         for key in self._tabular_keys:
             if key in plan["windows"]:
