@@ -14,7 +14,7 @@
 
 """Composition and legacy compatibility without a robot keyboard interface."""
 
-from unittest.mock import PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -23,7 +23,7 @@ from lerobot.processor.keyboard_base_processor import (
     KeyboardToBaseActionProcessorStep,
     make_keyboard_base_processor,
 )
-from lerobot.robots.lekiwi import LeKiwiClientConfig
+from lerobot.robots.lekiwi import LeKiwi, LeKiwiClient, LeKiwiClientConfig, LeKiwiConfig
 from lerobot.teleoperators.keyboard import (
     KeyboardBaseTeleop,
     KeyboardBaseTeleopConfig,
@@ -159,10 +159,9 @@ def test_raw_keyboard_can_use_a_processor_on_any_robot(raw_keyboard):
 
 
 def test_legacy_lekiwi_config_is_mapped_without_robot_methods(raw_keyboard):
-    robot = FakeMobileRobot()
+    robot = LeKiwiClient.__new__(LeKiwiClient)
     robot.config = LeKiwiClientConfig(remote_ip="unused", cameras={})
     robot.config.teleop_keys["forward"] = "i"
-    # FakeMobileRobot has no keyboard mapping method or arm prefix attribute.
     arm = FakeTeleop({"shoulder.pos": 1.0})
     teleop = MobileBaseTeleop.from_list(robot, [arm, raw_keyboard])
     raw_keyboard.event_queue.put(("i", True))
@@ -251,3 +250,50 @@ def test_base_processor_receives_fresh_observations(raw_keyboard):
         teleop.on_observation(obs)
         assert teleop.get_action() == {"lift.pos": height + 1.0}
         assert obs == {"lift.pos": height}
+
+
+def test_robot_provided_defaults_work_without_a_known_config(raw_keyboard):
+    robot = FakeMobileRobot()
+    robot.arm_action_prefix = "arm_"
+    robot.legacy_keyboard_bindings = dict(KeyboardToBaseActionProcessorStep().key_bindings)
+    robot.legacy_keyboard_bindings["forward"] = "i"
+    arm = FakeTeleop({"shoulder.pos": 12.0})
+    teleop = make_mobile_base_teleop(robot, raw_keyboard, arm)
+    raw_keyboard.event_queue.put(("i", True))
+    teleop.on_observation(observation())
+    assert teleop.get_action() == {"arm_shoulder.pos": 12.0, "x.vel": 0.1, "y.vel": 0.0, "theta.vel": 0.0}
+
+
+def test_wired_lekiwi_prefixes_arm_commands_for_the_motor_bus(keyboard, raw_keyboard):
+    robot = LeKiwi.__new__(LeKiwi)
+    robot.config = LeKiwiConfig(cameras={})
+    robot.bus = MagicMock()
+    robot.cameras = {}
+    arm = FakeTeleop({"shoulder_pan.pos": 12.0, "gripper.pos": 50.0})
+    teleop = make_mobile_base_teleop(robot, keyboard, arm)
+    teleop.on_observation({})
+    robot.send_action(teleop.get_action())
+    robot.bus.sync_write.assert_any_call("Goal_Position", {"arm_shoulder_pan": 12.0, "arm_gripper": 50.0})
+    with pytest.raises(ValueError, match="keyboard_base"):
+        make_mobile_base_teleop(robot, raw_keyboard)
+
+
+def test_legacy_mapping_restarts_when_bindings_change(raw_keyboard):
+    keys = dict(KeyboardToBaseActionProcessorStep().key_bindings)
+    processor = raw_keyboard.get_base_action_processor(keys)
+    assert processor(({"w": None, "+": None}, {}))["x.vel"] == 0.2
+    keys["forward"] = "i"
+    updated = raw_keyboard.get_base_action_processor(keys)
+    assert updated(({"w": None}, {}))["x.vel"] == 0.0
+    assert updated(({"i": None}, {}))["x.vel"] == 0.1
+
+
+def test_legacy_mapping_resets_on_keyboard_reconnect(raw_keyboard):
+    processor = raw_keyboard.get_base_action_processor(KeyboardToBaseActionProcessorStep().key_bindings)
+    assert processor(({"w": None, "+": None}, {}))["x.vel"] == 0.2
+    with (
+        patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=False),
+        patch("lerobot.teleoperators.keyboard.teleop_keyboard.PYNPUT_AVAILABLE", False),
+    ):
+        raw_keyboard.connect()
+    assert processor(({"w": None}, {}))["x.vel"] == 0.1

@@ -32,8 +32,9 @@ from lerobot.scripts.lerobot_calibrate import CalibrateConfig, calibrate
 from lerobot.scripts.lerobot_record import RecordConfig, record, record_loop
 from lerobot.scripts.lerobot_replay import DatasetReplayConfig, ReplayConfig, replay
 from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig, teleoperate
-from lerobot.teleoperators.keyboard import KeyboardBaseTeleop, KeyboardTeleop
+from lerobot.teleoperators.keyboard import KeyboardBaseTeleop, KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SO100Leader
+from lerobot.utils.feature_utils import hw_to_dataset_features
 from tests.fixtures.constants import DUMMY_REPO_ID
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
@@ -249,6 +250,7 @@ def test_record_multi_teleop_receives_fresh_observations_before_actions() -> Non
     # Exercise the legacy list entry point through the new wrapper without connecting hardware.
     robot = MagicMock(spec=LeKiwiClient)
     robot.name = "lekiwi_client"
+    robot.arm_action_prefix = "arm_"
     robot.config = LeKiwiClientConfig(remote_ip="unused", cameras={})
     arm = MagicMock(spec=SO100Leader)
     keyboard = MagicMock(spec=KeyboardBaseTeleop)
@@ -510,7 +512,9 @@ def test_lekiwi_keyboard_cli_uses_teleop_mapping(keyboard_type, hold_uncommanded
     )
     robot = MagicMock(spec=LeKiwiClient)
     robot.config = cfg.robot
+    robot.legacy_keyboard_bindings = cfg.robot.teleop_keys
     robot.name = "lekiwi_client"
+    robot.arm_action_prefix = "arm_"
     obs = {"arm_shoulder.pos": 10.0, "x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0}
     robot.action_features = dict.fromkeys(obs, float)
     robot.get_observation.return_value = obs
@@ -534,3 +538,50 @@ def test_lekiwi_keyboard_cli_uses_teleop_mapping(keyboard_type, hold_uncommanded
     assert robot.send_action.call_count > 0
     assert all(call.args[0] == expected for call in robot.send_action.call_args_list)
     robot._from_keyboard_to_base_action.assert_not_called()
+
+
+def test_legacy_keyboard_speed_survives_recording_and_reset_phases():
+    robot = MagicMock(spec=LeKiwiClient)
+    robot.arm_action_prefix = "arm_"
+    robot.legacy_keyboard_bindings = LeKiwiClientConfig(remote_ip="unused").teleop_keys
+    obs = {"arm_shoulder.pos": 10.0, "x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0}
+    robot.action_features = dict.fromkeys(obs, float)
+    robot.get_observation.return_value = obs
+    arm = MagicMock(spec=SO100Leader)
+    arm.get_action.return_value = {"shoulder.pos": 10.0}
+    dataset = MagicMock()
+    dataset.fps = 200
+    dataset.features = {
+        **hw_to_dataset_features(robot.action_features, "action"),
+        **hw_to_dataset_features(robot.action_features, "observation"),
+    }
+    processors = make_default_processors()
+    events = {"exit_early": False}
+
+    def send_action(action):
+        events["exit_early"] = True
+        return action
+
+    robot.send_action.side_effect = send_action
+    with (
+        patch("lerobot.teleoperators.keyboard.teleop_keyboard.require_package"),
+        patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=True),
+    ):
+        keyboard = KeyboardTeleop(KeyboardTeleopConfig())
+        keyboard.event_queue.put(("w", True))
+        for phase, speed_key_pressed in enumerate((True, False, True, True)):
+            keyboard.event_queue.put(("r", speed_key_pressed))
+            record_loop(
+                robot=robot,
+                events=events,
+                fps=200,
+                teleop_action_processor=processors[0],
+                robot_action_processor=processors[1],
+                robot_observation_processor=processors[2],
+                dataset=dataset if phase % 2 == 0 else None,
+                teleop=[arm, keyboard],
+                control_time_s=1.0,
+                single_task="Move to the table",
+            )
+    assert [call.args[0]["x.vel"] for call in robot.send_action.call_args_list] == [0.2, 0.2, 0.3, 0.3]
+    assert dataset.add_frame.call_count == 2

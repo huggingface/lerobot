@@ -25,11 +25,6 @@ from typing import TYPE_CHECKING
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.processor import RobotProcessorPipeline
-from lerobot.processor.keyboard_base_processor import (
-    KeyboardToBaseActionProcessorStep,
-    make_keyboard_base_processor,
-)
-from lerobot.robots.lekiwi.config_lekiwi import LeKiwiClientConfig
 
 from .keyboard import KeyboardTeleop
 from .teleoperator import Teleoperator
@@ -167,26 +162,18 @@ class MobileBaseTeleop:
 def make_mobile_base_teleop(
     robot: "Robot", base: Teleoperator, arm: Teleoperator | None = None, *, hold_uncommanded: bool = True
 ) -> MobileBaseTeleop:
-    """Apply CLI/legacy LeKiwi defaults at construction, keeping composition robot-independent.
-
-    Existing LeKiwi scripts may still supply a plain keyboard and LeKiwiClientConfig.teleop_keys.
-    Translate that configuration into a processor here; never call a robot keyboard method.
-    Other robots use keyboard_base or a teleoperator that already emits their base actions.
-    """
+    """Apply robot-provided arm prefixes and optional legacy keyboard bindings."""
     processor = None
-    robot_config = getattr(robot, "config", None)
-    lekiwi = isinstance(robot_config, LeKiwiClientConfig)
     if isinstance(base, KeyboardTeleop) and base.name == "keyboard":
-        if not isinstance(robot_config, LeKiwiClientConfig):
+        key_bindings = getattr(robot, "legacy_keyboard_bindings", None)
+        if key_bindings is None:
             raise ValueError("Use keyboard_base or a base teleoperator that emits this robot's action keys.")
-        processor = make_keyboard_base_processor(
-            KeyboardToBaseActionProcessorStep(key_bindings=dict(robot_config.teleop_keys))
-        )
+        processor = base.get_base_action_processor(key_bindings)
     return MobileBaseTeleop(
         robot,
         base,
         arm,
         base_action_processor=processor,
-        arm_action_prefix="arm_" if lekiwi else "",
+        arm_action_prefix=getattr(robot, "arm_action_prefix", ""),
         hold_uncommanded=hold_uncommanded,
     )

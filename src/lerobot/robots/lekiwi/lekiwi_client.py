@@ -40,6 +40,7 @@ from .config_lekiwi import LeKiwiClientConfig
 class LeKiwiClient(Robot):
     config_class = LeKiwiClientConfig
     name = "lekiwi_client"
+    arm_action_prefix = "arm_"
 
     def __init__(self, config: LeKiwiClientConfig) -> None:
         require_package("pyzmq", extra="lekiwi", import_name="zmq")
@@ -83,6 +84,11 @@ class LeKiwiClient(Robot):
 
         self._is_connected = False
         self.logs: dict[str, float] = {}
+
+    @property
+    def legacy_keyboard_bindings(self) -> dict[str, str]:
+        """Expose legacy controls for teleoperator-side keyboard mapping."""
+        return self.config.teleop_keys
 
     @cached_property
     def _state_ft(self) -> dict[str, type]:
