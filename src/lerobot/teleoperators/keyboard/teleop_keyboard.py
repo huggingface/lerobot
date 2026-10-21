@@ -443,8 +443,8 @@ class KeyboardMicroDuckTeleop(KeyboardTeleop):
     """
     Keyboard teleoperator for the Pollen Robotics Microduck.
 
-    Emits the ``microduck`` robot's action space: a body twist (``vx``, ``vy``, ``vyaw``) and a head pose
-    (``neck_pitch.pos``, ``head_pitch.pos``, ``head_yaw.pos``, ``head_roll.pos``).
+    Emits the ``microduck`` robot's action space: a body twist (``x.vel``, ``y.vel`` in m/s, ``theta.vel`` in
+    deg/s) and a head pose (``neck_pitch.pos``, ``head_pitch.pos``, ``head_yaw.pos``, ``head_roll.pos``).
 
     Keyboard Controls:
         Body (held):
@@ -487,9 +487,9 @@ class KeyboardMicroDuckTeleop(KeyboardTeleop):
     @property
     def action_features(self) -> dict:
         return {
-            "vx": float,
-            "vy": float,
-            "vyaw": float,
+            "x.vel": float,
+            "y.vel": float,
+            "theta.vel": float,
             **{f"{joint}.pos": float for joint in self.head},
         }
 
@@ -520,11 +520,11 @@ class KeyboardMicroDuckTeleop(KeyboardTeleop):
         self._last_t = now
 
         scale = self.config.speed_scales[self.speed_index]
-        vx = self.config.vx * scale * (("w" in pressed) - ("s" in pressed))
-        vy = self.config.vy * scale * (("a" in pressed) - ("d" in pressed))
-        vyaw = self.config.vyaw * scale * (("z" in pressed) - ("x" in pressed))
+        x_vel = self.config.x_vel * scale * (("w" in pressed) - ("s" in pressed))
+        y_vel = self.config.y_vel * scale * (("a" in pressed) - ("d" in pressed))
+        theta_vel = self.config.theta_vel * scale * (("z" in pressed) - ("x" in pressed))
         if keyboard is not None and keyboard.Key.space in pressed:
-            vx = vy = vyaw = 0.0
+            x_vel = y_vel = theta_vel = 0.0
 
         if "c" in pressed:
             self.head = dict.fromkeys(self.head, 0.0)
@@ -535,8 +535,8 @@ class KeyboardMicroDuckTeleop(KeyboardTeleop):
 
         self.logs["read_pos_dt_s"] = time.perf_counter() - before_read_t
         return {
-            "vx": vx,
-            "vy": vy,
-            "vyaw": vyaw,
+            "x.vel": x_vel,
+            "y.vel": y_vel,
+            "theta.vel": theta_vel,
             **{f"{joint}.pos": value for joint, value in self.head.items()},
         }

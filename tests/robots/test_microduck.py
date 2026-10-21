@@ -21,6 +21,7 @@ notifications it receives, so these tests pin the wire messages LeRobot sends an
 """
 
 import json
+import math
 import socket
 import tempfile
 import threading
@@ -146,12 +147,13 @@ def test_observation_reads_the_state_stream(robot):
     assert (obs["gyro.x"], obs["gyro.y"], obs["gyro.z"]) == (0.1, 0.2, 0.3)
     assert obs["gravity.z"] == -1.0
     assert (obs["odom.x"], obs["odom.y"], obs["odom.yaw"]) == (1.0, 2.0, 0.5)
-    assert obs["vyaw.applied"] == 0.2
+    assert obs["theta.vel.applied"] == pytest.approx(math.degrees(0.2))
 
 
 def test_send_action_clips_and_notifies_move_and_head(robot, robotd):
-    sent = robot.send_action({"vx": 1.0, "vy": -0.1, "vyaw": 0.5, "head_yaw.pos": 2.0})
-    assert sent["vx"] == pytest.approx(0.3)
+    sent = robot.send_action({"x.vel": 1.0, "y.vel": -0.1, "theta.vel": 200.0, "head_yaw.pos": 2.0})
+    assert sent["x.vel"] == pytest.approx(0.3)
+    assert sent["theta.vel"] == pytest.approx(86.0)
     assert sent["head_yaw.pos"] == pytest.approx(0.8)
     assert set(sent) == set(robot.action_features)
 
@@ -160,7 +162,11 @@ def test_send_action_clips_and_notifies_move_and_head(robot, robotd):
         time.sleep(0.01)
     move, head = robotd.notifications[-2:]
     assert move["method"] == "robot.move"
-    assert move["params"] == {"vx": pytest.approx(0.3), "vy": pytest.approx(-0.1), "vyaw": 0.5}
+    assert move["params"] == {
+        "vx": pytest.approx(0.3),
+        "vy": pytest.approx(-0.1),
+        "vyaw": pytest.approx(math.radians(86.0)),
+    }
     assert head["method"] == "robot.head"
     assert head["params"] == {"neck_pitch": 0.0, "head_pitch": 0.0, "head_yaw": 0.8, "head_roll": 0.0}
 
@@ -188,7 +194,7 @@ def test_state_eof_rejects_observations_and_actions_but_allows_cleanup(robot, ro
     with pytest.raises(DeviceNotConnectedError, match="robot.state stream stopped"):
         robot.get_observation()
     with pytest.raises(DeviceNotConnectedError, match="robot.state stream stopped"):
-        robot.send_action({"vx": 0.1})
+        robot.send_action({"x.vel": 0.1})
     assert robotd.notifications == []
     robot.disconnect()
     assert not robot.is_connected

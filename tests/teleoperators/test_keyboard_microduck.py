@@ -53,19 +53,19 @@ def test_idle_keyboard_commands_nothing(teleop):
 def test_held_keys_drive_the_twist(teleop):
     press(teleop, "w", "a", "x")
     action = teleop.get_action()
-    assert action["vx"] == pytest.approx(0.3)
-    assert action["vy"] == pytest.approx(0.3)
-    assert action["vyaw"] == pytest.approx(-1.5)
+    assert action["x.vel"] == pytest.approx(0.3)
+    assert action["y.vel"] == pytest.approx(0.3)
+    assert action["theta.vel"] == pytest.approx(-86.0)
 
     release(teleop, "w", "a", "x")
-    assert teleop.get_action()["vx"] == 0.0
+    assert teleop.get_action()["x.vel"] == 0.0
 
 
 def test_speed_presets_step_once_per_press(teleop):
     press(teleop, "-")
     press(teleop, "-")  # auto-repeat of a held key must not step again
     press(teleop, "w")
-    assert teleop.get_action()["vx"] == pytest.approx(0.3 * 0.66)
+    assert teleop.get_action()["x.vel"] == pytest.approx(0.3 * 0.66)
 
 
 def test_head_keys_integrate_and_clamp(teleop):

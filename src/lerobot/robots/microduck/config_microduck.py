@@ -46,10 +46,11 @@ class MicroDuckConfig(RobotConfig):
     # Cut torque when disconnecting. Off by default: a relaxed duck collapses.
     relax_on_disconnect: bool = False
 
-    # Twist limits, matching the onboard pad defaults. robotd does not clamp robot.move itself.
-    max_vx: float = 0.3  # m/s
-    max_vy: float = 0.3  # m/s
-    max_vyaw: float = 1.5  # rad/s
+    # Twist limits in action units, matching the onboard pad defaults (0.3 m/s, 0.3 m/s, 1.5 rad/s).
+    # robotd does not clamp robot.move itself.
+    max_x_vel: float = 0.3  # m/s
+    max_y_vel: float = 0.3  # m/s
+    max_theta_vel: float = 86.0  # deg/s
     # Head pose limit applied to every head joint, rad.
     max_head: float = 0.8
 
