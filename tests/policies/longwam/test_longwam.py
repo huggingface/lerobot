@@ -110,6 +110,48 @@ def batch(cfg, temporal=False, value=0.25, task="pick"):
     return result
 
 
+@pytest.mark.parametrize(
+    "input_size,camera_size",
+    [
+        ((16, 32), (16, 16)),
+        ((32, 16), (16, 16)),
+        ((16, 16), (16, 16)),
+        ((32, 32), (16, 16)),
+        ((23, 41), (16, 16)),
+        ((41, 23), (16, 16)),
+        ((41, 23), (16, 32)),
+        ((23, 41), (32, 16)),
+    ],
+)
+def test_training_and_inference_camera_geometry(config, input_size, camera_size):
+    config.camera_size = camera_size
+    pre, _ = make_pre_post_processors(config, dataset_stats=stats(config))
+    height, width = input_size
+    images = torch.ones(2, 3, height, width)
+    if width >= height:
+        images[..., width // 4 : 3 * width // 4] = 0
+    else:
+        images[..., height // 4 : 3 * height // 4, :] = 0
+    images[1] = 1 - images[0]
+    video = torch.stack((images, 1 - images), dim=1)
+
+    def inputs(frames):
+        return {
+            **dict.fromkeys(config.camera_keys, frames),
+            "observation.state": torch.zeros(*frames.shape[:-3], config.proprio_dim),
+            "task": ["pick"] * frames.shape[0],
+        }
+
+    training = pre(inputs(video))
+    inference = pre(inputs(video.flatten(0, 1)))
+    for key in config.camera_keys:
+        expected = inference[key].reshape(2, 2, 3, *camera_size)
+        # Tensor training interpolation need not reproduce PIL's uint8 rounding.
+        torch.testing.assert_close(training[key], expected, atol=2 / 255, rtol=0)
+        if input_size in ((16, 32), (32, 16)):
+            torch.testing.assert_close(training[key][0, 0], -torch.ones(3, *camera_size))
+
+
 @pytest.mark.parametrize("mode", ["idm", "cod"])
 @pytest.mark.parametrize("checkpointing", [False, True])
 def test_train_save_load_and_sync_inference(config, tmp_path, mode, checkpointing):
@@ -130,7 +172,10 @@ def test_train_save_load_and_sync_inference(config, tmp_path, mode, checkpointin
     frozen = {n: p.clone() for n, p in policy.named_parameters() if not p.requires_grad}
     trainable = {n: p.clone() for n, p in policy.named_parameters() if p.requires_grad}
     optimizer = config.get_optimizer_preset().build(policy.get_optim_params())
-    loss, metrics = policy(pre(batch(config, temporal=True)))
+    training_batch = batch(config, temporal=True)
+    for key, size in zip(config.camera_keys, ((16, 32), (32, 16)), strict=True):
+        training_batch[key] = torch.rand(*training_batch[key].shape[:-2], *size)
+    loss, metrics = policy(pre(training_batch))
     assert torch.isfinite(loss)
     assert set(metrics) == {"loss_video", "loss_action"}
     loss.backward()

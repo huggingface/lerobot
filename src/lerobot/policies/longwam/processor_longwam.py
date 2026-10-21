@@ -49,16 +49,17 @@ class LongWAMInputs(ProcessorStep):
                 raise ValueError("Camera images must be floating point in [0,1]")
             shape = image.shape[:-3]
             height, width = self.camera_size
+            # Share resize/crop geometry without changing released inference pixels.
+            input_height, input_width = image.shape[-2:]
+            scale = max(width / input_width, height / input_height)
+            resized_height, resized_width = round(input_height * scale), round(input_width * scale)
+            top, left = (resized_height - height) // 2, (resized_width - width) // 2
             if image.ndim == 4:
                 # Preserve released inference pixels, before the pipeline's device transfer.
                 frames = []
                 for frame in image:
                     pil = to_pil_image(frame.mul(255).round().to(torch.uint8))
-                    scale = max(width / pil.width, height / pil.height)
-                    pil = pil.resize(
-                        (round(pil.width * scale), round(pil.height * scale)), Image.Resampling.BILINEAR
-                    )
-                    left, top = (pil.width - width) // 2, (pil.height - height) // 2
+                    pil = pil.resize((resized_width, resized_height), Image.Resampling.BILINEAR)
                     frames.append(pil_to_tensor(pil.crop((left, top, left + width, top + height))))
                 observation[key] = (
                     torch.stack(frames).to(getattr(torch, self.image_dtype)).mul(2 / 255).sub(1)
@@ -67,11 +68,12 @@ class LongWAMInputs(ProcessorStep):
             image = image.reshape(-1, *image.shape[-3:]).float()
             image = functional.interpolate(
                 image,
-                size=self.camera_size,
+                size=(resized_height, resized_width),
                 mode="bilinear",
                 align_corners=False,
                 antialias=True,
             )
+            image = image[..., top : top + height, left : left + width]
             observation[key] = image.reshape(*shape, 3, height, width).mul(2).sub(1)
         observation["observation.state"] = observation["observation.state"].clamp(-5, 5)
         transition[TransitionKey.OBSERVATION] = observation
