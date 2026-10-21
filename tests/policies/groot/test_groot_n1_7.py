@@ -349,7 +349,7 @@ class _DummyGrootModel(nn.Module):
         self.forward_inputs = dict(inputs)
         return {"loss": self.weight + 1.0}
 
-    def get_action(self, inputs, options=None):
+    def get_action(self, inputs, options=None, *, noise=None):
         self.forward_inputs = dict(inputs)
         self.get_action_options = options
         batch_size = inputs["state"].shape[0]
@@ -496,8 +496,8 @@ def test_groot_n1_7_predict_action_chunk_truncates_to_checkpoint_valid_horizon(t
     _write_raw_n1_7_libero_checkpoint(model_path)
 
     class HorizonModel(_DummyGrootModel):
-        def get_action(self, inputs, options=None):
-            del options
+        def get_action(self, inputs, options=None, *, noise=None):
+            del options, noise
             batch_size = inputs["state"].shape[0]
             steps = torch.arange(40, dtype=torch.float32).view(1, 40, 1).expand(batch_size, 40, 132)
             return {"action_pred": steps}
@@ -2680,7 +2680,7 @@ def test_groot_n1_7_select_action_uses_checkpoint_valid_horizon(tmp_path, monkey
     _write_raw_n1_7_libero_checkpoint(model_path)
 
     class HorizonModel(_DummyGrootModel):
-        def get_action(self, inputs):
+        def get_action(self, inputs, *, noise=None):
             assert inputs["action_mask"].shape == (1, 40)
             assert inputs["action_mask"][0, :16].sum().item() == 16
             assert inputs["action_mask"][0, 16:].sum().item() == 0
