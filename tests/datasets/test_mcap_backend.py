@@ -451,7 +451,9 @@ def test_ingest_raw_mcap_episodes_batched_and_delta_timestamps(challenging_inges
         "observation.images.wrist": [-1 / CHALLENGE_FPS, 0.0],
     }
     ds_d = LeRobotDataset(
-        "challenge/mcap", root=challenging_ingest_root, delta_timestamps=delta_timestamps,
+        "challenge/mcap",
+        root=challenging_ingest_root,
+        delta_timestamps=delta_timestamps,
         tolerance_s=CHALLENGE_TOLERANCE_S,
     )
     batch = ds_d.__getitems__([0, 5, ep1_end - 1, len(ds_d) - 1])
