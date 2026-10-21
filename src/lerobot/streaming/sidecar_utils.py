@@ -29,7 +29,7 @@ from huggingface_hub.constants import HF_HOME
 from numpy.typing import NDArray
 
 from .location import StorageLocation
-from .mp4 import IntegerArray, Mp4Index, _compact_integer_array
+from .mp4 import IntegerArray, Mp4Index, compact_integer_array
 
 SIDECAR_SCHEMA_VERSION = 3
 
@@ -318,7 +318,12 @@ def _iter_arrays(
 def _validate_arrays(arrays: dict[str, NDArray[np.generic]]) -> None:
     """Check numeric one-dimensional arrays and consistent sample counts."""
     for name, array in arrays.items():
-        if array.ndim != 1 or array.dtype.kind not in "iuf":
+        valid_dtype = (
+            array.dtype.kind == "f" and array.dtype.itemsize == 8
+            if name == "sample_pts"
+            else array.dtype.kind in "iu"
+        )
+        if array.ndim != 1 or not valid_dtype:
             raise ValueError(f"Invalid MP4 sample array: {name}")
     if len({len(array) for name, array in arrays.items() if name != "sync_samples"}) != 1:
         raise ValueError("Inconsistent MP4 sample counts")
@@ -375,7 +380,7 @@ def mapped_sidecar(path: Path, *, workers: int = 4) -> tuple[Path, dict[str, Any
                                 for name in ARRAY_NAMES:
                                     array = arrays.pop(name)
                                     if name != "sample_pts" and array.dtype.kind in "iu":
-                                        array = _compact_integer_array(cast(IntegerArray, array))
+                                        array = compact_integer_array(cast(IntegerArray, array))
                                     out.write(b"\0" * (-out.tell() % 8))
                                     is_constant = (
                                         name not in ("sample_pts", "sync_samples")

@@ -928,7 +928,7 @@ def test_parallel_writer_releases_oversized_record_before_next_read(
     path = tmp_path / "index.npz"
     EpisodeVideoManifest.save_file_sidecar(path, [_record(f"{i}.mp4") for i in range(3)], spec=_spec())
     original_read = sidecar_utils._read_arrays
-    original_compact = sidecar_utils._compact_integer_array
+    original_compact = sidecar_utils.compact_integer_array
     original_iter = sidecar_utils._iter_arrays
     source_references: list[weakref.ReferenceType[np.ndarray]] = []
     compact_references: list[weakref.ReferenceType[np.ndarray]] = []
@@ -953,7 +953,7 @@ def test_parallel_writer_releases_oversized_record_before_next_read(
         return original_iter(archive, files, workers=workers, max_pending_bytes=1)
 
     monkeypatch.setattr(sidecar_utils, "_read_arrays", read)
-    monkeypatch.setattr(sidecar_utils, "_compact_integer_array", compact)
+    monkeypatch.setattr(sidecar_utils, "compact_integer_array", compact)
     monkeypatch.setattr(sidecar_utils, "_iter_arrays", small_budget)
     sidecar_utils.mapped_sidecar(path, workers=4)
     assert all(reference() is None for reference in source_references)

@@ -18,7 +18,7 @@ import pytest
 from lerobot.streaming import sidecar_utils
 from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
 from lerobot.streaming.mp4 import (
-    _compact_integer_array,
+    compact_integer_array,
     parse_mp4_index,
     synthesize_mp4,
     synthesized_mp4_size,
@@ -47,7 +47,7 @@ def isolated_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 )
 def test_integer_storage_preserves_width_boundaries(values: list[int], dtype: str) -> None:
     source = np.array(values, dtype=np.int64)
-    compact = _compact_integer_array(source)
+    compact = compact_integer_array(source)
     assert compact.dtype == np.dtype(dtype)
     np.testing.assert_array_equal(compact, source)
     assert compact.nbytes <= source.nbytes
@@ -55,7 +55,7 @@ def test_integer_storage_preserves_width_boundaries(values: list[int], dtype: st
 
 def test_empty_integer_storage_preserves_the_array() -> None:
     source = np.empty(0, dtype=np.int64)
-    assert _compact_integer_array(source) is source
+    assert compact_integer_array(source) is source
 
 
 def test_compact_offsets_add_sizes_without_unsigned_overflow() -> None:
@@ -174,17 +174,37 @@ def test_canonical_writer_releases_each_widened_array(
     spec = SidecarSpec("test/compact", "rev", str(tmp_path), ((record.file_path, record.file_size),))
     original = np.lib.format.write_array
     references = []
+    integer_names = sidecar_utils.ARRAY_NAMES[1:]
+    original_ids = {id(getattr(index, name)) for name in integer_names}
+    expected_copies = sum(getattr(index, name).dtype != np.int64 for name in integer_names)
 
     def write(member: Any, array: np.ndarray, *args: Any, **kwargs: Any) -> None:
         assert all(ref() is None for ref in references), "The writer retains a previous widened array"
-        if array.dtype == np.int64:
+        if array.dtype == np.int64 and id(array) not in original_ids:
             references.append(weakref.ref(array))
         original(member, array, *args, **kwargs)
 
     monkeypatch.setattr(np.lib.format, "write_array", write)
     EpisodeVideoManifest.save_file_sidecar(tmp_path / "index.npz", [record], spec=spec)
-    assert len(references) == 5
+    assert len(references) == expected_copies
     assert all(ref() is None for ref in references)
+
+
+def test_sidecar_validation_rejects_float32_timestamps_before_cache_conversion(tmp_path: Path) -> None:
+    index = parse_mp4_index("test.mp4", _minimal_mp4([10000, 10010, 10020]))
+    spec = SidecarSpec("test/compact", "rev", str(tmp_path), ((index.file_path, index.file_size),))
+    path = tmp_path / "index.npz"
+    EpisodeVideoManifest.save_file_sidecar(
+        path, [VideoFileRecord(index.file_path, index.file_size, index)], spec=spec
+    )
+    with np.load(path, allow_pickle=False) as archive:
+        members = {name: archive[name] for name in archive.files}
+    members["0/sample_pts"] = members["0/sample_pts"].astype(np.float32)
+    np.savez_compressed(path, **members)
+
+    assert not EpisodeVideoManifest.validate_file_sidecar(path, spec, prepare_cache=False)
+    assert not EpisodeVideoManifest.validate_file_sidecar(path, spec)
+    assert not list((tmp_path / "cache").glob("**/*.bin"))
 
 
 @pytest.mark.parametrize("invalid", [np.array([2**63] * 3, dtype=np.uint64), np.array([0.5] * 3)])

@@ -39,7 +39,7 @@ def _has_nonzero(values: IntegerArray) -> bool:
     return constant != 0 if constant is not None else bool(np.any(values))
 
 
-def _compact_integer_array(values: IntegerArray) -> IntegerArray:
+def compact_integer_array(values: IntegerArray) -> IntegerArray:
     """Store integer values in the smallest exact dtype without widening them."""
     if not values.size:
         return values
@@ -89,7 +89,11 @@ class Mp4SampleSlice:
 
 @dataclass(frozen=True)
 class Mp4Index:
-    """Serializable video-track sample table for one MP4 source file."""
+    """Serializable video-track sample table for one MP4 source file.
+
+    Integer arrays can use narrow unsigned dtypes or read-only zero-stride views.
+    Widen them explicitly before arithmetic, and do not mutate them in place.
+    """
 
     file_path: str
     file_size: int
@@ -404,11 +408,11 @@ def _parse_mp4_index_from_layout(
         height=tkhd["height"],
         stsd_body=stsd_body,
         sample_pts=sample_pts,
-        sample_durations=_compact_integer_array(sample_durations),
-        sample_composition_offsets=_compact_integer_array(composition_offsets),
-        sample_sizes=_compact_integer_array(sample_sizes),
-        sample_offsets=_compact_integer_array(sample_offsets),
-        sync_samples=_compact_integer_array(sync_samples),
+        sample_durations=compact_integer_array(sample_durations),
+        sample_composition_offsets=compact_integer_array(composition_offsets),
+        sample_sizes=compact_integer_array(sample_sizes),
+        sample_offsets=compact_integer_array(sample_offsets),
+        sync_samples=compact_integer_array(sync_samples),
     )
 
 
@@ -473,6 +477,7 @@ def synthesized_mp4_size(index: Mp4Index, sample_slice: Mp4SampleSlice) -> int:
         return payload_size + (8 if payload_size + 8 <= 0xFFFFFFFF else 16)
 
     def timing_size(values: IntegerArray) -> int:
+        # Keep this run count in sync with _timing_runs, which serializes the same tables.
         runs = (
             1
             if _constant_integer_value(values) is not None
