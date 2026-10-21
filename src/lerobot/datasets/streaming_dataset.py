@@ -494,6 +494,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         epoch = self._next_epoch if self.shuffle else 0
         self._active_epoch = epoch
 
+        # Random transforms draw from the global torch RNG. Without a DataLoader worker, the consumer
+        # thread applies them so the RNG advances in yield order, not in decode-thread timing order.
+        transform_on_consumer = torch.utils.data.get_worker_info() is None
         rank_episodes, _rank, _world_size = self._rank_episodes()
         share, resume_offset = self._worker_share(rank_episodes, self._resume_offset)
         consumer_episodes = share.episodes
@@ -594,6 +597,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                     episode_index,
                     frame_index,
                     video_cache=video_cache,
+                    apply_transforms=not transform_on_consumer,
                 )
 
             def update_frontier() -> None:
@@ -655,6 +659,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 if not decoded_futures:
                     continue
                 item = decoded_futures.popleft().result()
+                if transform_on_consumer:
+                    self._apply_image_transforms(item)
                 self._state_offset += 1
                 yield item
             self._active_epoch = epoch + 1 if self.shuffle else 0
@@ -868,6 +874,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         frame_index: int,
         *,
         video_cache: EpisodeByteCache | None,
+        apply_transforms: bool = True,
     ) -> dict[str, Any]:
         """Assemble an anchor's temporal windows, padding masks and decoded camera frames."""
         episode_length = len(episode_data.dataset)
@@ -910,8 +917,9 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                     )
                 item[video_key] = frames.squeeze(0)
 
-        # Runs on the decode thread, so augmentation parallelizes with decoding.
-        self._apply_image_transforms(item)
+        # In a DataLoader worker this runs on the decode thread, in parallel with decoding.
+        if apply_transforms:
+            self._apply_image_transforms(item)
         convert_image_depth_units(item, self._image_depth_units, self._depth_output_unit)
         item["task"] = self._task_names[episode_data.row_int("task_index", frame_index, item)]
         if episode_data.row_int("episode_index", frame_index, item) != episode_index:
