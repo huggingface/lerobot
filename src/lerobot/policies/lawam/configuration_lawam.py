@@ -206,9 +206,9 @@ class LaWAMConfig(PreTrainedConfig):
                     "when more than one visual feature is configured."
                 )
             primary, wrist = image_keys, []
-        elif primary is None:
+        elif primary is None and wrist is not None:
             primary = [key for key in image_keys if key not in wrist]
-        elif wrist is None:
+        elif wrist is None and primary is not None:
             wrist = [key for key in image_keys if key not in primary]
 
         if primary is None or wrist is None:

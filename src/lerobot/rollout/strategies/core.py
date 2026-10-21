@@ -19,21 +19,31 @@ from __future__ import annotations
 import abc
 import contextlib
 import logging
+import math
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
+from lerobot.configs import DatasetRecordConfig
+from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
-from lerobot.utils.action_interpolator import ActionInterpolator
-from lerobot.utils.constants import OBS_STR
+from lerobot.inference import InferenceEngine, commit_action, next_interpolated_action
+from lerobot.lerobot_types import RobotObservation
+from lerobot.teleoperators import Teleoperator
+from lerobot.utils import OBS_STR, ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import log_visualization_data
 
-from ..inference import InferenceEngine
-
 if TYPE_CHECKING:
-    from ..configs import RolloutStrategyConfig
-    from ..context import HardwareContext, ProcessorContext, RolloutContext, RuntimeContext
+    from ..configs import RolloutConfig, RolloutStrategyConfig
+    from ..context import (
+        DatasetContext,
+        HardwareContext,
+        ProcessorContext,
+        RolloutContext,
+        RuntimeContext,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +74,9 @@ class RolloutStrategy(abc.ABC):
 
     One-shot strategies (``supports_interactive = False``, the default) are
     free to finalize on ``run()`` exit, e.g. via ``VideoEncodingManager``.
+
+    Every autonomous motor tick must use :func:`send_next_action`, including
+    ticks spent holding or interpolating; see its dispatch contract below.
     """
 
     def __init__(self, config: RolloutStrategyConfig) -> None:
@@ -71,7 +84,7 @@ class RolloutStrategy(abc.ABC):
         self._engine: InferenceEngine | None = None
         self._interpolator: ActionInterpolator | None = None
         self._warmup_flushed: bool = False
-        self._cached_obs_processed: dict | None = None
+        self._cached_obs_processed: RobotObservation | None = None
 
     def _init_engine(self, ctx: RolloutContext) -> None:
         """Attach the inference engine and action interpolator, then start the backend.
@@ -89,6 +102,45 @@ class RolloutStrategy(abc.ABC):
         self._warmup_flushed = False
         logger.info("Inference engine started")
 
+    def _require_engine(self) -> InferenceEngine:
+        """The inference engine attached by :meth:`_init_engine`."""
+        if self._engine is None:
+            raise RuntimeError(f"{type(self).__name__}: inference engine not attached; call setup() first")
+        return self._engine
+
+    def _require_interpolator(self) -> ActionInterpolator:
+        """The action interpolator created by :meth:`_init_engine`."""
+        if self._interpolator is None:
+            raise RuntimeError(f"{type(self).__name__}: action interpolator not attached; call setup() first")
+        return self._interpolator
+
+    def _require_dataset_cfg(self, cfg: RolloutConfig) -> DatasetRecordConfig:
+        """The ``--dataset.*`` config a recording strategy records with; ``RolloutConfig`` enforces ``dataset_mode = "required"``."""
+        if cfg.dataset is None:
+            raise RuntimeError(
+                f"{type(self).__name__}: no dataset config; a recording strategy must declare "
+                'dataset_mode = "required" on its config'
+            )
+        return cfg.dataset
+
+    def _require_dataset(self, data: DatasetContext) -> LeRobotDataset:
+        """The dataset a recording strategy writes to (built from :meth:`_require_dataset_cfg`)."""
+        if data.dataset is None:
+            raise RuntimeError(
+                f"{type(self).__name__}: no dataset in the rollout context; a recording strategy "
+                'must declare dataset_mode = "required" on its config'
+            )
+        return data.dataset
+
+    def _require_teleop(self, hw: HardwareContext) -> Teleoperator:
+        """The connected teleoperator; ``RolloutConfig`` enforces it via ``requires_teleop``."""
+        if hw.teleop is None:
+            raise RuntimeError(
+                f"{type(self).__name__}: no teleoperator in the rollout context; a strategy that "
+                "reads the teleop must declare requires_teleop = True on its config"
+            )
+        return hw.teleop
+
     def reset_control_state(self) -> None:
         """Clear episode-scoped control state so a paused session can restart cleanly.
 
@@ -105,7 +157,46 @@ class RolloutStrategy(abc.ABC):
             self._interpolator.reset()
         self._cached_obs_processed = None
 
-    def _process_observation_and_notify(self, processors: ProcessorContext, obs_raw: dict) -> dict:
+    def hold_control_state(self, hw: HardwareContext) -> None:
+        """Apply a segment-end hold on the control thread after background dispatch is revoked."""
+        if self._interpolator is not None:
+            self._interpolator.reset()
+        self._cached_obs_processed = None
+        if hw.robot_wrapper.supports_hold and hw.robot_wrapper.hardware_failure is None:
+            hw.robot_wrapper.hold()
+            self._require_engine().acknowledge_hold()
+
+    @contextlib.contextmanager
+    def _pause_for_recording(
+        self, ctx: RolloutContext, *, resume_allowed: Callable[[], bool] | None = None
+    ) -> Iterator[None]:
+        """Invalidate async motion across a blocking mid-run save; resume from a fresh capture.
+
+        Call only inside an active run. Strategies with operator-controlled phases
+        supply their current permission to resume. Save/hold failures propagate and
+        leave inference paused; shutdown, takeover and faults never trigger resumption.
+        """
+        engine = self._require_engine()
+        if engine.control_thread_owns_policy:
+            yield
+            return
+        was_autonomous = resume_allowed is None or resume_allowed()
+        engine.pause()
+        self.hold_control_state(ctx.hardware)
+        logger.info("Inference paused for episode save; buffered motion invalidated")
+        yield
+        if (
+            was_autonomous
+            and not ctx.runtime.shutdown_event.is_set()
+            and not engine.failed
+            and (resume_allowed is None or resume_allowed())
+        ):
+            engine.resume()
+            logger.info("Episode save complete; inference resumes from the next fresh observation")
+
+    def _process_observation_and_notify(
+        self, processors: ProcessorContext, obs_raw: RobotObservation
+    ) -> RobotObservation:
         """Run the observation processor and notify the engine — throttled to policy ticks.
 
         Callers are responsible for calling ``robot.get_observation()`` every loop
@@ -122,9 +213,9 @@ class RolloutStrategy(abc.ABC):
         called (warmup completion, DAgger phase transitions back to AUTONOMOUS),
         because reset makes ``needs_new_action()`` return True on the next call.
         """
-        if self._cached_obs_processed is None or self._interpolator.needs_new_action():
+        if self._cached_obs_processed is None or self._require_interpolator().needs_new_action():
             obs_processed = processors.robot_observation_processor(obs_raw)
-            self._engine.notify_observation(obs_processed)
+            self._require_engine().notify_observation(obs_processed)
             self._cached_obs_processed = obs_processed
         return self._cached_obs_processed
 
@@ -136,9 +227,16 @@ class RolloutStrategy(abc.ABC):
         stays anchored.  On the first post-warmup iteration the engine and
         interpolator are reset so stale warmup state is discarded.
         """
-        engine = self._engine
-        interpolator = self._interpolator
         if not use_torch_compile:
+            return False
+        engine = self._require_engine()
+        interpolator = self._require_interpolator()
+        # A compiled model can hang inside its first call. Warmup bypasses the
+        # normal dispatch path, so explicitly run the nonblocking deadline gate.
+        engine.dispatch_allowed()
+        if engine.failed:
+            # Let send_next_action apply the robot hold and acknowledge it; do
+            # not keep waiting, reset model state, or resume a faulted engine.
             return False
         if not engine.ready:
             timer.wait()
@@ -153,25 +251,58 @@ class RolloutStrategy(abc.ABC):
         return False
 
     def _teardown_hardware(self, hw: HardwareContext, return_to_initial_position: bool = True) -> None:
-        """Stop the inference engine, optionally return robot to initial position, and disconnect hardware."""
-        if self._engine is not None:
-            logger.info("Stopping inference engine...")
-            self._engine.stop()
-        robot = hw.robot_wrapper.inner
-        if robot.is_connected:
-            if return_to_initial_position and hw.initial_position:
-                logger.info("Returning robot to initial position before shutdown...")
-                self.return_to_initial_position(hw)
-            elif not return_to_initial_position:
-                logger.info(
-                    "Skipping return-to-initial-position (disabled by config); leaving robot in final pose."
-                )
-            logger.info("Disconnecting robot...")
-            robot.disconnect()
-        teleop = hw.teleop
-        if teleop is not None and teleop.is_connected:
-            logger.info("Disconnecting teleoperator...")
-            teleop.disconnect()
+        """End policy execution, perform configured local shutdown movement, and disconnect.
+
+        A terminal inference fault does not imply failed local hardware. Honor
+        the return setting in that case; never home after a failed command.
+        Homing uses ordinary observation acquisition and can fail with it.
+        Disconnect torque behavior belongs to the robot driver, not the hold.
+        """
+        wrapper = hw.robot_wrapper
+        if self._interpolator is not None:
+            self._interpolator.reset()
+        self._cached_obs_processed = None
+        try:
+            if self._engine is not None:
+                logger.info("Stopping inference engine...")
+                if self._engine.failed and wrapper.supports_hold and wrapper.hardware_failure is None:
+                    try:
+                        wrapper.hold()
+                    except Exception:
+                        logger.exception("Fault hold failed; skipping further shutdown movement")
+                self._engine.stop()
+        finally:
+            robot = wrapper.inner
+            try:
+                if robot.is_connected:
+                    try:
+                        if wrapper.hardware_failure is not None:
+                            logger.warning(
+                                "Skipping return-to-initial-position: robot I/O failed: %s",
+                                wrapper.hardware_failure,
+                            )
+                        elif not return_to_initial_position:
+                            logger.info("Skipping return-to-initial-position: disabled by config")
+                        elif not hw.initial_position:
+                            logger.info("Skipping return-to-initial-position: no initial position captured")
+                        else:
+                            logger.info("Returning robot to initial position before shutdown...")
+                            self.return_to_initial_position(hw)
+                    finally:
+                        torque_setting = getattr(
+                            getattr(robot, "config", None), "disable_torque_on_disconnect", "unspecified"
+                        )
+                        logger.info(
+                            "Disconnecting robot: disable_torque_on_disconnect=%s; "
+                            "a prior hold command does not guarantee pose retention after disconnect",
+                            torque_setting,
+                        )
+                        robot.disconnect()
+            finally:
+                teleop = hw.teleop
+                if teleop is not None and teleop.is_connected:
+                    logger.info("Disconnecting teleoperator...")
+                    teleop.disconnect()
 
     @staticmethod
     def return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> bool:
@@ -182,10 +313,20 @@ class RolloutStrategy(abc.ABC):
         a completed reset on ``False``.
         """
         robot = hw.robot_wrapper
+        if robot.hardware_failure is not None:
+            logger.warning(
+                "Cannot return to initial position after robot I/O failure: %s", robot.hardware_failure
+            )
+            return False
         target = hw.initial_position
+        if target is None:
+            logger.warning("Could not return to initial position: none was captured at connect time")
+            return False
         try:
             current_obs = robot.get_observation()
-            current_pos = {k: v for k, v in current_obs.items() if k in target}
+            current_pos = {k: float(current_obs[k]) for k in target}
+            if not all(math.isfinite(current_pos[k]) and math.isfinite(target[k]) for k in target):
+                raise ValueError("Return movement requires finite current and initial positions")
             steps = max(int(duration_s * fps), 1)
             for step in range(1, steps + 1):
                 t = step / steps
@@ -233,6 +374,10 @@ class RolloutStrategy(abc.ABC):
         the end of every segment), and ``engine.pump_query(obs_processed)`` at the end
         of every tick — the text-query channel only advances through it, and a
         multi-second generation must not sit inside the action path.
+
+        Publish each captured observation with ``engine.notify_observation``
+        and dispatch through :func:`send_next_action` on every autonomous motor
+        tick, even when no new action is expected.
 
         Each ``run()`` call builds its own ``CycleTimer`` and reports it through
         ``timer.log_run_summary()`` from its ``finally``: a fresh timer's start-up
@@ -340,33 +485,42 @@ def send_next_action(
     ``robot_action_processor`` to the robot.  Works identically for
     sync and async backends — the rollout strategy never needs to branch.
 
+    Call once per autonomous motor tick, including interpolation and held ticks.
+    This is the strategy's dispatch boundary: it checks permission before
+    pulling and sending, clears interpolation on a
+    denial, performs a supported local hold, acknowledges it, and notifies the
+    engine after dispatch. A direct ``get_action`` call does not replace it.
+
     When *timer* is given, the engine pull and the robot send are timed as the
     ``infer`` and ``send`` steps of its cadence summary, and a tick with no action
     to send is counted there.  Note that on async backends ``infer`` is only a
     queue pull — inference runs off-thread, so its latency surfaces as starved
     ticks rather than as loop-body time.
 
-    Returns the action dict that was sent, or ``None`` if no action was
-    ready (e.g. empty async queue, interpolator not yet primed).
+    Returns the canonical action dict for a dispatched policy action, or ``None``
+    while waiting or faulted. A supported hold command may still have been sent.
     """
     engine = ctx.policy.inference
-    features = ctx.data.dataset_features
+    wrapper = ctx.hardware.robot_wrapper
     ordered_keys = ctx.data.ordered_action_keys
     # ``nullcontext`` accepts (and ignores) the section name, so it stands in for
     # ``timer.section`` verbatim when no timer was passed.
     section = timer.section if timer is not None else contextlib.nullcontext
 
-    if interpolator.needs_new_action():
-        with section("infer"):
-            obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
-            action_tensor = engine.get_action(obs_frame)
-        if action_tensor is not None:
-            interpolator.add(action_tensor.cpu())
+    def hold() -> None:
+        if wrapper.supports_hold:
+            wrapper.hold()
 
-    interp = interpolator.get()
+    # The gate/hold/acknowledge order is shared with other control loops through
+    # ``lerobot.inference``; this helper adds the frame, processor and cadence stats.
+    interp = next_interpolated_action(
+        engine,
+        interpolator,
+        lambda: build_dataset_frame(ctx.data.dataset_features, obs_processed, prefix=OBS_STR),
+        hold=hold,
+        timer=timer,
+    )
     if interp is None:
-        if timer is not None:
-            timer.note_starved_tick()
         return None
 
     if len(interp) != len(ordered_keys):
@@ -374,5 +528,6 @@ def send_next_action(
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
     with section("send"):
         processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
-        ctx.hardware.robot_wrapper.send_action(processed)
+        if not commit_action(engine, interpolator, lambda: wrapper.send_action(processed), hold=hold):
+            return None
     return action_dict

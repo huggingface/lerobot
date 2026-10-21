@@ -81,8 +81,8 @@ class Qwen2_5_VLACausalLMOutputWithPast(ModelOutput):  # noqa: N801
     attentions: tuple[torch.FloatTensor] | None = None
     rope_deltas: torch.LongTensor | None = None
 
-    channel_loss_dict: dict[torch.FloatTensor] | None = None
-    channel_loss_count_dict: dict[torch.FloatTensor] | None = None
+    channel_loss_dict: dict[str, torch.FloatTensor] | None = None
+    channel_loss_count_dict: dict[str, torch.FloatTensor] | None = None
 
 
 class BlockSparseMLP(nn.Module):
@@ -152,11 +152,11 @@ class Qwen2_5_VLDecoderLayer_with_MoE(Qwen2_5_VLDecoderLayer):  # noqa: N801
       layernorms and bfloat16 projections in the same module.
     """
 
-    def __init__(self, config: Qwen2_5_VLConfig, layer_idx: int, num_experts: int):
+    def __init__(self, config: Qwen2_5_VLTextConfig, layer_idx: int, num_experts: int) -> None:
         super().__init__(config, layer_idx)
         if config.mlp_moe:
             del self.mlp
-            self.mlp = None
+            self.mlp: nn.Module | None = None
             self.moe = SparseMoeBlock(config, num_experts=num_experts)
 
     def forward(
@@ -213,7 +213,7 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
     config_class = Qwen2_5_VLTextConfig
     _no_split_modules = ["Qwen2_5_VLDecoderLayer_with_MoE"]
 
-    def __init__(self, config: Qwen2_5_VLConfig | Qwen2_5_VLTextConfig):
+    def __init__(self, config: Qwen2_5_VLConfig | Qwen2_5_VLTextConfig) -> None:
         text_config = config.text_config if isinstance(config, Qwen2_5_VLConfig) else config
         self._require_eager_attention(text_config._attn_implementation)
         # Transformers selects SDPA automatically when no implementation is
@@ -223,7 +223,7 @@ class Qwen2_5_VLMoEModel(Qwen2_5_VLTextModel):  # noqa: N801
         super().__init__(text_config)
         # Free the parent-allocated dense layers before replacing them (pi_gemma.py precedent).
         del self.layers
-        self.layers = nn.ModuleList(
+        self.layers: nn.ModuleList = nn.ModuleList(
             [
                 Qwen2_5_VLDecoderLayer_with_MoE(text_config, layer_idx, text_config.num_experts)
                 for layer_idx in range(text_config.num_hidden_layers)

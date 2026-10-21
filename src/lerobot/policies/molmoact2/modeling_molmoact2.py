@@ -34,6 +34,8 @@ import types
 from collections import deque
 from collections.abc import Iterator
 from contextlib import nullcontext, suppress
+from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -52,6 +54,7 @@ from lerobot.utils.import_utils import (
     require_package,
 )
 
+from ..chunk import ChunkPolicySpec
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config
 from .utils_molmoact2 import (
@@ -67,15 +70,6 @@ else:
     get_peft_model = None
 
 logger = logging.getLogger(__name__)
-
-
-def _torch_dtype(dtype: str) -> torch.dtype:
-    """Convert a dtype name string to a torch.dtype."""
-    if dtype == "float32":
-        return torch.float32
-    if dtype == "bfloat16":
-        return torch.bfloat16
-    raise ValueError(f"Unsupported dtype: {dtype}")
 
 
 def _call_module_without_gradient_checkpointing_layer(
@@ -464,7 +458,7 @@ def _mask_discrete_action_spans(
 
 def _drop_trivial_attention_mask(model_inputs: dict[str, Tensor]) -> dict[str, Tensor]:
     attention_mask = model_inputs.get("attention_mask")
-    if torch.is_tensor(attention_mask) and bool(attention_mask.to(dtype=torch.bool).all().item()):
+    if isinstance(attention_mask, Tensor) and bool(attention_mask.to(dtype=torch.bool).all().item()):
         model_inputs = dict(model_inputs)
         model_inputs.pop("attention_mask", None)
     return model_inputs
@@ -621,11 +615,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     config_class = MolmoAct2Config
     name = "molmoact2"
+    config: MolmoAct2Config
 
     @classmethod
     def from_pretrained(
         cls,
-        pretrained_name_or_path: str | os.PathLike[str],
+        pretrained_name_or_path: str | Path,
         *,
         strict: bool = True,
         **kwargs: Any,
@@ -639,6 +634,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def supports_rtc(self) -> bool:
         return self.config.inference_action_mode == "continuous"
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Direct chunk prediction returns the checkpoint's configured playback slice."""
+        spec = super().chunk_inference_spec()
+        return replace(spec, prediction_steps=self.config.n_action_steps)
 
     def __init__(
         self,
@@ -676,7 +676,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             revision=self.config.checkpoint_revision,
             force_download=bool(self.config.checkpoint_force_download),
         )
-        storage_dtype = _torch_dtype(self.config.dtype)
+        storage_dtype = self.config.dtype
         if HFMolmoAct2Config is None or MolmoAct2ForConditionalGeneration is None:
             raise RuntimeError("transformers is required to load MolmoAct2 checkpoints.")
         hf_config = HFMolmoAct2Config.from_pretrained(
@@ -862,7 +862,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         parameters and therefore fp32 Adam state when trainable. Eligible
         action-expert operators still execute in bf16 under autocast.
         """
-        if self.config.dtype != "bfloat16":
+        if self.config.dtype != torch.bfloat16:
             return
 
         self.model.to(dtype=torch.bfloat16)
@@ -876,7 +876,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if depth_gate is not None:
             depth_gate.to(dtype=torch.float32)
 
-        fp32_module_types = tuple(
+        fp32_module_types: tuple[type[torch.nn.Module], ...] = tuple(
             module_type
             for module_type in (
                 torch.nn.LayerNorm,
@@ -949,7 +949,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         }
 
     def _autocast_context(self):
-        compute_dtype = _torch_dtype(self.config.dtype)
+        compute_dtype = self.config.dtype
         device_type = next(self.parameters()).device.type
         autocast_available = torch.amp.autocast_mode.is_autocast_available(device_type)
         if compute_dtype == torch.bfloat16:
@@ -1270,7 +1270,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         attention_mask = model_inputs.get("attention_mask")
         position_ids = model_inputs.get("position_ids")
         if position_ids is None:
-            if torch.is_tensor(attention_mask) and attention_mask.ndim == 2:
+            if isinstance(attention_mask, Tensor) and attention_mask.ndim == 2:
                 position_ids = _position_ids_from_attention_mask(attention_mask)
             else:
                 position_ids = cache_position.unsqueeze(0)
@@ -1639,6 +1639,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 hit_end = True
                 break
             if attention_bias is None:
+                if not callable(consume_generation_tokens):
+                    raise RuntimeError(
+                        "MolmoAct2 checkpoint does not expose discrete token generation helpers."
+                    )
                 current_output, current_attention_mask = consume_generation_tokens(
                     next_token,
                     past_key_values=current_past_key_values,
@@ -1646,6 +1650,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 )
                 current_past_key_values = current_output.past_key_values
             else:
+                if not callable(ar_decode_step):
+                    raise RuntimeError("MolmoAct2 checkpoint does not expose graph-backed AR decode helpers.")
                 step_position_ids = next_position_ids
                 last_hidden, current_past_key_values = ar_decode_step(
                     next_token,
@@ -1796,6 +1802,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         inference_delay: int | None,
         prev_chunk_left_over: Tensor | None,
         execution_horizon: int | None,
+        noise: Tensor | None = None,
     ) -> Tensor:
         backbone = self._backbone()
         action_expert = self._action_expert()
@@ -1827,14 +1834,16 @@ class MolmoAct2Policy(PreTrainedPolicy):
         source_tensor = encoder_kv_states[0][0]
         batch_size = int(source_tensor.shape[0])
         device = source_tensor.device
-        trajectory = torch.randn(
-            batch_size,
-            self._generation_action_horizon(),
-            int(backbone.config.max_action_dim),
-            device=device,
-            dtype=torch.float32,
-            generator=generator,
-        )
+        if noise is None:
+            noise = torch.randn(
+                batch_size,
+                self._generation_action_horizon(),
+                int(backbone.config.max_action_dim),
+                device=device,
+                dtype=torch.float32,
+                generator=generator,
+            )
+        trajectory = noise.to(device=device, dtype=torch.float32)
         if self.config.mask_action_dim_padding:
             trajectory = _mask_action_dim_tensor(trajectory, action_dim_is_pad)
 
@@ -1973,8 +1982,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return loss, metrics
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        """Generate an action chunk via continuous flow matching or discrete AR decoding."""
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], *, noise: Tensor | None = None, **kwargs
+    ) -> Tensor:
+        """Generate an action chunk via continuous flow matching or discrete AR decoding.
+
+        ``noise`` is the optional starting sample of continuous flow matching, shaped
+        ``(batch_size, chunk_size, max_action_dim)`` with ``max_action_dim`` from the model
+        config. When None, the policy draws it as usual. Discrete decoding ignores it.
+        """
         if "action_mode" in kwargs:
             raise TypeError(
                 "MolmoAct2 predict_action_chunk got unexpected keyword argument 'action_mode'; "
@@ -2010,6 +2026,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     inference_delay=kwargs.get("inference_delay"),
                     prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
                     execution_horizon=kwargs.get("execution_horizon"),
+                    noise=noise,
                 )
             else:
                 generation_kwargs: dict[str, Tensor] = {}
@@ -2032,18 +2049,19 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     action_horizon=self._generation_action_horizon(),
                     num_steps=num_steps,
                     generator=generator,
+                    noise=noise,
                     **generation_kwargs,
                 )
         return actions[:, : self.config.n_action_steps, :action_dim].to(dtype=torch.float32)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None, **kwargs) -> Tensor:
         """Pop one action step from the queue, regenerating the chunk when empty."""
         if self._rtc_enabled():
             raise AssertionError("RTC is not supported for select_action, use it with predict_action_chunk")
         self.eval()
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, noise=noise, **kwargs)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 

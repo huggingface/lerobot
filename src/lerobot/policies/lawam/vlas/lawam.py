@@ -736,6 +736,7 @@ class LatentWorldPolicyBackend(nn.Module):
         batch: LatentWorldPolicyInferBatch,
         guidance_scale: float | None = None,
         num_inference_steps: int | None = None,
+        noise: torch.Tensor | None = None,
     ) -> torch.Tensor:
         flow_stage_dtype = torch.float32
         prepared_batch = batch
@@ -764,5 +765,6 @@ class LatentWorldPolicyBackend(nn.Module):
                 cfg_scale=guidance_scale,
                 num_inference_steps=num_inference_steps,
                 attention_mask=attn_flow,
+                noise=noise,
             )
         return actions

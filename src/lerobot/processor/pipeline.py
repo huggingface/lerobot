@@ -38,7 +38,7 @@ from collections.abc import Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypedDict, TypeVar, cast
+from typing import Any, ClassVar, TypedDict, TypeVar, cast
 
 import torch
 from huggingface_hub import hf_hub_download, snapshot_download
@@ -72,10 +72,10 @@ class ProcessorStepRegistry:
     hardcoding class imports.
     """
 
-    _registry: dict[str, type] = {}
+    _registry: dict[str, type[ProcessorStep]] = {}
 
     @classmethod
-    def register(cls, name: str | None = None):
+    def register[StepT: ProcessorStep](cls, name: str | None = None) -> Callable[[type[StepT]], type[StepT]]:
         """A class decorator to register a ProcessorStep.
 
         Args:
@@ -88,7 +88,7 @@ class ProcessorStepRegistry:
             ValueError: If a step with the same name is already registered.
         """
 
-        def decorator(step_class: type) -> type:
+        def decorator(step_class: type[StepT]) -> type[StepT]:
             """The actual decorator that performs the registration."""
             registration_name = name if name is not None else step_class.__name__
 
@@ -106,7 +106,7 @@ class ProcessorStepRegistry:
         return decorator
 
     @classmethod
-    def get(cls, name: str) -> type:
+    def get(cls, name: str) -> type[ProcessorStep]:
         """Retrieves a processor step class from the registry by its name.
 
         Args:
@@ -158,6 +158,8 @@ class ProcessorStep(ABC):
     """
 
     _current_transition: EnvTransition | None = None
+    # Set by `ProcessorStepRegistry.register`; absent on unregistered steps, so read it with `getattr`.
+    _registry_name: ClassVar[str]
 
     @property
     def transition(self) -> EnvTransition:
@@ -259,6 +261,13 @@ class ProcessorMigrationError(Exception):
             f"Model '{model_path}' requires migration to processor format. "
             f"Run: {migration_command}\n\nOriginal error: {original_error}"
         )
+
+
+def _require_component[T](component: T | None, name: str) -> T:
+    """Return a transition component, raising if a processor step dropped it (set it to `None`)."""
+    if component is None:
+        raise ValueError(f"A processor step dropped the {name} from the transition.")
+    return component
 
 
 @dataclass
@@ -1316,10 +1325,10 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         if base_path and (base_path / state_filename).exists():
             state_path = str(base_path / state_filename)
         elif is_local_source:
-            state_path = base_path / state_filename if base_path else Path(state_filename)
+            missing_path = base_path / state_filename if base_path else Path(state_filename)
             raise FileNotFoundError(
                 f"State file '{state_filename}' was not found for local processor pipeline "
-                f"'{model_id}' at '{state_path}'."
+                f"'{model_id}' at '{missing_path}'."
             )
         else:
             # Download from Hub
@@ -1766,7 +1775,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(observation=observation)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.OBSERVATION]
+        return _require_component(transformed_transition[TransitionKey.OBSERVATION], "observation")
 
     def process_action(
         self, action: PolicyAction | RobotAction | EnvAction
@@ -1781,7 +1790,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(action=action)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.ACTION]
+        return _require_component(transformed_transition[TransitionKey.ACTION], "action")
 
     def process_reward(self, reward: float | torch.Tensor) -> float | torch.Tensor:
         """Processes only the reward part of a transition through the pipeline.
@@ -1794,7 +1803,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(reward=reward)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.REWARD]
+        return _require_component(transformed_transition[TransitionKey.REWARD], "reward")
 
     def process_done(self, done: bool | torch.Tensor) -> bool | torch.Tensor:
         """Processes only the done flag of a transition through the pipeline.
@@ -1807,7 +1816,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(done=done)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.DONE]
+        return _require_component(transformed_transition[TransitionKey.DONE], "done flag")
 
     def process_truncated(self, truncated: bool | torch.Tensor) -> bool | torch.Tensor:
         """Processes only the truncated flag of a transition through the pipeline.
@@ -1820,7 +1829,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(truncated=truncated)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.TRUNCATED]
+        return _require_component(transformed_transition[TransitionKey.TRUNCATED], "truncated flag")
 
     def process_info(self, info: dict[str, Any]) -> dict[str, Any]:
         """Processes only the info dictionary of a transition through the pipeline.
@@ -1833,7 +1842,7 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(info=info)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.INFO]
+        return _require_component(transformed_transition[TransitionKey.INFO], "info dictionary")
 
     def process_complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
         """Processes only the complementary data part of a transition through the pipeline.
@@ -1846,7 +1855,9 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         """
         transition: EnvTransition = create_transition(complementary_data=complementary_data)
         transformed_transition = self._forward(transition)
-        return transformed_transition[TransitionKey.COMPLEMENTARY_DATA]
+        return _require_component(
+            transformed_transition[TransitionKey.COMPLEMENTARY_DATA], "complementary data"
+        )
 
 
 # Type aliases for semantic clarity.
@@ -1964,7 +1975,7 @@ class PolicyActionProcessorStep(ProcessorStep, ABC):
         new_transition = self._current_transition
 
         action = new_transition.get(TransitionKey.ACTION)
-        if not isinstance(action, PolicyAction):
+        if not isinstance(action, torch.Tensor):
             raise ValueError(f"Action should be a PolicyAction type (tensor), but got {type(action)}")
 
         processed_action = self.action(action)

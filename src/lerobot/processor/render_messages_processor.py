@@ -64,8 +64,11 @@ class RenderTrainingMessagesStep(ProcessorStep):
             "recipe": asdict(self.recipe) if self.recipe is not None else None,
         }
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition | None:
-        """Render one sample or one batch of training annotations."""
+    def __call__(self, transition: EnvTransition) -> EnvTransition | None:  # type: ignore[override]
+        """Render one sample or one batch of training annotations.
+
+        Returns `None` to drop a sparse sample that no recipe branch or task fallback can render.
+        """
         if self.recipe is None:
             return transition
 
@@ -136,7 +139,7 @@ class RenderTrainingMessagesStep(ProcessorStep):
         complementary_data: dict[str, Any],
         persistent_batch: list,
         events_batch: list,
-    ) -> EnvTransition | None:
+    ) -> EnvTransition:
         """Render a language batch.
 
         Non-empty persistent and event batches must have the same size. Either
@@ -295,7 +298,7 @@ def _select_batch_indices(transition: EnvTransition, indices: list[int], batch_s
             }
     action = selected.get(TransitionKey.ACTION)
     if action is not None:
-        selected[TransitionKey.ACTION] = _select_value(action, indices, batch_size, str(TransitionKey.ACTION))
+        selected[TransitionKey.ACTION] = _select_value(action, indices, batch_size, TransitionKey.ACTION)
     return selected
 
 

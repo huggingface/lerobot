@@ -33,6 +33,7 @@ from lerobot.processor import (
     ProcessorStepRegistry,
     TransitionKey,
     UnnormalizerProcessorStep,
+    create_transition,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
@@ -79,9 +80,13 @@ class LaWAMPreSnapGripperProcessorStep(ProcessorStep):
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """Snap the configured gripper channel when it is present."""
         action = transition.get(TransitionKey.ACTION)
-        if action is None or action.shape[-1] <= self.gripper_dim:
+        if action is None:
             return transition
-        transition = dict(transition)
+        if not isinstance(action, torch.Tensor):
+            raise ValueError(f"Action should be a PolicyAction type (tensor), but got {type(action)}")
+        if action.shape[-1] <= self.gripper_dim:
+            return transition
+        transition = transition.copy()
         snapped = action.clone()
         snapped[..., self.gripper_dim] = (snapped[..., self.gripper_dim] >= self.threshold).float()
         transition[TransitionKey.ACTION] = snapped
@@ -185,9 +190,11 @@ class LaWAMResizeImagesProcessorStep(ObservationProcessorStep):
             leading_shapes[key] = image.shape[:-3]
             flat_observation[key] = image.reshape(-1, *image.shape[-3:])
 
-        resized_transition = self._resize_step({TransitionKey.OBSERVATION: flat_observation})
+        resized_transition = self._resize_step(create_transition(observation=flat_observation))
         resized_observation = dict(observation)
         resized_images = resized_transition[TransitionKey.OBSERVATION]
+        if resized_images is None:
+            raise RuntimeError("LaWAM image resize step returned no observation.")
         for key in self.image_features:
             resized = resized_images[key]
             resized_observation[key] = resized.reshape(*leading_shapes[key], *resized.shape[-3:])
@@ -327,7 +334,7 @@ class LaWAMQwenInputsProcessorStep(ProcessorStep):
                 "image_grid_thw": qwen_inputs.get("image_grid_thw"),
             }
         )
-        result = dict(transition)
+        result = transition.copy()
         result[TransitionKey.COMPLEMENTARY_DATA] = comp
         return result
 
@@ -485,7 +492,7 @@ class LaWAMPrepareBatchProcessorStep(ProcessorStep):
                 device=primary_video.device,
             )
 
-        result = dict(transition)
+        result = transition.copy()
         result[TransitionKey.OBSERVATION] = {}
         result[TransitionKey.ACTION] = None
         result[TransitionKey.COMPLEMENTARY_DATA] = prepared
@@ -509,9 +516,16 @@ class LaWAMPrepareBatchProcessorStep(ProcessorStep):
 
 
 def _make_lawam_model_input_steps(config: LaWAMConfig, *, action_hz: float) -> list[ProcessorStep]:
+    primary_image_features = config.primary_image_features
+    wrist_image_features = config.wrist_image_features
+    lam_image_feature = config.lam_image_feature
+    if primary_image_features is None or wrist_image_features is None or lam_image_feature is None:
+        raise ValueError(
+            "LaWAM camera roles must be resolved by `validate_features()` before building processors."
+        )
     return [
         LaWAMResizeImagesProcessorStep(
-            image_features=config.primary_image_features + config.wrist_image_features,
+            image_features=primary_image_features + wrist_image_features,
             image_hw=config.lam_image_hw,
         ),
         LaWAMQwenInputsProcessorStep(
@@ -519,13 +533,13 @@ def _make_lawam_model_input_steps(config: LaWAMConfig, *, action_hz: float) -> l
             placeholder_token=config.latent_action_placeholder_token,
             act_queries=config.num_action_queries,
             flow_queries=config.flow_action_num_queries,
-            primary_image_features=config.primary_image_features,
-            wrist_image_features=config.wrist_image_features,
+            primary_image_features=primary_image_features,
+            wrist_image_features=wrist_image_features,
             image_hw=config.lam_image_hw,
             default_task=config.default_task,
         ),
         LaWAMPrepareBatchProcessorStep(
-            lam_image_feature=config.lam_image_feature,
+            lam_image_feature=lam_image_feature,
             image_hw=config.lam_image_hw,
             action_horizon=config.action_horizon,
             chunk_size=config.chunk_size,
@@ -549,6 +563,8 @@ def make_lawam_pre_post_processors(
 ]:
     """Build LaWAM input normalization and action postprocessing pipelines."""
     config.validate_features()
+    if config.input_features is None or config.output_features is None:
+        raise ValueError("LaWAM requires resolved `input_features` and `output_features`.")
     if dataset_meta is None:
         dataset_meta = getattr(config, "_runtime_dataset_meta", None)
     dataset_fps = getattr(dataset_meta, "fps", None)

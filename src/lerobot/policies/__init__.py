@@ -12,14 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lerobot.utils.action_interpolator import ActionInterpolator as ActionInterpolator
+from lerobot.utils import ActionInterpolator as ActionInterpolator
 
 from .act.configuration_act import ACTConfig as ACTConfig
+from .chunk import (
+    ChunkPolicySpec,
+    ExecutionMode,
+    FeatureSpec,
+)
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
+from .dm05.configuration_dm05 import DM05Config as DM05Config
 from .eo1.configuration_eo1 import EO1Config as EO1Config
 from .evo1.configuration_evo1 import Evo1Config as Evo1Config
 from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
 from .fastwam.configuration_fastwam import FastWAMConfig as FastWAMConfig
+from .fineart_vla.configuration_fineart_vla import FineARTVLAConfig as FineARTVLAConfig
+from .flux3.configuration_flux3 import Flux3Config as Flux3Config
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .lawam.configuration_lawam import LaWAMConfig as LaWAMConfig
@@ -30,6 +38,13 @@ from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .pi0_fast.configuration_pi0_fast import PI0FastConfig as PI0FastConfig
 from .pi05.configuration_pi05 import PI05Config as PI05Config
 from .pretrained import PreTrainedPolicy as PreTrainedPolicy
+from .rtc import (
+    ActionQueue,
+    QueueSnapshot,
+    RTCConfig,
+    reanchor_relative_rtc_prefix,
+    validate_trained_rtc_horizon,
+)
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .utils import make_robot_action, prepare_observation_for_inference
@@ -46,8 +61,11 @@ __all__ = [
     # Configuration classes
     "ACTConfig",
     "DiffusionConfig",
+    "DM05Config",
     "EO1Config",
     "FastWAMConfig",
+    "FineARTVLAConfig",
+    "Flux3Config",
     "GaussianActorConfig",
     "Evo1Config",
     "GrootConfig",
@@ -64,10 +82,19 @@ __all__ = [
     "VQBeTConfig",
     "WallXConfig",
     "XVLAConfig",
+    # Chunk execution contracts
+    "ChunkPolicySpec",
+    "ExecutionMode",
+    "FeatureSpec",
     # Base class
     "PreTrainedPolicy",
     # RTC utilities
     "ActionInterpolator",
+    "ActionQueue",
+    "QueueSnapshot",
+    "RTCConfig",
+    "reanchor_relative_rtc_prefix",
+    "validate_trained_rtc_horizon",
     # Utility functions
     "make_robot_action",
     "prepare_observation_for_inference",

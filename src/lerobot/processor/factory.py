@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -115,6 +116,11 @@ def make_default_policy_processor_steps(
         normalizer_device: Device passed to `NormalizerProcessorStep` (some policies pin
             their normalization stats to the policy device; most leave it unset).
     """
+    if config.device is None or config.input_features is None or config.output_features is None:
+        raise ValueError(
+            "PreTrainedConfig.device, input_features and output_features must be resolved before "
+            "building the default policy processor steps."
+        )
     return DefaultPolicyProcessorSteps(
         rename_observations=RenameObservationsProcessorStep(rename_map={}),
         add_batch_dim=AddBatchDimensionProcessorStep(),
@@ -197,7 +203,7 @@ def _reconnect_relative_absolute_steps(
 
 
 def load_pretrained_policy_processors(
-    pretrained_path: str,
+    pretrained_path: str | Path,
     *,
     revision: str | None = None,
     preprocessor_overrides: dict[str, Any] | None = None,

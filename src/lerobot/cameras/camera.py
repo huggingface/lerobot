@@ -16,9 +16,9 @@
 
 import abc
 import warnings
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
-from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
+from numpy.typing import NDArray
 
 from .configs import CameraConfig
 
@@ -182,3 +182,14 @@ class Camera(abc.ABC):
     def disconnect(self) -> None:
         """Disconnect from the camera and release resources."""
         pass
+
+
+@runtime_checkable
+class DepthCamera(Protocol):
+    """Structural type for cameras that stream a depth channel next to color (e.g. `RealSenseCamera`)."""
+
+    use_depth: bool
+
+    def read_latest_depth(self, max_age_ms: int = 500) -> NDArray[Any]:
+        """Return the most recent depth frame immediately (peeking), like :meth:`Camera.read_latest`."""
+        ...

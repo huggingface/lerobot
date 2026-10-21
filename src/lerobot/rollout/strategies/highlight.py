@@ -22,14 +22,14 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event as ThreadingEvent, Lock
 
-from lerobot.datasets import VideoEncodingManager
+from lerobot.datasets import LeRobotDataset, VideoEncodingManager
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
 from lerobot.utils.keyboard_input import create_key_listener
 from lerobot.utils.utils import log_say
 
-from ..configs import HighlightStrategyConfig
+from ..configs import HighlightStrategyConfig, RolloutConfig
 from ..context import RolloutContext
 from ..ring_buffer import RolloutRingBuffer
 from .core import RolloutStrategy, safe_push_to_hub, send_next_action
@@ -48,13 +48,14 @@ class HighlightStrategy(RolloutStrategy):
     3. The episode is saved and the ring buffer resumes capturing.
 
     Requires ``streaming_encoding=True`` (enforced in config validation)
-    so that ``dataset.add_frame`` is a non-blocking queue put — flushing
-    the entire ring buffer in one tick must not stall the control loop.
+    to keep normal frame encoding off the control thread. Ring-buffer drains
+    and episode saves can still block: asynchronous inference is paused and
+    its buffered motion invalidated across these operator-triggered operations.
     """
 
     config: HighlightStrategyConfig
 
-    def __init__(self, config: HighlightStrategyConfig):
+    def __init__(self, config: HighlightStrategyConfig) -> None:
         super().__init__(config)
         self._ring: RolloutRingBuffer | None = None
         self._listener = None
@@ -62,7 +63,7 @@ class HighlightStrategy(RolloutStrategy):
         self._recording_live = ThreadingEvent()
         self._push_requested = ThreadingEvent()
         self._push_executor: ThreadPoolExecutor | None = None
-        self._pending_push: Future | None = None
+        self._pending_push: Future[None] | None = None
         self._episode_lock = Lock()
 
     def setup(self, ctx: RolloutContext) -> None:
@@ -91,12 +92,14 @@ class HighlightStrategy(RolloutStrategy):
 
     def run(self, ctx: RolloutContext) -> None:
         """Run the autonomous loop, buffering frames and recording on demand."""
-        engine = self._engine
+        engine = self._require_engine()
+        interpolator = self._require_interpolator()
+        ring = self._ring
+        if ring is None:
+            raise RuntimeError(f"{type(self).__name__}: ring buffer not attached; call setup() first")
         cfg = ctx.runtime.cfg
         robot = ctx.hardware.robot_wrapper
-        dataset = ctx.data.dataset
-        ring = self._ring
-        interpolator = self._interpolator
+        dataset = self._require_dataset(ctx.data)
         features = ctx.data.dataset_features
 
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
@@ -105,7 +108,6 @@ class HighlightStrategy(RolloutStrategy):
         play_sounds = cfg.play_sounds
 
         start_time = time.perf_counter()
-        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         logger.info("Highlight strategy recording started (press '%s' to save)", self.config.save_key)
 
         with VideoEncodingManager(dataset):
@@ -146,7 +148,7 @@ class HighlightStrategy(RolloutStrategy):
                             with timer.section("record"):
                                 obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
                                 action_frame = build_dataset_frame(features, action_dict, prefix=ACTION)
-                                frame = {**obs_frame, **action_frame, "task": task_str}
+                                frame = {**obs_frame, **action_frame, "task": engine.dispatched_task}
 
                                 toggled = False
                                 frame_consumed = False
@@ -162,13 +164,15 @@ class HighlightStrategy(RolloutStrategy):
                                             "Flushing ring buffer (%d frames) + starting live recording",
                                             len(ring),
                                         )
-                                        for buffered_frame in ring.drain():
-                                            dataset.add_frame(buffered_frame)
+                                        with self._pause_for_recording(ctx):
+                                            for buffered_frame in ring.drain():
+                                                dataset.add_frame(buffered_frame)
                                         self._recording_live.set()
                                     else:
-                                        dataset.add_frame(frame)
-                                        with self._episode_lock:
-                                            dataset.save_episode()
+                                        with self._pause_for_recording(ctx):
+                                            dataset.add_frame(frame)
+                                            with self._episode_lock:
+                                                dataset.save_episode()
                                         logger.info("Episode saved (total: %d)", dataset.num_episodes)
                                         log_say(
                                             f"Episode {dataset.num_episodes} saved",
@@ -192,6 +196,7 @@ class HighlightStrategy(RolloutStrategy):
                                     timer.log_episode_summary(f"episode {dataset.num_episodes}")
                                 timer.restart()
 
+                    engine.pump_query(obs_processed)
                     timer.wait()
 
             finally:
@@ -259,7 +264,7 @@ class HighlightStrategy(RolloutStrategy):
             dispatch, controls_help=f"save='{save_key}', push='{push_key}', ESC=stop"
         )
 
-    def _background_push(self, dataset, cfg) -> None:
+    def _background_push(self, dataset: LeRobotDataset, cfg: RolloutConfig) -> None:
         """Queue a Hub push on the single-worker executor."""
         if self._push_executor is None:
             return
@@ -267,7 +272,7 @@ class HighlightStrategy(RolloutStrategy):
         if self._pending_push is not None and not self._pending_push.done():
             logger.info("Previous push still in progress; queueing next")
 
-        def _push():
+        def _push() -> None:
             try:
                 with self._episode_lock:
                     if safe_push_to_hub(

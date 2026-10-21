@@ -10,6 +10,7 @@
 
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -181,7 +182,7 @@ class ConditionalFlowMatchingHead(nn.Module):
         self.enc_vlm = VectorMLP(in_dim=self.config.vlm_dim, hidden_dim=self.config.vision_dim)
         # self.enc_a_p_to_a = VectorMLP(in_dim=2 * self.config.hidden_dim, hidden_dim=self.config.hidden_dim)
         if self.config.use_state:
-            self.enc_state = MultiEmbodimentActionEncoder(
+            self.enc_state: MultiEmbodimentActionEncoder | None = MultiEmbodimentActionEncoder(
                 action_dim=self.config.state_dim,
                 hidden_size=self.config.hidden_dim,
                 num_embodiments=self.config.num_embodiments,
@@ -211,7 +212,7 @@ class ConditionalFlowMatchingHead(nn.Module):
         # cross_attention_dim must be set so condition tokens are consumed by cross-attention blocks.
         dit_class = AlternateVLDiT if self.config.use_alternate_vldit else DiT
 
-        dit_kwargs = {
+        dit_kwargs: dict[str, Any] = {
             "num_attention_heads": self.config.attention_heads,
             "attention_head_dim": int(self.config.hidden_dim // self.config.attention_heads),
             "output_dim": self.config.hidden_dim,
@@ -544,6 +545,8 @@ class ConditionalFlowMatchingHead(nn.Module):
         cfg_scale: float | None = None,
         num_inference_steps: int | None = None,
         attention_mask: torch.Tensor | None = None,
+        *,
+        noise: torch.Tensor | None = None,
     ) -> torch.Tensor:
         device = h_t.device
         model_dtype = self._compute_dtype()
@@ -581,11 +584,13 @@ class ConditionalFlowMatchingHead(nn.Module):
             num_inference_steps = int(getattr(self.config, "num_inference_steps", self.config.num_steps))
         if cfg_scale is None:
             cfg_scale = float(self.config.cfg_guidance_scale)
-        x_t = self.sample_noise(
-            shape=(batch_size, action_horizon, self.config.action_dim),
-            device=device,
-            dtype=model_dtype,
-        )
+        if noise is None:
+            noise = self.sample_noise(
+                shape=(batch_size, action_horizon, self.config.action_dim),
+                device=device,
+                dtype=model_dtype,
+            )
+        x_t = noise.to(device=device, dtype=model_dtype)
         x_t = x_t * time_valid.unsqueeze(-1).to(dtype=x_t.dtype)
 
         dt = 1.0 / float(num_inference_steps)
