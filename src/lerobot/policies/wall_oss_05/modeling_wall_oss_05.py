@@ -366,11 +366,17 @@ class WallOSS05Model(nn.Module):
         self.config = config
         self.processor = processor
         self.visual = Qwen2_5_VisionTransformerPretrainedModel(config.vision_config)
+        # WALL-X scales normalized activations in FP32, including in vision.
+        # Transformers' Qwen norm casts before scaling, changing BF16 outputs.
+        vision_width = int(config.vision_config.hidden_size)
         for block in self.visual.blocks:
+            block.norm1 = WallOSS05RMSNorm(vision_width, eps=1e-6)
+            block.norm2 = WallOSS05RMSNorm(vision_width, eps=1e-6)
             block.mlp = WallOSS05VisionMLP(
-                int(config.vision_config.hidden_size),
+                vision_width,
                 int(config.vision_config.intermediate_size),
             )
+        self.visual.merger.ln_q = WallOSS05RMSNorm(vision_width, eps=1e-6)
         self.model = WallOSS05Decoder(config)
         self.action_preprocessor = WallOSS05ActionProcessor(config)
         self.action_token_id = processor.tokenizer.convert_tokens_to_ids(_ACTION_TOKEN)

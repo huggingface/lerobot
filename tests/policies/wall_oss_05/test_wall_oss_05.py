@@ -771,10 +771,7 @@ def test_constant_quantiles_match_wall_normalization_and_inverse(tmp_path, reloa
     )
 
 
-@pytest.mark.parametrize("joint", [False, True], ids=["text-only", "joint-text-action"])
-@pytest.mark.parametrize("batch_size", [1, 2])
-def test_native_multimodal_model_trains_language_for_five_steps(joint, batch_size):
-    """Exercise the real vision encoder, routed decoder, tied head and flow expert on CPU."""
+def _tiny_native_config():
     transformers = pytest.importorskip("transformers")
     model_config = transformers.Qwen2_5_VLConfig(
         text_config={
@@ -808,6 +805,33 @@ def test_native_multimodal_model_trains_language_for_five_steps(joint, batch_siz
         vision_end_token_id=30,
     )
     model_config.vision_config._attn_implementation = "sdpa"
+    return model_config
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+def test_vision_norms_apply_scale_before_casting_to_activation_dtype(dtype):
+    """WALL-X scales its FP32 normalized activations before rounding back to BF16."""
+    config = _tiny_native_config()
+    processor = SimpleNamespace(tokenizer=SimpleNamespace(convert_tokens_to_ids=lambda _: 31))
+    model = WallOSS05Model(config, processor)
+    norms = [model.visual.blocks[0].norm1, model.visual.blocks[0].norm2, model.visual.merger.ln_q]
+    for norm in norms:
+        norm.to(dtype)
+        width = norm.weight.numel()
+        with torch.no_grad():
+            norm.weight.copy_(torch.linspace(0.3, 1.7, width))
+        inputs = torch.linspace(-3.7, 4.1, 9 * width).reshape(9, width).to(dtype)
+        values = inputs.float()
+        normalized = values * torch.rsqrt(values.square().mean(-1, keepdim=True) + norm.variance_epsilon)
+        expected = (norm.weight.float() * normalized).to(dtype)
+        torch.testing.assert_close(norm(inputs), expected, atol=0, rtol=0)
+
+
+@pytest.mark.parametrize("joint", [False, True], ids=["text-only", "joint-text-action"])
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_native_multimodal_model_trains_language_for_five_steps(joint, batch_size):
+    """Exercise the real vision encoder, routed decoder, tied head and flow expert on CPU."""
+    model_config = _tiny_native_config()
     processor = SimpleNamespace(tokenizer=SimpleNamespace(convert_tokens_to_ids=lambda _: 31))
     with torch.random.fork_rng():
         torch.manual_seed(7)
