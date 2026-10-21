@@ -134,7 +134,7 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.teleoperators.mobile_base import MobileBaseTeleop
+from lerobot.teleoperators.mobile_base import make_mobile_base_teleop
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging, move_cursor_up
@@ -176,7 +176,7 @@ class TeleoperateConfig:
 
 
 def teleop_loop(
-    teleop: Teleoperator | MobileBaseTeleop,
+    teleop: Teleoperator,
     robot: Robot,
     fps: int,
     teleop_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction],
@@ -287,7 +287,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
     robot = make_robot_from_config(cfg.robot)
     check_control_rate(robot, cfg.fps, "--fps")
-    teleop: Teleoperator | MobileBaseTeleop
+    teleop: Teleoperator
     if cfg.base_teleop is not None:
         arm = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
         teleop = MobileBaseTeleop(robot, base=make_teleoperator_from_config(cfg.base_teleop), arm=arm)

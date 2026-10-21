@@ -21,11 +21,13 @@ mobile robot can be teleoperated and recorded from the keyboard alone.
 
 import logging
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
+from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.processor import RobotProcessorPipeline
 
+from .config import TeleoperatorConfig
 from .keyboard import KeyboardTeleop
 from .teleoperator import Teleoperator
 
@@ -35,38 +37,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@runtime_checkable
-class KeyboardDrivenBase(Protocol):
-    """A robot whose base is driven from the raw keys of a plain ``keyboard`` teleoperator.
+class MobileBaseTeleop(Teleoperator):
+    """Combine base and optional arm actions after mapping each device's input.
 
     Robots implement this to map pressed keys to their base action (e.g. ``x.vel``, ``y.vel``,
     ``theta.vel``). The observation is passed so a mapping can be relative to measured state, e.g. a lift
     commanded from its current height.
     """
 
-    def from_keyboard_to_base_action(
-        self, pressed_keys: Iterable[str], observation: RobotObservation | None = None
-    ) -> RobotAction: ...
+    config_class = TeleoperatorConfig
+    name = "mobile_base"
 
-
-class MobileBaseTeleop:
-    """Combines a base teleoperator with an optional arm teleoperator into one robot action.
-
-    The base teleoperator is either a plain ``keyboard``, whose pressed keys the robot maps through
-    :meth:`KeyboardDrivenBase.from_keyboard_to_base_action`, or any teleoperator that already emits the
-    robot's base action keys (``keyboard_rover``, a gamepad, ...).
-
-    Arm actions are prefixed with the robot's ``arm_action_prefix`` attribute when it has one (LeKiwi's
-    arm keys are ``arm_<joint>.pos``). Without an arm teleoperator, every robot action that the base does
-    not command is held at the value observed on the first call.
-    """
-
-    def __init__(self, robot: "Robot", base: Teleoperator, arm: Teleoperator | None = None) -> None:
-        self._raw_keys = type(base) is KeyboardTeleop
-        if self._raw_keys and not isinstance(robot, KeyboardDrivenBase):
-            raise TypeError(
-                f"A plain `keyboard` cannot drive {robot.name}: the robot does not implement "
-                "`from_keyboard_to_base_action`. Use a teleoperator that emits its base actions instead."
+    def __init__(
+        self,
+        robot: "Robot",
+        base: Teleoperator,
+        arm: Teleoperator | None = None,
+        *,
+        base_action_processor: RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]
+        | None = None,
+        arm_action_prefix: str = "",
+        hold_uncommanded: bool = False,
+    ) -> None:
+        self._owns_connections = False
+        super().__init__(TeleoperatorConfig(id=getattr(base, "id", None)))
+        self._raw_keys = isinstance(base, KeyboardTeleop) and base.name == "keyboard"
+        if self._raw_keys and base_action_processor is None:
+            raise ValueError(
+                "A raw keyboard needs a base_action_processor; use keyboard_base for planar velocities."
             )
         self.robot = robot
         self.base = base
@@ -77,20 +75,86 @@ class MobileBaseTeleop:
         self._warned_base_disconnected = False
 
     @property
-    def is_connected(self) -> bool:
-        return self.base.is_connected and (self.arm is None or self.arm.is_connected)
+    def action_features(self) -> dict[str, type | tuple]:
+        base_features = {} if self._raw_keys else dict(self.base.action_features)
+        if self.base_action_processor is not None:
+            features = {
+                PipelineFeatureType.ACTION: base_features,
+                PipelineFeatureType.OBSERVATION: dict(self.robot.observation_features),
+            }
+            mapped = self.base_action_processor.transform_features(features)[PipelineFeatureType.ACTION]
+            base_features = {
+                key: (float if value.shape == (1,) else value.shape)
+                if isinstance(value, PolicyFeature)
+                else value
+                for key, value in mapped.items()
+            }
+        if self.arm is not None:
+            arm_features = {
+                f"{self.arm_prefix}{key}": value for key, value in self.arm.action_features.items()
+            }
+        elif self.hold_uncommanded:
+            arm_features = {
+                key: value for key, value in self.robot.action_features.items() if key not in base_features
+            }
+        else:
+            arm_features = {}
+        self._check_overlap(arm_features, base_features)
+        return {**arm_features, **base_features}
 
-    def connect(self) -> None:
+    @property
+    def feedback_features(self) -> dict[str, type]:
+        base_features = self.base.feedback_features
+        arm_features = (
+            {f"{self.arm_prefix}{key}": value for key, value in self.arm.feedback_features.items()}
+            if self.arm is not None
+            else {}
+        )
+        self._check_overlap(arm_features, base_features)
+        return {**arm_features, **base_features}
+
+    @staticmethod
+    def _check_overlap(arm: dict, base: dict) -> None:
+        overlap = arm.keys() & base.keys()
+        if overlap:
+            raise ValueError(f"Base and arm teleoperators command overlapping actions: {sorted(overlap)}")
+
+    @property
+    def is_connected(self) -> bool:
+        """Remain connected while any child needs cleanup, including after a keyboard disconnect."""
+        return self.base.is_connected or (self.arm is not None and self.arm.is_connected)
+
+    @property
+    def is_calibrated(self) -> bool:
+        return self.base.is_calibrated and (self.arm is None or self.arm.is_calibrated)
+
+    def calibrate(self) -> None:
+        self.base.calibrate()
+        if self.arm is not None:
+            self.arm.calibrate()
+
+    def configure(self) -> None:
+        self.base.configure()
+        if self.arm is not None:
+            self.arm.configure()
+
+    def connect(self, calibrate: bool = True) -> None:
+        self._owns_connections = True
         self._hold = None
         self._observation = None
         self._warned_base_disconnected = False
         try:
             if self.arm is not None:
-                self.arm.connect()
-            self.base.connect()
+                self.arm.connect(calibrate=calibrate)
+            self.base.connect(calibrate=calibrate)
         except Exception:
             self.disconnect()
             raise
+
+    def __del__(self) -> None:
+        # List-form recording borrows already connected devices for one phase.
+        if getattr(self, "_owns_connections", False):
+            super().__del__()
 
     def disconnect(self) -> None:
         # Always release the arm, even if disconnecting the base fails.
@@ -100,6 +164,54 @@ class MobileBaseTeleop:
         finally:
             if self.arm is not None and self.arm.is_connected:
                 self.arm.disconnect()
+
+    def send_feedback(self, feedback: dict[str, Any]) -> None:
+        self._check_overlap(
+            {f"{self.arm_prefix}{key}": value for key, value in self.arm.feedback_features.items()}
+            if self.arm is not None
+            else {},
+            self.base.feedback_features,
+        )
+        for device, prefix in ((self.base, ""), (self.arm, self.arm_prefix)):
+            if device is None:
+                continue
+            selected = {
+                key: feedback[f"{prefix}{key}"]
+                for key in device.feedback_features
+                if f"{prefix}{key}" in feedback
+            }
+            if selected:
+                device.send_feedback(selected)
+
+    @property
+    def supports_position_feedback(self) -> bool:
+        """Advertise actuated handover only when every feedback recipient supports torque control."""
+        devices = [
+            device for device in (self.base, self.arm) if device is not None and device.feedback_features
+        ]
+        return bool(devices) and all(
+            getattr(device, "supports_position_feedback", True)
+            and callable(getattr(device, "enable_torque", None))
+            and callable(getattr(device, "disable_torque", None))
+            for device in devices
+        )
+
+    def enable_torque(self) -> None:
+        """Enable torque on the devices that receive position feedback."""
+        self._set_torque("enable_torque")
+
+    def disable_torque(self) -> None:
+        """Release the devices that receive position feedback for human control."""
+        self._set_torque("disable_torque")
+
+    def _set_torque(self, method: str) -> None:
+        if not self.supports_position_feedback:
+            raise NotImplementedError(
+                "The composed devices do not support position feedback with torque control."
+            )
+        for device in (self.base, self.arm):
+            if device is not None and device.feedback_features:
+                getattr(device, method)()
 
     def on_observation(self, observation: RobotObservation) -> None:
         """Pass the raw observation to both input devices before requesting their actions."""
@@ -144,7 +256,8 @@ class MobileBaseTeleop:
         if self.arm is not None:
             arm_action = {f"{self.arm_prefix}{key}": value for key, value in self.arm.get_action().items()}
         else:
-            arm_action = self._held_arm_action(observation, base_action.keys())
+            arm_action = {}
+        self._check_overlap(arm_action, base_action)
         return {**arm_action, **base_action}
 
     @classmethod
