@@ -120,7 +120,7 @@ def test_every_recipe_parses_and_validates(benchmark, policy, tmp_path):
     assert cfg.policy.type == policy
 
 
-@pytest.mark.parametrize("policy", ["flux3", "lawam", "fastwam"])
+@pytest.mark.parametrize("policy", ["flux3", "lawam", "fastwam", "lingbot_va"])
 def test_world_model_recipes_accept_dataset_features(benchmark, policy, tmp_path):
     import draccus
 
@@ -155,6 +155,8 @@ def test_world_model_recipes_accept_dataset_features(benchmark, policy, tmp_path
     if hasattr(cfg.policy, "set_dataset_feature_metadata"):
         cfg.policy.set_dataset_feature_metadata(features)
     cfg.policy.validate_features()
+    if hasattr(cfg.policy, "obs_cam_keys"):
+        assert set(cfg.policy.obs_cam_keys) <= set(features)
 
 
 @pytest.mark.parametrize("policy", ["dm05", "pi05", "molmoact2"])
