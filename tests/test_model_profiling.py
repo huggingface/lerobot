@@ -3,10 +3,12 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
 
+import io
 import json
 import subprocess
 import sys
 import tomllib
+import zipfile
 from types import SimpleNamespace
 
 import pytest
@@ -55,6 +57,34 @@ def test_unknown_policy_filter_fails(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["model_profiling.py", "matrix"])
     with pytest.raises(SystemExit, match="2"):
         ci.main()
+
+
+def test_archive_preserves_run_attempt_and_only_public_report_files(monkeypatch, tmp_path):
+    run = {
+        "id": 123,
+        "head_sha": "abc",
+        "head_branch": "main",
+        "created_at": "2026-07-21T12:00:00Z",
+        "html_url": "https://github.com/huggingface/lerobot/actions/runs/123",
+    }
+    for key, value in {
+        "GITHUB_RUN_ID": "123",
+        "GITHUB_RUN_ATTEMPT": "2",
+        "GITHUB_REPOSITORY": "huggingface/lerobot",
+        "GITHUB_TOKEN": "test",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(ci, "urlopen", lambda *args, **kwargs: io.BytesIO(json.dumps(run).encode()))
+    (tmp_path / "results.json").write_text(json.dumps([{"policy": "act", "status": "failed"}]))
+    (tmp_path / "README.md").write_text("Measured results")
+    (tmp_path / "unrelated.txt").write_text("Do not publish")
+    folder = ci.archive(tmp_path)
+    metadata = json.loads((folder / "run.json").read_text())
+    assert metadata["key"] == "123-2"
+    assert metadata["conclusion"] == "failure"
+    assert metadata["created_at"] == run["created_at"]
+    with zipfile.ZipFile(folder / "report.zip") as report:
+        assert set(report.namelist()) == {"results.json", "README.md"}
 
 
 def test_runner_propagates_failure_and_writes_row(monkeypatch, tmp_path):
@@ -127,6 +157,89 @@ def test_world_model_recipes_accept_dataset_features(benchmark, policy, tmp_path
     cfg.policy.validate_features()
 
 
+@pytest.mark.parametrize("policy", ["dm05", "pi05", "molmoact2"])
+def test_recipes_normalize_dataset_without_quantile_stats(benchmark, policy):
+    import draccus
+    import torch
+    from datasets import Dataset
+
+    from lerobot.configs import FeatureType, PolicyFeature
+    from lerobot.lerobot_types import TransitionKey
+    from lerobot.processor import NormalizerProcessorStep
+
+    cfg = draccus.parse(benchmark.ProfileConfig, args=ci.policy_args(policy))
+    features = {
+        "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+        "action": PolicyFeature(FeatureType.ACTION, (2,)),
+    }
+    cfg.policy.input_features = {"observation.state": features["observation.state"]}
+    cfg.policy.output_features = {"action": features["action"]}
+    original_stats = {key: {"mean": torch.ones(2), "std": torch.full((2,), 2.0)} for key in features}
+    dataset = SimpleNamespace(
+        meta=SimpleNamespace(stats=original_stats),
+        hf_dataset=Dataset.from_dict(
+            {key: [[float(i), float(i * 2)] for i in range(100)] for key in features}
+        ),
+    )
+    stats = benchmark.profiling_stats(cfg, SimpleNamespace(config=cfg.policy), dataset)
+    assert cfg.policy.normalization_mapping["STATE"] == "QUANTILES"
+    assert all("q01" in stats[key] and "q99" in stats[key] for key in features)
+    assert all("q01" not in original_stats[key] for key in features)
+    assert -1e-6 <= stats["action"]["q01"][0] < 3
+    assert 95 < stats["action"]["q99"][0] <= 100
+    normalizer = NormalizerProcessorStep(
+        features=features,
+        norm_map=cfg.policy.normalization_mapping,
+        stats=stats,
+    )
+    result = normalizer(
+        {
+            TransitionKey.OBSERVATION: {"observation.state": torch.full((1, 2), 2.0)},
+            TransitionKey.ACTION: torch.full((1, 2), 2.0),
+        }
+    )
+    assert torch.isfinite(result[TransitionKey.OBSERVATION]["observation.state"]).all()
+    assert torch.isfinite(result[TransitionKey.ACTION]).all()
+
+
+def test_flux_preparation_uses_command_deltas_not_raw_action_stats(benchmark, monkeypatch, tmp_path):
+    import draccus
+    import numpy as np
+    from datasets import Dataset
+
+    from lerobot.datasets import lerobot_dataset
+
+    cfg = draccus.parse(benchmark.ProfileConfig, args=ci.policy_args("flux3"))
+    dataset = SimpleNamespace(
+        root=tmp_path,
+        meta=SimpleNamespace(total_episodes=1, episodes={"tasks": [["push"]]}),
+        hf_dataset=Dataset.from_dict(
+            {
+                "episode_index": [0, 0, 0],
+                "action": [[10.0, 20.0], [13.0, 24.0], [15.0, 25.0]],
+                "observation.state": [[1.0, 2.0], [2.0, 3.0], [3.0, 4.0]],
+            }
+        ),
+    )
+    monkeypatch.setattr(lerobot_dataset, "LeRobotDataset", lambda *args, **kwargs: dataset)
+    benchmark.prepare_policy_config(cfg, dataset)
+    np.testing.assert_allclose(cfg.policy.normalization_stats["action"]["q01"], [0.04, 0.02])
+    np.testing.assert_allclose(cfg.policy.normalization_stats["state"]["q01"], [1.02, 2.02])
+
+
+def test_current_observation_preserves_singleton_video_channels(benchmark):
+    import torch
+
+    batch = {
+        "observation.images.front": torch.randn(1, 3, 16, 16),
+        "observation.state": torch.randn(1, 1, 8),
+    }
+    cfg = SimpleNamespace(observation_delta_indices=[0])
+    result = benchmark.current_observation(batch, cfg)
+    assert torch.equal(result["observation.images.front"], batch["observation.images.front"])
+    assert torch.equal(result["observation.state"], batch["observation.state"][:, 0])
+
+
 def test_measure_excludes_warmup_and_preserves_batch(benchmark, monkeypatch):
     import torch
 
@@ -166,7 +279,7 @@ def test_current_observation_selects_present_not_last_future_frame(benchmark):
     import torch
 
     batch = {
-        "observation.images.front": torch.arange(4).reshape(1, 4, 1),
+        "observation.images.front": torch.arange(4).reshape(1, 4, 1, 1, 1),
         "observation.state": torch.arange(3).reshape(1, 3, 1),
         "action": torch.ones(1, 2),
     }
@@ -252,6 +365,8 @@ def test_real_act_inference_and_training_write_results(benchmark, monkeypatch, t
     benchmark.main(cfg)
     row = json.loads((cfg.output_dir / "result.json").read_text())
     assert row["status"] == "success"
+    assert len(row["config_fingerprint"]) == 64
+    assert row["configuration"]["policy"]["type"] == "act"
     assert all(len(row[mode]["samples_ms"]) == 2 for mode in ("inference", "training"))
     assert any(not torch.equal(captured["before"][k], v) for k, v in captured["policy"].state_dict().items())
 

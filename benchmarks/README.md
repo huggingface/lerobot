@@ -18,7 +18,7 @@ All ordinary policy, processor, dataset and optimizer CLI arguments are accepted
 
 ## Measurements
 
-`result.json` contains raw latency samples, median and p95 latency in milliseconds, peak allocated and reserved CUDA memory in bytes, policy and dataset identity, commit, device, PyTorch/CUDA versions, dtype, warmup and batch size. CPU/MPS CUDA-memory fields are null. The effective configuration is saved beside the result.
+`result.json` contains raw latency samples, median and p95 latency in milliseconds, peak allocated and reserved CUDA memory in bytes, policy and dataset identity, commit, device, PyTorch/CUDA versions, dtype, warmup and batch size. It also stores policy, optimizer and accelerator settings with a configuration fingerprint for history comparisons. CPU/MPS CUDA-memory fields are null. The effective configuration and preprocessing state are saved beside the result.
 
 - **Inference:** reset policy state and call `select_action` for every sample. This includes computing a fresh action chunk where applicable; queued-action cache hits cannot make the benchmark appear faster. Observations use timestamp zero from the dataset windows. Inference runs before training changes the weights.
 - **Training:** reuse `lerobot_train.update_policy`, including backward, gradient clipping, optimizer and scheduler updates. Gaussian actor uses the existing SAC update with real dataset rewards and adjacent next observations, including actor, critics, temperature and target updates.
@@ -30,6 +30,8 @@ The default CI recipes use policy defaults, PushT for the smaller policies and s
 
 Every workflow run produces a GitHub job summary and downloadable `model-profiling-report` artifact containing `results.json` and a Markdown table. Separate `model-profiling-<policy>` artifacts contain the effective configurations, individual results and optional traces. A filtered manual run reports only the requested policies. Failed and missing results remain visible.
 
-The public [LeRobot health dashboard](https://huggingface.co/spaces/lerobot/health-dashboard) reads these artifacts directly, including individual policy results as they finish. It provides a sortable table of inference and training latency, peak GPU memory, error details, run selection and report downloads. The Space uses a server-side GitHub token with Actions read access; the workflow needs no dashboard publishing credentials and sends no Slack notifications.
+The public [LeRobot health dashboard](https://huggingface.co/spaces/lerobot/health-dashboard) provides a sortable results table, error details and report downloads. Its History view charts inference or training latency by policy over the last month, three months, or all recorded runs. Matching setup comparisons use hardware, batch size, dtype, dataset and configuration fingerprint; source commits can differ.
 
-GitHub artifacts follow the repository's retention policy. Download reports you need to keep beyond that period.
+The workflow preserves each run and attempt under `data/<run-id>-<attempt>/` in the Space, using the existing `LEROBOT_HF_USER` secret with write access. Repository variable `MODEL_PROFILING_SPACE` overrides the destination. Archived JSON, report ZIP and source metadata remain available without GitHub authentication or artifact expiration. A valid server-side GitHub token also enables live results. No Slack notifications are sent.
+
+GitHub's raw per-policy artifacts follow the repository's retention policy. Download configurations and optional traces you need to retain separately.

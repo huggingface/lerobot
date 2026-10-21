@@ -92,6 +92,9 @@ jobs:
     if: always() && needs.matrix.result == 'success'
     needs: [matrix, profile]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -115,3 +118,14 @@ jobs:
           path: |
             profiling-results/results.json
             profiling-results/README.md
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - name: Preserve report history in the public dashboard
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+          PROFILE_SPACE: ${{ vars.MODEL_PROFILING_SPACE || 'lerobot/health-dashboard' }}
+        run: |
+          report=$(python3 scripts/ci/model_profiling.py archive)
+          uvx --from huggingface-hub==1.24.0 hf upload "$PROFILE_SPACE" "$report" \
+            "data/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --repo-type space \
+            --commit-message "Preserve profiling run ${GITHUB_RUN_ID}, attempt ${GITHUB_RUN_ATTEMPT}"

@@ -10,10 +10,12 @@ uv run python benchmarks/profile_policies.py --policy.type=act \
     --batch_size=1 --policy.device=cuda --output_dir=profiling-results/act
 """
 
+import hashlib
 import json
 import math
 import os
 import platform
+import runpy
 import statistics
 import subprocess
 import time
@@ -25,6 +27,7 @@ from itertools import repeat
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
 import torch
 from torch.utils.data import default_collate
 
@@ -32,6 +35,7 @@ from lerobot.configs import parser
 from lerobot.configs.parallelism import world_size_from_env
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import make_dataset
+from lerobot.datasets.compute_stats import RunningQuantileStats
 from lerobot.distributed.factory import make_accelerator
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies import make_policy, make_pre_post_processors
@@ -47,6 +51,7 @@ class ProfileConfig(TrainPipelineConfig):
     warmup: int = 3
     iterations: int = 10
     trace: bool = False
+    compute_missing_quantiles: bool = False
 
 
 def measure(
@@ -115,9 +120,51 @@ def current_observation(batch: dict[str, Any], policy_cfg: Any) -> dict[str, Any
             indices = getattr(policy_cfg, "image_observation_delta_indices", None) or indices
         elif key == "observation.state":
             indices = getattr(policy_cfg, "state_observation_delta_indices", None) or indices
-        if indices is not None:
+        feature = (getattr(policy_cfg, "input_features", None) or {}).get(key)
+        feature_rank = len(feature.shape) if feature else (3 if key.startswith("observation.image") else 1)
+        # The video reader already squeezes a singleton time window; tabular columns retain it.
+        if indices is not None and value.ndim == feature_rank + 2:
             observation[key] = value[:, indices.index(0)]
     return observation
+
+
+def profiling_stats(cfg: ProfileConfig, policy: Any, dataset: Any) -> dict:
+    stats = deepcopy(rename_stats(dataset.meta.stats, cfg.rename_map))
+    if cfg.compute_missing_quantiles:
+        features = {**policy.config.input_features, **policy.config.output_features}
+        for source_key in dataset.meta.stats:
+            key = (cfg.rename_map or {}).get(source_key, source_key)
+            feature = features.get(key)
+            if feature is None or policy.config.normalization_mapping.get(feature.type) != "QUANTILES":
+                continue
+            if all(q in stats[key] for q in ("q01", "q99")):
+                continue
+            accumulator = RunningQuantileStats(quantile_list=[0.01, 0.99])
+            table = dataset.hf_dataset.select_columns([source_key]).with_format("numpy")
+            for batch in table.iter(batch_size=4096):
+                accumulator.update(np.asarray(batch[source_key]))
+            computed = accumulator.get_statistics()
+            for q in ("q01", "q99"):
+                stats[key].setdefault(q, computed[q])
+    return stats
+
+
+def prepare_policy_config(cfg: ProfileConfig, dataset: Any) -> None:
+    if (
+        cfg.policy.type == "flux3"
+        and not cfg.policy.pretrained_path
+        and cfg.policy.normalization_stats is None
+    ):
+        # Reuse the documented export's command-delta statistics, rather than raw action quantiles.
+        export = runpy.run_path(str(Path(__file__).resolve().parents[1] / "examples/flux3/export_base.py"))
+        cfg.policy.normalization_stats, _ = export["compute_statistics"](
+            cfg.dataset.repo_id,
+            dataset.meta,
+            {"episodes": cfg.dataset.episodes},
+            root=dataset.root,
+            action_representation=cfg.policy.action_representation,
+            absolute_dims=cfg.policy.delta_absolute_dims,
+        )
 
 
 def make_training_step(
@@ -203,6 +250,7 @@ def main(cfg: ProfileConfig) -> None:
         "iterations": cfg.iterations,
         "dataset": cfg.dataset.repo_id,
         "dataset_revision": cfg.dataset.revision,
+        "dataset_episodes": cfg.dataset.episodes,
         "checkpoint": str(cfg.policy.pretrained_path) if cfg.policy.pretrained_path else None,
         "run_url": os.environ.get("PROFILE_RUN_URL"),
     }
@@ -212,16 +260,23 @@ def main(cfg: ProfileConfig) -> None:
             raise ValueError(f"Requested {device}, accelerator selected {accelerator.device}")
         set_seed(cfg.seed or 0)
         dataset = make_dataset(cfg)
+        prepare_policy_config(cfg, dataset)
         policy = make_policy(cfg.policy, ds_meta=dataset.meta, rename_map=cfg.rename_map)
         cfg.save_pretrained(cfg.output_dir)
+        saved = json.loads((cfg.output_dir / "train_config.json").read_text())
+        row["configuration"] = {key: saved.get(key) for key in ("policy", "optimizer", "accelerator")}
+        row["config_fingerprint"] = hashlib.sha256(
+            json.dumps(row["configuration"], sort_keys=True).encode()
+        ).hexdigest()
         row["parameter_dtype"] = str(next(policy.parameters()).dtype)
         row["mixed_precision"] = cfg.accelerator.mixed_precision
         # Build processors from the effective policy config and this dataset's statistics.
         preprocessor, _ = make_pre_post_processors(
             policy.config,
-            dataset_stats=rename_stats(dataset.meta.stats, cfg.rename_map),
+            dataset_stats=profiling_stats(cfg, policy, dataset),
             dataset_meta=dataset.meta,
         )
+        preprocessor.save_pretrained(cfg.output_dir / "preprocessor")
 
         def preprocess(batch: dict[str, Any]) -> Any:
             for key in dataset.meta.camera_keys:
