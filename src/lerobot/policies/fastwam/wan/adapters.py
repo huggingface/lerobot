@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from lerobot.utils.device_utils import auto_select_torch_device
+
 if TYPE_CHECKING:
     from diffusers import AutoencoderKLWan
 
@@ -40,7 +42,7 @@ class WanVideoVAE38(torch.nn.Module):
     def __init__(
         self,
         dtype: torch.dtype = torch.float32,
-        device: str | torch.device = "cuda",
+        device: str | torch.device | None = None,
         *,
         pretrained: AutoencoderKLWan,
     ) -> None:
@@ -48,9 +50,11 @@ class WanVideoVAE38(torch.nn.Module):
         # The Wan2.2 VAE is a fixed pretrained model — it is never trained from scratch,
         # so a real `AutoencoderKLWan` (with weights) must always be supplied (loaded from
         # the diffusers repo by `load_pretrained_wan_vae`). No random/offline build path.
-        self.vae = pretrained.to(device=device, dtype=dtype)
+        self.vae = pretrained.to(
+            device=device if device is not None else auto_select_torch_device(), dtype=dtype
+        )
 
-        # Read the standardization stats from the VAE's own config (diffusers populates
+        # Read the standardization stats from the VAE's own config
         # these from vae/config.json) — single source of truth, no local copy. diffusers'
         # encode/decode return *raw* latents, so we apply (latent - mean) / std ourselves.
         # Non-persistent: kept out of state_dict.

@@ -24,13 +24,16 @@ its writes live in the same method.
 """
 
 import logging
+import os
 from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import torch.distributed as dist
-from huggingface_hub import HfApi, ModelCard, ModelCardData, snapshot_download
+from huggingface_hub import HfApi, ModelCard, ModelCardData, is_offline_mode, model_info, snapshot_download
+from huggingface_hub.errors import HFValidationError, OfflineModeIsEnabled
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -38,6 +41,7 @@ from lerobot.__version__ import __version__
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.rewards import RewardModelConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.types import PolicyFeature
 from lerobot.distributed.checkpoint import (
     is_sharded_module,
     load_sharded_model,
@@ -347,6 +351,16 @@ def save_training_state(
 # ---------------------------------------------------------------------------------------------
 
 
+def _resume_checkpoint_dir(cfg: TrainPipelineConfig) -> Path:
+    """Return the checkpoint directory a resumed run restores from."""
+    if cfg.checkpoint_path is None:
+        raise ValueError(
+            "cfg.checkpoint_path is unset: `--resume=true` needs `--config_path=<checkpoint>` and "
+            "cannot be combined with `--policy.path` / `--reward_model.path`."
+        )
+    return cfg.checkpoint_path
+
+
 def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
     """Phase 1 — before `accelerator.prepare()`: restore RNG and return the step counter.
 
@@ -363,10 +377,10 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
 
     Raises:
         NotADirectoryError: If the checkpoint has no `training_state/` directory.
-        ValueError: If the resumed topology crosses the sharded/non-sharded boundary relative
-            to the one recorded in the checkpoint.
+        ValueError: If `cfg.checkpoint_path` is unset, or if the resumed topology crosses the
+            sharded/non-sharded boundary relative to the one recorded in the checkpoint.
     """
-    training_state_dir = cfg.checkpoint_path / TRAINING_STATE_DIR
+    training_state_dir = _resume_checkpoint_dir(cfg) / TRAINING_STATE_DIR
     if not training_state_dir.is_dir():
         raise NotADirectoryError(training_state_dir)
     metadata = load_training_metadata(training_state_dir)
@@ -481,10 +495,11 @@ def resume_after_prepare(
         scheduler (LRScheduler | None): The scheduler to restore, or None if the run has none.
 
     Raises:
+        ValueError: If `cfg.checkpoint_path` is unset.
         FileNotFoundError: If the checkpoint format declares DCP model shards but the shard
             directory is missing (e.g. it was pruned before upload).
     """
-    checkpoint_dir = cfg.checkpoint_path
+    checkpoint_dir = _resume_checkpoint_dir(cfg)
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
     unwrapped = accelerator.unwrap_model(policy)
@@ -682,21 +697,13 @@ def publish_trained_model(
 # Model card
 # ---------------------------------------------------------------------------------------------
 
-_BASE_MODEL_MAPPING = {
-    "smolvla": "lerobot/smolvla_base",
-    "pi0": "lerobot/pi0_base",
-    "pi05": "lerobot/pi05_base",
-    "pi0_fast": "lerobot/pi0fast-base",
-    "xvla": "lerobot/xvla-base",
-}
-
 
 def build_card_context(
     cfg: TrainPipelineConfig | None,
     dataset_meta: "LeRobotDatasetMetadata | None",
-    input_features: dict | None,
-    output_features: dict | None,
-) -> dict:
+    input_features: dict[str, PolicyFeature] | None,
+    output_features: dict[str, PolicyFeature] | None,
+) -> dict[str, Any]:
     """Collect optional data for the model-card template.
 
     Returns plain values only (no Markdown) — the template in
@@ -709,15 +716,17 @@ def build_card_context(
             if available.
         dataset_meta (LeRobotDatasetMetadata | None): Dataset metadata supplying the dataset,
             robot-type, and camera sections, if available.
-        input_features (dict | None): The policy's input feature declarations, if any.
-        output_features (dict | None): The policy's output feature declarations, if any.
+        input_features (dict[str, PolicyFeature] | None): The policy's input feature
+            declarations, if any.
+        output_features (dict[str, PolicyFeature] | None): The policy's output feature
+            declarations, if any.
 
     Returns:
-        dict: Template context with `training`, `input_features`, `output_features`,
+        dict[str, Any]: Template context with `training`, `input_features`, `output_features`,
             `dataset`, `robot_type`, and `cameras` entries; unavailable pieces stay
             empty/None.
     """
-    context = {
+    context: dict[str, Any] = {
         "training": None,
         "input_features": input_features or {},
         "output_features": output_features or {},
@@ -751,6 +760,26 @@ def build_card_context(
     return context
 
 
+def _hub_parent(model_cfg: PreTrainedConfig | RewardModelConfig) -> tuple[str | None, str | None]:
+    """The Hub repo the model was fine-tuned from and its `license:` tag, as in transformers.
+
+    `pretrained_path` only counts as a parent once the Hub confirms the repo, so a local
+    checkpoint, a path from another machine, or no network give no parent rather than an
+    invalid `base_model`.
+    """
+    pretrained_path = model_cfg.pretrained_path
+    if pretrained_path is None or os.path.isdir(pretrained_path) or is_offline_mode():
+        return None, None
+    try:
+        info = model_info(str(pretrained_path))
+    except (httpx.HTTPError, HFValidationError, OfflineModeIsEnabled):
+        return None, None
+    license_tag = next(
+        (tag.removeprefix("license:") for tag in info.tags or [] if tag.startswith("license:")), None
+    )
+    return info.id, license_tag
+
+
 def generate_model_card(
     model_cfg: PreTrainedConfig | RewardModelConfig,
     cfg: TrainPipelineConfig | None = None,
@@ -766,7 +795,8 @@ def generate_model_card(
 
     Args:
         model_cfg (PreTrainedConfig | RewardModelConfig): The model config providing type,
-            license, tags, repo id, and — for policies — the feature declarations.
+            license, tags, repo id, the pretrained path (the card's `base_model`, whose license
+            an unset `license` inherits), and — for policies — the feature declarations.
         cfg (TrainPipelineConfig | None, optional): The training config for the training and
             dataset card sections. Defaults to None.
         dataset_meta (LeRobotDatasetMetadata | None, optional): Dataset metadata for the
@@ -776,7 +806,10 @@ def generate_model_card(
         ModelCard: The rendered and validated LeRobot model card.
     """
     model_type = model_cfg.type
-    base_model = _BASE_MODEL_MAPPING.get(model_type)
+    # Like transformers' TrainingSummary: an unset license inherits the base repo's, and an
+    # unknown one is left out of the card rather than guessed.
+    base_model, parent_license = _hub_parent(model_cfg)
+    card_license = model_cfg.license or parent_license
 
     if isinstance(model_cfg, RewardModelConfig):
         tags = {"robotics", "lerobot", "reward-model", model_type}
@@ -797,13 +830,14 @@ def generate_model_card(
         context["base_model"] = base_model
 
     card_data = ModelCardData(
-        license=model_cfg.license or "apache-2.0",
+        license=card_license,
         library_name="lerobot",
         pipeline_tag="robotics",
         tags=list(tags.union(model_cfg.tags or [])),
         model_name=model_type,
         datasets=cfg.dataset.repo_id if cfg is not None else None,
         base_model=base_model,
+        base_model_relation="adapter" if base_model and getattr(model_cfg, "use_peft", False) else None,
     )
     card = ModelCard.from_template(card_data, template_str=template_card, **context)
     card.validate()

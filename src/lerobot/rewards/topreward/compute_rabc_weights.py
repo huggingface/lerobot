@@ -49,6 +49,7 @@ from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
 from lerobot.lerobot_types import TransitionKey
+from lerobot.processor import create_transition
 from lerobot.rewards.topreward.configuration_topreward import TOPRewardConfig
 from lerobot.rewards.topreward.modeling_topreward import TOPRewardModel
 from lerobot.rewards.topreward.processor_topreward import TOPRewardEncoderProcessorStep
@@ -103,7 +104,7 @@ def compute_instruction_rewards_for_prefixes(
 ) -> np.ndarray:
     """Score an episode via prefix sweep and return a per-frame normalised curve."""
     if num_samples is None or num_samples >= num_frames:
-        prefix_lengths = np.arange(1, num_frames + 1, dtype=np.int64)
+        prefix_lengths: np.ndarray = np.arange(1, num_frames + 1, dtype=np.int64)
     else:
         prefix_lengths = np.unique(np.linspace(1, num_frames, num_samples).round().astype(np.int64))
 
@@ -112,12 +113,11 @@ def compute_instruction_rewards_for_prefixes(
     for length in prefix_lengths:
         frames = episode_frames[: int(length)].unsqueeze(0)  # (1, T, C, H, W)
 
-        transition = {
-            TransitionKey.OBSERVATION: {image_key: frames},
-            TransitionKey.COMPLEMENTARY_DATA: {"task": task},
-        }
+        transition = create_transition(observation={image_key: frames}, complementary_data={"task": task})
         encoded = encoder(transition)
         obs = encoded[TransitionKey.OBSERVATION]
+        if obs is None:
+            raise ValueError("TOPRewardEncoderProcessorStep returned a transition without an observation")
         batch = {
             key: value.to(device) if isinstance(value, torch.Tensor) else value for key, value in obs.items()
         }

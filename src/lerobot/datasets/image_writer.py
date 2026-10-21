@@ -15,6 +15,7 @@
 # limitations under the License.
 import logging
 import multiprocessing
+import multiprocessing.queues
 import queue
 import threading
 from pathlib import Path
@@ -24,6 +25,12 @@ import PIL.Image
 import torch
 
 logger = logging.getLogger(__name__)
+
+# One pending write: (image, destination path, PNG compress level). ``None`` is the stop sentinel.
+ImageWriterItem = tuple[np.ndarray | PIL.Image.Image, Path, int]
+ImageWriterQueue = (
+    queue.Queue[ImageWriterItem | None] | multiprocessing.queues.JoinableQueue[ImageWriterItem | None]
+)
 
 
 def safe_stop_image_writer(func):
@@ -162,7 +169,7 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path, compress_level
         logger.error("Error writing image %s: %s", fpath, e)
 
 
-def worker_thread_loop(queue: queue.Queue):
+def worker_thread_loop(queue: ImageWriterQueue) -> None:
     while True:
         item = queue.get()
         if item is None:
@@ -173,7 +180,7 @@ def worker_thread_loop(queue: queue.Queue):
         queue.task_done()
 
 
-def worker_process(queue: queue.Queue, num_threads: int):
+def worker_process(queue: ImageWriterQueue, num_threads: int) -> None:
     threads = []
     for _ in range(num_threads):
         t = threading.Thread(target=worker_thread_loop, args=(queue,))
@@ -199,12 +206,12 @@ class AsyncImageWriter:
     the number of threads. If it is still not stable, try to use 1 subprocess, or more.
     """
 
-    def __init__(self, num_processes: int = 0, num_threads: int = 1):
+    def __init__(self, num_processes: int = 0, num_threads: int = 1) -> None:
         self.num_processes = num_processes
         self.num_threads = num_threads
-        self.queue = None
-        self.threads = []
-        self.processes = []
+        self.queue: ImageWriterQueue
+        self.threads: list[threading.Thread] = []
+        self.processes: list[multiprocessing.Process] = []
         self._stopped = False
 
         if num_threads <= 0 and num_processes <= 0:
@@ -229,20 +236,20 @@ class AsyncImageWriter:
 
     def save_image(
         self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
-    ):
+    ) -> None:
         if isinstance(image, torch.Tensor):
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()
         self.queue.put((image, fpath, compress_level))
 
-    def wait_until_done(self):
+    def wait_until_done(self) -> None:
         self.queue.join()
 
-    def stop(self):
+    def stop(self) -> None:
         if self._stopped:
             return
 
-        if self.num_processes == 0:
+        if isinstance(self.queue, queue.Queue):
             for _ in self.threads:
                 self.queue.put(None)
             for t in self.threads:

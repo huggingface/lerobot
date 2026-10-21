@@ -158,6 +158,8 @@ class RelativeActionsProcessorStep(ProcessorStep):
         action = new_transition.get(TransitionKey.ACTION)
         if action is None or state is None:
             return new_transition
+        if not isinstance(action, torch.Tensor):
+            raise ValueError(f"RelativeActionsProcessorStep expects a tensor action, got {type(action)}")
 
         mask = self._build_mask(action.shape[-1])
         new_transition[TransitionKey.ACTION] = to_relative_actions(action, state, mask)
@@ -228,6 +230,8 @@ class AbsoluteActionsProcessorStep(ProcessorStep):
         action = new_transition.get(TransitionKey.ACTION)
         if action is None:
             return new_transition
+        if not isinstance(action, torch.Tensor):
+            raise ValueError(f"AbsoluteActionsProcessorStep expects a tensor action, got {type(action)}")
 
         mask = self.relative_step._build_mask(action.shape[-1])
         new_transition[TransitionKey.ACTION] = to_absolute_actions(action, cached_state, mask)
