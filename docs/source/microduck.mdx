@@ -10,12 +10,12 @@ With this integration you can:
 
 ## How It Works
 
-| Data          | Source on the robot                                  | How LeRobot reaches it               |
-| ------------- | ---------------------------------------------------- | ------------------------------------ |
-| Commands      | `robotd`, JSON-RPC over `/run/robotd.sock`           | ssh-forwarded Unix socket            |
-| State (50 Hz) | `robotd` `robot.state` stream                        | same socket, second connection       |
-| Camera        | `mediad`, `GET http://<ip>:8080/frame` (upright PNG) | HTTP over the LAN                    |
-| Hub policies  | `updaterd`, JSON-RPC over `/run/updaterd.sock`       | ssh-forwarded Unix socket (optional) |
+| Data          | Source on the robot                            | How LeRobot reaches it                 |
+| ------------- | ---------------------------------------------- | -------------------------------------- |
+| Commands      | `robotd`, JSON-RPC over `/run/robotd.sock`     | ssh-forwarded Unix socket              |
+| State (50 Hz) | `robotd` `robot.state` stream                  | same socket, second connection         |
+| Camera        | `mediad`, hardware-encoded H.264               | WebRTC, signalling on `ws://<ip>:8443` |
+| Hub policies  | `updaterd`, JSON-RPC over `/run/updaterd.sock` | ssh-forwarded Unix socket (optional)   |
 
 `robotd` zeroes the twist if no command arrives for 500 ms, so the duck stops if LeRobot stops or the connection drops.
 
@@ -39,10 +39,96 @@ If the state stream stops, `get_observation` and `send_action` raise `DeviceNotC
 4. From a LeRobot source checkout, install the recording, keyboard, and visualization dependencies:
 
    ```bash
-   uv sync --locked --extra core_scripts --extra test
+   uv sync --locked --extra core_scripts --extra microduck --extra test
    ```
 
    Use `uv run --no-sync` before the commands below to use this environment.
+
+## Validate the Camera First
+
+The default transport is `--robot.camera_transport=webrtc`. It receives mediad's hardware H.264 stream,
+rotates it using `media.video`, and stores the latest RGB image at the configured size. Close the Duck's
+`:8080` browser console and other viewers first: they compete for its WebRTC session. The receiver uses
+LAN host candidates, without a public STUN server. No Hugging Face token is involved.
+
+Run this camera-only diagnostic from this checkout. It does **not** connect to `robotd`, enable motors,
+send motion commands, or require an SSH tunnel. Leave the Duck's normal daemons running:
+
+```bash
+uv sync --locked --extra microduck --extra core_scripts --extra test
+export DUCK_IP=192.168.1.42 # replace with your Duck's IP
+uv run --no-sync python examples/microduck/check_camera.py \
+    --host "$DUCK_IP" --seconds 30 --min-fps 4 \
+    --save-frame outputs/microduck-webrtc.png
+```
+
+For a live video window, add `--preview` (requires an OpenCV build with GUI support, such as the
+macOS Cocoa build). Press **Q** or **Esc** in that window, or close it, to stop. For a longer preview:
+
+```bash
+uv run --no-sync python examples/microduck/check_camera.py \
+    --host "$DUCK_IP" --preview --seconds 300
+```
+
+The preview scales large images to fit on screen and runs in the same process as the receiver, so keep
+other Duck video viewers closed. Rendering adds some laptop work to the timing measurements.
+
+Move a colored object through the camera view during the test, then open the saved PNG to check that
+it is upright and colors are correct. On macOS: `open outputs/microduck-webrtc.png`.
+
+The diagnostic prints delivered FPS, receive-gap p50/p95/max, and whether relative media timestamps
+increase. `PASS` requires at least the requested mean FPS and, for WebRTC, increasing timestamps.
+For the standard LightNav checkpoint, start with 4 FPS; inspect the gap metrics too, since a mean above
+4 can hide pauses. This validates camera delivery, not LightNav inference or robot control. Thirty FPS
+is a camera configuration, not a guaranteed delivered rate. Exit codes are 0 for pass, 1 for failure,
+and 130 for Ctrl-C.
+
+Run again to check that the first session was released. Compare the snapshot transport separately:
+
+```bash
+uv run --no-sync python examples/microduck/check_camera.py \
+    --host "$DUCK_IP" --transport snapshot --seconds 30 --min-fps 4 \
+    --save-frame outputs/microduck-snapshot.png
+```
+
+Both diagnostics measure local delivery timing, **not sensor-to-laptop latency**. To measure that
+latency independently, film a millisecond clock alongside the displayed stream or add synchronized
+capture timestamps at the source. Media timestamps alone do not establish a shared clock.
+
+Diagnostic flags: `--host` is required; `--transport` defaults to `webrtc`; `--signalling-port` to
+8443; `--camera-port` to 8080; `--seconds` to 30 (after the first frame); `--timeout` to 10 seconds
+(startup/stall or HTTP request); `--min-fps` to 4; `--save-frame` optionally saves the last upright
+image. A refused session, stall, or decoding error fails the diagnostic instead of silently retrying.
+The robot adapter itself retries WebRTC connections after one second.
+
+If WebRTC fails, close other viewers and check port 8443 and mediad. Select
+`--robot.camera_transport=snapshot` explicitly for the HTTP fallback; there is no automatic fallback.
+The receiver includes a process-wide aiortc DTLS cipher compatibility patch for GStreamer's RSA
+certificate. It uses a private aiortc API and was tested locally with the locked aiortc 1.15.0; Duck
+firmware interoperability still requires the real-device check above. If `media.video` goes unanswered
+for two seconds, a warning reports the assumed 90-degree mount; verify the saved image.
+
+### Camera Configuration and Freshness
+
+| Robot flag                      | Default  | Meaning                                                                 |
+| ------------------------------- | -------- | ----------------------------------------------------------------------- |
+| `camera_transport`              | `webrtc` | `webrtc` or explicit `snapshot` fallback                                |
+| `signalling_port`               | 8443     | WebRTC signalling port                                                  |
+| `camera_port`                   | 8080     | HTTP snapshot port                                                      |
+| `camera_width`, `camera_height` | 360, 640 | Upright observation dimensions                                          |
+| `camera_timeout_s`              | 2        | Snapshot timeout; WebRTC restarts after three times this without frames |
+| `use_camera`                    | true     | Disable for state-only operation                                        |
+
+`robot.get_camera_frame()` returns the image and freshness metadata atomically, or `None` before a
+valid frame arrives. `sequence` increases across camera reconnects within the robot instance;
+`received_at` is local `time.monotonic()` at receipt/decode; `media_time_s` is stream-relative and resets
+with a new WebRTC session (`session_id`). Snapshots have no media timestamp. During an outage the
+sample, sequence, and receive time stay unchanged, so consumers can detect both repeats and local age.
+The metadata is separate from the observation state vector and is not automatically saved in datasets.
+
+The observation API retains its last image during an outage. Before the first frame it returns one
+stable black placeholder; repeated reads do not manufacture new image identities. Navigation clients
+must reject repeated or stale samples; rendering an image alone does not prove the stream is live.
 
 ## Teleoperate
 
@@ -88,11 +174,11 @@ lerobot-record \
     --display_data=true
 ```
 
-The camera supplies its latest cached PNG image. Start with a dataset rate of 15 fps, then measure the camera update rate. If the recording loop runs faster than the camera, several dataset rows can use the same image.
+The camera supplies its latest cached upright RGB image from the selected transport. Start with a dataset rate of 15 fps, then measure the camera update rate. If the recording loop runs faster than the camera, several dataset rows can use the same image.
 
-If a camera request fails, LeRobot keeps the cached image for that connection. A new connection clears the cache and supplies black images until the first valid image arrives.
+If the camera stalls or a snapshot request fails, LeRobot keeps the cached image while reconnecting or retrying. A new connection clears the cache and supplies black images until the first valid image arrives.
 
-Dataset timestamps come from the frame index divided by the dataset rate. They describe the requested sample grid, not the camera capture time. The PNG endpoint supplies no capture timestamp, so the dataset rate and repeated pixels alone do not establish camera freshness.
+Dataset timestamps come from the frame index divided by the dataset rate. They describe the requested sample grid, not the camera capture time. The PNG endpoint supplies no capture timestamp; WebRTC supplies relative media timing. Neither the dataset rate nor repeated pixels alone establishes camera freshness.
 
 ### What Gets Saved
 
@@ -127,7 +213,7 @@ In another terminal, from the source checkout:
 
 ```bash
 export DUCK_IP=192.168.1.42
-curl --fail --max-time 5 "http://$DUCK_IP:8080/frame" -o /tmp/microduck-frame.png
+uv run --no-sync python examples/microduck/check_camera.py --host "$DUCK_IP" --seconds 10
 uv run --no-sync lerobot-teleoperate \
     --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
     --robot.robotd_address=127.0.0.1:17000 \
