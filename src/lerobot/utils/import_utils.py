@@ -142,8 +142,7 @@ _kernels_available = is_package_available("kernels")
 # Hardware SDKs
 _serial_available = is_package_available("pyserial", import_name="serial")
 _deepdiff_available = is_package_available("deepdiff")
-_dynamixel_sdk_available = is_package_available("dynamixel-sdk", import_name="dynamixel_sdk")
-_feetech_sdk_available = is_package_available("feetech-servo-sdk", import_name="scservo_sdk")
+_rustypot_available = is_package_available("rustypot")
 _reachy2_sdk_available = is_package_available("reachy2_sdk")
 _can_available = is_package_available("python-can", "can")
 _motorbridge_available = is_package_available("motorbridge")
@@ -164,6 +163,8 @@ _hidapi_available = is_package_available("hidapi", import_name="hid")
 _datasets_available = is_package_available("datasets")
 _pandas_available = is_package_available("pandas")
 _faker_available = is_package_available("faker")
+_msgpack_available = is_package_available("msgpack")
+_zenoh_available = is_package_available("eclipse-zenoh", import_name="zenoh")
 
 # Video encoding / decoding
 _av_available = is_package_available("av")
