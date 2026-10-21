@@ -64,6 +64,22 @@ def test_zero_threads():
         AsyncImageWriter(num_processes=0, num_threads=0)
 
 
+@pytest.mark.parametrize(
+    "num_processes, num_threads",
+    [
+        (1, 0),  # processes start, but each one has zero worker threads: queued frames hang forever
+        (1, -1),
+        (2, 0),
+        (-1, 1),  # negative process count creates no workers at all
+        (-1, 0),
+        (0, -1),
+    ],
+)
+def test_invalid_worker_counts(num_processes, num_threads):
+    with pytest.raises(ValueError):
+        AsyncImageWriter(num_processes=num_processes, num_threads=num_threads)
+
+
 def test_image_array_to_pil_image_float_array_wrong_range_0_255():
     image = np.random.rand(*DUMMY_HWC) * 255
     with pytest.raises(ValueError):

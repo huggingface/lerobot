@@ -214,8 +214,14 @@ class AsyncImageWriter:
         self.processes: list[multiprocessing.Process] = []
         self._stopped = False
 
-        if num_threads <= 0 and num_processes <= 0:
-            raise ValueError("Number of threads and processes must be greater than zero.")
+        if num_processes < 0:
+            raise ValueError(
+                f"Number of processes must be greater than or equal to zero, got {num_processes}."
+            )
+        if num_threads <= 0:
+            raise ValueError(
+                f"Number of threads per process must be greater than zero, got {num_threads}."
+            )
 
         if self.num_processes == 0:
             # Use threading
