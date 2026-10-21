@@ -292,9 +292,14 @@ def test_real_gaussian_actor_sac_update(benchmark, tmp_path):
             "episode_index": torch.tensor(0),
         }
     ] * 2
-    batch = benchmark.default_collate(dataset[:1])
+
+    def preprocess(batch):
+        # Real processors also return metadata that SAC must not treat as tensors.
+        return {**batch, "task": ["push the block"], "processed": True}
+
+    batch = preprocess(benchmark.default_collate(dataset[:1]))
     before = policy.actor.mean_layer.weight.detach().clone()
-    step = benchmark.make_training_step(cfg, policy, dataset, lambda b: b, None)
+    step = benchmark.make_training_step(cfg, policy, dataset, preprocess, None)
     result = step(batch)
     assert "loss_actor" in result.losses
     assert torch.isfinite(torch.tensor(result.losses["loss_critic"]))

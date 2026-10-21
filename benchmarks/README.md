@@ -28,17 +28,8 @@ The default CI recipes use policy defaults, PushT for the smaller policies and s
 
 ## Publishing
 
-Every workflow run produces a GitHub job summary and downloadable `model-profiling-report` artifact with `results.json`, a Markdown table, per-policy configurations, results and optional traces. A filtered manual run reports only the requested policies. Failed and missing results remain visible.
+Every workflow run produces a GitHub job summary and downloadable `model-profiling-report` artifact containing `results.json` and a Markdown table. Separate `model-profiling-<policy>` artifacts contain the effective configurations, individual results and optional traces. A filtered manual run reports only the requested policies. Failed and missing results remain visible.
 
-For a minimal rollout, use this summary and artifact first. For durable history, create a Hugging Face dataset and configure:
+The public [LeRobot health dashboard](https://huggingface.co/spaces/lerobot/health-dashboard) reads these artifacts directly, including individual policy results as they finish. It provides a sortable table of inference and training latency, peak GPU memory, error details, run selection and report downloads. The Space uses a server-side GitHub token with Actions read access; the workflow needs no dashboard publishing credentials and sends no Slack notifications.
 
-| Repository setting                  | Purpose                                                                |
-| ----------------------------------- | ---------------------------------------------------------------------- |
-| Variable `MODEL_PROFILING_REPO`     | Existing dataset ID, for example `lerobot/model-profiling-history`     |
-| Secret `LEROBOT_HF_USER`            | Read access to required assets and write access to the results dataset |
-| Secret `CI_SLACK_CHANNEL`           | Optional destination channel, shared with dependency CI notifications  |
-| Secret `SLACK_CIFEEDBACK_BOT_TOKEN` | Existing CI Slack bot token, with access to that channel               |
-
-The workflow uploads each run under `runs/<run-id>-<attempt>/` with [Hub folder uploads](https://huggingface.co/docs/huggingface_hub/guides/upload). It reuses the repository's existing Hugging Face Slack notification action to send the pass count and run link when a CI channel is configured. Neither destination is required to run the benchmark.
-
-For a browsable public dashboard, add a small [Hugging Face Space](https://huggingface.co/docs/hub/spaces-overview) reading the results dataset. Keep the dataset as the durable record, the Space as a view, and Slack as the notification channel. Hosting a dashboard is separate from this minimal profiling implementation.
+GitHub artifacts follow the repository's retention policy. Download reports you need to keep beyond that period.

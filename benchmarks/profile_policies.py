@@ -132,6 +132,7 @@ def make_training_step(
         algorithm.make_optimizers_and_scheduler()
         next_indices = [min(i + 1, len(dataset) - 1) for i in range(cfg.batch_size)]
         next_batch = preprocess(default_collate([dataset[i] for i in next_indices]))
+        next_state = {key: next_batch[key] for key in policy.config.input_features}
         done = torch.tensor(
             [
                 i + 1 >= len(dataset) or dataset[i]["episode_index"] != dataset[j]["episode_index"]
@@ -147,8 +148,8 @@ def make_training_step(
                 iter(
                     repeat(
                         {
-                            "state": batch,
-                            "next_state": next_batch,
+                            "state": {key: batch[key] for key in policy.config.input_features},
+                            "next_state": next_state,
                             "action": batch["action"],
                             "reward": batch["next.reward"].reshape(-1),
                             "done": batch.get("next.done", done).float().reshape(-1),
