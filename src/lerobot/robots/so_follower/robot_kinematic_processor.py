@@ -134,7 +134,7 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
             )
             r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
             desired = np.eye(4, dtype=float)
-            desired[:3, :3] = ref[:3, :3] @ r_abs
+            desired[:3, :3] = r_abs @ ref[:3, :3]
             desired[:3, 3] = ref[:3, 3] + delta_p
 
             self._command_when_disabled = desired.copy()

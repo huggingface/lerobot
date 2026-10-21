@@ -317,6 +317,29 @@ class HILSerlRobotEnvConfig(EnvConfig):
     def gym_kwargs(self) -> dict:
         return {}
 
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        """Refuse to build a vectorized environment: this one drives a physical robot.
+
+        `make_env` and `lerobot-eval` build simulated environments through `gym.make()`, which would look
+        for a non-existent `gym_gym_manipulator` package. The real-robot environment is built by
+        `lerobot.rl.gym_manipulator.make_robot_env` instead.
+
+        Args:
+            n_envs (`int`):
+                Ignored.
+            use_async_envs (`bool`, *optional*, defaults to `False`):
+                Ignored.
+
+        Raises:
+            NotImplementedError: Always, with the commands to use instead.
+        """
+        raise NotImplementedError(
+            "'gym_manipulator' is a real-robot environment: make_env and lerobot-eval cannot build it. "
+            "Run it with `python -m lerobot.rl.gym_manipulator --config_path <config.json>`, and evaluate a "
+            "policy on the robot with `python -m lerobot.rl.eval_policy --config_path <config.json>`. "
+            "See https://huggingface.co/docs/lerobot/hilserl"
+        )
+
 
 @EnvConfig.register_subclass("libero")
 @dataclass

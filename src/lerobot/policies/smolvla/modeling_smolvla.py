@@ -195,7 +195,11 @@ class SmolVLAPolicy(PreTrainedPolicy):
         return self.parameters()
 
     def _get_action_chunk(
-        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         # TODO: Check if this for loop is needed.
         # Context: In fact, self.queues contains only ACTION field, and in inference, we don't have action in the batch
@@ -234,19 +238,27 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
     @torch.no_grad()
     def predict_action_chunk(
-        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         self.eval()
 
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
-        actions = self._get_action_chunk(batch, noise, **kwargs)
+        actions = self._get_action_chunk(batch, noise=noise, **kwargs)
         return actions
 
     @torch.no_grad()
     def select_action(
-        self, batch: dict[str, Tensor], noise: Tensor | None = None, **kwargs: Unpack[RTCActionSelectKwargs]
+        self,
+        batch: dict[str, Tensor],
+        *,
+        noise: Tensor | None = None,
+        **kwargs: Unpack[RTCActionSelectKwargs],
     ) -> Tensor:
         """Select a single action given environment observations.
 
@@ -264,7 +276,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         if self._check_get_actions_condition():
-            actions = self._get_action_chunk(batch, noise)
+            actions = self._get_action_chunk(batch, noise=noise)
 
             # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
@@ -386,6 +398,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
         # Preprocess image features present in the batch
         for key in present_img_keys:
             img = batch[key][:, -1, :, :, :] if batch[key].ndim == 5 else batch[key]
+            if img.dtype == torch.uint8:
+                img = img.to(torch.float32) / 255.0
             if self.config.resize_imgs_with_padding is not None:
                 # SmolVLA stores the target as (width, height); the shared helper expects (height, width).
                 img = resize_with_pad(
@@ -777,6 +791,8 @@ class VLAFlowMatching(nn.Module):
         if noise is None:
             actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
             noise = self.sample_noise(actions_shape, device)
+        else:
+            noise = noise.to(device=device, dtype=torch.float32)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, state=state

@@ -18,10 +18,10 @@ from unittest.mock import call, patch
 
 import pytest
 
-from lerobot.motors.motors_bus import Motor, MotorNormMode, SerialMotorsBus
+from lerobot.motors.motors_bus import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
 from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _require_package_cache
-from tests.mocks.mock_motors_bus import DUMMY_1, DUMMY_2, MockBus, MockMotorsBus
+from tests.mocks.mock_motors_bus import DUMMY_1, DUMMY_2, DUMMY_3, MockBus, MockMotorsBus
 
 
 @pytest.fixture
@@ -453,3 +453,98 @@ def test_the_port_reopens_at_the_default_baudrate(bus):
     bus.connect(handshake=False)
 
     assert bus._bus.baudrate == bus.default_baudrate
+
+
+@pytest.fixture
+def arm() -> MockMotorsBus:
+    """Three calibration-capable motors."""
+    bus = MockMotorsBus(
+        "/dev/dummy-port",
+        {
+            "dummy_1": Motor(1, "model_4", MotorNormMode.RANGE_M100_100),
+            "dummy_2": Motor(2, "model_4", MotorNormMode.RANGE_M100_100),
+            "dummy_3": Motor(3, "model_4", MotorNormMode.RANGE_0_100),
+        },
+    )
+    bus.connect(handshake=False)
+    return bus
+
+
+def test_record_calibration(arm, monkeypatch):
+    """The motors are freed, in their mode and direction before the pose is asked; then homed at
+    the pose held, ranges swept by hand, and a full-turn motor spans its whole encoder."""
+    monkeypatch.setattr(DUMMY_3, "resolution", 1024)
+    for id_ in arm.ids:
+        arm._bus.seed(id_, "torque_enable", 1)
+        arm._bus.seed(id_, "drive_mode", 1)
+    poses = [{1: 600, 2: 300, 3: 400}, {1: 100, 3: 200}, {1: 900, 3: 700}]  # held, then swept
+    at_prompt = {}
+
+    def move() -> bool:
+        if not poses:
+            return True
+        for id_, position in poses.pop(0).items():
+            arm._bus.seed(id_, "present_position", position)
+        return False
+
+    def hold_the_pose(prompt: str) -> str:
+        registers = ("torque_enable", "operating_mode", "drive_mode")
+        at_prompt.update({id_: tuple(arm._bus.stored(id_, r) for r in registers) for id_ in arm.ids})
+        return move() or ""
+
+    monkeypatch.setattr("builtins.input", hold_the_pose)
+    monkeypatch.setattr("lerobot.motors.motors_bus.enter_pressed", move)
+
+    calibration = arm.record_calibration(
+        "position", full_turn_motors=["dummy_2"], inverted_motors=["dummy_3"]
+    )
+
+    assert at_prompt == {1: (0, 3, 0), 2: (0, 3, 0), 3: (0, 3, 1)}
+    assert calibration == {
+        "dummy_1": MotorCalibration(id=1, drive_mode=0, homing_offset=-89, range_min=100, range_max=900),
+        "dummy_2": MotorCalibration(id=2, drive_mode=0, homing_offset=211, range_min=0, range_max=1023),
+        "dummy_3": MotorCalibration(id=3, drive_mode=1, homing_offset=111, range_min=200, range_max=700),
+    }
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"motors": ["dummy_4"]},
+        {"full_turn_motors": ["dummy_4"]},
+        {"full_turn_motors": ["dummy_3"], "motors": ["dummy_1", "dummy_2"]},
+        {"inverted_motors": ["dummy_3"], "motors": ["dummy_1", "dummy_2"]},
+    ],
+    ids=[
+        "unknown motor",
+        "unknown full-turn motor",
+        "full-turn motor not calibrated",
+        "inverted motor not calibrated",
+    ],
+)
+def test_record_calibration_refuses_a_selection_before_touching_the_motors(selection, arm, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda prompt: pytest.fail("the pose was asked"))
+
+    with pytest.raises(ValueError, match="dummy_"):
+        arm.record_calibration("position", **{"full_turn_motors": [], **selection})
+
+    assert (arm._bus.torques, arm._bus.writes) == ([], [])
+
+
+@pytest.mark.parametrize(
+    "motors, order",
+    [(None, ["dummy_3", "dummy_2", "dummy_1"]), (["dummy_2", "dummy_1"], ["dummy_2", "dummy_1"])],
+    ids=["last motor first by default", "in the order given"],
+)
+def test_setup_motors_asks_for_one_motor_at_a_time(motors, order, bus, monkeypatch, capsys):
+    prompts, set_up = [], []
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "")
+    monkeypatch.setattr(bus, "setup_motor", set_up.append)
+
+    bus.setup_motors(motors)
+
+    assert set_up == order
+    assert prompts == [
+        f"Connect the controller board to the '{motor}' motor only and press enter." for motor in order
+    ]
+    assert f"'{order[0]}' motor id set to {bus.motors[order[0]].id}" in capsys.readouterr().out
