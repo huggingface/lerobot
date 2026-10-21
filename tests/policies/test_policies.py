@@ -271,6 +271,13 @@ def test_act_backbone_lr():
     assert len(optimizer.param_groups[1]["params"]) == 20
 
 
+@pytest.mark.parametrize("policy_name", ["act", "groot", "pi0", "pi05", "pi0_fast", "smolvla"])
+@pytest.mark.parametrize("fused", [None, True, False])
+def test_optimizer_preset_forwards_fused(policy_name: str, fused: bool | None):
+    cfg = make_policy_config(policy_name, optimizer_fused=fused, push_to_hub=False)
+    assert cfg.get_optimizer_preset().fused is fused
+
+
 @pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     """Check that the policy can be instantiated with defaults."""

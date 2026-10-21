@@ -224,6 +224,7 @@ def make_policy(
     env_cfg: EnvConfig | None = None,
     rename_map: dict[str, str] | None = None,
     defer_weight_load: bool = False,
+    pretrained_path: str | Path | None = None,
 ) -> PreTrainedPolicy:
     """
     Instantiate a policy model.
@@ -247,6 +248,9 @@ def make_policy(
             but skip the safetensors weight load. Used when resuming from a DCP checkpoint, whose
             sharded weights stream in after `accelerator.prepare()` (the distributed checkpoint
             engine overwrites the random init).
+        pretrained_path (str | Path | None): Load the weights (or PEFT adapter) from here instead
+            of `cfg.pretrained_path`, which keeps naming the model the policy was fine-tuned from
+            once the policy is built. Used when resuming from a checkpoint.
 
     Returns:
         PreTrainedPolicy: An instantiated and device-placed policy model.
@@ -273,6 +277,11 @@ def make_policy(
         )
 
     policy_cls = get_policy_class(cfg.type)
+    # Policies read `pretrained_path` while building to skip initializing weights the load will
+    # overwrite, so it names the weight source until the policy is built, then the parent again.
+    parent_path = cfg.pretrained_path
+    if pretrained_path is not None:
+        cfg.pretrained_path = Path(pretrained_path)
 
     kwargs: dict[str, Any] = {}
     if ds_meta is not None:
@@ -389,6 +398,11 @@ def make_policy(
     else:
         # Make a fresh policy.
         policy = policy_cls(**kwargs)
+
+    if pretrained_path is not None:
+        cfg.pretrained_path = parent_path
+        base_policy = policy.get_base_model() if hasattr(policy, "get_base_model") else policy
+        base_policy.config.pretrained_path = parent_path
 
     policy.to(cfg.device)
     assert isinstance(policy, torch.nn.Module)
