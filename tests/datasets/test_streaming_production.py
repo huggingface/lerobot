@@ -26,6 +26,11 @@ from lerobot.utils.utils import cycle
 from tests.fixtures.constants import DUMMY_REPO_ID
 
 
+def _flip_width(image: torch.Tensor) -> torch.Tensor:
+    """Pickle-safe transform for spawned DataLoader workers."""
+    return image.flip(-1)
+
+
 def _indices(dataset: StreamingLeRobotDataset) -> list[int]:
     return [int(item["index"]) for item in dataset]
 
@@ -191,20 +196,17 @@ def test_streaming_rgb_video_matches_map_style(
             )
 
 
-def test_streaming_applies_rgb_transforms_and_preserves_uint8(
-    tmp_path: Path, lerobot_dataset_factory
+@pytest.mark.parametrize("num_workers", [0, 1])
+def test_streaming_dataloader_applies_rgb_transforms_and_preserves_uint8(
+    tmp_path: Path, lerobot_dataset_factory, num_workers: int
 ) -> None:
     root = tmp_path / "dataset"
-
-    def flip_width(image: torch.Tensor) -> torch.Tensor:
-        return image.flip(-1)
-
     map_dataset = lerobot_dataset_factory(
         root=root,
         repo_id=DUMMY_REPO_ID,
         total_episodes=2,
         total_frames=10,
-        image_transforms=flip_width,
+        image_transforms=_flip_width,
         return_uint8=True,
     )
     streaming = StreamingLeRobotDataset(
@@ -212,11 +214,17 @@ def test_streaming_applies_rgb_transforms_and_preserves_uint8(
         root=root,
         shuffle=False,
         buffer_size=2,
-        image_transforms=flip_width,
+        image_transforms=_flip_width,
         return_uint8=True,
     )
+    loader = torch.utils.data.DataLoader(
+        streaming,
+        batch_size=None,
+        num_workers=num_workers,
+        multiprocessing_context="spawn" if num_workers else None,
+    )
 
-    sample = next(iter(streaming))
+    sample = next(iter(loader))
     reference = map_dataset[int(sample["index"])]
     for camera_key in map_dataset.meta.camera_keys:
         assert sample[camera_key].dtype == torch.uint8
