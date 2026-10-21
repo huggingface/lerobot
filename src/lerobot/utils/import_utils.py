@@ -172,6 +172,8 @@ _zenoh_available = is_package_available("eclipse-zenoh", import_name="zenoh")
 
 # Video encoding / decoding
 _av_available = is_package_available("av")
+_aiortc_available = is_package_available("aiortc")
+_websockets_available = is_package_available("websockets")
 
 # Misc
 _pynput_available = is_package_available("pynput")

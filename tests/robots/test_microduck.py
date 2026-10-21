@@ -20,6 +20,7 @@ A fake robotd on a Unix socket answers requests, streams ``robot.state`` to subs
 notifications it receives, so these tests pin the wire messages LeRobot sends and how it reads the state.
 """
 
+import asyncio
 import json
 import math
 import socket
@@ -297,6 +298,7 @@ def test_camera_reconnect_discards_previous_session(robotd, tmp_path, monkeypatc
             robotd_address=robotd.path,
             calibration_dir=tmp_path,
             use_camera=True,
+            camera_transport="snapshot",
             camera_width=16,
             camera_height=16,
             camera_timeout_s=0.01,
@@ -338,7 +340,12 @@ def test_camera_failure_keeps_current_session_frame(robotd, tmp_path, monkeypatc
     camera = SnapshotCamera()
     monkeypatch.setattr("lerobot.robots.microduck.microduck.requests.Session", lambda: camera)
     robot = MicroDuck(
-        MicroDuckConfig(robotd_address=robotd.path, calibration_dir=tmp_path, camera_timeout_s=0.01)
+        MicroDuckConfig(
+            robotd_address=robotd.path,
+            calibration_dir=tmp_path,
+            camera_transport="snapshot",
+            camera_timeout_s=0.01,
+        )
     )
     try:
         robot.connect()
@@ -356,3 +363,335 @@ def test_camera_failure_keeps_current_session_frame(robotd, tmp_path, monkeypatc
         assert robot.get_observation()["front"] is not previous
     finally:
         robot.disconnect()
+
+
+@pytest.mark.parametrize(
+    "rotate,expected", [(0, (2, 3)), (90, (3, 2)), (180, (2, 3)), (270, (3, 2))], ids=str
+)
+def test_upright_turns_clockwise_mounts_back(rotate, expected):
+    pytest.importorskip("aiortc")
+    from lerobot.robots.microduck.webrtc import upright
+
+    frame = np.zeros((2, 3, 3), dtype=np.uint8)
+    frame[0, 0] = 255  # top-left
+    turned = upright(frame, rotate)
+    assert turned.shape[:2] == expected
+    # A camera mounted a quarter turn clockwise sees its top-left where the upright view's top-right is.
+    corner = {0: (0, 0), 90: (0, expected[1] - 1), 180: (1, 2), 270: (2, 0)}[rotate]
+    assert turned[corner].tolist() == [255, 255, 255]
+
+
+def test_config_rejects_unknown_camera_transport():
+    with pytest.raises(ValueError, match="camera_transport"):
+        MicroDuckConfig(camera_transport="mjpeg")
+
+
+class FakeMediad:
+    """webrtcsink's signalling server with an aiortc producer on loopback.
+
+    The picture is landscape with a red top half, as the sideways-mounted camera sees an upright scene
+    whose right side is red. ``rotate=None`` leaves media.video unanswered; ``refusals`` sessions are
+    refused first, as when the robot's console holds its one session.
+    """
+
+    def __init__(self, rotate: int | None = 90, refusals: int = 0):
+        self.rotate = rotate
+        self.refusals = refusals
+        self.sessions = 0
+        self.ended = threading.Event()
+        self.paused = threading.Event()
+        self._loop = asyncio.new_event_loop()
+        ready = threading.Event()
+        threading.Thread(target=self._loop.run_forever, daemon=True).start()
+        asyncio.run_coroutine_threadsafe(self._start(ready), self._loop).result(timeout=5)
+        assert ready.is_set()
+
+    async def _start(self, ready: threading.Event):
+        from websockets.asyncio.server import serve
+
+        self._server = await serve(self._handle, "127.0.0.1", 0)
+        self.port = next(iter(self._server.sockets)).getsockname()[1]
+        ready.set()
+
+    async def _handle(self, websocket):
+        import av
+        from aiortc import (
+            RTCConfiguration,
+            RTCPeerConnection,
+            RTCRtpSender,
+            RTCSessionDescription,
+            VideoStreamTrack,
+        )
+
+        paused = self.paused
+
+        class Landscape(VideoStreamTrack):
+            async def recv(self):
+                while paused.is_set():
+                    await asyncio.sleep(0.01)
+                pts, time_base = await self.next_timestamp()
+                picture = np.zeros((180, 320, 3), dtype=np.uint8)
+                picture[:90] = (255, 0, 0)
+                frame = av.VideoFrame.from_ndarray(picture, format="rgb24")
+                frame.pts, frame.time_base = pts, time_base
+                return frame
+
+        pc = None
+        await websocket.send(json.dumps({"type": "welcome", "peerId": "consumer-1"}))
+        try:
+            async for raw in websocket:
+                message = json.loads(raw)
+                if message["type"] == "list":
+                    await websocket.send(json.dumps({"type": "list", "producers": [{"id": "robot-1"}]}))
+                elif message["type"] == "startSession":
+                    if self.refusals:
+                        self.refusals -= 1
+                        await websocket.send(json.dumps({"type": "error", "details": "session slot taken"}))
+                        continue
+                    self.sessions += 1
+                    await websocket.send(
+                        json.dumps({"type": "sessionStarted", "peerId": "robot-1", "sessionId": "s1"})
+                    )
+                    pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+                    channel = pc.createDataChannel("control")
+                    sender = pc.addTrack(Landscape())
+                    transceiver = next(t for t in pc.getTransceivers() if t.sender is sender)
+                    transceiver.setCodecPreferences(
+                        [
+                            c
+                            for c in RTCRtpSender.getCapabilities("video").codecs
+                            if c.mimeType == "video/H264"
+                        ]
+                    )
+
+                    def answer(text, channel=channel):
+                        call = json.loads(text)
+                        if call.get("method") == "media.video" and self.rotate is not None:
+                            geometry = {"width": 320, "height": 180, "rotate": self.rotate}
+                            channel.send(json.dumps({"jsonrpc": "2.0", "id": call["id"], "result": geometry}))
+
+                    channel.on("message")(answer)
+                    await pc.setLocalDescription(await pc.createOffer())
+                    offer = {"type": "offer", "sdp": pc.localDescription.sdp}
+                    await websocket.send(json.dumps({"type": "peer", "sessionId": "s1", "sdp": offer}))
+                elif message["type"] == "peer" and message.get("sdp"):
+                    await pc.setRemoteDescription(RTCSessionDescription(**message["sdp"]))
+                elif message["type"] == "endSession":
+                    self.ended.set()
+        finally:
+            if pc is not None:
+                await pc.close()
+
+    def close(self):
+        async def stop():
+            self._server.close()
+            await self._server.wait_closed()
+
+        asyncio.run_coroutine_threadsafe(stop(), self._loop).result(timeout=5)
+        self._loop.call_soon_threadsafe(self._loop.stop)
+
+
+@pytest.fixture
+def mediad(request):
+    pytest.importorskip("aiortc")
+    server = FakeMediad(**getattr(request, "param", {}))
+    yield server
+    server.close()
+
+
+def assert_upright_red_right(frame: np.ndarray):
+    height, width, _ = frame.shape
+    # Lossy codec: dominance, not equality.
+    assert frame[height // 2, width - 5, 0] > 200 and frame[height // 2, width - 5, 2] < 60
+    assert frame[height // 2, 4].max() < 60
+
+
+def webrtc_robot(robotd, mediad, tmp_path, **overrides):
+    config = MicroDuckConfig(
+        robotd_address=robotd.path,
+        calibration_dir=tmp_path,
+        remote_ip="127.0.0.1",
+        signalling_port=mediad.port,
+        camera_width=90,
+        camera_height=160,
+        **overrides,
+    )
+    return MicroDuck(config)
+
+
+def test_webrtc_camera_streams_upright_frames_and_ends_its_session(robotd, mediad, tmp_path):
+    robot = webrtc_robot(robotd, mediad, tmp_path)
+    robot.connect()
+    try:
+        assert robot._frame_ready.wait(timeout=10)
+        first = robot.get_observation()["front"]
+        assert first.shape == (160, 90, 3)
+        assert_upright_red_right(first)
+        deadline = time.monotonic() + 5
+        while robot.get_observation()["front"] is first and time.monotonic() < deadline:
+            time.sleep(0.01)
+        # Every decoded frame is a new array, so consumers can tell a fresh frame from a repeat.
+        assert robot.get_observation()["front"] is not first
+    finally:
+        robot.disconnect()
+    assert mediad.ended.wait(timeout=5)
+
+
+@pytest.mark.parametrize("mediad", [{"refusals": 1}], indirect=True)
+def test_webrtc_camera_retries_a_refused_session(robotd, mediad, tmp_path, caplog):
+    robot = webrtc_robot(robotd, mediad, tmp_path)
+    robot.connect()
+    try:
+        assert robot._frame_ready.wait(timeout=10)
+        assert mediad.sessions == 1
+        assert "session slot taken" in caplog.text
+        assert_upright_red_right(robot.get_observation()["front"])
+    finally:
+        robot.disconnect()
+
+
+@pytest.mark.parametrize("mediad", [{"rotate": None}], indirect=True)
+def test_webrtc_camera_assumes_the_known_mount_without_media_video(mediad):
+    from lerobot.robots.microduck.webrtc import receive_video
+
+    frames = []
+    stop = threading.Event()
+
+    def on_frame(frame):
+        frames.append(frame)
+        stop.set()
+
+    asyncio.run(
+        receive_video(
+            f"ws://127.0.0.1:{mediad.port}", on_frame, stop, stall_timeout_s=10, rotation_timeout_s=0.2
+        )
+    )
+    assert frames[0].image.shape == (320, 180, 3)
+    assert_upright_red_right(frames[0].image)
+
+
+def test_webrtc_metadata_matches_cached_observation(robotd, mediad, tmp_path):
+    robot = webrtc_robot(robotd, mediad, tmp_path)
+    robot.connect()
+    try:
+        assert robot._frame_ready.wait(timeout=5)
+        first = robot.get_camera_frame()
+        assert first is not None and first.media_time_s is not None
+        assert first.session_id == "s1"
+        assert 0 <= time.monotonic() - first.received_at < 2
+        mediad.paused.set()
+        # Drain frames already in flight, then the same sample must keep its identity and age.
+        time.sleep(0.2)
+        cached = robot.get_camera_frame()
+        time.sleep(0.1)
+        assert robot.get_camera_frame() is cached
+        assert robot.get_observation()["front"] is cached.image
+        mediad.paused.clear()
+        deadline = time.monotonic() + 2
+        while robot.get_camera_frame() is cached and time.monotonic() < deadline:
+            time.sleep(0.01)
+        newer = robot.get_camera_frame()
+        assert newer.sequence > cached.sequence
+        assert newer.media_time_s > cached.media_time_s
+        assert newer.received_at > cached.received_at
+    finally:
+        robot.disconnect()
+
+
+def test_webrtc_stall_closes_session(mediad):
+    from lerobot.robots.microduck.webrtc import receive_video
+
+    frames = []
+
+    def on_frame(frame):
+        frames.append(frame)
+        mediad.paused.set()
+
+    with pytest.raises(ConnectionError, match="No camera frame"):
+        asyncio.run(
+            receive_video(
+                f"ws://127.0.0.1:{mediad.port}",
+                on_frame,
+                threading.Event(),
+                stall_timeout_s=1,
+            )
+        )
+    assert frames
+    assert mediad.ended.wait(timeout=2)
+
+
+def test_webrtc_stop_during_signalling(monkeypatch):
+    pytest.importorskip("aiortc")
+    from contextlib import asynccontextmanager
+
+    from lerobot.robots.microduck import webrtc
+
+    entered = threading.Event()
+    cancelled = threading.Event()
+    stop = threading.Event()
+
+    @asynccontextmanager
+    async def never_connect(*args, **kwargs):
+        entered.set()
+        try:
+            await asyncio.Future()
+            yield
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(webrtc, "connect", never_connect)
+
+    async def run():
+        task = asyncio.create_task(
+            webrtc.receive_video("ws://unused", lambda frame: None, stop, stall_timeout_s=30)
+        )
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+
+    asyncio.run(run())
+    assert cancelled.is_set()
+
+
+def test_camera_diagnostic_reports_h264_stream(mediad, tmp_path, capsys):
+    from examples.microduck.check_camera import measure
+
+    args = SimpleNamespace(
+        host="127.0.0.1",
+        transport="webrtc",
+        signalling_port=mediad.port,
+        seconds=0.3,
+        timeout=5,
+        min_fps=4,
+        save_frame=tmp_path / "frame.png",
+    )
+    assert asyncio.run(measure(args))
+    assert "PASS:" in capsys.readouterr().out
+    assert args.save_frame.exists()
+    frame = cv2.imread(str(args.save_frame))
+    assert_upright_red_right(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+
+def test_camera_placeholder_is_not_a_new_frame(robotd, tmp_path, monkeypatch):
+    robot = MicroDuck(
+        MicroDuckConfig(
+            robotd_address=robotd.path,
+            calibration_dir=tmp_path,
+            camera_transport="snapshot",
+            camera_timeout_s=0.01,
+        )
+    )
+    monkeypatch.setattr(robot, "_camera_loop", lambda stop: stop.wait())
+    robot.connect()
+    try:
+        assert robot.get_camera_frame() is None
+        assert robot.get_observation()["front"] is robot.get_observation()["front"]
+    finally:
+        robot.disconnect()
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
+def test_camera_rejects_invalid_timeout(timeout):
+    with pytest.raises(ValueError, match="camera_timeout_s"):
+        MicroDuckConfig(camera_timeout_s=timeout)

@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import logging
 import math
 import threading
+import time
 from functools import cached_property
 from typing import Any
 
@@ -25,10 +27,13 @@ import requests
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.import_utils import require_package
 
 from ..robot import Robot
+from .camera_frame import CameraFrame
 from .config_microduck import MicroDuckConfig
 from .rpc import DuckRpc
+from .webrtc import receive_video
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +82,7 @@ class MicroDuck(Robot):
     control loop must run at 2 Hz or more.
 
     Observations come from robotd's ``robot.state`` stream (joints, IMU, odometry, applied twist) and from
-    mediad's snapshot endpoint for the head camera.
+    mediad for the head camera: its WebRTC stream by default, or one PNG snapshot per frame.
     """
 
     config_class = MicroDuckConfig
@@ -99,6 +104,9 @@ class MicroDuck(Robot):
 
         self._frame_lock = threading.Lock()
         self._latest_frame: np.ndarray | None = None
+        self._camera_frame: CameraFrame | None = None
+        self._frame_sequence = 0
+        self._empty_frame = np.zeros((config.camera_height, config.camera_width, 3), dtype=np.uint8)
         self._frame_ready = threading.Event()
 
         self._is_connected = False
@@ -143,12 +151,16 @@ class MicroDuck(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        if self.config.use_camera and self.config.camera_transport == "webrtc":
+            require_package("aiortc", extra="microduck")
+            require_package("websockets", extra="microduck")
         with self._state_lock:
             self._latest_state = None
             self._state_error = None
             self._state_ready.clear()
         with self._frame_lock:
             self._latest_frame = None
+            self._camera_frame = None
             self._frame_ready.clear()
         self._stop_event = threading.Event()
         try:
@@ -173,7 +185,10 @@ class MicroDuck(Robot):
 
             self._start_thread(self._state_loop, "microduck-state")
             if self.config.use_camera:
-                self._start_thread(self._camera_loop, "microduck-camera")
+                camera_loop = (
+                    self._webrtc_loop if self.config.camera_transport == "webrtc" else self._camera_loop
+                )
+                self._start_thread(camera_loop, "microduck-camera")
 
             if not self._state_ready.wait(timeout=self.config.rpc_timeout_s):
                 raise DeviceNotConnectedError("No robot.state received from robotd.")
@@ -182,8 +197,8 @@ class MicroDuck(Robot):
                 timeout=self.config.camera_timeout_s * 3
             ):
                 logger.warning(
-                    f"No camera frame from http://{self.config.remote_ip}:{self.config.camera_port}/frame yet; "
-                    "recording black frames until one arrives."
+                    f"No camera frame from {self._camera_source()} yet; recording black frames until one "
+                    "arrives."
                 )
             self._check_state_stream()
 
@@ -236,8 +251,7 @@ class MicroDuck(Robot):
                 self._state_ready.set()
 
     def _camera_loop(self, stop_event: threading.Event) -> None:
-        url = f"http://{self.config.remote_ip}:{self.config.camera_port}/frame"
-        size = (self.config.camera_width, self.config.camera_height)
+        url = self._camera_source()
         with requests.Session() as session:
             while not stop_event.is_set():
                 try:
@@ -250,13 +264,83 @@ class MicroDuck(Robot):
                 frame = cv2.imdecode(np.frombuffer(response.content, dtype=np.uint8), cv2.IMREAD_COLOR)
                 if frame is None:
                     continue
-                if (frame.shape[1], frame.shape[0]) != size:
-                    frame = cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
-                with self._frame_lock:
-                    if stop_event.is_set():
-                        return
-                    self._latest_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    self._frame_ready.set()
+                if not self._publish_frame(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), stop_event):
+                    return
+
+    def _webrtc_loop(self, stop_event: threading.Event) -> None:
+        url = self._camera_source()
+        last_error = None
+
+        def on_frame(frame: CameraFrame) -> None:
+            self._publish_frame(
+                frame.image,
+                stop_event,
+                received_at=frame.received_at,
+                media_time_s=frame.media_time_s,
+                session_id=frame.session_id,
+            )
+
+        while not stop_event.is_set():
+            try:
+                asyncio.run(
+                    receive_video(
+                        url,
+                        on_frame,
+                        stop_event,
+                        stall_timeout_s=3 * self.config.camera_timeout_s,
+                    )
+                )
+            except Exception as e:
+                # Warn once per distinct failure: a console holding the session would otherwise
+                # repeat the same refusal every second.
+                error = f"{type(e).__name__}: {e}"
+                if error != last_error:
+                    logger.warning(f"Camera stream from {url} stopped, reconnecting: {error}")
+                    last_error = error
+            stop_event.wait(1.0)
+
+    def _camera_source(self) -> str:
+        if self.config.camera_transport == "webrtc":
+            return f"ws://{self.config.remote_ip}:{self.config.signalling_port}"
+        return f"http://{self.config.remote_ip}:{self.config.camera_port}/frame"
+
+    def _publish_frame(
+        self,
+        frame: np.ndarray,
+        stop_event: threading.Event,
+        *,
+        received_at: float | None = None,
+        media_time_s: float | None = None,
+        session_id: str | None = None,
+    ) -> bool:
+        """Store an upright RGB frame at the configured size; False once this session has stopped."""
+        received_at = time.monotonic() if received_at is None else received_at
+        size = (self.config.camera_width, self.config.camera_height)
+        if (frame.shape[1], frame.shape[0]) != size:
+            frame = cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
+        with self._frame_lock:
+            # A late frame from a previous connection must not reach the current one.
+            if stop_event.is_set():
+                return False
+            self._latest_frame = frame
+            self._frame_sequence += 1
+            self._camera_frame = CameraFrame(
+                frame, self._frame_sequence, received_at, media_time_s, session_id
+            )
+            self._frame_ready.set()
+        return True
+
+    @check_if_not_connected
+    def get_camera_frame(self) -> CameraFrame | None:
+        """Return pixels and timing atomically, or None before a frame arrives.
+
+        Cached samples retain their sequence and received_at during a camera outage.
+        Use time.monotonic() - sample.received_at to detect a locally stale stream.
+        This does not measure sensor-to-laptop latency. Metadata is not added to the
+        observation state vector, so existing datasets retain their feature schema.
+        """
+        with self._frame_lock:
+            return self._camera_frame
 
     def _state_to_observation(self, state: dict[str, Any]) -> RobotObservation:
         obs: RobotObservation = {}
@@ -291,7 +375,7 @@ class MicroDuck(Robot):
             with self._frame_lock:
                 frame = self._latest_frame
             if frame is None:
-                frame = np.zeros((self.config.camera_height, self.config.camera_width, 3), dtype=np.uint8)
+                frame = self._empty_frame
             obs[CAMERA] = frame
         return obs
 
@@ -312,7 +396,7 @@ class MicroDuck(Robot):
         return sent
 
     def get_health(self) -> dict[str, Any]:
-        """robotd's ``robot.health`` reply: battery, motor temperatures, control loop, ..."""
+        """Robotd's ``robot.health`` reply: battery, motor temperatures, control loop, ..."""
         return self._cmd.request("robot.health")
 
     def load_policy(self, policy: str, slot: str = "walk") -> dict[str, Any]:
