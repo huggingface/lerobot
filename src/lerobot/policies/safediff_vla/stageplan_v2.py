@@ -165,3 +165,83 @@ class SafeDiffVLAStagePlanV2Policy(SafeDiffVLAPolicy):
                 return action
         action = action.clone(); action[..., GRIPPER_INDEX_RAW] = closed
         return action
+
+
+# ------------------------------------------------------------------------------------------------ learned predictor
+from .utils import IMAGE_MODALITY, TEXT_MODALITY  # noqa: E402
+
+WP_SCALE_M = 0.25  # waypoint offset is regressed in units of the 25 cm radius
+PRE_DIST_SCALE_M = 0.10  # pre-grasp distance regressed in units of 10 cm
+
+
+class StagePlanV2Head(nn.Module):
+    """Language-conditioned spatial fusion predicting ONLY the historical oracle variables.
+
+    1. per-camera spatial image tokens (+ camera embedding), language tokens, proprio embedding;
+    2. EXPLICIT referent gating: a language-pooled query scores every image token of each camera (softmax per camera) and the
+       attention-weighted token features are pooled per camera -- no global pooling before the referent is selected;
+    3. the three per-camera referent features + language vector + proprio are fused by an MLP;
+    4. a small (2-layer) decoder lets 3 queries (grasp / approach / waypoint) read the fused vector and all tokens;
+    5. heads: grasp_xyz (normalised action-xyz), grasp rotation (sin/cos Euler), approach_dir (unit), pre_dist, waypoint offset.
+    """
+
+    def __init__(self, latent_dim: int, state_dim: int = 7, d_model: int = 256, n_heads: int = 4, n_layers: int = 2, n_cams: int = 3, dropout: float = 0.1) -> None:
+        super().__init__()
+        self.n_cams, self.d = n_cams, d_model
+        self.vis_proj, self.txt_proj = nn.Linear(latent_dim, d_model), nn.Linear(latent_dim, d_model)
+        self.cam_embed = nn.Embedding(n_cams, d_model)
+        self.state_mlp = nn.Sequential(nn.Linear(state_dim, d_model), nn.SiLU(), nn.Linear(d_model, d_model))
+        self.lang_query = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        self.lang_attn = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.q_ref = nn.Linear(d_model, d_model); self.k_ref = nn.Linear(d_model, d_model)  # referent gating over image tokens
+        self.fuse = nn.Sequential(nn.Linear(d_model * (n_cams + 2), d_model), nn.GELU(), nn.Linear(d_model, d_model))
+        self.queries = nn.Parameter(torch.randn(1, 3, d_model) * 0.02)
+        layer = nn.TransformerDecoderLayer(d_model, n_heads, 2 * d_model, dropout, activation="gelu", batch_first=True, norm_first=True)
+        self.decoder = nn.TransformerDecoder(layer, n_layers); self.out_norm = nn.LayerNorm(d_model)
+        self.grasp_xyz, self.grasp_rot = nn.Linear(d_model, 3), nn.Linear(d_model, 6)
+        self.approach, self.pre_dist, self.wp = nn.Linear(d_model, 3), nn.Linear(d_model, 1), nn.Linear(d_model, 3)
+
+    def camera_ids(self, is_img: Tensor) -> Tensor:
+        rank = torch.cumsum(is_img.long(), dim=1) - 1
+        per_cam = (is_img.sum(dim=1, keepdim=True) // self.n_cams).clamp_min(1)
+        return (rank // per_cam).clamp(0, self.n_cams - 1)
+
+    def forward(self, tokens: Tensor, pad_mask: Tensor | None, modality_ids: Tensor, state: Tensor) -> dict[str, Tensor]:
+        if pad_mask is None: pad_mask = tokens.new_ones(tokens.shape[:2], dtype=torch.bool)
+        valid = pad_mask.to(torch.bool)
+        is_img, is_txt = (modality_ids == IMAGE_MODALITY) & valid, (modality_ids == TEXT_MODALITY) & valid
+        is_txt = is_txt | ((is_txt.sum(dim=1, keepdim=True) == 0) & valid)
+        cam = self.camera_ids(is_img)
+        vis = self.vis_proj(tokens) + self.cam_embed(cam); txt = self.txt_proj(tokens)
+        lang, _ = self.lang_attn(self.lang_query.expand(tokens.shape[0], -1, -1), txt, txt, key_padding_mask=~is_txt, need_weights=False)  # [B,1,d]
+        qv = self.q_ref(lang.squeeze(1)); kv = self.k_ref(vis)
+        logits = torch.einsum("bd,bnd->bn", qv, kv) / self.d ** 0.5
+        pooled = []
+        for c in range(self.n_cams):
+            m = is_img & (cam == c)
+            w = torch.softmax(logits.masked_fill(~m, float("-inf")).float(), dim=1).nan_to_num(0.0).to(vis.dtype)
+            pooled.append(torch.einsum("bn,bnd->bd", w, vis))
+        st = self.state_mlp(state)
+        fused = self.fuse(torch.cat(pooled + [lang.squeeze(1), st], dim=-1))
+        memory = torch.where(is_img.unsqueeze(-1), vis, txt); mem_valid = is_img | is_txt
+        q = self.queries + fused.unsqueeze(1)
+        h = self.out_norm(self.decoder(q, memory, memory_key_padding_mask=~mem_valid))
+        rot = self.grasp_rot(h[:, 0]).reshape(-1, 3, 2); rot = rot / rot.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        ad = self.approach(h[:, 1]); ad = ad / ad.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        return {"grasp_xyz": self.grasp_xyz(h[:, 0]), "grasp_rot_sc": rot, "approach_dir": ad, "pre_dist": self.pre_dist(h[:, 1]).squeeze(-1), "wp_rel": self.wp(h[:, 2]), "ref_logits": logits}
+
+
+def make_learned_provider(head: StagePlanV2Head) -> Callable:
+    """Provider used at INFERENCE: RGB + language + proprio -> StageVars. No privileged information."""
+
+    @torch.no_grad()
+    def provider(policy: SafeDiffVLAStagePlanV2Policy, batch: dict) -> StageVars:
+        tokens, pad, mod = policy._encode_multimodal_latent(batch)
+        out = head(tokens, pad, mod, policy._current_state(batch))
+        g = (out["grasp_xyz"] * policy.action_pos_std + policy.action_pos_mean)[0].float().cpu().numpy().astype(np.float64)
+        eul = torch.atan2(out["grasp_rot_sc"][0, :, 0], out["grasp_rot_sc"][0, :, 1]).float().cpu().numpy().astype(np.float64)
+        r = float(np.clip(out["pre_dist"][0].item() * PRE_DIST_SCALE_M, 0.05, 0.15))
+        w = g + out["wp_rel"][0].float().cpu().numpy().astype(np.float64) * WP_SCALE_M
+        return StageVars(g, eul, out["approach_dir"][0].float().cpu().numpy().astype(np.float64), r, True, w)
+
+    return provider

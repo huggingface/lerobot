@@ -41,10 +41,19 @@ POSE_TASKS = ("select_book", "select_drink")
 
 def main() -> None:
     ap = argparse.ArgumentParser(); ap.add_argument("--task", required=True); ap.add_argument("--seeds", type=int, nargs="+", default=[3000, 3001, 3002, 3003, 3004])
-    ap.add_argument("--release", default="latch", choices=["latch", "oracle_gate", "passthrough"]); ap.add_argument("--out", default="outputs/stageplan_v2/oracle_equiv"); a = ap.parse_args()
+    ap.add_argument("--release", default="latch", choices=["latch", "oracle_gate", "passthrough"]); ap.add_argument("--out", default="outputs/stageplan_v2/oracle_equiv"); ap.add_argument("--release-all", action="store_true", help="apply --release to EVERY task (default: pick tasks keep the historical latch)"); ap.add_argument("--wp-always", action="store_true", help="route EVERY task through W = G + family-median 25cm path point (generic form; no waypoint_valid)"); a = ap.parse_args()
     out = Path(a.out) / a.release / a.task; out.mkdir(parents=True, exist_ok=True)
     labels = pickle.load(open("outputs/stageplan/labels.pkl", "rb")); refs = json.load(open("outputs/eval/safediff_vla_g28/expert_refs.json"))
     fam = [l["P1"][3:] for l in labels.values() if l["valid"] and l["fam"] == a.task]; R_fam = Rotation.from_euler("xyz", np.array(fam)).mean().as_euler("xyz")
+    Wrel = None
+    if a.wp_always:  # generic waypoint: expert EE at the first step within 25 cm of the grasp pose, relative to it (median over TRAIN-split demos of this family)
+        import pandas as pd
+        df = pd.read_pickle("outputs/stageplan/df6.pkl"); G_ = dict(tuple(df.groupby("episode_index"))); W_ = []
+        for e_, l_ in labels.items():
+            if l_["fam"] != a.task or not l_["valid"]: continue
+            ac = np.stack(G_[e_].action.values).astype(float); ee_ = ac[: l_["t1"] + 1, :3]; d_ = np.linalg.norm(ee_ - l_["P1"][:3], axis=1)
+            if d_[0] > 0.25: W_.append(ee_[int(np.argmax(d_ <= 0.25))] - l_["P1"][:3])
+        Wrel = np.median(np.array(W_), 0)
     pol = SafeDiffVLAStagePlanV2Policy.from_pretrained(CHECKPOINT).to("cuda").eval(); env_cfg = VLABenchEnv(task=a.task); env = make_env(env_cfg, n_envs=1, use_async_envs=False)[a.task][0]
     H = {"e": None, "triggered": False}
 
@@ -55,6 +64,7 @@ def main() -> None:
             from VLABench.utils.utils import euler_to_quaternion
             q = euler_to_quaternion(-np.pi / 2, -np.pi / 2, 0.0); _, fwd = d.robot.gripper_pcd(kp + base, q); dvec = np.asarray(fwd, float) / np.linalg.norm(fwd); eul = np.array([-np.pi / 2, -np.pi / 2, 0.0])
         else: dvec, eul = np.array([0.0, 0.0, -1.0]), R_fam
+        if a.wp_always: return StageVars(kp, eul, dvec, 0.10, True, kp + Wrel)
         if a.task == "select_drink": return StageVars(kp, eul, dvec, 0.10, True, kp + np.array(refs["select_drink"]["w25_rel"]))
         return StageVars(kp, eul, dvec, 0.08, False, None)
 
@@ -67,7 +77,8 @@ def main() -> None:
         if near and (grasped or H["triggered"]): H["triggered"] = True; return True
         return False
 
-    mode = a.release if a.task in GOAL else "latch"
+    mode = a.release if (a.task in GOAL or a.release_all) else "latch"
+    if a.wp_always: a.out = a.out + "_wpalways"; out = Path(a.out) / mode / a.task; out.mkdir(parents=True, exist_ok=True)
     pol.install(provider, release_mode=mode, release_gate_fn=gate if mode == "oracle_gate" else None)
     pre, post = make_pre_post_processors(policy_cfg=pol.config, pretrained_path=CHECKPOINT, preprocessor_overrides={"device_processor": {"device": "cuda"}, "rename_observations_processor": {"rename_map": RENAME_MAP}})
     env_pre, env_post = make_env_pre_post_processors(env_cfg=env_cfg, policy_cfg=pol.config)
