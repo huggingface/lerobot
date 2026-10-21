@@ -65,6 +65,26 @@ def test_save_and_load_optimizer_state(model_params, optimizer, tmp_path):
     torch.testing.assert_close(optimizer.state_dict(), loaded_optimizer.state_dict())
 
 
+@pytest.mark.parametrize("config_cls", [AdamConfig, AdamWConfig])
+@pytest.mark.parametrize("fused", [None, True, False])
+def test_adam_fused_is_forwarded(config_cls, fused, model_params):
+    optimizer = config_cls(fused=fused).build(model_params)
+    assert optimizer.defaults["fused"] is fused
+
+
+@pytest.mark.parametrize("config_cls", [AdamConfig, AdamWConfig])
+def test_save_and_load_fused_optimizer_state(config_cls, model_params, tmp_path):
+    optimizer = config_cls(fused=True).build(model_params)
+    sum(param.sum() for param in model_params).backward()
+    optimizer.step()
+    save_optimizer_state(optimizer, tmp_path)
+
+    loaded_optimizer = load_optimizer_state(config_cls(fused=True).build(model_params), tmp_path)
+
+    assert loaded_optimizer.param_groups[0]["fused"] is True
+    torch.testing.assert_close(optimizer.state_dict(), loaded_optimizer.state_dict())
+
+
 @pytest.fixture
 def base_params_dict():
     return {
