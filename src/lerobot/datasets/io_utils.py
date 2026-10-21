@@ -271,7 +271,7 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
     to torch tensors. RGB images are converted from PIL objects (H, W, C, uint8)
     to a torch image representation (C, H, W, float32) in the range [0, 1]. Depth
     maps are returned as float32 (1, H, W) in their native units. Other
-    types are converted to torch.tensor.
+    types are converted to torch.tensor. Empty columns are preserved as empty lists.
 
     Args:
         items_dict (dict): A dictionary representing a batch of data from a
@@ -281,7 +281,7 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
         dict: The batch with items converted to torch tensors.
     """
     for key in items_dict:
-        if key in LANGUAGE_COLUMNS:
+        if key in LANGUAGE_COLUMNS or not items_dict[key]:
             continue
         first_item = items_dict[key][0]
         if isinstance(first_item, PILImage.Image):

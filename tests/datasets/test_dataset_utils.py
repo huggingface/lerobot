@@ -27,6 +27,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 import pandas as pd  # noqa: E402
 from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
+from PIL import Image as PILImage
 
 import lerobot.datasets.utils as dataset_utils
 from lerobot.datasets.io_utils import hf_transform_to_torch
@@ -41,6 +42,24 @@ from lerobot.datasets.utils import (
 )
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.feature_utils import combine_feature_dicts
+
+
+@pytest.mark.parametrize(
+    "query", [slice(0, 0), slice(1, None), []], ids=["empty-slice", "past-end", "empty-selection"]
+)
+def test_hf_transform_to_torch_empty_batch(query: slice | list[int]) -> None:
+    image_key = f"{OBS_IMAGES}.camera"
+    dataset = Dataset.from_dict(
+        {ACTION: [[1.0, 2.0]], "index": [0], image_key: [PILImage.new("RGB", (2, 2))]}
+    )
+    dataset.set_transform(hf_transform_to_torch)
+
+    assert dataset[query] == {ACTION: [], "index": [], image_key: []}
+    # An empty query must not affect subsequent numeric or image conversion.
+    sample = dataset[0]
+    torch.testing.assert_close(sample[ACTION], torch.tensor([1.0, 2.0]))
+    assert sample[image_key].shape == (3, 2, 2)
+    assert sample[image_key].dtype == torch.float32
 
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:
