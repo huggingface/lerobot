@@ -1046,18 +1046,22 @@ class SerialMotorsBus(MotorsBusBase):
             if max_ == min_:
                 raise ValueError(f"Invalid calibration for motor '{motor}': min and max are equal.")
 
+            # Round to the nearest encoder step. Truncating instead lands the inverse of a value
+            # that came from _normalize one step low whenever the division rounds a hair below the
+            # integer: on a full-turn 12-bit motor (0..4095) that is 17.7% of the positions in
+            # RANGE_M100_100 and 23.0% in RANGE_0_100, so a position read and written back moves.
             if self.motors[motor].norm_mode is MotorNormMode.RANGE_M100_100:
                 val = -val if drive_mode else val
                 bounded_val = min(100.0, max(-100.0, val))
-                unnormalized_values[id_] = int(((bounded_val + 100) / 200) * (max_ - min_) + min_)
+                unnormalized_values[id_] = int(round(((bounded_val + 100) / 200) * (max_ - min_) + min_))
             elif self.motors[motor].norm_mode is MotorNormMode.RANGE_0_100:
                 val = 100 - val if drive_mode else val
                 bounded_val = min(100.0, max(0.0, val))
-                unnormalized_values[id_] = int((bounded_val / 100) * (max_ - min_) + min_)
+                unnormalized_values[id_] = int(round((bounded_val / 100) * (max_ - min_) + min_))
             elif self.motors[motor].norm_mode is MotorNormMode.DEGREES:
                 mid = (min_ + max_) / 2
                 max_res = self.resolution(self._id_to_model(id_)) - 1
-                unnormalized_values[id_] = int((val * max_res / 360) + mid)
+                unnormalized_values[id_] = int(round((val * max_res / 360) + mid))
             else:
                 raise NotImplementedError
 
