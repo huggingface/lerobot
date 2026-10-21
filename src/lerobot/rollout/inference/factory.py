@@ -32,6 +32,7 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.processor import PolicyProcessorPipeline
 
+from ..agent.configuration import AgentSettings
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine
 from .rtc import RTCInferenceEngine
@@ -55,6 +56,12 @@ class InferenceEngineConfig(draccus.ChoiceRegistry, abc.ABC):
     @property
     def type(self) -> str:
         return self.get_choice_name(self.__class__)
+
+
+@InferenceEngineConfig.register_subclass("agent")
+@dataclass
+class AgentInferenceConfig(AgentSettings, InferenceEngineConfig):
+    """Direct native-tool VLM control through inspect-robots, without a VLA."""
 
 
 @InferenceEngineConfig.register_subclass("sync")
@@ -82,7 +89,7 @@ class RTCInferenceConfig(InferenceEngineConfig):
 def create_inference_engine(
     config: InferenceEngineConfig,
     *,
-    policy: PreTrainedPolicy,
+    policy: PreTrainedPolicy | None,
     preprocessor: PolicyProcessorPipeline,
     postprocessor: PolicyProcessorPipeline,
     robot_wrapper: ThreadSafeRobot,
@@ -97,6 +104,19 @@ def create_inference_engine(
 ) -> InferenceEngine:
     """Instantiate the appropriate inference engine from a config object."""
     logger.info("Creating inference engine: %s", config.type)
+    if isinstance(config, AgentInferenceConfig):
+        from ..agent.engine import AgentInferenceEngine
+
+        return AgentInferenceEngine(
+            config,
+            keys=ordered_action_keys,
+            features=robot_wrapper.observation_features,
+            robot_type=robot_wrapper.robot_type,
+            fps=fps,
+            task=task,
+        )
+    if policy is None:
+        raise ValueError("A VLA inference engine requires --policy.path")
     if isinstance(config, SyncInferenceConfig):
         return SyncInferenceEngine(
             policy=policy,

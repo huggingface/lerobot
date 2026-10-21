@@ -20,6 +20,7 @@ rollout strategies never branch on which backend is in use.
 
 from .base import EXTERNAL_HISTORY_DEFAULT, InferenceEngine, PolicyQuery, QueryAnswer, QueryKind
 from .factory import (
+    AgentInferenceConfig,
     InferenceEngineConfig,
     RTCInferenceConfig,
     SyncInferenceConfig,
@@ -29,6 +30,7 @@ from .rtc import RTCInferenceEngine
 from .sync import SyncInferenceEngine
 
 __all__ = [
+    "AgentInferenceConfig",
     "EXTERNAL_HISTORY_DEFAULT",
     "InferenceEngine",
     "InferenceEngineConfig",

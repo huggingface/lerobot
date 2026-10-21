@@ -607,7 +607,7 @@ def test_setup_defaults_to_starting_the_engine():
         def teardown(self, ctx):
             pass
 
-    engine = MagicMock()
+    engine = MagicMock(completion=None)
     ctx = SimpleNamespace(
         runtime=SimpleNamespace(cfg=SimpleNamespace(interpolation_multiplier=2)),
         policy=SimpleNamespace(inference=engine),
@@ -1013,7 +1013,7 @@ def _make_loop_ctx(fps: float, multiplier: int, num_ticks: int, on_tick=None):
         return {"m.pos": float(calls["n"])}
 
     robot.get_observation.side_effect = _get_observation
-    engine = MagicMock()
+    engine = MagicMock(completion=None)
     engine.dispatched_task = "task"
     actions = {"n": 0}
 

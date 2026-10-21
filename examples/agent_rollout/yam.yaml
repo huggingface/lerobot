@@ -1,0 +1,173 @@
+# Template: verify bounds, units, directions, camera paths and calibration before use.
+# Cartesian move_to uses the bundled FK/IK URDF. Run from the repository root,
+# or make both urdf_path entries absolute. See docs/source/agent_rollout.mdx.
+# Provider fields below are one explicit example, not backend defaults.
+interactive: true
+fps: 10
+interpolation_multiplier: 1
+duration: 0
+task: Put all colored cubes in the green bin.
+inference:
+  type: agent
+  model: gpt-6.1-sol
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  wire: responses
+  effort: low
+  max_llm_calls: 100
+  log_dir: outputs/agent-rollout
+  robot_notes: Replace these notes with verified joint directions, camera placement,
+    table height and frame/calibration information for your rig. RGB camera images
+    do not establish a metric camera-to-base transform.
+    Cartesian targets describe each arm's gripper flange, not the fingertip grasp
+    centre. Left and right coordinates are in separate arm-local base frames.
+  cartesian:
+    left:
+      urdf_path: examples/agent_rollout/urdf/yam.urdf
+      target_frame_name: gripper
+      joints:
+        left_joint_0.pos: joint1
+        left_joint_1.pos: joint2
+        left_joint_2.pos: joint3
+        left_joint_3.pos: joint4
+        left_joint_4.pos: joint5
+        left_joint_5.pos: joint6
+      gripper: left_gripper.pos
+      frame_description: Left gripper flange link in this arm's URDF base frame,
+        not a fingertip TCP or shared world frame. Verify joint zeros and describe
+        the base axes relative to your table and cameras before use.
+      # Workspace template in metres; verify for this arm's mounting and tool.
+      position_low: [-0.60, -0.60, 0.04]
+      position_high: [0.60, 0.60, 0.70]
+      angle_low: [-1.0, 0.0, 0.0]
+      angle_high: [1.0, 0.0, 0.0]
+      linear_speed: 0.03
+      angular_speed: 0.15
+    right:
+      urdf_path: examples/agent_rollout/urdf/yam.urdf
+      target_frame_name: gripper
+      joints:
+        right_joint_0.pos: joint1
+        right_joint_1.pos: joint2
+        right_joint_2.pos: joint3
+        right_joint_3.pos: joint4
+        right_joint_4.pos: joint5
+        right_joint_5.pos: joint6
+      gripper: right_gripper.pos
+      frame_description: Right gripper flange link in this arm's URDF base frame,
+        not a fingertip TCP or shared world frame. Verify joint zeros and describe
+        the base axes relative to your table and cameras before use.
+      # Workspace template in metres; verify for this arm's mounting and tool.
+      position_low: [-0.60, -0.60, 0.04]
+      position_high: [0.60, 0.60, 0.70]
+      angle_low: [-1.0, 0.0, 0.0]
+      angle_high: [1.0, 0.0, 0.0]
+      linear_speed: 0.03
+      angular_speed: 0.15
+  axes:
+    left_joint_0.pos:
+      minimum: -2.61799
+      maximum: 3.14159
+      max_speed: 0.3
+      unit: rad
+      description: left YAM joint 0, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    left_joint_1.pos:
+      minimum: 0
+      maximum: 3.66519
+      max_speed: 0.3
+      unit: rad
+      description: left YAM joint 1, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    left_joint_2.pos:
+      minimum: 0
+      maximum: 3.14159
+      max_speed: 0.3
+      unit: rad
+      description: left YAM joint 2, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    left_joint_3.pos:
+      minimum: -1.69297
+      maximum: 1.5708
+      max_speed: 0.3
+      unit: rad
+      description: left YAM joint 3, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    left_joint_4.pos:
+      minimum: -1.5708
+      maximum: 1.5708
+      max_speed: 0.3
+      unit: rad
+      description: left YAM joint 4, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    left_joint_5.pos:
+      minimum: -2.0944
+      maximum: 2.0944
+      max_speed: 0.3
+      unit: rad
+      description: left YAM joint 5, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    left_gripper.pos:
+      minimum: 0
+      maximum: 1
+      max_speed: 0.5
+      unit: fraction
+      description: 'left calibrated gripper: 0 closed, 1 open'
+      tracking_tolerance: 0.15
+    right_joint_0.pos:
+      minimum: -2.61799
+      maximum: 3.14159
+      max_speed: 0.3
+      unit: rad
+      description: right YAM joint 0, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    right_joint_1.pos:
+      minimum: 0
+      maximum: 3.66519
+      max_speed: 0.3
+      unit: rad
+      description: right YAM joint 1, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    right_joint_2.pos:
+      minimum: 0
+      maximum: 3.14159
+      max_speed: 0.3
+      unit: rad
+      description: right YAM joint 2, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    right_joint_3.pos:
+      minimum: -1.69297
+      maximum: 1.5708
+      max_speed: 0.3
+      unit: rad
+      description: right YAM joint 3, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    right_joint_4.pos:
+      minimum: -1.5708
+      maximum: 1.5708
+      max_speed: 0.3
+      unit: rad
+      description: right YAM joint 4, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    right_joint_5.pos:
+      minimum: -2.0944
+      maximum: 2.0944
+      max_speed: 0.3
+      unit: rad
+      description: right YAM joint 5, calibrated robot/model coordinates
+      tracking_tolerance: 0.15
+    right_gripper.pos:
+      minimum: 0
+      maximum: 1
+      max_speed: 0.5
+      unit: fraction
+      description: 'right calibrated gripper: 0 closed, 1 open'
+      tracking_tolerance: 0.15
+robot:
+  type: bi_yam_follower
+  id: bimanual_yam
+  read_only: false
+  left_arm:
+    port: can0
+  right_arm:
+    port: can1

@@ -236,13 +236,14 @@ class PatrolStrategy(RolloutStrategy):
 
 The config declares what the engine arranges on the strategy's behalf, so nothing in LeRobot needs to know its type:
 
-| Declaration                     | Effect                                                                                                                                     |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `dataset_mode`                  | `"none"` (default) rejects `--dataset.*` flags, `"optional"` records when they are given, `"required"` makes `--dataset.repo_id` mandatory |
-| `requires_teleop`               | Makes `--teleop.type` mandatory                                                                                                            |
-| `supports_interactive`          | Allows `--interactive=true`; `run()` must then honour the restartable contract documented on `RolloutStrategy`                             |
-| `requires_streaming_encoding()` | Return `True` when frames are written from inside the control loop: `--dataset.streaming_encoding` is forced on                            |
-| `extra_dataset_features()`      | Strategy-owned dataset columns (DAgger's `intervention`, for instance); every recorded frame must carry them                               |
+| Declaration                     | Effect                                                                                                                                                                     |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dataset_mode`                  | `"none"` (default) rejects `--dataset.*` flags, `"optional"` records when they are given, `"required"` makes `--dataset.repo_id` mandatory                                 |
+| `requires_teleop`               | Makes `--teleop.type` mandatory                                                                                                                                            |
+| `supports_interactive`          | Allows `--interactive=true`; `run()` must then honour the restartable contract documented on `RolloutStrategy`                                                             |
+| `supports_agent_inference`      | Allows `--inference.type=agent`; the strategy must work without a VLA policy/processors and end normally on agent completion. Defaults to `False`; base and sentry opt in. |
+| `requires_streaming_encoding()` | Return `True` when frames are written from inside the control loop: `--dataset.streaming_encoding` is forced on                                                            |
+| `extra_dataset_features()`      | Strategy-owned dataset columns (DAgger's `intervention`, for instance); every recorded frame must carry them                                                               |
 
 Name the distribution `lerobot_strategy_<name>` and `lerobot-rollout` imports the package before parsing the CLI — only its `__init__.py` runs, so import the config there. A package with any other name is loaded, submodules included, with `--strategy.discover_packages_path=<package>`. The strategy's dataclass fields become `--strategy.*` flags:
 
