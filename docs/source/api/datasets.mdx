@@ -24,14 +24,14 @@ See [Using LeRobotDataset](../lerobot-dataset-v3) for the format and the common 
 
 ## Paimon datasets
 
-Paimon stores LeRobot frames and companion metadata as lake tables. The Paimon backend reads
-these tables through the standard `LeRobotDataset` and `lerobot-train` interfaces.
+Train directly from tagged [Apache Paimon](https://paimon.apache.org/) lake tables with
+`LeRobotDataset` or `lerobot-train`, without exporting frame rows or media.
 
 ```bash
 pip install 'lerobot[paimon]'
 ```
 
-Import a LeRobot v3 dataset and pin its table group, then prepare a small local metadata directory:
+Import a LeRobot v3 dataset, tag its tables, and prepare local metadata:
 
 ```python
 import pypaimon.multimodal as pm
@@ -50,17 +50,12 @@ prepare_paimon_dataset(
 )
 ```
 
-The directory contains standard `meta/` files and `paimon.json` with the catalog, table and tag.
-Frame rows and media remain in Paimon. Catalog options also support remote catalogs and warehouses;
-provide credentials through the runtime environment, since the options are saved in `paimon.json`.
-Use a new table-group tag and metadata directory for each training version.
+Only `meta/` and the catalog/table/tag reference (`paimon.json`) are saved locally.
+Frame rows and media stay in Paimon. Remote catalogs are supported; supply credentials
+through the environment because catalog options are saved in `paimon.json`.
+Use a new tag and metadata directory for each training version.
 
-```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-dataset = LeRobotDataset("robot/frames", root="/data/paimon_training")
-frame = dataset[0]
-```
+Train with the prepared directory; the backend is selected automatically:
 
 ```bash
 lerobot-train \
@@ -71,7 +66,6 @@ lerobot-train \
   --output_dir=outputs/paimon-act
 ```
 
-Episode selection, temporal windows, RGB transforms and DataLoader workers use the normal LeRobot
-interfaces. This backend is read-only and supports RGB images/video, numeric state/action and task
-text; depth conversion, structured language and subtask metadata are not supported. Streaming mode
-is unnecessary for remote map-style reads and is not supported by this backend.
+Episode selection, temporal windows, RGB transforms and DataLoader workers use the standard
+LeRobot interfaces. This read-only backend supports RGB images/video, numeric state/action
+and task text. Depth, structured language, subtask metadata and streaming mode are not supported.
