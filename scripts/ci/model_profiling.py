@@ -62,7 +62,7 @@ def policy_args(policy: str) -> list[str]:
     ]
     if policy == "multi_task_dit":
         args += ["--policy.horizon=32", "--policy.n_action_steps=30"]
-    if policy in {"dm05", "pi05", "molmoact2"}:
+    if policy in {"dm05", "pi05", "molmoact2", "fineart_vla"}:
         args += ["--compute_missing_quantiles=true"]
     if policy == "tdmpc":
         args += ["--policy.horizon=3", "--policy.n_action_steps=1"]
