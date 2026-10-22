@@ -20,6 +20,8 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import torch
+
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -60,7 +62,9 @@ class WallOSS05Config(PreTrainedConfig):
     older ``wall-oss-flow`` defaults.
     """
 
+    # Stable tokenizer/processor asset source. Weights use the standard policy.path.
     pretrained_name_or_path: str = "lerobot/wall-oss-0.5"
+    dtype: torch.dtype | None = torch.bfloat16
     vlm_config: dict[str, Any] | None = None
     n_obs_steps: int = 1
     chunk_size: int = 32

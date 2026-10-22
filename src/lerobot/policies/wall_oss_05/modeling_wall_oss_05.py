@@ -17,19 +17,14 @@
 from __future__ import annotations
 
 import math
-import shutil
 from collections import deque
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as functional
-from huggingface_hub import save_torch_state_dict, snapshot_download
-from safetensors.torch import load_file
 from torch import Tensor, nn
 
-from lerobot.configs import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -360,11 +355,10 @@ class WallOSS05Model(nn.Module):
     def __init__(
         self,
         config: Qwen2_5_VLConfig,
-        processor: Qwen2_5_VLProcessor,
+        processor: Qwen2_5_VLProcessor | None = None,
     ):
         super().__init__()
         self.config = config
-        self.processor = processor
         self.visual = Qwen2_5_VisionTransformerPretrainedModel(config.vision_config)
         # WALL-X scales normalized activations in FP32, including in vision.
         # Transformers' Qwen norm casts before scaling, changing BF16 outputs.
@@ -379,7 +373,26 @@ class WallOSS05Model(nn.Module):
         self.visual.merger.ln_q = WallOSS05RMSNorm(vision_width, eps=1e-6)
         self.model = WallOSS05Decoder(config)
         self.action_preprocessor = WallOSS05ActionProcessor(config)
-        self.action_token_id = processor.tokenizer.convert_tokens_to_ids(_ACTION_TOKEN)
+        if processor is None and not hasattr(config, "action_token_id"):
+            raise ValueError(
+                "Wall-OSS-0.5 requires the native LeRobot checkpoint config. "
+                "Convert older snapshots with lerobot.policies.wall_oss_05.convert_checkpoint."
+            )
+        self.action_token_id = (
+            processor.tokenizer.convert_tokens_to_ids(_ACTION_TOKEN)
+            if processor is not None
+            else int(config.action_token_id)
+        )
+        self.eos_token_id = (
+            getattr(processor.tokenizer, "eos_token_id", config.text_config.eos_token_id)
+            if processor is not None
+            else config.text_config.eos_token_id
+        )
+        self.pad_token_id = (
+            getattr(processor.tokenizer, "pad_token_id", config.text_config.pad_token_id)
+            if processor is not None
+            else config.text_config.pad_token_id
+        )
         self.lm_head = nn.Linear(
             int(config.text_config.hidden_size),
             int(config.text_config.vocab_size),
@@ -557,8 +570,8 @@ class WallOSS05Model(nn.Module):
             raise ValueError("top_p must be in (0, 1].")
 
         if eos_token_id is None:
-            eos_token_id = self.processor.tokenizer.eos_token_id
-        pad_token_id = self.processor.tokenizer.pad_token_id
+            eos_token_id = self.eos_token_id
+        pad_token_id = self.pad_token_id
         if pad_token_id is None:
             pad_token_id = eos_token_id
 
@@ -737,19 +750,12 @@ class WallOSS05Model(nn.Module):
         return {"predict_action": noisy_actions}
 
 
-_CHECKPOINT_METADATA = (
-    "preprocessor_config.json",
-    "tokenizer.json",
-    "tokenizer_config.json",
-    "vocab.json",
-)
-
-
 class WallOSS05Policy(PreTrainedPolicy):
     """Native LeRobot implementation of Wall-OSS-0.5."""
 
     config_class = WallOSS05Config
     name = "wall_oss_05"
+    _fsdp_wrap_modules = ["WallOSS05DecoderLayer", "Qwen2_5_VLVisionBlock"]
 
     def __init__(
         self,
@@ -765,74 +771,39 @@ class WallOSS05Policy(PreTrainedPolicy):
         self.config = config
         self._queues: dict[str, deque[Tensor]] = {}
         self.processor: Qwen2_5_VLProcessor | None = None
-        self._source_checkpoint: Path | None = None
         if load_model:
-            self._load_native_model()
+            self._initialize_model()
         self.reset()
 
-    def _resolve_checkpoint(self) -> Path:
-        candidate = Path(self.config.pretrained_name_or_path)
-        if candidate.is_dir():
-            return candidate.resolve()
-        return Path(
-            snapshot_download(
-                repo_id=self.config.pretrained_name_or_path,
-                revision=self.config.pretrained_revision,
-            )
-        )
-
-    def _load_native_model(self) -> None:
+    def _initialize_model(self) -> None:
+        """Build from config; the shared persistence layer owns all weight loading."""
         require_package("transformers", extra="wall_oss_05")
-
-        source = self._resolve_checkpoint()
-        processor = Qwen2_5_VLProcessor.from_pretrained(source, fix_mistral_regex=True)
-        # These two control tokens were added dynamically by the training
-        # loader and therefore are not present in the base Qwen tokenizer
-        # files stored with the checkpoint.
-        processor.tokenizer.add_tokens([_PROPRIO_TOKEN, _ACTION_TOKEN])
-        processor.tokenizer.padding_side = "left"
-
-        if self.config.vlm_config is None:
-            checkpoint_config = WallOSS05Config.from_pretrained(source)
-            self.config.vlm_config = checkpoint_config.vlm_config
         model_config = self.config.vlm_backbone_config
         model_config.vision_config._attn_implementation = "sdpa"
+        previous_dtype = torch.get_default_dtype()
+        try:
+            if self.config.dtype is not None:
+                torch.set_default_dtype(self.config.dtype)
+            self.model = WallOSS05Model(model_config)
+        finally:
+            torch.set_default_dtype(previous_dtype)
+        # Match the released mixed-precision parameter layout.
+        self.model.action_preprocessor.float()
+        for module in self.model.model.modules():
+            if isinstance(module, WallOSS05RMSNorm):
+                module.float()
 
-        state_dict = load_file(source / "model.safetensors", device="cpu")
-        model_config.text_config.vocab_size = state_dict["model.embed_tokens.weight"].shape[0]
-        model_config.text_config.pad_token_id = processor.tokenizer.pad_token_id
-
-        model = WallOSS05Model(model_config, processor)
-        for key in [key for key in state_dict if ".normalizer_" in key]:
-            state_dict.pop(key)
-        self._fuse_vision_mlp_weights(state_dict)
-        incompatible = model.load_state_dict(state_dict, strict=False, assign=True)
-        missing = [
-            key
-            for key in incompatible.missing_keys
-            if not key.endswith("rotary_emb.inv_freq") and key != "lm_head.weight"
-        ]
-        if missing or incompatible.unexpected_keys:
-            raise RuntimeError(
-                "Converted Wall-OSS-0.5 weights do not match the native model: "
-                f"missing={missing[:10]}, unexpected={incompatible.unexpected_keys[:10]}"
+    def _get_processor(self) -> Qwen2_5_VLProcessor:
+        if self.processor is None:
+            require_package("transformers", extra="wall_oss_05")
+            self.processor = Qwen2_5_VLProcessor.from_pretrained(
+                self.config.pretrained_name_or_path,
+                revision=self.config.pretrained_revision,
+                fix_mistral_regex=True,
             )
-        model.tie_weights()
-
-        self.processor = processor
-        self.model = model.to(self.config.device)
-        self._source_checkpoint = source
-
-    @staticmethod
-    def _fuse_vision_mlp_weights(state_dict: dict[str, Tensor]) -> None:
-        gate_keys = [
-            key for key in state_dict if key.startswith("visual.blocks.") and ".mlp.gate_proj." in key
-        ]
-        for gate_key in gate_keys:
-            up_key = gate_key.replace("gate_proj", "up_proj")
-            state_dict[gate_key.replace("gate_proj", "gate_up_proj")] = torch.cat(
-                (state_dict.pop(gate_key), state_dict.pop(up_key)), dim=0
-            )
+            self.processor.tokenizer.add_tokens([_PROPRIO_TOKEN, _ACTION_TOKEN])
+            self.processor.tokenizer.padding_side = "left"
+        return self.processor
 
     def reset(self) -> None:
         self._queues = {ACTION: deque(maxlen=self.config.n_action_steps)}
@@ -949,8 +920,9 @@ class WallOSS05Policy(PreTrainedPolicy):
     @torch.no_grad()
     def generate_text(self, batch: dict[str, Tensor]) -> str:
         """Decode one response from contract-rendered messages."""
-        if self.processor is None or not hasattr(self, "model"):
+        if not hasattr(self, "model"):
             raise RuntimeError("Wall-OSS-0.5 model is not loaded.")
+        processor = self._get_processor()
         inputs = self._pretokenized_inputs(batch)
         output_ids = self.model.generate_text(
             **inputs,
@@ -958,11 +930,11 @@ class WallOSS05Policy(PreTrainedPolicy):
             min_new_tokens=0,
             temperature=self.config.text_temperature,
             top_p=self.config.text_top_p,
-            eos_token_id=self.processor.tokenizer.eos_token_id,
+            eos_token_id=processor.tokenizer.eos_token_id,
         )
         outputs = [
             text.strip()
-            for text in self.processor.tokenizer.batch_decode(
+            for text in processor.tokenizer.batch_decode(
                 output_ids,
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=True,
@@ -976,57 +948,3 @@ class WallOSS05Policy(PreTrainedPolicy):
             chunk = self.predict_action_chunk(batch, **kwargs)
             self._queues[ACTION].extend(chunk[:, : self.config.n_action_steps].transpose(0, 1))
         return self._queues[ACTION].popleft()
-
-    def _save_pretrained(self, save_directory: Path, state_dict: dict[str, Tensor] | None = None) -> None:
-        if self._source_checkpoint is None or not hasattr(self, "model"):
-            raise RuntimeError("Load the model before saving a Wall-OSS-0.5 checkpoint.")
-        save_directory.mkdir(parents=True, exist_ok=True)
-
-        if state_dict is None:
-            model_state = dict(self.model.state_dict())
-        else:
-            model_state = {
-                key.removeprefix("model."): value
-                for key, value in state_dict.items()
-                if key.startswith("model.")
-            }
-
-        # The public checkpoint stores the tied vocabulary matrix only under
-        # ``model.embed_tokens.weight``.
-        if "model.embed_tokens.weight" in model_state and "lm_head.weight" in model_state:
-            model_state.pop("lm_head.weight")
-        total_bytes = sum(value.numel() * value.element_size() for value in model_state.values())
-        save_torch_state_dict(
-            model_state,
-            str(save_directory),
-            max_shard_size=max(total_bytes, 1),
-        )
-
-        for name in _CHECKPOINT_METADATA:
-            shutil.copy2(self._source_checkpoint / name, save_directory / name)
-
-        saved_source = self.config.pretrained_name_or_path
-        self.config.pretrained_name_or_path = "."
-        try:
-            self.config._save_pretrained(save_directory)
-        finally:
-            self.config.pretrained_name_or_path = saved_source
-
-    @classmethod
-    def from_pretrained(
-        cls,
-        pretrained_name_or_path: str | Path,
-        *,
-        config: PreTrainedConfig | None = None,
-        **kwargs: Any,
-    ) -> WallOSS05Policy:
-        dataset_stats = kwargs.pop("dataset_stats", None)
-        dataset_meta = kwargs.pop("dataset_meta", None)
-        if config is None:
-            config = PreTrainedConfig.from_pretrained(pretrained_name_or_path, **kwargs)
-        if not isinstance(config, WallOSS05Config):
-            raise TypeError("Converted checkpoint config is not type='wall_oss_05'.")
-        config.pretrained_name_or_path = str(pretrained_name_or_path)
-        policy = cls(config, dataset_stats=dataset_stats, dataset_meta=dataset_meta)
-        policy.eval()
-        return policy

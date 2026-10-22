@@ -89,7 +89,7 @@ Select the policy with:
 Initialize from the LeRobot checkpoint with:
 
 ```bash
---policy.pretrained_name_or_path=lerobot/wall-oss-0.5
+--policy.path=lerobot/wall-oss-0.5
 ```
 
 Use `--policy.path=your-org/your-finetuned-checkpoint` when evaluating or
@@ -157,10 +157,22 @@ the checkpoint. When fine-tuning with `lerobot-train`, the training dataset
 statistics replace the pretrained processor statistics and are saved with the
 new checkpoint.
 
-The public base checkpoint's older combined message renderer is upgraded when
-loading its processors. This preserves its saved recipe and quantile statistics
-and adds the current policy tokenizer. Saving the loaded processors writes the
-current split-renderer format.
+The published checkpoint uses the native LeRobot policy state dictionary and
+current pre/postprocessor format. Weights load and save through the shared
+policy persistence code, including distributed gathers and the main-process
+write gate. The config retains a stable tokenizer asset reference and can be
+loaded from any working directory.
+
+To upgrade a historical snapshot locally, run:
+
+```bash
+uv run python -m lerobot.policies.wall_oss_05.convert_checkpoint \
+  --source=/path/to/historical-snapshot \
+  --output-dir=/path/to/native-checkpoint
+```
+
+Use the resulting directory as `--policy.path`. Conversion preserves the neural
+tensors and quantile statistics; runtime loading uses the standard native format.
 
 ## Training
 
@@ -171,8 +183,7 @@ Fine-tune the base checkpoint with the standard LeRobot training command:
 ```bash
 lerobot-train \
   --dataset.repo_id=your-org/your-dataset \
-  --policy.type=wall_oss_05 \
-  --policy.pretrained_name_or_path=lerobot/wall-oss-0.5 \
+  --policy.path=lerobot/wall-oss-0.5 \
   --policy.repo_id=your-org/wall-oss-0.5-your-task \
   --output_dir=outputs/train/wall_oss_05 \
   --job_name=wall_oss_05_finetune \
@@ -194,8 +205,7 @@ and continuous action chunk in one causal sequence:
 ```bash
 lerobot-train \
   --dataset.repo_id=your-org/your-language-annotated-dataset \
-  --policy.type=wall_oss_05 \
-  --policy.pretrained_name_or_path=lerobot/wall-oss-0.5 \
+  --policy.path=lerobot/wall-oss-0.5 \
   --policy.use_language_recipe=true \
   --policy.text_loss_weight=0.1 \
   --policy.flow_loss_weight=1.0 \
@@ -228,7 +238,7 @@ YAML override; LeRobot does not provide shared default recipe files.
 
 | Parameter                 | Default                    | Description                                                |
 | ------------------------- | -------------------------- | ---------------------------------------------------------- |
-| `pretrained_name_or_path` | `lerobot/wall-oss-0.5`     | Base or fine-tuned checkpoint                              |
+| `pretrained_name_or_path` | `lerobot/wall-oss-0.5`     | Tokenizer and image-processor asset source                 |
 | `chunk_size`              | `32`                       | Number of actions predicted per chunk                      |
 | `n_action_steps`          | `32`                       | Number of predicted actions executed before replanning     |
 | `camera_key_mapping`      | face and right-wrist views | Associates image feature keys with model camera slots      |

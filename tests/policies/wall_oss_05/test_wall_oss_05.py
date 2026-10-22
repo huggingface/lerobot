@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 from safetensors import safe_open
+from safetensors.torch import save_file
 from torch import nn
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
@@ -768,13 +769,9 @@ def test_six_dimensional_dataset_trains_through_factory_and_saved_processors(
     assert len(dataset.meta.stats[ACTION]["q01"]) == 6
     processor = _tiny_qwen_processor()
 
-    def initialize_tiny(policy):
-        # Substitute checkpoint I/O only. All model and processor computations stay real.
-        policy.processor = processor
-        policy.model = WallOSS05Model(_tiny_native_config(), processor)
-
-    monkeypatch.setattr(WallOSS05Policy, "_load_native_model", initialize_tiny)
-    config = _config(chunk_size=2, n_action_steps=2)
+    config = _config(
+        chunk_size=2, n_action_steps=2, dtype=torch.float32, vlm_config=_tiny_native_config().to_dict()
+    )
     policy = make_policy(config, ds_meta=dataset.meta)
     assert config.input_features[OBS_STATE].shape == (6,)
     assert config.action_feature.shape == (6,)
@@ -794,82 +791,19 @@ def test_six_dimensional_dataset_trains_through_factory_and_saved_processors(
     assert post(output).shape == (2, 2, 6)
     pre.save_pretrained(tmp_path / "checkpoint")
     post.save_pretrained(tmp_path / "checkpoint")
+    policy.save_pretrained(tmp_path / "checkpoint")
+    restored = WallOSS05Policy.from_pretrained(tmp_path / "checkpoint", strict=True)
+    torch.testing.assert_close(restored.state_dict(), policy.state_dict(), atol=0, rtol=0)
     pre2, post2 = make_pre_post_processors(config, pretrained_path=tmp_path / "checkpoint")
     for step in pre2.steps:
         if isinstance(step, WallOSS05TokenizerStep):
             step._processor = processor
     torch.testing.assert_close(pre2(next(iter(DataLoader(dataset, batch_size=2))))[ACTION], batch[ACTION])
     torch.testing.assert_close(post2(output), post(output))
-
-
-@pytest.mark.parametrize("recipe_enabled", [False, True])
-def test_public_legacy_processors_upgrade_without_losing_stats_or_recipe(tmp_path, recipe_enabled):
-    if recipe_enabled:
-        pytest.importorskip("datasets")
-        pytest.importorskip("av")
-    config = _dimension_config(state_dim=6, action_dim=6)
-    pre, post = make_pre_post_processors(config, dataset_stats=_stats(10, 20, state_dim=6, action_dim=6))
-    pre.save_pretrained(tmp_path)
-    post.save_pretrained(tmp_path)
-    path = tmp_path / "policy_preprocessor.json"
-    saved = json.loads(path.read_text())
-    recipe = (
-        {
-            "messages": [
-                {"role": "user", "content": "${task}: saved checkpoint prompt", "stream": "low_level"},
-                {
-                    "role": "assistant",
-                    "content": "${subtask}",
-                    "stream": "low_level",
-                    "target": True,
-                    "if_present": "subtask",
-                },
-            ]
-        }
-        if recipe_enabled
-        else None
-    )
-    saved["steps"] = [
-        {
-            "registry_name": "render_messages_processor",
-            "config": {"recipe": recipe, "render_training": False},
-        },
-        *[
-            entry
-            for entry in saved["steps"]
-            if entry["registry_name"]
-            not in {
-                "render_runtime_messages_processor",
-                "render_training_messages_processor",
-                "wall_oss_05_tokenizer",
-                "wall_oss_05_pad_state",
-                "wall_oss_05_pad_action",
-            }
-        ],
-    ]
-    path.write_text(json.dumps(saved))
-
-    pre, post = make_pre_post_processors(config, pretrained_path=tmp_path)
-    _stub_tokenizer(pre)
-    batch = _batch(batch_size=1)
-    batch[OBS_STATE] = torch.full((1, 6), 15.0)
-    batch[ACTION] = torch.full((1, 32, 6), 15.0)
-    processed = pre(batch)
-    torch.testing.assert_close(processed[OBS_STATE][..., :6], torch.zeros(1, 6))
-    torch.testing.assert_close(processed[ACTION][..., :6], torch.zeros(1, 32, 6))
-    torch.testing.assert_close(post(torch.zeros(1, 32, 26)), torch.full((1, 32, 6), 15.0))
-    if recipe_enabled:
-        result = pre({**batch, "query_kind": "next_subtask", "query_text": "clear the table"})
-        assert result["messages_rendered"] == [
-            [{"role": "user", "content": "clear the table: saved checkpoint prompt"}]
-        ]
-    # The migrated pipelines are saved in the current format for future reloads.
-    pre.save_pretrained(tmp_path)
-    post.save_pretrained(tmp_path)
-    assert "render_messages_processor" not in path.read_text()
-    pre, post = make_pre_post_processors(config, pretrained_path=tmp_path)
-    _stub_tokenizer(pre)
-    torch.testing.assert_close(pre(batch)[OBS_STATE], processed[OBS_STATE])
+    # Sharded resume constructs from config before DCP supplies the weights.
+    restored.config.pretrained_path = tmp_path / "weights-restored-later"
+    deferred = make_policy(restored.config, ds_meta=dataset.meta, defer_weight_load=True)
+    assert deferred.model.model.embed_tokens.weight.shape == restored.model.model.embed_tokens.weight.shape
 
 
 @pytest.mark.parametrize("reload", [False, True])
@@ -910,6 +844,7 @@ def _tiny_native_config():
             "num_attention_heads": 4,
             "num_key_value_heads": 2,
             "pad_token_id": 0,
+            "eos_token_id": 11,
             "rope_parameters": {"rope_type": "default", "mrope_section": [2, 1, 1]},
         },
         vision_config={
@@ -927,6 +862,7 @@ def _tiny_native_config():
         dim_inputs=[32, 16],
         experts=[{"hidden_size": 32, "intermediate_size": 64}, {"hidden_size": 16, "intermediate_size": 32}],
         action_hidden_size=16,
+        action_token_id=31,
         noise_scheduler={"s": 0.999},
         image_token_id=28,
         vision_start_token_id=29,
@@ -1057,30 +993,83 @@ def test_recipe_training_routes_text_and_optional_action_losses(predict_actions,
         assert policy.model.flow_scale.grad is None
 
 
-def test_save_preserves_tied_embedding_key_contract_and_vlm_config(tmp_path):
-    source = tmp_path / "source"
-    output = tmp_path / "output"
-    source.mkdir()
-    for name in (
-        "preprocessor_config.json",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "vocab.json",
-    ):
-        (source / name).write_text("{}")
+def test_native_checkpoint_roundtrip_from_another_working_directory(tmp_path, monkeypatch):
+    config = _config(vlm_config=_tiny_native_config().to_dict(), dtype=torch.float32)
+    policy = WallOSS05Policy(config)
+    output = tmp_path / "checkpoint"
+    policy.save_pretrained(output)
+    saved_config = WallOSS05Config.from_pretrained(output)
+    assert saved_config.pretrained_name_or_path == "lerobot/wall-oss-0.5"
+    assert saved_config.vlm_config == json.loads(json.dumps(config.vlm_config))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    restored = WallOSS05Policy.from_pretrained(output, strict=True)
+    torch.testing.assert_close(restored.state_dict(), policy.state_dict(), atol=0, rtol=0)
+    assert restored.model.lm_head.weight is restored.model.model.embed_tokens.weight
+    with safe_open(output / "model.safetensors", framework="pt") as checkpoint:
+        # The shared saver retains just one alias of the tied vocabulary matrix.
+        assert len(set(checkpoint.keys()) & {"model.model.embed_tokens.weight", "model.lm_head.weight"}) == 1
+
+
+@pytest.mark.parametrize("main_process", [False, True])
+def test_save_uses_shared_collective_and_main_process_gate(tmp_path, monkeypatch, main_process):
+    import lerobot.distributed.checkpoint as checkpoint
+    import lerobot.distributed.utils as distributed_utils
 
     policy = WallOSS05Policy(_config(), load_model=False)
     policy.model = _TinyTiedAuthorModel()
-    policy._source_checkpoint = source
-    policy.save_pretrained(output)
+    gathered = []
 
-    with safe_open(output / "model.safetensors", framework="pt") as checkpoint:
-        keys = set(checkpoint.keys())
-    assert "model.embed_tokens.weight" in keys
-    assert "lm_head.weight" not in keys
-    assert not (output / "normalizer_action.pth").exists()
-    assert not (output / "normalizer_propri.pth").exists()
-    assert not (output / "author_config.json").exists()
-    assert not (output / "author_train_config.yml").exists()
-    saved_config = WallOSS05Config.from_pretrained(output)
-    assert saved_config.vlm_config == {"model_type": "qwen2_5_vl"}
+    def gather(module):
+        gathered.append(module)
+        # DDP has a full state dict even off-main, which must still not write.
+        return module.state_dict()
+
+    monkeypatch.setattr(checkpoint, "full_model_state_dict", gather)
+    monkeypatch.setattr(distributed_utils, "is_main_process", lambda: main_process)
+    policy.save_pretrained(tmp_path)
+    assert gathered == [policy]
+    assert (tmp_path / "model.safetensors").exists() is main_process
+    assert (tmp_path / "config.json").exists() is main_process
+
+
+def test_offline_conversion_produces_a_native_strictly_loadable_checkpoint(tmp_path, dataset_dependencies):
+    pytest.importorskip("transformers")
+    from transformers import Qwen2_5_VLProcessor, Qwen2VLVideoProcessor
+
+    from lerobot.policies.wall_oss_05.convert_checkpoint import convert_checkpoint
+
+    source = tmp_path / "historical"
+    native = tmp_path / "native"
+    source.mkdir()
+    config = _config(vlm_config=_tiny_native_config().to_dict(), dtype=torch.float32)
+    policy = WallOSS05Policy(config)
+    historical = {
+        name.removeprefix("model."): tensor
+        for name, tensor in policy.state_dict().items()
+        if name != "model.lm_head.weight"
+    }
+    historical["action_preprocessor.normalizer_action.min.test"] = torch.zeros(26)
+    save_file(historical, source / "model.safetensors")
+    config._save_pretrained(source)
+    parts = _tiny_qwen_processor()
+    processor = Qwen2_5_VLProcessor(
+        image_processor=parts.image_processor,
+        tokenizer=parts.tokenizer,
+        video_processor=Qwen2VLVideoProcessor(),
+    )
+    processor.save_pretrained(source)
+    pre, post = make_pre_post_processors(config, dataset_stats=_stats())
+    pre.save_pretrained(source)
+    post.save_pretrained(source)
+    report = convert_checkpoint(source, native)
+    assert report["all_neural_tensors_preserved_exactly"]
+    assert report["dropped_model_owned_normalizer_tensors"] == 1
+    restored = WallOSS05Policy.from_pretrained(native, strict=True)
+    torch.testing.assert_close(restored.state_dict(), policy.state_dict(), atol=0, rtol=0)
+    pre2, post2 = make_pre_post_processors(restored.config, pretrained_path=native)
+    assert isinstance(
+        next(step for step in pre2.steps if isinstance(step, WallOSS05TokenizerStep)), WallOSS05TokenizerStep
+    )
+    torch.testing.assert_close(post2(torch.zeros(1, 32, 26)), post(torch.zeros(1, 32, 26)))

@@ -24,9 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
-from huggingface_hub import hf_hub_download
 from PIL import Image
-from safetensors.torch import load_file
 
 from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
@@ -45,12 +43,6 @@ from lerobot.processor import (
     load_pretrained_policy_processors,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
-)
-from lerobot.processor.converters import (
-    batch_to_transition,
-    policy_action_to_transition,
-    transition_to_batch,
-    transition_to_policy_action,
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -595,97 +587,15 @@ def make_wall_oss_05_pre_post_processors_from_pretrained(
     loading here also serves rollout and resumed training.
     """
     del dataset_stats, dataset_meta
-    preprocessor = _load_legacy_wall_preprocessor(
-        config, pretrained_path, revision, preprocessor_config_filename, preprocessor_overrides
+    preprocessor, postprocessor = load_pretrained_policy_processors(
+        pretrained_path,
+        revision=revision,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
     )
-    if preprocessor is None:
-        preprocessor, postprocessor = load_pretrained_policy_processors(
-            pretrained_path,
-            revision=revision,
-            preprocessor_overrides=preprocessor_overrides,
-            postprocessor_overrides=postprocessor_overrides,
-            preprocessor_config_filename=preprocessor_config_filename,
-            postprocessor_config_filename=postprocessor_config_filename,
-        )
-    else:
-        postprocessor = PolicyProcessorPipeline.from_pretrained(
-            pretrained_path,
-            config_filename=postprocessor_config_filename,
-            revision=revision,
-            overrides=postprocessor_overrides,
-            to_transition=policy_action_to_transition,
-            to_output=transition_to_policy_action,
-        )
     return reconcile_wall_oss_05_processors(config, preprocessor, postprocessor)
-
-
-def _load_legacy_wall_preprocessor(
-    config: WallOSS05Config,
-    pretrained_path: str | Path,
-    revision: str | None,
-    config_filename: str,
-    overrides: dict[str, Any] | None,
-) -> PolicyProcessorPipeline | None:
-    """Upgrade the public 0.5 checkpoint's removed renderer and policy-owned tokenization.
-
-    Keep serialized statistics and the checkpoint recipe. New checkpoints use
-    the ordinary pipeline loader without rewriting their processor steps.
-    """
-    local = Path(pretrained_path).is_dir()
-
-    def resolve(filename: str) -> Path:
-        if local:
-            return Path(pretrained_path) / filename
-        return Path(hf_hub_download(str(pretrained_path), filename, revision=revision))
-
-    loaded = json.loads(resolve(config_filename).read_text())
-    if not any(step.get("registry_name") == "render_messages_processor" for step in loaded["steps"]):
-        return None
-    migrated = []
-    for entry in loaded["steps"]:
-        if entry.get("registry_name") != "render_messages_processor":
-            migrated.append(entry)
-            continue
-        saved = entry.get("config", {})
-        recipe = saved.get("recipe")
-        migrated.extend(
-            [
-                {"registry_name": "render_runtime_messages_processor", "config": {"recipe": recipe}},
-                {
-                    "registry_name": "render_training_messages_processor",
-                    "config": {"recipe": recipe if saved.get("render_training", True) else None},
-                },
-            ]
-        )
-    if not any(step.get("registry_name") == "wall_oss_05_tokenizer" for step in migrated):
-        tokenizer = WallOSS05TokenizerStep(
-            processor_name=str(pretrained_path),
-            revision=revision,
-            camera_key_mapping=config.camera_key_mapping,
-            chunk_size=config.chunk_size,
-            max_state_dim=config.max_state_dim,
-            tokenizer_max_length=config.tokenizer_max_length,
-        )
-        index = next(
-            (i for i, entry in enumerate(migrated) if entry.get("registry_name") == "device_processor"),
-            len(migrated),
-        )
-        migrated.insert(index, {"registry_name": "wall_oss_05_tokenizer", "config": tokenizer.get_config()})
-    loaded["steps"] = migrated
-    state = {
-        Path(entry["state_file"]).stem: load_file(
-            resolve((Path(config_filename).parent / entry["state_file"]).as_posix())
-        )
-        for entry in migrated
-        if "state_file" in entry
-    }
-    return PolicyProcessorPipeline.from_config(
-        loaded,
-        state_dict=state,
-        overrides=overrides,
-        to_transition=batch_to_transition,
-        to_output=transition_to_batch,
-    )
 
 
 def make_wall_oss_05_pre_post_processors(
