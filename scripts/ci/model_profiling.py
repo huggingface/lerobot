@@ -69,8 +69,12 @@ def policy_args(policy: str) -> list[str]:
     if policy == "pi0_fast":
         # Autoregressive action decoding needs learned action tokens, not a random language model.
         args += [
-            "--policy.pretrained_path=lerobot/pi0fast-base",
-            "--policy.pretrained_revision=308eb844dabdf46cd9dcd5138c1988b7a234f1d9",
+            "--policy.pretrained_path=lerobot/pi0fast-libero",
+            "--policy.pretrained_revision=840f4b503f4c09110421c33c810a85b6684fd658",
+            "--policy.action_tokenizer_name=jadechoghari/tokenizer-lib-mean",
+            "--policy.chunk_size=10",
+            "--policy.n_action_steps=10",
+            "--policy.empty_cameras=1",
         ]
     if policy == "flux3":
         args += ["--policy.camera_layout=single"]

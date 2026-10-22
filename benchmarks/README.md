@@ -34,6 +34,8 @@ Every workflow run produces a GitHub job summary and downloadable `model-profili
 
 The public [LeRobot health dashboard](https://huggingface.co/spaces/lerobot/health-dashboard) provides a sortable results table, error details and report downloads. Its History view charts inference or training latency by policy over the last month, three months, or all recorded runs. Matching setup comparisons use hardware, batch size, dtype, dataset and configuration fingerprint; source commits can differ.
 
-The workflow preserves each run and attempt under `data/<run-id>-<attempt>/` in the Space, using the existing `MODEL_PROFILING_HF_TOKEN` (or the existing `LEROBOT_HF_USER` fallback) secret with write access. Repository variable `MODEL_PROFILING_SPACE` overrides the destination. Archived JSON, report ZIP and source metadata remain available without GitHub authentication or artifact expiration. A valid server-side GitHub token also enables live results. No Slack notifications are sent.
+The workflow preserves each run and attempt under `data/<run-id>-<attempt>/` in the Space, using the `MODEL_PROFILING_HF_TOKEN` (or the existing `LEROBOT_HF_USER` fallback) secret with write access. Repository variable `MODEL_PROFILING_SPACE` overrides the destination. Archived JSON, report ZIP and source metadata remain available without GitHub authentication or artifact expiration. A valid server-side GitHub token also enables live results. No Slack notifications are sent.
 
 GitHub's raw per-policy artifacts follow the repository's retention policy. Download configurations and optional traces you need to retain separately.
+
+PI0-FAST uses the pinned LIBERO checkpoint with its matching action tokenizer, horizon and camera layout, because the base checkpoint does not reliably emit a valid action prefix. Its optimizer, float32 dtype and training memory settings retain the policy defaults.
