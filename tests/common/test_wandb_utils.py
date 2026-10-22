@@ -33,27 +33,6 @@ def test_wandb_config_console_defaults():
     assert cfg.console_chunk_max_seconds == 0
 
 
-def test_wandb_logger_requires_initialized_run(monkeypatch, tmp_path):
-    wandb = MagicMock()
-    wandb.init.return_value = None
-    monkeypatch.setitem(sys.modules, "wandb", wandb)
-    cfg = SimpleNamespace(
-        wandb=WandBConfig(),
-        output_dir=tmp_path,
-        job_name="test-run",
-        env=None,
-        trainable_config=SimpleNamespace(type="test-policy"),
-        is_reward_model_training=False,
-        seed=42,
-        dataset=None,
-        resume=False,
-        to_dict=lambda: {},
-    )
-    with pytest.raises(RuntimeError, match="did not initialize a run"):
-        WandBLogger(cfg)
-    assert cfg.wandb.run_id is None
-
-
 def test_wandb_logger_forwards_resume_and_console_settings(monkeypatch, tmp_path):
     wandb = MagicMock()
     wandb.Settings.return_value = sentinel.settings

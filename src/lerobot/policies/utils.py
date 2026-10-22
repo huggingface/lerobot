@@ -17,7 +17,6 @@
 import logging
 from collections import deque
 
-import numpy as np
 import torch
 from torch import nn
 
@@ -100,7 +99,7 @@ def log_model_loading_keys(missing_keys: list[str], unexpected_keys: list[str]) 
 
 # TODO(Steven): Move this function to a proper preprocessor step
 def prepare_observation_for_inference(
-    observation: dict[str, np.ndarray],
+    observation: RobotObservation,
     device: torch.device,
     task: str | None = None,
     robot_type: str | None = None,
@@ -140,11 +139,10 @@ def prepare_observation_for_inference(
             tensor = tensor.permute(2, 0, 1).contiguous()
         observation[name] = tensor.unsqueeze(0)
 
-    processed_observation: RobotObservation = observation
-    processed_observation["task"] = task if task else ""
-    processed_observation["robot_type"] = robot_type if robot_type else ""
+    observation["task"] = task if task else ""
+    observation["robot_type"] = robot_type if robot_type else ""
 
-    return processed_observation
+    return observation
 
 
 def build_inference_frame(

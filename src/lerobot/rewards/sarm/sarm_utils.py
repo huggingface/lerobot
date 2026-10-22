@@ -21,7 +21,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from numpy.typing import NDArray
 
-type SubtaskNames = Sequence[str] | NDArray[np.str_]
+type SubtaskNames = Sequence[str] | NDArray[np.object_]
 type SubtaskFrames = Sequence[int] | NDArray[np.int64]
 
 

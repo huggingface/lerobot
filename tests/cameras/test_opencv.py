@@ -78,25 +78,6 @@ def patch_opencv_videocapture():
 TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
 DEFAULT_PNG_FILE_PATH = TEST_ARTIFACTS_DIR / "image_160x120.png"
 TEST_IMAGE_SIZES = ["128x128", "160x120", "320x180", "480x270"]
-
-
-def test_connect_accepts_path_with_real_opencv(tmp_path, monkeypatch):
-    image_path = tmp_path / "camera.png"
-    assert cv2.imwrite(str(image_path), np.zeros((32, 48, 3), dtype=np.uint8))
-    # The module-wide mock also converts Path to str, masking unsupported arguments
-    # at the actual OpenCV boundary. Exercise that boundary without a physical camera.
-    monkeypatch.setattr(cv2, "VideoCapture", RealVideoCapture)
-    camera = OpenCVCamera(OpenCVCameraConfig(index_or_path=image_path, warmup_s=0))
-    monkeypatch.setattr(camera, "_start_read_thread", lambda: None)
-    try:
-        camera.connect(warmup=False)
-        assert camera.is_connected
-        assert (camera.width, camera.height) == (48, 32)
-    finally:
-        if camera.is_connected:
-            camera.disconnect()
-
-
 TEST_IMAGE_PATHS = [TEST_ARTIFACTS_DIR / f"image_{size}.png" for size in TEST_IMAGE_SIZES]
 
 

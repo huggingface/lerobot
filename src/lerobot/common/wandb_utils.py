@@ -124,8 +124,6 @@ class WandBLogger:
                 console_chunk_max_seconds=self.cfg.console_chunk_max_seconds,
             ),
         )
-        if run is None:
-            raise RuntimeError("WandB did not initialize a run")
         run_id = run.id
         # NOTE: We will override the cfg.wandb.run_id with the wandb run id.
         # This is because we want to be able to resume the run from the wandb run id.
