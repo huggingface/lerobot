@@ -63,10 +63,10 @@ def test_runtime_media_commit_and_resume(single_episode_root, monkeypatch):
 def test_existing_subtask_changes_invalidate_media_without_rewriting_language(
     single_episode_root, monkeypatch
 ):
-    import pyarrow as pa
     import pyarrow.parquet as pq
 
     from lerobot.annotations import human_video_processing, processing
+    from lerobot.datasets.language import language_array
 
     monkeypatch.setattr(processing, "make_frame_provider", lambda *a, **k: StubFrameProvider())
     monkeypatch.setattr(human_video_processing, "make_frame_provider", lambda *a, **k: StubFrameProvider())
@@ -102,7 +102,7 @@ def test_existing_subtask_changes_invalidate_media_without_rewriting_language(
     table = before.set_column(
         before.schema.get_field_index("language_persistent"),
         "language_persistent",
-        pa.array(rows, type=before["language_persistent"].type),
+        language_array(rows, before["language_persistent"].type),
     )
     pq.write_table(table, path)
     run_annotation_pipeline(
