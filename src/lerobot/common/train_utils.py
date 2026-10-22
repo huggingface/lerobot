@@ -130,6 +130,8 @@ def update_last_checkpoint(checkpoint_dir: Path) -> None:
         checkpoint_dir (Path): The checkpoint step directory the `last` link should target.
     """
     last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
+    if last_checkpoint_dir.exists() and not last_checkpoint_dir.is_symlink():
+        raise FileExistsError(f"Refusing to replace a non-symlink checkpoint target: {last_checkpoint_dir}")
     relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
     with TemporaryDirectory(prefix=".last-", dir=checkpoint_dir.parent) as staging:
         pending = Path(staging) / LAST_CHECKPOINT_LINK

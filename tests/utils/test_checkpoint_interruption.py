@@ -64,3 +64,20 @@ def test_present_ema_is_left_to_native_deserializer(cfg_path):
     (cfg_path / "training_state/ema_state.pt").write_bytes(b"native loader validates content")
     cfg = SimpleNamespace(checkpoint_path=cfg_path, ema=SimpleNamespace(enable=True))
     _require_saved_ema_for_resume(cfg)
+
+
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_non_symlink_last_is_not_replaced(tmp_path, kind):
+    checkpoint = tmp_path / "000004"
+    checkpoint.mkdir()
+    target = tmp_path / "last"
+    if kind == "file":
+        target.write_text("existing content")
+    else:
+        target.mkdir()
+        (target / "keep").write_text("existing content")
+    with pytest.raises(FileExistsError):
+        train_utils.update_last_checkpoint(checkpoint)
+    assert not target.is_symlink()
+    preserved = target if kind == "file" else target / "keep"
+    assert preserved.read_text() == "existing content"
