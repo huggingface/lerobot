@@ -41,3 +41,7 @@ GitHub's raw per-policy artifacts follow the repository's retention policy. Down
 PI0-FAST uses the pinned LIBERO checkpoint with its matching action tokenizer, horizon and camera layout, because the base checkpoint does not reliably emit a valid action prefix. Its optimizer, float32 dtype and training memory settings retain the policy defaults.
 
 LingBot-VA uses `attn_mode=flex`, which its block-causal flow-matching training requires. The attention backend is recorded in the configuration so its measurements are not compared with the default inference-only backend.
+
+Manual workflow inputs can select `runner_group` and enable `gradient_checkpointing` where the policy exposes a native switch. The default runner is `aws-g6-4xlarge-plus` (L4); repository variable `MODEL_PROFILING_RUNNER_GROUP` can change it. Hugging Face's `aws-g6e-4xlarge` group is an L40S candidate, subject to repository access. Results record the actual GPU, its memory capacity, the checkpointing state and the full configuration; history matches setups separately.
+
+Checkpointing trades extra forward computation for lower activation memory. It leaves the optimizer unchanged and cannot remove parameter or optimizer-state memory. DM05 already enables its native checkpointing by default. Policies without a native checkpointing switch keep their existing setup. Multi-GPU sharding is outside this single-device benchmark; adding GPUs with DDP does not pool their memory.

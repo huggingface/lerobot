@@ -22,12 +22,20 @@ on:
         description: Collect a separate Torch trace after measuring latency
         type: boolean
         default: false
+      runner_group:
+        description: Runner group (empty uses MODEL_PROFILING_RUNNER_GROUP or the L4 default)
+        type: string
+        default: ""
+      gradient_checkpointing:
+        description: Enable native gradient checkpointing where supported; record as a separate setup
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: model-profiling-${{ github.ref }}
+  group: model-profiling-${{ github.ref }}-${{ inputs.runner_group || vars.MODEL_PROFILING_RUNNER_GROUP || 'aws-g6-4xlarge-plus' }}-${{ inputs.gradient_checkpointing || false }}
   cancel-in-progress: false
 
 jobs:
@@ -47,7 +55,7 @@ jobs:
   profile:
     needs: matrix
     runs-on:
-      group: aws-g6-4xlarge-plus
+      group: ${{ inputs.runner_group || vars.MODEL_PROFILING_RUNNER_GROUP || 'aws-g6-4xlarge-plus' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -63,6 +71,7 @@ jobs:
           EXTRA: ${{ matrix.extra }}
           MODE: ${{ inputs.mode || 'both' }}
           TRACE: ${{ inputs.trace || 'false' }}
+          GRADIENT_CHECKPOINTING: ${{ inputs.gradient_checkpointing || 'false' }}
           HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
           PROFILE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -71,7 +80,7 @@ jobs:
             --user "$(id -u):$(id -g)" \
             -e HOME=/tmp -e HF_HOME=/tmp/huggingface \
             -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e UV_CACHE_DIR=/tmp/uv \
-            -e HF_TOKEN -e POLICY -e EXTRA -e MODE -e TRACE -e PROFILE_RUN_URL \
+            -e HF_TOKEN -e POLICY -e EXTRA -e MODE -e TRACE -e GRADIENT_CHECKPOINTING -e PROFILE_RUN_URL \
             -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
             huggingface/lerobot-gpu:latest bash -euo pipefail -c '
               extras=(--extra training)
@@ -82,7 +91,8 @@ jobs:
                   "natten==0.21.6+torch2110cu128" --find-links https://whl.natten.org
               fi
               uv run --no-sync python scripts/ci/model_profiling.py run \
-                --policy "$POLICY" --profile_mode="$MODE" --trace="$TRACE"
+                --policy "$POLICY" --profile_mode="$MODE" --trace="$TRACE" \
+                --gradient-checkpointing="$GRADIENT_CHECKPOINTING"
             '
       - name: Upload results even when profiling fails
         if: always()

@@ -262,6 +262,9 @@ def main(cfg: ProfileConfig) -> None:
         "cuda_version": torch.version.cuda,
         "device": str(device),
         "device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else platform.processor(),
+        "device_total_memory_bytes": (
+            torch.cuda.get_device_properties(device).total_memory if device.type == "cuda" else None
+        ),
         "batch_size": cfg.batch_size,
         "warmup": cfg.warmup,
         "iterations": cfg.iterations,
@@ -289,6 +292,15 @@ def main(cfg: ProfileConfig) -> None:
             json.dumps(row["configuration"], sort_keys=True).encode()
         ).hexdigest()
         row["parameter_dtype"] = str(next(policy.parameters()).dtype)
+        row["gradient_checkpointing"] = any(
+            getattr(policy.config, key, False)
+            for key in (
+                "gradient_checkpointing",
+                "use_gradient_checkpointing",
+                "vlm_gradient_checkpointing",
+                "ae_gradient_checkpointing",
+            )
+        )
         row["mixed_precision"] = cfg.accelerator.mixed_precision
         # Build processors from the effective policy config and this dataset's statistics.
         preprocessor, _ = make_pre_post_processors(

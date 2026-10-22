@@ -44,7 +44,7 @@ def policy_matrix(root: Path = ROOT) -> list[dict[str, str]]:
     ]
 
 
-def policy_args(policy: str) -> list[str]:
+def policy_args(policy: str, gradient_checkpointing: bool = False) -> list[str]:
     dataset = (
         "lerobot/pusht"
         if policy in {"act", "diffusion", "tdmpc", "vqbet", "gaussian_actor", "flux3"}
@@ -92,10 +92,19 @@ def policy_args(policy: str) -> list[str]:
     if policy == "vqbet":
         # Finish the codebook stage during the default warmup, then time BeT updates.
         args += ["--policy.n_vqvae_training_steps=1"]
+    if gradient_checkpointing:
+        if policy in {"eo1", "pi0", "pi05", "pi0_fast", "fineart_vla", "molmoact2"}:
+            args += ["--policy.gradient_checkpointing=true"]
+        elif policy == "fastwam":
+            args += ["--policy.use_gradient_checkpointing=true"]
+        elif policy == "dm05":
+            args += ["--policy.vlm_gradient_checkpointing=true", "--policy.ae_gradient_checkpointing=true"]
     return args
 
 
-def run_policy(policy: str, output_dir: Path, overrides: list[str]) -> int:
+def run_policy(
+    policy: str, output_dir: Path, overrides: list[str], gradient_checkpointing: bool = False
+) -> int:
     if policy not in {entry["policy"] for entry in policy_matrix()}:
         raise ValueError(f"Unknown policy: {policy}")
     run_dir = output_dir / policy
@@ -106,7 +115,7 @@ def run_policy(policy: str, output_dir: Path, overrides: list[str]) -> int:
         [
             sys.executable,
             str(ROOT / "benchmarks/profile_policies.py"),
-            *policy_args(policy),
+            *policy_args(policy, gradient_checkpointing),
             *overrides,
             f"--output_dir={run_dir / 'run'}",
         ],
@@ -199,6 +208,7 @@ def main() -> int:
     parser.add_argument("command", choices=["matrix", "init", "run", "summary", "archive"])
     parser.add_argument("--policy")
     parser.add_argument("--output-dir", type=Path, default=Path("profiling-results"))
+    parser.add_argument("--gradient-checkpointing", choices=["true", "false"], default="false")
     args, overrides = parser.parse_known_args()
     if args.command in ("matrix", "summary"):
         selected = set(filter(None, (v.strip() for v in os.environ.get("POLICIES", "").split(","))))
@@ -213,7 +223,9 @@ def main() -> int:
             args.output_dir.mkdir(parents=True, exist_ok=True)
             print(summary(args.output_dir, [row["policy"] for row in matrix]))
     elif args.command == "run":
-        return run_policy(args.policy, args.output_dir.resolve(), overrides)
+        return run_policy(
+            args.policy, args.output_dir.resolve(), overrides, args.gradient_checkpointing == "true"
+        )
     elif args.command == "archive":
         print(archive(args.output_dir))
     else:

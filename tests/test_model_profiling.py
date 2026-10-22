@@ -122,6 +122,19 @@ def test_every_recipe_parses_and_validates(benchmark, policy, tmp_path):
     assert cfg.policy.type == policy
 
 
+@pytest.mark.parametrize(
+    ("policy", "flag"), [("pi05", "gradient_checkpointing"), ("fastwam", "use_gradient_checkpointing")]
+)
+def test_checkpointing_variant_preserves_optimizer_defaults(benchmark, policy, flag):
+    import draccus
+
+    original = draccus.parse(benchmark.ProfileConfig, args=ci.policy_args(policy))
+    variant = draccus.parse(benchmark.ProfileConfig, args=ci.policy_args(policy, gradient_checkpointing=True))
+    assert not getattr(original.policy, flag)
+    assert getattr(variant.policy, flag)
+    assert original.policy.get_optimizer_preset() == variant.policy.get_optimizer_preset()
+
+
 @pytest.mark.parametrize("policy", ["flux3", "lawam", "fastwam", "lingbot_va"])
 def test_world_model_recipes_accept_dataset_features(benchmark, policy, tmp_path):
     import draccus
