@@ -62,6 +62,7 @@ from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine
 from lerobot.lerobot_types import RobotAction
+from lerobot.robots.sim import SimRobot
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils import ACTION, OBS_STR, ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
@@ -74,10 +75,10 @@ from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyCon
 from ..context import RolloutContext
 from .core import (
     RolloutStrategy,
+    episode_finished,
     estimate_max_episode_seconds,
     safe_push_to_hub,
     send_next_action,
-    world_finished,
 )
 
 logger = logging.getLogger(__name__)
@@ -368,10 +369,11 @@ class DAggerStrategy(RolloutStrategy):
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
-        # Correction frames carry the simulated world's task, like the autonomous frames.
-        task_str = self._reset_sim_world(ctx) or task_str
-        engine.reset()
-        interpolator.reset()
+        sim_task = self._reset_sim_episode(ctx)
+        if sim_task is None:
+            self.reset_control_state()
+        else:
+            task_str = sim_task
         events.reset()
         engine.resume()
 
@@ -420,7 +422,7 @@ class DAggerStrategy(RolloutStrategy):
                     phase = events.phase
                     with timer.section("observe"):
                         obs = robot.get_observation()
-                    if world_finished(robot):
+                    if episode_finished(robot):
                         break
 
                     # --- CORRECTING: human teleop control ---
@@ -561,10 +563,11 @@ class DAggerStrategy(RolloutStrategy):
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
-        # Correction frames carry the simulated world's task, like the autonomous frames.
-        task_str = self._reset_sim_world(ctx) or task_str
-        engine.reset()
-        interpolator.reset()
+        sim_task = self._reset_sim_episode(ctx)
+        if sim_task is None:
+            self.reset_control_state()
+        else:
+            task_str = sim_task
         events.reset()
         engine.resume()
 
@@ -638,7 +641,7 @@ class DAggerStrategy(RolloutStrategy):
                     phase = events.phase
                     with timer.section("observe"):
                         obs = robot.get_observation()
-                    if world_finished(robot):
+                    if episode_finished(robot):
                         break
 
                     # --- CORRECTING: human teleop control + recording ---
@@ -736,7 +739,7 @@ class DAggerStrategy(RolloutStrategy):
             Pause the engine, then drive the leader arm to the follower's last
             commanded position so the operator takes over without a jerk.
 
-        PAUSED -> CORRECTING (non-actuated teleop):
+        PAUSED -> CORRECTING (non-actuated teleop, physical follower):
             Slide the follower to the teleop's current pose so the robot meets
             the operator's hand rather than jumping to it on the first frame.
 
@@ -768,9 +771,11 @@ class DAggerStrategy(RolloutStrategy):
             logger.info("Entering correction mode - human teleop control")
             if (
                 self.config.smooth_handover
+                and not isinstance(robot.inner, SimRobot)
                 and not teleop_supports_feedback(teleop)
                 and prev_action is not None
             ):
+                # Ramp commands would advance a step-driven sim outside the control loop.
                 logger.info("Smooth handover: sliding follower to teleop position")
                 obs = robot.get_observation()
                 teleop_action = teleop.get_action()

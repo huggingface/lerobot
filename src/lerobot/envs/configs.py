@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import abc
 import logging
+import sys
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from typing import Any
@@ -26,7 +27,7 @@ import gymnasium as gym
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sims.backend import BackendConfig
+from lerobot.sims.backend import BackendConfig, make_scalar_env
 from lerobot.sims.conventions import resolve, served_differences
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -91,6 +92,15 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         """The resolved simulator settings, as the env server and the in-process client run them."""
         return BackendConfig(**resolve(self.sim_settings()))
 
+    def create_env(self, *, task_id: int = 0) -> gym.Env:
+        """Build one local world for SimRobot, without a vector wrapper or execution session.
+
+        External integrations may override this factory. Observation and action conventions must
+        agree with ``sim_settings()``; existing ``create_envs()`` overrides are independent.
+        """
+        group = self.task if self.task and "," not in self.task else None
+        return make_scalar_env(self.backend_config(), task_id=task_id, group=group)
+
     def create_envs(
         self,
         n_envs: int,
@@ -154,7 +164,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
             if group not in descriptor.tasks:
                 raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
             result[group] = {
-                int(i): BatchedEnv(client(), n_envs, group, int(i), descriptor, use_async_envs and n_envs > 1)
+                int(i): BatchedEnv(client(), n_envs, group, int(i), descriptor, use_async_envs)
                 for i in descriptor.tasks[group]
             }
         return result
@@ -188,11 +198,28 @@ class HubEnvConfig(EnvConfig):
     trust_remote_code: bool = False
     # Keyword arguments of the repository's make_env, e.g. '{"episode_length": 9000}'.
     make_env_kwargs: dict[str, Any] = field(default_factory=dict)
+    hub_cache_dir: str | None = None
 
     @property
     def gym_kwargs(self) -> dict:
         # Not used for hub environments - the hub's make_env handles everything
         return {}
+
+    def create_envs(
+        self,
+        n_envs: int,
+        use_async_envs: bool = False,
+    ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
+        """Keep provider-owned batches intact; scalar serving is an explicit separate path."""
+        if self.endpoint is not None:
+            return super().create_envs(n_envs, use_async_envs)
+        from .factory import make_hub_envs
+
+        if not self.hub_path:
+            raise ValueError("--env.hub_path is required for an EnvHub environment")
+        return make_hub_envs(
+            self.hub_path, n_envs, use_async_envs, self.trust_remote_code, self.hub_cache_dir, cfg=self
+        )
 
     def sim_settings(self) -> dict[str, Any]:
         if not self.hub_path:
@@ -205,6 +232,7 @@ class HubEnvConfig(EnvConfig):
                 "hub_path": self.hub_path,
                 "trust_remote_code": self.trust_remote_code,
                 "make_env_kwargs": self.make_env_kwargs,
+                **({"hub_cache_dir": self.hub_cache_dir} if self.hub_cache_dir is not None else {}),
             },
         }
 
@@ -232,6 +260,10 @@ class AlohaEnv(EnvConfig):
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
 
+    def __post_init__(self) -> None:
+        if self.fps != 50:
+            raise ValueError("gym-aloha uses a fixed 50 Hz control interval; set fps=50")
+
     @property
     def gym_kwargs(self) -> dict:
         return {
@@ -241,7 +273,18 @@ class AlohaEnv(EnvConfig):
         }
 
     def sim_settings(self) -> dict[str, Any]:
-        return {**_gym_settings(self, tuple(f"joint_{i}.pos" for i in range(14))), "robot_type": "aloha"}
+        settings = _gym_settings(self, tuple(f"joint_{i}.pos" for i in range(14)))
+        settings["kwargs"]["packages"] = ("gym-aloha", "dm-control", "mujoco")
+        return {**settings, "robot_type": "aloha"}
+
+    def create_envs(
+        self, n_envs: int, use_async_envs: bool = False
+    ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
+        # The batched session has an owner thread; macOS GLFW needs a process's main thread.
+        # Local scalar SimRobot does not use that session and needs no worker process.
+        if sys.platform == "darwin" and self.endpoint is None and not use_async_envs:
+            raise ValueError("Batched Aloha rendering on macOS requires use_async_envs=True")
+        return super().create_envs(n_envs, use_async_envs)
 
 
 @EnvConfig.register_subclass("pusht")
@@ -621,7 +664,9 @@ class IsaaclabArenaEnv(HubEnvConfig):
             raise ValueError(f"--env.type={self.type} runs in-process only; --env.endpoint is not supported")
         if self.make_env_kwargs:
             raise ValueError(f"--env.type={self.type} is configured by its own options, not make_env_kwargs")
-        return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
+        return make_hub_envs(
+            self.hub_path, n_envs, use_async_envs, self.trust_remote_code, self.hub_cache_dir, cfg=self
+        )
 
     def get_env_processors(self):
         state_keys = tuple(k.strip() for k in (self.state_keys or "").split(",") if k.strip())
@@ -693,7 +738,9 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
             raise ValueError(f"--env.type={self.type} runs in-process only; --env.endpoint is not supported")
         if self.make_env_kwargs:
             raise ValueError(f"--env.type={self.type} is configured by its own options, not make_env_kwargs")
-        return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
+        return make_hub_envs(
+            self.hub_path, n_envs, use_async_envs, self.trust_remote_code, self.hub_cache_dir, cfg=self
+        )
 
 
 @EnvConfig.register_subclass("libero_plus")

@@ -97,7 +97,7 @@ def test_confirmation_pairs_applied_action_with_following_observation(executor):
     np.testing.assert_allclose(
         reply.body["result"]["obs"]["observation.state"], before + np.array([[0.1, 0]], np.float32)
     )
-    np.testing.assert_array_equal(feedback["applied"], [[np.float32(0.1), 0]])
+    np.testing.assert_array_equal(feedback["commanded_action"], [[np.float32(0.1), 0]])
     assert "result" not in feedback  # Images are serialized once.
 
 

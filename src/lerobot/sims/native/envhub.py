@@ -14,6 +14,7 @@
 
 """EnvHub environments: the torch-free Hub loader and the simulator-server backend."""
 
+import contextlib
 import importlib.util
 import logging
 import os
@@ -21,6 +22,8 @@ from typing import Any
 
 import gymnasium as gym
 from huggingface_hub import hf_hub_download, snapshot_download
+
+from lerobot.sims.adapters import check_explicit_reset
 
 logger = logging.getLogger(__name__)
 
@@ -200,11 +203,13 @@ def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorE
 
 
 def _world_factories(vec: Any, n_envs: int) -> list:
-    """Take the per-world factories of a built vector env, then close it: the server builds worlds lazily."""
+    """Extract scalar factories; native GPU batches belong on the direct EnvHub path."""
     fns = list(getattr(vec, "env_fns", None) or getattr(vec, "_env_fns", None) or ())
     if len(fns) != n_envs:
-        raise ValueError(f"Hub make_env must return vector envs built from {n_envs} per-world factories")
-    vec.close()
+        raise ValueError(
+            f"Scalar serving requires {n_envs} per-world factories. "
+            "Use direct EnvHub loading for provider-owned native batches."
+        )
     return fns
 
 
@@ -226,14 +231,22 @@ def create_envhub_envs(
     result = _call_make_env(module, n_envs=n_envs, use_async_envs=False, cfg=None, **options)
     if isinstance(result, gym.Env):
         # A single env has no reusable factory, so each world calls make_env again.
-        suite = getattr(result.spec, "id", None) if result.spec else None
-        result.close()
+        try:
+            check_explicit_reset(result)
+            suite = getattr(result.spec, "id", None) if result.spec else None
+        finally:
+            result.close()
         fns = [lambda: _call_make_env(module, n_envs=1, use_async_envs=False, cfg=None, **options)] * n_envs
         return {suite or "hub_env": {0: env_cls(fns)}}
-    return {
-        suite: {task_id: env_cls(_world_factories(vec, n_envs)) for task_id, vec in tasks.items()}
-        for suite, tasks in _normalize_hub_result(result).items()
-    }
+    batches = _normalize_hub_result(result)
+    with contextlib.ExitStack() as stack:
+        for tasks in batches.values():
+            for vec in tasks.values():
+                stack.callback(vec.close)
+        return {
+            suite: {task_id: env_cls(_world_factories(vec, n_envs)) for task_id, vec in tasks.items()}
+            for suite, tasks in batches.items()
+        }
 
 
 def resolve_envhub_sim(sim: dict[str, Any]) -> dict[str, Any]:

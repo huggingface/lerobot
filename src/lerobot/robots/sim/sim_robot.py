@@ -12,89 +12,132 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One simulated world driven through the Robot interface, in this process or served."""
+"""Adapt one simulated robot and its cameras to the ordinary Robot interface."""
+
+from __future__ import annotations
 
 import math
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
+import gymnasium as gym
 import numpy as np
 
-from lerobot.env_server.client import EnvClient
-from lerobot.env_server.contracts import StepResult
-from lerobot.env_server.in_process import InProcessEnvClient
+from lerobot.env_server.contracts import EnvDescriptor
 from lerobot.envs.configs import check_served
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.robots.robot import Robot
+from lerobot.sims.adapters import canonical_observation, check_step_info, env_attribute
+from lerobot.sims.backend import describe_env
+from lerobot.transport.wire.features import FeatureSpec, validate_array
 
 from .configuration_sim import SimRobotConfig
-from .world import EpisodeStatus
+
+if TYPE_CHECKING:
+    from lerobot.env_server.client import RemoteEnv
+
+
+@dataclass(frozen=True)
+class EpisodeStatus:
+    """Task outcome of the last simulator step, retained until the episode is reset."""
+
+    success: bool
+    terminated: bool
+    truncated: bool
+    step: int
+    reward: float
 
 
 class SimRobot(Robot):
-    """A simulated world as a robot: swappable with hardware, plus the ``World`` episode controls.
+    """Adapt one simulated robot in a task environment to LeRobot's Robot interface.
 
-    The world runs in this process, or behind ``lerobot-env-server`` when ``env.endpoint`` is set; both run
-    the same session code. In lockstep, each sent action advances the world exactly one step. Its
-    ``robot_type`` is the simulated body the env declares, else ``sim``; ``name`` stays ``sim``.
+    The local or remote environment owns physics, the scene and the task. ``send_action`` advances it
+    once; ``reset_episode`` resets the whole task environment, not just the robot's pose.
+    Existing LeRobot loops own inference, processors, recording and pacing. Feature inspection may
+    construct an environment before ``connect``; ``disconnect`` also releases that environment.
     """
 
     config_class = SimRobotConfig
     name = "sim"
+    supports_command_hold = True
 
-    def __init__(self, config: SimRobotConfig):
+    def __init__(self, config: SimRobotConfig) -> None:
         super().__init__(config)
         self.config = config
-        env = config.env
-        assert env is not None
-        # The env's suite, when it names exactly one; otherwise the simulator's first.
-        self._task_group = env.task if env.task and "," not in env.task else None
-        self.client: EnvClient | InProcessEnvClient
-        if env.endpoint is None:
-            self.client = InProcessEnvClient(env.backend_config())
-        else:
-            self.client = EnvClient(
-                env.endpoint,
-                env.type,
-                config.timeout_s,
-                config.setup_timeout_s,
-                encoding=env.encoding,
-                jpeg_quality=env.jpeg_quality,
-            )
-        try:
-            self.descriptor = self.client.describe()
-            self.robot_type = self.descriptor.robot_type or self.name
-            if env.endpoint is not None:
-                check_served(self.descriptor.config, env.sim_settings(), env.endpoint)
-            self.supports_position_hold = self.descriptor.hold == "position"
-            self.supports_command_hold = self.descriptor.hold == "command"
-            self.latest: StepResult | None = None
-            state = next((f for f in self.descriptor.features if f.name == "observation.state"), None)
-            if state is None or not state.names:
-                raise ValueError("Robot face requires explicit state component names")
-            self._state = state
-            self._camera_keys = {
-                f.name: f.name.removeprefix("observation.images.").removeprefix("observation.")
-                for f in self.descriptor.features
-                if f.kind == "rgb"
-            }
-        except BaseException:
-            self.client.close()
-            raise
+        self._env: gym.Env | RemoteEnv | None = None
+        self._descriptor: EnvDescriptor | None = None
+        self._source_features: tuple[FeatureSpec, ...] = ()
+        self._connected = False
+        self._failed = False
+        self._observation: RobotObservation = {}
+        self._episode_status: EpisodeStatus | None = None
+        self._task = ""
 
     @property
-    def cameras(self) -> dict[str, str]:
-        """Simulator camera features keyed by descriptor name; sized like a real robot's cameras."""
-        return self._camera_keys
+    def descriptor(self) -> EnvDescriptor:
+        """Reuse admission metadata without creating a local execution client."""
+        if self._descriptor is None:
+            config = self.config.env
+            assert config is not None
+            try:
+                if config.endpoint is None:
+                    self._env = config.create_env(task_id=self.config.task_id)
+                    sim = config.backend_config()
+                    group = config.task or sim.task
+                    descriptor = describe_env(sim, self._env, {group: [str(self.config.task_id)]})
+                else:
+                    from lerobot.env_server.client import EnvClient, RemoteEnv
 
-    def feature_names(self, rename_map: dict[str, str]) -> dict[str, str]:
-        """Map each descriptor feature to its policy key with ``rename_map``, as for any robot."""
-        return {f.name: rename_map.get(f.name, f.name) for f in self.descriptor.features}
+                    client = EnvClient(
+                        config.endpoint,
+                        config.type,
+                        self.config.timeout_s,
+                        self.config.setup_timeout_s,
+                        encoding=config.encoding,
+                        jpeg_quality=config.jpeg_quality,
+                    )
+                    remote_group = config.task if config.task and "," not in config.task else None
+                    self._env = RemoteEnv(client, remote_group, self.config.task_id)
+                    descriptor = self._env.descriptor
+                    check_served(descriptor.config, config.sim_settings(), config.endpoint)
+                self._source_features = descriptor.features
+                # Robot recording uses observation.images.<camera>, including a single camera.
+                features = tuple(
+                    replace(f, name="observation.images.image") if f.name == "observation.image" else f
+                    for f in descriptor.features
+                )
+                self._descriptor = replace(descriptor, features=features)
+                unsupported = [f.name for f in features if f.name != "observation.state" and f.kind != "rgb"]
+                if unsupported:
+                    raise ValueError(
+                        f"SimRobot currently supports state and RGB observations only; unsupported: {unsupported}"
+                    )
+                self.robot_type = descriptor.robot_type or self.name
+                if set(self.cameras).intersection(self._state_feature.names):
+                    raise ValueError("Simulator camera and state component names overlap")
+            except BaseException:
+                self.disconnect()
+                raise
+        return self._descriptor
+
+    @property
+    def _state_feature(self) -> FeatureSpec:
+        state = next((f for f in self.descriptor.features if f.name == "observation.state"), None)
+        if state is None or not state.names:
+            raise ValueError("SimRobot requires named state components")
+        return state
+
+    @property
+    def cameras(self) -> dict[str, tuple[int, ...]]:
+        return {
+            f.name.removeprefix("observation.images."): f.shape
+            for f in self.descriptor.features
+            if f.kind == "rgb"
+        }
 
     @property
     def observation_features(self) -> dict[str, type | tuple[int, ...]]:
-        return {
-            **dict.fromkeys(self._state.names, float),
-            **{self._camera_keys[f.name]: f.shape for f in self.descriptor.features if f.kind == "rgb"},
-        }
+        return {**dict.fromkeys(self._state_feature.names, float), **self.cameras}
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -102,8 +145,8 @@ class SimRobot(Robot):
 
     @property
     def is_connected(self) -> bool:
-        # A failed session is still owned: teardown must reach disconnect() to release it.
-        return bool(self.client.session)
+        # Failed execution still owns resources until disconnect.
+        return self._connected
 
     @property
     def is_calibrated(self) -> bool:
@@ -116,80 +159,155 @@ class SimRobot(Robot):
         pass
 
     def connect(self, calibrate: bool = True) -> None:
-        if self.client.session:
+        if self.is_connected:
             raise RuntimeError("Sim robot is already connected")
-        self.latest = self.client.open(1, self.config.clock, self._task_group, self.config.task_id)
+        try:
+            _ = self.descriptor
+            self._connected = True
+            self.reset_episode(seed=self.config.seed)
+        except BaseException:
+            self.disconnect()
+            raise
 
-    @property
-    def lockstep(self) -> bool:
-        return self.config.clock == "lockstep"
+    def _require_env(self) -> gym.Env | RemoteEnv:
+        if not self.is_connected or self._env is None:
+            raise RuntimeError("Connect before using the sim robot")
+        if self._failed:
+            raise RuntimeError("Simulator execution failed; disconnect and reconnect before continuing")
+        return self._env
 
-    def _snapshot(self) -> StepResult:
-        if self.lockstep and self.latest is not None:
-            # The world only moves on send_action, which already returned its observation.
-            return self.latest
-        self.latest = StepResult.from_dict(self.client.request("snapshot")["result"])
-        return self.latest
+    def _cache(
+        self,
+        obs: dict[str, np.ndarray],
+        reward: float,
+        terminated: bool,
+        truncated: bool,
+        info: dict,
+        step: int,
+    ) -> None:
+        check_step_info(info)
+        values = canonical_observation(obs)
+        if set(values) != {f.name for f in self._source_features}:
+            raise ValueError("Simulator observation keys differ from declared features")
+        observation: RobotObservation = {}
+        for source, feature in zip(self._source_features, self.descriptor.features, strict=True):
+            value = values[source.name]
+            validate_array(value, source)
+            if feature.name == "observation.state":
+                observation.update(zip(feature.names, map(float, value), strict=True))
+            elif feature.kind == "rgb":
+                observation[feature.name.removeprefix("observation.images.")] = value.copy()
+        if not math.isfinite(reward):
+            raise ValueError("Simulator returned a non-finite reward")
+        self._observation = observation
+        self._episode_status = EpisodeStatus(
+            bool(info.get("is_success", info.get("success", info.get("succeed", False)))),
+            bool(terminated),
+            bool(
+                truncated
+                or (
+                    self.descriptor.max_episode_steps is not None
+                    and step >= self.descriptor.max_episode_steps
+                )
+            ),
+            step,
+            float(reward),
+        )
+        assert self._env is not None
+        self._task = str(
+            info.get(
+                "task_description",
+                env_attribute(
+                    self._env,
+                    "task_description",
+                    env_attribute(self._env, "task", next(iter(self.descriptor.tasks))),
+                ),
+            )
+        )
 
-    def get_observation(self) -> dict[str, Any]:
-        result = self._snapshot()
+    def get_observation(self) -> RobotObservation:
+        self._require_env()
+        # Do not expose mutable native buffers to processors or asynchronous consumers.
         return {
-            **{
-                key: float(value)
-                for key, value in zip(self._state.names, result.obs[self._state.name][0], strict=True)
-            },
-            **{camera: result.obs[name][0] for name, camera in self._camera_keys.items()},
+            key: value.copy() if isinstance(value, np.ndarray) else value
+            for key, value in self._observation.items()
         }
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self, action: RobotAction) -> RobotAction:
+        """Command the simulated robot and advance its environment by one control interval."""
+        env = self._require_env()
+        status = self.episode_status
+        if status.terminated or status.truncated:
+            raise RuntimeError("Simulator episode ended; call reset_episode() before sending another action")
         names = self.descriptor.action_feature.names
         if set(action) != set(names):
             raise ValueError(
                 f"This sim robot takes exactly the actions {list(names)}; missing "
-                f"{sorted(set(names) - set(action))}, unknown {sorted(set(action) - set(names))}. A "
-                "teleoperator must send the simulated robot's action names, as for the real follower."
+                f"{sorted(set(names) - set(action))}, unknown {sorted(set(action) - set(names))}. "
+                "Use the normal teleop/action processors to map the simulated robot's commands."
             )
-        values = np.asarray([[action[name] for name in names]], dtype=np.float32)
-        if self.lockstep:
-            self.latest = StepResult.from_dict(self.client.request("step", actions=values)["result"])
-            return {name: float(value) for name, value in zip(names, values[0], strict=True)}
-        body = self.client.request("apply", actions=values)
-        self.latest = StepResult.from_dict(body["result"])
-        assert self.client.execution is not None
-        applied = self.client.execution.applied[0]
-        return {name: float(value) for name, value in zip(names, applied, strict=True)}
+        command = np.asarray([action[name] for name in names], dtype=np.float32)
+        validate_array(command, self.descriptor.action_feature)
+        try:
+            obs, reward, terminated, truncated, info = env.step(command)
+            self._cache(obs, reward, terminated, truncated, info, status.step + 1)
+        except BaseException:
+            self._failed = True
+            raise
+        # Submitted controller command, not measured motion completion.
+        return dict(zip(names, map(float, command), strict=True))
 
     def hold(self) -> None:
-        # A lockstep world stays where it is until the next action.
-        if not self.lockstep:
-            self.client.request("hold")
+        """An explicitly stepped world is already frozen; do not submit another action."""
+        self._require_env()
 
-    def reset_world(self, seed: int | None = None) -> None:
-        self.latest = StepResult.from_dict(self.client.request("reset", seeds=[seed])["result"])
+    def reset_episode(self, seed: int | None = None) -> None:
+        """Reset the task environment, including the robot and objects, and refresh cached results.
+
+        The calling workflow is responsible for resetting inference and stateful processors.
+        """
+        env = self._require_env()
+        try:
+            obs, info = env.reset(seed=seed)
+            self._cache(obs, 0.0, False, False, info, 0)
+        except BaseException:
+            self._failed = True
+            raise
 
     @property
     def task_description(self) -> str:
-        return self.latest.task[0] if self.latest is not None else ""
+        """Task instruction supplied by the environment."""
+        return self._task
 
     @property
     def episode_status(self) -> EpisodeStatus:
-        result = self.latest
-        if result is None:
-            raise RuntimeError("Connect before reading world status")
-        return EpisodeStatus(
-            bool(result.is_success[0]),
-            bool(result.terminated[0]),
-            bool(result.truncated[0]),
-            int(result.step[0]),
-            float(result.reward[0]),
-        )
+        self._require_env()
+        assert self._episode_status is not None
+        return self._episode_status
 
     def disconnect(self) -> None:
-        self.client.close()
+        env, self._env = self._env, None
+        self._connected = False
+        self._descriptor = None
+        self._source_features = ()
+        self._observation = {}
+        self._episode_status = None
+        self._task = ""
+        self._failed = False
+        if env is not None:
+            env.close()
+
+    def __del__(self) -> None:
+        # Feature inspection can create an environment before connect().
+        try:
+            if getattr(self, "_env", None) is not None:
+                self.disconnect()
+        except Exception:  # nosec B110
+            pass
 
 
 def check_control_rate(robot: Robot, fps: float) -> None:
-    """A sim robot ticks at its env's rate: a loop at another fps would play or record at the wrong speed."""
+    """Keep the loop's action rate equal to one simulator control interval."""
     if isinstance(robot, SimRobot) and not math.isclose(fps, robot.descriptor.fps):
         raise ValueError(
             f"The control loop runs at {fps} fps but the simulator control rate is {robot.descriptor.fps} Hz"

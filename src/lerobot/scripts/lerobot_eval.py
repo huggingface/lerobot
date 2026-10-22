@@ -276,6 +276,10 @@ def rollout(
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
     max_steps = env.call("_max_episode_steps")[0]
+    if max_steps is None:
+        raise ValueError(
+            "Evaluation requires a declared episode limit; wrap the environment with gymnasium.wrappers.TimeLimit."
+        )
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",

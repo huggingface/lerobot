@@ -108,19 +108,14 @@ def replay(cfg: ReplayConfig):
     robot_action_processor = make_default_robot_action_processor()
 
     robot = make_robot_from_config(cfg.robot)
-    dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
-
-    actions = dataset.select_columns(ACTION)
-    check_control_rate(robot, dataset.fps)
-
-    robot.connect()
-
-    # Replay must hit the dataset's own frame rate, or the trajectory plays back at the
-    # wrong speed.  It writes nothing, so a missed deadline is a control-stability
-    # problem only.
-    timer = CycleTimer(dataset.fps, records_data=False)
-
+    timer = None
     try:
+        dataset = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root, episodes=[cfg.dataset.episode])
+        actions = dataset.select_columns(ACTION)
+        check_control_rate(robot, dataset.fps)
+        robot.connect()
+        # Pace at the dataset rate, without changing the simulator timestep.
+        timer = CycleTimer(dataset.fps, records_data=False)
         log_say("Replaying episode", cfg.play_sounds, blocking=True)
         for idx in range(dataset.num_frames):
             timer.tick()
@@ -140,8 +135,10 @@ def replay(cfg: ReplayConfig):
 
             timer.wait()
     finally:
-        timer.log_run_summary()
-        robot.disconnect()
+        if timer is not None:
+            timer.log_run_summary()
+        if robot.is_connected or isinstance(robot, sim.SimRobot):
+            robot.disconnect()
 
 
 def main():

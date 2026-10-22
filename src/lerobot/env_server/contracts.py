@@ -35,30 +35,37 @@ class EnvDescriptor:
     fps: float
     clocks: tuple[str, ...]
     tasks: dict[str, list[str]]
-    max_episode_steps: int
+    max_episode_steps: int | None
     sim_build: dict[str, str]
     gripper_indices: tuple[int, ...] = ()
     command_retention_indices: tuple[int, ...] = ()
-    # The simulated body, recorded as a sim robot's robot_type; empty when the simulator does not declare one.
+    # Empty when the provider does not declare the simulated robot.
     robot_type: str = ""
-    # The resolved simulator configuration served, so a client can check it runs the env it expects.
+    # Used to check that the server runs the requested environment.
     config: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def hold(self) -> str:
-        """Position controllers retain targets; other controllers hold with a neutral command."""
-        return "position" if self.control == "position" else "command"
+    # Empty when asset revisions or hashes were not captured.
+    asset_revisions: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Reject invalid declarations before creating simulator resources."""
+        """Validate controller and feature declarations."""
         if self.control not in {"position", "delta", "eef_pose", "velocity"}:
             raise ValueError("Unknown controller convention")
-        if not np.isfinite(self.fps) or self.fps <= 0 or self.max_episode_steps <= 0:
+        if (
+            not np.isfinite(self.fps)
+            or self.fps <= 0
+            or (self.max_episode_steps is not None and self.max_episode_steps <= 0)
+        ):
             raise ValueError("FPS and episode limit must be positive")
         if len(self.action_feature.shape) != 1 or not self.action_feature.names:
             raise ValueError("Actions require ordered component names")
         if len({f.name for f in self.features}) != len(self.features):
             raise ValueError("Duplicate observation features")
+        if any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for metadata in (self.sim_build, self.asset_revisions)
+            for key, value in metadata.items()
+        ):
+            raise ValueError("Simulator versions and asset revisions must map strings to strings")
         if any(
             i < 0 or i >= self.action_feature.shape[0]
             for i in self.gripper_indices + self.command_retention_indices
@@ -71,10 +78,7 @@ class EnvDescriptor:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EnvDescriptor":
-        """Reconstruct validated declarations from decoded wire fields.
-
-        Fields this version does not know are dropped, so a newer server can add declarations.
-        """
+        """Reconstruct validated declarations, ignoring fields added by a newer server."""
         known = {f.name for f in fields(cls)}
         data = {key: value for key, value in data.items() if key in known}
         data["features"] = tuple(FeatureSpec(**f) for f in data["features"])
@@ -116,7 +120,7 @@ class StepResult:
 class ExecutionFeedback:
     """An executed control interval and its subsequent observation, not queue admission.
 
-    Applied values are controller commands, not proof of physical motion completion.
+    Commanded actions are submitted controller inputs, not measured motion or native post-clipping values.
     The advanced mask identifies absorbing worlds which did not execute a new action.
     Timestamps use the server monotonic clock, never the client clock.
     """
@@ -124,7 +128,7 @@ class ExecutionFeedback:
     request_id: str
     generation: int
     sequence: int
-    applied: np.ndarray
+    commanded_action: np.ndarray
     advanced: np.ndarray
     started_at: float
     completed_at: float
@@ -141,13 +145,13 @@ class ExecutionFeedback:
         return cls(**data, result=result)
 
     def validate(self, descriptor: EnvDescriptor, num_envs: int) -> None:
-        """Validate execution identity, applied commands, and their paired observation."""
+        """Validate execution identity, commanded actions, and their paired observation."""
         validate_segment(self.request_id, "execution request ID")
         if any(
             type(value) is not int or not 0 <= value < 2**63 for value in (self.generation, self.sequence)
         ):
             raise ValueError("Invalid execution identity")
-        validate_array(self.applied, descriptor.action_feature, leading_shape=(num_envs,))
+        validate_array(self.commanded_action, descriptor.action_feature, leading_shape=(num_envs,))
         if (
             not isinstance(self.advanced, np.ndarray)
             or self.advanced.shape != (num_envs,)

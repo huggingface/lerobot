@@ -22,7 +22,7 @@ from threading import Lock
 from typing import Any
 
 from lerobot.robots import Robot
-from lerobot.robots.sim.world import get_world
+from lerobot.robots.sim import SimRobot
 
 
 class ThreadSafeRobot:
@@ -113,12 +113,12 @@ class ThreadSafeRobot:
         else:
             self.configure_position_hold()
 
-    def reset_world(self, seed: int | None = None) -> None:
+    def reset_episode(self, seed: int | None = None) -> None:
+        """Reset a simulation episode and clear cached robot commands and observations."""
         with self._lock:
-            world = get_world(self._robot)
-            if world is None:
-                raise TypeError("This robot does not expose a simulator world")
-            world.reset_world(seed)
+            if not isinstance(self._robot, SimRobot):
+                raise TypeError("Episode reset is only supported by SimRobot")
+            self._robot.reset_episode(seed=seed)
             self._last_applied_action = None
             self._observed_positions.clear()
             self._observation_time = None

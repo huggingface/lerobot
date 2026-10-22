@@ -133,8 +133,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.robots.sim import check_control_rate, check_teleop_clock
-from lerobot.robots.sim.world import get_world
+from lerobot.robots.sim import SimRobot, check_control_rate
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -158,6 +157,7 @@ from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.io_utils import write_json
 from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.utils import (
     init_logging,
@@ -295,7 +295,7 @@ def record_loop(
         timer = CycleTimer(fps, records_data=dataset is not None)
 
     no_action_count = 0
-    world = get_world(robot)
+    sim_robot = robot if isinstance(robot, SimRobot) else None
     timestamp = 0.0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
@@ -384,7 +384,9 @@ def record_loop(
         timer.wait()
 
         timestamp = time.perf_counter() - start_episode_t
-        if world is not None and (world.episode_status.terminated or world.episode_status.truncated):
+        if sim_robot is not None and (
+            sim_robot.episode_status.terminated or sim_robot.episode_status.truncated
+        ):
             break
 
 
@@ -407,38 +409,9 @@ def record(
         else cfg.display_compressed_images
     )
 
-    check_teleop_clock(cfg.robot, cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
-    check_control_rate(robot, cfg.dataset.fps)
-    world = get_world(robot)
-    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
-
-    # Fall back to identity pipelines when the caller doesn't supply processors.
-    if (
-        teleop_action_processor is None
-        or robot_action_processor is None
-        or robot_observation_processor is None
-    ):
-        _t, _r, _o = make_default_processors()
-        teleop_action_processor = teleop_action_processor or _t
-        robot_action_processor = robot_action_processor or _r
-        robot_observation_processor = robot_observation_processor or _o
-
-    dataset_features = combine_feature_dicts(
-        aggregate_pipeline_dataset_features(
-            pipeline=teleop_action_processor,
-            initial_features=create_initial_features(
-                action=robot.action_features
-            ),  # TODO(steven, pepijn): in future this should be come from teleop or policy
-            use_videos=cfg.dataset.video,
-        ),
-        aggregate_pipeline_dataset_features(
-            pipeline=robot_observation_processor,
-            initial_features=create_initial_features(observation=robot.observation_features),
-            use_videos=cfg.dataset.video,
-        ),
-    )
-
+    sim_robot = robot if isinstance(robot, SimRobot) else None
+    teleop = None
     dataset = None
     listener = None
     # One timer for the whole session, so its statistics describe the recording rather
@@ -448,8 +421,32 @@ def record(
     timer = CycleTimer(cfg.dataset.fps)
 
     try:
+        check_control_rate(robot, cfg.dataset.fps)
+        teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+        if (
+            teleop_action_processor is None
+            or robot_action_processor is None
+            or robot_observation_processor is None
+        ):
+            _t, _r, _o = make_default_processors()
+            teleop_action_processor = teleop_action_processor or _t
+            robot_action_processor = robot_action_processor or _r
+            robot_observation_processor = robot_observation_processor or _o
+
+        dataset_features = combine_feature_dicts(
+            aggregate_pipeline_dataset_features(
+                pipeline=teleop_action_processor,
+                initial_features=create_initial_features(action=robot.action_features),
+                use_videos=cfg.dataset.video,
+            ),
+            aggregate_pipeline_dataset_features(
+                pipeline=robot_observation_processor,
+                initial_features=create_initial_features(observation=robot.observation_features),
+                use_videos=cfg.dataset.video,
+            ),
+        )
+        num_cameras = len(robot.cameras) if hasattr(robot, "cameras") else 0
         if cfg.resume:
-            num_cameras = len(robot.cameras) if hasattr(robot, "cameras") else 0
             dataset = LeRobotDataset.resume(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
@@ -474,7 +471,6 @@ def record(
                     "lerobot-record is for data collection only. Use lerobot-rollout for policy deployment."
                 )
             cfg.dataset.stamp_repo_id()
-            num_cameras = len(robot.cameras)  # type: ignore[attr-defined]
             dataset = LeRobotDataset.create(
                 cfg.dataset.repo_id,
                 cfg.dataset.fps,
@@ -492,6 +488,12 @@ def record(
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
             )
 
+        if isinstance(robot, SimRobot) and not cfg.resume:
+            write_json(
+                {"environment": robot.descriptor.to_dict(), "initial_seed": robot.config.seed},
+                dataset.root / "meta" / "simulation.json",
+            )
+
         # Connect the teleoperator before the robot so the robot isn't left idle (and possibly
         # tripping a firmware watchdog) during teleop init. Matches lerobot_teleoperate.py.
         if teleop is not None:
@@ -507,10 +509,15 @@ def record(
 
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
+            first_episode = True
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 episode_index = dataset.num_episodes
-                if world is not None:
-                    world.reset_world()
+                if sim_robot is not None and not first_episode:
+                    sim_robot.reset_episode()
+                    teleop_action_processor.reset()
+                    robot_action_processor.reset()
+                    robot_observation_processor.reset()
+                first_episode = False
                 log_say(f"Recording episode {episode_index}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -530,9 +537,9 @@ def record(
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment
-                # Skip reset for the last episode to be recorded, and for a simulated world, which resets itself
+                # SimRobot resets before the next episode; hardware uses an unrecorded reset phase.
                 if (
-                    world is None
+                    sim_robot is None
                     and not events["stop_recording"]
                     and ((recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"])
                 ):
@@ -581,7 +588,7 @@ def record(
         if dataset:
             dataset.finalize()
 
-        if robot.is_connected:
+        if robot.is_connected or sim_robot is not None:
             robot.disconnect()
         if teleop and teleop.is_connected:
             teleop.disconnect()

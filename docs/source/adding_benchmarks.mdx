@@ -1,30 +1,32 @@
 # Adding a Benchmark
 
-A benchmark is a simulator that LeRobot drives in one place, the shared env core, so that every way of using it behaves the same: `lerobot-eval` (a batched env, `--env.type=<benchmark>`), rollout and recording (a sim robot, `--robot.type=sim --robot.env.type=<benchmark>`), in-process or served by `lerobot-env-server` from its own Docker image. See [Simulation: in-process or served](./simulator_server) for how it is used.
+A benchmark provides tasks and environments. LeRobot reuses the same environment integration for `lerobot-eval` (a batched env, `--env.type=<benchmark>`), rollout and recording (a sim robot, `--robot.type=sim --robot.env.type=<benchmark>`), locally or through `lerobot-env-server`. See [Simulation: in-process or served](./simulator_server) for how it is used.
+
+Reuse an existing integration first. A package that already provides a compatible Gymnasium environment can use the generic Gym factory with its `gym_id` and `gym_kwargs`. A benchmark-specific wrapper is needed only when the native API or observations need adaptation. Do not add another implementation for SimRobot, a benchmark-specific Robot class, or a separate CLI script.
 
 ## What to add
 
-| Component            | Location                                      | What to add                                                                                                       |
-| -------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Native environments  | `src/lerobot/sims/native/<benchmark>.py`      | The `gym.Env` and a `create_<benchmark>_envs` factory: reset/step, rendering, episode limits, task descriptions   |
-| Canonical adapter    | `src/lerobot/sims/adapters.py`                | Only if needed: native observations to canonical keys, HWC uint8 RGB and float32 state                            |
-| Conventions          | `src/lerobot/sims/conventions.py`             | Control rate, controller (`position`, `delta`, `eef_pose`), ordered state/action names, gripper and held channels |
-| Config               | `src/lerobot/envs/configs.py`                 | An `EnvConfig` subclass whose `sim_settings()` maps its options to the factory's kwargs                           |
-| Server configuration | `docker/sims/configs/<benchmark>.yaml`        | The task and factory kwargs the server and CI use                                                                 |
-| Simulator image      | `docker/Dockerfile.sim`                       | A `<benchmark>_native` stage: pinned native dependencies and asset revisions; the final stage adds the server     |
-| CI manifest          | `benchmarks/benchmarks.yaml`                  | Name, tasks, checkpoint revision and camera `rename_map`; policy, image, config and extras default from the name  |
-| Dependencies         | `pyproject.toml`                              | An optional-dependency group for in-process use                                                                   |
-| Documentation        | `docs/source/<benchmark>.mdx`, `_toctree.yml` | A user-facing page                                                                                                |
+| Component              | Location                                                         | What to add                                                                                                                             |
+| ---------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Native environments    | Existing integration or `src/lerobot/sims/native/<benchmark>.py` | Only when needed: adapt the native API and expose reset/step, rendering, episode limits and task descriptions                           |
+| Observation conversion | Inside the existing benchmark integration                        | Only if needed: map native observations to canonical keys, HWC uint8 RGB and float32 state. No separate observation module is required. |
+| Conventions            | `src/lerobot/sims/conventions.py`                                | Control rate, controller (`position`, `delta`, `eef_pose`), ordered state/action names, gripper and held channels                       |
+| Config                 | `src/lerobot/envs/configs.py`                                    | An `EnvConfig` subclass whose `sim_settings()` maps its options to the factory's kwargs                                                 |
+| Server configuration   | `docker/sims/configs/<benchmark>.yaml`                           | The task and factory kwargs the server and CI use                                                                                       |
+| Simulator image        | `docker/Dockerfile.sim`                                          | A `<benchmark>_native` stage: pinned native dependencies and asset revisions; the final stage adds the server                           |
+| CI manifest            | `benchmarks/benchmarks.yaml`                                     | Name, tasks, checkpoint revision and camera `rename_map`; policy, image, config and extras default from the name                        |
+| Dependencies           | `pyproject.toml`                                                 | An optional-dependency group for in-process use                                                                                         |
+| Documentation          | `docs/source/<benchmark>.mdx`, `_toctree.yml`                    | A user-facing page                                                                                                                      |
 
-Data flows the same way in-process and served:
+Environment construction is shared. Only the execution location changes:
 
 ```text
-native simulator → canonical NumPy observations → session (in-process client or env server)
-  → batched env or sim robot → one-time image/tensor preparation → saved policy preprocessing
-  → policy → saved action postprocessing → session → native simulator
+Local SimRobot  → native environment
+Served SimRobot → environment client → server → same native environment
+Batched eval    → existing batch/session path → same environment factories
 ```
 
-Put image orientation, quaternion conversion and state ordering in the canonical adapter, and control conventions in `conventions.py`, so that evaluation and rollout agree. A new benchmark needs no [environment processor](./env_processor): observations reach the policy's own processors already canonical.
+Keep image orientation, quaternion conversion and state ordering in the benchmark's existing integration, and control conventions in `conventions.py`, so evaluation and rollout agree. The shared observation helper handles generic naming and array layout, not a growing list of benchmark-specific conversions. Keep checkpoint-specific preprocessing in the normal policy processors.
 
 ## What your environment must provide
 
@@ -76,7 +78,7 @@ Observations are a dict the canonical adapter understands:
 | `"agent_pos"`             | `observation.state`             | Proprioceptive state vector         |
 | `"environment_state"`     | `observation.environment_state` | Full environment state (e.g. PushT) |
 
-Any other array is passed as `observation.<key>`. Rename your simulator's outputs to these keys inside the `gym.Env`, or add a case to the canonical adapter.
+Any other array is passed as `observation.<key>`. Adapt native observations inside the benchmark integration; do not add benchmark-specific cases to the shared helper. SimRobot currently supports a named state vector and RGB images; additional numeric features are supported by batched evaluation but rejected by SimRobot.
 
 **GPU-based simulators (e.g. MuJoCo with EGL rendering):** if your simulator allocates GPU/EGL contexts during `__init__`, defer that allocation to a `_ensure_env()` helper called on first `reset()`/`step()`, so that a world built in a worker process does not inherit stale GPU handles. See `LiberoEnv._ensure_env()` for the pattern.
 

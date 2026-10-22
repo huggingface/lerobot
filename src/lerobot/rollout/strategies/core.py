@@ -28,7 +28,7 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine, commit_action, next_interpolated_action
 from lerobot.lerobot_types import RobotObservation
-from lerobot.robots.sim.world import get_world
+from lerobot.robots.sim import SimRobot
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils import OBS_STR, ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
@@ -45,16 +45,16 @@ if TYPE_CHECKING:
         RolloutContext,
         RuntimeContext,
     )
+    from ..robot_wrapper import ThreadSafeRobot
 
 logger = logging.getLogger(__name__)
 
 
-def world_finished(robot) -> bool:
-    """Read terminal status from the latest serialized simulator observation."""
-    world = get_world(robot.inner)
-    if world is not None:
-        status = world.episode_status
-        return status.success or status.terminated or status.truncated
+def episode_finished(robot: ThreadSafeRobot) -> bool:
+    """Check simulator termination without reading or advancing physics."""
+    if isinstance(robot.inner, SimRobot):
+        status = robot.inner.episode_status
+        return status.terminated or status.truncated
     return False
 
 
@@ -95,6 +95,7 @@ class RolloutStrategy(abc.ABC):
         self._interpolator: ActionInterpolator | None = None
         self._warmup_flushed: bool = False
         self._cached_obs_processed: RobotObservation | None = None
+        self._sim_episode_started = False
 
     def _init_engine(self, ctx: RolloutContext) -> None:
         """Attach the inference engine and action interpolator, then start the backend.
@@ -367,24 +368,25 @@ class RolloutStrategy(abc.ABC):
             compress_images=cfg.display_compressed_images,
         )
 
-    def _reset_sim_world(self, ctx: RolloutContext) -> str | None:
-        """Start a new world, discard previous inference, and return the task followed (None on hardware).
-
-        The policy follows the world's task unless the operator chose another instruction
-        (interactive ``/subtask``), which a world reset must not overwrite.
-        """
+    def _reset_sim_episode(self, ctx: RolloutContext) -> str | None:
+        """Reset sim and inference state, preserving an operator-selected task; None on hardware."""
         robot = ctx.hardware.robot_wrapper
-        world = get_world(robot.inner)
-        if world is None:
+        sim_robot = robot.inner
+        if not isinstance(sim_robot, SimRobot):
             return None
         engine = self._require_engine()
-        previous_world_task = world.task_description
+        previous_task = sim_robot.task_description
         engine.pause()
-        robot.reset_world()
-        engine.reset()
-        self._require_interpolator().reset()
-        if engine.task in ("", previous_world_task):
-            engine.set_task(world.task_description)
+        # connect() supplied the initial reset. Later runs/retries reset exactly once.
+        if self._sim_episode_started or sim_robot.episode_status.step > 0:
+            robot.reset_episode()
+        self._sim_episode_started = True
+        self.reset_control_state()
+        ctx.processors.teleop_action_processor.reset()
+        ctx.processors.robot_action_processor.reset()
+        ctx.processors.robot_observation_processor.reset()
+        if engine.task in ("", previous_task):
+            engine.set_task(sim_robot.task_description)
         return engine.task
 
     def setup(self, ctx: RolloutContext) -> None:

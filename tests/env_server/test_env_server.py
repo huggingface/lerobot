@@ -36,8 +36,10 @@ def test_torch_free_import():
             """
 import sys
 sys.modules['torch'] = None
+sys.modules['libero'] = None
 import numpy as np
 import lerobot.env_server.server, lerobot.sims.backend, lerobot.sims.native.envhub
+from lerobot.sims.native.libero import convert_observation
 from lerobot.transport.wire.client import query_reply, decode_reply
 from lerobot.transport.wire.features import FeatureSpec, feature_mismatch, validate_array
 from lerobot.transport.wire.protocol import Envelope, MessageType, correlate_reply, raise_peer_error, validate_reply
@@ -47,7 +49,9 @@ validate_array(np.zeros(2, np.float32), feature)
 request = Envelope(MessageType.DESCRIBE, request_id='request')
 reply = request.reply(MessageType.ACCEPTED, {})
 validate_reply(reply, request, MessageType.ACCEPTED)
-for prefix in ('torch', 'lerobot.policies', 'lerobot.remote_inference'):
+image = np.arange(6 * 7 * 3, dtype=np.uint8).reshape(6, 7, 3)
+np.testing.assert_array_equal(convert_observation({'pixels': {'front': image}})['pixels']['front'], image[::-1, ::-1])
+for prefix in ('torch', 'libero', 'lerobot.policies', 'lerobot.remote_inference'):
     assert not any(
         module is not None and (name == prefix or name.startswith(prefix + '.'))
         for name, module in sys.modules.items()
@@ -148,12 +152,10 @@ def test_vector_client(server):
 
 def test_robot_and_command_hold(server, tmp_path):
     from lerobot.robots.sim import SimRobot, SimRobotConfig
-    from lerobot.robots.sim.world import World
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 
     _, endpoint = server
     robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=endpoint), calibration_dir=tmp_path))
-    assert isinstance(robot, World)
     wrapper = ThreadSafeRobot(robot)
     wrapper.configure_hold()
     try:
@@ -161,8 +163,8 @@ def test_robot_and_command_hold(server, tmp_path):
         assert len(wrapper.get_observation()) == 3
         wrapper.send_action({"command_0": 0.5, "command_1": 0})
         wrapper.hold()
-        np.testing.assert_array_equal(server[0].sessions[robot.client.session].target, 0)
-        wrapper.reset_world(seed=10)
+        assert robot.episode_status.step == 1
+        wrapper.reset_episode(seed=10)
         assert robot.episode_status.step == 0
     finally:
         robot.disconnect()
@@ -171,20 +173,16 @@ def test_robot_and_command_hold(server, tmp_path):
 def test_sim_robot_registration_and_optional_world(server, tmp_path):
     from lerobot.robots import make_robot_from_config
     from lerobot.robots.sim import SimRobot, SimRobotConfig
-    from lerobot.robots.sim.world import get_world
 
     robot = make_robot_from_config(
         SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path)
     )
     try:
         assert isinstance(robot, SimRobot)
-        assert get_world(robot) is robot
-        assert get_world(object()) is None
         robot.connect()
         action = dict.fromkeys(robot.action_features, 0.0)
         assert robot.send_action(action) == action
-        assert robot.client.execution.generation == robot.client.generation
-        assert robot.client.execution.result.step[0] == robot.latest.step[0]
+        assert robot.episode_status.step == 1
     finally:
         robot.disconnect()
 
@@ -205,7 +203,9 @@ def test_libero_numpy_adapter_parity():
         return {k: batch(v) for k, v in value.items()} if isinstance(value, dict) else value[None]
 
     expected = LiberoProcessorStep().observation(preprocess_observation(batch(native)))
-    actual = canonical_observation(native, "libero")
+    from lerobot.sims.native.libero import convert_observation
+
+    actual = canonical_observation(convert_observation(native))
     np.testing.assert_allclose(
         actual["observation.state"], expected["observation.state"][0].numpy(), atol=1e-6
     )
@@ -243,10 +243,11 @@ def test_failed_robot_stays_connected_until_disconnect(server, tmp_path):
         SimRobotConfig(env=ToyEnvConfig(endpoint=endpoint), calibration_dir=tmp_path, timeout_s=0.1)
     )
     robot.connect()
-    session = robot.client.session
+    client = robot._env.client
+    session = client.session
     with pytest.raises(ValueError):
-        robot.client.request("step", actions=np.zeros((1, 2), np.float32))  # realtime rejects step
-    assert robot.client.failed
+        client.request("step", actions=np.zeros((1, 3), np.float32))
+    assert client.failed
     # Rollout teardown only disconnects connected robots; a failed session must still be released.
     assert robot.is_connected
     robot.disconnect()
@@ -401,7 +402,7 @@ def test_sim_robot_local_inference_engines(server, tmp_path, mode):
     robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path))
     wrapper = ThreadSafeRobot(robot)
     names = list(robot.action_features)
-    state_names = list(robot._state.names)
+    state_names = list(robot._state_feature.names)
     features = {
         "observation.state": {"dtype": "float32", "shape": (2,), "names": state_names},
         "action": {"dtype": "float32", "shape": (2,), "names": names},
@@ -442,7 +443,7 @@ def test_sim_robot_local_inference_engines(server, tmp_path, mode):
         wrapper.send_action(dict(zip(names, action.tolist(), strict=True)))
         wrapper.hold()
         engine.pause()
-        wrapper.reset_world(seed=42)
+        wrapper.reset_episode(seed=42)
         engine.reset()
         assert robot.episode_status.step == 0
         if mode == "rtc":
@@ -535,7 +536,7 @@ def test_sim_robot_remote_inference_engine(server, tmp_path):
         wrapper.send_action(dict.fromkeys(robot.action_features, 0.0))
         wrapper.hold()
         engine.pause()
-        wrapper.reset_world(seed=7)
+        wrapper.reset_episode(seed=7)
         engine.reset()
         assert robot.episode_status.step == 0
         assert not engine.failed
@@ -603,7 +604,7 @@ def test_rollout_rejects_checkpoint_schema_before_opening_world(server, tmp_path
     with pytest.raises(ValueError, match="control rate"):
         context._connect_rollout_hardware(cfg)
     assert not server[0].sessions
-    assert robot.client.descriptor is None
+    assert robot._env is None
 
 
 def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
@@ -631,6 +632,7 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
         )
         cfg = SimpleNamespace(
             resume=False,
+            policy=None,
             strategy=EpisodicStrategyConfig(),
             dataset=DatasetRecordConfig(
                 repo_id="local/rollout_sim_test",
@@ -656,7 +658,7 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
         reader = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root)
         sample = reader[0]
         np.testing.assert_allclose(
-            sample["observation.state"].numpy(), [observation[n] for n in robot._state.names]
+            sample["observation.state"].numpy(), [observation[n] for n in robot._state_feature.names]
         )
         np.testing.assert_array_equal(sample["action"].numpy(), [0, 0])
         image = sample["observation.images.image"].permute(1, 2, 0).numpy()
@@ -668,18 +670,21 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
         robot.disconnect()
 
 
-def test_world_reset_keeps_operator_instruction():
+def test_episode_reset_keeps_operator_instruction():
     pytest.importorskip("datasets", reason="rollout requires the dataset extra")
     from types import SimpleNamespace
 
-    from lerobot.robots.sim.world import EpisodeStatus
+    from lerobot.robots.sim.sim_robot import EpisodeStatus, SimRobot
     from lerobot.rollout.strategies.core import RolloutStrategy
 
-    class World:
+    class StubSimRobot(SimRobot):
+        def __init__(self):
+            pass
+
         task_description = "put the bowl on the plate"
         episode_status = EpisodeStatus(False, False, False, 0, 0.0)
 
-        def reset_world(self, seed=None):
+        def reset_episode(self, seed=None):
             pass
 
     class Engine:
@@ -694,19 +699,29 @@ def test_world_reset_keeps_operator_instruction():
         def reset(self):
             pass
 
-    world, engine = World(), Engine()
-    wrapper = SimpleNamespace(inner=world, reset_world=world.reset_world)
+    robot, engine = StubSimRobot(), Engine()
+    wrapper = SimpleNamespace(inner=robot, reset_episode=robot.reset_episode)
     strategy = SimpleNamespace(
-        _require_engine=lambda: engine, _require_interpolator=lambda: SimpleNamespace(reset=lambda: None)
+        _require_engine=lambda: engine,
+        _require_interpolator=lambda: SimpleNamespace(reset=lambda: None),
+        reset_control_state=engine.reset,
+        _sim_episode_started=False,
     )
-    ctx = SimpleNamespace(hardware=SimpleNamespace(robot_wrapper=wrapper))
-    # Unchanged instruction: the policy follows the world's task.
-    world.task_description = "put the bowl on the stove"
+    ctx = SimpleNamespace(
+        hardware=SimpleNamespace(robot_wrapper=wrapper),
+        processors=SimpleNamespace(
+            teleop_action_processor=SimpleNamespace(reset=lambda: None),
+            robot_action_processor=SimpleNamespace(reset=lambda: None),
+            robot_observation_processor=SimpleNamespace(reset=lambda: None),
+        ),
+    )
+    # Unchanged instruction: the policy follows the environment's task.
+    robot.task_description = "put the bowl on the stove"
     engine.task = "put the bowl on the stove"
-    assert RolloutStrategy._reset_sim_world(strategy, ctx) == "put the bowl on the stove"
-    # An operator /subtask survives /start's world reset.
+    assert RolloutStrategy._reset_sim_episode(strategy, ctx) == "put the bowl on the stove"
+    # An operator /subtask survives /start's episode reset.
     engine.task = "pick up the ketchup"
-    assert RolloutStrategy._reset_sim_world(strategy, ctx) == "pick up the ketchup"
+    assert RolloutStrategy._reset_sim_episode(strategy, ctx) == "pick up the ketchup"
     assert engine.task == "pick up the ketchup"
 
 

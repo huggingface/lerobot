@@ -14,6 +14,9 @@
 
 """Batched lockstep worlds as a Gymnasium vector env, in this process or served; no native imports."""
 
+from collections.abc import Sequence
+from typing import Any
+
 import gymnasium as gym
 import numpy as np
 import torch
@@ -40,7 +43,7 @@ class BatchedEnv(gym.vector.VectorEnv):
         task_id: int = 0,
         descriptor: EnvDescriptor | None = None,
         async_worlds: bool = False,
-    ):
+    ) -> None:
         self.client = client
         self.async_worlds = async_worlds
         self.descriptor = descriptor or self.client.describe()
@@ -68,23 +71,30 @@ class BatchedEnv(gym.vector.VectorEnv):
         self.latest: StepResult | None = None
         self.closed = False
 
-    def _open_session(self, seeds=None):
+    def _open_session(self, seeds: Sequence[int | None] | None = None) -> bool:
         # Not named `_ensure`: eval_policy_all prefetches envs exposing `_ensure`, and an
         # unseeded prefetch open would reset the worlds before the seeded rollout reset.
         if not self.client.session:
             self.latest = self.client.open(
-                self.num_envs, "lockstep", self.task_group, self.task_id, seeds, self.async_worlds
+                self.num_envs,
+                "lockstep",
+                self.task_group,
+                self.task_id,
+                list(seeds) if seeds is not None else None,
+                self.async_worlds,
             )
             assert self.client.descriptor is not None
             self.descriptor = self.client.descriptor
             return True
         return False
 
-    def _result(self, body):
+    def _result(self, body: dict[str, Any]) -> StepResult:
         self.latest = StepResult.from_dict(body["result"])
         return self.latest
 
-    def reset(self, *, seed=None, options=None):
+    def reset(
+        self, *, seed: int | list[int] | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         if isinstance(seed, int):
             seed = [seed + i for i in range(self.num_envs)]
         result = (
@@ -95,7 +105,9 @@ class BatchedEnv(gym.vector.VectorEnv):
         assert result is not None
         return result.obs, {"is_success": result.is_success}
 
-    def step(self, actions):
+    def step(
+        self, actions: np.ndarray
+    ) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray, dict[str, np.ndarray]]:
         self._open_session()
         result = self._result(self.client.request("step", actions=np.asarray(actions, dtype=np.float32)))
         return (
@@ -106,7 +118,7 @@ class BatchedEnv(gym.vector.VectorEnv):
             {"is_success": result.is_success},
         )
 
-    def call(self, name, *args, **kwargs):
+    def call(self, name: str, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
         if name == "_max_episode_steps":
             return (self.descriptor.max_episode_steps,) * self.num_envs
         if name == "task":
@@ -119,21 +131,21 @@ class BatchedEnv(gym.vector.VectorEnv):
             return tuple(self.client.request("render")["frames"])
         raise AttributeError(f"Simulator vector attribute is not exposed: {name}")
 
-    def get_attr(self, name):
+    def get_attr(self, name: str) -> tuple[Any, ...]:
         return self.call(name)
 
-    def render(self):
+    def render(self) -> tuple[np.ndarray, ...]:
         return self.call("render")
 
-    def close_extras(self, **kwargs):
+    def close_extras(self, **kwargs: Any) -> None:
         self.client.close()
 
-    def close(self, **kwargs):
+    def close(self, **kwargs: Any) -> None:
         self.client.close()
         self.closed = True
 
 
-def prepare_canonical_observation(observations):
+def prepare_canonical_observation(observations: dict[str, np.ndarray]) -> dict[str, torch.Tensor]:
     """Generic dataset-value conversion, once, on the policy side."""
     result = {}
     for name, value in observations.items():

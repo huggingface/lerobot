@@ -50,16 +50,16 @@ def test_in_process_client_matches_the_server(server):
         assert tuple(actual["task"]) == tuple(expected["task"])
 
 
-def test_in_process_realtime_world_keeps_ticking_while_idle(tmp_path):
+def test_local_sim_robot_waits_for_each_action(tmp_path):
     robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
     try:
         robot.connect()
         robot.send_action(dict.fromkeys(robot.action_features, 0.0))
         commanded = robot.episode_status.step
-        # 20 fps: the world advances on its own while no new command arrives, as hardware does.
+        # Pacing belongs to the caller; waiting does not advance simulation time.
         time.sleep(0.15)
         robot.get_observation()
-        assert robot.episode_status.step > commanded
+        assert robot.episode_status.step == commanded
     finally:
         robot.disconnect()
 
@@ -67,11 +67,9 @@ def test_in_process_realtime_world_keeps_ticking_while_idle(tmp_path):
 @pytest.mark.parametrize("where", ["in_process", "served"])
 def test_lockstep_sim_robot_advances_once_per_action(where, request, tmp_path):
     if where == "served":
-        config = SimRobotConfig(
-            env=ToyEnvConfig(endpoint=request.getfixturevalue("server")[1]), clock="lockstep"
-        )
+        config = SimRobotConfig(env=ToyEnvConfig(endpoint=request.getfixturevalue("server")[1]))
     else:
-        config = SimRobotConfig(env=ToyEnvConfig(), clock="lockstep")
+        config = SimRobotConfig(env=ToyEnvConfig())
     config.calibration_dir = tmp_path
     robot = SimRobot(config)
     try:
@@ -88,7 +86,7 @@ def test_lockstep_sim_robot_advances_once_per_action(where, request, tmp_path):
         assert robot.episode_status.step == 1
         robot.send_action(action)
         assert robot.episode_status.step == 2
-        robot.reset_world(seed=3)
+        robot.reset_episode(seed=3)
         assert robot.episode_status.step == 0
     finally:
         robot.disconnect()
@@ -97,8 +95,8 @@ def test_lockstep_sim_robot_advances_once_per_action(where, request, tmp_path):
 def test_sim_robot_config_needs_an_env_or_an_endpoint():
     with pytest.raises(ValueError, match="--robot.env.type"):
         SimRobotConfig()
-    with pytest.raises(ValueError, match="--robot.clock"):
-        SimRobotConfig(env=ToyEnvConfig(), clock="fast")
+    with pytest.raises(TypeError, match="clock"):
+        SimRobotConfig(env=ToyEnvConfig(), clock="realtime")
 
 
 def test_sim_robot_env_choices_exclude_envs_built_around_a_robot():
@@ -118,11 +116,11 @@ def test_sim_robot_env_choices_exclude_envs_built_around_a_robot():
     limit = sys.getrecursionlimit()
     sys.setrecursionlimit(300)
     try:
-        args = ["--robot.type=sim", "--robot.env.type=toy_test", "--robot.clock=lockstep"]
+        args = ["--robot.type=sim", "--robot.env.type=toy_test"]
         cfg = draccus.parse(Wrapper, args=args)
     finally:
         sys.setrecursionlimit(limit)
-    assert isinstance(cfg.robot.env, ToyEnvConfig) and cfg.robot.clock == "lockstep"
+    assert isinstance(cfg.robot.env, ToyEnvConfig)
     with pytest.raises(SystemExit):
         draccus.parse(Wrapper, args=["--robot.type=sim", "--robot.env.type=gym_manipulator"])
 
@@ -187,6 +185,7 @@ def test_sim_robot_records_the_body_its_env_declares(tmp_path):
     for declared, expected in ((None, "sim"), ("so_follower", "so_follower")):
         robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(robot_type=declared), calibration_dir=tmp_path))
         try:
+            _ = robot.descriptor
             assert (robot.name, robot.robot_type) == ("sim", expected)
             # A newer server may declare more: this client keeps what it knows.
             wire = {**robot.descriptor.to_dict(), "joint_units": ["rad", "rad"]}
@@ -198,7 +197,8 @@ def test_sim_robot_records_the_body_its_env_declares(tmp_path):
     server, thread, config.endpoint = _served(config.type)
     try:
         with pytest.raises(ValueError, match="robot_type: server ''"):
-            SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
+            robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
+            robot.connect()
     finally:
         server.stop.set()
         thread.join(5)
@@ -222,14 +222,6 @@ def test_worlds_in_their_own_processes_match_sequential_worlds():
         np.testing.assert_array_equal(parallel.terminated, sequential.terminated)
         np.testing.assert_array_equal(parallel.step, sequential.step)
         assert parallel.task == sequential.task
-
-
-def test_teleop_needs_a_realtime_sim_robot():
-    from lerobot.robots.sim import check_teleop_clock
-
-    check_teleop_clock(SimRobotConfig(env=ToyEnvConfig()), teleop=object())
-    with pytest.raises(ValueError, match="--robot.clock=realtime"):
-        check_teleop_clock(SimRobotConfig(env=ToyEnvConfig(), clock="lockstep"), teleop=object())
 
 
 def test_sim_robot_names_the_actions_it_takes(tmp_path):

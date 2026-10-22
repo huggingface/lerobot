@@ -21,21 +21,46 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
-from libero.libero import benchmark, get_libero_path
-from libero.libero.envs import OffScreenRenderEnv
+
+from lerobot.utils.import_utils import require_package
 
 from .utils import parse_camera_names
+
+if TYPE_CHECKING:
+    from libero.libero import benchmark
+    from libero.libero.envs import OffScreenRenderEnv
 
 RobotObservation = dict[str, Any]
 
 
+def convert_observation(obs: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep the legacy LIBERO image orientation and raw 8-D end-effector state."""
+    result: dict[str, Any] = {
+        "pixels": {name: np.ascontiguousarray(image[::-1, ::-1]) for name, image in obs["pixels"].items()}
+    }
+    if "robot_state" in obs:
+        state = obs["robot_state"]
+        quat = np.asarray(state["eef"]["quat"], dtype=np.float32)
+        w = np.clip(quat[..., 3], -1, 1)
+        den = np.sqrt(np.maximum(1 - w * w, 0))
+        scale = np.divide(2 * np.arccos(w), den, out=np.zeros_like(den), where=den > 1e-10)
+        result["agent_pos"] = np.concatenate(
+            (state["eef"]["pos"], quat[..., :3] * scale[..., None], state["gripper"]["qpos"]),
+            axis=-1,
+        ).astype(np.float32)
+    return result
+
+
 def _get_suite(name: str) -> benchmark.Benchmark:
     """Instantiate a LIBERO suite by name with clear validation."""
+    require_package("libero", extra="libero")
+    from libero.libero import benchmark
+
     bench = benchmark.get_benchmark_dict()
     if name not in bench:
         raise ValueError(f"Unknown LIBERO suite '{name}'. Available: {', '.join(sorted(bench.keys()))}")
@@ -76,6 +101,9 @@ def _load_initial_states(path: Path) -> np.ndarray:
 
 
 def get_task_init_states(task_suite: Any, i: int, is_libero_plus: bool = False) -> np.ndarray:
+    require_package("libero", extra="libero")
+    from libero.libero import get_libero_path
+
     task = task_suite.tasks[i]
     filename = Path(task.init_states_file)
     root = Path(get_libero_path("init_states"))
@@ -141,6 +169,9 @@ class LiberoEnv(gym.Env):
         is_libero_plus: bool = False,
         hard_reset: bool = True,
     ):
+        require_package("libero", extra="libero")
+        from libero.libero import get_libero_path
+
         super().__init__()
         if control_freq <= 0:
             raise ValueError(f"control_freq must be positive, got {control_freq}")
@@ -228,37 +259,7 @@ class LiberoEnv(gym.Env):
             self.observation_space = spaces.Dict(
                 {
                     "pixels": spaces.Dict(images),
-                    "robot_state": spaces.Dict(
-                        {
-                            "eef": spaces.Dict(
-                                {
-                                    "pos": spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float64),
-                                    "quat": spaces.Box(
-                                        low=-np.inf, high=np.inf, shape=(4,), dtype=np.float64
-                                    ),
-                                    "mat": spaces.Box(
-                                        low=-np.inf, high=np.inf, shape=(3, 3), dtype=np.float64
-                                    ),
-                                }
-                            ),
-                            "gripper": spaces.Dict(
-                                {
-                                    "qpos": spaces.Box(
-                                        low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64
-                                    ),
-                                    "qvel": spaces.Box(
-                                        low=-np.inf, high=np.inf, shape=(2,), dtype=np.float64
-                                    ),
-                                }
-                            ),
-                            "joints": spaces.Dict(
-                                {
-                                    "pos": spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float64),
-                                    "vel": spaces.Box(low=-np.inf, high=np.inf, shape=(7,), dtype=np.float64),
-                                }
-                            ),
-                        }
-                    ),
+                    "agent_pos": spaces.Box(-np.inf, np.inf, (8,), np.float32),
                 }
             )
 
@@ -275,6 +276,8 @@ class LiberoEnv(gym.Env):
         """
         if self._env is not None:
             return
+        from libero.libero.envs import OffScreenRenderEnv
+
         env = OffScreenRenderEnv(
             bddl_file_name=self._task_bddl_file,
             camera_heights=self.observation_height,
@@ -292,7 +295,6 @@ class LiberoEnv(gym.Env):
         raw_obs = self._env.env._get_observations()
         pixels = self._format_raw_obs(raw_obs)["pixels"]
         image = next(iter(pixels.values()))
-        image = image[::-1, ::-1]  # flip both H and W for visualization
         return image
 
     def _format_raw_obs(self, raw_obs: RobotObservation) -> RobotObservation:
@@ -330,7 +332,7 @@ class LiberoEnv(gym.Env):
             },
         }
         if self.obs_type == "pixels":
-            return {"pixels": images.copy()}
+            return convert_observation({"pixels": images.copy()})
 
         if self.obs_type == "pixels_agent_pos":
             # Validate required fields are present
@@ -340,7 +342,7 @@ class LiberoEnv(gym.Env):
                     f"Got eef_pos={eef_pos is not None}, eef_quat={eef_quat is not None}, "
                     f"gripper_qpos={gripper_qpos is not None}"
                 )
-            return obs
+            return convert_observation(obs)
 
         raise NotImplementedError(
             f"The observation type '{self.obs_type}' is not supported in LiberoEnv. "

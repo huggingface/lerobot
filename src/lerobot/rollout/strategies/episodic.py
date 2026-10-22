@@ -40,7 +40,7 @@ from lerobot.common.control_utils import (
 )
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
-from lerobot.robots.sim.world import get_world
+from lerobot.robots.sim import SimRobot
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -53,7 +53,7 @@ from lerobot.utils.visualization_utils import log_visualization_data
 from ..configs import EpisodicStrategyConfig
 from ..context import RolloutContext
 from ..robot_wrapper import ThreadSafeRobot
-from .core import RolloutStrategy, safe_push_to_hub, send_next_action, world_finished
+from .core import RolloutStrategy, episode_finished, safe_push_to_hub, send_next_action
 
 logger = logging.getLogger(__name__)
 
@@ -135,8 +135,8 @@ class EpisodicStrategy(RolloutStrategy):
         # the run summary averages across them without the untimed reset phases.
         timer = CycleTimer(fps, interpolator.multiplier)
 
-        # A simulated world resets itself at each episode start: no manual reset phase.
-        simulated = get_world(robot.inner) is not None
+        # SimRobot resets at episode start; hardware needs an unrecorded reset phase.
+        simulated = isinstance(robot.inner, SimRobot)
         with VideoEncodingManager(dataset):
             try:
                 recorded_episodes = 0
@@ -145,9 +145,11 @@ class EpisodicStrategy(RolloutStrategy):
                         break
 
                     # Reset policy state at episode start (discard leftover hidden state / queue)
-                    self._reset_sim_world(ctx)
-                    engine.reset()
-                    interpolator.reset()
+                    if simulated:
+                        self._reset_sim_episode(ctx)
+                    else:
+                        engine.reset()
+                        interpolator.reset()
                     # A reset interpolator re-primes over two consecutive inference
                     # ticks, exactly like loop start-up, so exempt the group that
                     # spans them instead of reporting a healthy episode as slow.
@@ -297,7 +299,7 @@ class EpisodicStrategy(RolloutStrategy):
             self._require_engine().pump_query(obs_processed)
             timer.wait()
             timestamp = time.perf_counter() - start_t
-            if world_finished(robot):
+            if episode_finished(robot):
                 break
 
     def _reset_loop(

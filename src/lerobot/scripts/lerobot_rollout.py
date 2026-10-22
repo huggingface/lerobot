@@ -173,6 +173,7 @@ from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.configs import parser
+from lerobot.processor import RobotProcessorPipeline
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -223,7 +224,10 @@ logger = logging.getLogger(__name__)
 
 
 @parser.wrap()
-def rollout(cfg: RolloutConfig):
+def rollout(
+    cfg: RolloutConfig,
+    teleop_action_processor: RobotProcessorPipeline | None = None,
+) -> None:
     """Main entry point for policy deployment."""
     init_logging(console_level=cfg.inference.log_level)
 
@@ -246,7 +250,7 @@ def rollout(cfg: RolloutConfig):
         shutdown_event = LinkedEvent(shutdown_event)
 
     logger.info("Building rollout context...")
-    ctx = build_rollout_context(cfg, shutdown_event)
+    ctx = build_rollout_context(cfg, shutdown_event, teleop_action_processor)
 
     strategy = create_strategy(cfg.strategy)
     logger.info("Rollout strategy: %s", cfg.strategy.type)
@@ -281,10 +285,10 @@ def rollout(cfg: RolloutConfig):
     logger.info("Rollout finished")
 
 
-def main() -> None:
+def main(*, teleop_action_processor: RobotProcessorPipeline | None = None) -> None:
     """CLI entry point for ``lerobot-rollout``."""
     register_third_party_plugins()
-    cast(Callable[[], None], rollout)()
+    cast(Callable[..., None], rollout)(teleop_action_processor=teleop_action_processor)
 
 
 if __name__ == "__main__":

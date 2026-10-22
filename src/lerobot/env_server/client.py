@@ -18,6 +18,8 @@ import uuid
 from threading import RLock
 from typing import Any
 
+import numpy as np
+
 from lerobot.transport.wire.client import query_reply
 from lerobot.transport.wire.features import feature_mismatch
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
@@ -218,3 +220,48 @@ class EnvClient:
                 self.descriptor = None
                 self.failed = False
                 self.execution = None
+
+
+class RemoteEnv:
+    """Scalar reset/step/close adapter around the existing batched simulator client.
+
+    The native environment stays on the server. Mutating requests are never retried.
+    """
+
+    def __init__(self, client: EnvClient, task_group: str | None = None, task_id: int = 0) -> None:
+        """Store connection settings without opening a simulator session."""
+        self.client = client
+        self.task_group = task_group
+        self.task_id = task_id
+
+    @property
+    def descriptor(self) -> EnvDescriptor:
+        """Discover the served schema without opening or resetting a session."""
+        return self.client.descriptor or self.client.describe()
+
+    @staticmethod
+    def _unbatch(result: StepResult) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+        return {name: value[0] for name, value in result.obs.items()}, {
+            "is_success": bool(result.is_success[0]),
+            "task_description": result.task[0],
+        }
+
+    def reset(
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+        """Open once with the requested seed, or explicitly reset the existing session."""
+        if not self.client.session:
+            result = self.client.open(1, "lockstep", self.task_group, self.task_id, seeds=[seed])
+        else:
+            result = StepResult.from_dict(self.client.request("reset", seeds=[seed])["result"])
+        return self._unbatch(result)
+
+    def step(self, action: np.ndarray) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
+        """Submit one command and wait for its paired observation and outcome."""
+        result = StepResult.from_dict(self.client.request("step", actions=action[None])["result"])
+        obs, info = self._unbatch(result)
+        return obs, float(result.reward[0]), bool(result.terminated[0]), bool(result.truncated[0]), info
+
+    def close(self) -> None:
+        """Release the remote environment session."""
+        self.client.close()

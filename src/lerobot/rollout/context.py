@@ -65,13 +65,13 @@ from lerobot.processor import (
 )
 from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
 from lerobot.robots import Robot, make_robot_from_config
-from lerobot.robots.sim import SimRobot, check_control_rate, check_teleop_clock
-from lerobot.robots.sim.world import get_world
+from lerobot.robots.sim import SimRobot, check_control_rate
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.transport.wire.features import feature_mismatch
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
+from lerobot.utils.io_utils import write_json
 
 from .configs import RolloutConfig
 from .planner import PlannerConfig, VlmPlanner, training_vocabulary
@@ -337,11 +337,14 @@ def _connect_rollout_hardware(
     """Connect devices and capture the initial pose after policy/descriptor validation."""
     if cfg.robot is None:
         raise ValueError("--robot.type is required for rollout")
-    check_teleop_clock(cfg.robot, cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
     wrapper = ThreadSafeRobot(robot)
     teleop = None
     try:
+        if isinstance(robot, SimRobot) and getattr(cfg, "interpolation_multiplier", 1) != 1:
+            raise ValueError(
+                "SimRobot currently requires interpolation_multiplier=1: one action is one sim step"
+            )
         check_control_rate(robot, cfg.fps)
         if isinstance(robot, SimRobot):
             if simulator_admission is not None:
@@ -439,6 +442,23 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
             )
 
     if dataset is not None:
+        if isinstance(robot, SimRobot) and not cfg.resume:
+            try:
+                write_json(
+                    {
+                        "environment": robot.descriptor.to_dict(),
+                        "initial_seed": robot.config.seed,
+                        "policy": {
+                            "path": str(cfg.policy.pretrained_path) if cfg.policy is not None else None,
+                            "revision": cfg.policy.pretrained_revision if cfg.policy is not None else None,
+                        },
+                    },
+                    dataset.root / "meta" / "simulation.json",
+                )
+            except BaseException:
+                # Ownership transfers to the caller only after this function returns.
+                dataset.finalize()
+                raise
         logger.info("Dataset ready: %s (%d existing episodes)", dataset.repo_id, dataset.num_episodes)
 
     return dataset
@@ -606,12 +626,10 @@ def build_rollout_context(
             "Creating inference engine (type=%s)...",
             cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
         )
-        world = get_world(robot)
-        task_str = (
-            world.task_description
-            if world is not None
-            else (cfg.dataset.single_task if cfg.dataset else cfg.task)
-        )
+        sim_robot = robot if isinstance(robot, SimRobot) else None
+        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
+        if sim_robot is not None and not task_str:
+            task_str = sim_robot.task_description
         inference_strategy = create_inference_engine(
             cfg.inference,
             policy=policy,
@@ -753,8 +771,7 @@ def build_remote_rollout_context(
                 raise ValueError("Remote deployment semantics differ from simulator semantics")
             if feature_mismatch(action, robot.descriptor.action_feature):
                 raise ValueError("Remote action declaration differs from simulator declaration")
-            names = robot.feature_names(cfg.rename_map)
-            declared = {names[f.name]: f for f in robot.descriptor.features}
+            declared = {cfg.rename_map.get(f.name, f.name): f for f in robot.descriptor.features}
             for feature in expected:
                 actual = declared.get(feature.name)
                 if actual is None:
@@ -765,9 +782,9 @@ def build_remote_rollout_context(
         hardware = _connect_rollout_hardware(cfg, require_hold=True, simulator_admission=validate_simulator)
         wrapper = hardware.robot_wrapper
         robot = wrapper.inner
-        world = get_world(robot)
-        if world is not None:
-            task = world.task_description
+        sim_robot = robot if isinstance(robot, SimRobot) else None
+        if sim_robot is not None and not task:
+            task = sim_robot.task_description
 
         observation_hw: dict[str, type | tuple] = {
             key: value

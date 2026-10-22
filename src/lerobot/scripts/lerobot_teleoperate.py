@@ -102,7 +102,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.robots.sim import check_teleop_clock
+from lerobot.robots.sim import SimRobot, check_control_rate
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -240,6 +240,10 @@ def teleop_loop(
                     move_cursor_up(len(robot_action_to_send) + 3)
 
             timer.wait()
+            if isinstance(robot, SimRobot) and (
+                robot.episode_status.terminated or robot.episode_status.truncated
+            ):
+                return
             loop_s = time.perf_counter() - loop_start
             print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
             move_cursor_up(1)
@@ -252,7 +256,10 @@ def teleop_loop(
 
 
 @parser.wrap()
-def teleoperate(cfg: TeleoperateConfig):
+def teleoperate(
+    cfg: TeleoperateConfig,
+    teleop_action_processor: RobotProcessorPipeline | None = None,
+):
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
@@ -265,15 +272,15 @@ def teleoperate(cfg: TeleoperateConfig):
         else cfg.display_compressed_images
     )
 
-    check_teleop_clock(cfg.robot, cfg.teleop)
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
-
-    teleop.connect()
-    robot.connect()
+    default_teleop_processor, robot_action_processor, robot_observation_processor = make_default_processors()
+    teleop_action_processor = teleop_action_processor or default_teleop_processor
 
     try:
+        check_control_rate(robot, cfg.fps)
+        teleop.connect()
+        robot.connect()
         teleop_loop(
             teleop=teleop,
             robot=robot,
@@ -291,8 +298,10 @@ def teleoperate(cfg: TeleoperateConfig):
     finally:
         if cfg.display_data:
             shutdown_visualization(cfg.display_mode)
-        teleop.disconnect()
-        robot.disconnect()
+        if teleop.is_connected:
+            teleop.disconnect()
+        if robot.is_connected or isinstance(robot, sim.SimRobot):
+            robot.disconnect()
 
 
 def main():

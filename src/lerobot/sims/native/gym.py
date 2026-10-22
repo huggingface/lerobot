@@ -15,6 +15,7 @@
 """Environments registered with Gymnasium by their own package (gym_aloha, gym_pusht, ...)."""
 
 import importlib
+import importlib.metadata
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -22,11 +23,23 @@ from typing import Any
 import gymnasium as gym
 
 
-def _make(gym_id: str, gym_kwargs: dict[str, Any]) -> gym.Env:
+def _make(gym_id: str, gym_kwargs: dict[str, Any], packages: tuple[str, ...]) -> gym.Env:
     if gym_id not in gym.registry:
         # The package named before the slash registers its environments on import.
         importlib.import_module(gym_id.split("/")[0])
-    return gym.make(gym_id, disable_env_checker=True, **gym_kwargs)
+    env = gym.make(gym_id, disable_env_checker=True, **gym_kwargs)
+    try:
+        env.metadata = {
+            **env.metadata,
+            "sim_build": {
+                **env.metadata.get("sim_build", {}),
+                **{package: importlib.metadata.version(package) for package in packages},
+            },
+        }
+        return env
+    except BaseException:
+        env.close()
+        raise
 
 
 def create_gym_envs(
@@ -35,9 +48,10 @@ def create_gym_envs(
     gym_id: str,
     gym_kwargs: dict[str, Any] | None = None,
     env_cls: Callable | None = None,
+    packages: tuple[str, ...] = (),
 ) -> dict[str, dict[int, Any]]:
     """One suite named ``task`` with one task: ``n_envs`` worlds made with ``gym.make(gym_id)``."""
     if env_cls is None:
         raise ValueError("env_cls must be provided")
-    make = partial(_make, gym_id, dict(gym_kwargs or {}))
+    make = partial(_make, gym_id, dict(gym_kwargs or {}), packages)
     return {task: {0: env_cls([make] * n_envs)}}

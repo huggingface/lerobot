@@ -118,6 +118,7 @@ class SimSession:
                 raise
             self.generation += 1
             self.commanded = False
+            validate_result(result, self.descriptor, self.backend.num_envs)
             self.target = self._initial_target(result)
             self.last_command = time.monotonic()
             return {"generation": self.generation, "result": result.to_dict()}
@@ -128,7 +129,9 @@ class SimSession:
                 raise ProtocolError(ErrorCode.UNSUPPORTED, "Step requires a lockstep session")
             try:
                 # Lockstep replies are the transition itself; execution feedback serves realtime only.
-                return {"result": self.backend.step(actions).to_dict()}
+                result = self.backend.step(actions)
+                validate_result(result, self.descriptor, self.backend.num_envs)
+                return {"result": result.to_dict()}
             except Exception as exc:
                 self.fault = f"Simulator step failed: {exc}"
                 raise
@@ -228,6 +231,9 @@ class SimSession:
     def _initial_target(self, result: StepResult) -> np.ndarray:
         dim = self.descriptor.action_feature.shape[0]
         target: np.ndarray = np.zeros((self.backend.num_envs, dim), dtype=np.float32)
+        if self.clock == "lockstep":
+            # Explicit stepping does not need an initial hold command or observed action positions.
+            return target
         if self.descriptor.control in {"position", "eef_pose"}:
             state = next((f for f in self.descriptor.features if f.name == "observation.state"), None)
             if state is None or not set(self.descriptor.action_feature.names).issubset(state.names):

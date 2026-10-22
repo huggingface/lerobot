@@ -105,6 +105,9 @@ def make_env(
     # TODO: (jadechoghari): deprecate string API and remove this check
     if isinstance(cfg, str):
         return make_hub_envs(cfg, n_envs, use_async_envs, trust_remote_code, hub_cache_dir)
-    if isinstance(cfg, HubEnvConfig) and trust_remote_code:
-        cfg.trust_remote_code = True
+    if isinstance(cfg, HubEnvConfig):
+        if trust_remote_code:
+            cfg.trust_remote_code = True
+        if hub_cache_dir is not None:
+            cfg.hub_cache_dir = hub_cache_dir
     return cfg.create_envs(n_envs=n_envs, use_async_envs=use_async_envs)

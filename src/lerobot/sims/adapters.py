@@ -12,55 +12,112 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native simulator observations to canonical dataset values, using NumPy only."""
+"""Simulator-independent observation conversion and explicit episode boundaries."""
 
 from collections.abc import Mapping
+from numbers import Integral
+from typing import Any
 
+import gymnasium as gym
 import numpy as np
+from gymnasium import spaces
+
+_OBSERVATION_KEYS = {"agent_pos": "observation.state", "environment_state": "observation.environment_state"}
 
 
-def quat_to_axisangle(quat: np.ndarray) -> np.ndarray:
-    """Convert xyzw quaternions with the legacy LIBERO numerical convention."""
-    quat = np.asarray(quat, dtype=np.float32)
-    if quat.shape[-1:] != (4,):
-        raise ValueError("Quaternion must end in four xyzw components")
-    w = np.clip(quat[..., 3], -1, 1)
-    den = np.sqrt(np.maximum(1 - w * w, 0))
-    scale = np.divide(2 * np.arccos(w), den, out=np.zeros_like(den), where=den > 1e-10)
-    return (quat[..., :3] * scale[..., None]).astype(np.float32)
+def env_attribute(env: Any, name: str, default: Any = None) -> Any:
+    """Read native declarations through Gymnasium wrappers as well as plain environments."""
+    if isinstance(env, gym.Wrapper):
+        try:
+            return env.get_wrapper_attr(name)
+        except AttributeError:
+            return default
+    return getattr(env, name, default)
 
 
-def canonical_observation(obs: Mapping, sim_type: str) -> dict[str, np.ndarray]:
-    """Emit canonical dataset values without model preprocessing or normalization."""
+def episode_limit(env: Any) -> int | None:
+    """Return the declared horizon, or None; an unknown horizon must not change the task."""
+    limit = env_attribute(env, "_max_episode_steps")
+    if limit is None:
+        limit = getattr(getattr(env, "spec", None), "max_episode_steps", None)
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, Integral) or limit <= 0):
+        raise ValueError("Simulator episode limit must be a positive integer or None")
+    return int(limit) if limit is not None else None
+
+
+def canonical_observation(obs: Mapping[str, Any]) -> dict[str, np.ndarray]:
+    """Rename declared arrays; native integrations own robot-specific conversions."""
     result = {}
-    pixels = obs.get("pixels")
-    if pixels is not None:
-        images = pixels if isinstance(pixels, dict) else {None: pixels}
-        for name, image in images.items():
-            image = np.asarray(image)
-            if image.ndim != 3 or image.shape[-1] != 3 or image.dtype != np.uint8:
-                raise ValueError("Canonical RGB requires HWC uint8")
-            if sim_type in {"libero", "libero_plus", "robocerebra"}:
-                image = image[::-1, ::-1]
-            key = f"observation.images.{name}" if name is not None else "observation.image"
-            result[key] = np.ascontiguousarray(image)
-    if "robot_state" in obs:
-        state = obs["robot_state"]
-        result["observation.state"] = np.concatenate(
-            (state["eef"]["pos"], quat_to_axisangle(state["eef"]["quat"]), state["gripper"]["qpos"]), axis=-1
-        ).astype(np.float32)
-    for raw, canonical in (
-        ("agent_pos", "observation.state"),
-        ("environment_state", "observation.environment_state"),
-    ):
-        if raw in obs:
-            result[canonical] = np.asarray(obs[raw], dtype=np.float32)
-    handled = {"pixels", "robot_state", "agent_pos", "environment_state"}
     for key, value in obs.items():
-        if key not in handled and isinstance(value, np.ndarray):
-            target = key if key.startswith("observation.") else f"observation.{key}"
+        if key == "pixels":
+            images = value if isinstance(value, Mapping) else {None: value}
+            for name, image in images.items():
+                image = np.asarray(image)
+                if image.ndim != 3 or image.shape[-1] != 3 or image.dtype != np.uint8:
+                    raise ValueError("Canonical RGB requires HWC uint8")
+                target = f"observation.images.{name}" if name is not None else "observation.image"
+                result[target] = np.ascontiguousarray(image)
+            continue
+        if not isinstance(value, np.ndarray):
+            raise ValueError(
+                f"Observation {key!r} must be an array; flatten native observations in the integration"
+            )
+        target = _OBSERVATION_KEYS.get(key, key if key.startswith("observation.") else f"observation.{key}")
+        if target == "observation.image" or target.startswith("observation.images."):
+            if value.ndim != 3 or value.shape[-1] != 3 or value.dtype != np.uint8:
+                raise ValueError("Canonical RGB requires HWC uint8")
+            result[target] = np.ascontiguousarray(value)
+        else:
             result[target] = np.asarray(value, dtype=np.float32)
     return result
+
+
+def canonical_observation_space(space: spaces.Dict) -> spaces.Dict:
+    """Describe the same conversion using spaces, without sampling or rendering."""
+    result = {}
+    for key, value in space.spaces.items():
+        if key == "pixels":
+            images = value.spaces if isinstance(value, spaces.Dict) else {None: value}
+            for name, image in images.items():
+                if (
+                    not isinstance(image, spaces.Box)
+                    or len(image.shape) != 3
+                    or image.shape[-1] != 3
+                    or image.dtype != np.uint8
+                ):
+                    raise ValueError("Canonical RGB requires HWC uint8")
+                target = f"observation.images.{name}" if name is not None else "observation.image"
+                result[target] = image
+            continue
+        if not isinstance(value, spaces.Box):
+            raise ValueError(f"Observation {key!r} requires a Box space; flatten it in the integration")
+        target = _OBSERVATION_KEYS.get(key, key if key.startswith("observation.") else f"observation.{key}")
+        if target == "observation.image" or target.startswith("observation.images."):
+            if len(value.shape) != 3 or value.shape[-1] != 3 or value.dtype != np.uint8:
+                raise ValueError("Canonical RGB requires HWC uint8")
+            result[target] = value
+        else:
+            result[target] = spaces.Box(-np.inf, np.inf, value.shape, np.float32)
+    return spaces.Dict(result)
+
+
+def check_explicit_reset(env: Any) -> None:
+    """Reject vector or automatic-reset environments before acquiring an episode."""
+    if isinstance(env, gym.vector.VectorEnv):
+        raise ValueError("SimRobot requires one scalar environment, not a vector environment")
+    current = env
+    if env_attribute(env, "is_vector_env", False):
+        raise ValueError("SimRobot requires one scalar environment, not a native vector environment")
+    while isinstance(current, gym.Wrapper):
+        if isinstance(current, gym.wrappers.Autoreset):
+            raise ValueError("Automatic reset is unsupported; supply an environment with explicit reset")
+        current = current.env
+
+
+def check_step_info(info: dict[str, Any]) -> None:
+    """Never mistake an automatically reset observation for the terminal observation."""
+    if any(key in info for key in ("final_observation", "final_obs", "terminal_observation", "final_info")):
+        raise ValueError("Automatic-reset step detected; disable autoreset in the simulator integration")
 
 
 def hold_action(action: np.ndarray, control: str, gripper_indices: tuple[int, ...]) -> np.ndarray:
