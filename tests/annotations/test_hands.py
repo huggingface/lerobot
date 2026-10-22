@@ -317,3 +317,113 @@ def test_dead_worker_fails_pending_requests_instead_of_hanging(tmp_path):
             client.submit({}).result(timeout=5)
     finally:
         client.close()
+
+
+def test_coordinator_pairs_concurrent_episodes_with_real_native_export(tmp_path, monkeypatch):
+    """Exercise the actual isolated bridge with CPU fixture model/camera endpoints."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from lerobot.annotations.hands.processing import HandAnnotator
+
+    root = tmp_path / "runtime"
+    package = root / "fixture_camera"
+    (package / "egocentric").mkdir(parents=True)
+    (package / "infra").mkdir()
+    for name in ("egocentric", "infra"):
+        (package / name / "__init__.py").write_text("")
+    # The production target is Linux. Supply its affinity interface to the
+    # isolated fixture process when this integration test runs on macOS.
+    (package / "__init__.py").write_text(
+        "import os\nif not hasattr(os,'sched_getaffinity'): os.sched_getaffinity=lambda pid: set(range(4))\n"
+    )
+    (package / "egocentric/config.py").write_text("""class EgocentricConfig:
+ def __init__(self,**kwargs): self.__dict__.update(kwargs)
+ def validate(self):
+  assert self.camera_backend=='droid-w' and self.hand_calibration=='calibrated'
+  assert self.droid_sample_fps==10. and self.droid_resolution==320
+  assert self.droid_moge_checkpoint.is_file()
+""")
+    (package / "egocentric/intrinsics.py").write_text("""class CameraIntrinsics:
+ def __init__(self,width,height,matrix,distortion,model,source): self.matrix=matrix
+""")
+    (package / "egocentric/video.py").write_text("""from types import SimpleNamespace
+import numpy as np
+def rectify_video(video,intrinsics,directory):
+ directory.mkdir(parents=True)
+ path=directory/'frames.rgb'
+ values=np.memmap(path,mode='w+',dtype=np.uint8,shape=(40,32,32,3));values[:]=0;values.flush()
+ return SimpleNamespace(frames_path=path,frame_count=40,height=32,width=32,matrix=intrinsics.matrix,fps=10.)
+""")
+    (package / "egocentric/droidw_camera.py").write_text("""import json
+import numpy as np
+def estimate_rectified_camera(video,directory,settings):
+ directory.mkdir(parents=True)
+ archive=directory/'camera.npz'
+ np.savez(archive,camera_pose=np.tile(np.eye(4),(40,1,1)),source_frame_index=np.arange(40),timestamp_s=np.arange(40)/10)
+ receipt=directory/'worker/output/camera/moge-ablation.json';receipt.parent.mkdir(parents=True)
+ receipt.write_text(json.dumps(dict(mode='on',metric_depth_reg=True,gt_scale_fit=False,counts=dict(depth_predictions=1))))
+ return archive,{'backend':'droid-w'}
+""")
+    (package / "infra/droidw_worker.py").write_text("_WORKERS={}\ndef close_workers(): pass\n")
+    model = root / "hand-python"
+    model.write_text(
+        f"#!{sys.executable}\n"
+        + """import json,sys
+from pathlib import Path
+import numpy as np
+from lerobot.annotations.hands.egohand.output import NATIVE_FIELDS
+calls=0
+for line in sys.stdin:
+ row=json.loads(line);calls+=1
+ assert row['row']['frame_count']==40 and row['orientation']=='sensor'
+ fields={name:np.zeros((40,*shape)) for name,shape in NATIVE_FIELDS.items()}
+ for name in ('soma_hand_pose','soma_wrist_orient','wrist_rotation_camera'): fields[name][...]=np.eye(3)
+ path=Path(row['directory'])/'hands.npz'
+ np.savez(path,joints_camera=np.broadcast_to([.2,.3,.6],(40,2,21,3)),direct_valid=np.ones((40,2),dtype=bool),**fields)
+ print(json.dumps({'id':row['id'],'status':'ok','result':{'prediction':str(path),'components':{'warm_calls':calls}}}),flush=True)
+"""
+    )
+    model.chmod(0o700)
+    checkpoint = root / "moge.pt"
+    checkpoint.write_bytes(b"CPU transport fixture; no model loaded")
+    config = HandBackendConfig(
+        root=str(root),
+        module="fixture_camera",
+        python=sys.executable,
+        egohand_python=str(model),
+        gem_root=str(root),
+        trt_cache=str(root / "cache"),
+        droid_moge_checkpoint=str(checkpoint),
+    )
+    source = str(Path(__file__).resolve().parents[2] / "src")
+    monkeypatch.setattr(
+        "lerobot.annotations.hands.processing.provisioned_environment",
+        lambda config: {**os.environ, "PYTHONPATH": os.pathsep.join([source, str(root)])},
+    )
+    calibration = {
+        "width": 32,
+        "height": 32,
+        "fx": 25.0,
+        "fy": 25.0,
+        "cx": 16.0,
+        "cy": 16.0,
+        "model": "pinhole",
+    }
+    annotator = HandAnnotator(config, root / "coordinator")
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pending = [
+                pool.submit(annotator.annotate, root / f"episode-{i}.mp4", calibration, root / f"work-{i}")
+                for i in range(2)
+            ]
+            reports = [future.result(timeout=30) for future in pending]
+        assert sorted(r["hand_components"]["warm_calls"] for r in reports) == [1, 2]
+        for i, report in enumerate(reports):
+            assert report["accepted_frames"] == 40 and report["action_schema"] == ACTION_SCHEMA
+            assert Path(report["segments"][0]).is_relative_to(root / f"work-{i}")
+            with np.load(report["segments"][0]) as segment:
+                np.testing.assert_allclose(segment["action"][0, :3], [0.6, -0.2, -0.3], atol=1e-7)
+                assert segment["action"].shape == (40, 156)
+    finally:
+        annotator.close()
+    assert annotator.process.poll() is not None
