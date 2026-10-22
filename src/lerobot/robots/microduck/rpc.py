@@ -77,12 +77,13 @@ class DuckRpc:
         self._reader = sock.makefile("r", encoding="utf-8", newline="\n")
 
     def close(self) -> None:
+        if self._sock is not None:
+            with contextlib.suppress(OSError):
+                self._sock.shutdown(socket.SHUT_RDWR)
         if self._reader is not None:
             self._reader.close()
             self._reader = None
         if self._sock is not None:
-            with contextlib.suppress(OSError):
-                self._sock.shutdown(socket.SHUT_RDWR)
             self._sock.close()
             self._sock = None
 

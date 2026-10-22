@@ -30,6 +30,7 @@ Have the robot on its stand the first time: nothing published on the Hub is veri
 
 import argparse
 import time
+from contextlib import ExitStack
 
 from lerobot.robots.microduck import MicroDuck, MicroDuckConfig
 from lerobot.teleoperators.keyboard import KeyboardMicroDuckTeleop, KeyboardMicroDuckTeleopConfig
@@ -38,7 +39,7 @@ from lerobot.utils.robot_utils import precise_sleep
 FPS = 30
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -61,23 +62,23 @@ def main():
     )
     keyboard = KeyboardMicroDuckTeleop(KeyboardMicroDuckTeleopConfig())
 
-    robot.connect()
-    keyboard.connect()
-
-    print(f"Loading {args.policy} into slot '{args.slot}'...")
-    print(robot.load_policy(args.policy, slot=args.slot))
-
-    print("Driving: W/S forward/back, A/D strafe, Z/X turn, I/J/K/L head, +/- speed. Ctrl+C to stop.")
     try:
-        while True:
-            t0 = time.perf_counter()
-            robot.send_action(keyboard.get_action())
-            precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+        with ExitStack() as cleanup:
+            robot.connect()
+            cleanup.callback(robot.disconnect)
+            keyboard.connect()
+            cleanup.callback(keyboard.disconnect)
+
+            print(f"Loading {args.policy} into slot '{args.slot}'...")
+            print(robot.load_policy(args.policy, slot=args.slot))
+
+            print("Driving: W/S forward/back, A/D strafe, Z/X turn, I/J/K/L head, +/- speed. Ctrl+C to stop.")
+            while True:
+                t0 = time.perf_counter()
+                robot.send_action(keyboard.get_action())
+                precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
     except KeyboardInterrupt:
         pass
-    finally:
-        keyboard.disconnect()
-        robot.disconnect()
 
 
 if __name__ == "__main__":

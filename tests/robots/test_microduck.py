@@ -23,12 +23,16 @@ notifications it receives, so these tests pin the wire messages LeRobot sends an
 import asyncio
 import json
 import math
+import runpy
+import select
 import socket
+import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import cv2
 import numpy as np
@@ -37,6 +41,7 @@ import requests
 
 from lerobot.robots.microduck import MicroDuck, MicroDuckConfig
 from lerobot.robots.microduck.microduck import JOINT_NAMES
+from lerobot.robots.microduck.rpc import DuckRpc
 from lerobot.utils.errors import DeviceNotConnectedError
 
 STATE = {
@@ -933,3 +938,76 @@ def test_gamepad_cli_and_local_dataset(robotd, tmp_path):
     assert "microduck.gamepad" not in dataset.features
     assert set(robotd.methods()) == {"hello", "robot.subscribe"}
     assert robotd.notifications == []
+
+
+def test_rpc_close_interrupts_blocked_reader():
+    client, peer = socket.socketpair()
+    client.settimeout(5.0)
+    rpc = DuckRpc("unused")
+    rpc._sock = client
+    rpc._reader = client.makefile("r", encoding="utf-8")
+    errors = []
+    closed = threading.Event()
+
+    def read() -> None:
+        try:
+            rpc.read_message()
+        except (OSError, ConnectionError, json.JSONDecodeError) as exc:
+            errors.append(exc)
+
+    def close() -> None:
+        try:
+            rpc.close()
+        finally:
+            closed.set()
+
+    peer.sendall(b'{"partial":')
+    reader = threading.Thread(target=read)
+    reader.start()
+    closer = threading.Thread(target=close)
+    try:
+        deadline = time.monotonic() + 1.0
+        while select.select([client], [], [], 0)[0]:
+            assert time.monotonic() < deadline, "reader did not consume the partial message"
+            time.sleep(0.001)
+        closer.start()
+        assert closed.wait(1.0), "close waited for the socket read timeout"
+    finally:
+        peer.close()
+        reader.join(timeout=6.0)
+        if closer.ident is not None:
+            closer.join(timeout=6.0)
+        rpc.close()
+    assert not reader.is_alive()
+    assert errors
+    assert not rpc.is_open
+
+
+@pytest.mark.parametrize("failure", ["keyboard_connect", "load_policy", "interrupt", "keyboard_disconnect"])
+def test_policy_example_cleans_up_on_failure(monkeypatch, failure):
+    script = Path(__file__).resolve().parents[2] / "examples/microduck/rollout_hub_policy.py"
+    main = runpy.run_path(str(script), run_name="test_example")["main"]
+    robot = Mock()
+    keyboard = Mock()
+    keyboard.get_action.side_effect = KeyboardInterrupt
+    if failure == "keyboard_connect":
+        keyboard.connect.side_effect = RuntimeError("setup failed")
+    elif failure == "load_policy":
+        robot.load_policy.side_effect = RuntimeError("load failed")
+    elif failure == "keyboard_disconnect":
+        keyboard.disconnect.side_effect = RuntimeError("cleanup failed")
+    monkeypatch.setitem(main.__globals__, "MicroDuck", Mock(return_value=robot))
+    monkeypatch.setitem(main.__globals__, "KeyboardMicroDuckTeleop", Mock(return_value=keyboard))
+    monkeypatch.setattr(sys, "argv", [str(script), "--ip", "127.0.0.1", "--policy", "example/policy"])
+
+    if failure == "interrupt":
+        main()
+    else:
+        with pytest.raises(RuntimeError):
+            main()
+
+    robot.disconnect.assert_called_once_with()
+    if failure == "keyboard_connect":
+        keyboard.disconnect.assert_not_called()
+    else:
+        keyboard.disconnect.assert_called_once_with()
