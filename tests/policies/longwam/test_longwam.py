@@ -16,6 +16,7 @@ from transformers import PreTrainedTokenizerFast
 from lerobot.policies import make_pre_post_processors
 from lerobot.policies.longwam.configuration_longwam import LongWAMConfig
 from lerobot.policies.longwam.modeling_longwam import LongWAMPolicy
+from lerobot.policies.longwam.processor_longwam import LongWAMInputs
 from lerobot.processor import NormalizerProcessorStep, TokenizerProcessorStep
 from lerobot.utils.constants import OBS_LANGUAGE_TOKENS
 
@@ -150,6 +151,42 @@ def test_training_and_inference_camera_geometry(config, input_size, camera_size)
         torch.testing.assert_close(training[key], expected, atol=2 / 255, rtol=0)
         if input_size in ((16, 32), (32, 16)):
             torch.testing.assert_close(training[key][0, 0], -torch.ones(3, *camera_size))
+
+
+@pytest.mark.parametrize("temporal", [False, True])
+def test_split_processors_and_existing_hub_config(config, tmp_path, temporal):
+    config.prompt_template = "Task: {task}"
+    pre, post = make_pre_post_processors(config, dataset_stats=stats(config))
+    assert [step._registry_name for step in pre.steps[3:6]] == [
+        "longwam_observations",
+        "longwam_action_clamp",
+        "longwam_prompt",
+    ]
+    inputs = batch(config, temporal=temporal, task=" pick \n place ")
+    inputs["observation.state"][...] = torch.tensor([-20.0, 20.0])
+    if temporal:
+        inputs["action"][...] = torch.tensor([-20.0, 0.0, 20.0])
+    expected = pre(inputs)
+    assert expected["task"] == ["Task: pick place"]
+    assert expected["observation.state"].unique().tolist() == [-5.0, 5.0]
+    assert inputs["observation.state"].unique().tolist() == [-20.0, 20.0]
+    if temporal:
+        assert expected["action"].unique().tolist() == [-5.0, 0.0, 5.0]
+        assert inputs["action"].unique().tolist() == [-20.0, 0.0, 20.0]
+    assert inputs["task"] == [" pick \n place "]
+    pre.steps[3:6] = [
+        LongWAMInputs(
+            camera_keys=config.camera_keys,
+            camera_size=config.camera_size,
+            prompt_template=config.prompt_template,
+        )
+    ]
+    pre.save_pretrained(tmp_path, config_filename="policy_preprocessor.json")
+    post.save_pretrained(tmp_path, config_filename="policy_postprocessor.json")
+    loaded_pre, _ = make_pre_post_processors(config, pretrained_path=tmp_path)
+    actual = loaded_pre(inputs)
+    assert actual.pop("task") == expected.pop("task")
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 
 
 @pytest.mark.parametrize("mode", ["idm", "cod"])

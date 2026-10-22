@@ -10,9 +10,11 @@ from torch.nn import functional
 from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.lerobot_types import EnvTransition, TransitionKey
+from lerobot.lerobot_types import EnvTransition, RobotObservation, TransitionKey
 from lerobot.processor import (
     ActionProcessorStep,
+    ComplementaryDataProcessorStep,
+    ObservationProcessorStep,
     PolicyProcessorPipeline,
     ProcessorStep,
     ProcessorStepRegistry,
@@ -26,21 +28,16 @@ from .configuration_longwam import LongWAMConfig
 FeatureMap = dict[PipelineFeatureType, dict[str, PolicyFeature]]
 
 
-@ProcessorStepRegistry.register(name="longwam_inputs")
+@ProcessorStepRegistry.register(name="longwam_observations")
 @dataclass
-class LongWAMInputs(ProcessorStep):
+class LongWAMObservations(ObservationProcessorStep):
+    """Prepare camera pixels and clamp normalized proprioception."""
+
     camera_keys: tuple[str, ...]
     camera_size: tuple[int, int]
-    prompt_template: str
     image_dtype: str = "float32"
 
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        transition = transition.copy()
-        raw_observation = transition[TransitionKey.OBSERVATION]
-        complementary_data = transition[TransitionKey.COMPLEMENTARY_DATA]
-        if raw_observation is None or complementary_data is None:
-            raise ValueError("Long-WAM requires observations and a task")
-        observation = dict(raw_observation)
+    def observation(self, observation: RobotObservation) -> RobotObservation:
         for key in self.camera_keys:
             image = observation[key]
             if image.ndim not in (4, 5) or image.shape[-3] != 3:
@@ -76,22 +73,12 @@ class LongWAMInputs(ProcessorStep):
             image = image[..., top : top + height, left : left + width]
             observation[key] = image.reshape(*shape, 3, height, width).mul(2).sub(1)
         observation["observation.state"] = observation["observation.state"].clamp(-5, 5)
-        transition[TransitionKey.OBSERVATION] = observation
-        action = transition.get(TransitionKey.ACTION)
-        if isinstance(action, torch.Tensor):
-            transition[TransitionKey.ACTION] = action.clamp(-5, 5)
-        complementary = dict(complementary_data)
-        tasks = complementary["task"]
-        tasks = [tasks] if isinstance(tasks, str) else tasks
-        complementary["task"] = [self.prompt_template.format(task=" ".join(task.split())) for task in tasks]
-        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
-        return transition
+        return observation
 
     def get_config(self) -> dict[str, Any]:
         return {
             "camera_keys": self.camera_keys,
             "camera_size": self.camera_size,
-            "prompt_template": self.prompt_template,
             "image_dtype": self.image_dtype,
         }
 
@@ -103,6 +90,60 @@ class LongWAMInputs(ProcessorStep):
                 type=feature.type, shape=(3, *self.camera_size)
             )
         return features
+
+
+@ProcessorStepRegistry.register(name="longwam_prompt")
+@dataclass
+class LongWAMPrompt(ComplementaryDataProcessorStep):
+    """Format task instructions before tokenization."""
+
+    prompt_template: str
+
+    def complementary_data(self, complementary_data: dict[str, Any]) -> dict[str, Any]:
+        tasks = complementary_data["task"]
+        tasks = [tasks] if isinstance(tasks, str) else tasks
+        complementary_data["task"] = [
+            self.prompt_template.format(task=" ".join(task.split())) for task in tasks
+        ]
+        return complementary_data
+
+    def get_config(self) -> dict[str, Any]:
+        return {"prompt_template": self.prompt_template}
+
+    def transform_features(self, features: FeatureMap) -> FeatureMap:
+        return features
+
+
+@ProcessorStepRegistry.register(name="longwam_action_clamp")
+class LongWAMActionClamp(ActionProcessorStep):
+    """Clamp normalized training actions; inference has no action input."""
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if transition.get(TransitionKey.ACTION) is None:
+            return transition
+        return super().__call__(transition)
+
+    def action(self, action: torch.Tensor) -> torch.Tensor:
+        return action.clamp(-5, 5)
+
+    def transform_features(self, features: FeatureMap) -> FeatureMap:
+        return features
+
+
+@ProcessorStepRegistry.register(name="longwam_inputs")
+@dataclass(kw_only=True)
+class LongWAMInputs(LongWAMObservations):
+    """Load existing Hub processor configs by delegating to the split steps."""
+
+    prompt_template: str
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        transition = super().__call__(transition)
+        transition = LongWAMActionClamp()(transition)
+        return LongWAMPrompt(self.prompt_template)(transition)
+
+    def get_config(self) -> dict[str, Any]:
+        return {**super().get_config(), "prompt_template": self.prompt_template}
 
 
 @ProcessorStepRegistry.register(name="longwam_action_toggle")
@@ -130,12 +171,13 @@ def make_longwam_pre_post_processors(
         steps.rename_observations,
         steps.add_batch_dim,
         steps.normalize,
-        LongWAMInputs(
+        LongWAMObservations(
             config.camera_keys,
             config.camera_size,
-            config.prompt_template,
             str(config.dtype or torch.float32).removeprefix("torch."),
         ),
+        LongWAMActionClamp(),
+        LongWAMPrompt(config.prompt_template),
         TokenizerProcessorStep(
             tokenizer_name=config.tokenizer_name,
             max_length=config.tokenizer_max_length,
