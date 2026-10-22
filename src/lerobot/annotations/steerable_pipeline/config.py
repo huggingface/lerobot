@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from lerobot.annotations.runtime.configs import RuntimeConfig
+from lerobot.annotations.runtime.types import checked_name
 from lerobot.configs.default import JobConfig
 
 # No floating/default runtime: supply a dependency-complete image@sha256:digest.
@@ -204,6 +205,15 @@ class HumanVideoConfig:
     max_concurrency: int = 4
     output_dir: str = "human_videos"
     seed: int | None = None
+
+    def __post_init__(self):
+        checked_name(self.output_dir)
+        if self.output_dir in {"data", "meta", "videos"}:
+            raise ValueError("Human videos need their own output directory")
+        if self.max_concurrency < 1 or self.context_frames < 1 or self.duration_s < 1:
+            raise ValueError("Human video concurrency, context and duration must be positive")
+        if self.max_segments_per_episode is not None and self.max_segments_per_episode < 1:
+            raise ValueError("Human video segment cap must be positive")
 
 
 @dataclass

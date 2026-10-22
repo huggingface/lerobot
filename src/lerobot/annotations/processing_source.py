@@ -299,6 +299,21 @@ class LeRobotEpisodeSource:
                     "upstream": artifact_identities(parent),
                     "unavailable": unavailable,
                 }
+                if stage.id == "human_video" and "plan" not in bindings:
+                    # Native identities deliberately omit language columns. This
+                    # stage also consumes publisher subtasks when plan is off.
+                    record = _load_record(self.root, metadata)
+                    frames = record.frames_df()
+                    stored = (
+                        frames["language_persistent"].iloc[0]
+                        if "language_persistent" in frames.columns and len(frames)
+                        else []
+                    )
+                    identity["existing_subtasks"] = [
+                        {key: atom.get(key) for key in ("content", "timestamp")}
+                        for atom in (list(stored) if stored is not None else [])
+                        if atom.get("style") == "subtask"
+                    ]
                 yield InputItem(
                     str(ep),
                     metadata,

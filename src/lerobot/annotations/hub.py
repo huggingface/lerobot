@@ -84,10 +84,10 @@ def _publication_context(root, cfg):
     return api, current, previous, private
 
 
-def _source_files(root):
+def _source_files(root, human_video_output="human_videos"):
     files = {
         f"{name}/{path.relative_to((root / name).resolve()).as_posix()}": path
-        for name in ("data", "meta", "videos")
+        for name in ("data", "meta", "videos", human_video_output)
         for path in (root / name).resolve().rglob("*")
         if path.is_file()
     }
@@ -116,7 +116,7 @@ def preflight_publication(root, cfg, *, planned_paths=()):
     root = Path(root).resolve()
     _, current, _, _ = _publication_context(root, cfg)
     planned = set(planned_paths)
-    paths = set(_source_files(root)) if current is None else set()
+    paths = set(_source_files(root, cfg.human_video.output_dir)) if current is None else set()
     paths.update(planned | {"README.md", LINEAGE})
     # Count all planned outputs on both create and update, with no double counting.
     # Only unchanged source bytes are a known lower bound; generated sizes may shrink.
@@ -134,7 +134,7 @@ def publish_annotation(root, cfg, *, changed_paths):
     card_path = root / "README.md"
     card = DatasetCard(card_path.read_text() if card_path.exists() else "---\n{}\n---\n# Processed dataset\n")
     if current is None:
-        files = _source_files(root)
+        files = _source_files(root, cfg.human_video.output_dir)
     else:
         files = {}
         for path in changed_paths:
@@ -142,7 +142,10 @@ def publish_annotation(root, cfg, *, changed_paths):
             if not path.is_relative_to(root):
                 raise ValueError("Changed publication path escapes its dataset root")
             relative = path.relative_to(root).as_posix()
-            if relative.startswith("videos/") or not relative.startswith(("data/", "meta/")):
+            prefixes = ("data/", "meta/")
+            if cfg.human_video.enabled:
+                prefixes += (cfg.human_video.output_dir + "/",)
+            if relative.startswith("videos/") or not relative.startswith(prefixes):
                 raise ValueError("Annotation updates only publish changed data/metadata, not videos")
             files[relative] = path
     if cfg.repo_id:
@@ -167,6 +170,10 @@ def publish_annotation(root, cfg, *, changed_paths):
         for phase in ("plan", "interjections", "vqa")
         if getattr(cfg, phase).enabled
     }
+    if cfg.human_video.enabled:
+        from .human_video_processing import HumanVideoStage
+
+        processing["human_video"] = HumanVideoStage(root, draccus.encode(cfg)).scientific_config()
     images = (cfg.job.image, cfg.runtime.hf_jobs.cpu_image, cfg.runtime.hf_jobs.gpu_image)
     code_revision = cfg.runtime.hf_jobs.code_revision or cfg.job.lerobot_ref
     lineage = {

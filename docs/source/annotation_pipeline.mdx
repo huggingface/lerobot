@@ -416,6 +416,15 @@ for the complete option list.
 
 ## Human demonstration videos (`--human_video.*`)
 
+Human videos run as a dependency-aware stage in `annotations.runtime`, after
+subtask generation when enabled. Workers save checksummed episode media bundles;
+the recipe commits them with `meta/human_videos.jsonl` through the same recoverable
+dataset transaction as the language columns. Resume reuses accepted bundles,
+including recorded segment failures, without repeating their provider requests.
+Interrupted work without a checkpoint can repeat on an explicit rerun. Uncertain
+provider failures are not automatically retried by this stage. With `plan` off,
+the source's existing subtask text and boundaries participate in cache identity.
+
 The optional `human_video` module turns every subtask into a short video of a person doing it, the
 "HumanGen" data of [Zero-WAM](https://robbyant-research.github.io/Zero-WAM/): policies such as
 Zero-WAM take such videos as in-context task prompts. For each subtask segment:
