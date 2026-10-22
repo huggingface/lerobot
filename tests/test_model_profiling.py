@@ -65,6 +65,7 @@ def test_archive_preserves_run_attempt_and_only_public_report_files(monkeypatch,
         "head_sha": "abc",
         "head_branch": "main",
         "created_at": "2026-07-21T12:00:00Z",
+        "run_started_at": "2026-10-21T12:00:00Z",
         "html_url": "https://github.com/huggingface/lerobot/actions/runs/123",
     }
     for key, value in {
@@ -83,6 +84,7 @@ def test_archive_preserves_run_attempt_and_only_public_report_files(monkeypatch,
     assert metadata["key"] == "123-2"
     assert metadata["conclusion"] == "failure"
     assert metadata["created_at"] == run["created_at"]
+    assert metadata["run_started_at"] == run["run_started_at"]
     with zipfile.ZipFile(folder / "report.zip") as report:
         assert set(report.namelist()) == {"results.json", "README.md"}
 

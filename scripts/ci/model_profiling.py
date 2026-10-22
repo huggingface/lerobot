@@ -62,9 +62,6 @@ def policy_args(policy: str) -> list[str]:
     ]
     if policy == "multi_task_dit":
         args += ["--policy.horizon=32", "--policy.n_action_steps=30"]
-    if policy == "fineart_vla":
-        # The default FAST tokenizer fit needs a representative action distribution.
-        args += ["--dataset.episodes=[0,1,2,3,4,5,6,7,8,9]"]
     if policy in {"dm05", "pi05", "molmoact2"}:
         args += ["--compute_missing_quantiles=true"]
     if policy == "tdmpc":
@@ -170,7 +167,9 @@ def archive(output_dir: Path) -> Path:
     with urlopen(request, timeout=30) as response:  # nosec B310: fixed GitHub HTTPS host above
         run = json.load(response)
     rows = json.loads((output_dir / "results.json").read_text())
-    metadata = {key: run[key] for key in ("id", "head_sha", "head_branch", "created_at", "html_url")}
+    metadata = {
+        key: run[key] for key in ("id", "head_sha", "head_branch", "created_at", "run_started_at", "html_url")
+    }
     metadata.update(
         key=f"{run_id}-{os.environ['GITHUB_RUN_ATTEMPT']}",
         run_attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]),

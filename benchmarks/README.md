@@ -30,10 +30,10 @@ The recipes compute missing vector quantiles for DM05, Pi0.5 and MolmoAct2 from 
 
 ## Publishing
 
-Every workflow run produces a GitHub job summary and downloadable `model-profiling-report` artifact containing `results.json` and a Markdown table. Separate `model-profiling-<policy>` artifacts contain the effective configurations, individual results and optional traces. A filtered manual run reports only the requested policies. Failed and missing results remain visible.
+Every workflow run produces a GitHub job summary and downloadable `model-profiling-report-<attempt>` artifact containing `results.json` and a Markdown table. Separate `model-profiling-<policy>-<attempt>` artifacts contain the effective configurations, individual results and optional traces. A filtered manual run reports only the requested policies. Failed and missing results remain visible.
 
 The public [LeRobot health dashboard](https://huggingface.co/spaces/lerobot/health-dashboard) provides a sortable results table, error details and report downloads. Its History view charts inference or training latency by policy over the last month, three months, or all recorded runs. Matching setup comparisons use hardware, batch size, dtype, dataset and configuration fingerprint; source commits can differ.
 
-The workflow preserves each run and attempt under `data/<run-id>-<attempt>/` in the Space, using the existing `LEROBOT_HF_USER` secret with write access. Repository variable `MODEL_PROFILING_SPACE` overrides the destination. Archived JSON, report ZIP and source metadata remain available without GitHub authentication or artifact expiration. A valid server-side GitHub token also enables live results. No Slack notifications are sent.
+The workflow preserves each run and attempt under `data/<run-id>-<attempt>/` in the Space, using the existing `MODEL_PROFILING_HF_TOKEN` (or the existing `LEROBOT_HF_USER` fallback) secret with write access. Repository variable `MODEL_PROFILING_SPACE` overrides the destination. Archived JSON, report ZIP and source metadata remain available without GitHub authentication or artifact expiration. A valid server-side GitHub token also enables live results. No Slack notifications are sent.
 
 GitHub's raw per-policy artifacts follow the repository's retention policy. Download configurations and optional traces you need to retain separately.
