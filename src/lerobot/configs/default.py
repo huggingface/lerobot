@@ -55,8 +55,10 @@ class DatasetConfig:
     # Has no effect on datasets without depth cameras.
     depth_output_unit: str = DEFAULT_DEPTH_UNIT
     streaming: bool = False
-    # Number of complete episodes mixed by the rank-level exact-coverage sampler.
-    streaming_episode_pool_size: int = 32
+    # Complete episodes mixed by the exact-coverage sampler of each DataLoader worker. None mixes
+    # 32 episodes for the rank and gives each of the N workers 32/N; a larger pool mixes more
+    # episodes in each batch, but uses more memory and fetches more data before the first sample.
+    streaming_episode_pool_size: int | None = None
     # Round-robin trades frame-weighted sampling for more even resident-episode mixing.
     streaming_sampling_strategy: StreamingSamplingStrategy = StreamingSamplingStrategy.REMAINING
     # Complete episodes fetched ahead of the current admission frontier.
@@ -69,6 +71,8 @@ class DatasetConfig:
     # Per-rank native HTTP limits. None preserves the fetcher's worker-derived default.
     streaming_native_http_connections: int | None = None
     streaming_native_http_subranges: int = 1
+    # Seconds to wait for another process that builds the same MP4 sidecar.
+    streaming_sidecar_lock_timeout_s: float = 30 * 60
     # Maximum open video decoders. Streaming: per rank, None covers every camera in the episode pool.
     # Map-style: only for non-default storage formats (e.g. lance), per DataLoader worker.
     video_decoder_cache_size: int | None = None
@@ -89,7 +93,7 @@ class DatasetConfig:
         if not (0.0 <= self.eval_split < 1.0):
             raise ValueError(f"eval_split must be in [0.0, 1.0), got {self.eval_split}")
         self.streaming_sampling_strategy = StreamingSamplingStrategy(self.streaming_sampling_strategy)
-        if self.streaming_episode_pool_size <= 0:
+        if self.streaming_episode_pool_size is not None and self.streaming_episode_pool_size <= 0:
             raise ValueError("streaming_episode_pool_size must be positive")
         if self.streaming_prefetch_episodes < 0:
             raise ValueError("streaming_prefetch_episodes must be non-negative")
@@ -105,6 +109,8 @@ class DatasetConfig:
             raise ValueError("streaming_native_http_connections must be positive")
         if self.streaming_native_http_subranges <= 0:
             raise ValueError("streaming_native_http_subranges must be positive")
+        if self.streaming_sidecar_lock_timeout_s <= 0:
+            raise ValueError("streaming_sidecar_lock_timeout_s must be positive")
         if self.episodes is not None:
             if any(ep < 0 for ep in self.episodes):
                 raise ValueError(

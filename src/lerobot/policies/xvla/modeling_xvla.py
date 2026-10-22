@@ -29,10 +29,11 @@ from typing import TYPE_CHECKING
 import torch
 from torch import Tensor, nn
 
-from lerobot.configs import PreTrainedConfig
+from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
 
+from ..chunk import FeatureSpec
 from ..common.vla_utils import pad_vector, resize_with_pad
 from ..pretrained import PreTrainedPolicy, T
 from ..utils import populate_queues
@@ -235,6 +236,8 @@ class XVLAModel(nn.Module):
         domain_id: torch.LongTensor,
         proprio: torch.Tensor,
         steps: int,
+        *,
+        noise: torch.Tensor | None = None,
     ) -> torch.Tensor:
         self.eval()
 
@@ -247,7 +250,11 @@ class XVLAModel(nn.Module):
         batch_size = input_ids.shape[0]
         action_dim = self.dim_action
 
-        x1 = torch.randn(batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype)
+        if noise is None:
+            noise = torch.randn(
+                batch_size, self.chunk_size, action_dim, device=proprio.device, dtype=target_dtype
+            )
+        x1 = noise.to(device=proprio.device, dtype=target_dtype)
         action = torch.zeros_like(x1)
 
         steps = max(1, int(steps))
@@ -284,6 +291,45 @@ class XVLAPolicy(PreTrainedPolicy):
         self._queues: dict[str, deque[Tensor]] = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
+
+    def validate_chunk_input_features(self, features: tuple[FeatureSpec, ...]) -> None:
+        """Declare XVLA's existing image masks/resizing and state zero-padding.
+
+        Deployments name the physical cameras and state coordinates explicitly.
+        A different state width is accepted only with identity normalization; truncating
+        supplied coordinates or guessing normalization statistics is unsupported.
+        """
+        expected = self.config.input_features or {}
+        supplied = {feature.name: feature for feature in features}
+        required = {name for name, feature in expected.items() if feature.type != FeatureType.VISUAL}
+        if not required <= supplied.keys() or not supplied.keys() <= expected.keys():
+            raise ValueError("XVLA requires all nonvisual inputs and only known camera features.")
+        if not any(expected[name].type == FeatureType.VISUAL for name in supplied):
+            raise ValueError("XVLA requires at least one camera.")
+        for name, feature in supplied.items():
+            policy_feature = expected[name]
+            if policy_feature.type == FeatureType.VISUAL:
+                shape = policy_feature.shape
+                if len(shape) != 3 or shape[0] != 3 or feature.kind != "rgb":
+                    raise ValueError(f"XVLA requires RGB camera inputs: {name}.")
+                if self.config.resize_imgs_with_padding is None and feature.shape != (
+                    shape[1],
+                    shape[2],
+                    shape[0],
+                ):
+                    raise ValueError(f"RGB feature shape differs without policy resizing: {name}.")
+            elif name == OBS_STATE and self.config.use_proprio:
+                if feature.kind != "tensor" or len(feature.shape) != 1:
+                    raise ValueError("XVLA requires a one-dimensional state tensor.")
+                if feature.shape[0] > self.config.max_state_dim:
+                    raise ValueError("XVLA chunk serving cannot truncate supplied state coordinates.")
+                if (
+                    feature.shape != tuple(policy_feature.shape)
+                    and self.config.normalization_mapping.get("STATE") != NormalizationMode.IDENTITY
+                ):
+                    raise ValueError("XVLA state shape flexibility requires identity normalization.")
+            elif feature.kind != "tensor" or feature.shape != tuple(policy_feature.shape):
+                raise ValueError(f"Tensor feature shape differs from checkpoint: {name}.")
 
     def get_optim_params(self) -> dict:
         """Return trainable named parameters for optimization.
@@ -392,24 +438,29 @@ class XVLAPolicy(PreTrainedPolicy):
         log_dict["loss"] = total_loss.detach().item()
         return total_loss, log_dict
 
-    def _get_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def _get_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         inputs = self._build_model_inputs(batch)
-        actions = self.model.generate_actions(**inputs, steps=self.config.num_denoising_steps)
+        actions = self.model.generate_actions(**inputs, steps=self.config.num_denoising_steps, noise=noise)
         return actions
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:  # noqa: ARG002
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+        """Predict a chunk of actions.
+
+        `noise` is the starting sample of the flow, shaped `(batch_size, chunk_size, model.dim_action)`.
+        When it is None, it is drawn with `torch.randn`.
+        """
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
-        return self._get_action_chunk(batch)
+        return self._get_action_chunk(batch, noise=noise)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:  # noqa: ARG002
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         self.eval()
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
         if len(self._queues[ACTION]) == 0:
-            actions = self._get_action_chunk(batch)
+            actions = self._get_action_chunk(batch, noise=noise)
             self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
 
         return self._queues[ACTION].popleft()

@@ -427,7 +427,7 @@ def add_actor_information_and_train(
 
         # Log training metrics at specified intervals
         optimization_step = algorithm.optimization_step
-        if optimization_step % log_freq == 0:
+        if log_freq > 0 and optimization_step % log_freq == 0:
             training_infos["replay_buffer_size"] = len(replay_buffer)
             if offline_replay_buffer is not None:
                 training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
@@ -454,7 +454,7 @@ def add_actor_information_and_train(
                 custom_step_key="Optimization step",
             )
 
-        if optimization_step % log_freq == 0:
+        if log_freq > 0 and optimization_step % log_freq == 0:
             logging.info(f"[LEARNER] Number of optimization step: {optimization_step}")
 
         # Save checkpoint at specified intervals
