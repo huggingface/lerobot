@@ -87,7 +87,7 @@ jobs:
 
       # TODO(Steven): Evaluate the need of these dependencies
       - name: Install apt dependencies
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           # The Azure mirror can stall for 20+ minutes before falling back.
           # Keep the runner's official Ubuntu archive and security mirrors.
