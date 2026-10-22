@@ -164,7 +164,6 @@ def test_invalid_latency_is_never_compared(measured_policy, value):
 
 
 def test_summary_slack_and_check_keep_failures_and_dashboard_link(tmp_path, measured_policy, monkeypatch):
-    monkeypatch.setenv("GITHUB_SHA", "tested-commit")
     monkeypatch.setenv("PROFILE_RUN_URL", "https://github.com/huggingface/lerobot/actions/runs/456")
     policies = [entry["policy"] for entry in ci.policy_matrix()]
     for policy in policies:
@@ -189,10 +188,10 @@ def test_summary_slack_and_check_keep_failures_and_dashboard_link(tmp_path, meas
     assert all(policy in table for policy in policies)
     assert "GPU limit" in table
     assert payload["blocks"][4]["elements"][0]["url"] == ci.SPACE_URL
-    check = json.loads((tmp_path / "check.json").read_text())
-    assert check["details_url"] == ci.SPACE_URL
-    assert check["head_sha"] == "tested-commit"
-    assert ci.SPACE_URL in check["output"]["summary"]
+    check = json.loads((tmp_path / "status.json").read_text())
+    assert check["target_url"] == ci.SPACE_URL
+    assert check["context"] == "Profiling report"
+    assert ci.SPACE_URL in report
     compared = json.loads((tmp_path / "comparison.json").read_text())
     assert compared["rows"][0]["inference"]["baseline"]["median_ms"] == 12.5
 

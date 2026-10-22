@@ -32,7 +32,7 @@ The recipes compute missing vector quantiles for DM05, Pi0.5 and MolmoAct2 from 
 
 ## Publishing
 
-Every workflow run produces a GitHub job summary, a `Profiling results` check linking directly to the public dashboard, and a downloadable `model-profiling-report-<attempt>` artifact containing `results.json`, a Markdown table, `comparison.json` with baseline provenance, and the exact Slack payload (`slack.json`). Separate `model-profiling-<policy>-<attempt>` artifacts contain the effective configurations, individual results and optional traces. A filtered manual run reports only the requested policies. Failed and missing results remain visible.
+Every workflow run produces a GitHub job summary, a `Profiling report` status in the PR checks linking directly to the public dashboard, and a downloadable `model-profiling-report-<attempt>` artifact containing `results.json`, a Markdown table, `comparison.json` with baseline provenance, and the exact Slack payload (`slack.json`). Separate `model-profiling-<policy>-<attempt>` artifacts contain the effective configurations, individual results and optional traces. A filtered manual run reports only the requested policies. Failed and missing results remain visible.
 
 The public [LeRobot health dashboard](https://huggingface.co/spaces/lerobot/health-dashboard) provides a sortable results table, error details and report downloads. Its History view charts inference or training latency by policy over the last month, three months, or all recorded runs. Matching setup comparisons use hardware, batch size, dtype, dataset and configuration fingerprint; source commits can differ.
 

@@ -358,15 +358,13 @@ def summary(
             }
         )
     (output_dir / "slack.json").write_text(json.dumps(payload, indent=2) + "\n")
-    check = {
-        "name": "Profiling results",
-        "head_sha": os.environ.get("GITHUB_SHA", ""),
-        "status": "completed",
-        "conclusion": "neutral",
-        "details_url": SPACE_URL,
-        "output": {"title": f"{counts} measurements", "summary": report},
+    status = {
+        "context": "Profiling report",
+        "state": "success",  # Report availability; failed GPU jobs retain their own conclusions.
+        "target_url": SPACE_URL,
+        "description": f"{counts} measurements",
     }
-    (output_dir / "check.json").write_text(json.dumps(check, indent=2) + "\n")
+    (output_dir / "status.json").write_text(json.dumps(status, indent=2) + "\n")
     return report
 
 
