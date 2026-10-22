@@ -97,7 +97,8 @@ jobs:
           fi
           apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
           sudo apt-get "${apt_options[@]}" update
-          sudo apt-get "${apt_options[@]}" install -y build-essential git \
+          # Recommended speech models and GPU drivers are not needed by the tests.
+          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends build-essential git \
             curl libglib2.0-0 libegl1-mesa-dev ffmpeg \
             libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev
 
