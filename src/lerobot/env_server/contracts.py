@@ -20,7 +20,6 @@ from typing import Any
 import numpy as np
 
 from lerobot.transport.wire.features import FeatureSpec, validate_array
-from lerobot.transport.wire.protocol import validate_segment
 
 
 @dataclass(frozen=True)
@@ -43,8 +42,6 @@ class EnvDescriptor:
     robot_type: str = ""
     # Used to check that the server runs the requested environment.
     config: dict[str, Any] = field(default_factory=dict)
-    # Empty when asset revisions or hashes were not captured.
-    asset_revisions: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Validate controller and feature declarations."""
@@ -61,11 +58,9 @@ class EnvDescriptor:
         if len({f.name for f in self.features}) != len(self.features):
             raise ValueError("Duplicate observation features")
         if any(
-            not isinstance(key, str) or not isinstance(value, str)
-            for metadata in (self.sim_build, self.asset_revisions)
-            for key, value in metadata.items()
+            not isinstance(key, str) or not isinstance(value, str) for key, value in self.sim_build.items()
         ):
-            raise ValueError("Simulator versions and asset revisions must map strings to strings")
+            raise ValueError("Simulator versions must map strings to strings")
         if any(
             i < 0 or i >= self.action_feature.shape[0]
             for i in self.gripper_indices + self.command_retention_indices
@@ -114,56 +109,6 @@ class StepResult:
             name: np.stack(value) if isinstance(value, list) else value for name, value in data["obs"].items()
         }
         return cls(**{**data, "obs": obs, "task": tuple(data["task"])})
-
-
-@dataclass(frozen=True)
-class ExecutionFeedback:
-    """An executed control interval and its subsequent observation, not queue admission.
-
-    Commanded actions are submitted controller inputs, not measured motion or native post-clipping values.
-    The advanced mask identifies absorbing worlds which did not execute a new action.
-    Timestamps use the server monotonic clock, never the client clock.
-    """
-
-    request_id: str
-    generation: int
-    sequence: int
-    commanded_action: np.ndarray
-    advanced: np.ndarray
-    started_at: float
-    completed_at: float
-    result: StepResult
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize metadata alongside the enclosing reply's single result."""
-        # The enclosing reply carries result once, avoiding duplicate image allocation.
-        return {name: value for name, value in vars(self).items() if name != "result"}
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any], result: StepResult) -> "ExecutionFeedback":
-        """Attach the result carried by the same reply."""
-        return cls(**data, result=result)
-
-    def validate(self, descriptor: EnvDescriptor, num_envs: int) -> None:
-        """Validate execution identity, commanded actions, and their paired observation."""
-        validate_segment(self.request_id, "execution request ID")
-        if any(
-            type(value) is not int or not 0 <= value < 2**63 for value in (self.generation, self.sequence)
-        ):
-            raise ValueError("Invalid execution identity")
-        validate_array(self.commanded_action, descriptor.action_feature, leading_shape=(num_envs,))
-        if (
-            not isinstance(self.advanced, np.ndarray)
-            or self.advanced.shape != (num_envs,)
-            or self.advanced.dtype != np.bool_
-        ):
-            raise ValueError("Invalid execution mask")
-        if (
-            not np.isfinite([self.started_at, self.completed_at]).all()
-            or not 0 <= self.started_at <= self.completed_at
-        ):
-            raise ValueError("Invalid server execution timestamps")
-        validate_result(self.result, descriptor, num_envs)
 
 
 def validate_result(result: StepResult, descriptor: EnvDescriptor, num_envs: int) -> None:

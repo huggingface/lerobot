@@ -58,7 +58,7 @@ To make your environment loadable from the Hub, your repository must contain at 
 **`env.py`** (or custom Python file)
 
 - Must expose a `make_env(n_envs: int, use_async_envs: bool)` function
-- Extra keyword arguments of `make_env` are the environment's own options: `--env.make_env_kwargs='{"episode_length": 900}'` passes them (`--robot.env.make_env_kwargs` for a sim robot), and a server takes them with `--set 'sim.kwargs.make_env_kwargs={episode_length: 900}'`
+- Pass the environment's own options with `--env.make_env_kwargs='{"episode_length": 900}'` (`--robot.env.make_env_kwargs` for SimRobot). A server accepts the same options with `--set 'sim.kwargs.make_env_kwargs={episode_length: 900}'`.
 - This function should return one of:
   - A `gym.vector.VectorEnv` (most common)
   - A single `gym.Env` (will be automatically wrapped)

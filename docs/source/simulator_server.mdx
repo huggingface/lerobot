@@ -5,7 +5,7 @@ A simulated environment can be driven in two ways:
 - as a **batched env** (`--env.*`): many worlds of one task, stepped together in lockstep. `lerobot-eval` and evaluation during training use it.
 - through a **sim robot** (`--robot.type=sim`): one simulated robot and its cameras exposed through the `Robot` interface. `lerobot-rollout`, `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay` use it.
 
-Either runs **in-process**, in the policy's Python environment, or **served** by `lerobot-env-server`, usually in its own Docker image, so that the simulator's dependencies never meet the policy's. Setting an `endpoint` selects the execution location. Both share native factories and observation conversion (HWC uint8 images, flat float32 state). Local SimRobot calls its scalar environment directly; remote SimRobot uses a synchronous proxy. Batched evaluation retains the session-based execution path.
+Either runs **in-process**, in the policy's Python environment, or **served** by `lerobot-env-server`, usually in its own Docker image, so that the simulator's dependencies never meet the policy's. Setting an `endpoint` selects the execution location. Both use the same simulator session and backend for observations, task outcomes and episode boundaries. Local calls run synchronously on the caller's thread; served calls run on the server.
 
 ## Evaluate a checkpoint
 
@@ -52,7 +52,7 @@ lerobot-rollout \
 
 - `--robot.env.*` takes the same options as `--env.*` in evaluation. EnvHub environments are `--robot.env.type=envhub --robot.env.hub_path=<user/repo> --robot.env.trust_remote_code=true`.
 - `--robot.env.endpoint=tcp/...` drives the world on an env server instead, as `--env.endpoint` does for a batched env. The robot checks that the server runs that environment.
-- Local SimRobot calls a scalar environment directly. Served SimRobot uses a scalar adapter around the existing environment client. Both advance exactly one control interval per `send_action()`; observation reads and holds never advance physics. There is no `--robot.clock` option.
+- Both local and served SimRobot advance exactly one control interval per `send_action()`. Observation reads and holds never advance physics.
 - Existing loop timers provide pacing, including keyboard/gamepad teleoperation. Blocking inference, rendering or network calls slow simulation relative to wall time: physics does not continue independently of the control loop. With RTC, prediction runs in the background and queued actions keep advancing simulation while that loop runs.
 - `--fps` must equal the environment's control rate, and `--interpolation_multiplier` must be 1; rollout refuses unsupported rates or interpolation.
 
@@ -62,32 +62,13 @@ The episodic rollout strategy resets the simulator between episodes and stops on
 
 `SimRobot.reset_episode(seed=...)` resets the whole task environment, including the robot and objects, and refreshes cached observations and episode status. This is not a robot homing command. `--robot.seed` seeds the initial reset; later unseeded resets continue the simulator's RNG. The calling workflow clears policy queues and stateful processors at the episode boundary; `reset_episode()` does not own those components. `episode_status` and `task_description` expose the environment's task information. These are simulation-specific additions, not requirements on the base `Robot`. Human takeover does not reset the episode.
 
-Feature discovery reads declared spaces without sampling, resetting, or stepping. A native integration may still construct its environment to expose those spaces. The initial Robot interface supports a named 1-D state vector and RGB cameras; extra numeric observations are rejected rather than silently discarded. Batched evaluation can still use additional declared arrays. Native integrations own simulator-specific observation conversions, including LIBERO's orientation and state conventions.
+Feature discovery reads declared spaces without sampling, resetting, or stepping. Any environment constructed to discover its spaces is closed immediately; cached features remain available after disconnecting. The initial Robot interface supports a named 1-D state vector and RGB cameras; extra numeric observations are rejected rather than silently discarded. Batched evaluation can still use additional declared arrays. Native integrations own simulator-specific observation conversions, including LIBERO's orientation and state conventions.
 
 Automatic-reset wrappers are unsupported. Integrations must expose explicit reset and retain the terminal observation. Known automatic-reset wrappers are rejected, and returned `final_observation`/`final_obs` markers cause an error instead of recording the next episode's initial state as the previous result.
 
 Episode limits are read through Gym wrappers or the environment's specification. An unknown limit remains unknown: LeRobot does not silently end the task at 500 steps. Scalar workflows still honor native termination/truncation and their configured duration. Benchmark evaluation requires a declared limit, such as `gymnasium.wrappers.TimeLimit`.
 
-New simulation recordings save the environment declaration, resolved configuration and initial seed in `meta/simulation.json`; rollout recordings also include the configured policy reference. Providers can declare installed native versions in `env.metadata["sim_build"]` and immutable asset revisions or hashes in `env.metadata["asset_revisions"]`. These travel through the server into the same manifest. An empty asset-revision map means asset identity was not captured. This is basic provenance, not a full physics/asset lock or a scene-state snapshot. Resuming does not overwrite the original file.
-
 Use the standard LeRobot teleoperation, recording and rollout entry points. Teleoperation mappings belong in the normal action processors; there is no separate per-environment CLI. RL/HIL-SERL is unchanged.
-
-Native workflow tests cover recording, one CPU training update and saved-checkpoint rollout, locally and through the simulator server. They use Panda Cartesian deltas and bimanual Aloha absolute joint targets. Both use MuJoCo; this does not validate a second physics engine. Run them with compatible native dependencies and a working graphics context:
-
-```bash
-LEROBOT_TEST_NATIVE_SIM=1 uv run --no-sync pytest -q \
-  tests/env_server/test_gym_hil_sim.py tests/env_server/test_aloha_sim.py
-```
-
-On macOS, batched Aloha evaluation requires `--eval.use_async_envs=true` (the default), even for one world. This puts native rendering on the worker process's main thread; GLFW cannot render on the in-process session's owner thread. Scalar local SimRobot does not use that owner thread.
-
-### Provider contract
-
-- Use `EnvConfig.sim_settings()` to describe a construction path that both local execution and the server can reproduce. The standard Gym integration accepts `gym_id`, `gym_kwargs`, and optional `packages` to record installed native package versions. Register the Gym ID from an importable package.
-- Overriding `create_env()` supplies a local scalar factory only. It does not register a server backend. Existing native `create_envs()` implementations, especially GPU batches, remain independent.
-- Declare ordered state/action components and document units, frames, absolute/delta control, gripper convention, and the actual control interval. The loop timer does not change the native physics timestep.
-- Return flat numeric arrays and HWC uint8 RGB images, with matching spaces. The scalar Robot interface currently accepts named state and RGB only.
-- Preserve terminal observations until an explicit reset. Return task instructions through `info["task_description"]` or native attributes; local and served execution use the same priority.
 
 For remote inference, keep the same `--robot.*` options and replace the local policy and inference options with:
 
@@ -106,9 +87,7 @@ Local RTC uses the same inference engine, processors and rollout dispatch helper
 
 The RTC worker predicts the next chunk while the control loop executes the current queue. Each dispatched action advances one simulation interval. If startup has no actions, the queue is exhausted, or the control loop stalls, the explicitly stepped world stays frozen. A sim hold is not a physical controller holding a moving body. This mode tests RTC integration, not hardware-like wall-clock dynamics.
 
-`tests/env_server/test_sim_rtc.py` uses the real RTC engine and dispatch helper with a controlled predictor and a shared test clock. Results are released after an exact number of control steps, independent of GPU speed. It checks guided/trained overlap, startup, stale results after reset, bounded starvation recovery, and faults. Native Panda and Aloha tests repeat delayed overlap locally and through a server. These are software/physics integration tests, not trained-model quality tests or real-time performance benchmarks.
-
-Continuous physics remains a separate follow-up. The server's existing realtime session code is not exposed by scalar SimRobot, which still selects lockstep. No new clock option is introduced here.
+The simulator supports explicit stepping only. Continuous wall-clock physics is not supported.
 
 SimRobot hold leaves the explicitly stepped world frozen, for every controller. A terminal result stays cached until an explicit reset; another action after episode end is rejected. Simulator failures propagate to rollout shutdown. Remote timeouts do not imply a command was not executed: requests are not retried.
 

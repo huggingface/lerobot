@@ -111,9 +111,12 @@ def test_aloha_local_and_server_parity(aloha_server, tmp_path):
             robot.disconnect()
 
 
-def test_aloha_batched_single_world_can_render_in_a_worker():
+@pytest.mark.parametrize("use_async_envs", [False, True])
+def test_aloha_batched_single_world_can_render_on_its_owner_thread(use_async_envs):
     pytest.importorskip("gym_aloha")
-    envs = make_env(AlohaEnv(task="AlohaTransferCube-v0", episode_length=3), n_envs=1, use_async_envs=True)
+    envs = make_env(
+        AlohaEnv(task="AlohaTransferCube-v0", episode_length=3), n_envs=1, use_async_envs=use_async_envs
+    )
     env = envs["AlohaTransferCube-v0"][0]
     try:
         observation, _ = env.reset(seed=42)
@@ -127,7 +130,6 @@ def test_aloha_batched_single_world_can_render_in_a_worker():
 def test_aloha_keyboard_recording(aloha_server, tmp_path, monkeypatch, remote):
     from lerobot.configs.dataset import DatasetRecordConfig
     from lerobot.scripts import lerobot_record
-    from lerobot.utils.io_utils import load_json
     from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
     teleop = MockTeleop(MockTeleopConfig())
@@ -168,10 +170,7 @@ def test_aloha_keyboard_recording(aloha_server, tmp_path, monkeypatch, remote):
     assert dataset.features["action"]["names"] == [f"joint_{i}.pos" for i in range(14)]
     np.testing.assert_allclose(dataset[0]["action"][0], 0.01, atol=1e-6)
     np.testing.assert_allclose(dataset[0]["action"][7], -0.01, atol=1e-6)
-    metadata = load_json(dataset.root / "meta" / "simulation.json")
-    assert metadata["environment"]["sim_build"]["gym-aloha"] == version("gym-aloha")
-    assert "mujoco" in metadata["environment"]["sim_build"]
-    assert metadata["initial_seed"] == 42
+    assert not (dataset.root / "meta" / "simulation.json").exists()
     if not remote:
         from tests.env_server.native_workflow import train_and_rollout
 

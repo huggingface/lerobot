@@ -158,13 +158,7 @@ def test_native_keyboard_recording_uses_normal_entrypoint(native_server, tmp_pat
     assert dataset.num_frames == 6
     assert dataset.features["action"]["names"] == list(PANDA_ACTION_NAMES)
     np.testing.assert_array_equal(dataset[0]["action"].numpy(), np.zeros(7))
-    from lerobot.utils.io_utils import load_json
-
-    metadata = load_json(dataset.root / "meta" / "simulation.json")
-    assert metadata["environment"]["action_feature"]["names"] == list(PANDA_ACTION_NAMES)
-    assert metadata["environment"]["fps"] == 10
-    assert "mujoco" in metadata["environment"]["sim_build"]
-    assert "gym-hil" in metadata["environment"]["sim_build"]
+    assert not (dataset.root / "meta" / "simulation.json").exists()
     if not remote:
         from tests.env_server.native_workflow import train_and_rollout
 

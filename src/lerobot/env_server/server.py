@@ -38,7 +38,7 @@ from lerobot.transport.zenoh import (
 
 from .contracts import EnvDescriptor
 from .protocol import any_deployment_describe, deployment_prefix, instance_prefix, session_prefix
-from .session import Command, SimSession, check_open
+from .session import SimSession, check_open
 
 logger = logging.getLogger(__name__)
 
@@ -54,15 +54,6 @@ class ServerConfig:
     max_sessions: int = 1
     request_timeout_s: float = 120
     presence_grace_s: float = 10
-    command_timeout_s: float = 1
-
-
-@dataclass
-class _Command(Command):
-    """A realtime command and the query waiting for its execution."""
-
-    message: Envelope | None = None
-    pending: PendingQuery | None = None
 
 
 class _Session(SimSession):
@@ -103,22 +94,14 @@ class _Session(SimSession):
         }
         return {**reply, "result": {**result, "obs": obs}}
 
-    def _command_done(self, command: Command, reply: dict[str, Any]) -> None:
-        assert isinstance(command, _Command) and command.message is not None and command.pending is not None
-        self.server._send(command.pending, command.message.reply(MessageType.ACK, self.encode(reply)))
-
-    def _command_failed(self, command: Command, code: ErrorCode, reason: str) -> None:
-        assert isinstance(command, _Command) and command.message is not None and command.pending is not None
-        self.server._send(command.pending, command.message.error(code, reason))
-
 
 class EnvServer:
-    """Serve world operations and physics ticks from one owner thread."""
+    """Serve explicitly stepped environments from one owner thread."""
 
     def __init__(self, config: ServerConfig):
         """Initialize owned resources without advancing simulation time."""
         self.config = config
-        if config.max_envs < 1 or config.max_sessions < 1 or config.command_timeout_s <= 0:
+        if config.max_envs < 1 or config.max_sessions < 1:
             raise ValueError("Server resource bounds must be positive")
         self.instance = uuid.uuid4().hex
         self.transport = ZenohTransport(config.zenoh)
@@ -128,7 +111,7 @@ class EnvServer:
         self.descriptor: EnvDescriptor
 
     def serve(self) -> None:
-        """Pump bounded requests and realtime worlds until stopped."""
+        """Pump bounded simulator requests until stopped."""
         try:
             # Listen before probing: slow simulators must not exceed the clients' connect timeout.
             # Describe queries wait for the queryable declared below, within their own deadline.
@@ -161,7 +144,7 @@ class EnvServer:
                         except Empty:
                             break
                         self._reply(pending)
-                self._tick()
+                self._check_presence()
                 self.stop.wait(0.002)
         finally:
             for session_id in list(self.sessions):
@@ -186,9 +169,7 @@ class EnvServer:
         message = None
         try:
             message = decode_message(pending.payload)
-            body = self._dispatch(pending.key, message, pending)
-            if body is None:
-                return
+            body = self._dispatch(pending.key, message)
             reply = message.reply(MessageType.ACK if message.session_id else MessageType.ACCEPTED, body)
         except Exception as exc:
             code = exc.code if isinstance(exc, ProtocolError) else ErrorCode.EXECUTION
@@ -196,9 +177,7 @@ class EnvServer:
             logger.debug("Simulator request failed", exc_info=True)
         self._send(pending, reply)
 
-    def _dispatch(
-        self, key: str, message: Envelope, pending: PendingQuery | None = None
-    ) -> dict[str, Any] | None:
+    def _dispatch(self, key: str, message: Envelope) -> dict[str, Any]:
         if key in (deployment_prefix(self.config.deployment) + "/describe", any_deployment_describe()):
             return {
                 "deployment": self.config.deployment,
@@ -221,9 +200,7 @@ class EnvServer:
         if operation == "close":
             self._close_session(message.session_id)
             return {}
-        command = _Command(message.request_id, np.empty(0), message, pending) if pending else None
-        reply = session.handle(operation, body, command)
-        return None if reply is None else session.encode(reply)
+        return session.encode(session.handle(operation, body))
 
     def _open(self, body: dict) -> dict:
         count = body.get("num_envs", 1)
@@ -262,7 +239,6 @@ class EnvServer:
             body.get("task_group"),
             body.get("task_id", 0),
             body.get("seeds"),
-            self.config.command_timeout_s,
             encoding=encoding,
             jpeg_quality=jpeg_quality,
             async_worlds=async_worlds,
@@ -277,7 +253,7 @@ class EnvServer:
             }
         )
 
-    def _tick(self) -> None:
+    def _check_presence(self) -> None:
         now = time.monotonic()
         for session_id, session in list(self.sessions.items()):
             lost = session.presence.dropped > 0
@@ -292,18 +268,6 @@ class EnvServer:
                     break
             if lost or (not session.seen_client and now - session.opened_at > self.config.presence_grace_s):
                 self._close_session(session_id)
-                continue
-            command = session.command
-            if (
-                session.due(now)
-                and isinstance(command, _Command)
-                and command.pending is not None
-                and command.pending.expired
-            ):
-                # The client already gave up; never execute a command it can no longer see.
-                command.pending.drop()
-                session.command = None
-            session.tick(now)
 
     def _close_session(self, session_id: str) -> None:
         session = self.sessions.pop(session_id)

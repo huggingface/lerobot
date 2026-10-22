@@ -157,7 +157,6 @@ from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.io_utils import write_json
 from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.utils import (
     init_logging,
@@ -488,12 +487,6 @@ def record(
                 encoder_queue_maxsize=cfg.dataset.encoder_queue_maxsize,
             )
 
-        if isinstance(robot, SimRobot) and not cfg.resume:
-            write_json(
-                {"environment": robot.descriptor.to_dict(), "initial_seed": robot.config.seed},
-                dataset.root / "meta" / "simulation.json",
-            )
-
         # Connect the teleoperator before the robot so the robot isn't left idle (and possibly
         # tripping a firmware watchdog) during teleop init. Matches lerobot_teleoperate.py.
         if teleop is not None:
@@ -588,7 +581,7 @@ def record(
         if dataset:
             dataset.finalize()
 
-        if robot.is_connected or sim_robot is not None:
+        if robot.is_connected:
             robot.disconnect()
         if teleop and teleop.is_connected:
             teleop.disconnect()

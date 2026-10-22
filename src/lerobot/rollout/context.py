@@ -71,7 +71,6 @@ from lerobot.transport.wire.features import feature_mismatch
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
-from lerobot.utils.io_utils import write_json
 
 from .configs import RolloutConfig
 from .planner import PlannerConfig, VlmPlanner, training_vocabulary
@@ -322,7 +321,7 @@ def _disconnect_setup_hardware(robot: Robot, teleop: Teleoperator | None) -> Non
     """Release each connected device without masking the original setup failure."""
     for name, resource in (("teleoperator", teleop), ("robot", robot)):
         try:
-            if resource is not None and (resource.is_connected or isinstance(resource, SimRobot)):
+            if resource is not None and resource.is_connected:
                 resource.disconnect()
         except Exception:
             logger.exception("Could not close %s after rollout setup failed", name)
@@ -341,7 +340,7 @@ def _connect_rollout_hardware(
     wrapper = ThreadSafeRobot(robot)
     teleop = None
     try:
-        if isinstance(robot, SimRobot) and getattr(cfg, "interpolation_multiplier", 1) != 1:
+        if isinstance(robot, SimRobot) and cfg.interpolation_multiplier != 1:
             raise ValueError(
                 "SimRobot currently requires interpolation_multiplier=1: one action is one sim step"
             )
@@ -442,23 +441,6 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
             )
 
     if dataset is not None:
-        if isinstance(robot, SimRobot) and not cfg.resume:
-            try:
-                write_json(
-                    {
-                        "environment": robot.descriptor.to_dict(),
-                        "initial_seed": robot.config.seed,
-                        "policy": {
-                            "path": str(cfg.policy.pretrained_path) if cfg.policy is not None else None,
-                            "revision": cfg.policy.pretrained_revision if cfg.policy is not None else None,
-                        },
-                    },
-                    dataset.root / "meta" / "simulation.json",
-                )
-            except BaseException:
-                # Ownership transfers to the caller only after this function returns.
-                dataset.finalize()
-                raise
         logger.info("Dataset ready: %s (%d existing episodes)", dataset.repo_id, dataset.num_episodes)
 
     return dataset

@@ -21,9 +21,9 @@ Reuse an existing integration first. A package that already provides a compatibl
 Environment construction is shared. Only the execution location changes:
 
 ```text
-Local SimRobot  → native environment
-Served SimRobot → environment client → server → same native environment
-Batched eval    → existing batch/session path → same environment factories
+Local SimRobot  → local client → shared session/backend → native environment
+Served SimRobot → remote client → server → same session/backend → native environment
+Batched eval    → batched adapter → local/remote client → same session/backend
 ```
 
 Keep image orientation, quaternion conversion and state ordering in the benchmark's existing integration, and control conventions in `conventions.py`, so evaluation and rollout agree. The shared observation helper handles generic naming and array layout, not a growing list of benchmark-specific conversions. Keep checkpoint-specific preprocessing in the normal policy processors.
@@ -80,7 +80,7 @@ Observations are a dict the canonical adapter understands:
 
 Any other array is passed as `observation.<key>`. Adapt native observations inside the benchmark integration; do not add benchmark-specific cases to the shared helper. SimRobot currently supports a named state vector and RGB images; additional numeric features are supported by batched evaluation but rejected by SimRobot.
 
-**GPU-based simulators (e.g. MuJoCo with EGL rendering):** if your simulator allocates GPU/EGL contexts during `__init__`, defer that allocation to a `_ensure_env()` helper called on first `reset()`/`step()`, so that a world built in a worker process does not inherit stale GPU handles. See `LiberoEnv._ensure_env()` for the pattern.
+**GPU-based simulators (e.g. MuJoCo with EGL rendering):** defer GPU/EGL allocation until the first `reset()`/`step()` when possible. Metadata probes construct and close an environment without resetting it. Local scalar calls run on the caller's thread; parallel batches construct their environments inside worker processes. See `LiberoEnv._ensure_env()` for the pattern.
 
 ### Conventions (`src/lerobot/sims/conventions.py`)
 

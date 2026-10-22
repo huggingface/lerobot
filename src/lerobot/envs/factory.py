@@ -19,8 +19,10 @@ from typing import Any
 
 import gymnasium as gym
 
+from lerobot.sims.native.envhub import _load_hub_module
+
 from .configs import EnvConfig, HubEnvConfig
-from .utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
+from .utils import _call_make_env, _normalize_hub_result
 
 
 def make_env_config(env_type: str, **kwargs) -> EnvConfig:
@@ -64,10 +66,13 @@ def make_hub_envs(
     cfg: EnvConfig | None = None,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
     """The vector envs a Hub repository's ``make_env`` returns, as it returns them."""
-    # _download_hub_file raises unless trust_remote_code is set.
-    repo_id, _, local_file, _ = _download_hub_file(hub_path, trust_remote_code, hub_cache_dir)
-    module = _import_hub_module(local_file, repo_id)
-    raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
+    _, module = _load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
+    options = cfg.make_env_kwargs if isinstance(cfg, HubEnvConfig) else {}
+    # Generic Hub environments use the same kwargs locally and on the server.
+    provider_config = None if type(cfg) is HubEnvConfig else cfg
+    raw_result = _call_make_env(
+        module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=provider_config, **options
+    )
     return _normalize_hub_result(raw_result)
 
 

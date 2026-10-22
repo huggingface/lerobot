@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from lerobot.env_server.client import EnvClient
-from lerobot.sims.adapters import canonical_observation, hold_action
+from lerobot.sims.adapters import canonical_observation
 from lerobot.transport.wire.protocol import ErrorCode, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig
 from tests.env_server.toy_env import ToyEnvConfig
@@ -215,11 +215,6 @@ def test_libero_numpy_adapter_parity():
     )
 
 
-def test_delta_hold_retains_gripper():
-    action = np.array([[1, 2, 3, 0.7]], np.float32)
-    np.testing.assert_array_equal(hold_action(action, "delta", (3,)), [[0, 0, 0, action[0, 3]]])
-
-
 def test_server_loss_fails_session(server):
     running, endpoint = server
     client = EnvClient(endpoint, timeout_s=0.1)
@@ -243,7 +238,7 @@ def test_failed_robot_stays_connected_until_disconnect(server, tmp_path):
         SimRobotConfig(env=ToyEnvConfig(endpoint=endpoint), calibration_dir=tmp_path, timeout_s=0.1)
     )
     robot.connect()
-    client = robot._env.client
+    client = robot.client
     session = client.session
     with pytest.raises(ValueError):
         client.request("step", actions=np.zeros((1, 3), np.float32))
@@ -592,6 +587,7 @@ def test_rollout_rejects_checkpoint_schema_before_opening_world(server, tmp_path
         teleop=None,
         rename_map={},
         fps=robot.descriptor.fps,
+        interpolation_multiplier=1,
         policy=SimpleNamespace(
             input_features={"observation.state": PolicyFeature(type=FeatureType.STATE, shape=(6,))},
             output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
@@ -604,7 +600,7 @@ def test_rollout_rejects_checkpoint_schema_before_opening_world(server, tmp_path
     with pytest.raises(ValueError, match="control rate"):
         context._connect_rollout_hardware(cfg)
     assert not server[0].sessions
-    assert robot._env is None
+    assert not robot.client.session
 
 
 def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
@@ -792,8 +788,10 @@ def test_envhub_backend_serves_a_hub_repository(tmp_path, monkeypatch):
         backend_module.Backend(config, num_envs=1)
 
 
-def test_envhub_make_env_takes_the_options_of_the_command(tmp_path, monkeypatch):
+@pytest.mark.parametrize("path", ["backend", "robot", "batch"])
+def test_envhub_make_env_takes_the_options_of_the_command(tmp_path, monkeypatch, path):
     from lerobot.envs.configs import HubEnvConfig
+    from lerobot.robots.sim import SimRobot, SimRobotConfig
     from lerobot.sims import backend as backend_module
     from lerobot.sims.native import envhub
 
@@ -811,6 +809,10 @@ class SizedReach(Reach):
             }
         )
 
+    def _obs(self):
+        shape = self.observation_space["pixels"]["front"].shape
+        return {"pixels": {"front": np.zeros(shape, np.uint8)}, "agent_pos": self.pos.copy()}
+
 
 def make_env(n_envs=1, use_async_envs=False, size=8):
     return {"reach_suite": {0: gym.vector.SyncVectorEnv([lambda: SizedReach(size)] * n_envs)}}
@@ -818,10 +820,31 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
     )
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
     config = HubEnvConfig(hub_path="user/reach", trust_remote_code=True, make_env_kwargs={"size": 4})
-    backend = backend_module.Backend(backend_module.BackendConfig(**config.sim_settings()), num_envs=1)
+    if path == "robot":
+        robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path / "calibration"))
+        try:
+            assert robot.observation_features["front"] == (4, 4, 3)
+            robot.connect()
+            assert robot.get_observation()["front"].shape == (4, 4, 3)
+        finally:
+            robot.disconnect()
+        return
+    if path == "batch":
+        batches = config.create_envs(n_envs=1)
+        try:
+            env = next(iter(next(iter(batches.values())).values()))
+            observation, _ = env.reset(seed=0)
+            assert observation["pixels"]["front"].shape == (1, 4, 4, 3)
+        finally:
+            for tasks in batches.values():
+                for env in tasks.values():
+                    env.close()
+        return
+    backend = backend_module.Backend(config.backend_config(), num_envs=1)
     try:
         shapes = {f.name: f.shape for f in backend.descriptor().features}
         assert shapes["observation.images.front"] == (4, 4, 3)
+        assert backend.reset().obs["observation.images.front"].shape == (1, 4, 4, 3)
     finally:
         backend.close()
 

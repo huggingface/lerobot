@@ -18,14 +18,12 @@ import uuid
 from threading import RLock
 from typing import Any
 
-import numpy as np
-
 from lerobot.transport.wire.client import query_reply
 from lerobot.transport.wire.features import feature_mismatch
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import PresenceToken, ZenohConfig, ZenohTransport
 
-from .contracts import EnvDescriptor, ExecutionFeedback, StepResult, validate_result
+from .contracts import EnvDescriptor, StepResult, validate_result
 from .protocol import any_deployment_describe, deployment_prefix, instance_prefix, session_prefix
 
 
@@ -64,7 +62,6 @@ class EnvClient:
         self.lock = RLock()
         self.failed = False
         self.num_envs = 0
-        self.execution: ExecutionFeedback | None = None
 
     def describe(self) -> EnvDescriptor:
         """Discover the simulator boot and canonical schema without opening a world session."""
@@ -162,8 +159,7 @@ class EnvClient:
             try:
                 timeout = self.setup_timeout_s if operation == "reset" else self.timeout_s
                 result = self._query(key, MessageType.CONTROL, body, timeout)
-                # Execution feedback already validated its paired result in _query.
-                if "result" in result and "execution" not in result:
+                if "result" in result:
                     assert self.descriptor is not None
                     validate_result(StepResult.from_dict(result["result"]), self.descriptor, self.num_envs)
                 if "generation" in result:
@@ -188,22 +184,6 @@ class EnvClient:
             # Mutations are never retried, so a reply dropped under congestion is fatal: block instead.
             congestion_control="block",
         )
-        if "execution" in response.body:
-            assert self.descriptor is not None
-            execution = ExecutionFeedback.from_dict(
-                response.body["execution"], StepResult.from_dict(response.body["result"])
-            )
-            execution.validate(self.descriptor, self.num_envs)
-            if execution.generation != message.generation or (
-                body.get("operation", key.rsplit("/", 1)[-1]) in {"apply", "step"}
-                and execution.request_id != message.request_id
-            ):
-                raise ProtocolError(ErrorCode.STALE, "Execution differs from the active command")
-            if self.execution is not None and execution.sequence < self.execution.sequence:
-                raise ProtocolError(ErrorCode.STALE, "Execution sequence moved backwards")
-            self.execution = execution
-        elif "generation" in response.body:
-            self.execution = None
         return response.body
 
     def close(self) -> None:
@@ -219,49 +199,3 @@ class EnvClient:
                 self.instance = ""
                 self.descriptor = None
                 self.failed = False
-                self.execution = None
-
-
-class RemoteEnv:
-    """Scalar reset/step/close adapter around the existing batched simulator client.
-
-    The native environment stays on the server. Mutating requests are never retried.
-    """
-
-    def __init__(self, client: EnvClient, task_group: str | None = None, task_id: int = 0) -> None:
-        """Store connection settings without opening a simulator session."""
-        self.client = client
-        self.task_group = task_group
-        self.task_id = task_id
-
-    @property
-    def descriptor(self) -> EnvDescriptor:
-        """Discover the served schema without opening or resetting a session."""
-        return self.client.descriptor or self.client.describe()
-
-    @staticmethod
-    def _unbatch(result: StepResult) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
-        return {name: value[0] for name, value in result.obs.items()}, {
-            "is_success": bool(result.is_success[0]),
-            "task_description": result.task[0],
-        }
-
-    def reset(
-        self, *, seed: int | None = None, options: dict[str, Any] | None = None
-    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
-        """Open once with the requested seed, or explicitly reset the existing session."""
-        if not self.client.session:
-            result = self.client.open(1, "lockstep", self.task_group, self.task_id, seeds=[seed])
-        else:
-            result = StepResult.from_dict(self.client.request("reset", seeds=[seed])["result"])
-        return self._unbatch(result)
-
-    def step(self, action: np.ndarray) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
-        """Submit one command and wait for its paired observation and outcome."""
-        result = StepResult.from_dict(self.client.request("step", actions=action[None])["result"])
-        obs, info = self._unbatch(result)
-        return obs, float(result.reward[0]), bool(result.terminated[0]), bool(result.truncated[0]), info
-
-    def close(self) -> None:
-        """Release the remote environment session."""
-        self.client.close()

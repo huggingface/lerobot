@@ -21,20 +21,13 @@ import pytest
 
 from lerobot.robots.sim import SimRobot, SimRobotConfig
 from lerobot.rollout.robot_wrapper import ThreadSafeRobot
+from lerobot.sims import backend as backend_module
 from lerobot.sims.adapters import canonical_observation
 from lerobot.sims.backend import ToyEnv
 from tests.env_server.toy_env import ToyEnvConfig
 
 
-def test_local_factory_is_lazy_and_does_not_create_a_session(tmp_path, monkeypatch):
-    from lerobot.env_server.in_process import InProcessEnvClient
-    from lerobot.sims.backend import Backend
-
-    def no_session(*args, **kwargs):
-        raise AssertionError("Local SimRobot must not construct a client or batched Backend")
-
-    monkeypatch.setattr(InProcessEnvClient, "__init__", no_session)
-    monkeypatch.setattr(Backend, "__init__", no_session)
+def test_local_execution_uses_shared_backend_on_the_callers_thread(tmp_path, monkeypatch):
     events = []
 
     class World(ToyEnv):
@@ -53,21 +46,25 @@ def test_local_factory_is_lazy_and_does_not_create_a_session(tmp_path, monkeypat
         def close(self):
             events.append(("close", threading.get_ident()))
 
-    config = ToyEnvConfig()
-    # An external EnvConfig can supply its own scalar factory, without a core simulator switch.
-    monkeypatch.setattr(config, "create_env", lambda *, task_id: World())
-    robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
-    assert events == []
+    monkeypatch.setattr(backend_module, "ToyEnv", World)
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(robot_type="panda"), calibration_dir=tmp_path))
+    assert robot.robot_type == "panda"
+    assert [name for name, _ in events] == ["construct", "close"]
+    assert robot.client._world is None
+    assert not robot.is_connected
     try:
         assert robot.observation_features["image"] == (8, 8, 3)
-        assert [name for name, _ in events] == ["construct"]
         robot.connect()
         robot.send_action(dict.fromkeys(robot.action_features, 0.0))
         robot.get_observation()
     finally:
         robot.disconnect()
-    assert [name for name, _ in events] == ["construct", "reset", "step", "close"]
+    assert [name for name, _ in events] == ["construct", "close", "construct", "reset", "step", "close"]
     assert {owner for _, owner in events} == {threading.get_ident()}
+    before = list(events)
+    _ = robot.observation_features
+    _ = robot.action_features
+    assert robot.robot_type == "panda" and events == before
 
 
 @pytest.mark.parametrize("control", ["delta", "position"])
@@ -134,7 +131,7 @@ def test_malformed_step_fails_until_reconnect(tmp_path, monkeypatch):
     robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
     try:
         robot.connect()
-        env = robot._env
+        env = robot.client._world.backend.envs[0]
         original = env.step
 
         def malformed(action):
@@ -142,7 +139,7 @@ def test_malformed_step_fails_until_reconnect(tmp_path, monkeypatch):
             return obs, float("nan"), terminated, truncated, info
 
         monkeypatch.setattr(env, "step", malformed)
-        with pytest.raises(ValueError, match="non-finite reward"):
+        with pytest.raises(ValueError, match="reward"):
             robot.send_action(dict.fromkeys(robot.action_features, 0.0))
         assert robot.is_connected
         with pytest.raises(RuntimeError, match="disconnect and reconnect"):
@@ -171,7 +168,7 @@ def test_feature_discovery_never_samples_or_resets(tmp_path, monkeypatch):
     monkeypatch.setattr(env.observation_space, "sample", unexpected)
     monkeypatch.setattr(env, "reset", unexpected)
     monkeypatch.setattr(env, "step", unexpected)
-    monkeypatch.setattr(config, "create_env", lambda *, task_id: env)
+    monkeypatch.setattr(backend_module, "ToyEnv", lambda: env)
     robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
     try:
         assert len(robot.action_features) == 2
@@ -205,7 +202,7 @@ def test_initial_seed_is_used_once_then_reset_continues_rng(tmp_path, monkeypatc
         return reset(seed=seed)
 
     monkeypatch.setattr(env, "reset", seeded_reset)
-    monkeypatch.setattr(config, "create_env", lambda *, task_id: env)
+    monkeypatch.setattr(backend_module, "ToyEnv", lambda: env)
     robot = SimRobot(SimRobotConfig(env=config, seed=42, calibration_dir=tmp_path))
     try:
         robot.connect()
@@ -221,11 +218,12 @@ def test_extra_numeric_features_are_rejected_not_dropped(tmp_path, monkeypatch):
     config = ToyEnvConfig()
     env = ToyEnv()
     env.observation_space["force"] = spaces.Box(-1, 1, (3,), np.float32)
-    monkeypatch.setattr(config, "create_env", lambda *, task_id: env)
-    robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
+    monkeypatch.setattr(backend_module, "ToyEnv", lambda: env)
+    closed = []
+    monkeypatch.setattr(env, "close", lambda: closed.append(True))
     with pytest.raises(ValueError, match="unsupported.*observation.force"):
-        _ = robot.observation_features
-    assert robot._env is None
+        SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
+    assert closed == [True]
 
 
 def test_gym_autoreset_wrapper_is_rejected_before_reset(tmp_path, monkeypatch):
@@ -240,11 +238,9 @@ def test_gym_autoreset_wrapper_is_rejected_before_reset(tmp_path, monkeypatch):
         def reset(self, **kwargs):
             raise AssertionError("Reject the wrapper before reset")
 
-    monkeypatch.setattr(config, "create_env", lambda *, task_id: gym.wrappers.Autoreset(AutoResetEnv()))
-    robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
+    monkeypatch.setattr(backend_module, "ToyEnv", lambda: gym.wrappers.Autoreset(AutoResetEnv()))
     with pytest.raises(ValueError, match="Automatic reset"):
-        robot.connect()
-    assert robot._env is None
+        SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
 
 
 @pytest.mark.parametrize("key", ["final_observation", "final_obs", "terminal_observation"])
@@ -252,7 +248,7 @@ def test_hidden_autoreset_result_faults_instead_of_recording_next_episode(tmp_pa
     robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
     try:
         robot.connect()
-        env = robot._env
+        env = robot.client._world.backend.envs[0]
         step = env.step
 
         def autoreset(action):
@@ -308,7 +304,7 @@ def test_record_resets_once_per_episode_including_retry(tmp_path, monkeypatch, r
             resets.append(seed)
             return super().reset(seed)
 
-    monkeypatch.setattr(config, "create_env", lambda *, task_id: World())
+    monkeypatch.setattr(backend_module, "ToyEnv", World)
     monkeypatch.setattr(lerobot_record, "make_robot_from_config", lambda _: robot)
     monkeypatch.setattr(lerobot_record, "make_teleoperator_from_config", lambda _: teleop)
     events = {"exit_early": False, "stop_recording": False, "rerecord_episode": False}

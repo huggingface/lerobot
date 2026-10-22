@@ -137,7 +137,7 @@ def replay(cfg: ReplayConfig):
     finally:
         if timer is not None:
             timer.log_run_summary()
-        if robot.is_connected or isinstance(robot, sim.SimRobot):
+        if robot.is_connected:
             robot.disconnect()
 
 

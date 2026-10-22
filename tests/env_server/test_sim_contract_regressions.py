@@ -52,15 +52,12 @@ def test_typed_envhub_preserves_native_batch_and_factory_arguments(monkeypatch):
         return {"native": {0: batch}}
 
     module = SimpleNamespace(make_env=factory, LEROBOT_SIM={})
-    monkeypatch.setattr(
-        "lerobot.envs.factory._download_hub_file", lambda *args: ("audit/native", "env.py", "/unused", None)
-    )
-    monkeypatch.setattr("lerobot.envs.factory._import_hub_module", lambda *args: module)
+    monkeypatch.setattr("lerobot.envs.factory._load_hub_module", lambda *args: ("audit/native", module))
     monkeypatch.setattr(envhub, "_load_hub_module", lambda *args: ("audit/native", module))
     config = HubEnvConfig(hub_path="audit/native", trust_remote_code=True)
     try:
         assert make_env(config, n_envs=3, use_async_envs=True)["native"][0] is batch
-        assert calls == [{"n_envs": 3, "use_async_envs": True, "cfg": config}]
+        assert calls == [{"n_envs": 3, "use_async_envs": True}]
         assert not batch.closed
     finally:
         batch.close()
@@ -135,7 +132,7 @@ def test_backend_resolves_wrapped_episode_limit(monkeypatch, async_worlds):
 
 def test_local_robot_resolves_wrapped_episode_limit(monkeypatch, tmp_path):
     config = ToyEnvConfig()
-    monkeypatch.setattr(config, "create_env", lambda **kwargs: wrapped_long_episode())
+    monkeypatch.setattr(backend_module, "ToyEnv", wrapped_long_episode)
     robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
     try:
         robot.connect()
@@ -217,10 +214,14 @@ def test_aloha_rejects_an_incorrect_control_interval():
         AlohaEnv(fps=25)
 
 
-def test_aloha_rejects_unsafe_batched_rendering_on_macos(monkeypatch):
-    monkeypatch.setattr("lerobot.envs.configs.sys.platform", "darwin")
-    with pytest.raises(ValueError, match="use_async_envs=True"):
-        make_env(AlohaEnv(), n_envs=1)
+def test_aloha_local_batched_rendering_does_not_require_a_background_thread(monkeypatch):
+    class LocalBatch:
+        def create_envs(self, n_envs, use_async_envs):
+            assert n_envs == 1 and not use_async_envs
+            return {"native": {0: object()}}
+
+    monkeypatch.setattr("lerobot.envs.configs.EnvConfig.create_envs", LocalBatch.create_envs)
+    assert "native" in make_env(AlohaEnv(), n_envs=1)
 
 
 def test_aloha_keyboard_mapping_uses_absolute_joints_and_normalized_grippers():
@@ -239,16 +240,77 @@ def test_aloha_keyboard_mapping_uses_absolute_joints_and_normalized_grippers():
 
 
 @pytest.mark.parametrize("async_worlds", [False, True])
-def test_provider_versions_and_asset_revisions_survive_serialization(monkeypatch, async_worlds):
+def test_provider_versions_survive_serialization(monkeypatch, async_worlds):
     class VersionedEnv(ToyEnv):
-        metadata = {"sim_build": {"physics": "1.2.3"}, "asset_revisions": {"robot": "sha256:abc"}}
+        metadata = {"sim_build": {"physics": "1.2.3"}}
 
     monkeypatch.setattr(backend_module, "ToyEnv", VersionedEnv)
     backend = Backend(BackendConfig(), async_worlds=async_worlds)
     try:
         descriptor = backend.descriptor()
         assert descriptor.sim_build["physics"] == "1.2.3"
-        assert descriptor.asset_revisions == {"robot": "sha256:abc"}
         assert EnvDescriptor.from_dict(descriptor.to_dict()) == descriptor
     finally:
         backend.close()
+
+
+@pytest.mark.parametrize("provider", ["robocasa", "robotwin", "vlabench"])
+def test_native_observation_conversions_satisfy_the_shared_array_contract(provider):
+    from lerobot.sims.adapters import canonical_observation
+
+    image = np.zeros((8, 8, 3), np.uint8)
+    if provider == "robocasa":
+        from lerobot.sims.native.robocasa import RoboCasaEnv
+
+        env = RoboCasaEnv.__new__(RoboCasaEnv)
+        env.obs_type = "pixels_agent_pos"
+        env.camera_name = ["front"]
+        observation = env._format_raw_obs({"video.front": image, "metadata": "not a policy feature"})
+        state_dim = 16
+    elif provider == "robotwin":
+        from lerobot.sims.native.robotwin import RoboTwinEnv
+
+        env = RoboTwinEnv.__new__(RoboTwinEnv)
+        env.camera_names = ["front"]
+        env._black_frame = image
+        env._env = SimpleNamespace(
+            get_obs=lambda: {
+                "observation": {"front": {"rgb": image}},
+                "joint_action": {"vector": np.zeros(14, np.float32)},
+                "metadata": "not a policy feature",
+            }
+        )
+        observation = env._get_obs()
+        state_dim = 14
+    else:
+        pytest.importorskip("cv2")
+        pytest.importorskip("scipy")
+        from lerobot.sims.native.vlabench import VLABenchEnv
+
+        env = VLABenchEnv.__new__(VLABenchEnv)
+        env.obs_type = "pixels_agent_pos"
+        env.render_resolution = (8, 8)
+        env._robot_base_xyz = np.zeros(3)
+        env._env = SimpleNamespace(
+            get_observation=lambda: {
+                "rgb": np.stack([image] * 3),
+                "ee_state": np.array([0, 0, 0, 1, 0, 0, 0, 0.5]),
+                "metadata": "not a policy feature",
+            }
+        )
+        observation = env._get_obs()
+        state_dim = 7
+    canonical = canonical_observation(observation)
+    assert canonical["observation.state"].shape == (state_dim,)
+    assert canonical["observation.state"].dtype == np.float32
+    for name, value in canonical.items():
+        assert isinstance(value, np.ndarray)
+        if name != "observation.state":
+            assert value.shape == (8, 8, 3) and value.dtype == np.uint8
+
+
+@pytest.mark.parametrize("config", [IsaaclabArenaEnv(), UnitreeG1MujocoEnv()])
+def test_specialized_hub_integrations_reject_generic_options(config):
+    config.make_env_kwargs = {"episode_length": 4}
+    with pytest.raises(ValueError, match="own options"):
+        make_env(config, n_envs=1)

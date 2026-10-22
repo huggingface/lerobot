@@ -118,14 +118,3 @@ def check_step_info(info: dict[str, Any]) -> None:
     """Never mistake an automatically reset observation for the terminal observation."""
     if any(key in info for key in ("final_observation", "final_obs", "terminal_observation", "final_info")):
         raise ValueError("Automatic-reset step detected; disable autoreset in the simulator integration")
-
-
-def hold_action(action: np.ndarray, control: str, gripper_indices: tuple[int, ...]) -> np.ndarray:
-    """Retain position targets or zero motion while preserving declared gripper components."""
-    result = action.copy()
-    if control in {"delta", "velocity"}:
-        result.fill(0)
-        result[..., list(gripper_indices)] = action[..., list(gripper_indices)]
-    elif control not in {"position", "eef_pose"}:
-        raise ValueError(f"Unsupported hold control: {control}")
-    return result

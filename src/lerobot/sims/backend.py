@@ -77,7 +77,7 @@ class _Factories:
         self.env_fns = env_fns
 
 
-def make_env_factories(
+def _make_env_factories(
     config: BackendConfig, num_envs: int = 1
 ) -> dict[str, dict[int, list[Callable[[], gym.Env]]]]:
     """Collect native factories without building vector environments or starting a session."""
@@ -97,18 +97,7 @@ def make_env_factories(
     }
 
 
-def make_scalar_env(config: BackendConfig, task_id: int = 0, group: str | None = None) -> gym.Env:
-    """Build exactly one native world. Its caller owns reset, stepping and close."""
-    factories = make_env_factories(config)
-    group = group or next(iter(factories))
-    try:
-        env_fn = factories[group][task_id][0]
-    except (KeyError, IndexError) as exc:
-        raise ValueError(f"Unknown task: {group}/{task_id}") from exc
-    return env_fn()
-
-
-def describe_env(config: BackendConfig, env: Any, tasks: dict[str, list[str]]) -> EnvDescriptor:
+def _describe_env(config: BackendConfig, env: Any, tasks: dict[str, list[str]]) -> EnvDescriptor:
     """Describe native spaces without resetting, stepping or constructing an execution session."""
     if not isinstance(env.observation_space, spaces.Dict):
         raise ValueError(f"Simulation requires dict observations, got {env.observation_space}")
@@ -142,7 +131,7 @@ def describe_env(config: BackendConfig, env: Any, tasks: dict[str, list[str]]) -
         FeatureSpec("action", (action_dim,), "float32", names=action_names, semantics=config.semantics),
         config.control,
         config.fps,
-        ("lockstep", "realtime"),
+        ("lockstep",),
         tasks,
         episode_limit(env),
         {
@@ -154,7 +143,6 @@ def describe_env(config: BackendConfig, env: Any, tasks: dict[str, list[str]]) -
         config.command_retention_indices,
         config.robot_type,
         asdict(config),
-        dict(env_attribute(env, "metadata", {}).get("asset_revisions", {})),
     )
 
 
@@ -299,7 +287,7 @@ class Backend:
         self.last: list[_EnvStep] = []
         self.steps: np.ndarray = np.zeros(num_envs, dtype=np.int64)
         self.sim_time = 0.0
-        factories = make_env_factories(config, num_envs)
+        factories = _make_env_factories(config, num_envs)
         self.tasks = {key: [str(i) for i in tasks] for key, tasks in factories.items()}
         group = group or next(iter(factories))
         try:
@@ -328,7 +316,7 @@ class Backend:
     def descriptor(self) -> EnvDescriptor:
         """Describe this task using its observation and action spaces."""
         self._ensure()
-        return describe_env(self.config, self.envs[0], self.tasks)
+        return _describe_env(self.config, self.envs[0], self.tasks)
 
     def reset(self, seeds: list[int | None] | None = None) -> StepResult:
         """Reset every world with explicit seeds and clear terminal latches."""
@@ -343,18 +331,10 @@ class Backend:
             results = [env.receive(refresh=True) for env in self.envs]
         else:
             results = [env.reset(seed=seed) for env, seed in zip(self.envs, seeds, strict=True)]
-        for env, (obs, info) in zip(self.envs, results, strict=True):
-            check_step_info(info)
-            task = str(
-                info.get(
-                    "task_description",
-                    env_attribute(env, "task_description", env_attribute(env, "task", self.group)),
-                )
-            )
-            success = bool(info.get("is_success", info.get("success", info.get("succeed", False))))
-            self.last.append(_EnvStep(canonical_observation(obs), 0.0, False, False, success, task))
         self.steps[:] = 0
         self.sim_time = 0.0
+        for env, (obs, info) in zip(self.envs, results, strict=True):
+            self.last.append(self._result(env, obs, 0.0, False, False, info, 0))
         return self.snapshot()
 
     def step(self, actions: np.ndarray) -> StepResult:
@@ -380,25 +360,34 @@ class Backend:
             obs, reward, terminated, truncated, info = (
                 env.receive() if self.async_worlds else env.step(actions[i])
             )
-            check_step_info(info)
             self.steps[i] += 1
-            limit = episode_limit(env)
-            truncated = bool(truncated or (limit is not None and self.steps[i] >= limit))
-            self.last[i] = _EnvStep(
-                canonical_observation(obs),
-                float(reward),
-                bool(terminated),
-                truncated,
-                bool(info.get("is_success", info.get("success", info.get("succeed", False)))),
-                str(
-                    info.get(
-                        "task_description",
-                        env_attribute(env, "task_description", env_attribute(env, "task", self.group)),
-                    )
-                ),
-            )
+            self.last[i] = self._result(env, obs, reward, terminated, truncated, info, int(self.steps[i]))
         self.sim_time += 1 / self.config.fps
         return self.snapshot()
+
+    def _result(
+        self,
+        env: Any,
+        obs: dict[str, Any],
+        reward: float,
+        terminated: bool,
+        truncated: bool,
+        info: dict[str, Any],
+        step: int,
+    ) -> _EnvStep:
+        check_step_info(info)
+        limit = episode_limit(env)
+        task = info.get(
+            "task_description", env_attribute(env, "task_description", env_attribute(env, "task", self.group))
+        )
+        return _EnvStep(
+            canonical_observation(obs),
+            float(reward),
+            bool(terminated),
+            bool(truncated or (limit is not None and step >= limit)),
+            bool(info.get("is_success", info.get("success", info.get("succeed", False)))),
+            str(task),
+        )
 
     def snapshot(self) -> StepResult:
         """Return owned batch arrays without advancing physics."""

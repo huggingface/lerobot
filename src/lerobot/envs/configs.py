@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import abc
 import logging
-import sys
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from typing import Any
@@ -27,7 +26,7 @@ import gymnasium as gym
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sims.backend import BackendConfig, make_scalar_env
+from lerobot.sims.backend import BackendConfig
 from lerobot.sims.conventions import resolve, served_differences
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -91,15 +90,6 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     def backend_config(self) -> BackendConfig:
         """The resolved simulator settings, as the env server and the in-process client run them."""
         return BackendConfig(**resolve(self.sim_settings()))
-
-    def create_env(self, *, task_id: int = 0) -> gym.Env:
-        """Build one local world for SimRobot, without a vector wrapper or execution session.
-
-        External integrations may override this factory. Observation and action conventions must
-        agree with ``sim_settings()``; existing ``create_envs()`` overrides are independent.
-        """
-        group = self.task if self.task and "," not in self.task else None
-        return make_scalar_env(self.backend_config(), task_id=task_id, group=group)
 
     def create_envs(
         self,
@@ -276,15 +266,6 @@ class AlohaEnv(EnvConfig):
         settings = _gym_settings(self, tuple(f"joint_{i}.pos" for i in range(14)))
         settings["kwargs"]["packages"] = ("gym-aloha", "dm-control", "mujoco")
         return {**settings, "robot_type": "aloha"}
-
-    def create_envs(
-        self, n_envs: int, use_async_envs: bool = False
-    ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-        # The batched session has an owner thread; macOS GLFW needs a process's main thread.
-        # Local scalar SimRobot does not use that session and needs no worker process.
-        if sys.platform == "darwin" and self.endpoint is None and not use_async_envs:
-            raise ValueError("Batched Aloha rendering on macOS requires use_async_envs=True")
-        return super().create_envs(n_envs, use_async_envs)
 
 
 @EnvConfig.register_subclass("pusht")

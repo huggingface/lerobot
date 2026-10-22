@@ -300,7 +300,7 @@ def teleoperate(
             shutdown_visualization(cfg.display_mode)
         if teleop.is_connected:
             teleop.disconnect()
-        if robot.is_connected or isinstance(robot, sim.SimRobot):
+        if robot.is_connected:
             robot.disconnect()
 
 
