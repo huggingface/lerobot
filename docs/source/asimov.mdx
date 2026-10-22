@@ -1,0 +1,110 @@
+# Asimov 1
+
+[Asimov 1](https://github.com/menloresearch/menlo-sdk) is Menlo Research's humanoid robot. This integration uses `menlo-sdk` 0.1.x for UDP locomotion control, with balancing provided by the robot's onboard policy.
+
+It supports keyboard teleoperation, dataset recording, and replay through the standard LeRobot commands. It follows the mobile-base action convention from [PR #4941](https://github.com/huggingface/lerobot/pull/4941), and the Unitree G1 integration's fixed proprioception schema and configurable cameras. The standalone `keyboard_base` processor and teleoperator are shared with that PR; its multi-device composition is not required here.
+
+## Install and connect
+
+```bash
+uv sync --locked --extra asimov --extra core_scripts
+```
+
+Update the robot to Robot OS **0.2.3 or newer on the SDK-supported 0.2 line**. The SDK checks the robot model, OS compatibility, and wire protocol on connection; this integration does not bypass those checks. See the [Menlo SDK guide](https://docs.menlo.ai/asimov/1/program/sdk).
+
+On Asimov Edge, enable UDP control and configure `udp-state-host` to the IP address of the computer running LeRobot. The default command port is 8850, the local state port is 8851, and the robot's HTTP version endpoint is on port 3000. Both machines must be reachable on the same network. Run one UDP client per local state port.
+
+The corresponding options are `--robot.host`, `--robot.command_port`, `--robot.state_host` (local bind address), `--robot.state_port`, and `--robot.version_port`. Incoming state is filtered to the robot's host address.
+
+Connecting only reads state. **Use Asimov Manager to prepare the robot and enter MOVE before driving it.** Follow Menlo's setup procedure and keep Manager's E-Stop accessible. LeRobot will refuse walking commands in DAMP, STAND, unknown modes, or when a fault is reported. It does not automatically stand, arm, or damp the robot.
+
+## Keyboard teleoperation
+
+```bash
+uv run --locked lerobot-teleoperate \
+  --robot.type=asimov \
+  --robot.host=192.168.22.32 \
+  --teleop.type=keyboard_base \
+  --fps=30
+```
+
+Replace the address with your robot's IP. The keyboard uses `w`/`s` for forward/backward, `a`/`d` for left/right translation, and `z`/`x` for counter-clockwise/clockwise rotation. Releasing movement keys sends zero velocity; opposing directions cancel. `+` and `-` change speed presets once per press. Ctrl+C exits and closes the SDK connection. A local keyboard backend must be available (for example, macOS with input permissions or an X11 desktop on Linux).
+
+Linear presets default to `(0.1, 0.2, 0.3)` m/s; angular presets default to `(30, 60, 90)` deg/s. Asimov additionally clamps every command to its configured limits: **0.3 m/s forward, 0.2 m/s sideways, 30 deg/s turning** by default. For gentler keyboard presets, add:
+
+```bash
+  --teleop.linear_speeds='[0.05,0.1,0.2]' \
+  --teleop.angular_speeds='[10,20,30]'
+```
+
+Robot limits can be lowered with `--robot.max_linear_velocity`, `--robot.max_lateral_velocity`, and `--robot.max_angular_velocity`. Values above the firmware caps (0.4 m/s, 0.4 m/s, and 0.8 rad/s ≈ 45.84 deg/s) are rejected.
+
+## Record and replay
+
+```bash
+uv run --locked lerobot-record \
+  --robot.type=asimov \
+  --robot.host=192.168.22.32 \
+  --teleop.type=keyboard_base \
+  --dataset.repo_id="${HF_USER}/asimov-walking" \
+  --dataset.single_task="Walk forward and turn left" \
+  --dataset.fps=30 \
+  --dataset.num_episodes=5 \
+  --dataset.episode_time_s=20 \
+  --dataset.reset_time_s=10
+```
+
+Set `HF_USER` to your Hugging Face username and authenticate before uploading. Without cameras this records proprioception and actions. Add cameras for visual policy training.
+
+```bash
+uv run --locked lerobot-replay \
+  --robot.type=asimov \
+  --robot.host=192.168.22.32 \
+  --dataset.repo_id="${HF_USER}/asimov-walking" \
+  --dataset.episode=0
+```
+
+Replay executes walking commands on the physical robot. Prepare MOVE mode and clear the walking area first; replayed velocities do not guarantee the same path because the firmware provides no odometry.
+
+## Cameras and features
+
+Configure standard LeRobot cameras, for example a USB camera connected to the LeRobot computer:
+
+```bash
+  --robot.cameras='{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}'
+```
+
+ZMQ cameras and depth-capable camera backends are also supported. This adapter uses UDP, which carries no onboard video; Menlo's native LiveKit camera/audio streams are not connected by this integration.
+
+| Feature                    | Units and meaning                                                        |
+| -------------------------- | ------------------------------------------------------------------------ |
+| `x.vel`, `y.vel` (actions) | Forward and left body-frame velocity, m/s                                |
+| `theta.vel` (action)       | Counter-clockwise yaw rate, **deg/s**; converted to rad/s for Menlo      |
+| `<joint>.pos`              | 25 measured joint motor positions, radians, using Menlo's firmware names |
+| `imu.gravity.x/y/z`        | Projected gravity in the body frame (unit vector)                        |
+| `imu.gyro.x/y/z`           | Angular velocity, rad/s                                                  |
+| `imu.quat.w/x/y/z`         | Orientation quaternion, scalar first                                     |
+| `mode`, `faulted`          | Reported firmware mode and fault indicator, stored as numeric scalars    |
+| Configured camera names    | RGB images `(height, width, 3)`; optional `<name>_depth`                 |
+
+Feature names and shapes are available before connecting. The adapter verifies the SDK's 25-joint order on connection. Missing IMU fields, changed joint layouts, non-finite readings, and observations older than `max_state_age_s` (default 0.5 seconds) raise an error instead of recording fabricated values. Joint velocities, battery telemetry, and base odometry are not part of this schema. Joint positions are observations only: direct joint trajectories and whole-body learning are outside this locomotion adapter.
+
+## Command lifetime and cleanup
+
+`send_action()` calls the SDK with `wait=False`, a zero readiness timeout, and a short `duration=command_timeout_s` (default 0.25 seconds). It returns the velocity the SDK actually sent after clamping, in LeRobot units. Asimov opts into `Robot.record_sent_action` so `lerobot-record` saves these clamped velocities. This requires the dataset action space to match the robot's three velocity features; custom processors that change the recorded action representation are not supported with this option. Missing action axes become zero; unknown keys and non-finite commands are rejected. An SDK `Sent` result is not a firmware acknowledgement.
+
+Each successful action refreshes the bounded hold. If the recording, policy, or camera loop stalls, the SDK sends zero when that hold expires; its background loop runs at 10 Hz, so expiry is not a hard real-time deadline. Use a control frequency comfortably faster than the hold duration. If the Python process or network fails outright, the firmware/Edge UDP watchdog is the remaining fallback (the SDK documents a two-second velocity timeout).
+
+`stop()` ends this adapter's command while keeping MOVE balancing active. `disconnect()` lets the SDK send its final zero and closes cameras, including after a lost link or partial connection failure. Neither operation calls STAND or DAMP: DAMP removes actuator support, and STAND does not balance. Follow Menlo's supported shutdown procedure to put the robot away.
+
+## Validation
+
+```bash
+uv run --locked --extra test pytest \
+  tests/robots/test_asimov.py \
+  tests/teleoperators/test_keyboard_base.py -q
+```
+
+These tests use mocked hardware and run without the optional SDK. Physical walking, firmware timing, camera streams, and recorded-policy performance still require validation on an Asimov 1.
+
+With `--extra asimov`, also run `tests/robots/test_asimov_sdk.py` to exercise the real SDK's command clamping, timed expiry, and close behavior over an in-memory transport.
