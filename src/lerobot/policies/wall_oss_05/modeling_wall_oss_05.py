@@ -400,7 +400,7 @@ class WallOSS05Model(nn.Module):
         if processor is None and not hasattr(config, "action_token_id"):
             raise ValueError(
                 "Wall-OSS-0.5 requires the native LeRobot checkpoint config. "
-                "Convert older snapshots with lerobot.policies.wall_oss_05.convert_checkpoint."
+                "Load the current lerobot/wall-oss-0.5 checkpoint."
             )
         self.action_token_id = (
             processor.tokenizer.convert_tokens_to_ids(_ACTION_TOKEN)
@@ -671,10 +671,7 @@ class WallOSS05Model(nn.Module):
         action_token_mask = input_ids == self.action_token_id
         action_rows = action_token_mask.any(dim=-1)
         action_embeddings = None
-        noisy_actions = None
-        active_action_chunk = None
-        active_dof_mask = None
-        active_sample_time = None
+        flow_inputs = None
         if action_rows.any():
             if action_chunk is None or dof_mask is None or sample_time is None:
                 raise ValueError("Action-token inputs require actions, dof_mask, and sample_time.")
@@ -695,6 +692,7 @@ class WallOSS05Model(nn.Module):
                 active_sample_time,
                 active_dof_mask,
             )
+            flow_inputs = (active_action_chunk, active_dof_mask, active_sample_time, noisy_actions)
         hidden_states = self._hidden_states(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -706,11 +704,8 @@ class WallOSS05Model(nn.Module):
         text_loss = self._text_cross_entropy(hidden_states, text_labels) if text_labels is not None else None
 
         flow_loss = None
-        if action_rows.any():
-            assert active_action_chunk is not None
-            assert active_dof_mask is not None
-            assert active_sample_time is not None
-            assert noisy_actions is not None
+        if flow_inputs is not None:
+            active_action_chunk, active_dof_mask, active_sample_time, noisy_actions = flow_inputs
             action_hidden = hidden_states[action_token_mask, : self.config.action_hidden_size]
             velocity = self.action_preprocessor.action_proj_back(action_hidden.float())
             expanded_time = active_sample_time[:, None, None].expand_as(active_action_chunk).reshape(-1, 26)

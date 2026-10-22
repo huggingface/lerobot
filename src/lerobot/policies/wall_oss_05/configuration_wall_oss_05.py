@@ -22,9 +22,10 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.feature_utils import dataset_to_policy_features
 from lerobot.utils.import_utils import _transformers_available, require_package
 
 if TYPE_CHECKING or _transformers_available:
@@ -182,11 +183,12 @@ class WallOSS05Config(PreTrainedConfig):
             )
 
     def set_dataset_feature_metadata(self, features: dict[str, dict[str, Any]]) -> None:
-        """Resolve native state width when fine-tuning a canonical 26D checkpoint."""
-        if self.input_features is not None and OBS_STATE in features:
-            self.input_features[OBS_STATE] = PolicyFeature(
-                type=FeatureType.STATE, shape=tuple(features[OBS_STATE]["shape"])
-            )
+        """Resolve native state and camera features when fine-tuning a checkpoint."""
+        self.input_features = {
+            key: feature
+            for key, feature in dataset_to_policy_features(features).items()
+            if feature.type is not FeatureType.ACTION
+        }
 
     def get_optimizer_preset(self) -> AdamWConfig:
         return AdamWConfig(

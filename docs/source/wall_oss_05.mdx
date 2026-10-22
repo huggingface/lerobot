@@ -163,17 +163,6 @@ policy persistence code, including distributed gathers and the main-process
 write gate. The config retains a stable tokenizer asset reference and can be
 loaded from any working directory.
 
-To upgrade a historical snapshot locally, run:
-
-```bash
-uv run python -m lerobot.policies.wall_oss_05.convert_checkpoint \
-  --source=/path/to/historical-snapshot \
-  --output-dir=/path/to/native-checkpoint
-```
-
-Use the resulting directory as `--policy.path`. Conversion preserves the neural
-tensors and quantile statistics; runtime loading uses the standard native format.
-
 ## Training
 
 Fine-tune the base checkpoint with the standard LeRobot training command:
@@ -195,6 +184,16 @@ lerobot-train \
 Start with a small batch size because Wall-OSS-0.5 is a 4B-parameter model.
 Increase it according to available GPU memory, or use gradient accumulation
 through your distributed training configuration.
+
+For datasets with different camera names, map their feature keys to the Wall
+camera slots. For example, add the following option for `top` and `wrist`:
+
+```bash
+--policy.camera_key_mapping='{"observation.images.top":"face_view","observation.images.wrist":"right_wrist_view"}'
+```
+
+Fine-tuning resolves camera shapes and state/action widths from the dataset,
+including when loading the base checkpoint with `--policy.path`.
 
 ### Train with language annotations
 

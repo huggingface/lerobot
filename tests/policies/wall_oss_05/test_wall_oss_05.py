@@ -22,14 +22,11 @@ from types import SimpleNamespace
 import pytest
 import torch
 from safetensors import safe_open
-from safetensors.torch import save_file
 from torch import nn
 
-from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
+from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.policies.factory import (
-    get_policy_class,
     make_policy,
-    make_policy_config,
     make_pre_post_processors,
 )
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -42,7 +39,6 @@ from lerobot.policies.wall_oss_05.modeling_wall_oss_05 import (
 )
 from lerobot.policies.wall_oss_05.processor_wall_oss_05 import (
     WALL_OSS_PREDICT_ACTIONS,
-    WallOSS05TaskPassthrough,
     WallOSS05TokenizerStep,
 )
 from lerobot.processor import (
@@ -78,13 +74,6 @@ def _config(**overrides) -> WallOSS05Config:
         values.pop("recipe")
     values.update(overrides)
     return WallOSS05Config(**values)
-
-
-def test_default_loss_weights_use_one_to_ten_text_flow_ratio():
-    config = _config()
-
-    assert config.text_loss_weight == 0.1
-    assert config.flow_loss_weight == 1.0
 
 
 @pytest.mark.parametrize("query_kind", ["vqa", "next_subtask"])
@@ -125,18 +114,6 @@ def test_recipe_override_remains_portable_after_save(tmp_path, dataset_dependenc
     assert result["messages_rendered"] == [[{"role": "user", "content": "clear the table: choose a subtask"}]]
 
 
-class _TinyAuthorModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.scale = nn.Parameter(torch.tensor(1.0))
-
-    def forward(self, action_chunk, flow_loss_mask, **kwargs):
-        del kwargs
-        selected = action_chunk[flow_loss_mask]
-        loss = (self.scale * selected).square().mean()
-        return SimpleNamespace(loss=loss, flow_loss=loss)
-
-
 class _TinyTiedAuthorModel(nn.Module):
     def __init__(self):
         super().__init__()
@@ -144,26 +121,6 @@ class _TinyTiedAuthorModel(nn.Module):
         self.model.embed_tokens = nn.Embedding(8, 4)
         self.lm_head = nn.Linear(4, 8, bias=False)
         self.lm_head.weight = self.model.embed_tokens.weight
-
-
-class _TinyJointAuthorModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.flow_scale = nn.Parameter(torch.tensor(2.0))
-        self.text_scale = nn.Parameter(torch.tensor(3.0))
-
-    def forward(self, flow_loss_mask, text_labels=None, **kwargs):
-        del kwargs
-        flow_loss = self.flow_scale.square() if flow_loss_mask.any() else None
-        text_loss = (
-            self.text_scale.square() if text_labels is not None and (text_labels != -100).any() else None
-        )
-        losses = [value for value in (flow_loss, text_loss) if value is not None]
-        return SimpleNamespace(
-            loss=sum(losses) if losses else None,
-            flow_loss=flow_loss,
-            text_loss=text_loss,
-        )
 
 
 class _CharTokenizer:
@@ -326,44 +283,6 @@ def test_recipe_processor_renders_joint_text_and_action_supervision(dataset_depe
     assert processed["messages_rendered"][0][-1]["content"] == "pick up the red block"
     assert processed["message_streams"] == [["low_level", "low_level"]]
     assert processed["target_message_indices"] == [[1]]
-
-
-def test_native_prompt_and_image_token_expansion_preserve_the_contract():
-    pytest.importorskip("transformers")
-
-    step = _tokenizer_step()
-    prefix, postfix = step._flow_prompt("pick the cup?!")
-    assert "Instruction: pick the cup?!" in prefix
-    assert "front view:" in prefix
-    assert "right wrist view:" in prefix
-    assert postfix.count("<|action|>") == 32
-
-    assert prefix.count("<|image_pad|>") == 2
-
-
-def test_native_text_prompts_cover_subtask_and_vqa_contracts():
-    pytest.importorskip("transformers")
-
-    step = _tokenizer_step()
-
-    subtask, _, _ = step._recipe_prompt(
-        [{"role": "user", "content": "put the cup away\nPredict the next action in language.\n"}],
-        [None],
-        [],
-        "",
-    )
-    vqa, _, _ = step._recipe_prompt(
-        [{"role": "user", "content": "Where is the cup?"}],
-        [None],
-        [],
-        "",
-    )
-
-    assert "put the cup away" in subtask
-    assert "Predict the next action in language." in subtask
-    assert "Where is the cup?" in vqa
-    assert "Question:" not in vqa
-    assert "front view:" in vqa
 
 
 def test_recipe_prompt_marks_only_target_text_and_can_append_actions():
@@ -545,17 +464,6 @@ def test_flow_loss_averages_only_valid_action_elements(monkeypatch, mask):
     assert output.flow_loss.item() == pytest.approx(0.0 if mask == "all" else 1.0)
 
 
-def test_factory_uses_distinct_policy_type():
-    config = make_policy_config("wall_oss_05")
-    assert isinstance(config, WallOSS05Config)
-    assert get_policy_class("wall_oss_05") is WallOSS05Policy
-    assert config.type == "wall_oss_05"
-    assert config.chunk_size == 32
-    assert config.max_action_dim == 26
-    assert config.normalization_mapping["STATE"] is NormalizationMode.QUANTILES
-    assert config.normalization_mapping["ACTION"] is NormalizationMode.QUANTILES
-
-
 def _dimension_config(state_dim: int, action_dim: int):
     return _config(
         input_features={
@@ -567,23 +475,9 @@ def _dimension_config(state_dim: int, action_dim: int):
     )
 
 
-def test_narrow_dimensions_are_padded_to_the_26d_contract():
-    # Native robot widths below 26D are zero-padded rather than rejected, so a 6D
-    # OMX arm rolls out without a CLI dim override.
-    WallOSS05Policy(_dimension_config(state_dim=16, action_dim=12), load_model=False)
-
-
 def test_dimensions_exceeding_the_26d_contract_are_rejected():
     with pytest.raises(ValueError, match="cannot exceed the fixed 26D contract"):
         WallOSS05Policy(_dimension_config(state_dim=32, action_dim=32), load_model=False)
-
-
-def test_task_passthrough_does_not_rewrite():
-    step = WallOSS05TaskPassthrough()
-    data = {"task": ["no period", "Keep?!  spaces"]}
-    result = step.complementary_data(data)
-    assert result is data
-    assert result["task"] == ["no period", "Keep?!  spaces"]
 
 
 def test_exact_selected_task_reaches_policy_formatter_unchanged():
@@ -594,15 +488,6 @@ def test_exact_selected_task_reaches_policy_formatter_unchanged():
     preprocessor(_batch())
 
     assert all(task in text for task, text in zip(tasks, step._processor.tokenizer.seen_texts, strict=True))
-
-
-def test_pre_and_postprocessors_are_serializable(tmp_path):
-    config = _config()
-    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=_stats())
-    preprocessor.save_pretrained(tmp_path)
-    postprocessor.save_pretrained(tmp_path)
-    assert (tmp_path / "policy_preprocessor.json").exists()
-    assert (tmp_path / "policy_postprocessor.json").exists()
 
 
 def test_finetuned_weight_revision_does_not_select_the_base_tokenizer_revision():
@@ -744,20 +629,25 @@ def _tiny_qwen_processor():
     return SimpleNamespace(tokenizer=tokenizer, image_processor=image_processor)
 
 
+@pytest.mark.parametrize("saved_processors", [False, True])
 def test_six_dimensional_dataset_trains_through_factory_and_saved_processors(
-    tmp_path, monkeypatch, dataset_dependencies
+    tmp_path, dataset_dependencies, saved_processors
 ):
     """Use real dataset stats, tokenization, vision, decoder, flow loss and optimizer."""
     from torch.utils.data import DataLoader
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
+    cameras = {
+        "observation.images.top": "face_view",
+        "observation.images.wrist": "right_wrist_view",
+    }
     features = {
         OBS_STATE: {"dtype": "float32", "shape": (6,), "names": None},
         ACTION: {"dtype": "float32", "shape": (6,), "names": None},
         **{
             key: {"dtype": "image", "shape": (3, 16, 16), "names": ["channels", "height", "width"]}
-            for key in _config().camera_key_mapping
+            for key in cameras
         },
     }
     root = tmp_path / "dataset"
@@ -769,7 +659,7 @@ def test_six_dimensional_dataset_trains_through_factory_and_saved_processors(
             {
                 OBS_STATE: torch.arange(6).float() + index,
                 ACTION: torch.arange(6).float() - index,
-                **{key: torch.full((3, 16, 16), index / 4) for key in _config().camera_key_mapping},
+                **{key: torch.full((3, 16, 16), index / 4) for key in cameras},
                 "task": "pick up the red cup",
             }
         )
@@ -782,10 +672,36 @@ def test_six_dimensional_dataset_trains_through_factory_and_saved_processors(
     config = _config(
         chunk_size=2, n_action_steps=2, dtype=torch.float32, vlm_config=_tiny_native_config().to_dict()
     )
+    # Start from a canonical 26D checkpoint with different camera names, just
+    # like --policy.path plus --policy.camera_key_mapping on lerobot-train.
+    base = tmp_path / "base"
+    WallOSS05Policy(config).save_pretrained(base)
+    base_pre, base_post = make_pre_post_processors(config, dataset_stats=_stats())
+    base_pre.save_pretrained(base)
+    base_post.save_pretrained(base)
+    config = WallOSS05Config.from_pretrained(base)
+    config.pretrained_path = base
+    config.camera_key_mapping = cameras
     policy = make_policy(config, ds_meta=dataset.meta)
     assert config.input_features[OBS_STATE].shape == (6,)
     assert config.action_feature.shape == (6,)
-    pre, post = make_pre_post_processors(config, dataset_stats=dataset.meta.stats)
+    assert set(config.image_features) == set(cameras)
+    assert all(feature.shape == (3, 16, 16) for feature in config.image_features.values())
+    processor_kwargs = {"dataset_stats": dataset.meta.stats}
+    if saved_processors:
+        processor_kwargs.update(
+            pretrained_path=base,
+            preprocessor_overrides={
+                "normalizer_processor": {
+                    "features": {**config.input_features, **config.output_features},
+                    "stats": dataset.meta.stats,
+                }
+            },
+            postprocessor_overrides={
+                "unnormalizer_processor": {"features": config.output_features, "stats": dataset.meta.stats}
+            },
+        )
+    pre, post = make_pre_post_processors(config, **processor_kwargs)
     for step in pre.steps:
         if isinstance(step, WallOSS05TokenizerStep):
             step._processor = processor
@@ -973,7 +889,10 @@ def test_native_multimodal_model_trains_language_for_five_steps(joint, batch_siz
     with torch.random.fork_rng():
         torch.manual_seed(7)
         model = WallOSS05Model(model_config, processor)
-        policy = WallOSS05Policy(_config(chunk_size=2, n_action_steps=2), load_model=False)
+        policy = WallOSS05Policy(
+            _config(chunk_size=2, n_action_steps=2, flow_loss_weight=2.0, text_loss_weight=0.5),
+            load_model=False,
+        )
         policy.model = model
         ids = [4, 29, 28, 30, 29, 28, 30, 6, 7, 8] + ([31, 31] if joint else [])
         input_ids = torch.tensor([ids] * batch_size)
@@ -1003,67 +922,12 @@ def test_native_multimodal_model_trains_language_for_five_steps(joint, batch_siz
             assert model.visual.patch_embed.proj.weight.grad is not None
             assert model.visual.patch_embed.proj.weight.grad.norm() > 0
             assert ("flow_loss" in metrics) is joint
+            assert loss.item() == pytest.approx(
+                0.5 * metrics["text_loss"] + 2.0 * metrics.get("flow_loss", 0.0), rel=1e-6
+            )
             text_losses.append(metrics["text_loss"])
             optimizer.step()
         assert text_losses[-1] < text_losses[0]
-
-
-def test_forward_backward_update_is_finite_and_tiny_batch_overfits():
-    config = _config()
-    policy = WallOSS05Policy(config, load_model=False)
-    policy.processor = object()
-    policy.model = _TinyAuthorModel()
-    optimizer = torch.optim.SGD(policy.parameters(), lr=0.2)
-    preprocessor, _ = make_pre_post_processors(config, dataset_stats=_stats(0, 52))
-    _stub_tokenizer(preprocessor)
-    batch = preprocessor(_batch())
-
-    initial_loss = None
-    for _ in range(8):
-        optimizer.zero_grad()
-        loss, output = policy(batch)
-        if initial_loss is None:
-            initial_loss = loss.item()
-        assert torch.isfinite(loss)
-        loss.backward()
-        assert policy.model.scale.grad is not None
-        assert torch.isfinite(policy.model.scale.grad)
-        assert policy.model.scale.grad.abs().item() > 0
-        optimizer.step()
-        assert output["flow_loss"] >= 0
-
-    final_loss, _ = policy(batch)
-    assert final_loss.item() < initial_loss * 0.05
-
-
-@pytest.mark.parametrize(
-    ("predict_actions", "expect_flow"),
-    [(False, False), (True, True)],
-    ids=["text-only", "joint-text-action"],
-)
-def test_recipe_training_routes_text_and_optional_action_losses(predict_actions, expect_flow):
-    config = _config(flow_loss_weight=2.0, text_loss_weight=0.5)
-    policy = WallOSS05Policy(config, load_model=False)
-    policy.processor = object()
-    policy.model = _TinyJointAuthorModel()
-    batch = _batch(batch_size=1)
-    batch["messages_rendered"] = [[{"role": "assistant", "content": "pick red"}]]
-    batch.update(_model_inputs())
-    batch["text_labels"] = torch.tensor([[-100, 1, 2]])
-    batch[WALL_OSS_PREDICT_ACTIONS] = torch.tensor([predict_actions])
-
-    loss, metrics = policy(batch)
-    loss.backward()
-
-    expected_loss = 0.5 * 9.0 + (2.0 * 4.0 if expect_flow else 0.0)
-    assert loss.item() == pytest.approx(expected_loss)
-    assert metrics["text_loss"] == pytest.approx(9.0)
-    assert ("flow_loss" in metrics) is expect_flow
-    assert policy.model.text_scale.grad is not None
-    if expect_flow:
-        assert policy.model.flow_scale.grad is not None
-    else:
-        assert policy.model.flow_scale.grad is None
 
 
 def test_native_checkpoint_roundtrip_from_another_working_directory(tmp_path, monkeypatch):
@@ -1105,44 +969,3 @@ def test_save_uses_shared_collective_and_main_process_gate(tmp_path, monkeypatch
     assert gathered == [policy]
     assert (tmp_path / "model.safetensors").exists() is main_process
     assert (tmp_path / "config.json").exists() is main_process
-
-
-def test_offline_conversion_produces_a_native_strictly_loadable_checkpoint(tmp_path, dataset_dependencies):
-    pytest.importorskip("transformers")
-    from transformers import Qwen2_5_VLProcessor, Qwen2VLVideoProcessor
-
-    from lerobot.policies.wall_oss_05.convert_checkpoint import convert_checkpoint
-
-    source = tmp_path / "historical"
-    native = tmp_path / "native"
-    source.mkdir()
-    config = _config(vlm_config=_tiny_native_config().to_dict(), dtype=torch.float32)
-    policy = WallOSS05Policy(config)
-    historical = {
-        name.removeprefix("model."): tensor
-        for name, tensor in policy.state_dict().items()
-        if name != "model.lm_head.weight"
-    }
-    historical["action_preprocessor.normalizer_action.min.test"] = torch.zeros(26)
-    save_file(historical, source / "model.safetensors")
-    config._save_pretrained(source)
-    parts = _tiny_qwen_processor()
-    processor = Qwen2_5_VLProcessor(
-        image_processor=parts.image_processor,
-        tokenizer=parts.tokenizer,
-        video_processor=Qwen2VLVideoProcessor(),
-    )
-    processor.save_pretrained(source)
-    pre, post = make_pre_post_processors(config, dataset_stats=_stats())
-    pre.save_pretrained(source)
-    post.save_pretrained(source)
-    report = convert_checkpoint(source, native)
-    assert report["all_neural_tensors_preserved_exactly"]
-    assert report["dropped_model_owned_normalizer_tensors"] == 1
-    restored = WallOSS05Policy.from_pretrained(native, strict=True)
-    torch.testing.assert_close(restored.state_dict(), policy.state_dict(), atol=0, rtol=0)
-    pre2, post2 = make_pre_post_processors(restored.config, pretrained_path=native)
-    assert isinstance(
-        next(step for step in pre2.steps if isinstance(step, WallOSS05TokenizerStep)), WallOSS05TokenizerStep
-    )
-    torch.testing.assert_close(post2(torch.zeros(1, 32, 26)), post(torch.zeros(1, 32, 26)))

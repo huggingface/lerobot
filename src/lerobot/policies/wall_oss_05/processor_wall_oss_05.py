@@ -539,6 +539,7 @@ def reconcile_wall_oss_05_processors(
             _configure_wall_quantile_eps(step)
         if isinstance(step, WallOSS05TokenizerStep):
             step.action_dim = action_dim
+            step.camera_key_mapping = dict(config.camera_key_mapping)
     insert_idx = next(
         (
             idx + 1

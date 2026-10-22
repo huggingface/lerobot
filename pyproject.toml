@@ -350,6 +350,7 @@ all = [
     "lerobot[diffusion]",
     "lerobot[multi_task_dit]",
     "lerobot[wallx]",
+    "lerobot[wall_oss_05]",
     "lerobot[pi]",
     "lerobot[dm05]",
     "lerobot[fineart_vla]",
