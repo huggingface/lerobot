@@ -6,7 +6,7 @@ import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from .types import Resources, checked_name
 
@@ -56,8 +56,9 @@ class HFJobsConfig:
 
 @dataclass
 class RuntimeConfig:
-    backend: Literal["local", "slurm", "hf_jobs"] = "local"
-    mode: Literal["run", "plan", "resume"] = "run"
+    # draccus 0.10 cannot deserialize Literal fields in saved Job configs.
+    backend: str = "local"
+    mode: str = "run"
     run_uri: str | None = None
     workers: int = 1
     batch_size: int = 16
@@ -72,6 +73,8 @@ class RuntimeConfig:
     hf_jobs: HFJobsConfig = field(default_factory=HFJobsConfig)
 
     def __post_init__(self):
+        if self.backend not in {"local", "slurm", "hf_jobs"} or self.mode not in {"run", "plan", "resume"}:
+            raise ValueError("Invalid runtime backend or mode")
         if (
             self.workers < 1
             or self.batch_size < 1

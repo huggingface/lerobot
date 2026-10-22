@@ -33,7 +33,9 @@ from .steerable_pipeline.vlm_client import make_vlm_client
 from .storage import commit_local_files, recover_local_commit
 
 
-def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client_factory=None):
+def run_annotation_pipeline(
+    cfg: AnnotationPipelineConfig, root: Path, *, client_factory=None, human_video_generator_factory=None
+):
     """Build a language recipe; current flags remain compatible, execution is shared."""
     root = root.resolve()
     _load_v3_info(root)
@@ -51,7 +53,7 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
             raise RuntimeError("Recover the pending dataset commit before planning")
     else:
         recover_local_commit(root)
-    enabled = [name for name in ("plan", "interjections", "vqa") if getattr(cfg, name).enabled]
+    enabled = [name for name in ("plan", "interjections", "vqa", "human_video") if getattr(cfg, name).enabled]
     if not enabled:
         return PipelineRunSummary([], [], ValidationReport())
     source = LeRobotEpisodeSource(
@@ -80,6 +82,7 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
             "plan",
             "interjections",
             "vqa",
+            "human_video",
             "seed",
             "video_backend",
             "executor",
@@ -94,16 +97,28 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
     }
     if "plan" in enabled and "interjections" in enabled:
         phase_dependencies["plan_update"] = ("plan", "interjections")
-    shared = {key: value for key, value in config.items() if key not in {"plan", "interjections", "vqa"}}
+    if "human_video" in enabled:
+        phase_dependencies["human_video"] = ("plan",) if "plan" in enabled else ()
+    shared = {
+        key: value
+        for key, value in config.items()
+        if key not in {"plan", "interjections", "vqa", "human_video"}
+    }
     for name, parents in phase_dependencies.items():
         family = "plan" if name == "plan_update" else name
         stages.append(
             StageConfig(
                 name,
-                "lerobot.annotations.processing:LanguageModule",
+                "lerobot.annotations.human_video_processing:HumanVideoStage"
+                if name == "human_video"
+                else "lerobot.annotations.processing:LanguageModule",
                 {
                     "root": str(root),
-                    "phase": name,
+                    **(
+                        {"generator_factory": human_video_generator_factory}
+                        if name == "human_video"
+                        else {"phase": name}
+                    ),
                     "annotation_config": {**shared, family: config[family]},
                     "client_factory": client_factory,
                 },
@@ -126,7 +141,12 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
     previous_endpoints = os.environ.get("LEROBOT_ANNOTATION_ENDPOINTS")
 
     def before_execute(store, plan):
-        if not cfg.vlm.auto_serve or client_factory or not plan.factory.endswith("LanguageModule") or service:
+        if (
+            not cfg.vlm.auto_serve
+            or client_factory
+            or service
+            or not plan.factory.endswith(("LanguageModule", "HumanVideoStage"))
+        ):
             return
 
         def needs_inference(shard):
@@ -212,6 +232,14 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
         # Feature order selects the default camera; do not sort the native metadata.
         info_path.write_text(json.dumps(info, separators=(",", ":"), allow_nan=False))
         files["meta/info.json"] = info_path
+        if "human_video" in completed:
+            from .human_video_processing import prepare_human_videos
+
+            media_files, media_expected = prepare_human_videos(
+                root, directory, store, completed["human_video"][0], cfg.human_video.output_dir
+            )
+            files.update(media_files)
+            expected.update(media_expected)
         # Preparation lives outside the transient release directory so a crash
         # after publishing the journal can finish the commit on the next invocation.
         prepared = cfg.resolved_staging_dir(root) / "prepared" / plan.plan_id
@@ -245,5 +273,5 @@ def run_annotation_pipeline(cfg: AnnotationPipelineConfig, root: Path, *, client
         phases,
         [root / path for path in files if path.startswith("data/")],
         validation,
-        metadata_paths=[root / path for path in files if path.startswith("meta/")],
+        metadata_paths=[root / path for path in files if not path.startswith("data/")],
     )
