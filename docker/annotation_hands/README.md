@@ -20,8 +20,18 @@ Building preserves all applicable upstream notices. GPU extensions compile from
 source; RTX 5090 binaries and TensorRT plans must not be reused on other GPUs.
 Studio checks both the image Space commit and the image-version checksum.
 
-The free builder has a time limit. Compile only SM80 (A100), SM90 (H200) and
-SM120 + PTX (RTX PRO 6000), with two bounded compiler jobs. The build helper
+The free builder has a 30-minute build limit; a longer startup timeout does not
+extend it. Build the two camera wheels in a CPU-only HF Job using the pinned
+devel image, Python 3.10.20, PyTorch 2.8.0+cu128 and setuptools 79.0.1. The private
+operator build records source hashes, import checks, ELF architecture listings
+and wheel hashes. Copy its `build.json` and `wheels/` to `camera-wheels/` in this
+image context and pin their hashes plus the source build identity in
+`image-version.json`. `verify_camera_wheels.py` rejects missing operators,
+changed sources, architectures or unverified bytes before installation. No
+weights or GPU-specific TensorRT plans enter these wheels.
+
+Compile only SM80 (A100), SM90 (H200) and SM120 + PTX (RTX PRO 6000), with two
+bounded compiler jobs. The build helper
 filters out `lietorch_extras`, which is referenced only by vendor examples;
 DROID-W uses `lietorch_backends` and its own `droid_backends`. Vendor inference
 sources and compiler optimization flags stay unchanged. This changes build

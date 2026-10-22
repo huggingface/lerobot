@@ -1,4 +1,4 @@
-# Builds native dependencies on CPU. Model weights are pulled with the Job user's token.
+# Installs verified CPU-built native operators. Model weights use the Job user's token.
 FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel@sha256:53ab3de62f6101d1e42f9be28623ab7a468a24c070d632f211ed576e30b6abd3 AS build
 ENV DEBIAN_FRONTEND=noninteractive UV_PYTHON_INSTALL_DIR=/opt/uv-python
 ENV TORCH_CUDA_ARCH_LIST="8.0;9.0;12.0+PTX" MAX_JOBS=2
@@ -24,12 +24,12 @@ RUN mkdir -p /opt/camera-adapter /opt/hand-camera \
     && tar -xzf /tmp/camera-adapter-source.tar.gz -C /opt/camera-adapter \
     && tar -xzf /tmp/camera-native-source.tar.gz -C /opt/hand-camera
 WORKDIR /opt/hand-camera/release-195fps-verified/DROID-W/thirdparty/lietorch
-COPY build_camera_extensions.py /opt/hand-worker/
+COPY camera-wheels /opt/hand-worker/camera-wheels
+COPY verify_camera_wheels.py image-version.json /opt/hand-worker/
 RUN uv pip install --python /opt/droid/bin/python wheel ninja setuptools==79.0.1 \
-    && /opt/droid/bin/python /opt/hand-worker/build_camera_extensions.py \
-    && uv pip install --python /opt/droid/bin/python --no-deps /tmp/lietorch-wheels/*.whl
+    && python /opt/hand-worker/verify_camera_wheels.py /opt/hand-worker/camera-wheels /opt/hand-worker/image-version.json \
+    && uv pip install --python /opt/droid/bin/python --no-deps /opt/hand-worker/camera-wheels/wheels/*.whl
 WORKDIR /opt/hand-camera/release-195fps-verified/DROID-W
-RUN /opt/droid/bin/python setup.py build_ext --inplace
 RUN for source in /opt/hand-camera/release-195fps-verified/DROID-W/*; do \
       name=$(basename "$source"); \
       if [ ! -e "/opt/hand-camera/DROID-on/$name" ]; then ln -s "$source" "/opt/hand-camera/DROID-on/$name"; fi; \
