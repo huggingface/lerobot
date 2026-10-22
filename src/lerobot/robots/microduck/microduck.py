@@ -30,11 +30,10 @@ from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import require_package
 
 from ..robot import Robot
-from .camera_frame import CameraFrame
 from .config_microduck import MicroDuckConfig
 from .connection import MicroDuckConnection
 from .rpc import DuckRpc
-from .webrtc import receive_video
+from .webrtc import CameraFrame, receive_video
 
 logger = logging.getLogger(__name__)
 

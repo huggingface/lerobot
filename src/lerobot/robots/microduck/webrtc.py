@@ -34,13 +34,12 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from lerobot.utils.import_utils import _aiortc_available, _websockets_available, require_package
-
-from .camera_frame import CameraFrame
 
 if TYPE_CHECKING or _aiortc_available:
     from aiortc import RTCConfiguration, RTCDataChannel, RTCPeerConnection, RTCSessionDescription
@@ -56,6 +55,24 @@ logger = logging.getLogger(__name__)
 CONTROL_LABEL = "control"
 # Degrees clockwise the head camera is mounted from upright, assumed if media.video goes unanswered.
 DEFAULT_MOUNT_ROTATION = 90
+
+
+@dataclass(frozen=True)
+class CameraFrame:
+    """A decoded frame. Treat image as read-only while consumers share it.
+
+    received_at is local time.monotonic() at decode/receipt, not sensor capture time.
+    media_time_s is the stream-relative presentation time, or None for snapshots.
+    It resets on WebRTC reconnection; session_id identifies the signalling session.
+    sequence increases for every published frame within one MicroDuck instance.
+    A standalone WebRTC receiver numbers frames within its session instead.
+    """
+
+    image: np.ndarray
+    sequence: int
+    received_at: float
+    media_time_s: float | None = None
+    session_id: str | None = None
 
 
 def upright(frame: np.ndarray, rotate: int) -> np.ndarray:
