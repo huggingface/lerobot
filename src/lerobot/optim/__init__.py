@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .grad_scaler import (
+    load_scaler_state,
+    save_scaler_state,
+)
 from .optimizers import (
     AdamConfig as AdamConfig,
     AdamWConfig as AdamWConfig,
@@ -20,7 +24,6 @@ from .optimizers import (
     SGDConfig as SGDConfig,
     XVLAAdamWConfig as XVLAAdamWConfig,
     load_optimizer_state,
-    load_optimizer_state_dict,
     save_optimizer_state,
 )
 from .schedulers import (
@@ -51,8 +54,9 @@ __all__ = [
     "VQBeTSchedulerConfig",
     # State management
     "load_optimizer_state",
-    "load_optimizer_state_dict",
+    "load_scaler_state",
     "load_scheduler_state",
     "save_optimizer_state",
+    "save_scaler_state",
     "save_scheduler_state",
 ]

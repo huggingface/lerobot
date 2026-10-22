@@ -21,7 +21,7 @@ on:
 
 # Sets up the environment variables
 env:
-  UV_VERSION: "0.8.0"
+  UV_VERSION: "0.11.30"
   PYTHON_VERSION: "3.12"
 
 jobs:

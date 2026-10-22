@@ -54,6 +54,9 @@ class FastWAMPolicy(PreTrainedPolicy):
 
     config_class = FastWAMConfig
     name = "fastwam"
+    # FSDP2 wrap units: MoTLayer is the single FSDP owner of each layer's expert blocks
+    # (the blocks are re-parented onto it precisely so sharding has one boundary to hook).
+    _fsdp_wrap_modules = ["MoTLayer"]
 
     def __init__(
         self,
@@ -136,7 +139,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             model.to(map_location)
         return model
 
-    def get_optim_params(self) -> list[Tensor]:
+    def get_optim_params(self) -> list[torch.nn.Parameter]:
         # Return the trainable tensors directly (a single param group). The optimizer
         # builder wraps these in a param group; returning a bare {"params": [...]} dict
         # instead would make `list(...)` yield the key string "params".
@@ -203,12 +206,15 @@ class FastWAMPolicy(PreTrainedPolicy):
         return loss, dict(metrics or {})
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **_: Any) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         """Predict a chunk of actions from the current FastWAM observation.
 
         Args:
             batch (dict[str, Tensor]): Inference batch with `input_image` or
                 image observation keys, plus `context/context_mask` or `prompt`.
+            noise (Tensor | None): Optional starting action sample of shape
+                `[B, action_horizon, action_dim]`. When None, each sample draws it with
+                the seed in `batch["seed"]`, or `config.inference_seed` if the batch has none.
 
         Returns:
             Tensor: Action chunk with shape `[B, action_horizon, action_dim]`.
@@ -216,6 +222,7 @@ class FastWAMPolicy(PreTrainedPolicy):
 
         self.eval()
         infer_kwargs = _batch_to_infer_kwargs(batch=batch, config=self.config)
+        infer_kwargs["noise"] = noise
         batch_size = _infer_kwargs_batch_size(infer_kwargs)
         if batch_size == 1:
             action = _action_from_model_output(self.model.infer_action(**infer_kwargs))
@@ -234,10 +241,10 @@ class FastWAMPolicy(PreTrainedPolicy):
         return action.to(device=batch_device(batch), dtype=torch.float32)
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], **kwargs: Any) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
         self.eval()
         if len(self._action_queue) == 0:
-            actions = self.predict_action_chunk(batch, **kwargs)[:, : self.config.n_action_steps]
+            actions = self.predict_action_chunk(batch, noise=noise)[:, : self.config.n_action_steps]
             self._action_queue.extend(actions.transpose(0, 1))
         return self._action_queue.popleft()
 
@@ -252,10 +259,18 @@ class FastWAMPolicy(PreTrainedPolicy):
         across checkpoints) and are intentionally excluded from `model.safetensors`
         — see `FastWAM.__init__`. The tokenizer comes from `google/umt5-xxl`.
         """
-        dtype = _dtype_from_name(config.torch_dtype)
+        dtype = config.dtype
         device = config.device
-        video_expert = WanVideoDiT(**config.video_dit_config).to(device=device, dtype=dtype)
-        action_expert = ActionDiT(**config.action_dit_config).to(device=device, dtype=dtype)
+        if device is None:
+            # PreTrainedConfig.__post_init__ always resolves a device; None here is a programming error.
+            raise ValueError("`FastWAMConfig.device` is unset; cannot build the FastWAM core model.")
+        video_dit_config = config.video_dit_config
+        action_dit_config = config.action_dit_config
+        if video_dit_config is None or action_dit_config is None:
+            # FastWAMConfig.__post_init__ always fills both; None here is a programming error.
+            raise ValueError("`FastWAMConfig.video_dit_config` and `action_dit_config` must be resolved.")
+        video_expert = WanVideoDiT(**video_dit_config).to(device=device, dtype=dtype)
+        action_expert = ActionDiT(**action_dit_config).to(device=device, dtype=dtype)
         mot = MoT(
             mixtures={"video": video_expert, "action": action_expert},
             mot_checkpoint_mixed_attn=config.mot_checkpoint_mixed_attn,
@@ -276,7 +291,7 @@ class FastWAMPolicy(PreTrainedPolicy):
             tokenizer=build_wan_tokenizer(
                 model_id=config.tokenizer_model_id, tokenizer_max_len=config.tokenizer_max_len
             ),
-            text_dim=int(config.video_dit_config["text_dim"]),
+            text_dim=int(video_dit_config["text_dim"]),
             proprio_dim=config.proprio_dim,
             device=device,
             torch_dtype=dtype,
@@ -311,6 +326,7 @@ def _batch_to_infer_kwargs(batch: dict[str, Tensor], config: FastWAMConfig) -> d
         "seed": batch.get("seed", config.inference_seed),
         "rand_device": batch.get("rand_device", config.rand_device),
         "tiled": bool(batch.get("tiled", config.tiled)),
+        "compile_action_infer": bool(batch.get("compile_action_infer", config.compile_action_infer)),
     }
 
 
@@ -360,13 +376,6 @@ def _slice_infer_value(value: Any, *, index: int, batch_size: int) -> Any:
     if isinstance(value, (list, tuple)) and len(value) == batch_size:
         return value[index]
     return value
-
-
-def _dtype_from_name(name: str) -> torch.dtype:
-    dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
-    if name not in dtype_map:
-        raise ValueError(f"Unsupported torch dtype `{name}`.")
-    return dtype_map[name]
 
 
 def batch_device(batch: dict[str, Any]) -> torch.device:

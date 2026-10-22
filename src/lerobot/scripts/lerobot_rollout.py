@@ -26,11 +26,14 @@ Strategies
     --strategy.type=highlight  Ring buffer + keystroke save
     --strategy.type=dagger     Human-in-the-loop (DAgger / RaC)
     --strategy.type=episodic   Episode-oriented recording with reset phases
+    --strategy.type=<name>     Any strategy from an installed ``lerobot_strategy_*``
+                               package (see "Bring your own strategy" in the docs)
 
 Inference backends
 ------------------
     --inference.type=sync      One policy call per control tick (default)
     --inference.type=rtc       Real-Time Chunking for slow VLA models
+    --inference.type=remote    Policy served by lerobot-policy-server (see remote inference docs)
 
 Usage examples
 --------------
@@ -43,6 +46,17 @@ Usage examples
         --robot.type=koch_follower \\
         --robot.port=/dev/ttyACM0 \\
         --task="pick up cube" --duration=30
+
+    # Interactive session: the robot stays idle until /start is typed, then /subtask,
+    # /vqa, /autosteer, /reset and /stop drive the run from stdin. With
+    # --strategy.type=sentry it also records, labeling frames with their task.
+    lerobot-rollout \\
+        --strategy.type=base \\
+        --policy.path=lerobot/act_koch_real \\
+        --robot.type=koch_follower \\
+        --robot.port=/dev/ttyACM0 \\
+        --task="pick up cube" \\
+        --interactive=true
 
     # Base mode — RTC inference for slow VLAs (Pi0, Pi0.5, SmolVLA)
     lerobot-rollout \\
@@ -151,6 +165,9 @@ Usage examples
 """
 
 import logging
+import threading
+from collections.abc import Callable
+from typing import cast
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
@@ -173,7 +190,13 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.rollout import RolloutConfig, build_rollout_context, create_strategy
+from lerobot.rollout import (
+    InteractiveSession,
+    LinkedEvent,
+    RolloutConfig,
+    build_rollout_context,
+    create_strategy,
+)
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -191,9 +214,8 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils import init_logging, register_third_party_plugins
 from lerobot.utils.process import ProcessSignalHandler
-from lerobot.utils.utils import init_logging
 from lerobot.utils.visualization_utils import init_visualization, shutdown_visualization
 
 logger = logging.getLogger(__name__)
@@ -202,7 +224,7 @@ logger = logging.getLogger(__name__)
 @parser.wrap()
 def rollout(cfg: RolloutConfig):
     """Main entry point for policy deployment."""
-    init_logging()
+    init_logging(console_level=cfg.inference.log_level)
 
     if cfg.display_data:
         logger.info(
@@ -215,6 +237,12 @@ def rollout(cfg: RolloutConfig):
 
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)
     shutdown_event = signal_handler.shutdown_event
+    if not isinstance(shutdown_event, threading.Event):
+        raise RuntimeError("ProcessSignalHandler(use_threads=True) must hand out a threading.Event")
+    if cfg.interactive:
+        # /reset and /stop end the control loop via the local flag; process signals still
+        # propagate through the parent event.
+        shutdown_event = LinkedEvent(shutdown_event)
 
     logger.info("Building rollout context...")
     ctx = build_rollout_context(cfg, shutdown_event)
@@ -228,10 +256,16 @@ def rollout(cfg: RolloutConfig):
         f"{cfg.duration}s" if cfg.duration > 0 else "infinite",
     )
 
+    session: InteractiveSession | None = None
     try:
         strategy.setup(ctx)
-        logger.info("Rollout setup complete, starting rollout...")
-        strategy.run(ctx)
+        if cfg.interactive:
+            logger.info("Rollout setup complete — starting interactive session (robot idle until /start)")
+            session = InteractiveSession(strategy, ctx)
+            session.run()
+        else:
+            logger.info("Rollout setup complete, starting rollout...")
+            strategy.run(ctx)
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     finally:
@@ -239,13 +273,17 @@ def rollout(cfg: RolloutConfig):
         if cfg.display_data:
             shutdown_visualization(cfg.display_mode)
 
+    failure = session.controller if session is not None else ctx.policy.inference
+    if failure.failed:
+        logger.error("Rollout ended by a terminal fault: %s", failure.failure_traceback)
+        raise SystemExit(1)
     logger.info("Rollout finished")
 
 
-def main():
+def main() -> None:
     """CLI entry point for ``lerobot-rollout``."""
     register_third_party_plugins()
-    rollout()
+    cast(Callable[[], None], rollout)()
 
 
 if __name__ == "__main__":

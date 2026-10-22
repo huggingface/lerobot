@@ -16,13 +16,17 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 import numpy as np
 
+from lerobot.configs import is_depth_map
 from lerobot.processor import RelativeActionsProcessorStep
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .io_utils import load_image_as_numpy
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_QUANTILES = [0.01, 0.10, 0.50, 0.90, 0.99]
 
@@ -37,19 +41,18 @@ class RunningQuantileStats:
     which adapt dynamically if the observed data range expands.
     """
 
-    def __init__(self, quantile_list: list[float] | None = None, num_quantile_bins: int = 5000):
+    def __init__(self, quantile_list: list[float] | None = None, num_quantile_bins: int = 5000) -> None:
         self._count = 0
-        self._mean = None
-        self._mean_of_squares = None
-        self._min = None
-        self._max = None
-        self._histograms = None
-        self._bin_edges = None
+        # Per-dimension running statistics; all ``None`` until the first ``update()``.
+        self._mean: np.ndarray | None = None
+        self._mean_of_squares: np.ndarray | None = None
+        self._min: np.ndarray | None = None
+        self._max: np.ndarray | None = None
+        self._histograms: list[np.ndarray] | None = None
+        self._bin_edges: list[np.ndarray] | None = None
         self._num_quantile_bins = num_quantile_bins
 
-        self._quantile_list = quantile_list
-        if self._quantile_list is None:
-            self._quantile_list = DEFAULT_QUANTILES
+        self._quantile_list = quantile_list if quantile_list is not None else DEFAULT_QUANTILES
         self._quantile_keys = [f"q{int(q * 100):02d}" for q in self._quantile_list]
 
     def update(self, batch: np.ndarray) -> None:
@@ -63,7 +66,8 @@ class RunningQuantileStats:
         batch = batch.astype(np.result_type(batch.dtype, np.float32), copy=False)
         num_elements, vector_length = batch.shape
 
-        if self._count == 0:
+        # First batch: the running statistics are still unset.
+        if self._mean is None or self._mean_of_squares is None or self._min is None or self._max is None:
             self._mean = np.mean(batch, axis=0)
             self._mean_of_squares = np.mean(batch**2, axis=0)
             self._min = np.min(batch, axis=0)
@@ -109,7 +113,13 @@ class RunningQuantileStats:
         Returns:
             Dictionary containing the computed statistics.
         """
-        if self._count < 2:
+        if (
+            self._count < 2
+            or self._mean is None
+            or self._mean_of_squares is None
+            or self._min is None
+            or self._max is None
+        ):
             raise ValueError("Cannot compute statistics for less than 2 vectors.")
 
         variance = self._mean_of_squares - self._mean**2
@@ -130,8 +140,10 @@ class RunningQuantileStats:
 
         return stats
 
-    def _adjust_histograms(self):
+    def _adjust_histograms(self) -> None:
         """Adjust histograms when min or max changes."""
+        if self._histograms is None or self._bin_edges is None or self._min is None or self._max is None:
+            raise RuntimeError("Running statistics are not initialized; call update() first.")
         for i in range(len(self._histograms)):
             old_edges = self._bin_edges[i]
             old_hist = self._histograms[i]
@@ -150,7 +162,7 @@ class RunningQuantileStats:
             for old_center, count in zip(old_centers, old_hist, strict=False):
                 if count > 0:
                     # Find which new bin this old center belongs to
-                    bin_idx = np.searchsorted(new_edges, old_center) - 1
+                    bin_idx = int(np.searchsorted(new_edges, old_center)) - 1
                     bin_idx = max(0, min(bin_idx, self._num_quantile_bins - 1))
                     new_hist[bin_idx] += count
 
@@ -159,12 +171,16 @@ class RunningQuantileStats:
 
     def _update_histograms(self, batch: np.ndarray) -> None:
         """Update histograms with new vectors."""
+        if self._histograms is None or self._bin_edges is None:
+            raise RuntimeError("Running statistics are not initialized; call update() first.")
         for i in range(batch.shape[1]):
             hist, _ = np.histogram(batch[:, i], bins=self._bin_edges[i])
             self._histograms[i] += hist
 
     def _compute_quantiles(self) -> list[np.ndarray]:
         """Compute quantiles based on histograms."""
+        if self._histograms is None or self._bin_edges is None:
+            raise RuntimeError("Running statistics are not initialized; call update() first.")
         results = []
         for q in self._quantile_list:
             target_count = q * self._count
@@ -183,9 +199,9 @@ class RunningQuantileStats:
         idx = np.searchsorted(cumsum, target_count)
 
         if idx == 0:
-            return edges[0]
+            return float(edges[0])
         if idx >= len(cumsum):
-            return edges[-1]
+            return float(edges[-1])
 
         # If not edge case, interpolate within the bin
         count_before = cumsum[idx - 1]
@@ -193,11 +209,11 @@ class RunningQuantileStats:
 
         # If no samples in this bin, use the bin edge
         if count_in_bin == 0:
-            return edges[idx]
+            return float(edges[idx])
 
         # Linear interpolation within the bin
         fraction = (target_count - count_before) / count_in_bin
-        return edges[idx] + fraction * (edges[idx + 1] - edges[idx])
+        return float(edges[idx] + fraction * (edges[idx + 1] - edges[idx]))
 
 
 def estimate_num_samples(
@@ -236,10 +252,10 @@ def auto_downsample_height_width(img: np.ndarray, target_size: int = 150, max_si
     return img[:, ::downsample_factor, ::downsample_factor]
 
 
-def sample_images(image_paths: list[str]) -> np.ndarray:
+def sample_images(image_paths: Sequence[str]) -> np.ndarray:
     sampled_indices = sample_indices(len(image_paths))
 
-    images = None
+    images: np.ndarray | None = None
     for i, idx in enumerate(sampled_indices):
         path = image_paths[idx]
         # we load RGB images as uint8 to reduce memory usage; depth keeps its native dtype
@@ -251,6 +267,8 @@ def sample_images(image_paths: list[str]) -> np.ndarray:
 
         images[i] = img
 
+    if images is None:
+        raise ValueError("Cannot sample images from an empty list of image paths.")
     return images
 
 
@@ -327,7 +345,7 @@ def _reshape_for_feature_stats(value: np.ndarray, keepdims: bool) -> np.ndarray:
 
 def _reshape_for_global_stats(
     value: np.ndarray, keepdims: bool, original_shape: tuple[int, ...]
-) -> np.ndarray | float:
+) -> np.ndarray:
     """Reshape statistics for global reduction (axis=None)."""
     if keepdims:
         target_shape = tuple(1 for _ in original_shape)
@@ -338,7 +356,7 @@ def _reshape_for_global_stats(
 
 def _reshape_single_stat(
     value: np.ndarray, axis: int | tuple[int, ...] | None, keepdims: bool, original_shape: tuple[int, ...]
-) -> np.ndarray | float:
+) -> np.ndarray:
     """Apply appropriate reshaping to a single statistic array.
 
     This function transforms statistic arrays to match expected output shapes
@@ -474,7 +492,7 @@ def get_feature_stats(
     if reshaped.shape[0] < 2:
         stats = _compute_basic_stats(reshaped, sample_count, quantile_list)
     else:
-        running_stats = RunningQuantileStats()
+        running_stats = RunningQuantileStats(quantile_list=quantile_list)
         running_stats.update(reshaped)
         stats = running_stats.get_statistics()
         stats["count"] = np.array([sample_count])
@@ -485,9 +503,9 @@ def get_feature_stats(
 
 def compute_episode_stats(
     episode_data: dict[str, list[str] | np.ndarray],
-    features: dict,
+    features: dict[str, dict],
     quantile_list: list[float] | None = None,
-) -> dict:
+) -> dict[str, dict[str, np.ndarray]]:
     """Compute comprehensive statistics for all features in an episode.
 
     Processes different data types appropriately:
@@ -510,20 +528,28 @@ def compute_episode_stats(
         leading channel axis (e.g. shape (3, 1, 1) for RGB). RGB stats are divided by
         255 to land in [0, 1]; depth maps (features flagged with ``is_depth_map``) skip
         this rescaling and remain in their stored units (stored in ``depth_unit``).
+        The count represents all episode frames, so sampled image/video estimates
+        are weighted by episode length when aggregated. Existing saved statistics
+        are not retroactively updated.
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES
 
-    ep_stats = {}
+    ep_stats: dict[str, dict[str, np.ndarray]] = {}
     for key, data in episode_data.items():
         if features[key]["dtype"] in {"string", "language"}:
             continue
 
+        axes_to_reduce: int | tuple[int, ...]
         if features[key]["dtype"] in ["image", "video"]:
+            if isinstance(data, np.ndarray):
+                raise TypeError(f"Feature '{key}' must be a sequence of image paths, got a numpy array.")
             ep_ft_array = sample_images(data)
             axes_to_reduce = (0, 2, 3)
             keepdims = True
         else:
+            if not isinstance(data, np.ndarray):
+                raise TypeError(f"Feature '{key}' must be a numpy array, got {type(data).__name__}.")
             ep_ft_array = data
             axes_to_reduce = 0
             keepdims = data.ndim == 1
@@ -533,9 +559,8 @@ def compute_episode_stats(
         )
 
         if features[key]["dtype"] in ["image", "video"]:
-            normalization_factor = (
-                255.0 if not (features[key].get("info") or {}).get("is_depth_map", False) else 1.0
-            )
+            ep_stats[key]["count"] = np.array([len(data)])
+            normalization_factor = 1.0 if is_depth_map(features[key]) else 255.0
             ep_stats[key] = {
                 k: v if k == "count" else np.squeeze(v / normalization_factor, axis=0)
                 for k, v in ep_stats[key].items()
@@ -564,7 +589,7 @@ def _validate_stat_value(value: np.ndarray, key: str, feature_key: str) -> None:
         )
 
 
-def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
+def _assert_type_and_shape(stats_list: list[dict[str, dict[str, np.ndarray]]]) -> None:
     """Validate that all statistics have correct types and shapes.
 
     Args:
@@ -579,7 +604,7 @@ def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
                 _validate_stat_value(stat_value, stat_key, feature_key)
 
 
-def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
+def aggregate_feature_stats(stats_ft_list: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
     """Aggregates stats for a single feature."""
     means = np.stack([s["mean"] for s in stats_ft_list])
     variances = np.stack([s["std"] ** 2 for s in stats_ft_list])
@@ -613,13 +638,20 @@ def aggregate_feature_stats(stats_ft_list: list[dict[str, dict]]) -> dict[str, d
         for q_key in quantile_keys:
             if all(q_key in s for s in stats_ft_list):
                 quantile_values = np.stack([s[q_key] for s in stats_ft_list])
-                weighted_quantiles = quantile_values * counts
-                aggregated[q_key] = weighted_quantiles.sum(axis=0) / total_count
+                # Exact global quantiles cannot be recovered from quantile summaries.
+                # Keep a conservative envelope of the available estimates: min
+                # for lower quantiles and max for upper quantiles. The resulting
+                # values are bounds across the inputs, not global quantile estimates.
+                q_percent = int(q_key[1:])
+                if q_percent <= 50:
+                    aggregated[q_key] = np.min(quantile_values, axis=0)
+                else:
+                    aggregated[q_key] = np.max(quantile_values, axis=0)
 
     return aggregated
 
 
-def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np.ndarray]]:
+def aggregate_stats(stats_list: list[dict[str, dict[str, np.ndarray]]]) -> dict[str, dict[str, np.ndarray]]:
     """Aggregate stats from multiple compute_stats outputs into a single set of stats.
 
     The final stats will have the union of all data keys from each of the stats dicts.
@@ -634,7 +666,7 @@ def aggregate_stats(stats_list: list[dict[str, dict]]) -> dict[str, dict[str, np
     _assert_type_and_shape(stats_list)
 
     data_keys = {key for stats in stats_list for key in stats}
-    aggregated_stats = {key: {} for key in data_keys}
+    aggregated_stats: dict[str, dict[str, np.ndarray]] = {key: {} for key in data_keys}
 
     for key in data_keys:
         stats_with_key = [stats[key] for stats in stats_list if key in stats]
@@ -720,7 +752,7 @@ def compute_relative_action_stats(
     )
     relative_mask = np.array(mask_step._build_mask(action_dim), dtype=np.float32)
 
-    logging.info("Loading action/state data for relative action stats...")
+    logger.info("Loading action/state data for relative action stats...")
     all_actions = np.array(hf_dataset[ACTION], dtype=np.float32)
     all_states = np.array(hf_dataset[OBS_STATE], dtype=np.float32)
     episode_indices = np.array(hf_dataset["episode_index"])
@@ -732,7 +764,7 @@ def compute_relative_action_stats(
         )
 
     effective_workers = max(num_workers, 1)
-    logging.info(
+    logger.info(
         f"Computing relative action stats from {len(valid_starts)} chunks "
         f"(chunk_size={chunk_size}, workers={effective_workers})"
     )
@@ -769,7 +801,7 @@ def compute_relative_action_stats(
 
     excluded_dims = int(len(relative_mask) - relative_mask.sum())
     total_frames = len(valid_starts) * chunk_size
-    logging.info(
+    logger.info(
         f"Relative action stats ({len(valid_starts)} chunks, {total_frames} frames): "
         f"relative_dims={int(relative_mask.sum())}/{len(relative_mask)} (excluded={excluded_dims}), "
         f"mean={np.abs(stats['mean']).mean():.4f}, std={stats['std'].mean():.4f}, "

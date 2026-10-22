@@ -13,10 +13,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pytest
+from PIL import Image
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
@@ -31,6 +33,7 @@ from lerobot.datasets.compute_stats import (
     sample_images,
     sample_indices,
 )
+from lerobot.datasets.io_utils import load_stats, write_stats
 from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 
 
@@ -199,6 +202,34 @@ def test_compute_episode_stats():
     # RGB is normalized to [0, 1].
     np.testing.assert_allclose(stats[OBS_IMAGE]["min"], 0.0)
     np.testing.assert_allclose(stats[OBS_IMAGE]["max"], 1.0)
+
+
+@pytest.mark.parametrize("feature_dtype", ["image", "video"])
+def test_image_stats_weight_sampled_frames_by_episode_length(tmp_path: Path, feature_dtype: str) -> None:
+    short_frame = tmp_path / "short.png"
+    long_frame = tmp_path / "long.png"
+    Image.new("RGB", (1, 1), color=(0, 0, 0)).save(short_frame)
+    Image.new("RGB", (1, 1), color=(255, 255, 255)).save(long_frame)
+    image_feature = {OBS_IMAGE: {"dtype": feature_dtype}}
+    # Repeating each real static frame removes sampling variance while preserving unequal lengths.
+    short_episode = compute_episode_stats({OBS_IMAGE: [str(short_frame)] * 100}, image_feature)
+    long_episode = compute_episode_stats({OBS_IMAGE: [str(long_frame)] * 1_000}, image_feature)
+    combined = aggregate_stats([short_episode, long_episode])[OBS_IMAGE]
+
+    np.testing.assert_allclose(combined["mean"], np.full((3, 1, 1), 10 / 11))
+    np.testing.assert_allclose(combined["std"], np.full((3, 1, 1), np.sqrt(10) / 11))
+    assert short_episode[OBS_IMAGE]["count"].item() == 100
+    assert long_episode[OBS_IMAGE]["count"].item() == 1_000
+    assert combined["count"].item() == 1_100
+
+    write_stats({OBS_IMAGE: combined}, tmp_path)
+    reloaded = load_stats(tmp_path)
+    for name in ("mean", "std", "count"):
+        np.testing.assert_array_equal(reloaded[OBS_IMAGE][name], combined[name])
+    resumed = aggregate_stats([reloaded, short_episode])[OBS_IMAGE]
+    np.testing.assert_allclose(resumed["mean"], np.full((3, 1, 1), 5 / 6))
+    np.testing.assert_allclose(resumed["std"], np.full((3, 1, 1), np.sqrt(5) / 6))
+    assert resumed["count"].item() == 1_200
 
 
 def test_assert_type_and_shape_valid():
@@ -576,6 +607,18 @@ def test_get_feature_stats_fixed_quantiles():
     assert expected_quantile_keys.issubset(set(stats.keys()))
 
 
+def test_get_feature_stats_custom_quantile_list():
+    """Test that a custom quantile_list is honoured when computing from multiple samples."""
+    data = np.random.default_rng(0).normal(0, 1, (1000, 3))
+
+    stats = get_feature_stats(data, axis=0, keepdims=False, quantile_list=[0.05, 0.95])
+
+    quantile_keys = {key for key in stats if key.startswith("q")}
+    assert quantile_keys == {"q05", "q95"}
+    np.testing.assert_allclose(stats["q05"], np.quantile(data, 0.05, axis=0), atol=0.05)
+    np.testing.assert_allclose(stats["q95"], np.quantile(data, 0.95, axis=0), atol=0.05)
+
+
 def test_get_feature_stats_unsupported_axis_error():
     """Test error for unsupported axis configuration."""
     data = np.random.normal(0, 1, (10, 5))
@@ -688,7 +731,7 @@ def test_compute_episode_stats_string_features_skipped():
 
 
 def test_aggregate_feature_stats_with_quantiles():
-    """Test aggregating feature stats that include quantiles."""
+    """Test aggregating feature stats that include quantiles uses conservative bounds."""
     stats_ft_list = [
         {
             "min": np.array([1.0]),
@@ -697,6 +740,9 @@ def test_aggregate_feature_stats_with_quantiles():
             "std": np.array([2.0]),
             "count": np.array([100]),
             "q01": np.array([1.5]),
+            "q10": np.array([2.0]),
+            "q50": np.array([5.0]),
+            "q90": np.array([9.0]),
             "q99": np.array([9.5]),
         },
         {
@@ -706,22 +752,21 @@ def test_aggregate_feature_stats_with_quantiles():
             "std": np.array([2.5]),
             "count": np.array([150]),
             "q01": np.array([2.5]),
+            "q10": np.array([3.0]),
+            "q50": np.array([6.0]),
+            "q90": np.array([11.0]),
             "q99": np.array([11.5]),
         },
     ]
 
     result = aggregate_feature_stats(stats_ft_list)
 
-    # Should preserve quantiles
-    assert "q01" in result
-    assert "q99" in result
-
-    # Verify quantile aggregation (weighted average)
-    expected_q01 = (1.5 * 100 + 2.5 * 150) / 250  # ≈ 2.1
-    expected_q99 = (9.5 * 100 + 11.5 * 150) / 250  # ≈ 10.7
-
-    np.testing.assert_allclose(result["q01"], np.array([expected_q01]), atol=1e-6)
-    np.testing.assert_allclose(result["q99"], np.array([expected_q99]), atol=1e-6)
+    # Lower quantiles use min; upper quantiles use max, regardless of counts.
+    np.testing.assert_allclose(result["q01"], np.array([1.5]), atol=1e-6)
+    np.testing.assert_allclose(result["q10"], np.array([2.0]), atol=1e-6)
+    np.testing.assert_allclose(result["q50"], np.array([5.0]), atol=1e-6)
+    np.testing.assert_allclose(result["q90"], np.array([11.0]), atol=1e-6)
+    np.testing.assert_allclose(result["q99"], np.array([11.5]), atol=1e-6)
 
 
 def test_aggregate_stats_mixed_quantiles():
@@ -878,3 +923,60 @@ def test_fixed_quantiles_always_computed():
         for q_key in expected_quantiles:
             assert q_key in episode_stats[key]
             assert episode_stats[key][q_key].shape == (features[key]["shape"][0],)
+
+
+def test_aggregate_stats_incremental_resume():
+    """Verify conservative bounds remain associative across incremental additions."""
+    # Start with episode 1 stats (narrow distribution)
+    ep1_stats = {
+        "action": {
+            "min": np.array([-10.0, -5.0]),
+            "max": np.array([10.0, 5.0]),
+            "mean": np.array([0.0, 0.0]),
+            "std": np.array([3.0, 1.5]),
+            "count": np.array([500]),
+            "q01": np.array([-9.0, -4.5]),
+            "q99": np.array([9.0, 4.5]),
+        },
+    }
+
+    # Episode 2: wider distribution on dim 0
+    ep2_stats = {
+        "action": {
+            "min": np.array([-30.0, -5.0]),
+            "max": np.array([40.0, 6.0]),
+            "mean": np.array([5.0, 0.5]),
+            "std": np.array([15.0, 2.0]),
+            "count": np.array([100]),
+            "q01": np.array([-25.0, -4.0]),
+            "q99": np.array([35.0, 5.5]),
+        },
+    }
+
+    # First aggregation: ep1 + ep2 (simulates save_episode for ep2)
+    cumulative = aggregate_stats([ep1_stats, ep2_stats])
+
+    # q01 should take min (conservative lower bound)
+    np.testing.assert_allclose(cumulative["action"]["q01"], np.array([-25.0, -4.5]))
+    # q99 should take max (conservative upper bound)
+    np.testing.assert_allclose(cumulative["action"]["q99"], np.array([35.0, 5.5]))
+
+    # Episode 3: even wider on dim 1
+    ep3_stats = {
+        "action": {
+            "min": np.array([-8.0, -20.0]),
+            "max": np.array([8.0, 25.0]),
+            "mean": np.array([0.0, 3.0]),
+            "std": np.array([2.0, 8.0]),
+            "count": np.array([50]),
+            "q01": np.array([-7.0, -18.0]),
+            "q99": np.array([7.0, 22.0]),
+        },
+    }
+
+    # Second aggregation: cumulative + ep3 (simulates save_episode for ep3)
+    cumulative2 = aggregate_stats([cumulative, ep3_stats])
+
+    # Bounds should widen monotonically
+    np.testing.assert_allclose(cumulative2["action"]["q01"], np.array([-25.0, -18.0]))
+    np.testing.assert_allclose(cumulative2["action"]["q99"], np.array([35.0, 22.0]))

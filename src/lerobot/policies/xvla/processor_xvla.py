@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
 from lerobot.lerobot_types import EnvTransition, TransitionKey
 from lerobot.processor import (
     ObservationProcessorStep,
@@ -144,24 +144,16 @@ class LiberoProcessorStep(ObservationProcessorStep):
         """
         Transforms feature keys from the LIBERO format to the LeRobot standard.
         """
-        new_features: dict[PipelineFeatureType, dict[str, PolicyFeature]] = {}
+        new_features = {ft: feats.copy() for ft, feats in features.items()}
 
-        # copy over non-STATE features
-        for ft, feats in features.items():
-            if ft != PipelineFeatureType.STATE:
-                new_features[ft] = feats.copy()
-
-        # rebuild STATE features
-        state_feats = {}
-
-        # add our new flattened state
-        state_feats[OBS_STATE] = PolicyFeature(
-            key=OBS_STATE,
-            shape=(20,),
-            dtype="float32",
-        )
-
-        new_features[PipelineFeatureType.STATE] = state_feats
+        # rebuild the observation STATE features around our new flattened state
+        observation_features = {
+            key: feature
+            for key, feature in new_features.get(PipelineFeatureType.OBSERVATION, {}).items()
+            if feature.type is not FeatureType.STATE
+        }
+        observation_features[OBS_STATE] = PolicyFeature(type=FeatureType.STATE, shape=(20,))
+        new_features[PipelineFeatureType.OBSERVATION] = observation_features
 
         return new_features
 
