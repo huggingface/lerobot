@@ -305,7 +305,9 @@ for line in sys.stdin:pool.submit(reply,json.loads(line))
 
 def test_dead_worker_fails_pending_requests_instead_of_hanging(tmp_path):
     program = tmp_path / "worker.py"
-    program.write_text("import sys\nsys.stdin.readline()\nsys.exit(1)\n")
+    program.write_text(
+        "import sys\nsys.stdin.readline()\nprint('fixture model load failed',file=sys.stderr,flush=True)\nsys.exit(1)\n"
+    )
     client = RequestProcess(
         [sys.executable, str(program)],
         cwd=tmp_path,
@@ -313,7 +315,7 @@ def test_dead_worker_fails_pending_requests_instead_of_hanging(tmp_path):
         log=tmp_path / "worker.log",
     )
     try:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="fixture model load failed"):
             client.submit({}).result(timeout=5)
     finally:
         client.close()

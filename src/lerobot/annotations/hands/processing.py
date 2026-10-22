@@ -66,7 +66,8 @@ class RequestProcess:
     """JSON-lines request IDs permit two clips in flight without sharing GPU contexts."""
 
     def __init__(self, command, *, cwd, environment, log, window=2):
-        self.log = Path(log).open("w")  # noqa: SIM115 - lifetime is owned by close(), like the subprocess
+        self.log_path = Path(log)
+        self.log = self.log_path.open("w")  # noqa: SIM115 - lifetime is owned by close(), like the subprocess
         self.process = subprocess.Popen(
             command,
             cwd=cwd,
@@ -104,7 +105,13 @@ class RequestProcess:
         finally:
             with self.lock:
                 self.closed = True
-            self._fail_pending(RuntimeError("The native worker exited before returning all requests"))
+            with self.log_path.open("rb") as stream:
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - 4000))
+                detail = stream.read().decode(errors="replace")
+            self._fail_pending(
+                RuntimeError("The native worker exited before returning all requests\n" + detail)
+            )
 
     def _fail_pending(self, error):
         with self.lock:
