@@ -679,9 +679,10 @@ def test_six_dimensional_dataset_trains_through_factory_and_saved_processors(
     base_pre, base_post = make_pre_post_processors(config, dataset_stats=_stats())
     base_pre.save_pretrained(base)
     base_post.save_pretrained(base)
-    config = WallOSS05Config.from_pretrained(base)
+    config = WallOSS05Config.from_pretrained(
+        base, cli_overrides=[f"--camera_key_mapping={json.dumps(cameras)}"]
+    )
     config.pretrained_path = base
-    config.camera_key_mapping = cameras
     policy = make_policy(config, ds_meta=dataset.meta)
     assert config.input_features[OBS_STATE].shape == (6,)
     assert config.action_feature.shape == (6,)

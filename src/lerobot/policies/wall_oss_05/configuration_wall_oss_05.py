@@ -119,6 +119,10 @@ class WallOSS05Config(PreTrainedConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        # Checkpoint CLI overrides merge dictionaries. A new feature key for
+        # the same model slot replaces its saved camera, retaining slot order.
+        cameras_by_slot = {slot: key for key, slot in self.camera_key_mapping.items()}
+        self.camera_key_mapping = {key: slot for slot, key in cameras_by_slot.items()}
         if self.recipe_path is not None:
             from lerobot.datasets.recipe import resolve_recipe_override
 
