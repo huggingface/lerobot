@@ -8,9 +8,11 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import httpx
 import numpy as np
 import pyarrow as pa
 import pytest
+from huggingface_hub.errors import RepositoryNotFoundError
 
 from lerobot.annotations.hands.assets import (
     MANO_FILES,
@@ -105,7 +107,7 @@ def test_reject_bad_native_alignment(source_table, tmp_path, failure):
 def model_api(private=True, owner="alice", revision="a" * 40):
     api = Mock()
     api.whoami.return_value = {"name": owner}
-    api.model_info.return_value = SimpleNamespace(private=private, sha=revision)
+    api.repo_info.return_value = SimpleNamespace(private=private, sha=revision)
     api.list_repo_files.return_value = list(MANO_FILES.values())
     return api
 
@@ -164,11 +166,56 @@ def test_private_asset_pin_download_and_no_mirror_fallback(tmp_path):
 def test_changed_assets_fail_before_model_load(tmp_path):
     api = model_api()
     source = resolve_mano("alice/mano", "t", True, api_factory=lambda **kw: api)
-    api.model_info.return_value.sha = "b" * 40
+    api.repo_info.return_value.sha = "b" * 40
     download = Mock()
     with pytest.raises(ValueError, match="changed"):
         download_mano(source, "t", tmp_path, api_factory=lambda **kw: api, download=download)
     download.assert_not_called()
+
+
+@pytest.mark.parametrize("private", [True, False])
+def test_private_dataset_assets_use_the_same_pinned_namespace_on_download(tmp_path, private):
+    api = model_api()
+    info = SimpleNamespace(private=private, sha="a" * 40)
+
+    def repo_info(repo, *, repo_type):
+        if repo_type == "model":
+            raise RepositoryNotFoundError(
+                "No model repository",
+                response=httpx.Response(404, request=httpx.Request("GET", "https://test.example")),
+            )
+        return info
+
+    api.repo_info.side_effect = repo_info
+    if not private:
+        with pytest.raises(ValueError, match="private"):
+            resolve_mano("alice/mano", "t", True, api_factory=lambda **kw: api)
+        return
+    source = resolve_mano("alice/mano", "t", True, api_factory=lambda **kw: api)
+    assert source["repo_type"] == "dataset"
+    api.list_repo_files.assert_called_once_with("alice/mano", repo_type="dataset", revision="a" * 40)
+    # A same-named model appearing later must not change the pinned asset source.
+    api.repo_info.side_effect = None
+    api.repo_info.return_value = info
+    api.repo_info.reset_mock()
+    asset = tmp_path / "asset.safetensors"
+    asset.write_bytes(b"download transport fixture")
+    download = Mock(return_value=asset)
+    download_mano(source, "t", tmp_path / "private", api_factory=lambda **kw: api, download=download)
+    api.repo_info.assert_called_once_with("alice/mano", repo_type="dataset")
+    assert len(download.call_args_list) == 2
+    assert all(call.kwargs["repo_type"] == "dataset" for call in download.call_args_list)
+
+
+def test_existing_model_manifests_without_repo_type_remain_supported(tmp_path):
+    api = model_api()
+    source = resolve_mano("alice/mano", "t", True, api_factory=lambda **kw: api)
+    source.pop("repo_type")
+    asset = tmp_path / "asset.safetensors"
+    asset.write_bytes(b"download transport fixture")
+    download = Mock(return_value=asset)
+    download_mano(source, "t", tmp_path / "private", api_factory=lambda **kw: api, download=download)
+    assert all(call.kwargs["repo_type"] == "model" for call in download.call_args_list)
 
 
 def test_no_fabricated_hf_gpu_benchmarks():

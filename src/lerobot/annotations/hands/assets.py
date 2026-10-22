@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 
 from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.errors import RepositoryNotFoundError
 
 
 def file_checksum(path: Path) -> tuple[str, int]:
@@ -21,26 +22,43 @@ def file_checksum(path: Path) -> tuple[str, int]:
 MANO_FILES = {"left": "MANO_LEFT.safetensors", "right": "MANO_RIGHT.safetensors"}
 
 
-def resolve_mano(repo: str, token: str, acknowledged: bool, *, api_factory=HfApi) -> dict:
+def resolve_mano(
+    repo: str, token: str, acknowledged: bool, *, repo_type: str | None = None, api_factory=HfApi
+) -> dict:
     if not acknowledged:
         raise ValueError("Confirm your MANO and model rights for non-commercial research first")
     api = api_factory(token=token)
     owner = api.whoami()["name"]
     if not repo or repo.split("/")[0] != owner:
-        raise ValueError("Choose a MANO model repository in your personal Hugging Face account")
-    info = api.model_info(repo)
+        raise ValueError("Choose a MANO repository in your personal Hugging Face account")
+    if repo_type not in {None, "model", "dataset"}:
+        raise ValueError("MANO assets require a model or dataset repository")
+    kind = repo_type or "model"
+    try:
+        info = api.repo_info(repo, repo_type=kind)
+    except RepositoryNotFoundError:
+        if repo_type is not None:
+            raise
+        kind = "dataset"
+        info = api.repo_info(repo, repo_type=kind)
     if not info.private:
         raise ValueError(
             "MANO must come from your private licensed asset repository; public mirrors are disabled"
         )
     if not re.fullmatch(r"[a-f0-9]{40}", info.sha):
         raise ValueError("MANO assets require an immutable Hub revision")
-    files = set(api.list_repo_files(repo, repo_type="model", revision=info.sha))
+    files = set(api.list_repo_files(repo, repo_type=kind, revision=info.sha))
     if not set(MANO_FILES.values()) <= files:
         raise ValueError(
             "The private repository must contain MANO_LEFT.safetensors and MANO_RIGHT.safetensors"
         )
-    return {"repo_id": repo, "revision": info.sha, "files": MANO_FILES, "research_rights_acknowledged": True}
+    return {
+        "repo_id": repo,
+        "repo_type": kind,
+        "revision": info.sha,
+        "files": MANO_FILES,
+        "research_rights_acknowledged": True,
+    }
 
 
 def download_mano(
@@ -48,7 +66,11 @@ def download_mano(
 ) -> dict:
     # Recheck privacy, ownership and immutable revision in the user's Job before GPU setup.
     pinned = resolve_mano(
-        source["repo_id"], token, source.get("research_rights_acknowledged", False), api_factory=api_factory
+        source["repo_id"],
+        token,
+        source.get("research_rights_acknowledged", False),
+        repo_type=source.get("repo_type", "model"),
+        api_factory=api_factory,
     )
     if pinned["revision"] != source["revision"] or source["files"] != MANO_FILES:
         raise ValueError("MANO assets changed after the estimate; create a fresh estimate")
@@ -56,7 +78,13 @@ def download_mano(
     receipts = {}
     for side, filename in MANO_FILES.items():
         path = Path(
-            download(source["repo_id"], filename, repo_type="model", revision=source["revision"], token=token)
+            download(
+                source["repo_id"],
+                filename,
+                repo_type=pinned["repo_type"],
+                revision=source["revision"],
+                token=token,
+            )
         )
         # Safetensors is validated by the model loader; never unpickle uploaded model files.
         target = root / filename
