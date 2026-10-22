@@ -165,7 +165,7 @@ def test_native_keyboard_recording_uses_normal_entrypoint(native_server, tmp_pat
         train_and_rollout(dataset, GymHilEnvConfig(episode_length=3), native_server, tmp_path, monkeypatch)
 
 
-def test_native_teleop_stops_cleanly_at_episode_boundary(tmp_path):
+def test_native_teleop_resets_at_episode_boundary(tmp_path):
     pytest.importorskip("gym_hil")
     from lerobot.processor import make_default_processors
     from lerobot.scripts.lerobot_teleoperate import teleop_loop
@@ -173,21 +173,29 @@ def test_native_teleop_stops_cleanly_at_episode_boundary(tmp_path):
 
     robot = SimRobot(SimRobotConfig(env=GymHilEnvConfig(episode_length=2), calibration_dir=tmp_path))
     teleop = MockTeleop(MockTeleopConfig(n_motors=4))
-    teleop.get_action = lambda: {}
+    episode_steps = []
+
+    def action():
+        episode_steps.append(robot.episode_status.step)
+        if len(episode_steps) == 6:
+            raise KeyboardInterrupt
+        return {}
+
+    teleop.get_action = action
     _, action_processor, observation_processor = make_default_processors()
     try:
         robot.connect()
         teleop.connect()
-        teleop_loop(
-            teleop,
-            robot,
-            fps=10,
-            duration=10,
-            teleop_action_processor=panda_keyboard_processor(),
-            robot_action_processor=action_processor,
-            robot_observation_processor=observation_processor,
-        )
-        assert robot.episode_status.step == 2 and robot.episode_status.truncated
+        with pytest.raises(KeyboardInterrupt):
+            teleop_loop(
+                teleop,
+                robot,
+                fps=10,
+                teleop_action_processor=panda_keyboard_processor(),
+                robot_action_processor=action_processor,
+                robot_observation_processor=observation_processor,
+            )
+        assert episode_steps == [0, 1, 0, 1, 0, 1]
     finally:
         robot.disconnect()
         teleop.disconnect()

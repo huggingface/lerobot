@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from draccus.choice_types import ChoiceType
 
-from lerobot.envs.configs import EnvConfig
+from lerobot.envs.configs import EnvConfig, HubEnvConfig
 from lerobot.robots.config import RobotConfig
 
 
@@ -82,3 +82,5 @@ class SimRobotConfig(RobotConfig):
         super().__post_init__()
         if self.env is None:
             raise ValueError("A sim robot needs --robot.env.type")
+        if isinstance(self.env, HubEnvConfig) and self.env.use_native_batch:
+            raise ValueError("Native batches are for local batched evaluation, not SimRobot")

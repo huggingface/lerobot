@@ -52,9 +52,8 @@ def test_typed_envhub_preserves_native_batch_and_factory_arguments(monkeypatch):
         return {"native": {0: batch}}
 
     module = SimpleNamespace(make_env=factory, LEROBOT_SIM={})
-    monkeypatch.setattr("lerobot.envs.factory._load_hub_module", lambda *args: ("audit/native", module))
-    monkeypatch.setattr(envhub, "_load_hub_module", lambda *args: ("audit/native", module))
-    config = HubEnvConfig(hub_path="audit/native", trust_remote_code=True)
+    monkeypatch.setattr("lerobot.envs.factory.load_hub_module", lambda *args: ("audit/native", module))
+    config = HubEnvConfig(hub_path="audit/native", trust_remote_code=True, use_native_batch=True)
     try:
         assert make_env(config, n_envs=3, use_async_envs=True)["native"][0] is batch
         assert calls == [{"n_envs": 3, "use_async_envs": True}]
@@ -65,7 +64,7 @@ def test_typed_envhub_preserves_native_batch_and_factory_arguments(monkeypatch):
 
 @pytest.mark.parametrize(
     "config",
-    [HubEnvConfig(hub_path="audit/native"), IsaaclabArenaEnv(), UnitreeG1MujocoEnv()],
+    [HubEnvConfig(hub_path="audit/native", use_native_batch=True), IsaaclabArenaEnv(), UnitreeG1MujocoEnv()],
 )
 def test_typed_envhub_subclasses_keep_factory_dispatch_and_cache(monkeypatch, config):
     batch = NativeBatch(2)
@@ -91,10 +90,29 @@ def test_typed_envhub_subclasses_keep_factory_dispatch_and_cache(monkeypatch, co
 def test_scalar_envhub_rejection_closes_all_created_batches(monkeypatch):
     batches = [NativeBatch(1), NativeBatch(1)]
     module = SimpleNamespace(make_env=lambda **kwargs: {"native": dict(enumerate(batches))})
-    monkeypatch.setattr(envhub, "_load_hub_module", lambda *args: ("audit/native", module))
-    with pytest.raises(ValueError, match="scalar|per-world factories"):
+    monkeypatch.setattr(envhub, "load_hub_module", lambda *args: ("audit/native", module))
+    with pytest.raises(ValueError, match="Scalar|per-world factories"):
         envhub.create_envhub_envs("", 1, lambda fns: fns, "audit/native", True)
     assert all(batch.closed for batch in batches)
+
+
+def test_envhub_does_not_unwrap_a_provider_owned_batch_with_factories(monkeypatch):
+    batch = NativeBatch(1)
+    batch.env_fns = [ToyEnv]
+    module = SimpleNamespace(make_env=lambda **kwargs: batch, LEROBOT_SIM={})
+    monkeypatch.setattr(envhub, "load_hub_module", lambda *args: ("audit/native", module))
+    with pytest.raises(ValueError, match="use_native_batch"):
+        make_env(HubEnvConfig(hub_path="audit/native", trust_remote_code=True))
+    assert batch.closed
+
+
+def test_native_batch_option_rejects_serving_and_sim_robot(tmp_path):
+    config = HubEnvConfig(hub_path="audit/native", use_native_batch=True, endpoint="tcp/127.0.0.1:7448")
+    with pytest.raises(ValueError, match="in-process only"):
+        config.create_envs(1)
+    config.endpoint = None
+    with pytest.raises(ValueError, match="not SimRobot"):
+        SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
 
 
 class LongEpisode(gym.Env):

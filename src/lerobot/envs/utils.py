@@ -29,8 +29,6 @@ from lerobot.configs import FeatureType, PolicyFeature
 # Compatibility exports of the torch-free Hub loader, shared with the simulator server.
 from lerobot.sims.native.envhub import (
     _call_make_env as _call_make_env,
-    _download_hub_file as _download_hub_file,
-    _import_hub_module as _import_hub_module,
     _load_module_from_path as _load_module_from_path,
     _normalize_hub_result as _normalize_hub_result,
     _parse_hub_url as _parse_hub_url,

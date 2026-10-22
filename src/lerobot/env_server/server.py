@@ -203,12 +203,22 @@ class EnvServer:
         return session.encode(session.handle(operation, body))
 
     def _open(self, body: dict) -> dict:
+        unknown = set(body) - {
+            "num_envs",
+            "task_group",
+            "task_id",
+            "seeds",
+            "async_worlds",
+            "encoding",
+            "jpeg_quality",
+        }
+        if unknown:
+            raise ProtocolError(ErrorCode.UNSUPPORTED, f"Unsupported session options: {sorted(unknown)}")
         count = body.get("num_envs", 1)
-        clock = body.get("clock", "lockstep")
         async_worlds = body.get("async_worlds", False)
         encoding = body.get("encoding", "raw")
         jpeg_quality = body.get("jpeg_quality", 90)
-        check_open(self.descriptor, count, clock, self.config.max_envs)
+        check_open(count, self.config.max_envs)
         if type(async_worlds) is not bool:
             raise ProtocolError(ErrorCode.MALFORMED, "async_worlds must be a boolean")
         if encoding not in {"raw", "jpeg"} or type(jpeg_quality) is not int or not 1 <= jpeg_quality <= 100:
@@ -235,7 +245,6 @@ class EnvServer:
             self.config.sim,
             self.descriptor,
             count,
-            clock,
             body.get("task_group"),
             body.get("task_id", 0),
             body.get("seeds"),

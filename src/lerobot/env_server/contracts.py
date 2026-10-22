@@ -32,12 +32,9 @@ class EnvDescriptor:
     action_feature: FeatureSpec
     control: str
     fps: float
-    clocks: tuple[str, ...]
     tasks: dict[str, list[str]]
     max_episode_steps: int | None
     sim_build: dict[str, str]
-    gripper_indices: tuple[int, ...] = ()
-    command_retention_indices: tuple[int, ...] = ()
     # Empty when the provider does not declare the simulated robot.
     robot_type: str = ""
     # Used to check that the server runs the requested environment.
@@ -61,11 +58,6 @@ class EnvDescriptor:
             not isinstance(key, str) or not isinstance(value, str) for key, value in self.sim_build.items()
         ):
             raise ValueError("Simulator versions must map strings to strings")
-        if any(
-            i < 0 or i >= self.action_feature.shape[0]
-            for i in self.gripper_indices + self.command_retention_indices
-        ):
-            raise ValueError("Invalid gripper component")
 
     def to_dict(self) -> dict[str, Any]:
         """Return the explicit wire fields without Python-object serialization."""
@@ -78,9 +70,6 @@ class EnvDescriptor:
         data = {key: value for key, value in data.items() if key in known}
         data["features"] = tuple(FeatureSpec(**f) for f in data["features"])
         data["action_feature"] = FeatureSpec(**data["action_feature"])
-        data["clocks"] = tuple(data["clocks"])
-        data["gripper_indices"] = tuple(data.get("gripper_indices", ()))
-        data["command_retention_indices"] = tuple(data.get("command_retention_indices", ()))
         return cls(**data)
 
 

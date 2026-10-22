@@ -15,6 +15,7 @@
 """Scalar Robot behaviour, independent of local or server execution."""
 
 import threading
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -65,6 +66,44 @@ def test_local_execution_uses_shared_backend_on_the_callers_thread(tmp_path, mon
     _ = robot.observation_features
     _ = robot.action_features
     assert robot.robot_type == "panda" and events == before
+
+
+@pytest.mark.parametrize("remote", [False, True])
+@pytest.mark.parametrize("success", [False, True])
+def test_teleop_resets_episodes_and_processors(tmp_path, monkeypatch, request, remote, success):
+    from lerobot.processor import make_default_processors
+    from lerobot.scripts.lerobot_teleoperate import teleop_loop
+    from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
+
+    endpoint = request.getfixturevalue("server")[1] if remote else None
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=endpoint), calibration_dir=tmp_path))
+    teleop = MockTeleop(MockTeleopConfig())
+    processors = make_default_processors()
+    resets = [MagicMock(wraps=processor.reset) for processor in processors]
+    for processor, reset in zip(processors, resets, strict=True):
+        monkeypatch.setattr(processor, "reset", reset)
+    monkeypatch.setattr("lerobot.scripts.lerobot_teleoperate.CycleTimer.wait", lambda self: None)
+    episode_steps = []
+    episode_length = 1 if success else 5
+    num_actions = 2 * episode_length + 1
+
+    def action():
+        episode_steps.append(robot.episode_status.step)
+        if len(episode_steps) > num_actions:
+            raise KeyboardInterrupt
+        return dict.fromkeys(robot.action_features, 2.0 if success else 0.0)
+
+    monkeypatch.setattr(teleop, "get_action", action)
+    try:
+        robot.connect()
+        teleop.connect()
+        with pytest.raises(KeyboardInterrupt):
+            teleop_loop(teleop, robot, 20, *processors)
+        assert episode_steps == [i % episode_length for i in range(num_actions + 1)]
+        assert [reset.call_count for reset in resets] == [num_actions // episode_length] * 3
+    finally:
+        robot.disconnect()
+        teleop.disconnect()
 
 
 @pytest.mark.parametrize("control", ["delta", "position"])

@@ -77,7 +77,6 @@ class BatchedEnv(gym.vector.VectorEnv):
         if not self.client.session:
             self.latest = self.client.open(
                 self.num_envs,
-                "lockstep",
                 self.task_group,
                 self.task_id,
                 list(seeds) if seeds is not None else None,

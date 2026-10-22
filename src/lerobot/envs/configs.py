@@ -189,6 +189,8 @@ class HubEnvConfig(EnvConfig):
     # Keyword arguments of the repository's make_env, e.g. '{"episode_length": 9000}'.
     make_env_kwargs: dict[str, Any] = field(default_factory=dict)
     hub_cache_dir: str | None = None
+    # Keep a provider-owned vector environment instead of building scalar worlds.
+    use_native_batch: bool = False
 
     @property
     def gym_kwargs(self) -> dict:
@@ -200,11 +202,13 @@ class HubEnvConfig(EnvConfig):
         n_envs: int,
         use_async_envs: bool = False,
     ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-        """Keep provider-owned batches intact; scalar serving is an explicit separate path."""
-        if self.endpoint is not None:
+        """Use the shared backend unless the provider must own the vector environment."""
+        if not self.use_native_batch:
             return super().create_envs(n_envs, use_async_envs)
         from .factory import make_hub_envs
 
+        if self.endpoint is not None:
+            raise ValueError("--env.use_native_batch=true runs in-process only; endpoint is not supported")
         if not self.hub_path:
             raise ValueError("--env.hub_path is required for an EnvHub environment")
         return make_hub_envs(
@@ -212,6 +216,8 @@ class HubEnvConfig(EnvConfig):
         )
 
     def sim_settings(self) -> dict[str, Any]:
+        if self.use_native_batch:
+            raise ValueError("Native batches are for local batched evaluation, not SimRobot or serving")
         if not self.hub_path:
             raise ValueError("--env.hub_path is required for an EnvHub environment")
         # The suites come from the repository; --env.task selects among them.

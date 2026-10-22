@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -69,7 +70,7 @@ def test_batch_terminal_freeze_and_seed_parity(server, async_worlds):
     try:
         descriptor = with_client.describe()
         assert descriptor.action_feature.shape == (2,)
-        with_client.open(2, "lockstep", async_worlds=async_worlds)
+        with_client.open(2, async_worlds=async_worlds)
         first = with_client.request("reset", seeds=[10, 20])["result"]
         second = with_client.request("reset", seeds=[10, 20])["result"]
         np.testing.assert_array_equal(first["obs"]["observation.state"], second["obs"]["observation.state"])
@@ -97,10 +98,10 @@ def test_admission_and_stale_generation(server):
     other = EnvClient(endpoint)
     try:
         with pytest.raises(ProtocolError, match="between 1 and 32"):
-            client.open(33, "lockstep")
-        client.open(1, "lockstep")
+            client.open(33)
+        client.open(1)
         with pytest.raises(ProtocolError) as error:
-            other.open(1, "lockstep")
+            other.open(1)
         assert error.value.code == ErrorCode.BUSY
         client.request("reset")
         client.generation = 0
@@ -111,6 +112,13 @@ def test_admission_and_stale_generation(server):
     finally:
         client.close()
         other.close()
+
+
+@pytest.mark.parametrize("clock", ["lockstep", "realtime"])
+def test_server_rejects_removed_clock_selection(server, clock):
+    with pytest.raises(ProtocolError, match="Unsupported session options"):
+        server[0]._open({"clock": clock})
+    assert not server[0].sessions
 
 
 def test_jpeg_observations_match_raw(server):
@@ -219,7 +227,7 @@ def test_server_loss_fails_session(server):
     running, endpoint = server
     client = EnvClient(endpoint, timeout_s=0.1)
     try:
-        client.open(1, "lockstep")
+        client.open(1)
         running.stop.set()
         assert running.stop.is_set()
         time.sleep(0.03)
@@ -256,7 +264,7 @@ def test_failed_robot_stays_connected_until_disconnect(server, tmp_path):
 def test_client_loss_releases_ownership(server):
     running, endpoint = server
     client = EnvClient(endpoint)
-    client.open(1, "lockstep")
+    client.open(1)
     time.sleep(0.03)
     client.transport.close()  # No close query: exercise liveliness cleanup.
     deadline = time.monotonic() + 2
@@ -265,7 +273,7 @@ def test_client_loss_releases_ownership(server):
     assert not running.sessions
     other = EnvClient(endpoint)
     try:
-        other.open(1, "lockstep")
+        other.open(1)
     finally:
         other.close()
 
@@ -756,6 +764,88 @@ def make_env(n_envs=1, use_async_envs=False):
 """
 
 
+@pytest.mark.parametrize("async_worlds", [False, True])
+def test_envhub_local_and_served_evaluation_match(tmp_path, async_worlds):
+    from lerobot.env_server.server import EnvServer, ServerConfig
+    from lerobot.envs.configs import HubEnvConfig
+    from lerobot.envs.factory import make_env
+
+    pytest.importorskip("zenoh")
+    (tmp_path / "env.py").write_text(
+        _ENVHUB_ENV
+        + """
+LEROBOT_SIM = {"fps": 15, "control": "delta", "action_names": ["dx", "dy"]}
+
+def make_env(n_envs=1, use_async_envs=False):
+    return {"reach_suite": {0: gym.vector.SyncVectorEnv(
+        [lambda: gym.wrappers.TimeLimit(Reach(), max_episode_steps=3)] * n_envs
+    )}}
+"""
+    )
+    config = HubEnvConfig(hub_path=str(tmp_path), trust_remote_code=True)
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        endpoint = f"tcp/127.0.0.1:{sock.getsockname()[1]}"
+    server = EnvServer(
+        ServerConfig(
+            deployment="envhub",
+            sim=config.backend_config(),
+            zenoh=ZenohConfig(listen_endpoints=[endpoint]),
+        )
+    )
+    thread = threading.Thread(target=server.serve)
+    thread.start()
+    batches = []
+    try:
+        assert server.ready.wait(5)
+        for location in (None, endpoint):
+            config.endpoint = location
+            batches.append(make_env(config, n_envs=2, use_async_envs=async_worlds)["reach_suite"][0])
+        local, served = batches
+        assert local.canonical_observations and served.canonical_observations
+        assert replace(local.descriptor, config={}) == replace(served.descriptor, config={})
+        assert config.fps == 15
+        assert set(config.features) == {"observation.state", "observation.images.front", "action"}
+        observations = [batch.reset(seed=0)[0] for batch in batches]
+        for name in observations[0]:
+            np.testing.assert_array_equal(observations[0][name], observations[1][name])
+        terminal = None
+        for _ in range(4):
+            results = [batch.step(np.array([[4, 0], [0, 0]], np.float32)) for batch in batches]
+            for name in results[0][0]:
+                np.testing.assert_array_equal(results[0][0][name], results[1][0][name])
+            for index in (1, 2, 3):
+                np.testing.assert_array_equal(results[0][index], results[1][index])
+            np.testing.assert_array_equal(results[0][4]["is_success"], results[1][4]["is_success"])
+            if terminal is None:
+                terminal = results[0][0]["observation.state"][0].copy()
+            np.testing.assert_array_equal(results[0][0]["observation.state"][0], terminal)
+        assert results[0][2].tolist() == [True, False]
+        assert results[0][3].tolist() == [False, True]
+        assert local.latest.step.tolist() == served.latest.step.tolist() == [1, 3]
+        for batch in batches:
+            batch.reset(seed=0)
+            assert batch.latest.step.tolist() == [0, 0]
+    finally:
+        for batch in batches:
+            batch.close()
+        server.stop.set()
+        thread.join(5)
+        assert not thread.is_alive()
+
+
+def test_envhub_string_loading_uses_canonical_observations(tmp_path):
+    from lerobot.envs.factory import make_env
+
+    (tmp_path / "env.py").write_text(_ENVHUB_ENV)
+    batch = make_env(str(tmp_path), trust_remote_code=True)["reach_suite"][0]
+    try:
+        assert batch.canonical_observations
+        assert set(batch.reset()[0]) == {"observation.state", "observation.images.front"}
+    finally:
+        batch.close()
+
+
 def test_envhub_backend_serves_a_hub_repository(tmp_path, monkeypatch):
     from lerobot.sims import backend as backend_module
     from lerobot.sims.native import envhub
@@ -834,7 +924,8 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
         try:
             env = next(iter(next(iter(batches.values())).values()))
             observation, _ = env.reset(seed=0)
-            assert observation["pixels"]["front"].shape == (1, 4, 4, 3)
+            assert env.canonical_observations
+            assert observation["observation.images.front"].shape == (1, 4, 4, 3)
         finally:
             for tasks in batches.values():
                 for env in tasks.values():
@@ -932,10 +1023,9 @@ def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
     env_file.write_text(_ENVHUB_ENV + declared)
     resolved = envhub.resolve_envhub_sim({**sim, "fps": 50})
     assert (resolved["fps"], resolved["control"], resolved["semantics"]) == (50, "delta", "reach-delta-v1")
-    assert (resolved["state_names"], resolved["action_names"], resolved["gripper_indices"]) == (
+    assert (resolved["state_names"], resolved["action_names"]) == (
         ["x", "y"],
         ["dx", "dy"],
-        [],
     )
     assert resolved["robot_type"] == "so_follower"
     # Repositories without LEROBOT_SIM keep working with the defaults.

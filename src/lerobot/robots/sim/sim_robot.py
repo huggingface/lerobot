@@ -142,9 +142,7 @@ class SimRobot(Robot):
         if self.is_connected:
             raise RuntimeError("Sim robot is already connected")
         try:
-            self.latest = self.client.open(
-                1, "lockstep", self._task_group, self.config.task_id, seeds=[self.config.seed]
-            )
+            self.latest = self.client.open(1, self._task_group, self.config.task_id, seeds=[self.config.seed])
             descriptor = self.client.descriptor
             assert descriptor is not None
             if (

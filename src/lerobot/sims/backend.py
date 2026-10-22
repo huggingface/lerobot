@@ -53,16 +53,12 @@ class BackendConfig:
     kwargs: dict[str, Any] = field(default_factory=dict)
     state_names: tuple[str, ...] = ()
     action_names: tuple[str, ...] = ()
-    gripper_indices: tuple[int, ...] = ()
-    command_retention_indices: tuple[int, ...] = ()
     robot_type: str = ""
 
     def __post_init__(self) -> None:
         """Normalize component order and reject invalid controller declarations."""
         self.state_names = tuple(self.state_names)
         self.action_names = tuple(self.action_names)
-        self.gripper_indices = tuple(self.gripper_indices)
-        self.command_retention_indices = tuple(self.command_retention_indices)
         if (
             self.control not in {"position", "delta", "eef_pose", "velocity"}
             or not self.semantics
@@ -131,7 +127,6 @@ def _describe_env(config: BackendConfig, env: Any, tasks: dict[str, list[str]]) 
         FeatureSpec("action", (action_dim,), "float32", names=action_names, semantics=config.semantics),
         config.control,
         config.fps,
-        ("lockstep",),
         tasks,
         episode_limit(env),
         {
@@ -139,8 +134,6 @@ def _describe_env(config: BackendConfig, env: Any, tasks: dict[str, list[str]]) 
             "gymnasium": importlib.metadata.version("gymnasium"),
             **env_attribute(env, "metadata", {}).get("sim_build", {}),
         },
-        config.gripper_indices,
-        config.command_retention_indices,
         config.robot_type,
         asdict(config),
     )

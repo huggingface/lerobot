@@ -30,7 +30,7 @@ from tests.utils import skip_if_package_missing
 
 def _episode(client: EnvClient | InProcessEnvClient) -> list[dict]:
     try:
-        client.open(2, "lockstep", seeds=[10, 20])
+        client.open(2, seeds=[10, 20])
         results = [client.request("reset", seeds=[10, 20])["result"]]
         for actions in ([[2, 0], [0, 0]], [[0.1, 0.1], [0.1, 0.1]], [[0.5, 0], [0.5, 0]]):
             results.append(client.request("step", actions=np.array(actions, np.float32))["result"])

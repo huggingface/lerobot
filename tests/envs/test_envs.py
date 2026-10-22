@@ -25,7 +25,7 @@ from gymnasium.utils.env_checker import check_env
 
 from lerobot.configs.types import PolicyFeature
 from lerobot.envs.batched import prepare_canonical_observation
-from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
+from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig, HubEnvConfig
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import (
     _normalize_hub_result,
@@ -236,7 +236,8 @@ def test_make_env_from_hub_requires_trust_remote_code():
 def test_make_env_from_hub_with_trust(hub_id):
     """Test loading environment from Hugging Face Hub with trust_remote_code=True."""
     # load environment from hub
-    envs_dict = make_env(hub_id, n_envs=2, trust_remote_code=True)
+    config = HubEnvConfig(hub_path=hub_id, use_native_batch=True)
+    envs_dict = make_env(config, n_envs=2, trust_remote_code=True)
 
     # verify structure
     assert isinstance(envs_dict, dict)
@@ -272,7 +273,8 @@ def test_make_env_from_hub_async():
     hub_id = "lerobot/cartpole-env"
 
     # load with async envs
-    envs_dict = make_env(hub_id, n_envs=2, use_async_envs=True, trust_remote_code=True)
+    config = HubEnvConfig(hub_path=hub_id, use_native_batch=True)
+    envs_dict = make_env(config, n_envs=2, use_async_envs=True, trust_remote_code=True)
 
     suite_name = next(iter(envs_dict))
     task_id = next(iter(envs_dict[suite_name]))

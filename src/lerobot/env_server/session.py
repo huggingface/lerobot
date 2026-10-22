@@ -25,14 +25,12 @@ from lerobot.transport.wire.protocol import ErrorCode, ProtocolError
 from .contracts import EnvDescriptor, validate_result
 
 
-def check_open(descriptor: EnvDescriptor, num_envs: Any, clock: str, max_envs: int) -> None:
-    """Reject unsupported batch sizes and clocks before creating native resources."""
+def check_open(num_envs: Any, max_envs: int) -> None:
+    """Reject unsupported batch sizes before creating native resources."""
     if type(num_envs) is not int or not 1 <= num_envs <= max_envs:
         raise ProtocolError(
             ErrorCode.INCOMPATIBLE, f"Batch size {num_envs!r} is not between 1 and {max_envs}"
         )
-    if clock != "lockstep" or clock not in descriptor.clocks:
-        raise ProtocolError(ErrorCode.INCOMPATIBLE, "Simulation supports the lockstep clock only")
 
 
 class SimSession:
@@ -43,14 +41,13 @@ class SimSession:
         sim: BackendConfig,
         descriptor: EnvDescriptor,
         num_envs: int,
-        clock: str,
         task_group: str | None = None,
         task_id: int = 0,
         seeds: list[int | None] | None = None,
         async_worlds: bool = False,
     ) -> None:
-        """Construct and reset the selected task without starting a background clock."""
-        check_open(descriptor, num_envs, clock, num_envs)
+        """Construct and reset the selected task."""
+        check_open(num_envs, num_envs)
         self.backend = Backend(sim, num_envs, task_group, task_id, async_worlds)
         try:
             self.descriptor = self.backend.descriptor()

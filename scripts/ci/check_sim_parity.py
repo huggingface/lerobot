@@ -67,7 +67,7 @@ def check(config_path: Path, steps: int = 5):
                             log.seek(0)
                             raise RuntimeError("Simulator startup failed:\n" + log.read()) from None
                 client.timeout_s = client.setup_timeout_s = 120
-                actual = [client.open(1, "lockstep", seeds=[123])]
+                actual = [client.open(1, seeds=[123])]
                 actual.extend(
                     StepResult.from_dict(client.request("step", actions=action)["result"])
                     for action in actions

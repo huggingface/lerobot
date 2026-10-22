@@ -52,7 +52,6 @@ class InProcessEnvClient:
     def open(
         self,
         num_envs: int,
-        clock: str,
         task_group: str | None = None,
         task_id: int = 0,
         seeds: list[int | None] | None = None,
@@ -63,10 +62,8 @@ class InProcessEnvClient:
             if self.session:
                 raise RuntimeError("Environment session already open")
             descriptor = self.describe()
-            check_open(descriptor, num_envs, clock, num_envs)
-            self._world = SimSession(
-                self.sim, descriptor, num_envs, clock, task_group, task_id, seeds, async_worlds
-            )
+            check_open(num_envs, num_envs)
+            self._world = SimSession(self.sim, descriptor, num_envs, task_group, task_id, seeds, async_worlds)
             self.descriptor = self._world.descriptor
             self.session = uuid.uuid4().hex
             self.generation = 0

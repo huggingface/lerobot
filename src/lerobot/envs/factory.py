@@ -19,7 +19,7 @@ from typing import Any
 
 import gymnasium as gym
 
-from lerobot.sims.native.envhub import _load_hub_module
+from lerobot.sims.native.envhub import load_hub_module
 
 from .configs import EnvConfig, HubEnvConfig
 from .utils import _call_make_env, _normalize_hub_result
@@ -66,7 +66,7 @@ def make_hub_envs(
     cfg: EnvConfig | None = None,
 ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
     """The vector envs a Hub repository's ``make_env`` returns, as it returns them."""
-    _, module = _load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
+    _, module = load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
     options = cfg.make_env_kwargs if isinstance(cfg, HubEnvConfig) else {}
     # Generic Hub environments use the same kwargs locally and on the server.
     provider_config = None if type(cfg) is HubEnvConfig else cfg
@@ -109,7 +109,7 @@ def make_env(
         raise ValueError("`n_envs` must be at least 1")
     # TODO: (jadechoghari): deprecate string API and remove this check
     if isinstance(cfg, str):
-        return make_hub_envs(cfg, n_envs, use_async_envs, trust_remote_code, hub_cache_dir)
+        cfg = HubEnvConfig(hub_path=cfg, trust_remote_code=trust_remote_code, hub_cache_dir=hub_cache_dir)
     if isinstance(cfg, HubEnvConfig):
         if trust_remote_code:
             cfg.trust_remote_code = True

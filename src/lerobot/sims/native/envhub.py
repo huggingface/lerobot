@@ -35,7 +35,6 @@ SIM_DEFAULTS: dict[str, Any] = {
     "semantics": "envhub-v1",
     "state_names": [],
     "action_names": [],
-    "gripper_indices": [],
     "robot_type": "",
 }
 
@@ -143,7 +142,7 @@ def _import_hub_module(local_file: str, repo_id: str) -> Any:
 _MODULES: dict[tuple[str, int, int], Any] = {}
 
 
-def _load_hub_module(hub_path: str, trust_remote_code: bool, hub_cache_dir: str | None) -> tuple[str, Any]:
+def load_hub_module(hub_path: str, trust_remote_code: bool, hub_cache_dir: str | None) -> tuple[str, Any]:
     """Download and import a Hub env.py once per process.
 
     The server builds a Backend for its probe and for every session; executing env.py only once
@@ -204,11 +203,16 @@ def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorE
 
 def _world_factories(vec: Any, n_envs: int) -> list:
     """Extract scalar factories; native GPU batches belong on the direct EnvHub path."""
+    if type(vec) not in (gym.vector.SyncVectorEnv, gym.vector.AsyncVectorEnv):
+        raise ValueError(
+            "Scalar execution requires an unwrapped SyncVectorEnv or AsyncVectorEnv. "
+            "Use --env.use_native_batch=true to preserve provider-owned batches in local evaluation."
+        )
     fns = list(getattr(vec, "env_fns", None) or getattr(vec, "_env_fns", None) or ())
     if len(fns) != n_envs:
         raise ValueError(
             f"Scalar serving requires {n_envs} per-world factories. "
-            "Use direct EnvHub loading for provider-owned native batches."
+            "Use --env.use_native_batch=true for provider-owned batches in local evaluation."
         )
     return fns
 
@@ -226,7 +230,7 @@ def create_envhub_envs(
 
     ``task`` is unused: suites and task ids come from the repository, and clients select them.
     """
-    _, module = _load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
+    _, module = load_hub_module(hub_path, trust_remote_code, hub_cache_dir)
     options = make_env_kwargs or {}
     result = _call_make_env(module, n_envs=n_envs, use_async_envs=False, cfg=None, **options)
     if isinstance(result, gym.Env):
@@ -258,7 +262,7 @@ def resolve_envhub_sim(sim: dict[str, Any]) -> dict[str, Any]:
     if not missing:
         return sim
     kwargs = sim.get("kwargs", {})
-    repo_id, module = _load_hub_module(
+    repo_id, module = load_hub_module(
         kwargs["hub_path"], kwargs.get("trust_remote_code", False), kwargs.get("hub_cache_dir")
     )
     declared = getattr(module, "LEROBOT_SIM", {})

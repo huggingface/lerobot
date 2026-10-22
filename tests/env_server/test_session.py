@@ -32,18 +32,23 @@ def session():
         descriptor = probe.descriptor()
     finally:
         probe.close()
-    world = SimSession(config, descriptor, 1, "lockstep", seeds=[0])
+    world = SimSession(config, descriptor, 1, seeds=[0])
     try:
         yield world
     finally:
         world.close()
 
 
-@pytest.mark.parametrize("clock", ["realtime", "unknown"])
-def test_only_lockstep_is_admitted(session, clock):
-    with pytest.raises(ProtocolError, match="lockstep"):
-        check_open(session.descriptor, 1, clock, 1)
-    assert session.descriptor.clocks == ("lockstep",)
+@pytest.mark.parametrize("count", [0, -1, 2, True, 1.0, "1"])
+def test_invalid_batch_sizes_are_rejected(count):
+    with pytest.raises(ProtocolError, match="Batch size"):
+        check_open(count, 1)
+
+
+def test_descriptor_has_no_unused_execution_options(session):
+    assert (
+        not {"clocks", "gripper_indices", "command_retention_indices"} & session.descriptor.to_dict().keys()
+    )
 
 
 @pytest.mark.parametrize("operation", ["apply", "hold"])

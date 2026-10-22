@@ -90,13 +90,12 @@ class EnvClient:
     def open(
         self,
         num_envs: int,
-        clock: str,
         task_group: str | None = None,
         task_id: int = 0,
         seeds: list[int | None] | None = None,
         async_worlds: bool = False,
     ) -> StepResult:
-        """Admit an exclusive environment batch with the requested clock.
+        """Admit an exclusive, explicitly stepped environment batch.
 
         ``async_worlds`` asks the server to run each world in its own process, so the batch steps in parallel.
         """
@@ -111,7 +110,6 @@ class EnvClient:
                 MessageType.OPEN,
                 {
                     "num_envs": num_envs,
-                    "clock": clock,
                     "task_group": task_group,
                     "task_id": task_id,
                     "seeds": seeds,

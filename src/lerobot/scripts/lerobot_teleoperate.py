@@ -193,6 +193,13 @@ def teleop_loop(
     start = time.perf_counter()
     try:
         while True:
+            if isinstance(robot, SimRobot) and (
+                robot.episode_status.terminated or robot.episode_status.truncated
+            ):
+                robot.reset_episode()
+                teleop_action_processor.reset()
+                robot_action_processor.reset()
+                robot_observation_processor.reset()
             timer.tick()
             loop_start = time.perf_counter()  # for the live readout below
 
@@ -240,10 +247,6 @@ def teleop_loop(
                     move_cursor_up(len(robot_action_to_send) + 3)
 
             timer.wait()
-            if isinstance(robot, SimRobot) and (
-                robot.episode_status.terminated or robot.episode_status.truncated
-            ):
-                return
             loop_s = time.perf_counter() - loop_start
             print(f"Teleop loop time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
             move_cursor_up(1)

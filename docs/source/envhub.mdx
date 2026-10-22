@@ -19,27 +19,31 @@ This design means you can go from discovering an interesting environment on the 
 
 When you create an EnvHub package, you can build anything you want inside it and use any simulation tool you like: this is your own space to play with. The only requirement is that the package contains an `env.py` file that defines the environment and allows LeRobot to load and use your EnvHub package.
 
-This `env.py` file needs to expose a small API so LeRobot can load and run it. Provide a `make_env(n_envs: int = 1, use_async_envs: bool = False, cfg=None)` function. Direct loading with a typed `HubEnvConfig` passes that config as `cfg`; string loading and scalar serving call it without a config. It should return one of:
+This `env.py` file needs to expose a small API so LeRobot can load and run it. Provide a `make_env(n_envs: int = 1, use_async_envs: bool = False)` function. Generic EnvHub loading calls it without a LeRobot config; options come from `make_env_kwargs`. Specialized integrations such as Isaac Lab Arena still pass their own config as `cfg`. It should return one of:
 
 - A `gym.vector.VectorEnv` (most common)
 - A single `gym.Env` (will be automatically wrapped)
 - A dict mapping `{suite_name: {task_id: VectorEnv}}` (for multi-task benchmarks)
 
-Direct loading preserves the returned vector environment, including provider-owned GPU batches. It does not split the batch into independent Python environments.
+By default, local evaluation, served evaluation and `SimRobot` use the same simulator backend. Observations must be dictionaries of arrays, such as `agent_pos` and `pixels`. The backend converts them to LeRobot feature names and preserves terminal observations until reset.
 
-Only **scalar serving and `SimRobot`** require a single environment or vector environments built from per-world factories (`SyncVectorEnv` or `AsyncVectorEnv`). Those paths build explicitly reset scalar worlds. A native GPU batch without scalar factories must use direct loading; it is not automatically supported by `SimRobot` or the simulator server.
+Return a single environment or an unwrapped `SyncVectorEnv` or `AsyncVectorEnv` built from per-world factories. LeRobot uses those factories to build explicitly reset scalar worlds; it does not unwrap custom vector wrappers.
 
-`env.py` may also define an optional `LEROBOT_SIM` dictionary describing scalar execution (fps, control, component names; see [EnvHub and the simulator server](#envhub-and-the-simulator-server)). Direct native batches remain under the provider's configuration and execution rules.
+For provider-owned batches, including GPU vector environments, set `--env.use_native_batch=true`. This preserves the returned environment and its execution rules. It is for local evaluation only, not `SimRobot` or serving. Isaac Lab Arena and Unitree's specialized configs keep their existing native paths.
+
+`env.py` may also define an optional `LEROBOT_SIM` dictionary describing scalar execution (fps, control, component names; see [EnvHub and the simulator server](#envhub-and-the-simulator-server)).
 
 ## Quick Start
 
 Loading an environment from the Hub is as simple as:
 
 ```python
-from lerobot.envs import make_env
+from lerobot.envs import HubEnvConfig, make_env
 
-# Load a hub environment (requires explicit consent to run remote code)
-env = make_env("lerobot/cartpole-env", trust_remote_code=True)
+# CartPole has flat observations and discrete actions, so keep its native batch.
+env = make_env(
+    HubEnvConfig(hub_path="lerobot/cartpole-env", trust_remote_code=True, use_native_batch=True)
+)
 ```
 
 <Tip warning={true}>
@@ -77,15 +81,14 @@ To make your environment loadable from the Hub, your repository must contain at 
 - Every key is optional; repositories without `LEROBOT_SIM` keep working with the defaults
 - `robot_type` is the type the real robot records (`so_follower`, `omx_follower`) when lerobot has a class for the body, so simulated and real datasets match
 
-| Key               | Meaning                                                        | Default                               |
-| ----------------- | -------------------------------------------------------------- | ------------------------------------- |
-| `fps`             | Control rate of one `step()`                                   | `30`                                  |
-| `control`         | Action convention: `position`, `delta`, `eef_pose`, `velocity` | `"position"`                          |
-| `semantics`       | Name of the observation/action conventions                     | `"envhub-v1"`                         |
-| `state_names`     | Names of the `observation.state` components, in order          | generic `state_0`, `state_1`, ...     |
-| `action_names`    | Names of the action components, in order                       | generic `command_0`, `command_1`, ... |
-| `gripper_indices` | Action components kept while the robot holds its command       | none                                  |
-| `robot_type`      | Simulated body, recorded as a sim robot's dataset `robot_type` | none (datasets record `sim`)          |
+| Key            | Meaning                                                        | Default                               |
+| -------------- | -------------------------------------------------------------- | ------------------------------------- |
+| `fps`          | Control rate of one `step()`                                   | `30`                                  |
+| `control`      | Action convention: `position`, `delta`, `eef_pose`, `velocity` | `"position"`                          |
+| `semantics`    | Name of the observation/action conventions                     | `"envhub-v1"`                         |
+| `state_names`  | Names of the `observation.state` components, in order          | generic `state_0`, `state_1`, ...     |
+| `action_names` | Names of the action components, in order                       | generic `command_0`, `command_1`, ... |
+| `robot_type`   | Simulated body, recorded as a sim robot's dataset `robot_type` | none (datasets record `sim`)          |
 
 **`README.md`**
 
@@ -157,7 +160,7 @@ from lerobot.envs.utils import _load_module_from_path, _call_make_env, _normaliz
 module = _load_module_from_path("./env.py")
 
 # Test the make_env function
-result = _call_make_env(module, n_envs=2, use_async_envs=False)
+result = _call_make_env(module, n_envs=2, use_async_envs=False, cfg=None)
 normalized = _normalize_hub_result(result)
 
 # Verify it works
@@ -267,7 +270,7 @@ For better performance with multiple environments:
 envs_dict = make_env(
     "username/my-env",
     n_envs=8,
-    use_async_envs=True,  # Use AsyncVectorEnv for parallel execution
+    use_async_envs=True,  # Step scalar worlds in parallel worker processes
     trust_remote_code=True
 )
 ```
@@ -312,7 +315,7 @@ To be served, an environment must follow these conventions:
 - `env.py` is executed once per server process, so it can keep process-wide state, such as a simulator application that can only start once (Isaac Sim's `SimulationApp`).
 - Observations are the dictionaries in-process LeRobot reads: `pixels` (one HWC uint8 image or a dictionary of cameras), `agent_pos` and `environment_state`, as NumPy arrays.
 - Actions are a one-dimensional continuous `Box`.
-- Episodes end through `terminated`/`truncated` or `_max_episode_steps` (default 500), and `info["is_success"]` reports success. The task text comes from the environment's `task_description` (or `task`) attribute.
+- Episodes end through `terminated`/`truncated`. Declare an episode limit with `TimeLimit` or `_max_episode_steps` for benchmark evaluation; LeRobot does not invent a default limit. `info["is_success"]` reports success. The task text comes from the environment's `task_description` (or `task`) attribute.
 - `LEROBOT_SIM` is optional, but declare it whenever the defaults (30 fps, position control) do not match your environment.
 
 For examples, see the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments-6ad0f5bf3fac8dbe626c17dc): [`lerobot/so101-tabletop-mujoco`](https://huggingface.co/lerobot/so101-tabletop-mujoco) (MuJoCo) and [`lerobot/so101-tabletop-isaac`](https://huggingface.co/lerobot/so101-tabletop-isaac) (Isaac Sim, installed through `requirements.txt` and `packages.txt`) serve the same SO-101 scene with the same observations, actions and `LEROBOT_SIM`.
@@ -372,11 +375,14 @@ env = make_env("trusted-org/verified-env@a1b2c3d4", trust_remote_code=True)
 Here's a complete example using the reference CartPole environment:
 
 ```python
-from lerobot.envs import make_env
+from lerobot.envs import HubEnvConfig, make_env
 import numpy as np
 
-# Load the environment
-envs_dict = make_env("lerobot/cartpole-env", n_envs=4, trust_remote_code=True)
+# CartPole uses its native batch, not the robotics observation/action contract.
+envs_dict = make_env(
+    HubEnvConfig(hub_path="lerobot/cartpole-env", trust_remote_code=True, use_native_batch=True),
+    n_envs=4,
+)
 
 # Get the vectorized environment
 suite_name = next(iter(envs_dict))
@@ -391,8 +397,8 @@ while not done.all():
     # Random policy
     action = env.action_space.sample()
     obs, reward, terminated, truncated, info = env.step(action)
-    total_reward += reward
-    done = terminated | truncated
+    total_reward += reward * ~done
+    done |= terminated | truncated
 
 print(f"Average reward: {total_reward.mean():.2f}")
 env.close()
