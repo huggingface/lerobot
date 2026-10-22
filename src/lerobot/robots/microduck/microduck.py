@@ -107,7 +107,6 @@ class MicroDuck(Robot):
         self._state_ready = threading.Event()
 
         self._frame_lock = threading.Lock()
-        self._latest_frame: np.ndarray | None = None
         self._camera_frame: CameraFrame | None = None
         self._frame_sequence = 0
         self._empty_frame = np.zeros((config.camera_height, config.camera_width, 3), dtype=np.uint8)
@@ -163,7 +162,6 @@ class MicroDuck(Robot):
             self._state_error = None
             self._state_ready.clear()
         with self._frame_lock:
-            self._latest_frame = None
             self._camera_frame = None
             self._frame_ready.clear()
         self._stop_event = threading.Event()
@@ -343,7 +341,6 @@ class MicroDuck(Robot):
             # A late frame from a previous connection must not reach the current one.
             if stop_event.is_set():
                 return False
-            self._latest_frame = frame
             self._frame_sequence += 1
             self._camera_frame = CameraFrame(
                 frame, self._frame_sequence, received_at, media_time_s, session_id
@@ -399,10 +396,8 @@ class MicroDuck(Robot):
 
         if self.config.use_camera:
             with self._frame_lock:
-                frame = self._latest_frame
-            if frame is None:
-                frame = self._empty_frame
-            obs[CAMERA] = frame
+                sample = self._camera_frame
+            obs[CAMERA] = sample.image if sample is not None else self._empty_frame
         return obs
 
     @staticmethod
@@ -442,10 +437,6 @@ class MicroDuck(Robot):
         self._cmd.notify("robot.move", dict(zip(TWIST_PARAMS, twist, strict=True)))
         self._cmd.notify("robot.head", {name: sent[f"{name}.pos"] for name in HEAD_JOINTS})
         return sent
-
-    def get_health(self) -> dict[str, Any]:
-        """Robotd's ``robot.health`` reply: battery, motor temperatures, control loop, ..."""
-        return self._cmd.request("robot.health")
 
     def load_policy(self, policy: str, slot: str = "walk") -> dict[str, Any]:
         """Loads an onboard ONNX policy into ``slot`` (``walk``, ``stand``, ``sitstand``, a skill, ...).

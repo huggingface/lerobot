@@ -89,7 +89,7 @@ def test_record_and_resume_image_streams(tmp_path, monkeypatch, video, camera, o
     )
     robot = MicroDuck(robot_cfg)
     assert not hasattr(robot, "cameras")
-    robot._latest_frame = FRONT_IMAGE
+    robot._publish_frame(FRONT_IMAGE, robot._stop_event)
     monkeypatch.setattr(robot, "connect", lambda: setattr(robot, "_is_connected", True))
     monkeypatch.setattr(robot._cmd, "request", lambda *args, **kwargs: {"accepted": True})
     monkeypatch.setattr(robot._cmd, "notify", lambda *args, **kwargs: None)
