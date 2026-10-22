@@ -1,14 +1,15 @@
 # Hand action annotations
 
 In Annotation Studio, select **Hand actions** alongside other annotations. Choose
-a dataset, episodes and a calibrated human-POV RGB camera, then an HF Jobs GPU
+a dataset, episodes and a human-POV RGB camera, then an HF Jobs GPU
 under **Models & compute**. The shared wizard handles estimates, review, launch
 and progress. This flow uses EgoHand and native SOMA/MHR hands; no MANO files are
 needed.
 
 ## Pipeline
 
-1. **Camera motion:** measured calibration rectifies the video. Fresh DROID-W
+1. **Camera motion:** dataset calibration rectifies the video, or an explicitly
+   selected experimental mode estimates pinhole intrinsics with MoGe. Fresh DROID-W
    camera tracking uses **MoGe Small**, which remains mandatory for depth and
    metric scale. Camera inference samples at 10 Hz and interpolates onto the
    unchanged source frame grid.
@@ -60,10 +61,20 @@ already contain `annotation.original_action` are rejected to preserve provenance
 
 ## Calibration and compute
 
-The selected camera's `info["camera.intrinsics"]` metadata must contain measured
+By default, the selected camera's `info["camera.intrinsics"]` metadata must contain measured
 `pinhole` or `opencv_fisheye` calibration at its exact resolution: `model`, `width`,
 `height`, `fx`, `fy`, `cx`, `cy`, and `distortion`. Missing calibration fails before
 paid dispatch. There is no manual calibration or FPS-assumption form.
+
+For videos without calibration, the explicit **Estimate with MoGe if missing**
+option enables experimental focal estimation with the same pinned MoGe Small
+checkpoint. It takes the median prediction over up to five frames per episode,
+assumes a centered pinhole camera with square pixels and no lens distortion,
+and preserves its assumptions, sample estimates and dispersion in the episode
+report. Existing calibration always takes precedence; malformed calibration is
+not silently replaced. This is an intrinsics estimate, not lens calibration or
+a reproduction of the calibrated benchmark. Its metric accuracy is unvalidated.
+DROID-W + MoGe remain enabled, and no ground-truth scale fitting is introduced.
 
 Default hand input is the sensor image. **Aria Gen1 sensor image** is an explicit
 orientation option (or `camera.hand_input_orientation = "aria-gen1-cw90"` in camera

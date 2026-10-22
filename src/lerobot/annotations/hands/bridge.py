@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .config import HandBackendConfig
 from .egohand.output import export_actions
+from .intrinsics import resolve_calibration
 from .processing import RequestProcess
 
 
@@ -69,7 +70,7 @@ def main():
     def camera(request):
         directory = Path(request["directory"])
         directory.mkdir(parents=True, exist_ok=False)
-        calibration = request["calibration"]
+        calibration = resolve_calibration(request["calibration"], Path(request["video"]), directory, config)
         matrix = np.array(
             [[calibration["fx"], 0, calibration["cx"]], [0, calibration["fy"], calibration["cy"]], [0, 0, 1]],
             dtype=float,
@@ -120,11 +121,11 @@ def main():
             or evidence.get("counts", {}).get("depth_predictions", 0) < 1
         ):
             raise ValueError("The camera worker did not verify DROID-W+MoGe without GT scale fitting")
-        return row, hands, archive, statistics
+        return row, hands, archive, statistics, calibration
 
     def finish(request, pending):
         try:
-            row, hands, archive, statistics = pending.result()
+            row, hands, archive, statistics, calibration = pending.result()
             hand_result = hands.result(timeout=config.timeout_s)
             report = export_actions(
                 Path(hand_result["prediction"]),
@@ -137,6 +138,7 @@ def main():
                 camera_statistics=statistics,
                 hand_components=hand_result["components"],
                 orientation=request["orientation"],
+                camera_intrinsics=calibration,
             )
             response = {"id": request["id"], "status": "ok", "result": report}
         except Exception as error:
