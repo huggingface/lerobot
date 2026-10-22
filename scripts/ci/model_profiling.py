@@ -8,16 +8,37 @@
 import argparse
 import ast
 import json
+import math
 import os
 import shutil
 import subprocess
 import sys
 import zipfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
+SPACE_URL = "https://huggingface.co/spaces/lerobot/health-dashboard"
+HISTORY_URL = "https://lerobot-health-dashboard.hf.space/api/history"
+LATEST_URL = "https://lerobot-health-dashboard.hf.space/api/runs/latest"
+SETUP_FIELDS = (
+    "device_name",
+    "device_total_memory_bytes",
+    "batch_size",
+    "parameter_dtype",
+    "mixed_precision",
+    "warmup",
+    "iterations",
+    "dataset",
+    "dataset_revision",
+    "dataset_episodes",
+    "checkpoint",
+    "checkpoint_revision",
+    "config_fingerprint",
+    "gradient_checkpointing",
+)
 
 
 def policy_matrix(root: Path = ROOT) -> list[dict[str, str]]:
@@ -136,7 +157,83 @@ def run_policy(
     return result.returncode
 
 
-def summary(output_dir: Path, policies: list[str] | None = None) -> str:
+def measured(row: dict, mode: str) -> float | None:
+    result = row.get(mode, {})
+    value = result.get("median_ms")
+    if (
+        result.get("status") == "success"
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and value > 0
+    ):
+        return value
+    return None
+
+
+def comparison(row: dict, mode: str, points: list[dict], started_at: datetime) -> dict:
+    """Nearest matching measurement to four weeks ago, within three days either side."""
+    value = measured(row, mode)
+    result: dict[str, Any] = {"median_ms": value, "change_pct": None, "baseline": None}
+    if value is None or not row.get("config_fingerprint") or any(key not in row for key in SETUP_FIELDS):
+        return result
+    target = started_at - timedelta(weeks=4)
+    candidates = []
+    for point in points:
+        run, old = point["run"], point["result"]
+        if run.get("status") != "completed" or run.get("conclusion") == "cancelled":
+            continue
+        if old.get("policy") != row["policy"] or measured(old, mode) is None:
+            continue
+        if any(key not in old or old[key] != row[key] for key in SETUP_FIELDS):
+            continue
+        date = run.get("run_started_at") or run.get("created_at")
+        if not date:
+            continue
+        timestamp = datetime.fromisoformat(date.replace("Z", "+00:00"))
+        distance = abs(timestamp - target)
+        if distance <= timedelta(days=3):
+            candidates.append((distance, -timestamp.timestamp(), -run.get("run_attempt", 1), point))
+    if candidates:
+        point = min(candidates, key=lambda candidate: candidate[:3])[3]
+        run, old = point["run"], point["result"]
+        previous = measured(old, mode)
+        assert previous is not None  # Candidates above contain successful, finite measurements.
+        result.update(
+            change_pct=(value / previous - 1) * 100,
+            baseline={
+                "run": run.get("key", str(run["id"])),
+                "started_at": run.get("run_started_at") or run["created_at"],
+                "median_ms": previous,
+                "url": run["html_url"],
+            },
+        )
+    return result
+
+
+def metric_label(row: dict, mode: str, metric: dict) -> str:
+    if metric["median_ms"] is not None:
+        return f"{metric['median_ms']:.2f}"
+    error = (row.get(mode, {}).get("error") or row.get("error", "")).lower()
+    if "out of memory" in error or "outofmemory" in error:
+        return "GPU limit"
+    if "gated" in error or "403" in error or "401" in error:
+        return "Access"
+    return "Failed" if error or row.get(mode, {}).get("status") == "failed" else "—"
+
+
+def delta_label(metric: dict) -> str:
+    return f"{metric['change_pct']:+.1f}%" if metric["change_pct"] is not None else "—"
+
+
+def summary(
+    output_dir: Path,
+    policies: list[str] | None = None,
+    *,
+    points: list[dict] | None = None,
+    started_at: datetime | None = None,
+    history_note: str = "",
+    latest: bool = False,
+) -> str:
     rows: list[dict[str, Any]] = []
     for policy in policies or [entry["policy"] for entry in policy_matrix()]:
         path = output_dir / policy / "result.json"
@@ -150,29 +247,130 @@ def summary(output_dir: Path, policies: list[str] | None = None) -> str:
             }
         )
     (output_dir / "results.json").write_text(json.dumps(rows, indent=2) + "\n")
+    started_at = started_at or datetime.now(UTC)
+    comparisons = [
+        {
+            "policy": row["policy"],
+            **{
+                mode: comparison(
+                    row,
+                    mode,
+                    points or [],
+                    datetime.fromisoformat(row["source_run"]["run_started_at"].replace("Z", "+00:00"))
+                    if row.get("source_run", {}).get("run_started_at")
+                    else started_at,
+                )
+                for mode in ("inference", "training")
+            },
+        }
+        for row in rows
+    ]
+    note = (
+        "Median latency in ms; Δ4w: − faster, + slower. — means no matching baseline. "
+        "Baseline: nearest run to 28 days before each measurement (±3 days), with matching GPU and configuration. "
+        "* after a policy means gradient checkpointing is on."
+    )
+    source_note = (
+        "Latest archived measurements from multiple source runs; setups and source dates are retained in results.json."
+        if latest
+        else ""
+    )
     lines = [
         "# LeRobot model profiling",
         "",
+        f"[Results and history in the public health dashboard]({SPACE_URL})",
+        "",
         "Fixed batch; warmup excluded; latency measured without the Torch profiler.",
         "",
-        "| Policy | Status | Inference median ms | Training median ms | Error |",
-        "| --- | --- | ---: | ---: | --- |",
+        note,
+        source_note,
+        history_note,
+        "",
+        "| Policy | Status | Inference ms | Δ4w | Training ms | Δ4w | Error |",
+        "| --- | --- | ---: | ---: | ---: | ---: | --- |",
     ]
-    for row in rows:
+    table = [f"{'Policy':<15} {'Infer ms':>10} {'Δ4w':>8} {'Train ms':>10} {'Δ4w':>8}"]
+    for row, compared in zip(rows, comparisons, strict=True):
         values = []
         for mode in ("inference", "training"):
-            value = row.get(mode, {}).get("median_ms")
-            values.append(f"{value:.2f}" if value is not None else "—")
+            values.extend([metric_label(row, mode, compared[mode]), delta_label(compared[mode])])
+        label = row["policy"] + ("*" if row.get("gradient_checkpointing") else "")
+        table.append(f"{label:<15} {values[0]:>10} {values[1]:>8} {values[2]:>10} {values[3]:>8}")
         errors = [row.get("error", "")] + [row.get(m, {}).get("error", "") for m in ("inference", "training")]
         error = "; ".join(filter(None, errors)).replace("|", "/").replace("\n", " ")[:250]
-        lines.append(f"| {row['policy']} | {row['status']} | {' | '.join(values)} | {error} |")
+        lines.append(f"| {label} | {row['status']} | {' | '.join(values)} | {error} |")
     report = "\n".join(lines) + "\n"
     (output_dir / "README.md").write_text(report)
+    (output_dir / "comparison.json").write_text(
+        json.dumps(
+            {
+                "started_at": started_at.isoformat(),
+                "note": note,
+                "history_note": history_note,
+                "rows": comparisons,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    counts = ", ".join(
+        f"{sum(measured(row, mode) is not None for row in rows)}/{len(rows)} {mode}"
+        for mode in ("inference", "training")
+    )
+    run_url = os.environ.get("PROFILE_RUN_URL", "")
+    payload: dict[str, Any] = {
+        "text": f"LeRobot profiling: {counts}. Results and history: {SPACE_URL}",
+        "unfurl_links": False,
+        "unfurl_media": False,
+        "blocks": [
+            {"type": "header", "text": {"type": "plain_text", "text": "LeRobot model profiling"}},
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{started_at:%Y-%m-%d}* · {counts}\nFresh-action inference / training update · median ms",
+                },
+            },
+            {"type": "section", "text": {"type": "mrkdwn", "text": "```\n" + "\n".join(table) + "\n```"}},
+            {
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": " ".join(filter(None, [note, source_note, history_note]))}
+                ],
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Check Action results"},
+                        "url": SPACE_URL,
+                    }
+                ],
+            },
+        ],
+    }
+    if run_url:
+        payload["blocks"].append(
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": f"<{run_url}|GitHub run and raw artifacts>"}],
+            }
+        )
+    (output_dir / "slack.json").write_text(json.dumps(payload, indent=2) + "\n")
+    check = {
+        "name": "Profiling results",
+        "head_sha": os.environ.get("GITHUB_SHA", ""),
+        "status": "completed",
+        "conclusion": "neutral",
+        "details_url": SPACE_URL,
+        "output": {"title": f"{counts} measurements", "summary": report},
+    }
+    (output_dir / "check.json").write_text(json.dumps(check, indent=2) + "\n")
     return report
 
 
-def archive(output_dir: Path) -> Path:
-    """Prepare a permanent, public report without including caches or credentials."""
+def current_run() -> dict:
     run_id = os.environ["GITHUB_RUN_ID"]
     request = Request(
         f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{run_id}",
@@ -182,7 +380,13 @@ def archive(output_dir: Path) -> Path:
         },
     )
     with urlopen(request, timeout=30) as response:  # nosec B310: fixed GitHub HTTPS host above
-        run = json.load(response)
+        return json.load(response)
+
+
+def archive(output_dir: Path) -> Path:
+    """Prepare a permanent, public report without including caches or credentials."""
+    run_id = os.environ["GITHUB_RUN_ID"]
+    run = current_run()
     rows = json.loads((output_dir / "results.json").read_text())
     metadata = {
         key: run[key] for key in ("id", "head_sha", "head_branch", "created_at", "run_started_at", "html_url")
@@ -198,8 +402,9 @@ def archive(output_dir: Path) -> Path:
     shutil.copyfile(output_dir / "results.json", folder / "results.json")
     (folder / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     with zipfile.ZipFile(folder / "report.zip", "w", zipfile.ZIP_DEFLATED) as report:
-        for name in ("results.json", "README.md"):
-            report.write(output_dir / name, name)
+        for name in ("results.json", "README.md", "comparison.json", "slack.json"):
+            if (output_dir / name).exists():
+                report.write(output_dir / name, name)
     return folder
 
 
@@ -209,6 +414,8 @@ def main() -> int:
     parser.add_argument("--policy")
     parser.add_argument("--output-dir", type=Path, default=Path("profiling-results"))
     parser.add_argument("--gradient-checkpointing", choices=["true", "false"], default="false")
+    parser.add_argument("--compare-history", action="store_true")
+    parser.add_argument("--publish-latest", choices=["true", "false"], default="false")
     args, overrides = parser.parse_known_args()
     if args.command in ("matrix", "summary"):
         selected = set(filter(None, (v.strip() for v in os.environ.get("POLICIES", "").split(","))))
@@ -221,7 +428,33 @@ def main() -> int:
             print(json.dumps({"include": matrix}))
         else:
             args.output_dir.mkdir(parents=True, exist_ok=True)
-            print(summary(args.output_dir, [row["policy"] for row in matrix]))
+            if args.publish_latest == "true":
+                with urlopen(LATEST_URL, timeout=30) as response:  # nosec B310: fixed public HTTPS URL
+                    rows = json.load(response)["rows"]
+                for row in rows:
+                    if row["policy"] in {entry["policy"] for entry in matrix}:
+                        path = args.output_dir / row["policy"] / "result.json"
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(json.dumps(row))
+            points, started_at, history_note = [], None, ""
+            if args.compare_history:
+                run = current_run()
+                started_at = datetime.fromisoformat(run["run_started_at"].replace("Z", "+00:00"))
+                try:
+                    with urlopen(HISTORY_URL, timeout=30) as response:  # nosec B310: fixed public HTTPS URL
+                        points = json.load(response)["points"]
+                except (OSError, ValueError, KeyError):
+                    history_note = "History unavailable; four-week comparisons omitted."
+            print(
+                summary(
+                    args.output_dir,
+                    [row["policy"] for row in matrix],
+                    points=points,
+                    started_at=started_at,
+                    history_note=history_note,
+                    latest=args.publish_latest == "true",
+                )
+            )
     elif args.command == "run":
         return run_policy(
             args.policy, args.output_dir.resolve(), overrides, args.gradient_checkpointing == "true"

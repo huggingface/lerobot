@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tomllib
 import zipfile
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -39,7 +41,7 @@ def test_summary_retains_missing_and_failed_policies(tmp_path):
             {
                 "policy": "act",
                 "status": "failed",
-                "inference": {"median_ms": 12.5},
+                "inference": {"status": "success", "median_ms": 12.5},
                 "training": {"status": "failed", "error": "out of memory"},
             }
         )
@@ -57,6 +59,199 @@ def test_unknown_policy_filter_fails(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["model_profiling.py", "matrix"])
     with pytest.raises(SystemExit, match="2"):
         ci.main()
+
+
+@pytest.fixture
+def measured_policy():
+    return {
+        "policy": "act",
+        "status": "success",
+        "device_name": "NVIDIA L4",
+        "device_total_memory_bytes": 23659151360,
+        "batch_size": 1,
+        "parameter_dtype": "torch.float32",
+        "mixed_precision": "no",
+        "warmup": 3,
+        "iterations": 10,
+        "dataset": "lerobot/pusht",
+        "dataset_revision": None,
+        "dataset_episodes": [0],
+        "checkpoint": None,
+        "checkpoint_revision": None,
+        "config_fingerprint": "recorded-configuration",
+        "gradient_checkpointing": False,
+        "inference": {"status": "success", "median_ms": 10.0},
+        "training": {"status": "success", "median_ms": 20.0},
+    }
+
+
+def history_point(row, days=28, attempt=1):
+    return {
+        "run": {
+            "id": 123,
+            "key": f"123-{attempt}",
+            "run_attempt": attempt,
+            "status": "completed",
+            "conclusion": "failure",
+            # Creation time is stale on retries; use the attempt's start time.
+            "created_at": "2026-01-01T01:00:00Z",
+            "run_started_at": (datetime(2026, 10, 26, 1, tzinfo=UTC) - timedelta(days=days)).isoformat(),
+            "html_url": "https://github.com/huggingface/lerobot/actions/runs/123",
+        },
+        "result": row,
+    }
+
+
+def test_four_week_comparison_selects_nearest_attempt_per_operation(measured_policy):
+    old = deepcopy(measured_policy)
+    old["inference"]["median_ms"] = 12.5
+    old["training"]["median_ms"] = 16.0
+    failed_training = deepcopy(old)
+    failed_training["training"] = {"status": "failed", "error": "out of memory"}
+    points = [history_point(old, 30), history_point(old, 28), history_point(failed_training, 28, 2)]
+    now = datetime(2026, 10, 26, 1, tzinfo=UTC)
+    inference = ci.comparison(measured_policy, "inference", points, now)
+    training = ci.comparison(measured_policy, "training", points, now)
+    assert inference["change_pct"] == pytest.approx(-20.0)
+    assert inference["baseline"]["run"] == "123-2"
+    assert training["change_pct"] == pytest.approx(25.0)
+    assert training["baseline"]["run"] == "123-1"
+    assert training["baseline"]["started_at"].startswith("2026-09-28")
+
+
+@pytest.mark.parametrize("days", [0, 24, 32, 56])
+def test_four_week_comparison_does_not_substitute_recent_or_stale_runs(measured_policy, days):
+    result = ci.comparison(
+        measured_policy,
+        "inference",
+        [history_point(measured_policy, days)],
+        datetime(2026, 10, 26, 1, tzinfo=UTC),
+    )
+    assert result["change_pct"] is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("device_name", "NVIDIA L40S"),
+        ("device_total_memory_bytes", 48000000000),
+        ("batch_size", 2),
+        ("parameter_dtype", "torch.bfloat16"),
+        ("mixed_precision", "bf16"),
+        ("warmup", 1),
+        ("iterations", 50),
+        ("dataset", "another/dataset"),
+        ("dataset_revision", "new-revision"),
+        ("dataset_episodes", [1]),
+        ("checkpoint", "another/checkpoint"),
+        ("checkpoint_revision", "new-checkpoint"),
+        ("config_fingerprint", "different-optimizer"),
+        ("gradient_checkpointing", True),
+    ],
+)
+def test_four_week_comparison_rejects_different_setups(measured_policy, field, value):
+    old = {**measured_policy, field: value}
+    result = ci.comparison(
+        measured_policy, "training", [history_point(old)], datetime(2026, 10, 26, 1, tzinfo=UTC)
+    )
+    assert result["baseline"] is None
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -1, 0, None])
+def test_invalid_latency_is_never_compared(measured_policy, value):
+    measured_policy["inference"]["median_ms"] = value
+    assert ci.measured(measured_policy, "inference") is None
+
+
+def test_summary_slack_and_check_keep_failures_and_dashboard_link(tmp_path, measured_policy, monkeypatch):
+    monkeypatch.setenv("GITHUB_SHA", "tested-commit")
+    monkeypatch.setenv("PROFILE_RUN_URL", "https://github.com/huggingface/lerobot/actions/runs/456")
+    policies = [entry["policy"] for entry in ci.policy_matrix()]
+    for policy in policies:
+        folder = tmp_path / policy
+        folder.mkdir()
+        row = {**measured_policy, "policy": policy}
+        if policy == "eo1":
+            row["status"] = "failed"
+            row["training"] = {"status": "failed", "error": "CUDA out of memory"}
+        (folder / "result.json").write_text(json.dumps(row))
+    old = deepcopy(measured_policy)
+    old["inference"]["median_ms"] = 12.5
+    old["training"]["median_ms"] = 16.0
+    report = ci.summary(
+        tmp_path, points=[history_point(old)], started_at=datetime(2026, 10, 26, 1, tzinfo=UTC)
+    )
+    assert "| act | success | 10.00 | -20.0% | 20.00 | +25.0% |" in report
+    assert "| eo1 | failed | 10.00 | — | GPU limit | — |" in report
+    payload = json.loads((tmp_path / "slack.json").read_text())
+    table = payload["blocks"][2]["text"]["text"]
+    assert len(table) < 3000  # Slack section limit; includes all registered policies.
+    assert all(policy in table for policy in policies)
+    assert "GPU limit" in table
+    assert payload["blocks"][4]["elements"][0]["url"] == ci.SPACE_URL
+    check = json.loads((tmp_path / "check.json").read_text())
+    assert check["details_url"] == ci.SPACE_URL
+    assert check["head_sha"] == "tested-commit"
+    assert ci.SPACE_URL in check["output"]["summary"]
+    compared = json.loads((tmp_path / "comparison.json").read_text())
+    assert compared["rows"][0]["inference"]["baseline"]["median_ms"] == 12.5
+
+
+def test_history_outage_still_writes_current_report(monkeypatch, tmp_path):
+    monkeypatch.setenv("POLICIES", "act")
+    monkeypatch.setattr(
+        sys, "argv", ["model_profiling.py", "summary", "--compare-history", "--output-dir", str(tmp_path)]
+    )
+    monkeypatch.setattr(ci, "current_run", lambda: {"run_started_at": "2026-10-26T01:00:00Z"})
+
+    def unavailable(*args, **kwargs):
+        raise OSError("Space unavailable")
+
+    monkeypatch.setattr(ci, "urlopen", unavailable)
+    assert ci.main() == 0
+    assert "History unavailable" in (tmp_path / "README.md").read_text()
+    assert json.loads((tmp_path / "comparison.json").read_text())["rows"][0]["inference"]["baseline"] is None
+
+
+def test_publish_latest_retains_sources_and_compares_measurement_date(monkeypatch, tmp_path, measured_policy):
+    old = deepcopy(measured_policy)
+    old["inference"]["median_ms"] = 12.5
+    row = {**measured_policy, "source_run": history_point(measured_policy, 0)["run"]}
+    responses = {
+        ci.LATEST_URL: {"rows": [row]},
+        ci.HISTORY_URL: {"points": [history_point(old)]},
+    }
+    monkeypatch.setattr(ci, "urlopen", lambda url, **kwargs: io.BytesIO(json.dumps(responses[url]).encode()))
+    monkeypatch.setattr(ci, "current_run", lambda: {"run_started_at": "2026-11-23T01:00:00Z"})
+    monkeypatch.setenv("POLICIES", "act")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "model_profiling.py",
+            "summary",
+            "--compare-history",
+            "--publish-latest=true",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+    assert ci.main() == 0
+    assert json.loads((tmp_path / "results.json").read_text()) == [row]
+    result = json.loads((tmp_path / "comparison.json").read_text())
+    assert result["rows"][0]["inference"]["change_pct"] == pytest.approx(-20.0)
+    assert "multiple source runs" in (tmp_path / "README.md").read_text()
+
+
+def test_unrecorded_configuration_cannot_be_a_baseline(measured_policy):
+    old = deepcopy(measured_policy)
+    del old["config_fingerprint"]
+    assert (
+        ci.comparison(
+            measured_policy, "inference", [history_point(old)], datetime(2026, 10, 26, 1, tzinfo=UTC)
+        )["baseline"]
+        is None
+    )
 
 
 def test_archive_preserves_run_attempt_and_only_public_report_files(monkeypatch, tmp_path):
@@ -78,6 +273,8 @@ def test_archive_preserves_run_attempt_and_only_public_report_files(monkeypatch,
     monkeypatch.setattr(ci, "urlopen", lambda *args, **kwargs: io.BytesIO(json.dumps(run).encode()))
     (tmp_path / "results.json").write_text(json.dumps([{"policy": "act", "status": "failed"}]))
     (tmp_path / "README.md").write_text("Measured results")
+    (tmp_path / "comparison.json").write_text("[]")
+    (tmp_path / "slack.json").write_text("{}")
     (tmp_path / "unrelated.txt").write_text("Do not publish")
     folder = ci.archive(tmp_path)
     metadata = json.loads((folder / "run.json").read_text())
@@ -86,7 +283,7 @@ def test_archive_preserves_run_attempt_and_only_public_report_files(monkeypatch,
     assert metadata["created_at"] == run["created_at"]
     assert metadata["run_started_at"] == run["run_started_at"]
     with zipfile.ZipFile(folder / "report.zip") as report:
-        assert set(report.namelist()) == {"results.json", "README.md"}
+        assert set(report.namelist()) == {"results.json", "README.md", "comparison.json", "slack.json"}
 
 
 def test_runner_propagates_failure_and_writes_row(monkeypatch, tmp_path):
