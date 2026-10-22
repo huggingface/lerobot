@@ -433,6 +433,7 @@ def make_dataloaders(
                 train_num_workers,
                 rank_episodes,
             )
+        dataset.set_data_parallel_shard(parallel_dims.dp_rank, parallel_dims.dp_world_size)  # not RANK env
         if (
             dataset.num_frames_for_rank(parallel_dims.dp_rank, parallel_dims.dp_world_size, train_num_workers)
             == 0

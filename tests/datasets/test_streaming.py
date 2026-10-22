@@ -67,6 +67,30 @@ def test_streaming_dataset_forwards_token_to_metadata_and_remote_worker_io(
     )
 
 
+def test_streaming_dataset_sidecar_lock_timeout(tmp_path, monkeypatch):
+    metadata = SimpleNamespace(
+        repo_id=DUMMY_REPO_ID,
+        root=tmp_path,
+        revision=streaming_dataset_module.CODEBASE_VERSION,
+        _version=streaming_dataset_module.CODEBASE_VERSION,
+        features={},
+        total_episodes=0,
+        video_keys=[],
+        depth_keys=[],
+        image_keys=[],
+        rescale_depth_stats=Mock(),
+    )
+    ensure_sidecar = Mock(side_effect=TimeoutError("Timed out waiting 5s for MP4 sidecar lock"))
+    monkeypatch.setattr(streaming_dataset_module, "LeRobotDatasetMetadata", Mock(return_value=metadata))
+    monkeypatch.setattr(streaming_dataset_module, "ensure_dataset_mp4_sidecar", ensure_sidecar)
+
+    with pytest.raises(TimeoutError) as excinfo:
+        StreamingLeRobotDataset(DUMMY_REPO_ID, root=tmp_path, sidecar_lock_timeout_s=5)
+
+    assert ensure_sidecar.call_args.kwargs["lock_timeout_s"] == 5
+    assert "--dataset.streaming_sidecar_lock_timeout_s" in "".join(excinfo.value.__notes__)
+
+
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
     """Test if are correctly accessed"""
     ds_num_frames = 400
