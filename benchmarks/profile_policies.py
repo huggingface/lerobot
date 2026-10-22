@@ -256,6 +256,15 @@ def main(cfg: ProfileConfig) -> None:
         "policy": cfg.policy.type,
         "status": "failed",
         "profile_mode": cfg.profile_mode,
+        "gradient_checkpointing": any(
+            getattr(cfg.policy, key, False)
+            for key in (
+                "gradient_checkpointing",
+                "use_gradient_checkpointing",
+                "vlm_gradient_checkpointing",
+                "ae_gradient_checkpointing",
+            )
+        ),
         "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "git_dirty": subprocess.run(["git", "diff", "--quiet", "HEAD"], check=False).returncode != 0,
         "torch_version": torch.__version__,
@@ -292,15 +301,6 @@ def main(cfg: ProfileConfig) -> None:
             json.dumps(row["configuration"], sort_keys=True).encode()
         ).hexdigest()
         row["parameter_dtype"] = str(next(policy.parameters()).dtype)
-        row["gradient_checkpointing"] = any(
-            getattr(policy.config, key, False)
-            for key in (
-                "gradient_checkpointing",
-                "use_gradient_checkpointing",
-                "vlm_gradient_checkpointing",
-                "ae_gradient_checkpointing",
-            )
-        )
         row["mixed_precision"] = cfg.accelerator.mixed_precision
         # Build processors from the effective policy config and this dataset's statistics.
         preprocessor, _ = make_pre_post_processors(
