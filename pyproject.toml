@@ -395,7 +395,6 @@ lerobot-imgtransform-viz="lerobot.scripts.lerobot_imgtransform_viz:main"
 lerobot-edit-dataset="lerobot.scripts.lerobot_edit_dataset:main"
 lerobot-setup-can="lerobot.scripts.lerobot_setup_can:main"
 lerobot-annotate="lerobot.scripts.lerobot_annotate:main"
-lerobot-annotate-hands="lerobot.scripts.lerobot_annotate_hands:main"
 lerobot-rollout="lerobot.scripts.lerobot_rollout:main"
 lerobot-policy-server="lerobot.scripts.lerobot_policy_server:main"
 

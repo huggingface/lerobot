@@ -1,324 +1,324 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License").
-"""CPU contract tests: real checkpoints, source binding and external-process I/O."""
+"""Frame preservation, asset isolation and native hand-process contracts."""
 
-import io
-import json
 import os
+import subprocess
 import sys
-import tarfile
-import time
-from dataclasses import asdict, replace
-from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
-import draccus
 import numpy as np
 import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
-pytest.importorskip("datasets")
-
-from lerobot.annotations.hands.config import (
-    GROUNDED_REVISION,
-    HandBackendConfig,
-    HandPipelineConfig,
-    estimate,
+from lerobot.annotations.hands.assets import (
+    MANO_FILES,
+    checkpoint_guard,
+    download_mano,
+    file_checksum,
+    resolve_mano,
 )
-from lerobot.annotations.hands.pipeline import extract_dataset, materialize, run_hand_pipeline
-from lerobot.annotations.hands.processing import (
-    HandReconstructionStage,
-    provisioned_environment,
-    validate_dataset,
-)
-from lerobot.annotations.hands.source import RawHandVideoSource
-from lerobot.annotations.runtime.artifacts import ArtifactStore, file_checksum
-from lerobot.annotations.runtime.configs import StageConfig
-from lerobot.annotations.runtime.pipeline import run_pipeline
-from lerobot.annotations.runtime.planner import seal_plan
-from lerobot.annotations.runtime.types import Outcome, Resources
-from lerobot.annotations.runtime.worker import accepted_items
-
-
-class CPUHandStage(HandReconstructionStage):
-    """Only model inference is replaced; production orchestration stays real."""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.spec = replace(self.spec, resources=Resources())
-
-    def setup(self, context):
-        self.environment = {**os.environ, "CUDA_VISIBLE_DEVICES": "0"}
+from lerobot.annotations.hands.config import COMPUTE, estimate
+from lerobot.annotations.hands.writer import ACTION_NAMES, attach_actions, validate_calibration
 
 
 @pytest.fixture
-def source(tmp_path, monkeypatch):
-    root = tmp_path / "raw"
-    root.mkdir()
+def source_table():
+    return pa.table(
+        {
+            "episode_index": pa.array([8] * 40, type=pa.int64()),
+            "frame_index": pa.array(range(40), type=pa.int64()),
+            "timestamp": pa.array(np.arange(40) / 10, type=pa.float32()),
+            "action": pa.array([[float(i), 2.0] for i in range(40)], type=pa.list_(pa.float32(), 2)),
+            "observation.state": pa.array([[float(i)] for i in range(40)], type=pa.list_(pa.float32(), 1)),
+        }
+    )
+
+
+def native_report(directory, *, observed=True):
+    segments = []
+    if observed:
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / "segment.npz"
+        np.savez(
+            path,
+            source_frame_index=np.arange(5, 35),
+            timestamp_s=np.arange(5, 35) / 10,
+            action=np.ones((30, 102), dtype=np.float32),
+            confidence=np.full((30, 2), 0.9),
+        )
+        segments.append(str(path))
+    return {
+        "rectified_frames": 40,
+        "rectified_fps": 10.0,
+        "accepted_frames": 30 if observed else 0,
+        "segments": segments,
+    }
+
+
+@pytest.mark.parametrize("observed", [True, False])
+def test_attach_keeps_every_frame_and_original_action(source_table, tmp_path, observed):
+    report = native_report(tmp_path, observed=observed)
+    annotated, summary = attach_actions(source_table, report, directory=tmp_path, fps=10)
+    assert len(annotated) == len(source_table) == 40
+    for name in ("episode_index", "frame_index", "timestamp", "observation.state"):
+        assert annotated[name].equals(source_table[name])
+    assert annotated["annotation.original_action"].equals(source_table["action"])
+    valid = np.array(annotated["annotation.hand_action_valid"].to_pylist()).ravel()
+    actions = np.array(annotated["action"].to_pylist())
+    assert valid.sum() == (30 if observed else 0)
+    assert not actions[~valid].any()
+    assert np.isfinite(actions).all() and actions.shape == (40, 102)
+    reference = np.array(annotated["annotation.hand_reference_frame"].to_pylist()).ravel()
+    assert np.all(reference[~valid] == -1)
+    assert np.all(reference[valid] == 5)
+    assert summary["unmeasured_frames"] == (10 if observed else 40)
+    assert len(ACTION_NAMES) == len(set(ACTION_NAMES)) == 102
+
+
+@pytest.mark.parametrize("failure", ["overlap", "clock", "length", "outside", "nonfinite", "source_action"])
+def test_reject_bad_native_alignment(source_table, tmp_path, failure):
+    report = native_report(tmp_path)
+    if failure == "overlap":
+        report["segments"] *= 2
+    elif failure == "clock":
+        report["rectified_fps"] = 15
+    elif failure == "length":
+        report["rectified_frames"] = 39
+    elif failure == "outside":
+        report["segments"] = [str(tmp_path.parent / "escape.npz")]
+    elif failure == "source_action":
+        source_table = source_table.append_column("annotation.original_action", source_table["action"])
+    else:
+        path = tmp_path / "segment.npz"
+        with np.load(path) as data:
+            values = dict(data)
+        values["action"][0, 0] = np.nan
+        np.savez(path, **values)
+    with pytest.raises(ValueError):
+        attach_actions(source_table, report, directory=tmp_path, fps=10)
+
+
+def model_api(private=True, owner="alice", revision="a" * 40):
+    api = Mock()
+    api.whoami.return_value = {"name": owner}
+    api.model_info.return_value = SimpleNamespace(private=private, sha=revision)
+    api.list_repo_files.return_value = list(MANO_FILES.values())
+    return api
+
+
+@pytest.mark.parametrize(
+    "repo,accepted,private",
+    [("alice/mano", False, True), ("mirror/mano", True, True), ("alice/mano", True, False)],
+)
+def test_mano_rights_privacy_and_ownership_required(repo, accepted, private):
+    with pytest.raises(ValueError):
+        resolve_mano(repo, "private-token", accepted, api_factory=lambda **kw: model_api(private))
+
+
+def test_private_asset_pin_download_and_no_mirror_fallback(tmp_path):
+    api = model_api()
+    source = resolve_mano("alice/mano", "private-token", True, api_factory=lambda **kw: api)
+    files = {}
+    for filename in MANO_FILES.values():
+        path = tmp_path / filename
+        path.write_bytes(filename.encode())
+        files[filename] = path
+    download = Mock(side_effect=lambda repo, filename, **kw: files[filename])
+    receipt = download_mano(
+        source, "private-token", tmp_path / "private", api_factory=lambda **kw: api, download=download
+    )
+    assert all(
+        call.kwargs["revision"] == "a" * 40 and call.kwargs["token"] == "private-token"
+        for call in download.call_args_list
+    )
+    guard = checkpoint_guard(tmp_path / "guard", receipt)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import huggingface_hub as h; print(h.hf_hub_download('public/mirror','MANO_RIGHT.safetensors')); h.hf_hub_download('public/mirror','other_MANO.safetensors')",
+        ],
+        env={**os.environ, "PYTHONPATH": str(guard), "HF_HUB_OFFLINE": "1"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert str(receipt["right"]["path"]) in result.stdout
+    assert result.returncode != 0 and "Unapproved MANO" in result.stderr
+    assert "private-token" not in (guard / "sitecustomize.py").read_text()
+    files["MANO_LEFT.safetensors"].write_bytes(b"changed source")
+    # The private copy is checksum-bound independently of mutable source-cache handles.
+    assert file_checksum(tmp_path / "private/MANO_LEFT.safetensors") == (
+        receipt["left"]["sha256"],
+        receipt["left"]["size"],
+    )
+    (tmp_path / "private/MANO_LEFT.safetensors").write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="checksum"):
+        checkpoint_guard(tmp_path / "guard", receipt)
+
+
+def test_changed_assets_fail_before_model_load(tmp_path):
+    api = model_api()
+    source = resolve_mano("alice/mano", "t", True, api_factory=lambda **kw: api)
+    api.model_info.return_value.sha = "b" * 40
+    download = Mock()
+    with pytest.raises(ValueError, match="changed"):
+        download_mano(source, "t", tmp_path, api_factory=lambda **kw: api, download=download)
+    download.assert_not_called()
+
+
+def test_no_fabricated_hf_gpu_benchmarks():
+    assert set(COMPUTE) == {"h200", "a100-large", "rtx-pro-6000"}
+    assert estimate(3000)["seconds"] is None
+    assert estimate(3000, 50)["seconds"] == 60
+    assert estimate(3000, 50)["basis"] == "user planning assumption"
+    with pytest.raises(ValueError):
+        estimate(3000, float("nan"))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"fx": 0},
+        {"fy": 51},
+        {"width": 32},
+        {"cx": float("nan")},
+        {"model": "opencv_fisheye", "distortion": []},
+    ],
+)
+def test_calibration_is_measured_and_resolution_bound(change):
     calibration = {
         "model": "pinhole",
         "width": 64,
         "height": 64,
-        "fx": 50,
-        "fy": 50,
-        "cx": 32,
-        "cy": 32,
+        "fx": 50.0,
+        "fy": 50.0,
+        "cx": 32.0,
+        "cy": 32.0,
         "distortion": [],
     }
-    for index in range(3):
-        (root / f"video{index}.mp4").write_bytes(b"video" + bytes([index]))
-        (root / f"video{index}.intrinsics.json").write_text(json.dumps(calibration))
-    monkeypatch.setattr(
-        "lerobot.annotations.hands.source.probe_video",
-        lambda p: {
-            "width": 64,
-            "height": 64,
-            "fps": 30,
-            "frames": 150,
-            "seconds": 5,
-        },
+    assert validate_calibration(calibration, 64, 64) == calibration
+    with pytest.raises(ValueError):
+        validate_calibration({**calibration, **change}, 64, 64)
+
+
+def test_native_infiller_predictions_are_retained_but_not_mislabeled(tmp_path, source_table):
+    from lerobot.annotations.hands.bridge import preserve_infilling
+
+    n = 40
+    observed = np.ones((n, 2), dtype=bool)
+    infilled = np.zeros((n, 2), dtype=bool)
+    observed[30:35, 1] = False
+    infilled[30:35, 1] = True
+    observed[39] = False
+    joints = np.zeros((n, 2, 21, 3))
+    joints[39] = np.nan  # Unrecoverable; the infiller did not produce a pose.
+    archive = tmp_path / "native.npz"
+    np.savez(
+        archive,
+        joints_camera=joints,
+        packaged_joints_camera=joints,
+        infilled=infilled,
+        raw_direct_valid=observed,
+        mano_pose=np.ones((n, 2, 96)),
+        mano_shape=np.zeros((n, 2, 10)),
+        wrist_rotation_camera=np.tile(np.eye(3), (n, 2, 1, 1)),
+        world_from_camera=np.tile(np.eye(4), (n, 1, 1)),
+        camera_tracked=np.ones(n, dtype=bool),
+        confidence=np.ones((n, 2)),
+        source_frame_index=np.arange(n),
+        timestamp_s=np.arange(n) / 10,
     )
-    return RawHandVideoSource(root, videos_per_group=2)
+    report = native_report(tmp_path)
+    # A separate native observed-only span: valid strict training frames 0–29.
+    strict = tmp_path / "strict.npz"
+    np.savez(strict, source_frame_index=np.arange(30))
+    report.update(hand_prediction=str(archive), segments=[str(strict)])
+    geometry = Mock()
+    geometry.fuse_segment_to_flu.side_effect = lambda j, w, c: (np.ones((len(j), 12)), j)
+    geometry.policy_action_with_mano.side_effect = lambda w, p: np.ones((len(w), 102))
+    report = preserve_infilling(report, tmp_path, geometry)
+    table, summary = attach_actions(source_table, report, directory=tmp_path, fps=10)
+    assert summary["valid_frames"] == 39
+    assert summary["observed_training_frames"] == 30
+    assert summary["infilled_frames"] == 5
+    assert summary["unmeasured_frames"] == 1
+    assert table["annotation.hand_action_valid"][32].as_py() is True
+    assert table["annotation.hand_infilled"][32].as_py() == [False, True]
+    assert table["annotation.hand_action_observed_valid"][32].as_py() is False
+    assert table["annotation.hand_action_valid"][39].as_py() is False
+    assert table["annotation.hand_reference_frame"][32].as_py() == 0
+    geometry.fuse_segment_to_flu.assert_called_once()
+    # Reject a corrupted export trying to count infilled poses as observed.
+    dense_path = report["dense_segments"][0]
+    with np.load(dense_path) as data:
+        values = dict(data)
+    values["observed_valid"][32] = True
+    np.savez(dense_path, **values)
+    with pytest.raises(ValueError, match="Infilled predictions"):
+        attach_actions(source_table, report, directory=tmp_path, fps=10)
 
 
-def test_estimate_hardware_and_group_scheduling(source):
-    cfg = HandPipelineConfig()
-    cfg.runtime.workers = 2
-    result = estimate(cfg, source.groups)
-    assert result["source_frames"] == 450
-    assert result["estimated_seconds"] == pytest.approx(300 / 53.9)
-    cfg.compute = "h200"
-    assert estimate(cfg, source.groups)["estimated_fps_per_gpu"] is None
-    cfg.planning_fps = 40
-    assert estimate(cfg, source.groups)["estimated_seconds"] == 7.5
-    assert estimate(cfg, source.groups)["basis"] == "user planning assumption"
+def test_droid_native_bridge_reuses_one_service_across_requests(tmp_path, monkeypatch):
+    from pathlib import Path
 
+    from lerobot.annotations.hands.config import HandBackendConfig
+    from lerobot.annotations.hands.processing import HandAnnotator
 
-@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
-def test_invalid_planning_fps(value):
-    with pytest.raises(ValueError, match="planning_fps"):
-        HandPipelineConfig(planning_fps=value).validate()
-
-
-def test_inputs_bind_calibration_content_and_mutations(source, tmp_path):
-    store = ArtifactStore(tmp_path / "store")
-    factory = "lerobot.annotations.hands.processing:HandReconstructionStage"
-    stage = StageConfig("hands", factory, {"backend": {}})
-    plan = seal_plan(
-        store, source.dataset_ref, factory, stage.config, source.discover(stage, store, {}), shard_size=1
-    )
-    assert not store.exists(source.videos[0]["video"]["path"])
-    calibration = source.root / "video0.intrinsics.json"
-    calibration.write_text(calibration.read_text() + "\n")
-    with pytest.raises(ValueError, match="Source changed"):
-        source.stage_inputs(store, plan)
-    updated = RawHandVideoSource(source.root, videos_per_group=2)
-    new_plan = seal_plan(
-        store, updated.dataset_ref, factory, stage.config, updated.discover(stage, store, {}), shard_size=1
-    )
-    assert plan.read_shard(store, 0)[0].item_id != new_plan.read_shard(store, 0)[0].item_id
-    assert plan.read_shard(store, 1)[0].item_id == new_plan.read_shard(store, 1)[0].item_id
-
-
-def test_missing_bad_calibration_fails_before_compute(source):
-    calibration = source.root / "video0.intrinsics.json"
-    calibration.unlink()
-    with pytest.raises(ValueError, match="Missing per-video"):
-        RawHandVideoSource(source.root)
-    calibration.write_text('{"model":"pinhole","width":32,"height":64}')
-    with pytest.raises(ValueError, match="resolution"):
-        RawHandVideoSource(source.root)
-
-
-def test_plan_starts_no_models_or_uploads(source, tmp_path, monkeypatch):
-    cfg = HandPipelineConfig(input_root=source.root, output_root=tmp_path / "out")
-    cfg.runtime.mode = "plan"
-    monkeypatch.setattr(HandReconstructionStage, "setup", lambda *a: pytest.fail("model startup during plan"))
-    result = run_hand_pipeline(cfg)
-    assert result["status"] == "planned"
-    assert not list((tmp_path / "out.run").glob("hand-inputs/*"))
-    assert not (tmp_path / "out").exists()
-
-
-def test_requires_research_rights_before_any_execution(source, tmp_path):
-    cfg = HandPipelineConfig(input_root=source.root, output_root=tmp_path / "out")
-    with pytest.raises(ValueError, match="upstream model rights"):
-        run_hand_pipeline(cfg)
-
-
-def test_config_round_trip():
-    cfg = draccus.decode(HandPipelineConfig, {"compute": "h100", "runtime": {"workers": 2}})
-    assert cfg.input_root == Path("raw-egocentric")
-    # Nested defaults still disable automatic inference retries.
-    assert cfg.runtime.max_retries == 0
-
-
-def make_dataset(root, *, invalid=False):
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-    features = {
-        name: {"dtype": dtype, "shape": (size,), "names": None}
-        for name, dtype, size in [
-            ("action", "float32", 102),
-            ("annotation.hand_confidence", "float32", 2),
-            ("annotation.source_video_id", "int64", 1),
-            ("annotation.source_frame_index", "int64", 1),
-            ("annotation.source_timestamp_s", "float64", 1),
-        ]
-    }
-    dataset = LeRobotDataset.create(
-        "local/hand-fixture", fps=30, features=features, root=root, use_videos=False
-    )
-    for index in range(2):
-        dataset.add_frame(
-            {
-                "action": np.full(102, np.nan if invalid else 0, dtype=np.float32),
-                "annotation.hand_confidence": np.array([0.9, 0.8], dtype=np.float32),
-                "annotation.source_video_id": np.array([0], dtype=np.int64),
-                "annotation.source_frame_index": np.array([index], dtype=np.int64),
-                "annotation.source_timestamp_s": np.array([index / 30], dtype=np.float64),
-                "task": "research test",
-            }
-        )
-    dataset.save_episode()
-    dataset.finalize()
-
-
-def test_nonfinite_articulation_rejected(tmp_path):
-    make_dataset(tmp_path / "dataset", invalid=True)
-    with pytest.raises(ValueError, match="articulation"):
-        validate_dataset(tmp_path / "dataset")
-
-
-@pytest.mark.parametrize("mode", ["normal", "omitted", "backend-failed", "rejected"])
-def test_external_group_checkpoint_and_resume(source, tmp_path, monkeypatch, mode):
-    # The stub exports a schema-valid hand dataset and accounts for every MP4.
-    # It is an executable process, not a mock returning invented ItemResults.
-    fixture = tmp_path / "fixture"
-    make_dataset(fixture)
-    monkeypatch.setenv("HAND_TEST_FIXTURE", str(fixture))
-    monkeypatch.setenv("HAND_TEST_MODE", mode)
-    backend = tmp_path / "backend"
-    (backend / "scripts").mkdir(parents=True)
-    script = backend / "scripts/process_egocentric_videos.py"
-    script.write_text("""import json, os, shutil, sys
-from pathlib import Path
-args = sys.argv
-assert args[args.index('--camera-backend') + 1] == 'droid-w'
-assert args[args.index('--wrist-position-refinement') + 1] == 'raw-plane-world5-sixteenth'
-inputs = Path(args[args.index('--input') + 1])
-output = Path(args[args.index('--output') + 1])
-videos = sorted(inputs.glob('*.mp4'))
-assert all(v.with_suffix('.intrinsics.json').is_file() for v in videos)
-shutil.copytree(os.environ['HAND_TEST_FIXTURE'], output)
-(output / 'meta/egocentric_workflow.json').write_text(json.dumps({
- 'source_video_index': {'0': videos[0].name},
- 'episode_sources': [{'episode_index':0,'source_video_id':0,'start_frame':0,'end_frame':2}]
-}))
-report = {'videos': [{'video':v.name,'status':'accepted' if i==0 else 'rejected'} for i,v in enumerate(videos)],
- 'summary':{'failed':0,'accepted':1,'accepted_two_hand_frames':2,'rectified_frames':150*len(videos)}}
-mode = os.environ['HAND_TEST_MODE']
-if mode == 'omitted': report['videos'] = []
-if mode == 'rejected':
- for video in report['videos']: video['status'] = 'rejected'
- report['summary'].update(accepted=0,accepted_two_hand_frames=0)
-output.with_name('dataset.manifest.json').write_text(json.dumps(report))
-if mode == 'backend-failed': sys.exit(2)
+    package = tmp_path / "runtime/research_runtime"
+    (package / "egocentric").mkdir(parents=True)
+    (package / "infra").mkdir()
+    for folder in (package, package / "egocentric", package / "infra"):
+        (folder / "__init__.py").write_text("")
+    (package / "egocentric/config.py").write_text("""class EgocentricConfig:
+    def __init__(self, **kwargs): self.__dict__.update(kwargs)
+    def validate(self):
+        assert self.camera_backend == "droid-w"
+        assert self.hand_calibration == "calibrated"
+        assert self.hand_fp16 and not self.sparse_hand_recovery
+        assert self.joint_refinement == "world11-half"
+        assert self.wrist_rotation_target_gamma == 1.0
+        assert self.wrist_orientation_refinement == "articulated-world5-half"
+        assert self.wrist_position_refinement == "raw-plane-world5-sixteenth"
 """)
-    config = HandBackendConfig(root=str(backend), python=sys.executable, research_terms_accepted=True)
-    runtime = HandPipelineConfig().runtime
-    runtime.run_uri = str(tmp_path / "store")
-    stage = StageConfig(
-        "hands",
-        "tests.annotations.test_hands:CPUHandStage",
-        {"backend": asdict(config), "minimum_segment_frames": 2},
-    )
-    if mode in {"omitted", "backend-failed"}:
-        with pytest.raises((RuntimeError, ValueError), match="omitted a video|backend failed"):
-            run_pipeline(source, [stage], runtime, before_execute=source.stage_inputs)
-        assert not list((tmp_path / "store").rglob("accepted/*.parquet"))
-        return
-    store, completed = run_pipeline(source, [stage], runtime, before_execute=source.stage_inputs)
-    plan, summary = completed["hands"]
-    if mode == "rejected":
-        assert summary.completed == 0 and summary.rejected == 2
-        config = HandPipelineConfig(input_root=source.root, output_root=tmp_path / "rejected")
-        report = materialize(store, plan, config, time.perf_counter(), {})
-        assert report["status"] == "rejected" and report["episodes"] == 0
-        assert report["rejected_video_ids"] == [0, 1, 2]
-        assert not (config.output_root / "meta/info.json").exists()
-        return
-    assert summary.completed == 2
-    outputs = list(accepted_items(store, plan))
-    assert all(result.outcome == Outcome.COMPLETED for _, result in outputs)
-    monkeypatch.setattr(CPUHandStage, "setup", lambda *a: pytest.fail("cached resume reran inference"))
-    run_pipeline(source, [stage], runtime, before_execute=source.stage_inputs)
-    config = HandPipelineConfig(input_root=source.root, output_root=tmp_path / "final")
-    report = materialize(
-        store, plan, config, time.perf_counter(), estimate(config, source.groups), fresh=True
-    )
-    assert report["episodes"] == 2 and report["accepted_frames"] == 4
-    assert report["rejected_video_ids"] == [1]
-    assert [entry["source_video_id"] for entry in report["episode_sources"]] == [0, 2]
-    merged = pa.concat_tables(
-        [pq.read_table(path) for path in sorted((config.output_root / "data").rglob("*.parquet"))]
-    )
-    assert merged["annotation.source_video_id"].to_pylist() == [0, 0, 2, 2]
-    reused = materialize(store, plan, config, time.perf_counter(), {}, fresh=False)
-    assert reused["reused"] and reused["episodes"] == 2
-    # Materialize each group to exercise source-ID remapping without running
-    # the full dataset aggregator on intentionally tiny metadata fixtures.
-    from lerobot.annotations.hands.pipeline import remap_source_ids
+    (package / "egocentric/backends.py").write_text("""class MacrodataService:
+    def __init__(self, config, gpu): self.calls = 0
+    def close(self): pass
+""")
+    (package / "egocentric/pipeline.py").write_text("""import numpy as np
 
-    for index, (_, result) in enumerate(outputs):
-        artifact = next(a for a in result.artifacts if a.name == "dataset")
-        bundle = store.download(artifact, tmp_path / f"group{index}.tar")
-        root = tmp_path / f"group{index}"
-        extract_dataset(bundle, root)
-        lineage = remap_source_ids(root)
-        assert lineage[0]["source_video_id"] == (0 if index == 0 else 2)
-        assert (
-            pq.read_table(root / "data/chunk-000/file-000.parquet")["annotation.source_video_id"].to_pylist()
-            == [index * 2] * 2
-        )
+def _process_video(config, service, video, work_root):
+    service.calls += 1
+    work_root.mkdir(parents=True)
+    path = work_root / "hands.npz"
+    n = 40
+    np.savez(path, joints_camera=np.zeros((n,2,21,3)), infilled=np.zeros((n,2),dtype=bool), raw_direct_valid=np.ones((n,2),dtype=bool), mano_pose=np.ones((n,2,96)), mano_shape=np.zeros((n,2,10)), wrist_rotation_camera=np.tile(np.eye(3),(n,2,1,1)), world_from_camera=np.tile(np.eye(4),(n,1,1)), camera_tracked=np.ones(n,dtype=bool), confidence=np.ones((n,2)), source_frame_index=np.arange(n), timestamp_s=np.arange(n)/10)
+    return dict(hand_prediction=str(path), rectified_frames=n, rectified_fps=10, segments=[], accepted_frames=0, service_calls=service.calls)
+""")
+    (package / "egocentric/geometry.py").write_text("""import numpy as np
 
+def fuse_segment_to_flu(j,w,c): return np.zeros((len(j),12)),j
 
-@pytest.mark.parametrize("name", ["../escape", "/absolute", "weights/MANO.pkl"])
-def test_bundle_path_rejected(tmp_path, name):
-    bundle = tmp_path / "bad.tar"
-    with tarfile.open(bundle, "w") as archive:
-        info = tarfile.TarInfo(name)
-        info.size = 1
-        archive.addfile(info, io.BytesIO(b"x"))
-    with pytest.raises(ValueError, match="bundle member"):
-        extract_dataset(bundle, tmp_path / "out")
-
-
-def test_asset_manifest_binds_actual_files(tmp_path, monkeypatch):
-    cfg = HandBackendConfig(root=str(tmp_path), research_terms_accepted=True)
-    for name in ("python", "macrodata_python", "droid_python", "droid_moge_checkpoint"):
-        path = tmp_path / name
-        path.touch()
-        setattr(cfg, name, str(path))
-    cfg.droid_root = cfg.droid_model_cache = str(tmp_path)
-    (tmp_path / "grounded_worker.py").touch()
-    asset = tmp_path / "asset"
-    asset.write_bytes(b"model")
-    manifest = tmp_path / "assets.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "files": [{"path": str(asset), "sha256": file_checksum(asset)[0]}],
-                "environment": {"HF_HOME": str(tmp_path), "TORCH_HOME": str(tmp_path)},
-            }
-        )
-    )
-    cfg.assets_manifest, cfg.assets_sha256 = str(manifest), file_checksum(manifest)[0]
+def policy_action_with_mano(w,p): return np.zeros((len(w),102))
+""")
+    (package / "infra/droidw_worker.py").write_text("def close_workers(): pass\n")
+    config = HandBackendConfig(root=str(package.parent), module="research_runtime", python=sys.executable)
     monkeypatch.setattr(
-        "lerobot.annotations.hands.processing.subprocess.check_output", lambda *a, **k: GROUNDED_REVISION
+        "lerobot.annotations.hands.processing.provisioned_environment",
+        lambda *args: {**os.environ, "PYTHONPATH": str(package.parent)},
     )
-    monkeypatch.setattr("lerobot.annotations.hands.processing.subprocess.run", lambda *a, **k: None)
-    assert provisioned_environment(cfg)["HF_HUB_OFFLINE"] == "1"
-    asset.write_bytes(b"changed")
-    with pytest.raises(ValueError, match="Provisioned asset changed"):
-        provisioned_environment(cfg)
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"transport fixture; no model inference")
+    worker = HandAnnotator(config, {}, tmp_path / "warm")
+    try:
+        first = worker.annotate(video, {}, tmp_path / "first")
+        second = worker.annotate(video, {}, tmp_path / "second")
+        assert (first["service_calls"], second["service_calls"]) == (1, 2)
+        assert first["recoverable_frames"] == second["recoverable_frames"] == 40
+        assert len(first["dense_segments"]) == 1
+    finally:
+        worker.close()
+    assert worker.process.poll() is not None
+    assert Path(first["dense_segments"][0]).is_file()
