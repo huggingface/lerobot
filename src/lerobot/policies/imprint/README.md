@@ -74,8 +74,32 @@ Stage 1 (`training_stage="memory"`):
 
 - Images, state, and `action` all have time length `history_length`.
 - `action_delta_indices` is `-history_length ... -1`. That window is already the causal stream.
-- `episode_progress` has shape `(B,)` and is the current step divided by the last demonstration step.
+- `episode_progress` has shape `(B,)` and is the current step divided by the last demonstration step. `lerobot-train` fills it from `frame_index` and the episode length. A hand-built batch must pass it.
 - Optional `query_steps` has shape `(B, Q)` and selects past frames to reconstruct. If it is missing, the policy samples `num_query_samples` indices.
+
+After stage 1, keep the memory and drop the decoder:
+
+```python
+import copy
+from pathlib import Path
+
+from lerobot.policies.imprint.configuration_imprint import ImprintConfig
+from lerobot.policies.imprint.modeling_imprint import ImprintPolicy
+from lerobot.policies.imprint.processor_imprint import make_imprint_pre_post_processors
+
+stage1_dir = Path("outputs/train/<run>/checkpoints/<step>/pretrained_model")
+joint_config = copy.deepcopy(ImprintConfig.from_pretrained(stage1_dir))
+joint_config.training_stage = "joint"
+joint = ImprintPolicy(joint_config)
+report = joint.load_memory_weights(stage1_dir)
+joint_init = Path("outputs/imprint_joint_init")
+joint.save_pretrained(joint_init)
+preprocessor, postprocessor = make_imprint_pre_post_processors(joint.config)
+preprocessor.save_pretrained(joint_init)
+postprocessor.save_pretrained(joint_init)
+```
+
+`report["loaded"]` lists the copied tensors. The decoder keys are in `report["skipped_decoder"]`. The joint action expert and the current-frame projections start at their new initialization. The two processor files are what `lerobot-train --policy.path=outputs/imprint_joint_init` loads.
 
 `observation.language.embedding` has shape `(B, lang_dim)` when you have an external language vector. If the key is missing, language FiLM is skipped. Text strings are ignored.
 
@@ -85,8 +109,8 @@ Stage 1 (`training_stage="memory"`):
 
 - The image stem is a stride-2 convolution and a spatial mean. It is not Wan 2.2 and not DINOv3.
 - A finalized chunk is the mean of `chunk_frames` stem tokens. It is not a Wan latent.
-- No JAX checkpoint, Orbax loader, or Hugging Face weight file from `Amazon-FAR/imprint_models` is read.
-- Stage 1 and joint training are separate configs. The joint model has no decoder. There is no automatic copy of stage-1 weights into the joint model.
+- No JAX checkpoint, Orbax loader, or Hugging Face weight file from `Amazon-FAR/imprint_models` is read. `load_memory_weights` copies this package's own stage-1 memory, not those checkpoints.
+- Stage 1 and joint training use separate configs. The joint model has no decoder. `load_memory_weights` is the handoff.
 - `chunkwise_wy` is not implemented. Long histories in this port use the Python event loop.
 - Standard `lerobot-train` supplies the causal actions only when the dataset uses `action_delta_indices`.
 - This package does not report RMBench, RoboCasa, or real-robot success rates.

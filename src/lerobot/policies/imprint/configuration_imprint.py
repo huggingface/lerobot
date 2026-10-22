@@ -42,7 +42,8 @@ class ImprintConfig(PreTrainedConfig):
     ``training_stage="joint"`` is the deployable policy: flow-matching action
     loss with memory tokens read inside the action expert. ``training_stage="memory"``
     is stage 1: reconstruct past streams and estimate episode progress. The paper
-    discards the stage-1 decoder before joint adaptation.
+    discards the stage-1 decoder before joint adaptation. Copy the trained memory
+    into a joint policy with ``ImprintPolicy.load_memory_weights``.
 
     CLI: ``--policy.type=imprint``.
     """

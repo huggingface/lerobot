@@ -23,9 +23,12 @@ tokenizer and DINOv3 frame encoder. This module does not download those models.
 from __future__ import annotations
 
 from collections import deque
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from safetensors.torch import load_file
 from torch import Tensor, nn
 
 from lerobot.configs.types import PolicyFeature
@@ -48,6 +51,33 @@ from .memory import (
 LANG_EMBEDDING = "observation.language.embedding"
 EPISODE_PROGRESS = "episode_progress"
 QUERY_STEPS = "query_steps"
+# Stage-1 modules that joint training continues. The decoder is discarded.
+# The action expert and the current-frame projections are joint-only.
+_MEMORY_WEIGHT_PREFIXES = ("frame_encoder.", "to_chunk.", "to_recent.", "memory.")
+_TRANSFER_FIELDS = (
+    "encoder",
+    "use_memory",
+    "memory_dim",
+    "num_latents",
+    "num_heads",
+    "num_cross_blocks",
+    "delta_num_layers",
+    "delta_num_heads",
+    "delta_head_dim",
+    "delta_conv_kernel",
+    "delta_ffn_inner",
+    "delta_decay_bias",
+    "delta_beta_bias",
+    "recent_fusion_blocks",
+    "max_chunks",
+    "visual_dim",
+    "chunk_feature_dim",
+    "recent_feature_dim",
+    "lang_dim",
+    "tokenizer_hidden",
+    "chunk_frames",
+    "tokens_per_view",
+)
 
 
 class TinyFrameEncoder(nn.Module):
@@ -216,6 +246,70 @@ class ImprintPolicy(PreTrainedPolicy):
         self._last_action = None
         self._recurrent_state = None
 
+    def load_memory_weights(self, stage1_dir: str | Path) -> dict[str, tuple[str, ...]]:
+        """Copy a stage-1 memory checkpoint into this joint policy.
+
+        The stage-1 decoder stays out. The action expert and the current-frame
+        observation projections keep the weights this joint policy already has.
+        Save the result and pass that directory as ``--policy.path`` for joint
+        ``lerobot-train``. This does not read ``Amazon-FAR/imprint_models``.
+        """
+        if self.config.training_stage != "joint":
+            raise ValueError("load_memory_weights targets a joint IMPRINT policy.")
+        if not self.config.use_memory or self.memory is None:
+            raise ValueError("load_memory_weights requires use_memory=True.")
+        source_dir = Path(stage1_dir)
+        source = ImprintConfig.from_pretrained(source_dir)
+        if not isinstance(source, ImprintConfig):
+            raise ValueError(f"Expected an IMPRINT checkpoint in {source_dir}.")
+        if source.training_stage != "memory":
+            raise ValueError(
+                "load_memory_weights expects a stage-1 checkpoint "
+                f"(training_stage='memory'). Got {source.training_stage!r} in {source_dir}."
+            )
+        _check_transfer_geometry(source, self.config)
+        weight_path = source_dir / SAFETENSORS_SINGLE_FILE
+        if not weight_path.is_file():
+            raise FileNotFoundError(f"Stage-1 weights were not found at {weight_path}.")
+        stored = load_file(str(weight_path))
+        current = self.state_dict()
+        loaded: list[str] = []
+        missing: list[str] = []
+        for key, value in current.items():
+            if not key.startswith(_MEMORY_WEIGHT_PREFIXES):
+                continue
+            incoming = stored.get(key)
+            if incoming is None:
+                missing.append(key)
+                continue
+            if tuple(incoming.shape) != tuple(value.shape):
+                raise ValueError(
+                    f"Stage-1 tensor {key} has shape {tuple(incoming.shape)}; "
+                    f"this joint policy expects {tuple(value.shape)}."
+                )
+            current[key] = incoming.to(device=value.device, dtype=value.dtype)
+            loaded.append(key)
+        if missing or not loaded:
+            raise ValueError(
+                "Stage-1 checkpoint is missing memory tensors required by this joint policy: "
+                f"{missing or ['<none matched>']}."
+            )
+        incompatible = self.load_state_dict(current)
+        if incompatible.missing_keys or incompatible.unexpected_keys:
+            raise RuntimeError(
+                "Loading the transferred memory left the joint policy inconsistent: "
+                f"missing {incompatible.missing_keys}, unexpected {incompatible.unexpected_keys}."
+            )
+        skipped_decoder = tuple(sorted(key for key in stored if key.startswith("decoder.")))
+        skipped_other = tuple(
+            sorted(key for key in stored if key not in loaded and not key.startswith("decoder."))
+        )
+        return {
+            "loaded": tuple(loaded),
+            "skipped_decoder": skipped_decoder,
+            "skipped_other": skipped_other,
+        }
+
     def finalized_chunk_counts(self) -> Tensor:
         """Accepted recurrent chunks per batch row. Empty before the first observation."""
         if self._recurrent_state is None:
@@ -312,7 +406,8 @@ class ImprintPolicy(PreTrainedPolicy):
         if EPISODE_PROGRESS not in batch:
             raise ValueError(
                 "Stage-1 IMPRINT requires episode_progress with shape (B,), "
-                "the current step divided by the last demonstration step."
+                "the current step divided by the last demonstration step. "
+                "lerobot-train writes it from frame_index when the dataset metadata is available."
             )
         visual = self._encode_visual(batch)
         state = _with_time(batch[OBS_STATE], name=OBS_STATE)
@@ -551,6 +646,43 @@ def _action_tensor(batch: dict[str, Tensor]) -> Tensor | None:
     if not isinstance(action, Tensor):
         raise ValueError(f"action must be a tensor, got {type(action).__name__}.")
     return action
+
+
+def _check_transfer_geometry(source: ImprintConfig, target: ImprintConfig) -> None:
+    if not source.use_memory:
+        raise ValueError("The stage-1 checkpoint has use_memory=False, so there is no memory to copy.")
+    mismatches: list[str] = []
+    for name in _TRANSFER_FIELDS:
+        left = getattr(source, name)
+        right = getattr(target, name)
+        if left != right:
+            mismatches.append(f"{name}: stage1={left!r} joint={right!r}")
+    if _camera_signature(source) != _camera_signature(target):
+        mismatches.append(
+            f"cameras: stage1={_camera_signature(source)!r} joint={_camera_signature(target)!r}"
+        )
+    if _vector_signature(source.robot_state_feature) != _vector_signature(target.robot_state_feature):
+        mismatches.append("observation.state shape differs")
+    if _vector_signature(source.action_feature) != _vector_signature(target.action_feature):
+        mismatches.append("action shape differs")
+    if mismatches:
+        raise ValueError(
+            "Stage-1 and joint IMPRINT configs must share the memory geometry. " + "; ".join(mismatches)
+        )
+
+
+def _camera_signature(config: ImprintConfig) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    return tuple(
+        sorted(
+            (key, tuple(int(dim) for dim in feature.shape)) for key, feature in config.image_features.items()
+        )
+    )
+
+
+def _vector_signature(feature: PolicyFeature | None) -> tuple[int, ...] | None:
+    if feature is None:
+        return None
+    return tuple(int(dim) for dim in feature.shape)
 
 
 def _feature_dim(feature: PolicyFeature | None, name: str) -> int:

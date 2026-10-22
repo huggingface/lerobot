@@ -41,6 +41,7 @@ from lerobot.policies.imprint.memory import (
     memory_pretraining_loss,
 )
 from lerobot.policies.imprint.modeling_imprint import ImprintPolicy
+from lerobot.policies.imprint.processor_imprint import ImprintEpisodeProgressStep
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -399,3 +400,109 @@ def test_pi05_defaults_stay_unchanged() -> None:
     config = PI05Config()
     assert config.use_visual_memory is False
     assert config.chunk_size == 50
+
+
+def test_episode_progress_uses_frame_and_episode_length() -> None:
+    step = ImprintEpisodeProgressStep(episode_indices=[0, 1], episode_lengths=[5, 9])
+    output = step.complementary_data(
+        {
+            "frame_index": torch.tensor([3, 0]),
+            "episode_index": torch.tensor([0, 1]),
+        }
+    )
+    torch.testing.assert_close(output["episode_progress"], torch.tensor([0.75, 0.0]))
+    already = step.complementary_data(
+        {
+            "frame_index": torch.tensor([3]),
+            "episode_index": torch.tensor([0]),
+            "episode_progress": torch.tensor([0.1]),
+        }
+    )
+    torch.testing.assert_close(already["episode_progress"], torch.tensor([0.1]))
+
+
+class _EpisodeTable:
+    def __init__(self, rows: list[tuple[int, int]]) -> None:
+        self._rows = [{"episode_index": index, "length": length} for index, length in rows]
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+    def __getitem__(self, index: int) -> dict[str, int]:
+        return self._rows[index]
+
+
+def test_stage1_processor_reads_runtime_dataset_meta() -> None:
+    config = tiny_config(training_stage="memory")
+    config._runtime_dataset_meta = type("Meta", (), {"episodes": _EpisodeTable([(0, 5), (1, 9)])})()
+    preprocessor, _postprocessor = make_pre_post_processors(config)
+    batch = preprocessor(
+        {
+            CAM: torch.rand(2, 3, 8, 8),
+            OBS_STATE: torch.randn(2, 4),
+            ACTION: torch.randn(2, 4),
+            "frame_index": torch.tensor([3, 0]),
+            "episode_index": torch.tensor([0, 1]),
+        }
+    )
+    torch.testing.assert_close(batch["episode_progress"], torch.tensor([0.75, 0.0]))
+    joint = tiny_config(training_stage="joint")
+    joint._runtime_dataset_meta = config._runtime_dataset_meta
+    joint_pre, _joint_post = make_pre_post_processors(joint)
+    assert not any(isinstance(step, ImprintEpisodeProgressStep) for step in joint_pre.steps)
+
+
+def test_stage1_memory_transfers_and_inference_resets(tmp_path) -> None:
+    torch.manual_seed(10)
+    stage1 = ImprintPolicy(tiny_config(training_stage="memory"))
+    history = stage1.config.history_length
+    loss, _logs = stage1(
+        {
+            CAM: _visual(2, history),
+            OBS_STATE: _state(2, history),
+            ACTION: _action(2, history),
+            "episode_progress": torch.tensor([0.2, 0.4]),
+            "query_steps": torch.tensor([[0, 1], [1, 2]]),
+        }
+    )
+    loss.backward()
+    with torch.no_grad():
+        stage1.memory.proj_chunk.weight.add_(0.1)
+    stage1_dir = tmp_path / "stage1"
+    stage1.save_pretrained(stage1_dir)
+
+    joint = ImprintPolicy(tiny_config())
+    expert_before = joint.expert.out_proj.weight.detach().clone()
+    observation_before = joint.obs_visual.weight.detach().clone()
+    report = joint.load_memory_weights(stage1_dir)
+    assert "memory.proj_chunk.weight" in report["loaded"]
+    assert report["skipped_decoder"]
+    assert all(key.startswith("decoder.") for key in report["skipped_decoder"])
+    torch.testing.assert_close(joint.memory.proj_chunk.weight, stage1.memory.proj_chunk.weight)
+    torch.testing.assert_close(joint.frame_encoder.conv.weight, stage1.frame_encoder.conv.weight)
+    torch.testing.assert_close(joint.expert.out_proj.weight, expert_before)
+    torch.testing.assert_close(joint.obs_visual.weight, observation_before)
+
+    mismatched = ImprintPolicy(tiny_config(memory_dim=64, delta_head_dim=16))
+    try:
+        mismatched.load_memory_weights(stage1_dir)
+    except ValueError as exc:
+        assert "memory geometry" in str(exc)
+    else:
+        raise AssertionError("a different memory width was accepted")
+
+    joint_dir = tmp_path / "joint"
+    joint.save_pretrained(joint_dir)
+    loaded = ImprintPolicy.from_pretrained(joint_dir, config=joint.config)
+    torch.testing.assert_close(loaded.memory.proj_chunk.weight, stage1.memory.proj_chunk.weight)
+    loaded.reset()
+    step = {CAM: _visual(1, 1), OBS_STATE: _state(1, 1)}
+    assert loaded.finalized_chunk_counts().numel() == 0
+    loaded.select_action(step)
+    loaded.select_action({CAM: _visual(1, 1), OBS_STATE: _state(1, 1)})
+    assert int(loaded.finalized_chunk_counts()[0]) == 1
+    chunk = loaded.predict_action_chunk(step)
+    assert chunk.shape == (1, loaded.config.chunk_size, 4)
+    assert int(loaded.finalized_chunk_counts()[0]) == 1
+    loaded.reset()
+    assert loaded.finalized_chunk_counts().numel() == 0
