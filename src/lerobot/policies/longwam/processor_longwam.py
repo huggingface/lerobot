@@ -130,22 +130,6 @@ class LongWAMActionClamp(ActionProcessorStep):
         return features
 
 
-@ProcessorStepRegistry.register(name="longwam_inputs")
-@dataclass(kw_only=True)
-class LongWAMInputs(LongWAMObservations):
-    """Load existing Hub processor configs by delegating to the split steps."""
-
-    prompt_template: str
-
-    def __call__(self, transition: EnvTransition) -> EnvTransition:
-        transition = super().__call__(transition)
-        transition = LongWAMActionClamp()(transition)
-        return LongWAMPrompt(self.prompt_template)(transition)
-
-    def get_config(self) -> dict[str, Any]:
-        return {**super().get_config(), "prompt_template": self.prompt_template}
-
-
 @ProcessorStepRegistry.register(name="longwam_action_toggle")
 @dataclass
 class LongWAMActionToggle(ActionProcessorStep):
