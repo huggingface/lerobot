@@ -398,6 +398,11 @@ def aggregate_datasets(
             LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots, strict=True)
         ]
     )
+    audio_datasets = [meta.repo_id for meta in all_metadata if meta.audio_keys]
+    if audio_datasets:
+        raise NotImplementedError(
+            f"Aggregating datasets with audio features is not supported yet: {audio_datasets}."
+        )
     fps, robot_type, _ = validate_all_metadata(all_metadata)
     features = merge_video_feature_info_for_aggregate(all_metadata)
     video_keys = [key for key in features if features[key]["dtype"] == "video"]

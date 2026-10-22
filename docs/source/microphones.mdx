@@ -1,0 +1,103 @@
+# Microphones
+
+LeRobot can capture audio from microphones:
+
+| Class                 | Supported Microphones                                                    |
+| --------------------- | ------------------------------------------------------------------------ |
+| `PortAudioMicrophone` | Built-in, USB and sound-card microphones supported by PortAudio (any OS) |
+
+> [!NOTE]
+> This page covers the microphone devices only. Recording audio into a `LeRobotDataset` with `lerobot-record`
+> is not supported yet.
+
+### Install
+
+Microphones need the `audio` extra:
+
+```bash
+pip install 'lerobot[audio]'
+```
+
+On Linux, `sounddevice` also needs the PortAudio system library:
+
+```bash
+sudo apt install libportaudio2
+```
+
+### Find your microphone
+
+`PortAudioMicrophone` identifies devices by their `sounddevice` index. List the available microphones with:
+
+```bash
+lerobot-find-microphones
+```
+
+The output will look something like this:
+
+```bash
+--- Detected Microphones ---
+Microphone #0:
+  Index: 0
+  Name: Built-in Microphone
+  Sample rate: 48000
+  Channels: [1, 2]
+--------------------
+```
+
+Add `--record-time-s 3` to also record a 3-second WAV clip from each microphone into `outputs/captured_audio`,
+to check that the right device picks up sound.
+
+> [!TIP]
+> Indices may change after re-plugging a device or rebooting.
+
+### Use a microphone
+
+```python
+from lerobot.microphones.portaudio import PortAudioMicrophone, PortAudioMicrophoneConfig
+
+config = PortAudioMicrophoneConfig(microphone_index=0, sample_rate=16000, channels=[1])
+
+with PortAudioMicrophone(config) as microphone:
+    microphone.start_recording("episode_0.wav")  # The file is optional
+    ...
+    chunk = microphone.read()  # All samples since the previous read(), shape (num_samples, num_channels)
+    window = microphone.read_latest(1.0)  # The most recent second of audio, does not consume samples
+    ...
+    microphone.stop_recording()
+```
+
+Unlike a camera, a microphone has a recording phase, usually one per episode: audio is a continuous stream, so
+`read()` returns every sample captured since the previous call rather than a single frame.
+
+- **`read()`** is for recording: no sample is skipped, and the number of samples depends on the time elapsed
+  since the previous call. Samples are kept in memory for `buffer_duration_s` seconds (10 by default). If
+  `read()` is called less often, the oldest samples are dropped and a warning is logged. The file written by
+  `start_recording(output_file)` is not affected.
+- **`read_latest(duration_s)`** is for fixed-size inputs, e.g. for a policy or a visualization.
+- **`last_read_timestamp`** holds, after each read, the time at which the last returned sample was captured, in
+  the `time.perf_counter()` clock. Use it to align audio with other observations.
+
+To start several microphones at the same time, use `async_microphones_start_recording`:
+
+```python
+from lerobot.microphones import async_microphones_start_recording, async_microphones_stop_recording
+
+async_microphones_start_recording(microphones, output_files=["left.wav", "right.wav"])
+...
+async_microphones_stop_recording(microphones)
+```
+
+Capture runs in a separate process, so the audio stream is not affected by the CPU load of the control loop.
+
+### Platform notes
+
+- **macOS** asks for microphone access the first time. Grant it to your terminal application.
+- **WSL2** has no direct access to audio devices. Microphones are only visible through the PulseAudio server of
+  WSLg, when it is available.
+
+### Third-party microphones
+
+Like cameras, microphones can be provided by external packages named `lerobot_microphone_*`. They are imported
+automatically, and their configuration class (a `MicrophoneConfig` subclass named `<Name>Config`) is matched to
+their `<Name>` microphone class. See [Third-Party Cameras & Sensors](./third_party_sensors) for the general
+approach.
