@@ -15,6 +15,7 @@
 # limitations under the License.
 """Tests for dataset tools utilities."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -25,6 +26,7 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 
 from lerobot.configs import DepthEncoderConfig, RGBEncoderConfig
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 from lerobot.datasets.dataset_tools import (
     _fractions_to_episode_indices,
     add_features,
@@ -37,10 +39,12 @@ from lerobot.datasets.dataset_tools import (
     remove_feature,
     split_dataset,
 )
-from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.io_utils import load_info, load_stats
+from lerobot.processor import NormalizerProcessorStep, TransitionKey
+from lerobot.processor.converters import create_transition
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
-from tests.fixtures.dataset_factories import add_frames
+from tests.fixtures.dataset_factories import LeRobotDatasetFactory, add_frames
 
 
 @pytest.fixture
@@ -1325,6 +1329,74 @@ def test_modify_tasks_keeps_original_when_not_overridden(sample_dataset):
     assert modified_dataset.meta.episodes[4]["tasks"][0] == "New Task A"
 
 
+@require_h264
+@pytest.mark.parametrize("num_episodes", [1, 2])
+def test_convert_image_to_video_preserves_stats(
+    tmp_path: Path, empty_lerobot_dataset_factory: LeRobotDatasetFactory, num_episodes: int
+) -> None:
+    """Changing image storage to video must not drop normalization statistics."""
+    image_key = "observation.images.cam"
+    features = {
+        "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+        image_key: {
+            "dtype": "image",
+            "shape": (64, 96, 3),
+            "names": ["height", "width", "channels"],
+        },
+    }
+    source_dataset = empty_lerobot_dataset_factory(
+        root=tmp_path / "images", features=features, use_videos=False
+    )
+    for episode_index in range(num_episodes):
+        for frame_index in range(4):
+            source_dataset.add_frame(
+                {
+                    "action": np.array([episode_index, frame_index], dtype=np.float32),
+                    image_key: np.full((64, 96, 3), 30 + 40 * frame_index, dtype=np.uint8),
+                    "task": "test conversion",
+                }
+            )
+        source_dataset.save_episode()
+    source_dataset.finalize()
+    source_stats = load_stats(source_dataset.root)
+
+    video_dataset = convert_image_to_video_dataset(
+        dataset=source_dataset,
+        output_dir=tmp_path / "videos",
+        repo_id="dummy/converted",
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", pix_fmt="yuv420p", g=2, crf=18),
+        max_episodes_per_batch=1,
+        num_workers=1,
+    )
+
+    assert image_key in video_dataset.meta.video_keys
+    assert video_dataset.meta.total_episodes == num_episodes
+    assert video_dataset.meta.total_frames == 4 * num_episodes
+    persisted_stats = load_stats(video_dataset.root)
+    assert set(persisted_stats) == set(source_stats)
+    assert video_dataset.meta.stats is not None
+    assert set(video_dataset.meta.stats) == set(source_stats)
+    for feature_key, feature_stats in source_stats.items():
+        assert set(persisted_stats[feature_key]) == set(feature_stats)
+        for stat_key, expected in feature_stats.items():
+            np.testing.assert_array_equal(persisted_stats[feature_key][stat_key], expected)
+            np.testing.assert_array_equal(video_dataset.meta.stats[feature_key][stat_key], expected)
+
+    normalizer = NormalizerProcessorStep(
+        features={image_key: PolicyFeature(FeatureType.VISUAL, (3, 64, 96))},
+        norm_map={FeatureType.VISUAL: NormalizationMode.MEAN_STD},
+        stats=video_dataset.meta.stats,
+    )
+    image = video_dataset[0][image_key]
+    normalized = normalizer(create_transition(observation={image_key: image}))
+    image_stats = source_stats[image_key]
+    expected = (image - torch.as_tensor(image_stats["mean"], dtype=image.dtype)) / (
+        torch.as_tensor(image_stats["std"], dtype=image.dtype) + normalizer.eps
+    )
+    assert not torch.allclose(expected, image)
+    torch.testing.assert_close(normalized[TransitionKey.OBSERVATION][image_key], expected)
+
+
 def test_convert_image_to_video_dataset(tmp_path):
     """Test converting lerobot/pusht_image dataset to video format."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -1503,6 +1575,14 @@ def test_convert_image_to_video_dataset_depth(tmp_path, empty_lerobot_dataset_fa
     assert "observation.images.depth" in video_dataset.meta.video_keys
     assert "observation.images.depth" in video_dataset.meta.depth_keys
     assert "observation.images.cam" not in video_dataset.meta.depth_keys
+
+    # Both RGB and depth normalization statistics survive the storage conversion.
+    assert source_dataset.meta.stats is not None
+    assert video_dataset.meta.stats is not None
+    for key in ("observation.images.cam", "observation.images.depth"):
+        assert set(video_dataset.meta.stats[key]) == set(source_dataset.meta.stats[key])
+        for stat_key, expected in source_dataset.meta.stats[key].items():
+            np.testing.assert_array_equal(video_dataset.meta.stats[key][stat_key], expected)
 
     depth_path = video_dataset.root / video_dataset.meta.get_video_file_path(0, "observation.images.depth")
     assert depth_path.exists(), f"Depth video file should exist: {depth_path}"
