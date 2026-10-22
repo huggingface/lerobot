@@ -169,6 +169,8 @@
     title: Reachy 2
   - local: unitree_g1
     title: Unitree G1
+  - local: asimov
+    title: Asimov 1
   - local: earthrover_mini_plus
     title: Earth Rover Mini
   - local: omx

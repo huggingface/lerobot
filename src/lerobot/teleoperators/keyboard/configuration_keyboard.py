@@ -15,7 +15,9 @@
 # limitations under the License.
 """Configuration for keyboard teleoperators."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from lerobot.processor.keyboard_base_processor import default_base_key_bindings
 
 from ..config import TeleoperatorConfig
 
@@ -66,3 +68,13 @@ class KeyboardRoverTeleopConfig(TeleoperatorConfig):
     angular_speed_ratio: float = 0.6
     min_linear_speed: float = 0.1
     min_angular_speed: float = 0.05
+
+
+@TeleoperatorConfig.register_subclass("keyboard_base")
+@dataclass
+class KeyboardBaseTeleopConfig(KeyboardTeleopConfig):
+    """Planar base keyboard controls: linear speeds in m/s, angular speeds in deg/s."""
+
+    key_bindings: dict[str, str] = field(default_factory=default_base_key_bindings)
+    linear_speeds: tuple[float, ...] = (0.1, 0.2, 0.3)
+    angular_speeds: tuple[float, ...] = (30.0, 60.0, 90.0)

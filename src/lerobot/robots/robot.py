@@ -49,6 +49,10 @@ class Robot(abc.ABC):
     # Before the first command, a finite measured pose establishes the targets.
     # Mixed velocity/torque robots require their own stop implementation.
     supports_position_hold: bool = False
+    # Opt in when lerobot-record should store send_action()'s returned values, e.g.
+    # clamped base velocities. Requires the dataset and robot action spaces to match.
+    # Other robots may record a pre-processor representation (e.g. end-effector actions).
+    record_sent_action: bool = False
 
     def __init__(self, config: RobotConfig):
         self.robot_type = self.name
