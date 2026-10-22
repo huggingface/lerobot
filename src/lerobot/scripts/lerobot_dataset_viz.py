@@ -89,6 +89,7 @@ from lerobot.configs import DEPTH_MILLIMETER_UNIT
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.storage import DEFAULT_STORAGE_FORMAT
 from lerobot.datasets.utils import task_name
+from lerobot.datasets.video_utils import extract_video_clip
 from lerobot.utils.constants import ACTION, DONE, OBS_STATE, REWARD, SUCCESS, TASK
 from lerobot.utils.utils import init_logging
 
@@ -170,13 +171,12 @@ def build_blueprint_from_dataset(dataset: LeRobotDataset):
 
 @dataclass
 class _VideoFrames:
-    offset_s: float
     timestamps_ns: np.ndarray
 
     def timestamp_ns(self, timestamp_s: float) -> int:
         # Dataset timestamps may be float32. Snap to an actual presentation timestamp
         # so rounding cannot select the previous video frame in the viewer.
-        target_ns = round((timestamp_s + self.offset_s) * 1e9)
+        target_ns = round(timestamp_s * 1e9)
         right = min(int(np.searchsorted(self.timestamps_ns, target_ns)), len(self.timestamps_ns) - 1)
         left = max(0, right - 1)
         return int(
@@ -185,7 +185,7 @@ class _VideoFrames:
 
 
 def _log_video_assets(dataset: LeRobotDataset, episode_index: int) -> dict[str, _VideoFrames]:
-    """Log local RGB MP4s once, retaining the v3 episode offset and exact frame timestamps."""
+    """Embed only the requested episode's RGB video and retain exact frame timestamps."""
     import rerun as rr
 
     if (
@@ -210,16 +210,19 @@ def _log_video_assets(dataset: LeRobotDataset, episode_index: int) -> dict[str, 
             logging.warning("No local MP4 for %s; falling back to individual frames.", key)
             continue
         try:
-            asset = rr.AssetVideo(path=path)
+            episode = dataset.meta.episodes[episode_index]
+            clip = extract_video_clip(
+                path, episode[f"videos/{key}/from_timestamp"], episode[f"videos/{key}/to_timestamp"]
+            )
+            asset = rr.AssetVideo(contents=clip, media_type="video/mp4")
             timestamps_ns = asset.read_frame_timestamps_nanos()
-            if len(timestamps_ns) == 0 or np.any(np.diff(timestamps_ns) <= 0):
-                raise ValueError("Video has no frames or non-increasing presentation timestamps")
-            offset_s = dataset.meta.episodes[episode_index][f"videos/{key}/from_timestamp"]
+            if len(timestamps_ns) != len(dataset) or np.any(np.diff(timestamps_ns) <= 0):
+                raise ValueError("Video frame timestamps do not match the selected episode")
             rr.log(key, asset, static=True, strict=True)
         except (OSError, ValueError, RuntimeError) as exc:
             logging.warning("Cannot use video asset for %s; falling back to individual frames: %s", key, exc)
             continue
-        videos[key] = _VideoFrames(offset_s=offset_s, timestamps_ns=timestamps_ns)
+        videos[key] = _VideoFrames(timestamps_ns=timestamps_ns)
     return videos
 
 

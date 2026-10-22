@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import io
 from pathlib import Path
 
 import numpy as np
@@ -130,9 +131,9 @@ def test_compressed_video_shared_file_alignment(
     assert assets[0][0] == CAMERA and assets[0][3]["static"] is True
     references = [c for c in calls if isinstance(c[1], rr.VideoFrameReference)]
     assert [c[1].timestamp.as_arrow_array()[0].as_py() for c in references] == [
-        300_000_000,
-        400_000_000,
-        500_000_000,
+        0,
+        100_000_000,
+        200_000_000,
     ]
     assert [c[2]["frame_index"]["sequence"] for c in references] == [0, 1, 2]
     assert [c[2]["timestamp"]["timestamp"] for c in references] == pytest.approx([0, 0.1, 0.2])
@@ -142,6 +143,34 @@ def test_compressed_video_shared_file_alignment(
     assert [c[2] for c in actions] == [c[2] for c in references]
     tasks = [c for c in calls if c[0] == "task"]
     assert len(tasks) == 1 and tasks[0][1].text.as_arrow_array()[0].as_py() == "### episode 1"
+
+
+@pytest.mark.parametrize("episode_index", [0, 1])
+def test_embedded_video_contains_only_selected_episode(dataset_root, tmp_path, rerun_logs, episode_index):
+    av = pytest.importorskip("av")
+    rr, calls = rerun_logs
+    dataset = LeRobotDataset(
+        "test/rerun-video", root=dataset_root, episodes=[episode_index], video_backend="pyav"
+    )
+    video_path = dataset.root / dataset.meta.get_video_file_path(episode_index, CAMERA)
+    original_bytes = video_path.read_bytes()
+    with av.open(str(video_path)) as source:
+        source_frames = [frame.to_ndarray(format="rgb24") for frame in source.decode(video=0)]
+
+    visualize_dataset(dataset, episode_index, save=True, output_dir=tmp_path)
+
+    asset = next(c[1] for c in calls if isinstance(c[1], rr.AssetVideo))
+    clip = bytes(asset.blob.as_arrow_array()[0].as_py())
+    with av.open(io.BytesIO(clip)) as video:
+        frames = list(video.decode(video=0))
+    assert len(frames) == 3
+    assert [float(frame.pts * frame.time_base) for frame in frames] == pytest.approx([0, 0.1, 0.2])
+    np.testing.assert_array_equal(
+        np.stack([frame.to_ndarray(format="rgb24") for frame in frames]),
+        np.stack(source_frames[episode_index * 3 : (episode_index + 1) * 3]),
+    )
+    assert len(clip) < len(original_bytes)
+    assert video_path.read_bytes() == original_bytes
 
 
 @pytest.mark.parametrize("compressed", [False, True])
