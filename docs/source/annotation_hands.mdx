@@ -1,0 +1,160 @@
+# Annotate human-POV hands
+
+This optional research workflow converts calibrated egocentric MP4s to LeRobot
+v3 episodes. It runs the evaluated recipe from
+[Grounded PR #392](https://github.com/pkooij/grounded-data-pipe/pull/392) through
+the shared annotation engine: content-bound plans, GPU admission, checkpoints,
+local/Slurm/Hugging Face Jobs execution and cached resumes. It reconstructs hands
+in existing human recordings, separately from robot-to-human video generation.
+
+The pinned recipe uses DROID-W with MoGe Small, calibrated HaWoR/MANO, ByteTrack,
+FP16 hands, `world11-half` joint smoothing, gamma-1 wrist rotation restoration,
+articulated orientation refinement and bounded 1.875-mm wrist-plane correction.
+It exports **102D actions**: 12 wrist position/rotation values plus 90 finger
+articulation values. Coordinates are fixed segment-start FLU; wrist rotation
+vectors are radians. These are inferred human actions, not robot joint commands
+or ground-truth metric trajectories.
+
+## Research rights
+
+The adapter is Apache-2.0. It does not copy Grounded's
+[AGPL implementation](https://github.com/pkooij/grounded-data-pipe/blob/d61017dd3a95c59a51d836aab6f7bac1baee34eb/LICENSE),
+install runtimes, download model assets, accept licenses for users or redistribute
+MANO. Process separation is an integration boundary, not a determination that
+all deployments are exempt from upstream obligations.
+
+As checked on October 22, 2026:
+
+| Component                             | Relevant terms                                                                                                                                                                                       |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MANO software/data                    | Personal, non-transferable research license; third-party distribution requires prior permission. Standard terms exclude commercial services, commercial training and commercial artifact production. |
+| HaWoR and infiller                    | Non-commercial model terms, including restrictions on distributed derivatives.                                                                                                                       |
+| WiLoR detector / Ultralytics          | Separate model and software terms apply.                                                                                                                                                             |
+| DROID-W, MoGe, FiT3D and dependencies | Review each installed component/checkpoint. DROID-W does not remove the hand-model restrictions.                                                                                                     |
+
+Read the [official MANO terms](https://mano.is.tue.mpg.de/license.html),
+[HaWoR repository](https://github.com/ThunderVVV/HaWoR) and
+[mixed-provenance model card](https://huggingface.co/macrodata/egovision-safetensors).
+An Apache package label or conversion to safetensors does not relicense weights.
+Obtain your required access and provision an authorized private research runtime.
+Do not publish MANO assets in a public Space/container or enable an unrestricted
+shared service under the standard license. Commercial use needs separate
+permissions or another stack. This is an engineering reading of published terms,
+not a legal opinion.
+
+## Inputs and provisioned runtime
+
+Place `clip.mp4` and `clip.intrinsics.json` together, recursively under one folder:
+
+```json
+{
+  "model": "pinhole",
+  "width": 1408,
+  "height": 1408,
+  "fx": 700,
+  "fy": 700,
+  "cx": 704,
+  "cy": 704,
+  "distortion": []
+}
+```
+
+`opencv_fisheye` is also supported by the backend. The calibrated recipe requires
+isotropic focal lengths. Missing/mismatched calibration fails before dispatch;
+focal lengths are never invented. Keep one FPS/resolution profile per output.
+Native frame rate is preserved.
+
+Provision the [standalone runtime](https://github.com/pkooij/grounded-data-pipe/blob/d61017dd3a95c59a51d836aab6f7bac1baee34eb/docs/egocentric_workflow.md)
+at commit `d61017dd3a95c59a51d836aab6f7bac1baee34eb`, including
+`ego-vision[models]==0.1.25`, the optimized DROID-W worker and authorized model
+caches. The adapter checks the checkout and asset hashes and sets Hugging
+Face/Transformers offline mode. It does not provision these assets.
+
+Supply an asset manifest listing **all consumed checkpoint and runtime files**,
+including HaWoR, detector, infiller, MANO, MoGe and FiT3D. It is an operator
+attestation, not an automatic license audit. Example structure:
+
+```json
+{
+  "environment": {
+    "HF_HOME": "/opt/cache/huggingface",
+    "TORCH_HOME": "/opt/cache/droidw-torch"
+  },
+  "files": [
+    { "path": "/opt/weights/moge-small.pt", "sha256": "ACTUAL_SHA256" },
+    { "path": "/opt/DROID-W/grounded_worker.py", "sha256": "ACTUAL_SHA256" }
+  ]
+}
+```
+
+Replace placeholders, include the remaining assets, then pin the manifest's own
+SHA-256 in `backend.assets_sha256`. Keep secrets out of configuration.
+
+Adapt `examples/annotation/human_pov_hands.json`. Set
+`research_terms_accepted=true` only after obtaining the required rights. Every
+worker needs the configured paths; the coordinator can use another interpreter.
+
+```bash
+uv run lerobot-annotate-hands --config hands.json --estimate
+uv run lerobot-annotate-hands --config hands.json
+```
+
+`runtime.mode="plan"` writes metadata plans without uploading MP4s or starting
+models. Execution stages checksum-bound input bytes in the artifact store.
+HF Jobs requires a remote run URI, a dependency-complete authorized image pinned
+by digest and a LeRobot commit containing this adapter. Use
+`runtime.hf_jobs.code_repository` for an unmerged fork. Configuring HF Jobs and
+executing the command launches billable work; LeRobot does not publish a model
+image for you. Completed groups resume without inference. Automatic inference
+retries are disabled.
+
+## Compute and FPS estimates
+
+Choose `compute="rtx-5090"`, `"a100-80gb"`, `"h100"`, `"h200"` or `"rtx-pro-6000"`. HF Jobs uses
+the selected flavor. Local/Slurm uses allocated devices; its profile is a
+planning declaration. One GPU is reserved per worker. Set `runtime.workers` and
+enough groups to use those workers; eight videos per group is a starting point
+for small inputs. Models stay loaded across videos within one group. Each new
+group starts a backend invocation; changing group membership invalidates caches.
+RTX 5090 and H100 are local/Slurm profiles. A100 80 GB, H200 and RTX PRO 6000
+map to available HF Jobs flavors (checked October 22, 2026).
+
+The measured reference is **53.9 input FPS on one RTX 5090**, including model
+startup, camera/hands and export, on ten short calibrated HOT3D clips / 1,500
+frames. [Timing and limitations](https://github.com/pkooij/grounded-data-pipe/blob/d61017dd3a95c59a51d836aab6f7bac1baee34eb/docs/egocentric_bounded_plane.md#fresh-integrated-ten-clip-check).
+It excludes first-time installation/downloads and is distinct from model-only
+FPS. It is not a guarantee for arbitrary recordings.
+
+Other GPUs have **no measured FPS yet**. Supply `planning_fps` as an explicit
+assumption rather than treating hardware-spec scaling as a benchmark. Estimates
+use the busiest worker's assigned input frames, exclude queue/transfers and
+assume no shared-I/O contention. Resolution, duration, visibility, CPU and storage
+affect throughput. The final report includes invocation wall time and withholds
+a new FPS claim on cached resumes. CPU-only inference is not supported.
+
+## Filtering and outputs
+
+Only uninterrupted segments with two directly observed, finite hands, full
+articulation and valid camera tracking are retained. Infilled-only, one-hand,
+no-hand and invalid-camera frames split segments. Runs shorter than
+`minimum_segment_frames` are discarded (default 30, minimum two). Not every input
+frame/video becomes a training episode.
+
+The output is a standard LeRobot dataset plus `meta/hand_annotations.json`:
+
+- Per-video accepted/rejected status, rejection reasons and retained frame yield.
+- Source/calibration hashes and the pinned recipe/asset-manifest digest.
+- Global `annotation.source_video_id` and explicit `episode_sources` linking
+  exported episodes to original videos and source intervals.
+- Compute estimates, wall time and whether results were reused.
+
+Group reports, logs and immutable bundles remain in `runtime.run_uri`. Backend
+failures, omitted videos, malformed actions and inconsistent counts prevent
+publication. An entirely rejected input produces a report with no trainable
+episodes. Existing output directories are never replaced. Inspect failures before
+an explicit resume: a failed group can repeat inference within that group.
+
+For raw Hub inputs, use `--hub-repo owner/raw --hub-revision COMMIT_SHA`.
+Publication is opt-in through `--upload-repo owner/hands` and restricted to a
+private repository by this command. Recording rights and output/data terms still
+apply.
