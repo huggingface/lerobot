@@ -237,12 +237,9 @@ def visualize_dataset(
     display_mode: str = "rerun",
     host: str = "127.0.0.1",
     autoplay: bool = True,
-    display_compressed_videos: bool = False,
+    display_compressed_videos: bool = True,
     **kwargs,
 ) -> Path | None:
-    if display_compressed_videos and display_mode != "rerun":
-        raise ValueError("--display-compressed-videos is only supported with --display-mode rerun")
-
     if display_mode == "foxglove":
         from lerobot.utils.foxglove_visualization import serve_foxglove_dataset_playback
 
@@ -488,12 +485,11 @@ def main():
 
     parser.add_argument(
         "--display-compressed-videos",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
-            "Log local RGB MP4s as Rerun video assets instead of individual frames. "
-            "Reduces .rrd size and avoids RGB decoding for video-only datasets. "
-            "Depth and unavailable video assets use individual frames. "
-            "Requires a viewer that supports the source video codec. Rerun only."
+            "Use local compressed RGB videos in Rerun (default: enabled). "
+            "Disable if your viewer cannot play the source codec."
         ),
     )
 

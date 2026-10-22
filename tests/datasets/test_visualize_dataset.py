@@ -22,11 +22,28 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.configs import RGBEncoderConfig
 from lerobot.datasets import LeRobotDataset
+from lerobot.scripts import lerobot_dataset_viz
 from lerobot.scripts.lerobot_dataset_viz import _log_video_assets, visualize_dataset
 
 CAMERA = "observation.images.camera"
 IMAGE_CAMERA = "observation.images.image"
 DEPTH_CAMERA = "observation.images.depth"
+
+
+@pytest.mark.parametrize("flags,enabled", [([], True), (["--no-display-compressed-videos"], False)])
+def test_compressed_video_cli_default_and_opt_out(monkeypatch, flags, enabled):
+    calls = []
+    dataset = object()
+    monkeypatch.setattr(
+        "sys.argv", ["lerobot-dataset-viz", "--repo-id", "test/video", "--episode-index", "0", *flags]
+    )
+    monkeypatch.setattr(lerobot_dataset_viz, "LeRobotDataset", lambda *args, **kwargs: dataset)
+    monkeypatch.setattr(
+        lerobot_dataset_viz, "visualize_dataset", lambda *args, **kwargs: calls.append((args, kwargs))
+    )
+    lerobot_dataset_viz.main()
+    assert calls[0][0] == (dataset,)
+    assert calls[0][1]["display_compressed_videos"] is enabled
 
 
 @pytest.fixture(scope="module", params=["h264", "libsvtav1"])
@@ -106,7 +123,6 @@ def test_compressed_video_shared_file_alignment(
         num_workers=num_workers,
         save=True,
         output_dir=tmp_path,
-        display_compressed_videos=True,
     )
     assert rrd_path.is_file() and rrd_path.stat().st_size > 0
     assets = [c for c in calls if isinstance(c[1], rr.AssetVideo)]
@@ -131,7 +147,14 @@ def test_compressed_video_shared_file_alignment(
 @pytest.mark.parametrize("compressed", [False, True])
 def test_individual_frame_display(dataset, tmp_path, rerun_logs, compressed):
     rr, calls = rerun_logs
-    visualize_dataset(dataset, 1, save=True, output_dir=tmp_path, display_compressed_images=compressed)
+    visualize_dataset(
+        dataset,
+        1,
+        save=True,
+        output_dir=tmp_path,
+        display_compressed_videos=False,
+        display_compressed_images=compressed,
+    )
     assert not any(isinstance(c[1], rr.AssetVideo | rr.VideoFrameReference) for c in calls)
     images = [c for c in calls if c[0] == CAMERA]
     assert len(images) == 3
@@ -145,7 +168,7 @@ def test_unreadable_asset_falls_back_to_real_decoding(dataset, tmp_path, monkeyp
         raise RuntimeError("Unsupported video asset")
 
     monkeypatch.setattr(rr.AssetVideo, "read_frame_timestamps_nanos", unreadable)
-    visualize_dataset(dataset, 1, save=True, output_dir=tmp_path, display_compressed_videos=True)
+    visualize_dataset(dataset, 1, save=True, output_dir=tmp_path)
     assert len([c for c in calls if c[0] == CAMERA and isinstance(c[1], rr.Image)]) == 3
     assert not any(isinstance(c[1], rr.AssetVideo | rr.VideoFrameReference) for c in calls)
 
@@ -159,7 +182,7 @@ def test_missing_asset_uses_frame_fallback(dataset, monkeypatch, rerun_logs, cap
 def test_image_transforms_are_not_bypassed(dataset, tmp_path, rerun_logs):
     rr, calls = rerun_logs
     dataset.set_image_transforms(lambda image: image * 0)
-    visualize_dataset(dataset, 1, save=True, output_dir=tmp_path, display_compressed_videos=True)
+    visualize_dataset(dataset, 1, save=True, output_dir=tmp_path)
     images = [c[1] for c in calls if c[0] == CAMERA]
     assert len(images) == 3 and all(isinstance(image, rr.Image) for image in images)
     assert all(not any(image.buffer.as_arrow_array()[0].as_py()) for image in images)
@@ -177,9 +200,16 @@ def test_unsupported_dataset_uses_reader(dataset, rerun_logs, unsupported, caplo
     assert "Falling back to individual frames" in caplog.text
 
 
-def test_video_assets_are_rerun_only(dataset):
-    with pytest.raises(ValueError, match="only supported.*rerun"):
-        visualize_dataset(dataset, 1, display_mode="foxglove", display_compressed_videos=True)
+def test_compressed_video_default_preserves_foxglove(dataset, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "lerobot.utils.foxglove_visualization.serve_foxglove_dataset_playback",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    assert visualize_dataset(dataset, 1, display_mode="foxglove") is None
+    assert calls == [
+        ((dataset, 1), {"host": "127.0.0.1", "port": 8765, "compress_images": False, "autoplay": True})
+    ]
 
 
 @pytest.mark.parametrize("include_video", [False, True])
@@ -219,7 +249,7 @@ def test_image_and_depth_cameras_keep_frame_rendering(tmp_path, rerun_logs, incl
     dataset = LeRobotDataset(
         "test/mixed", root=root, episodes=[0], video_backend="pyav", depth_output_unit="m"
     )
-    visualize_dataset(dataset, 0, save=True, output_dir=tmp_path, display_compressed_videos=True)
+    visualize_dataset(dataset, 0, save=True, output_dir=tmp_path)
     assert len([c for c in calls if c[0] == IMAGE_CAMERA and isinstance(c[1], rr.Image)]) == 3
     depths = [c[1] for c in calls if c[0] == DEPTH_CAMERA]
     assert len(depths) == 3 and all(isinstance(depth, rr.DepthImage) for depth in depths)

@@ -75,26 +75,10 @@ lerobot-dataset-viz \
 
 Once executed, the tool opens `rerun.io` and displays the camera streams, robot states, and actions for the selected episode.
 
-To reduce Rerun recording size, use the dataset's compressed RGB videos directly:
-
-```bash
-lerobot-dataset-viz \
-    --repo-id lerobot/pusht \
-    --episode-index 0 \
-    --display-compressed-videos
-```
-
-This logs each local MP4 once and references its frames on the same timelines as the actions and state.
-It accounts for episodes starting partway through a shared v3 video file. When all videos can be used
-and there is no depth, the tool also skips video decoding in Python. Image cameras, depth maps, and
-videos that cannot be loaded as assets retain individual-frame display. `--display-compressed-images`
-can optionally JPEG-compress the RGB frames that still use that path.
-
-The Rerun viewer must support the source video codec; omit `--display-compressed-videos` if playback
-fails in your viewer. The entire MP4 is embedded, including any other episodes sharing that file,
-so savings depend on video size and episode length. Transformed datasets, delta timestamps, and
-non-default storage formats use the existing individual-frame display. This option is Rerun-only
-and also works with `--save 1` or `--mode distant`.
+Rerun uses local compressed RGB videos by default, keeping frames synchronized with actions and state.
+Images, depth, and unsupported datasets retain individual-frame display. Use
+`--no-display-compressed-videos` if your viewer cannot play the source codec.
+Each entire MP4 is embedded, including other episodes sharing that file, so recording size varies.
 
 To use [Foxglove](https://foxglove.dev) instead of Rerun, install the extra add `--display-mode foxglove`. This starts a WebSocket server (connect the Foxglove app to `ws://127.0.0.1:8765`) that serves the episode as a seekable timeline you can play/pause and scrub.
 
