@@ -176,6 +176,7 @@ def test_failed_segment_is_recorded_and_others_continue(single_episode_root: Pat
     entries = json.loads((staging.episode_dir / "human_video.json").read_text())
     assert sorted(e["status"] for e in entries) == ["failed", "ok"]
     assert "provider error" in next(e for e in entries if e["status"] == "failed")["error"]
+    assert next(e for e in entries if e["status"] == "failed")["error_type"] == "RuntimeError"
 
 
 def test_max_segments_and_frame_offset(single_episode_root: Path, tmp_path: Path) -> None:

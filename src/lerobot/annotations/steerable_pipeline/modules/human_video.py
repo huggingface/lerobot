@@ -338,7 +338,7 @@ class HumanVideoModule:
                 entry["last_frame_path"] = str((out_dir / f"{stem}_last_frame.png").relative_to(self.root))
         except Exception as err:  # noqa: BLE001  - one failed segment must not stop the episode
             logger.warning("human_video: episode %d segment %d failed: %s", record.episode_index, k, err)
-            entry.update({"status": "failed", "error": str(err)[:500]})
+            entry.update({"status": "failed", "error_type": type(err).__name__, "error": str(err)[:500]})
         return entry
 
     @staticmethod
