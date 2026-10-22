@@ -695,3 +695,241 @@ def test_camera_placeholder_is_not_a_new_frame(robotd, tmp_path, monkeypatch):
 def test_camera_rejects_invalid_timeout(timeout):
     with pytest.raises(ValueError, match="camera_timeout_s"):
         MicroDuckConfig(camera_timeout_s=timeout)
+
+
+@pytest.fixture
+def gamepad_robot(robotd, tmp_path):
+    robot = MicroDuck(
+        MicroDuckConfig(
+            robotd_address=robotd.path,
+            use_camera=False,
+            control_mode="gamepad",
+            calibration_dir=tmp_path,
+        )
+    )
+    robot.connect()
+    yield robot
+    if robot.is_connected:
+        robot.disconnect()
+
+
+def test_gamepad_records_commands_without_writing_to_robot(gamepad_robot, robotd, tmp_path, monkeypatch):
+    from lerobot.teleoperators.microduck_gamepad import MicroDuckGamepad, MicroDuckGamepadConfig
+
+    monkeypatch.setitem(STATE, "move", {"requested": [0.4, -0.2, 0.5], "applied": [0.1, 0.0, 0.0]})
+    monkeypatch.setitem(STATE, "head", [0.12, 0.23, -0.34, 0.45])
+    # Wait for the fake daemon to publish the changed command.
+    deadline = time.monotonic() + 1
+    while gamepad_robot._check_state_stream()["move"]["requested"][0] != 0.4:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    teleop = MicroDuckGamepad(MicroDuckGamepadConfig(calibration_dir=tmp_path))
+    teleop.connect()
+    try:
+        obs = gamepad_robot.get_observation()
+        teleop.on_observation(obs)
+        action = teleop.get_action()
+        assert action == pytest.approx(
+            {
+                "x.vel": 0.4,
+                "y.vel": -0.2,
+                "theta.vel": math.degrees(0.5),
+                "neck_pitch.pos": 0.12,
+                "head_pitch.pos": 0.23,
+                "head_yaw.pos": -0.34,
+                "head_roll.pos": 0.45,
+            }
+        )
+        assert obs["x.vel.applied"] == 0.1
+        assert "microduck.gamepad" not in gamepad_robot.observation_features
+        # Passive recording must not clamp the gamepad's actual command to LeRobot's 0.3 limit.
+        assert gamepad_robot.send_action(action) == action
+        with pytest.raises(ValueError, match="unmodified action"):
+            gamepad_robot.send_action({**action, "x.vel": 0})
+        with pytest.raises(RuntimeError, match="fresh"):
+            teleop.get_action()
+        gamepad_robot.disconnect()
+        assert set(robotd.methods()) == {"hello", "robot.subscribe"}
+        assert robotd.notifications == []
+    finally:
+        teleop.disconnect()
+
+
+def test_gamepad_requires_passive_mode_and_fresh_sample(robot, tmp_path):
+    from lerobot.teleoperators.microduck_gamepad import MicroDuckGamepad, MicroDuckGamepadConfig
+
+    teleop = MicroDuckGamepad(MicroDuckGamepadConfig(calibration_dir=tmp_path))
+    teleop.connect()
+    try:
+        with pytest.raises(ValueError, match="control_mode=gamepad"):
+            teleop.on_observation(robot.get_observation())
+        action = dict.fromkeys(teleop.action_features, 0.0)
+        teleop.on_observation({"microduck.gamepad": {"action": action, "received_at": time.monotonic() - 2}})
+        with pytest.raises(RuntimeError, match="fresh"):
+            teleop.get_action()
+        teleop.on_observation({"microduck.gamepad": {"action": action, "received_at": time.monotonic()}})
+        teleop.disconnect()
+        teleop.connect()
+        with pytest.raises(RuntimeError, match="fresh"):
+            teleop.get_action()
+    finally:
+        teleop.disconnect()
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {},
+        {"move": {"applied": [0, 0, 0]}, "head": [0, 0, 0, 0]},
+        {"move": {"requested": [0, 0]}, "head": [0, 0, 0, 0]},
+        {"move": {"requested": [float("nan"), 0, 0]}, "head": [0, 0, 0, 0]},
+    ],
+)
+def test_gamepad_does_not_invent_missing_commands(state):
+    with pytest.raises(ValueError):
+        MicroDuck._gamepad_action(state)
+
+
+def test_gamepad_state_failure_prevents_recording(gamepad_robot, robotd):
+    observation = gamepad_robot.get_observation()
+    robotd.close_state()
+    deadline = time.monotonic() + 1
+    while gamepad_robot._state_error is None:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    with pytest.raises(DeviceNotConnectedError):
+        gamepad_robot.send_action(observation["microduck.gamepad"]["action"])
+    gamepad_robot.disconnect()
+    assert "robot.stop" not in robotd.methods()
+
+
+def test_gamepad_record_loop_saves_actions_without_commands(gamepad_robot, robotd, tmp_path):
+    from lerobot.processor import make_default_processors
+    from lerobot.scripts.lerobot_record import record_loop
+    from lerobot.teleoperators.microduck_gamepad import MicroDuckGamepad, MicroDuckGamepadConfig
+    from lerobot.utils.feature_utils import hw_to_dataset_features
+
+    class Dataset:
+        fps = 15
+        features = {
+            **hw_to_dataset_features(gamepad_robot.observation_features, "observation", use_video=False),
+            **hw_to_dataset_features(gamepad_robot.action_features, "action", use_video=False),
+        }
+        frames = []
+
+        def add_frame(self, frame):
+            self.frames.append(frame)
+
+    dataset = Dataset()
+    teleop = MicroDuckGamepad(MicroDuckGamepadConfig(calibration_dir=tmp_path))
+    teleop.connect()
+    try:
+        teleop_processor, action_processor, obs_processor = make_default_processors()
+        record_loop(
+            robot=gamepad_robot,
+            events={"exit_early": False},
+            fps=15,
+            teleop_action_processor=teleop_processor,
+            robot_action_processor=action_processor,
+            robot_observation_processor=obs_processor,
+            dataset=dataset,
+            teleop=teleop,
+            control_time_s=0.15,
+            single_task="Walk with the gamepad",
+        )
+        assert len(dataset.frames) >= 2
+        for frame in dataset.frames:
+            assert frame["action"][0] == pytest.approx(0.1)
+            assert frame["action"][2] == pytest.approx(math.degrees(0.2))
+        assert robotd.notifications == []
+    finally:
+        teleop.disconnect()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"control_mode": "unknown"},
+        {"control_mode": "gamepad", "relax_on_disconnect": True},
+        {"ssh_timeout_s": 0},
+        {"ssh_timeout_s": float("nan")},
+        {"ssh_port": 0},
+        {"rpc_timeout_s": -1},
+    ],
+)
+def test_invalid_connection_configuration(kwargs):
+    with pytest.raises(ValueError):
+        MicroDuckConfig(**kwargs)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_automatic_connection_lifecycle(robotd, tmp_path, monkeypatch, fail):
+    from unittest.mock import Mock
+
+    connection = Mock()
+    connection.open.return_value = robotd.path
+    factory = Mock(return_value=connection)
+    monkeypatch.setattr("lerobot.robots.microduck.microduck.MicroDuckConnection", factory)
+    robotd.close_before_first_state = fail
+    robot = MicroDuck(MicroDuckConfig(remote_ip="192.0.2.1", use_camera=False, calibration_dir=tmp_path))
+    if fail:
+        with pytest.raises(DeviceNotConnectedError):
+            robot.connect()
+    else:
+        robot.connect()
+        assert robot.get_observation()["gravity.z"] == -1
+        robot.disconnect()
+    factory.assert_called_once_with("192.0.2.1", "microduck", 22, 10.0)
+    connection.close.assert_called_once()
+    assert not robot._cmd.is_open
+    assert not robot._state_rpc.is_open
+
+
+def test_explicit_socket_does_not_launch_ssh(robotd, tmp_path, monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("An explicit socket must not launch SSH")
+
+    monkeypatch.setattr("lerobot.robots.microduck.microduck.MicroDuckConnection", forbidden)
+    robot = MicroDuck(MicroDuckConfig(robotd_address=robotd.path, use_camera=False, calibration_dir=tmp_path))
+    robot.connect()
+    robot.disconnect()
+
+
+def test_gamepad_cli_and_local_dataset(robotd, tmp_path):
+    import draccus
+    import pyarrow.parquet as pq
+
+    from lerobot.scripts.lerobot_record import RecordConfig, record
+
+    dataset_root = tmp_path / "gamepad-recording"
+    cfg = draccus.parse(
+        RecordConfig,
+        args=[
+            "--robot.type=microduck",
+            f"--robot.robotd_address={robotd.path}",
+            "--robot.control_mode=gamepad",
+            "--robot.use_camera=false",
+            "--teleop.type=microduck_gamepad",
+            "--dataset.repo_id=local/microduck-gamepad",
+            f"--dataset.root={dataset_root}",
+            "--dataset.push_to_hub=false",
+            "--dataset.no_stamp=true",
+            "--dataset.single_task=Walk",
+            "--dataset.num_episodes=1",
+            "--dataset.episode_time_s=0.2",
+            "--dataset.reset_time_s=0",
+            "--dataset.fps=15",
+            "--play_sounds=false",
+        ],
+    )
+    assert cfg.dataset.push_to_hub is False
+    dataset = record(cfg)
+    assert dataset.num_episodes == 1
+    rows = pq.read_table(next(dataset_root.glob("data/*/*.parquet"))).to_pylist()
+    assert len(rows) >= 2
+    for row in rows:
+        assert row["action"][:3] == pytest.approx([0.1, 0, math.degrees(0.2)])
+        assert len(row["observation.state"]) == len(dataset.features["observation.state"]["names"])
+    assert "microduck.gamepad" not in dataset.features
+    assert set(robotd.methods()) == {"hello", "robot.subscribe"}
+    assert robotd.notifications == []

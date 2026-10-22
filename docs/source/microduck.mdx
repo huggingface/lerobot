@@ -4,7 +4,9 @@
 
 With this integration you can:
 
+- connect by IP without managing a separate SSH tunnel,
 - teleoperate the duck from your laptop keyboard,
+- record the gamepad already paired with the duck,
 - record LeRobot datasets (head camera + proprioception + commanded intents) for imitation learning,
 - load onboard RL policies from the Hugging Face Hub.
 
@@ -17,32 +19,87 @@ With this integration you can:
 | Camera        | `mediad`, hardware-encoded H.264               | WebRTC, signalling on `ws://<ip>:8443` |
 | Hub policies  | `updaterd`, JSON-RPC over `/run/updaterd.sock` | ssh-forwarded Unix socket (optional)   |
 
-`robotd` zeroes the twist if no command arrives for 500 ms, so the duck stops if LeRobot stops or the connection drops.
+In LeRobot control mode, `robotd` zeroes the twist if no command arrives for 500 ms. In gamepad mode, the onboard gamepad keeps sending commands independently of the laptop connection.
 
 If the state stream stops, `get_observation` and `send_action` raise `DeviceNotConnectedError`. Disconnect, then reconnect before you continue.
 
 ## Setup
 
-1. Find the robot's IP with `duckctl ip` (mDNS hostnames are not reliable on these boards).
-2. Stop the onboard gamepad daemon so the two don't fight over the commands:
+1. Find the robot's IP with `duckctl ip`.
+2. Configure SSH key authentication for `microduck@<ip>` and verify the host key by connecting
+   normally once. This check must then succeed without a password prompt:
 
    ```bash
-   ssh microduck@<ip> sudo systemctl stop padd
+   ssh -o BatchMode=yes microduck@<ip> true
    ```
 
-3. Forward `robotd`'s socket (and `updaterd`'s, to load Hub policies). Leave this terminal open:
-
-   ```bash
-   ssh -N -L /tmp/robotd.sock:/run/robotd.sock -L /tmp/updaterd.sock:/run/updaterd.sock microduck@<ip>
-   ```
-
-4. From a LeRobot source checkout, install the recording, keyboard, and visualization dependencies:
+3. Install the recording, keyboard, and camera dependencies:
 
    ```bash
    uv sync --locked --extra core_scripts --extra microduck --extra test
    ```
 
-   Use `uv run --no-sync` before the commands below to use this environment.
+With `--robot.remote_ip=<ip>`, LeRobot opens an SSH forward to `/run/robotd.sock` automatically and
+closes only its own connection on exit. There is no separate tunnel terminal or fixed local port.
+SSH host verification stays enabled; authentication failures explain how to finish setup.
+`--robot.ssh_user`, `--robot.ssh_port`, and `--robot.ssh_timeout_s` customize that connection.
+This still uses SSH underneath; it does not expose robotd as an unauthenticated network service.
+
+To reuse an existing tunnel, set `--robot.robotd_address=127.0.0.1:17000` or an existing local Unix
+socket path. LeRobot leaves that tunnel running. `updaterd_address` remains an explicit forward for
+Hub policy downloads.
+
+For **keyboard/policy control**, stop the onboard gamepad daemon before connecting:
+
+```bash
+ssh microduck@<ip> sudo systemctl stop padd
+```
+
+For **gamepad recording**, leave `padd` running and use the mode below. LeRobot does not start or
+stop services automatically.
+
+## Record With the Paired Gamepad
+
+The controller stays paired with the Duck. Enable and drive it normally with the gamepad; LeRobot
+observes the onboard command stream. Close other camera viewers first.
+
+```bash
+export DUCK_IP=192.168.1.42 # replace with your Duck's IP
+# Only needed if padd was stopped for keyboard teleoperation:
+ssh "microduck@$DUCK_IP" sudo systemctl start padd
+
+export DUCK_DATASET_ROOT="$PWD/outputs/microduck-gamepad-$(date +%Y%m%d-%H%M%S)"
+uv run --no-sync lerobot-record \
+    --robot.type=microduck --robot.remote_ip="$DUCK_IP" \
+    --robot.control_mode=gamepad --teleop.type=microduck_gamepad \
+    --dataset.repo_id=local/microduck-gamepad --dataset.root="$DUCK_DATASET_ROOT" \
+    --dataset.no_stamp=true --dataset.push_to_hub=false \
+    --dataset.single_task="Walk and move the head with the gamepad" \
+    --dataset.num_episodes=2 --dataset.episode_time_s=20 --dataset.reset_time_s=10 \
+    --dataset.fps=15 --dataset.rgb_encoder.vcodec=h264 \
+    --display_data=true --play_sounds=false
+```
+
+`control_mode=gamepad` is passive: connect does not enable or home the robot, `send_action` verifies
+and returns the recorded command without writing it back, and disconnect does not stop or relax it.
+The gamepad remains in control during resets and after recording ends. Use its normal stop control.
+The `max_*` LeRobot command limits do not limit the onboard gamepad; set the speed on the Duck.
+
+Actions contain `robot.state.move.requested` (forward/sideways in m/s, yaw converted from rad/s to
+LeRobot's deg/s) and `robot.state.head` (the onboard smoothed head command, in rad). These are
+commanded intents, not measured joint positions or raw stick/button events. Other onboard command
+sources must be inactive: robot.state does not identify which source issued a command.
+
+Record walking and head movement only. Sitting, tricks, body-pose modes, enable/relax buttons, and
+other discrete skills are not represented in this seven-value action schema. Applied base velocities
+remain in the observation. The teleoperator and observation use the same state snapshot; missing,
+invalid, or stale command samples fail instead of inventing zero actions. State and camera arrive
+asynchronously, so this does not claim hardware timestamp synchronization.
+
+The `microduck.gamepad` observation entry is transient metadata for the teleoperator; it is excluded
+from dataset observation features. The same `robot.control_mode` and `teleop.type` flags also work
+with `lerobot-teleoperate` for a live view without recording. For keyboard, replay, or policy control,
+return to `--robot.control_mode=lerobot` and stop `padd` first.
 
 ## Validate the Camera First
 
@@ -296,6 +353,7 @@ This repeats the recorded intents, not an exact physical trajectory: the onboard
 ```bash
 uv run --no-sync pytest \
     tests/robots/test_microduck.py \
+    tests/robots/test_microduck_connection.py \
     tests/teleoperators/test_keyboard_microduck.py \
     tests/test_record_image_streams.py -q
 ```

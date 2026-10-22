@@ -43,6 +43,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> "Teleoperator":
         if config.arm is not None:
             devices.append((make_teleoperator_from_config(config.arm), ""))
         return CompositeTeleoperator(devices, config)
+    elif config.type == "microduck_gamepad":
+        from .microduck_gamepad import MicroDuckGamepad
+
+        return MicroDuckGamepad(config)
     elif config.type == "keyboard":
         from .keyboard import KeyboardTeleop
 

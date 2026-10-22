@@ -24,8 +24,8 @@ class MicroDuckConfig(RobotConfig):
     """Pollen Robotics Microduck, driven through its onboard locomotion policy.
 
     The duck walks with an onboard RL policy, so LeRobot commands *intents* (a body twist and a head
-    pose), never joint targets. Those intents go to ``robotd`` over its JSON-RPC socket, forwarded from
-    the robot with ``ssh -N -L /tmp/robotd.sock:/run/robotd.sock microduck@<remote_ip>``.
+    pose), never joint targets. LeRobot opens an SSH forward to robotd automatically unless an
+    explicit robotd_address is supplied. Gamepad mode observes commands without sending them.
 
     The robot stores its calibration. LeRobot does not calibrate the motors.
     """
@@ -34,7 +34,13 @@ class MicroDuckConfig(RobotConfig):
     remote_ip: str = "192.168.1.42"
 
     # robotd's socket as seen from this machine: a Unix socket path, or ``host:port`` for a TCP forward.
-    robotd_address: str = "/tmp/robotd.sock"  # nosec B108: a forwarded socket path, not a temp file
+    # None opens an owned SSH forward automatically using remote_ip.
+    robotd_address: str | None = None
+    ssh_user: str = "microduck"
+    ssh_port: int = 22
+    ssh_timeout_s: float = 10.0
+    # gamepad observes onboard control; LeRobot never enables, moves or stops the robot.
+    control_mode: str = "lerobot"
     # updaterd's socket, only needed to fetch policies from the Hub (``MicroDuck.load_policy``).
     updaterd_address: str | None = None
     rpc_timeout_s: float = 5.0
@@ -72,6 +78,16 @@ class MicroDuckConfig(RobotConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.control_mode not in ("lerobot", "gamepad"):
+            raise ValueError("control_mode must be 'lerobot' or 'gamepad'")
+        if self.control_mode == "gamepad" and self.relax_on_disconnect:
+            raise ValueError("Gamepad recording cannot relax the robot on disconnect")
+        if not 1 <= self.ssh_port <= 65535:
+            raise ValueError("ssh_port must be between 1 and 65535")
+        for name in ("ssh_timeout_s", "rpc_timeout_s"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be positive and finite")
         if self.camera_transport not in ("webrtc", "snapshot"):
             raise ValueError(
                 f"camera_transport must be 'webrtc' or 'snapshot', got {self.camera_transport!r}"
