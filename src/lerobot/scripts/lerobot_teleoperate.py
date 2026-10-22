@@ -93,6 +93,7 @@ from lerobot.robots import (  # noqa: F401
     earthrover_mini_plus,
     hope_jr,
     koch_follower,
+    limx_tron2,
     make_robot_from_config,
     omx_follower,
     openarm_follower,
