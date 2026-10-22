@@ -10,7 +10,7 @@ It combines three key ingredients:
 
 2. **On-robot actor / learner loop with human interventions:** a distributed Soft Actor Critic (SAC) learner updates the policy while an actor explores on the physical robot; the human can jump in at any time to correct dangerous or unproductive behaviour.
 
-3. **Safety & efficiency tools:** joint/end-effector (EE) bounds, crop region of interest (ROI) preprocessing and WandB monitoring keep the data useful and the hardware safe.
+3. **Safety & efficiency tools:** joint/end-effector (EE) bounds, crop region of interest (ROI) preprocessing and Trackio monitoring keep the data useful and the hardware safe.
 
 Together these elements let HIL-SERL reach near-perfect task success and faster cycle times than imitation-only baselines.
 
@@ -727,10 +727,9 @@ Example configuration for training the [reward classifier](https://huggingface.c
   "optimizer": {
     "grad_clip_norm": 10.0
   },
-  "wandb": {
+  "trackio": {
     "enable": true,
-    "project": "reward-classifier",
-    "disable_artifact": false
+    "project": "reward-classifier"
   },
   "job_name": "reward-classifier"
 }
@@ -874,7 +873,7 @@ The training proceeds automatically:
 
 - The key to learning efficiently is to have human interventions to provide corrective feedback and completing the task to aide the policy learning and exploration.
 - To perform human interventions, you can press the upper right trigger button on the gamepad (or the `space` key on the keyboard). This will pause the policy actions and allow you to take over.
-- A successful experiment is one where the human has to intervene at the start but then reduces the amount of interventions as the policy improves. You can monitor the intervention rate in the `wandb` dashboard.
+- A successful experiment is one where the human has to intervene at the start but then reduces the amount of interventions as the policy improves. You can monitor the intervention rate in the Trackio dashboard (`trackio show --project <project>`).
 
 <p align="center">
   <img
@@ -897,7 +896,7 @@ The training proceeds automatically:
 
 **Monitoring and Debugging**
 
-If you have `wandb.enable` set to `true` in your configuration, you can monitor training progress in real-time through the [Weights & Biases](https://wandb.ai/site/) dashboard.
+If you have `trackio.enable` set to `true` in your configuration, you can monitor training progress in real-time through the [Trackio](https://huggingface.co/docs/trackio) dashboard (`trackio show --project <project>`).
 
 ### Guide to Human Interventions
 

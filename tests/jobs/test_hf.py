@@ -32,7 +32,6 @@ from lerobot.jobs.hf import (
     build_repo_id,
     follow_job,
     resolve_job_tags,
-    resolve_wandb_api_key,
     submit_to_hf,
 )
 
@@ -96,43 +95,6 @@ def test_poll_until_done_propagates_programming_errors(monkeypatch):
     done = threading.Event()
     with pytest.raises(TypeError):
         _poll_until_done("j", done, poll_interval=0.001, max_failures=3)
-
-
-def test_resolve_wandb_key_from_env(monkeypatch):
-    monkeypatch.setenv("WANDB_API_KEY", "abc123")
-    assert resolve_wandb_api_key() == "abc123"
-
-
-def test_resolve_wandb_key_missing(monkeypatch, tmp_path):
-    monkeypatch.delenv("WANDB_API_KEY", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))  # no ~/.netrc here
-    monkeypatch.setattr("netrc.netrc", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
-    assert resolve_wandb_api_key() is None
-
-
-def test_resolve_wandb_key_from_netrc(monkeypatch):
-    # No env var → fall back to the wandb credentials in ~/.netrc.
-    monkeypatch.delenv("WANDB_API_KEY", raising=False)
-
-    class _FakeNetrc:
-        def authenticators(self, host):
-            assert host == "api.wandb.ai"
-            return ("login", "account", "netrc-secret")
-
-    monkeypatch.setattr("netrc.netrc", lambda *a, **k: _FakeNetrc())
-    assert resolve_wandb_api_key() == "netrc-secret"
-
-
-def test_resolve_wandb_key_netrc_without_wandb_entry(monkeypatch):
-    # ~/.netrc exists but has no api.wandb.ai entry → None.
-    monkeypatch.delenv("WANDB_API_KEY", raising=False)
-
-    class _FakeNetrc:
-        def authenticators(self, host):
-            return None
-
-    monkeypatch.setattr("netrc.netrc", lambda *a, **k: _FakeNetrc())
-    assert resolve_wandb_api_key() is None
 
 
 def test_build_repo_id_sanitizes_and_timestamps():
@@ -527,8 +489,8 @@ def test_submit_returns_on_model_pushed_marker(monkeypatch):
     submit_to_hf(cfg)
 
 
-def test_submit_raises_when_wandb_enabled_without_key(monkeypatch):
-    """wandb.enable with no key reachable anywhere fails fast, before submitting."""
+def test_submit_raises_when_trackio_enabled_without_space_id(monkeypatch):
+    """trackio.enable without a Space fails fast, before submitting: the pod's local database is lost."""
 
     monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
 
@@ -540,7 +502,6 @@ def test_submit_raises_when_wandb_enabled_without_key(monkeypatch):
             return {"name": "alice"}
 
     monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
-    monkeypatch.setattr("lerobot.jobs.hf.resolve_wandb_api_key", lambda: None)
 
     cfg = draccus.parse(
         TrainPipelineConfig,
@@ -551,12 +512,69 @@ def test_submit_raises_when_wandb_enabled_without_key(monkeypatch):
             "act",
             "--job.target",
             "a10g-small",
-            "--wandb.enable",
+            "--trackio.enable",
             "true",
         ],
     )
-    with pytest.raises(ValueError, match="WANDB_API_KEY"):
+    with pytest.raises(ValueError, match="space_id"):
         submit_to_hf(cfg)
+
+
+def test_submit_with_trackio_space_id_stages_config_and_forwards_only_hf_token(monkeypatch, tmp_path):
+    """With a Space set, the staged config carries the trackio section and the pod gets only HF_TOKEN."""
+
+    monkeypatch.setattr("lerobot.jobs.hf.get_token", lambda: "tok")
+
+    class FakeHfApi:
+        def __init__(self, token=None):
+            pass
+
+        def whoami(self, token=None):
+            return {"name": "alice"}
+
+    monkeypatch.setattr("lerobot.jobs.hf.HfApi", FakeHfApi)
+    monkeypatch.setattr("lerobot.jobs.hf.ensure_dataset_available", lambda *a, **kw: None)
+    staged = {}
+
+    def fake_stage(cfg, repo_id, token, tags=None):
+        # Build the real pod config (no upload) so the test sees what the pod would parse.
+        path = build_remote_config_file(cfg, repo_id, tmp_path / "train_config.json", tags=tags)
+        staged.update(json.loads(path.read_text()))
+        return repo_id
+
+    monkeypatch.setattr("lerobot.jobs.hf._stage_config_on_hub", fake_stage)
+    run_job_calls = []
+
+    def fake_run_job(**kwargs):
+        run_job_calls.append(kwargs)
+        return SimpleNamespace(id="job-1", url=None)
+
+    monkeypatch.setattr("lerobot.jobs.hf.run_job", fake_run_job)
+
+    cfg = draccus.parse(
+        TrainPipelineConfig,
+        args=[
+            "--dataset.repo_id",
+            "u/d",
+            "--policy.type",
+            "act",
+            "--job.target",
+            "a10g-small",
+            "--job.detach",
+            "true",
+            "--trackio.enable",
+            "true",
+            "--trackio.space_id",
+            "u/s",
+        ],
+    )
+    submit_to_hf(cfg)
+
+    assert len(run_job_calls) == 1
+    # The Hub token alone authenticates both the dataset pull and the trackio Space sync.
+    assert run_job_calls[0]["secrets"] == {"HF_TOKEN": "tok"}
+    assert staged["trackio"]["enable"] is True
+    assert staged["trackio"]["space_id"] == "u/s"
 
 
 @pytest.mark.timeout(15)

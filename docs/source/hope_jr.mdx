@@ -257,13 +257,11 @@ lerobot-train \
   --output_dir=outputs/train/hopejr_hand \
   --job_name=hopejr \
   --policy.device=mps \
-  --wandb.enable=true \
+  --trackio.enable=true \
   --policy.repo_id=<USER>/hand_test_policy
 ```
 
 ### Evaluate
-
-This training run can be viewed as an example [here](https://wandb.ai/tino/lerobot/runs/rp0k8zvw?nw=nwusertino).
 
 ```bash
 lerobot-record \
