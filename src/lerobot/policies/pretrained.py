@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeVar, Unpack
 
 from huggingface_hub import hf_hub_download, save_torch_state_dict
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
-from huggingface_hub.errors import HfHubHTTPError
+from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
 from safetensors.torch import load_model as load_model_as_safetensor
 from torch import Tensor, nn
 
@@ -32,7 +32,7 @@ from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.optim.optimizers import OptimizerParams
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import resolve_safetensors_device
-from lerobot.utils.hub import HubMixin
+from lerobot.utils.hub import HubMixin, missing_hub_repo_message
 from lerobot.utils.import_utils import _peft_available, require_package
 
 from .chunk import ChunkPolicySpec, ExecutionMode, FeatureSpec
@@ -209,6 +209,10 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                     local_files_only=local_files_only,
                 )
                 policy = cls._load_as_safetensor(instance, model_file, device, strict)
+            except RepositoryNotFoundError as e:
+                raise FileNotFoundError(
+                    missing_hub_repo_message(model_id, SAFETENSORS_SINGLE_FILE)
+                ) from e
             except HfHubHTTPError as e:
                 raise FileNotFoundError(
                     f"{SAFETENSORS_SINGLE_FILE} not found on the HuggingFace Hub in {model_id}"

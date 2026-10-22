@@ -108,6 +108,13 @@ embedded 70/30 subtask recipe. `--policy.path` loads the base checkpoint's own
 config, so fine-tuning keeps the FAST token layout (`fast_skip_tokens`) and the
 recipe the base was trained with; the other `--policy.*` flags override it.
 
+<Tip>
+  `lerobot/fineart_vla_base` has not been released publicly yet, so loading it fails with a
+  "repository does not exist" error. Until the checkpoint is published, start from the PI0.5
+  checkpoint instead: `--policy.type=fineart_vla --policy.pretrained_path=lerobot/pi05_base`.
+  The OpenPI-format weights are converted on load (see the next section).
+</Tip>
+
 ```bash
 lerobot-train \
     --dataset.repo_id=${HF_USER}/my_language_annotated_dataset \
