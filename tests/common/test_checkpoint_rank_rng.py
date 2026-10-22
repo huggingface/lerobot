@@ -60,13 +60,32 @@ def checkpoint(tmp_path, monkeypatch):
     cfg.checkpoint_path = tmp_path
     states = {}
     for rank in (0, 1):
-        runtime["rank"] = rank
         seed(100 + rank)
         random.gauss(0, 1)
         np.random.standard_normal(3)
         torch.rand(5 + rank)
         states[rank] = snapshot()
-        train_utils.save_training_state(tmp_path, 4, cfg)
+
+    def gather(state, destination, dst):
+        assert dst == 0
+        assert all(torch.equal(state[key], value) for key, value in states[runtime["rank"]].items())
+        if runtime["rank"] == 0:
+            destination[:] = [states[0], states[1]]
+        else:
+            assert destination is None
+
+    monkeypatch.setattr(train_utils.dist, "gather_object", gather)
+    for rank in (0, 1):
+        runtime["rank"] = rank
+        seed(100 + rank)
+        random.gauss(0, 1)
+        np.random.standard_normal(3)
+        torch.rand(5 + rank)
+        # Rank 1 writes to a different local path. Rank 0 must still own a
+        # complete checkpoint with both RNG payloads.
+        destination = tmp_path if rank == 0 else tmp_path / "rank1-local"
+        train_utils.save_training_state(destination, 4, cfg)
+    assert not list((tmp_path / "rank1-local").rglob("*.safetensors"))
     return cfg, runtime, states
 
 

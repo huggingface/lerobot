@@ -34,6 +34,7 @@ import httpx
 import torch.distributed as dist
 from huggingface_hub import HfApi, ModelCard, ModelCardData, is_offline_mode, model_info, snapshot_download
 from huggingface_hub.errors import HFValidationError, OfflineModeIsEnabled
+from safetensors.torch import save_file
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -70,7 +71,8 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.hub import find_latest_hub_checkpoint
 from lerobot.utils.io_utils import load_json, write_json
-from lerobot.utils.random_utils import load_rng_state, save_rng_state
+from lerobot.utils.random_utils import load_rng_state, save_rng_state, serialize_rng_state
+from lerobot.utils.utils import flatten_dict
 
 if TYPE_CHECKING:
     from accelerate import Accelerator
@@ -311,7 +313,7 @@ def save_training_state(
     sharded: bool = False,
     model: PreTrainedPolicy | None = None,
 ) -> None:
-    """Write training_state/. Collective under sharding: call on every rank.
+    """Write training_state/. Collective in distributed runs: call on every rank.
 
     Args:
         checkpoint_dir (Path): The checkpoint step directory; `training_state/` is created inside it.
@@ -342,15 +344,22 @@ def save_training_state(
         # Collective — all ranks write their DCP shards into optimizer_0/.
         save_sharded_optimizer(accelerator, optimizer, model, save_dir)
 
-    # Random streams can differ even when replicated weights and optimizer states
-    # agree. Each rank owns its file; save_checkpoint's final barrier completes
-    # all writes before the caller publishes the checkpoint.
+    # Gather small CPU RNG payloads to the existing checkpoint writer. Independent
+    # rank writes would leave incomplete checkpoints on node-local filesystems.
+    rng_states: list[dict[str, Any] | None] | None = None
     if dist.is_initialized() and dist.get_world_size() > 1:
-        rank_dir = save_dir / "rng_states" / f"rank_{dist.get_rank()}"
-        rank_dir.mkdir(parents=True, exist_ok=True)
-        save_rng_state(rank_dir)
+        if is_main_process():
+            rng_states = [None] * dist.get_world_size()
+        dist.gather_object(serialize_rng_state(), rng_states, dst=0)
 
     if is_main_process():  # ONE grouped gate for the whole rank-0-only region
+        if rng_states is not None:
+            for rank, rng_state in enumerate(rng_states):
+                if rng_state is None:
+                    raise RuntimeError(f"Missing gathered RNG state for rank {rank}.")
+                rank_dir = save_dir / "rng_states" / f"rank_{rank}"
+                rank_dir.mkdir(parents=True, exist_ok=True)
+                save_file(flatten_dict(rng_state), rank_dir / RNG_STATE)
         save_training_metadata(step, save_dir, cfg)
         save_rng_state(save_dir)
         if scheduler is not None:
