@@ -61,17 +61,6 @@ lerobot-eval \
   --rename_map='{"observation.images.image": "observation.images.base_0_rgb", "observation.images.image2": "observation.images.left_wrist_0_rgb"}'
 ```
 
-### Recording
-
-`lerobot-record` also supports rename maps, nested under the dataset config:
-
-```bash
-lerobot-record \ # When running inference
-  --policy.path="<user>/smolVLA_finetuned" \
-  ... \
-  --dataset.rename_map='{"observation.images.glove2": "observation.images.image"}'
-```
-
 ## Alternative: edit the policy config directly
 
 If you always use the same dataset or environment, you can **edit the policy's `config.json`** so its observation keys match your data source. Then no rename map is needed.
@@ -105,10 +94,10 @@ XVLA-base has three visual inputs and `empty_cameras=0` by default. Your dataset
 
 ## Quick reference
 
-| Goal                                      | What to do                                                                  |
-| ----------------------------------------- | --------------------------------------------------------------------------- |
-| Dataset keys ≠ policy keys                | `--rename_map='{"dataset_key": "policy_key", ...}'`                         |
-| Env keys ≠ policy keys (eval)             | `--rename_map='{"env_key": "policy_key", ...}'`                             |
-| Recording with different keys (inference) | `--dataset.rename_map='{"source_key": "policy_key", ...}'`.                 |
-| Fewer cameras than policy expects         | `--policy.empty_cameras=N` (supported by PI0, PI05, PI0Fast, SmolVLA, XVLA) |
-| Avoid passing a rename map                | Edit the policy's `config.json` so its keys match your data source          |
+| Goal                                    | What to do                                                                  |
+| --------------------------------------- | --------------------------------------------------------------------------- |
+| Dataset keys ≠ policy keys              | `--rename_map='{"dataset_key": "policy_key", ...}'`                         |
+| Env keys ≠ policy keys (eval)           | `--rename_map='{"env_key": "policy_key", ...}'`                             |
+| Rollout with different keys (inference) | `--rename_map='{"source_key": "policy_key", ...}'`.                         |
+| Fewer cameras than policy expects       | `--policy.empty_cameras=N` (supported by PI0, PI05, PI0Fast, SmolVLA, XVLA) |
+| Avoid passing a rename map              | Edit the policy's `config.json` so its keys match your data source          |

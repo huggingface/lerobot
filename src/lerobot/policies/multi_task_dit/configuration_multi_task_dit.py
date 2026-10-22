@@ -17,10 +17,8 @@
 import logging
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import NormalizationMode
-from lerobot.optim.optimizers import AdamConfig
-from lerobot.optim.schedulers import DiffuserSchedulerConfig
+from lerobot.configs import NormalizationMode, PreTrainedConfig
+from lerobot.optim import AdamConfig, DiffuserSchedulerConfig
 
 
 @PreTrainedConfig.register_subclass("multi_task_dit")
@@ -77,6 +75,16 @@ class MultiTaskDiTConfig(PreTrainedConfig):
     image_resize_shape: tuple[int, int] | None = None  # Resize images before crop
     image_crop_shape: tuple[int, int] | None = (224, 224)  # Crop shape (CLIP default)
     image_crop_is_random: bool = True  # Random crop during training, center at inference
+
+    # Compile the vision tower and the noise predictor with torch.compile. Fuses the
+    # elementwise work (GELU, residual adds, layer norm, autocast casts) that otherwise
+    # dominates the ViT-B/16 forward/backward in eager mode. Costs a one-off compile
+    # (~90s on an A100 at batch 160) at the first step and once per new batch shape: the
+    # dataloader's partial last batch of an epoch, and the inference batch.
+    compile_model: bool = False
+    # torch.compile mode; None is inductor's default. "max-autotune-no-cudagraphs" measured no
+    # throughput gain on an A100 for four times the compile time.
+    compile_mode: str | None = None
 
     # Text Encoder (CLIP)
     text_encoder_name: str = "openai/clip-vit-base-patch16"  # HuggingFace CLIP model

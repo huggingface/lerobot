@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from lerobot.cameras.configs import CameraConfig, Cv2Rotation
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.cameras import CameraConfig, Cv2Rotation
+from lerobot.cameras.opencv import OpenCVCameraConfig
 
 from ..config import RobotConfig
 
@@ -23,10 +24,20 @@ from ..config import RobotConfig
 def lekiwi_cameras_config() -> dict[str, CameraConfig]:
     return {
         "front": OpenCVCameraConfig(
-            index_or_path="/dev/video0", fps=30, width=640, height=480, rotation=Cv2Rotation.ROTATE_180
+            index_or_path=Path("/dev/video0"),
+            fps=30,
+            width=640,
+            height=480,
+            fourcc="MJPG",
+            rotation=Cv2Rotation.ROTATE_180,
         ),
         "wrist": OpenCVCameraConfig(
-            index_or_path="/dev/video2", fps=30, width=480, height=640, rotation=Cv2Rotation.ROTATE_90
+            index_or_path=Path("/dev/video2"),
+            fps=30,
+            width=480,
+            height=640,
+            fourcc="MJPG",
+            rotation=Cv2Rotation.ROTATE_90,
         ),
     }
 
@@ -46,7 +57,13 @@ class LeKiwiConfig(RobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=lekiwi_cameras_config)
 
     # Set to `True` for backward compatibility with previous policies/dataset
-    use_degrees: bool = False
+    use_degrees: bool = True
+
+    # Number of extra attempts when a `sync_read` of the motors fails. Feetech buses can occasionally
+    # return a corrupted status packet ("Incorrect status packet!"), especially when several joints move
+    # at once, which otherwise aborts the control loop. Retries are immediate (no sleep) and only happen on
+    # failure, so the steady-state read cost is unchanged.
+    num_read_retries: int = 2
 
 
 @dataclass

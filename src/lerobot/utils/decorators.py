@@ -16,7 +16,7 @@
 
 from functools import wraps
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from .errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 
 def check_if_not_connected(func):

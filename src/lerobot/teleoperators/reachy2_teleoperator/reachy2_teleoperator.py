@@ -19,7 +19,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from lerobot.utils.import_utils import _reachy2_sdk_available
+from lerobot.utils.import_utils import _reachy2_sdk_available, require_package
 
 if TYPE_CHECKING or _reachy2_sdk_available:
     from reachy2_sdk import ReachySDK
@@ -84,6 +84,7 @@ class Reachy2Teleoperator(Teleoperator):
     name = "reachy2_specific"
 
     def __init__(self, config: Reachy2TeleoperatorConfig):
+        require_package("reachy2_sdk", extra="reachy2")
         super().__init__(config)
 
         self.config = config
@@ -148,6 +149,8 @@ class Reachy2Teleoperator(Teleoperator):
     @check_if_not_connected
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
+        if self.reachy is None:
+            raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")
 
         joint_action: dict[str, float] = {}
         vel_action: dict[str, float] = {}
@@ -172,5 +175,5 @@ class Reachy2Teleoperator(Teleoperator):
         raise NotImplementedError
 
     def disconnect(self) -> None:
-        if self.is_connected:
+        if self.reachy is not None and self.reachy.is_connected():
             self.reachy.disconnect()

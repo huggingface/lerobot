@@ -22,15 +22,24 @@ and calculate arctan2 of the unit circle to get the joint angle.
 We then store the ellipse parameters and the zero offset for each joint to be used at runtime.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-import serial
+
+from lerobot.utils.import_utils import _serial_available, require_package
+
+if TYPE_CHECKING or _serial_available:
+    import serial
+else:
+    serial = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +91,7 @@ class ExoskeletonCalibration:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ExoskeletonCalibration":
+    def from_dict(cls, data: dict) -> ExoskeletonCalibration:
         joints = [
             ExoskeletonJointCalibration(
                 name=j["name"],
@@ -143,10 +152,14 @@ def run_exo_calibration(
     side: str,
     save_path: Path,
     params: CalibParams | None = None,
-) -> ExoskeletonCalibration:
+) -> ExoskeletonCalibration | None:
     """
     Run interactive calibration for an exoskeleton arm.
+
+    Returns the calibration once every joint has been recorded, or None if the calibration window is
+    closed before that.
     """
+    require_package("pyserial", extra="unitree_g1", import_name="serial")
     try:
         import cv2
         import matplotlib.pyplot as plt
@@ -246,7 +259,7 @@ def run_exo_calibration(
     joint_idx = 0
     phase = "ellipse"
     advance_requested = False
-    zero_samples = []
+    zero_samples: list[float] = []
 
     def on_key(event):
         nonlocal advance_requested
@@ -444,3 +457,6 @@ def run_exo_calibration(
 
     finally:
         plt.close(fig)
+
+    # The window was closed before every joint was calibrated.
+    return None

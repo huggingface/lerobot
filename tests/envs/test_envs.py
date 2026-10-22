@@ -23,9 +23,8 @@ import torch
 from gymnasium.envs.registration import register, registry as gym_registry
 from gymnasium.utils.env_checker import check_env
 
-import lerobot
 from lerobot.configs.types import PolicyFeature
-from lerobot.envs.configs import EnvConfig
+from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import (
     _normalize_hub_result,
@@ -36,9 +35,16 @@ from tests.utils import require_env
 
 OBS_TYPES = ["state", "pixels", "pixels_agent_pos"]
 
+ENV_TASK_PAIRS = [
+    ("aloha", "AlohaInsertion-v0"),
+    ("aloha", "AlohaTransferCube-v0"),
+    ("pusht", "PushT-v0"),
+]
+AVAILABLE_ENVS = ["aloha", "pusht"]
+
 
 @pytest.mark.parametrize("obs_type", OBS_TYPES)
-@pytest.mark.parametrize("env_name, env_task", lerobot.env_task_pairs)
+@pytest.mark.parametrize("env_name, env_task", ENV_TASK_PAIRS)
 @require_env
 def test_env(env_name, env_task, obs_type):
     if env_name == "aloha" and obs_type == "state":
@@ -51,7 +57,7 @@ def test_env(env_name, env_task, obs_type):
     env.close()
 
 
-@pytest.mark.parametrize("env_name", lerobot.available_envs)
+@pytest.mark.parametrize("env_name", AVAILABLE_ENVS)
 @require_env
 def test_factory(env_name):
     cfg = make_env_config(env_name)
@@ -266,3 +272,11 @@ def test_make_env_from_hub_async():
 
     # clean up
     env.close()
+
+
+def test_gym_manipulator_points_to_the_real_robot_entry_points():
+    # It drives a physical robot, so make_env must not look for a `gym_gym_manipulator` package.
+    with pytest.raises(NotImplementedError, match="real-robot environment") as e:
+        make_env(HILSerlRobotEnvConfig(), n_envs=1)
+    assert "lerobot.rl.gym_manipulator" in str(e.value)
+    assert "lerobot.rl.eval_policy" in str(e.value)

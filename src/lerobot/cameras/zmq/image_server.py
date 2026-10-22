@@ -31,8 +31,8 @@ import cv2
 import numpy as np
 import zmq
 
-from lerobot.cameras.configs import ColorMode
-from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from ..configs import ColorMode
+from ..opencv import OpenCVCamera, OpenCVCameraConfig
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +102,7 @@ class ImageServer:
                 fps=self.fps,
                 width=shape[1],
                 height=shape[0],
+                fourcc=cfg.get("fourcc", "MJPG"),
                 color_mode=ColorMode.RGB,
             )
             camera = OpenCVCamera(cam_config)

@@ -20,7 +20,7 @@ from typing import Any
 
 import zmq
 
-from lerobot.robots.unitree_g1.config_unitree_g1 import UnitreeG1Config
+from .config_unitree_g1 import UnitreeG1Config
 
 # Module-level ZMQ state mirrors the Unitree SDK's global ChannelFactory Singleton.
 # Only one robot connection per process is supported.
@@ -117,7 +117,7 @@ def ChannelFactoryInitialize(domain_id: int = 0, config: Any = None) -> None:  #
         config = UnitreeG1Config()
     robot_ip = config.robot_ip
 
-    ctx = zmq.Context.instance()
+    ctx: zmq.Context = zmq.Context.instance()
     _ctx = ctx
 
     # lowcmd: send robot commands

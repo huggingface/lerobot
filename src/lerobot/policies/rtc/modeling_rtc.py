@@ -27,9 +27,10 @@ import math
 import torch
 from torch import Tensor
 
-from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.rtc.debug_tracker import Tracker
+from lerobot.configs import RTCAttentionSchedule
+
+from .configuration_rtc import RTCConfig
+from .debug_tracker import Tracker
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,12 @@ class RTCProcessor:
     prefix attention, and adaptive chunk processing.
     """
 
-    def __init__(self, rtc_config: RTCConfig):
+    def __init__(self, rtc_config: RTCConfig, *, trained_mode_supported: bool = False):
+        if rtc_config.enabled and rtc_config.mode == "trained" and not trained_mode_supported:
+            raise ValueError(
+                "RTC mode='trained' requires a PI05-compatible checkpoint trained with "
+                "rtc_training_max_delay > 0."
+            )
         self.rtc_config = rtc_config
 
         self.tracker = None
@@ -197,9 +203,8 @@ class RTCProcessor:
             padded[:, : prev_chunk_left_over.shape[1], : prev_chunk_left_over.shape[2]] = prev_chunk_left_over
             prev_chunk_left_over = padded
 
-        assert prev_chunk_left_over.shape == x_t.shape, (
-            "The padded previous chunk must be the same size as the input tensor"
-        )
+        if prev_chunk_left_over.shape != x_t.shape:
+            raise ValueError("The padded previous chunk must be the same size as the input tensor")
 
         weights = (
             self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)

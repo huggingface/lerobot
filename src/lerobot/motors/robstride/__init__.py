@@ -15,4 +15,6 @@
 # limitations under the License.
 
 from .robstride import RobstrideMotorsBus
-from .tables import *
+from .tables import *  # noqa: F403 — hardware constant tables
+
+__all__ = ["RobstrideMotorsBus"]

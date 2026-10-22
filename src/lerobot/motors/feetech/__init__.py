@@ -14,5 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .feetech import DriveMode, FeetechMotorsBus, OperatingMode, TorqueMode
-from .tables import *
+from ..motors_bus import DriveMode
+from .feetech import FeetechMotorsBus, OperatingMode, TorqueMode
+
+__all__ = ["DriveMode", "FeetechMotorsBus", "OperatingMode", "TorqueMode"]

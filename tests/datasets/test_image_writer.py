@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+
 from lerobot.datasets.image_writer import (
     AsyncImageWriter,
     image_array_to_pil_image,
@@ -57,9 +59,13 @@ def test_init_multiprocessing():
         writer.stop()
 
 
-def test_zero_threads():
+@pytest.mark.parametrize(
+    ("num_processes", "num_threads"),
+    [(0, 0), (1, 0), (1, -1), (-1, 1)],
+)
+def test_invalid_worker_counts(num_processes, num_threads):
     with pytest.raises(ValueError):
-        AsyncImageWriter(num_processes=0, num_threads=0)
+        AsyncImageWriter(num_processes=num_processes, num_threads=num_threads)
 
 
 def test_image_array_to_pil_image_float_array_wrong_range_0_255():
@@ -92,7 +98,7 @@ def test_image_array_to_pil_image_pytorch_format(img_array_factory):
 
 def test_image_array_to_pil_image_single_channel(img_array_factory):
     img_array = img_array_factory(channels=1)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="Unsupported single-channel image dtype"):
         image_array_to_pil_image(img_array)
 
 
@@ -342,7 +348,7 @@ def test_with_different_image_formats(tmp_path, img_array_factory):
     writer = AsyncImageWriter()
     try:
         image_array = img_array_factory()
-        formats = ["png", "jpeg", "bmp"]
+        formats = ["png", "tiff", "tif"]
         for fmt in formats:
             fpath = tmp_path / f"test_image.{fmt}"
             write_image(image_array, fpath)

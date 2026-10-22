@@ -14,14 +14,11 @@
 
 from dataclasses import dataclass, field
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.optim.optimizers import AdamWConfig
-from lerobot.optim.schedulers import (
-    CosineDecayWithWarmupSchedulerConfig,
-)
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
+from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import OBS_IMAGES
+
+from ..rtc.configuration_rtc import RTCConfig
 
 
 @PreTrainedConfig.register_subclass("smolvla")
@@ -55,7 +52,7 @@ class SmolVLAConfig(PreTrainedConfig):
     # the space used by the pi internal runtime which was used to train the base model.
     adapt_to_pi_aloha: bool = False
 
-    # Converts joint dimensions to deltas with respect to the current state before passing to the model.
+    # Converts joint dimensions to relative values with respect to the current state before passing to the model.
     # Gripper dimensions will remain in absolute values.
     use_delta_joint_actions_aloha: bool = False
 
@@ -79,6 +76,7 @@ class SmolVLAConfig(PreTrainedConfig):
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 1e-10
     optimizer_grad_clip_norm: float = 10
+    optimizer_fused: bool | None = None
 
     scheduler_warmup_steps: int = 1_000
     scheduler_decay_steps: int = 30_000
@@ -124,6 +122,8 @@ class SmolVLAConfig(PreTrainedConfig):
             )
 
     def validate_features(self) -> None:
+        if self.input_features is None:
+            raise ValueError("`input_features` must be resolved before `validate_features()` is called.")
         for i in range(self.empty_cameras):
             key = f"{OBS_IMAGES}.empty_camera_{i}"
             empty_camera = PolicyFeature(
@@ -139,6 +139,7 @@ class SmolVLAConfig(PreTrainedConfig):
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
             grad_clip_norm=self.optimizer_grad_clip_norm,
+            fused=self.optimizer_fused,
         )
 
     def get_scheduler_preset(self):

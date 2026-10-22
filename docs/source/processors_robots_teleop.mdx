@@ -22,7 +22,7 @@ With processors, you choose the learning features you want to use for your polic
 ## Three pipelines
 
 We often compose three pipelines. Depending on your setup, some can be empty if action and observation spaces already match.
-Each of these pipelines handle different conversions between different action and observation spaces. Below is a quick explanation of each pipeline.
+Each of these pipelines handles different conversions between different action and observation spaces. Below is a quick explanation of each pipeline.
 
 1. Pipeline 1: Teleop action space → dataset action space (phone pose → EE targets)
 2. Pipeline 2: Dataset action space → robot command space (EE targets → joints)
@@ -74,15 +74,15 @@ In the phone to SO-100 follower examples we use the following adapters:
 - `robot_action_to_transition`: transforms the teleop action dict to a pipeline transition.
 - `transition_to_robot_action`: transforms the pipeline transition to a robot action dict.
 - `observation_to_transition`: transforms the robot observation dict to a pipeline transition.
-- `transition_to_observation`: transforms the pipeline transition to a observation dict.
+- `transition_to_observation`: transforms the pipeline transition to an observation dict.
 
-Checkout [src/lerobot/processor/converters.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/processor/converters.py) for more details.
+Check out [src/lerobot/processor/converters.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/processor/converters.py) for more details.
 
 ## Dataset feature contracts
 
 Dataset features are determined by the keys saved in the dataset. Each step can declare what features it modifies in a contract called `transform_features(...)`. Once you build a processor, the processor can then aggregate all of these features with `aggregate_pipeline_dataset_features()` and merge multiple feature dicts with `combine_feature_dicts(...)`.
 
-Below is and example of how we declare features with the `transform_features` method in the phone to SO-100 follower examples:
+Below is an example of how we declare features with the `transform_features` method in the phone to SO-100 follower examples:
 
 ```python
     def transform_features(

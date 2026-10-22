@@ -11,3 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""
+SARM subtask annotation tools.
+
+Available modules (import directly)::
+
+    from lerobot.data_processing.sarm_annotations.subtask_annotation import ...
+"""
+
+__all__: list[str] = []

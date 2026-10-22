@@ -22,8 +22,7 @@ from pathlib import Path
 import numpy as np
 import tensorflow_datasets as tfds
 
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.utils.utils import get_elapsed_time_in_days_hours_minutes_seconds
 
 DROID_SHARDS = 2048

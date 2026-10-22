@@ -23,3 +23,13 @@ from .reachy2_teleoperator import (
     REACHY2_VEL,
     Reachy2Teleoperator,
 )
+
+__all__ = [
+    "REACHY2_ANTENNAS_JOINTS",
+    "REACHY2_L_ARM_JOINTS",
+    "REACHY2_NECK_JOINTS",
+    "REACHY2_R_ARM_JOINTS",
+    "REACHY2_VEL",
+    "Reachy2Teleoperator",
+    "Reachy2TeleoperatorConfig",
+]
