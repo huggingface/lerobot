@@ -216,6 +216,58 @@ def test_train_save_load_and_sync_inference(config, tmp_path, mode, checkpointin
     assert not restored._frames and not restored._action_queue and restored._text_context is None
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("mode", ["idm", "cod"])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("autocast", [False, True])
+def test_training_parameter_and_optimizer_precision(config, tmp_path, device, mode, dtype, autocast):
+    if device == "cuda" and (not torch.cuda.is_available() or not torch.cuda.is_bf16_supported()):
+        pytest.skip("requires CUDA with BF16 support")
+    torch.manual_seed(7)
+    config.denoising, config.imagine_sigma = mode, 0 if mode == "cod" else 0.9
+    config.use_gradient_checkpointing = True
+    # Save FP32 values first so loading into BF16 cannot silently pass an FP32 test.
+    initial = LongWAMPolicy(config)
+    checkpoint = tmp_path / "precision"
+    initial.save_pretrained(checkpoint)
+    config.dtype, config.device = dtype, device
+    policy = LongWAMPolicy.from_pretrained(checkpoint, config=config, strict=True).train()
+    for name, parameter in policy.named_parameters():
+        assert parameter.dtype == dtype
+        torch.testing.assert_close(
+            parameter, initial.get_parameter(name).to(device=device, dtype=dtype), atol=0, rtol=0
+        )
+    before = {name: parameter.detach().clone() for name, parameter in policy.named_parameters()}
+    optimizer = config.get_optimizer_preset().build(policy.get_optim_params())
+    pre, _ = make_pre_post_processors(config, dataset_stats=stats(config))
+    training_batch = pre(batch(config, temporal=True))
+    with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=autocast):
+        loss, _ = policy(training_batch)
+    assert torch.isfinite(loss)
+    loss.backward()
+    trainable = [parameter for parameter in policy.parameters() if parameter.requires_grad]
+    assert trainable
+    for parameter in trainable:
+        assert parameter.grad is not None
+        assert parameter.grad.dtype == dtype
+        assert torch.isfinite(parameter.grad).all()
+    optimizer.step()
+    for parameter in trainable:
+        for moment in ("exp_avg", "exp_avg_sq"):
+            assert optimizer.state[parameter][moment].dtype == dtype
+            assert torch.isfinite(optimizer.state[parameter][moment]).all()
+    for prefix in ("dit.video.", "dit.action.", "proprio_encoder."):
+        assert any(
+            not torch.equal(before[name], parameter)
+            for name, parameter in policy.named_parameters()
+            if name.startswith(prefix)
+        )
+    for name, parameter in policy.named_parameters():
+        if not parameter.requires_grad:
+            assert parameter.grad is None
+            torch.testing.assert_close(parameter, before[name], atol=0, rtol=0)
+
+
 @pytest.mark.parametrize("mode", ["idm", "cod"])
 def test_history_eviction_and_padding(config, mode):
     config.denoising, config.imagine_sigma = mode, 0 if mode == "cod" else 0.9
