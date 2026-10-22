@@ -30,6 +30,7 @@ from .fineart_vla.configuration_fineart_vla import FineARTVLAConfig as FineARTVL
 from .flux3.configuration_flux3 import Flux3Config as Flux3Config
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig as GaussianActorConfig
 from .groot.configuration_groot import GrootConfig as GrootConfig
+from .imprint.configuration_imprint import ImprintConfig as ImprintConfig
 from .lawam.configuration_lawam import LaWAMConfig as LaWAMConfig
 from .lingbot_va.configuration_lingbot_va import LingBotVAConfig as LingBotVAConfig
 from .lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config as LingbotVLAV2Config
@@ -72,6 +73,7 @@ __all__ = [
     "GaussianActorConfig",
     "Evo1Config",
     "GrootConfig",
+    "ImprintConfig",
     "LaWAMConfig",
     "LingBotVAConfig",
     "LingbotVLAV2Config",
