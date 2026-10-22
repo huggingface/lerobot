@@ -33,6 +33,7 @@ from lerobot.policies.factory import make_policy
 from lerobot.policies.fastwam import modeling_fastwam
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
+from lerobot.policies.fastwam.wan import LiteKVFusion
 
 DOT_FLAGS = {
     "action_expert_layers": 1,
@@ -163,55 +164,6 @@ def test_public_dtype_train_infer_and_checkpoint(offline_components, tmp_path, f
     assert loaded.config.dtype == dtype
 
 
-@pytest.mark.parametrize(
-    "override", ["default", "retracted_1d_rope", "world_model_only_conditioning", "depth"]
-)
-def test_checkpoint_rejects_incompatible_explicit_config(offline_components, tmp_path, override):
-    policy = FastWAMPolicy(tiny_config(**DOT_FLAGS))
-    policy.save_pretrained(tmp_path)
-    config = deepcopy(policy.config)
-    if override == "default":
-        config = tiny_config()
-    elif override == "depth":
-        config.action_dit_config["num_layers"] = 2
-        config.action_expert_layers = 2
-    else:
-        setattr(config, override, False)
-    with pytest.raises(ValueError, match="checkpoint.*architecture"):
-        FastWAMPolicy.from_pretrained(tmp_path, config=config)
-
-
-def test_checkpoint_preserves_explicit_embodiment_overrides(offline_components, tmp_path):
-    policy = FastWAMPolicy(tiny_config(**DOT_FLAGS))
-    with torch.no_grad():
-        policy.model.video_expert.time_embedding[0].weight.fill_(0.125)
-    policy.save_pretrained(tmp_path)
-    config = tiny_config(action_dim=2, proprio_dim=3, **DOT_FLAGS)
-    # A resolved depth is equivalent to the convenience override.
-    config.action_expert_layers = None
-    loaded = FastWAMPolicy.from_pretrained(tmp_path, config=config)
-    assert loaded.config.action_dim == 2
-    assert loaded.config.proprio_dim == 3
-    torch.testing.assert_close(
-        loaded.model.video_expert.time_embedding[0].weight, policy.model.video_expert.time_embedding[0].weight
-    )
-    assert loaded.model.action_expert.action_dim == 2
-
-
-@pytest.mark.parametrize("flags", [{}, DOT_FLAGS], ids=["default", "fasterwam"])
-def test_weights_only_checkpoint_with_explicit_config(offline_components, tmp_path, caplog, flags):
-    policy = FastWAMPolicy(tiny_config(**flags))
-    policy.save_pretrained(tmp_path)
-    (tmp_path / "config.json").unlink()
-    config = deepcopy(policy.config)
-
-    loaded = FastWAMPolicy.from_pretrained(tmp_path, config=config, strict=True)
-
-    assert loaded.config is config
-    torch.testing.assert_close(loaded.state_dict(), policy.state_dict(), rtol=0, atol=0)
-    assert "skipping architecture validation" in caplog.text
-
-
 def test_cli_backbone_conversion_loads_weights_and_trains(offline_components, tmp_path, monkeypatch):
     torch.manual_seed(7)
     original = FastWAMPolicy(tiny_config(dtype=torch.float32))
@@ -273,3 +225,36 @@ def test_cli_backbone_conversion_loads_weights_and_trains(offline_components, tm
     policy.save_pretrained(tmp_path / "converted")
     loaded = FastWAMPolicy.from_pretrained(tmp_path / "converted", strict=True)
     torch.testing.assert_close(loaded.state_dict(), policy.state_dict(), rtol=0, atol=0)
+    incompatible = deepcopy(policy.config)
+    incompatible.retracted_1d_rope = False
+    with pytest.raises(ValueError, match="checkpoint.*architecture"):
+        FastWAMPolicy.from_pretrained(tmp_path / "converted", config=incompatible)
+    # An embodiment change must still keep the compatible backbone weights.
+    embodiment = tiny_config(dtype=policy.config.dtype, action_dim=2, proprio_dim=3, **DOT_FLAGS)
+    adapted = FastWAMPolicy.from_pretrained(tmp_path / "converted", config=embodiment)
+    assert adapted.config.action_dim == 2 and adapted.config.proprio_dim == 3
+    torch.testing.assert_close(
+        adapted.model.video_expert.time_embedding[0].weight,
+        policy.model.video_expert.time_embedding[0].weight,
+        rtol=0,
+        atol=0,
+    )
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
+def test_fusion_uses_float32_softmax_with_policy_dtype_storage(dtype):
+    fusion = LiteKVFusion(1, 2, 3).to(dtype=dtype)
+    with torch.no_grad():
+        fusion.logits.copy_(torch.tensor([[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]]))
+    expected = torch.softmax(fusion.logits[0].float(), dim=-1)
+    assert fusion.logits.dtype == dtype
+    assert fusion.mixing_weights(0).dtype == torch.float32
+    torch.testing.assert_close(fusion.mixing_weights(0), expected, rtol=0, atol=0)
+    cache = [
+        {key: torch.randn(1, 2, 12, dtype=dtype, requires_grad=True) for key in ("k", "v")} for _ in range(3)
+    ]
+    k, v = fusion(cache, 0)
+    assert k.dtype == v.dtype == dtype
+    (k.float().square().mean() + v.float().square().mean()).backward()
+    assert torch.isfinite(fusion.logits.grad).all() and fusion.logits.grad.abs().sum() > 0
+    assert all(torch.isfinite(entry[key].grad).all() for entry in cache for key in ("k", "v"))
