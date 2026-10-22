@@ -236,18 +236,19 @@ YAML override; LeRobot does not provide shared default recipe files.
 
 ## Key Configuration Parameters
 
-| Parameter                 | Default                    | Description                                                |
-| ------------------------- | -------------------------- | ---------------------------------------------------------- |
-| `pretrained_name_or_path` | `lerobot/wall-oss-0.5`     | Tokenizer and image-processor asset source                 |
-| `chunk_size`              | `32`                       | Number of actions predicted per chunk                      |
-| `n_action_steps`          | `32`                       | Number of predicted actions executed before replanning     |
-| `camera_key_mapping`      | face and right-wrist views | Associates image feature keys with model camera slots      |
-| `use_language_recipe`     | `true`                     | Enables the recipe stored in the policy config             |
-| `recipe_path`             | `None`                     | Optional explicit external recipe override                 |
-| `text_loss_weight`        | `0.1`                      | Weight for supervised assistant-token cross-entropy        |
-| `flow_loss_weight`        | `1.0`                      | Weight for continuous flow-action loss                     |
-| `tokenizer_max_length`    | `1000`                     | Maximum joint vision-language-action token sequence length |
-| `device`                  | auto                       | Use `cuda` for Wall-OSS-0.5                                |
+| Parameter                 | Default                    | Description                                                    |
+| ------------------------- | -------------------------- | -------------------------------------------------------------- |
+| `pretrained_name_or_path` | `lerobot/wall-oss-0.5`     | Tokenizer and image-processor asset source                     |
+| `tokenizer_revision`      | `None`                     | Optional base tokenizer pin, separate from the weight revision |
+| `chunk_size`              | `32`                       | Number of actions predicted per chunk                          |
+| `n_action_steps`          | `32`                       | Number of predicted actions executed before replanning         |
+| `camera_key_mapping`      | face and right-wrist views | Associates image feature keys with model camera slots          |
+| `use_language_recipe`     | `true`                     | Enables the recipe stored in the policy config                 |
+| `recipe_path`             | `None`                     | Optional explicit external recipe override                     |
+| `text_loss_weight`        | `0.1`                      | Weight for supervised assistant-token cross-entropy            |
+| `flow_loss_weight`        | `1.0`                      | Weight for continuous flow-action loss                         |
+| `tokenizer_max_length`    | `1000`                     | Maximum joint vision-language-action token sequence length     |
+| `device`                  | auto                       | Use `cuda` for Wall-OSS-0.5                                    |
 
 ## Evaluation and Inference
 

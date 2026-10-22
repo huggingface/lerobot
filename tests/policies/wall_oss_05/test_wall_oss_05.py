@@ -605,6 +605,16 @@ def test_pre_and_postprocessors_are_serializable(tmp_path):
     assert (tmp_path / "policy_postprocessor.json").exists()
 
 
+def test_finetuned_weight_revision_does_not_select_the_base_tokenizer_revision():
+    config = _config(
+        pretrained_revision="finetuned-weight-commit", tokenizer_revision="base-tokenizer-commit"
+    )
+    pre, _ = make_pre_post_processors(config, dataset_stats=_stats())
+    tokenizer = next(step for step in pre.steps if isinstance(step, WallOSS05TokenizerStep))
+    assert tokenizer.processor_name == "lerobot/wall-oss-0.5"
+    assert tokenizer.revision == "base-tokenizer-commit"
+
+
 @pytest.mark.parametrize(("state_dim", "action_dim"), [(26, 26), (6, 6), (8, 7)])
 def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path, state_dim, action_dim):
     config = _config()

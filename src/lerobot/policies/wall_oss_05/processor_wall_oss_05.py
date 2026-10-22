@@ -631,7 +631,7 @@ def make_wall_oss_05_pre_post_processors(
             WallOSS05PadActionProcessorStep(max_action_dim=config.max_action_dim),
             WallOSS05TokenizerStep(
                 processor_name=config.pretrained_name_or_path,
-                revision=config.pretrained_revision,
+                revision=config.tokenizer_revision,
                 camera_key_mapping=config.camera_key_mapping,
                 chunk_size=config.chunk_size,
                 max_state_dim=config.max_state_dim,

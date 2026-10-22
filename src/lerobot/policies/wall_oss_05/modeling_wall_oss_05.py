@@ -843,7 +843,7 @@ class WallOSS05Policy(PreTrainedPolicy):
             require_package("transformers", extra="wall_oss_05")
             self.processor = Qwen2_5_VLProcessor.from_pretrained(
                 self.config.pretrained_name_or_path,
-                revision=self.config.pretrained_revision,
+                revision=self.config.tokenizer_revision,
                 fix_mistral_regex=True,
             )
             self.processor.tokenizer.add_tokens([_PROPRIO_TOKEN, _ACTION_TOKEN])

@@ -64,6 +64,7 @@ class WallOSS05Config(PreTrainedConfig):
 
     # Stable tokenizer/processor asset source. Weights use the standard policy.path.
     pretrained_name_or_path: str = "lerobot/wall-oss-0.5"
+    tokenizer_revision: str | None = None
     dtype: torch.dtype | None = torch.bfloat16
     vlm_config: dict[str, Any] | None = None
     n_obs_steps: int = 1
