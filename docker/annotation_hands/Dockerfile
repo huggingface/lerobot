@@ -53,11 +53,11 @@ COPY image-version.json health.py /opt/hand-worker/
 ENV PATH=/opt/hand-controller/bin:$PATH PYTHONUNBUFFERED=1 HF_HUB_DISABLE_TELEMETRY=1 PYTHONDONTWRITEBYTECODE=1
 ENV HOME=/home/user XDG_CACHE_HOME=/home/user/.cache
 ENV PYTHONPATH=/opt/camera-adapter/src GDP_TRT_UPDATE=1
-ENV LD_LIBRARY_PATH=/opt/droid/lib/python3.10/site-packages/tensorrt_libs:/opt/droid/lib/python3.10/site-packages/nvidia/cu12/lib:/opt/droid/lib/python3.10/site-packages/nvidia/cudnn/lib:/usr/local/cuda/lib64
+ENV DROID_LIBRARY_PATH=/opt/droid/lib/python3.10/site-packages/tensorrt_libs:/opt/droid/lib/python3.10/site-packages/nvidia/cu12/lib:/opt/droid/lib/python3.10/site-packages/nvidia/cudnn/lib:/usr/local/cuda/lib64
 ENV EGO_LIBRARY_PATH=/opt/egohand/lib/python3.10/site-packages/nvidia/cudnn/lib:/opt/egohand/lib/python3.10/site-packages/nvidia/cu13/lib:/opt/egohand/lib/python3.10/site-packages/tensorrt_libs:/usr/local/cuda/lib64
-RUN /opt/droid/bin/python -c "import sys; sys.path.insert(0,'/opt/hand-camera/release-195fps-verified/DROID-W'); import torch,lietorch,droid_backends,moge,timm,cv2,tensorrt; assert torch.__version__=='2.8.0+cu128'; assert tensorrt.__version__=='10.13.3.9'" \
-    && /opt/egohand/bin/python -c "import torch,gem,soma,onnxruntime; assert torch.__version__.split('+')[0]=='2.14.1'; assert 'TensorrtExecutionProvider' in onnxruntime.get_available_providers()" \
-    && python -c "import numpy,pyarrow,av,scipy; from pathlib import Path; import importlib.metadata as m; assert Path(m.distribution('torch').locate_file('torch')).is_dir()"
+RUN LD_LIBRARY_PATH="$DROID_LIBRARY_PATH" /opt/droid/bin/python -c "import sys; sys.path.insert(0,'/opt/hand-camera/release-195fps-verified/DROID-W'); import torch,lietorch,droid_backends,moge,timm,cv2,tensorrt; from pathlib import Path; from importlib.metadata import distribution; assert torch.__version__=='2.8.0+cu128'; assert tensorrt.__version__=='10.13.3.9'; assert Path(distribution('nvidia-cudss-cu12').locate_file('nvidia/cu12/lib/libcudss.so.0')).is_file()" \
+    && LD_LIBRARY_PATH="$EGO_LIBRARY_PATH" /opt/egohand/bin/python -c "import torch,gem,soma,onnxruntime; assert torch.__version__.split('+')[0]=='2.14.1'; assert 'TensorrtExecutionProvider' in onnxruntime.get_available_providers()" \
+    && python -c "import torch,numpy,pyarrow,av,scipy; import lerobot_camera_runtime.egocentric.droidw_camera, lerobot_camera_runtime.stages.droidw_slam; assert torch.__version__.split('+')[0]=='2.11.0'"
 RUN useradd -m -u 1000 user && mkdir -p /workspace && chown user:user /workspace
 USER user
 WORKDIR /workspace

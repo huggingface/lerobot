@@ -59,6 +59,8 @@ def provisioned_environment(config: HandBackendConfig) -> dict[str, str]:
     )
     environment.pop("HF_TOKEN", None)
     environment.pop("ANNOTATION_MANIFEST", None)
+    if environment.get("DROID_LIBRARY_PATH"):
+        environment["LD_LIBRARY_PATH"] = environment["DROID_LIBRARY_PATH"]
     return environment
 
 

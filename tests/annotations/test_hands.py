@@ -429,3 +429,42 @@ for line in sys.stdin:
     finally:
         annotator.close()
     assert annotator.process.poll() is not None
+
+
+def test_native_interpreters_isolate_cuda_libraries_and_strip_hub_credentials(tmp_path, monkeypatch):
+    from lerobot.annotations.hands.config import GEM_REVISION, RUNTIME_REVISION
+    from lerobot.annotations.hands.processing import provisioned_environment
+
+    receipt = tmp_path / "runtime-source.json"
+    receipt.write_text(json.dumps({"revision": RUNTIME_REVISION, "files": []}))
+    checkpoint = tmp_path / "moge.pt"
+    checkpoint.write_bytes(b"CPU transport fixture")
+    config = HandBackendConfig(
+        root=str(tmp_path),
+        runtime_source_sha256=file_checksum(receipt)[0],
+        module="camera_runtime",
+        gem_root=str(tmp_path),
+        python=sys.executable,
+        egohand_python=sys.executable,
+        droid_python=sys.executable,
+        droid_moge_checkpoint=str(checkpoint),
+    )
+    monkeypatch.setenv("HF_TOKEN", "must-not-reach-native-code")
+    monkeypatch.setenv("ANNOTATION_MANIFEST", "must-not-reach-native-code")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/controller/lib")
+    monkeypatch.setenv("DROID_LIBRARY_PATH", "/camera/lib")
+    monkeypatch.setenv("EGO_LIBRARY_PATH", "/hand/lib")
+    monkeypatch.setattr(
+        "lerobot.annotations.hands.processing.subprocess.check_output", lambda *a, **kw: GEM_REVISION
+    )
+    monkeypatch.setattr("lerobot.annotations.hands.processing.subprocess.run", Mock())
+    monkeypatch.setattr(
+        "lerobot.annotations.hands.processing.verify_assets",
+        lambda config: {"environment": {"HF_HOME": str(tmp_path / "offline-cache")}},
+    )
+    environment = provisioned_environment(config)
+    assert "HF_TOKEN" not in environment and "ANNOTATION_MANIFEST" not in environment
+    assert environment["HF_HUB_OFFLINE"] == environment["TRANSFORMERS_OFFLINE"] == "1"
+    assert environment["LD_LIBRARY_PATH"] == "/camera/lib"
+    assert environment["EGO_LIBRARY_PATH"] == "/hand/lib"
+    assert os.environ["LD_LIBRARY_PATH"] == "/controller/lib"
