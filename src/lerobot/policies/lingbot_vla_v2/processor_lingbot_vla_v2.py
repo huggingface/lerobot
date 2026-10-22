@@ -421,24 +421,34 @@ def make_lingbot_vla_v2_pre_post_processors_from_pretrained(
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
 ]:
-    """Load the saved pipelines with the slot mapping of the active config.
+    """Load the saved pipelines, re-pinning the settings the active config owns.
 
-    A fine-tune maps a new robot onto the canonical slots, so its config's spans replace the
-    checkpoint's. Explicit overrides still win.
+    A fine-tune maps a new robot onto the canonical slots and may change the prompt length or image
+    settings, so the config's values replace the checkpoint's (eval and resume load the checkpoint's
+    own config, so nothing changes there). The saved tokenizer and image processor artifacts are
+    kept. Explicit overrides still win.
     """
     # Fine-tuning stats arrive as the caller's normalizer overrides (lerobot-train injects them).
     del dataset_stats, dataset_meta
     spans = _slot_spans(config)
-    preprocessor_overrides = {SLOT_MAPPING_STEP: spans, **(preprocessor_overrides or {})}
-    postprocessor_overrides = {
-        INVERSE_SLOT_MAPPING_STEP: {"action_spans": spans["action_spans"]},
-        **(postprocessor_overrides or {}),
+    pre: dict[str, dict[str, Any]] = {
+        SLOT_MAPPING_STEP: spans,
+        IMAGE_STEP: {
+            "resize_imgs_with_padding": tuple(config.resize_imgs_with_padding),
+            "image_max_pixels": config.image_max_pixels,
+            "image_min_pixels": config.image_min_pixels,
+        },
+        "tokenizer_processor": {"max_length": config.tokenizer_max_length},
     }
+    post: dict[str, dict[str, Any]] = {INVERSE_SLOT_MAPPING_STEP: {"action_spans": spans["action_spans"]}}
+    for overrides, explicit in ((pre, preprocessor_overrides), (post, postprocessor_overrides)):
+        for step, values in (explicit or {}).items():
+            overrides[step] = {**overrides.get(step, {}), **values}
     return load_pretrained_policy_processors(
         pretrained_path,
         revision=revision,
-        preprocessor_overrides=preprocessor_overrides,
-        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_overrides=pre,
+        postprocessor_overrides=post,
         preprocessor_config_filename=preprocessor_config_filename,
         postprocessor_config_filename=postprocessor_config_filename,
     )

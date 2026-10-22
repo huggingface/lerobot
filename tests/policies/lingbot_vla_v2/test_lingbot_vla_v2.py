@@ -27,7 +27,7 @@ import torch
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.lingbot_vla_v2.configuration_lingbot_vla_v2 import LingbotVLAV2Config, SlotMapping
-from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.constants import ACTION, OBS_LANGUAGE_TOKENS, OBS_STATE
 from tests.utils import skip_if_package_missing
 
 CAMERA = "observation.images.camera_top"
@@ -253,6 +253,7 @@ def test_finetune_save_reload_select_action(tiny_backbone, tmp_path, device):
     cfg.pretrained_path = base_dir
     cfg.device = device
     cfg.state_slots, cfg.action_slots = _slot_kwargs(arm=[[0, 5]], effector=[[5, 6]]).values()
+    cfg.tokenizer_max_length = 24  # --policy.tokenizer_max_length, applied over the saved processor's 16
     meta = _ds_meta(6)
     policy = make_policy(cfg, ds_meta=meta)
     preprocessor, postprocessor = make_pre_post_processors(
@@ -277,7 +278,9 @@ def test_finetune_save_reload_select_action(tiny_backbone, tmp_path, device):
         },
     )
     # The accelerate dataloader hands the preprocessor tensors already on the training device.
-    loss, _ = policy.forward(preprocessor(_raw_batch(6, device)))
+    batch = preprocessor(_raw_batch(6, device))
+    assert batch[OBS_LANGUAGE_TOKENS].shape[-1] == 24
+    loss, _ = policy.forward(batch)
     loss.backward()
     assert torch.isfinite(loss)
     for obj in (policy, preprocessor, postprocessor):
