@@ -39,3 +39,5 @@ The workflow preserves each run and attempt under `data/<run-id>-<attempt>/` in 
 GitHub's raw per-policy artifacts follow the repository's retention policy. Download configurations and optional traces you need to retain separately.
 
 PI0-FAST uses the pinned LIBERO checkpoint with its matching action tokenizer, horizon and camera layout, because the base checkpoint does not reliably emit a valid action prefix. Its optimizer, float32 dtype and training memory settings retain the policy defaults.
+
+LingBot-VA uses `attn_mode=flex`, which its block-causal flow-matching training requires. The attention backend is recorded in the configuration so its measurements are not compared with the default inference-only backend.

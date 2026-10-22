@@ -84,7 +84,11 @@ def policy_args(policy: str) -> list[str]:
             '--policy.wrist_image_features=["observation.images.wrist"]',
         ]
     if policy == "lingbot_va":
-        args += ['--policy.obs_cam_keys=["observation.images.front","observation.images.wrist"]']
+        # Block-causal flow-matching training requires the policy's FlexAttention backend.
+        args += [
+            '--policy.obs_cam_keys=["observation.images.front","observation.images.wrist"]',
+            "--policy.attn_mode=flex",
+        ]
     if policy == "vqbet":
         # Finish the codebook stage during the default warmup, then time BeT updates.
         args += ["--policy.n_vqvae_training_steps=1"]
