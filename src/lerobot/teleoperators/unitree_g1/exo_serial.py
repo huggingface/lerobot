@@ -76,7 +76,7 @@ class ExoskeletonArm:
     calibration: ExoskeletonCalibration | None = None
 
     def __post_init__(self):
-        require_package("pyserial", extra="hardware", import_name="serial")
+        require_package("pyserial", extra="unitree_g1", import_name="serial")
         if self.calibration_fpath.is_file():
             self._load_calibration()
 

@@ -18,6 +18,7 @@ import os
 import re
 from glob import glob
 from pathlib import Path
+from typing import Literal, cast
 
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from termcolor import colored
@@ -41,8 +42,10 @@ def cfg_to_group(
             return tag
         return tag[:max_tag_length]
 
+    trainable_kind = "reward_model" if cfg.is_reward_model_training else "policy"
+    trainable_tag = f"{trainable_kind}:{cfg.trainable_config.type}"
     lst = [
-        f"policy:{cfg.policy.type}",
+        trainable_tag,
         f"seed:{cfg.seed}",
     ]
     if cfg.dataset is not None:
@@ -62,8 +65,7 @@ def get_wandb_run_id_from_filesystem(log_dir: Path) -> str:
     match = re.search(r"run-([^\.]+).wandb", paths[0].split("/")[-1])
     if match is None:
         raise RuntimeError("Couldn't get the previous WandB run ID for run resumption.")
-    wandb_run_id = match.groups(0)[0]
-    return wandb_run_id
+    return match.group(1)
 
 
 def get_safe_wandb_artifact_name(name: str):
@@ -74,7 +76,7 @@ def get_safe_wandb_artifact_name(name: str):
 class WandBLogger:
     """A helper class to log object using wandb."""
 
-    def __init__(self, cfg: TrainPipelineConfig):
+    def __init__(self, cfg: TrainPipelineConfig) -> None:
         self.cfg = cfg.wandb
         self.log_dir = cfg.output_dir
         self.job_name = cfg.job_name
@@ -85,14 +87,23 @@ class WandBLogger:
         os.environ["WANDB_SILENT"] = "True"
         import wandb
 
-        wandb_run_id = (
-            cfg.wandb.run_id
-            if cfg.wandb.run_id
-            else get_wandb_run_id_from_filesystem(self.log_dir)
-            if cfg.resume
-            else None
-        )
-        wandb.init(
+        wandb_run_id: str | None = None
+        if cfg.wandb.run_id:
+            wandb_run_id = cfg.wandb.run_id
+        elif cfg.resume:
+            # `validate()` always resolves `output_dir` on resume; None here means it was skipped.
+            if self.log_dir is None:
+                raise ValueError("Resuming a WandB run requires `cfg.output_dir` to locate the previous run.")
+            wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir)
+        resume = self.cfg.resume or ("must" if cfg.resume else None)
+        if resume is not None and resume not in {"allow", "must", "never", "auto"}:
+            raise ValueError(f"Unsupported WandB resume mode: {resume!r}")
+        mode: Literal["online", "offline", "disabled"] = "online"
+        if self.cfg.mode == "offline":
+            mode = "offline"
+        elif self.cfg.mode == "disabled":
+            mode = "disabled"
+        run = wandb.init(
             id=wandb_run_id,
             project=self.cfg.project,
             entity=self.cfg.entity,
@@ -105,17 +116,22 @@ class WandBLogger:
             save_code=False,
             # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
             job_type="train_eval",
-            resume="must" if cfg.resume else None,
-            mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
+            resume=cast(Literal["allow", "must", "never", "auto"] | None, resume),
+            mode=mode,
+            settings=wandb.Settings(
+                console=self.cfg.console,
+                console_multipart=self.cfg.console_multipart,
+                console_chunk_max_seconds=self.cfg.console_chunk_max_seconds,
+            ),
         )
-        run_id = wandb.run.id
+        run_id = run.id
         # NOTE: We will override the cfg.wandb.run_id with the wandb run id.
         # This is because we want to be able to resume the run from the wandb run id.
         cfg.wandb.run_id = run_id
         # Handle custom step key for rl asynchronous training.
         self._wandb_custom_step_key: set[str] | None = None
         logging.info(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
-        logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
+        logging.info(f"Track this run --> {colored(run.get_url(), 'yellow', attrs=['bold'])}")
         self._wandb = wandb
 
     def log_policy(self, checkpoint_dir: Path):
@@ -176,24 +192,26 @@ class WandBLogger:
                 self._wandb_custom_step_key.add(new_custom_key)
                 self._wandb.define_metric(new_custom_key, hidden=True)
 
+        batch_data = {}
         for k, v in d.items():
+            # Skip the custom step key here, it's added to the batch below.
+            if custom_step_key is not None and k == custom_step_key:
+                continue
+
             if not isinstance(v, (int | float | str)):
                 logging.warning(
                     f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
                 )
                 continue
 
-            # Do not log the custom step key itself.
-            if self._wandb_custom_step_key is not None and k in self._wandb_custom_step_key:
-                continue
+            batch_data[f"{mode}/{k}"] = v
 
+        if batch_data:
             if custom_step_key is not None:
-                value_custom_step = d[custom_step_key]
-                data = {f"{mode}/{k}": v, f"{mode}/{custom_step_key}": value_custom_step}
-                self._wandb.log(data)
-                continue
-
-            self._wandb.log(data={f"{mode}/{k}": v}, step=step)
+                batch_data[f"{mode}/{custom_step_key}"] = d[custom_step_key]
+                self._wandb.log(batch_data)
+            else:
+                self._wandb.log(data=batch_data, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         if mode not in {"train", "eval"}:

@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.utils.import_utils import _serial_available
+from lerobot.utils.import_utils import _serial_available, require_package
 
 if TYPE_CHECKING or _serial_available:
     import serial
@@ -152,10 +152,14 @@ def run_exo_calibration(
     side: str,
     save_path: Path,
     params: CalibParams | None = None,
-) -> ExoskeletonCalibration:
+) -> ExoskeletonCalibration | None:
     """
     Run interactive calibration for an exoskeleton arm.
+
+    Returns the calibration once every joint has been recorded, or None if the calibration window is
+    closed before that.
     """
+    require_package("pyserial", extra="unitree_g1", import_name="serial")
     try:
         import cv2
         import matplotlib.pyplot as plt
@@ -255,7 +259,7 @@ def run_exo_calibration(
     joint_idx = 0
     phase = "ellipse"
     advance_requested = False
-    zero_samples = []
+    zero_samples: list[float] = []
 
     def on_key(event):
         nonlocal advance_requested
@@ -453,3 +457,6 @@ def run_exo_calibration(
 
     finally:
         plt.close(fig)
+
+    # The window was closed before every joint was calibrated.
+    return None

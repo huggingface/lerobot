@@ -1,0 +1,99 @@
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Benchmark image for VLABench integration tests.
+# Extends the nightly GPU image with the PR's source code and VLABench setup.
+#
+# Build:  docker build -f docker/Dockerfile.benchmark.vlabench -t lerobot-benchmark-vlabench .
+# Run:    docker run --gpus all --rm lerobot-benchmark-vlabench lerobot-eval ...
+
+FROM huggingface/lerobot-gpu:latest
+
+# Install VLABench from GitHub (not on PyPI) and pin MuJoCo/dm-control.
+# Shallow-clone without submodule recursion (nested SSH-only submodules fail in CI).
+# Editable install (-e) because VLABench/utils/ has no __init__.py, so
+# find_packages() omits it from wheels; editable mode uses the source tree directly.
+# rrt-algorithms has the same packaging issue (rrt/ dir missing __init__.py).
+# Patch: constant.py calls os.listdir on ~100 asset/obj/meshes/* dirs at import
+# time. Guard the call so missing dirs return [] instead of crashing (in case
+# the asset download is partial).
+#
+# Pinned upstream SHAs for reproducible benchmark runs. Bump when you need
+# an upstream fix; don't rely on `main`/`develop` drift.
+ARG VLABENCH_SHA=cf588fe60c0c7282174fe979f5913170cfe69017
+ARG RRT_ALGORITHMS_SHA=e51d95ee489a225220d6ae2a764c4111f6ba7d85
+RUN git clone https://github.com/OpenMOSS/VLABench.git ~/VLABench && \
+    git -C ~/VLABench checkout ${VLABENCH_SHA} && \
+    git clone https://github.com/motion-planning/rrt-algorithms.git ~/rrt-algorithms && \
+    git -C ~/rrt-algorithms checkout ${RRT_ALGORITHMS_SHA} && \
+    python3 -c "\
+import pathlib; \
+p = pathlib.Path.home() / 'VLABench/VLABench/configs/constant.py'; \
+t = p.read_text(); \
+p.write_text(t.replace( \
+    'subdirs = os.listdir(xml_dir)', \
+    'if not os.path.isdir(xml_dir): return []\n    subdirs = os.listdir(xml_dir)'))" && \
+    uv pip install --no-cache -e ~/VLABench -e ~/rrt-algorithms \
+      mujoco==3.2.2 dm-control==1.0.22 \
+      open3d colorlog scikit-learn openai gdown
+
+# Download VLABench mesh assets. Task configs reference object meshes
+# (obj/meshes/fruit/, containers/basket/, tablewares/plates/, etc.); without
+# them the task builder picks from an empty mesh list and crashes with
+# IndexError at task-build time (random.choice([]) in config_manager.py).
+#
+# Preferred source: an HF Hub mirror. Set VLABENCH_ASSETS_REPO at build time
+# (e.g. --build-arg VLABENCH_ASSETS_REPO=lerobot/vlabench-assets) and we'll
+# snapshot_download the repo into VLABench's assets dir. This is the reliable
+# path for CI — Google Drive frequently returns HTTP 429 ("Too many users have
+# viewed or downloaded this file recently") on shared academic files.
+#
+# After download we *validate* that at least one XML exists under each
+# task-critical subtree and fail the build loudly if not. Silent-empty asset
+# dirs are the #1 cause of VLABench runtime crashes in CI, so we surface them
+# here rather than after a 10-minute eval build.
+#
+# Fallback: VLABench's own gdown-based script. Best-effort only.
+ARG VLABENCH_ASSETS_REPO=""
+RUN ASSETS_DIR="$HOME/VLABench/VLABench/assets" && \
+    if [ -n "${VLABENCH_ASSETS_REPO}" ]; then \
+        echo "Downloading VLABench assets from HF Hub: ${VLABENCH_ASSETS_REPO}" && \
+        uv pip install --no-cache "huggingface_hub[hf_xet]>=0.26" && \
+        python -c "from huggingface_hub import snapshot_download; \
+p = snapshot_download(repo_id='${VLABENCH_ASSETS_REPO}', repo_type='dataset', \
+    local_dir='${ASSETS_DIR}', allow_patterns=['obj/**', 'scenes/**']); \
+print('snapshot_download returned:', p)"; \
+    else \
+        echo "No VLABENCH_ASSETS_REPO set — falling back to gdown" && \
+        python ~/VLABench/scripts/download_assets.py --choice all; \
+    fi && \
+    python -c "\
+from pathlib import Path; \
+import sys; \
+root = Path('${ASSETS_DIR}'); \
+checks = ['obj/meshes/tablewares/plates', 'obj/meshes/containers/basket', 'obj/meshes/fruit', 'obj/meshes/containers/tray']; \
+failed = []; \
+print(f'Validating VLABench assets under {root}'); \
+[print(f'  {c}: {len(list((root/c).rglob(\"*.xml\")))} XMLs') for c in checks]; \
+[failed.append(c) for c in checks if not any((root/c).rglob('*.xml'))]; \
+sys.exit(f'Empty asset dirs (no *.xml): {failed}') if failed else print('All asset dirs populated.')"
+
+# Overlay the PR's source code on top of the nightly image.
+COPY --chown=user_lerobot:user_lerobot . .
+
+# Re-install lerobot editably so the new source (with VLABenchEnv registration
+# and updated obs handling) replaces the stale package baked into the nightly image.
+RUN uv pip install --no-cache --no-deps -e .
+
+CMD ["/bin/bash"]

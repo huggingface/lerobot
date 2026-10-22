@@ -17,10 +17,11 @@
 from dataclasses import asdict, dataclass
 from typing import Any
 
+import numpy as np
 import torch
 
 from lerobot.configs import FeatureType, PipelineFeatureType, PolicyFeature
-from lerobot.types import PolicyAction, RobotAction
+from lerobot.lerobot_types import EnvAction, PolicyAction, RobotAction
 from lerobot.utils.constants import ACTION
 
 from .pipeline import ActionProcessorStep, ProcessorStepRegistry
@@ -33,7 +34,9 @@ class RobotActionToPolicyActionProcessorStep(ActionProcessorStep):
 
     motor_names: list[str]
 
-    def action(self, action: RobotAction) -> PolicyAction:
+    def action(self, action: PolicyAction | RobotAction | EnvAction) -> PolicyAction:
+        if not isinstance(action, dict):
+            raise ValueError(f"Expected a robot action dictionary, got {type(action)}")
         if len(self.motor_names) != len(action):
             raise ValueError(f"Action must have {len(self.motor_names)} elements, got {len(action)}")
         return torch.tensor([action[f"{name}.pos"] for name in self.motor_names])
@@ -55,7 +58,9 @@ class PolicyActionToRobotActionProcessorStep(ActionProcessorStep):
 
     motor_names: list[str]
 
-    def action(self, action: PolicyAction) -> RobotAction:
+    def action(self, action: PolicyAction | RobotAction | EnvAction) -> RobotAction:
+        if not isinstance(action, torch.Tensor | np.ndarray):
+            raise ValueError(f"Expected a policy action tensor or array, got {type(action)}")
         if len(self.motor_names) != len(action):
             raise ValueError(f"Action must have {len(self.motor_names)} elements, got {len(action)}")
         return {f"{name}.pos": action[i] for i, name in enumerate(self.motor_names)}

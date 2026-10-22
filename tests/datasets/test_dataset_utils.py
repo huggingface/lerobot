@@ -14,16 +14,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 import torch
+from packaging.version import Version
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import pandas as pd  # noqa: E402
 from datasets import Dataset  # noqa: E402
 from huggingface_hub import DatasetCard
 
+import lerobot.datasets.utils as dataset_utils
 from lerobot.datasets.io_utils import hf_transform_to_torch
-from lerobot.datasets.utils import create_lerobot_dataset_card
+from lerobot.datasets.utils import (
+    BackwardCompatibilityError,
+    ForwardCompatibilityError,
+    check_version_compatibility,
+    create_lerobot_dataset_card,
+    get_repo_versions,
+    get_safe_version,
+    resolve_episode_indices,
+)
 from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.feature_utils import combine_feature_dicts
 
@@ -55,6 +70,44 @@ def test_default_parameters():
             "data_files": "data/*/*.parquet",
         }
     ]
+
+
+def test_resolve_episode_indices_applies_allowlist_and_exclusions():
+    assert resolve_episode_indices([4, 1, 3, 0], 5, [1, 4]) == [3, 0]
+
+
+def test_resolve_episode_indices_preserves_none_without_filtering():
+    assert resolve_episode_indices(None, 5) is None
+
+
+def test_resolve_episode_indices_ignores_out_of_range_values(caplog):
+    assert resolve_episode_indices([-1, 0, 3, 5], 4, [-2, 3, 8]) == [0]
+    assert "Ignoring episode indices outside the dataset range [0, 4): [-1, 5]" in caplog.text
+    assert "Ignoring excluded episode indices outside the dataset range [0, 4): [-2, 8]" in caplog.text
+
+
+@pytest.mark.parametrize("token", ["hf_test_token", True, False])
+def test_get_repo_versions_forwards_token(monkeypatch, token):
+    api = Mock()
+    api.list_repo_refs.return_value = SimpleNamespace(
+        branches=[SimpleNamespace(name="v3.0")],
+        tags=[],
+    )
+    hf_api = Mock(return_value=api)
+    monkeypatch.setattr(dataset_utils, "HfApi", hf_api)
+
+    assert get_repo_versions("private/repo", token=token) == [Version("3.0")]
+    hf_api.assert_called_once_with(token=token)
+    api.list_repo_refs.assert_called_once_with("private/repo", repo_type="dataset")
+
+
+@pytest.mark.parametrize("token", ["hf_test_token", True, False])
+def test_get_safe_version_forwards_token(monkeypatch, token):
+    get_versions = Mock(return_value=[Version("3.0")])
+    monkeypatch.setattr(dataset_utils, "get_repo_versions", get_versions)
+
+    assert get_safe_version("private/repo", "v3.0", token=token) == "v3.0"
+    get_versions.assert_called_once_with("private/repo", token=token)
 
 
 def test_with_tags():
@@ -151,3 +204,85 @@ def test_non_dict_passthrough_last_wins():
     out = combine_feature_dicts(g1, g2)
     # For non-dict entries the last one wins
     assert out["misc"] == 456
+
+
+def test_get_safe_version_raises_on_repo_without_version_tags(monkeypatch):
+    monkeypatch.setattr(dataset_utils, "get_repo_versions", Mock(return_value=[]))
+
+    with pytest.raises(RuntimeError, match="must be tagged with a codebase version"):
+        get_safe_version("private/repo", "v3.0")
+
+
+def test_get_safe_version_error_reports_repo_id(monkeypatch):
+    repo_id = "private/repo"
+    monkeypatch.setattr(dataset_utils, "get_repo_versions", Mock(return_value=[]))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        get_safe_version(repo_id, "v3.0")
+
+    assert repo_id in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("anchor", "start", "end", "indices", "padding"),
+    [
+        # Absolute dataset indices (map-style): episode rows 10..14.
+        (10, 10, 15, [10, 10, 11], [True, False, False]),
+        (14, 10, 15, [13, 14, 14], [False, False, True]),
+        # Episode-local indices (streaming): rows 0..4.
+        (2, 0, 5, [1, 2, 3], [False, False, False]),
+    ],
+)
+def test_delta_window_clamps_and_marks_padding(anchor, start, end, indices, padding):
+    window, is_pad = dataset_utils.delta_window(anchor, [-1, 0, 1], start, end)
+    assert window == indices
+    assert is_pad.tolist() == padding
+    assert is_pad.dtype == torch.bool
+
+
+def test_shift_timestamps_and_task_name():
+    assert dataset_utils.shift_timestamps([0.0, 0.5], 10.0) == [10.0, 10.5]
+    tasks = pd.DataFrame({"task_index": [0, 1]}, index=["pick", "place"])
+    assert dataset_utils.task_name(tasks, torch.tensor(1)) == "place"
+
+
+def _future_warnings(caplog):
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if "please update your current version of lerobot" in r.getMessage()
+    ]
+
+
+def test_older_dataset_same_major_is_silent(caplog):
+    """#4851: a v3.0 dataset read by v3.1 code must not ask to update lerobot."""
+    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.utils"):
+        check_version_compatibility("user/dataset", "v3.0", "v3.1")
+
+    assert _future_warnings(caplog) == []
+
+
+def test_newer_dataset_same_major_asks_to_update_lerobot(caplog):
+    """#4851: a v3.1 dataset read by v3.0 code must warn (it used to be silent)."""
+    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.utils"):
+        check_version_compatibility("user/dataset", "v3.1", "v3.0")
+
+    assert len(_future_warnings(caplog)) == 1
+
+
+def test_newer_major_dataset_raises_forward_compatibility_error():
+    """#4851: a v4.0 dataset cannot be read by v3.0 code (it used to be silent)."""
+    with pytest.raises(ForwardCompatibilityError):
+        check_version_compatibility("user/dataset", "v4.0", "v3.0")
+
+
+def test_newer_major_dataset_only_warns_when_major_is_not_enforced(caplog):
+    with caplog.at_level(logging.WARNING, logger="lerobot.datasets.utils"):
+        check_version_compatibility("user/dataset", "v4.0", "v3.0", enforce_breaking_major=False)
+
+    assert len(_future_warnings(caplog)) == 1
+
+
+def test_older_major_dataset_still_raises_conversion_error():
+    with pytest.raises(BackwardCompatibilityError):
+        check_version_compatibility("user/dataset", "v2.1", "v3.0")

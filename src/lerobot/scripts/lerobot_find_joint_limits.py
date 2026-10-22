@@ -45,16 +45,20 @@ from lerobot.model import RobotKinematics
 from lerobot.robots import (  # noqa: F401
     RobotConfig,
     bi_openarm_follower,
+    bi_rebot_b601_follower,
     bi_so_follower,
     koch_follower,
     make_robot_from_config,
     omx_follower,
     openarm_follower,
+    rebot_b601_follower,
     so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
     bi_openarm_leader,
+    bi_openarm_mini,
+    bi_rebot_102_leader,
     bi_so_leader,
     gamepad,
     koch_leader,
@@ -62,6 +66,7 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     openarm_leader,
     openarm_mini,
+    rebot_102_leader,
     so_leader,
 )
 from lerobot.utils.robot_utils import precise_sleep
@@ -87,7 +92,7 @@ class FindJointLimitsConfig:
 
 
 @draccus.wrap()
-def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
+def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig) -> None:
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
 
@@ -131,7 +136,8 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
 
             # 2. Read Observations
             observation = robot.get_observation()
-            joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])
+            motor_names = robot.bus.motors  # type: ignore[attr-defined]  # single-bus robots only
+            joint_positions = np.array([observation[f"{key}.pos"] for key in motor_names])
 
             # 3. Calculate Kinematics
             # Forward kinematics to get (x, y, z) translation

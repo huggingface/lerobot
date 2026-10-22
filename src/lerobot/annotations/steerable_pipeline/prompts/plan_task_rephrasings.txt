@@ -1,0 +1,32 @@
+You are generating training data for a Hi Robot-style policy. We need
+{n} alternative phrasings of the same robot task so the policy sees
+diverse user prompts during training instead of the same canonical
+string repeated every frame.
+
+Original task:
+"{base_task}"
+
+Generate exactly {n} alternative phrasings of the same task. Vary:
+
+- formality (casual / polite / curt)
+- verbosity (mostly short imperative; occasional polite request)
+- word choice (synonyms, different verbs)
+- sentence structure (imperative / question / suggestion)
+
+Hard rules:
+- Each phrasing MUST preserve the exact meaning of the original task.
+  Do not change which object is involved, the destination, or the
+  action. Do not add extra steps. Do not invent new objects.
+- Each phrasing must be a short phrase or sentence, plain prose, no
+  markdown, no quotes, no list numbers.
+- Phrasings must be distinct — no near-duplicates.
+- Output exactly {n} entries.
+
+Output strictly valid JSON:
+  {{
+    "rephrasings": [
+      "<phrasing 1>",
+      "<phrasing 2>",
+      ...
+    ]
+  }}

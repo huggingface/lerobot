@@ -1,0 +1,27 @@
+You are watching a teleoperated robot demonstration from a single
+camera. The user asked the robot to: "{episode_task}"
+
+This is an OBSERVATION pass. Watch the entire clip and describe, in
+chronological order, ONLY what the robot physically does — the concrete
+motions, approaches, contacts, grasps, releases, and relocations you can
+actually SEE in the frames.
+
+Hard rules:
+- Describe only motion visible in the video. Do NOT use the task
+  instruction to guess steps that aren't shown. The instruction is the
+  goal; the video is ground truth.
+- Do NOT segment into named subtasks yet and do NOT output JSON beyond
+  the single field below. Just narrate what happens.
+- Give an approximate timestamp (in seconds) for each distinct event,
+  e.g. "0.0-1.4s: the base drives forward toward the stove".
+- Do NOT invent objects, grasps, destinations, or steps. If the robot
+  only does one thing (e.g. it just navigates and the clip ends), say
+  exactly that and nothing more.
+- Be concrete and literal. "the gripper closes on the mug" — not "the
+  robot prepares to make coffee".
+
+Output strictly valid JSON:
+
+  {{
+    "description": "<chronological, timestamped description of ONLY what is visible>"
+  }}

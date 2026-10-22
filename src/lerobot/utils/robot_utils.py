@@ -30,6 +30,10 @@ def precise_sleep(seconds: float, spin_threshold: float = 0.010, sleep_margin: f
     """
     if seconds <= 0:
         return
+    if spin_threshold < 0:
+        raise ValueError(f"spin_threshold must be >= 0, got {spin_threshold}")
+    if sleep_margin < 0:
+        raise ValueError(f"sleep_margin must be >= 0, got {sleep_margin}")
 
     system = platform.system()
     # On macOS and Windows the scheduler / sleep granularity can make

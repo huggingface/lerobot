@@ -25,7 +25,7 @@ import metaworld.policies as policies
 import numpy as np
 from gymnasium import spaces
 
-from lerobot.types import RobotObservation
+from lerobot.lerobot_types import RobotObservation
 
 from .utils import _LazyAsyncVectorEnv
 
@@ -155,6 +155,7 @@ class MetaworldEnv(gym.Env):
             env.model.cam_pos[2] = [0.75, 0.075, 0.7]
         env.reset()
         env._freeze_rand_vec = False  # otherwise no randomization
+        env.seeded_rand_vec = True  # use seeded RNG so reset(seed=X) controls object positions
         self._env = env
 
     def render(self) -> np.ndarray:
@@ -220,6 +221,8 @@ class MetaworldEnv(gym.Env):
         self._ensure_env()
         super().reset(seed=seed)
 
+        if seed is not None:
+            self._env.seed(seed)
         raw_obs, info = self._env.reset(seed=seed)
 
         observation = self._format_raw_obs(raw_obs)
@@ -311,6 +314,7 @@ def create_metaworld_envs(
     is_async = env_cls is gym.vector.AsyncVectorEnv
     cached_obs_space = None
     cached_act_space = None
+    cached_metadata = None
     out: dict[str, dict[int, Any]] = defaultdict(dict)
 
     for group in task_groups:
@@ -324,10 +328,11 @@ def create_metaworld_envs(
             fns = [(lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs)) for _ in range(n_envs)]
 
             if is_async:
-                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space)
+                lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)
                 if cached_obs_space is None:
                     cached_obs_space = lazy.observation_space
                     cached_act_space = lazy.action_space
+                    cached_metadata = lazy.metadata
                 out[group][tid] = lazy
             else:
                 out[group][tid] = env_cls(fns)
