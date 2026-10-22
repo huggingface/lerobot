@@ -143,6 +143,7 @@ from lerobot.teleoperators import (  # noqa: F401
     homunculus,
     koch_leader,
     make_teleoperator_from_config,
+    microduck_gamepad,
     omx_leader,
     openarm_leader,
     openarm_mini,
@@ -318,6 +319,7 @@ def record_loop(
         with timer.section("teleop"):
             # Get action from teleop
             if isinstance(teleop, Teleoperator):
+                teleop.on_observation(obs)
                 act = teleop.get_action()
                 if robot.name == "unitree_g1":
                     teleop.send_feedback(obs)

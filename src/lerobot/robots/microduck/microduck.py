@@ -32,6 +32,7 @@ from lerobot.utils.import_utils import require_package
 from ..robot import Robot
 from .camera_frame import CameraFrame
 from .config_microduck import MicroDuckConfig
+from .connection import MicroDuckConnection
 from .rpc import DuckRpc
 from .webrtc import receive_video
 
@@ -92,8 +93,11 @@ class MicroDuck(Robot):
         super().__init__(config)
         self.config = config
 
-        self._cmd = DuckRpc(config.robotd_address, timeout_s=config.rpc_timeout_s)
-        self._state_rpc = DuckRpc(config.robotd_address, timeout_s=config.rpc_timeout_s)
+        self._connection: MicroDuckConnection | None = None
+        self._cmd = DuckRpc(config.robotd_address or "", timeout_s=config.rpc_timeout_s)
+        self._state_rpc = DuckRpc(config.robotd_address or "", timeout_s=config.rpc_timeout_s)
+        self._observed_gamepad_action: RobotAction | None = None
+        self._state_received_at = 0.0
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
 
@@ -163,14 +167,25 @@ class MicroDuck(Robot):
             self._camera_frame = None
             self._frame_ready.clear()
         self._stop_event = threading.Event()
+        self._observed_gamepad_action = None
+        self._state_received_at = 0.0
         try:
+            if self.config.robotd_address is None:
+                self._connection = MicroDuckConnection(
+                    self.config.remote_ip,
+                    self.config.ssh_user,
+                    self.config.ssh_port,
+                    self.config.ssh_timeout_s,
+                )
+                address = self._connection.open()
+                self._cmd.address = self._state_rpc.address = address
             try:
                 self._cmd.open()
                 self._state_rpc.open()
             except OSError as e:
                 raise DeviceNotConnectedError(
-                    f"Could not reach robotd at {self.config.robotd_address}. Forward its socket first: "
-                    f"ssh -N -L {self.config.robotd_address}:/run/robotd.sock microduck@{self.config.remote_ip}"
+                    f"Could not reach robotd at {self._cmd.address}. Check the Duck's robotd service "
+                    "and SSH access, or the explicit robotd_address forward."
                 ) from e
 
             hello = self._cmd.request("hello", {"api_version": API_VERSION})
@@ -202,7 +217,7 @@ class MicroDuck(Robot):
                 )
             self._check_state_stream()
 
-            if self.config.enable_on_connect:
+            if self.config.enable_on_connect and self.config.control_mode == "lerobot":
                 reply = self._cmd.request("robot.enable", {"on": True})
                 if reply and not reply.get("accepted", True):
                     logger.warning(f"robot.enable was refused: {reply.get('reason')}")
@@ -222,7 +237,12 @@ class MicroDuck(Robot):
                 raise DeviceNotConnectedError(
                     f"robot.state stream stopped: {error}. Disconnect and reconnect {self}."
                 ) from error
-            return self._latest_state or {}
+            if (
+                self._latest_state is not None
+                and time.monotonic() - self._state_received_at > self.config.rpc_timeout_s
+            ):
+                raise DeviceNotConnectedError("The Microduck state stream is stale; reconnect the robot")
+            return {**(self._latest_state or {}), "_received_at": self._state_received_at}
 
     def _start_thread(self, target, name: str) -> None:
         thread = threading.Thread(target=target, args=(self._stop_event,), name=name, daemon=True)
@@ -248,6 +268,7 @@ class MicroDuck(Robot):
                 if stop_event.is_set():
                     return
                 self._latest_state = message.get("params")
+                self._state_received_at = time.monotonic()
                 self._state_ready.set()
 
     def _camera_loop(self, stop_event: threading.Event) -> None:
@@ -370,6 +391,11 @@ class MicroDuck(Robot):
     def get_observation(self) -> RobotObservation:
         state = self._check_state_stream()
         obs = self._state_to_observation(state)
+        if self.config.control_mode == "gamepad":
+            self._observed_gamepad_action = None
+            action = self._gamepad_action(state)
+            self._observed_gamepad_action = dict(action)
+            obs["microduck.gamepad"] = {"action": action, "received_at": state["_received_at"]}
 
         if self.config.use_camera:
             with self._frame_lock:
@@ -379,9 +405,31 @@ class MicroDuck(Robot):
             obs[CAMERA] = frame
         return obs
 
+    @staticmethod
+    def _gamepad_action(state: dict[str, Any]) -> RobotAction:
+        movement = state.get("move")
+        requested = movement.get("requested") if isinstance(movement, dict) else None
+        head = state.get("head")
+        if (
+            not isinstance(requested, list)
+            or len(requested) != 3
+            or not isinstance(head, list)
+            or len(head) != 4
+        ):
+            raise ValueError("Gamepad recording requires robot.state move.requested[3] and head[4]")
+        values = [float(value) for value in requested + head]
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("The Duck published non-finite gamepad commands")
+        values[2] = math.degrees(values[2])
+        return dict(zip(BASE_ACTIONS + HEAD_ACTIONS, values, strict=True))
+
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
         self._check_state_stream()
+        if self.config.control_mode == "gamepad":
+            if self._observed_gamepad_action is None or action != self._observed_gamepad_action:
+                raise ValueError("Gamepad mode only records the unmodified action from microduck_gamepad")
+            return dict(action)
         cfg = self.config
         limits = {"x.vel": cfg.max_x_vel, "y.vel": cfg.max_y_vel, "theta.vel": cfg.max_theta_vel}
         sent: RobotAction = {}
@@ -440,13 +488,18 @@ class MicroDuck(Robot):
         self._state_ready.clear()
         self._frame_ready.clear()
         self._cmd.close()
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+        self._observed_gamepad_action = None
 
     @check_if_not_connected
     def disconnect(self) -> None:
         try:
-            self._cmd.request("robot.stop")
-            if self.config.relax_on_disconnect:
-                self._cmd.request("robot.relax")
+            if self.config.control_mode == "lerobot":
+                self._cmd.request("robot.stop")
+                if self.config.relax_on_disconnect:
+                    self._cmd.request("robot.relax")
         except (OSError, ConnectionError) as e:
             logger.warning(f"Could not stop {self} cleanly: {e}")
         finally:

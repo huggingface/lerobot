@@ -19,7 +19,7 @@ from typing import Any
 
 import draccus
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors.motors_bus import MotorCalibration
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
@@ -175,6 +175,10 @@ class Teleoperator(abc.ABC):
         This may include setting motor parameters, control modes, or initial state.
         """
         pass
+
+    def on_observation(self, observation: RobotObservation) -> None:
+        """Receive the robot observation before producing an action."""
+        return None
 
     @abc.abstractmethod
     def get_action(self) -> RobotAction:
