@@ -28,8 +28,7 @@ import cv2
 import numpy as np
 import requests
 
-from lerobot.robots.microduck.camera_frame import CameraFrame
-from lerobot.robots.microduck.webrtc import receive_video
+from lerobot.robots.microduck.webrtc import CameraFrame, receive_video
 
 
 def positive(value: str) -> float:

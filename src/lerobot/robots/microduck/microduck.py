@@ -30,11 +30,10 @@ from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import require_package
 
 from ..robot import Robot
-from .camera_frame import CameraFrame
 from .config_microduck import MicroDuckConfig
 from .connection import MicroDuckConnection
 from .rpc import DuckRpc
-from .webrtc import receive_video
+from .webrtc import CameraFrame, receive_video
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +108,9 @@ class MicroDuck(Robot):
         self._frame_lock = threading.Lock()
         self._camera_frame: CameraFrame | None = None
         self._frame_sequence = 0
-        self._empty_frame = np.zeros((config.camera_height, config.camera_width, 3), dtype=np.uint8)
+        self._empty_frame: np.ndarray[Any, np.dtype[np.uint8]] = np.zeros(
+            (config.camera_height, config.camera_width, 3), dtype=np.uint8
+        )
         self._frame_ready = threading.Event()
 
         self._is_connected = False
