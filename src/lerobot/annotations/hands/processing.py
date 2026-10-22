@@ -1,84 +1,75 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License").
-"""One warm native hand/camera process per HF Job, with a private MANO overlay."""
+"""Bounded warm camera/hand processes owned by one annotation Job."""
 
 from __future__ import annotations
 
 import json
 import os
-import queue
 import re
 import shutil
 import signal
 import subprocess
 import threading
+import uuid
+from concurrent.futures import Future
+from dataclasses import asdict
 from pathlib import Path
 
-from .assets import checkpoint_guard, file_checksum
-from .config import RUNTIME_REVISION, HandBackendConfig
+from .assets import file_checksum, verify_assets
+from .config import GEM_REVISION, RUNTIME_REVISION, HandBackendConfig
 
 
-def provisioned_environment(config: HandBackendConfig, mano: dict, directory: Path) -> dict[str, str]:
-    root = Path(config.root)
+def provisioned_environment(config: HandBackendConfig) -> dict[str, str]:
+    source = Path(config.root) / "runtime-source.json"
+    if file_checksum(source)[0] != config.runtime_source_sha256:
+        raise ValueError("Camera adapter source differs from the pinned image")
+    receipt = json.loads(source.read_text())
+    if receipt["revision"] != RUNTIME_REVISION:
+        raise ValueError("The image contains a different camera adapter revision")
+    for entry in receipt["files"]:
+        if file_checksum(Path(config.root) / entry["path"]) != (entry["sha256"], entry["size"]):
+            raise ValueError("Camera adapter source changed")
     git = shutil.which("git")
     if git is None:
-        raise RuntimeError("The HF Jobs hand image must contain git")
-    head = subprocess.check_output([git, "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
-    if head != RUNTIME_REVISION:
-        raise ValueError(f"Hand runtime must be pinned to {RUNTIME_REVISION}")
-    subprocess.run([git, "-C", str(root), "diff", "--quiet", "HEAD", "--"], check=True)
+        raise ValueError("The native image requires Git to verify its frozen source")
+    for root, revision in ((config.gem_root, GEM_REVISION),):
+        head = subprocess.check_output([git, "-C", root, "rev-parse", "HEAD"], text=True).strip()
+        if head != revision:
+            raise ValueError(f"Native source must be pinned to {revision}")
+        subprocess.run([git, "-C", root, "diff", "--quiet", "HEAD", "--"], check=True)
     if not re.fullmatch(r"[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*", config.module):
-        raise ValueError("Configure the installed hand runtime module in the operator image")
-    for name in ("python", "macrodata_python", "droid_python", "droid_moge_checkpoint"):
+        raise ValueError("The image must configure its installed camera module")
+    for name in ("python", "egohand_python", "droid_python", "droid_moge_checkpoint"):
         if not Path(getattr(config, name)).is_file():
             raise ValueError(f"The HF Jobs image is missing {name}")
-    manifest = Path(config.assets_manifest)
-    if (
-        not re.fullmatch(r"[a-f0-9]{64}", config.assets_sha256)
-        or file_checksum(manifest)[0] != config.assets_sha256
-    ):
-        raise ValueError("Worker asset-manifest digest differs from the pinned image")
-    assets = json.loads(manifest.read_text())
-    if not assets.get("files"):
-        raise ValueError("The hand image must list its non-MANO model and runtime files")
-    for asset in assets["files"]:
-        if "mano" in Path(asset["path"]).name.lower():
-            raise ValueError("The shared image must not contain MANO assets")
-        if file_checksum(Path(asset["path"]))[0] != asset["sha256"]:
-            raise ValueError("Provisioned hand runtime asset changed")
+    assets = verify_assets(config)
     environment = os.environ.copy()
-    for name in ("HF_HOME", "TORCH_HOME"):
-        value = assets.get("environment", {}).get(name)
-        if not value or not Path(value).is_dir():
-            raise ValueError(f"The hand image must provision {name}")
-        environment[name] = value
-    guard = checkpoint_guard(directory, mano)
+    for key, value in assets.get("environment", {}).items():
+        if key not in {"HF_HOME", "TORCH_HOME", "LD_LIBRARY_PATH"}:
+            raise ValueError("Unexpected native release environment option")
+        environment[key] = value
     environment.update(
         HF_HUB_OFFLINE="1",
         TRANSFORMERS_OFFLINE="1",
         CUDA_VISIBLE_DEVICES="0",
-        PYTHONPATH=os.pathsep.join([str(guard), str(root / "src")]),
+        PYTHONPATH=os.pathsep.join(
+            [str(Path(__file__).resolve().parents[3]), str(Path(config.root) / "src")]
+        ),
     )
-    # HF authentication is used only by the controller's private asset pull.
     environment.pop("HF_TOKEN", None)
     environment.pop("ANNOTATION_MANIFEST", None)
     return environment
 
 
-class HandAnnotator:
-    def __init__(self, config: HandBackendConfig, mano: dict, work: Path):
-        self.config, self.work = config, work
-        work.mkdir(parents=True, exist_ok=True)
-        environment = provisioned_environment(config, mano, work / "private-imports")
-        self.log = (work / "native.log").open("w")
+class RequestProcess:
+    """JSON-lines request IDs permit two clips in flight without sharing GPU contexts."""
+
+    def __init__(self, command, *, cwd, environment, log, window=2):
+        self.log = Path(log).open("w")  # noqa: SIM115 - lifetime is owned by close(), like the subprocess
         self.process = subprocess.Popen(
-            [
-                config.python,
-                str(Path(__file__).with_name("bridge.py")),
-                json.dumps(config.__dict__),
-                str(work),
-            ],
-            cwd=config.root,
+            command,
+            cwd=cwd,
             env=environment,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -87,43 +78,62 @@ class HandAnnotator:
             bufsize=1,
             start_new_session=True,
         )
-        self.responses: queue.Queue = queue.Queue()
-        if self.process.stdin is None or self.process.stdout is None:
-            raise RuntimeError("The hand worker must expose its request and response pipes")
         self.lock = threading.Lock()
+        self.pending: dict[str, Future] = {}
+        self.window = threading.BoundedSemaphore(window)
+        self.closed = False
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
 
-        def reader():
+    def _read(self):
+        try:
+            if self.process.stdout is None:
+                raise RuntimeError("The native worker must expose its response pipe")
             for line in self.process.stdout:
-                self.responses.put(line)
-            self.responses.put(None)
+                result = json.loads(line)
+                with self.lock:
+                    future = self.pending.pop(result["id"])
+                if result.get("status") == "ok":
+                    future.set_result(result["result"])
+                else:
+                    future.set_exception(
+                        RuntimeError(result.get("error", "Native annotation failed; inspect its log"))
+                    )
+        except BaseException as error:
+            self._fail_pending(error)
+        finally:
+            with self.lock:
+                self.closed = True
+            self._fail_pending(RuntimeError("The native worker exited before returning all requests"))
 
-        threading.Thread(target=reader, daemon=True).start()
-
-    def annotate(self, video: Path, calibration: dict, directory: Path) -> dict:
+    def _fail_pending(self, error):
         with self.lock:
-            if self.process.poll() is not None:
-                raise RuntimeError("The native hand worker exited; inspect the Job logs")
-            request = {
-                "video": str(video.resolve()),
-                "calibration": calibration,
-                "directory": str(directory.resolve()),
-            }
-            assert self.process.stdin is not None
-            self.process.stdin.write(json.dumps(request) + "\n")
-            self.process.stdin.flush()
-            try:
-                line = self.responses.get(timeout=self.config.timeout_s)
-            except queue.Empty:
-                self.close()
-                raise TimeoutError("Native hand annotation timed out") from None
-            if line is None:
-                raise RuntimeError("The native hand worker exited before returning an episode")
-            result = json.loads(line)
-            if result.get("status") != "ok":
-                raise RuntimeError("Native hand annotation failed; inspect the Job's native log")
-            return result["result"]
+            pending, self.pending = self.pending, {}
+        for future in pending.values():
+            if not future.done():
+                future.set_exception(error)
+
+    def submit(self, payload) -> Future:
+        self.window.acquire()
+        future: Future = Future()
+        future.add_done_callback(lambda _: self.window.release())
+        request_id = uuid.uuid4().hex
+        try:
+            with self.lock:
+                if self.closed or self.process.poll() is not None or self.process.stdin is None:
+                    raise RuntimeError("The native worker is unavailable; inspect the Job logs")
+                self.pending[request_id] = future
+                self.process.stdin.write(json.dumps({**payload, "id": request_id}) + "\n")
+                self.process.stdin.flush()
+        except BaseException as error:
+            with self.lock:
+                self.pending.pop(request_id, None)
+            future.set_exception(error)
+        return future
 
     def close(self):
+        with self.lock:
+            self.closed = True
         if self.process.poll() is None:
             os.killpg(self.process.pid, signal.SIGTERM)
             try:
@@ -131,4 +141,40 @@ class HandAnnotator:
             except subprocess.TimeoutExpired:
                 os.killpg(self.process.pid, signal.SIGKILL)
                 self.process.wait()
+        self.reader.join(timeout=5)
+        self._fail_pending(RuntimeError("Native worker closed"))
         self.log.close()
+
+
+class HandAnnotator:
+    def __init__(self, config: HandBackendConfig, work: Path):
+        self.config = config
+        work.mkdir(parents=True, exist_ok=True)
+        environment = provisioned_environment(config)
+        self.client = RequestProcess(
+            [config.python, "-m", "lerobot.annotations.hands.bridge", json.dumps(asdict(config))],
+            cwd=config.root,
+            environment=environment,
+            log=work / "native.log",
+        )
+
+    @property
+    def process(self):
+        return self.client.process
+
+    def annotate(self, video: Path, calibration: dict, directory: Path, *, orientation="sensor") -> dict:
+        try:
+            return self.client.submit(
+                {
+                    "video": str(video.resolve()),
+                    "calibration": calibration,
+                    "directory": str(directory.resolve()),
+                    "orientation": orientation,
+                }
+            ).result(timeout=self.config.timeout_s)
+        except TimeoutError:
+            self.close()
+            raise TimeoutError("Native EgoHand annotation timed out") from None
+
+    def close(self):
+        self.client.close()

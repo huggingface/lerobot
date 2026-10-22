@@ -1,123 +1,76 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License").
-"""User-controlled MANO assets. No public MANO checkpoint fallback."""
+"""Verify the provisioned public EgoHand/SOMA models and calibrated camera runtime."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
-import shutil
 from pathlib import Path
 
-from huggingface_hub import HfApi, hf_hub_download
-from huggingface_hub.errors import RepositoryNotFoundError
+from .config import CHECKPOINT_SHA256, HandBackendConfig
 
 
 def file_checksum(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest(), path.stat().st_size
+        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest(), path.stat().st_size
 
 
-MANO_FILES = {"left": "MANO_LEFT.safetensors", "right": "MANO_RIGHT.safetensors"}
+def verify_assets(config: HandBackendConfig) -> dict:
+    manifest = Path(config.assets_manifest)
+    if file_checksum(manifest)[0] != config.assets_sha256:
+        raise ValueError("The native asset manifest differs from the pinned release")
+    assets = json.loads(manifest.read_text())
+    listed = {}
+    for entry in assets["files"]:
+        path = (manifest.parent / entry["path"]).resolve()
+        if not path.is_relative_to(manifest.parent.resolve()):
+            raise ValueError("The release asset escaped its workspace")
+        if "mano" in path.name.lower():
+            raise ValueError("The EgoHand/SOMA runtime must not contain MANO assets")
+        if file_checksum(path) != (entry["sha256"], entry["size"]):
+            raise ValueError(f"Native runtime asset checksum mismatch: {path.name}")
+        listed[str(path.resolve())] = entry
+    for name in ("checkpoint", "detector", "droid_moge_checkpoint"):
+        if str(Path(getattr(config, name)).resolve()) not in listed:
+            raise ValueError(f"The release manifest must pin {name}")
+    if listed[str(Path(config.checkpoint).resolve())]["sha256"] != CHECKPOINT_SHA256:
+        raise ValueError("Use the verified inference-only EgoHand checkpoint; no model conversion at launch")
+    if assets.get("identity_backend") != "mhr" or assets.get("gt_scale_alignment") is not False:
+        raise ValueError("The native release requires SOMA/MHR and no GT scale alignment")
+    return assets
 
 
-def resolve_mano(
-    repo: str, token: str, acknowledged: bool, *, repo_type: str | None = None, api_factory=HfApi
-) -> dict:
-    if not acknowledged:
-        raise ValueError("Confirm your MANO and model rights for non-commercial research first")
-    api = api_factory(token=token)
-    owner = api.whoami()["name"]
-    if not repo or repo.split("/")[0] != owner:
-        raise ValueError("Choose a MANO repository in your personal Hugging Face account")
-    if repo_type not in {None, "model", "dataset"}:
-        raise ValueError("MANO assets require a model or dataset repository")
-    kind = repo_type or "model"
-    try:
-        info = api.repo_info(repo, repo_type=kind)
-    except RepositoryNotFoundError:
-        if repo_type is not None:
-            raise
-        kind = "dataset"
-        info = api.repo_info(repo, repo_type=kind)
-    if not info.private:
-        raise ValueError(
-            "MANO must come from your private licensed asset repository; public mirrors are disabled"
-        )
-    if not re.fullmatch(r"[a-f0-9]{40}", info.sha):
-        raise ValueError("MANO assets require an immutable Hub revision")
-    files = set(api.list_repo_files(repo, repo_type=kind, revision=info.sha))
-    if not set(MANO_FILES.values()) <= files:
-        raise ValueError(
-            "The private repository must contain MANO_LEFT.safetensors and MANO_RIGHT.safetensors"
-        )
-    return {
-        "repo_id": repo,
-        "repo_type": kind,
-        "revision": info.sha,
-        "files": MANO_FILES,
-        "research_rights_acknowledged": True,
-    }
+def download_release(profile: dict, token: str, root: Path) -> dict:
+    """Download immutable model assets; authentication never reaches native inference."""
+    from huggingface_hub import hf_hub_download, snapshot_download
 
-
-def download_mano(
-    source: dict, token: str, root: Path, *, api_factory=HfApi, download=hf_hub_download
-) -> dict:
-    # Recheck privacy, ownership and immutable revision in the user's Job before GPU setup.
-    pinned = resolve_mano(
-        source["repo_id"],
-        token,
-        source.get("research_rights_acknowledged", False),
-        repo_type=source.get("repo_type", "model"),
-        api_factory=api_factory,
+    manifest = Path(
+        hf_hub_download(profile["repo"], "assets.json", revision=profile["revision"], token=token)
     )
-    if pinned["revision"] != source["revision"] or source["files"] != MANO_FILES:
-        raise ValueError("MANO assets changed after the estimate; create a fresh estimate")
+    if file_checksum(manifest)[0] != profile["manifest_sha256"]:
+        raise ValueError("The hand asset release manifest changed")
+    document = json.loads(manifest.read_text())
     root.mkdir(parents=True, exist_ok=True)
-    receipts = {}
-    for side, filename in MANO_FILES.items():
-        path = Path(
-            download(
-                source["repo_id"],
-                filename,
-                repo_type=pinned["repo_type"],
-                revision=source["revision"],
-                token=token,
-            )
-        )
-        # Safetensors is validated by the model loader; never unpickle uploaded model files.
-        target = root / filename
-        shutil.copyfile(path, target)
-        digest, size = file_checksum(target)
-        receipts[side] = {"path": str(target), "sha256": digest, "size": size}
-    (root / "receipt.json").write_text(json.dumps({"source": source, "files": receipts}))
-    return receipts
-
-
-def checkpoint_guard(directory: Path, receipts: dict) -> Path:
-    """Apply to every native subprocess via PYTHONPATH/sitecustomize.
-
-    Only the two exact MANO filenames may be resolved, and only to the user's
-    checksum-verified files. All other model downloads obey the offline cache.
-    """
-    for side in MANO_FILES:
-        entry = receipts[side]
-        if file_checksum(Path(entry["path"])) != (entry["sha256"], entry["size"]):
-            raise ValueError("Private MANO asset checksum mismatch")
-    directory.mkdir(parents=True, exist_ok=True)
-    paths = {filename: receipts[side]["path"] for side, filename in MANO_FILES.items()}
-    script = (
-        "import huggingface_hub\n"
-        f"_mano_paths = {paths!r}\n"
-        "_download = huggingface_hub.hf_hub_download\n"
-        "def _licensed_download(repo_id, filename, *args, **kwargs):\n"
-        "    if 'mano' in filename.lower():\n"
-        "        if filename not in _mano_paths:\n"
-        "            raise RuntimeError('Unapproved MANO checkpoint request')\n"
-        "        return _mano_paths[filename]\n"
-        "    return _download(repo_id, filename, *args, **kwargs)\n"
-        "huggingface_hub.hf_hub_download = _licensed_download\n"
+    for entry in document["files"]:
+        name = Path(entry["path"])
+        if name.is_absolute() or ".." in name.parts or "mano" in name.name.lower():
+            raise ValueError("Unexpected file in the native hand release")
+    snapshot_download(
+        profile["repo"],
+        revision=profile["revision"],
+        token=token,
+        local_dir=root,
+        allow_patterns=[entry["path"] for entry in document["files"]],
+        max_workers=16,
     )
-    (directory / "sitecustomize.py").write_text(script)
-    return directory
+    (root / "assets.json").write_bytes(manifest.read_bytes())
+    return {
+        "release_revision": profile["revision"],
+        "manifest_sha256": profile["manifest_sha256"],
+        "files": len(document["files"]),
+        "bytes": sum(entry["size"] for entry in document["files"]),
+    }

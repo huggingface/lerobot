@@ -1,136 +1,165 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License").
-"""Standalone JSON-lines bridge to an independently installed research runtime.
+"""Fresh calibrated DROID-W+MoGe, warm EgoHand/SOMA, bounded two-clip scheduling."""
 
-Only orchestration lives here; upstream inference/refinement code remains in its
-own interpreter and retains its own license. No filtered dataset is exported.
-"""
-
-import contextlib
 import importlib
 import json
-import shutil
+import os
+import signal
 import sys
+import threading
 import traceback
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from pathlib import Path
 
-import numpy as np
-
-
-def preserve_infilling(result, directory, geometry):
-    """Retain native infiller output; coordinate/action conversion stays upstream.
-
-    The strict native export mask is kept separately. No new missing-frame
-    interpolation, confidence fabrication, or motion estimator is introduced.
-    """
-    with np.load(result["hand_prediction"], allow_pickle=False) as archive:
-        values = dict(archive)
-    count = result["rectified_frames"]
-    joints = values["joints_camera"]
-    # The observed-only refinement can leave unsupported frames unavailable.
-    # On infilled frames retain the packaged infiller's joints, without applying
-    # corrections whose support protocol explicitly excludes those frames.
-    infilled = values["infilled"]
-    if "packaged_joints_camera" in values:
-        joints = joints.copy()
-        joints[infilled] = values["packaged_joints_camera"][infilled]
-    observed = values["raw_direct_valid"]
-    pose, shape = values["mano_pose"], values["mano_shape"]
-    wrist, camera = values["wrist_rotation_camera"], values["world_from_camera"]
-    available = values["camera_tracked"] & np.isfinite(camera).all(axis=(1, 2))
-    available &= ((observed | infilled) & np.isfinite(values["confidence"]) & (values["confidence"] > 0)).all(
-        axis=1
-    )
-    for array in (joints, wrist, pose, shape):
-        available &= np.isfinite(array).reshape(count, -1).all(axis=1)
-    strict = np.zeros(count, dtype=bool)
-    for path in result["segments"]:
-        with np.load(path, allow_pickle=False) as segment:
-            strict[segment["source_frame_index"]] = True
-    if int(strict.sum()) != result["accepted_frames"]:
-        raise ValueError("Native observed-action report is inconsistent")
-    # Conversion happens per continuous recoverable span, keeping the same FLU
-    # frame across an occlusion bridged by the native motion infiller.
-    edges = np.flatnonzero(np.diff(np.pad(available.astype(np.int8), (1, 1))))
-    spans = []
-    for index, (start, end) in enumerate(edges.reshape(-1, 2)):
-        wrist_action, _ = geometry.fuse_segment_to_flu(joints[start:end], wrist[start:end], camera[start:end])
-        action = geometry.policy_action_with_mano(wrist_action, pose[start:end])
-        path = directory / f"dense-actions-{index:04d}.npz"
-        np.savez_compressed(
-            path,
-            action=action,
-            source_frame_index=values["source_frame_index"][start:end],
-            timestamp_s=values["timestamp_s"][start:end],
-            confidence=values["confidence"][start:end],
-            observed=observed[start:end],
-            infilled=infilled[start:end],
-            observed_valid=strict[start:end],
-        )
-        spans.append(str(path))
-    result.update(
-        dense_segments=spans,
-        recoverable_frames=int(available.sum()),
-        export_policy="native-infilling-with-observation-provenance-v1",
-    )
-    return result
+from .config import HandBackendConfig
+from .egohand.output import export_actions
+from .processing import RequestProcess
 
 
 def main():
-    options = json.loads(sys.argv[1])
-    prefix = options["module"]
-    service = None
+    protocol, sys.stdout = sys.stdout, sys.stderr
+    config = HandBackendConfig(**json.loads(sys.argv[1]))
+    camera_config = importlib.import_module(config.module + ".egocentric.config").EgocentricConfig
+    calibration_type = importlib.import_module(config.module + ".egocentric.intrinsics").CameraIntrinsics
+    rectify = importlib.import_module(config.module + ".egocentric.video").rectify_video
+    estimate_camera = importlib.import_module(
+        config.module + ".egocentric.droidw_camera"
+    ).estimate_rectified_camera
+    camera_workers = importlib.import_module(config.module + ".infra.droidw_worker")
+    import cv2
+    import numpy as np
+
+    Path(config.trt_cache).mkdir(parents=True, exist_ok=True)
+    cv2.setNumThreads(min(24, len(os.sched_getaffinity(0))))
+
+    environment = dict(os.environ, NVIDIA_TF32_OVERRIDE="0")
+    environment["PYTHONPATH"] = os.pathsep.join([config.gem_root, environment["PYTHONPATH"]])
+    environment.update(OMP_NUM_THREADS="4", OPENBLAS_NUM_THREADS="4")
+    if environment.get("EGO_LIBRARY_PATH"):
+        environment["LD_LIBRARY_PATH"] = environment["EGO_LIBRARY_PATH"]
+    hand = RequestProcess(
+        [config.egohand_python, "-m", "lerobot.annotations.hands.egohand.worker", json.dumps(asdict(config))],
+        cwd=config.gem_root,
+        environment=environment,
+        log=Path(config.trt_cache) / "hand-worker.log",
+    )
+    camera_pool = ThreadPoolExecutor(max_workers=1)
+    exports = ThreadPoolExecutor(max_workers=1)
+    reply_lock = threading.Lock()
+    slots = threading.BoundedSemaphore(2)
+    stopping = threading.Event()
+
+    def stop_owned_workers():
+        stopping.set()
+        # These process records belong to this coordinator, never GPU-wide PIDs.
+        for worker in list(camera_workers._WORKERS.values()):
+            if worker.process.poll() is None:
+                os.killpg(worker.process.pid, signal.SIGTERM)
+        hand.close()
+
+    def interrupted(signum, frame):
+        stop_owned_workers()
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
+
+    def camera(request):
+        directory = Path(request["directory"])
+        directory.mkdir(parents=True, exist_ok=False)
+        calibration = request["calibration"]
+        matrix = np.array(
+            [[calibration["fx"], 0, calibration["cx"]], [0, calibration["fy"], calibration["cy"]], [0, 0, 1]],
+            dtype=float,
+        )
+        intrinsics = calibration_type(
+            calibration["width"],
+            calibration["height"],
+            matrix,
+            np.asarray(calibration.get("distortion", [])),
+            calibration["model"],
+            Path(request["video"]),
+        )
+        video = rectify(Path(request["video"]), intrinsics, directory / "rgb")
+        row = {
+            "source": request["video"],
+            "frames_path": str(video.frames_path),
+            "frame_count": video.frame_count,
+            "height": video.height,
+            "width": video.width,
+            "matrix": video.matrix.tolist(),
+            "fps": video.fps,
+        }
+        hands = hand.submit({"row": row, "directory": str(directory), "orientation": request["orientation"]})
+        settings = camera_config(
+            input_root=Path(request["video"]).parent,
+            output_root=directory / "unused",
+            repo_id="local/soma-annotation",
+            macrodata_python=Path(config.egohand_python),
+            gpus=("0",),
+            camera_backend="droid-w",
+            hand_calibration="calibrated",
+            droid_root=Path(config.droid_root),
+            droid_python=Path(config.droid_python),
+            droid_moge_checkpoint=Path(config.droid_moge_checkpoint),
+            droid_model_cache=Path(config.droid_model_cache),
+            droid_resolution=320,
+            droid_sample_fps=10.0,
+        )
+        settings.validate()
+        archive, statistics = estimate_camera(video, directory / "camera", settings)
+        # Preserve the MoGe-on arm: never silently substitute a camera without its depth prior.
+        receipt = directory / "camera/worker/output/camera/moge-ablation.json"
+        evidence = json.loads(receipt.read_text())
+        if (
+            evidence.get("mode") != "on"
+            or evidence.get("metric_depth_reg") is not True
+            or evidence.get("gt_scale_fit") is not False
+            or evidence.get("counts", {}).get("depth_predictions", 0) < 1
+        ):
+            raise ValueError("The camera worker did not verify DROID-W+MoGe without GT scale fitting")
+        return row, hands, archive, statistics
+
+    def finish(request, pending):
+        try:
+            row, hands, archive, statistics = pending.result()
+            hand_result = hands.result(timeout=config.timeout_s)
+            report = export_actions(
+                Path(hand_result["prediction"]),
+                archive,
+                Path(request["directory"]) / "actions",
+                frames=row["frame_count"],
+                fps=row["fps"],
+            )
+            report.update(
+                camera_statistics=statistics,
+                hand_components=hand_result["components"],
+                orientation=request["orientation"],
+            )
+            response = {"id": request["id"], "status": "ok", "result": report}
+        except Exception as error:
+            traceback.print_exc()
+            response = {"id": request["id"], "status": "failed", "error": str(error)}
+        finally:
+            slots.release()
+        with reply_lock:
+            protocol.write(json.dumps(response) + "\n")
+            protocol.flush()
+
     try:
-        with contextlib.redirect_stdout(sys.stderr):
-            configuration = importlib.import_module(prefix + ".egocentric.config").EgocentricConfig
-            backend = importlib.import_module(prefix + ".egocentric.backends").MacrodataService
-            process_video = importlib.import_module(prefix + ".egocentric.pipeline")._process_video
-            geometry = importlib.import_module(prefix + ".egocentric.geometry")
         for line in sys.stdin:
-            try:
-                request = json.loads(line)
-                directory = Path(request["directory"])
-                inputs = directory / "input"
-                inputs.mkdir(parents=True, exist_ok=True)
-                video = inputs / "episode.mp4"
-                shutil.copyfile(request["video"], video)
-                video.with_suffix(".intrinsics.json").write_text(json.dumps(request["calibration"]))
-                with contextlib.redirect_stdout(sys.stderr):
-                    config = configuration(
-                        input_root=inputs,
-                        output_root=directory / "unused",
-                        repo_id="local/hand-annotation",
-                        macrodata_python=Path(options["macrodata_python"]),
-                        gpus=("0",),
-                        camera_backend="droid-w",
-                        hand_fp16=True,
-                        detector_mode="vendored_track_local",
-                        sparse_hand_recovery=False,
-                        hand_calibration="calibrated",
-                        joint_refinement="world11-half",
-                        wrist_rotation_target_gamma=1.0,
-                        wrist_orientation_refinement="articulated-world5-half",
-                        wrist_position_refinement="raw-plane-world5-sixteenth",
-                        minimum_segment_frames=30,
-                        droid_root=Path(options["droid_root"]),
-                        droid_python=Path(options["droid_python"]),
-                        droid_moge_checkpoint=Path(options["droid_moge_checkpoint"]),
-                        droid_model_cache=Path(options["droid_model_cache"]),
-                    )
-                    config.validate()
-                    if service is None:
-                        service = backend(config, "0")
-                    result = process_video(config, service, video, directory / "native")
-                    result = preserve_infilling(result, directory, geometry)
-                print(json.dumps({"status": "ok", "result": result}), flush=True)
-            except Exception:
-                traceback.print_exc(file=sys.stderr)
-                print(json.dumps({"status": "failed"}), flush=True)
+            if stopping.is_set():
+                break
+            request = json.loads(line)
+            slots.acquire()
+            exports.submit(finish, request, camera_pool.submit(camera, request))
     finally:
-        if service is not None:
-            service.close()
-        with contextlib.redirect_stdout(sys.stderr):
-            importlib.import_module(prefix + ".infra.droidw_worker").close_workers()
+        stop_owned_workers()
+        camera_pool.shutdown(wait=True, cancel_futures=True)
+        exports.shutdown(wait=True, cancel_futures=True)
+        camera_workers.close_workers()
 
 
 if __name__ == "__main__":

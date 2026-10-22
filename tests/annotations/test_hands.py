@@ -1,87 +1,110 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License").
-"""Frame preservation, asset isolation and native hand-process contracts."""
+"""Native representation, frame alignment, immutable assets and process lifecycle."""
 
+import json
 import os
-import subprocess
 import sys
-from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import Mock
 
-import httpx
 import numpy as np
 import pyarrow as pa
 import pytest
-from huggingface_hub.errors import RepositoryNotFoundError
+from scipy.spatial.transform import Rotation
 
-from lerobot.annotations.hands.assets import (
-    MANO_FILES,
-    checkpoint_guard,
-    download_mano,
-    file_checksum,
-    resolve_mano,
+from lerobot.annotations.hands.assets import download_release, file_checksum, verify_assets
+from lerobot.annotations.hands.config import (
+    ACTION_SCHEMA,
+    COMPUTE,
+    HandBackendConfig,
+    estimate,
 )
-from lerobot.annotations.hands.config import COMPUTE, estimate
-from lerobot.annotations.hands.writer import ACTION_NAMES, attach_actions, validate_calibration
+from lerobot.annotations.hands.egohand.geometry import optical_wrist, pack_action
+from lerobot.annotations.hands.egohand.output import NATIVE_FIELDS, export_actions, observed_spans
+from lerobot.annotations.hands.processing import RequestProcess
+from lerobot.annotations.hands.writer import ACTION_NAMES, PARAMETERS, attach_actions, validate_calibration
 
 
 @pytest.fixture
 def source_table():
     return pa.table(
         {
-            "episode_index": pa.array([8] * 40, type=pa.int64()),
-            "frame_index": pa.array(range(40), type=pa.int64()),
-            # A long float32 clock has quantization larger than a fixed 10 us
-            # tolerance; native elapsed times still align with these same rows.
+            "episode_index": [8] * 40,
+            "frame_index": list(range(40)),
             "timestamp": pa.array(1000 + np.arange(40) / 10, type=pa.float32()),
             "action": pa.array([[float(i), 2.0] for i in range(40)], type=pa.list_(pa.float32(), 2)),
-            "observation.state": pa.array([[float(i)] for i in range(40)], type=pa.list_(pa.float32(), 1)),
+            "observation.state": [[float(i)] for i in range(40)],
         }
     )
 
 
-def native_report(directory, *, observed=True):
-    segments = []
+def native_report(directory, observed=True):
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = []
     if observed:
-        directory.mkdir(parents=True, exist_ok=True)
         path = directory / "segment.npz"
+        fields = {name: np.zeros((30, *shape), dtype=np.float32) for name, shape in PARAMETERS.items()}
         np.savez(
             path,
             source_frame_index=np.arange(5, 35),
             timestamp_s=np.arange(5, 35) / 10,
-            action=np.ones((30, 102), dtype=np.float32),
-            confidence=np.full((30, 2), 0.9),
+            action=np.ones((30, 156), dtype=np.float32),
+            **fields,
         )
-        segments.append(str(path))
+        paths.append(str(path))
     return {
+        "action_schema": ACTION_SCHEMA,
+        "gt_scale_alignment": False,
+        "motion_infilling": False,
         "rectified_frames": 40,
         "rectified_fps": 10.0,
         "accepted_frames": 30 if observed else 0,
-        "segments": segments,
+        "segments": paths,
     }
 
 
 @pytest.mark.parametrize("observed", [True, False])
-def test_attach_keeps_every_frame_and_original_action(source_table, tmp_path, observed):
-    report = native_report(tmp_path, observed=observed)
-    annotated, summary = attach_actions(source_table, report, directory=tmp_path, fps=10)
+def test_attach_preserves_frames_native_fields_and_source_actions(source_table, tmp_path, observed):
+    annotated, summary = attach_actions(
+        source_table, native_report(tmp_path, observed), directory=tmp_path, fps=10
+    )
     assert len(annotated) == len(source_table) == 40
     for name in ("episode_index", "frame_index", "timestamp", "observation.state"):
         assert annotated[name].equals(source_table[name])
     assert annotated["annotation.original_action"].equals(source_table["action"])
-    valid = np.array(annotated["annotation.hand_action_valid"].to_pylist()).ravel()
-    actions = np.array(annotated["action"].to_pylist())
+    valid = np.asarray(annotated["annotation.hand_action_valid"].to_pylist())
     assert valid.sum() == (30 if observed else 0)
-    assert not actions[~valid].any()
-    assert np.isfinite(actions).all() and actions.shape == (40, 102)
-    reference = np.array(annotated["annotation.hand_reference_frame"].to_pylist()).ravel()
-    assert np.all(reference[~valid] == -1)
-    assert np.all(reference[valid] == 5)
-    assert summary["unmeasured_frames"] == (10 if observed else 40)
-    assert len(ACTION_NAMES) == len(set(ACTION_NAMES)) == 102
+    assert annotated["annotation.hand_action_valid"].equals(
+        annotated["annotation.hand_action_observed_valid"]
+    )
+    actions = np.asarray(annotated["action"].to_pylist())
+    assert actions.shape == (40, 156) and not actions[~valid].any()
+    reference = np.asarray(annotated["annotation.hand_reference_frame"].to_pylist())
+    assert (reference[~valid] == -1).all() and (reference[valid] == 5).all()
+    for name, shape in PARAMETERS.items():
+        assert np.asarray(annotated["annotation." + name].to_pylist()).shape == (40, np.prod(shape))
+    assert summary["infilled_frames"] == 0 and summary["unmeasured_frames"] == (10 if observed else 40)
+    assert len(ACTION_NAMES) == len(set(ACTION_NAMES)) == 156
+    assert not any("mano" in name or "confidence" in name for name in annotated.column_names)
 
 
-@pytest.mark.parametrize("failure", ["overlap", "clock", "length", "outside", "nonfinite", "source_action"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "overlap",
+        "clock",
+        "length",
+        "outside",
+        "nonfinite",
+        "source_action",
+        "wrong_schema",
+        "infilling",
+        "gt_scale",
+        "short_span",
+        "missing_native",
+    ],
+)
 def test_reject_bad_native_alignment(source_table, tmp_path, failure):
     report = native_report(tmp_path)
     if failure == "overlap":
@@ -94,148 +117,96 @@ def test_reject_bad_native_alignment(source_table, tmp_path, failure):
         report["segments"] = [str(tmp_path.parent / "escape.npz")]
     elif failure == "source_action":
         source_table = source_table.append_column("annotation.original_action", source_table["action"])
+    elif failure == "wrong_schema":
+        report["action_schema"] = "mano102"
+    elif failure == "infilling":
+        report["motion_infilling"] = True
+    elif failure == "gt_scale":
+        report["gt_scale_alignment"] = True
     else:
         path = tmp_path / "segment.npz"
         with np.load(path) as data:
             values = dict(data)
-        values["action"][0, 0] = np.nan
+        if failure == "nonfinite":
+            values["action"][0, 0] = np.nan
+        elif failure == "short_span":
+            values = {k: v[:29] for k, v in values.items()}
+        else:
+            values["soma_hand_pose"] = np.zeros((30, 2, 15, 3, 3))
         np.savez(path, **values)
     with pytest.raises(ValueError):
         attach_actions(source_table, report, directory=tmp_path, fps=10)
 
 
-def model_api(private=True, owner="alice", revision="a" * 40):
-    api = Mock()
-    api.whoami.return_value = {"name": owner}
-    api.repo_info.return_value = SimpleNamespace(private=private, sha=revision)
-    api.list_repo_files.return_value = list(MANO_FILES.values())
-    return api
+def test_native_articulation_retains_every_dof_and_order():
+    pose = Rotation.from_rotvec(np.arange(144).reshape(48, 3) * 0.001).as_matrix().reshape(1, 2, 24, 3, 3)
+    wrist = np.arange(12, dtype=np.float32)[None]
+    output = pack_action(wrist, pose)
+    assert output.shape == (1, 156)
+    np.testing.assert_array_equal(output[:, :12], wrist)
+    np.testing.assert_allclose(output[:, 12:], np.arange(144)[None] * 0.001, atol=1e-7)
 
 
 @pytest.mark.parametrize(
-    "repo,accepted,private",
-    [("alice/mano", False, True), ("mirror/mano", True, True), ("alice/mano", True, False)],
-)
-def test_mano_rights_privacy_and_ownership_required(repo, accepted, private):
-    with pytest.raises(ValueError):
-        resolve_mano(repo, "private-token", accepted, api_factory=lambda **kw: model_api(private))
-
-
-def test_private_asset_pin_download_and_no_mirror_fallback(tmp_path):
-    api = model_api()
-    source = resolve_mano("alice/mano", "private-token", True, api_factory=lambda **kw: api)
-    files = {}
-    for filename in MANO_FILES.values():
-        path = tmp_path / filename
-        path.write_bytes(filename.encode())
-        files[filename] = path
-    download = Mock(side_effect=lambda repo, filename, **kw: files[filename])
-    receipt = download_mano(
-        source, "private-token", tmp_path / "private", api_factory=lambda **kw: api, download=download
-    )
-    assert all(
-        call.kwargs["revision"] == "a" * 40 and call.kwargs["token"] == "private-token"
-        for call in download.call_args_list
-    )
-    guard = checkpoint_guard(tmp_path / "guard", receipt)
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import huggingface_hub as h; print(h.hf_hub_download('public/mirror','MANO_RIGHT.safetensors')); h.hf_hub_download('public/mirror','other_MANO.safetensors')",
-        ],
-        env={**os.environ, "PYTHONPATH": str(guard), "HF_HUB_OFFLINE": "1"},
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert str(receipt["right"]["path"]) in result.stdout
-    assert result.returncode != 0 and "Unapproved MANO" in result.stderr
-    assert "private-token" not in (guard / "sitecustomize.py").read_text()
-    files["MANO_LEFT.safetensors"].write_bytes(b"changed source")
-    # The private copy is checksum-bound independently of mutable source-cache handles.
-    assert file_checksum(tmp_path / "private/MANO_LEFT.safetensors") == (
-        receipt["left"]["sha256"],
-        receipt["left"]["size"],
-    )
-    (tmp_path / "private/MANO_LEFT.safetensors").write_bytes(b"tampered")
-    with pytest.raises(ValueError, match="checksum"):
-        checkpoint_guard(tmp_path / "guard", receipt)
-
-
-def test_changed_assets_fail_before_model_load(tmp_path):
-    api = model_api()
-    source = resolve_mano("alice/mano", "t", True, api_factory=lambda **kw: api)
-    api.repo_info.return_value.sha = "b" * 40
-    download = Mock()
-    with pytest.raises(ValueError, match="changed"):
-        download_mano(source, "t", tmp_path, api_factory=lambda **kw: api, download=download)
-    download.assert_not_called()
-
-
-@pytest.mark.parametrize("private", [True, False])
-def test_private_dataset_assets_use_the_same_pinned_namespace_on_download(tmp_path, private):
-    api = model_api()
-    info = SimpleNamespace(private=private, sha="a" * 40)
-
-    def repo_info(repo, *, repo_type):
-        if repo_type == "model":
-            raise RepositoryNotFoundError(
-                "No model repository",
-                response=httpx.Response(404, request=httpx.Request("GET", "https://test.example")),
-            )
-        return info
-
-    api.repo_info.side_effect = repo_info
-    if not private:
-        with pytest.raises(ValueError, match="private"):
-            resolve_mano("alice/mano", "t", True, api_factory=lambda **kw: api)
-        return
-    source = resolve_mano("alice/mano", "t", True, api_factory=lambda **kw: api)
-    assert source["repo_type"] == "dataset"
-    api.list_repo_files.assert_called_once_with("alice/mano", repo_type="dataset", revision="a" * 40)
-    # A same-named model appearing later must not change the pinned asset source.
-    api.repo_info.side_effect = None
-    api.repo_info.return_value = info
-    api.repo_info.reset_mock()
-    asset = tmp_path / "asset.safetensors"
-    asset.write_bytes(b"download transport fixture")
-    download = Mock(return_value=asset)
-    download_mano(source, "t", tmp_path / "private", api_factory=lambda **kw: api, download=download)
-    api.repo_info.assert_called_once_with("alice/mano", repo_type="dataset")
-    assert len(download.call_args_list) == 2
-    assert all(call.kwargs["repo_type"] == "dataset" for call in download.call_args_list)
-
-
-def test_existing_model_manifests_without_repo_type_remain_supported(tmp_path):
-    api = model_api()
-    source = resolve_mano("alice/mano", "t", True, api_factory=lambda **kw: api)
-    source.pop("repo_type")
-    asset = tmp_path / "asset.safetensors"
-    asset.write_bytes(b"download transport fixture")
-    download = Mock(return_value=asset)
-    download_mano(source, "t", tmp_path / "private", api_factory=lambda **kw: api, download=download)
-    assert all(call.kwargs["repo_type"] == "model" for call in download.call_args_list)
-
-
-def test_no_fabricated_hf_gpu_benchmarks():
-    assert set(COMPUTE) == {"h200", "a100-large", "rtx-pro-6000"}
-    assert estimate(3000)["seconds"] is None
-    assert estimate(3000, 50)["seconds"] == 60
-    assert estimate(3000, 50)["basis"] == "user planning assumption"
-    with pytest.raises(ValueError):
-        estimate(3000, float("nan"))
-
-
-@pytest.mark.parametrize(
-    "change",
+    "bad",
     [
-        {"fx": 0},
-        {"fy": 51},
-        {"width": 32},
-        {"cx": float("nan")},
-        {"model": "opencv_fisheye", "distortion": []},
+        np.full((1, 2, 24, 3, 3), np.nan),
+        np.zeros((1, 2, 24, 3, 3)),
+        np.broadcast_to(np.diag([-1.0, 1.0, 1.0]), (1, 2, 24, 3, 3)),
     ],
+)
+def test_reject_invalid_rotations(bad):
+    with pytest.raises(ValueError):
+        pack_action(np.zeros((1, 12)), bad)
+
+
+def test_rig_basis_camera_equivariance():
+    orientation, wrist, camera = Rotation.random(3, random_state=np.random.default_rng(3)).as_matrix()
+    transformed = orientation @ camera @ orientation.T @ wrist
+    np.testing.assert_allclose(
+        optical_wrist(transformed, orientation), camera @ optical_wrist(wrist, orientation), atol=1e-12
+    )
+
+
+def test_direct_support_never_bridges_missing_or_single_hand_frames():
+    direct = np.ones((100, 2), dtype=bool)
+    direct[35, 1] = False
+    direct[70:99] = False
+    camera = np.ones(100, dtype=bool)
+    assert observed_spans(direct, camera) == [(0, 35), (36, 70)]
+    # Isolated last-frame detections are never accepted, even with export minimum 1.
+    assert observed_spans(direct, camera, minimum_frames=1) == [(0, 35), (36, 70)]
+
+
+def test_export_resets_origin_and_preserves_metric_scale(tmp_path):
+    n = 70
+    fields = {name: np.zeros((n, *shape)) for name, shape in NATIVE_FIELDS.items()}
+    for name in ("wrist_rotation_camera", "soma_wrist_orient", "soma_hand_pose"):
+        fields[name][...] = np.eye(3)
+    joints = np.broadcast_to([0.2, 0.3, 0.6], (n, 2, 21, 3)).copy()
+    direct = np.ones((n, 2), dtype=bool)
+    direct[35] = False
+    prediction = tmp_path / "hands.npz"
+    camera = tmp_path / "camera.npz"
+    poses = np.broadcast_to(np.eye(4), (n, 4, 4)).copy()
+    poses[:, 0, 3] = 3 + np.arange(n) * 0.01
+    np.savez(prediction, direct_valid=direct, joints_camera=joints, **fields)
+    np.savez(camera, camera_pose=poses, source_frame_index=np.arange(n), timestamp_s=np.arange(n) / 30)
+    report = export_actions(prediction, camera, tmp_path / "actions", frames=n, fps=30)
+    assert report["accepted_frames"] == 69 and len(report["segments"]) == 2
+    with np.load(report["segments"][1]) as segment:
+        np.testing.assert_allclose(segment["action"][0, :3], [0.6, -0.2, -0.3], atol=1e-7)
+        np.testing.assert_allclose(segment["action"][1, :3], [0.6, -0.21, -0.3], atol=1e-7)
+        assert segment["soma_hand_pose"].shape == (34, 2, 24, 3, 3)
+    joints *= 2
+    np.savez(prediction, direct_valid=direct, joints_camera=joints, **fields)
+    doubled = export_actions(prediction, camera, tmp_path / "doubled", frames=n, fps=30)
+    with np.load(doubled["segments"][0]) as segment:
+        np.testing.assert_allclose(segment["action"][0, :3], [1.2, -0.4, -0.6], atol=1e-7)
+
+
+@pytest.mark.parametrize(
+    "change", [{"fx": 0}, {"width": 32}, {"cx": float("nan")}, {"model": "opencv_fisheye", "distortion": []}]
 )
 def test_calibration_is_measured_and_resolution_bound(change):
     calibration = {
@@ -243,7 +214,7 @@ def test_calibration_is_measured_and_resolution_bound(change):
         "width": 64,
         "height": 64,
         "fx": 50.0,
-        "fy": 50.0,
+        "fy": 51.0,
         "cx": 32.0,
         "cy": 32.0,
         "distortion": [],
@@ -253,121 +224,96 @@ def test_calibration_is_measured_and_resolution_bound(change):
         validate_calibration({**calibration, **change}, 64, 64)
 
 
-def test_native_infiller_predictions_are_retained_but_not_mislabeled(tmp_path, source_table):
-    from lerobot.annotations.hands.bridge import preserve_infilling
+def test_no_fabricated_hf_throughput():
+    assert set(COMPUTE) == {"h200", "a100-large", "rtx-pro-6000"}
+    assert estimate(3000)["seconds"] is None
+    assert estimate(3000)["reference_fps"] == [39.41450219151414, 41.03790957211554]
 
-    n = 40
-    observed = np.ones((n, 2), dtype=bool)
-    infilled = np.zeros((n, 2), dtype=bool)
-    observed[30:35, 1] = False
-    infilled[30:35, 1] = True
-    observed[39] = False
-    joints = np.zeros((n, 2, 21, 3))
-    joints[39] = np.nan  # Unrecoverable; the infiller did not produce a pose.
-    archive = tmp_path / "native.npz"
-    np.savez(
-        archive,
-        joints_camera=joints,
-        packaged_joints_camera=joints,
-        infilled=infilled,
-        raw_direct_valid=observed,
-        mano_pose=np.ones((n, 2, 96)),
-        mano_shape=np.zeros((n, 2, 10)),
-        wrist_rotation_camera=np.tile(np.eye(3), (n, 2, 1, 1)),
-        world_from_camera=np.tile(np.eye(4), (n, 1, 1)),
-        camera_tracked=np.ones(n, dtype=bool),
-        confidence=np.ones((n, 2)),
-        source_frame_index=np.arange(n),
-        timestamp_s=np.arange(n) / 10,
+
+def asset_fixture(tmp_path):
+    files = []
+    for name in ("checkpoint", "detector", "moge"):
+        path = tmp_path / name
+        path.write_bytes(name.encode())
+        sha, size = file_checksum(path)
+        files.append({"path": name, "sha256": sha, "size": size})
+    document = {"files": files, "identity_backend": "mhr", "gt_scale_alignment": False}
+    manifest = tmp_path / "assets.json"
+    manifest.write_text(json.dumps(document))
+    config = HandBackendConfig(
+        checkpoint=str(tmp_path / "checkpoint"),
+        detector=str(tmp_path / "detector"),
+        droid_moge_checkpoint=str(tmp_path / "moge"),
+        assets_manifest=str(manifest),
+        assets_sha256=file_checksum(manifest)[0],
     )
-    report = native_report(tmp_path)
-    # A separate native observed-only span: valid strict training frames 0–29.
-    strict = tmp_path / "strict.npz"
-    np.savez(strict, source_frame_index=np.arange(30))
-    report.update(hand_prediction=str(archive), segments=[str(strict)])
-    geometry = Mock()
-    geometry.fuse_segment_to_flu.side_effect = lambda j, w, c: (np.ones((len(j), 12)), j)
-    geometry.policy_action_with_mano.side_effect = lambda w, p: np.ones((len(w), 102))
-    report = preserve_infilling(report, tmp_path, geometry)
-    table, summary = attach_actions(source_table, report, directory=tmp_path, fps=10)
-    assert summary["valid_frames"] == 39
-    assert summary["observed_training_frames"] == 30
-    assert summary["infilled_frames"] == 5
-    assert summary["unmeasured_frames"] == 1
-    assert table["annotation.hand_action_valid"][32].as_py() is True
-    assert table["annotation.hand_infilled"][32].as_py() == [False, True]
-    assert table["annotation.hand_action_observed_valid"][32].as_py() is False
-    assert table["annotation.hand_action_valid"][39].as_py() is False
-    assert table["annotation.hand_reference_frame"][32].as_py() == 0
-    geometry.fuse_segment_to_flu.assert_called_once()
-    # Reject a corrupted export trying to count infilled poses as observed.
-    dense_path = report["dense_segments"][0]
-    with np.load(dense_path) as data:
-        values = dict(data)
-    values["observed_valid"][32] = True
-    np.savez(dense_path, **values)
-    with pytest.raises(ValueError, match="Infilled predictions"):
-        attach_actions(source_table, report, directory=tmp_path, fps=10)
+    return document, config
 
 
-def test_droid_native_bridge_reuses_one_service_across_requests(tmp_path, monkeypatch):
-    from pathlib import Path
+def test_asset_download_is_allowlisted_and_pinned(tmp_path, monkeypatch):
+    document, config = asset_fixture(tmp_path)
+    download = Mock(return_value=config.assets_manifest)
+    snapshot = Mock()
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", download)
+    monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot)
+    profile = {"repo": "private/hand-runtime", "revision": "a" * 40, "manifest_sha256": config.assets_sha256}
+    receipt = download_release(profile, "token", tmp_path / "download")
+    assert receipt["files"] == 3
+    assert snapshot.call_args.kwargs["allow_patterns"] == [x["path"] for x in document["files"]]
+    assert snapshot.call_args.kwargs["revision"] == "a" * 40
+    document["files"][0]["path"] = "../escape"
+    Path(config.assets_manifest).write_text(json.dumps(document))
+    profile["manifest_sha256"] = file_checksum(Path(config.assets_manifest))[0]
+    with pytest.raises(ValueError, match="Unexpected"):
+        download_release(profile, "token", tmp_path / "download")
+    assert snapshot.call_count == 1
 
-    from lerobot.annotations.hands.config import HandBackendConfig
-    from lerobot.annotations.hands.processing import HandAnnotator
 
-    package = tmp_path / "runtime/research_runtime"
-    (package / "egocentric").mkdir(parents=True)
-    (package / "infra").mkdir()
-    for folder in (package, package / "egocentric", package / "infra"):
-        (folder / "__init__.py").write_text("")
-    (package / "egocentric/config.py").write_text("""class EgocentricConfig:
-    def __init__(self, **kwargs): self.__dict__.update(kwargs)
-    def validate(self):
-        assert self.camera_backend == "droid-w"
-        assert self.hand_calibration == "calibrated"
-        assert self.hand_fp16 and not self.sparse_hand_recovery
-        assert self.joint_refinement == "world11-half"
-        assert self.wrist_rotation_target_gamma == 1.0
-        assert self.wrist_orientation_refinement == "articulated-world5-half"
-        assert self.wrist_position_refinement == "raw-plane-world5-sixteenth"
+def test_corrupt_models_fail_before_loading(tmp_path, monkeypatch):
+    document, config = asset_fixture(tmp_path)
+    monkeypatch.setattr("lerobot.annotations.hands.assets.CHECKPOINT_SHA256", document["files"][0]["sha256"])
+    assert verify_assets(config)["identity_backend"] == "mhr"
+    (tmp_path / "detector").write_bytes(b"changed")
+    with pytest.raises(ValueError, match="checksum"):
+        verify_assets(config)
+
+
+def test_request_process_supports_out_of_order_replies_and_owned_cleanup(tmp_path):
+    program = tmp_path / "worker.py"
+    program.write_text("""import concurrent.futures,json,sys,time
+pool=concurrent.futures.ThreadPoolExecutor(2)
+def reply(row):
+ time.sleep(row['delay'])
+ print(json.dumps({'id':row['id'],'status':'ok','result':row['value']}),flush=True)
+for line in sys.stdin:pool.submit(reply,json.loads(line))
 """)
-    (package / "egocentric/backends.py").write_text("""class MacrodataService:
-    def __init__(self, config, gpu): self.calls = 0
-    def close(self): pass
-""")
-    (package / "egocentric/pipeline.py").write_text("""import numpy as np
-
-def _process_video(config, service, video, work_root):
-    service.calls += 1
-    work_root.mkdir(parents=True)
-    path = work_root / "hands.npz"
-    n = 40
-    np.savez(path, joints_camera=np.zeros((n,2,21,3)), infilled=np.zeros((n,2),dtype=bool), raw_direct_valid=np.ones((n,2),dtype=bool), mano_pose=np.ones((n,2,96)), mano_shape=np.zeros((n,2,10)), wrist_rotation_camera=np.tile(np.eye(3),(n,2,1,1)), world_from_camera=np.tile(np.eye(4),(n,1,1)), camera_tracked=np.ones(n,dtype=bool), confidence=np.ones((n,2)), source_frame_index=np.arange(n), timestamp_s=np.arange(n)/10)
-    return dict(hand_prediction=str(path), rectified_frames=n, rectified_fps=10, segments=[], accepted_frames=0, service_calls=service.calls)
-""")
-    (package / "egocentric/geometry.py").write_text("""import numpy as np
-
-def fuse_segment_to_flu(j,w,c): return np.zeros((len(j),12)),j
-
-def policy_action_with_mano(w,p): return np.zeros((len(w),102))
-""")
-    (package / "infra/droidw_worker.py").write_text("def close_workers(): pass\n")
-    config = HandBackendConfig(root=str(package.parent), module="research_runtime", python=sys.executable)
-    monkeypatch.setattr(
-        "lerobot.annotations.hands.processing.provisioned_environment",
-        lambda *args: {**os.environ, "PYTHONPATH": str(package.parent)},
+    client = RequestProcess(
+        [sys.executable, str(program)],
+        cwd=tmp_path,
+        environment=os.environ.copy(),
+        log=tmp_path / "worker.log",
     )
-    video = tmp_path / "source.mp4"
-    video.write_bytes(b"transport fixture; no model inference")
-    worker = HandAnnotator(config, {}, tmp_path / "warm")
+    first = client.submit({"value": "first", "delay": 0.2})
+    second = client.submit({"value": "second", "delay": 0})
+    assert second.result(timeout=5) == "second" and first.result(timeout=5) == "first"
+    client.close()
+    client.close()
+    assert client.process.poll() is not None
+    with pytest.raises(RuntimeError):
+        client.submit({"value": "closed", "delay": 0}).result(timeout=5)
+
+
+def test_dead_worker_fails_pending_requests_instead_of_hanging(tmp_path):
+    program = tmp_path / "worker.py"
+    program.write_text("import sys\nsys.stdin.readline()\nsys.exit(1)\n")
+    client = RequestProcess(
+        [sys.executable, str(program)],
+        cwd=tmp_path,
+        environment=os.environ.copy(),
+        log=tmp_path / "worker.log",
+    )
     try:
-        first = worker.annotate(video, {}, tmp_path / "first")
-        second = worker.annotate(video, {}, tmp_path / "second")
-        assert (first["service_calls"], second["service_calls"]) == (1, 2)
-        assert first["recoverable_frames"] == second["recoverable_frames"] == 40
-        assert len(first["dense_segments"]) == 1
+        with pytest.raises(RuntimeError):
+            client.submit({}).result(timeout=5)
     finally:
-        worker.close()
-    assert worker.process.poll() is not None
-    assert Path(first["dense_segments"][0]).is_file()
+        client.close()

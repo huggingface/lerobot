@@ -1,119 +1,102 @@
 # Hand action annotations
 
-In Annotation Studio, select **Hand actions** alongside the other annotations.
-Choose a dataset, episodes and an RGB human-POV camera, then choose an HF Jobs
-GPU under **Models & compute**. Use the same estimate, review, launch and progress
-pages as other annotations. There is no separate raw-video conversion command,
-folder selector, local-machine mode or Slurm mode for this feature.
+In Annotation Studio, select **Hand actions** alongside other annotations. Choose
+a dataset, episodes and a calibrated human-POV RGB camera, then an HF Jobs GPU
+under **Models & compute**. The shared wizard handles estimates, review, launch
+and progress. This flow uses EgoHand and native SOMA/MHR hands; no MANO files are
+needed.
+
+## Pipeline
+
+1. **Camera motion:** measured calibration rectifies the video. Fresh DROID-W
+   camera tracking uses **MoGe Small**, which remains mandatory for depth and
+   metric scale. Camera inference samples at 10 Hz and interpolates onto the
+   unchanged source frame grid.
+2. **Hands:** the FP32 TensorRT hand detector runs in batches of eight, with
+   complete-clip physical left/right association. EgoHand processes 64 independent
+   hand crops per batch. Only its backbone uses FP16 autocast; heads and geometry
+   remain FP32. CPU crop preparation and the next clip's detection overlap pose
+   inference, while camera tracking runs in its isolated environment.
+3. **Supported motion:** the validated smoothing and post-reconstruction singleton
+   rejection remain. Export requires at least 30 consecutive frames where both
+   hands are directly observed, native parameters are finite and the camera is
+   valid. Tracker-filled boxes are not observations. This recipe has **no motion
+   infiller**; it does not fabricate missing poses.
+4. **Dataset actions:** native 156D actions and SOMA parameters are attached to the
+   annotated dataset copy, preserving every selected source episode and frame.
+
+The recipe is `egohand-soma-v3-checkpoint-overlap-v4`. It uses the verified smaller
+inference-only checkpoint with byte-identical model tensors, GEM-X revision
+`20555befe2fbbe5b2015e1fff7ff214dc18ea9d6`, and a pinned DROID-W/MoGe runtime.
+No reference camera, ground-truth scale fitting or benchmark data enters inference.
 
 ## Dataset output
 
-The annotated copy retains every selected source episode and frame, including
-frames with no usable hands. It writes hand actions into the existing dataset's
-Parquet rows:
+| Feature                                                          | Meaning                                                                                                                               |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `action`                                                         | 156 float32 values: left/right wrist position and axis-angle rotation (12), then 24 native SOMA joint rotation vectors per hand (144) |
+| `annotation.hand_action_valid`                                   | Complete finite observed bimanual action within an accepted span                                                                      |
+| `annotation.hand_action_observed_valid`                          | Same strict training mask; no infilled poses exist in this recipe                                                                     |
+| `annotation.hand_observed`                                       | Left/right direct-observation flags for accepted action frames                                                                        |
+| `annotation.hand_reference_frame`                                | Source frame defining the accepted span's fixed FLU frame; -1 when invalid                                                            |
+| `annotation.soma_wrist_orient`                                   | Both native wrist orientation matrices, flattened                                                                                     |
+| `annotation.soma_hand_pose`                                      | Both sets of 24 native finger joint rotation matrices, flattened                                                                      |
+| `annotation.soma_identity` / `annotation.soma_scales`            | Both hands' native identity and scale parameters, flattened                                                                           |
+| `annotation.wrist_rotation_camera`                               | Both wrists in the physical camera basis, flattened                                                                                   |
+| `annotation.hand_joints_camera` / `annotation.hand_joints_world` | Common 21-joint geometry in camera / span-start FLU coordinates, flattened                                                            |
+| `annotation.camera_world_from_optical`                           | Camera transformation matrix, flattened                                                                                               |
+| `annotation.original_action`                                     | Source actions preserved before replacement, if present                                                                               |
 
-| Feature                                 | Meaning                                                                                                              |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `action`                                | 102 float32 values: left/right wrist position and axis-angle rotation (12), then left/right finger articulation (90) |
-| `annotation.hand_action_valid`          | One boolean; true where a complete finite bimanual action is available, including native motion infilling            |
-| `annotation.hand_action_observed_valid` | Strict native observed-only bimanual training mask (minimum 30-frame spans)                                          |
-| `annotation.hand_observed`              | Per-hand direct-observation flags                                                                                    |
-| `annotation.hand_infilled`              | Per-hand native motion-infiller flags; these are inferred, not observed                                              |
-| `annotation.hand_confidence`            | Left/right confidence for valid action frames; zero otherwise                                                        |
-| `annotation.hand_reference_frame`       | Source episode frame defining that span's fixed FLU coordinate frame; -1 when invalid                                |
-| `annotation.original_action`            | Original source action, if present, preserved before replacement                                                     |
+SOMA articulation is not converted to MANO coefficients. Wrist neutral axes are
+native SOMA/MHR axes; cross-model wrist-angle comparability is not claimed.
+Accepted spans each use a fixed start-camera FLU frame (forward, left, up), with
+metric scale preserved. These inferred human poses are not robot joint commands
+or ground truth. Monocular metric scale remains model-dependent.
 
-The native **HaWoR motion infiller** is retained: usable infilled poses are written
-to `action` with their provenance. Training can use `annotation.hand_action_valid`
-for all available predictions, or `annotation.hand_action_observed_valid` for
-strict observed-only training. Truly unrecoverable actions contain **zero
-placeholders** and must be masked; zeros are not measured poses.
-This preserves episode lengths and camera/frame alignment without inventing
-missing hands. A fully unobserved episode remains present with all actions invalid.
-Failed inference is reported as a failed episode, rather than a completed episode
-with fabricated values. Existing datasets already containing preserved original
-actions are rejected to avoid overwriting that provenance.
-
-The native recipe uses calibrated HaWoR/MANO, DROID-W camera tracking with MoGe,
-FP16 hands and ByteTrack; world joint smoothing, wrist rotation restoration,
-articulated orientation refinement and bounded wrist-plane correction retain
-the pinned recipe's behavior. The native strict training mask requires uninterrupted spans of at least 30 frames
-with both hands directly observed and camera tracking valid. The annotated copy
-also retains complete finite infilled predictions, with separate masks.
-Continuous recoverable spans share a fixed start-camera FLU frame (forward, left,
-up), including across occlusions bridged by the native infiller. Each span records
-its reference frame; coordinate conversion uses the pinned native geometry code.
-These are inferred human poses, not robot joint commands or ground truth.
-Monocular metric scale remains model-dependent.
+Unaccepted frames contain **zero placeholders and invalid masks**. Training must
+apply the validity mask. A fully unobserved episode remains present with all
+actions invalid. Inference errors are reported as failed episodes. Datasets that
+already contain `annotation.original_action` are rejected to preserve provenance.
 
 ## Calibration and compute
 
-Use measured `pinhole` or `opencv_fisheye` calibration matching the selected
-camera's exact resolution. Studio can read `camera.intrinsics` from the camera's
-`info` metadata, or accept the calibration JSON in the wizard. Required fields
-are `model`, `width`, `height`, `fx`, `fy`, `cx`, `cy`, and `distortion`.
-The selected recipe requires positive isotropic focal lengths; fisheye requires
-four distortion coefficients. Missing calibration fails before dispatch.
-Native source FPS is preserved; processing FPS is a separate quantity.
+The selected camera's `info["camera.intrinsics"]` metadata must contain measured
+`pinhole` or `opencv_fisheye` calibration at its exact resolution: `model`, `width`,
+`height`, `fx`, `fy`, `cx`, `cy`, and `distortion`. Missing calibration fails before
+paid dispatch. There is no manual calibration or FPS-assumption form.
 
-HF Jobs choices are A100 80 GB, RTX PRO 6000 96 GB and H200 141 GB. Their actual
-throughput has not been benchmarked. An optional **Planning speed** is an
-explicit user assumption used for duration estimates, never a measured result.
-The historical reference is 53.9 input FPS on an RTX 5090 over ten calibrated
-HOT3D clips / 1,500 source frames, including model startup, camera/hands and export
-but excluding installation/downloads. This is not a benchmark of HF hardware.
-Queue, setup, downloads and copying add time. Quotes show live HF hardware prices
-and reserve the complete timeout; reservations are not actual charges.
+Default hand input is the sensor image. **Aria Gen1 sensor image** is an explicit
+orientation option (or `camera.hand_input_orientation = "aria-gen1-cw90"` in camera
+metadata). It rotates only hand-model input and restores sensor camera axes after
+inference. It must not be applied to ordinary upright cameras.
 
-## MANO and research rights
+HF Jobs offers A100 80 GB, RTX PRO 6000 96 GB and H200 141 GB. Their throughput is
+**not measured yet**. The development reference is 39.41–41.04 full-pipeline input
+FPS on an RTX 5090 over two fresh-process samples of ten short calibrated clips,
+1,500 input frames and 1,120 accepted frames each. This includes startup, decoding,
+calibration, fresh DROID-W+MoGe, hands and native export. It excludes installation
+and model downloads and is not a cold filesystem-cache benchmark. The development
+recall/action-error results are not held-out generalization or HF acceptance tests.
+Quotes show live hardware prices and reserve the full timeout; this reservation
+is not an actual charge. Queue, model downloads, per-GPU TensorRT compilation and
+dataset copying add time.
 
-The [official MANO site](https://mano.is.tue.mpg.de/) requires registration and
-agreement to its [license](https://mano.is.tue.mpg.de/license.html).
-Standard terms restrict use to permitted non-commercial purposes and restrict
-third-party transfer and redistribution. A public checkpoint mirror or a research
-checkbox does not grant those rights. Review the
-[HaWoR terms](https://github.com/ThunderVVV/HaWoR) and
-[other checkpoint terms](https://huggingface.co/macrodata/egovision-safetensors)
-as well. Model-format conversion does not change a license.
+## Assets and deployment
 
-Obtain MANO through the official process yourself. If your permissions permit
-storing/using your files on your controlled HF compute, place your own licensed
-`MANO_LEFT.safetensors` and `MANO_RIGHT.safetensors` in a **private model or dataset repository
-in your own account**. Conversion, storage and hosting must be within your
-permissions. Studio does not accept a license for you or certify legal compliance.
-No official-account credentials are requested or stored by the Space.
+EgoHand and its detector use OpenMDW 1.1. SOMA/MHR assets use Apache 2.0. The camera
+and other runtime dependencies retain their respective terms; see the model cards
+and GEM-X attribution notices linked in Studio. The research flow keeps outputs
+private. It neither downloads nor redistributes MANO assets.
 
-The Job uses your HF token to pull those files at the exact quoted commit,
-rechecks ownership/privacy, records checksums, and supplies local paths to native
-model resolution. There is no public MANO fallback. Assets and asset caches are
-never written into the annotated dataset or its execution checkpoints. Research
-outputs are private. Do not enable unrestricted shared hosting under the standard
-MANO terms; obtain separate permission for uses outside your license.
+The operator builds a dependency-complete private HF worker image on CPU and pins
+its Space revision and image-version checksum. Model files and native camera
+source are checked against immutable manifests. The user's HF login must have
+read access to the private runtime release. After download, native inference runs
+offline without that token. GPU-specific TensorRT plans are rebuilt on the Job's
+GPU from the frozen ONNX graphs and settings; no RTX 5090 plans are reused.
 
-## Deployment contract
-
-This integration is experimental. The Space must be configured with a
-**dependency-complete HF Jobs image pinned by digest**, without shared MANO
-files, and `HAND_JOB_BACKEND` operator settings. `HAND_JOB_IMAGE` identifies that
-image; it is not an end-user machine selector. The operator configuration names
-the separately installed runtime package, its interpreters, DROID paths and a
-SHA-256-pinned non-MANO asset manifest. That runtime retains its own license;
-this Apache adapter neither copies nor relicenses its inference implementation.
-
-The runtime checkout is pinned to `d61017dd3a95c59a51d836aab6f7bac1baee34eb`.
-The image supplies git, NumPy, FFmpeg, ego-vision 0.1.25, CUDA-compatible hand
-models and camera dependencies in isolated interpreters. The manifest lists
-checksummed runtime/model files and `HF_HOME`/`TORCH_HOME` cache directories.
-`HandBackendConfig` defines the remaining operator fields. No credentials belong
-in that manifest. Native inference is offline after the authorized private MANO
-pull. The bridge retains warm hand/camera services across episodes and returns
-native action predictions with observed/infilled provenance; no separate filtered
-LeRobot dataset is created. The export policy is versioned separately from the
-inference recipe.
-
-The same #4892 execution engine checkpoints each stage, including the preceding
-language and human-video stages where selected. Cached stages do not repeat
-inference; automatic inference retries remain disabled. The outer Job owns GPU
-allocation and billing. An unconfigured image prevents launch rather than
-silently sending work to a custom machine. Native GPU validation is still
-required before treating the integration or speed estimates as production-ready.
+The #4892 execution engine checkpoints the hand stage alongside language and human
+video stages where selected. Two episodes may be in flight, with bounded separate
+camera, detector, pose and export work. Cached stages do not repeat inference and
+automatic inference retries remain disabled. HF Jobs owns compute and billing.
+The integration remains experimental until the user validates a real HF GPU run.
