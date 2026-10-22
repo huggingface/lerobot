@@ -1,0 +1,59 @@
+{
+ "tag": "safediff-stageplan-v2.1-grounded-final",
+ "base_code_sha_v2_final": "11ff62d1",
+ "proposal_threshold": 0.1,
+ "proposal_grid": 64,
+ "proposal_K_max": 10,
+ "anchor_gap_max_m": 0.03,
+ "scorer_crop_px": 72,
+ "artifacts": {
+  "front_proposal_head": {
+   "path": "outputs/stageplan_v21/x/proposal_head_v21q_g64.pt",
+   "sha256": "ced7e6cdc9a648b64187dd3f144759d857daf052df2f202f4649950ec9a901c0"
+  },
+  "right_proposal_head": {
+   "path": "outputs/stageplan_v21/x/proposal_head_right_g64.pt",
+   "sha256": "cfeebf092e92d1d60e9f7ddc4fe3b7c9f4034bb29b0bec24639b7ea6d0f6a2fb"
+  },
+  "referent_scorer": {
+   "path": "outputs/stageplan_v21/x/scorer_expanded.pt",
+   "sha256": "8fd1c412b058c372e33583c922ffa6ce3986eca4fbb062260c76e771ad1185ca"
+  },
+  "anchor_head": {
+   "path": "outputs/stageplan_v21/x/anchor_head.pt",
+   "sha256": "f481a4375acd320491f52bd4014802b6b99f73c76ae5e5028b880c71a359e6f3"
+  },
+  "stageplan_v2_head(retained for rot/approach/pre/wp)": {
+   "path": "outputs/train/safediff_stageplan_v2/stageplan_head.safetensors",
+   "sha256": "bb21b41c7377a0a5faad3eea9fa02bedfd44610efc04fefdd86053a521bebff4"
+  },
+  "camera_calibration": {
+   "path": "outputs/data/safediff_vla_g1_counterfactual/camera_calibration.json",
+   "sha256": "7fd4455e94403674d76c7f7b3c738c3239fc26cf0d4d572cd541b1aa5044c814"
+  },
+  "pilot_scene_split(40/10)": {
+   "path": "outputs/stageplan_v21/pilot_scene_split.json",
+   "sha256": "21c4c591af65fb6a255b2a8806ed679191d41819ea545ca3e1e6affebab497e2"
+  },
+  "expansion_split(200/50)": {
+   "path": "outputs/stageplan_v21/x/split_x.json",
+   "sha256": "28e3832dfa677b1998ecbdec4d0f4d5801938a1f382a6bc6303c55664f4c1b9b"
+  },
+  "label_frame_sim": {
+   "path": "outputs/stageplan_v21/x/label_frame_sim.json",
+   "sha256": "41cbf9c98684882da31ce3b6aa2a739b33e0f1aeb720683087ce3372fb1bdec6"
+  },
+  "backbone_model.safetensors": {
+   "path": "outputs/train/safediff_vla_grounded_grasp_v2_20k/checkpoints/020000/pretrained_model/model.safetensors",
+   "sha256": "900b79dd768162d3eb91505d605f1c259be1be149b58123fa8bd5576f5646023"
+  },
+  "backbone_policy_postprocessor_step_0_unnormalizer_processor.safetensors": {
+   "path": "outputs/train/safediff_vla_grounded_grasp_v2_20k/checkpoints/020000/pretrained_model/policy_postprocessor_step_0_unnormalizer_processor.safetensors",
+   "sha256": "046e410f5a000cbcd990fa212fe6cd6bfaa7abf6cefdbe718ede8581739accdb"
+  },
+  "backbone_policy_preprocessor_step_5_normalizer_processor.safetensors": {
+   "path": "outputs/train/safediff_vla_grounded_grasp_v2_20k/checkpoints/020000/pretrained_model/policy_preprocessor_step_5_normalizer_processor.safetensors",
+   "sha256": "02bd4d0c6bfa97108a45c894d06a05090a85ffae17106c7cb4ae6e6a41efce68"
+  }
+ }
+}
