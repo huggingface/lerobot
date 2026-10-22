@@ -315,7 +315,8 @@ class WallOSS05TokenizerStep(ProcessorStep):
             expanded[text_index] = text.replace("<|wall_image_placeholder|>", WALL_OSS_IMAGE_TOKEN)
 
         bins = np.linspace(-1, 1, 513)[:-1]
-        discrete = np.digitize(state.cpu().numpy(), bins=bins) - 1
+        state_np: np.ndarray = state.cpu().numpy()
+        discrete = np.asarray(np.digitize(state_np, bins=bins)) - 1
         for index, text in enumerate(expanded):
             expanded[index] = text.replace(WALL_OSS_PROPRIO_TOKEN, " ".join(map(str, discrete[index])))
         texts, target_spans = [], []
