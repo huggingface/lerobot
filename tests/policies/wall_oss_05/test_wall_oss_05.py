@@ -25,7 +25,12 @@ from safetensors import safe_open
 from torch import nn
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature
-from lerobot.policies.factory import get_policy_class, make_policy_config, make_pre_post_processors
+from lerobot.policies.factory import (
+    get_policy_class,
+    make_policy,
+    make_policy_config,
+    make_pre_post_processors,
+)
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.wall_oss_05.configuration_wall_oss_05 import WallOSS05Config
 from lerobot.policies.wall_oss_05.modeling_wall_oss_05 import (
@@ -266,10 +271,12 @@ def _batch(batch_size=2):
     }
 
 
-def _stats(q01: float = 0.0, q99: float = 2.0) -> dict[str, dict[str, torch.Tensor]]:
+def _stats(
+    q01: float = 0.0, q99: float = 2.0, *, state_dim: int = 26, action_dim: int = 26
+) -> dict[str, dict[str, torch.Tensor]]:
     return {
-        OBS_STATE: {"q01": torch.full((26,), q01), "q99": torch.full((26,), q99)},
-        ACTION: {"q01": torch.full((26,), q01), "q99": torch.full((26,), q99)},
+        OBS_STATE: {"q01": torch.full((state_dim,), q01), "q99": torch.full((state_dim,), q99)},
+        ACTION: {"q01": torch.full((action_dim,), q01), "q99": torch.full((action_dim,), q99)},
     }
 
 
@@ -597,14 +604,16 @@ def test_pre_and_postprocessors_are_serializable(tmp_path):
     assert (tmp_path / "policy_postprocessor.json").exists()
 
 
-def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path):
+@pytest.mark.parametrize(("state_dim", "action_dim"), [(26, 26), (6, 6), (8, 7)])
+def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path, state_dim, action_dim):
     config = _config()
     pretrained_stats = _stats(0, 2)
-    training_stats = _stats(10, 20)
+    training_stats = _stats(10, 20, state_dim=state_dim, action_dim=action_dim)
     preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=pretrained_stats)
     preprocessor.save_pretrained(tmp_path)
     postprocessor.save_pretrained(tmp_path)
 
+    config = _dimension_config(state_dim=state_dim, action_dim=action_dim)
     features = {**config.input_features, **config.output_features}
     loaded_preprocessor, loaded_postprocessor = make_pre_post_processors(
         config,
@@ -626,8 +635,8 @@ def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path):
     )
     _stub_tokenizer(loaded_preprocessor)
     batch = _batch(batch_size=1)
-    batch[OBS_STATE] = torch.full((1, 26), 15.0)
-    batch[ACTION] = torch.full((1, 32, 26), 15.0)
+    batch[OBS_STATE] = torch.full((1, state_dim), 15.0)
+    batch[ACTION] = torch.full((1, 32, action_dim), 15.0)
 
     processed = loaded_preprocessor(batch)
 
@@ -635,7 +644,7 @@ def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path):
     torch.testing.assert_close(processed[ACTION], torch.zeros_like(processed[ACTION]))
     torch.testing.assert_close(
         loaded_postprocessor(torch.zeros(1, 32, 26)),
-        torch.full((1, 32, 26), 15.0),
+        torch.full((1, 32, action_dim), 15.0),
     )
 
     fine_tuned_checkpoint = tmp_path / "fine_tuned"
@@ -652,26 +661,145 @@ def test_training_dataset_stats_override_pretrained_processor_stats(tmp_path):
     )
     torch.testing.assert_close(
         reloaded_postprocessor(torch.zeros(1, 32, 26)),
-        torch.full((1, 32, 26), 15.0),
+        torch.full((1, 32, action_dim), 15.0),
     )
 
 
-def test_saved_processors_reconnect_native_state_width_and_action_crop(tmp_path):
-    config = _dimension_config(state_dim=6, action_dim=6)
-    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=_stats())
-    preprocessor.save_pretrained(tmp_path)
-    postprocessor.save_pretrained(tmp_path)
+@pytest.mark.parametrize(("state_dim", "action_dim"), [(6, 6), (8, 7)])
+@pytest.mark.parametrize("reload", [False, True])
+def test_processors_normalize_native_widths_and_mask_padded_joints(tmp_path, state_dim, action_dim, reload):
+    config = _dimension_config(state_dim=state_dim, action_dim=action_dim)
+    preprocessor, postprocessor = make_pre_post_processors(
+        config, dataset_stats=_stats(state_dim=state_dim, action_dim=action_dim)
+    )
+    if reload:
+        preprocessor.save_pretrained(tmp_path)
+        postprocessor.save_pretrained(tmp_path)
+        preprocessor, postprocessor = make_pre_post_processors(config, pretrained_path=tmp_path)
 
-    preprocessor, postprocessor = make_pre_post_processors(config, pretrained_path=tmp_path)
     _stub_tokenizer(preprocessor)
     batch = _batch(batch_size=1)
-    batch[OBS_STATE] = torch.ones(1, 6)
-    batch[ACTION] = torch.ones(1, 32, 6)
+    batch[OBS_STATE] = torch.ones(1, state_dim)
+    batch[ACTION] = torch.ones(1, 32, action_dim)
     processed = preprocessor(batch)
 
-    assert processed[OBS_STATE].shape == (1, 26)
-    assert processed[ACTION].shape == (1, 32, 26)
-    assert postprocessor(torch.zeros(1, 32, 26)).shape == (1, 32, 6)
+    torch.testing.assert_close(processed[OBS_STATE], torch.zeros(1, 26))
+    torch.testing.assert_close(processed[ACTION], torch.zeros(1, 32, 26))
+    assert processed["dof_mask"][..., :action_dim].all()
+    assert not processed["dof_mask"][..., action_dim:].any()
+    torch.testing.assert_close(postprocessor(torch.zeros(1, 32, 26)), torch.ones(1, 32, action_dim))
+    batch.pop(ACTION)
+    inference = preprocessor(batch)
+    torch.testing.assert_close(inference["dof_mask"], processed["dof_mask"])
+
+
+def _tiny_qwen_processor():
+    transformers = pytest.importorskip("transformers")
+    tokenizers = pytest.importorskip("tokenizers")
+    vocabulary = {
+        "<pad>": 0,
+        "<unk>": 1,
+        "pick": 5,
+        "up": 6,
+        "the": 7,
+        "red": 8,
+        "cup": 9,
+        "<|im_start|>": 10,
+        "<|im_end|>": 11,
+        "<|propri|>": 12,
+        "<|image_pad|>": 28,
+        "<|vision_start|>": 29,
+        "<|vision_end|>": 30,
+        "<|action|>": 31,
+    }
+    # Fill unused IDs so additions preserve the model's explicit special-token IDs.
+    vocabulary.update({f"unused_{i}": i for i in range(32) if i not in vocabulary.values()})
+    backend = tokenizers.Tokenizer(tokenizers.models.WordLevel(vocabulary, unk_token="<unk>"))
+    backend.pre_tokenizer = tokenizers.pre_tokenizers.Whitespace()
+    tokenizer = transformers.PreTrainedTokenizerFast(
+        tokenizer_object=backend,
+        unk_token="<unk>",
+        pad_token="<pad>",
+        eos_token="<|im_end|>",
+        additional_special_tokens=[key for key in vocabulary if key.startswith("<|")],
+    )
+    image_processor = transformers.Qwen2VLImageProcessor(
+        min_pixels=16 * 16,
+        max_pixels=16 * 16,
+        patch_size=2,
+        temporal_patch_size=2,
+        merge_size=2,
+    )
+    return SimpleNamespace(tokenizer=tokenizer, image_processor=image_processor)
+
+
+def test_six_dimensional_dataset_trains_through_factory_and_saved_processors(
+    tmp_path, monkeypatch, dataset_dependencies
+):
+    """Use real dataset stats, tokenization, vision, decoder, flow loss and optimizer."""
+    from torch.utils.data import DataLoader
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    features = {
+        OBS_STATE: {"dtype": "float32", "shape": (6,), "names": None},
+        ACTION: {"dtype": "float32", "shape": (6,), "names": None},
+        **{
+            key: {"dtype": "image", "shape": (3, 16, 16), "names": ["channels", "height", "width"]}
+            for key in _config().camera_key_mapping
+        },
+    }
+    root = tmp_path / "dataset"
+    writer = LeRobotDataset.create(
+        repo_id="test/wall-six-dim", fps=10, features=features, root=root, use_videos=False
+    )
+    for index in range(4):
+        writer.add_frame(
+            {
+                OBS_STATE: torch.arange(6).float() + index,
+                ACTION: torch.arange(6).float() - index,
+                **{key: torch.full((3, 16, 16), index / 4) for key in _config().camera_key_mapping},
+                "task": "pick up the red cup",
+            }
+        )
+    writer.save_episode()
+    writer.finalize()
+    dataset = LeRobotDataset("test/wall-six-dim", root=root, delta_timestamps={ACTION: [0, 0.1]})
+    assert len(dataset.meta.stats[ACTION]["q01"]) == 6
+    processor = _tiny_qwen_processor()
+
+    def initialize_tiny(policy):
+        # Substitute checkpoint I/O only. All model and processor computations stay real.
+        policy.processor = processor
+        policy.model = WallOSS05Model(_tiny_native_config(), processor)
+
+    monkeypatch.setattr(WallOSS05Policy, "_load_native_model", initialize_tiny)
+    config = _config(chunk_size=2, n_action_steps=2)
+    policy = make_policy(config, ds_meta=dataset.meta)
+    assert config.input_features[OBS_STATE].shape == (6,)
+    assert config.action_feature.shape == (6,)
+    pre, post = make_pre_post_processors(config, dataset_stats=dataset.meta.stats)
+    for step in pre.steps:
+        if isinstance(step, WallOSS05TokenizerStep):
+            step._processor = processor
+    batch = pre(next(iter(DataLoader(dataset, batch_size=2))))
+    assert not batch["dof_mask"][..., 6:].any()
+    optimizer = torch.optim.AdamW(policy.parameters(), lr=0.001)
+    loss, _ = policy(batch)
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert policy.model.visual.patch_embed.proj.weight.grad.norm() > 0
+    optimizer.step()
+    output = policy.predict_action_chunk(batch)
+    assert post(output).shape == (2, 2, 6)
+    pre.save_pretrained(tmp_path / "checkpoint")
+    post.save_pretrained(tmp_path / "checkpoint")
+    pre2, post2 = make_pre_post_processors(config, pretrained_path=tmp_path / "checkpoint")
+    for step in pre2.steps:
+        if isinstance(step, WallOSS05TokenizerStep):
+            step._processor = processor
+    torch.testing.assert_close(pre2(next(iter(DataLoader(dataset, batch_size=2))))[ACTION], batch[ACTION])
+    torch.testing.assert_close(post2(output), post(output))
 
 
 @pytest.mark.parametrize("recipe_enabled", [False, True])
@@ -680,7 +808,7 @@ def test_public_legacy_processors_upgrade_without_losing_stats_or_recipe(tmp_pat
         pytest.importorskip("datasets")
         pytest.importorskip("av")
     config = _dimension_config(state_dim=6, action_dim=6)
-    pre, post = make_pre_post_processors(config, dataset_stats=_stats(10, 20))
+    pre, post = make_pre_post_processors(config, dataset_stats=_stats(10, 20, state_dim=6, action_dim=6))
     pre.save_pretrained(tmp_path)
     post.save_pretrained(tmp_path)
     path = tmp_path / "policy_preprocessor.json"

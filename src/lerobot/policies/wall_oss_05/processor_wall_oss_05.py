@@ -85,6 +85,7 @@ class WallOSS05TokenizerStep(ProcessorStep):
     camera_key_mapping: dict[str, str]
     chunk_size: int = 32
     max_state_dim: int = 26
+    action_dim: int = 26
     tokenizer_max_length: int = 1000
     revision: str | None = None
     _processor: Any = field(default=None, init=False, repr=False)
@@ -95,6 +96,7 @@ class WallOSS05TokenizerStep(ProcessorStep):
             "camera_key_mapping": self.camera_key_mapping,
             "chunk_size": self.chunk_size,
             "max_state_dim": self.max_state_dim,
+            "action_dim": self.action_dim,
             "tokenizer_max_length": self.tokenizer_max_length,
             "revision": self.revision,
         }
@@ -348,7 +350,9 @@ class WallOSS05TokenizerStep(ProcessorStep):
                 "pixel_values": image_inputs["pixel_values"],
                 "image_grid_thw": image_inputs["image_grid_thw"],
                 "moe_token_types": input_ids == action_token_id,
-                "dof_mask": torch.ones((batch_size, self.chunk_size, self.max_state_dim), dtype=torch.bool),
+                "dof_mask": (torch.arange(self.max_state_dim) < self.action_dim)
+                .expand(batch_size, self.chunk_size, -1)
+                .clone(),
                 WALL_OSS_PREDICT_ACTIONS: torch.tensor(predict_actions, dtype=torch.bool),
             }
         )
@@ -399,11 +403,9 @@ class WallOSS05TaskPassthrough(ComplementaryDataProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register(name="wall_oss_05_pad_state")
 class WallOSS05PadStateProcessorStep(ObservationProcessorStep):
-    """Zero-pad state to the fixed 26D Wall-OSS contract before normalization."""
+    """Zero-pad normalized state to the fixed 26D Wall-OSS contract."""
 
     max_state_dim: int = 26
-    # Shared with the crop step so OMX 6D→26D auto-crops actions back to 6D.
-    native_dim_holder: dict[str, int] | None = None
 
     def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
         if OBS_STATE not in observation:
@@ -414,8 +416,6 @@ class WallOSS05PadStateProcessorStep(ObservationProcessorStep):
             raise ValueError(
                 f"Wall-OSS-0.5 state has {state_dim} dims, which exceeds max_state_dim={self.max_state_dim}."
             )
-        if self.native_dim_holder is not None:
-            self.native_dim_holder["dim"] = state_dim
         if state_dim < self.max_state_dim:
             observation = dict(observation)
             observation[OBS_STATE] = torch.nn.functional.pad(state, (0, self.max_state_dim - state_dim))
@@ -437,7 +437,7 @@ class WallOSS05PadStateProcessorStep(ObservationProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register(name="wall_oss_05_pad_action")
 class WallOSS05PadActionProcessorStep(ProcessorStep):
-    """Zero-pad training actions to the fixed 26D Wall-OSS contract before normalization."""
+    """Zero-pad normalized training actions to the fixed 26D Wall-OSS contract."""
 
     max_action_dim: int = 26
 
@@ -475,36 +475,19 @@ class WallOSS05PadActionProcessorStep(ProcessorStep):
 @dataclass
 @ProcessorStepRegistry.register(name="wall_oss_05_crop_action")
 class WallOSS05CropActionProcessorStep(PolicyActionProcessorStep):
-    """Crop padded actions back to the robot/env action width after unnormalization.
+    """Crop actions to the configured action feature width, independently of state."""
 
-    ``action_dim`` overrides the auto width tracked by the paired pad step.
-    """
-
-    action_dim: int | None = None
-    native_dim_holder: dict[str, int] | None = None
-
-    def _resolved_dim(self, action: PolicyAction) -> int | None:
-        if self.action_dim is not None:
-            return self.action_dim
-        if self.native_dim_holder is not None:
-            return self.native_dim_holder.get("dim")
-        return None
+    action_dim: int = 26
 
     def action(self, action: PolicyAction) -> PolicyAction:
-        dim = self._resolved_dim(action)
-        if dim is None or action.shape[-1] <= dim:
-            return action
-        return action[..., :dim]
+        return action[..., : self.action_dim]
 
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        dim = self.action_dim
-        if dim is None:
-            return features
         new_features = {ft: feats.copy() for ft, feats in features.items()}
         action_feats = new_features.setdefault(PipelineFeatureType.ACTION, {})
-        action_feats[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(dim,))
+        action_feats[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))
         return new_features
 
     def get_config(self) -> dict[str, Any]:
@@ -550,56 +533,47 @@ def reconcile_wall_oss_05_processors(
     preprocessor: PolicyProcessorPipeline,
     postprocessor: PolicyProcessorPipeline,
 ) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
-    """Insert pad/crop steps into Hub pipelines that predate auto-padding.
-
-    Pad/crop share a holder so a 6D robot state is zero-padded to 26D for the
-    model, then actions are cropped back to 6D automatically.
-    """
-    native_dim_holder: dict[str, int] = {}
-    pre_steps = list(preprocessor.steps)
+    """Resolve native action widths and normalize outside model-space padding."""
+    if config.action_feature is None:
+        raise ValueError("Wall-OSS-0.5 requires an action output feature.")
+    action_dim = config.action_feature.shape[-1]
+    pre_steps = [
+        step
+        for step in preprocessor.steps
+        if not isinstance(step, (WallOSS05PadStateProcessorStep, WallOSS05PadActionProcessorStep))
+    ]
     for step in pre_steps:
         if isinstance(step, NormalizerProcessorStep):
             _configure_wall_quantile_eps(step)
-    if not any(isinstance(step, WallOSS05PadStateProcessorStep) for step in pre_steps):
-        insert_idx = next(
-            (idx for idx, step in enumerate(pre_steps) if isinstance(step, NormalizerProcessorStep)),
-            len(pre_steps),
-        )
-        pre_steps[insert_idx:insert_idx] = [
-            WallOSS05PadStateProcessorStep(
-                max_state_dim=config.max_state_dim, native_dim_holder=native_dim_holder
-            ),
-            WallOSS05PadActionProcessorStep(max_action_dim=config.max_action_dim),
-        ]
-        preprocessor.steps = pre_steps
-    else:
-        for step in pre_steps:
-            if isinstance(step, WallOSS05PadStateProcessorStep):
-                step.native_dim_holder = native_dim_holder
-                break
+        if isinstance(step, WallOSS05TokenizerStep):
+            step.action_dim = action_dim
+    insert_idx = next(
+        (
+            idx + 1
+            for idx, step in enumerate(pre_steps)
+            if isinstance(step, WallOSS05ClampNormalizedProcessorStep)
+        ),
+        next(idx + 1 for idx, step in enumerate(pre_steps) if isinstance(step, NormalizerProcessorStep)),
+    )
+    pre_steps[insert_idx:insert_idx] = [
+        WallOSS05PadStateProcessorStep(max_state_dim=config.max_state_dim),
+        WallOSS05PadActionProcessorStep(max_action_dim=config.max_action_dim),
+    ]
+    preprocessor.steps = pre_steps
 
-    post_steps = list(postprocessor.steps)
+    post_steps = [
+        step for step in postprocessor.steps if not isinstance(step, WallOSS05CropActionProcessorStep)
+    ]
     for step in post_steps:
         if isinstance(step, UnnormalizerProcessorStep):
             _configure_wall_quantile_eps(step)
-    crop_step = WallOSS05CropActionProcessorStep(
-        action_dim=config.postprocess_action_dim,
-        native_dim_holder=native_dim_holder,
-    )
-    crop_idx = next(
-        (idx for idx, step in enumerate(post_steps) if isinstance(step, WallOSS05CropActionProcessorStep)),
-        None,
-    )
-    if crop_idx is None:
-        insert_idx = next(
-            (idx + 1 for idx, step in enumerate(post_steps) if isinstance(step, UnnormalizerProcessorStep)),
-            0,
+    crop_idx = next(idx for idx, step in enumerate(post_steps) if isinstance(step, UnnormalizerProcessorStep))
+    post_steps.insert(crop_idx, WallOSS05CropActionProcessorStep(action_dim=action_dim))
+    if config.postprocess_action_dim is not None:
+        post_steps.insert(
+            crop_idx + 2, WallOSS05CropActionProcessorStep(action_dim=config.postprocess_action_dim)
         )
-        post_steps.insert(insert_idx, crop_step)
-    else:
-        post_steps[crop_idx] = crop_step
     postprocessor.steps = post_steps
-
     return preprocessor, postprocessor
 
 
@@ -732,7 +706,8 @@ def make_wall_oss_05_pre_post_processors(
 
         recipe = TrainingRecipe.from_dict(config.recipe)
     render_training = config.recipe is not None and bool(config.use_language_recipe or config.recipe_path)
-    native_dim_holder: dict[str, int] = {}
+    if config.action_feature is None:
+        raise ValueError("Wall-OSS-0.5 requires an action output feature.")
     return make_policy_processor_pipelines(
         input_steps=[
             RenderRuntimeMessagesStep(recipe),
@@ -740,27 +715,28 @@ def make_wall_oss_05_pre_post_processors(
             steps.rename_observations,
             steps.add_batch_dim,
             WallOSS05TaskPassthrough(),
-            WallOSS05PadStateProcessorStep(
-                max_state_dim=config.max_state_dim, native_dim_holder=native_dim_holder
-            ),
-            WallOSS05PadActionProcessorStep(max_action_dim=config.max_action_dim),
             steps.normalize,
             WallOSS05ClampNormalizedProcessorStep(),
+            WallOSS05PadStateProcessorStep(max_state_dim=config.max_state_dim),
+            WallOSS05PadActionProcessorStep(max_action_dim=config.max_action_dim),
             WallOSS05TokenizerStep(
                 processor_name=config.pretrained_name_or_path,
                 revision=config.pretrained_revision,
                 camera_key_mapping=config.camera_key_mapping,
                 chunk_size=config.chunk_size,
                 max_state_dim=config.max_state_dim,
+                action_dim=config.action_feature.shape[-1],
                 tokenizer_max_length=config.tokenizer_max_length,
             ),
             steps.to_device,
         ],
         output_steps=[
+            WallOSS05CropActionProcessorStep(action_dim=config.action_feature.shape[-1]),
             steps.unnormalize,
-            WallOSS05CropActionProcessorStep(
-                action_dim=config.postprocess_action_dim,
-                native_dim_holder=native_dim_holder,
+            *(
+                [WallOSS05CropActionProcessorStep(action_dim=config.postprocess_action_dim)]
+                if config.postprocess_action_dim is not None
+                else []
             ),
             steps.to_cpu,
         ],

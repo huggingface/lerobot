@@ -20,7 +20,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from lerobot.configs import FeatureType, NormalizationMode, PreTrainedConfig
+from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import _transformers_available, require_package
@@ -67,9 +67,8 @@ class WallOSS05Config(PreTrainedConfig):
     n_action_steps: int = 32
     max_action_dim: int = 26
     max_state_dim: int = 26
-    # When set, crop unnormalized actions to this width. When None, the
-    # postprocessor auto-crops to the native state width seen before padding
-    # (so a 6D OMX robot gets 6D actions back without a CLI override).
+    # Optional additional crop after unnormalization. The default output width
+    # comes from output_features[ACTION], independently of state width.
     postprocess_action_dim: int | None = None
     num_inference_timesteps: int = 10
     action_branch: str = "flow"
@@ -175,6 +174,13 @@ class WallOSS05Config(PreTrainedConfig):
             raise ValueError(
                 f"postprocess_action_dim must be in [1, {self.max_action_dim}], "
                 f"got {self.postprocess_action_dim}."
+            )
+
+    def set_dataset_feature_metadata(self, features: dict[str, dict[str, Any]]) -> None:
+        """Resolve native state width when fine-tuning a canonical 26D checkpoint."""
+        if self.input_features is not None and OBS_STATE in features:
+            self.input_features[OBS_STATE] = PolicyFeature(
+                type=FeatureType.STATE, shape=tuple(features[OBS_STATE]["shape"])
             )
 
     def get_optimizer_preset(self) -> AdamWConfig:

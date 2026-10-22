@@ -137,9 +137,12 @@ general-purpose VLM.
 ## Data Requirements
 
 Wall-OSS-0.5 operates internally on a canonical 26D state and action layout.
-Narrower features are zero-padded, and output actions are cropped to the input
-state width unless `postprocess_action_dim` is set. Padding does not remap joint
-coordinates or controller conventions; the caller must supply compatible values.
+Narrower state and action features are normalized with their native dataset
+statistics, then zero-padded to 26D for the model. Padded action dimensions are
+excluded from the training loss. Outputs are cropped to the dataset's action
+width before unnormalization: an 8D state with 7D actions returns 7D actions.
+`postprocess_action_dim` can apply an additional output crop. Padding does not
+remap joint coordinates or controller conventions; supply compatible values.
 
 Configure image inputs with `camera_key_mapping`. The mapping associates each
 LeRobot image feature with a Wall camera slot. The default checkpoint uses
