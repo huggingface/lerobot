@@ -614,3 +614,9 @@ enable_error_code = [
 [[tool.mypy.overrides]]
 module = ["lerobot.rl.*", "lerobot.policies.molmoact2.molmoact2_hf_model.*"]
 ignore_errors = true
+
+# ZeroMQ's public stubs re-export names from Python modules. Follow those modules
+# to retain their types instead of treating the re-exported names as missing.
+[[tool.mypy.overrides]]
+module = ["zmq", "zmq.*"]
+follow_imports = "silent"

@@ -78,7 +78,7 @@ class EpisodeAwareSampler:
                 f"got {len(from_indices)} and {len(to_indices)}"
             )
 
-        used = np.ones(len(from_indices), dtype=bool)
+        used: np.ndarray = np.ones(len(from_indices), dtype=bool)
         if episode_indices_to_use is not None:
             used = np.zeros(len(from_indices), dtype=bool)
             used[np.asarray(episode_indices_to_use, dtype=np.int64)] = True
