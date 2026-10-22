@@ -84,7 +84,8 @@ lerobot-train \
   --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 5}}]}, "observation.state.effector.position": {"origin_keys": [{"observation.state": {"start": 5, "end": 6}}]}}' \
   --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 5}}]}, "action.effector.position": {"origin_keys": [{"action": {"start": 5, "end": 6}}]}}' \
   --rename_map='{"observation.images.top": "observation.images.camera_top", "observation.images.wrist": "observation.images.camera_wrist_left"}' \
-  --policy.dtype=bfloat16 \
+  --policy.dtype=float32 \
+  --accelerator.mixed_precision=bf16 \
   --policy.repo_id=your_repo_id \
   --batch_size=1 \
   --steps=30000 \
@@ -92,8 +93,15 @@ lerobot-train \
   --output_dir=outputs/train/lingbot_vla_v2_omx
 ```
 
+Keep the weights in fp32 and compute in bf16 (`--policy.dtype=float32 --accelerator.mixed_precision=bf16`), as
+upstream does. With `--policy.dtype=bfloat16` the optimizer updates bf16 weights directly, and most updates are too
+small to change them: on this dataset 66% of the weights stayed bit-identical to the base checkpoint, and the
+fine-tuned policy was much jerkier. Run inference in fp32 as well (the default of a checkpoint trained this way);
+bf16 inference makes the action chunks noticeably less smooth.
+
 Normalization statistics come from the dataset. Multi-GPU training uses the standard `torchrun` launcher with
-the `--parallelism.*` and `--accelerator.*` flags.
+the `--parallelism.*` and `--accelerator.*` flags. The fp32 weights, gradients and optimizer state take about
+96 GB, so shard them with `--parallelism.dp_shard=<num_gpus>` when one GPU is too small.
 
 ### Dual-query distillation
 
