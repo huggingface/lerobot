@@ -59,7 +59,7 @@ def video_reader(request, tmp_path, lerobot_dataset_factory, info_factory, episo
         video_backend="pyav",
     )
 
-    def read(*, frame_offset=0, timestamp_offset=0.0, delta=False):
+    def read(*, frame_offset=0, timestamp_offset=0.0, delta=False, tabular_windows=False):
         # Extend the selected episode with real, contiguous Parquet rows.
         # Precision tests replace only the decoder; ordinary-data tests use real video.
         for path in (source.root / "data").glob("*/*.parquet"):
@@ -105,6 +105,11 @@ def video_reader(request, tmp_path, lerobot_dataset_factory, info_factory, episo
             "return_uint8": True,
             "delta_timestamps": {"camera": [-1 / source.fps, 0.0, 1 / source.fps]} if delta else None,
         }
+        if tabular_windows:
+            kwargs["delta_timestamps"] = {
+                "frame_index": [-1 / source.fps, 0.0],
+                "timestamp": [-1 / source.fps, 0.0],
+            }
         if kind == "streaming":
             dataset = StreamingLeRobotDataset(
                 DUMMY_REPO_ID, root=root, shuffle=False, video_backend="pyav", decode_threads=1, **kwargs
@@ -247,6 +252,17 @@ def test_float32_rounding_allowance(fps):
             frames, fps, stored_timestamps=np.asarray(expected, dtype=np.float32).tolist(), tolerance_s=1e-4
         )
     assert actual == expected
+
+
+def test_tabular_time_windows_do_not_replace_video_anchor(video_reader):
+    _kind, source, read = video_reader
+    items = read(tabular_windows=True)
+    oracle = LeRobotDataset(DUMMY_REPO_ID, root=source.root, return_uint8=True, video_backend="pyav")
+    start = int(source.meta.episodes[1]["dataset_from_index"])
+    for item in items:
+        anchor = int(item["frame_index"][-1])
+        assert item["timestamp"].shape == (2,)
+        torch.testing.assert_close(item["camera"], oracle[start + anchor]["camera"], rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("timestamp", [0.05, float("nan"), float("inf"), -float("inf")])

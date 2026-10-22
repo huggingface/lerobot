@@ -257,7 +257,9 @@ def test_rgb_batch_decode_deduplicates_overlapping_frames():
     reader._build_video_requests = lambda *args: {file_key: file_requests}
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
-        decoded = reader._decode_videos([{}, {}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
+        decoded = reader._decode_videos(
+            [{}, {}, {}], {"frame_index": [], "timestamp": []}, {}, {file_key: (decoder, None)}
+        )
 
     assert decoder.calls == [[1, 2, 3]]
     assert decoded[0][file_key[0]][:, 0, 0, 0].tolist() == [1, 2, 2]
@@ -293,7 +295,9 @@ def test_rgb_batch_decode_limits_and_releases_chunks():
     reader._build_video_requests = lambda *args: {file_key: file_requests}
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
-        decoded = reader._decode_videos([{}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
+        decoded = reader._decode_videos(
+            [{}, {}], {"frame_index": [], "timestamp": []}, {}, {file_key: (decoder, None)}
+        )
 
     assert decoder.calls == [
         list(range(max_frames)),
@@ -330,7 +334,7 @@ def test_rgb_batch_decode_rejects_bad_pts_after_chunk_scatter():
         ThreadPoolExecutor(max_workers=1) as reader._decode_pool,
         pytest.raises(FrameTimestampError, match="chunk 0, file 0"),
     ):
-        reader._decode_videos([{}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
+        reader._decode_videos([{}, {}], {"frame_index": [], "timestamp": []}, {}, {file_key: (decoder, None)})
 
     assert decoder.calls == [list(range(max_frames)), list(range(max_frames, max_frames + 5))]
 
@@ -350,7 +354,9 @@ def test_rgb_batch_decode_respects_byte_limit_for_float_output():
     reader._build_video_requests = lambda *args: {file_key: file_requests}
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
-        decoded = reader._decode_videos([{}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
+        decoded = reader._decode_videos(
+            [{}, {}], {"frame_index": [], "timestamp": []}, {}, {file_key: (decoder, None)}
+        )
 
     # At 1024x1024, each normalized frame temporarily occupies 3 MiB of decoder
     # uint8 storage plus 12 MiB of float32 output, so the 64 MiB budget permits four.
@@ -381,7 +387,9 @@ def test_rgb_single_request_keeps_direct_decode_result():
     reader._build_video_requests = lambda *args: {file_key: [(0, [0.1, 0.2])]}
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
-        decoded = reader._decode_videos([{}], {"timestamp": []}, {}, {file_key: (Decoder(), None)})
+        decoded = reader._decode_videos(
+            [{}], {"frame_index": [], "timestamp": []}, {}, {file_key: (Decoder(), None)}
+        )
 
     assert decoded[0][file_key[0]].data_ptr() == batch_data.data_ptr()
 

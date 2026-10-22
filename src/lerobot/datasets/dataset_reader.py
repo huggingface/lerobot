@@ -363,9 +363,9 @@ class DatasetReader(BaseDatasetReader):
         Per video key: the referenced rows' frame indices if the item has a delta
         window on it, else the item's own frame index. Frame indices are converted
         to timestamps on the dataset FPS grid, avoiding float32 rounding in the
-        persisted ``timestamp`` column. ``current_frame_indices`` and
-        ``query_indices_per_item`` are batch-aligned (indices ABSOLUTE), so every
-        referenced row is read from Arrow in a single shot.
+        persisted ``timestamp`` column. The two anchor lists and
+        ``query_indices_per_item`` are batch-aligned (indices ABSOLUTE). Each
+        referenced column is read from Arrow in one shot across the batch.
         """
         # Pass 1: per item, collect the relative rows each video key needs a
         # frame index for.
@@ -541,8 +541,10 @@ class DatasetReader(BaseDatasetReader):
         # Video frames: decoded one item at a time. We do not group decoding by physical
         # MP4 across the batch as it competes with the multiple workers of the DataLoader.
         if len(self._meta.video_keys) > 0:
-            current_frame_indices = [int(items[i]["frame_index"]) for i in range(n)]
-            current_timestamps = [float(items[i]["timestamp"]) for i in range(n)]
+            # Use anchor rows even when a tabular delta window replaced these
+            # features in the returned items with multi-frame tensors.
+            current_frame_indices = [int(base["frame_index"][i]) for i in range(n)]
+            current_timestamps = [float(base["timestamp"][i]) for i in range(n)]
             query_timestamps = self._get_query_timestamps(
                 current_frame_indices, current_timestamps, query_indices_per_item
             )
