@@ -25,6 +25,8 @@ If the state stream stops, `get_observation` and `send_action` raise `DeviceNotC
 
 ## Setup
 
+For SSH key installation and manual forwarding, see the [SSH setup README](https://github.com/huggingface/lerobot/blob/main/examples/microduck/README.md).
+
 1. Find the robot's IP with `duckctl ip`.
 2. Configure SSH key authentication for `microduck@<ip>` and verify the host key by connecting
    normally once. This check must then succeed without a password prompt:
