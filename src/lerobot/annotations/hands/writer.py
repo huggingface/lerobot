@@ -59,6 +59,13 @@ def attach_actions(table: pa.Table, report: dict, *, directory: Path, fps: float
         raise ValueError("Hand annotation requires ordered source episode frames")
     if report["rectified_frames"] != n or not math.isclose(report["rectified_fps"], fps, rel_tol=1e-6):
         raise ValueError("Native hand frame count/rate differs from the source episode")
+    timestamps = table["timestamp"].to_numpy()
+    source_stamps = np.asarray(timestamps, dtype=np.float64)
+    # LeRobot timestamps may be float32. Account for their representable clock
+    # precision (and subtraction of a nonzero origin) on long recordings.
+    timestamp_tolerance = max(1e-5, 2 * float(np.abs(np.spacing(timestamps)).max()))
+    if timestamp_tolerance >= 0.25 / fps:
+        raise ValueError("Source timestamp precision is too coarse to align hand actions")
     actions = np.zeros((n, 102), dtype=np.float32)
     confidence = np.zeros((n, 2), dtype=np.float32)
     valid = np.zeros(n, dtype=bool)
@@ -111,9 +118,10 @@ def attach_actions(table: pa.Table, report: dict, *, directory: Path, fps: float
             raise ValueError("Every available hand must be labeled observed or infilled")
         if np.any(strict & (~direct.all(axis=1) | filled.any(axis=1))):
             raise ValueError("Infilled predictions cannot be marked as observed training actions")
-        source_stamps = np.asarray(table["timestamp"].to_pylist(), dtype=np.float64)
         relative_stamps = source_stamps[indices] - source_stamps[0]
-        if np.shape(stamps) != (len(indices),) or not np.allclose(stamps, relative_stamps, atol=1e-5, rtol=0):
+        if np.shape(stamps) != (len(indices),) or not np.allclose(
+            stamps, relative_stamps, atol=timestamp_tolerance, rtol=0
+        ):
             raise ValueError("Native action timestamps differ from source rows")
         actions[indices], confidence[indices], valid[indices], reference[indices] = (
             values,

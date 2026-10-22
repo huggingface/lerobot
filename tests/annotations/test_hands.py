@@ -29,7 +29,9 @@ def source_table():
         {
             "episode_index": pa.array([8] * 40, type=pa.int64()),
             "frame_index": pa.array(range(40), type=pa.int64()),
-            "timestamp": pa.array(np.arange(40) / 10, type=pa.float32()),
+            # A long float32 clock has quantization larger than a fixed 10 us
+            # tolerance; native elapsed times still align with these same rows.
+            "timestamp": pa.array(1000 + np.arange(40) / 10, type=pa.float32()),
             "action": pa.array([[float(i), 2.0] for i in range(40)], type=pa.list_(pa.float32(), 2)),
             "observation.state": pa.array([[float(i)] for i in range(40)], type=pa.list_(pa.float32(), 1)),
         }
