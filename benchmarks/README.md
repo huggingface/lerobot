@@ -2,6 +2,8 @@
 
 Profile both fresh-action inference and training updates without changing the normal training loop. The weekly and manually dispatched [Model Profiling workflow](../.github/workflows/model_profiling.yml) discovers every registered `PreTrainedConfig` policy automatically. Each policy runs in its own dependency environment, and a failure does not stop the others. Reward models have a separate registry and are outside this policy benchmark.
 
+Automatic profiling runs once a week at **01:00 Monday, Europe/Paris** (Sunday night into Monday). The timezone follows daylight-saving changes. The schedule takes effect on the default branch after merge; manual runs remain available for debugging.
+
 Run one policy locally with its usual training configuration:
 
 ```bash
