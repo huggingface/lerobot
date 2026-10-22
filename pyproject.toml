@@ -191,6 +191,7 @@ damiao = ["lerobot[can-dep]"]
 robstride = ["lerobot[can-dep]"]
 
 # Robots
+asimov = ["menlo-sdk>=0.1.0,<0.2.0"]
 openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
@@ -356,6 +357,7 @@ all = [
     "lerobot[gamepad]",
     "lerobot[hopejr]",
     "lerobot[lekiwi]",
+    "lerobot[asimov]",
     "lerobot[openarms]",
     "lerobot[reachy2]",
     "lerobot[rebot]",

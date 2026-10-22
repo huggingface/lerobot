@@ -176,6 +176,7 @@ from lerobot.configs import parser
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    asimov,
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
