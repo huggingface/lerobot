@@ -20,6 +20,13 @@ Building preserves all applicable upstream notices. GPU extensions compile from
 source; RTX 5090 binaries and TensorRT plans must not be reused on other GPUs.
 Studio checks both the image Space commit and the image-version checksum.
 
+The free builder has a time limit. Compile only SM80 (A100), SM90 (H200) and
+SM120 + PTX (RTX PRO 6000), with two bounded compiler jobs. The build helper
+filters out `lietorch_extras`, which is referenced only by vendor examples;
+DROID-W uses `lietorch_backends` and its own `droid_backends`. Vendor inference
+sources and compiler optimization flags stay unchanged. This changes build
+packaging, not model precision or runtime sampling.
+
 The private model release `finerobotics/egohand-soma-runtime` contains the verified
 inference-only checkpoint, FP32 detector ONNX, native SOMA/MHR assets, MoGe/DROID
 weights, exact camera ONNX graphs, local initialization caches and model notices.

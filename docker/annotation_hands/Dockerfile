@@ -1,7 +1,7 @@
 # Builds native dependencies on CPU. Model weights are pulled with the Job user's token.
 FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel@sha256:53ab3de62f6101d1e42f9be28623ab7a468a24c070d632f211ed576e30b6abd3 AS build
 ENV DEBIAN_FRONTEND=noninteractive UV_PYTHON_INSTALL_DIR=/opt/uv-python
-ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0;12.0+PTX" MAX_JOBS=1
+ENV TORCH_CUDA_ARCH_LIST="8.0;9.0;12.0+PTX" MAX_JOBS=2
 RUN apt-get update && apt-get install -y --no-install-recommends git build-essential ninja-build ffmpeg libglib2.0-0 python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && python -m pip install --break-system-packages --no-cache-dir uv==0.12.11 \
@@ -24,8 +24,10 @@ RUN mkdir -p /opt/camera-adapter /opt/hand-camera \
     && tar -xzf /tmp/camera-adapter-source.tar.gz -C /opt/camera-adapter \
     && tar -xzf /tmp/camera-native-source.tar.gz -C /opt/hand-camera
 WORKDIR /opt/hand-camera/release-195fps-verified/DROID-W/thirdparty/lietorch
+COPY build_camera_extensions.py /opt/hand-worker/
 RUN uv pip install --python /opt/droid/bin/python wheel ninja setuptools==79.0.1 \
-    && uv pip install --python /opt/droid/bin/python --no-build-isolation --no-deps .
+    && /opt/droid/bin/python /opt/hand-worker/build_camera_extensions.py \
+    && uv pip install --python /opt/droid/bin/python --no-deps /tmp/lietorch-wheels/*.whl
 WORKDIR /opt/hand-camera/release-195fps-verified/DROID-W
 RUN /opt/droid/bin/python setup.py build_ext --inplace
 RUN for source in /opt/hand-camera/release-195fps-verified/DROID-W/*; do \
