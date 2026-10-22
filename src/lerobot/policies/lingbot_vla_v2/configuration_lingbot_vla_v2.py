@@ -92,12 +92,11 @@ class LingbotVLAV2Config(PreTrainedConfig):
     tokenizer_path: str = "Qwen/Qwen3-VL-4B-Instruct"
     tokenizer_max_length: int = 72
 
-    # Image resize target (width, height). Qwen3-VL consumes native-resolution tokens,
-    # so this is the pre-patchify resize applied by the image processor.
-    resize_imgs_with_padding: tuple[int, int] = (224, 224)
-    # Qwen3-VL dynamic-resolution bounds (cap the vision-token budget).
-    image_max_pixels: int = 262144
-    image_min_pixels: int = 131072
+    # Upstream's preprocessing: frames resized to 256x256, then the Qwen3-VL image processor at
+    # 65536 px, i.e. 16x16 patches merged into 8x8 = 64 tokens per camera (`align_params.llm.image_token_size`).
+    resize_imgs_with_padding: tuple[int, int] = (256, 256)
+    image_max_pixels: int = 65536
+    image_min_pixels: int = 65536
     # Number of flow-matching denoising steps at inference.
     num_steps: int = 10
     # Compute dtype for the whole model. The Qwen3-VL backbone defaults to bfloat16

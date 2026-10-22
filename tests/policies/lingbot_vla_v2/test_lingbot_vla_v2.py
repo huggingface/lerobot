@@ -296,6 +296,24 @@ def test_finetune_save_reload_select_action(tiny_backbone, tmp_path, device):
     assert torch.isfinite(action).all()
 
 
+def test_default_image_settings_match_upstream(tiny_backbone):
+    """Upstream feeds 64 tokens per camera (256x256 frames at 65536 px), which the distillation heads assume."""
+    from lerobot.policies.lingbot_vla_v2.processor_lingbot_vla_v2 import LingbotVLAV2ImageProcessorStep
+    from lerobot.processor import TransitionKey
+
+    defaults = LingbotVLAV2Config()
+    step = LingbotVLAV2ImageProcessorStep(
+        tokenizer_path=str(tiny_backbone),
+        cameras=["camera_top"],
+        resize_imgs_with_padding=defaults.resize_imgs_with_padding,
+        image_max_pixels=defaults.image_max_pixels,
+        image_min_pixels=defaults.image_min_pixels,
+    )
+    out = step({TransitionKey.OBSERVATION: {CAMERA: torch.rand(1, 3, 480, 640)}})
+    grid = out[TransitionKey.OBSERVATION]["image_grid_thw"][0, 0]
+    assert int(grid.prod()) // 4 == 64 == 8 * 8  # 2x2 merge; upstream `llm.image_token_size: 8`
+
+
 @skip_if_package_missing("transformers")
 def test_sparse_moe_matches_per_token_reference():
     """The padded sparse expert path equals a naive per-token top-k mixture."""

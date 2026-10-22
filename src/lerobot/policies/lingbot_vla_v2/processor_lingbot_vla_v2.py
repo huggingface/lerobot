@@ -210,14 +210,10 @@ class LingbotVLAV2ImageProcessorStep(ProcessorStep):
 
     tokenizer_path: str = "Qwen/Qwen3-VL-4B-Instruct"
     cameras: list = field(default_factory=list)
-    resize_imgs_with_padding: tuple = (224, 224)
-    # Cap the Qwen3-VL image processor's dynamic-resolution token budget. Left
-    # uncapped, a native 1080x1920 frame explodes to ~8k vision tokens -> an
-    # O(N^2) eager-attention tensor that OOMs and does not match the checkpoint's
-    # training resolution. Qwen3-VL uses 16px patches + 2x2 merge (=1024 px/token),
-    # so 1,048,576 px ~= 1024 tokens.
-    image_max_pixels: int = 262144
-    image_min_pixels: int = 131072
+    resize_imgs_with_padding: tuple = (256, 256)
+    # Qwen3-VL dynamic-resolution bounds (16 px patches, 2x2 merge = 1024 px per token).
+    image_max_pixels: int = 65536
+    image_min_pixels: int = 65536
 
     _image_processor: Any = field(default=None, init=False, repr=False)
 
