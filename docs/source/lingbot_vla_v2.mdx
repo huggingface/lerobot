@@ -145,12 +145,15 @@ lerobot-eval \
   --rename_map='{"observation.images.head_camera": "observation.images.cam_high", "observation.images.left_camera": "observation.images.cam_left_wrist", "observation.images.right_camera": "observation.images.cam_right_wrist"}'
 ```
 
-Upstream reports 93.52% (clean) and 92.80% (randomized) average success over the 50 RoboTwin 2.0 tasks for its
-Muon post-training recipe, evaluated with the upstream RoboTwin launcher in fp32
-([upstream README](https://github.com/Robbyant/lingbot-vla-v2)). These are upstream numbers, not measured
-through this port.
+Average success over the 50 RoboTwin 2.0 tasks (100 episodes each), as reported in the
+[upstream README](https://github.com/Robbyant/lingbot-vla-v2) for the released RoboTwin checkpoint (Muon
+post-training on clean and randomized data, FP32 inference with the upstream RoboTwin launcher). These are
+upstream numbers, not measured through this port.
 
-<!-- TODO: RoboTwin success rate measured with lerobot-eval -->
+| Setting    | π0.5   | LingBot-VLA 1.0 | LingBot-VLA 2.0 |
+| ---------- | ------ | --------------- | --------------- |
+| Clean      | 82.74% | 88.56%          | **93.52%**      |
+| Randomized | 76.76% | 86.68%          | **92.80%**      |
 
 ## Inference speed-ups
 
