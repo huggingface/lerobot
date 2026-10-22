@@ -355,6 +355,7 @@ class DatasetReader(BaseDatasetReader):
     def _get_query_timestamps(
         self,
         current_frame_indices: list[int],
+        current_timestamps: list[float],
         query_indices_per_item: list[dict[str, list[int]] | None],
     ) -> list[dict[str, list[float]]]:
         """Timestamps to decode for each requested item, as one ``{video_key: [timestamp, ...]}`` dict.
@@ -379,19 +380,32 @@ class DatasetReader(BaseDatasetReader):
                         needed.update(rel[key])
             rel_per_item.append(rel)
 
-        # Single Arrow read for every referenced row, keyed by row for lookup below.
-        frame_index_lookup: dict[int, int] = {}
+        # One Arrow read per column over every referenced row. Check the stored times
+        # before replacing them, so inconsistent data does not become silently readable.
+        ts_lookup: dict[int, float] = {}
         if needed:
             rel_sorted = sorted(needed)
             column = self._column_view("frame_index")[rel_sorted]["frame_index"]
-            frame_index_lookup = {rel: int(column[j]) for j, rel in enumerate(rel_sorted)}
+            stored = self._column_view("timestamp")[rel_sorted]["timestamp"]
+            timestamps = frame_indices_to_timestamps(
+                [int(value) for value in column],
+                self._meta.fps,
+                stored_timestamps=[float(value) for value in stored],
+                tolerance_s=self._tolerance_s,
+            )
+            ts_lookup = dict(zip(rel_sorted, timestamps, strict=True))
+
+        current_ts = frame_indices_to_timestamps(
+            current_frame_indices,
+            self._meta.fps,
+            stored_timestamps=current_timestamps,
+            tolerance_s=self._tolerance_s,
+        )
 
         # Pass 2: assemble per item; keys without a delta window fall back to the anchor frame.
         return [
             {
-                key: frame_indices_to_timestamps([frame_index_lookup[r] for r in rel[key]], self._meta.fps)
-                if key in rel
-                else frame_indices_to_timestamps([current_frame_indices[i]], self._meta.fps)
+                key: [ts_lookup[r] for r in rel[key]] if key in rel else [current_ts[i]]
                 for key in self._meta.video_keys
             }
             for i, rel in enumerate(rel_per_item)
@@ -528,7 +542,10 @@ class DatasetReader(BaseDatasetReader):
         # MP4 across the batch as it competes with the multiple workers of the DataLoader.
         if len(self._meta.video_keys) > 0:
             current_frame_indices = [int(items[i]["frame_index"]) for i in range(n)]
-            query_timestamps = self._get_query_timestamps(current_frame_indices, query_indices_per_item)
+            current_timestamps = [float(items[i]["timestamp"]) for i in range(n)]
+            query_timestamps = self._get_query_timestamps(
+                current_frame_indices, current_timestamps, query_indices_per_item
+            )
             for item, query_ts, ep_idx in zip(items, query_timestamps, ep_idxs, strict=True):
                 item.update(self._query_videos(query_ts, ep_idx))
 

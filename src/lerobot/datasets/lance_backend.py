@@ -469,7 +469,7 @@ class LanceDatasetReader(BaseDatasetReader):
         prepared: dict[tuple, tuple],
     ) -> list[dict[str, torch.Tensor]]:
         """Decode all camera frames a batch needs, one blob fetch + one decode pass per file."""
-        requests = self._build_video_requests(plans, columns["frame_index"], row_pos)
+        requests = self._build_video_requests(plans, columns["frame_index"], columns["timestamp"], row_pos)
         entries = prepared
 
         results: list[dict[str, torch.Tensor]] = [{} for _ in plans]
@@ -507,6 +507,7 @@ class LanceDatasetReader(BaseDatasetReader):
         self,
         plans: list[_SamplePlan],
         frame_indices: np.ndarray,
+        timestamps: np.ndarray,
         row_pos: dict[int, int],
     ) -> dict[tuple, list[tuple[int, list[float]]]]:
         requests: dict[tuple, list[tuple[int, list[float]]]] = defaultdict(list)
@@ -517,7 +518,9 @@ class LanceDatasetReader(BaseDatasetReader):
                 requests[self._video_file_key(key, ep_idx)].append(
                     (
                         sample_idx,
-                        self._shifted_video_timestamps(key, ep_idx, window, frame_indices, row_pos),
+                        self._shifted_video_timestamps(
+                            key, ep_idx, window, frame_indices, timestamps, row_pos
+                        ),
                     )
                 )
         return requests
@@ -605,12 +608,16 @@ class LanceDatasetReader(BaseDatasetReader):
         ep_idx: int,
         window: list[int],
         frame_indices: np.ndarray,
+        timestamps: np.ndarray,
         row_pos: dict[int, int],
     ) -> list[float]:
         _, _, from_ts_arr = self._video_locator[key]
         base = float(from_ts_arr[ep_idx])
         local_timestamps = frame_indices_to_timestamps(
-            [int(frame_indices[row_pos[row]]) for row in window], self.meta.fps
+            [int(frame_indices[row_pos[row]]) for row in window],
+            self.meta.fps,
+            stored_timestamps=[float(timestamps[row_pos[row]]) for row in window],
+            tolerance_s=self.tolerance_s,
         )
         return shift_timestamps(local_timestamps, base)
 
