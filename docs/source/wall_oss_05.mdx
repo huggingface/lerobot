@@ -259,6 +259,10 @@ Wall-OSS-0.5 generates continuous action chunks with its flow sampler. The
 current policy supports the continuous flow branch; the autoregressive action
 branch is not exposed.
 
+Each chunk encodes its camera images and prefills the observation/text prefix
+once. The ten Euler steps reuse the prefix keys and values and decode only the
+action tokens. The cache is rebuilt for each new observation.
+
 For a supported simulator, provide the fine-tuned checkpoint and the
 environment-specific options through `lerobot-eval`:
 

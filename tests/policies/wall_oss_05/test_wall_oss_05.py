@@ -891,6 +891,69 @@ def test_vision_norms_apply_scale_before_casting_to_activation_dtype(dtype):
         torch.testing.assert_close(norm(inputs), expected, atol=0, rtol=0)
 
 
+def _uncached_flow_sample(model, inputs, noise):
+    """Independent full-sequence Euler reference retained from the original port."""
+    actions = noise.clone()
+    batch_size, horizon, width = actions.shape
+    times = model.action_preprocessor.inference_times(10, actions.device)
+    for index in range(10):
+        embeddings = model.action_preprocessor.embed(
+            times[index].expand(batch_size), actions, inputs["dof_mask"]
+        )
+        hidden = model._hidden_states(
+            **{key: value for key, value in inputs.items() if key != "dof_mask"}, action_embeddings=embeddings
+        )
+        action_hidden = hidden[
+            inputs["input_ids"] == model.action_token_id, : model.config.action_hidden_size
+        ]
+        velocity = model.action_preprocessor.action_proj_back(action_hidden.float()).reshape(
+            batch_size, horizon, width
+        )
+        actions = actions + (times[index + 1] - times[index]) * velocity
+    return actions
+
+
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_flow_sampling_caches_vision_and_prefix_with_action_parity(batch_size):
+    processor = SimpleNamespace(tokenizer=SimpleNamespace(convert_tokens_to_ids=lambda _: 31))
+    with torch.random.fork_rng(), torch.no_grad():
+        torch.manual_seed(19)
+        model = WallOSS05Model(_tiny_native_config(), processor).eval()
+        ids = torch.tensor([[0, 0, 4, 29, 28, 30, 29, 28, 30, 6, 31, 31]] * batch_size)
+        if batch_size == 2:
+            ids[1, :2] = torch.tensor([4, 5])
+        inputs = {
+            "input_ids": ids,
+            "attention_mask": ids != 0,
+            "pixel_values": torch.randn(8 * batch_size, 24),
+            "image_grid_thw": torch.tensor([[1, 2, 2]] * (2 * batch_size)),
+            "moe_token_types": ids == 31,
+            "dof_mask": (torch.arange(26) < 6).expand(batch_size, 2, -1).clone(),
+        }
+        noise = torch.randn(batch_size, 2, 26)
+        expected = _uncached_flow_sample(model, inputs, noise)
+        vision_calls, decoded_lengths = [], []
+        vision_hook = model.visual.register_forward_pre_hook(lambda module, args: vision_calls.append(1))
+        decoder_hook = model.model.layers[0].register_forward_pre_hook(
+            lambda module, args: decoded_lengths.append(args[0].shape[1])
+        )
+        actual = model.generate_flow_action(
+            **inputs, action_horizon=2, action_dim=26, num_inference_timesteps=10, noise=noise
+        )["predict_action"]
+        vision_hook.remove()
+        decoder_hook.remove()
+        torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+        assert len(vision_calls) == 1
+        assert decoded_lengths == [ids.shape[1] - 2] + [2] * 10
+        # A new observation must get its own prefix cache.
+        inputs["pixel_values"] = inputs["pixel_values"] + 1
+        expected = _uncached_flow_sample(model, inputs, noise)
+        actual = model.generate_flow_action(
+            **inputs, action_horizon=2, action_dim=26, num_inference_timesteps=10, noise=noise
+        )["predict_action"]
+        torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
+
+
 @pytest.mark.parametrize("joint", [False, True], ids=["text-only", "joint-text-action"])
 @pytest.mark.parametrize("batch_size", [1, 2])
 def test_native_multimodal_model_trains_language_for_five_steps(joint, batch_size):

@@ -66,6 +66,9 @@ class WallOSS05Output:
     text_loss: Tensor | None = None
 
 
+type WallOSS05KeyValue = tuple[Tensor, Tensor]
+
+
 class WallOSS05RMSNorm(nn.Module):
     def __init__(self, hidden_size: int, eps: float):
         super().__init__()
@@ -163,7 +166,8 @@ class WallOSS05JointAttention(nn.Module):
         token_types: Tensor,
         attention_mask: Tensor,
         position_embeddings: tuple[Tensor, Tensor],
-    ) -> Tensor:
+        past_key_value: WallOSS05KeyValue | None = None,
+    ) -> tuple[Tensor, WallOSS05KeyValue]:
         batch_size, sequence_length, _ = hidden_states.shape
         query = hidden_states.new_zeros(batch_size, sequence_length, self.num_heads, self.head_dim)
         key = hidden_states.new_zeros(batch_size, sequence_length, self.num_key_value_heads, self.head_dim)
@@ -193,12 +197,16 @@ class WallOSS05JointAttention(nn.Module):
             self.mrope_section,
             unsqueeze_dim=1,
         )
-        key = repeat_kv(key, self.num_key_value_groups)
-        value = repeat_kv(value, self.num_key_value_groups)
         projection_dtype = self.qkv_proj_experts[0].weight.dtype
         query = query.to(projection_dtype)
         key = key.to(projection_dtype)
         value = value.to(projection_dtype)
+        if past_key_value is not None:
+            key = torch.cat((past_key_value[0], key), dim=2)
+            value = torch.cat((past_key_value[1], value), dim=2)
+        present = (key, value)
+        key = repeat_kv(key, self.num_key_value_groups)
+        value = repeat_kv(value, self.num_key_value_groups)
 
         attended = functional.scaled_dot_product_attention(
             query,
@@ -216,7 +224,7 @@ class WallOSS05JointAttention(nn.Module):
             mask = token_types == expert_index
             if mask.any():
                 output[mask, :width] = projection(attended[mask].to(projection.weight.dtype))
-        return output
+        return output, present
 
 
 class WallOSS05DecoderLayer(nn.Module):
@@ -248,13 +256,15 @@ class WallOSS05DecoderLayer(nn.Module):
         token_types: Tensor,
         attention_mask: Tensor,
         position_embeddings: tuple[Tensor, Tensor],
-    ) -> Tensor:
+        past_key_value: WallOSS05KeyValue | None = None,
+    ) -> tuple[Tensor, WallOSS05KeyValue]:
         normalized = self._normalize(hidden_states, token_types, self.input_layernorms)
-        hidden_states = hidden_states + self.self_attn(
-            normalized, token_types, attention_mask, position_embeddings
+        attended, present = self.self_attn(
+            normalized, token_types, attention_mask, position_embeddings, past_key_value
         )
+        hidden_states = hidden_states + attended
         normalized = self._normalize(hidden_states, token_types, self.post_attention_layernorms)
-        return hidden_states + self.moe(normalized, token_types)
+        return hidden_states + self.moe(normalized, token_types), present
 
 
 class WallOSS05Decoder(nn.Module):
@@ -284,17 +294,31 @@ class WallOSS05Decoder(nn.Module):
         token_types: Tensor,
         attention_mask: Tensor,
         position_ids: Tensor,
-    ) -> Tensor:
-        position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
+        *,
+        past_key_values: tuple[WallOSS05KeyValue, ...] | None = None,
+        use_cache: bool = False,
+        position_embeddings: tuple[Tensor, Tensor] | None = None,
+    ) -> tuple[Tensor, tuple[WallOSS05KeyValue, ...] | None]:
+        if position_embeddings is None:
+            position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
         hidden_states = inputs_embeds
-        for layer in self.layers:
-            hidden_states = layer(hidden_states, token_types, attention_mask, position_embeddings)
+        cache = []
+        for index, layer in enumerate(self.layers):
+            hidden_states, present = layer(
+                hidden_states,
+                token_types,
+                attention_mask,
+                position_embeddings,
+                past_key_values[index] if past_key_values is not None else None,
+            )
+            if use_cache:
+                cache.append(present)
         output = torch.zeros_like(hidden_states)
         for expert_index, (norm, width) in enumerate(zip(self.norms, self.dim_inputs, strict=True)):
             mask = token_types == expert_index
             if mask.any():
                 output[mask, :width] = norm(hidden_states[mask, :width])
-        return output
+        return output, tuple(cache) if use_cache else None
 
 
 class WallOSS05SinusoidalEmbedding(nn.Module):
@@ -525,12 +549,13 @@ class WallOSS05Model(nn.Module):
         embeddings: Tensor,
     ) -> Tensor:
         position_ids = self._position_ids(input_ids, attention_mask, image_grid_thw)
-        return self.model(
+        hidden_states, _ = self.model(
             embeddings,
             moe_token_types.long(),
             self._causal_mask(attention_mask),
             position_ids,
         )
+        return hidden_states
 
     @staticmethod
     def _sample_text_token(logits: Tensor, temperature: float, top_p: float) -> Tensor:
@@ -730,19 +755,39 @@ class WallOSS05Model(nn.Module):
         else:
             noisy_actions = noise.to(input_ids.device, dtype=torch.float32).clone()
         times = self.action_preprocessor.inference_times(num_inference_timesteps, input_ids.device)
-
+        prefix_length = input_ids.shape[1] - action_horizon
+        if (
+            prefix_length < 1
+            or (input_ids[:, :prefix_length] == self.action_token_id).any()
+            or not (input_ids[:, prefix_length:] == self.action_token_id).all()
+        ):
+            raise ValueError("Flow inputs must end with exactly action_horizon contiguous action tokens.")
+        # The causal observation/text prefix is independent of the flow timestep.
+        # Keep this cache local to a chunk so the next observation always gets a fresh prefill.
+        embeddings = self._input_embeddings(input_ids, pixel_values, image_grid_thw)
+        positions = self._position_ids(input_ids, attention_mask, image_grid_thw)
+        causal_mask = self._causal_mask(attention_mask)
+        position_embeddings = self.model.rotary_emb(embeddings, positions)
+        _, prefix_cache = self.model(
+            embeddings[:, :prefix_length],
+            moe_token_types[:, :prefix_length].long(),
+            causal_mask[:, :prefix_length, :prefix_length],
+            positions[:, :, :prefix_length],
+            use_cache=True,
+            position_embeddings=tuple(value[..., :prefix_length, :] for value in position_embeddings),
+        )
         for index in range(num_inference_timesteps):
             timestep = times[index].expand(batch_size)
             action_embeddings = self.action_preprocessor.embed(timestep, noisy_actions, dof_mask)
-            hidden_states = self._hidden_states(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                pixel_values=pixel_values,
-                image_grid_thw=image_grid_thw,
-                moe_token_types=moe_token_types,
-                action_embeddings=action_embeddings,
+            hidden_states, _ = self.model(
+                action_embeddings.to(embeddings.dtype),
+                moe_token_types[:, prefix_length:].long(),
+                causal_mask[:, prefix_length:],
+                positions[:, :, prefix_length:],
+                past_key_values=prefix_cache,
+                position_embeddings=tuple(value[..., prefix_length:, :] for value in position_embeddings),
             )
-            action_hidden = hidden_states[input_ids == self.action_token_id, : self.config.action_hidden_size]
+            action_hidden = hidden_states[..., : self.config.action_hidden_size]
             velocity = self.action_preprocessor.action_proj_back(action_hidden.float())
             velocity = velocity.view(batch_size, action_horizon, action_dim)
             noisy_actions = noisy_actions + (times[index + 1] - times[index]) * velocity
