@@ -210,7 +210,8 @@ class ActionDiT(nn.Module):
         context_attn_mask = None
         if context is not None:
             context = context.to(dtype=model_dtype)
-            assert self.text_embedding is not None
+            if self.text_embedding is None:
+                raise ValueError("Text cross-attention requires an action expert text embedding module.")
             context_emb = self.text_embedding(context)
             if context_mask is not None:
                 context_attn_mask = context_mask.unsqueeze(1).expand(-1, seq_len, -1)
@@ -663,7 +664,9 @@ class LiteKVFusion(nn.Module):
             raise ValueError(
                 f"`action_layer_idx` must be in [0, {self.num_action_layers}), got {action_layer_idx}"
             )
-        return functional.softmax(self.logits[action_layer_idx], dim=-1)
+        # Keep normalization in float32 even when FSDP requires low-precision parameter storage.
+        # The cache mixing below retains the cache dtype, as in the original implementation.
+        return functional.softmax(self.logits[action_layer_idx], dim=-1, dtype=torch.float32)
 
     def forward(
         self,

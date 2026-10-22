@@ -16,7 +16,9 @@
 
 """Public checkpoint and dtype regression tests with small offline components."""
 
+import sys
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -25,6 +27,9 @@ from torch import nn
 pytest.importorskip("transformers")
 pytest.importorskip("diffusers")
 
+from lerobot.configs import parser
+from lerobot.configs.train import TrainPipelineConfig
+from lerobot.policies.factory import make_policy
 from lerobot.policies.fastwam import modeling_fastwam
 from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
 from lerobot.policies.fastwam.modeling_fastwam import FastWAMPolicy
@@ -96,38 +101,57 @@ def offline_components(monkeypatch):
     monkeypatch.setattr(modeling_fastwam, "build_wan_tokenizer", lambda **kw: None)
 
 
-@pytest.mark.parametrize("flags", [{}, DOT_FLAGS], ids=["default", "fasterwam"])
-@pytest.mark.parametrize(
-    "dtype",
-    [
-        torch.float32,
-        pytest.param(
-            torch.bfloat16,
-            marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="bfloat16 requires CUDA autocast"),
-        ),
-    ],
-)
-def test_public_dtype_train_infer_and_checkpoint(offline_components, tmp_path, flags, dtype):
-    torch.manual_seed(1234)
-    policy = FastWAMPolicy(
-        tiny_config(dtype=dtype, device="cuda" if dtype == torch.bfloat16 else "cpu", **flags)
-    )
-    batch = {
+def training_batch():
+    return {
         "observation.images.image": torch.rand(1, 3, 16, 32),
         "observation.state": torch.rand(1, 2),
         "context": torch.randn(1, 4, 8),
         "context_mask": torch.ones(1, 4, dtype=torch.bool),
         "action": torch.randn(1, 32, 3),
     }
-    loss, _ = policy(batch)
+
+
+@pytest.mark.parametrize("flags", [{}, DOT_FLAGS], ids=["default", "fasterwam"])
+@pytest.mark.parametrize(
+    "device,dtype",
+    [
+        ("cpu", torch.float32),
+        ("cpu", torch.bfloat16),
+        pytest.param(
+            "cuda",
+            torch.bfloat16,
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(), reason="CUDA dtype coverage requires CUDA"
+            ),
+        ),
+    ],
+)
+def test_public_dtype_train_infer_and_checkpoint(offline_components, tmp_path, flags, device, dtype):
+    torch.manual_seed(1234)
+    policy = FastWAMPolicy(tiny_config(dtype=dtype, device=device, **flags))
+    batch = training_batch()
+    with torch.autocast(device, dtype=torch.bfloat16, enabled=dtype == torch.bfloat16):
+        loss, _ = policy(batch)
     loss.backward()
     assert torch.isfinite(loss)
     grads = [p.grad for p in policy.parameters() if p.grad is not None]
     assert grads and all(torch.isfinite(grad).all() for grad in grads)
     assert any(grad.abs().sum() > 0 for grad in grads)
-    assert policy.model.video_expert.time_embedding[0].weight.dtype == dtype
+    assert {p.dtype for p in policy.model.mot.parameters()} == {dtype}
+    if flags:
+        assert policy.model.mot.lite_kv_fusion.logits.grad.abs().sum() > 0
+        for projection in ("k", "v"):
+            weight = getattr(policy.model.mot.layers[0].blocks["video"].self_attn, projection).weight
+            assert weight.grad.abs().sum() > 0
+        assert policy.model.action_expert.text_embedding is None
+        assert not any(
+            "cross_attn" in key for key in policy.model.mot.layers[0].blocks["action"].state_dict()
+        )
+    else:
+        assert policy.model.mot.lite_kv_fusion is None
+        assert policy.model.action_expert.text_embedding is not None
     noise = torch.randn(1, 8, 3)
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16, enabled=dtype == torch.bfloat16):
         policy.eval()
         action = policy.predict_action_chunk(batch, noise=noise)
         policy.save_pretrained(tmp_path)
@@ -186,3 +210,66 @@ def test_weights_only_checkpoint_with_explicit_config(offline_components, tmp_pa
     assert loaded.config is config
     torch.testing.assert_close(loaded.state_dict(), policy.state_dict(), rtol=0, atol=0)
     assert "skipping architecture validation" in caplog.text
+
+
+def test_cli_backbone_conversion_loads_weights_and_trains(offline_components, tmp_path, monkeypatch):
+    torch.manual_seed(7)
+    original = FastWAMPolicy(tiny_config(dtype=torch.float32))
+    original.save_pretrained(tmp_path / "backbone")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "lerobot-train",
+            f"--policy.path={tmp_path / 'backbone'}",
+            "--policy.action_expert_layers=1",
+            "--policy.lite_kv_fusion=true",
+            "--policy.retracted_1d_rope=true",
+            "--policy.world_model_only_conditioning=true",
+            "--policy.push_to_hub=false",
+            "--dataset.repo_id=local/fixture",
+        ],
+    )
+
+    @parser.wrap()
+    def parse_config(cfg: TrainPipelineConfig) -> TrainPipelineConfig:
+        cfg.validate()
+        return cfg
+
+    cfg = parse_config()
+    with pytest.raises(ValueError, match="checkpoint.*architecture"):
+        FastWAMPolicy.from_pretrained(tmp_path / "backbone", config=cfg.policy, strict=True)
+    changed_backbone = deepcopy(cfg.policy)
+    changed_backbone.video_dit_config["num_layers"] = 2
+    with pytest.raises(ValueError, match="checkpoint.*architecture"):
+        FastWAMPolicy.from_pretrained(tmp_path / "backbone", config=changed_backbone)
+    meta = SimpleNamespace(
+        features={
+            "observation.images.image": {
+                "dtype": "image",
+                "shape": (3, 16, 32),
+                "names": ["channels", "height", "width"],
+            },
+            "observation.state": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+            "action": {"dtype": "float32", "shape": (3,), "names": ["a", "b", "c"]},
+        },
+        stats={},
+    )
+    policy = make_policy(cfg.policy, ds_meta=meta)
+    original_state = original.state_dict()
+    for key, value in policy.state_dict().items():
+        if key != "model.mot.lite_kv_fusion.logits":
+            torch.testing.assert_close(value, original_state[key], rtol=0, atol=0)
+    fusion = policy.model.mot.lite_kv_fusion
+    assert torch.count_nonzero(fusion.logits) == 0
+    policy.train()
+    optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=0.01)
+    loss, _ = policy(training_batch())
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert fusion.logits.grad is not None and fusion.logits.grad.abs().sum() > 0
+    optimizer.step()
+    assert torch.count_nonzero(fusion.logits) > 0
+    policy.save_pretrained(tmp_path / "converted")
+    loaded = FastWAMPolicy.from_pretrained(tmp_path / "converted", strict=True)
+    torch.testing.assert_close(loaded.state_dict(), policy.state_dict(), rtol=0, atol=0)

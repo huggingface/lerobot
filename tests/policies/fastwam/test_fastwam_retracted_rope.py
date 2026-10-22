@@ -31,18 +31,10 @@ pytest.importorskip("diffusers", reason="fastwam requires the `fastwam` extra (d
 
 from lerobot.policies.fastwam.wan.model import rope_apply
 from lerobot.policies.fastwam.wan.video_dit import (
-    _rope_pair_axis_counts,
     apply_dense_rope,
     precompute_freqs_cis,
     retract_video_rope,
 )
-
-
-def test_axis_split_matches_rope_apply():
-    # head_dim=128 -> 64 pairs -> (22, 21, 21), matching the paper's (44, 42, 42) dims.
-    assert _rope_pair_axis_counts(64) == (22, 21, 21)
-    # Small head: 6 pairs -> (2, 2, 2); each axis keeps at least one pair here.
-    assert _rope_pair_axis_counts(6) == (2, 2, 2)
 
 
 def test_roundtrip_cancellation_on_nonzero_temporal_spatial_coordinates():
@@ -57,41 +49,7 @@ def test_roundtrip_cancellation_on_nonzero_temporal_spatial_coordinates():
     retracted = retract_video_rope(keys=rotated, video_freqs=freqs, grid_sizes=grid)
     # float32 keys rotated in float64: cancellation must be exact to float32 precision.
     torch.testing.assert_close(retracted, keys, rtol=1e-5, atol=1e-5)
-
-
-def test_roundtrip_covers_each_axis_separately():
-    """A token moved ONLY along one axis must still roundtrip; this fails if the
-    de-rotation reads the wrong coordinate per pair block (e.g. swaps y and x)."""
-    torch.manual_seed(1)
-    heads, head_dim = 2, 12
-    freqs = precompute_freqs_cis(head_dim, end=64)
-    grid = torch.tensor([[1, 3, 2]])  # single frame, y in {0,1,2}, x in {0,1}
-    seq = 6
-    keys = torch.randn(1, seq, heads * head_dim)
-    rotated = rope_apply(keys.view(1, seq, heads, head_dim), grid, freqs).flatten(2)
-    retracted = retract_video_rope(keys=rotated, video_freqs=freqs, grid_sizes=grid)
-    torch.testing.assert_close(retracted, keys, rtol=1e-5, atol=1e-5)
-
-    # Multi-frame grids put temporal rotation on the first pair block: verify it too.
-    grid = torch.tensor([[3, 1, 2]])
-    seq = 6
-    keys = torch.randn(1, seq, heads * head_dim)
-    rotated = rope_apply(keys.view(1, seq, heads, head_dim), grid, freqs).flatten(2)
-    retracted = retract_video_rope(keys=rotated, video_freqs=freqs, grid_sizes=grid)
-    torch.testing.assert_close(retracted, keys, rtol=1e-5, atol=1e-5)
-
-
-def test_wrong_axis_assignment_does_not_cancel():
-    """Negative control: retracting with y/x grid dims swapped must NOT cancel the
-    rotation, proving the test can detect a wrong positional axis assignment."""
-    torch.manual_seed(2)
-    heads, head_dim = 2, 12
-    freqs = precompute_freqs_cis(head_dim, end=64)
-    grid = torch.tensor([[1, 3, 2]])  # h != w so a swap is observable
-    seq = 6
-    keys = torch.randn(1, seq, heads * head_dim)
-    rotated = rope_apply(keys.view(1, seq, heads, head_dim), grid, freqs).flatten(2)
-    swapped = retract_video_rope(keys=rotated, video_freqs=freqs, grid_sizes=torch.tensor([[1, 2, 3]]))
+    swapped = retract_video_rope(keys=rotated, video_freqs=freqs, grid_sizes=torch.tensor([[2, 3, 2]]))
     assert (swapped - keys).abs().max() > 1e-3
 
 

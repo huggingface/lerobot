@@ -103,9 +103,9 @@ class FastWAMPolicy(PreTrainedPolicy):
     ) -> FastWAMPolicy:
         """Load a checkpoint without silently changing its Faster-WAM architecture.
 
-        An explicit config can still change embodiment dimensions. Its Faster-WAM
-        options and resolved action depth must match the saved config, because the
-        lenient cross-embodiment weight loader cannot validate these semantics.
+        An explicit config can change embodiment dimensions or initialize Faster-WAM
+        from a default FastWAM backbone with ``strict=False``. Already converted
+        checkpoints must retain their Faster-WAM options and resolved action depth.
         A weights-only checkpoint uses the explicit config without this comparison.
         """
         if config is not None:
@@ -139,9 +139,29 @@ class FastWAMPolicy(PreTrainedPolicy):
             if config.action_dit_config["num_layers"] != saved_config.action_dit_config["num_layers"]:
                 mismatched.append("action_dit_config.num_layers")
             if mismatched:
-                raise ValueError(
-                    "FastWAM checkpoint architecture conflicts with explicit config: "
-                    f"{', '.join(mismatched)}. Keep the checkpoint's Faster-WAM options and action depth."
+                is_default_backbone = not any(getattr(saved_config, key) for key in options) and (
+                    saved_config.video_dit_config is not None
+                    and config.video_dit_config is not None
+                    and saved_config.action_dit_config["num_layers"]
+                    == saved_config.video_dit_config["num_layers"]
+                    == config.video_dit_config["num_layers"]
+                )
+                if (
+                    not is_default_backbone
+                    or not any(getattr(config, key) for key in options)
+                    or kwargs.get("strict", False)
+                    or config.action_dit_config["num_layers"] > saved_config.action_dit_config["num_layers"]
+                ):
+                    raise ValueError(
+                        "FastWAM checkpoint architecture conflicts with explicit config: "
+                        f"{', '.join(mismatched)}. Keep the checkpoint's Faster-WAM options and action "
+                        "depth, or initialize from a default FastWAM backbone with strict=False "
+                        "and unchanged video depth."
+                    )
+                logging.warning(
+                    "Initializing Faster-WAM from a default FastWAM backbone: retaining compatible "
+                    "weights and leading action layers, discarding unused action/text modules, "
+                    "and initializing new fusion logits to zero. Fine-tuning is required."
                 )
         return super().from_pretrained(pretrained_name_or_path, config=config, **kwargs)
 
@@ -333,7 +353,7 @@ class FastWAMPolicy(PreTrainedPolicy):
                 num_action_layers=int(action_dit_config["num_layers"]),
                 num_heads=int(action_dit_config["num_heads"]),
                 num_video_layers=int(video_dit_config["num_layers"]),
-            ).to(device=device)
+            ).to(device=device, dtype=dtype)
             if config.lite_kv_fusion
             else None
         )

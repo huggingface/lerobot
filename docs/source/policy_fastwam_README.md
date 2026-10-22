@@ -87,8 +87,22 @@ world_model_only_conditioning=True`. Training uses the same joint video + action
 flow-matching loss as Fast-WAM; gradients from the action loss reach the video backbone
 through the fusion. At inference the video KV cache is prefilled once per chunk and the
 fused context is fixed across action denoising steps, so repeated denoising only runs the
-shallow expert. No Faster-WAM checkpoints are released here; the variant trains its
-action expert and fusion from scratch on your own data.
+shallow expert. No trained Faster-WAM checkpoints are released here. You can initialize
+from a default FastWAM backbone and then fine-tune on your own data:
+
+```bash
+lerobot-train --policy.path=lerobot/fastwam_base \
+  --policy.action_expert_layers=1 --policy.lite_kv_fusion=true \
+  --policy.retracted_1d_rope=true --policy.world_model_only_conditioning=true \
+  --dataset.repo_id=YOUR_DATASET --policy.push_to_hub=false
+```
+
+This retains compatible backbone weights and the leading action layers. It discards
+unused action layers and text modules, and initializes fusion logits to zero. This
+conversion requires fine-tuning; it does not preserve the trained policy's behavior.
+Keep the video backbone depth unchanged.
+The Python loader permits it with `strict=False` (the default). When loading an already
+converted Faster-WAM checkpoint, keep its saved Faster-WAM options and action depth.
 
 The implementation is derived from the paper and the Apache-2.0 LeRobot fastwam code.
 The public repository [TeamFasterwam/FasterWAM](https://github.com/TeamFasterwam/FasterWAM)

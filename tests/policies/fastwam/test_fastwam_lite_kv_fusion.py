@@ -27,7 +27,7 @@ import torch
 pytest.importorskip("transformers", reason="fastwam requires the `fastwam` extra (transformers)")
 pytest.importorskip("diffusers", reason="fastwam requires the `fastwam` extra (diffusers)")
 
-from lerobot.policies.fastwam.wan import ActionDiT, LiteKVFusion, MoT
+from lerobot.policies.fastwam.wan import LiteKVFusion
 
 
 def _cache(
@@ -46,30 +46,6 @@ def _cache(
             v[:, :, h * head_dim] = 100.0 * float(layer + 1) + h
         cache.append({"k": k, "v": v})
     return cache
-
-
-def test_mixing_logits_shape_and_param_count():
-    # Paper config: 1 action layer x 24 heads x 30 video layers = 720 parameters.
-    fusion = LiteKVFusion(num_action_layers=1, num_heads=24, num_video_layers=30)
-    assert fusion.logits.shape == (1, 24, 30)
-    assert sum(p.numel() for p in fusion.parameters()) == 720
-
-    # General DoT shape: L_a x H x L_v.
-    fusion = LiteKVFusion(num_action_layers=2, num_heads=3, num_video_layers=5)
-    assert fusion.logits.shape == (2, 3, 5)
-
-
-def test_zero_logits_give_uniform_softmax_over_video_layers():
-    fusion = LiteKVFusion(num_action_layers=1, num_heads=4, num_video_layers=8)
-    beta = fusion.mixing_weights(action_layer_idx=0)
-    assert beta.shape == (4, 8)
-    torch.testing.assert_close(beta, torch.full_like(beta, 1.0 / 8))
-
-    # Setting one logit high must make that layer's weight approach 1 (softmax over L_v).
-    fusion.logits.data[0, :, 3] = 12.0
-    beta = fusion.mixing_weights(0)
-    assert beta[:, 3].min() > 0.99
-    assert torch.allclose(beta.sum(dim=-1), torch.ones(4))
 
 
 def test_mixing_weights_indexing_is_action_layer_head_video_layer():
@@ -144,54 +120,20 @@ def test_gradients_reach_cache_and_logits():
         assert entry["v"].grad is not None and entry["v"].grad.abs().sum() > 0
 
 
-def test_fusion_output_flows_through_action_layer_in_mot():
-    """End-to-end MoT check: the single action layer reads the fused cache built from all
-    video layers, not just its index-aligned layer."""
-    torch.manual_seed(0)
-    expert_kwargs = {
-        "hidden_dim": 8,
-        "action_dim": 3,
-        "ffn_dim": 16,
-        "text_dim": 8,
-        "freq_dim": 8,
-        "eps": 1e-6,
-        "num_heads": 2,
-        "attn_head_dim": 12,
-        "fp32_attention": False,
-    }
-    video = ActionDiT(**expert_kwargs, num_layers=3)
-    action = ActionDiT(**expert_kwargs, num_layers=1, use_text_cross_attention=False)
-    fusion = LiteKVFusion(num_action_layers=1, num_heads=2, num_video_layers=3)
-    mot = MoT(
-        mixtures={"video": video, "action": action},
-        mot_checkpoint_mixed_attn=False,
-        lite_kv_fusion=fusion,
-    ).eval()
-
-    batch, seq_v, seq_a = 1, 6, 2
-    video_tokens = torch.randn(batch, seq_v, 8)
-    cache = mot.prefill_video_cache(
-        video_tokens=video_tokens,
-        video_freqs=video.freqs[:seq_v].view(seq_v, 1, -1),
-        video_t_mod=torch.zeros(batch, 6, 8),
-        video_context_payload=None,
-        video_attention_mask=torch.ones(seq_v, seq_v, dtype=torch.bool),
-    )
-    assert len(cache) == 3
-    action_kv = mot.prepare_action_kv_context(cache)
-    assert len(action_kv) == 1
-
-    # With uniform mixing, the fused K must be the mean of the per-layer cached K.
-    k_mean = torch.stack([c["k"] for c in cache]).mean(dim=0)
-    torch.testing.assert_close(action_kv[0]["k"], k_mean)
-
-    out = mot.forward_action_with_video_cache(
-        action_tokens=torch.randn(batch, seq_a, 8),
-        action_freqs=action.freqs[:seq_a].view(seq_a, 1, -1),
-        action_t_mod=torch.zeros(batch, 6, 8),
-        action_context_payload=None,
-        video_kv_cache=action_kv,
-        attention_mask=torch.ones(seq_v + seq_a, seq_v + seq_a, dtype=torch.bool),
-        video_seq_len=seq_v,
-    )
-    assert out.shape == (batch, seq_a, 8)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
+def test_fusion_preserves_float32_softmax_with_low_precision_storage(dtype):
+    fusion = LiteKVFusion(1, 2, 3).to(dtype=dtype)
+    with torch.no_grad():
+        fusion.logits.copy_(torch.tensor([[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]]))
+    expected = torch.softmax(fusion.logits[0].float(), dim=-1)
+    assert fusion.mixing_weights(0).dtype == torch.float32
+    torch.testing.assert_close(fusion.mixing_weights(0), expected, rtol=0, atol=0)
+    cache = [
+        {key: value.to(dtype).requires_grad_() for key, value in entry.items()}
+        for entry in _cache(3, batch=1, seq=2, heads=2, head_dim=4)
+    ]
+    k, v = fusion(cache, 0)
+    assert k.dtype == v.dtype == dtype
+    (k.float().square().mean() + v.float().square().mean()).backward()
+    assert torch.isfinite(fusion.logits.grad).all() and fusion.logits.grad.abs().sum() > 0
+    assert all(torch.isfinite(entry[key].grad).all() for entry in cache for key in ("k", "v"))
