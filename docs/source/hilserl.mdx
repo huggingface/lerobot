@@ -829,7 +829,9 @@ Create a training configuration file (example available [here](https://huggingfa
 5. Check the other parameters related to the Gaussian Actor in [configuration_gaussian_actor.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/gaussian_actor/configuration_gaussian_actor.py#L79).
 6. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
 
-The learned Gaussian head predicts pre-tanh standard deviations, clamped by `policy_kwargs.std_min` and `policy_kwargs.std_max`. The diagonal variances are the squares of those scales. Correcting the previous interpretation of scales as variances can change action sampling and log-probabilities from existing actor checkpoints. Parameter names and shapes are unchanged; re-evaluate these checkpoints before using them to control a robot.
+The learned Gaussian head predicts pre-tanh standard deviations, clamped by `policy_kwargs.std_min` and `policy_kwargs.std_max`. The diagonal variances are the squares of those scales. With the default bounds, correcting the previous interpretation of scales as variances changes the effective pre-tanh standard deviation range from approximately `[3.2e-3, 3.16]` to `[1e-5, 10]`.
+
+To preserve an old checkpoint's action distribution for inference, halve both `actor.std_layer.weight` and `actor.std_layer.bias`, and replace its configured `std_min` and `std_max` with their square roots. Use that checkpoint's own bounds, not necessarily the defaults: `sqrt(clamp(exp(z), min, max)) = clamp(exp(z / 2), sqrt(min), sqrt(max))`. For a fixed-standard-deviation actor, take the square root of its configured `fixed_std` instead. This assumes the mean head and action transforms are unchanged. Parameter names and shapes are unchanged, but this conversion does not make resumed training equivalent; re-evaluate existing checkpoints before using them to control a robot.
 
 **Starting the Learner**
 
