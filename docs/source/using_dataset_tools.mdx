@@ -75,6 +75,19 @@ lerobot-dataset-viz \
 
 Once executed, the tool opens `rerun.io` and displays the camera streams, robot states, and actions for the selected episode.
 
+Use these options to send smaller RGB images to Rerun.
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --episode-index 0 \
+    --image-max-size 480 \
+    --display-compressed-images \
+    --jpeg-quality 75
+```
+
+`--image-max-size` preserves the aspect ratio and never enlarges an image. Images keep their original size by default. `--jpeg-quality` accepts values from 0 to 100 and defaults to 95. It only applies with `--display-compressed-images`. These options affect RGB images in Rerun. Depth images and the stored dataset are unchanged.
+
 To use [Foxglove](https://foxglove.dev) instead of Rerun, install the extra add `--display-mode foxglove`. This starts a WebSocket server (connect the Foxglove app to `ws://127.0.0.1:8765`) that serves the episode as a seekable timeline you can play/pause and scrub.
 
 For advanced usage—including visualizing datasets stored on a remote server—run:
