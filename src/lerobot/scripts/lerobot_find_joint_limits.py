@@ -212,7 +212,7 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig) -> None:
         print(f"max_ee = {r_max_ee}")
         print(f"min_ee = {r_min_ee}")
 
-        print("\n# Joint Position Limits (radians):")
+        print("\n# Joint Position Limits (robot observation units):")
         print(f"max_pos = {r_max_pos}")
         print(f"min_pos = {r_min_pos}")
 
