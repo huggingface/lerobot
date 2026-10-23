@@ -51,6 +51,8 @@ COPY --from=build /opt/hand-controller /opt/hand-controller
 COPY --from=build /opt/GEM-X /opt/GEM-X
 COPY --from=build /opt/camera-adapter /opt/camera-adapter
 COPY --from=build /opt/hand-camera /opt/hand-camera
+COPY camera-startup-requirements.txt verify_runtime_imports.py /opt/hand-worker/
+RUN python -m pip --python /opt/droid/bin/python install --no-cache-dir -r /opt/hand-worker/camera-startup-requirements.txt
 COPY image-version.json health.py /opt/hand-worker/
 ENV PATH=/opt/hand-controller/bin:$PATH PYTHONUNBUFFERED=1 HF_HUB_DISABLE_TELEMETRY=1 PYTHONDONTWRITEBYTECODE=1
 ENV HOME=/home/user XDG_CACHE_HOME=/home/user/.cache
@@ -60,6 +62,8 @@ ENV EGO_LIBRARY_PATH=/opt/egohand/lib/python3.10/site-packages/nvidia/cudnn/lib:
 RUN LD_LIBRARY_PATH="$DROID_LIBRARY_PATH" /opt/droid/bin/python -c "import sys; sys.path.insert(0,'/opt/hand-camera/release-195fps-verified/DROID-W'); import torch,lietorch,droid_backends,moge,timm,cv2,tensorrt; from pathlib import Path; from importlib.metadata import distribution; assert torch.__version__=='2.8.0+cu128'; assert tensorrt.__version__=='10.13.3.9'; assert Path(distribution('nvidia-cudss-cu12').locate_file('nvidia/cu12/lib/libcudss.so.0')).is_file()" \
     && LD_LIBRARY_PATH="$EGO_LIBRARY_PATH" /opt/egohand/bin/python -c "import torch,gem,soma,onnxruntime; assert torch.__version__.split('+')[0]=='2.14.1'; assert 'TensorrtExecutionProvider' in onnxruntime.get_available_providers()" \
     && python -c "import torch,numpy,pyarrow,av,scipy; import lerobot_camera_runtime.egocentric.droidw_camera, lerobot_camera_runtime.stages.droidw_slam; assert torch.__version__.split('+')[0]=='2.11.0'"
+RUN CUDA_VISIBLE_DEVICES="" LD_LIBRARY_PATH="$DROID_LIBRARY_PATH" /opt/droid/bin/python /opt/hand-worker/verify_runtime_imports.py camera \
+    && CUDA_VISIBLE_DEVICES="" LD_LIBRARY_PATH="$EGO_LIBRARY_PATH" /opt/egohand/bin/python /opt/hand-worker/verify_runtime_imports.py egohand
 RUN if ! getent passwd 1000 >/dev/null; then useradd -m -u 1000 user; fi \
     && mkdir -p /workspace /home/user && chown 1000:1000 /workspace /home/user
 USER 1000
