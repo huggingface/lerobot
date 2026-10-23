@@ -438,7 +438,7 @@ def install_sidecar(source: Path, destination: Path) -> None:
 
 def mapped_arrays(buffer: np.memmap[Any, Any], item: dict[str, Any]) -> dict[str, NDArray[np.generic]]:
     """Return views whose base retains the single shared read-only mapping."""
-    arrays = {}
+    arrays: dict[str, NDArray[np.generic]] = {}
     for name, (offset, count, dtype, stored_count) in item["arrays"].items():
         strides = (0,) if stored_count == 1 and count > 1 else None
         arrays[name] = np.ndarray(
