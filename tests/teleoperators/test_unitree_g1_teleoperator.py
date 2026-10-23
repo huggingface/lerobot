@@ -484,3 +484,14 @@ class TestExoskeletonArm:
         arm = self._arm_reading(None)
         assert not arm.detect_joystick()
         assert arm.joystick_from_raw(None) is None
+
+
+def test_get_action_consumes_current_wireless_observation(teleop_remote_only):
+    teleop = teleop_remote_only
+    teleop.connect()
+    remote = teleop.wireless_remote
+    original_update = remote.parse
+    remote.parse = MagicMock(wraps=original_update)
+    observation = {"wireless_remote": b"\x00" * 40}
+    teleop.get_action(observation=observation)
+    remote.parse.assert_called_once_with(observation["wireless_remote"])

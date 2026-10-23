@@ -19,7 +19,7 @@ import time
 from queue import Queue
 from typing import TYPE_CHECKING, Any, cast
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _pynput_available, require_package
 from lerobot.utils.keyboard_input import pynput_can_capture
@@ -128,7 +128,7 @@ class KeyboardTeleop(Teleoperator):
         pass
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         before_read_t = time.perf_counter()
 
         self._drain_pressed_keys()
@@ -178,7 +178,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             }
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         self._drain_pressed_keys()
         delta_x = 0.0
         delta_y = 0.0
@@ -367,7 +367,7 @@ class KeyboardRoverTeleop(KeyboardTeleop):
                 self.current_pressed.pop(key_char, None)
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         """
         Get the current action based on pressed keys.
 

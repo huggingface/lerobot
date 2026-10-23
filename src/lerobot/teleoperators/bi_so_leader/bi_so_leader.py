@@ -17,7 +17,7 @@
 import logging
 from functools import cached_property
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.bimanual import BimanualMixin
 from lerobot.utils.decorators import check_if_not_connected
 
@@ -86,15 +86,15 @@ class BiSOLeader(BimanualMixin, Teleoperator):
         self.right_arm.setup_motors()
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         action_dict = {}
 
         # Add "left_" prefix
-        left_action = self.left_arm.get_action()
+        left_action = self.left_arm.get_action(observation=observation)
         action_dict.update({f"left_{key}": value for key, value in left_action.items()})
 
         # Add "right_" prefix
-        right_action = self.right_arm.get_action()
+        right_action = self.right_arm.get_action(observation=observation)
         action_dict.update({f"right_{key}": value for key, value in right_action.items()})
 
         return action_dict

@@ -17,7 +17,7 @@
 import logging
 from functools import cached_property
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.bimanual import BimanualMixin
 from lerobot.utils.decorators import check_if_not_connected
 
@@ -83,11 +83,11 @@ class BiOpenArmMini(BimanualMixin, Teleoperator):
         self.right_arm.setup_motors()
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         action: RobotAction = {}
-        for k, v in self.left_arm.get_action().items():
+        for k, v in self.left_arm.get_action(observation=observation).items():
             action[f"left_{k}"] = v
-        for k, v in self.right_arm.get_action().items():
+        for k, v in self.right_arm.get_action(observation=observation).items():
             action[f"right_{k}"] = v
         return action
 

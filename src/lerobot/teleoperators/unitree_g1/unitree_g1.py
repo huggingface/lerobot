@@ -232,7 +232,9 @@ class UnitreeG1Teleoperator(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def get_action(self) -> dict[str, float]:
+    def get_action(self, observation: RobotObservation | None = None) -> dict[str, float]:
+        if observation is not None:
+            self._update_wireless_remote(observation)
         if not self._arm_control_enabled:
             return self._wireless_state.to_action()
 
@@ -281,7 +283,7 @@ class UnitreeG1Teleoperator(Teleoperator):
             self._exo_state.rx, self._exo_state.ry = right.x, right.y
             self._exo_state.buttons[_RIGHT_EXO_BUTTON] = int(right.pressed)
 
-    def on_observation(self, observation: RobotObservation) -> None:
+    def _update_wireless_remote(self, observation: RobotObservation) -> None:
         wireless_remote = observation.get("wireless_remote")
         if wireless_remote is None:
             return
@@ -290,7 +292,11 @@ class UnitreeG1Teleoperator(Teleoperator):
             self._wireless_state = remote
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        self.on_observation(feedback)
+        """Deprecated for observation delivery; pass observations to :meth:`get_action` instead.
+
+        Kept as a compatibility alias for callers that send wireless-remote observations here.
+        """
+        self._update_wireless_remote(feedback)
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()

@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _hebi_available, _teleop_available, require_package
@@ -292,7 +292,7 @@ class IOSPhone(BasePhone, Teleoperator):
         return pos, rot, pose
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         pose = self._read_current_pose()
         if pose is None or not self.is_calibrated:
             return {}
@@ -442,7 +442,7 @@ class AndroidPhone(BasePhone, Teleoperator):
             self._latest_message = message
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         pose = self._read_current_pose()
         if pose is None or not self.is_calibrated:
             return {}
@@ -538,8 +538,8 @@ class Phone(Teleoperator):
     def configure(self) -> None:
         return self._phone_impl.configure()
 
-    def get_action(self) -> RobotAction:
-        return self._phone_impl.get_action()
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
+        return self._phone_impl.get_action(observation=observation)
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         return self._phone_impl.send_feedback(feedback)
