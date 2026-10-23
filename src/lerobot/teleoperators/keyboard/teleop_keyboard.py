@@ -77,7 +77,7 @@ class KeyboardTeleop(Teleoperator):
     @property
     def action_features(self) -> dict:
         # Pressed keys have no static feature layout; subclasses with a fixed action space override this.
-        raise NotImplementedError(f"{self.__class__.__name__} exposes no static action features.")
+        return {}
 
     @property
     def feedback_features(self) -> dict:
@@ -150,7 +150,7 @@ class KeyboardTeleop(Teleoperator):
         pass
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         before_read_t = time.perf_counter()
 
         self._drain_pressed_keys()
@@ -200,7 +200,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
             }
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         self._drain_pressed_keys()
         delta_x = 0.0
         delta_y = 0.0
@@ -389,7 +389,7 @@ class KeyboardRoverTeleop(KeyboardTeleop):
                 self.current_pressed.pop(key_char, None)
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         """
         Get the current action based on pressed keys.
 

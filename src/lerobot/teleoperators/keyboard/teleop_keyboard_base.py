@@ -56,5 +56,10 @@ class KeyboardBaseTeleop(KeyboardTeleop):
     def on_observation(self, observation: RobotObservation) -> None:
         self._observation = observation
 
-    def get_action(self) -> RobotAction:
-        return self.action_processor((super().get_action(), self._observation))
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
+        return self.action_processor(
+            (
+                super().get_action(observation=observation),
+                observation if observation is not None else self._observation,
+            )
+        )

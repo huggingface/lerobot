@@ -196,9 +196,16 @@ class Teleoperator(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         """
         Retrieve the current action from the teleoperator.
+
+        Args:
+            observation: Latest raw robot state, when action generation needs it. Implementations
+                must not mutate it. Devices independent of robot state may ignore it.
+
+        The optional argument is the prototype API. The existing observation hook remains for
+        comparison with the original control loops; new callers can pass the observation directly.
 
         Returns:
             RobotAction: A flat dictionary representing the teleoperator's current actions. Its

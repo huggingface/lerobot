@@ -64,7 +64,12 @@ class KeyboardToBaseActionProcessorStep(RobotActionProcessorStep):
             raise ValueError("Speed presets must be finite and nonnegative.")
 
     def action(self, action: RobotAction) -> RobotAction:
-        pressed = set(action)
+        # Raw keyboard values are None; other devices' values must pass through unchanged.
+        pressed = {key for key, value in action.items() if value is None}
+        passthrough = {key: value for key, value in action.items() if value is not None}
+        overlap = passthrough.keys() & {"x.vel", "y.vel", "theta.vel"}
+        if overlap:
+            raise ValueError(f"Keyboard mapping would overwrite base commands: {sorted(overlap)}")
         newly_pressed = pressed - self._pressed
         self._pressed = pressed
         keys = self.key_bindings
@@ -73,6 +78,7 @@ class KeyboardToBaseActionProcessorStep(RobotActionProcessorStep):
         xy = self.linear_speeds[self._speed_index]
         theta = self.angular_speeds[self._speed_index]
         return {
+            **passthrough,
             "x.vel": xy * (int(keys["forward"] in pressed) - int(keys["backward"] in pressed)),
             "y.vel": xy * (int(keys["left"] in pressed) - int(keys["right"] in pressed)),
             "theta.vel": theta * (int(keys["rotate_left"] in pressed) - int(keys["rotate_right"] in pressed)),
@@ -95,8 +101,11 @@ class KeyboardToBaseActionProcessorStep(RobotActionProcessorStep):
         return {
             **features,
             PipelineFeatureType.ACTION: {
-                key: PolicyFeature(type=FeatureType.ACTION, shape=(1,))
-                for key in ("x.vel", "y.vel", "theta.vel")
+                **features.get(PipelineFeatureType.ACTION, {}),
+                **{
+                    key: PolicyFeature(type=FeatureType.ACTION, shape=(1,))
+                    for key in ("x.vel", "y.vel", "theta.vel")
+                },
             },
         }
 

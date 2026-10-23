@@ -270,7 +270,11 @@ class UnitreeG1Teleoperator(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def get_action(self) -> dict[str, float]:
+    def get_action(self, observation: RobotObservation | None = None) -> dict[str, float]:
+        if observation is not None:
+            wireless_remote = observation.get("wireless_remote")
+            if wireless_remote is not None:
+                self.remote_controller.set_from_wireless(wireless_remote)
         joint_action: dict[str, float] = {}
         left_raw = None
         right_raw = None

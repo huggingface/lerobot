@@ -250,9 +250,12 @@ class MobileBaseTeleop(Teleoperator):
             self._hold = {key: observation[key] for key in held_keys}
         return dict(self._hold)
 
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         """Combine device actions using the observation delivered by the control loop."""
-        observation = self._observation
+        if observation is None:
+            observation = self._observation
+        else:
+            self.on_observation(observation)
         if observation is None:
             raise RuntimeError("Call on_observation before requesting a mobile base action.")
         base_action = self._base_action(observation)

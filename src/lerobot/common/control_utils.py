@@ -175,7 +175,10 @@ class ActuatedTeleoperator(Protocol):
 
     def on_observation(self, observation: dict[str, Any]) -> None: ...
 
-    def get_action(self) -> RobotAction: ...
+    @property
+    def feedback_features(self) -> dict[str, Any]: ...
+
+    def get_action(self, observation: dict[str, Any] | None = None) -> RobotAction: ...
 
     def send_feedback(self, feedback: dict[str, Any]) -> None: ...
 
@@ -202,7 +205,12 @@ def teleop_supports_feedback(teleop: Teleoperator) -> TypeGuard[ActuatedTeleoper
 
 
 def teleop_smooth_move_to(
-    teleop: ActuatedTeleoperator, target_pos: RobotAction, duration_s: float = 2.0, fps: int = 30
+    teleop: ActuatedTeleoperator,
+    target_pos: RobotAction,
+    duration_s: float = 2.0,
+    fps: int = 30,
+    *,
+    observation: dict[str, Any] | None = None,
 ) -> None:
     """Smoothly move an actuated teleop to ``target_pos`` via linear interpolation.
 
@@ -217,7 +225,9 @@ def teleop_smooth_move_to(
     follower robot does not receive new actions, which could be an issue on LeKiwi.
     """
     teleop.enable_torque()
-    current = teleop.get_action()
+    raw_action = teleop.get_action() if observation is None else teleop.get_action(observation=observation)
+    # A generic composite may also expose raw keys or base controls; only actuate feedback channels.
+    current = {key: value for key, value in raw_action.items() if key in teleop.feedback_features}
     steps = max(int(duration_s * fps), 1)
 
     for step in range(steps + 1):
