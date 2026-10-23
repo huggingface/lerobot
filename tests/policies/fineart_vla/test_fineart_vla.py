@@ -213,9 +213,11 @@ def test_forward_matches_pi05_when_language_losses_are_off():
 
     # Two fp32 3B policies do not fit a 24 GB GPU together: run PI0.5 first, keep its weights
     # on the CPU, and free the GPU before building FineART-VLA from the same weights.
+    # Both are built on the GPU: initializing 3B weights on the CPU takes over a minute each.
     pi05 = fineart = None
     try:
-        pi05 = PI05Policy(PI05Config(**common, **_parity_features())).cuda().eval()
+        with torch.device("cuda"):
+            pi05 = PI05Policy(PI05Config(**common, **_parity_features())).eval()
         with torch.no_grad():
             torch.manual_seed(1)
             pi05_loss, _ = pi05.forward(batch)
@@ -226,19 +228,20 @@ def test_forward_matches_pi05_when_language_losses_are_off():
         pi05 = None
         torch.cuda.empty_cache()
 
-        fineart = FineARTVLAPolicy(
-            FineARTVLAConfig(
-                **common,
-                **_parity_features(),
-                text_loss_weight=0.0,
-                enable_fast_action_loss=False,
-                knowledge_insulation=False,
-                use_liger_kernels=False,
+        with torch.device("cuda"):
+            fineart = FineARTVLAPolicy(
+                FineARTVLAConfig(
+                    **common,
+                    **_parity_features(),
+                    text_loss_weight=0.0,
+                    enable_fast_action_loss=False,
+                    knowledge_insulation=False,
+                    use_liger_kernels=False,
+                )
             )
-        )
         fineart.load_state_dict(weights, strict=True)
         del weights
-        fineart = fineart.cuda().eval()
+        fineart = fineart.eval()
         with torch.no_grad():
             torch.manual_seed(1)
             fineart_loss, _ = fineart.forward(batch)
