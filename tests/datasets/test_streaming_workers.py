@@ -37,6 +37,8 @@ from lerobot.datasets.streaming_dataset import (  # noqa: E402
 from lerobot.utils.utils import cycle  # noqa: E402
 from tests.fixtures.constants import DUMMY_REPO_ID  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 # Fixed, uneven episode lengths: random multinomial lengths can contain empty episodes.
 LENGTHS = (5, 9, 3, 11, 6, 8, 4, 10)
 

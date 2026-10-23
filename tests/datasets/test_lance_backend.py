@@ -59,6 +59,8 @@ from tests.fixtures.constants import (
     DUMMY_REPO_ID,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 def _storage_type(dtype: pa.DataType) -> pa.DataType:
     """Extension type -> its storage type (pa.array can't build extension values directly)."""

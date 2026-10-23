@@ -42,6 +42,8 @@ from tests.inference.policy_helpers import (
 from tests.remote_inference.helpers import admit
 from tests.remote_inference.network_helpers import runtime_for
 
+pytestmark = pytest.mark.dataset
+
 
 def test_direct_remote_actions_match_local_pipeline_after_queue_drains(remote_server):
     _, config = remote_server

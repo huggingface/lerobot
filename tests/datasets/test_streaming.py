@@ -26,6 +26,8 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize("token", ["hf_test_token", True, False])
 @pytest.mark.parametrize("from_local", [False, True])

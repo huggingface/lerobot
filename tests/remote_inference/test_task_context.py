@@ -28,6 +28,8 @@ from lerobot.inference import RemoteInferenceConfig
 from lerobot.rollout import context
 from tests.remote_inference.helpers import ControlledClient
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.fixture
 def setup(monkeypatch, tmp_path):

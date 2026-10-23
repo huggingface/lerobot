@@ -77,6 +77,7 @@ def test_config_save_load_roundtrip(tmp_path):
     assert restored.text_loss_weight == 0.5
 
 
+@pytest.mark.dataset
 def test_recipe_path_is_resolved_once_into_the_config(tmp_path):
     pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
     config = FineARTVLAConfig(device="cpu", recipe_path="recipes/subtask.yaml")
@@ -125,6 +126,7 @@ class _PaligemmaTokenizer:
         return [10, 11] if text == "Action: " else [12]
 
 
+@pytest.mark.dataset
 def test_processor_save_load_roundtrip_embeds_action_tokenizer(tmp_path, monkeypatch):
     pytest.importorskip("datasets", reason="recipes require lerobot[dataset]")
     pytest.importorskip("av", reason="recipes require lerobot[dataset]")

@@ -27,6 +27,8 @@ from lerobot.datasets.io_utils import (
 )
 from lerobot.datasets.sampler import EpisodeAwareSampler, compute_sampler_state
 
+pytestmark = pytest.mark.dataset
+
 
 def calculate_episode_data_index(hf_dataset: Dataset) -> dict[str, torch.Tensor]:
     """Calculate episode data index for testing. Returns {"from": Tensor, "to": Tensor}."""

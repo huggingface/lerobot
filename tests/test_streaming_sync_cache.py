@@ -20,6 +20,7 @@ from lerobot.streaming.mp4 import parse_mp4_index, synthesize_mp4
 from lerobot.streaming.sidecar import SidecarSpec
 
 av = pytest.importorskip("av")
+pytestmark = pytest.mark.dataset
 
 
 @pytest.fixture
