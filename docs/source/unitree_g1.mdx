@@ -228,6 +228,14 @@ ssh unitree@<ROBOT_WIFI_IP>
 
 ## Part 2: Teleoperation & Locomotion
 
+### Input Devices and Whole-Body Controllers
+
+Here, **controller** refers to the robot's whole-body control policy selected with `--robot.controller`, such as GR00T, Holosoma, or SONIC. The Unitree wireless remote and the exoskeleton thumbsticks are **input devices**.
+
+The G1 teleoperator represents their axes and buttons as `JoystickState`.
+
+With GR00T, pressing the right exo thumbstick raises the waist (`remote.button.0`, R1), and pressing the left lowers it (`remote.button.4`, R2).
+
 ### Run the Robot Server
 
 On the robot (from `~/lerobot`):
