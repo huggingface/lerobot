@@ -56,6 +56,7 @@ def provisioned_environment(config: HandBackendConfig) -> dict[str, str]:
         HF_HUB_OFFLINE="1",
         TRANSFORMERS_OFFLINE="1",
         CUDA_VISIBLE_DEVICES="0",
+        NVIDIA_TF32_OVERRIDE="0",
         PYTHONPATH=os.pathsep.join(
             [str(Path(__file__).resolve().parents[3]), str(Path(config.root) / "src")]
         ),

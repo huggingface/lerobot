@@ -432,7 +432,10 @@ for line in sys.stdin:
     assert annotator.process.poll() is not None
 
 
-def test_native_interpreters_isolate_cuda_libraries_and_strip_hub_credentials(tmp_path, monkeypatch):
+@pytest.mark.parametrize("tf32_override", [None, "1"])
+def test_native_interpreters_isolate_cuda_libraries_and_strip_hub_credentials(
+    tmp_path, monkeypatch, tf32_override
+):
     from lerobot.annotations.hands.config import RUNTIME_REVISION
     from lerobot.annotations.hands.processing import provisioned_environment
 
@@ -484,6 +487,10 @@ def test_native_interpreters_isolate_cuda_libraries_and_strip_hub_credentials(tm
     monkeypatch.setenv("LD_LIBRARY_PATH", "/controller/lib")
     monkeypatch.setenv("DROID_LIBRARY_PATH", "/camera/lib")
     monkeypatch.setenv("EGO_LIBRARY_PATH", "/hand/lib")
+    if tf32_override is None:
+        monkeypatch.delenv("NVIDIA_TF32_OVERRIDE", raising=False)
+    else:
+        monkeypatch.setenv("NVIDIA_TF32_OVERRIDE", tf32_override)
     monkeypatch.setattr(
         "lerobot.annotations.hands.processing.verify_assets",
         lambda config: {"environment": {"HF_HOME": str(tmp_path / "offline-cache")}},
@@ -493,7 +500,9 @@ def test_native_interpreters_isolate_cuda_libraries_and_strip_hub_credentials(tm
     assert environment["HF_HUB_OFFLINE"] == environment["TRANSFORMERS_OFFLINE"] == "1"
     assert environment["LD_LIBRARY_PATH"] == "/camera/lib"
     assert environment["EGO_LIBRARY_PATH"] == "/hand/lib"
+    assert environment["NVIDIA_TF32_OVERRIDE"] == "0"
     assert os.environ["LD_LIBRARY_PATH"] == "/controller/lib"
+    assert os.environ.get("NVIDIA_TF32_OVERRIDE") == tf32_override
     source.write_text("# changed source\n")
     with pytest.raises(subprocess.CalledProcessError):
         provisioned_environment(config)
