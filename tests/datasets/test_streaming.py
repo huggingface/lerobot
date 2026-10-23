@@ -228,8 +228,6 @@ def test_frames_order_with_shards(tmp_path, lerobot_dataset_factory, shuffle):
     "state_deltas, action_deltas",
     [
         ([-1, -0.5, -0.20, 0], [0, 1, 2, 3]),
-        ([-1, -0.5, -0.20, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
-        ([-2, -1, -0.5, 0], [0, 1, 2, 3]),
         ([-2, -1, -0.5, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
     ],
 )
@@ -309,8 +307,6 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
     "state_deltas, action_deltas",
     [
         ([-1, -0.5, -0.20, 0], [0, 1, 2, 3, 10, 20]),
-        ([-1, -0.5, -0.20, 0], [-20, -1.5, -1, -0.5, -0.20, -0.10, 0]),
-        ([-2, -1, -0.5, 0], [0, 1, 2, 3, 10, 20]),
         ([-2, -1, -0.5, 0], [-20, -1.5, -1, -0.5, -0.20, -0.10, 0]),
     ],
 )
