@@ -55,6 +55,8 @@ from tests.fixtures.constants import DUMMY_CHW, DUMMY_HWC, DUMMY_MOTOR_FEATURES,
 from tests.mocks.mock_robot import MockRobotConfig
 from tests.utils import require_x86_64_kernel
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.fixture
 def image_dataset(tmp_path, empty_lerobot_dataset_factory):

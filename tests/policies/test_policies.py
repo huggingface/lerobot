@@ -53,6 +53,8 @@ from lerobot.utils.utils import cycle
 from tests.artifacts.policies.save_policy_to_safetensors import get_policy_stats
 from tests.utils import DEVICE, require_cpu, require_env, require_x86_64_kernel
 
+pytestmark = pytest.mark.dataset
+
 # Policies that require optional heavy dependencies to instantiate
 _POLICY_REQUIRED_PACKAGES: dict[str, tuple[str, ...]] = {
     "diffusion": ("diffusers",),

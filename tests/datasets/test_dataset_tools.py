@@ -42,6 +42,8 @@ from tests.datasets.test_video_encoding import require_h264, require_hevc, requi
 from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
 from tests.fixtures.dataset_factories import add_frames
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.fixture
 def sample_dataset(tmp_path, empty_lerobot_dataset_factory):

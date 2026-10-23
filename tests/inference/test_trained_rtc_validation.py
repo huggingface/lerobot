@@ -24,6 +24,8 @@ from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.rollout.context import _validate_trained_rtc_rollout_config
 from tests.inference.policy_helpers import ConformingPolicy, observation, runner_for, tiny_config
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize(
     "delay,horizon,allowed",

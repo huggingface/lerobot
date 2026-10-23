@@ -29,6 +29,8 @@ from tests.inference.policy_helpers import (
     tiny_config,
 )
 
+pytestmark = pytest.mark.dataset
+
 
 class ObservedPolicy(ConformingPolicy):
     name = "observed_prediction"

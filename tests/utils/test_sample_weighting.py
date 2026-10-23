@@ -31,6 +31,8 @@ from lerobot.utils.sample_weighting import (
     make_sample_weighter,
 )
 
+pytestmark = pytest.mark.dataset
+
 # =============================================================================
 # Fixtures
 # =============================================================================

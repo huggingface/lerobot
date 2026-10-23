@@ -53,6 +53,8 @@ from lerobot.rollout.interactive import InteractiveCommand, parse_command  # noq
 from lerobot.rollout.planner import PlannerConfig, VlmPlanner, training_vocabulary  # noqa: E402
 from tests.interactive_helpers import _FakeEngine, _loop_ctx, _make_ctx
 
+pytestmark = pytest.mark.dataset
+
 
 def _wait_for(predicate, timeout: float = 2.0) -> bool:
     deadline = time.monotonic() + timeout
