@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import shutil
 from collections import Counter
 from itertools import islice
 from pathlib import Path
@@ -43,9 +44,12 @@ pytestmark = pytest.mark.dataset
 LENGTHS = (5, 9, 3, 11, 6, 8, 4, 10)
 
 
-@pytest.fixture
-def root(tmp_path: Path, info_factory, tasks_factory, episodes_factory, lerobot_dataset_factory) -> Path:
-    root = tmp_path / "dataset"
+@pytest.fixture(scope="module")
+def root_template(
+    tmp_path_factory, info_factory, tasks_factory, episodes_factory, lerobot_dataset_factory
+) -> Path:
+    """Build the dataset once per module; `root` hands each test its own copy."""
+    root = tmp_path_factory.mktemp("streaming_workers") / "dataset"
     total = sum(LENGTHS)
     info = info_factory(total_episodes=len(LENGTHS), total_frames=total, total_tasks=1, use_videos=False)
     tasks = tasks_factory(total_tasks=1)
@@ -63,6 +67,13 @@ def root(tmp_path: Path, info_factory, tasks_factory, episodes_factory, lerobot_
         tasks=tasks,
         episodes_metadata=datasets.Dataset.from_list(episodes),
     )
+    return root
+
+
+@pytest.fixture
+def root(tmp_path: Path, root_template: Path) -> Path:
+    root = tmp_path / "dataset"
+    shutil.copytree(root_template, root)
     return root
 
 
