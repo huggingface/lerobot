@@ -360,7 +360,7 @@ def _recycle_dataloader_iterator(
     if hasattr(dl_iter, "_shutdown_workers"):
         dl_iter._shutdown_workers()
     # persistent_workers=True caches the iterator, and iter() would return the closed workers.
-    for loader in (dataloader, getattr(dataloader, "base_dataloader", None)):
+    for loader in filter(None, (dataloader, getattr(dataloader, "base_dataloader", None))):
         if getattr(loader, "_iterator", None) is not None:
             loader._iterator._shutdown_workers()
             loader._iterator = None
