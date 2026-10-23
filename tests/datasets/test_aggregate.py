@@ -181,39 +181,32 @@ def assert_episode_indices_updated_correctly(aggr_ds, ds_0, ds_1):
         )
 
 
-def assert_video_frames_integrity(aggr_ds, ds_0, ds_1):
-    """Test that video frames are correctly preserved and frame indices are updated."""
+def assert_frames_match_sources(aggr_ds, ds_0, ds_1):
+    """Iterate the aggregated dataset once and check every frame against its source frame.
 
-    def visual_frames_equal(frame1, frame2):
-        return torch.allclose(frame1, frame2)
-
-    video_keys = list(
-        filter(
-            lambda key: aggr_ds.meta.info.features[key]["dtype"] == "video",
-            aggr_ds.meta.info.features.keys(),
-        )
-    )
-
-    # Test the section corresponding to the first dataset (ds_0)
-    for i in range(len(ds_0)):
-        assert aggr_ds[i]["index"] == i, (
-            f"Frame index at position {i} should be {i}, but got {aggr_ds[i]['index']}"
-        )
-        for key in video_keys:
-            assert visual_frames_equal(aggr_ds[i][key], ds_0[i][key]), (
-                f"Visual frames at position {i} should be equal between aggregated and ds_0"
+    Covers iteration, frame indices, episode indices and video frames in a single pass, so each frame is
+    decoded once per dataset instead of once per check and per video key.
+    """
+    video_keys = [key for key, ft in aggr_ds.meta.info.features.items() if ft["dtype"] == "video"]
+    num_frames = 0
+    for i, item in enumerate(aggr_ds):
+        num_frames += 1
+        assert item["index"] == i, f"Frame index at position {i} should be {i}, but got {item['index']}"
+        if i < len(ds_0):
+            source, source_item = "ds_0", ds_0[i]
+            assert item["episode_index"] < ds_0.num_episodes, (
+                f"Episode index {item['episode_index']} at position {i} should be < {ds_0.num_episodes}"
             )
-
-    # Test the section corresponding to the second dataset (ds_1)
-    for i in range(len(ds_0), len(ds_0) + len(ds_1)):
-        # The frame index in the aggregated dataset should also match its position.
-        assert aggr_ds[i]["index"] == i, (
-            f"Frame index at position {i} should be {i}, but got {aggr_ds[i]['index']}"
-        )
-        for key in video_keys:
-            assert visual_frames_equal(aggr_ds[i][key], ds_1[i - len(ds_0)][key]), (
-                f"Visual frames at position {i} should be equal between aggregated and ds_1"
+        else:
+            source, source_item = "ds_1", ds_1[i - len(ds_0)]
+            assert ds_0.num_episodes <= item["episode_index"] < ds_0.num_episodes + ds_1.num_episodes, (
+                f"Episode index {item['episode_index']} at position {i} should be >= {ds_0.num_episodes}"
             )
+        for key in video_keys:
+            assert torch.allclose(item[key], source_item[key]), (
+                f"Visual frames at position {i} should be equal between aggregated and {source}"
+            )
+    assert num_frames == len(ds_0) + len(ds_1)
 
 
 def assert_dataset_iteration_works(aggr_ds):
@@ -384,11 +377,9 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     assert_episode_and_frame_counts(aggr_ds, expected_total_episodes, expected_total_frames)
     assert_dataset_content_integrity(aggr_ds, ds_0, ds_1)
     assert_metadata_consistency(aggr_ds, ds_0, ds_1)
-    assert_episode_indices_updated_correctly(aggr_ds, ds_0, ds_1)
-    assert_video_frames_integrity(aggr_ds, ds_0, ds_1)
+    assert_frames_match_sources(aggr_ds, ds_0, ds_1)
     assert_video_timestamps_within_bounds(aggr_ds)
     assert_depth_keys_preserved(aggr_ds, ds_0, ds_1)
-    assert_dataset_iteration_works(aggr_ds)
 
 
 def test_aggregate_datasets_rejects_mismatched_roots(tmp_path):
@@ -573,11 +564,9 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
     assert_episode_and_frame_counts(aggr_ds, expected_total_episodes, expected_total_frames)
     assert_dataset_content_integrity(aggr_ds, ds_0, ds_1)
     assert_metadata_consistency(aggr_ds, ds_0, ds_1)
-    assert_episode_indices_updated_correctly(aggr_ds, ds_0, ds_1)
-    assert_video_frames_integrity(aggr_ds, ds_0, ds_1)
+    assert_frames_match_sources(aggr_ds, ds_0, ds_1)
     assert_video_timestamps_within_bounds(aggr_ds)
     assert_depth_keys_preserved(aggr_ds, ds_0, ds_1)
-    assert_dataset_iteration_works(aggr_ds)
 
     # Check that multiple files were actually created due to small size limits
     data_dir = tmp_path / "small_aggr" / "data"
