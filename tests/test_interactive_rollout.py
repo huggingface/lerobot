@@ -309,8 +309,8 @@ def test_interactive_cli_strategy_failure_exits_nonzero_after_teardown(monkeypat
     monkeypatch.setattr(
         lerobot_rollout, "ProcessSignalHandler", lambda **_: SimpleNamespace(shutdown_event=parent)
     )
-    monkeypatch.setattr(lerobot_rollout, "build_rollout_context", lambda *_: ctx)
-    monkeypatch.setattr(lerobot_rollout, "create_strategy", lambda _: strategy)
+    monkeypatch.setattr("lerobot.rollout.context.build_rollout_context", lambda *_: ctx)
+    monkeypatch.setattr("lerobot.rollout.strategies.create_strategy", lambda _: strategy)
     with _pipe_stream() as (reader, _):
         session = InteractiveSession(strategy, ctx, input_stream=reader)
         session.controller.start()
