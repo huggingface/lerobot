@@ -1,0 +1,218 @@
+# 카메라
+
+LeRobot은 비디오 캡처(video capture)를 위한 여러 옵션을 제공합니다.
+
+| 클래스            | 지원되는 카메라                      |
+| ----------------- | ------------------------------------ |
+| `OpenCVCamera`    | 휴대폰, 노트북 내장 카메라, USB 웹캠 |
+| `ZMQCamera`       | 네트워크에 연결된 카메라             |
+| `RealSenseCamera` | Intel RealSense(깊이 포함)           |
+| `Reachy2Camera`   | Reachy 2 로봇 카메라                 |
+
+> [!TIP]
+> `OpenCVCamera` 호환성에 대한 자세한 내용은 [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html)를 참조하십시오.
+
+### 카메라 찾기
+
+모든 카메라는 인스턴스화하려면 고유 식별자(unique identifier)가 필요하며, 이를 통해 연결된 여러 장치를 구분할 수 있습니다.
+
+`OpenCVCamera`와 `RealSenseCamera`는 자동 검색(auto-discovery)을 지원합니다. 아래 명령어를 실행하여 사용 가능한 장치와 해당 식별자를 나열하십시오. 운영체제에 따라 컴퓨터를 재부팅하거나 카메라를 다시 연결하면 이러한 식별자가 변경될 수 있습니다.
+
+```bash
+lerobot-find-cameras opencv # Intel Realsense 카메라의 경우 realsense를 사용합니다.
+```
+
+카메라 두 대가 연결되어 있다면 출력은 대략 다음과 같습니다.
+
+```bash
+--- Detected Cameras ---
+Camera #0:
+  Name: OpenCV Camera @ 0
+  Type: OpenCV
+  Id: 0
+  Backend api: AVFOUNDATION
+  Default stream profile:
+    Format: 16.0
+    Width: 1920
+    Height: 1080
+    Fps: 15.0
+--------------------
+(more cameras ...)
+```
+
+> [!WARNING]
+> `macOS`에서 Intel RealSense 카메라를 사용할 때 `Error finding RealSense cameras: failed to set power state` [오류](https://github.com/IntelRealSense/librealsense/issues/12307)가 발생할 수 있습니다. 이 문제는 같은 명령어를 `sudo` 권한으로 실행하면 해결할 수 있습니다. `macOS`에서 RealSense 카메라를 사용하는 것은 불안정하다는 점에 유의하십시오.
+
+`ZMQCamera`와 `Reachy2Camera`는 자동 검색을 지원하지 않습니다. 네트워크 주소와 포트 또는 로봇 SDK 설정을 제공하여 수동으로 구성해야 합니다.
+
+## 카메라 사용
+
+### 프레임 접근 모드
+
+모든 카메라 클래스는 프레임(frame) 캡처를 위한 세 가지 접근 모드를 구현합니다.
+
+| 메서드                    | 동작                                                                                                                                                                                             | 차단 여부     | 적합한 용도                        |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- | ---------------------------------- |
+| `read()`                  | 카메라 하드웨어가 프레임을 반환할 때까지 기다립니다. 카메라와 SDK에 따라 오랫동안 차단될 수 있습니다.                                                                                            | 예            | 간단한 스크립트, 순차 캡처         |
+| `async_read(timeout_ms)`  | 백그라운드 스레드(background thread)에서 아직 소비되지 않은 최신 프레임을 반환합니다. 버퍼가 비어 있을 때만 `timeout_ms`까지 차단됩니다. 프레임이 도착하지 않으면 `TimeoutError`를 발생시킵니다. | 시간제한 있음 | 카메라 FPS와 동기화된 제어 루프    |
+| `read_latest(max_age_ms)` | 버퍼에서 가장 최근 프레임을 가져옵니다(오래된 프레임일 수 있음). 프레임이 `max_age_ms`보다 오래되면 `TimeoutError`를 발생시킵니다.                                                               | 아니요        | UI 시각화, 로깅(logging), 모니터링 |
+
+### 사용 예제
+
+다음 예제는 카메라 API를 사용하여 다양한 카메라 유형에서 프레임을 구성하고 캡처하는 방법을 보여 줍니다.
+
+- OpenCV 기반 카메라를 사용한 **블로킹 및 논블로킹 프레임 캡처**
+- Intel RealSense 카메라를 사용한 **컬러 및 깊이 캡처**
+
+> [!WARNING]
+> 카메라 연결을 깔끔하게 해제하지 않으면 리소스 누수(resource leak)가 발생할 수 있습니다. 자동 정리를 보장하려면 컨텍스트 관리자 프로토콜(context manager protocol)을 사용하십시오.
+>
+> ```python
+> with OpenCVCamera(config) as camera:
+>     ...
+> ```
+>
+> `connect()`와 `disconnect()`를 수동으로 호출할 수도 있지만, 후자는 항상 `finally` 블록에서 사용하십시오.
+
+<hfoptions id="shell_restart">
+<hfoption id="Open CV Camera">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from lerobot.cameras import ColorMode, Cv2Rotation
+
+# 원하는 FPS, 해상도, 색상 모드, 회전으로 `OpenCVCameraConfig`를 구성합니다.
+config = OpenCVCameraConfig(
+    index_or_path=0,
+    fps=15,
+    width=1920,
+    height=1080,
+    color_mode=ColorMode.RGB,
+    rotation=Cv2Rotation.NO_ROTATION
+)
+
+# `OpenCVCamera`를 인스턴스화하고 연결하며, 워밍업 읽기를 수행합니다(기본값).
+with OpenCVCamera(config) as camera:
+
+    # 프레임을 동기적으로 읽습니다. 하드웨어가 새 프레임을 전달할 때까지 차단됩니다.
+    frame = camera.read()
+    print(f"read() call returned frame with shape:", frame.shape)
+
+    # 시간제한을 두고 프레임을 비동기적으로 읽습니다. 소비되지 않은 최신 프레임을 반환하거나 새 프레임을 위해 최대 timeout_ms까지 기다립니다.
+    try:
+        for i in range(10):
+            frame = camera.async_read(timeout_ms=200)
+            print(f"async_read call returned frame {i} with shape:", frame.shape)
+    except TimeoutError as e:
+        print(f"No frame received within timeout: {e}")
+
+    # 프레임을 즉시 반환합니다. 카메라가 캡처한 가장 최근 프레임을 반환합니다.
+    try:
+        initial_frame = camera.read_latest(max_age_ms=1000)
+        for i in range(10):
+            frame = camera.read_latest(max_age_ms=1000)
+            print(f"read_latest call returned frame {i} with shape:", frame.shape)
+            print(f"Was a new frame received by the camera? {not (initial_frame == frame).any()}")
+    except TimeoutError as e:
+        print(f"Frame too old: {e}")
+
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+<hfoption id="Intel Realsense Camera">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
+from lerobot.cameras import ColorMode, Cv2Rotation
+
+# 카메라의 일련번호를 지정하고 깊이를 활성화하는 `RealSenseCameraConfig`를 생성합니다.
+config = RealSenseCameraConfig(
+    serial_number_or_name="233522074606",
+    fps=15,
+    width=640,
+    height=480,
+    color_mode=ColorMode.RGB,
+    use_depth=True,
+    rotation=Cv2Rotation.NO_ROTATION
+)
+
+# `RealSenseCamera`를 인스턴스화하고 워밍업 읽기와 함께 연결합니다(기본값).
+camera = RealSenseCamera(config)
+camera.connect()
+
+# `read()`로 컬러 프레임을 캡처하고 `read_depth()`로 깊이 맵을 캡처합니다.
+try:
+    color_frame = camera.read()
+    depth_map = camera.read_depth()
+    print("Color frame shape:", color_frame.shape)
+    print("Depth map shape:", depth_map.shape)
+finally:
+    camera.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+## 휴대폰 카메라 사용
+
+<hfoptions id="use phone">
+<hfoption id="iPhone & macOS">
+
+macOS에서 iPhone을 카메라로 사용하려면 연속성 카메라(Continuity Camera) 기능을 활성화하십시오.
+
+- Mac이 macOS 13 이상을 실행하고 있고, iPhone이 iOS 16 이상을 실행하고 있는지 확인하십시오.
+- 두 장치 모두 동일한 Apple ID로 로그인하십시오.
+- USB 케이블로 장치를 연결하거나, 무선 연결을 위해 Wi-Fi와 Bluetooth를 켜십시오.
+
+자세한 내용은 [Apple support](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac)를 참조하십시오.
+
+</hfoption>
+<hfoption id="OBS virtual camera">
+
+OBS를 사용하여 휴대폰을 카메라로 사용하려면 다음 단계에 따라 가상 카메라(virtual camera)를 설정하십시오.
+
+1. _(Linux만 해당) `v4l2loopback-dkms`와 `v4l-utils`를 설치하십시오_. 이 패키지는 가상 카메라 장치를 생성하고 설정을 확인합니다. 다음 명령어로 설치하십시오.
+
+```bash
+sudo apt install v4l2loopback-dkms v4l-utils
+```
+
+2. _휴대폰에 [DroidCam app](https://droidcam.app)을 설치하십시오_. 이 앱은 iOS와 Android 모두에서 사용할 수 있습니다.
+3. _[OBS Studio](https://obsproject.com)를 다운로드하여 설치하십시오_.
+4. _[DroidCam OBS plugin](https://droidcam.app/obs)을 다운로드하여 설치하십시오_.
+5. _OBS Studio를 시작하십시오_.
+
+6. _휴대폰을 소스로 추가하십시오_. [여기](https://droidcam.app/obs/usage)의 지침을 따르십시오. 워터마크를 피하려면 해상도를 `640x480`으로 설정해야 합니다.
+7. _해상도 설정을 조정하십시오_. OBS Studio에서 `File > Settings > Video` 또는 `OBS > Preferences... > Video`로 이동하십시오. `Base(Canvas) Resolution`과 `Output(Scaled) Resolution`을 직접 입력하여 `640x480`으로 변경하십시오.
+8. _가상 카메라를 시작하십시오_. OBS Studio에서 [여기](https://obsproject.com/kb/virtual-camera-guide)의 지침을 따르십시오.
+9. _가상 카메라 설정과 해상도를 확인하십시오_.
+   - **Linux**: `v4l2-ctl`을 사용하여 장치를 나열하고 해상도를 확인하십시오.
+     ```bash
+     v4l2-ctl --list-devices  # VirtualCam을 찾아 /dev/videoX 경로를 기록합니다.
+     v4l2-ctl -d /dev/videoX --get-fmt-video  # 사용자의 VirtualCam 경로로 바꿉니다.
+     ```
+     목록에 `VirtualCam`이 표시되고 해상도가 `640x480`으로 표시되어야 합니다.
+   - **macOS**: Photo Booth 또는 FaceTime을 열고 입력으로 "OBS Virtual Camera"를 선택하십시오.
+   - **Windows**: 기본 Camera 앱은 가상 카메라를 지원하지 않습니다. 화상 회의 앱(Zoom, Teams)을 사용하거나 `lerobot-find-cameras opencv`를 직접 실행하여 확인하십시오.
+
+<details>
+<summary><strong>문제 해결</strong></summary>
+
+> 가상 카메라 해상도가 올바르지 않습니다.
+
+가상 카메라 소스를 삭제하고 다시 생성하십시오. 생성 후에는 해상도를 변경할 수 없습니다.
+
+> Error reading frame in background thread for OpenCVCamera(X): OpenCVCamera(X) frame width=640 or height=480 do not match configured width=1920 or height=1080.
+
+이 오류는 OBS Virtual Camera가 다시 스케일링했음에도 `1920x1080` 해상도를 광고하기 때문에 발생합니다. 현재 유일한 해결 방법은 `_postprocess_image()`에서 너비와 높이 검사를 주석 처리하는 것입니다.
+
+</details>
+
+</hfoption>
+</hfoptions>
+
+모든 설정이 올바르게 완료되면 휴대폰이 표준 OpenCV 카메라로 표시되며 `OpenCVCamera`와 함께 사용할 수 있습니다.
