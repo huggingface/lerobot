@@ -40,6 +40,7 @@ from .config_lekiwi import LeKiwiClientConfig
 class LeKiwiClient(Robot):
     config_class = LeKiwiClientConfig
     name = "lekiwi_client"
+    arm_action_prefix = "arm_"
 
     def __init__(self, config: LeKiwiClientConfig) -> None:
         require_package("pyzmq", extra="lekiwi", import_name="zmq")

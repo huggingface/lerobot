@@ -1,6 +1,4 @@
-# !/usr/bin/env python
-
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,64 +12,99 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Teleoperate LeKiwi using a keyboard and an optional leader arm.
+
+Run without arguments for a hardware-free demonstration. For a LeKiwi client:
+    uv run examples/lekiwi/teleoperate.py --remote-ip <ip>
+Add --leader-port <serial-port> to combine a standard keyboard and an SO-100/101 leader.
+"""
+
+import argparse
 import time
 
+from lerobot.lerobot_types import RobotAction, RobotObservation
+from lerobot.processor import RobotProcessorPipeline
+from lerobot.processor.converters import robot_action_observation_to_transition, transition_to_robot_action
+from lerobot.processor.hold_joints_processor import HoldUncommandedJointsProcessorStep
+from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
-from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
+from lerobot.teleoperators import Teleoperator
+from lerobot.teleoperators.composite import CompositeTeleoperator
+from lerobot.teleoperators.keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so_leader import SO100Leader, SO100LeaderConfig
-from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
-
-FPS = 30
 
 
-def main():
-    # Create the robot and teleoperator configurations
-    robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="my_lekiwi")
-    teleop_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
-    keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
+def make_pipeline(
+    joint_names: tuple[str, ...],
+) -> RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]:
+    return RobotProcessorPipeline(
+        steps=[KeyboardToBaseActionProcessorStep(), HoldUncommandedJointsProcessorStep(joint_names)],
+        to_transition=robot_action_observation_to_transition,
+        to_output=transition_to_robot_action,
+    )
 
-    # Initialize the robot and teleoperator
-    robot = LeKiwiClient(robot_config)
-    leader_arm = SO100Leader(teleop_arm_config)
-    keyboard = KeyboardTeleop(keyboard_config)
 
-    # Connect to the robot and teleoperator
-    # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
-    robot.connect()
-    leader_arm.connect()
-    keyboard.connect()
+def demonstrate() -> None:
+    pipeline = make_pipeline(("arm_shoulder.pos", "arm_gripper.pos"))
+    samples = [
+        ("Keyboard only", {"w": None}, {"arm_shoulder.pos": 10.0, "arm_gripper.pos": 30.0}),
+        ("Hold initial pose despite measurement drift", {"w": None}, {"arm_shoulder.pos": 9.0}),
+        ("Leader command survives keyboard mapping", {"w": None, "arm_shoulder.pos": 20.0}, {}),
+        ("Released keyboard stops base", {"arm_shoulder.pos": 20.0}, {}),
+    ]
+    for description, action, observation in samples:
+        print(f"{description}:\n  {pipeline((action, observation))}")
 
-    # Init rerun viewer
-    init_rerun(session_name="lekiwi_teleop")
 
-    if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
-        raise ValueError("Robot or teleop is not connected!")
+def teleoperate(remote_ip: str, leader_port: str | None, fps: int) -> None:
+    robot = LeKiwiClient(LeKiwiClientConfig(remote_ip=remote_ip, id="my_lekiwi"))
+    keyboard = KeyboardTeleop(KeyboardTeleopConfig(id="my_keyboard"))
+    teleop: Teleoperator = keyboard
+    if leader_port:
+        leader = SO100Leader(SO100LeaderConfig(port=leader_port, id="my_leader"))
+        teleop = CompositeTeleoperator([(keyboard, ""), (leader, "arm_")])
+    pipeline = make_pipeline(tuple(key for key in robot.action_features if key.endswith(".pos")))
 
-    print("Starting teleop loop...")
-    while True:
-        t0 = time.perf_counter()
+    try:
+        robot.connect()
+        teleop.connect()
+        pipeline.reset()
+        while keyboard.is_connected:
+            start = time.perf_counter()
+            observation = robot.get_observation()
+            raw_action = teleop.get_action(observation=observation)
+            action = pipeline((raw_action, observation))
+            robot.send_action(action)
+            time.sleep(max(0.0, 1.0 / fps - (time.perf_counter() - start)))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            if robot.is_connected:
+                robot.send_action({"x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0})
+        finally:
+            try:
+                if teleop.is_connected:
+                    teleop.disconnect()
+            finally:
+                if robot.is_connected:
+                    robot.disconnect()
 
-        # Get robot observation
-        observation = robot.get_observation()
 
-        # Get teleop action
-        # Arm
-        arm_action = leader_arm.get_action()
-        arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-        # Keyboard
-        keyboard_keys = keyboard.get_action()
-        base_action = robot._from_keyboard_to_base_action(keyboard_keys)
-
-        action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-
-        # Send action to robot
-        _ = robot.send_action(action)
-
-        # Visualize
-        log_rerun_data(observation=observation, action=action)
-
-        precise_sleep(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--remote-ip")
+    parser.add_argument("--leader-port")
+    parser.add_argument("--fps", type=int, default=30)
+    args = parser.parse_args()
+    if args.fps <= 0:
+        parser.error("--fps must be positive")
+    if args.leader_port and not args.remote_ip:
+        parser.error("--leader-port requires --remote-ip")
+    if args.remote_ip:
+        teleoperate(args.remote_ip, args.leader_port, args.fps)
+    else:
+        demonstrate()
 
 
 if __name__ == "__main__":

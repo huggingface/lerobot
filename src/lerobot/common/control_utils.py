@@ -175,6 +175,9 @@ def sanity_check_dataset_robot_compatibility(
 class ActuatedTeleoperator(Protocol):
     """A teleoperator whose arm can be driven: position feedback plus torque control."""
 
+    @property
+    def feedback_features(self) -> dict[str, Any]: ...
+
     def get_action(self, observation: dict[str, Any] | None = None) -> RobotAction: ...
 
     def send_feedback(self, feedback: dict[str, Any]) -> None: ...
@@ -189,11 +192,13 @@ def teleop_supports_feedback(teleop: Teleoperator) -> TypeGuard[ActuatedTeleoper
 
     Actuated teleops (e.g. SO-101, OpenArmMini) have non-empty ``feedback_features``
     and expose ``enable_torque`` / ``disable_torque`` motor-control methods.
+    Composites can opt out via ``supports_position_feedback`` when a child is not actuated.
 
     TODO(Maxime): See if it is possible to unify this interface across teleops instead of duck-typing.
     """
     return (
         bool(teleop.feedback_features)
+        and getattr(teleop, "supports_position_feedback", True)
         and hasattr(teleop, "disable_torque")
         and hasattr(teleop, "enable_torque")
     )
@@ -220,7 +225,9 @@ def teleop_smooth_move_to(
     follower robot does not receive new actions, which could be an issue on LeKiwi.
     """
     teleop.enable_torque()
-    current = teleop.get_action(observation=observation)
+    raw_action = teleop.get_action() if observation is None else teleop.get_action(observation=observation)
+    # A generic composite may also expose raw keys or base controls; only actuate feedback channels.
+    current = {key: value for key, value in raw_action.items() if key in teleop.feedback_features}
     steps = max(int(duration_s * fps), 1)
 
     for step in range(steps + 1):

@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.datasets import LeRobotDataset
 from lerobot.processor import make_default_processors
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
@@ -78,6 +79,10 @@ def main():
             make_default_processors()
         )
 
+        teleop, teleop_action_processor = make_mobile_teleop(
+            robot, keyboard, leader_arm, action_processor=teleop_action_processor
+        )
+
         print("Starting record loop...")
         recorded_episodes = 0
         while recorded_episodes < NUM_EPISODES and not events["stop_recording"]:
@@ -92,7 +97,7 @@ def main():
                 robot_action_processor=robot_action_processor,
                 robot_observation_processor=robot_observation_processor,
                 dataset=dataset,
-                teleop=[leader_arm, keyboard],
+                teleop=teleop,
                 control_time_s=EPISODE_TIME_SEC,
                 single_task=TASK_DESCRIPTION,
                 display_data=True,
@@ -110,7 +115,7 @@ def main():
                     teleop_action_processor=teleop_action_processor,
                     robot_action_processor=robot_action_processor,
                     robot_observation_processor=robot_observation_processor,
-                    teleop=[leader_arm, keyboard],
+                    teleop=teleop,
                     control_time_s=RESET_TIME_SEC,
                     single_task=TASK_DESCRIPTION,
                     display_data=True,

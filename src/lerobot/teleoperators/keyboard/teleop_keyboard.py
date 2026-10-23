@@ -68,7 +68,7 @@ class KeyboardTeleop(Teleoperator):
     @property
     def action_features(self) -> dict:
         # Pressed keys have no static feature layout; subclasses with a fixed action space override this.
-        raise NotImplementedError(f"{self.__class__.__name__} exposes no static action features.")
+        return {}
 
     @property
     def feedback_features(self) -> dict:
@@ -85,6 +85,9 @@ class KeyboardTeleop(Teleoperator):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
+        self.current_pressed.clear()
+        while not self.event_queue.empty():
+            self.event_queue.get_nowait()
         if PYNPUT_AVAILABLE and pynput_can_capture():
             logging.info("pynput is available - enabling local keyboard listener.")
             self.listener = keyboard.Listener(
@@ -127,8 +130,9 @@ class KeyboardTeleop(Teleoperator):
     def configure(self):
         pass
 
-    @check_if_not_connected
     def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
+        if not self.is_connected:
+            return {}
         before_read_t = time.perf_counter()
 
         self._drain_pressed_keys()

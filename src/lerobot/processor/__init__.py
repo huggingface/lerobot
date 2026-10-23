@@ -66,7 +66,9 @@ from .hil_processor import (
     RewardClassifierProcessorStep,
     TimeLimitProcessorStep,
 )
+from .hold_joints_processor import HoldUncommandedJointsProcessorStep
 from .image_augmentation_processor import ImageAugmentationProcessorStep
+from .keyboard_base_processor import KeyboardToBaseActionProcessorStep
 from .newline_task_processor import NewLineTaskProcessorStep
 from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
 from .observation_processor import VanillaObservationProcessorStep
@@ -104,6 +106,8 @@ from .render_messages_processor import RenderRuntimeMessagesStep, RenderTraining
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
 __all__ = [
+    "HoldUncommandedJointsProcessorStep",
+    "KeyboardToBaseActionProcessorStep",
     "ActionProcessorStep",
     "AddTeleopActionAsComplimentaryDataStep",
     "AddTeleopEventsAsInfoStep",

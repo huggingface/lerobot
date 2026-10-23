@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.datasets import (
     LeRobotDataset,
@@ -324,7 +325,9 @@ def _disconnect_setup_hardware(robot: Robot, teleop: Teleoperator | None) -> Non
             logger.exception("Could not close %s after rollout setup failed", name)
 
 
-def _connect_rollout_hardware(cfg: RolloutConfig, *, require_hold: bool = False) -> HardwareContext:
+def _connect_rollout_hardware(
+    cfg: RolloutConfig, processors: ProcessorContext, *, require_hold: bool = False
+) -> HardwareContext:
     """Connect devices and capture the initial pose after policy/descriptor validation."""
     if cfg.robot is None:
         raise ValueError("--robot.type is required for rollout")
@@ -341,8 +344,17 @@ def _connect_rollout_hardware(cfg: RolloutConfig, *, require_hold: bool = False)
         initial_position = {key: value for key, value in initial_obs.items() if key.endswith(".pos")}
         logger.info("Captured initial robot position (%d keys)", len(initial_position))
         if cfg.teleop is not None:
-            logger.info("Connecting teleoperator (%s)...", cfg.teleop.type)
             teleop = make_teleoperator_from_config(cfg.teleop)
+        if cfg.base_teleop is not None:
+            teleop, processors.teleop_action_processor = make_mobile_teleop(
+                robot,
+                base=make_teleoperator_from_config(cfg.base_teleop),
+                arm=teleop,
+                keyboard_mapping=cfg.base_mapping,
+                action_processor=processors.teleop_action_processor,
+            )
+        if teleop is not None:
+            logger.info("Connecting teleoperator (%s)...", teleop.name)
             teleop.connect()
             logger.info("Teleoperator connected")
         return HardwareContext(wrapper, teleop, initial_position)
@@ -505,7 +517,7 @@ def build_rollout_context(
     processors = _resolve_robot_processors(
         teleop_action_processor, robot_action_processor, robot_observation_processor
     )
-    hardware = _connect_rollout_hardware(cfg)
+    hardware = _connect_rollout_hardware(cfg, processors)
     robot_wrapper = hardware.robot_wrapper
     robot = robot_wrapper.inner
 
@@ -722,7 +734,7 @@ def build_remote_rollout_context(
         processors = _resolve_robot_processors(
             teleop_action_processor, robot_action_processor, robot_observation_processor
         )
-        hardware = _connect_rollout_hardware(cfg, require_hold=True)
+        hardware = _connect_rollout_hardware(cfg, processors, require_hold=True)
         wrapper = hardware.robot_wrapper
         robot = wrapper.inner
 
