@@ -80,12 +80,13 @@ lerobot-teleoperate \
 
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pprint import pformat
 
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
+from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs import parser
 from lerobot.processor import (
     RobotAction,
@@ -93,6 +94,7 @@ from lerobot.processor import (
     RobotProcessorPipeline,
     make_default_processors,
 )
+from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -134,7 +136,6 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.teleoperators.mobile_base import make_mobile_base_teleop
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging, move_cursor_up
@@ -153,6 +154,10 @@ class TeleoperateConfig:
     # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard`, alongside `teleop`
     # for the arms. Without `teleop`, the arms hold the position they had when teleoperation started.
     base_teleop: TeleoperatorConfig | None = None
+    # Keyboard-to-base mapping, applied in the action pipeline when base_teleop is a raw keyboard.
+    base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
+    # With base-only control, hold other joints at their first measured positions.
+    hold_uncommanded: bool = True
     # Limit the maximum frames per second.
     fps: int = 60
     teleop_time_s: float | None = None
@@ -287,14 +292,21 @@ def teleoperate(cfg: TeleoperateConfig):
 
     robot = make_robot_from_config(cfg.robot)
     check_control_rate(robot, cfg.fps, "--fps")
+    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
     teleop: Teleoperator
     if cfg.base_teleop is not None:
         arm = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
-        teleop = MobileBaseTeleop(robot, base=make_teleoperator_from_config(cfg.base_teleop), arm=arm)
+        teleop, teleop_action_processor = make_mobile_teleop(
+            robot,
+            base=make_teleoperator_from_config(cfg.base_teleop),
+            arm=arm,
+            keyboard_mapping=cfg.base_mapping,
+            hold_uncommanded=cfg.hold_uncommanded,
+            action_processor=teleop_action_processor,
+        )
     else:
-        assert cfg.teleop is not None  # enforced by TeleoperateConfig.__post_init__
+        assert cfg.teleop is not None
         teleop = make_teleoperator_from_config(cfg.teleop)
-    teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     teleop.connect()
     robot.connect()

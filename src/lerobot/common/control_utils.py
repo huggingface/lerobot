@@ -179,9 +179,10 @@ def sanity_check_dataset_robot_compatibility(
 class ActuatedTeleoperator(Protocol):
     """A teleoperator whose arm can be driven: position feedback plus torque control."""
 
-    def on_observation(self, observation: dict[str, Any]) -> None: ...
+    @property
+    def feedback_features(self) -> dict[str, Any]: ...
 
-    def get_action(self) -> RobotAction: ...
+    def get_action(self, observation: dict[str, Any] | None = None) -> RobotAction: ...
 
     def send_feedback(self, feedback: dict[str, Any]) -> None: ...
 
@@ -228,7 +229,9 @@ def teleop_smooth_move_to(
     follower robot does not receive new actions, which could be an issue on LeKiwi.
     """
     teleop.enable_torque()
-    current = teleop.get_action(observation=observation)
+    raw_action = teleop.get_action() if observation is None else teleop.get_action(observation=observation)
+    # A generic composite may also expose raw keys or base controls; only actuate feedback channels.
+    current = {key: value for key, value in raw_action.items() if key in teleop.feedback_features}
     steps = max(int(duration_s * fps), 1)
 
     for step in range(steps + 1):

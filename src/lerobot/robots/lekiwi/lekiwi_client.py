@@ -16,7 +16,6 @@
 
 import json
 import logging
-from collections.abc import Iterable
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -85,11 +84,6 @@ class LeKiwiClient(Robot):
 
         self._is_connected = False
         self.logs: dict[str, float] = {}
-
-    @property
-    def legacy_keyboard_bindings(self) -> dict[str, str]:
-        """Expose legacy controls for teleoperator-side keyboard mapping."""
-        return self.config.teleop_keys
 
     @cached_property
     def _state_ft(self) -> dict[str, type]:
@@ -292,10 +286,7 @@ class LeKiwiClient(Robot):
 
         return obs_dict
 
-    def from_keyboard_to_base_action(
-        self, pressed_keys: Iterable[str], observation: RobotObservation | None = None
-    ) -> RobotAction:
-        """Maps the keys pressed on a plain ``keyboard`` teleoperator to a base velocity command."""
+    def _from_keyboard_to_base_action(self, pressed_keys: np.ndarray):
         # Speed control
         if self.teleop_keys["speed_up"] in pressed_keys:
             self.speed_index = min(self.speed_index + 1, 2)
@@ -326,9 +317,6 @@ class LeKiwiClient(Robot):
             "y.vel": y_cmd,
             "theta.vel": theta_cmd,
         }
-
-    # Kept for scripts written against the former private name.
-    _from_keyboard_to_base_action = from_keyboard_to_base_action
 
     def configure(self) -> None:
         pass
