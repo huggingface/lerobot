@@ -7,6 +7,18 @@ import sys
 from pathlib import Path
 
 
+def verify_checkpoint_alias(root: Path):
+    """Retain the frozen checkpoint path check from the wrapper's real cwd."""
+    frozen = root.parent / "release-195fps-verified/DROID-W/pretrained/droid.pth"
+    mounted = root.parents[2] / "workspace/hand-assets/camera/droid.pth"
+    # Job assets are intentionally absent at image build time. resolve() checks
+    # the symlink chain without loading or distributing any checkpoint bytes.
+    if (root / "pretrained/droid.pth").resolve() != frozen.resolve():
+        raise RuntimeError("MoGe-on wrapper does not resolve the frozen DROID checkpoint")
+    if frozen.resolve() != mounted.resolve():
+        raise RuntimeError("Frozen DROID checkpoint does not resolve the Job asset mount")
+
+
 def main():
     """Import the actual camera bootstrap or concrete hand inference entry points."""
     import torch
@@ -16,6 +28,7 @@ def main():
     if sys.argv[1] == "camera":
         os.environ.update(DROIDW_LEAN_STARTUP="1", MPLBACKEND="Agg")
         root = Path("/opt/hand-camera/DROID-on")
+        verify_checkpoint_alias(root)
         sys.path.insert(0, str(root))
         # The frozen bootstrap installs its wrappers at import time. A distinct
         # run name leaves the socket service, model loading and inference idle.

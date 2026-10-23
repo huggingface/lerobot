@@ -37,6 +37,7 @@ RUN for source in /opt/hand-camera/release-195fps-verified/DROID-W/*; do \
     && mkdir -p /opt/hand-camera/moge-joint-vio/weights \
     && ln -s /workspace/hand-assets/camera/moge-small.pt /opt/hand-camera/moge-joint-vio/weights/small.pt \
     && ln -s /workspace/hand-assets/camera /opt/hand-camera/release-195fps-verified/DROID-W/pretrained \
+    && ln -s /opt/hand-camera/release-195fps-verified/DROID-W/pretrained /opt/hand-camera/DROID-on/pretrained \
     && ln -s /workspace/hand-cache/camera-artifacts /opt/hand-camera/speed-round24/artifacts
 RUN rm -rf /opt/hand-camera/release-195fps-verified/DROID-W/build \
     /opt/hand-camera/release-195fps-verified/DROID-W/thirdparty/lietorch/build /tmp/*.tar.gz
