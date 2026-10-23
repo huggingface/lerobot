@@ -31,11 +31,19 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from huggingface_hub import snapshot_download
 
-from lerobot.utils.import_utils import _datasets_available, _transformers_available, require_package
+from lerobot.utils.import_utils import (
+    _datasets_available,
+    _scipy_available,
+    _transformers_available,
+    require_package,
+)
 
 if TYPE_CHECKING or _transformers_available:
+    from tokenizers.pre_tokenizers import ByteLevel
     from transformers import AutoProcessor
     from transformers.dynamic_module_utils import get_class_from_dynamic_module
+if TYPE_CHECKING or _scipy_available:
+    from scipy.fft import dct
 # pyarrow ships with the dataset extra; tokenizer fitting reads training parquet shards.
 if TYPE_CHECKING or _datasets_available:
     import pyarrow as pa
@@ -95,9 +103,31 @@ def _dataset_signature(
         "validation_samples": validation_samples,
         "max_reconstruction_rmse": max_reconstruction_rmse,
         "max_dim_rmse": max_dim_rmse,
+        "complete_byte_alphabet": True,
     }
     encoded = json.dumps(_jsonable(payload), sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def _complete_byte_alphabet(fitted: Any, actions: np.ndarray) -> None:
+    """Keep held-out DCT coefficients lossless at the BPE text encoding boundary."""
+    tokenizer = getattr(fitted, "bpe_tokenizer", None)
+    if tokenizer is None or not hasattr(tokenizer, "train_new_from_iterator"):
+        return
+    require_package("scipy", extra="fineart_vla")
+    require_package("transformers", extra="fineart_vla")
+    # FAST's observed character alphabet can omit UTF-8 bytes. The byte decoder then
+    # silently drops unseen coefficients or replaces them with U+FFFD during inference.
+    coefficients = np.around(dct(actions, axis=1, norm="ortho") * fitted.scale)
+    texts = (
+        "".join(map(chr, np.maximum(row.flatten() - fitted.min_token, 0).astype(int))) for row in coefficients
+    )
+    fitted.bpe_tokenizer = tokenizer.train_new_from_iterator(
+        texts,
+        vocab_size=fitted.vocab_size,
+        initial_alphabet=ByteLevel.alphabet(),
+        max_token_length=10000,
+    )
 
 
 def _select_episode_indices(
@@ -446,6 +476,7 @@ def fit_fast_tokenizer(
     fit_actions = actions[:n_samples]
     validation_actions = actions[n_samples:total_samples]
     fitted = base.fit(fit_actions)
+    _complete_byte_alphabet(fitted, fit_actions)
     validation_report, decoded_actions = _validate_fast_reconstruction(
         fitted,
         validation_actions,

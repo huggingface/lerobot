@@ -1,0 +1,179 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+name: Model Profiling
+
+on:
+  schedule:
+    # Sunday night into Monday, including daylight-saving changes.
+    - cron: "0 1 * * 1"
+      timezone: Europe/Paris
+  workflow_dispatch:
+    inputs:
+      policies:
+        description: Comma-separated policies (empty profiles every registered policy)
+        type: string
+        default: ""
+      mode:
+        description: Operations to profile
+        type: choice
+        options: [both, inference, training]
+        default: both
+      trace:
+        description: Collect a separate Torch trace after measuring latency
+        type: boolean
+        default: false
+      runner_group:
+        description: Runner group (empty uses MODEL_PROFILING_RUNNER_GROUP or the L4 default)
+        type: string
+        default: ""
+      gradient_checkpointing:
+        description: Enable native gradient checkpointing where supported; record as a separate setup
+        type: boolean
+        default: false
+      notify_slack:
+        description: Post the compact report to the existing CI Slack channel (automatic for weekly runs)
+        type: boolean
+        default: false
+      publish_latest:
+        description: Publish latest archived measurements without running GPUs; retain each source run
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-profiling-${{ github.ref }}-${{ inputs.runner_group || vars.MODEL_PROFILING_RUNNER_GROUP || 'aws-g6-4xlarge-plus' }}-${{ inputs.gradient_checkpointing || false }}-${{ inputs.publish_latest && 'publish' || 'profile' }}
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      policies: ${{ steps.matrix.outputs.policies }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - id: matrix
+        env:
+          POLICIES: ${{ inputs.policies }}
+        run: echo "policies=$(python3 scripts/ci/model_profiling.py matrix)" >> "$GITHUB_OUTPUT"
+
+  profile:
+    if: ${{ !inputs.publish_latest }}
+    needs: matrix
+    runs-on:
+      group: ${{ inputs.runner_group || vars.MODEL_PROFILING_RUNNER_GROUP || 'aws-g6-4xlarge-plus' }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.matrix.outputs.policies) }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Profile inference and training in an isolated environment
+        env:
+          POLICY: ${{ matrix.policy }}
+          EXTRA: ${{ matrix.extra }}
+          MODE: ${{ inputs.mode || 'both' }}
+          TRACE: ${{ inputs.trace || 'false' }}
+          GRADIENT_CHECKPOINTING: ${{ inputs.gradient_checkpointing || 'false' }}
+          HF_TOKEN: ${{ secrets.LEROBOT_HF_USER }}
+          PROFILE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 scripts/ci/model_profiling.py init --policy "$POLICY"
+          docker run --rm --gpus all --shm-size=16g \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e HF_HOME=/tmp/huggingface \
+            -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e UV_CACHE_DIR=/tmp/uv \
+            -e HF_TOKEN -e POLICY -e EXTRA -e MODE -e TRACE -e GRADIENT_CHECKPOINTING -e PROFILE_RUN_URL \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
+            huggingface/lerobot-gpu:latest bash -euo pipefail -c '
+              extras=(--extra training)
+              if [[ -n "$EXTRA" ]]; then extras+=(--extra "$EXTRA"); fi
+              uv sync --locked "${extras[@]}"
+              if [[ "$POLICY" == flux3 ]]; then
+                uv pip install --python /tmp/venv/bin/python --no-deps \
+                  "natten==0.21.6+torch2110cu128" --find-links https://whl.natten.org
+              fi
+              uv run --no-sync python scripts/ci/model_profiling.py run \
+                --policy "$POLICY" --profile_mode="$MODE" --trace="$TRACE" \
+                --gradient-checkpointing="$GRADIENT_CHECKPOINTING"
+            '
+      - name: Upload results even when profiling fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: model-profiling-${{ matrix.policy }}-${{ github.run_attempt }}
+          path: profiling-results/
+          if-no-files-found: warn
+
+  publish:
+    if: always() && !cancelled() && needs.matrix.result == 'success'
+    needs: [matrix, profile]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: ${{ !inputs.publish_latest }}
+        with:
+          pattern: model-profiling-*-${{ github.run_attempt }}
+          path: profiling-results
+          merge-multiple: true
+      - name: Publish job summary
+        id: report
+        env:
+          POLICIES: ${{ inputs.policies }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PROFILE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PUBLISH_LATEST: ${{ inputs.publish_latest || 'false' }}
+        run: |
+          python3 scripts/ci/model_profiling.py summary --compare-history \
+            --publish-latest="$PUBLISH_LATEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "passed=$(jq '[.[] | select(.status == "success")] | length' profiling-results/results.json)" >> "$GITHUB_OUTPUT"
+          echo "total=$(jq 'length' profiling-results/results.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: model-profiling-report-${{ github.run_attempt }}
+          path: |
+            profiling-results/results.json
+            profiling-results/README.md
+            profiling-results/comparison.json
+            profiling-results/slack.json
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        if: ${{ !inputs.publish_latest }}
+      - name: Preserve report history in the public dashboard
+        if: ${{ !inputs.publish_latest }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HF_TOKEN: ${{ secrets.MODEL_PROFILING_HF_TOKEN || secrets.LEROBOT_HF_USER }}
+          PROFILE_SPACE: ${{ vars.MODEL_PROFILING_SPACE || 'lerobot/health-dashboard' }}
+        run: |
+          report=$(python3 scripts/ci/model_profiling.py archive)
+          uvx --from huggingface-hub==1.24.0 hf upload "$PROFILE_SPACE" "$report" \
+            "data/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --repo-type space \
+            --commit-message "Preserve profiling run ${GITHUB_RUN_ID}, attempt ${GITHUB_RUN_ATTEMPT}"
+      - name: Link check results to the public dashboard
+        if: ${{ !cancelled() && steps.report.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input profiling-results/status.json > /dev/null
+      - name: Post weekly results to Slack
+        if: ${{ !cancelled() && steps.report.outcome == 'success' && (github.event_name == 'schedule' || inputs.notify_slack) }}
+        uses: slackapi/slack-github-action@6c661ce58804a1a20f6dc5fbee7f0381b469e001 # same action as hf-workflows/post-slack
+        with:
+          channel-id: ${{ secrets.CI_SLACK_CHANNEL }}
+          payload-file-path: profiling-results/slack.json
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
