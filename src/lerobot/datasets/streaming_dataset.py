@@ -50,6 +50,7 @@ from .streaming_sidecar import (
 from .utils import (
     check_version_compatibility,
     delta_window,
+    frame_indices_to_timestamps,
     resolve_episode_indices,
     shift_timestamps,
     task_name,
@@ -828,7 +829,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
         # before row lookup so action/state windows cannot decode unrelated images.
         column_keys = set(self.delta_indices or ()) - set(self.meta.video_keys)
         if self.meta.video_keys:
-            column_keys.add("timestamp")
+            # Both columns are used by video addressing and its consistency check.
+            column_keys.update(("frame_index", "timestamp"))
         return _EpisodeData(
             dataset=dataset,
             columns={key: dataset.select_columns(key) for key in sorted(column_keys) if key not in numeric},
@@ -904,9 +906,19 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset[dict[str, Any]]):
                 raise RuntimeError("Video dataset streaming requires an episode byte cache")
             for video_key in self.meta.video_keys:
                 target_indices = windows.get(video_key, [frame_index])
-                local_timestamps = [
-                    float(timestamp) for timestamp in episode_data.column_values("timestamp", target_indices)
+                local_frame_indices = [
+                    int(stored_frame_index)
+                    for stored_frame_index in episode_data.column_values("frame_index", target_indices)
                 ]
+                local_timestamps = frame_indices_to_timestamps(
+                    local_frame_indices,
+                    self.fps,
+                    stored_timestamps=[
+                        float(timestamp)
+                        for timestamp in episode_data.column_values("timestamp", target_indices)
+                    ],
+                    tolerance_s=self.tolerance_s,
+                )
                 query_timestamps = shift_timestamps(
                     local_timestamps, episode_data.video_from_timestamps[video_key]
                 )
