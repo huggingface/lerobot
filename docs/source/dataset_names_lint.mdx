@@ -1,0 +1,34 @@
+# Check dataset channel names
+
+LeRobot's numeric feature names can declare which joint or sensor channel each
+value represents. Run the **non-blocking**, opt-in metadata check against a
+local dataset (with LeRobot's `dataset` extra installed):
+
+```bash
+python -m lerobot.datasets.names_lint /path/to/dataset
+```
+
+The command reads `meta/info.json` and writes a machine-readable report at
+`meta/names_lint.json`. You can instead pass `meta/info.json` directly and
+choose `--output /path/to/report.json`.
+
+The JSON contains `schema_version`, `issue_count`, `warnings_by_code`,
+`feature_classes`, and an `issues` array with details. The feature classes
+include `count_match`, `absent`, `possible_whole_vector`, `empty_declaration`,
+`mismatch`, `unsupported`, and explicit `*_excluded` categories.
+
+The count check applies to **1D numeric non-bookkeeping** features only.
+Image/video fields use axis names (`height`, `width`, `channels`) rather than
+scalar channel names. Multidimensional arrays can use axis names or last-axis
+names; they are classified as out of scope, avoiding misleading warnings.
+A single label on a larger vector can denote the _whole vector_ rather than
+an incomplete list; it is reported as `possible_whole_vector` rather than an
+error. Name-to-index mappings and nested group/list representations are
+supported. A `count_match` only means that the _number_ of names matches the
+shape; it does not prove that the names are semantically correct.
+
+The command exits successfully even with warnings. It never rewrites
+`meta/info.json`, rejects existing datasets, changes dataset loading, or blocks
+Hub uploads. CI can retain the JSON file as a build artifact.
+
+An output path that aliases the input metadata is rejected to preserve the source.
