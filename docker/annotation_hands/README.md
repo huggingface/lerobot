@@ -3,7 +3,8 @@
 This image runs EgoHand/SOMA with DROID-W + MoGe on HF Jobs. The controller,
 camera and hand workers use isolated environments because their PyTorch/CUDA
 versions differ. The image installs precompiled camera wheels; it needs no CUDA
-compiler or model weights at build time.
+compiler. Model assets are embedded during the image build using public upstream
+downloads and the frozen manifest, so Jobs need no model-repository login.
 
 ## Build context
 
@@ -17,6 +18,10 @@ Use this directory with the operator's immutable runtime artifacts:
 - `camera-wheels/build.json` and `camera-wheels/wheels/*.whl`: CPU-built LieTorch
   and DROID operators for Python 3.10, with SM80/SM90/SM120 support.
 - `image-version.json`: source, wheel and manifest checksums.
+- `model-assets/`: the frozen `assets.json`, notices, camera support files and
+  model files small enough to keep in the Space repository. Large upstream
+  downloads are pinned in `model-sources.json`. The build strips EgoHand's
+  optimizer/trainer state and requires byte-identical inference weights.
 
 ```bash
 docker build -t annotation-hands docker/annotation_hands
@@ -31,9 +36,9 @@ checkpoint and TensorRT paths. Both camera compilation and inference require
 
 Pin the built image's HF Space revision and `image-version.json` checksum in
 Studio's `hand-worker-image.json`. Also pin the model release revision and
-`assets.json` checksum. Publish the checksummed model package in the public worker
-Space and set the asset profile's `repo_type` to `space`. Model files are fetched
-anonymously; native inference then runs offline. The user's HF login is needed
+`assets.json` checksum. Publish this build context in the public worker Space and
+set the asset profile's `embedded` flag. Jobs use the preinstalled, checksummed
+assets and native inference runs offline. The user's HF login is needed
 for Jobs and private datasets. Preserve upstream terms
 and notices when preparing the runtime and model releases.
 

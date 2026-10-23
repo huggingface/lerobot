@@ -279,6 +279,24 @@ def test_corrupt_models_fail_before_loading(tmp_path, monkeypatch):
         verify_assets(config)
 
 
+def test_embedded_asset_release_uses_no_hub_access(tmp_path, monkeypatch):
+    document, config = asset_fixture(tmp_path)
+    download = Mock(side_effect=AssertionError("Embedded assets must not contact the Hub"))
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", download)
+    monkeypatch.setattr("huggingface_hub.snapshot_download", download)
+    profile = {
+        "embedded": True,
+        "repo": "public/worker",
+        "revision": "a" * 40,
+        "manifest_sha256": config.assets_sha256,
+    }
+    assert download_release(profile, "job-token", tmp_path)["files"] == len(document["files"])
+    download.assert_not_called()
+    profile["manifest_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="manifest changed"):
+        download_release(profile, None, tmp_path)
+
+
 def test_request_process_supports_out_of_order_replies_and_owned_cleanup(tmp_path):
     program = tmp_path / "worker.py"
     program.write_text("""import concurrent.futures,json,sys,time

@@ -45,6 +45,11 @@ RUN for source in /opt/hand-camera/release-195fps-verified/DROID-W/*; do \
 RUN rm -rf /opt/hand-camera/release-195fps-verified/DROID-W/build \
     /opt/hand-camera/release-195fps-verified/DROID-W/thirdparty/lietorch/build /tmp/*.tar.gz
 
+FROM build AS models
+COPY model-assets/ /model-assets/
+COPY model-sources.json build_model_assets.py /opt/hand-worker/
+RUN /opt/egohand/bin/python /opt/hand-worker/build_model_assets.py /model-assets /opt/hand-worker/model-sources.json
+
 FROM base AS runtime
 COPY --from=build /opt/uv-python /opt/uv-python
 COPY --from=build /opt/droid /opt/droid
@@ -68,6 +73,9 @@ RUN if ! getent passwd 1000 >/dev/null; then useradd -m -u 1000 user; fi \
     && mkdir -p /workspace /home/user/.cache && chown -R 1000:1000 /workspace /home/user
 USER 1000
 WORKDIR /workspace
+COPY --from=models --chown=1000:1000 /model-assets /workspace/hand-assets
+COPY model-sources.json build_model_assets.py /opt/hand-worker/
+RUN python /opt/hand-worker/build_model_assets.py /workspace/hand-assets /opt/hand-worker/model-sources.json --verify-only
 RUN python /opt/hand-worker/verify_runtime_imports.py all
 EXPOSE 7860
 CMD ["python", "/opt/hand-worker/health.py"]

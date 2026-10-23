@@ -11,7 +11,11 @@ class Health(BaseHTTPRequestHandler):
     def do_GET(self):
         """Serve the immutable build receipt."""
         payload = json.loads(Path("/opt/hand-worker/image-version.json").read_text())
-        payload.update(status="ready", inference_tested=False, models_embedded=False)
+        payload.update(
+            status="ready",
+            inference_tested=False,
+            models_embedded=payload.get("build", {}).get("model_weights_embedded", False),
+        )
         data = json.dumps(payload).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

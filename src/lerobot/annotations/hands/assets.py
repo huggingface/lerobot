@@ -45,7 +45,7 @@ def verify_assets(config: HandBackendConfig) -> dict:
 
 
 def download_release(profile: dict, token: str | None, root: Path) -> dict:
-    """Download public immutable assets without forwarding the caller's Job token."""
+    """Use embedded or public immutable assets without forwarding the Job token."""
     from huggingface_hub import hf_hub_download, snapshot_download
 
     # Keep the token argument for existing callers. Asset distribution is public;
@@ -55,7 +55,10 @@ def download_release(profile: dict, token: str | None, root: Path) -> dict:
         "revision": profile["revision"],
         "token": False,
     }
-    manifest = Path(hf_hub_download(profile["repo"], "assets.json", **options))
+    embedded = profile.get("embedded") is True
+    manifest = (
+        root / "assets.json" if embedded else Path(hf_hub_download(profile["repo"], "assets.json", **options))
+    )
     if file_checksum(manifest)[0] != profile["manifest_sha256"]:
         raise ValueError("The hand asset release manifest changed")
     document = json.loads(manifest.read_text())
@@ -64,14 +67,15 @@ def download_release(profile: dict, token: str | None, root: Path) -> dict:
         name = Path(entry["path"])
         if name.is_absolute() or ".." in name.parts or "mano" in name.name.lower():
             raise ValueError("Unexpected file in the native hand release")
-    snapshot_download(
-        profile["repo"],
-        **options,
-        local_dir=root,
-        allow_patterns=[entry["path"] for entry in document["files"]],
-        max_workers=16,
-    )
-    (root / "assets.json").write_bytes(manifest.read_bytes())
+    if not embedded:
+        snapshot_download(
+            profile["repo"],
+            **options,
+            local_dir=root,
+            allow_patterns=[entry["path"] for entry in document["files"]],
+            max_workers=16,
+        )
+        (root / "assets.json").write_bytes(manifest.read_bytes())
     return {
         "release_revision": profile["revision"],
         "manifest_sha256": profile["manifest_sha256"],
