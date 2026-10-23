@@ -1,0 +1,111 @@
+# Export Policies to ONNX
+
+Trained policies don't have to stay in Python. Exporting a policy to [ONNX](https://onnx.ai/) lets you run
+inference with fast, dependency-light runtimes (onnxruntime, TensorRT, OpenVINO, …) on edge devices, robots
+without a full Python stack, or production services where you want hardware-accelerated inference without
+PyTorch installed.
+
+This guide shows how to export a policy to ONNX and verify the exported graph against PyTorch. We use
+[ACT](https://huggingface.co/papers/2304.13705) as the worked example; the same pattern applies to other
+policies with an adjusted input wrapper.
+
+**What you'll learn:**
+
+1. How to export a policy (from a checkpoint or from scratch) to an `.onnx` file with dynamic batch size.
+2. What the exported graph expects as inputs and outputs, and how normalization fits in.
+3. How to verify the exported graph with onnxruntime and take it further with TensorRT.
+
+---
+
+## Quickstart
+
+Install the export dependencies:
+
+```shell
+pip install onnx onnxruntime
+```
+
+Export a pretrained policy with the provided example script:
+
+```shell
+python examples/onnx/export_policy_to_onnx.py \
+    --from-pretrained lerobot/act_aloha_sim_insertion_human \
+    --output outputs/onnx/act_aloha.onnx
+```
+
+The script exports the policy with a dynamic batch dimension, then runs the exported graph with
+onnxruntime and checks that it reproduces the PyTorch output within a tight tolerance (default `1e-4`):
+
+```text
+Exported policy to outputs/onnx/act_aloha.onnx
+Inputs: ['observation.state', 'observation.images.top', 'observation.images.wrist']
+PyTorch vs onnxruntime max abs diff: 2.31e-07 (atol 1.00e-04)
+```
+
+You can also export a randomly initialized policy sized from a dataset's features — useful to smoke-test
+the export path without downloading a checkpoint:
+
+```shell
+python examples/onnx/export_policy_to_onnx.py --output outputs/onnx/act_pusht.onnx
+```
+
+## What the exported graph expects
+
+The exported graph intentionally takes **flat tensors** instead of the nested batch dictionary LeRobot
+uses in Python — this makes binding inputs straightforward in any runtime:
+
+- One input per observation feature, in this order: the state tensor `(batch, state_dim)` if the policy
+  uses one, then one tensor `(batch, 3, H, W)` per camera image, in `config.input_features` order.
+- One output `action_chunk` of shape `(batch, chunk_size, action_dim)` — the full action chunk predicted
+  from a single observation.
+
+The batch dimension is declared dynamic, so you can export once and run with any batch size (including 1
+on a robot).
+
+### Normalization
+
+The exported graph operates in the **normalized** observation/action space, exactly like
+`policy.select_action` does in Python: input normalization and output denormalization are applied by the
+processor pipeline around the policy (see [Debugging the Processor Pipeline](debug_processor_pipeline)),
+not inside the policy module.
+
+When serving the ONNX graph, apply the same transforms with the dataset statistics stored alongside the
+policy (or in the dataset metadata):
+
+```python
+# For a feature with per-dimension `mean` and `std` statistics:
+normalized = (observation - mean) / std
+action = model_unnormalize(ort_output * action_std + action_mean)
+```
+
+The statistics live in the `stats` of the dataset metadata (or the processor state saved with your
+checkpoint). Keep them next to the exported `.onnx` file so the serving runtime can rebuild the transform.
+
+## Verify before you deploy
+
+Always verify the exported graph against PyTorch on shapes you care about — the example script does this
+automatically for the dummy batch, and `--atol` controls the tolerance. If a policy fails to export or
+diverges, check for data-dependent control flow (e.g. `.item()` calls) in its forward pass; policies are
+regularly updated to be export-friendly.
+
+## Going further with TensorRT
+
+The exported ONNX graph can be compiled with TensorRT for NVIDIA GPUs and Jetson devices:
+
+```shell
+trtexec --onnx=outputs/onnx/act_aloha.onnx --saveEngine=act_aloha.engine --fp16
+```
+
+`--fp16` typically halves latency with negligible accuracy loss for policies, but always re-verify outputs
+against PyTorch after switching runtimes or precision — compare a few real observations, not only the
+random verification batch.
+
+## Current limitations
+
+- The example wrapper supports the standard ACT input layout — one state feature plus any number of
+  camera images; environment-state observations would need a small wrapper extension.
+- Camera resolutions are fixed at export time by the feature shapes; only the batch dimension is dynamic.
+- Temporal ensembling is a queueing/weighting scheme applied by `ACTPolicy` at runtime and is not part of
+  the exported graph; if your policy uses it, apply the ensemble outside the graph.
+- Normalization is not baked into the graph — see the contract above. Fusing it into the graph is a
+  possible extension if you prefer a self-contained artifact.
