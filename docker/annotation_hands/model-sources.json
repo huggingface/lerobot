@@ -7,7 +7,8 @@
       "file": "egohand_s060000.ckpt",
       "sha256": "f940ecb6e3b73d5bd9e562cff232550e1c072f6c063eb4f705951122b15d8a75",
       "output": "egohand/inference-only.pt",
-      "inference_tensors": 817
+      "template": "egohand-checkpoint-template.zip",
+      "template_sha256": "1231b2eb35e87e2882e6ff606962d4d6185926f93148b1282415c942f40b68a9"
     },
     {
       "repo": "nvidia/SOMA-X",

@@ -4,6 +4,7 @@
 
 import hashlib
 import importlib.util
+import io
 import json
 import shutil
 from pathlib import Path
@@ -42,13 +43,14 @@ def test_public_assembly_omits_training_state_without_changing_tensors(tmp_path,
         )
     )
 
-    def download(repo, filename, **kwargs):
-        assert repo == "public/model" and kwargs["token"] is False and kwargs["revision"] == "a" * 40
-        target = Path(kwargs["local_dir"]) / filename
-        shutil.copyfile(original, target)
-        return str(target)
+    template = tmp_path / "template.zip"
+    build.create_template(expected, template)
 
-    monkeypatch.setattr("huggingface_hub.hf_hub_download", download)
+    def download(source, target):
+        assert source["repo"] == "public/model" and source["revision"] == "a" * 40
+        shutil.copyfile(original, target)
+
+    monkeypatch.setattr(build, "download_public", download)
     sources = {
         "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "downloads": [
@@ -58,11 +60,12 @@ def test_public_assembly_omits_training_state_without_changing_tensors(tmp_path,
                 "revision": "a" * 40,
                 "sha256": hashlib.sha256(original.read_bytes()).hexdigest(),
                 "output": "inference-only.pt",
-                "inference_tensors": 2,
+                "template": template.name,
+                "template_sha256": hashlib.sha256(template.read_bytes()).hexdigest(),
             }
         ],
     }
-    build.assemble(root, sources)
+    build.assemble(root, sources, tmp_path)
     payload = torch.load(root / "inference-only.pt", weights_only=True)
     assert set(payload) == {"state_dict"}
     for name, tensor in state.items():
@@ -72,14 +75,14 @@ def test_public_assembly_omits_training_state_without_changing_tensors(tmp_path,
         build.verify(root, sources)
 
 
-def test_rejects_unverified_upstream_before_unpickling(tmp_path, monkeypatch):
+def test_rejects_unverified_upstream_before_extracting_tensors(tmp_path, monkeypatch):
     manifest = tmp_path / "assets.json"
     manifest.write_text('{"files": []}')
     original = tmp_path / "bad.ckpt"
     original.write_bytes(b"unverified")
-    monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda *args, **kwargs: str(original))
-    load = Mock(side_effect=AssertionError("Never unpickle an unverified checkpoint"))
-    monkeypatch.setattr(torch, "load", load)
+    monkeypatch.setattr(build, "download_public", lambda source, target: shutil.copyfile(original, target))
+    rebuild = Mock(side_effect=AssertionError("Never extract an unverified checkpoint"))
+    monkeypatch.setattr(build, "rebuild_checkpoint", rebuild)
     sources = {
         "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "downloads": [
@@ -89,13 +92,36 @@ def test_rejects_unverified_upstream_before_unpickling(tmp_path, monkeypatch):
                 "revision": "a" * 40,
                 "sha256": "0" * 64,
                 "output": "inference-only.pt",
-                "inference_tensors": 2,
+                "template": "template.zip",
             }
         ],
     }
     with pytest.raises(ValueError, match="Upstream model changed"):
-        build.assemble(tmp_path, sources)
-    load.assert_not_called()
+        build.assemble(tmp_path, sources, tmp_path)
+    rebuild.assert_not_called()
+
+
+def test_public_http_download_never_uses_job_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "private-job-token")
+    request = Mock(return_value=io.BytesIO(b"public model"))
+    monkeypatch.setattr(build.urllib.request, "urlopen", request)
+    build.download_public(
+        {"repo": "public/model", "revision": "a" * 40, "file": "model.pt"}, tmp_path / "model.pt"
+    )
+    assert request.call_args.args == (
+        "https://huggingface.co/public/model/resolve/" + "a" * 40 + "/model.pt",
+    )
+    assert (tmp_path / "model.pt").read_bytes() == b"public model"
+
+
+def test_tensor_records_must_match_the_accepted_checkpoint(tmp_path):
+    accepted, changed = tmp_path / "accepted.pt", tmp_path / "changed.pt"
+    torch.save({"state_dict": {"weight": torch.tensor([1.0])}}, accepted)
+    torch.save({"state_dict": {"weight": torch.tensor([2.0])}}, changed)
+    template = tmp_path / "template.zip"
+    build.create_template(accepted, template)
+    with pytest.raises(ValueError, match="Upstream tensor differs"):
+        build.rebuild_checkpoint(changed, tmp_path / "output.pt", template)
 
 
 @pytest.mark.parametrize("name", ["../outside", "/outside", "MANO_RIGHT.pkl"])

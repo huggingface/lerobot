@@ -47,7 +47,7 @@ RUN rm -rf /opt/hand-camera/release-195fps-verified/DROID-W/build \
 
 FROM build AS models
 COPY model-assets/ /model-assets/
-COPY model-sources.json build_model_assets.py /opt/hand-worker/
+COPY model-sources.json build_model_assets.py egohand-checkpoint-template.zip /opt/hand-worker/
 RUN /opt/egohand/bin/python /opt/hand-worker/build_model_assets.py /model-assets /opt/hand-worker/model-sources.json
 
 FROM base AS runtime

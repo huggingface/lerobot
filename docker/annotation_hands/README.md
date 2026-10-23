@@ -20,8 +20,11 @@ Use this directory with the operator's immutable runtime artifacts:
 - `image-version.json`: source, wheel and manifest checksums.
 - `model-assets/`: the frozen `assets.json`, notices, camera support files and
   model files small enough to keep in the Space repository. Large upstream
-  downloads are pinned in `model-sources.json`. The build strips EgoHand's
-  optimizer/trainer state and requires byte-identical inference weights.
+  downloads are pinned in `model-sources.json`.
+- `egohand-checkpoint-template.zip`: accepted checkpoint container metadata and
+  tensor hashes, without tensor values. The build streams the 817 inference
+  tensor records from the public checkpoint with bounded memory, without
+  unpickling it, and requires a byte-identical inference-only checkpoint.
 
 ```bash
 docker build -t annotation-hands docker/annotation_hands
