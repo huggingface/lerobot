@@ -38,6 +38,7 @@ from lerobot.datasets.dataset_tools import (
     split_dataset,
 )
 from lerobot.datasets.io_utils import load_info
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from tests.datasets.test_video_encoding import require_h264, require_hevc, require_libsvtav1
 from tests.fixtures.constants import DUMMY_DEPTH_FEATURES, DUMMY_DEPTH_KEY
 from tests.fixtures.dataset_factories import add_frames
@@ -1114,6 +1115,35 @@ def test_modify_tasks_single_task_for_all(sample_dataset):
         item = modified_dataset[i]
         assert item["task_index"].item() == 0
         assert item["task"] == new_task
+
+
+@pytest.mark.parametrize("episodes", [None, [1, 3]], ids=["all-episodes", "selected-episodes"])
+@pytest.mark.parametrize(
+    ("updates", "expected_tasks"),
+    [
+        ({"task_replacements": {"task_0": "z_task"}}, ["z_task", "task_1", "z_task", "task_1", "z_task"]),
+        ({"new_task": "new task"}, ["new task"] * 5),
+    ],
+    ids=["reordered-task-indices", "single-task"],
+)
+def test_modify_tasks_refreshes_loaded_reader(sample_dataset, episodes, updates, expected_tasks):
+    """Task edits must be visible through an already loaded dataset, including episode subsets."""
+    dataset = LeRobotDataset(
+        sample_dataset.repo_id, root=sample_dataset.root, episodes=episodes, video_backend="pyav"
+    )
+    original_frames = [dataset[i] for i in range(len(dataset))]
+
+    modified = modify_tasks(dataset, **updates)
+
+    assert modified is dataset
+    assert len(modified) == len(original_frames)
+    for i, original in enumerate(original_frames):
+        item = modified[i]
+        ep_idx = original["episode_index"].item()
+        assert item["task"] == expected_tasks[ep_idx]
+        assert item["episode_index"].item() == ep_idx
+        torch.testing.assert_close(item["action"], original["action"])
+        torch.testing.assert_close(item["observation.state"], original["observation.state"])
 
 
 def test_modify_tasks_episode_specific(sample_dataset):
