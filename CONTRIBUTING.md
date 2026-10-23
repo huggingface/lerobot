@@ -81,6 +81,8 @@ The Fast Tests CI runs one tier per extra (`base`, `dataset`, `hardware`, `viz`)
 pytest -sv tests -m dataset
 ```
 
+The GPU Tests CI only runs tests marked `gpu`. Every test under `tests/policies` and every `@require_cuda` test gets it automatically; mark any other test that uses CUDA with `@pytest.mark.gpu`.
+
 ## Submitting Issues & Pull Requests
 
 Use the templates for required fields and examples.

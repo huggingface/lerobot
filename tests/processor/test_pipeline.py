@@ -1950,6 +1950,7 @@ def test_state_file_naming_with_multiple_processors():
         assert loaded_post.steps[0].window_size == 10
 
 
+@pytest.mark.gpu
 def test_override_with_device_strings():
     """Test overriding device parameters with string values."""
 

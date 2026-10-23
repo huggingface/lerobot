@@ -195,8 +195,9 @@ jobs:
           hf auth whoami
       - name: Fix ptxas permissions
         run: chmod +x /lerobot/.venv/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas
+      # Tests without the `gpu` mark do not use the GPU and already ran in the Full Tests job (see tests/conftest.py)
       - name: Run pytest on GPU
-        run: pytest tests -vv --maxfail=10
+        run: pytest tests -vv --maxfail=10 -m gpu
       - name: Run end-to-end tests
         run: make test-end-to-end
 

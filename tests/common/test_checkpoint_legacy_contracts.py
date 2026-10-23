@@ -149,6 +149,7 @@ class TestV060HardBreak:
     torch DCP's own missing-artifact error, never a bespoke v0.6.0 message.
     """
 
+    @pytest.mark.gpu
     def test_sharded_resume_fails_with_ordinary_missing_artifact_error(self, tmp_path, accelerate_state):
         make_v060_fsdp_checkpoint(tmp_path)
 
