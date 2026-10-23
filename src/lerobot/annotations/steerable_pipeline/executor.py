@@ -15,13 +15,16 @@
 # limitations under the License.
 """In-process executor that runs the annotation phases.
 
-The executor runs **six phases** in dependency order:
+The executor runs **six phases** in dependency order (seven when the
+optional ``ecot`` module is attached):
 
     phase 1: ``plan`` module (plan + subtasks + memory)
     phase 2: ``interjections`` module (interjections + speech)
     phase 3: ``plan`` plan-update pass — re-runs plan emission at every
              interjection timestamp produced by phase 2
     phase 4: ``vqa`` module (VQA)
+    phase 4.5 (optional): ``ecot`` module — dense ECoT reasoning traces,
+             only when ``ecot`` is attached and enabled
     phase 5: validator
     phase 6: writer
 
@@ -88,6 +91,7 @@ class Executor:
     vqa: Any  # GeneralVqaModule
     writer: LanguageColumnsWriter
     validator: StagingValidator
+    ecot: Any = None  # EcotReasoningModule; optional, skipped when None/disabled
 
     def run(self, root: Path) -> PipelineRunSummary:
         records = list(iter_episodes(root, only_episodes=self.config.only_episodes))
@@ -112,6 +116,11 @@ class Executor:
         phases.append(self._run_plan_update_phase(records, staging_dir))
         # Phase 4: ``vqa`` module (VQA)
         phases.append(self._run_module_phase("vqa", records, staging_dir, self.vqa))
+        # Phase 4.5 (optional): ``ecot`` module — dense ECoT reasoning traces.
+        # Skipped entirely when no module is attached (e.g. tests that build
+        # the executor for the plan/vqa/interjection contract only).
+        if self.ecot is not None:
+            phases.append(self._run_module_phase("ecot", records, staging_dir, self.ecot))
 
         print("[annotate] running validator...", flush=True)
         report = self.validator.validate(records, staging_dir)

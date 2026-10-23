@@ -39,6 +39,7 @@ _MODULES: tuple[ModuleName, ...] = (
     "plan",
     "interjections",
     "vqa",
+    "ecot",
 )
 
 
