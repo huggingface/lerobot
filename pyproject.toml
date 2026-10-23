@@ -246,6 +246,7 @@ robometer = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]", "lerobot
 topreward = ["lerobot[transformers-dep]"]
 xvla = ["lerobot[transformers-dep]"]
 eo1 = ["lerobot[transformers-dep]", "lerobot[qwen-vl-utils-dep]"]
+longwam = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[sentencepiece-dep]"]
 fastwam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
@@ -357,6 +358,7 @@ all = [
     "lerobot[molmoact2]",
     "lerobot[smolvla]",
     "lerobot[fastwam]",
+    "lerobot[longwam]",
     "lerobot[flux3]",
     "lerobot[groot]",
     "lerobot[xvla]",
@@ -551,6 +553,8 @@ default.extend-ignore-identifiers-re = [
     "OT_VALUE",
     "VanderBilt",
     "seperated_timestep",
+    # Diffusers VAE configuration spelling.
+    "temperal_downsample",
     "nd",  # einsum output axes "...nd" in the vendored FLUX 3 Action transformer
     "EmbedND",
 ]

@@ -1,0 +1,91 @@
+<!-- Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Long-WAM
+
+[Long-WAM](https://nvlabs.github.io/LongLive/Long-WAM/) predicts actions from a
+language instruction and a history of camera observations. **IDM** imagines
+future video before denoising actions; **COD** denoises video and actions jointly.
+Wan backbones come from Diffusers and the UMT5 text encoder from Transformers.
+
+## Install
+
+```bash
+pip install "lerobot[longwam]"
+```
+
+## Checkpoints
+
+LeRobot-native checkpoints include the model and saved pre/post-processors;
+the tokenizer loads from `google/umt5-xxl`:
+
+- [LIBERO IDM](https://huggingface.co/Efficient-Large-Model/Long-WAM-LIBERO-IDM-LeRobot)
+- [LIBERO COD](https://huggingface.co/Efficient-Large-Model/Long-WAM-LIBERO-COD-LeRobot)
+
+Original Long-WAM `model.pt` bundles cannot be loaded directly.
+
+## Inference
+
+```python
+from lerobot.policies import make_pre_post_processors
+from lerobot.policies.longwam.modeling_longwam import LongWAMPolicy
+
+checkpoint = "Efficient-Large-Model/Long-WAM-LIBERO-IDM-LeRobot"
+policy = LongWAMPolicy.from_pretrained(checkpoint).to("cuda").eval()
+preprocess, postprocess = make_pre_post_processors(
+    policy.config,
+    pretrained_path=checkpoint,
+    preprocessor_overrides={"device_processor": {"device": "cuda"}},
+)
+policy.reset()
+# Each control tick: current RGB images in [0,1], robot state, and task text.
+action = postprocess(policy.select_action(preprocess(observation)))
+```
+
+Call `select_action` on **every control tick**, including while an action chunk
+is executing, so the history stays current. `predict_action_chunk` returns
+`[batch, prediction_steps, action_dim]`; each call records the supplied current frame.
+`reset()` and `drop_queued_actions()` clear both history and queued actions.
+This integration supports synchronous execution; generic async/RTC is not yet validated.
+
+For LIBERO, install `lerobot[libero]` and use the standard evaluator:
+
+```bash
+lerobot-eval --policy.path=Efficient-Large-Model/Long-WAM-LIBERO-IDM-LeRobot \
+  --policy.device=cuda \
+  --env.type=libero --env.task=libero_spatial --eval.batch_size=1
+```
+
+## Fine-tuning
+
+```bash
+lerobot-train --policy.path=Efficient-Large-Model/Long-WAM-LIBERO-IDM-LeRobot \
+  --policy.device=cuda --policy.dtype=bfloat16 \
+  --accelerator.mixed_precision=bf16 \
+  --dataset.repo_id=YOUR_ORG/YOUR_DATASET \
+  --output_dir=outputs/longwam --batch_size=1 --steps=30000 \
+  --policy.push_to_hub=false
+```
+
+Set parameter storage and autocast separately. `--policy.dtype` sets the model's
+parameter dtype **before checkpoint loading**; `--accelerator.mixed_precision`
+selects autocast during training. The example explicitly uses BF16 for both,
+matching the parameter dtype selected by the
+[original Long-WAM BF16 configuration](https://github.com/NVlabs/LongLive/blob/1b9e348897cafa206fc6dd6feb80b59e2a8b1aa9/Long-WAM/src/longwam/runtime/factory.py#L616-L619).
+The native AdamW optimizer keeps gradients and its first/second moments in the
+parameter dtype; BF16 autocast does not create FP32 master weights.
+
+For FP32 parameters, gradients and AdamW moments with BF16 autocast, replace the
+dtype argument with `--policy.dtype=float32` and keep
+`--accelerator.mixed_precision=bf16`. This also loads the frozen VAE and text
+encoder in FP32, increasing memory use. Select the dtype before loading the model
+and constructing the optimizer: converting an already BF16-loaded model to FP32
+cannot recover precision lost during loading. These choices specify storage and
+computation; they do not establish equivalent convergence or LIBERO performance.
+
+Keep the checkpoint's camera order, action/state definitions, and denoising mode.
+`past_obs_steps` is measured in control ticks. Training samples video every
+`video_stride=4` ticks. `action_horizon` sets the training chunk length;
+`inference_action_horizon` optionally overrides it at inference, and
+`n_action_steps` sets the executed length. Training uses future frames as supervision;
+inference only sees past/current observations.
