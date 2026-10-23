@@ -184,3 +184,28 @@ def test_set_half_turn_homings(dummy_motors):
     bus.reset_calibration.assert_called_once()
     for id_, homing in expected_homings.items():
         assert written(bus, "Homing_Offset", id_) == homing
+
+
+def test_set_half_turn_homings_on_an_inverted_motor(dummy_motors):
+    """An inverted motor (Drive_Mode = 1) subtracts the homing offset from the position it
+    reports, so its offset has the opposite sign: present = actual - offset. After homing a
+    motor at position `p`, the offset p - 2047 makes it report the half turn, 2047."""
+    current_positions = {1: 1337, 2: 42, 3: 3672}
+    expected_homings = {1: -710, 2: -2005, 3: -1625}  # position - 2047 for ids 1 and 2
+
+    bus = make_bus(dummy_motors)
+    for id_, position in current_positions.items():
+        seed(bus, "Present_Position", id_, position)
+    seed(bus, "Drive_Mode", 1, 1)  # dummy_1 inverted; dummy_2 inverted via Drive_Mode too
+    seed(bus, "Drive_Mode", 2, 1)
+    bus.reset_calibration = MagicMock()
+
+    bus.set_half_turn_homings()
+
+    bus.reset_calibration.assert_called_once()
+    for id_, homing in expected_homings.items():
+        assert written(bus, "Homing_Offset", id_) == homing
+        offset = written(bus, "Homing_Offset", id_)
+        drive_mode = bus._bus.stored(id_, "drive_mode")
+        # present = actual + sign * offset on a Dynamixel: -offset when inverted.
+        assert current_positions[id_] + (1 - 2 * drive_mode) * offset == 2047
