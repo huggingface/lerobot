@@ -302,6 +302,7 @@ class SmolVLMWithExpertModel(nn.Module):
         head_dim,
         use_cache: bool = True,
         past_key_values: "DynamicCache | None" = None,
+        cross_attn_kv: dict[int, tuple[torch.Tensor, torch.Tensor]] | None = None,
     ) -> "tuple[list[torch.Tensor], DynamicCache | None]":
         attention_interface = self.get_attention_interface()
 
@@ -358,20 +359,12 @@ class SmolVLMWithExpertModel(nn.Module):
             expert_hidden_states = expert_hidden_states.to(dtype=expert_layer.self_attn.q_proj.weight.dtype)
             expert_query_state = expert_layer.self_attn.q_proj(expert_hidden_states).view(expert_hidden_shape)
 
-            # reshape (not view): K/V read back from the cache are transposed, hence non-contiguous
-            _key_states = key_states.to(dtype=expert_layer.self_attn.k_proj.weight.dtype).reshape(
-                *key_states.shape[:2], -1
-            )
-            expert_key_states = expert_layer.self_attn.k_proj(_key_states).view(
-                *_key_states.shape[:-1], -1, expert_layer.self_attn.head_dim
-            )  # k_proj should have same dim as kv
-
-            _value_states = value_states.to(dtype=expert_layer.self_attn.v_proj.weight.dtype).reshape(
-                *value_states.shape[:2], -1
-            )
-            expert_value_states = expert_layer.self_attn.v_proj(_value_states).view(
-                *_value_states.shape[:-1], -1, expert_layer.self_attn.head_dim
-            )
+            if cross_attn_kv is not None:
+                expert_key_states, expert_value_states = cross_attn_kv[layer_idx]
+            else:
+                expert_key_states, expert_value_states = self._project_prefix_kv(
+                    expert_layer, key_states, value_states
+                )
 
             expert_position_id = (
                 expert_position_id - torch.min(expert_position_id, dim=1, keepdim=True).values
@@ -397,6 +390,61 @@ class SmolVLMWithExpertModel(nn.Module):
         # att_output = att_output.to(dtype=models[i].dtype)
         return att_outputs, past_key_values
 
+    def _is_cross_attn_layer(self, layer_idx: int) -> bool:
+        """Return whether ``layer_idx`` uses the expert cross-attention path."""
+        if "cross" not in self.attention_mode:
+            return False
+        return not (self.self_attn_every_n_layers > 0 and layer_idx % self.self_attn_every_n_layers == 0)
+
+    def _project_prefix_kv(
+        self, expert_layer, key_states: torch.Tensor, value_states: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Project the VLM prefix K/V into the expert's K/V space."""
+        # reshape (not view): K/V read back from the cache are transposed, hence non-contiguous
+        key_states = key_states.to(dtype=expert_layer.self_attn.k_proj.weight.dtype).reshape(
+            *key_states.shape[:2], -1
+        )
+        key_states = expert_layer.self_attn.k_proj(key_states).view(
+            *key_states.shape[:-1], -1, expert_layer.self_attn.head_dim
+        )
+        value_states = value_states.to(dtype=expert_layer.self_attn.v_proj.weight.dtype).reshape(
+            *value_states.shape[:2], -1
+        )
+        value_states = expert_layer.self_attn.v_proj(value_states).view(
+            *value_states.shape[:-1], -1, expert_layer.self_attn.head_dim
+        )
+        return key_states, value_states
+
+    def precompute_cross_attn_kv(
+        self, past_key_values: "DynamicCache"
+    ) -> dict[int, tuple[torch.Tensor, torch.Tensor]]:
+        """Project the fixed prefix K/V into every cross-attention expert once per action chunk.
+
+        The prefix does not change during denoising, so these projections are loop-invariant and
+        every denoising step can reuse them instead of re-projecting the prefix.
+
+        Args:
+            past_key_values: Cache filled by the prefix prefill.
+
+        Returns:
+            A ``layer_idx -> (key, value)`` mapping for the cross-attention layers. Keys and values
+            have shape ``(batch_size, prefix_len, num_key_value_heads, head_dim)`` and the expert
+            layer's dtype. Empty when ``attention_mode`` has no cross-attention.
+        """
+        models = [self.get_vlm_model().text_model, self.lm_expert]
+        model_layers = self.get_model_layers(models)
+        expert_kv: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
+        for layer_idx in range(self.num_vlm_layers):
+            if not self._is_cross_attn_layer(layer_idx):
+                continue
+            expert_layer = model_layers[1][layer_idx]
+            if expert_layer is None:
+                continue
+            key_states = past_key_values.layers[layer_idx].keys.transpose(1, 2)
+            value_states = past_key_values.layers[layer_idx].values.transpose(1, 2)
+            expert_kv[layer_idx] = self._project_prefix_kv(expert_layer, key_states, value_states)
+        return expert_kv
+
     def get_model_layers(self, models: list) -> list:
         vlm_layers = []
         expert_layers = []
@@ -418,6 +466,7 @@ class SmolVLMWithExpertModel(nn.Module):
         past_key_values: "DynamicCache | None" = None,
         inputs_embeds: list[torch.Tensor | None] | None = None,
         use_cache: bool | None = None,
+        cross_attn_kv: dict[int, tuple[torch.Tensor, torch.Tensor]] | None = None,
     ):
         if inputs_embeds is None:
             raise ValueError(
@@ -446,11 +495,7 @@ class SmolVLMWithExpertModel(nn.Module):
         num_layers = self.num_vlm_layers
         head_dim = self.vlm.config.text_config.head_dim
         for layer_idx in range(num_layers):
-            if (
-                fill_kv_cache
-                or "cross" not in self.attention_mode
-                or (self.self_attn_every_n_layers > 0 and layer_idx % self.self_attn_every_n_layers == 0)
-            ):
+            if fill_kv_cache or not self._is_cross_attn_layer(layer_idx):
                 att_outputs, past_key_values = self.forward_attn_layer(
                     model_layers,
                     inputs_embeds,
@@ -473,6 +518,7 @@ class SmolVLMWithExpertModel(nn.Module):
                     head_dim,
                     use_cache=use_cache,
                     past_key_values=past_key_values,
+                    cross_attn_kv=cross_attn_kv,
                 )
             outputs_embeds = []
             start = 0
