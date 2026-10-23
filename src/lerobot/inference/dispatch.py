@@ -30,13 +30,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import nullcontext
+from typing import TYPE_CHECKING
 
-import torch
+import numpy as np
 
-from lerobot.utils import ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
 
 from .base import InferenceEngine
+
+if TYPE_CHECKING:
+    import torch
+
+    from lerobot.utils import ActionInterpolator
 
 
 def dispatch_permitted(
@@ -81,7 +86,7 @@ def next_interpolated_action(
             frame = obs_frame() if callable(obs_frame) else obs_frame
             action = engine.get_action(frame)
         if action is not None:
-            interpolator.add(action.cpu())
+            interpolator.add(action if isinstance(action, np.ndarray) else action.cpu())
     if not dispatch_permitted(engine, interpolator, hold):
         return None
     target = interpolator.get()

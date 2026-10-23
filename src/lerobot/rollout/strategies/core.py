@@ -480,7 +480,7 @@ def send_next_action(
 ) -> dict | None:
     """Dispatch the next action to the robot.
 
-    Pulls the next action tensor from the inference engine, feeds the
+    Pulls the next action from the inference engine, feeds the
     interpolator, and sends the interpolated action through the
     ``robot_action_processor`` to the robot.  Works identically for
     sync and async backends — the rollout strategy never needs to branch.
@@ -524,7 +524,7 @@ def send_next_action(
         return None
 
     if len(interp) != len(ordered_keys):
-        raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
+        raise ValueError(f"Interpolated action length ({len(interp)}) != action keys ({len(ordered_keys)})")
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
     with section("send"):
         processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
