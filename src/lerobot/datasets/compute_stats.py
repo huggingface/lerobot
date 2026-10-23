@@ -45,7 +45,9 @@ class RunningQuantileStats:
         self._count = 0
         # Per-dimension running statistics; all ``None`` until the first ``update()``.
         self._mean: np.ndarray | None = None
-        self._mean_of_squares: np.ndarray | None = None
+        self._origin: np.ndarray | None = None
+        self._mean_offset: np.ndarray | None = None
+        self._m2: np.ndarray | None = None
         self._min: np.ndarray | None = None
         self._max: np.ndarray | None = None
         self._histograms: list[np.ndarray] | None = None
@@ -62,14 +64,29 @@ class RunningQuantileStats:
             batch: An array where all dimensions except the last are batch dimensions.
         """
         batch = batch.reshape(-1, batch.shape[-1])
-        # Promote integer and low-precision inputs before computing squared statistics.
+        # Promote integer and low-precision inputs before computing statistics.
         batch = batch.astype(np.result_type(batch.dtype, np.float32), copy=False)
         num_elements, vector_length = batch.shape
 
+        if self._mean is not None and vector_length != self._mean.size:
+            raise ValueError("The length of new vectors does not match the initialized vector length.")
+        if num_elements == 0:
+            raise ValueError("Cannot update statistics with an empty batch.")
+
+        # Keep batch and running means relative to one fixed origin. Even float64
+        # summation can lose small deviations when every sample has a large offset.
+        origin = batch[0].astype(np.float64) if self._origin is None else self._origin
+        centered = np.subtract(batch, origin, dtype=np.float64)
+        batch_mean_offset = np.mean(centered, axis=0)
+        centered -= batch_mean_offset
+        np.square(centered, out=centered)
+        batch_m2 = np.sum(centered, axis=0)
+
         # First batch: the running statistics are still unset.
-        if self._mean is None or self._mean_of_squares is None or self._min is None or self._max is None:
-            self._mean = np.mean(batch, axis=0)
-            self._mean_of_squares = np.mean(batch**2, axis=0)
+        if self._mean_offset is None or self._m2 is None or self._min is None or self._max is None:
+            self._origin = origin
+            self._mean_offset = batch_mean_offset
+            self._m2 = batch_m2
             self._min = np.min(batch, axis=0)
             self._max = np.max(batch, axis=0)
             self._histograms = [np.zeros(self._num_quantile_bins) for _ in range(vector_length)]
@@ -78,9 +95,6 @@ class RunningQuantileStats:
                 for i in range(vector_length)
             ]
         else:
-            if vector_length != self._mean.size:
-                raise ValueError("The length of new vectors does not match the initialized vector length.")
-
             new_max = np.max(batch, axis=0)
             new_min = np.min(batch, axis=0)
             max_changed = np.any(new_max > self._max)
@@ -91,17 +105,14 @@ class RunningQuantileStats:
             if max_changed or min_changed:
                 self._adjust_histograms()
 
+            # Merge centered second moments to avoid cancellation in E[x**2] - E[x]**2.
+            delta = batch_mean_offset - self._mean_offset
+            weight = num_elements / (self._count + num_elements)
+            self._m2 += batch_m2 + delta**2 * self._count * weight
+            self._mean_offset += delta * weight
+
+        self._mean = origin + self._mean_offset
         self._count += num_elements
-
-        batch_mean = np.mean(batch, axis=0)
-        batch_mean_of_squares = np.mean(batch**2, axis=0)
-
-        # Update running mean and mean of squares
-        self._mean += (batch_mean - self._mean) * (num_elements / self._count)
-        self._mean_of_squares += (batch_mean_of_squares - self._mean_of_squares) * (
-            num_elements / self._count
-        )
-
         self._update_histograms(batch)
 
     def get_statistics(self) -> dict[str, np.ndarray]:
@@ -116,13 +127,13 @@ class RunningQuantileStats:
         if (
             self._count < 2
             or self._mean is None
-            or self._mean_of_squares is None
+            or self._m2 is None
             or self._min is None
             or self._max is None
         ):
             raise ValueError("Cannot compute statistics for less than 2 vectors.")
 
-        variance = self._mean_of_squares - self._mean**2
+        variance = self._m2 / self._count
 
         stddev = np.sqrt(np.maximum(0, variance))
 
