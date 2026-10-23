@@ -75,6 +75,11 @@ lerobot-dataset-viz \
 
 Once executed, the tool opens `rerun.io` and displays the camera streams, robot states, and actions for the selected episode.
 
+Rerun uses local compressed RGB videos by default, keeping frames synchronized with actions and state.
+Images, depth, and unsupported datasets retain individual-frame display. Use
+`--no-display-compressed-videos` if your viewer cannot play the source codec.
+Only the selected episode's video is embedded. Videos that cannot be trimmed safely use frame display.
+
 To use [Foxglove](https://foxglove.dev) instead of Rerun, install the extra add `--display-mode foxglove`. This starts a WebSocket server (connect the Foxglove app to `ws://127.0.0.1:8765`) that serves the episode as a seekable timeline you can play/pause and scrub.
 
 For advanced usage—including visualizing datasets stored on a remote server—run:
