@@ -5,6 +5,7 @@ import importlib
 import os
 import re
 import runpy
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,11 +42,32 @@ def verify_solver_signature(source: Path, header: Path):
 
 def main():
     """Import the actual camera bootstrap or concrete hand inference entry points."""
+    mode = sys.argv[1]
+    if mode == "all":
+        for kind, python, libraries in (
+            ("camera", "/opt/droid/bin/python", os.environ["DROID_LIBRARY_PATH"]),
+            ("egohand", "/opt/egohand/bin/python", os.environ["EGO_LIBRARY_PATH"]),
+            ("controller", sys.executable, os.environ.get("LD_LIBRARY_PATH", "")),
+        ):
+            environment = dict(
+                os.environ,
+                CUDA_VISIBLE_DEVICES="",
+                HF_HUB_OFFLINE="1",
+                TRANSFORMERS_OFFLINE="1",
+                LD_LIBRARY_PATH=libraries,
+            )
+            subprocess.run([python, __file__, kind], env=environment, check=True)
+        return
+
     import torch
 
     if torch.cuda.is_available():
         raise RuntimeError("Run startup import verification with CUDA_VISIBLE_DEVICES empty")
-    if sys.argv[1] == "camera":
+    if mode == "camera":
+        import tensorrt
+
+        if torch.__version__ != "2.8.0+cu128" or tensorrt.__version__ != "10.13.3.9":
+            raise RuntimeError("Camera requires PyTorch 2.8.0+cu128 and TensorRT 10.13.3.9")
         os.environ.update(DROIDW_LEAN_STARTUP="1", MPLBACKEND="Agg")
         root = Path("/opt/hand-camera/DROID-on")
         verify_checkpoint_alias(root)
@@ -55,6 +77,8 @@ def main():
         if solver.version != "0.8.0.10":
             raise RuntimeError("The frozen CSR wrapper requires cuDSS 0.8.0.10")
         verify_solver_signature(root / "cudss_solver.py", solver.locate_file("nvidia/cu12/include/cudss.h"))
+        if not Path(solver.locate_file("nvidia/cu12/lib/libcudss.so.0")).is_file():
+            raise RuntimeError("Camera requires the cuDSS shared library")
         sys.path.insert(0, str(root))
         # The frozen bootstrap installs its wrappers at import time. A distinct
         # run name leaves the socket service, model loading and inference idle.
@@ -67,14 +91,37 @@ def main():
             "src.utils.datasets",
             "src.utils.mono_priors.metric_depth_estimators",
             "lerobot_camera_runtime.infra.droidw_moge",
+            "lietorch",
+            "droid_backends",
+            "moge",
+            "timm",
+            "cv2",
         ):
             importlib.import_module(module)
-    elif sys.argv[1] == "egohand":
-        for module in ("gem.inference.pose", "gem.common.detectors.hand"):
+    elif mode == "egohand":
+        import onnxruntime
+
+        if torch.__version__.split("+")[0] != "2.14.1":
+            raise RuntimeError("EgoHand requires PyTorch 2.14.1")
+        if "TensorrtExecutionProvider" not in onnxruntime.get_available_providers():
+            raise RuntimeError("EgoHand requires the TensorRT detector provider")
+        for module in ("gem.inference.pose", "gem.common.detectors.hand", "soma"):
+            importlib.import_module(module)
+    elif mode == "controller":
+        if torch.__version__.split("+")[0] != "2.11.0":
+            raise RuntimeError("The annotation controller requires PyTorch 2.11.0")
+        for module in (
+            "numpy",
+            "pyarrow",
+            "av",
+            "scipy",
+            "lerobot_camera_runtime.egocentric.droidw_camera",
+            "lerobot_camera_runtime.stages.droidw_slam",
+        ):
             importlib.import_module(module)
     else:
-        raise ValueError("Choose camera or egohand startup imports")
-    print(f"Verified complete {sys.argv[1]} startup imports on CPU; no models loaded", flush=True)
+        raise ValueError("Choose all, camera, egohand or controller startup imports")
+    print(f"Verified complete {mode} startup imports on CPU; no models loaded", flush=True)
 
 
 if __name__ == "__main__":

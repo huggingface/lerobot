@@ -1,60 +1,41 @@
-# EgoHand/SOMA HF Jobs image
+# Hand annotation worker
 
-This is the CPU build recipe for the experimental `Hand actions` runtime. It
-keeps DROID-W + MoGe and EgoHand in their validated separate Python/PyTorch
-versions. Model weights are fetched at Job startup, never embedded in an image.
+This image runs EgoHand/SOMA with DROID-W + MoGe on HF Jobs. The controller,
+camera and hand workers use isolated environments because their PyTorch/CUDA
+versions differ. The image installs precompiled camera wheels; it needs no CUDA
+compiler or model weights at build time.
 
-The operator build context is maintained in the private HF Docker Space
-`finerobotics/egohand-soma-worker-v4`. It includes:
+## Build context
 
-- This Dockerfile and the pinned environment requirements.
-- Studio's `worker-requirements.txt` and the CPU-only health endpoint.
-- `camera-native-source.tar.gz`: the frozen DROID-W + MoGe source, headers and
-  TensorRT hooks, without machine-specific binaries, weights or recordings.
-- `camera-adapter-source.tar.gz`: the pinned calibrated camera adapter, its
-  upstream license, and `runtime-source.json` with per-file checksums.
-- `image-version.json`: source/archive hashes and native revision identifiers.
+Use this directory with the operator's immutable runtime artifacts:
 
-The private source context is separate from the public LeRobot distribution.
-Building preserves all applicable upstream notices. GPU extensions compile from
-source; RTX 5090 binaries and TensorRT plans must not be reused on other GPUs.
-Studio checks both the image Space commit and the image-version checksum.
+- `camera-adapter-source.tar.gz`: calibrated camera adapter, license notices and
+  `runtime-source.json` with per-file checksums.
+- `camera-native-source.tar.gz`: DROID-W/MoGe source and TensorRT wrappers.
+- `camera-startup-source.tar.gz` and `camera-startup-sources.json`: supplemental
+  Python imports and their notices, checked before installation.
+- `camera-wheels/build.json` and `camera-wheels/wheels/*.whl`: CPU-built LieTorch
+  and DROID operators for Python 3.10, with SM80/SM90/SM120 support.
+- `image-version.json`: source, wheel and manifest checksums.
 
-The free builder has a 30-minute build limit; a longer startup timeout does not
-extend it. Build the two camera wheels in a CPU-only HF Job using the pinned
-devel image, Python 3.10.20, PyTorch 2.8.0+cu128 and setuptools 79.0.1. The private
-operator build records source hashes, import checks, ELF architecture listings
-and wheel hashes. Copy its `build.json` and `wheels/` to `camera-wheels/` in this
-image context and pin their hashes plus the source build identity in
-`image-version.json`. `verify_camera_wheels.py` rejects missing operators,
-changed sources, architectures or unverified bytes before installation. No
-weights or GPU-specific TensorRT plans enter these wheels.
+```bash
+docker build -t annotation-hands docker/annotation_hands
+```
 
-Compile only SM80 (A100), SM90 (H200) and SM120 + PTX (RTX PRO 6000), with two
-bounded compiler jobs. The build helper
-filters out `lietorch_extras`, which is referenced only by vendor examples;
-DROID-W uses `lietorch_backends` and its own `droid_backends`. Vendor inference
-sources and compiler optimization flags stay unchanged. This changes build
-packaging, not model precision or runtime sampling.
+The build checks wheel hashes, complete offline imports and the cuDSS 0.8.0.10
+ABI as the Job user. Compatibility links preserve the frozen camera wrapper's
+checkpoint and TensorRT paths. Both camera compilation and inference require
+`NVIDIA_TF32_OVERRIDE=0`.
 
-The frozen FP64 sparse wrapper uses cuDSS 0.8.0.10's separate CSR offset/index
-types. The CPU startup check compares its call with the installed header. Each
-GPU Job also solves a known SPD system before compiling engines or reading videos.
-Camera engine build and execution both require `NVIDIA_TF32_OVERRIDE=0`.
+## Deployment
 
-The private model release `finerobotics/egohand-soma-runtime` contains the verified
-inference-only checkpoint, FP32 detector ONNX, native SOMA/MHR assets, MoGe/DROID
-weights, exact camera ONNX graphs, local initialization caches and model notices.
-`assets.json` pins every file's SHA-256 and byte count. It contains no MANO,
-recordings, benchmark predictions, reference cameras or evaluation targets.
+Pin the built image's HF Space revision and `image-version.json` checksum in
+Studio's `hand-worker-image.json`. Also pin the model release revision and
+`assets.json` checksum. Model files are fetched with the Job user's HF login;
+native inference then runs offline without that token. Preserve upstream terms
+and notices when preparing the runtime and model releases.
 
-After a successful CPU build, provision Studio's `hand-worker-image.json` with the
-image revision and image-version hash, plus the immutable model release and asset
-manifest hash. Its backend paths must match the Dockerfile. Mark `build_verified`
-only after the image passes its CPU import checks and serves the health receipt.
-Keep public hand launches gated until a GPU Job writes validated native outputs.
-
-On the user's GPU Job, `hand_setup.py` compiles the frozen camera graphs using the
-validated TensorRT 10.13.3.9 settings. The detector builds its own FP32 provider
-cache. This is deployment compilation, not automatic benchmarking or speed tuning.
-No GPU acceptance or performance claim follows from a successful CPU image build.
+The CPU health endpoint reports build readiness. Before enabling a new image,
+validate a GPU Job that compiles its camera engines and writes native SOMA
+actions. TensorRT plans are built on the selected GPU rather than copied from
+another machine.

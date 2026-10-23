@@ -1,6 +1,0 @@
-# Startup utilities imported by the frozen trajectory-only camera worker.
-# Keep the numerical/model dependencies in camera-requirements.txt unchanged.
-munch==4.0.0
-colorama==0.4.6
-scikit-learn==1.7.2
-tensorboard==2.20.0

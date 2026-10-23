@@ -88,9 +88,7 @@ def infer(predictor, item):
     row = request["row"]
     started = time.perf_counter()
     parts = {}
-    output, topology = predict_frames_batched(
-        predictor, frames, annotations, batch_hands=64, timings=parts, parallel_prepare=True
-    )
+    output, topology = predict_frames_batched(predictor, frames, annotations, batch_hands=64, timings=parts)
     result = {
         "format": "gem_pose_predictions_v1",
         "task": "hand",

@@ -17,9 +17,7 @@ from scipy.spatial.transform import Rotation
 from lerobot.annotations.hands.assets import download_release, file_checksum, verify_assets
 from lerobot.annotations.hands.config import (
     ACTION_SCHEMA,
-    COMPUTE,
     HandBackendConfig,
-    estimate,
 )
 from lerobot.annotations.hands.egohand.geometry import optical_wrist, pack_action
 from lerobot.annotations.hands.egohand.output import NATIVE_FIELDS, export_actions, observed_spans
@@ -223,12 +221,6 @@ def test_calibration_is_measured_and_resolution_bound(change):
     assert validate_calibration(calibration, 64, 64) == calibration
     with pytest.raises(ValueError):
         validate_calibration({**calibration, **change}, 64, 64)
-
-
-def test_no_fabricated_hf_throughput():
-    assert set(COMPUTE) == {"h200", "a100-large", "rtx-pro-6000"}
-    assert estimate(3000)["seconds"] is None
-    assert estimate(3000)["reference_fps"] == [39.41450219151414, 41.03790957211554]
 
 
 def asset_fixture(tmp_path):

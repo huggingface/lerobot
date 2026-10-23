@@ -64,7 +64,7 @@ def _restore_raster(prediction, transforms, source_boxes):
 
 @torch.inference_mode()
 def predict_frames_batched(
-    predictor, frames, annotations, *, batch_hands=64, square_pixels=True, timings=None, parallel_prepare=True
+    predictor, frames, annotations, *, batch_hands=64, square_pixels=True, timings=None
 ):
     from gem.common.camera_adapters import SquarePixelTransform
     from gem.inference.pose import predict_frame

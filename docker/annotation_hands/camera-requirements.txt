@@ -16,3 +16,8 @@ termcolor==3.3.0
 nvidia-cudss-cu12==0.8.0.10
 tensorrt-cu12==10.13.3.9
 utils3d-moge @ git+https://github.com/EasternJournalist/utils3d-moge.git@62f09d58509485564e24d5d9f6aac9ee9ebc0c37
+munch==4.0.0
+colorama==0.4.6
+scikit-learn==1.7.2
+tensorboard==2.20.0
+setuptools==79.0.1

@@ -16,7 +16,8 @@ needed.
 2. **Hands:** the FP32 TensorRT hand detector runs in batches of eight, with
    complete-clip physical left/right association. EgoHand processes 64 independent
    hand crops per batch. Only its backbone uses FP16 autocast; heads and geometry
-   remain FP32. CPU crop preparation and the next clip's detection overlap pose
+   remain FP32. Crop centers follow detections without a fixed pixel-motion cap;
+   size stabilization and adaptive filtering remain enabled. CPU crop preparation and the next clip's detection overlap pose
    inference, while camera tracking runs in its isolated environment.
 3. **Supported motion:** the validated smoothing and post-reconstruction singleton
    rejection remain. Export requires at least 30 consecutive frames where both
@@ -26,10 +27,9 @@ needed.
 4. **Dataset actions:** native 156D actions and SOMA parameters are attached to the
    annotated dataset copy, preserving every selected source episode and frame.
 
-The recipe is `egohand-soma-v3-checkpoint-overlap-v4`. It uses the verified smaller
-inference-only checkpoint with byte-identical model tensors, GEM-X revision
-`20555befe2fbbe5b2015e1fff7ff214dc18ea9d6`, and a pinned DROID-W/MoGe runtime.
-No reference camera, ground-truth scale fitting or benchmark data enters inference.
+The recipe pins an inference-only EgoHand checkpoint, GEM-X and the camera
+runtime. No reference camera, ground-truth scale fitting or benchmark data enters
+inference.
 
 ## Dataset output
 
@@ -81,16 +81,10 @@ orientation option (or `camera.hand_input_orientation = "aria-gen1-cw90"` in cam
 metadata). It rotates only hand-model input and restores sensor camera axes after
 inference. It must not be applied to ordinary upright cameras.
 
-HF Jobs offers A100 80 GB, RTX PRO 6000 96 GB and H200 141 GB. Their throughput is
-**not measured yet**. The development reference is 39.41–41.04 full-pipeline input
-FPS on an RTX 5090 over two fresh-process samples of ten short calibrated clips,
-1,500 input frames and 1,120 accepted frames each. This includes startup, decoding,
-calibration, fresh DROID-W+MoGe, hands and native export. It excludes installation
-and model downloads and is not a cold filesystem-cache benchmark. The development
-recall/action-error results are not held-out generalization or HF acceptance tests.
-Quotes show live hardware prices and reserve the full timeout; this reservation
-is not an actual charge. Queue, model downloads, per-GPU TensorRT compilation and
-dataset copying add time.
+Choose an HF Jobs GPU in Studio. Estimates use live hardware prices and reserve
+the selected timeout; this reservation is not an actual charge. Runtime depends
+on resolution, recording length and GPU. Queueing, model downloads, TensorRT
+compilation and dataset copying add time.
 
 ## Assets and deployment
 
@@ -99,15 +93,13 @@ and other runtime dependencies retain their respective terms; see the model card
 and GEM-X attribution notices linked in Studio. The research flow keeps outputs
 private. It neither downloads nor redistributes MANO assets.
 
-The operator builds a dependency-complete private HF worker image on CPU and pins
-its Space revision and image-version checksum. Model files and native camera
-source are checked against immutable manifests. The user's HF login must have
-read access to the private runtime release. After download, native inference runs
-offline without that token. GPU-specific TensorRT plans are rebuilt on the Job's
-GPU from the frozen ONNX graphs and settings; no RTX 5090 plans are reused.
+The operator provides a [worker image](https://github.com/huggingface/lerobot/tree/main/docker/annotation_hands)
+with pinned source, dependencies and manifests. The user's HF login must have
+read access to its model release. After download, native inference runs offline
+without that token. TensorRT plans are built on the Job's GPU from the pinned
+ONNX graphs.
 
 The #4892 execution engine checkpoints the hand stage alongside language and human
 video stages where selected. Two episodes may be in flight, with bounded separate
 camera, detector, pose and export work. Cached stages do not repeat inference and
 automatic inference retries remain disabled. HF Jobs owns compute and billing.
-The integration remains experimental until the user validates a real HF GPU run.
