@@ -61,7 +61,7 @@ from lerobot.common.train_utils import (
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import EvalConfig, JobConfig, parser
 from lerobot.configs.rewards import RewardModelConfig
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.datasets import (
     EpisodeAwareSampler,
     LeRobotDataset,
@@ -93,6 +93,7 @@ from lerobot.utils.import_utils import (
     register_third_party_plugins,
     require_package,
 )
+from lerobot.utils.io_utils import load_json
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.sample_weighting import SampleWeighter
@@ -115,6 +116,22 @@ if TYPE_CHECKING or _accelerate_available:
 from .lerobot_eval import eval_policy_all
 
 EMA_STATE_FILENAME = "ema_state.pt"
+
+
+def _require_saved_ema_for_resume(cfg: TrainPipelineConfig) -> None:
+    """Reject a missing expected shadow; allow intentionally enabling EMA on a non-EMA run."""
+    if not cfg.ema.enable or cfg.checkpoint_path is None:
+        return
+    ema_path = cfg.checkpoint_path / TRAINING_STATE_DIR / EMA_STATE_FILENAME
+    if ema_path.is_file():
+        return
+    saved_cfg = load_json(cfg.checkpoint_path / PRETRAINED_MODEL_DIR / TRAIN_CONFIG_NAME)
+    if saved_cfg.get("ema", {}).get("enable", False):
+        raise FileNotFoundError(
+            f"Cannot resume the saved EMA training state: {ema_path} is missing. "
+            "The checkpoint may be incomplete. Resume a completed checkpoint instead. "
+            "To intentionally start a new EMA, start a new run from the saved policy."
+        )
 
 
 def _ema_parameters(policy: PreTrainedPolicy) -> list[torch.nn.Parameter]:
@@ -741,6 +758,7 @@ def train(cfg: TrainPipelineConfig) -> None:
     # --- resume phase 1 + dataloaders ----------------------------------------------------------
     step = 0  # number of loop steps (= micro-batches consumed per data-parallel worker)
     if cfg.resume:
+        _require_saved_ema_for_resume(cfg)
         step = resume_before_prepare(cfg)  # step + RNG only; sharded state loads after prepare
 
     dataloader, eval_dataloader = make_dataloaders(cfg, dataset, eval_dataset, step, parallel_dims)

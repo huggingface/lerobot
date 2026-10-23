@@ -122,17 +122,21 @@ def should_save_checkpoint(step: int, save_freq: int, total_steps: int) -> bool:
 def update_last_checkpoint(checkpoint_dir: Path) -> None:
     """Point the `last` symlink in the checkpoints directory at the given checkpoint.
 
-    Any existing `last` symlink is replaced. The link target is relative to the checkpoints
-    directory, so the tree stays valid when the run directory is moved.
+    Replace the link atomically on the same filesystem, so a process interruption cannot
+    leave a gap after removing the old link. The target remains relative to the checkpoints
+    directory. This does not make the checkpoint files durable across a power failure.
 
     Args:
         checkpoint_dir (Path): The checkpoint step directory the `last` link should target.
     """
     last_checkpoint_dir = checkpoint_dir.parent / LAST_CHECKPOINT_LINK
-    if last_checkpoint_dir.is_symlink():
-        last_checkpoint_dir.unlink()
+    if last_checkpoint_dir.exists() and not last_checkpoint_dir.is_symlink():
+        raise FileExistsError(f"Refusing to replace a non-symlink checkpoint target: {last_checkpoint_dir}")
     relative_target = checkpoint_dir.relative_to(checkpoint_dir.parent)
-    last_checkpoint_dir.symlink_to(relative_target)
+    with TemporaryDirectory(prefix=".last-", dir=checkpoint_dir.parent) as staging:
+        pending = Path(staging) / LAST_CHECKPOINT_LINK
+        pending.symlink_to(relative_target)
+        os.replace(pending, last_checkpoint_dir)
 
 
 # ---------------------------------------------------------------------------------------------
