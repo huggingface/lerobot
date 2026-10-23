@@ -77,6 +77,8 @@
     title: EO-1
   - local: lingbot_va
     title: LingBot-VA
+  - local: lingbot_vla_v2
+    title: LingBot-VLA 2.0
   - local: fastwam
     title: FastWAM
   - local: flux3
@@ -91,6 +93,8 @@
     title: 多任務 DiT 策略
   - local: walloss
     title: WALL-OSS
+  - local: wall_oss_05
+    title: Wall-OSS-0.5
   - local: dm05
     title: DM05
   title: 策略

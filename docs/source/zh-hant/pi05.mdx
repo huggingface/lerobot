@@ -173,6 +173,7 @@ lerobot-train \
 - **`--policy.pretrained_path=lerobot/pi05_base`**：要微調的 π₀.₅ 基礎模型，可選擇：
   - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
   - [lerobot/pi05_libero_base](https://huggingface.co/lerobot/pi05_libero_base)（專門以 Libero 資料集訓練）
+- **`--policy.optimizer_fused=true`**：使用融合（fused）AdamW 以加快最佳化器步驟；接續訓練時會忽略此旗標
 
 ### 可選的訓練時 RTC[[optional-training-time-rtc]]
 

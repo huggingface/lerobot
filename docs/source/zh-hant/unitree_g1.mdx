@@ -1,12 +1,53 @@
 # Unitree G1[[unitree-g1]]
 
-<img
-  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/unitree_thumbnail.jpg"
-  alt="Unitree G1 locomanipulation demo"
+<video
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/unitree_g1_passing_can.mp4"
+  autoplay
+  loop
+  muted
+  playsinline
   style={{ width: "100%" }}
 />
 
-LeRobot 現在支援 Unitree G1 人形機器人！你可以進行遙操作、訓練移動操作（locomanipulation）策略（policy）、在模擬中測試等。29 與 23 自由度（DoF）兩種版本都有支援。
+LeRobot 支援 Unitree G1 人形機器人。你可以進行遙操作、訓練
+移動操作策略（locomanipulation policy）、在模擬中測試等。29 與 23 自由度（DoF）
+兩種版本都有支援。
+
+## 具身形態選擇[[embodiment-selection]]
+
+單一 `UnitreeG1` 類別會透過 `UnitreeG1Config.embodiment` 選擇其具身形態（embodiment）的關節定義。
+預設為 `g1_29`；因此現有設定會保留 G1-29 行為。使用 `--robot.embodiment=g1_23`
+或在 Python 中選擇 23 自由度配置：
+
+```python
+from lerobot.robots.unitree_g1 import UnitreeG1Config
+
+config = UnitreeG1Config(embodiment="g1_23", is_simulation=False)
+```
+
+| 能力                                              | G1-29                        | G1-23                         |
+| ------------------------------------------------- | ---------------------------- | ----------------------------- |
+| 關節設定與動作（action）／觀測（observation）特徵 | 29 個身體關節、14 個手臂關節 | 23 個身體關節、10 個手臂關節  |
+| DDS 命令／回饋配置                                | 29 個作用中槽位              | 29 個槽位，缺少的關節保持停用 |
+| MuJoCo 模擬                                       | 支援                         | 尚未支援；原生模型規劃中      |
+| 移動控制器                                        | GR00T 與 Holosoma            | GR00T 與 Holosoma             |
+| SONIC 全身控制器                                  | 支援                         | 不支援；策略需要 29 自由度    |
+| 重力補償                                          | 支援，預設關閉               | 尚未支援；原生運動學規劃中    |
+
+兩種版本都使用相同的、具有 29 個槽位的 DDS 訊息配置。G1-29 會使用全部 29 個槽位，而
+G1-23 會使用其中 23 個，並讓六個不存在的關節槽位保持停用。因此，`kp`、`kd` 與
+`default_positions` 向量仍維持 29 個元素長，並依 DDS 槽位建立索引。
+G1-23 的作用中手臂槽位是 `15..19` 與 `22..26`。槽位 `13, 14, 20, 21, 27, 28` 沒有
+作用中的關節；其設定值必須為零。這些槽位會從動作／觀測
+特徵中省略，而不會重新編號。
+在發布 G1-23 訊息之前，非作用中與保留的命令項目會被清除。
+明確的增益覆寫值必須是有限、非負，並使用相同的稀疏配置。
+預設增益會依關節名稱在兩種版本間共用，因此相同的實體關節
+會使用相同的增益，而 G1-23 中不存在的槽位則維持為零。
+
+原生 G1-23 MuJoCo 模擬尚未支援。在啟用模擬的情況下選擇 G1-23 具身形態，
+會在傳輸初始化之前失敗。原生 G1-23 MuJoCo 模型
+規劃於未來版本推出。
 
 ---
 
@@ -36,7 +77,7 @@ pip install -e '.[unitree_g1]'
 ```
 
 <Tip>
-  目前 pinocchio 必須從 conda-forge 安裝（而不是 pip），才會包含手臂 IK 所需的
+  目前 pinocchio 必須從 conda-forge 安裝（而非 pip），才能包含手臂 IK 所需的
   CasADi 綁定（binding）。
 </Tip>
 
@@ -309,7 +350,7 @@ G1 的移動控制器未宣告 rollout 的可恢復等待機制所使用的保�
 
 ## 第 5 部分：SONIC 全身控制（latent token 策略）[[part-5-sonic-whole-body-control-latent-token-policies]]
 
-LeRobot 現在將 NVIDIA [SONIC](https://nvlabs.github.io/GEAR-SONIC/) 全身控制部署架構中的**解碼器**部分，移植為 `SonicWholeBodyController`。策略不再直接命令各個關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將這個 token 與近期的本體感覺（proprioception）歷史，對應成一個殘差動作（action），經過縮放後加到站立姿態上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
+LeRobot 現在將 NVIDIA [SONIC](https://nvlabs.github.io/GEAR-SONIC/) 全身控制部署架構中的**解碼器**部分，移植為 `SonicWholeBodyController`。策略不再直接命令各個關節，而是在每個控制週期輸出 64 維的 **latent motion token**（`motion_token.{i}.pos`）；SONIC 解碼器會將這個 token 與近期的本體感覺（proprioception）歷史，對應成一個殘差動作，經過縮放後加到站立姿態上，為全部 29 個自由度產生 50 Hz 的關節位置目標。
 
 控制器會從 [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder) 載入 ONNX 解碼器與所有部署常數（PD 增益、`default_angles`、`action_scale` 以及中性 token）。這個儲存庫也提供蒸餾過的低延遲解碼器，可透過控制器的 `policy_type="low_latency"` 引數選用（預設為 `"default"`）。
 
@@ -355,7 +396,7 @@ lerobot-policy-server \
 python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
 ```
 
-接著在 G1 的第二個終端機中啟動 rollout 使用者端，並將 `<GPU_MACHINE_IP>` 替換掉：
+接著在 G1 的第二個終端機中啟動 rollout 用戶端，並將 `<GPU_MACHINE_IP>` 替換掉：
 
 ```bash
 lerobot-rollout \
@@ -381,7 +422,7 @@ lerobot-rollout \
 
 此做法會停用返回初始位置：透過 SONIC 的 latent token 空間進行插值，並不是經過驗證的實體歸位軌跡。基於相同理由，請避免使用 `/reset`，因為它會將 token 掃回連線時的值。`/stop` 仍會關閉遠端工作階段，並透過一般控制器關閉路徑中斷與機器人的連線。
 
-使用 `SonicWholeBodyController` 時，觀測狀態是 64 維的 token 回傳值，而不是 29 個關節位置，因此相容的檢查點必須以該狀態訓練。連線時，機器人會先讓關節平順地移動到解碼器的 `default_angles`，控制器才接手。
+使用 `SonicWholeBodyController` 時，觀測的狀態（state）是 64 維的 token 回傳值，而不是 29 個關節位置，因此相容的檢查點必須以該狀態訓練。連線時，機器人會先讓關節平順地移動到解碼器的 `default_angles`，控制器才接手。
 
 ---
 

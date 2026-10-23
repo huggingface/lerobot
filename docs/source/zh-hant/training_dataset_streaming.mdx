@@ -56,14 +56,17 @@ worker，因此一個批次只會混合單一 worker 池中的回合。池越大
 **限制。** 位元組預算（`streaming_byte_budget_gb`）與明確設定的 `video_decoder_cache_size`
 都是以 rank 為單位：每個 worker 分到其中的 1/N。每個 worker 至少需要一個回合，因此 `lerobot-train`
 使用的 worker 數最多等於該 rank 擁有的回合數。`--num_workers=0` 會讓資料集留在
-訓練行程中。
+訓練行程中。此時，訓練執行緒會套用影像轉換，因此相同的 `--seed`
+會產生相同的轉換。
 
 ## MP4 sidecar 與第一次執行[[mp4-sidecars-and-the-first-run]]
 
 影片串流會使用 MP4 索引 sidecar。資料集初始化時會先檢查
 以修訂版本（revision）為鍵的本機快取，再尋找有效的已發布 sidecar。若兩者都沒有，
-LeRobot 會在持有行程鎖的情況下於本機建立 sidecar，並以原子方式安裝它。
-建立失敗或中斷時，不會取代先前的有效檔案。
+LeRobot 會在持有行程鎖的情況下於本機建立 sidecar，並以原子方式安裝它。若
+建立失敗或中斷，不會取代先前的有效檔案。其他需要
+同一個 sidecar 的行程，會等待該鎖最多 `--dataset.streaming_sidecar_lock_timeout_s`
+（預設 30 分鐘）。若大型資料集需要更長的索引時間，請調高此值。
 
 Hub 酬載（payload）的讀取會固定在中繼資料快照的 commit。Bucket 索引會
 與最新的物件清單（包含內容雜湊）進行比對，因此在相同
@@ -77,13 +80,23 @@ Hub 酬載（payload）的讀取會固定在中繼資料快照的 commit。Bucke
 節點本機快取的叢集上，第一個工作可能會在每個節點各建立一次。共用的 LeRobot 快取可以避免這種
 重複。
 
-壓縮的 v3 sidecar 會轉換一次，成為唯讀的記憶體映射（memory-mapped）索引，位於
-`$HF_LEROBOT_HOME/streaming-indexes` 下。轉換過程會上鎖，並以原子方式發布；
-共用該快取的 rank 會重複使用相同的檔案支援陣列頁面，而不是各自解壓縮
-每個陣列的私有副本。每個 rank 只會為其回合所使用的來源檔案建構紀錄。
-衍生的索引需要容納**未壓縮樣本表**的磁碟空間，但不會儲存影片
-酬載。第一次轉換會有成本；之後的開啟會重複使用它。替換 sidecar
-會建立新的不可變映射索引世代，而不會使正在讀取的讀取器失效。
+Sidecar 建構會將每個完成的來源索引寫入暫存封存檔。它最多
+保留設定的解析結果數量。陣列記憶體取決於最大的並行
+來源；封存檔中繼資料仍會隨著來源數量成長。執行 `lerobot-build-mp4-sidecar` 時，
+可使用 `--workers` 設定解析並行度。建立失敗時會保留先前的 sidecar。
+
+已發布的 schema-3 NPZ 封存檔會保留標準的 `int64` 整數陣列。第一次開啟時，會將
+封存檔轉換成位於 `$HF_LEROBOT_HOME/streaming-indexes` 下的唯讀記憶體映射（memory-mapped）索引。
+衍生索引會使用最小的精確整數型別。它會將固定的持續時間、組合
+偏移、大小或位元組偏移只儲存一次。唯讀陣列檢視會保留邏輯樣本數。
+呈現時間戳會保留精確的 `float64` 值。同步樣本陣列會保留密集儲存。
+
+衍生索引會使用獨立的快取世代。較舊的讀取器會保留其現有的快取
+格式。使用新讀取器的第一次開啟可以轉換封存檔一次；之後的開啟會重複使用它。
+轉換會使用行程鎖與原子替換。共用該快取的 rank 會重複使用
+相同的檔案支援頁面。每個 rank 只會為其回合所使用的來源檔案建構紀錄。
+舊與新的快取世代可能需要額外的磁碟空間。替換 sidecar 會建立
+新的不可變世代，而不會使正在讀取的讀取器失效。
 
 這並不會讓所有中繼資料都維持固定大小：回合中繼資料與區段表仍會隨著
 資料集成長，而打亂後的 rank 分片可能會碰到重疊的來源檔案。常駐於作業系統的映射
@@ -133,6 +146,7 @@ MP4 編輯時間軸會被拒絕，而不是默默回傳對齊錯誤的影格。
 | `video_decoder_cache_size`          | 池 × 相機數 | 每個 worker 開啟的影片解碼器 LRU 上限              |
 | `streaming_native_http_connections` |      未設定 | 每個 rank 的原生 HTTP 連線上限                     |
 | `streaming_native_http_subranges`   |           1 | 每次原生 HTTP 範圍讀取的並行子範圍數               |
+| `streaming_sidecar_lock_timeout_s`  |        1800 | 等待另一個 sidecar 建立的秒數                      |
 | `max_num_shards`（`--num_workers`） |          16 | 每個 worker 並行擷取的回合數                       |
 
 除了 `max_num_shards` 之外，所有選項都是 `--dataset.*` 旗標。`max_num_shards` 是

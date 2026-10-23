@@ -29,12 +29,14 @@ pip install lerobot[phone]
 ### 手機方向與控制[[phone-orientation-and-controls]]
 
 - 方向：手持手機時，讓螢幕朝上，頂端朝向與機器人夾爪相同的方向。這能確保校正時，手機的座標系與機器人的座標系對齊，讓動作感覺自然，請參考下方的圖片。
-- 啟用／停用：
-  - iOS：按住 `B1` 啟用遙操作，放開即停止。第一次按下時會擷取參考姿態。
-  - Android：按住 `Move` 按鈕，放開即停止。第一次按下時會擷取參考姿態。
-- 夾爪控制：
-  - iOS：類比輸入 `A3` 以速度輸入的方式控制夾爪。
+- 啟用／停用——這是**安全保持開關**（dead-man switch），**你必須在整個動作期間持續按住它**：
+  - iOS：按住 `B1` 移動機器人，放開後手臂會凍結在原位。每次按下都會將手機重新錨定到手臂目前的姿態，因此你可以放開、把手移回舒適的位置、再次按下並繼續——機器人不會跳動。
+  - Android：在 WebXR 頁面上使用 `Move` 按鈕也一樣。
+- 夾爪控制（無論是否按住啟用按鈕都有效）：
+  - iOS：類比滑桿 `A3` 會以速度輸入控制夾爪——向上推可張開，向下拉可閉合，放開回到中央則保持不動。
   - Android：按鈕 `A` 與 `B` 的作用類似遞增／遞減（A 張開、B 閉合）。你可以在 `GripperVelocityToJoint` 步驟中調整速度。
+- 握法：用**雙手**握住手機，一根拇指放在啟用按鈕（`B1`）上，另一根放在夾爪滑桿（`A3`）上，這樣就能在不改變握法的情況下同時驅動手臂與夾爪。操作時讓手機保持平放——它的姿態就是命令，因此在動作途中重新握持會移動機器人。
+- 機器人起始姿態：`teleoperate.py` 會在啟動時（手機校正之前）將手臂移到它的[歸位姿態](./so101#calibrate)，並在按下 Ctrl+C 時移回腳本啟動時手臂原本所在的位置。歸位會命令每個手臂關節前往校正期間由 `set_half_turn_homings()` 置中的半圈值——也就是校正圖示中保持的姿態——而夾爪則留在原處，因此歸位絕不會讓它夾到東西。這一點很重要，因為目標是從你按下啟用按鈕時手臂所在的位置，以 IK 解算出來的——彎折或完全伸展的手臂可移動空間很少，會撞上關節限位。其他範例腳本（`record.py`、`evaluate.py`、`replay.py`）不會讓手臂歸位，因此請在啟動它們之前自行將手臂放到該位置。
 
 <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/phone_teleop.webp" alt="Phone teleop orientation" title="Phone teleop orientation" width="40%">
 
@@ -65,21 +67,37 @@ teleop_device = Phone(teleop_config)
 
 執行其中一個範例腳本，即可進行遙操作、錄製資料集、重播資料集或評估策略（policy）。
 
-所有腳本都假設你已經設定好機器人（例如 SO-100 從臂），並設定了正確的序列埠。
+所有腳本都假設你已經設定並校正好機器人（例如 SO-100 從臂）。
 
-此外，你需要**將機器人的 URDF 複製到 examples 資料夾中**。以本教學的範例（使用 SO100/SO101）來說，請將 [SO-ARM100 儲存庫](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101)中的 `SO101` 資料夾複製到 `examples/phone_to_so100/` 目錄，讓 URDF 檔案的路徑變成 `examples/phone_to_so100/SO101/so101_new_calib.urdf`。
+<Tip warning={true}>
 
-- 執行這個範例進行遙操作：
+**你必須提供機器人的 URDF**。每個範例都會解算反向運動學（inverse kinematics），這需要手臂的運動學模型，而 LeRobot 並未隨附 URDF。
+
+以本教學使用的 SO-100/SO-101 來說，請將 [SO-ARM100 儲存庫](https://github.com/TheRobotStudio/SO-ARM100/tree/main/Simulation/SO101)中的 `SO101` 資料夾複製到 `examples/phone_to_so100/`，
+這樣當你位於 LeRobot 儲存庫中時，檔案會落在 `examples/phone_to_so100/SO101/so101_new_calib.urdf`：
+
+```bash
+git clone --depth 1 https://github.com/TheRobotStudio/SO-ARM100.git /tmp/SO-ARM100
+cp -r /tmp/SO-ARM100/Simulation/SO101 examples/phone_to_so100/SO101
+```
+
+如果你把檔案存放在其他地方，或要驅動另一支手臂，請用 `--urdf` 讓腳本指向不同的檔案。
+
+</Tip>
+
+- 執行這個範例進行遙操作，並傳入從臂的序列埠（可用 `lerobot-find-port` 找到）：
 
   ```bash
   cd examples/phone_to_so100
-  python teleoperate.py
+  python teleoperate.py --port /dev/tty.usbmodem5A460814411
   ```
+
+  `--id` 會選擇要使用哪個已儲存的校正，`--urdf` 則指向上述的 URDF。
 
 執行範例後：
 
 - Android：啟動腳本後，在手機上開啟印出的本機 URL，點選 Start，然後按住 Move。
-- iOS：先開啟 HEBI Mobile I/O；B1 啟用動作，A3 控制夾爪。
+- iOS：先開啟 HEBI Mobile I/O；按住 B1 即可移動機器人。A3 控制夾爪。
 
 此外，你可以編輯範例中的處理器步驟，自訂對應方式或安全限制。你也可以重新對應輸入（例如改用其他類比輸入），或修改輸入與運動學的步驟，將管線調整為適用於其他機器人（例如 LeKiwi）。更多相關內容，請參閱[機器人與遙操作器的處理器](./processors_robots_teleop)指南。
 
@@ -121,13 +139,13 @@ teleop_device = Phone(teleop_config)
 
   ```python
   action["enabled"] = enabled
-        action["target_x"] = -pos[1] if enabled else 0.0
-        action["target_y"] = pos[0] if enabled else 0.0
-        action["target_z"] = pos[2] if enabled else 0.0
-        action["target_wx"] = rotvec[1] if enabled else 0.0
-        action["target_wy"] = rotvec[0] if enabled else 0.0
-        action["target_wz"] = -rotvec[2] if enabled else 0.0
-        action["gripper_vel"] = gripper_vel  # 停用時仍會送出夾爪動作
+  action["target_x"] = pos[1] if enabled else 0.0
+  action["target_y"] = -pos[0] if enabled else 0.0
+  action["target_z"] = pos[2] if enabled else 0.0
+  action["target_wx"] = rotvec[1] if enabled else 0.0
+  action["target_wy"] = -rotvec[0] if enabled else 0.0
+  action["target_wz"] = rotvec[2] if enabled else 0.0
+  action["gripper_vel"] = gripper_vel  # 停用時仍會送出夾爪動作
   ```
 
 - `EEReferenceAndDelta` 步驟會將目標增量轉換為絕對的 EE 目標姿態，並在啟用時儲存參考姿態；`end_effector_step_sizes` 是 EE 姿態的步長，修改它即可改變動作速度。
@@ -193,4 +211,5 @@ teleop_device = Phone(teleop_config)
 
 - 找不到 iOS 裝置：確認 HEBI Mobile I/O 已開啟，且筆電與手機在同一個網路上。
 - 無法連上 Android 的 URL：確認你使用的是 `https` 而不是 `http`，並使用腳本印出的確切 IP，同時讓瀏覽器略過憑證問題繼續進入。
-- 動作方向相反：調整 `MapPhoneActionToRobotAction` 中的正負號，或交換座標軸，以符合你的設定。
+- 動作方向相反：一次檢查一個軸，然後調整 `MapPhoneActionToRobotAction` 中的正負號，或交換座標軸，以符合你的設定。
+- 手臂幾乎不動或與其限位對抗：從中段範圍的起始姿態重新開始（請見上文）——IK 是從手臂目前的構型解算的。

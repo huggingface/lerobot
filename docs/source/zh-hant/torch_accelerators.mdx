@@ -5,7 +5,7 @@ LeRobot 的訓練與推論都支援多種硬體加速選項。
 這些選項包括：
 
 - **CPU**：所有運算都由 CPU 執行，不使用專用的加速器
-- **CUDA**：使用 NVIDIA 與 AMD GPU 加速
+- **CUDA**：使用 NVIDIA GPU 加速，並可透過 ROCm 使用 AMD GPU 加速（請參閱 [AMD GPU](#amd-gpus-rocm)）
 - **MPS**：使用 Apple Silicon GPU 加速
 - **XPU**：使用 Intel 內建與獨立 GPU 加速
 
@@ -15,6 +15,21 @@ LeRobot 的訓練與推論都支援多種硬體加速選項。
 
 CPU、CUDA 與 MPS 後端請依照 [PyTorch 安裝頁面](https://pytorch.org/get-started/locally)的說明操作。
 XPU 後端請依照 [PyTorch 文件](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html)的說明操作。
+
+### AMD GPU（ROCm）[[amd-gpus-rocm]]
+
+PyTorch 的 ROCm 建置會透過 `torch.cuda` 命名空間公開 HIP 執行環境，因此
+`--policy.device=cuda` 會選取 AMD GPU，且不需要在 LeRobot 端做任何變更。若要選取特定顯示卡，建議使用 `HIP_VISIBLE_DEVICES` 而非 `CUDA_VISIBLE_DEVICES`。
+
+在現有的 ROCm PyTorch 上安裝 LeRobot 時需要特別留意：LeRobot 會固定
+`torch<2.12`、`torchvision<0.27` 與 `numpy<2.3`，這些版本都低於目前 ROCm 映像檔
+所隨附的版本，而且 `[tool.uv.sources]` 會從 CUDA 的 `cu128` 索引解析 torch，因此
+未受限的安裝會取代 ROCm 建置，並使 GPU 無法使用。請使用
+`uv pip install --override` 固定這些套件，讓其餘相依樹能正常解析。
+[`docker/Dockerfile.rocm`](https://github.com/huggingface/lerobot/blob/main/docker/Dockerfile.rocm)
+即可完成上述操作，是取得可用環境最快的方式；請參閱
+[docker/README.md](https://github.com/huggingface/lerobot/blob/main/docker/README.md)
+了解 ROCm 所需的執行旗標。
 
 ### 驗證安裝[[verifying-the-installation]]
 

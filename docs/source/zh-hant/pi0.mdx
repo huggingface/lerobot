@@ -81,6 +81,7 @@ lerobot-train \
 - **`--policy.pretrained_path=lerobot/pi0_base`**：要微調（fine-tune）的 π₀ 基礎模型，可選擇：
   - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
   - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero)（專門針對 Libero 資料集訓練）
+- **`--policy.optimizer_fused=true`**：使用融合（fused）AdamW 以加快最佳化器步驟；接續訓練時會忽略此旗標
 
 ### 訓練參數說明[[training-parameters-explained]]
 

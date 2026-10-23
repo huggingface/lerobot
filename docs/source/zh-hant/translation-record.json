@@ -184,7 +184,7 @@
     },
     "integrate_hardware.mdx": {
       "source_title": "Bring Your Own Hardware",
-      "source_version": "2f8d541e54e1660f7a62762762ae7abb033ea42b",
+      "source_version": "219aec923d5a58419f5088d994c44be6320c00de",
       "title": "整合你自己的硬體"
     },
     "introduction_processors.mdx": {
@@ -228,12 +228,18 @@
       "title": "LIBERO"
     },
     "libero_plus.mdx": {
-      "source_version": "173b81255cb1d1f664d7163cb0800eb1380f7bf8",
+      "source_title": "LIBERO-plus",
+      "source_version": "9c2cdc1777d60bb9b9ee3ff3734f84e903a96d31",
       "title": "LIBERO-plus"
     },
     "lingbot_va.mdx": {
       "source_version": "d33e90340890936073b730fcefe781292406e1ef",
       "title": "LingBot-VA"
+    },
+    "lingbot_vla_v2.mdx": {
+      "source_title": "LingBot-VLA 2.0",
+      "source_version": "3b7603ceeb64f7b4d2498007a89786241c324398",
+      "title": "LingBot-VLA 2.0"
     },
     "metaworld.mdx": {
       "source_version": "b7accdfa2e1c58d69f7d16d9561bade9731b7262",
@@ -271,19 +277,23 @@
       "title": "使用 PEFT 訓練（例如 LoRA）"
     },
     "phone_teleop.mdx": {
-      "source_version": "ae79531efc9c21dc03016b22e87577b98d821dd8",
+      "source_title": "Phone",
+      "source_version": "d10eb4ccc497c0f85213b3c224b81a9d8b8599bb",
       "title": "手機"
     },
     "pi0.mdx": {
-      "source_version": "a8934efd2b2a0d7b1afa815ac1ffc853a59a936b",
+      "source_title": "π₀ (Pi0)",
+      "source_version": "fca3009bcc36c9f3269ee332fa3fb666536fa197",
       "title": "π₀ (Pi0)"
     },
     "pi05.mdx": {
-      "source_version": "d68f969fca846e45becb23dc914a18ebf28470df",
+      "source_title": "π₀.₅ (Pi05)",
+      "source_version": "0340854ccc2a50129b74680b6530d129dd5f25d8",
       "title": "π₀.₅ (Pi05)"
     },
     "pi0fast.mdx": {
-      "source_version": "30b95aaf6991cc33f915675c30320311c51eb825",
+      "source_title": "π₀-FAST (Pi0Fast)",
+      "source_version": "ddcce92ee865e92b7c8754308ae31155ff6022ff",
       "title": "π₀-FAST (Pi0Fast)"
     },
     "porting_datasets_v3.mdx": {
@@ -313,7 +323,8 @@
       "title": "重新命名對應表與空相機"
     },
     "robocasa.mdx": {
-      "source_version": "2a3ddb39c59f7519672f83df96fcc8d3078e4e49",
+      "source_title": "RoboCasa365",
+      "source_version": "990fd867f788b6e0b68b8f64afa5272e3a6dbbb2",
       "title": "RoboCasa365"
     },
     "robocerebra.mdx": {
@@ -361,7 +372,8 @@
       "title": "串流影片編碼"
     },
     "third_party_robots.mdx": {
-      "source_version": "c96612bf408ee7cc878e5a5c95ab80ce4deb107b",
+      "source_title": "Third-Party Robots & Teleoperators",
+      "source_version": "7c4da691d9c8d521a49981796dbd6d9134641d7c",
       "title": "第三方機器人與遙操作器"
     },
     "third_party_sensors.mdx": {
@@ -379,17 +391,17 @@
     },
     "torch_accelerators.mdx": {
       "source_title": "PyTorch accelerators",
-      "source_version": "a84c69378e02baff6c1877f53a73844a47afd3b7",
+      "source_version": "27e6987fc9eb9f9657ac21f1f0bd1ac9b2e6ee73",
       "title": "PyTorch 加速器"
     },
     "training_dataset_streaming.mdx": {
       "source_title": "Training Dataset Streaming",
-      "source_version": "b791f6d4dc98641183f04c1e561e761d49854dab",
+      "source_version": "2a54dd45d3a7e0c9098fe7508888b4f7a9067bcf",
       "title": "訓練資料集串流"
     },
     "unitree_g1.mdx": {
       "source_title": "Unitree G1",
-      "source_version": "b11fea207bdeae4e479e3acb83537855db6104f8",
+      "source_version": "21f5899f1923e1952cd74fa52caf1ce16f19e2d4",
       "title": "Unitree G1"
     },
     "using_dataset_tools.mdx": {
@@ -408,6 +420,11 @@
     "vlabench.mdx": {
       "source_version": "9d45da4ec84012c3614d5375a95d9140366cf2a4",
       "title": "VLABench"
+    },
+    "wall_oss_05.mdx": {
+      "source_title": "Wall-OSS-0.5",
+      "source_version": "e6d2ec5f3543873b9ddd67a67e8cc8a589e03f3d",
+      "title": "Wall-OSS-0.5"
     },
     "walloss.mdx": {
       "source_version": "b13ea5790df5ed757ea085c9b4833f333aa45a2c",

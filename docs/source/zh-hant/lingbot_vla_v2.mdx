@@ -1,0 +1,228 @@
+# LingBot-VLA 2.0[[lingbot-vla-20]]
+
+LingBot-VLA 2.0 是 Robbyant 的視覺-語言-動作模型，也是 LingBot-VLA 1.0 的後繼者。它將
+Qwen3-VL-4B 骨幹網路與稀疏專家混合（Mixture-of-Experts）Qwen2 動作專家（32 個專家、top-4 路由）配對，並
+在各具身形態共用的 55 維標準狀態（state）／動作空間上，以流匹配（flow matching）產生動作區塊（action chunk）。
+
+LeRobot 移植版是 `lingbot_vla_v2` 策略（policy）。它使用標準 LeRobot 資料集、處理器、`lerobot-train`、
+`lerobot-eval` 與 `lerobot-rollout`，包括上游的雙查詢深度與影片蒸餾。
+
+如需模型詳細資訊，請參閱[上游儲存庫](https://github.com/Robbyant/lingbot-vla-v2)與
+[技術報告](https://arxiv.org/abs/2607.06403)。
+
+## 安裝[[installation]]
+
+```bash
+pip install -e ".[training,lingbot_vla_v2]"
+```
+
+Qwen3-VL tokenizer 與影像處理器會從 `Qwen/Qwen3-VL-4B-Instruct`（`--policy.tokenizer_path`）載入，
+時機是在建構處理器時。不需要 `flash-attn`；注意力使用 PyTorch SDPA。
+
+## 檢查點[[checkpoints]]
+
+| 檢查點                            | 來源                                               | 用途                                                                                                                     |
+| --------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `lerobot/lingbot_vla_v2_base`     | `robbyant/lingbot-vla-v2-6b`，僅格式轉換           | 微調的起點。特徵為完整的 55 維標準佈局；請為你的機器人傳入槽位對應。                                                     |
+| `lerobot/lingbot_vla_v2_robotwin` | `robbyant/lingbot-vla-v2-6b-robotwin`，第 50000 步 | RoboTwin 2.0 評估。14 維狀態／動作，相機 `cam_high`、`cam_left_wrist`、`cam_right_wrist`，`QUANTILES`（q01/q99）正規化。 |
+
+使用 `--policy.path` 載入任一個檢查點；策略類型會從檢查點的 `config.json` 讀取。
+
+## 將機器人對應到標準佈局[[mapping-a-robot-onto-the-canonical-layout]]
+
+模型會看到 55 維狀態，並預測 55 維動作。佈局由設定中的 `canonical_joints` 決定：
+
+| 槽位                | 維度 | 內容           |
+| ------------------- | ---- | -------------- |
+| `arm.position`      | 14   | 手臂關節位置   |
+| `end.position`      | 14   | 末端執行器姿態 |
+| `effector.position` | 2    | 夾爪位置       |
+| `hand.position`     | 12   | 靈巧手關節     |
+| `waist.position`    | 4    | 腰部關節       |
+| `head.position`     | 2    | 頭部關節       |
+| `base.velocity`     | 3    | 移動底座速度   |
+| `reserved.slots`    | 4    | 保留           |
+
+`--policy.state_slots` 與 `--policy.action_slots` 會將資料集中 `observation.state` 與 `action` 的跨度
+對應到這些槽位，格式為 JSON：
+
+```json
+{
+  "observation.state.arm.position": {
+    "origin_keys": [{ "observation.state": { "start": 0, "end": 5 } }]
+  }
+}
+```
+
+- 槽位名稱是上述標準名稱，可選擇加上 `observation.state.` 或 `action.` 前綴。未知
+  名稱會引發錯誤。
+- 每個槽位會從 `observation.state`（狀態槽位）或 `action`（動作槽位）讀取一個或多個 `{start, end}` 跨度。
+  跨度會串接並從槽位開頭開始打包；槽位的其餘部分會以零填充，且不納入
+  損失計算。
+- 若沒有槽位對應，原始特徵會視為 55 維標準佈局，如同基礎檢查點。
+- 相對動作預設為關閉。`--policy.use_relative_actions=true` 會從動作中減去目前狀態，
+  但名稱包含 `--policy.relative_exclude_joints` 項目的維度除外（預設 `["gripper"]`）。
+
+後處理器會反轉此對應，因此 `select_action` 會以機器人原始動作空間回傳動作。
+微調後的檢查點會將其槽位對應與資料集統計量一併儲存在處理器中。
+
+### 相機[[cameras]]
+
+影像步驟會依序讀取檢查點 `input_features` 中列出的相機。對於基礎
+檢查點，這些相機是 `camera_top`、`camera_wrist_left` 與 `camera_wrist_right`。使用 `--rename_map` 將你的資料集相機對應到
+這些相機；你的機器人沒有的視角會被遮罩。
+
+## 微調[[fine-tuning]]
+
+以下範例使用 [`maximellerbach/omx_multicubes`](https://huggingface.co/datasets/maximellerbach/omx_multicubes)，
+其為具有 5 個關節與一個夾爪的單臂，並有兩台相機（`top`、`wrist`）：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=maximellerbach/omx_multicubes \
+  --policy.path=lerobot/lingbot_vla_v2_base \
+  --policy.state_slots='{"observation.state.arm.position": {"origin_keys": [{"observation.state": {"start": 0, "end": 5}}]}, "observation.state.effector.position": {"origin_keys": [{"observation.state": {"start": 5, "end": 6}}]}}' \
+  --policy.action_slots='{"action.arm.position": {"origin_keys": [{"action": {"start": 0, "end": 5}}]}, "action.effector.position": {"origin_keys": [{"action": {"start": 5, "end": 6}}]}}' \
+  --rename_map='{"observation.images.top": "observation.images.camera_top", "observation.images.wrist": "observation.images.camera_wrist_left"}' \
+  --policy.dtype=float32 \
+  --accelerator.mixed_precision=bf16 \
+  --policy.repo_id=your_repo_id \
+  --batch_size=1 \
+  --steps=30000 \
+  --save_freq=5000 \
+  --output_dir=outputs/train/lingbot_vla_v2_omx
+```
+
+將權重保持為 fp32，並以 bf16 計算（`--policy.dtype=float32 --accelerator.mixed_precision=bf16`），如同
+上游做法。使用 `--policy.dtype=bfloat16` 時，最佳化器會直接更新 bf16 權重，而大多數更新都太
+小，無法改變權重：在此資料集上，66% 的權重與基礎檢查點保持位元完全相同，且
+微調後的策略抖動明顯得多。推論時也請使用 fp32（這是以此方式訓練之檢查點的預設值）；
+bf16 推論會讓動作區塊明顯較不平順。
+
+正規化統計量來自資料集。多 GPU 訓練使用標準 `torchrun` 啟動器，搭配
+`--parallelism.*` 與 `--accelerator.*` 旗標。fp32 權重、梯度與最佳化器狀態約佔
+96 GB，因此當單一 GPU 太小時，請使用 `--parallelism.dp_shard=<num_gpus>` 進行分片。
+
+### 雙查詢蒸餾[[dual-query-distillation]]
+
+LingBot-VLA 2.0 會在語言 token 之後附加學習到的查詢 token（目前與未來的深度／影片），且
+動作專家會關注這些 token。兩個檢查點都在 `align_params` 中帶有上游的配方，因此查詢
+token 在推論時一律會使用。訓練期間，小型預測頭（head）會讀取這些 token，並以
+凍結的教師模型（LingBot-Depth 搭配 MoGe-2，以及 DINO-Video）蒸餾，使用上游的損失權重；額外損失會
+記錄為 `depth_loss`、`future_depth_loss`、`current_video_loss` 與 `future_video_loss`。
+
+教師會在第一次訓練步驟時下載（約 3 GB，來自 `robbyant/lingbot-vla-v2-6b` 與
+`Ruicheng/moge-2-vitb-normal`），約佔用 2 GB 的 GPU 記憶體，並為每個步驟的每個樣本增加約 130 ms。
+每個樣本也會載入提前 `chunk_size - 1` 步的影格，這是未來目標所需。推論時不會
+執行任何額外作業。
+
+### 關鍵訓練參數[[key-training-parameters]]
+
+| 參數                                    | 預設值                      | 說明                                                            |
+| --------------------------------------- | --------------------------- | --------------------------------------------------------------- |
+| `state_slots` / `action_slots`          | `null`                      | 原始跨度到標準槽位（請見上文）。                                |
+| `use_relative_actions`                  | `false`                     | 訓練相對於目前狀態的動作。                                      |
+| `loss_type`                             | `L1_fm`                     | 對速度的流匹配損失。                                            |
+| `normalization_mapping`                 | `MEAN_STD` 狀態與動作       | RoboTwin 檢查點使用 `QUANTILES`。                               |
+| `train_expert_only`                     | `false`                     | 凍結 Qwen3-VL 骨幹網路，僅訓練動作專家。                        |
+| `freeze_vision_encoder`                 | `false`                     | 凍結視覺塔。                                                    |
+| `gradient_checkpointing`                | `false`                     | 在反向傳播時重新計算 activation，以犧牲步驟時間換取記憶體節省。 |
+| `use_moe_expert_lr`                     | `true`                      | 路由專家以 `lr * sqrt(num_experts / top_k)` 訓練，如同上游。    |
+| `optimizer_lr` / `scheduler_decay_lr`   | `1e-5` / `1e-5`             | AdamW 峰值與最終學習率。                                        |
+| `resize_imgs_with_padding`              | `[256, 256]`                | Qwen3-VL 影像處理器之前的影格大小，如同上游。                   |
+| `image_max_pixels` / `image_min_pixels` | `65536` / `65536`           | Qwen3-VL 像素預算：每台相機 64 個 token，如同上游。             |
+| `chunk_size` / `n_action_steps`         | `50` / `50`                 | 預測時域與每個區塊執行的動作數。                                |
+| `num_steps`                             | `10`                        | 推論時的去噪步驟。                                              |
+| `tokenizer_path`                        | `Qwen/Qwen3-VL-4B-Instruct` | Qwen3-VL tokenizer 與影像處理器。離線時使用本機路徑。           |
+
+若要適應較小的 GPU，可將 `--policy.train_expert_only=true` 與 `--policy.gradient_checkpointing=true` 搭配
+較小的 `--batch_size`。
+
+## 評估[[evaluation]]
+
+在 LeRobot 的 RoboTwin 環境中評估 RoboTwin 檢查點（設定方式請參閱 [RoboTwin](./robotwin)）。
+重新命名對應會將環境相機名稱與檢查點的名稱對齊：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/lingbot_vla_v2_robotwin \
+  --env.type=robotwin \
+  --env.task=beat_block_hammer \
+  --eval.batch_size=1 \
+  --eval.n_episodes=100 \
+  --rename_map='{"observation.images.head_camera": "observation.images.cam_high", "observation.images.left_camera": "observation.images.cam_left_wrist", "observation.images.right_camera": "observation.images.cam_right_wrist"}'
+```
+
+下表為 50 個 RoboTwin 2.0 任務（每個任務 100 個回合）的平均成功率，取自
+[上游 README](https://github.com/Robbyant/lingbot-vla-v2) 中已發布 RoboTwin 檢查點的結果（以乾淨與隨機化資料、
+使用 Muon 最佳化器進行後訓練，並使用上游 RoboTwin 啟動器以 FP32 推論）。這些是
+上游的數字，並非透過此移植版測得。
+
+| 設定   | π0.5   | LingBot-VLA 1.0 | LingBot-VLA 2.0 |
+| ------ | ------ | --------------- | --------------- |
+| 乾淨   | 82.74% | 88.56%          | **93.52%**      |
+| 隨機化 | 76.76% | 86.68%          | **92.80%**      |
+
+## 推論加速[[inference-speed-ups]]
+
+有四個旗標預設皆為關閉，可加速 `select_action`。它們需要 CUDA 與固定輸入形狀，且不需要額外
+相依套件：
+
+- `--policy.use_cudagraph_denoise=true`：將去噪迴圈擷取為一個 CUDA graph。
+- `--policy.use_cudagraph_prefix=true`：擷取視覺-語言前綴的 KV 填充。
+- `--policy.use_cudagraph_prefix_full=true`：也在前綴 graph 中擷取視覺塔。
+- `--policy.compile_predict_velocity=true`：對每步速度預測使用 `torch.compile`。第一次呼叫
+  會編譯約一分鐘。
+
+一個 50 步動作區塊、10 個去噪步驟的耗時，使用 RoboTwin 檢查點與一張 RTX PRO 6000：
+
+| 旗標                            | bf16    | fp32    |
+| ------------------------------- | ------- | ------- |
+| 無                              | ~756 ms | ~614 ms |
+| 全部三個 CUDA graph 旗標        | ~180 ms | ~203 ms |
+| 全部三個 CUDA graph 旗標 + 編譯 | ~120 ms | ~156 ms |
+
+在 bf16 下，CUDA graph 的輸出與 eager 模式相同；`torch.compile` 會稍微改變數值。
+
+## 部署[[deployment]]
+
+使用 `lerobot-rollout` 在機器人上執行微調後的檢查點，並傳入與訓練時相同的 `--rename_map`：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=outputs/train/lingbot_vla_v2_omx/checkpoints/last/pretrained_model \
+  --robot.type=<your_robot_type> \
+  --robot.port=<port> \
+  --task="pick up the cube" \
+  --fps=30 \
+  --device=cuda
+```
+
+即時分塊可透過 `--inference.type=rtc` 使用，與其他流匹配策略相同。
+
+## 引用[[citation]]
+
+```bibtex
+@article{lingbotvla2,
+      title={From Foundation to Application: Improving VLA Models in Practice},
+      author={Wei Wu and Fangjing Wang and Fan Lu and He Sun and Shi Liu and Yunnan Wang and Yibin Yan and Yong Wang and Shuailei Ma and Xinyang Wang and Yibin Liu and Shuai Yang and Tianxiang Zhou and Kejia Zhang and Lei Zhou and Cheng Su and Nan Xue and Bin Tan and Han Zhang and Youchao Zhang and Fei Liao and Xing Zhu and Yujun Shen and Kecheng Zheng},
+      journal={arXiv preprint arXiv:2607.06403},
+      year={2026}
+}
+```
+
+## 授權[[license]]
+
+程式碼與轉換後的檢查點皆為 Apache-2.0，與上游 LingBot-VLA 2.0 及 Qwen3-VL 發布版本相同。
+
+蒸餾訓練會下載三個凍結教師，各自遵循其授權（推論時永遠不會載入它們）：
+
+| 教師模型      | 權重                                         | 授權                                                                              |
+| ------------- | -------------------------------------------- | --------------------------------------------------------------------------------- |
+| MoGe-2        | `Ruicheng/moge-2-vitb-normal`                | MIT                                                                               |
+| LingBot-Depth | `robbyant/lingbot-vla-v2-6b` (`depth/`)      | Apache-2.0                                                                        |
+| DINO-Video    | `robbyant/lingbot-vla-v2-6b` (`dino_video/`) | [DINOv3 License](https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md) |
+
+DINO-Video 權重衍生自 Meta 的 DINOv3，因此使用蒸餾進行訓練，代表需在
+DINOv3 License 下使用它們；該授權除其他條款外，要求你在出版品中致謝 DINOv3，並限制部分最終用途。

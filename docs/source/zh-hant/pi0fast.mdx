@@ -118,6 +118,7 @@ lerobot-train \
 | `--policy.max_action_tokens`           | 每個動作區塊最多的 FAST token 數量 | `256`                           |
 | `--policy.action_tokenizer_name`       | 要使用的 FAST tokenizer            | `lerobot/fast-action-tokenizer` |
 | `--policy.compile_model=true`          | 啟用 torch.compile 以加速訓練      | `false`                         |
+| `--policy.optimizer_fused=true`        | 使用 fused AdamW；接續訓練時會忽略 | `None`                          |
 
 ## 推論[[inference]]
 
