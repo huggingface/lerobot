@@ -1,0 +1,365 @@
+# reBot B601[[rebot-b601]]
+
+reBot B601 是 Seeed Studio 推出的開源機器手臂，適用於模仿學習與具身 AI（embodied AI）。一整套配置包含一支附夾爪的 6 自由度從臂，以及一支用於遙操作的 reBot Arm 102 主臂。
+
+從臂有 Damiao（DM）與 RobStride（RS）兩種馬達版本。兩種版本使用相同的 LeRobot 機器人類型與關節名稱，可透過 `--robot.motor_family` 選擇硬體。
+
+| 版本                                                               | `motor_family` | 馬達                                    | 預設連線方式      |
+| ------------------------------------------------------------------ | -------------- | --------------------------------------- | ----------------- |
+| [B601-DM](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/) | `dm`           | Damiao（底座 `4340P`、腕部 `4310`）     | Damiao 序列橋接器 |
+| [B601-RS](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/) | `rs`           | RobStride（底座 `rs-06`、腕部 `rs-00`） | 原生 CAN          |
+
+本指南說明單臂與雙臂配置的硬體設定、校正、遙操作與錄製。
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/b601dm_zeroposition.jpg"
+    alt="reBot B601 從臂"
+    width="48%"
+  />
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/102_zeroposition.jpg"
+    alt="reBot Arm 102 主臂"
+    width="48%"
+  />
+</div>
+
+_B601 從臂（左）與 reBot Arm 102 主臂（右）。DM 與 RS 從臂的關節配置與整體外觀相同，但使用不同的馬達。圖片由 Seeed Studio 提供。_
+
+## 硬體與安全[[hardware-and-safety]]
+
+請依照對應從臂的 Seeed Studio 指南組裝、接線並設定馬達：[B601-DM](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/) 或 [B601-RS](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/)。
+
+<Tip warning={true}>
+  請將從臂固定在穩固的表面上，並保持工作區域淨空。每當扭矩停用或
+  程式斷線時，請扶住手臂，因為它可能會因重力而移動。
+  如果運作期間電源或資料線中斷， 請停止程式，讓主臂與從臂回到零點位置，
+  再重新連接並重新啟動。
+</Tip>
+
+## 安裝 LeRobot 🤗[[install-lerobot]]
+
+請依照[安裝指南](./installation)操作，再安裝 reBot 支援套件：
+
+```bash
+pip install -e ".[rebot]"
+```
+
+這會為從臂安裝 `motorbridge`，並為 reBot Arm 102 主臂安裝 `motorbridge-smart-servo`。
+
+## 連接硬體[[connect-the-hardware]]
+
+DM 預設使用自己的序列橋接器，也可以選擇使用原生 CAN。RS 則必須使用原生 CAN。
+
+| `can_adapter` | 用途                              | 連接埠範例     |
+| ------------- | --------------------------------- | -------------- |
+| `damiao`      | Damiao 序列橋接器；僅限 DM        | `/dev/ttyACM0` |
+| `socketcan`   | MotorBridge 原生 CAN；RS 必須使用 | `can0`         |
+
+馬達系列會決定預設的轉接器。若要讓 DM 改走原生 CAN，請加上 `--robot.can_adapter=socketcan`，並以它的 CAN 通道作為 `--robot.port`。
+
+### 序列橋接器[[serial-bridge]]
+
+使用 `lerobot-find-port` 找出 DM 序列橋接器與主臂的連接埠。如果裝置名稱不容易分辨，請一次只連接一個序列裝置。
+
+```bash
+lerobot-find-port
+```
+
+<Tip warning={true}>
+  在 Linux 上，如果 `brltty` 占用了序列裝置，請將它移除（`sudo apt remove
+  brltty`）。 你可能也需要以 `sudo chmod 666 /dev/ttyACM* /dev/ttyUSB*`
+  暫時取得存取權限。
+</Tip>
+
+### 原生 CAN[[native-can]]
+
+`socketcan` 這個設定名稱在各平台上都相同。Linux 使用 SocketCAN。macOS 需要相容的 PCAN 轉接器與 MacCAN PCBUSB 執行環境。Windows 的原生 CAN 支援仍屬實驗性質，需要 PEAK PCAN 轉接器與 PCAN-Basic。安裝細節請參閱 [MotorBridge 平台設定](https://github.com/motorbridge/motorbridge/tree/v0.5.1)。
+
+在 Linux 上，連接 RS 從臂之前，請將每個原生 CAN 介面設定為 1 Mbps：
+
+```bash
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set can0 up
+ip -details link show can0
+```
+
+請將 `can0` 換成你的 CAN 後端所提供的通道。雙臂的原生 CAN 配置需要不同的通道，例如 `can0` 與 `can1`，因為兩支手臂使用相同的馬達 ID。
+
+## 裝置類型[[device-types]]
+
+| 類型                     | 裝置                    |
+| ------------------------ | ----------------------- |
+| `rebot_b601_follower`    | 單支從臂                |
+| `bi_rebot_b601_follower` | 雙臂從臂                |
+| `rebot_102_leader`       | 單支 reBot Arm 102 主臂 |
+| `bi_rebot_102_leader`    | 雙臂 reBot Arm 102 主臂 |
+
+`motor_family` 預設為 `dm`。在雙臂設定中，每支手臂都有各自的 `left_arm_config.*` 或 `right_arm_config.*` 設定，可以分別選擇馬達系列。
+
+## 校正[[calibration]]
+
+校正會將目前的實際姿態設為馬達的零點位置，並儲存 LeRobot 的校正檔。請將每支手臂擺到下圖所示的零點位置，夾爪完全閉合，然後在提示出現時按下 <kbd>ENTER</kbd>。
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/b601dm_zeroposition.jpg"
+    alt="位於零點位置的 reBot B601 從臂"
+    width="48%"
+  />
+  <img
+    src="https://files.seeedstudio.com/wiki/robotics/projects/lerobot/102_zeroposition.jpg"
+    alt="位於零點位置的 reBot Arm 102 主臂"
+    width="48%"
+  />
+</div>
+
+_從臂的零點位置（左）與主臂的零點位置（右）。圖中為 DM 從臂；RS 從臂的關節配置相同。_
+
+之後的指令請沿用相同的 `--robot.id` 與 `--teleop.id`，讓 LeRobot 載入已儲存的校正。如果校正檔已經存在，指令會讓你選擇沿用，或輸入 `c` 重新校正。
+
+### 從臂[[follower]]
+
+<hfoptions id="calibrate-follower">
+<hfoption id="Single arm (DM)">
+
+```bash
+lerobot-calibrate \
+    --robot.type=rebot_b601_follower \
+    --robot.motor_family=dm \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower
+```
+
+</hfoption>
+<hfoption id="Single arm (RS)">
+
+```bash
+lerobot-calibrate \
+    --robot.type=rebot_b601_follower \
+    --robot.motor_family=rs \
+    --robot.port=can0 \
+    --robot.id=follower
+```
+
+</hfoption>
+<hfoption id="Dual arm (DM)">
+
+會先校正左側從臂，再校正右側從臂。
+
+```bash
+lerobot-calibrate \
+    --robot.type=bi_rebot_b601_follower \
+    --robot.id=bi_follower \
+    --robot.left_arm_config.motor_family=dm \
+    --robot.left_arm_config.port=/dev/ttyACM0 \
+    --robot.right_arm_config.motor_family=dm \
+    --robot.right_arm_config.port=/dev/ttyACM1
+```
+
+若是兩支 RS 從臂，請將兩者的馬達系列都設為 `rs`，並為兩個連接埠使用不同的原生 CAN 通道。各手臂的校正檔會加上 `_left` 與 `_right` 後綴。
+
+</hfoption>
+</hfoptions>
+
+### 主臂[[leader]]
+
+<hfoptions id="calibrate-leader">
+<hfoption id="Single arm">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader
+```
+
+</hfoption>
+<hfoption id="Dual arm">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=bi_rebot_102_leader \
+    --teleop.id=bi_leader \
+    --teleop.left_arm_config.port=/dev/ttyUSB0 \
+    --teleop.right_arm_config.port=/dev/ttyUSB1
+```
+
+</hfoption>
+</hfoptions>
+
+## 遙操作[[teleoperation]]
+
+請先從小幅度的動作開始，確認每個關節的方向都正確後，再使用完整的工作範圍。
+
+<hfoptions id="teleoperate">
+<hfoption id="Single arm (DM)">
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_follower \
+    --robot.motor_family=dm \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader
+```
+
+</hfoption>
+<hfoption id="Single arm (RS)">
+
+```bash
+lerobot-teleoperate \
+    --robot.type=rebot_b601_follower \
+    --robot.motor_family=rs \
+    --robot.port=can0 \
+    --robot.id=follower \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader
+```
+
+</hfoption>
+<hfoption id="Dual arm (DM)">
+
+```bash
+lerobot-teleoperate \
+    --robot.type=bi_rebot_b601_follower \
+    --robot.id=bi_follower \
+    --robot.left_arm_config.motor_family=dm \
+    --robot.left_arm_config.port=/dev/ttyACM0 \
+    --robot.right_arm_config.motor_family=dm \
+    --robot.right_arm_config.port=/dev/ttyACM1 \
+    --teleop.type=bi_rebot_102_leader \
+    --teleop.id=bi_leader \
+    --teleop.left_arm_config.port=/dev/ttyUSB0 \
+    --teleop.right_arm_config.port=/dev/ttyUSB1
+```
+
+</hfoption>
+</hfoptions>
+
+## 錄製資料集[[record-a-dataset]]
+
+錄製之前請先測試遙操作。若要加入相機，先用以下指令找出它：
+
+```bash
+lerobot-find-cameras opencv
+```
+
+### 單臂[[single-arm]]
+
+這個範例會使用一台 OpenCV 相機，在本機錄製五個 DM 回合（episode）：
+
+```bash
+lerobot-record \
+    --robot.type=rebot_b601_follower \
+    --robot.motor_family=dm \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower \
+    --robot.cameras='{"front": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}}' \
+    --teleop.type=rebot_102_leader \
+    --teleop.port=/dev/ttyUSB0 \
+    --teleop.id=leader \
+    --dataset.repo_id=your_username/rebot-dm-test \
+    --dataset.single_task="Pick up the object" \
+    --dataset.num_episodes=5 \
+    --dataset.episode_time_s=30 \
+    --dataset.reset_time_s=10 \
+    --dataset.push_to_hub=false \
+    --display_data=true
+```
+
+若是 RS，請將 `motor_family` 改為 `rs`，並將機器人的連接埠改為原生 CAN 通道。若只想測試馬達，可以移除相機引數。
+
+### 雙臂[[bimanual]]
+
+這個 DM 範例會錄製一台共用的上方相機，以及每支手臂各一台腕部相機。資料集中的相機鍵名為 `top`、`left_wrist` 與 `right_wrist`。
+
+```bash
+lerobot-record \
+    --robot.type=bi_rebot_b601_follower \
+    --robot.id=bi_follower \
+    --robot.left_arm_config.motor_family=dm \
+    --robot.left_arm_config.port=/dev/ttyACM0 \
+    --robot.right_arm_config.motor_family=dm \
+    --robot.right_arm_config.port=/dev/ttyACM1 \
+    --robot.cameras='{
+      top: {
+        type: opencv,
+        index_or_path: "/dev/video2",
+        width: 640,
+        height: 480,
+        fps: 30,
+        fourcc: "MJPG"
+      }
+    }' \
+    --robot.left_arm_config.cameras='{
+      wrist: {
+        type: opencv,
+        index_or_path: "/dev/video0",
+        width: 640,
+        height: 480,
+        fps: 30,
+        fourcc: "MJPG"
+      }
+    }' \
+    --robot.right_arm_config.cameras='{
+      wrist: {
+        type: opencv,
+        index_or_path: "/dev/video4",
+        width: 640,
+        height: 480,
+        fps: 30,
+        fourcc: "MJPG"
+      }
+    }' \
+    --teleop.type=bi_rebot_102_leader \
+    --teleop.id=bi_leader \
+    --teleop.left_arm_config.port=/dev/ttyUSB0 \
+    --teleop.right_arm_config.port=/dev/ttyUSB1 \
+    --dataset.repo_id=local/rebot-bimanual-dm-camera-test \
+    --dataset.root=/tmp/rebot-bimanual-dm-camera-test \
+    --dataset.single_task="Test coordinated movement of both reBot DM arms" \
+    --dataset.fps=30 \
+    --dataset.num_episodes=2 \
+    --dataset.episode_time_s=20 \
+    --dataset.reset_time_s=10 \
+    --dataset.push_to_hub=false \
+    --display_data=false
+```
+
+> [!TIP]
+> 若是雙臂 RS 配置，請將兩者的馬達系列都設為 `rs`，並使用不同的原生 CAN 通道。混合配置可以一支手臂選擇 `dm`、另一支選擇 `rs`。
+
+若要上傳、重播、訓練與評估策略（policy），請參閱[機器人模仿學習](./il_robots)。
+
+## 進階控制[[advanced-controls]]
+
+兩種版本提供相同的關節名稱，對外的位置也都以角度表示。LeRobot 會將各馬達系列的方向符號套用到動作（action）與觀測（observation）上，因此策略與遙操作器不需要自行轉換馬達的方向。
+
+- DM 預設對手臂使用 MIT 控制，對夾爪使用 `force_pos`。`gripper_torque_ratio` 預設為 `0.07`；DM 也支援 `--robot.control_mode=pos_vel`。
+- RS 使用 MIT 控制，以及限制出力的阻抗式夾爪，因為 MotorBridge 沒有為 RobStride 提供 `force_pos`。依量測到的夾爪動作，命令扭矩在移動時上限為 `3.5` N·m，夾持時上限為 `1.0` N·m。如果回饋失效，LeRobot 會嘗試將夾爪扭矩命令設為零，接著停用手臂。
+- `mit_kp`、`mit_kd` 與 `pos_vel_velocity` 可以接受套用到所有關節的單一數值，或以關節為鍵名的對應表。
+- `max_relative_target` 會限制命令與最新量測位置之間的差距。例如 `--robot.max_relative_target=5.0` 會將每個關節的命令變化限制在五度以內。
+- `joint_limits` 可以選擇以對外的關節角度，覆寫該馬達系列的預設限制。
+
+從臂的馬達方向會依馬達系列在內部自動選擇。如果遙操作時某個關節的方向錯誤，仍可調整主臂的 `joint_directions`。
+
+<Tip warning={true}>
+  DM 與 RS 使用相同的座標慣例，但幾何結構、增益與
+  動力學特性都不同。在兩種版本之間轉移策略或資料集之前， 請先加以驗證。
+</Tip>
+
+## 疑難排解[[troubleshooting]]
+
+| 問題                       | 檢查項目                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------ |
+| 找不到序列裝置或裝置忙碌中 | 一次重新連接一個裝置，重新執行 `lerobot-find-port`，檢查權限，並在 Linux 上移除 `brltty`。 |
+| 原生 CAN 無法連線          | 檢查轉接器的執行環境、通道名稱、1 Mbps 位元率、馬達電源、CAN 接線與終端電阻。              |
+| 遙操作時某個關節的方向錯誤 | 停止程式，確認 `motor_family`，並檢查主臂的 `joint_directions`。                           |
+| 沒有沿用已儲存的校正       | 使用校正時相同的機器人或遙操作器 `id`。                                                    |
+
+組裝、接線與硬體相關的診斷，請參閱 Seeed Studio 的 [B601-DM](https://wiki.seeedstudio.com/rebot_arm_b601_dm_lerobot/) 與 [B601-RS](https://wiki.seeedstudio.com/rebot_arm_b601_rs_lerobot/) 指南。

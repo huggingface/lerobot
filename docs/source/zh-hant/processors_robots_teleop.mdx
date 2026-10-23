@@ -1,0 +1,151 @@
+# 機器人與遙操作器的處理器[[processors-for-robots-and-teleoperators]]
+
+本指南說明如何建構與修改處理管線（pipeline），將遙操作器（teleoperator，例如手機）連接到機器人與資料集。管線會將不同動作／觀測空間（action/observation space）之間的轉換標準化，讓你不必重寫膠合程式碼（glue code），就能替換遙操作器與機器人。
+
+我們以手機對 SO-100 從臂的範例作為具體說明，但相同的模式適用於其他機器人。
+
+**你將學到的內容**
+
+- 絕對與相對末端執行器（EE）控制：各自的意義、取捨，以及如何依你的任務選擇。
+- 三管線模式：如何依序對應遙操作動作 → 資料集動作 → 機器人命令，以及機器人觀測 → 資料集觀測。
+- 轉接器（adapter，`to_transition` / `to_output`）：它們如何將原始字典轉換為 `EnvTransition` 再轉換回來，以減少樣板程式碼（boilerplate）。
+- 資料集特徵契約（feature contract）：步驟如何透過 `transform_features(...)` 宣告特徵，以及錄製時如何聚合與合併這些特徵。
+- 選擇表示方式：何時該儲存關節位置、絕對末端執行器位姿或相對末端執行器增量（delta），以及這對訓練有什麼影響。
+- 自訂管線的指引：如何安全地替換機器人／URDF，以及調整邊界、步長與逆運動學（IK）初始化等選項。
+
+### 絕對與相對末端執行器控制[[absolute-vs-relative-ee-control]]
+
+本指南的範例使用絕對末端執行器（end effector，EE）位姿（pose），因為它們比較容易理解。實務上，通常會偏好以相對末端執行器增量或關節位置作為學習特徵（learning feature）。
+
+透過處理器（processor），你可以選擇策略（policy）要使用的學習特徵，可以是關節位置／速度、絕對末端執行器位姿，或相對末端執行器位置。你也可以選擇儲存其他特徵，例如關節扭矩、馬達電流等。
+
+## 三條管線[[three-pipelines]]
+
+我們通常會組合三條管線。依你的設定，如果動作空間與觀測空間已經一致，其中某些管線可以是空的。
+每條管線各自負責不同動作空間與觀測空間之間的轉換。以下簡要說明每條管線。
+
+1. 管線 1：遙操作動作空間 → 資料集動作空間（手機位姿 → 末端執行器目標）
+2. 管線 2：資料集動作空間 → 機器人命令空間（末端執行器目標 → 關節）
+3. 管線 3：機器人觀測空間 → 資料集觀測空間（關節 → 末端執行器位姿）
+
+以下是手機對 SO-100 從臂範例中使用的三條管線：
+
+```python
+phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, RobotAction]( # 遙操作 -> 資料集動作
+    steps=[
+        MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
+        EEReferenceAndDelta(
+            kinematics=kinematics_solver, end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5}, motor_names=list(robot.bus.motors.keys()),
+        ),
+        EEBoundsAndSafety(
+            end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]}, max_ee_step_m=0.20,
+        ),
+        GripperVelocityToJoint(),
+    ],
+    to_transition=robot_action_to_transition,
+    to_output=transition_to_robot_action,
+)
+
+robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction]( # 資料集動作 -> 機器人
+    steps=[
+        InverseKinematicsEEToJoints(
+            kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()), initial_guess_current_joints=True,
+        ),
+    ],
+    to_transition=robot_action_to_transition,
+    to_output=transition_to_robot_action,
+)
+
+robot_joints_to_ee_pose = RobotProcessorPipeline[RobotObservation, RobotObservation]( # 機器人觀測 -> 資料集觀測
+    steps=[
+        ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
+    ],
+    to_transition=observation_to_transition,
+    to_output=transition_to_observation,
+)
+```
+
+## 為何使用 to_transition / to_output[[why-totransition-tooutput]]
+
+為了在機器人／遙操作器與管線之間來回轉換，我們使用 `to_transition` 與 `to_output` 這兩個管線轉接器（adapter）。
+它們將轉換方式標準化以減少樣板程式碼（boilerplate），並在機器人與遙操作器的原始字典，以及管線的 `EnvTransition` 格式之間搭起橋樑。
+在手機對 SO-100 從臂的範例中，我們使用以下轉接器：
+
+- `robot_action_to_transition`：將遙操作動作字典轉換為管線的 transition。
+- `transition_to_robot_action`：將管線的 transition 轉換為機器人動作字典。
+- `observation_to_transition`：將機器人觀測字典轉換為管線的 transition。
+- `transition_to_observation`：將管線的 transition 轉換為觀測字典。
+
+更多細節請參閱 [src/lerobot/processor/converters.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/processor/converters.py)。
+
+## 資料集特徵契約[[dataset-feature-contracts]]
+
+資料集特徵由資料集中儲存的鍵名決定。每個步驟都可以在名為 `transform_features(...)` 的契約（contract）中，宣告它修改了哪些特徵。建構好處理器（processor）後，處理器就能透過 `aggregate_pipeline_dataset_features()` 聚合所有這些特徵，並透過 `combine_feature_dicts(...)` 合併多個特徵字典。
+
+以下範例說明我們如何在手機對 SO-100 從臂的範例中，以 `transform_features` 方法宣告特徵：
+
+```python
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # 我們只在資料集中使用末端執行器位姿，因此不需要關節位置
+        for n in self.motor_names:
+            features[PipelineFeatureType.ACTION].pop(f"{n}.pos", None)
+        # 我們指定此步驟中希望儲存到資料集的資料集特徵
+        for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
+            features[PipelineFeatureType.ACTION][f"ee.{k}"] = PolicyFeature(
+                type=FeatureType.STATE, shape=(1,)
+            )
+        return features
+```
+
+這裡我們宣告了這個步驟修改了哪些 PolicyFeature，這樣執行處理器時，就知道可以預期哪些特徵。這些特徵之後可以聚合起來，用來建立資料集特徵。
+
+以下範例說明我們如何在手機對 SO-100 的錄製範例中聚合與合併特徵：
+
+```python
+features=combine_feature_dicts(
+        # 執行管線的特徵契約
+        # 這會告訴你管線步驟執行後特徵的樣貌
+        aggregate_pipeline_dataset_features(
+            pipeline=phone_to_robot_ee_pose_processor,
+            initial_features=create_initial_features(action=phone.action_features), # <- 我們可以預期的動作特徵，這些來自我們的遙操作裝置（手機）和動作處理器
+            use_videos=True,
+        ),
+        aggregate_pipeline_dataset_features(
+            pipeline=robot_joints_to_ee_pose,
+            initial_features=create_initial_features(observation=robot.observation_features), # <- 我們可以預期的觀測特徵，這些來自我們的機器人和觀測處理器
+            use_videos=True,
+            patterns=["observation.state.ee"], # <- 在這裡你可以選擇使用特定模式過濾我們想要儲存到資料集的特徵
+
+        ),
+    ),
+```
+
+運作方式：
+
+- `aggregate_pipeline_dataset_features(...)`：在整條管線上套用 `transform_features`，並依模式（pattern）篩選（`use_videos=True` 時包含影像，指定 `patterns` 時包含狀態特徵）。
+- `combine_feature_dicts(...)`：合併多個特徵字典。
+- 使用 `record_loop(...)` 錄製時，會先以 `build_dataset_frame(...)` 建立與 `dataset.features` 一致的影格，再呼叫 `add_frame(...)` 將該影格加入資料集。
+
+## 自訂機器人管線的指引[[guidance-when-customizing-robot-pipelines]]
+
+你可以將以下任一種特徵儲存為動作／觀測空間：
+
+- 關節位置
+- 絕對末端執行器位姿
+- 相對末端執行器增量
+- 其他特徵：關節速度、扭矩等
+
+選擇你的策略動作空間與觀測空間要使用的內容，並據此設定或修改管線與步驟。
+
+### 不同的機器人[[different-robots]]
+
+- 你可以輕鬆重複使用管線。例如，若要讓另一台機器人搭配手機遙操作，請修改範例，替換機器人的 `RobotKinematics`（URDF）與 `motor_names`，就能讓你自己的機器人搭配手機遙操作。此外，請確認 `target_frame_name` 指向你的夾爪／腕部。
+
+### 安全優先[[safety-first]]
+
+- 修改管線時，請先從較嚴格的邊界開始；使用實體機器人時，請實作安全步驟。
+- 建議先從模擬開始，再轉移到實體機器人。
+
+就是這樣！希望本指南能幫助你開始自訂機器人管線。如果過程中遇到任何問題，歡迎到我們的 [Discord 社群](https://discord.com/invite/s3KuuzsPFb) 尋求協助。

@@ -1,0 +1,609 @@
+# 策略部署[[policy-deployment-lerobot-rollout]]
+
+`lerobot-rollout` 是在真實機器人上部署訓練好的策略（policy）時使用的統一 CLI。它支援多種執行策略（strategy）與推論後端，涵蓋快速評估、連續錄製，以及人在迴圈（human-in-the-loop）的資料收集。
+
+## 快速開始[[quick-start]]
+
+除了機器人與策略各自的額外套件之外，不需要其他相依套件。
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=lerobot/act_koch_real \
+    --robot.type=koch_follower \
+    --robot.port=/dev/ttyACM0 \
+    --task="pick up cube" \
+    --duration=30
+```
+
+這會執行策略 30 秒，且不錄製。
+
+### 選擇裝置[[choosing-a-device]]
+
+在可使用該裝置的主機上，傳入 `--device=cpu` 或 `--device=cuda` 即可覆寫檢查點（checkpoint）原本指定的裝置。
+決定好的裝置會在載入策略、建構其處理器之前，套用到策略設定中。
+例如，若策略支援在 CPU 上執行，可在上述指令中加入 `--device=cpu`，在只有 CPU 的主機上執行以 CUDA 訓練的檢查點。
+在機器人上部署前，請確認 CPU 推論能達到你所需的控制頻率。
+
+若省略 `--device`，rollout 會使用策略設定中指定的裝置；若沒有指定，則自動選擇可用的裝置。
+搭配 `build_rollout_context` 使用 `RolloutConfig(device=...)` 時，行為也相同。
+
+---
+
+## 執行策略[[strategies]]
+
+以 `--strategy.type=<name>` 選擇執行策略（strategy）。每種執行策略都定義了不同的控制迴圈（control loop），各有自己的錄製與互動方式。
+
+### Base（`--strategy.type=base`）[[base---strategytypebase]]
+
+自主執行策略，不錄製資料。適合快速評估、展示，或只需要觀察機器人的情況。
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Put lego brick into the box" \
+    --duration=60
+```
+
+| 旗標             | 說明                                                         | 預設值 |
+| ---------------- | ------------------------------------------------------------ | ------ |
+| `--duration`     | 執行時間（秒，0 = 無限）                                     | 0      |
+| `--task`         | 傳給策略的任務描述                                           | --     |
+| `--display_data` | 將觀測（observation）與動作（action）串流到 Rerun 進行視覺化 | false  |
+
+### Sentry（`--strategy.type=sentry`）[[sentry---strategytypesentry]]
+
+連續自主錄製，並定期上傳到 Hugging Face Hub。回合（episode）的邊界會依相機解析度與 FPS 自動計算，讓每個儲存的回合都產生完整的影片檔案，上傳也更有效率。
+
+策略的狀態（隱藏狀態、RTC 佇列）會跨越回合邊界持續保留：機器人在回合之間不會重設。
+
+```bash
+lerobot-rollout \
+    --strategy.type=sentry \
+    --strategy.upload_every_n_episodes=5 \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --dataset.repo_id=${HF_USER}/rollout_eval_data \
+    --dataset.single_task="Put lego brick into the box" \
+    --duration=3600
+```
+
+| 旗標                                   | 說明                                   | 預設值 |
+| -------------------------------------- | -------------------------------------- | ------ |
+| `--strategy.upload_every_n_episodes`   | 每 N 個回合推送一次到 Hub              | 5      |
+| `--strategy.target_video_file_size_mb` | 切換到下一個回合時的目標影片檔案大小   | auto   |
+| `--dataset.repo_id`                    | **必填。** 存放錄製資料集的 Hub 儲存庫 | --     |
+| `--dataset.push_to_hub`                | 結束時是否推送到 Hub                   | true   |
+
+### Highlight（`--strategy.type=highlight`）[[highlight---strategytypehighlight]]
+
+自主執行 rollout，並透過有記憶體上限的環形緩衝區（ring buffer）按需錄製。緩衝區會保留最近 N 秒的遙測資料。按下儲存鍵會寫出緩衝區內容並開始即時錄製；再按一次即可儲存該回合。使用非同步後端時，每次切換都會暫停推論、使佇列中與內插中的動作失效，並在阻塞式的寫出或儲存之前，要求機器人在本機進行受支援的位置保持。健康的執行會在之後從全新的擷取畫面繼續。
+
+```bash
+lerobot-rollout \
+    --strategy.type=highlight \
+    --strategy.ring_buffer_seconds=30 \
+    --strategy.save_key=s \
+    --strategy.push_key=h \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=koch_follower \
+    --robot.port=/dev/ttyACM0 \
+    --dataset.repo_id=${HF_USER}/rollout_highlight_data \
+    --dataset.single_task="Pick up the red cube"
+```
+
+**鍵盤控制：**
+
+| 按鍵          | 動作                                       |
+| ------------- | ------------------------------------------ |
+| `s`（可設定） | 開始錄製（寫出緩衝區內容）／停止並儲存回合 |
+| `h`（可設定） | 將資料集推送到 Hub                         |
+| `ESC`         | 停止工作階段                               |
+
+| 旗標                                   | 說明                                 |
+| -------------------------------------- | ------------------------------------ |
+| `--strategy.ring_buffer_seconds`       | 緩衝遙測的時長（預設：10）           |
+| `--strategy.ring_buffer_max_memory_mb` | 環形緩衝區的記憶體上限（預設：1024） |
+| `--strategy.save_key`                  | 切換錄製的按鍵（預設：`s`）          |
+| `--strategy.push_key`                  | 推送到 Hub 的按鍵（預設：`h`）       |
+
+### DAgger（`--strategy.type=dagger`）[[dagger---strategytypedagger]]
+
+人在迴圈的資料收集。在策略自主執行與人透過遙操作器（teleoperator）介入之間交替。介入期間的影格會標記為 `intervention=True`。需要搭配遙操作器（`--teleop.type`）。
+
+詳細操作步驟請參閱[人在迴圈中的資料收集](./hil_data_collection)指南。
+
+**僅錄製修正模式**（預設）：只錄製人為修正的時段，每次修正會成為一個回合。
+
+```bash
+lerobot-rollout \
+    --strategy.type=dagger \
+    --strategy.num_episodes=20 \
+    --policy.path=outputs/pretrain/checkpoints/last/pretrained_model \
+    --robot.type=bi_openarm_follower \
+    --teleop.type=bi_openarm_mini \
+    --dataset.repo_id=${HF_USER}/rollout_hil_data \
+    --dataset.single_task="Fold the T-shirt"
+```
+
+**連續錄製模式**（`--strategy.record_autonomous=true`）：自主執行與人為修正的影格都會錄製，並依時間切換回合（與 Sentry 相同）。
+
+```bash
+lerobot-rollout \
+    --strategy.type=dagger \
+    --strategy.record_autonomous=true \
+    --strategy.num_episodes=50 \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --dataset.repo_id=${HF_USER}/rollout_dagger_data \
+    --dataset.single_task="Grasp the block"
+```
+
+**鍵盤控制**（預設輸入裝置）：
+
+| 按鍵    | 動作                                 |
+| ------- | ------------------------------------ |
+| `Space` | 暫停／繼續策略執行                   |
+| `Tab`   | 開始／停止人為修正                   |
+| `Enter` | 將資料集推送到 Hub（僅錄製修正模式） |
+| `ESC`   | 停止工作階段                         |
+
+也可以透過 `--strategy.input_device=pedal` 使用腳踏板輸入，並以 `--strategy.pedal.*` 旗標設定踏板的按鍵代碼。
+
+若機器人支援 rollout 的位置保持，暫停時會更新驅動程式實際套用的最後一個位置目標，包含其截斷（clipping）處理與夾爪目標。在送出第一個命令之前，則由一個經過驗證的量測姿態提供目標。這會保留命令位置的誤差，而不是把目標改成量測到的姿態；機器人可以繼續朝該目標穩定下來，同時策略的軌跡推進會停止。請在實際機器人上驗證負載下的手臂與夾爪行為；這種軟體位置保持並不保證能維持抓握或讓機器人完全靜止。
+
+| 旗標                                 | 說明                                                                                                                                                       |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--strategy.num_episodes`            | 要錄製的修正回合數量（預設：10）                                                                                                                           |
+| `--strategy.record_autonomous`       | 也錄製自主執行的影格（預設：false）                                                                                                                        |
+| `--strategy.upload_every_n_episodes` | 每 N 個回合推送到 Hub（預設：5）                                                                                                                           |
+| `--strategy.input_device`            | 輸入裝置：`keyboard` 或 `pedal`（預設：keyboard）                                                                                                          |
+| `--strategy.smooth_handover`         | 在暫停或開始修正時平滑地移交控制權（預設：true）。若使用離合器式（clutch-style）遙操作器，也就是在接合時以機器人目前姿態重新設定參考點的類型，請停用此選項 |
+| `--teleop.type`                      | **必填。** 遙操作器類型                                                                                                                                    |
+
+### Episodic（`--strategy.type=episodic`）[[episodic---strategytypeepisodic]]
+
+以回合為單位的錄製，行為與 `lerobot-record` 相同。每個回合由策略驅動機器人；回合之間的重設階段，則可選擇由遙操作器驅動機器人。
+
+```bash
+lerobot-rollout \
+    --strategy.type=episodic \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --teleop.type=so100_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --dataset.repo_id=${HF_USER}/my_eval_data \
+    --dataset.num_episodes=20 \
+    --dataset.episode_time_s=30 \
+    --dataset.reset_time_s=10 \
+    --dataset.single_task="Pick up the red cube"
+```
+
+遙操作是可選的——若省略，機器人會在重設階段保持原位。
+
+**鍵盤控制：**
+
+| 按鍵      | 動作                   |
+| --------- | ---------------------- |
+| `→`（右） | 提早結束目前的回合     |
+| `←`（左） | 捨棄這個回合並重新錄製 |
+| `ESC`     | 停止錄製工作階段       |
+
+| 旗標                                            | 說明                                                                                                                                 |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `--dataset.num_episodes`                        | 要錄製的回合數量                                                                                                                     |
+| `--dataset.episode_time_s`                      | 每個錄製回合的時長（秒）。若已設定 `--duration` 而未設定此項，預設為 `--duration`                                                    |
+| `--dataset.reset_time_s`                        | 回合之間重設階段的時長（秒）                                                                                                         |
+| `--teleop.type`                                 | 可選。在重設期間驅動機器人的遙操作器                                                                                                 |
+| `--strategy.reset_to_initial_position`          | 是否在回合之間將機器人重設到初始位置                                                                                                 |
+| `--strategy.smooth_leader_to_follower_handover` | 是否開啟主臂 -> 從臂的平滑交接行為。                                                                                                 |
+| `--strategy.smooth_handover`                    | 在重設開始時平滑地將控制權移交給遙操作器（預設：true）。若使用在接合時以機器人目前姿態重新設定參考點的離合器式遙操作器，請停用此選項 |
+
+### 自訂執行策略[[bring-your-own-strategy]]
+
+`--strategy.type` 接受環境中已註冊的任何執行策略，不限於上述內建項目。一個執行策略由可透過 pip 安裝的套件中的兩個類別組成：一個註冊在 `RolloutStrategyConfig` 上的設定類別，以及一個去掉 `Config` 後綴命名的 `RolloutStrategy` 子類別。這與[自訂硬體](./integrate_hardware#the-4-core-conventions)採用相同的 `SomethingConfig`/`Something` 命名慣例，會從設定類別所在的模組或套件解析。
+
+```python
+from dataclasses import dataclass
+from typing import ClassVar
+
+from lerobot.rollout import RolloutContext, RolloutStrategy, RolloutStrategyConfig
+
+
+@RolloutStrategyConfig.register_subclass("patrol")
+@dataclass
+class PatrolStrategyConfig(RolloutStrategyConfig):
+    dataset_mode: ClassVar[str] = "required"  # 引擎會為你建立資料集
+    legs: int = 2  # 會變成 --strategy.legs
+
+
+class PatrolStrategy(RolloutStrategy):
+    def run(self, ctx: RolloutContext) -> None:
+        ...  # 有節奏的控制迴圈：請參閱 RolloutStrategy.run 上的契約
+
+    def teardown(self, ctx: RolloutContext) -> None:
+        ctx.data.dataset.finalize()
+        self._teardown_hardware(ctx.hardware, ctx.runtime.cfg.return_to_initial_position)
+```
+
+設定類別會宣告引擎要替執行策略處理哪些事項，因此 LeRobot 的其他部分都不需要知道它的類型：
+
+| 宣告                            | 效果                                                                                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `dataset_mode`                  | `"none"`（預設）會拒絕 `--dataset.*` 旗標，`"optional"` 在提供這些旗標時進行錄製，`"required"` 則讓 `--dataset.repo_id` 變成必填 |
+| `requires_teleop`               | 讓 `--teleop.type` 變成必填                                                                                                      |
+| `supports_interactive`          | 允許 `--interactive=true`；此時 `run()` 必須遵守 `RolloutStrategy` 文件中說明的可重新啟動契約                                    |
+| `requires_streaming_encoding()` | 若影格是在控制迴圈內寫入，請回傳 `True`：系統會強制開啟 `--dataset.streaming_encoding`                                           |
+| `extra_dataset_features()`      | 執行策略專屬的資料集欄位（例如 DAgger 的 `intervention`）；每個錄製的影格都必須包含這些欄位                                      |
+
+將套件的發行名稱（distribution）命名為 `lerobot_strategy_<name>`，`lerobot-rollout` 就會在解析 CLI 之前匯入該套件——只會執行它的 `__init__.py`，因此請在那裡匯入設定類別。若套件名稱不同，可以用 `--strategy.discover_packages_path=<package>` 載入它（包含子模組）。執行策略的 dataclass 欄位會變成 `--strategy.*` 旗標：
+
+```bash
+lerobot-rollout \
+    --strategy.type=patrol \
+    --strategy.legs=3 \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --dataset.repo_id=${HF_USER}/rollout_patrol \
+    --dataset.single_task="patrol the aisle"
+```
+
+`SentryStrategy`（會錄製，可安全用於互動模式）與 `BaseStrategy`（不錄製）是可以直接參考的實作；它們所使用的輔助函式是 `lerobot.rollout.strategies` 中的 `send_next_action`、`safe_push_to_hub` 與 `estimate_max_episode_seconds`。
+
+使用非同步後端時，必須遵守派送契約（dispatch contract）。以 `engine.notify_observation(obs_processed)` 發布每個擷取到的觀測，在**每一個自主馬達週期**（包含內插與位置保持的週期）呼叫 `send_next_action(...)`，然後呼叫 `engine.pump_query(obs_processed)`。只呼叫 `engine.get_action()` 會略過許可與位置保持的交握：已規劃的文字查詢可能會無限期等待，終止性故障也可能永遠不會發出關機訊號。
+
+`send_next_action` 建構在 `lerobot.inference.dispatch_tick` 及其組成部分（`next_interpolated_action`、`commit_action`、`dispatch_permitted`）之上，它們一次性地編碼了這個順序：在取出動作之前與之後、以及送出之前都呼叫 `dispatch_allowed()`；被拒絕時使內插失效、要求受支援的本機位置保持並呼叫 `acknowledge_hold()`；送出之後呼叫 `record_dispatch()`。失敗的位置保持永遠不會被確認。請使用這些輔助函式，而不是自行重新實作這個順序；`send_next_action` 只額外加入資料集影格、機器人端的動作處理器與節奏統計。遠端情境中的 `ctx.policy.policy`、`preprocessor` 與 `postprocessor` 都設為 `None`；請改用 `ctx.policy.inference` 以及 `ctx.processors` 中的機器人端管線。
+
+將已知會在執行中阻塞的錄製工作（包含環形緩衝區的寫出與回合的完成處理）包在 `self._pause_for_recording(ctx)` 中。這會在錄製造成停頓之前使非同步的動作失效，並且只在執行仍然健康且處於啟用狀態時才繼續。具有由操作者控制之階段的執行策略，必須把目前的動作許可傳入 `resume_allowed`。下一個動作必須來自全新的觀測；已儲存的工作不得讓已暫停、已停止或已故障的執行重新啟動。
+
+---
+
+## 推論後端[[inference-backends]]
+
+以 `--inference.type=<name>` 選擇後端。本機的同步與 RTC 推論會使用下方設定的策略。[遠端後端](./remote_inference)則從伺服器取得其策略契約，不會在機器人電腦上載入權重。
+
+### 預設：同步[[sync-default]]
+
+每個控制週期（control tick）呼叫一次策略。主迴圈會阻塞，直到動作計算完成。
+
+適用於所有策略，不需要額外的旗標。
+
+### 即時分塊（`--inference.type=rtc`）[[real-time-chunking---inferencetypertc]]
+
+由背景執行緒以非同步的方式產生動作區塊（action chunk）。主控制迴圈會輪詢下一個已就緒的動作，同時策略會平行計算下一個區塊。
+
+對於相容的 VLA 模型（Pi0、Pi0.5、SmolVLA），使用 RTC 可以讓推論與動作執行重疊進行。要持續不中斷地執行，仍需要足夠的可用動作播放時間，來涵蓋推論延遲及其變動。
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --inference.type=rtc \
+    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.max_guidance_weight=10.0 \
+    --policy.path=${HF_USER}/pi0_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Pick up the cube" \
+    --duration=60 \
+    --device=cuda
+```
+
+| 旗標                                        | 說明                                                                                       |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `--inference.rtc.execution_horizon`         | 與前一個區塊混合的步數（預設：依策略而異）                                                 |
+| `--inference.rtc.mode`                      | `guided`（預設），或適用於相容 Pi05 檢查點、使用已訓練前綴的 `trained`                     |
+| `--inference.rtc.max_guidance_weight`       | 一致性約束的強度（預設：依策略而異）                                                       |
+| `--inference.rtc.prefix_attention_schedule` | 混合排程：`LINEAR`、`EXP`、`ONES`、`ZEROS`                                                 |
+| `--inference.queue_threshold`               | 背壓（backpressure）閾值；已訓練的 RTC 至少需要設為其最大延遲                              |
+| `--inference.action_starvation_grace_s`     | 在受支援的機器人上，動作耗盡（starvation）後等待新動作的時間（預設 `1.0`；`0` 會立即故障） |
+
+調校 RTC 參數的細節請參閱[即時分塊](./rtc)指南。
+
+本機 RTC 在 rollout 行程中的背景執行緒執行，不經過任何傳輸層。
+若伺服器與用戶端位於同一台電腦，請改用 `--inference.type=remote`。
+區塊對齊／混合，請參閱[遠端指南](./remote_inference)；非同步後端共用的
+[等待行為](./remote_inference#what-the-robot-does-while-waiting-or-stopping)，
+也記載於該指南。
+
+**等待需要受支援的機器人。** 沒有這項能力時，一般的本機 RTC 仍可使用，
+但已規劃的文字／指令變更暫停，以及可復原的動作耗盡，
+都需要這項能力。以位置控制的 SO、OMX、Koch、HopeJr 與 Rebot 從臂支援此功能；
+OpenArm、Reachy2 與雙臂包裝器有設定上的限制，列於
+[機器人支援表](./integrate_hardware#waiting-between-predictions)。
+有支援時，空的緩衝區可以保留最後套用的目標，持續
+`action_starvation_grace_s`（預設 1 秒），這段時間也包含排空舊推論，
+以及從全新擷取畫面進行預測所需的時間。動作開始之後，
+若寬限為零或機器人不受支援，動作耗盡時會立即故障；啟動階段則有自己的期限。
+與先前的本機 RTC 路徑不同，動作耗盡不再是無限期略過的控制週期。
+寬限絕不會延長已過期的請求或新鮮度限制。
+
+本機 RTC 透過 `--inference.` 提供以下額外的時間預算：
+
+| 參數                    | 預設值  | 意義                           |
+| ----------------------- | ------- | ------------------------------ |
+| `max_observation_age_s` | `5 s`   | 直到動作執行為止的最大來源年齡 |
+| `action_timeout_s`      | `10 s`  | 尚未完成的動作請求             |
+| `startup_timeout_s`     | `120 s` | 初始準備與以全新動作啟動       |
+| `language_timeout_s`    | `120 s` | 已規劃的語言操作               |
+
+這些是起始值，而不是經過量測的硬體保證。RTC 必須保留足夠的
+**裁剪後播放**時間，以容納下一次推論與時間餘裕。若推論經常耗盡可用的預測時域（horizon），
+提高 `queue_threshold` 並沒有幫助；
+請降低延遲，或驗證更長的時域／不同的動作頻率。
+
+終止性故障絕不會自動恢復策略的動作。在觀測擷取與致動器控制都可用的情況下，
+關機程序會遵循 `--return_to_initial_position`（預設 true），然後中斷連線。
+返回初始位置需要讀取一次完整的觀測，因此持續的相機故障可能會使其無法進行。
+命令套用失敗時，所有後端（包含同步）都會停止後續的關機移動。
+這不會改變同步預測，
+也不會引入針對相機的復原機制。
+
+<details>
+<summary>編譯與指令變更</summary>
+
+RTC 編譯會在動作開始前暖機初始呼叫與帶前綴的呼叫，包含一個具代表性的
+非零延遲。雖然 `--compile_warmup_inferences` 預設為 2，
+但啟用 RTC 時至少需要 3；啟動日誌會回報實際生效的次數。暖機必須
+在 `startup_timeout_s` 內完成。之後若指令改變了張量形狀，可能會觸發
+重新編譯，並超出播放時間或操作期限。
+
+推論期間的任務變更會捨棄過時的結果。受支援的機器人會暫停
+並請求全新的動作；沒有這項等待能力時，剩餘的動作可能會
+耗盡。在這些機器人上，建議在兩次執行之間變更任務。
+
+</details>
+
+---
+
+## 互動工作階段[[interactive-sessions]]
+
+加上 `--interactive=true`，就能從終端機操控 rollout，而不是立即開始執行。硬體會照常連線、策略也會照常載入，但**在你輸入 `/start` 之前，機器人會保持靜止**。這適合想先布置場景、在每次嘗試之間給策略新的指令，或想執行多次而不必每次重新載入的情況。
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_smolvla_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="pick up the cube" \
+    --interactive=true
+```
+
+| 指令                | 動作                                                                                                                                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/start`            | 開始（或重新開始）策略控制迴圈                                                                                                                                                                                             |
+| `/subtask <text>`   | 在目前的執行中變更指令；非同步推論可能會進入已規劃的位置保持。不帶引數時會印出目前的任務。只會影響以語言為條件的策略（SmolVLA、π0/π0.5 等）。搭配[外部規劃器](#external-planner)時，`/subtask` 也會從 autosteer 交還控制權 |
+| `/vqa <text>`       | 針對機器人目前看到的畫面提問。只能在執行期間使用，且需要策略具有 text head，或使用[外部規劃器](#external-planner)                                                                                                          |
+| `/autosteer <goal>` | 交出一個高階目標，讓策略的 text head 或[外部規劃器](#external-planner)選擇子任務。`/autosteer off` 會交還控制權；不帶引數時會回報目前的目標                                                                                |
+| `/reset`            | 停止移動，讓機器人回到啟動時的位置，並恢復 `--task` 的指令                                                                                                                                                                 |
+| `/stop`             | 結束工作階段並執行一般的關閉程序                                                                                                                                                                                           |
+| `/help`             | 列出指令                                                                                                                                                                                                                   |
+
+```text
+> /start
+Rollout running — task 'pick up the cube'. /subtask <text> to change it, ...
+> /subtask put the cube in the box
+Task: 'pick up the cube' → 'put the cube in the box' (applies from the next policy inference)
+> /vqa is the cube inside the box?
+Asked: 'is the cube inside the box?' — answering from the next observation...
+Q: is the cube inside the box?
+A: No — the cube is on the table to the left of the box.
+> /reset
+Task restored to 'pick up the cube'
+Resetting — returning the robot to its initial position...
+Robot reset — holding at initial position. /start to run.
+> /stop
+```
+
+以 `>` 開頭的行是你輸入的內容；工作階段本身不會顯示提示符號。
+
+`Ctrl-C` 仍會照常關閉程式，而關閉 stdin（`Ctrl-D`，或管線腳本執行結束）也會結束工作階段——因此透過管線執行的腳本，必須在預定的時間內保持 stdin 開啟：
+
+```bash
+(printf '/start\n'; sleep 60; printf '/stop\n') | lerobot-rollout ... --interactive=true
+```
+
+**`/subtask`** 會更新後續推論使用的任務。使用 `--inference.type=sync` 時，預先算好的區塊動作會被捨棄。使用本機 RTC 或遠端推論時，若在動作請求期間變更，過時的結果會被捨棄。在支援本機位置保持的機器人上，引擎會使佇列中與內插中的動作失效，等待控制迴圈確認位置保持，然後在新任務下請求全新的動作。預期這段轉換期間機器人會停下來；它並不保證能連續混合。若在兩次請求之間變更，則可以保留已接受的動作以維持連續性。在不支援位置保持的機器人上，本機 RTC 仍會捨棄過時的結果，但可能耗盡剩餘的動作而終止。如果該機器人無法適當地保持位置，請在兩次執行之間變更指令。
+
+使用本機 `--use_torch_compile=true` 時，若新指令改變了處理後的張量形狀，可能會觸發重新編譯。填充（padding）可能讓某些任務變更維持相同的形狀，但之後的編譯不保證能在剩餘的播放時間或指令變更期限內完成：它可能造成終止性故障。除非已驗證過這些轉換，否則在嘗試不同指令時請不要開啟編譯。在初始編譯暖機（warm-up）期間的變更不會要求位置保持，因為策略的動作尚未開始。
+
+`/vqa` 與 `/autosteer` 需要宣告支援文字生成並實作 `PreTrainedPolicy.generate_text()` 的策略，例如經過適當訓練的 EO1 檢查點，或使用[外部規劃器](#external-planner)。系統會在接受查詢之前檢查這項能力；個別檢查點的行為仍需要驗證。
+
+**`/vqa`** 會依據下一次的觀測作答，準備好就會印出，所以你可以同時繼續輸入；同一時間只會處理一個問題（autosteer 自己的查詢也共用這個名額）。使用外部規劃器時，問題會在工作執行緒上回答，機器人則繼續動作，以下內容都不適用。非同步後端會先進入經確認的本機位置保持，並使佇列中與內插中的動作失效，再將全新的觀測提交給文字路徑。健康且啟用中的執行會在答案產生後，從全新的動作區塊繼續；已暫停或已停止的執行則維持非啟用狀態。同步文字生成會在控制執行緒上直接執行，並捨棄策略預先算好的動作，因此下一個控制週期會從全新的推論繼續。查詢時間會計入 `--duration`。只有在執行期間才接受提問——閒置的引擎沒有目前的畫面。若指令或執行情境使非同步答案失效，該問題會收到一則取消通知，而不是過時的答案。區段結束時也會回報尚未回答的問題，包括仍在生成中的問題；回報取消並不會中斷執行中的模型呼叫，也不會提早釋放其查詢名額。
+
+**`/autosteer`** 會交給策略一個目標，並每隔 `--autosteer_interval_s` 秒（預設 10）向它要下一個子任務，以與 `/subtask` 相同的方式套用，並在對話中公告。每次查詢都是一次完整的文字生成，所以這個間隔就是調整成本的旋鈕：數值越低，重新規劃得越快，但迴圈也會花更多時間在生成文字，而不是執行動作。規劃的進度保存在策略中，而不是 rollout 中，因此區段結束時規劃也會跟著結束；遇到 `/reset`、`/subtask`、`/autosteer off`，或第一次規劃失敗時，排程器也會停止。
+
+**工作階段執行期間，ERROR 以下等級的日誌會被靜音**，避免例行輸出和你正在輸入的內容交錯；錯誤與致命的推論失敗仍會顯示，工作階段結束後即恢復一般日誌。[節奏摘要](#cadence-reporting)則會改為印在對話中；若不使用 `--interactive` 執行，就會恢復即時日誌。
+
+工作階段可以透過 SSH 使用，也能在無頭（headless）機器上執行——不需要顯示伺服器。
+
+**在互動模式下錄製。** `--strategy.type=sentry` 也接受 `--interactive=true`，會在你操控期間持續錄製：每個 `/start`…`/reset` 區段都會儲存完整的回合（episode），外加最後一個不完整的回合，資料集則會一直保持開啟直到關閉。每個影格都會記錄實際送出的動作屬於哪個任務，因此已在舊任務下排入佇列或內插的動作，會保留舊任務的標籤。
+
+執行中阻塞式的回合儲存會暫停非同步推論、使佇列中與內插中的動作失效，並要求受支援的本機位置保持。只有在執行仍處於啟用且健康的狀態時，才會從全新的擷取畫面繼續。DAgger 的儲存，以及 Highlight 環形緩衝區的寫出與儲存，也都受到相同的保護。錄製暫停與一般的動作耗盡共用相同的實體等待行為，但兩者的期限與恢復條件仍各自獨立。
+
+```bash
+lerobot-rollout \
+    --strategy.type=sentry \
+    --policy.path=${HF_USER}/my_smolvla_policy \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --dataset.repo_id=${HF_USER}/rollout_cube_sessions \
+    --task="pick up the cube" \
+    --interactive=true
+```
+
+其他會錄製的執行策略（episodic、DAgger、highlight）不支援互動模式：它們會綁定自己的鍵盤控制，並在 `run()` 結束時完成（finalize）資料集，因此無法逐區段重新啟動。
+
+### 外部規劃器[[external-planner]]
+
+`--planner.model_id=<name>` 會讓 `/vqa` 與 `/autosteer` 改經由標註管線的 VLM 用戶端（`annotations` 額外套件），而不是策略的 text head。呼叫會在工作執行緒上執行，機器人則繼續動作，而且不會為這些呼叫要求語言位置保持，只有一個刻意的例外：`/autosteer` 開始時，推論後端會暫停，直到規劃器第一次回覆為止，因為目標是給規劃器的情境，而不是給策略的指令。非同步後端（`rtc`、`remote`）會捨棄已在佇列中或正為先前指令計算中的動作；同步後端則會讓機器人保持位置。第一個子任務套用之後，後端會從全新的觀測繼續。`/subtask` 仍會直接套用你的指令並取消自動規劃；較晚抵達的規劃器回覆無法覆寫它。
+
+規劃器可以搭配每一種推論後端使用。使用本機推論時，若已載入的處理器有子任務配方，就會重複使用它，否則會要求一個簡短的指令；這並不代表檢查點能夠遵循該指令。`--planner.instructions='["pick up the cup","open the drawer"]'` 會限制規劃器的輸出：系統會要求 VLM 從這些字串中挑選一個，若下一個子任務的回覆不在清單中，就會視為錯誤。大小寫、多餘的空格與結尾的句點都會被忽略，而送給策略的是清單本身的措辭。若未提供此旗標，清單會從檢查點訓練資料集的任務標籤中讀取（透過其 `train_config.json`）。每個標籤都會放進提示詞中，因此對於任務很多的資料集，請傳入此旗標並提供較短的清單。若無法讀取資料集，系統會記錄一則警告，規劃器的輸出則維持自由格式。遠端推論擁有策略，因此本機無法取得配方與訓練詞彙：請明確傳入 `--planner.instructions`，否則答案會維持自由格式。規劃器只在搭配本機推論時於硬體上測試過。
+
+外部規劃器會收到最近 `--planner.history` 組觀測／命令配對（預設 4），接著是目前的影像。每一組配對都包含用來請求指令的觀測，以及引擎隨後接受的指令；被接受並不代表執行成功。重複的指令會保留在歷史中，讓 VLM 能夠判斷是否缺乏進展。手動接管、重設、停止、區段結束或設定新的 autosteer 目標時，歷史都會清除。設定 `--planner.history=0` 即可停用。`/vqa` 可以檢視這段歷史，但不會新增項目。對於下一個子任務的請求，VLM 必須先描述場景，並說明前一個命令是已完成、進行中還是失敗，然後才能指定下一個指令。回覆 `done` 代表目標已完成：autosteer 會停止、執行會結束，機器人會保持姿態直到 `/reset` 或 `/start`。在 `/subtask`、`/reset` 或新目標之前產生、較晚抵達的 `done` 會被捨棄。每個套用的子任務都會連同模型的場景評估與請求延遲一起印出。
+
+另外啟動一個相容 OpenAI 的 VLM 伺服器，然後連線：
+
+```bash
+transformers serve Qwen/Qwen3-VL-8B-Instruct --port 8000
+# 或者：vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8000
+lerobot-rollout ... --task="pick up the cup" --interactive=true \
+    --planner.model_id=Qwen/Qwen3-VL-8B-Instruct \
+    --planner.api_base=http://localhost:8000/v1
+> /start
+> /vqa What is the next short instruction to clear the table?
+> /subtask put the cup in the sink
+> /autosteer clear the table
+```
+
+託管模型的使用方式相同。這個範例使用 Hugging Face Inference Providers，搭配具有「Make calls to Inference Providers」權限的權杖：
+
+```bash
+export HF_TOKEN=hf_...
+lerobot-rollout ... --task="put all colored cubes in the green bin" --interactive=true \
+    --planner.model_id=Qwen/Qwen3.8-27B:novita \
+    --planner.api_base=https://router.huggingface.co/v1 \
+    --planner.api_key_env=HF_TOKEN
+```
+
+`/vqa` 只會回報答案；`/autosteer` 則會套用指令。以 `--planner.api_base` 設定端點，並以 `--planner.api_key_env=<variable>`（建議做法，金鑰不會出現在指令與日誌中）或 `--planner.api_key` 設定金鑰。`--planner.request_timeout_s`（預設 600）與 `--planner.request_max_retries`（預設 2）會限制每個請求；`--planner.camera_key` 用來選擇一台相機；`--planner.log_path` 會將每次交換附加為一行 JSON。模型服務的相依套件屬於伺服器環境。`--autosteer_interval_s` 量測的是套用回覆之後的機器人動作時間，請求延遲則另外累加。多層級操控與自動場景盤點不在這個 adapter 的範圍內。
+
+### 程式化控制[[programmatic-control]]
+
+`RolloutController` 以函式庫 API 的形式提供相同的操作——執行緒安全的 `start()` / `reset()` / `stop()` / `set_task()`，外加一個 `RolloutEvent` 回呼，而且不會處理 stdin、輸出或日誌靜音：
+
+```python
+from threading import Event, Thread
+
+from lerobot.rollout import (
+    LinkedEvent,
+    RolloutController,
+    RolloutEvent,
+    build_rollout_context,
+    create_strategy,
+)
+
+parent = Event()  # 你應用程式的關閉訊號
+ctx = build_rollout_context(cfg, LinkedEvent(parent))  # 載入策略、連接機器人
+strategy = create_strategy(cfg.strategy)
+strategy.setup(ctx)
+
+controller = RolloutController(strategy, ctx, on_event=print)  # 或你自己的觀察者
+serve_thread = Thread(target=controller.serve)  # serve() 會阻塞；可在任何你喜歡的地方執行
+serve_thread.start()
+
+controller.start()                        # 機器人開始執行策略
+controller.set_task("grab the red cube")  # 在執行中重新下指令
+controller.reset()                        # 停止移動、返回原點、保持暖機
+controller.stop()                         # 結束 serve()
+
+serve_thread.join()
+strategy.teardown(ctx)  # 收尾（teardown）仍由呼叫端負責
+```
+
+`RolloutController` 要求情境的關閉事件必須是 `LinkedEvent`，並依上方的方式建構：控制器會透過自己的旗標結束執行區段，而你的 `parent` 事件仍可強制完整關閉。除非你想聽語音公告，否則請設定 `play_sounds=False`。
+
+---
+
+## 常用旗標[[common-flags]]
+
+| 旗標                              | 說明                                                                       | 預設值 |
+| --------------------------------- | -------------------------------------------------------------------------- | ------ |
+| `--policy.path`                   | **必填。** HF Hub 模型 ID 或本機檢查點路徑                                 | --     |
+| `--robot.type`                    | **必填。** 機器人類型（例如 `so100_follower`、`koch_follower`）            | --     |
+| `--robot.port`                    | 機器人的序列埠                                                             | --     |
+| `--robot.cameras`                 | 相機設定（JSON dict）                                                      | --     |
+| `--fps`                           | 策略推論與資料集錄製的頻率                                                 | 30     |
+| `--duration`                      | 執行時間（秒；0 = 無限；互動模式下為每個區段）                             | 0      |
+| `--device`                        | Torch device（`cpu`、`cuda`、`mps`）                                       | 自動   |
+| `--task`                          | 任務描述（未提供資料集時使用）                                             | --     |
+| `--display_data`                  | 將遙測資料串流到 Rerun 進行視覺化                                          | false  |
+| `--display_ip` / `--display_port` | 遠端 Rerun 伺服器的位址                                                    | --     |
+| `--interpolation_multiplier`      | 每個策略動作對應的機器人命令數（以 `fps × N` Hz 控制）                     | 1      |
+| `--interactive`                   | 在 stdin 上開啟對話工作階段；機器人會保持閒置直到 `/start`（base、sentry） | false  |
+| `--use_torch_compile`             | 推論時啟用 `torch.compile`                                                 | false  |
+| `--resume`                        | 接續先前的錄製工作階段                                                     | false  |
+| `--play_sounds`                   | 以語音合成播報事件                                                         | true   |
+
+---
+
+## 節奏回報[[cadence-reporting]]
+
+每種執行策略都會回報其控制迴圈（control loop）實際達到的成果，`lerobot-record`、`lerobot-teleoperate` 與 `lerobot-replay` 也是如此——它們都透過同一個計時器控制節奏。每個儲存的回合都會產生一行摘要；迴圈結束時（包括按下 `Ctrl-C`），則會輸出一段涵蓋整次執行的報告：
+
+```
+Cadence (episode 1): 29.84 Hz policy vs 30 Hz target · 1200 ticks, 20.1 s measured · 6/598 cycles over the 33.3 ms budget (work mean 18.7 ms, worst 48.1 ms)
+Cadence (episode 2): 29.84 Hz policy vs 30 Hz target · 1200 ticks, 20.1 s measured · 6/599 cycles over the 33.3 ms budget (work mean 18.7 ms, worst 48.1 ms)
+Cadence summary — whole run, 2 episodes · target 30 Hz × 2 (16.7 ms tick slot, 33.3 ms cycle budget): 2400 ticks, 1197 cycles judged
+  effective cadence: 29.84 Hz policy / 59.67 Hz commands over 40.2 s measured
+  cycles over the 33.3 ms work budget: 12/1197 (1.0%) — work mean 18.7 ms, worst 48.1 ms
+  ticks over their 16.7 ms slot: 40/2400 (costs interpolation smoothness only)
+  loop-body steps (share of measured work):
+    observe      mean   3.13 ms · worst   9.00 ms ·  31.7% of work · 2400 calls
+    process_obs  mean   0.50 ms · worst   1.00 ms ·   5.1% of work · 2400 calls
+    infer        mean   5.18 ms · worst  40.00 ms ·  52.4% of work · 2400 calls
+    send         mean   0.40 ms · worst   0.40 ms ·   4.1% of work · 2400 calls
+    record       mean   0.67 ms · worst 620.00 ms ·   6.8% of work · 2402 calls
+  pacing headroom: 7.4 ms slept per tick on average (max 13.0 ms) — near zero means the loop is saturated
+```
+
+由上往下讀：**effective cadence** 是相對於 `--fps` 實際達到的節奏，**cycles over budget** 是迴圈無法維持目標的頻率，**step breakdown** 說明時間花在哪裡，而 **pacing headroom** 接近零，代表已經沒有餘裕吸收一次較慢的控制週期（tick）。`infer` 佔比偏高，表示瓶頸在策略或裝置；`observe` 佔比偏高，則表示瓶頸在相機。某個步驟的 `worst` 遠高於 `mean`，代表是偶發事件——在上例中，`record` 每個影格為 0.67 ms，而 620 ms 的離群值，是結束某個回合時發生阻塞的 `save_episode`。
+
+這裡的一個 _cycle_ 是相當於一個策略動作的控制週期數（`--interpolation_multiplier` 個）。只有整個 cycle 超出 `1/fps` 預算時才會讓你掉影格（frame）；單一控制週期超出其時槽只會讓內插後的動作較不平順，這也是兩者分開計算的原因。若未使用內插，一個 cycle 就是單一控制週期，因此報告會省略這項區分，全程以控制週期計算。
+
+在[互動工作階段](#interactive-sessions)中，每個 `/start` 區段都有自己的計時器，因此報告會在每個區段結束時（`/reset`、`/stop` 或 `--duration`）出現在對話中，而不是每個行程（process）只出現一次。
+
+---
+
+## 程式化用法[[programmatic-usage]]
+
+若要進行擴充，`lerobot.inference` 是提供後端設定、本機引擎與共用排程契約的公開套件。`lerobot.remote_inference` 負責遠端引擎、通訊協定、部署與工作階段的實作；`lerobot.rollout` 則負責機器人迴圈、執行策略、內插與錄製。請從各自的套件匯入公開符號，而不是從實作檔案匯入。只有在使用遠端後端或伺服器時，才需要可選的遠端相依套件。
+
+若要進行自訂部署（例如搭配運動學處理器），請直接使用 rollout 模組的 API：
+
+```python
+from lerobot.rollout import BaseStrategyConfig, RolloutConfig, build_rollout_context
+from lerobot.inference import SyncInferenceConfig
+from lerobot.rollout.strategies import BaseStrategy
+from lerobot.utils.process import ProcessSignalHandler
+
+cfg = RolloutConfig(
+    robot=my_robot_config,
+    policy=my_policy_config,
+    strategy=BaseStrategyConfig(),
+    inference=SyncInferenceConfig(),
+    fps=30,
+    duration=60,
+    task="my task",
+)
+
+signal_handler = ProcessSignalHandler(use_threads=True)
+ctx = build_rollout_context(
+    cfg,
+    signal_handler.shutdown_event,
+    robot_action_processor=my_custom_action_processor,       # 可選
+    robot_observation_processor=my_custom_obs_processor,     # 可選
+)
+
+strategy = BaseStrategy(cfg.strategy)
+try:
+    strategy.setup(ctx)
+    strategy.run(ctx)
+finally:
+    strategy.teardown(ctx)
+```
+
+搭配運動學處理器的完整範例，請參閱 `examples/so100_to_so100_EE/rollout.py` 與 `examples/phone_to_so100/rollout.py`。

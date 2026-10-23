@@ -1,0 +1,493 @@
+# 整合你自己的硬體[[bring-your-own-hardware]]
+
+本教學說明如何將你自己設計的機器人整合進 LeRobot 生態系，讓它能使用我們所有的工具（資料收集、控制管線、策略訓練與推論）。
+
+為此，LeRobot 提供了 [`Robot`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/robot.py) 基底類別，它定義了整合實體機器人的標準介面。接下來看看如何實作它。
+
+## 先決條件[[prerequisites]]
+
+- 你的機器人提供某種通訊介面（例如序列埠、CAN、TCP）
+- 能以程式讀取感測器資料並送出馬達命令的方式，例如製造商提供的 SDK 或 API，或是你自行實作的通訊協定。
+- 已在你的環境中安裝 LeRobot。請依照我們的[安裝指南](./installation)進行。
+
+## 選擇你的馬達[[choose-your-motors]]
+
+如果你使用的是 Feetech 或 Dynamixel 馬達，LeRobot 提供內建的匯流排（bus）介面 [`SerialMotorsBus`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/motors/motors_bus.py)，它可驅動這兩個系列：每個馬達的型號會告訴它該用哪一種。請參閱它以了解其 API。它需要 `serial-motors` 額外套件，該套件會安裝 rustypot：`pip install 'lerobot[serial-motors]'`，或從原始碼 checkout 執行 `pip install -e ".[serial-motors]"`。
+若想看它如何使用的良好範例，可以參考我們自己的 [SO101 從臂實作](https://github.com/huggingface/lerobot/blob/main/src/lerobot/robots/so_follower/so_follower.py)
+
+如果相容，請使用這些介面。否則，你需要找到或自行撰寫 Python 介面（本教學不涵蓋這部分）：
+
+- 找到現有的 Python SDK（或使用 C/C++ 的綁定）
+- 或實作一個基本的通訊包裝器（wrapper，例如透過 pyserial、socket 或 CANopen）
+
+你並不孤單，許多社群貢獻都使用了自訂的電路板或韌體！
+
+對於 Feetech 和 Dynamixel，我們目前支援以下伺服馬達：
+
+- Feetech STS 與 SMS 系列：`sts3215`、`sts3250`、`sm8512bl`
+- Feetech SCS 系列：`scs0009`
+- Dynamixel X 系列（協定 2.0）：`xl330-m077`、`xl330-m288`、`xc330-t181`、`xc330-t288`、`xl430-w250`、`xl430-w250-2`、`xc430-w150`、`xm430-w350`、`xm540-w270`、`xh540-w150`
+
+不同型號可以共用同一條匯流排，例如 STS/SMS 與 SCS 伺服馬達，或 XL430 與 XL330：每個馬達都會透過自己所屬型號的定義來讀寫，包括位元組順序與正負號編碼。不同系列之間的差異來自同一組定義：哪個運作模式數值代表位置控制（`bus.set_operating_mode("position")`）、原點偏移（homing offset）是加到位置還是從位置減去，以及有哪些暫存器存在。
+
+支援某個型號並不代表所有校正輔助方法（calibration helper）都能在它上面運作：Feetech SCS0009 既沒有運作模式，也沒有原點偏移，因此 `set_operating_mode()` 與 `set_half_turn_homings()` 會拒絕它。下面的校正流程適用於同時具備這兩者的伺服馬達，例如 STS；SCS 伺服馬達則只靠其活動範圍來校正。
+
+如果你使用的 Feetech 或 Dynamixel 伺服馬達不在這份清單中，請將它們加入 [rustypot](https://github.com/pollen-robotics/rustypot)，匯流排所讀取的控制表都保存在那裡：若某型號可共用現有的控制表，只需要註冊其型號編號；若是新型號，則需要提供伺服馬達定義（請參閱[伺服馬達貢獻指南](https://github.com/pollen-robotics/rustypot/blob/v1.13.1/src/servo/README.md)）。LeRobot 會從已安裝的 rustypot Python 套件讀取型號，因此該套件必須包含新型號：使用已包含它的 rustypot 發行版，或從原始碼建置 rustypot。
+
+在接下來幾節中，範例會使用 Feetech 馬達。如有需要，請更換型號並調整為你的馬達。
+
+## 步驟 1：建立 `Robot` 介面的子類別[[step-1-subclass-the-robot-interface]]
+
+首先，你需要為機器人指定設定類別與一個字串識別碼（`name`）。如果你的機器人有希望能輕鬆修改的特殊需求，就應該放在這裡（例如連接埠／位址、鮑率）。
+
+這裡我們會為機器人加入連接埠名稱，並預設一台相機：
+
+<!-- prettier-ignore-start -->
+```python
+from dataclasses import dataclass, field
+
+from lerobot.cameras import CameraConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.robots import RobotConfig
+
+
+@RobotConfig.register_subclass("my_cool_robot")
+@dataclass
+class MyCoolRobotConfig(RobotConfig):
+    port: str
+    cameras: dict[str, CameraConfig] = field(
+        default_factory=lambda: {
+            "cam_1": OpenCVCameraConfig(
+                index_or_path=2,
+                fps=30,
+                width=480,
+                height=640,
+            ),
+        }
+    )
+```
+<!-- prettier-ignore-end -->
+
+[相機教學](./cameras)以了解如何偵測並新增你的相機。
+
+接著，我們會建立繼承 `Robot` 的實際機器人類別。這個抽象類別定義了一份契約（contract），你的機器人必須遵守，才能搭配 LeRobot 的其他工具使用。
+
+這裡我們會建立一台配有一台相機的簡單 5 自由度（5-DoF）機器人。它可以是一隻簡單的手臂，但請注意，`Robot` 抽象類別並不對機器人的外型（form factor）做任何假設。設計新機器人時，盡情發揮你的想像力吧！
+
+<!-- prettier-ignore-start -->
+```python
+from typing import Any
+
+from lerobot.cameras import make_cameras_from_configs
+from lerobot.motors import Motor, MotorCalibration, MotorNormMode, SerialMotorsBus
+from lerobot.robots import Robot
+
+class MyCoolRobot(Robot):
+    config_class = MyCoolRobotConfig
+    name = "my_cool_robot"
+
+    def __init__(self, config: MyCoolRobotConfig):
+        super().__init__(config)
+        self.config = config
+        self.bus = SerialMotorsBus(
+            port=self.config.port,
+            motors={
+                "joint_1": Motor(1, "sts3250", MotorNormMode.RANGE_M100_100),
+                "joint_2": Motor(2, "sts3215", MotorNormMode.RANGE_M100_100),
+                "joint_3": Motor(3, "sts3215", MotorNormMode.RANGE_M100_100),
+                "joint_4": Motor(4, "sts3215", MotorNormMode.RANGE_M100_100),
+                "joint_5": Motor(5, "sts3215", MotorNormMode.RANGE_M100_100),
+            },
+            calibration=self.calibration,
+        )
+        self.cameras = make_cameras_from_configs(config.cameras)
+```
+<!-- prettier-ignore-end -->
+
+## 步驟 2：定義觀測與動作特徵[[step-2-define-observation-and-action-features]]
+
+這兩個屬性定義了你的機器人與使用它的工具（例如資料收集或學習管線）之間的*介面契約*。
+
+> [!WARNING]
+> 請注意，即使機器人尚未連線，這些屬性也必須可以呼叫，因此請不要依賴執行時的硬體狀態來定義它們。
+
+### `observation_features`[[observationfeatures]]
+
+這個屬性應回傳一個字典，描述機器人感測器輸出的結構。鍵名與 `get_observation()` 回傳的內容一致，值則描述形狀（陣列／影像）或型別（簡單數值）。
+
+以我們配有一台相機的 5 自由度手臂為例：
+
+<!-- prettier-ignore-start -->
+```python
+@property
+def _motors_ft(self) -> dict[str, type]:
+    return {
+        "joint_1.pos": float,
+        "joint_2.pos": float,
+        "joint_3.pos": float,
+        "joint_4.pos": float,
+        "joint_5.pos": float,
+    }
+
+@property
+def _cameras_ft(self) -> dict[str, tuple]:
+    return {
+        cam: (self.cameras[cam].height, self.cameras[cam].width, 3) for cam in self.cameras
+    }
+
+@property
+def observation_features(self) -> dict:
+    return {**self._motors_ft, **self._cameras_ft}
+```
+<!-- prettier-ignore-end -->
+
+在這個例子中，觀測（observation）是一個簡單的字典，儲存每個馬達的位置與一張相機影像。
+
+### `action_features`[[actionfeatures]]
+
+這個屬性描述你的機器人透過 `send_action()` 預期接收的命令。同樣地，鍵名必須符合預期的輸入格式，值則定義每個命令的形狀／型別。
+
+這裡我們直接使用與 `observation_features` 相同的關節本體感覺特徵（`self._motors_ft`）：送出的動作（action）就是每個馬達的目標位置。
+
+<!-- prettier-ignore-start -->
+```python
+@property
+def action_features(self) -> dict:
+    return self._motors_ft
+```
+<!-- prettier-ignore-end -->
+
+## 步驟 3：處理連線與斷線[[step-3-handle-connection-and-disconnection]]
+
+這些方法負責開啟與關閉和硬體之間的通訊（例如序列埠、CAN 介面、USB 裝置、相機）。
+
+### `is_connected`[[isconnected]]
+
+這個屬性只需反映是否已與機器人硬體建立通訊。當它為 `True` 時，應該能透過 `get_observation()` 與 `send_action()` 讀寫硬體。
+
+<!-- prettier-ignore-start -->
+```python
+@property
+def is_connected(self) -> bool:
+    return self.bus.is_connected and all(cam.is_connected for cam in self.cameras.values())
+```
+<!-- prettier-ignore-end -->
+
+### `connect()`[[connect]]
+
+這個方法應建立與硬體的通訊。此外，如果你的機器人需要校正但尚未校正，預設應啟動校正程序。如果你的機器人需要特定的設定，也應在這裡呼叫。
+
+<!-- prettier-ignore-start -->
+```python
+def connect(self, calibrate: bool = True) -> None:
+    self.bus.connect()
+    if not self.is_calibrated and calibrate:
+        self.calibrate()
+
+    for cam in self.cameras.values():
+        cam.connect()
+
+    self.configure()
+```
+<!-- prettier-ignore-end -->
+
+### `disconnect()`[[disconnect]]
+
+這個方法應妥善地結束與硬體的通訊：釋放所有相關的資源，例如執行緒或行程（process），並關閉連接埠等。
+
+這裡 `SerialMotorsBus` 與 `Camera` 類別已經處理好這些工作，所以只需要呼叫它們各自的 `disconnect()` 方法：
+
+<!-- prettier-ignore-start -->
+```python
+def disconnect(self) -> None:
+    self.bus.disconnect()
+    for cam in self.cameras.values():
+        cam.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+## 步驟 4：支援校正與設定[[step-4-support-calibration-and-configuration]]
+
+LeRobot 支援自動儲存與載入校正資料，這對關節偏移量、零點位置或感測器對齊很有用。
+
+> 請注意，依你的硬體不同，這可能不適用。如果是這種情況，可以直接讓這些方法什麼都不做：
+
+<!-- prettier-ignore-start -->
+```python
+@property
+def is_calibrated(self) -> bool:
+    return True
+
+def calibrate(self) -> None:
+    pass
+```
+<!-- prettier-ignore-end -->
+
+### `is_calibrated`[[iscalibrated]]
+
+這應反映你的機器人是否已載入所需的校正資料。
+
+<!-- prettier-ignore-start -->
+```python
+@property
+def is_calibrated(self) -> bool:
+    return self.bus.is_calibrated
+```
+<!-- prettier-ignore-end -->
+
+### `calibrate()`[[calibrate]]
+
+校正的目標有兩個：
+
+- 知道每個馬達的實際活動範圍，以便只在這個範圍內送出命令。
+- 將原始的馬達位置正規化為合理的連續值（例如百分比、角度），而不是依所用馬達而定、在其他地方無法重現的任意離散值。
+
+它應實作校正的邏輯（如果適用），並更新 `self.calibration` 字典。如果你使用的是 Feetech 或 Dynamixel 馬達，`SerialMotorsBus` 已內建手動校正流程：
+
+1. `_keep_calibration_file()` 會提供重用此 id 校正檔案的選項。如果你保留它，它會被寫入馬達，校正就在那裡結束。
+2. `record_calibration()` 會放開馬達，並將它們設為你指定的運作模式。
+3. 它會要求你將關節保持在活動範圍的中間：該姿勢會成為每個馬達的半圈位置。
+4. 它會在你移動每個關節時記錄其範圍，直到你按下 ENTER。會無限旋轉的關節會放入 `full_turn_motors`，並改為取得完整的編碼器範圍；我們的 5 自由度手臂沒有這種關節。
+5. `write_calibration()` 會將結果寫入馬達，而 `_save_calibration()` 會將其儲存到校正檔案。
+
+<!-- prettier-ignore-start -->
+```python
+def calibrate(self) -> None:
+    if self._keep_calibration_file(self.bus):
+        return
+
+    self.calibration = self.bus.record_calibration("position", full_turn_motors=[])
+    self.bus.write_calibration(self.calibration)
+    self._save_calibration()
+    print("Calibration saved to", self.calibration_fpath)
+```
+<!-- prettier-ignore-end -->
+
+### `configure()`[[configure]]
+
+使用這個方法為你的硬體進行各種設定（伺服馬達的控制模式、控制器增益等）。它通常應在連線時執行，而且要具有冪等性（idempotent）。
+
+<!-- prettier-ignore-start -->
+```python
+def configure(self) -> None:
+    with self.bus.torque_disabled():
+        self.bus.configure_motors()
+        for motor in self.bus.motors:
+            self.bus.set_operating_mode("position", motor)
+            self.bus.write("P_Coefficient", motor, 16)
+            self.bus.write("I_Coefficient", motor, 0)
+            self.bus.write("D_Coefficient", motor, 32)
+```
+<!-- prettier-ignore-end -->
+
+## 步驟 5：實作感測器讀取與動作發送[[step-5-implement-sensors-reading-and-action-sending]]
+
+這些是最重要的執行期函式，也就是核心的 I/O 迴圈。
+
+### `get_observation()`[[getobservation]]
+
+從機器人回傳一個感測器數值的字典，通常包括馬達狀態（state）、相機影格、各種感測器等。在 LeRobot 框架中，這些觀測會被送入策略（policy），用來預測接下來要執行的動作。字典的鍵名與結構必須與 `observation_features` 一致。
+
+<!-- prettier-ignore-start -->
+```python
+def get_observation(self) -> dict[str, Any]:
+    if not self.is_connected:
+        raise ConnectionError(f"{self} is not connected.")
+
+    # 讀取手臂位置
+    obs_dict = self.bus.sync_read("Present_Position")
+    obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
+
+    # 從相機擷取影像
+    for cam_key, cam in self.cameras.items():
+        obs_dict[cam_key] = cam.async_read()
+
+    return obs_dict
+```
+<!-- prettier-ignore-end -->
+
+### `send_action()`[[sendaction]]
+
+接收一個與 `action_features` 相符的字典，並將它送到你的硬體。你可以加入安全限制（截斷、平滑化），並回傳實際送出的內容。
+
+為了簡單起見，我們的範例不會對動作做任何修改。
+
+<!-- prettier-ignore-start -->
+```python
+def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    goal_pos = {key.removesuffix(".pos"): val for key, val in action.items()}
+
+    # 將目標位置傳送給手臂
+    self.bus.sync_write("Goal_Position", goal_pos)
+
+    return action
+```
+<!-- prettier-ignore-end -->
+
+### 預測之間的等待[[waiting-between-predictions]]
+
+一般的本機 RTC 不需要新的機器人能力仍可使用。遠端 rollout、規劃的非同步語言暫停與可復原的動作供應不足，都需要一份保留目標等待契約。請先確認透過 send_action() 反覆重送所有動作欄位不會對控制器造成問題，再設定 supports_position_hold = True 來啟用這項能力。通常這些欄位是實際的位置目標。控制器也可以改用一個經過個別驗證的保留命令來選擇啟用，例如 SONIC 的潛在動作 token，前提是重複送出它能讓板載控制器持續保持平衡。單靠啟用扭矩或 `.pos` 後綴並不能建立這項能力；速度／力矩與移動命令仍然不適合。
+
+共用的 rollout 實作會更新 `send_action()` 回傳的最後一個完整且有限值的動作，包括夾爪與任何驅動程式截斷。當你的驅動程式修改目標時，請回傳實際套用的目標，而不是原始請求。後續的觀測更新不會取代該目標。在任何命令被套用之前，會由一個經過驗證的量測位置快照初始化它。機器人可能會朝其保留目標移動並穩定下來；這份契約會停止軌跡推進，而不是保證立即的物理停止。請在硬體上針對每次部署驗證負載支援、夾持與命令更新行為。
+
+當保持啟用時，自訂的動作處理器與遙操作修正必須保留完整的位置命令，包括夾爪。驅動程式必須為每個動作元件回傳有限的實際套用值。不完整／無效的回傳在命令套用之後屬於契約失敗：rollout 會停止並抑制回歸原點，而不是重用較舊的目標。命令失敗在同步 rollout 中也會抑制原點的回歸。
+
+遠端 rollout 會自動檢查這項驅動程式能力；不需要額外的保持模式命令列旗標。一般觀測失敗會走正常的 rollout 清理路徑。回到初始位置仍需要完整的觀測，而且如果相機持續無法使用，可能會失敗。
+
+| 機器人實作                                     | 位置目標等待支援                                                                                                                                                                              |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SO 從臂（SO-100/SO-101）、OMX、Koch            | 支援。                                                                                                                                                                                        |
+| HopeJr 手臂與手部                              | 支援。                                                                                                                                                                                        |
+| Rebot B601                                     | 在現有的絕對位置手臂／夾爪模式下支援。                                                                                                                                                        |
+| OpenArm                                        | 在 `use_velocity_and_torque=false` 時支援；混合動作結構描述會被排除。                                                                                                                         |
+| BiSO、BiOpenArm、BiRebot B601                  | 當兩個底層手臂都支援時即支援；其套用的目標會保留左／右前綴。                                                                                                                                  |
+| Reachy2                                        | 僅在 `with_mobile_base=false`、`use_external_commands=false` 與 `max_relative_target=null` 時支援。移動底座命令是速度命令，外部模式不會傳送目標，而截斷路徑目前會回傳原始值而不是實際套用值。 |
+| LeKiwi（包括網路客戶端）、EarthRover Mini Plus | 不支援：動作包含移動底座速度，無法保留為位置目標。                                                                                                                                            |
+| Unitree G1                                     | 僅在 `SonicWholeBodyController` 時支援：等待會重複最後一個完整的 64 維動作 token，讓板載解碼器持續保持平衡。GR00T/Holosoma 移動與原始 `.q` 控制仍不支援。                                     |
+
+這些宣告反映的是驅動程式命令契約，而不是對每種具身形態或控制器設定的實際驗證。泛用 `Robot` 的預設值仍為 false。能力檢查並不代表已確認檢查點相容性、控制器調校、負載支援或硬體健康狀態。
+
+## 新增遙操作器[[adding-a-teleoperator]]
+
+針對遙操作裝置的實作，我們也提供了 [`Teleoperator`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/teleoperators/teleoperator.py) 基底類別。這個類別與 `Robot` 基底類別非常相似，同樣不對外型做任何假設。
+
+主要的差異在於 I/O 函式：遙操作器可以透過 `get_action` 產生動作，並透過 `send_feedback` 接收回饋動作。回饋可以是遙操作裝置上任何可控制的東西，用來幫助操控者了解所送出動作的結果，例如主臂上的運動／力回饋，或遊戲手把的震動。若要實作遙操作器，可以依照本教學，針對這兩個方法加以調整。
+
+## 使用你自己的 `LeRobot` 裝置 🔌[[using-your-own-lerobot-devices-]]
+
+只要建立一個獨立、可安裝的 Python 套件，就能輕鬆以你自訂的硬體擴充 `lerobot`，無論是相機、機器人還是遙操作裝置。只要遵守幾個簡單的慣例，`lerobot` 的命令列工具（例如 `lerobot-teleop` 與 `lerobot-record`）就會**自動發現並整合你的裝置**，完全不需要修改 `lerobot` 的原始碼。
+
+本指南說明你的外掛（plugin）必須遵守的慣例。
+
+### 4 項核心慣例[[the-4-core-conventions]]
+
+為了讓你的自訂裝置能被找到，你必須遵守以下四項規則。
+
+#### 1\. 建立具有特定前綴的可安裝套件[[1-create-an-installable-package-with-a-specific-prefix]]
+
+你的專案必須是標準、可安裝的 Python 套件。最重要的是，套件的名稱（定義在 `pyproject.toml` 或 `setup.py` 中）必須以下列其中一個前綴開頭：
+
+- `lerobot_robot_`：用於機器人。
+- `lerobot_camera_`：用於相機。
+- `lerobot_teleoperator_`：用於遙操作裝置。
+- `lerobot_strategy_`：用於 `lerobot-rollout` 的執行策略（請參閱[自訂執行策略](./inference#bring-your-own-strategy)）。
+
+`lerobot` 就是靠這套前綴系統，在 Python 環境中自動找到你的外掛。
+
+#### 2\. 遵循 `SomethingConfig`/`Something` 的命名模式[[2-follow-the-somethingconfigsomething-naming-pattern]]
+
+裝置的實作類別必須以其設定類別命名，只要去掉 `Config` 後綴即可。
+
+- **設定類別：** `MyAwesomeTeleopConfig`
+- **裝置類別：** `MyAwesomeTeleop`
+
+#### 3\. 將你的檔案放在可預測的結構中[[3-place-your-files-in-a-predictable-structure]]
+
+裝置類別（`MyAwesomeTeleop`）必須放在相對於其設定類別（`MyAwesomeTeleopConfig`）可預期的模組中。`lerobot` 會自動在以下位置搜尋：
+
+- 與設定類別**相同的模組**中。
+- **以裝置命名的子模組**中（例如 `my_awesome_teleop.py`）。
+
+建議且最簡單的結構，是將它們分別放在同一個目錄下、命名清楚的獨立檔案中。
+
+#### 4\. 在 `__init__.py` 中匯出類別[[4-expose-classes-in-initpy]]
+
+套件的 `__init__.py` 檔案應匯入並公開設定類別與裝置類別，讓它們方便存取。
+
+### 全部串起來：完整範例[[putting-it-all-together-a-complete-example]]
+
+讓我們建立一個名為 `my_awesome_teleop` 的新遙操作器。
+
+#### 目錄結構[[directory-structure]]
+
+以下是專案資料夾的結構。套件名稱 `lerobot_teleoperator_my_awesome_teleop` 遵循**慣例 #1**。
+
+```
+lerobot_teleoperator_my_awesome_teleop/
+├── pyproject.toml #（或 setup.py）列出 lerobot 作為相依套件
+└── lerobot_teleoperator_my_awesome_teleop/
+    ├── __init__.py
+    ├── config_my_awesome_teleop.py
+    └── my_awesome_teleop.py
+```
+
+#### 檔案內容[[file-contents]]
+
+- **`config_my_awesome_teleop.py`**：定義設定類別。注意 `Config` 後綴（**慣例 #2**）。
+
+  ```python
+  from dataclasses import dataclass
+
+  from lerobot.teleoperators.config import TeleoperatorConfig
+
+  @TeleoperatorConfig.register_subclass("my_awesome_teleop")
+  @dataclass
+  class MyAwesomeTeleopConfig(TeleoperatorConfig):
+      # 你的設定放在這裡
+      port: str = "192.168.1.1"
+  ```
+
+- **`my_awesome_teleop.py`**：實作裝置。類別名稱 `MyAwesomeTeleop` 與其設定類別的名稱相符（**慣例 #2**）。這個檔案結構遵守**慣例 #3**。
+
+  ```python
+  from lerobot.teleoperators.teleoperator import Teleoperator
+
+  from .config_my_awesome_teleop import MyAwesomeTeleopConfig
+
+  class MyAwesomeTeleop(Teleoperator):
+      config_class = MyAwesomeTeleopConfig
+      name = "my_awesome_teleop"
+
+      def __init__(self, config: MyAwesomeTeleopConfig):
+          super().__init__(config)
+          self.config = config
+
+      # 你的裝置邏輯（例如 connect）放在這裡
+  ```
+
+- **`__init__.py`**：公開主要的類別（**慣例 #4**）。
+
+  ```python
+  from .config_my_awesome_teleop import MyAwesomeTeleopConfig
+  from .my_awesome_teleop import MyAwesomeTeleop
+  ```
+
+### 安裝與使用[[installation-and-usage]]
+
+1.  **在你的 Python 環境中安裝新的外掛。** 你可以使用 `pip` 的可編輯模式（editable mode）安裝本機的外掛套件，或從 PyPi 安裝。
+
+    ```bash
+    # 本機安裝
+    # 切換到外掛的根目錄並安裝
+    cd lerobot_teleoperator_my_awesome_teleop
+    pip install -e .
+
+    # 從 PyPi 安裝
+    pip install lerobot_teleoperator_my_awesome_teleop
+    ```
+
+2.  **直接從命令列使用。** 現在，你可以透過指定裝置的類型來使用你的自訂裝置。
+
+    ```bash
+    lerobot-teleoperate --teleop.type=my_awesome_teleop \
+    # 其他參數
+    ```
+
+就是這樣！你的自訂裝置現在已完全整合。
+
+### 尋找範例？[[looking-for-an-example-]]
+
+看看這兩個來自社群的套件：
+
+- https://github.com/SpesRobotics/lerobot-robot-xarm
+- https://github.com/SpesRobotics/lerobot-teleoperator-teleop
+
+## 總結[[wrapping-up]]
+
+完成機器人類別後，你就可以充分運用 LeRobot 生態系：
+
+- 使用現有的遙操作器控制你的機器人，或直接整合你自己的遙操作裝置
+- 錄製訓練資料並將其視覺化
+- 將它整合進強化學習（RL）或模仿學習的管線中
+
+有任何問題，歡迎到我們的 [Discord](https://discord.gg/s3KuuzsPFb) 向社群尋求協助 🤗

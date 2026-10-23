@@ -1,0 +1,268 @@
+# VLA-JEPA[[vla-jepa]]
+
+這是 **VLA-JEPA** 的 LeRobot 移植版。VLA-JEPA 是一個視覺-語言-動作模型（vision-language-action model），結合了 Qwen3-VL 語言骨幹網路（backbone）、自監督的影片世界模型（world model，V-JEPA2），以及採用流匹配（flow matching）的 DiT 動作頭（action head）。
+
+---
+
+## 架構概覽[[architecture-overview]]
+
+VLA-JEPA 有三個主要元件：
+
+| 元件                  | 模組                              | 角色                                     |
+| --------------------- | --------------------------------- | ---------------------------------------- |
+| **Qwen3-VL 骨幹網路** | `Qwen3VLInterface`                | 將影像與語言指令融合為 context token     |
+| **DiT-B 動作頭**      | `VLAJEPAActionHead`               | 以流匹配擴散生成動作區塊（action chunk） |
+| **V-JEPA2 世界模型**  | `ActionConditionedVideoPredictor` | 自監督的影片預測損失（僅在訓練時使用）   |
+
+### 資料流[[data-flow]]
+
+**訓練：**
+
+1. 長度為 `num_video_frames` 影格的影片片段，會由 V-JEPA2 編碼為每個影格的 patch token。
+2. Qwen3-VL 骨幹網路處理多視角影像與任務指令，產生一段 context token 序列，其中包含特殊的動作 token（作為世界模型的條件）與 embodied token。
+3. 動作頭接收這些 context token，作為 cross-attention 的 key/value，並透過流匹配預測去雜訊後的動作區塊。
+4. 世界模型預測器使用從 Qwen 擷取的動作 token，預測未來的 V-JEPA2 影格嵌入向量（embedding）；這些預測的迴歸損失會加到動作損失上。
+
+**推論：**
+只會用到 Qwen 與動作頭。推論時不需要世界模型。
+
+### 動作頭細節[[action-head-details]]
+
+可透過 `action_model_type` 選擇的預設組態：
+
+| 預設組態 | Heads | Head dim |
+| -------- | ----- | -------- |
+| `DiT-B`  | 12    | 64       |
+| `DiT-L`  | 32    | 48       |
+
+預設組態（preset）只會設定注意力的幾何形狀，每個項目都可以透過
+`action_num_heads` / `action_attention_head_dim` 覆寫。由此可得出兩種寬度：
+
+- DiT 的**內部**寬度為 `heads x head_dim`（`DiT-B` 為 768），由這兩個值推算而來，而不是直接設定；
+- DiT 的**輸出**寬度，以及動作解碼器與狀態編碼器（state encoder） MLP 的寬度，為
+  `action_hidden_size`（預設 1024）。
+
+因此 `DiT-B` 執行的是寬度 768 的 Transformer，再投影到 1024。兩者彼此獨立。
+
+### 世界模型細節[[world-model-details]]
+
+影片預測器是 ViT 風格的 Transformer（`ActionConditionedVideoPredictor`），輸入包括：
+
+- **影格 token**：投影到 `predictor_embed_dim` 的 V-JEPA2 patch 嵌入向量
+- **動作 token**：投影到 `predictor_embed_dim` 的 Qwen 動作 token 嵌入向量
+
+它使用 block-causal attention，讓每個時間步都能注意到之前的所有時間步。預測器輸入的 `embed_dim` 等於 `num_views × video_encoder_hidden_size`（例如預訓練檢查點為 2 個視角 × 1024 = 2048）。
+
+---
+
+## 預訓練檢查點[[pretrained-checkpoints]]
+
+LeRobot 組織中直接提供了三個檢查點（checkpoint）：[`lerobot/VLA-JEPA`](https://huggingface.co/collections/lerobot/vla-jepa)，由 [ginwind/VLA-JEPA](https://huggingface.co/ginwind/VLA-JEPA) 轉換而來：
+
+| 檢查點                        | 資料集            | 相機                  | 世界模型 | 動作維度 |
+| ----------------------------- | ----------------- | --------------------- | -------- | -------- |
+| `lerobot/VLA-JEPA-LIBERO`     | LIBERO-10         | 2（agentview + 腕部） | 啟用     | 7        |
+| `lerobot/VLA-JEPA-Pretrain`   | DROID 1.0.1       | 2（外部左側視角）     | 啟用     | 7        |
+| `lerobot/VLA-JEPA-SimplerEnv` | OXE Bridge / RT-1 | 1（視角重複 ×2）      | 啟用     | 7        |
+
+所有檢查點都使用 `Qwen/Qwen3-VL-2B-Instruct` 作為語言骨幹網路。
+
+---
+
+## 設定[[configuration]]
+
+`VLAJEPAConfig` 中的主要參數：
+
+| 參數                         | 預設值        | 說明                                                                                                                                                                                                                      |
+| ---------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chunk_size`                 | 7             | 每次推論呼叫所預測的動作數量                                                                                                                                                                                              |
+| `n_action_steps`             | 7             | 重新規劃之前，從預測區塊中執行的步數                                                                                                                                                                                      |
+| `num_video_frames`           | 8             | 輸入世界模型的影片片段長度                                                                                                                                                                                                |
+| `enable_world_model`         | `True`        | 是否載入並訓練 V-JEPA2 預測器                                                                                                                                                                                             |
+| `world_model_loss_weight`    | 0.1           | JEPA 預測損失相對於動作損失的權重                                                                                                                                                                                         |
+| `causal_world_model_context` | `False`       | 以因果方式編碼世界模型的 context（每個 context 位置各執行一次只含前綴的 V-JEPA2 前向傳遞），避免雙向注意力將未來影格洩漏到預測器的輸入中。會多花 `t_enc_ctx` 次編碼器呼叫                                                 |
+| `num_inference_timesteps`    | 4             | 動作去雜訊的 Euler 積分步數                                                                                                                                                                                               |
+| `freeze_qwen`                | `False`       | 凍結 Qwen3-VL 骨幹網路，只訓練動作頭                                                                                                                                                                                      |
+| `reinit_modules`             | `None`        | 載入時允許隨機重新初始化的鍵名前綴（用於跨具身遷移，請參閱[在不同具身形態上微調](#fine-tuning-on-a-different-embodiment)）                                                                                                |
+| `resize_images_to`           | `None`        | 每個相機影格在進入 Qwen3-VL vision tower 之前，要縮放成的 `(height, width)`。`None` 會保留原始解析度，而 Qwen3-VL 的 patch 數量會隨解析度增加，因此 720x1280 的相機可能會耗盡 GPU 記憶體。已發布的檢查點使用 `[224, 224]` |
+| `gripper_dim`                | 6             | 夾爪維度在動作向量中的索引。當 `gripper_joint_names` 與資料集的動作名稱相符時，會忽略這個參數                                                                                                                             |
+| `gripper_joint_names`        | `["gripper"]` | 用於識別夾爪的動作維度名稱；相符的索引優先於 `gripper_dim`                                                                                                                                                                |
+| `gripper_threshold`          | 0.5           | `pre_snap_gripper_action` 與 `binarize_gripper_action` 使用的閾值。注意 `binarize` 是在反正規化*之後*執行，因此會與夾爪的實際物理值比較                                                                                   |
+| `pre_snap_gripper_action`    | `False`       | 在反正規化之前，將夾爪維度對齊到 {0, 1}。LIBERO 專用，詳見下文                                                                                                                                                            |
+| `binarize_gripper_action`    | `False`       | 在反正規化之後，將夾爪維度二值化為 {-1, 1}。LIBERO 專用，詳見下文                                                                                                                                                         |
+| `clip_normalized_actions`    | `True`        | 在反正規化之前，將正規化後的動作裁切到 [-1, 1]。只在 `ACTION` 使用 `MIN_MAX` 時套用；在 `MEAN_STD` 下會忽略並發出警告，因為那樣會在 1 個標準差處截斷                                                                      |
+| `world_model_num_views`      | `None`        | 世界模型預測器所支援的相機視角數，已固定在檢查點的張量形狀中。`None` 會退回使用 `jepa_tubelet_size`，也就是已發布檢查點所編碼的值                                                                                         |
+
+<Tip warning={true}>
+
+`pre_snap_gripper_action` 與 `binarize_gripper_action` 是從 starVLA 的 LIBERO 評估迴圈移植而來，
+只有在 LIBERO 的動作慣例下才正確。`pre_snap` 會將 {0, 1} 寫入
+*正規化*空間，反正規化器會將這兩個值對應到中點與最大值，接著 `binarize` 再
+將這個**實際物理**值與 `gripper_threshold`（0.5）比較。如果夾爪的量測單位是
+角度、mm 或 [0, 100]，這兩個值都會落在閾值之上，夾爪命令就會變成
+固定值。因此它們預設為 `False`；請只在類似 LIBERO 的設定中啟用，
+而且啟用時，要以夾爪本身的單位設定 `gripper_threshold`。當資料集統計量
+顯示數值範圍無法運作時，處理器工廠會發出警告。
+
+</Tip>
+
+---
+
+## 訓練[[training]]
+
+訓練步數會依資料集大小與運算預算而不同。原始論文先在 ssv2 + droid 上聯合預訓練 50k 步，再為 LIBERO 額外訓練 30k 步；不過從提供的預訓練檢查點微調（fine-tune）時，較少的步數也可能有不錯的表現。
+
+### 從頭完整訓練[[full-training-from-scratch]]
+
+```bash
+lerobot-train \
+  policy.type=vla_jepa \
+  policy.repo_id=your_org/your_repo \
+  dataset.repo_id=your_org/your_dataset
+```
+
+### 從預訓練檢查點微調[[fine-tuning-from-a-pretrained-checkpoint]]
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+如果你想凍結 Qwen 骨幹網路，只訓練動作頭，請設定 `policy.freeze_qwen=True`：
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --policy.freeze_qwen=true \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+### 在不同具身形態上微調[[fine-tuning-on-a-different-embodiment]]
+
+當目標機器人的動作或狀態維度與預訓練檢查點不同時，動作頭的輸入／輸出投影層形狀會不相符，無法直接載入。`reinit_modules` 讓你列出允許形狀不符的鍵名前綴：這些層會隨機重新初始化，其餘所有權重則沿用檢查點的值。所列前綴以外的任何形狀不符，都會引發錯誤。
+
+與 `action_dim` 和 `state_dim` 有關的層如下：
+
+| 層                                     | 鍵名前綴                            |
+| -------------------------------------- | ----------------------------------- |
+| 動作編碼器（action_dim → inner_dim）   | `model.action_model.action_encoder` |
+| 動作解碼器（hidden_size → action_dim） | `model.action_model.action_decoder` |
+| 狀態編碼器（state_dim → inner_dim）    | `model.action_model.state_encoder`  |
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --policy.freeze_qwen=true \
+  --policy.reinit_modules='["model.action_model.action_encoder", "model.action_model.action_decoder", "model.action_model.state_encoder"]' \
+  --dataset.repo_id=your_org/your_dataset
+```
+
+如果你的機器人沒有本體感覺（proprioception）狀態，請從清單中拿掉 `model.action_model.state_encoder`。
+
+### 重現 LIBERO 結果[[reproducing-the-libero-results]]
+
+**在 LIBERO 上訓練：**
+從 Pretrain 檢查點開始，在 LIBERO 資料集上訓練 30k 步。
+原始論文提到以 8 張 GPU、每張批次大小 32 訓練，也就是全域批次大小為 256。
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.repo_id=your_org/your_repo \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --steps=30000
+```
+
+**評估預訓練的 LIBERO-10 檢查點：**
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/VLA-JEPA-LIBERO \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.n_episodes=10 \
+  --eval.batch_size=5
+```
+
+若只想評估部分任務：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/VLA-JEPA-LIBERO \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.task_ids='[0,1,2]' \
+  --eval.n_episodes=10 \
+  --eval.batch_size=5
+```
+
+**預期結果：**
+
+| 任務套件       | 回合數  | 成功數  | 成功率     |
+| -------------- | ------- | ------- | ---------- |
+| libero_spatial | 100     | 93      | **95.0%**  |
+| libero_object  | 100     | 100     | **100.0%** |
+| libero_goal    | 100     | 98      | **98.0%**  |
+| libero_10      | 100     | 96      | **93.0%**  |
+| **整體**       | **400** | **387** | **96.5%**  |
+
+---
+
+## 在相機數量不同的資料集上微調[[fine-tuning-on-datasets-with-a-different-number-of-cameras]]
+
+預訓練的世界模型預測器是以 `embed_dim = world_model_num_views × 1024` 訓練的，也就是兩個相機視角。
+
+<Tip>
+
+這個視角數量過去是從 `jepa_tubelet_size` 讀取，但這個參數同時也代表 JEPA 編碼器的*時間* tubelet 大小。現在改用 `world_model_num_views` 這個欄位；維持 `None` 時會退回使用 `jepa_tubelet_size`，因此已發布的檢查點仍然可以照常載入。
+
+</Tip>
+
+**預設行為：補齊或裁減視角（不需要任何操作）**
+
+從 `VLA-JEPA-Pretrain` 微調時，模型會自動調整輸入世界模型的視角數量，使其符合 `world_model_num_views`：
+
+- **單視角資料集**（例如 BridgeV2）：將單一視角的潛在表示複製一份，產生雙視角的世界模型輸入，在不造成任何權重形狀不符的情況下，保留 JEPA 的自監督訊號。
+- **超過 2 個視角的資料集**（例如有 3 個視角的 DROID）：所有視角都會傳入 Qwen 骨幹網路，以取得更豐富的 context，但世界模型只會使用前 `world_model_num_views` 個視角（依設定的視角順序，一個腕部視角與一個第三人稱視角）。
+
+**選項 1：停用世界模型**
+
+設定 `enable_world_model=False` 即可完全略過 JEPA 損失，只會載入並訓練 Qwen 骨幹網路與動作頭。這樣就足以取得良好的動作表現。
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/VLA-JEPA-Pretrain \
+  --policy.enable_world_model=false \
+  --policy.repo_id=your_org/your_repo \
+  --dataset.repo_id=your_org/single_camera_dataset
+```
+
+**選項 2：重新初始化預測器的輸入投影**
+
+如果你想將 `world_model_num_views` 改成 2 以外的值，請以 `strict=False` 載入檢查點，並為新的 `embed_dim` 重新初始化 `model.video_predictor.predictor_embed`。預測器其他所有區塊的權重（注意力、MLP、正規化、輸出投影）都與相機數量無關，可以沿用預訓練檢查點。
+
+---
+
+## 引用[[citation]]
+
+```bibtex
+@misc{sun2026vlajepaenhancingvisionlanguageactionmodel,
+  title         = {VLA-JEPA: Enhancing Vision-Language-Action Model with Latent World Model},
+  author        = {Jingwen Sun and Wenyao Zhang and Zekun Qi and Shaojie Ren and Zezhi Liu and Hanxin Zhu and Guangzhong Sun and Xin Jin and Zhibo Chen},
+  year          = {2026},
+  eprint        = {2602.10098},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  url           = {https://arxiv.org/abs/2602.10098},
+}
+```
+
+---
+
+## 授權[[license]]
+
+權重依原始 [ginwind/VLA-JEPA](https://huggingface.co/ginwind/VLA-JEPA) 儲存庫的授權（**Apache 2.0 授權**）散布，LeRobot 的整合程式碼則採用 **Apache 2.0 授權**。

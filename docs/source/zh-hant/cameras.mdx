@@ -1,0 +1,234 @@
+# 相機[[cameras]]
+
+LeRobot 提供多種影像擷取方式：
+
+| 類別              | 支援的相機                                    |
+| ----------------- | --------------------------------------------- |
+| `OpenCVCamera`    | 手機、筆電內建相機、USB 網路攝影機（webcams） |
+| `ZMQCamera`       | 透過網路連線的相機                            |
+| `RealSenseCamera` | Intel RealSense（含深度）                     |
+| `Reachy2Camera`   | Reachy 2 機器人相機                           |
+
+> [!TIP]
+> 關於 `OpenCVCamera` 的相容性細節，請參閱 [Video I/O with OpenCV Overview](https://docs.opencv.org/4.x/d0/da7/videoio_overview.html)。
+
+### 找到你的相機[[find-your-camera]]
+
+每台相機都需要一個唯一的識別碼（identifier）才能建立實例，讓你能區分多台已連接的裝置。
+
+`OpenCVCamera` 和 `RealSenseCamera` 支援自動探索（auto-discovery）。執行下方指令即可列出可用的裝置及其識別碼。請注意，依作業系統而定，這些識別碼可能會在重新開機或重新插拔相機後改變。
+
+```bash
+lerobot-find-cameras opencv # Intel Realsense 相機則使用 realsense
+```
+
+若你連接了兩台相機，輸出會類似以下內容：
+
+```bash
+--- Detected Cameras ---
+Camera #0:
+  Name: OpenCV Camera @ 0
+  Type: OpenCV
+  Id: 0
+  Backend api: AVFOUNDATION
+  Default stream profile:
+    Format: 16.0
+    Width: 1920
+    Height: 1080
+    Fps: 15.0
+--------------------
+(more cameras ...)
+```
+
+> [!WARNING]
+> 在 `macOS` 上使用 Intel RealSense 相機時，你可能會遇到這個[錯誤](https://github.com/IntelRealSense/librealsense/issues/12307)：`Error finding RealSense cameras: failed to set power state`。以 `sudo` 權限執行相同指令即可解決。請注意，在 `macOS` 上使用 RealSense 相機並不穩定。
+
+`ZMQCamera` 和 `Reachy2Camera` 不支援自動探索，必須手動提供網路位址與連接埠，或機器人 SDK 的設定。
+
+## 使用相機[[use-cameras]]
+
+### 影格存取模式[[frame-access-modes]]
+
+所有相機類別都實作了三種擷取影格（frame）的存取模式：
+
+| 方法                      | 行為                                                                                                                         | 是否阻塞？ | 最適合用於                |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------- |
+| `read()`                  | 等待相機硬體回傳一個影格。依相機與 SDK 而定，可能會阻塞（block）很長時間。                                                   | 是         | 簡單的腳本、循序擷取      |
+| `async_read(timeout_ms)`  | 從背景執行緒回傳最新、尚未取用的影格。只有在緩衝區為空時才會阻塞，最多 `timeout_ms`。若沒有影格到達，會拋出 `TimeoutError`。 | 有逾時限制 | 與相機 FPS 同步的控制迴圈 |
+| `read_latest(max_age_ms)` | 查看緩衝區中最新的影格（可能已過時）。若影格比 `max_age_ms` 更舊，會拋出 `TimeoutError`。                                    | 否         | UI 視覺化、記錄、監控     |
+
+### 使用範例[[usage-examples]]
+
+以下範例示範如何使用相機 API，針對不同類型的相機進行設定並擷取影格。
+
+- 使用 OpenCV 相機進行**阻塞與非阻塞的影格擷取**
+- 使用 Intel RealSense 相機進行**彩色與深度擷取**
+
+> [!WARNING]
+> 如果沒有正確中斷相機連線，可能會造成資源洩漏（resource leak）。請使用 context manager 確保自動清理：
+>
+> ```python
+> with OpenCVCamera(config) as camera:
+>     ...
+> ```
+>
+> 你也可以手動呼叫 `connect()` 和 `disconnect()`，但後者請務必放在 `finally` 區塊中。
+
+<hfoptions id="shell_restart">
+<hfoption id="Open CV Camera">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from lerobot.cameras import ColorMode, Cv2Rotation
+
+# 以你想要的 FPS、解析度、色彩模式與旋轉建立一個 `OpenCVCameraConfig`。
+config = OpenCVCameraConfig(
+    index_or_path=0,
+    fps=15,
+    width=1920,
+    height=1080,
+    color_mode=ColorMode.RGB,
+    rotation=Cv2Rotation.NO_ROTATION
+)
+
+# 建立並連接一個 `OpenCVCamera`，執行暖機讀取（預設）。
+with OpenCVCamera(config) as camera:
+
+    # 同步讀取一個影格 — 會阻塞直到硬體傳回新的影格
+    frame = camera.read()
+    print(f"read() call returned frame with shape:", frame.shape)
+
+    # 帶逾時的非同步讀取影格 — 回傳最新尚未取用的影格，或等待最多 timeout_ms 以取得新影格
+    try:
+        for i in range(10):
+            frame = camera.async_read(timeout_ms=200)
+            print(f"async_read call returned frame {i} with shape:", frame.shape)
+    except TimeoutError as e:
+        print(f"No frame received within timeout: {e}")
+
+    # 立即回傳一個影格 - 回傳相機最近擷取的影格
+    try:
+        initial_frame = camera.read_latest(max_age_ms=1000)
+        for i in range(10):
+            frame = camera.read_latest(max_age_ms=1000)
+            print(f"read_latest call returned frame {i} with shape:", frame.shape)
+            print(f"Was a new frame received by the camera? {not (initial_frame == frame).any()}")
+    except TimeoutError as e:
+        print(f"Frame too old: {e}")
+
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+<hfoption id="Intel Realsense Camera">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
+from lerobot.cameras import ColorMode, Cv2Rotation
+
+# 建立一個 `RealSenseCameraConfig`，指定相機的序號並啟用深度。
+config = RealSenseCameraConfig(
+    serial_number_or_name="233522074606",
+    fps=15,
+    width=640,
+    height=480,
+    color_mode=ColorMode.RGB,
+    use_depth=True,
+    # 可選的固定色彩控制項。若省略，將維持目前感測器設定不變。
+    exposure=120,
+    gain=64,
+    white_balance=4600,
+    rotation=Cv2Rotation.NO_ROTATION
+)
+
+# 建立並連接一個 `RealSenseCamera`，執行暖機讀取（預設）。
+camera = RealSenseCamera(config)
+camera.connect()
+
+# 透過 `read()` 擷取彩色影格，並透過 `read_depth()` 擷取深度圖。
+try:
+    color_frame = camera.read()
+    depth_map = camera.read_depth()
+    print("Color frame shape:", color_frame.shape)
+    print("Depth map shape:", depth_map.shape)
+finally:
+    camera.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+手動色彩控制會停用對應的自動曝光或白平衡模式。其支援範圍因相機型號而異；無效的值會在連線時引發錯誤，錯誤內容會包含感測器回報的範圍。要求不支援的控制項也會引發錯誤。省略的控制項會讓感測器現有的自動或手動設定維持不變。這些選項需要 `use_rgb=True`。
+
+手動色彩控制需要專用的 RGB 模組。沒有此模組的相機（例如 RealSense D405）不支援這些控制，且會在連線時引發錯誤。
+
+</hfoption>
+</hfoptions>
+
+### 使用深度[[working-with-depth]]
+
+Intel RealSense 和 Reachy 2 相機可以同步擷取彩色與深度影像。呼叫 `read()` 會回傳形狀為 `(H, W, 3)` 的 `uint8` **彩色**影格；呼叫 `read_depth()` 會回傳形狀為 `(H, W, 1)` 的 `uint16` **深度圖（depth map）**，每個像素值代表與感測器的距離，單位為**毫米**。像素值為 `0` 通常表示「沒有可用的量測值」（超出範圍、被遮蔽或信心度低）。
+
+錄製期間，控制迴圈會透過 `read_latest()`（彩色）與 `read_latest_depth()`（深度）以非阻塞的方式查看最新的緩衝影格，並將深度圖加入為同層級的特徵（例如 `front` 旁邊的 `front_depth`）。
+
+錄製資料集時，深度串流如何儲存與編碼，請參閱影片編碼指南的[深度串流](./video_encoding_parameters#depth-streams)章節。
+
+## 使用你手機的相機[[use-your-phones-camera]]
+
+<hfoptions id="use phone">
+<hfoption id="iPhone & macOS">
+
+若要在 macOS 上將 iPhone 當作相機使用，請啟用「接續互通相機（Continuity Camera）」功能：
+
+- 確認你的 Mac 執行 macOS 13 或更新版本，且你的 iPhone 為 iOS 16 或更新版本。
+- 兩台裝置都使用相同的 Apple ID 登入。
+- 以 USB 線連接你的裝置，或開啟 Wi-Fi 與藍牙進行無線連線。
+
+如需更多細節，請前往 [Apple 支援](https://support.apple.com/en-gb/guide/mac-help/mchl77879b8a/mac)。
+
+</hfoption>
+<hfoption id="OBS virtual camera">
+
+若你想透過 OBS 將手機當作相機使用，請依照以下步驟設定虛擬相機（virtual camera）。
+
+1. _（僅限 Linux）安裝 `v4l2loopback-dkms` 和 `v4l-utils`_。這些套件會建立虛擬相機裝置並驗證其設定。安裝方式：
+
+```bash
+sudo apt install v4l2loopback-dkms v4l-utils
+```
+
+2. _在你的手機上安裝 [DroidCam app](https://droidcam.app)_。此 app 同時提供 iOS 和 Android 版本。
+3. _下載並安裝 [OBS Studio](https://obsproject.com)_。
+4. _下載並安裝 [DroidCam OBS 外掛](https://droidcam.app/obs)_。
+5. _啟動 OBS Studio_。
+
+6. *將你的手機新增為來源。*請依照[這裡](https://droidcam.app/obs/usage)的說明操作。請務必將解析度設為 `640x480`，以避免出現浮水印。
+7. *調整解析度設定。*在 OBS Studio 中，前往 `File > Settings > Video` 或 `OBS > Preferences... > Video`，手動將 `Base(Canvas) Resolution` 和 `Output(Scaled) Resolution` 改為 `640x480`。
+8. *啟動虛擬相機。*在 OBS Studio 中，請依照[這裡](https://obsproject.com/kb/virtual-camera-guide)的說明操作。
+9. _確認虛擬相機的設定與解析度。_
+   - **Linux**：使用 `v4l2-ctl` 列出裝置並檢查解析度：
+     ```bash
+     v4l2-ctl --list-devices  # 找到 VirtualCam 並記下其 /dev/videoX 路徑
+     v4l2-ctl -d /dev/videoX --get-fmt-video  # 換成你的 VirtualCam 路徑
+     ```
+     你應該會看到列出的 `VirtualCam` 以及解析度 `640x480`。
+   - **macOS**：開啟 Photo Booth 或 FaceTime，並選擇「OBS Virtual Camera」作為輸入。
+   - **Windows**：內建的相機 app 不支援虛擬相機。請使用視訊會議 app（Zoom、Teams），或直接執行 `lerobot-find-cameras opencv` 進行確認。
+
+<details>
+<summary><strong>疑難排解</strong></summary>
+
+> 虛擬相機的解析度不正確。
+
+刪除虛擬相機來源並重新建立。解析度在建立後就無法變更。
+
+> Error reading frame in background thread for OpenCVCamera(X): OpenCVCamera(X) frame width=640 or height=480 do not match configured width=1920 or height=1080.
+
+這個錯誤是因為 OBS Virtual Camera 即使已經縮放，仍會宣告 `1920x1080` 的解析度。目前唯一的解法是將 `_postprocess_image()` 中的寬高檢查註解掉。
+
+</details>
+
+</hfoption>
+</hfoptions>
+
+若一切設定正確，你的手機將會顯示為標準的 OpenCV 相機，並可搭配 `OpenCVCamera` 使用。

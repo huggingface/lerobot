@@ -1,0 +1,290 @@
+# Wall-OSS-0.5[[wall-oss-05]]
+
+Wall-OSS-0.5 是由 [XSquare Robot](https://x2robot.com/en/research/68bc2cde8497d7f238dde690) 推出的 4B
+視覺－語言－動作模型（vision-language-action model）。
+它結合 Qwen2.5-VL 視覺－語言骨幹網路與連續
+流匹配動作專家。
+
+LeRobot 透過 `wall_oss_05` 策略類型（policy type）與
+[`lerobot/wall-oss-0.5`](https://huggingface.co/lerobot/wall-oss-0.5)
+檢查點（checkpoint）提供 Wall-OSS-0.5。
+
+<Tip>
+
+`wall_oss_05` 與既有的 `wall_x` 策略鎖定不同的 WALL 版本。
+請將 `wall_oss_05` 與 Wall-OSS-0.5 檢查點搭配使用。
+
+</Tip>
+
+## 模型概覽[[model-overview]]
+
+Wall-OSS-0.5 以相機觀測（camera observations）、機器人狀態（robot state）
+及自然語言任務為條件來生成動作。策略會使用流匹配預測一個連續動作區塊。
+其視覺－語言專家也能產生文字，用於
+影像描述（captioning）、視覺問答、視覺定位與語言子任務。
+
+此發布模型採用：
+
+- 26 維標準狀態與動作表示；
+- 32 步動作區塊；
+- q01/q99 範圍正規化；
+- 10 步流取樣器；
+- 以 Qwen2.5-VL 處理視覺與語言輸入。
+
+基礎檢查點用於在部署前於目標機器人與任務
+資料集上進行微調。
+
+### LeRobot 整合涵蓋範圍[[what-the-lerobot-integration-covers]]
+
+- 標準 `policy.type=wall_oss_05` 設定與 Hub 檢查點載入。
+- 原生 Qwen2.5-VL 視覺－語言處理與 Wall 動作專家。
+- 連續 x 預測流訓練與 10 步 Euler 取樣。
+- 由配方（recipe）驅動的文字交叉熵與文字／動作聯合微調。
+- 原生文字生成，用於 VQA、視覺定位、影像描述與語言子任務。
+- 透過 LeRobot 的互動式 rollout 直接生成文字。
+- 使用 LeRobot q01/q99 處理器的標準 26D 狀態與動作輸入。
+- 使用 `lerobot-train` 微調，並透過標準策略 API 進行推論。
+
+## 安裝需求[[installation-requirements]]
+
+Wall-OSS-0.5 需要具備 CUDA 的 NVIDIA GPU。請安裝含策略
+相依套件（dependency）的 LeRobot：
+
+```bash
+pip install "lerobot[wall_oss_05]"
+```
+
+若使用 LeRobot 原始碼簽出：
+
+```bash
+uv sync --extra wall_oss_05
+```
+
+此策略以原生方式在 LeRobot 中實作。其唯一的策略專屬
+相依套件是 Transformers；不需要另外簽出 Wall-X。
+由配方支援的處理也需要 dataset 額外套件（extra）。若要做語言查詢
+或訓練，請安裝 `uv sync --extra wall_oss_05 --extra training`（training
+包含 dataset 支援）。若只需動作處理且不要 dataset 額外套件，請設定
+`--policy.recipe=null`。
+
+## 檢查點[[checkpoints]]
+
+| 變體    | LeRobot 檢查點                                                        | 預定用途            |
+| ------- | --------------------------------------------------------------------- | ------------------- |
+| 基礎 4B | [`lerobot/wall-oss-0.5`](https://huggingface.co/lerobot/wall-oss-0.5) | 標準 26D 微調與部署 |
+
+此檢查點包含策略設定、Qwen 處理器與 tokenizer、
+模型權重、已儲存的 LeRobot 前／後處理器、正規化統計量，以及
+轉換中繼資料。這是基礎檢查點：請在目標機器人與任務上微調它，
+再回報任務層級結果。
+
+## 使用方式[[usage]]
+
+使用下列方式選擇策略：
+
+```bash
+--policy.type=wall_oss_05
+```
+
+使用下列方式從 LeRobot 檢查點初始化：
+
+```bash
+--policy.path=lerobot/wall-oss-0.5
+```
+
+當評估或部署已儲存的 LeRobot 檢查點時，請使用
+`--policy.path=your-org/your-finetuned-checkpoint`。
+
+### 文字與 VQA[[text-and-vqa]]
+
+Wall-OSS-0.5 使用共用的策略文字契約。執行階段會提供
+`query_kind` 與 `query_text`，然後執行一般的策略輸入處理器：
+
+```python
+request = {
+    **observation,
+    "query_kind": "vqa",
+    "query_text": "Which object is closest to the right gripper?",
+}
+processed_batch = preprocessor(request)
+answer = policy.generate_text(processed_batch)
+```
+
+`vqa` 會保留呼叫端問題。`next_subtask` 會套用由
+`WallOSS05Config` 擁有的配方。策略會繼承 `generate_text(processed_batch)`，並
+覆寫 `supports_text_generation` 與 `generate_text`。生成時會使用檢查點的
+綁定 Qwen 詞彙輸出頭與視覺－語言專家；不會呼叫
+獨立的 VLM。
+
+語言執行階段可以生成子任務，然後以該子任務作為
+Wall 動作預測的條件：
+
+```bash
+lerobot-rollout \
+  --policy.path=your-org/your-finetuned-wall-oss-0.5 \
+  --policy.device=cuda \
+  --task="clear the table" \
+  --interactive=true
+```
+
+在 `/start` 之後，使用 `/vqa <question>`、`/autosteer <goal>` 或
+`/subtask <text>`。
+
+Wall 保留了實用的具身 VQA 與視覺定位能力，但它
+專門針對機器人觀測，並非用來取代
+通用 VLM。
+
+## 資料需求[[data-requirements]]
+
+Wall-OSS-0.5 在內部使用標準 26D 狀態與動作配置。
+較窄的狀態與動作特徵會以其原生資料集
+統計量正規化，然後補零至 26D 供模型使用。補零的動作維度會
+從訓練損失中排除。輸出會在反正規化前裁剪至資料集的動作
+寬度：8D 狀態搭配 7D 動作會回傳 7D 動作。
+`postprocess_action_dim` 可套用額外的輸出裁剪。補零不會
+重新對應關節座標或控制器慣例；請提供相容的值。
+
+使用 `camera_key_mapping` 設定影像輸入。此映射會將每個
+LeRobot 影像特徵關聯到一個 Wall 相機槽位。預設檢查點使用
+`face_view` 與 `right_wrist_view`。
+
+資料集任務字串會作為語言指令傳遞給策略。
+錄製、訓練與評估時請使用一致的任務描述。
+
+狀態與動作的 q01/q99 正規化由已儲存的 LeRobot
+前處理器與後處理器處理。推論時會還原隨
+檢查點儲存的統計量。使用 `lerobot-train` 微調時，訓練資料集
+統計量會取代預訓練處理器的統計量，並隨
+新檢查點一起儲存。
+
+已發布的檢查點使用原生 LeRobot 策略狀態字典與
+目前的前／後處理器格式。權重透過共用的
+策略持久化程式碼載入與儲存，包括分散式 gather 與主行程
+寫入閘門。此設定會保留穩定的 tokenizer 資產參照，且可
+從任何工作目錄載入。
+
+## 訓練[[training]]
+
+使用標準 LeRobot 訓練指令微調基礎檢查點：
+
+### 訓練指令範例[[training-command-example]]
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-org/your-dataset \
+  --policy.path=lerobot/wall-oss-0.5 \
+  --policy.repo_id=your-org/wall-oss-0.5-your-task \
+  --output_dir=outputs/train/wall_oss_05 \
+  --job_name=wall_oss_05_finetune \
+  --policy.device=cuda \
+  --batch_size=1 \
+  --steps=20000
+```
+
+由於 Wall-OSS-0.5 是 4B 參數模型，請先從小批次大小開始。
+再依可用 GPU 記憶體調升，或透過分散式訓練設定使用
+梯度累積。
+
+若資料集的相機名稱不同，請將其特徵鍵名對應到 Wall
+相機槽位。例如，為 `top` 與 `wrist` 新增下列選項：
+
+```bash
+--policy.camera_key_mapping='{"observation.images.top":"face_view","observation.images.wrist":"right_wrist_view"}'
+```
+
+微調會從資料集解析相機形狀與狀態／動作寬度，
+包括使用 `--policy.path` 載入基礎檢查點時。
+
+### 使用語言標註訓練[[train-with-language-annotations]]
+
+由 `WallOSS05Config` 擁有的配方預設會使用 LeRobot 的可選語言資料行。
+其聯合子任務配方會在同一個因果序列中監督助理回應
+與連續動作區塊：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=your-org/your-language-annotated-dataset \
+  --policy.path=lerobot/wall-oss-0.5 \
+  --policy.use_language_recipe=true \
+  --policy.text_loss_weight=0.1 \
+  --policy.flow_loss_weight=1.0 \
+  --policy.device=cuda \
+  --batch_size=1 \
+  --steps=20000
+```
+
+配方串流會決定每個樣本執行哪些目標：
+
+- 目標助理輪次會接收下一 token 的文字交叉熵；
+- `low_level` 輪次會接收連續流動作監督；以及
+- 具有目標助理輪次的 `low_level` 配方會接收兩個損失，
+  其中動作 token 會關注受監督的文字。
+
+只有目標助理內容及其 `<|im_end|>` token 會用作
+語言標籤。使用者提示、填充、影像、本體感覺與連續
+動作查詢 token 會在文字交叉熵中被遮罩。沒有標註的資料列
+會保留原始的僅動作提示與損失。設定 `use_language_recipe=false`
+可停用標註渲染；設定 `recipe=null` 則會同時停用兩個配方渲染器。
+明確的 `recipe_path` 會覆寫內建配方。全新微調會從該配方
+與訓練統計量重建處理器；接續訓練與
+rollout 會還原檢查點已儲存的處理器與統計量。
+
+請參閱[語言資料行與配方](./language_and_recipes)，了解標註
+結構與配方結構。`recipe_path` 可指向明確的外部
+YAML 覆寫；LeRobot 不提供共用的預設配方檔案。
+
+## 關鍵設定參數[[key-configuration-parameters]]
+
+| 參數                      | 預設值                 | 說明                                                |
+| ------------------------- | ---------------------- | --------------------------------------------------- |
+| `pretrained_name_or_path` | `lerobot/wall-oss-0.5` | Tokenizer 與影像處理器資產來源                      |
+| `tokenizer_revision`      | `None`                 | 可選的基礎 tokenizer 固定版本，與權重的修訂版本分開 |
+| `chunk_size`              | `32`                   | 每個區塊預測的動作數量                              |
+| `n_action_steps`          | `32`                   | 重新規劃前執行的預測動作數量                        |
+| `camera_key_mapping`      | 正面與右腕視角         | 將影像特徵鍵名關聯到模型相機槽位                    |
+| `use_language_recipe`     | `true`                 | 啟用儲存在策略設定中的配方                          |
+| `recipe_path`             | `None`                 | 可選的明確外部配方覆寫                              |
+| `text_loss_weight`        | `0.1`                  | 受監督助理 token 交叉熵的權重                       |
+| `flow_loss_weight`        | `1.0`                  | 連續流動作損失的權重                                |
+| `tokenizer_max_length`    | `1000`                 | 聯合視覺－語言－動作 token 序列的最大長度           |
+| `device`                  | auto                   | Wall-OSS-0.5 請使用 `cuda`                          |
+
+## 評估與推論[[evaluation-and-inference]]
+
+將微調檢查點的 Hub 儲存庫或本機目錄作為
+策略路徑傳入，即可搭配標準 LeRobot 評估或機器人
+rollout 工作流程使用。
+
+Wall-OSS-0.5 會使用其流取樣器生成連續動作區塊。
+目前策略支援連續流分支；自迴歸動作
+分支尚未公開。
+
+每個區塊會編碼其相機影像，並預填充觀測／文字前綴
+一次。十個 Euler 步驟會重複使用前綴的 key 與 value（KV），並只解碼
+動作 token。每個新觀測都會重建快取。
+
+若使用支援的模擬器，請透過 `lerobot-eval` 提供微調檢查點與
+環境特定選項：
+
+```bash
+lerobot-eval \
+  --policy.path=your-org/your-finetuned-wall-oss-0.5 \
+  --policy.device=cuda \
+  --env.type=<environment> \
+  --env.task=<task> \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10
+```
+
+請勿將基礎檢查點當成任務特定策略來評估。
+標準表示、正規化統計量與任務分布
+必須與微調檢查點相符。
+
+## 參考資料[[references]]
+
+- [Wall-OSS-0.5 專案頁面](https://x2robot.com/en/research/68bc2cde8497d7f238dde690)
+- [Wall-OSS-0.5 LeRobot 檢查點](https://huggingface.co/lerobot/wall-oss-0.5)
+
+## 授權條款[[license]]
+
+Wall-OSS-0.5 與 Wall-X 依 Apache 2.0 授權條款發布。

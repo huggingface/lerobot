@@ -1,0 +1,232 @@
+- sections:
+  - local: index
+    title: LeRobot
+  - local: installation
+    title: 安裝
+  - local: cheat-sheet
+    title: 速查表
+  title: 開始使用
+- sections:
+  - local: il_robots
+    title: 機器人的模仿學習
+  - local: lelab
+    title: LeLab：LeRobot 圖形介面
+  - local: bring_your_own_policies
+    title: 新增策略
+  - local: integrate_hardware
+    title: 整合你自己的硬體
+  - local: hilserl
+    title: 使用強化學習訓練機器人
+  - local: hilserl_sim
+    title: 在模擬環境中使用強化學習訓練
+  - local: multi_gpu_training
+    title: 多 GPU 訓練
+  - local: hil_data_collection
+    title: 人在迴圈（HIL）資料收集
+  - local: peft_training
+    title: 使用 PEFT 訓練（例如 LoRA）
+  - local: rename_map
+    title: 重新命名對應表與空相機
+  title: 教學
+- sections:
+  - local: hardware_guide
+    title: 運算硬體指南
+  - local: torch_accelerators
+    title: PyTorch 加速器
+  title: 運算與硬體
+- sections:
+  - local: lerobot-dataset-v3
+    title: 使用 LeRobotDataset
+  - local: training_dataset_streaming
+    title: 訓練資料集串流
+  - local: porting_datasets_v3
+    title: 移植大型資料集
+  - local: using_dataset_tools
+    title: 使用資料集工具
+  - local: language_and_recipes
+    title: 語言欄位與配方
+  - local: tools
+    title: 工具
+  - local: annotation_pipeline
+    title: 標註管線
+  - local: video_encoding_parameters
+    title: 影片編碼參數
+  - local: streaming_video_encoding
+    title: 串流影片編碼
+  title: 資料集
+- sections:
+  - local: act
+    title: ACT
+  - local: smolvla
+    title: SmolVLA
+  - local: pi0
+    title: π₀ (Pi0)
+  - local: pi0fast
+    title: π₀-FAST (Pi0Fast)
+  - local: pi05
+    title: π₀.₅ (Pi05)
+  - local: fineart_vla
+    title: FineART-VLA
+  - local: molmoact2
+    title: MolmoAct2
+  - local: vla_jepa
+    title: VLA-JEPA
+  - local: lawam
+    title: LaWAM
+  - local: eo1
+    title: EO-1
+  - local: lingbot_va
+    title: LingBot-VA
+  - local: lingbot_vla_v2
+    title: LingBot-VLA 2.0
+  - local: fastwam
+    title: FastWAM
+  - local: flux3
+    title: FLUX 3 Action (flux3)
+  - local: evo1
+    title: EVO1
+  - local: groot
+    title: NVIDIA GR00T
+  - local: xvla
+    title: X-VLA
+  - local: multi_task_dit
+    title: 多任務 DiT 策略
+  - local: walloss
+    title: WALL-OSS
+  - local: wall_oss_05
+    title: Wall-OSS-0.5
+  - local: dm05
+    title: DM05
+  title: 策略
+- sections:
+  - local: sarm
+    title: SARM
+  - local: robometer
+    title: ROBOMETER
+  - local: topreward
+    title: TOPReward
+  title: 獎勵模型
+- sections:
+  - local: inference
+    title: 策略部署（lerobot-rollout）
+  - local: remote_inference
+    title: 遠端推論
+  - local: rtc
+    title: 即時分塊（RTC）
+  title: 推論
+- sections:
+  - local: envhub
+    title: 來自 Hub 的環境
+  - local: envhub_leisaac
+    title: 在模擬環境中控制與訓練機器人（LeIsaac）
+  title: 模擬
+- sections:
+  - local: adding_benchmarks
+    title: 新增基準測試
+  - local: libero
+    title: LIBERO
+  - local: libero_plus
+    title: LIBERO-plus
+  - local: metaworld
+    title: Meta-World
+  - local: robotwin
+    title: RoboTwin 2.0
+  - local: robocasa
+    title: RoboCasa365
+  - local: robocerebra
+    title: RoboCerebra
+  - local: robomme
+    title: RoboMME
+  - local: envhub_isaaclab_arena
+    title: NVIDIA IsaacLab Arena 環境
+  - local: vlabench
+    title: VLABench
+  title: 基準測試
+- sections:
+  - local: introduction_processors
+    title: 處理器簡介
+  - local: debug_processor_pipeline
+    title: 除錯你的處理器管線
+  - local: implement_your_own_processor
+    title: 實作你自己的處理器
+  - local: processors_robots_teleop
+    title: 機器人與遙操作器的處理器
+  - local: env_processor
+    title: 環境處理器
+  - local: action_representations
+    title: 動作表示法
+  title: 機器人處理器
+- sections:
+  - local: so101
+    title: SO-101
+  - local: so100
+    title: SO-100
+  - local: koch
+    title: Koch v1.1
+  - local: lekiwi
+    title: LeKiwi
+  - local: hope_jr
+    title: Hope Jr
+  - local: reachy2
+    title: Reachy 2
+  - local: unitree_g1
+    title: Unitree G1
+  - local: earthrover_mini_plus
+    title: Earth Rover Mini
+  - local: omx
+    title: OMX
+  - local: openarm
+    title: OpenArm
+  - local: rebot_b601
+    title: reBot B601
+  - local: third_party_robots
+    title: 第三方機器人與遙操作器
+  title: 機器人
+- sections:
+  - local: phone_teleop
+    title: 手機
+  - local: isaac_teleop
+    title: Isaac Teleop
+  title: 遙操作器
+- sections:
+  - local: cameras
+    title: 相機
+  - local: third_party_sensors
+    title: 第三方相機與感測器
+  title: 感測器
+- sections:
+  - local: notebooks
+    title: Notebooks
+  - local: feetech
+    title: 更新 Feetech 韌體
+  - local: damiao
+    title: Damiao 馬達與 CAN 匯流排
+  title: 資源
+- sections:
+  - local: contributing
+    title: 貢獻至 LeRobot
+  - local: writing_docstrings
+    title: 撰寫 docstring
+  - local: backwardcomp
+    title: 向下相容性
+  title: 關於
+- sections:
+  - local: api/robots
+    title: 機器人
+  - local: api/teleoperators
+    title: 遙操作器
+  - local: api/cameras
+    title: 相機
+  - local: api/motors
+    title: 馬達
+  - local: api/datasets
+    title: 資料集
+  - local: api/policies
+    title: 策略
+  - local: api/processor
+    title: 處理器
+  - local: api/envs
+    title: 環境
+  - local: api/configs
+    title: 設定
+  title: API 參考

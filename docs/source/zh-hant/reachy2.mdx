@@ -1,0 +1,284 @@
+# Reachy 2[[reachy-2]]
+
+Reachy 2 是 Pollen Robotics 打造的開源人形機器人，專為具身 AI（embodied AI）與真實世界應用的開發而設計。
+更多關於這個平台的資訊，請參閱 [Pollen Robotics 網站](https://www.pollen-robotics.com/reachy/)或 [Reachy 2 說明文件](https://docs.pollen-robotics.com/)！
+
+## 遙操作 Reachy 2[[teleoperate-reachy-2]]
+
+目前有兩種方式可以遙操作 Reachy 2：
+
+- Pollen Robotics 的 VR 遙操作（未包含在 LeRobot 中）。
+- 機器人對機器人的遙操作（用一台 Reachy 2 控制另一台）。
+
+## Reachy 2 模擬[[reachy-2-simulation]]
+
+**（僅限 Linux）** 你可以使用提供的 [Docker 映像檔](https://hub.docker.com/r/pollenrobotics/reachy2_core)，在模擬環境（Gazebo 或 MuJoCo）中執行 Reachy 2。
+
+1. 安裝 [Docker Engine](https://docs.docker.com/engine/)。
+2. 執行（適用於 MuJoCo）：
+
+```
+docker run --rm -it \
+  --name reachy \
+  --privileged \
+  --network host \
+  --ipc host \
+  --device-cgroup-rule='c 189:* rwm' \
+  --group-add audio \
+  -e ROS_DOMAIN_ID="$ROS_DOMAIN_ID" \
+  -e DISPLAY="$DISPLAY" \
+  -e RCUTILS_CONSOLE_OUTPUT_FORMAT="[{severity}]: {message}" \
+  -e REACHY2_CORE_SERVICE_FAKE="${REACHY2_CORE_SERVICE_FAKE:-true}" \
+  -v /dev:/dev \
+  -v "$HOME/.reachy_config":/home/reachy/.reachy_config_override \
+  -v "$HOME/.reachy.log":/home/reachy/.ros/log \
+  -v /usr/lib/x86_64-linux-gnu:/opt/host-libs \
+  --entrypoint /package/launch.sh \
+  pollenrobotics/reachy2_core:1.7.5.9_deploy \
+  start_rviz:=true start_sdk_server:=true mujoco:=true
+```
+
+> [!NOTE]
+> 如果 MuJoCo 執行得很慢（模擬頻率過低），請在前一個指令後面加上 `-e LD_LIBRARY_PATH="/opt/host-libs:$LD_LIBRARY_PATH" \` 以改善效能：
+>
+> ```
+> docker run --rm -it \
+>   --name reachy \
+>   --privileged \
+>   --network host \
+>   --ipc host \
+>   --device-cgroup-rule='c 189:* rwm' \
+>   --group-add audio \
+>   -e ROS_DOMAIN_ID="$ROS_DOMAIN_ID" \
+>   -e DISPLAY="$DISPLAY" \
+>   -e RCUTILS_CONSOLE_OUTPUT_FORMAT="[{severity}]: {message}" \
+>   -e REACHY2_CORE_SERVICE_FAKE="${REACHY2_CORE_SERVICE_FAKE:-true}" \
+>   -e LD_LIBRARY_PATH="/opt/host-libs:$LD_LIBRARY_PATH" \
+>   -v /dev:/dev \
+>   -v "$HOME/.reachy_config":/home/reachy/.reachy_config_override \
+>   -v "$HOME/.reachy.log":/home/reachy/.ros/log \
+>   -v /usr/lib/x86_64-linux-gnu:/opt/host-libs \
+>   --entrypoint /package/launch.sh \
+>   pollenrobotics/reachy2_core:1.7.5.9_deploy \
+>   start_rviz:=true start_sdk_server:=true mujoco:=true
+> ```
+
+## 設定[[setup]]
+
+### 事前準備[[prerequisites]]
+
+- 在你的機器人上，確認各個**服務映像檔**（service image）符合最低版本要求：
+  - **reachy2-core >= 1.7.5.2**
+  - **webrtc >= 2.0.1.1**
+
+接著，若你想使用 VR 遙操作：
+
+- 安裝 [Reachy 2 遙操作應用程式](https://docs.pollen-robotics.com/teleoperation/teleoperation-introduction/discover-teleoperation/)。
+  使用版本 **>=v1.2.0**
+
+我們建議使用兩台電腦：一台用於遙操作（需要 Windows），另一台用於以 LeRobot 錄製。
+
+### 安裝 LeRobot[[install-lerobot]]
+
+請依照[安裝說明](https://github.com/huggingface/lerobot#installation)安裝 LeRobot。
+
+安裝 LeRobot 與 Reachy 2 的相依套件：
+
+```bash
+pip install -e ".[reachy2]"
+```
+
+## 步驟 1：錄製[[step-1-recording]]
+
+### 取得 Reachy 2 的 IP 位址[[get-reachy-2-ip-address]]
+
+在開始遙操作與資料錄製之前，請先找出[機器人的 IP 位址](https://docs.pollen-robotics.com/getting-started/setup-reachy2/connect-reachy2/)。
+我們強烈建議透過**乙太網路**（Ethernet）連接所有裝置（PC 與機器人）。
+
+### 啟動錄製[[launch-recording]]
+
+使用 LeRobot 的 `lerobot-record` 指令來管理錄製工作階段。先前記錄於此的 `pollen_data_acquisition_server` 工作流程已不再提供。
+
+使用 Reachy 2 VR 遙操作應用程式時，請選擇「Standard session」。VR 應用程式會控制機器人的動作，而 `lerobot-record` 則負責管理資料集並開始與停止回合。
+
+### 使用 `lerobot-record` 錄製[[record-with-lerobot-record]]
+
+LeRobot 的錄製功能完整支援 Reachy 2。
+
+**範例：不使用移動底座進行錄製：**
+首先，將 reachy2 與 reachy2_teleoperator 加入錄製腳本的 import 中，接著就可以使用以下指令：
+
+```bash
+lerobot-record \
+    --robot.type=reachy2 \
+    --robot.ip_address=192.168.0.200 \
+    --robot.id=r2-0000 \
+    --robot.use_external_commands=true \
+    --robot.with_mobile_base=false \
+    --teleop.type=reachy2_teleoperator \
+    --teleop.ip_address=192.168.0.200 \
+    --teleop.with_mobile_base=false \
+    --robot.with_torso_camera=true \
+    --dataset.repo_id=pollen_robotics/record_test \
+    --dataset.single_task="Reachy 2 recording test" \
+    --dataset.num_episodes=1 \
+    --dataset.episode_time_s=5 \
+    --dataset.fps=15 \
+    --dataset.push_to_hub=true \
+    --dataset.private=true \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
+    # --dataset.rgb_encoder.vcodec=auto \
+    --display_data=true
+```
+
+#### 特定選項[[specific-options]]
+
+**完整設定總覽（包含所有選項）：**
+
+```bash
+lerobot-record \
+    --robot.type=reachy2 \
+    --robot.ip_address=192.168.0.200 \
+    --robot.use_external_commands=true \
+    --robot.with_mobile_base=true \
+    --robot.with_l_arm=true \
+    --robot.with_r_arm=true \
+    --robot.with_neck=true \
+    --robot.with_antennas=true \
+    --robot.with_left_teleop_camera=true \
+    --robot.with_right_teleop_camera=true \
+    --robot.with_torso_camera=false \
+    --robot.camera_width=640 \
+    --robot.camera_height=480 \
+    --robot.disable_torque_on_disconnect=false \
+    --robot.max_relative_target=5.0 \
+    --teleop.type=reachy2_teleoperator \
+    --teleop.ip_address=192.168.0.200 \
+    --teleop.use_present_position=false \
+    --teleop.with_mobile_base=false \
+    --teleop.with_l_arm=true \
+    --teleop.with_r_arm=true \
+    --teleop.with_neck=true \
+    --teleop.with_antennas=true \
+    --dataset.repo_id=pollen_robotics/record_test \
+    --dataset.single_task="Reachy 2 recording test" \
+    --dataset.num_episodes=1 \
+    --dataset.episode_time_s=5 \
+    --dataset.fps=15 \
+    --dataset.push_to_hub=true \
+    --dataset.private=true \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
+    # --dataset.rgb_encoder.vcodec=auto \
+    --display_data=true
+```
+
+##### `--robot.use_external_commands`[[--robotuseexternalcommands]]
+
+決定 LeRobot 的 robot.send_action() 是否向機器人送出命令。
+使用 VR 遙操作應用程式時**必須**設為 false，因為該應用程式已經會送出命令。
+
+##### `--teleop.use_present_position`[[--teleopusepresentposition]]
+
+決定遙操作器讀取的是機器人的目標位置，還是目前位置。
+如果使用一台處於順應模式（compliant）的 Reachy 2 來控制另一台，則必須設為 true。
+
+##### 只使用需要的部位[[use-the-relevant-parts]]
+
+根據我們的初步測試，當只有部分關節在動時仍錄製**所有**關節，可能會讓某些策略（policy）的模型品質下降。
+為了避免這種情況，可以使用以下方式，將特定部位排除在錄製與重播之外：
+
+```bash
+--robot.with_<part>=false
+```
+
+其中 `<part>` 為以下其中之一：`mobile_base`、`l_arm`、`r_arm`、`neck`、`antennas`。
+它決定對應的部位是否會錄製在觀測（observation）中。未設定時為 True。
+
+預設情況下，**所有部位都會被錄製**。
+
+`reachy2_teleoperator` 也提供相同的逐部位設定機制。
+
+```bash
+--teleop.with\_<part>
+```
+
+其中 `<part>` 為以下其中之一：`mobile_base`、`l_arm`、`r_arm`、`neck`、`antennas`。
+決定對應的部位是否會錄製在動作（action）中。未設定時為 True。
+
+> **重要：** 在同一個工作階段中，機器人與遙操作器兩邊**啟用的部位必須一致**。
+> 例如，如果機器人以 `--robot.with_mobile_base=false` 執行，遙操作器也必須以 `--teleoperator.with_mobile_base=false` 停用相同的部位。
+
+##### 只使用需要的相機[[use-the-relevant-cameras]]
+
+**相機**也可以用同樣的方式處理。使用以下方式，以預設參數啟用或停用每台相機：
+
+```bash
+--robot.with_left_teleop_camera=<true|false> \
+--robot.with_right_teleop_camera=<true|false> \
+--robot.with_torso_camera=<true|false>
+```
+
+預設情況下不會錄製任何相機，所有相機引數都設為 `false`。
+如有需要，可以使用 `--robot.camera_width` 與 `--robot.camera_height` 引數，為 Reachy 2 的相機設定自訂的 `width` 與 `height`：
+
+```bash
+--robot.camera_width=1920 \
+--robot.camera_height=1080
+```
+
+這會變更 3 台預設機器人相機（由上述布林引數啟用）的解析度。
+
+如有需要，也可以照常使用以下方式，加入機器人以外的其他相機：
+
+```bash
+--robot.cameras="{ extra: {type: opencv, index_or_path: 42, width: 640, height: 480, fps: 30}}" \
+```
+
+## 步驟 2：重播[[step-2-replay]]
+
+請確認機器人設定的部位與資料集相同：
+
+```bash
+lerobot-replay \
+    --robot.type=reachy2 \
+    --robot.ip_address=192.168.0.200 \
+    --robot.use_external_commands=false \
+    --robot.with_mobile_base=false \
+    --dataset.repo_id=pollen_robotics/record_test \
+    --dataset.episode=0
+```
+
+## 步驟 3：訓練[[step-3-train]]
+
+```bash
+lerobot-train \
+  --dataset.repo_id=pollen_robotics/record_test \
+  --policy.type=act \
+  --output_dir=outputs/train/reachy2_test \
+  --job_name=reachy2 \
+  --policy.device=mps \
+  --wandb.enable=true \
+  --policy.repo_id=pollen_robotics/record_test_policy
+```
+
+## 步驟 4：評估[[step-4-evaluate]]
+
+```bash
+lerobot-eval \
+  --robot.type=reachy2 \
+  --robot.ip_address=192.168.0.200 \
+  --dataset.repo_id=pollen_robotics/eval_record_test \
+  --dataset.single_task="Evaluate reachy2 policy" \
+  --dataset.num_episodes=10 \
+  --policy.path=outputs/train/reachy2_test/checkpoints/last/pretrained_model
+```
+
+已移動的章節：
+
+[ <a href="#record-with-lerobot-record">（可選但建議）安裝 pollen_data_acquisition_server</a><a id="optional-but-recommended-install-pollendataacquisitionserver"></a> ]
+
+[ <a href="#record-with-lerobot-record">選項 1：使用 Pollen 資料擷取伺服器（建議用於 VR 遙操作）</a><a id="option-1-using-pollen-data-acquisition-server-recommended-for-vr-teleop"></a> ]
+
+[ <a href="#record-with-lerobot-record">選項 2：使用 lerobot.record</a><a id="option-2-using-lerobotrecord"></a> ]

@@ -1,0 +1,177 @@
+# 速查表[[cheat-sheet]]
+
+所有 LeRobot 指令都整理在這裡。如果你忘了某個指令的用法，或想認識新的指令，都可以在這裡查閱。
+
+> [!WARNING]
+> 以下列出的所有指令，請記得將連接埠（port）、名稱與 ID 換成你自己的值！
+
+> [!TIP]
+> 另一個查看所有指令、並依你的設定產生對應參數的好方法，是使用這個 [Jupyter Notebook](https://github.com/huggingface/lerobot/blob/main/examples/notebooks/quickstart.ipynb)。
+
+### 設定與安裝[[setup-and-installation]]
+
+安裝方式請參閱 [LeRobot 安裝指南](https://huggingface.co/docs/lerobot/main/zh-hant/installation)。
+
+### 實用工具[[useful-tools]]
+
+###### 尋找連接埠[[find-port]]
+
+使用此工具找出你的機器人連接到哪個序列埠（serial port）。請依照終端機中的指示操作：系統會要求你拔下 USB 線並按下 Enter，接著腳本會偵測並印出該機器人對應的序列埠。
+
+```bash
+lerobot-find-port
+```
+
+###### 尋找相機[[find-cameras]]
+
+快速找出相機索引並確認其輸出。此指令會將相機資訊印到終端機，並將每台偵測到的相機所拍攝的測試畫面儲存到 `lerobot/outputs/captured_images`
+
+```bash
+lerobot-find-cameras
+```
+
+### 校正[[calibration]]
+
+在大多數情況下，每個機器人和遙操作（teleoperation）裝置只需要校正一次。校正前，請確認所有關節都大致位於中間位置。
+
+```bash
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm
+```
+
+之後在其他腳本中，請使用與校正時相同的 ID，LeRobot 就是透過這些 ID 找到校正檔案。
+
+### 遙操作[[teleoperation]]
+
+使用兩台相機進行遙操作，並透過 Rerun 顯示資料。
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader_arm \
+    --display_data=true
+```
+
+### 錄製資料集[[recording-a-dataset]]
+
+資料集會自動上傳到伺服器，並儲存在 repo_id 之下。請確認你已透過 CLI 登入 HF 帳號：
+`hf auth login`
+
+你可以在這裡取得存取權杖（access token）：[https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+
+```bash
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm \
+    --robot.cameras="{ top: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30} }" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader_arm \
+    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --dataset.num_episodes=30 \
+    --dataset.single_task="put the red brick in a bowl" \
+    --dataset.streaming_encoding=true \
+    --display_data=true
+```
+
+收集資料集時，你可以用鍵盤控制流程：
+使用鍵盤快捷鍵控制資料錄製流程：
+
+- 按下 **右方向鍵（`→`）**：儲存目前的回合（episode），並進入下一個回合。
+- 按下 **左方向鍵（`←`）**：刪除目前的回合並重新錄製。
+- 按下 **Escape（`ESC`）**：停止錄製、編碼影片並上傳。
+
+### 錄製深度[[recording-depth]]
+
+設定 `use_depth: true` 時，Intel RealSense 相機（`type: intelrealsense`）會錄製深度串流。深度會量化為 12 位元的數值，並儲存為獨立的影片。
+
+```bash
+lerobot-record \
+    ... \
+    --robot.cameras="{ head: {type: intelrealsense, serial_number_or_name: \"0123456789\", width: 640, height: 480, fps: 30, use_depth: true} }" \
+    --dataset.repo_id=${HF_USER}/so101_depth_test \
+    --dataset.single_task="put the red brick in a bowl" \
+    --dataset.depth_encoder.depth_min=0.01 \
+    --dataset.depth_encoder.depth_max=10.0 \
+    --dataset.depth_encoder.shift=0.0 \
+    --dataset.depth_encoder.use_log=true
+```
+
+### 影片編碼參數[[video-encoding-parameters]]
+
+RGB 與深度串流會分別透過 `--dataset.rgb_encoder.*` 與 `--dataset.depth_encoder.*` 這兩組鍵獨立編碼。
+
+```bash
+lerobot-record \
+    ... \
+    --dataset.rgb_encoder.vcodec=h264 \
+    --dataset.rgb_encoder.pix_fmt=yuv420p \
+    --dataset.rgb_encoder.crf=23 \
+    --dataset.depth_encoder.vcodec=hevc \
+    --dataset.depth_encoder.extra_options='{"x265-params": "lossless=1"}'
+```
+
+### 訓練[[training]]
+
+視你的硬體而定，訓練策略（policy）可能需要數小時。以下是訓練簡單 `ACT` 策略的方式：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --policy.type=act \
+    --output_dir=outputs/train/act_so101_test \
+    --job_name=act_so101_test \
+    --policy.device=cuda \
+    --wandb.enable=true \
+    --policy.repo_id=${HF_USER}/policy_test \
+    --steps=20000
+```
+
+- 策略類型：`act`、`diffusion`、`smolvla`、`pi05`
+- 裝置：`cuda`（NVIDIA）、`mps`（Apple Silicon）、`cpu`
+
+如果你想微調（fine-tune）特定模型，可以提供該模型的路徑。這種情況下只需提供 path，可以省略 type。
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/so101_dataset_test \
+    --policy.path=username/the_policy_to_finetune \
+    --policy.device=cuda \
+    --policy.repo_id=${HF_USER}/policy_test \
+    --output_dir=outputs/train/act_so101_test \
+    --steps=20000
+```
+
+沒有本機 GPU 嗎？在任一指令中加上 `--job.target=<flavor>`（例如 `a10g-small`），`lerobot-train` 就會改在 [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) 上執行。它會替你上傳只存在本機的資料集，並推送訓練好的模型。執行 `hf jobs hardware` 可列出可用的 flavor。
+
+若要接續（resume）訓練，請將 `--config_path` 指向某個檢查點（checkpoint）並加上 `--resume=true`。它接受本機路徑或 Hub 的 repo id（會取得最新的檢查點），加上 `--job.target=<flavor>` 後也能在 Job 上執行：
+
+```bash
+lerobot-train --config_path=${HF_USER}/policy_test --resume=true --job.target=a10g-small
+```
+
+### 推論[[inference]]
+
+推論（inference）是指在機器人上執行訓練好的策略或模型，我們使用 `lerobot-rollout` 來進行。你需要提供策略的路徑，可以是本機路徑或 Hugging Face 上的路徑，例如 "lerobot/folding_latest"。相機設定必須與收集資料集時相同。持續時間以秒為單位，若未指定則會一直執行。
+
+> [!TIP]
+> 如果你使用的是先前的 V0.5.1 版本，則需要使用 `lerobot-record` 而不是 `lerobot-rollout`。更多資訊請參閱[此處](https://huggingface.co/docs/lerobot/v0.5.1/en/il_robots#run-inference-and-evaluate-your-policy)。
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USER}/my_policy \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM1 \
+    --robot.cameras="{ up: {type: opencv, index_or_path: /dev/video1, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: /dev/video5, width: 640, height: 480, fps: 30}}" \
+    --task="Put lego brick into the transparent box" \
+    --duration=60
+```

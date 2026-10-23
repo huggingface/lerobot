@@ -1,0 +1,103 @@
+# 重新命名對應表與空相機[[rename-map-and-empty-cameras]]
+
+使用機器人策略（policy）進行訓練、評估或錄製時，你的**資料集**或**環境**提供的觀測（observation）使用一組鍵名（例如 `observation.images.front`、`observation.images.eagle`），而你的**策略**預期的卻是另一組鍵名（例如 `observation.images.image`、`observation.images.image2`）。**重新命名對應表**（rename map）能在不修改策略或資料來源的情況下，填補這個落差。
+
+> **適用範圍：** 重新命名對應表只會重新命名**觀測**的鍵名（影像與狀態），動作（action）的鍵名不受影響。
+
+## 為什麼觀測的鍵名不一定相符[[why-observation-keys-dont-always-match]]
+
+策略在預訓練時的設定中，就內建了一組固定的**輸入特徵名稱**。例如：
+
+- [pi0fast-libero](https://huggingface.co/lerobot/pi0fast-libero) 需要 `observation.images.base_0_rgb` 與 `observation.images.left_wrist_0_rgb`。
+- [xvla-base](https://huggingface.co/lerobot/xvla-base) 需要 `observation.images.image`、`observation.images.image2` 以及 `observation.images.image3`。
+
+你的資料集可能使用完全不同的名稱（例如 `observation.images.front`、`observation.images.eagle`、`observation.images.glove`），而評估環境又可能使用另一組名稱。與其修改策略設定或重新命名資料集中的欄位，你可以傳入一份**重新命名對應表**：一個 JSON 字典，將來源的鍵名對應到策略預期的鍵名。重新命名會在預處理管線中進行，因此策略看到的永遠是它預期的鍵名。
+
+## 使用重新命名對應表[[using-the-rename-map]]
+
+在命令列中以 JSON 字串傳入對應關係。格式固定為：
+
+```
+--rename_map='{"source_key": "policy_key", ...}'
+```
+
+其中 **source_key** 是資料集或環境提供的鍵名，**policy_key** 則是策略預期的鍵名。
+
+只有列出的鍵名會被重新命名，其餘的都會原封不動地傳遞下去。項目的順序不影響結果。
+
+支援的策略：**PI0**、**PI05**、**PI0Fast**、**SmolVLA** 與 **XVLA**。
+
+### 訓練[[training]]
+
+假設你要在一個資料集上微調（fine-tune）[lerobot/xvla-base](https://huggingface.co/lerobot/xvla-base)，資料集的影像位於 `observation.images.front`、`observation.images.eagle` 與 `observation.images.glove`，而 XVLA 預期的是 `observation.images.image`、`observation.images.image2` 與 `observation.images.image3`：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/xvla_training \
+  --job_name=xvla_training \
+  --policy.path="lerobot/xvla-base" \
+  --policy.repo_id="HF_USER/xvla-your-robot" \
+  --policy.dtype=bfloat16 \
+  --policy.action_mode=auto \
+  --steps=20000 \
+  --policy.device=cuda \
+  --policy.freeze_vision_encoder=false \
+  --policy.freeze_language_encoder=false \
+  --policy.train_policy_transformer=true \
+  --policy.train_soft_prompts=true \
+  --rename_map='{"observation.images.front": "observation.images.image", "observation.images.eagle": "observation.images.image2", "observation.images.glove": "observation.images.image3"}'
+```
+
+### 評估[[evaluation]]
+
+某個策略預期的是 `observation.images.base_0_rgb` 與 `observation.images.left_wrist_0_rgb`（例如 [pi0fast-libero](https://huggingface.co/lerobot/pi0fast-libero)），但 LIBERO 環境回傳的是 `observation.images.image` 與 `observation.images.image2`：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/pi0fast-libero \
+  --env.type=libero \
+  ... \
+  --rename_map='{"observation.images.image": "observation.images.base_0_rgb", "observation.images.image2": "observation.images.left_wrist_0_rgb"}'
+```
+
+## 替代方案：直接編輯策略設定[[alternative-edit-the-policy-config-directly]]
+
+如果你總是使用同一個資料集或環境，可以**直接編輯策略的 `config.json`**，讓它的觀測鍵名與你的資料來源相符，這樣就不需要重新命名對應表。
+
+取捨在於：修改策略設定會讓它綁定在單一資料來源上；重新命名對應表則能讓同一個策略在多個資料集與環境中使用。
+
+## 空相機：視角數少於策略預期[[empty-cameras-fewer-views-than-the-policy-expects]]
+
+有些策略是針對固定數量的影像輸入設計的。如果你的資料集相機數量較少，可以在策略設定中設定 **`empty_cameras`**，而不必修改模型架構。
+
+### 運作原理[[how-it-works]]
+
+設定 `empty_cameras=N` 會在策略設定中新增 N 個佔位用的影像特徵，名稱為：
+
+```
+observation.images.empty_camera_0
+observation.images.empty_camera_1
+...
+```
+
+執行時，這些鍵名在批次中沒有對應的資料。策略會以帶遮罩的假張量填入（對以 SigLIP 為基礎的視覺編碼器填入 `-1`，注意力遮罩設為零），因此這些多出來的影像欄位在訓練與推論時實際上都會被忽略。
+
+### 範例[[example]]
+
+XVLA-base 有三個視覺輸入，預設 `empty_cameras=0`。而你的資料集只有兩台相機：
+
+1. 設定 `--policy.empty_cameras=1`。
+2. 設定中會新增第三個鍵名：`observation.images.empty_camera_0`。
+3. 像平常一樣，為兩台實際的相機使用重新命名對應表。
+4. 第三個欄位會被遮罩——資料集中不需要假的影像。
+
+## 快速參考[[quick-reference]]
+
+| 目標                           | 怎麼做                                                               |
+| ------------------------------ | -------------------------------------------------------------------- |
+| 資料集鍵名 ≠ 策略鍵名          | `--rename_map='{"dataset_key": "policy_key", ...}'`                  |
+| 環境鍵名 ≠ 策略鍵名（評估）    | `--rename_map='{"env_key": "policy_key", ...}'`                      |
+| 以不同鍵名進行 rollout（推論） | `--rename_map='{"source_key": "policy_key", ...}'`                   |
+| 相機數量少於策略預期           | `--policy.empty_cameras=N`（PI0、PI05、PI0Fast、SmolVLA、XVLA 支援） |
+| 不想傳入重新命名對應表         | 編輯策略的 `config.json`，讓它的鍵名與你的資料來源相符               |

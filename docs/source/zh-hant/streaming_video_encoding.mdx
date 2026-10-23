@@ -1,0 +1,155 @@
+# 串流影片編碼指南[[streaming-video-encoding-guide]]
+
+## 1. 概覽[[1-overview]]
+
+串流影片編碼省去了錄製影片資料集時，傳統上先存成 PNG 再讀回的流程。原本的流程是：
+
+1. 擷取影格 -> 將 PNG 寫入磁碟 ->（回合結束時）讀取 PNG -> 編碼為 MP4 -> 刪除 PNG
+
+現在影格可以在擷取時即時編碼：
+
+1. 擷取影格 -> 排入編碼器執行緒 -> 直接編碼為 MP4
+
+這讓 `save_episode()` 幾乎瞬間完成（回合結束時，影片早已編碼完畢），也消除了以往在回合之間必須等待的阻塞，在多相機、長回合的情況下尤其明顯。
+
+## 2. 調校參數[[2-tuning-parameters]]
+
+| 參數                    | CLI 旗標                          | 型別          | 預設           | 說明                                                     |
+| ----------------------- | --------------------------------- | ------------- | -------------- | -------------------------------------------------------- |
+| `streaming_encoding`    | `--dataset.streaming_encoding`    | `bool`        | `True`         | 在擷取時啟用即時編碼                                     |
+| `vcodec`                | `--dataset.rgb_encoder.vcodec`    | `str`         | `"libsvtav1"`  | 影片編解碼器（codec）。`"auto"` 會偵測最合適的硬體編碼器 |
+| `encoder_threads`       | `--dataset.encoder_threads`       | `int \| None` | `None`（自動） | 每個編碼器實例的執行緒數。`None` 會交由 vcodec 決定      |
+| `encoder_queue_maxsize` | `--dataset.encoder_queue_maxsize` | `int`         | `30`           | 每個相機的最大緩衝影格數（30fps 時約 1 秒）。會消耗 RAM  |
+
+## 3. 效能考量[[3-performance-considerations]]
+
+串流編碼代表 CPU 是在擷取迴圈**進行中**編碼影片，而不是之後才編碼。因此 CPU 的運算資源必須分配給：
+
+- **控制迴圈**（讀取相機、控制機器人、寫入非影片資料）
+- **編碼器執行緒**（每台相機一個執行緒池）
+- **Rerun 視覺化**（若有啟用）
+- **作業系統與其他行程**（process）
+
+### 解析度與相機數量的影響[[resolution-number-of-cameras-impact]]
+
+| 設定                        | 吞吐量（px/sec） | CPU 編碼負載 | 備註                   |
+| --------------------------- | ---------------- | ------------ | ---------------------- |
+| 2 台相機 640x480x3 @30fps   | 55M              | 低           | 大多數系統都能執行     |
+| 2 台相機 1280x720x3 @30fps  | 165M             | 中等         | 現代的系統可以輕鬆應付 |
+| 2 台相機 1920x1080x3 @30fps | 373M             | 高           | 需要效能強大的高階 CPU |
+
+### `encoder_threads` 調校[[encoderthreads-tuning]]
+
+這個參數控制每個編碼器實例在內部使用多少執行緒：
+
+- **較高的值**（例如 4-5）：編碼較快，但每台相機會使用更多 CPU 核心。適合核心數多的高階系統。
+- **較低的值**（例如 1-2）：每台相機使用的 CPU 較少，把核心留給擷取與視覺化。適合低解析度影像搭配效能足夠的 CPU。
+- **`None`（預設）**：交由編解碼器決定。相關資訊可在編解碼器的記錄中找到。
+
+### 背壓與掉影格[[backpressure-and-frame-dropping]]
+
+每台相機都有一個大小固定的佇列（`encoder_queue_maxsize`，預設 30 個影格）。當編碼器跟不上時：
+
+1. 佇列會被填滿（消耗 RAM）
+2. 新的影格會被**丟棄**（而不是阻塞），擷取迴圈會不受干擾地繼續執行
+3. 記錄一則警告：`"Encoder queue full for {camera}, dropped N frame(s)"`
+4. 回合結束時，會回報每台相機掉影格的總數
+
+### 編碼器落後的徵狀[[symptoms-of-encoder-falling-behind]]
+
+- **系統變得遲鈍甚至凍結**：所有 CPU 都處於 100%
+- 記錄中出現**掉影格警告**，或錄製的資料集中影格數／FPS 低於預期
+- **機器人動作斷斷續續**：如果 CPU 嚴重超載，連擷取迴圈都可能受影響
+- **Rerun 延遲越來越大**：視覺化跟不上即時畫面
+
+## 4. 硬體加速編碼[[4-hardware-accelerated-encoding]]
+
+### 何時使用[[when-to-use]]
+
+在以下情況使用硬體編碼：
+
+- CPU 是瓶頸（掉影格、機器人動作斷續、Rerun 延遲）
+- 你有相容的硬體（GPU 或專用的編碼器）
+- 你以高吞吐量錄製（高解析度或使用多台相機）
+
+### 選擇編解碼器[[choosing-a-codec]]
+
+| 編解碼器            | CPU 使用量 | 檔案大小    | 品質 | 備註                                        |
+| ------------------- | ---------- | ----------- | ---- | ------------------------------------------- |
+| `libsvtav1`（預設） | 高         | 最小        | 最佳 | 預設值。壓縮效果最好，但最耗 CPU            |
+| `h264`              | 中等       | 約大 30-50% | 良好 | 軟體 H.264。CPU 用量較低                    |
+| 硬體編碼器          | 極低       | 最大        | 良好 | 交給專用硬體處理。最適合 CPU 資源有限的系統 |
+
+### 可用的硬體編碼器[[available-hw-encoders]]
+
+| 編碼器              | 平台          | 硬體                                                                   | CLI 值                                           |
+| ------------------- | ------------- | ---------------------------------------------------------------------- | ------------------------------------------------ |
+| `h264_videotoolbox` | macOS         | Apple Silicon / Intel                                                  | `--dataset.rgb_encoder.vcodec=h264_videotoolbox` |
+| `hevc_videotoolbox` | macOS         | Apple Silicon / Intel                                                  | `--dataset.rgb_encoder.vcodec=hevc_videotoolbox` |
+| `h264_nvenc`        | Linux/Windows | NVIDIA GPU                                                             | `--dataset.rgb_encoder.vcodec=h264_nvenc`        |
+| `hevc_nvenc`        | Linux/Windows | NVIDIA GPU                                                             | `--dataset.rgb_encoder.vcodec=hevc_nvenc`        |
+| `h264_vaapi`        | Linux         | Intel/AMD GPU                                                          | `--dataset.rgb_encoder.vcodec=h264_vaapi`        |
+| `h264_qsv`          | Linux/Windows | Intel Quick Sync                                                       | `--dataset.rgb_encoder.vcodec=h264_qsv`          |
+| `auto`              | 任何          | 探測系統中可用的硬體編碼器。若找不到硬體編碼器，則退回使用 `libsvtav1` | `--dataset.rgb_encoder.vcodec=auto`              |
+
+> [!NOTE]
+> 若要使用硬體加速編碼器，你可能需要更新 GPU 驅動程式。
+
+> [!NOTE]
+> `libsvtav1` 是預設值，因為它能提供最好的訓練效能；其他 vcodec 可以降低 CPU 用量、速度也更快，但通常會產生較大的檔案，也可能影響訓練時間。
+
+## 5. 疑難排解[[5-troubleshooting]]
+
+| 症狀                                               | 可能原因                            | 解決方法                                                                                                                                                                                                                                                |
+| -------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 系統凍結、機器人動作斷續，或 Rerun 視覺化延遲      | CPU 資源不足（負載 100%）           | 關閉其他應用程式、降低編碼吞吐量、調低 `encoder_threads`、改用 `h264`、使用 `display_data=False`。如果 CPU 仍持續處於 100%，代表它可能不足以應付你的設定，請考慮 `--dataset.streaming_encoding=false` 或硬體編碼（`--dataset.rgb_encoder.vcodec=auto`） |
+| 出現「Encoder queue full」警告，或資料集中有掉影格 | 編碼器跟不上（佇列溢位）            | 如果 CPU 未達 100%：調高 `encoder_threads`、調高 `encoder_queue_maxsize`，或使用硬體編碼（`--dataset.rgb_encoder.vcodec=auto`）。                                                                                                                       |
+| RAM 用量很高                                       | 佇列填滿的速度比編碼還快            | `encoder_threads` 太低或 CPU 不足。調低 `encoder_queue_maxsize` 或使用硬體編碼                                                                                                                                                                          |
+| 影片檔案很大                                       | 使用硬體編碼器或 H.264              | 預期中的取捨。如果 CPU 負擔得起，請改用 `libsvtav1`                                                                                                                                                                                                     |
+| `save_episode()` 仍然很慢                          | `streaming_encoding` 為 `False`     | 設定 `--dataset.streaming_encoding=true`                                                                                                                                                                                                                |
+| 編碼器執行緒當機                                   | 編解碼器無法使用或設定無效          | 確認 `vcodec` 已安裝，或嘗試 `--dataset.rgb_encoder.vcodec=auto`                                                                                                                                                                                        |
+| 錄製的資料集缺少影格                               | CPU／GPU 資源不足，或偶發的負載尖峰 | 如果缺少約 5% 的影格，你的系統很可能超載了，請參考上述建議。如果缺少的影格較少（約 2%），很可能是偶發的短暫負載尖峰所致（通常發生在啟動時），可視為正常現象。                                                                                           |
+
+## 6. 建議設定[[6-recommended-configurations]]
+
+這些估計值偏保守；建議在你的環境上測試，先從低負載開始，再逐步增加。
+
+### 高階系統：現代 12 核以上（24 執行緒以上）[[high-end-systems-modern-12-cores-24-threads]]
+
+在 CPU 上，約 250-500M px/sec 的吞吐量應該可以輕鬆應付。若想要更好的結果，在可行時可以嘗試硬體編碼。
+
+```bash
+# 3 台相機 1280x720x3 @30fps：預設值運作良好。可選擇提高編碼器的平行度。
+# 2 台相機 1920x1080x3 @30fps：預設值運作良好。可選擇提高編碼器的平行度。
+lerobot-record --dataset.encoder_threads=5 ...
+
+# 3 台相機 1920x1080x3 @30fps：可能需要一些調校。
+```
+
+### 中階系統：現代 8 核以上（16 執行緒以上）或 Apple Silicon[[mid-range-systems-modern-8-cores-16-threads-or-apple-silicon]]
+
+在 CPU 上，約 80-300M px/sec 的吞吐量應該是可行的。
+
+```bash
+# 3 台相機 640x480x3 @30fps：預設值運作良好。可選擇降低編碼器的平行度。
+# 2 台相機 1280x720x3 @30fps：預設值運作良好。可選擇降低編碼器的平行度。
+lerobot-record --dataset.encoder_threads=2 ...
+
+# 2 台相機 1920x1080x3 @30fps：可能需要一些調校。
+```
+
+### 低資源系統：現代 4 核以上（8 執行緒以上）或 Raspberry Pi 5[[low-resource-systems-modern-4-cores-8-threads-or-raspberry-pi-5]]
+
+在資源非常有限的系統上，串流編碼可能會和擷取迴圈搶太多資源。停用後會退回以 PNG 為基礎的做法，也就是在回合之間進行編碼（會阻塞，但不會干擾擷取）。另一種做法是以較低的吞吐量錄製，同時降低擷取與編碼的負載。也可以考慮將編解碼器改為 `h264`，並使用批次編碼。
+
+```bash
+# 2 台相機 640x480x3 @30fps：需要一些調校。
+
+# 使用 H.264、停用串流，考慮批次編碼
+lerobot-record --dataset.rgb_encoder.vcodec=h264 --dataset.streaming_encoding=false ...
+```
+
+## 7. 結語[[7-closing-note]]
+
+效能最終取決於你的實際設定：每秒影格數、解析度、CPU 核心數與負載、可用記憶體、回合長度，以及你選擇的編碼器。請務必以你的目標工作負載測試，留意 CPU 與系統的能力，並適當調整 `encoder_threads`、`encoder_queue_maxsize` 與
+`vcodec`。話雖如此，許多應用常見的實用設定是三台相機、640×480x3 @30fps；在現代的系統上，使用預設的串流影片編碼設定通常就能順利執行。請務必比較影片長度與 CLI 指定的回合長度，並確認資料列數等於 FPS × CLI 指定的時間長度，以驗證錄製的資料集是否正常。

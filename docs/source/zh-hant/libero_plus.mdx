@@ -1,0 +1,224 @@
+# LIBERO-plus[[libero-plus]]
+
+LIBERO-plus 是建構在 [LIBERO](./libero) 之上、針對視覺-語言-動作模型（vision-language-action model，VLA）的**穩健性基準測試**。它對原始的 LIBERO 任務集套用**七個彼此獨立的擾動（perturbation）維度**，有系統地對策略（policy）進行壓力測試，找出標準基準測試沒能發現的失敗模式。
+
+- 論文：[In-depth Robustness Analysis of Vision-Language-Action Models](https://arxiv.org/abs/2510.13626)
+- GitHub：[sylvestf/LIBERO-plus](https://github.com/sylvestf/LIBERO-plus)
+- 資料集：[lerobot/libero_plus](https://huggingface.co/datasets/lerobot/libero_plus)
+
+![An overview of the LIBERO-plus benchmark perturbation dimensions](https://github.com/sylvestf/LIBERO-plus/raw/main/static/images/libero-plus.jpg)
+
+## 擾動維度[[perturbation-dimensions]]
+
+LIBERO-plus 沿著以下幾個面向擾動每個原始的 LIBERO 任務，建立了約 10,000 個任務變體：
+
+| 維度                    | 改變的內容                                |
+| ----------------------- | ----------------------------------------- |
+| 物件佈局                | 目標位置、是否有干擾物件                  |
+| 相機視角                | 相機位置、朝向、視野                      |
+| 機器人初始狀態（state） | 機械手臂的起始姿態                        |
+| 語言指令                | 由 LLM 改寫的任務描述（換句話說／同義詞） |
+| 光照條件                | 強度、方向、顏色、陰影                    |
+| 背景材質                | 場景表面與物件外觀                        |
+| 感測器雜訊              | 光度失真與影像劣化                        |
+
+## 可用的任務套件[[available-task-suites]]
+
+LIBERO-plus 會擾動 Spatial、Object、Goal 與 Long 套件中的 40 個原始任務。這四個套件中的每個已註冊任務都是受擾動後的變體，而不是其中一個原始任務。這個 fork 也保留了 LIBERO-90 中的 90 個未受擾動任務。
+
+| 套件           | CLI 名稱         | 原始任務 | 已註冊任務 | 最大步數 | 說明                             |
+| -------------- | ---------------- | -------- | ---------- | -------- | -------------------------------- |
+| LIBERO-Spatial | `libero_spatial` | 10       | 2,402      | 280      | 需要推理空間關係的任務           |
+| LIBERO-Object  | `libero_object`  | 10       | 2,518      | 280      | 以操作不同物件為主的任務         |
+| LIBERO-Goal    | `libero_goal`    | 10       | 2,591      | 300      | 目標會變動、以目標為條件的任務   |
+| LIBERO-90      | `libero_90`      | 90       | 90         | 400      | 未受擾動的短時程 LIBERO 任務     |
+| LIBERO-Long    | `libero_10`      | 10       | 2,519      | 520      | 來自 LIBERO-100 集合的長時程任務 |
+
+這些數量來自上游的[任務登錄表](https://github.com/sylvestf/LIBERO-plus/blob/4976dc30028e805ff8094b55501d532c48fec182/libero/libero/benchmark/libero_suite_task_map.py)。四個受擾動的套件共包含 **10,030 個任務變體**；LIBERO-90 不計入這個總數。數量與任務索引取決於所安裝的 fork 修訂版本。
+
+<Tip warning={true}>
+  安裝 LIBERO-plus 會**取代**原本的 LIBERO：它會解除安裝 `hf-libero`， 讓
+  `import libero` 指向 LIBERO-plus 這個 fork，因此兩者無法同時安裝。
+  若要切換回原本的 LIBERO，請解除安裝這個 fork， 再以 `pip install -e
+  ".[libero]"` 重新安裝。
+</Tip>
+
+## 安裝[[installation]]
+
+### 系統相依套件（僅限 Linux）[[system-dependencies-linux-only]]
+
+```bash
+sudo apt install libexpat1 libfontconfig1-dev libmagickwand-dev
+```
+
+### Python 套件[[python-package]]
+
+```bash
+pip install -e ".[libero]" "robosuite==1.4.1" bddl easydict mujoco wand scikit-image gym
+git clone https://github.com/sylvestf/LIBERO-plus.git
+cd LIBERO-plus && pip install --no-deps -e .
+pip uninstall -y hf-libero  # 讓 `import libero` 解析到這個 fork
+```
+
+LIBERO-plus 是從它的 GitHub fork 安裝，而不是透過 pyproject 的額外套件：這個 fork 是以 pip 無法處理的 namespace package 形式發布，所以必須 clone 下來並加入 `PYTHONPATH`。標準的安裝方式請參閱 `docker/Dockerfile.benchmark.libero_plus`。由於需要 MuJoCo，因此僅支援 Linux。
+
+<Tip>
+執行評估前，請先設定 MuJoCo 的渲染後端：
+
+```bash
+export MUJOCO_GL=egl   # 無頭模式／HPC／雲端
+```
+
+</Tip>
+
+### 下載 LIBERO-plus 資產[[download-libero-plus-assets]]
+
+LIBERO-plus 的擴充素材包（asset pack）是另外提供的。請從 [Hugging Face 資料集](https://huggingface.co/datasets/Sylvest/LIBERO-plus/tree/main)下載 `assets.zip`，並解壓縮到 LIBERO-plus 的套件目錄中：
+
+```bash
+# 安裝套件後，找出它安裝的位置：
+python -c "import libero; print(libero.__file__)"
+# 然後將 assets.zip 解壓縮到 <package_root>/libero/assets/
+```
+
+## 評估[[evaluation]]
+
+### 建議：預設評估[[default-evaluation-recommended]]
+
+依照[上游評估指南](https://github.com/sylvestf/LIBERO-plus#-evaluation)的建議，在四個受擾動的套件中評估每個已註冊變體，每個變體使用一個回合（episode）：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero_plus \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --env.max_parallel_tasks=1
+```
+
+對上述登錄表而言，這會執行 **10,030 個回合**。若使用 `--eval.n_episodes=10`，同一個指令會執行 **100,300 個回合**，而不是 400 個。
+
+### 冒煙測試[[smoke-test]]
+
+在啟動完整評估之前，請先用一個已註冊變體與一個回合檢查你的設定：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero_plus \
+  --env.task=libero_spatial \
+  --env.task_ids='[0]' \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1
+```
+
+這是設定檢查，不是具代表性的穩健性評估。
+
+### 單一套件評估[[single-suite-evaluation]]
+
+在單一 LIBERO-plus 套件上評估：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero_plus \
+  --env.task=libero_spatial \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1
+```
+
+- `--env.task` 用來選擇套件（`libero_spatial`、`libero_object` 等）。
+- `--env.task_ids` 會限定為已註冊的任務索引（`[0]`、`[1,2,3]` 等），這些索引用來識別四個受擾動套件中的變體。省略此選項會執行所有已註冊任務。評估多個套件時，同一份索引清單會分別套用到每個套件。
+- `--eval.batch_size` 控制同時平行執行的環境數量。
+- `--eval.n_episodes` 設定每個已註冊任務要執行幾個回合。增加此值會重複評估所選變體，不會再選取其他不同的變體。
+
+### 多套件評估[[multi-suite-evaluation]]
+
+傳入以逗號分隔的清單，就能一次在多個套件上對策略進行基準測試：
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero_plus \
+  --env.task=libero_spatial,libero_object \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1
+```
+
+### 控制模式[[control-mode]]
+
+LIBERO-plus 支援兩種控制模式：`relative`（預設）與 `absolute`。不同的 VLA 檢查點（checkpoint）是以不同的動作參數化（action parameterization）方式訓練的，請確認模式與你的策略相符：
+
+```bash
+--env.control_mode=relative   # 或 "absolute"
+```
+
+### 重設效能[[reset-performance]]
+
+LeRobot 預設會保留 LIBERO 的硬重設（hard reset）行為。啟用固定初始
+狀態後，你可以選擇改用軟重設（soft reset），省去
+每個回合重新建構模擬器模型與渲染器的時間：
+
+```bash
+--env.init_states=true --env.hard_reset=false
+```
+
+軟重設速度較快，但在環境的穩定步驟之後，結果與硬重設並非位元完全相同，因此相機觀測（observation）與策略的結果可能略有差異。重現基準測試結果時，請使用硬重設。
+
+### 策略輸入與輸出[[policy-inputs-and-outputs]]
+
+**觀測：**
+
+- `observation.state`——8 維本體感覺（proprioceptive）特徵（末端執行器位置、軸角表示的朝向、夾爪 qpos）
+- `observation.images.image`——主相機視角（`agentview_image`），HWC uint8
+- `observation.images.image2`——腕部相機視角（`robot0_eye_in_hand_image`），HWC uint8
+
+**動作：**
+
+- 在 `Box(-1, 1, shape=(7,))` 中連續控制——6D 末端執行器增量 + 1D 夾爪
+
+### 評估工作量與可重現性[[evaluation-workload-and-reproducibility]]
+
+評估回合總數為**所有套件中選取的已註冊任務數 × `--eval.n_episodes`**。例如，所有 Spatial 變體各執行一個回合會得到 2,402 個回合；在 Spatial 與 Object 中選取 `--env.task_ids='[0,1,2]'` 且各執行一個回合，會得到六個回合。
+
+400 個回合的計算方式（40 個原始任務 × 10 個回合）適用於原始 LIBERO，不適用於完整的 LIBERO-plus 評估。對 LIBERO-plus 而言，請從每個已註冊變體一個回合開始。重複執行同一個變體的回合，並不等同於對原始任務的不同變體進行取樣。
+
+若使用自訂子集，請使用這個 fork 的[任務分類](https://github.com/sylvestf/LIBERO-plus/blob/4976dc30028e805ff8094b55501d532c48fec182/libero/libero/benchmark/task_classification.json)來辨識擾動類別與難度等級。不要假設每個原始任務在每個擾動類別中都有十個不同的變體。回報結果時，請記錄 fork 修訂版本、選取的套件名稱與任務索引、每個變體的回合數、隨機種子與重設設定。若要與已發表結果比較，請遵循此基準測試的取樣與彙總協定，而不是把任意子集視為等效。
+
+## 訓練[[training]]
+
+### 資料集[[dataset]]
+
+LIBERO-plus 的 LeRobot 格式訓練資料集可在此取得：
+
+- [lerobot/libero_plus](https://huggingface.co/datasets/lerobot/libero_plus)
+
+### 訓練指令範例[[example-training-command]]
+
+```bash
+lerobot-train \
+    --policy.type=smolvla \
+    --policy.repo_id=${HF_USER}/smolvla_libero_plus \
+    --policy.load_vlm_weights=true \
+    --dataset.repo_id=lerobot/libero_plus \
+    --env.type=libero_plus \
+    --env.task=libero_spatial \
+    --output_dir=./outputs/ \
+    --steps=100000 \
+    --batch_size=4 \
+    --eval.batch_size=1 \
+    --eval.n_episodes=1 \
+    --env_eval_freq=1000
+```
+
+## 與 LIBERO 的關係[[relationship-to-libero]]
+
+LIBERO-plus 可以直接替換 LIBERO 使用：
+
+- 相同的 Python gym 介面（`LiberoEnv`、`LiberoProcessorStep`）
+- 相同的相機名稱與觀測／動作格式
+- 相同的套件名稱
+- 安裝在相同的 `libero` Python 套件名稱下（GitHub 儲存庫不同）
+
+若要使用原始的 LIBERO 基準測試，請參閱 [LIBERO](./libero) 並使用 `--env.type=libero`。
