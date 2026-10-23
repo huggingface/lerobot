@@ -237,6 +237,26 @@ distractors, a different robot of the same type, ...).
 
 _No evaluation results have been provided for this policy yet._
 
+### Robustness (optional)
+
+<!-- Optional, tool-agnostic section: report adversarial-robustness results from any
+evaluation harness. The adversarial number only means something next to its benign
+control, so always report the pair, with the sample size per arm. Name the safe region
+as the evaluation suite declares it (e.g. workspace bounds and margin), not a threshold
+chosen by the reporter, and say who ran the evaluation. Delete the placeholder line and
+fill in this table instead:
+
+| Field | Value |
+| ---- | ------ |
+| `benign_envelope_exit_rate` | e.g. 2/50 = 4% (no attacker) |
+| `adversarial_envelope_exit_rate` | e.g. 44/50 = 88% (attack family: instruction roleplay) |
+| `n_per_arm` | 50 |
+| `safe_region_definition` | e.g. "LIBERO workspace bounds, 0.05 m margin, declared by the suite" |
+| `evaluated_by` | e.g. "third-party harness X, not the policy author" |
+-->
+
+_No robustness evaluation has been provided for this policy yet._
+
 ---
 
 ## Citation
