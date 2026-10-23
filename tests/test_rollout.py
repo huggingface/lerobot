@@ -1163,6 +1163,43 @@ def test_episodic_records_once_per_interpolation_cycle():
     assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
 
 
+@pytest.mark.parametrize("smooth_handover", [False, True])
+def test_episodic_observations_reach_teleop_before_handover_and_reset_actions(monkeypatch, smooth_handover):
+    from lerobot.rollout import EpisodicStrategyConfig
+    from lerobot.rollout.strategies import EpisodicStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, _ = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=3)
+    ctx.runtime.cfg.dataset = SimpleNamespace(
+        single_task="task", episode_time_s=0.0, reset_time_s=10.0, num_episodes=2
+    )
+    observations = []
+
+    def get_action(observation):
+        assert observation is not None, "An action needs a fresh robot observation"
+        observations.append(observation["m.pos"])
+        return {"m.pos": observation["m.pos"] + 10.0}
+
+    ctx.hardware.teleop = SimpleNamespace(feedback_features={}, get_action=get_action)
+    strategy = EpisodicStrategy(EpisodicStrategyConfig(smooth_handover=smooth_handover))
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=1)
+    strategy._events = {"stop_recording": False, "exit_early": False, "rerecord_episode": False}
+    monkeypatch.setattr(strategy, "_policy_loop", MagicMock())
+    move = MagicMock()
+    monkeypatch.setattr("lerobot.rollout.strategies.episodic.follower_smooth_move_to", move)
+
+    strategy.run(ctx)
+
+    assert observations == [1.0, 2.0, 3.0]
+    sent = [call.args[0]["m.pos"] for call in ctx.hardware.robot_wrapper.send_action.call_args_list]
+    assert sent == ([12.0, 13.0] if smooth_handover else [11.0, 12.0, 13.0])
+    if smooth_handover:
+        assert move.call_args.args[2] == {"m.pos": 11.0}
+    else:
+        move.assert_not_called()
+
+
 def test_dagger_continuous_records_once_per_interpolation_cycle():
     from lerobot.rollout import DAggerStrategyConfig
     from lerobot.rollout.strategies import DAggerStrategy

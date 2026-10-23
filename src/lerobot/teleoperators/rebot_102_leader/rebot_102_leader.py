@@ -18,7 +18,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.motors import MotorCalibration
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
@@ -172,7 +172,7 @@ class RebotArm102Leader(Teleoperator):
         return value - turns * 360.0, abs(turns)
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         start = time.perf_counter()
         try:
             raw_positions = self._read_raw_positions()

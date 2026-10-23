@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_not_connected
 from lerobot.utils.errors import DeviceNotConnectedError
 
@@ -101,7 +101,7 @@ class GamepadTeleop(Teleoperator):
         self.gamepad.start()
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         if self.gamepad is None:
             raise DeviceNotConnectedError(f"{self} is not connected. Run `.connect()` first.")
 
