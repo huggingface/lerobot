@@ -42,6 +42,7 @@ from .video_utils import (
     decode_video_frames,
     depth_encoder_configs,
     dequantize_depth_frames,
+    get_video_duration_in_s,
     image_depth_units,
 )
 
@@ -276,6 +277,58 @@ class DatasetReader(BaseDatasetReader):
                         return False
 
         return True
+
+    def validate_episode_video_timestamps(self, tolerance_s: float = 1e-4) -> None:
+        """Check that selected episodes' video timestamps lie within their actual video files.
+
+        Datasets truncated during upload or conversion can declare episodes whose
+        ``videos/<key>/to_timestamp`` extends past the end of the aggregated video
+        file that the metadata assigns them to. Decoding any frame of such an
+        episode fails deep inside the video backend with an opaque error; this
+        check surfaces the problem up front with the list of affected episodes.
+
+        Raises:
+            RuntimeError: If any selected episode references a video file that is
+                shorter than the episode's declared ``to_timestamp``.
+        """
+        if not self._meta.video_keys or self.root is None:
+            return
+
+        episode_indices = range(self._meta.total_episodes) if self.episodes is None else self.episodes
+
+        durations: dict[tuple[str, str], float] = {}
+        broken: dict[tuple[str, str], list[int]] = {}
+        for ep_idx in episode_indices:
+            ep = self._meta.episodes[ep_idx]
+            for vid_key in self._meta.video_keys:
+                to_timestamp = ep.get(f"videos/{vid_key}/to_timestamp")
+                if to_timestamp is None:
+                    continue
+                file_path = self._meta.get_video_file_path(ep_idx, vid_key)
+                if not (self.root / file_path).exists():
+                    # Missing files are handled by the cache/download logic.
+                    continue
+                cache_key = (vid_key, str(file_path))
+                duration = durations.get(cache_key)
+                if duration is None:
+                    duration = get_video_duration_in_s(self.root / file_path)
+                    durations[cache_key] = duration
+                if to_timestamp > duration + tolerance_s:
+                    broken.setdefault(cache_key, []).append(ep_idx)
+
+        if broken:
+            details = "; ".join(
+                f"{vid_key} file '{file_path}': episodes {ep_list}"
+                for (vid_key, file_path), ep_list in sorted(broken.items())
+            )
+            affected = sorted({ep_idx for ep_list in broken.values() for ep_idx in ep_list})
+            raise RuntimeError(
+                f"{len(affected)} episode(s) reference timestamps past the end of their video file(s): {details}. "
+                "The video file(s) are shorter than declared in the episode metadata, so reading these episodes "
+                "will fail. The dataset was likely truncated during upload or conversion — please report it to "
+                "its maintainers. To load the remaining data, exclude the affected episodes with "
+                f"'episodes=' or 'episode_filter=' (affected episode indices: {affected})."
+            )
 
     def get_episodes_file_paths(self) -> list[str]:
         """Return deduplicated relative file paths (data + video) for selected episodes.
