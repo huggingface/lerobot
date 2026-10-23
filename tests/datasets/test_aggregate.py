@@ -328,10 +328,10 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     Source datasets include both RGB and depth video features so the same
     aggregation flow is exercised on the ``is_depth_map`` branch.
     """
-    ds_0_num_frames = 400
-    ds_1_num_frames = 800
-    ds_0_num_episodes = 10
-    ds_1_num_episodes = 25
+    ds_0_num_frames = 120
+    ds_1_num_frames = 200
+    ds_0_num_episodes = 4
+    ds_1_num_episodes = 7
 
     # Create two datasets with different number of frames and episodes
     ds_0 = lerobot_dataset_factory(
@@ -516,8 +516,8 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
     Depth video features are included to verify that file rotation/concat
     correctly handles depth-marked features alongside regular RGB ones.
     """
-    ds_0_num_episodes = ds_1_num_episodes = 10
-    ds_0_num_frames = ds_1_num_frames = 400
+    ds_0_num_episodes = ds_1_num_episodes = 5
+    ds_0_num_frames = ds_1_num_frames = 150
 
     ds_0 = lerobot_dataset_factory(
         root=tmp_path / "small_0",
@@ -545,7 +545,7 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
         aggr_root=tmp_path / "small_aggr",
         # Tiny file size to trigger new file instantiation
         data_files_size_in_mb=0.01,
-        video_files_size_in_mb=0.1,
+        video_files_size_in_mb=0.03,
     )
 
     # Mock the revision to prevent Hub calls during dataset loading
@@ -576,9 +576,9 @@ def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
         parquet_files = list(data_dir.rglob("*.parquet"))
         assert len(parquet_files) > 1, "Small file size limits should create multiple parquet files"
 
-    if video_dir.exists():
-        video_files = list(video_dir.rglob("*.mp4"))
-        assert len(video_files) > 1, "Small file size limits should create multiple video files"
+    for key in aggr_ds.meta.video_keys:
+        video_files = list((video_dir / key).rglob("*.mp4"))
+        assert len(video_files) > 1, f"Small file size limits should create multiple {key} video files"
 
 
 def test_video_timestamps_regression(tmp_path, lerobot_dataset_factory):
