@@ -1,340 +1,415 @@
 # Annotation Pipeline
 
-`lerobot-annotate` watches each episode's video with a vision-language
-model (VLM) and writes natural-language annotations back into your
-dataset. It fills the two language columns from the
-[Language Columns and Recipes](./language_and_recipes) page —
-`language_persistent` and `language_events` — straight into
-`data/chunk-*/file-*.parquet`.
+`lerobot-annotate` adds subtasks, plans, memory, task rephrasings, interjections,
+speech and visual Q&A to **existing LeRobot v3 datasets**. The same annotation
+modules run through a resumable engine locally, on Slurm or on Hugging Face Jobs.
+The engine also supports non-VLM steps; it does not add new annotation workflows.
 
-In short: point it at a LeRobot dataset, and it adds subtasks, plans,
-memory, interjections, speech, and visual Q&A that a policy can be
-trained on.
+The engine lives in `lerobot.annotations.runtime`; `annotations/storage.py` handles
+recoverable dataset updates and `annotations/hub.py` handles explicit publication.
+Slurm and HF execution adapters remain in `lerobot.jobs`.
 
-## How it fits together
+Videos, FPS, cameras, actions/state and publisher-owned labels are preserved.
+Conversion, resizing, re-encoding and action-space changes belong in separate
+preparation scripts. Use a writable dataset copy, not an immutable Hub snapshot.
 
-```text
-  your dataset                  lerobot-annotate
-  (LeRobot v3.1)
-        │
-        ▼
-  ┌─────────────────────────────────────────────────────┐
-  │                    read episodes                     │
-  └──────────────────────────┬──────────────────────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        ▼                    ▼                     ▼
-  ┌──────────┐      ┌───────────────┐        ┌──────────┐       one shared Qwen-VL
-  │   plan   │      │ interjections │        │   vqa    │  ◀──   server (vLLM, OpenAI
-  └────┬─────┘      └───────┬───────┘        └────┬─────┘        API) drives all three
-       └────────────────────┼─────────────────────┘
-                            │   each module stages raw JSONL
-                            ▼   into .annotate_staging/
-                  ┌─────────────────┐
-                  │    validator    │  ◀──  checks everything
-                  └────────┬────────┘
-                           ▼
-                  ┌─────────────────┐
-                  │     writer      │
-                  └────────┬────────┘
-                           ▼
-              data/chunk-*/file-*.parquet
-              (+ meta/info.json tools)
-```
+## Run a small annotation job
 
-Three modules (`plan`, `interjections`, `vqa`) all talk to **one** shared
-VLM. Each module stages its output to disk, a validator checks it, and a
-single writer rewrites the dataset shards in place.
-
-## What the pipeline produces
-
-Each module emits a few kinds of annotation ("styles"), routed to one of
-the two language columns:
-
-| Style / atom                                | Column                | Module          |
-| ------------------------------------------- | --------------------- | --------------- |
-| `subtask` (Pi0.7-style "how, not what")     | `language_persistent` | `plan`          |
-| `plan` (initial + refresh on interjection)  | `language_persistent` | `plan`          |
-| `memory` (MEM-style compression)            | `language_persistent` | `plan`          |
-| `task_aug` (rephrasings of the task)        | `language_persistent` | `plan`          |
-| `interjection`                              | `language_events`     | `interjections` |
-| speech tool-call atom (`style=null`, `say`) | `language_events`     | `interjections` |
-| `vqa` (user / assistant pair)               | `language_events`     | `vqa`           |
-
-### How subtasks are generated
-
-The `plan` module doesn't ask the VLM for subtasks in one shot. Instead
-it uses a two-step **describe → segment** flow:
-
-1. **Describe** — the VLM narrates only what it actually sees in the
-   chosen camera (no guessing about the task).
-2. **Segment** — that description is fed back in, and the VLM splits the
-   episode into consecutive atomic subtasks.
-
-Both passes see the episode as **timestamped contact sheets** — frames
-sampled at `frames_per_second` (0.5s by default) and packed into JPEG
-grids with each frame's time burned into its corner, so the VLM cites
-exact boundary times directly. This is far cheaper in vision tokens than
-one image per frame, so the sampling can stay dense; episodes longer than
-`max_frames_per_prompt` are split into windows at the same density and
-merged. Both prompts also carry a causal **event-boundary** definition (a
-new event starts when an object becomes held / is released / reaches a new
-location / a lid changes state / contents move) to sharpen where cuts land.
-
-Optionally, a third **seeded-relabel** pass (`--plan.subtask_seeded_relabel`)
-revisits each span with its previous/current/next segment contact sheets and
-minimally corrects the label, using the first label as a prior — it keeps the
-boundaries fixed and only sharpens wording, at the cost of one extra call per
-subtask.
-
-The resulting spans are then stitched into a gap-free, full-episode
-cover, so **every frame has exactly one active subtask**. See
-[Running on Hugging Face Jobs](#running-on-hugging-face-jobs) for the
-production settings (single camera, timestamped contact sheets,
-auto-windowed subtask generation).
-
-### Tools
-
-The writer does **not** add a `tools` column to the parquet. The tool
-catalog lives in `meta/info.json["tools"]` instead (see [Tools](./tools)).
-After every run, the pipeline makes sure the canonical `say` schema is in
-that list, keeping any tools you declared beforehand.
-
-Want to add your own tool? Edit `meta/info.json["tools"]` directly — the
-pipeline preserves whatever is already there. That makes the tool visible
-to the chat template, so the model can learn to _generate_ the call. The
-runtime layer that actually _executes_ a generated call (the `Tool`
-protocol / `TOOL_REGISTRY` under `src/lerobot/tools/`) is not part of
-this PR — the [Tools](./tools) doc marks those pieces as
-not-yet-implemented.
-
-## Running on Hugging Face Jobs
-
-Annotating a real dataset needs a GPU big enough to serve the VLM, so
-`lerobot-annotate` can dispatch itself to
-[Hugging Face Jobs](https://huggingface.co/docs/hub/en/jobs) — same as
-`lerobot-train`. Add `--job.target=<flavor>` to the exact command you'd
-run locally and it runs on that hardware instead:
+Install the `dataset` and `annotations` extras, then start with a few episodes.
+This example uses an already-running OpenAI-compatible model endpoint, so the
+laptop does not load the VLM. Set `model_id` to the model that endpoint serves.
 
 ```bash
-hf auth login   # once
-
+uv sync --extra dataset --extra annotations
 uv run lerobot-annotate \
-    --repo_id=user/my_dataset \
-    --new_repo_id=user/my_dataset_annotated \
-    --push_to_hub=true \
-    --vlm.model_id=Qwen/Qwen3.6-27B \
-    --vlm.num_gpus=1 \
-    --vlm.serve_command="vllm serve Qwen/Qwen3.6-27B --tensor-parallel-size 1 \
-        --max-model-len 32768 --gpu-memory-utilization 0.8 \
-        --uvicorn-log-level warning --port {port}" \
-    --vlm.serve_ready_timeout_s=1800 \
-    --vlm.chat_template_kwargs='{"enable_thinking": false}' \
-    --job.target=h200
+    --root=/data/my-lerobot-v3-copy \
+    --only_episodes='[0,1]' \
+    --vlm.model_id=Qwen/Qwen3-VL-4B-Instruct \
+    --vlm.auto_serve=false \
+    --vlm.api_base=http://model.internal:8000/v1 \
+    --runtime.run_uri=/data/runs/annotation \
+    --runtime.workers=2 --runtime.batch_size=2 \
+    --executor.episode_parallelism=1
 ```
 
-That submits a single-GPU `h200` job that:
+Alternatively, use `--repo_id=owner/dataset --revision=SOURCE_SHA`; the CLI creates
+and reuses a writable working copy without modifying the pinned Hub snapshot.
+Use `vlm.auto_serve=true` to own a local vLLM service when the environment has the
+required dependencies and GPU memory. vLLM is not installed by the annotation extra.
 
-1. starts from the `vllm/vllm-openai` image and installs `lerobot` on top,
-2. boots one vLLM server per GPU and drives it over the OpenAI-compatible API,
-3. runs the `plan` / `interjections` / `vqa` modules across the dataset,
-4. with `--push_to_hub=true`, uploads the result to `--new_repo_id` (or
-   back to `--repo_id` in place if you leave that unset).
+Annotations go into `language_persistent` and `language_events` in the dataset's
+Parquet shards. [Language Columns and Recipes](./language_and_recipes) explains
+how policies consume them.
 
-The command streams the job's logs; `Ctrl-C` detaches without cancelling
-it. List the available flavors and their pricing with `hf jobs hardware`.
+| Module          | Annotations                                | Column                |
+| --------------- | ------------------------------------------ | --------------------- |
+| `plan`          | `subtask`, `plan`, `memory`, `task_aug`    | `language_persistent` |
+| `interjections` | `interjection` and `say` speech tool calls | `language_events`     |
+| `vqa`           | Grounded user/assistant Q&A                | `language_events`     |
 
-<Tip warning={true}>
+Each module is enabled by default; disable it with `--plan.enabled=false`,
+`--interjections.enabled=false` or `--vqa.enabled=false`. The tool catalogue lives
+in `meta/info.json["tools"]`; existing tools are retained and `say` is added.
 
-Qwen3.6 ships with thinking enabled, which eats the token budget the
-annotator needs for its JSON answer — `--vlm.chat_template_kwargs='{"enable_thinking": false}'`
-turns it off. Without `--push_to_hub=true` the annotated dataset is
-discarded when the pod exits.
+## Execution, options and resume
 
-</Tip>
+```text
+           ┌─ plan/subtasks → interjections → plan refresh ─┐
+v3 input ──┤                                                ├─ validate → materialize
+           └─ VQA ──────────────────────────────────────────┘
+```
 
-### Job options
+Stages are sequential by default. Workers initialize once and commit checked batches
+to `runtime.run_uri`; re-running the same configuration reuses valid outputs, repairs
+corrupt/incomplete work and avoids model startup on a fully cached run. Uncommitted
+work can repeat. Changing model, prompt or upstream content invalidates affected work;
+a module's version must change when its behavior changes.
+The first local worker-group failure signals sibling groups to stop and cancels pending
+groups. In-flight batches finish checkpointing and teardown before the error returns;
+no later batches are started. This is cooperative cancellation, not a kill of a hung
+model request: configure finite service timeouts. Resume reuses completed batches.
 
-| Flag                | Default                   | What it does                                                                    |
-| ------------------- | ------------------------- | ------------------------------------------------------------------------------- |
-| `--job.target`      | `local`                   | HF Jobs flavor to run on (e.g. `h200`, `h200x4`). Omitted/`local` runs here.    |
-| `--job.image`       | `vllm/vllm-openai:latest` | Runtime image for the pod.                                                      |
-| `--job.timeout`     | `2h`                      | Wall-clock cap. Raise it for large datasets.                                    |
-| `--job.detach`      | `false`                   | Submit and exit instead of streaming logs.                                      |
-| `--job.lerobot_ref` | `main`                    | Git ref of lerobot installed on the pod — point it at a branch to test changes. |
-| `--job.tags`        | `[]`                      | Extra tags on the job and on any dataset it pushes (`lerobot` is always added). |
+| Option                                                                        | Default                            | Use                                                                                                                                                                        |
+| ----------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runtime.mode`                                                                | `run`                              | `plan` previews independent work without inference/submission; downstream plans wait for real outputs. `resume` is an alias of `run`: both verify and reuse existing work. |
+| `runtime.run_uri`                                                             | Local annotation staging directory | Persistent local/shared path or remote store; required explicitly for HF Jobs.                                                                                             |
+| `runtime.workers` / `batch_size` / `shard_size`                               | `1` / `16` / `64`                  | Worker processes/groups, items per checkpoint batch, items per work shard. Use at least one shard per requested worker.                                                    |
+| `runtime.max_parallel_stages`                                                 | `1`                                | Admit independent stages concurrently; requires an explicit CPU/GPU/memory `resource_budget`.                                                                              |
+| `runtime.max_retries`                                                         | `2`                                | Bounded retries for temporary network/service failures; schema/input errors and unknown bugs fail immediately.                                                             |
+| `executor.episode_parallelism` / `vlm.client_concurrency`                     | `16` / `16`                        | Threads inside each language worker and requests per client, not global endpoint limits.                                                                                   |
+| `plan.frames_per_second` / `max_frames_per_prompt` / `window_overlap_seconds` | `2` / `60` / `1`                   | Subtask sampling density, frame budget including overlap, and context overlap.                                                                                             |
+| `plan.emit_plan` / `emit_memory` / `n_task_rephrasings`                       | `true` / `true` / `10`             | Select plan/memory output; `0` rephrasings disables task augmentation.                                                                                                     |
+| `vlm.camera_key` / `vqa.restrict_to_default_camera` / `vqa.vqa_emission_hz`   | First image camera / `false` / `1` | Default camera, whether VQA uses only that camera, and VQA frequency.                                                                                                      |
 
-For a bigger dataset, scale to `h200x4` and raise
-`--vlm.parallel_servers` / `--vlm.num_gpus` to match, and give the job
-more headroom with e.g. `--job.timeout=8h`.
+Subtasks use timestamped contact sheets and a describe→segment pass. Optional
+`plan.subtask_seeded_relabel=true` refines wording with another call per subtask.
+Long episodes use overlapping context but nonoverlapping output ownership, preserving
+exact source frame IDs/timestamps in `meta/annotations/windows/chunk-*/file-*.parquet`
+(one table per data shard, anchored to each episode's first shard). Partial updates preserve
+unselected episodes. An unlabelled window rejects that episode with a reason rather
+than borrowing neighbouring labels; healthy episodes in the batch continue. Invalid
+episode clocks/frames are also rejected, while unexpected module errors still fail fast.
+Inspect boundaries and idle tails:
+structural validation is not a human assessment of label quality.
 
-Remote runs need `--repo_id` (the pod pulls the dataset from the Hub;
-`--root` names a directory only your machine has). A dataset that exists
-only in your local cache is pushed to a **private** repo first.
+Tune `vlm.max_new_tokens` and model-specific `vlm.chat_template_kwargs` so the
+model has enough response budget for valid JSON, especially on long windows.
 
-## Key options
+For concurrent stages, use a configuration file or Python; reserve worker resources
+separately from an external/owned model service:
 
-These are the flags you'll reach for most often. Run
-`lerobot-annotate --help` for everything else; the defaults are tuned for
-short manipulation episodes.
+```python
+from lerobot.annotations.steerable_pipeline.config import AnnotationPipelineConfig
+from lerobot.annotations.runtime.configs import RuntimeConfig
+from lerobot.annotations.runtime.types import Resources
 
-### Dataset in / out
+cfg = AnnotationPipelineConfig()
+cfg.runtime = RuntimeConfig(
+    run_uri="/data/runs/annotation", workers=2,
+    max_parallel_stages=2, resource_budget=Resources(cpus=4, memory_gb=16),
+)
+# Pass cfg to run_annotation_pipeline(cfg, Path("/data/my-lerobot-v3-copy")),
+# or serialize it and use --config_path=annotation.json.
+```
 
-| Flag              | Default | What it does                                                            |
-| ----------------- | ------- | ----------------------------------------------------------------------- |
-| `--repo_id`       | —       | Hub dataset to annotate (downloaded if `--root` unset).                 |
-| `--root`          | —       | Annotate a local dataset directory instead.                             |
-| `--new_repo_id`   | —       | Push the result to a new repo (leaves the source repo untouched).       |
-| `--push_to_hub`   | `false` | Upload after annotating (to `--new_repo_id`, else back to `--repo_id`). |
-| `--only_episodes` | all     | Annotate just these episode indices (handy for a test run).             |
-| `--seed`          | `1729`  | Seeds the RNGs that pick interjection timestamps + VQA question types.  |
+For a shared model endpoint, run one authenticated coordinator and point **all**
+clients at `vlm.endpoint_limit_url` with the same `vlm.endpoint_limit_key`:
 
-### Which modules run
+```bash
+uv run python -m lerobot.annotations.runtime.endpoint_limits \
+    --host=0.0.0.0 --port=8090 --key=annotation --limit=8 \
+    --token-env=ANNOTATION_LIMIT_TOKEN
+```
 
-Every module is on by default and can be toggled independently (set to
-`false` to skip it, e.g. to iterate on one module at a time):
+Set `vlm.endpoint_limit_token_env=ANNOTATION_LIMIT_TOKEN` on clients; use TLS or a
+private trusted network. The limit covers participating clients across workers/runs.
+Unreachable coordinators fail closed. Ambiguous timeouts or killed workers leave permits
+held: drain/cancel inference before restarting the coordinator, rather than assuming
+old requests ended. Put API credentials in `vlm.api_key_env`, not saved configuration.
+Admission expires after `vlm.endpoint_limit_timeout_s=300` seconds (request timeout:
+`vlm.request_timeout_s=600`). When no inference was sent and permit cleanup succeeds,
+`EndpointAdmissionTimeoutError` is a temporary service error retried by the worker with
+backoff and checkpoint reuse, up to `runtime.max_retries`; the client does not multiply
+admission waits by its request retries. Permanent admission failures, unconfirmed cleanup
+and retained-permit errors raise non-retryable `EndpointLimitError`. Coordinator overload
+or temporary outages retry the same admission ID within that single deadline.
+Permit cleanup has separate bounded
+network retries. A failed release after a
+successful completion logs a retained-permit warning and keeps the response; it never
+resends that request. The coordinator may still need operator recovery.
 
-| Flag                      | Default | Turns off                           |
-| ------------------------- | ------- | ----------------------------------- |
-| `--plan.enabled`          | `true`  | subtasks + plan + memory + task_aug |
-| `--interjections.enabled` | `true`  | interjections + speech atoms        |
-| `--vqa.enabled`           | `true`  | the VQA pairs                       |
+Known connect/DNS failures release their permits. Inspect held request IDs with an
+authenticated `POST /status` (`{"key":"annotation"}`). For operator recovery, start
+the coordinator with a **separate** `--admin-token-env`; after draining/cancelling
+inference, `POST /reset` with that admin bearer token and
+`{"key":"annotation","drained":true}`. Reset is disabled without an admin token;
+never reset live inference just to unblock workers. Request retries (429/5xx and temporary
+network failures) are bounded by `vlm.request_max_retries=2`; each reacquires admission.
+`vlm.request_timeout_s` bounds each request (600 seconds by default); hidden SDK retries
+stay disabled so they cannot bypass shared admission.
+Empty subtask results (`no_subtasks`, `empty_subtask_window:N`) receive up to
+`plan.rejection_max_retries=2` additional episode-local attempts before final rejection;
+set it to zero to disable. Invalid clocks/frames are not retried. Final rejections are
+cached on resume, dependent stages are masked, and healthy episodes continue. Changing
+the plan retry policy changes its scientific cache identity. Rejected families leave
+existing labels intact; never delete audit checkpoints to retry an input.
 
-### The VLM (`--vlm.*`)
+## Slurm and Hugging Face Jobs
 
-| Flag                       | Default            | What it does                                                                         |
-| -------------------------- | ------------------ | ------------------------------------------------------------------------------------ |
-| `--vlm.model_id`           | `Qwen/Qwen3.6-27B` | The model to serve and prompt.                                                       |
-| `--vlm.camera_key`         | first `images.*`   | Which camera every prompt is grounded on.                                            |
-| `--vlm.serve_command`      | auto               | The exact `vllm serve …` command (set TP size, GPU memory, `--max-model-len` here).  |
-| `--vlm.parallel_servers`   | `1`                | Independent servers for round-robin routing (one per GPU).                           |
-| `--vlm.num_gpus`           | `0`                | GPUs per server (`0` = one each).                                                    |
-| `--vlm.client_concurrency` | `16`               | In-flight requests across all servers.                                               |
-| `--vlm.max_new_tokens`     | `512`              | Generation cap per call.                                                             |
-| `--vlm.temperature`        | `0.2`              | Sampling temperature.                                                                |
-| `--vlm.reasoning_effort`   | `null`             | Thinking-budget hint (`low`/`medium`/`high`) forwarded to OpenAI-compatible servers. |
+### Slurm
 
-### Subtasks / plan / memory (`--plan.*`)
+Run the controller where `sbatch`/`squeue` are available. Code, dataset, Python environment
+and run storage must be visible to workers. Language clients need a reachable model
+service; the controller's localhost is not another node's localhost.
+Only trusted operators may write `runtime.run_uri`: plans contain importable factories,
+so write access equals code execution with the workers' credentials.
 
-| Flag                            | Default    | What it does                                                                                                                 |
-| ------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `--plan.frames_per_second`      | `2.0`      | Frame sampling rate for the contact sheets (`2.0` = one frame every 0.5s).                                                   |
-| `--plan.max_frames_per_prompt`  | `60`       | Frame budget per VLM call. Episodes whose sampling exceeds this are auto-windowed at the same density, then stitched.        |
-| `--plan.contact_sheet_columns`  | `5`        | Columns per contact-sheet grid (`contact_sheet_frames_per_sheet` tiles, time row-major).                                     |
-| `--plan.plan_max_steps`         | `8`        | Upper bound on subtasks per episode.                                                                                         |
-| `--plan.subtask_describe_first` | `true`     | Run the describe→segment grounding pass (best subtask quality; +1 call/episode).                                             |
-| `--plan.subtask_seeded_relabel` | `false`    | Second pass: re-label each subtask from its prev/current/next contact sheets, seeded with the first label (+1 call/subtask). |
-| `--plan.subtask_relabel_frames` | `5`        | Frames sampled uniformly per segment sheet in the relabel pass (only used when `subtask_seeded_relabel=true`).               |
-| `--plan.emit_plan`              | `true`     | Emit the numbered `plan` rows (`false` = subtasks + memory only).                                                            |
-| `--plan.emit_memory`            | `true`     | Emit the `memory` rows (`false` = subtasks + plan only); symmetric to `emit_plan`.                                           |
-| `--plan.n_task_rephrasings`     | `10`       | How many `task_aug` rephrasings to emit (`0` disables).                                                                      |
-| `--plan.derive_task_from_video` | `if_short` | Use the dataset task as-is (`off`), only when it's missing/short (`if_short`), or always re-derive from video (`always`).    |
+```bash
+uv run lerobot-annotate --root=/shared/my-lerobot-v3-copy \
+    --vlm.auto_serve=false --vlm.api_base=http://model.internal:8000/v1 \
+    --runtime.backend=slurm --runtime.workers=4 \
+    --runtime.run_uri=/shared/runs/annotation \
+    --runtime.slurm.python_executable=/shared/env/bin/python \
+    --runtime.slurm.working_directory=/shared/project \
+    --runtime.slurm.max_concurrent=4 --runtime.slurm.time_limit=02:00:00
+```
 
-### Interjections + VQA
+Steps declare CPU, GPU and memory requests; Slurm supports both CPU and GPU jobs.
+Each array has a dependent finalizer. Resume refuses duplicate active submissions;
+detaching the controller does not cancel cluster jobs. Configure `partition`, `account`
+and writable model/kernel caches for your cluster. `runtime.mode=plan` renders scripts
+for independent stages without submitting jobs.
+Purged array IDs do not block resume. Queue probes and non-waiting submissions use
+`runtime.slurm.command_timeout_s` (30 seconds); scheduler errors/timeouts fail closed.
+A submission timeout can mean the job was accepted: inspect the queue before retrying.
+The dependent `sbatch --wait` intentionally has no short command timeout.
 
-| Flag                                            | Default | What it does                                               |
-| ----------------------------------------------- | ------- | ---------------------------------------------------------- |
-| `--interjections.max_interjections_per_episode` | `3`     | Cap on interjection/speech pairs per episode.              |
-| `--vqa.vqa_emission_hz`                         | `1.0`   | How often VQA pairs are emitted.                           |
-| `--vqa.restrict_to_default_camera`              | `false` | Ground VQA only on `--vlm.camera_key` (else every camera). |
-| `--vqa.coordinate_scale`                        | `1000`  | VLM bbox/keypoint grid, stored as [0, 1] (`none` = px).    |
-| `--executor.episode_parallelism`                | `16`    | Episodes processed concurrently within each phase.         |
+### Running on Hugging Face Jobs
 
-## Contributing new modules
+For generic remote-worker stages, Ctrl-C or `runtime.hf_jobs.detach=true` stops the
+stage with `KeyboardInterrupt` after its currently submitted group; it launches no later
+worker groups or dependent stages. Submitted jobs and already running independent stage
+controllers are not cancelled; job IDs remain recorded. Resume after they finish. For
+controller-wide detachment, detach the outer single-node annotation job instead.
 
-The pipeline is built to grow, and **contributions are very welcome** —
-a brand-new module (say, trajectory traces or affordances), a new prompt
-template, a smarter grounding flow, or quality fixes to the existing
-`plan` / `interjections` / `vqa` modules.
+Replace `SOURCE_SHA`, `CODE_SHA`, account/repository names and the image digest below.
+Remote annotation requires a pinned Hub source, persistent remote storage and a public
+code repository. The image must include Python 3.12+, git, ffmpeg and compatible dataset,
+annotation and model-service dependencies; code installation uses `--no-deps`.
+There is no default job image: a stock vLLM image is **not** a dependency-complete
+LeRobot runtime. For an external endpoint, build from your pinned Python 3.12+ base,
+install git/ffmpeg and a hash-locked dependency set resolved from this code revision's
+`lerobot[annotations]`, then smoke-test these imports and a small decode/annotation:
 
-Every module lives under
-`src/lerobot/annotations/steerable_pipeline/modules/`, shares the VLM
-client and the keyframe cache, writes its raw output to the staging
-tree, and plugs into the executor as its own phase. Got an idea? Open an
-issue or PR on [the repo](https://github.com/huggingface/lerobot).
+```bash
+python -c 'import draccus, datasets, pyarrow, av, openai; import lerobot.annotations.processing'
+```
 
-## How recipes consume the output
+Only trusted operators may write `runtime.run_uri`, including its bucket and bundles:
+plans contain importable factories, so write access equals code execution with the
+HF workers' credentials. Do not execute a run store supplied by an untrusted party.
 
-The annotations are meant to be read by recipes (see
-[Language Columns and Recipes](./language_and_recipes)). Typically:
+Publish that tested image and pass its registry digest below. For `vlm.auto_serve=true`,
+also include an explicitly pinned vLLM version with compatible Torch/video-decoder
+versions; do not install unconstrained dependencies on top of vLLM at job startup.
+`bootstrap_packages` is only for a small number of explicit `name==version` additions,
+not automatic dependency resolution. `job.lerobot_ref` is a legacy code-SHA alias,
+not a branch/tag selector.
 
-- low-level / high-level / memory-update branches read
-  `subtask` / `plan` / `memory` from `language_persistent`.
-- an interjection-response branch reads `interjection` events plus the
-  paired speech atom (merged into one assistant turn via `tool_calls_from`)
-  and the matching `plan` refresh at the same timestamp.
-- a VQA branch reads the `(vqa, user)` and `(vqa, assistant)` pairs from
-  `language_events`.
+```bash
+hf auth login
+uv run lerobot-annotate --repo_id=owner/dataset --revision=SOURCE_SHA \
+    --runtime.run_uri=hf://buckets/your-account/annotations/run-1 \
+    --runtime.hf_jobs.namespace=your-account \
+    --runtime.hf_jobs.code_revision=CODE_SHA \
+    --job.target=h200 --job.image=YOUR_RUNTIME@sha256:IMAGE_DIGEST \
+    --job.timeout=30m --job.detach=true
+```
 
-## Why state and events are split
+The built-in language recipe runs on **one HF node with local workers**, optionally
+owning its VLM service. Generic steps can use multiple HF worker jobs only when they
+explicitly declare remotely readable inputs. Local roots are never silently uploaded.
+Resolved configuration files work remotely; credentials travel as secrets. Pin model
+revisions (`vlm.model_revision`) and verify externally served models yourself. Check
+`hf jobs hardware`, cap concurrency/timeouts, and smoke-test the image before scaling.
 
-Two ideas shape the design:
+Outputs survive job exit even without Hub publication. The job prints a release index;
+restore it with its key relative to the run store:
 
-1. **Persistent state vs. exact events.** Persistent rows (`subtask`,
-   `plan`, `memory`) apply to the whole episode and answer "what's true
-   right now?". Event rows (`interjection`, `vqa`, speech) appear only on
-   the one frame whose timestamp matches. Timestamps are copied straight
-   from the source parquet — never recomputed in floating point.
-2. **One VLM pass.** All three modules share a single VLM client (the
-   OpenAI-compatible client talking to the job's vLLM server), so you pay
-   for one model load per dataset, not three.
+```python
+from pathlib import Path
+from lerobot.annotations.runtime.artifacts import ArtifactStore
+from lerobot.jobs.processing import restore_release
 
-## Re-running a single module
+store = ArtifactStore("hf://buckets/your-account/annotations/run-1")
+restore_release(store, "releases/RELEASE_DIGEST.json", Path("restored"))
+```
 
-Each module stages its raw output to
-`<root>/.annotate_staging/episode_{N:06d}/<module>.jsonl`. This makes
-prompt iteration cheap: re-running one module overwrites only its own
-JSONL, then the writer recomposes the final parquet. Disable modules you
-don't want with `--plan.enabled=false` (and likewise
-`--interjections.enabled` / `--vqa.enabled`) to test one at a time.
+Unchanged videos reference the pinned source revision; restoration verifies their hashes.
+For account/job setup, see the [HF Jobs guide](https://huggingface.co/docs/huggingface_hub/guides/jobs).
 
-## What the validator checks
+## Data safety and publication
 
-Before the writer runs, `StagingValidator` confirms:
+- One controller owns each run. Process a separate dataset version while training:
+  local commits are recoverable, not atomic snapshots for simultaneous readers.
+- Native rows/columns and publisher-owned labels are retained. Ownership records in
+  `meta/annotations/ownership/*.parquet` identify generated families that reruns may replace.
+- Labels and provenance are Parquet; JSON is used for internal control/debug records.
+  Validation checks source clocks, annotation structure and cross-family consistency.
+- Publication is explicit: `push_to_hub=true` requires `new_repo_id`, pinned source
+  `repo_id`/`revision`, a fresh `release_tag` and a reviewed `redistribution_permission`.
+  Permission notes do not invent a missing licence. Existing targets additionally require
+  `expected_target_revision` and must be processed datasets with matching lineage.
+  New targets inherit source visibility (`push_private=null`); local-only sources default
+  to private. Publishing a private Hub source publicly requires both `push_private=false`
+  and `allow_public_from_private=true`, in addition to reviewed permission. Unknown
+  visibility fails closed. Existing target visibility is checked, never silently changed.
+- Later releases start from the processed target's pinned revision and upload changed
+  Parquet/metadata, not another video copy. Publication has bounded file/byte limits;
+  large staged uploads need a separate workflow. Seeds do not guarantee bitwise VLM/GPU
+  reproducibility, and cached-run time is not processing throughput.
+- Release tags are immutable; the format tag (for example `v3.0`) moves to each new
+  release, matching `LeRobotDataset.push_to_hub`. Default loads follow that alias.
+  Pin `revision` to a release tag or commit for reproducible reads. Tag failures are
+  reported, even after the commit exists; a delete/recreate alias update is not atomic.
+- Published lineage contains scientific annotation settings, prompt fingerprints,
+  episode selection and available code/model/image pins, not operational configs,
+  endpoint addresses, local paths, bucket locations or scheduler accounts. Inspect
+  free-text permission notes and custom model parameters before public publication.
 
-- every event row lands exactly on a real frame timestamp;
-- no speech / interjection pairs are left orphaned;
-- `plan` is refreshed at every interjection timestamp;
-- `memory` rows fall on subtask boundaries (a warning, not an error);
-- each VQA assistant `content` is valid JSON in one of the
-  bbox / keypoint / count / attribute / spatial shapes;
-- every row goes to the column chosen by `column_for_style(style)`.
+Publication checks permissions, target lineage/tags, projected file counts (including
+ownership/window tables) and known unchanged-source bytes **before inference**, for both
+new targets and updates. Generated sizes are checked again before upload. A local-only
+source can be published to a new explicit target with native-content SHA256 provenance;
+Hub sources require their exact upstream commit. Native-content identity ignores
+Parquet row groups and Arrow reader batches, so the same fingerprint version reproduces
+it before or after annotation materialization. No project-specific tags are added.
 
-Any error aborts the writer. Pass `--skip_validation=true` to override
-while debugging.
+Local source fingerprints and episode indexes are reused while file identity, size,
+mtime and ctime are unchanged; `runtime.verify_sources=true` forces a full source read.
+This local change detector is not an adversarial integrity guarantee: same-size edits
+within a coarse filesystem timestamp tick can be invisible. Treat published local
+artifacts as immutable. Artifacts retain
+checksum/schema checks (unchanged local verification is memoized within a store instance;
+remote checks and downloads still hash bytes). Endpoint addresses, worker counts and
+dataset-root locations do not change language cache identity. Reuse after relocation
+requires the same persistent `runtime.run_uri`; model/config/prompt changes still invalidate
+work. Packaged prompt edits and prompt overrides are hashed; provide the same overrides
+to all workers. Corrupt checkpoints are ignored with diagnostic warnings, not silently.
+Language items pin their own native rows, referenced video files/offsets, task, relevant
+metadata and upstream artifacts. Appending episodes or changing one episode does not
+invalidate unrelated VLM items, nor does expanding `only_episodes`. A changed shared
+video invalidates the episodes that reference that file. Whole-dataset/stage digests
+remain in plan provenance, not these item keys. Initial corrected identities may require
+one recomputation of older cached work.
 
-## Where each module's ideas come from
+The generic runtime is Torch-free on CPU. The language recipe is not: its shared
+dataset/configuration/video modules import Torch even in planning and CPU workers.
+The frame provider defers its own Torch/decoder/encoder imports until use, but this
+does not prevent those shared imports from loading Torch or video dependencies.
+Selecting a CPU HF Jobs flavor does not remove that dependency; budget workers accordingly.
+Persisted window tables use a fixed v1 schema; adding fields or changing their types/order
+requires an explicit migration before merging older window rows.
 
-- **`plan` — subtasks.** Hi Robot ([Shi 2025](https://arxiv.org/abs/2502.19417))
-  for atom granularity ("pick up one piece of lettuce", "place bowl to
-  box"); Pi0.7 ([Physical Intelligence 2025](https://pi.website/pi07))
-  for "how, not what" detail.
-- **`plan` — memory.** MEM ([Torne 2026](https://arxiv.org/abs/2603.03596)):
-  keep only the minimal relevant information — preserve outcomes, drop
-  specific attributes.
-- **`interjections`.** Hi Robot's scenario taxonomy: negative task,
-  situated correction, specific constraint, preference. Speech is a
-  tool-call-only atom
-  (`tool_calls=[{type:function, function:{name:"say", arguments:{text:...}}}]`).
-- **`vqa`.** ECoT ([Zawalski 2024](https://arxiv.org/abs/2407.08693)) for
-  grounded features (bounding boxes `[x_min, y_min, x_max, y_max]` and
-  keypoints, stored as [0, 1] image fractions) and Steerable VLA Policies
-  ([Zhao 2025](https://arxiv.org/abs/2509.07626)) for multi-abstraction
-  grounding. Pi0.7 also grounds answers across abstraction levels.
+Fingerprints and prepared files follow `staging_dir` (default: the dataset's `.annotate_staging`).
+Set it to an external path to keep planning writes outside the dataset; a pending commit
+must be recovered before planning. Mutating runs retain the dataset's commit journal/lock.
+Prepared files, installed files, journal replacements and their directory entries are
+fsynced before recovery state is retired on POSIX. The filesystem must honor fsync and
+atomic rename; this is still not a multi-file snapshot for concurrent readers. Windows
+has no portable directory fsync, so full power-loss durability is not promised there.
+Owned prepared files and empty per-plan directories are removed after successful recovery.
+Run-store
+outputs are retained for resume by default. Set `runtime.retain_materialized_outputs=false`
+to remove large materialization artifacts after a durable local commit, retaining inference
+outputs; explicit prune markers make the CPU-only rebuild normal, not a corruption warning.
+Remote HF release copies remain durable
+until you explicitly retire that release/store. Local stores require shared filesystem locks
+and atomic rename, but not hard-link support. Publication reuses at most 64 lock stripes;
+locks are not unlinked while another writer could be waiting. Local verification uses an
+LRU (131,072 entries; `ArtifactStore(..., verification_cache_size=...)`), not
+periodic whole-cache clears. There is no automatic cache TTL/deletion. Legacy per-artifact
+locks/window files are not automatically deleted from old run stores/datasets.
 
-When improving a module, tweak its prompt template in
-`src/lerobot/annotations/steerable_pipeline/prompts/` rather than
-rewriting from scratch.
+## Add an annotation step
 
-## Roughly how much it costs
+For prompt/grounding changes, reuse the existing modules and templates under
+`annotations/steerable_pipeline/`. For a new computation, implement an importable
+processing module; it need not use a VLM. This lifecycle sketch leaves prediction
+logic to your application:
 
-Per episode, the pipeline makes about `max_steps` plan calls,
-`max_interjections_per_episode` interjection calls, and
-`vqa_emission_hz × episode_seconds` VQA calls. With the defaults (8
-subtasks, 1 interjection, 1 Hz × 3 pairs) on a 30-second episode, that's
-~50 VLM calls.
+```python
+import pyarrow as pa
+from lerobot.annotations.runtime.types import ItemResult, ModuleSpec, Outcome, Resources
 
-Storage stays small: `language_persistent` is at most tens of KB per
-episode (parquet dictionary-encodes the one entry that repeats across
-frames), and `language_events` is empty on most frames — its size scales
-with the number of emissions, not `num_frames × num_emissions`.
+class MyStep:
+    def __init__(self):
+        self.spec = ModuleSpec(
+            name="my_annotation", version="1", scope="episode",
+            outputs={"labels": pa.schema([
+                ("episode_index", pa.int64()), ("frame_index", pa.int64()),
+                ("timestamp", pa.float64()), ("label", pa.string()),
+            ])},
+            resources=Resources(cpus=1, gpus=0, memory_gb=4),
+        )
+
+    def setup(self, context):
+        pass  # Initialize the model/client once here, never in __init__.
+
+    def process_batch(self, items, context):
+        results = []
+        for item in items:
+            rows = self.predict(item.payload, seed=item.seed)
+            table = pa.Table.from_pylist(rows, schema=self.spec.outputs["labels"])
+            artifact = context.write_parquet(item, "labels", table)
+            results.append(ItemResult(item.item_id, Outcome.COMPLETED, (artifact,)))
+        return results
+
+    def predict(self, references, *, seed):
+        raise NotImplementedError("Implement bounded prediction on exact source frames")
+
+    def teardown(self):
+        pass  # Release worker-owned resources.
+```
+
+Choose `scope` from `asset`, `episode`, `camera_stream`, `window` or `reduction`, and
+declare every output schema/resource requirement. Constructors must remain lightweight:
+planning inspects them without loading models. Return one result per item; masks and
+rejections need explicit reasons. Preserve source frame IDs/timestamps; window predictors
+can use `EpisodeWindow` and `reconcile_frame_rows`/`reconcile_spans` from
+`lerobot.annotations.runtime.windows`. Bump the module version when semantics change.
+Modules may optionally implement `ScientificProcessingModule.scientific_config()` to
+return only result-affecting settings (including model/prompt digests). Without this hook,
+the entire constructor config is scientific. Keep paths/endpoints in constructor config
+for execution; never omit a setting that can change results from the scientific hook.
+
+Wire the step into a Python recipe, not a new CLI. A source provides `dataset_ref`
+and `discover(stage, store, upstream)`, yielding bounded JSON `InputItem` references
+and resolving verified upstream artifacts. It must verify pinned inputs; declaring
+`DatasetRef` alone does not make local files immutable.
+For item-local reuse, set `InputItem.content_digest` to a complete SHA256 fingerprint of
+all native inputs and that item's upstream content; keep operational bindings in `payload`.
+Without this explicit contract, dataset/upstream-wide revisions remain in item identity.
+Do not opt in with paths alone or omit a model-visible input.
+
+```python
+from lerobot.annotations.runtime.configs import RuntimeConfig, StageConfig
+from lerobot.annotations.runtime.pipeline import run_pipeline
+
+# source is your reference-only source; my_package.steps must exist on every worker.
+stages = [StageConfig("labels", "my_package.steps:MyStep")]
+store, completed = run_pipeline(source, stages, RuntimeConfig(run_uri="/data/runs/custom"))
+```
+
+Use `depends_on=("other_stage",)` for ordering. Independent stages may overlap within
+the resource budget. `when="quality.usable"` records a reasoned mask for a false boolean
+supplied by the source after its declared dependency; it is **not** a built-in quality
+detector. For HF multi-job execution set `ModuleSpec.hf_jobs_compatible=True` only after
+making every input/model reference remote-readable; choose the CPU/GPU image/flavor
+and concurrency under `runtime.hf_jobs`.
+
+A custom step produces checked artifacts, not automatic dataset columns. Add explicit
+validation/materialization when introducing new columns, preserve native data, and
+review a small sample before scaling. Keep model/prompt semantics in the annotation
+module and scheduling, storage and retries in the engine. Run `lerobot-annotate --help`
+for the complete option list.

@@ -42,6 +42,14 @@ from lerobot.datasets.io_utils import load_tasks
 from lerobot.datasets.utils import DEFAULT_TASKS_PATH
 
 
+class RejectedEpisodeError(ValueError):
+    """A known per-episode input/model outcome, not a configuration or programming error."""
+
+    def __init__(self, reason: str, message: str):
+        self.reason = reason
+        super().__init__(message)
+
+
 @dataclass
 class EpisodeRecord:
     """Per-episode record yielded by the reader."""
@@ -53,6 +61,7 @@ class EpisodeRecord:
     data_path: Path
     row_offset: int  # row offset within the parquet file where this episode starts
     row_count: int  # number of rows for this episode
+    data_paths: tuple[Path, ...] = ()
 
     # Memoized parquet slice — populated on first ``frames_df()`` call so
     # repeat queries from different modules don't re-read the whole shard.
@@ -63,11 +72,21 @@ class EpisodeRecord:
         if self._frames_df_cache is None:
             import pandas as pd  # noqa: PLC0415  - deferred for optional dataset extra
 
-            table = pq.read_table(self.data_path)
+            if self.data_paths:
+                import pyarrow as pa
+                import pyarrow.compute as pc
+
+                table = pa.concat_tables([pq.read_table(path) for path in self.data_paths])
+                table = table.filter(pc.equal(table["episode_index"], self.episode_index)).sort_by(
+                    [("frame_index", "ascending")]
+                )
+            else:
+                table = pq.read_table(self.data_path)
             df: pd.DataFrame = table.to_pandas()
-            self._frames_df_cache = df.iloc[self.row_offset : self.row_offset + self.row_count].reset_index(
-                drop=True
-            )
+            self._frames_df_cache = df.iloc[
+                0 if self.data_paths else self.row_offset : (0 if self.data_paths else self.row_offset)
+                + self.row_count
+            ].reset_index(drop=True)
         return self._frames_df_cache
 
 

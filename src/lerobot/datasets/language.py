@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Literal
 
 import datasets
@@ -119,6 +120,44 @@ def language_persistent_arrow_type() -> pa.ListType:
 def language_events_arrow_type() -> pa.ListType:
     """Return the Arrow list type for the ``language_events`` column."""
     return pa.list_(language_event_row_arrow_type())
+
+
+def language_array(values, dtype: pa.ListType) -> pa.Array:
+    """Construct canonical nested language/JSON arrays via Arrow storage types."""
+    names = {field.name for field in dtype.value_type}
+    normalized = []
+    for atoms in values:
+        rows = []
+        for atom in atoms or []:
+            if set(atom) - names:
+                raise ValueError("Unsupported extra language atom fields")
+            row = dict(atom)
+            calls = row.get("tool_calls")
+            if calls is not None:
+                row["tool_calls"] = [
+                    json.dumps(
+                        json.loads(call) if isinstance(call, str) else call,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    )
+                    for call in calls
+                ]
+            rows.append(row)
+        normalized.append(rows)
+    storage = pa.list_(
+        pa.struct(
+            [
+                pa.field(
+                    field.name,
+                    pa.list_(pa.string()) if field.name == "tool_calls" else field.type,
+                    nullable=field.nullable,
+                )
+                for field in dtype.value_type
+            ]
+        )
+    )
+    return pa.array(normalized, type=storage).cast(dtype)
 
 
 def language_persistent_row_feature() -> dict[str, object]:
