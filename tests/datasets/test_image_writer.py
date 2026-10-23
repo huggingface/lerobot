@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import multiprocessing
 import queue
+import threading
 import time
 from multiprocessing import queues
 from unittest.mock import MagicMock, patch
@@ -22,6 +24,7 @@ from PIL import Image
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
+import lerobot.datasets.image_writer as image_writer
 from lerobot.datasets.image_writer import (
     AsyncImageWriter,
     image_array_to_pil_image,
@@ -31,6 +34,14 @@ from lerobot.datasets.image_writer import (
 from tests.fixtures.constants import DUMMY_HWC
 
 DUMMY_IMAGE = "test_image.png"
+
+
+def _gated_process_worker(ready, release, target, args):
+    """Hold a spawned process before it drains the real image queue."""
+    ready.set()
+    if not release.wait(timeout=30):
+        raise RuntimeError("test did not release worker")
+    target(*args)
 
 
 def test_init_threading():
@@ -66,6 +77,130 @@ def test_init_multiprocessing():
 def test_invalid_worker_counts(num_processes, num_threads):
     with pytest.raises(ValueError):
         AsyncImageWriter(num_processes=num_processes, num_threads=num_threads)
+
+
+@pytest.mark.parametrize("queue_maxsize", [0, -1])
+def test_invalid_queue_maxsize(queue_maxsize):
+    with pytest.raises(ValueError, match="queue_maxsize"):
+        AsyncImageWriter(queue_maxsize=queue_maxsize)
+
+
+@pytest.mark.parametrize("num_processes", [0, 1])
+def test_image_writer_queue_has_finite_default(num_processes):
+    writer = AsyncImageWriter(num_processes=num_processes, num_threads=1)
+    try:
+        maxsize = writer.queue.maxsize if num_processes == 0 else writer.queue._maxsize
+        assert maxsize == 30
+    finally:
+        writer.stop()
+
+
+def test_full_image_writer_queue_rejects_frame_without_waiting_for_worker(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+    submitted = threading.Event()
+    written = []
+    outcome = []
+
+    def slow_write(image, fpath, compress_level):
+        started.set()
+        assert release.wait(timeout=5)
+        written.append(fpath)
+
+    with patch("lerobot.datasets.image_writer.write_image", side_effect=slow_write):
+        writer = AsyncImageWriter(num_threads=1, queue_maxsize=1)
+        submitter = None
+        try:
+            image = np.zeros((8, 8, 3), dtype=np.uint8)
+            first = tmp_path / "first.png"
+            second = tmp_path / "second.png"
+            rejected = tmp_path / "rejected.png"
+            writer.save_image(image, first)
+            assert started.wait(timeout=5)
+            writer.save_image(image, second)
+
+            def submit_rejected():
+                try:
+                    writer.save_image(image, rejected)
+                except Exception as error:
+                    outcome.append(error)
+                finally:
+                    submitted.set()
+
+            submitter = threading.Thread(target=submit_rejected, daemon=True)
+            submitter.start()
+            assert submitted.wait(timeout=2), "save_image blocked on a full queue"
+            assert len(outcome) == 1 and isinstance(outcome[0], queue.Full)
+        finally:
+            release.set()
+            if submitter is not None:
+                submitter.join(timeout=5)
+            writer.stop()
+
+    assert written == [first, second]
+
+
+@pytest.mark.skipif(multiprocessing.get_start_method() != "fork", reason="requires forked test worker")
+def test_full_process_image_writer_queue_rejects_frame(tmp_path):
+    started = multiprocessing.Event()
+    release = multiprocessing.Event()
+
+    def slow_write(image, fpath, compress_level):
+        started.set()
+        assert release.wait(timeout=5)
+        write_image(image, fpath, compress_level)
+
+    with patch("lerobot.datasets.image_writer.write_image", side_effect=slow_write):
+        writer = AsyncImageWriter(num_processes=1, num_threads=1, queue_maxsize=1)
+        try:
+            image = np.zeros((8, 8, 3), dtype=np.uint8)
+            first = tmp_path / "first.png"
+            second = tmp_path / "second.png"
+            rejected = tmp_path / "rejected.png"
+            writer.save_image(image, first)
+            assert started.wait(timeout=5)
+            writer.save_image(image, second)
+            with pytest.raises(queue.Full):
+                writer.save_image(image, rejected)
+        finally:
+            release.set()
+            writer.stop()
+
+    assert first.exists() and second.exists()
+    assert not rejected.exists()
+
+
+@pytest.mark.parametrize("num_threads", [1, 2])
+@pytest.mark.parametrize("capacity", [1, 2])
+def test_spawn_queue_saturation_drains_accepted_images(tmp_path, monkeypatch, num_threads, capacity):
+    """Exercise bounded submission and real PNG writes with spawn, not fork inheritance."""
+    ctx = multiprocessing.get_context("spawn")
+    ready, release = ctx.Event(), ctx.Event()
+
+    def process(*, target, args):
+        return ctx.Process(target=_gated_process_worker, args=(ready, release, target, args))
+
+    monkeypatch.setattr(image_writer.multiprocessing, "Process", process)
+    monkeypatch.setattr(image_writer.multiprocessing, "JoinableQueue", ctx.JoinableQueue)
+    writer = AsyncImageWriter(num_processes=1, num_threads=num_threads, queue_maxsize=capacity)
+    image = np.full((8, 9, 3), 127, dtype=np.uint8)
+    accepted = [tmp_path / f"accepted-{i}.png" for i in range(capacity)]
+    rejected = tmp_path / "rejected.png"
+    try:
+        assert ready.wait(timeout=30), "spawned worker did not start"
+        for path in accepted:
+            writer.save_image(image, path)
+        with pytest.raises(queue.Full):
+            writer.save_image(image, rejected)
+    finally:
+        release.set()
+        writer.stop()
+    assert all(p.exitcode == 0 for p in writer.processes)
+    assert not rejected.exists()
+    for path in accepted:
+        with Image.open(path) as saved:
+            np.testing.assert_array_equal(np.asarray(saved), image)
+    writer.stop()
 
 
 def test_image_array_to_pil_image_float_array_wrong_range_0_255():
@@ -295,9 +430,10 @@ def test_multiple_stops_multiprocessing():
 
 
 def test_wait_until_done(tmp_path, img_array_factory):
-    writer = AsyncImageWriter(num_processes=0, num_threads=4)
+    num_images = 100
+    # Saturation behavior is tested separately; this checks that accepted writes drain.
+    writer = AsyncImageWriter(num_processes=0, num_threads=4, queue_maxsize=num_images)
     try:
-        num_images = 100
         image_arrays = [img_array_factory(height=500, width=500) for _ in range(num_images)]
         fpaths = [tmp_path / f"frame_{i:06d}.png" for i in range(num_images)]
         for image_array, fpath in zip(image_arrays, fpaths, strict=True):
@@ -313,9 +449,10 @@ def test_wait_until_done(tmp_path, img_array_factory):
 
 
 def test_wait_until_done_multiprocessing(tmp_path, img_array_factory):
-    writer = AsyncImageWriter(num_processes=2, num_threads=2)
+    num_images = 100
+    # A spawned process may still be starting while this burst is submitted.
+    writer = AsyncImageWriter(num_processes=2, num_threads=2, queue_maxsize=num_images)
     try:
-        num_images = 100
         image_arrays = [img_array_factory() for _ in range(num_images)]
         fpaths = [tmp_path / f"frame_{i:06d}.png" for i in range(num_images)]
         for image_array, fpath in zip(image_arrays, fpaths, strict=True):
