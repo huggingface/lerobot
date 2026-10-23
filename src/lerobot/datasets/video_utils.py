@@ -1164,7 +1164,9 @@ class VideoFrame:
     ```
     """
 
-    pa_type: ClassVar[Any] = pa.struct({"path": pa.string(), "timestamp": pa.float32()})
+    # float64: float32 timestamps lose sub-frame precision as accumulated offsets grow
+    # (e.g. when concatenating datasets), which can shift frame boundaries.
+    pa_type: ClassVar[Any] = pa.struct({"path": pa.string(), "timestamp": pa.float64()})
     _type: str = field(default="VideoFrame", init=False, repr=False)
 
     def __call__(self):
