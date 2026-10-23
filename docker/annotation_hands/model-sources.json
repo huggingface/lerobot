@@ -1,0 +1,28 @@
+{
+  "manifest_sha256": "f6fb26f2f1c2d26a4622a67c5e775701564e22fe869180df6c2803de00580c91",
+  "downloads": [
+    {
+      "repo": "nvidia/EgoHand-v1",
+      "revision": "4c90fd1bd774a794ce7492c0091736d580e6e6b7",
+      "file": "egohand_s060000.ckpt",
+      "sha256": "f940ecb6e3b73d5bd9e562cff232550e1c072f6c063eb4f705951122b15d8a75",
+      "output": "egohand/inference-only.pt",
+      "template": "egohand-checkpoint-template.zip",
+      "template_sha256": "1231b2eb35e87e2882e6ff606962d4d6185926f93148b1282415c942f40b68a9"
+    },
+    {
+      "repo": "nvidia/SOMA-X",
+      "revision": "f81a01796f652260ff930d5318d6c6b845a505ed",
+      "file": "MHR/mhr_model_lod1.pt",
+      "sha256": "352e271a6c42729c68554ceaea0c955e866970160c31e35506d782dc0f7377bc",
+      "output": "soma/MHR/mhr_model_lod1.pt"
+    },
+    {
+      "repo": "Ruicheng/moge-2-vits-normal",
+      "revision": "26b477f41595707c5db6770294c0d1721e8ed4ed",
+      "file": "model.pt",
+      "sha256": "79a16621928c2bf0ed04659218c55c01075e950507f40bb3332fb4c873d3e1dc",
+      "output": "camera/moge-small.pt"
+    }
+  ]
+}

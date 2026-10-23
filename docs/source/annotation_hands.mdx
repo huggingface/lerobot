@@ -1,0 +1,107 @@
+# Hand action annotations
+
+In Annotation Studio, select **Hand actions** alongside other annotations. Choose
+a dataset, episodes and a human-POV RGB camera, then an HF Jobs GPU
+under **Models & compute**. The shared wizard handles estimates, review, launch
+and progress. This flow uses EgoHand and native SOMA/MHR hands; no MANO files are
+needed.
+
+## Pipeline
+
+1. **Camera motion:** dataset calibration rectifies the video, or an explicitly
+   selected experimental mode estimates pinhole intrinsics with MoGe. Fresh DROID-W
+   camera tracking uses **MoGe Small**, which remains mandatory for depth and
+   metric scale. Camera inference samples at 10 Hz and interpolates onto the
+   unchanged source frame grid.
+2. **Hands:** the FP32 TensorRT hand detector runs in batches of eight, with
+   complete-clip physical left/right association. EgoHand processes 64 independent
+   hand crops per batch. Only its backbone uses FP16 autocast; heads and geometry
+   remain FP32. Crop centers follow detections without a fixed pixel-motion cap;
+   size stabilization and adaptive filtering remain enabled. CPU crop preparation and the next clip's detection overlap pose
+   inference, while camera tracking runs in its isolated environment.
+3. **Supported motion:** the validated smoothing and post-reconstruction singleton
+   rejection remain. Export requires at least 30 consecutive frames where both
+   hands are directly observed, native parameters are finite and the camera is
+   valid. Tracker-filled boxes are not observations. This recipe has **no motion
+   infiller**; it does not fabricate missing poses.
+4. **Dataset actions:** native 156D actions and SOMA parameters are attached to the
+   annotated dataset copy, preserving every selected source episode and frame.
+
+The recipe pins an inference-only EgoHand checkpoint, GEM-X and the camera
+runtime. No reference camera, ground-truth scale fitting or benchmark data enters
+inference.
+
+## Dataset output
+
+| Feature                                                          | Meaning                                                                                                                               |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `action`                                                         | 156 float32 values: left/right wrist position and axis-angle rotation (12), then 24 native SOMA joint rotation vectors per hand (144) |
+| `annotation.hand_action_valid`                                   | Complete finite observed bimanual action within an accepted span                                                                      |
+| `annotation.hand_action_observed_valid`                          | Same strict training mask; no infilled poses exist in this recipe                                                                     |
+| `annotation.hand_observed`                                       | Left/right direct-observation flags for accepted action frames                                                                        |
+| `annotation.hand_reference_frame`                                | Source frame defining the accepted span's fixed FLU frame; -1 when invalid                                                            |
+| `annotation.soma_wrist_orient`                                   | Both native wrist orientation matrices, flattened                                                                                     |
+| `annotation.soma_hand_pose`                                      | Both sets of 24 native finger joint rotation matrices, flattened                                                                      |
+| `annotation.soma_identity` / `annotation.soma_scales`            | Both hands' native identity and scale parameters, flattened                                                                           |
+| `annotation.wrist_rotation_camera`                               | Both wrists in the physical camera basis, flattened                                                                                   |
+| `annotation.hand_joints_camera` / `annotation.hand_joints_world` | Common 21-joint geometry in camera / span-start FLU coordinates, flattened                                                            |
+| `annotation.camera_world_from_optical`                           | Camera transformation matrix, flattened                                                                                               |
+| `annotation.original_action`                                     | Source actions preserved before replacement, if present                                                                               |
+
+SOMA articulation is not converted to MANO coefficients. Wrist neutral axes are
+native SOMA/MHR axes; cross-model wrist-angle comparability is not claimed.
+Accepted spans each use a fixed start-camera FLU frame (forward, left, up), with
+metric scale preserved. These inferred human poses are not robot joint commands
+or ground truth. Monocular metric scale remains model-dependent.
+
+Unaccepted frames contain **zero placeholders and invalid masks**. Training must
+apply the validity mask. A fully unobserved episode remains present with all
+actions invalid. Inference errors are reported as failed episodes. Datasets that
+already contain `annotation.original_action` are rejected to preserve provenance.
+
+## Calibration and compute
+
+By default, the selected camera's `info["camera.intrinsics"]` metadata must contain measured
+`pinhole` or `opencv_fisheye` calibration at its exact resolution: `model`, `width`,
+`height`, `fx`, `fy`, `cx`, `cy`, and `distortion`. Missing calibration fails before
+paid dispatch. There is no manual calibration or FPS-assumption form.
+
+For videos without calibration, the explicit **Estimate with MoGe if missing**
+option enables experimental focal estimation with the same pinned MoGe Small
+checkpoint. It takes the median prediction over up to five frames per episode,
+assumes a centered pinhole camera with square pixels and no lens distortion,
+and preserves its assumptions, sample estimates and dispersion in the episode
+report. Existing calibration always takes precedence; malformed calibration is
+not silently replaced. This is an intrinsics estimate, not lens calibration or
+a reproduction of the calibrated benchmark. Its metric accuracy is unvalidated.
+DROID-W + MoGe remain enabled, and no ground-truth scale fitting is introduced.
+
+Default hand input is the sensor image. **Aria Gen1 sensor image** is an explicit
+orientation option (or `camera.hand_input_orientation = "aria-gen1-cw90"` in camera
+metadata). It rotates only hand-model input and restores sensor camera axes after
+inference. It must not be applied to ordinary upright cameras.
+
+Choose an HF Jobs GPU in Studio. Estimates use live hardware prices and reserve
+the selected timeout; this reservation is not an actual charge. Runtime depends
+on resolution, recording length and GPU. Queueing, model downloads, TensorRT
+compilation and dataset copying add time.
+
+## Assets and deployment
+
+EgoHand and its detector use OpenMDW 1.1. SOMA/MHR assets use Apache 2.0. The camera
+and other runtime dependencies retain their respective terms; see the model cards
+and GEM-X attribution notices linked in Studio. The research flow keeps outputs
+private. It neither downloads nor redistributes MANO assets.
+
+The operator provides a [worker image](https://github.com/huggingface/lerobot/tree/main/docker/annotation_hands)
+with pinned source, dependencies and manifests. The Annotation Studio Space builds
+its checksummed model package from anonymous upstream downloads and includes
+the assets in the image. Jobs need no model-repository access. Sign-in
+is required for HF Jobs and private datasets. Native inference runs offline
+without that token. TensorRT plans are built on the Job's GPU from the pinned
+ONNX graphs.
+
+The #4892 execution engine checkpoints the hand stage alongside language and human
+video stages where selected. Two episodes may be in flight, with bounded separate
+camera, detector, pose and export work. Cached stages do not repeat inference and
+automatic inference retries remain disabled. HF Jobs owns compute and billing.

@@ -3,7 +3,10 @@
 `lerobot-annotate` adds subtasks, plans, memory, task rephrasings, interjections,
 speech and visual Q&A to **existing LeRobot v3 datasets**. The same annotation
 modules run through a resumable engine locally, on Slurm or on Hugging Face Jobs.
-The engine also supports non-VLM steps; it does not add new annotation workflows.
+Annotation Studio also offers research-only [Hand actions](./annotation_hands)
+for human-POV datasets, using HF Jobs and the same episode engine. Dataset camera
+calibration is preferred; an explicit experimental mode can estimate intrinsics
+with MoGe when it is missing, with unvalidated metric accuracy.
 
 The engine lives in `lerobot.annotations.runtime`; `annotations/storage.py` handles
 recoverable dataset updates and `annotations/hub.py` handles explicit publication.
