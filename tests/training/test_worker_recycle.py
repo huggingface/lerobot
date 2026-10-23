@@ -20,11 +20,14 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from accelerate import Accelerator
 
-from lerobot.datasets.sampler import EpisodeAwareSampler
-from lerobot.scripts.lerobot_train import _recycle_dataloader_iterator
-from lerobot.utils.utils import cycle
+pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
+
+from accelerate import Accelerator  # noqa: E402
+
+from lerobot.datasets.sampler import EpisodeAwareSampler  # noqa: E402
+from lerobot.scripts.lerobot_train import _recycle_dataloader_iterator  # noqa: E402
+from lerobot.utils.utils import cycle  # noqa: E402
 
 NUM_FRAMES = 23  # not a multiple of the batch size, so the last batch of each epoch is partial
 BATCH_SIZE = 4
