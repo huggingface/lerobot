@@ -60,8 +60,9 @@ ENV EGO_LIBRARY_PATH=/opt/egohand/lib/python3.10/site-packages/nvidia/cudnn/lib:
 RUN LD_LIBRARY_PATH="$DROID_LIBRARY_PATH" /opt/droid/bin/python -c "import sys; sys.path.insert(0,'/opt/hand-camera/release-195fps-verified/DROID-W'); import torch,lietorch,droid_backends,moge,timm,cv2,tensorrt; from pathlib import Path; from importlib.metadata import distribution; assert torch.__version__=='2.8.0+cu128'; assert tensorrt.__version__=='10.13.3.9'; assert Path(distribution('nvidia-cudss-cu12').locate_file('nvidia/cu12/lib/libcudss.so.0')).is_file()" \
     && LD_LIBRARY_PATH="$EGO_LIBRARY_PATH" /opt/egohand/bin/python -c "import torch,gem,soma,onnxruntime; assert torch.__version__.split('+')[0]=='2.14.1'; assert 'TensorrtExecutionProvider' in onnxruntime.get_available_providers()" \
     && python -c "import torch,numpy,pyarrow,av,scipy; import lerobot_camera_runtime.egocentric.droidw_camera, lerobot_camera_runtime.stages.droidw_slam; assert torch.__version__.split('+')[0]=='2.11.0'"
-RUN useradd -m -u 1000 user && mkdir -p /workspace && chown user:user /workspace
-USER user
+RUN if ! getent passwd 1000 >/dev/null; then useradd -m -u 1000 user; fi \
+    && mkdir -p /workspace /home/user && chown 1000:1000 /workspace /home/user
+USER 1000
 WORKDIR /workspace
 EXPOSE 7860
 CMD ["python", "/opt/hand-worker/health.py"]
