@@ -184,11 +184,11 @@ LeRobot provides **feature-scoped extras** that map to common workflows. If you 
 
 **Composite Extras** combine feature extras for common CLI scripts:
 
-| Extra          | Includes                       | Typical use case                                        |
-| -------------- | ------------------------------ | ------------------------------------------------------- |
-| `core_scripts` | `dataset` + `hardware` + `viz` | `lerobot-record`, `lerobot-replay`, `lerobot-calibrate` |
-| `evaluation`   | `av`                           | `lerobot-eval` (add policy + env extras as needed)      |
-| `dataset_viz`  | `dataset` + `viz`              | `lerobot-dataset-viz`, `lerobot-imgtransform-viz`       |
+| Extra          | Includes                       | Typical use case                                                                  |
+| -------------- | ------------------------------ | --------------------------------------------------------------------------------- |
+| `core_scripts` | `dataset` + `hardware` + `viz` | `lerobot-record`, `lerobot-replay`, `lerobot-calibrate`                           |
+| `evaluation`   | `av`                           | `lerobot-eval` (add policy + env extras as needed)                                |
+| `dataset_viz`  | `dataset` + `viz`              | `lerobot-dataset-viz`, `lerobot-imgtransform-viz`, `lerobot-check-dataset-videos` |
 
 ```bash
 pip install 'lerobot[core_scripts]'          # Record, replay, calibrate
