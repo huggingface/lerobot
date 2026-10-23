@@ -19,6 +19,24 @@ from .intrinsics import resolve_calibration
 from .processing import RequestProcess
 
 
+def native_failure_detail(error, camera_workers, hand):
+    """Keep native CUDA/TensorRT stderr that Python stream redirects do not catch."""
+    paths = [("hand worker", hand.log_path)]
+    paths.extend((f"camera worker {name}", worker.log) for name, worker in camera_workers._WORKERS.items())
+    details = [str(error)]
+    for name, path in paths:
+        try:
+            with Path(path).open("rb") as source:
+                source.seek(0, os.SEEK_END)
+                source.seek(max(0, source.tell() - 6000))
+                text = source.read().decode(errors="replace")
+        except OSError:
+            continue
+        if text:
+            details.append(f"{name} native stderr:\n{text}")
+    return "\n".join(details)
+
+
 def main():
     protocol, sys.stdout = sys.stdout, sys.stderr
     config = HandBackendConfig(**json.loads(sys.argv[1]))
@@ -144,7 +162,11 @@ def main():
             response = {"id": request["id"], "status": "ok", "result": report}
         except Exception as error:
             traceback.print_exc()
-            response = {"id": request["id"], "status": "failed", "error": str(error)}
+            response = {
+                "id": request["id"],
+                "status": "failed",
+                "error": native_failure_detail(error, camera_workers, hand),
+            }
         finally:
             slots.release()
         with reply_lock:
