@@ -1,0 +1,17 @@
+# 策略[[policies]]
+
+每个策略（policy）都继承 [`PreTrainedPolicy`]，它结合了 `torch.nn.Module` 与 Hub mixin，因此任何策略都可以通过相同的两次调用推送到 Hugging Face Hub 并从中加载。
+
+每个策略（policy）都有自己的指南，其中包含训练配方和结果——[ACT](../act)、[SmolVLA](../smolvla)、[π₀](../pi0)、[π₀.₅](../pi05)，其余的都列在策略一节下。要添加一个策略，请参阅[添加策略](../bring_your_own_policies)。
+
+## PreTrainedPolicy[[pretrainedpolicy]]
+
+[[autodoc]] lerobot.policies.pretrained.PreTrainedPolicy
+
+## PreTrainedConfig[[pretrainedconfig]]
+
+[[autodoc]] lerobot.configs.PreTrainedConfig
+
+## make_policy[[makepolicy]]
+
+[[autodoc]] lerobot.policies.factory.make_policy

@@ -1,0 +1,397 @@
+# Isaac Teleop[[isaac-teleop]]
+
+使用 NVIDIA [Isaac Teleop](https://github.com/NVIDIA/IsaacTeleop) 控制你的机器人，这是一个
+多模态遥操作框架。Isaac Teleop 可以用多种
+输入设备驱动同一个 `TeleopSession`：XR（VR）控制器、手部追踪、全身追踪、Manus 手套、脚踏
+踏板等。
+
+在 LeRobot 中，Isaac Teleop 以一个独立示例的形式提供，位于
+[`examples/isaac_teleop_to_so101/`](https://github.com/huggingface/lerobot/tree/main/examples/isaac_teleop_to_so101)。
+每个 Isaac Teleop 输入设备都是该示例 `isaac_teleop` 包中独立的 `Teleoperator` 子类，
+它们共享同一套会话生命周期（参见 `IsaacTeleopTeleoperator`）。目前
+可用的设备有 **XR 控制器**（`XRController`）和可反向驱动的
+**SO-101 主臂**（`SO101LeaderArm`）；Manus 手套以及手部/全身追踪则是
+接下来自然会支持的设备。本指南重点介绍 XR 控制器；SO-101 主臂的用法概述在
+[运行示例](#step-3-run-the-example)中。
+
+**在本指南中，你将学到：**
+
+- Isaac Teleop 设备如何驱动机器人末端执行器（EE）目标
+- _离合（clutch）_（XR 控制器上的握持/挤压键）如何在不让手臂突然跳动的情况下启用遥操作
+- 如何运行 SO‑101 遥操作示例，并调整运动、夹爪和 IK 参数
+
+## 安装[[installation]]
+
+该示例位于 LeRobot 仓库中（它不属于 `lerobot` pip 包），因此请
+克隆仓库并从源码安装。最权威、始终保持最新的安装和使用
+参考是该示例的
+[`README.md`](https://github.com/huggingface/lerobot/tree/main/examples/isaac_teleop_to_so101/README.md)；
+简而言之：
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+uv pip install -e ".[feetech,kinematics,dataset]" "huggingface_hub>=1.5"
+uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131" "scipy>=1.14"
+```
+
+`isaacteleop` 发布在公开的 PyPI 上（仅支持 Linux）。`cloudxr` extra 提供 CloudXR
+运行时绑定；`retargeters-lite` 是基于 scipy 的重定向器（retargeter）方案，在
+x86_64 和 ARM 上都能解析依赖（在 aarch64 上，例如 DGX Spark，完整的 `retargeters` extra 无法解析依赖，
+原因是它固定了 `dex-retargeting`/`nlopt` 的版本，这也是这里不默认使用它的原因）。在
+x86_64 上，你还可以额外安装完整的重定向器技术栈：
+
+```bash
+uv pip install "isaacteleop[retargeters]~=1.3.131"
+```
+
+### 设置 CloudXR 并连接头显[[set-up-cloudxr-and-connect-a-headset]]
+
+Isaac Teleop 通过 **NVIDIA CloudXR** 把头显串流到你的机器上，CloudXR 提供了
+会话所连接的 OpenXR 运行时。默认情况下，当你调用 `teleop_device.connect()` 时，LeTeleop
+**会自动为你启动 CloudXR 运行时**，你不再需要在另一个 shell 中运行 `python -m
+isaacteleop.cloudxr` 和 `source cloudxr.env`。你只需要连接一个受支持的
+头显，并开放 CloudXR 的防火墙端口。
+头显配对和防火墙的详细信息，请参阅 Isaac Teleop
+[快速入门](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html)。
+
+**首次运行（EULA）。** 第一次启动时必须接受 NVIDIA CloudXR EULA。自动启动
+会**在 stdin 上**提示你接受，因此在无头（headless）机器上它会一直挂起，等待输入。请以交互方式
+先执行一次以下命令来完成 EULA 初始化：
+
+```bash
+python -m isaacteleop.cloudxr --accept-eula   # 仅需一次：接受 CloudXR EULA
+```
+
+此后，`connect()` 会以非交互方式启动运行时。运行时启动期间，
+启动过程会**阻塞约 30 秒**。
+
+**配置。** `IsaacTeleopConfig`（所有设备共用）上的两个字段控制这一行为：
+
+- `auto_launch_cloudxr`（默认 `True`）：`connect()` 是否启动运行时。当
+  CloudXR 已在外部运行时，请设为 `False`。
+- `cloudxr_env_file`（默认 `None`）：可选的 CloudXR 设备配置 `.env` 文件，用于选择
+  头显传输方式（例如 Apple Vision Pro 配置）。这是启动器的**输入**；它不是
+  旧版手动流程让你 `source` 的 `~/.cloudxr/run/cloudxr.env` **输出**文件。`None`
+  会保留默认的自动 WebRTC 配置；不过，除非你传入 `--teleop.cloudxr_env_file`，否则 SO-101 示例会把它覆盖为
+  `teleoperate.py` 旁附带的 `default.env`。
+
+**选择不自动启动。** 若要跳过自动启动（CloudXR 已在运行），可以设置
+`auto_launch_cloudxr=False`，或者导出：
+
+```bash
+export LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1
+```
+
+**环境变量的优先级高于配置字段**：如果设置了 `LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1`，
+即使 `auto_launch_cloudxr=True`，也会跳过自动启动。这个变量与 Isaac Lab 的
+`ISAACLAB_CXR_SKIP_AUTOLAUNCH` **相互独立**：设置其中一个不会影响
+另一个。
+
+**每个进程一个遥操作器。** CloudXR 运行时会在整个进程范围内配置环境（它是
+单例），因此每个进程只能运行一个 Isaac Teleop 遥操作器。
+
+**关闭。** 退出时务必调用 `teleop_device.disconnect()`，包括按下 Ctrl-C 时。请把
+遥操作循环包在 `try/finally` 中，并在 `finally` 里调用 `disconnect()`。这样会**先**关闭
+OpenXR 会话，**再**关闭 CloudXR 运行时，这是必需的顺序；启动器的
+`atexit` 钩子只会回收运行时，并不会执行会话的 `__exit__`，因此如果没有
+显式调用 `disconnect()`，被中断的运行会以错误的顺序关闭。
+
+```python
+teleop_device.connect()
+try:
+    while True:
+        action = teleop_device.get_action()
+        # ... 驱动机器人 ...
+finally:
+    teleop_device.disconnect()
+```
+
+受支持的操作系统、GPU、CloudXR 版本和头显，
+请参阅[系统要求](https://nvidia.github.io/IsaacTeleop/main/references/requirements.html)。
+
+## 工作原理[[how-it-works]]
+
+XR 控制器是一种 Isaac Teleop **输入**设备。`XRController` 被刻意设计成一个轻量的
+读取器：它提供**原始**的控制器握持位姿（已静态变换到机器人
+基座坐标系），以及挤压键和扳机的模拟量。它本身**没有**重定向器，也**没有**
+离合逻辑。离合（启用锁存 + 将增量重新定位到末端执行器上）和夹爪
+映射都位于示例循环的下游，之后再交给 LeRobot 现有的闭环
+笛卡尔 IK 流水线，也就是手机遥操作器使用的同一条流水线。设备相关的部分是
+`XRController`、循环中的 `Clutch`，以及 `MapXRControllerActionToRobotAction`；下游的一切
+（`EEBoundsAndSafety`、`InverseKinematicsEEToJoints`）都是共享的。未来的设备（例如 Manus
+手套）只需换上自己的 `teleop_<device>.py` 和处理器，其余部分都可以复用。
+
+`XRController._build_pipeline` 连接 Isaac Teleop 的 `ControllersSource`（由原生的
+`ControllerTransform`（`base_T_anchor`）静态变换到机器人基座坐标系），并原样提供
+变换后的控制器数据流。`get_action()` 直接从中读取握持位姿、挤压键和扳机；
+会话始终以 `RUNNING` 状态步进（没有需要门控的离合重定向器）。
+
+`Clutch` 类（位于 `examples/isaac_teleop_to_so101/isaac_teleop/clutch.py`，由
+`common.py` 中的循环驱动）仿照 Isaac Teleop 的 `SO101ClutchRetargeter`，但它位于循环内部，
+这样设备就能保持为轻量的读取器：
+
+- 它在挤压键的**启用边沿**（挤压值首次超过
+  `clutch_threshold` 的那一帧）锁存启用原点，并围绕该原点重新定位位置和姿态，因此启用时手臂不会
+  瞬移。`Clutch.rebase` 以 `(pos, quat)` 对的形式返回基座坐标系下的绝对目标，
+  循环会把它拼接成 7 维的 `ee_pose`，再交给处理器。
+- 模拟扳机会转换为 `[0, 1]` 范围内的夹爪 `closedness`（0 = 张开，1 = 闭合），
+  与扳机按压程度成正比，`MapXRControllerActionToRobotAction` 再把它映射为夹爪目标。
+
+关于源节点和重定向器如何组合，
+请参阅 Isaac Teleop 的
+[重定向接口](https://nvidia.github.io/IsaacTeleop/main/references/retargeting/index.html)
+和[架构概览](https://nvidia.github.io/IsaacTeleop/main/overview/architecture.html)。
+
+```text
+  VR controller (OpenXR)
+        │
+        ▼
+  XRController.get_action()          ── raw base-frame grip_pos / grip_quat + squeeze + trigger
+        │                                (TeleopSession always stepped RUNNING; clutch lives downstream)
+        ▼
+  Clutch.rebase(grip_pos, grip_quat) ── engage-relative delta applied to the EE home (pos + orient)
+        │  ee_pose (7) / closedness       → absolute ee_pose; closedness = trigger
+        ▼
+  MapXRControllerActionToRobotAction ── absolute ee.x/y/z; ee.w* = orientation rotvec target;
+        │  ee.x/y/z / ee.w* / ee.gripper_pos   ee.gripper_pos = (1 - closedness) * 100
+        ▼
+  EEBoundsAndSafety                ── workspace clip + per-frame step clamp (clamp+warn)
+        │
+        ▼
+  InverseKinematicsEEToJoints      ── closed-loop Placo IK; position + soft-orientation
+        │  (orientation_weight=0.01)   (passes ee.gripper_pos → gripper.pos)
+        ▼
+  SO-101 follower joint targets
+```
+
+### 离合：由示例循环负责[[the-clutch-owned-by-the-example-loop]]
+
+与手机流水线不同（它把离合拆分到 `MapPhoneActionToRobotAction` 和
+`EEReferenceAndDelta` 中），XR 离合完全位于示例循环的 `Clutch` 类中。它输出的是
+**绝对**末端执行器位姿，因此没有 `EEReferenceAndDelta` 阶段，处理器中也不会
+累积增量；`MapXRControllerActionToRobotAction` 是一个纯粹、无状态的逐帧映射。
+
+离合在挤压键的**启用边沿**（挤压值超过
+`clutch_threshold` 的瞬间）锁存启用原点，并根据*相对于*该原点的运动驱动末端执行器，因此启用时手臂不会
+瞬移。在**每一次**启用时（无论是启动时，还是任务中途重新接合离合），起始
+*位置*都会根据手臂**实测关节**的正向运动学锁存，因此即使手臂在离合断开期间移动过，起始位置也等于
+手臂实际所在的位置，启用时也就不会跳动。起始
+*姿态*则保持上一次指令的旋转：5 自由度手臂只能柔性地
+追踪姿态，如果锁存实测的腕部姿态，每次重新接合离合时都会把其追踪偏差注入到
+指令中。
+
+## 控制方式[[controls]]
+
+- **挤压键/握持键**：即**离合**（死人开关）。按住并超过 `clutch_threshold` 即可启用
+  遥操作；松开即暂停。每次启用都会重新捕获原点，因此你可以在暂停时调整
+  手的位置，再重新启用，手臂也不会跳动（类似鼠标抬起重定位的方式）。
+- **扳机**：控制**夹爪**，以**模拟量**方式控制。夹爪开合会按比例
+  跟随扳机，扳机按下一半时夹爪就闭合一半；这是通过
+  `[0, 1]` 范围内的 closedness（0 = 张开，1 = 闭合）实现的，它会映射为夹爪关节的绝对目标。
+- **控制器姿态**：控制**腕部**。离合会把控制器姿态重新定位
+  （相对于启用时刻、在基座坐标系下）为一个柔性 IK 姿态目标，腕部会在追踪
+  位置的同时追踪该目标。在 5 自由度的 SO‑101 上，腕部按设计只会部分跟随手部，请参阅
+  下文的 `orientation_weight`。
+
+## 快速开始[[get-started]]
+
+### 步骤 1：创建遥操作器[[step-1-create-the-teleoperator]]
+
+```python
+# 请从仓库根目录运行，以便可以导入 `examples` 包。
+from examples.isaac_teleop_to_so101.isaac_teleop import XRController, XRControllerConfig
+
+teleop_config = XRControllerConfig(
+    hand_side="right",      # "left" 或 "right" 控制器
+    clutch_threshold=0.5,   # 挤压值超过该阈值时启用离合
+)
+teleop_device = XRController(teleop_config)
+```
+
+`XRController.get_action()` 返回的是基座坐标系下**原始**的控制器位姿，而不是经过离合重新定位的
+目标：`grip_pos` (3,) `[x, y, z]` [m] 和 `grip_quat` (4,) `[qx, qy, qz, qw]`，均位于机器人基座
+坐标系下，另外还有 `[0, 1]` 范围内的标量模拟值 `squeeze` 和 `trigger`。示例循环的 `Clutch`
+会把它们转换为绝对的 `ee_pose`，循环还会将挤压值与
+`clutch_threshold` 比较，以决定是否启用。
+
+### 步骤 2：连接[[step-2-connect]]
+
+调用 `teleop_device.connect()` 时，会先自动启动 CloudXR 运行时（除非你选择不自动启动，
+参见[设置 CloudXR 并连接头显](#set-up-cloudxr-and-connect-a-headset)；这一步会阻塞
+约 30 秒，并且首次运行时会在 stdin 上提示接受 EULA），然后启动 Isaac Teleop 的
+[`TeleopSession`](https://nvidia.github.io/IsaacTeleop/main/getting_started/teleop_session.html)
+（打开 OpenXR 会话并发现控制器）。XR 控制器会自行校准，因此
+无需手动校准步骤；每次启用时，离合都会负责重新居中。请将
+`connect()` 与调用 `disconnect()` 的 `try/finally` 搭配使用，这样在退出或按下 Ctrl-C 时，会话会先于
+运行时关闭。
+
+### 步骤 3：运行示例[[step-3-run-the-example]]
+
+该示例假定你已经配置好机器人（SO‑101 从臂），并设置了正确的串口。
+
+**机器人 URDF 及其网格文件会在首次运行时自动获取**：XR 设备会把
+SO-101 URDF 从
+[`lerobot/robot-urdfs` Hugging Face bucket](https://huggingface.co/buckets/lerobot/robot-urdfs/tree/so101)
+下载到 LeRobot 缓存（`HF_LEROBOT_HOME/robot-urdfs/so101/`）中，之后会重复使用，因此不需要
+单独的下载步骤：
+
+```bash
+python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
+    --robot.id=so101_follower_arm --teleop.type=xr_controller
+```
+
+该 CLI 采用 `lerobot-teleoperate` 风格（draccus）：`--robot.*` 用于配置 SO-101 从臂，
+`--teleop.type` 用于选择 Isaac 输入设备（`xr_controller` | `so101_leader`），
+`--teleop.*` 则是对应设备的参数。`--teleop.type=xr_controller` 会运行上文介绍的 XR 控制器
+流程。启动时的安全约定：默认情况下，它会在
+`--reset_duration` 秒内把所有关节平滑移动到默认的复位位姿（`--reset_to_origin=false` 会让手臂保持原位），然后根据
+手臂的实测位姿设置离合的起始点，确保第一次启用时不会跳动；只有在离合启用时
+才会向从臂发送指令。
+
+**自定义复位位姿。** 复位位姿以内置默认值的形式提供（一个舒适的中间位置
+位姿），开箱即用，你**不**需要录制任何内容。若要根据你的设置调整它，
+请手动把手臂反向驱动到想要的位姿，然后运行
+`python -m examples.isaac_teleop_to_so101.override_reset_pose --id <robot.id>`；它会把
+当前关节值写入 LeRobot 缓存中按手臂区分的文件
+（`HF_LEROBOT_HOME/reset_poses/<robot.name>/<robot.id>.json`，键名规则与校准文件相同），下次运行时
+它的优先级会高于内置默认值。由于该文件存放在用户本地缓存中（而不是
+仓库中），你的覆盖设置只会保留在你的机器上，并且只要使用相同的 `--robot.id` 启动，
+`teleoperate` 和 `record` 都会采用它。
+
+另一种设备 `--teleop.type=so101_leader` 会让从臂 1:1 镜像一条可反向驱动的
+SO-101 _主臂_，其关节数据由 Isaac Teleop 原生的 `so101_leader` 插件串流（没有
+离合，也没有 IK；主臂和从臂共享 SO-101 的运动学）。
+
+`so101_leader_plugin` 二进制文件是一个 C++ 插件，它**不**属于 `isaacteleop` pip
+包，你需要从 Isaac Teleop 源码树构建它。请参阅
+[从源码构建 Isaac Teleop](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html)
+（简而言之，在你的 Isaac Teleop 代码目录中执行：`cmake -B build && cmake --build build --parallel &&
+cmake --install build`）；构建会把插件安装到 `<IsaacTeleop>/install/plugins/` 下，因此
+该二进制文件位于 `install/plugins/so101_leader/so101_leader_plugin`，也就是下面的 `--launch_plugin` 路径。
+关于其串口和校准的细节，请参阅插件自带的 `README.md`（位于二进制文件旁）。
+
+把 `--teleop.port` 指向实体主臂的串口，并把 `--launch_plugin` 指向该插件
+二进制文件，脚本就会在 CloudXR 启动后运行该插件：
+
+```bash
+python -m examples.isaac_teleop_to_so101.teleoperate --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
+    --robot.id=so101_follower_arm --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 --teleop.id=so101_leader_arm \
+    --launch_plugin=/code/Teleop/install/plugins/so101_leader/so101_leader_plugin
+```
+
+（注意，这里的 `so101_leader` 是 _Isaac_ 主臂，它根据 Isaac Teleop 设备
+注册表解析，与 `lerobot-teleoperate` 中基于串口的 `so101_leader` 不同。）设置了 `--teleop.port` 时，
+插件的 tick→弧度校准会根据 `--teleop.id` 推断，并作为第三个位置参数传给插件，
+即位于
+`HF_LEROBOT_CALIBRATION/teleoperators/so_leader/<id>.json` 的 LeRobot 格式 JSON，它与串口版 SO-101 主臂
+使用的是同一个文件（`lerobot-calibrate --teleop.type=so101_leader --teleop.id=<id>`）。如果该文件不存在，脚本
+会发出警告，插件则使用内置默认值。运行 `python -m examples.isaac_teleop_to_so101.teleoperate --help` 可查看所有参数。它的
+启动安全约定：默认情况下，从臂会在
+`--align_duration` 秒内平滑移动到主臂的第一个读数（使用 `--align=false` 可跳过），这样
+镜像开始时手臂不会猛然跳动；而当主臂数据流过时时，从臂会
+保持在其实测位姿。
+
+URDF 的获取使用 `huggingface_hub`（已是 LeRobot 的依赖），访问的是公开的
+`lerobot/robot-urdfs` bucket，因此无需登录。它缓存在
+`HF_LEROBOT_HOME/robot-urdfs/so101/` 下；删除该文件夹即可强制重新下载。
+
+接下来在头显中：按住握持键以启用，移动控制器来驱动
+手臂，扭转或倾斜控制器来调整腕部姿态，按下扳机来闭合夹爪
+（按比例控制，松开即张开）。
+
+若要录制数据集（而不仅仅是遥操作），请使用同一文件夹中的 `record.py`。它会像 `teleoperate.py` 一样，
+根据 `--teleop.type`（`xr_controller` | `so101_leader`）进行分派，因此两种设备都
+可以驱动从臂，并且它会把指令关节值保存到 LeRobot 数据集中（使用 `lerobot-record` 风格的
+`--dataset.*` 参数）。完整的 CLI 和录制时的键盘快捷键，请参阅其模块 docstring。
+
+## 重要的流水线步骤与选项[[important-pipeline-steps-and-options]]
+
+离合已经生成了基座坐标系下的绝对位姿，因此处理器这一侧是一条轻量的
+**绝对位姿**路径：没有坐标系重映射，没有增量累积，也没有
+`EEReferenceAndDelta` 阶段。
+
+- `MapXRControllerActionToRobotAction` 是一个从设备输出到
+  IK 输入约定的无状态逐帧映射。它写入基座坐标系下的绝对位置，把绝对
+  姿态编码为旋转向量（rotvec）目标，并把 closedness 反转为电机的夹爪目标：
+
+  ```python
+  action["ee.x"], action["ee.y"], action["ee.z"] = ee_pose[:3]   # 绝对值，基座坐标系 [m]
+  action["ee.wx"], action["ee.wy"], action["ee.wz"] = orient_rotvec  # 姿态目标（rotvec）
+  action["ee.gripper_pos"] = (1 - closedness) * 100   # 电机单位；SO-101 校准时 100 = 张开
+  ```
+
+  夹爪极性（`100 = open, 0 = closed`）是源码中的硬件校准约定；如果夹爪在应该闭合时反而张开，请在源码中翻转它。
+
+- `EEBoundsAndSafety` 把末端执行器限制在工作空间内，并对逐帧跳变进行限速。离合的
+  防瞬移机制让每帧的变化都很小，因此 `max_ee_step_m` 主要用于捕捉控制器追踪的瞬时
+  故障。z 方向下限为 `0.0`（桌面所在平面），这样偏离的目标就不会把末端执行器驱动到
+  桌面以下；x/y 则保持宽松的 `[-1, 1]` m 范围。请设置 `raise_on_jump=False`，让超限的帧
+  **被限幅并发出警告**，而不是抛出异常；循环中途崩溃会让手臂失去控制：
+
+  ```python
+  EEBoundsAndSafety(
+      end_effector_bounds={"min": [-1.0, -1.0, 0.0], "max": [1.0, 1.0, 1.0]},
+      max_ee_step_m=0.10,
+      raise_on_jump=False,
+  )
+  ```
+
+- `InverseKinematicsEEToJoints(initial_guess_current_joints=False, orientation_weight=0.01)` 求解
+  闭环 Placo IK。SO‑101 是 5 自由度手臂，因此 IK 以位置为主；较小的
+  `orientation_weight` 让它柔性地追踪 `ee.w*` 中携带的姿态目标，使腕部能够
+  跟随手部，而欠定的滚转（roll）按设计只会部分跟随。这里**没有**
+  `GripperVelocityToJoint`：绝对的 `ee.gripper_pos` 会直接传给 `gripper.pos`。
+  `initial_guess_current_joints=False` 让每次求解都从**上一次的 IK 解**热启动，
+  而不是从实测关节重新初始化，因此关节轨迹在帧与帧之间
+  保持连续。请在硬件上调整 `orientation_weight`：设得太高会干扰位置追踪，设得太
+  低则会忽略姿态指令。
+
+该示例还在循环层面把关安全：启动时的复位平滑移动结束后（默认开启，
+传入 `--reset_to_origin=false` 可让手臂保持原位），它**只在
+离合启用时**才向机器人发送指令，离合断开时则重新发送实测的关节值，因此松开
+离合会让手臂停在原地。
+
+关于如何让流水线适配其他机器人，请参阅[机器人和遥操作器的处理器](./processors_robots_teleop)
+指南。
+
+## 故障排除[[troubleshooting]]
+
+- **`ModuleNotFoundError: isaacteleop`**：当前环境中没有安装 `isaacteleop` 包。
+  请重新运行本指南开头的安装命令：
+  `uv pip install "isaacteleop[cloudxr,retargeters-lite]~=1.3.131"`。
+- **找不到控制器**：请确认 CloudXR 运行时正在运行、防火墙端口已
+  加入白名单，并且头显已连接（参见
+  [设置 CloudXR 并连接头显](#set-up-cloudxr-and-connect-a-headset)以及 Isaac
+  Teleop [快速入门](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html)）。
+- **CloudXR 自动启动失败**：如果运行时没有在启动超时时间内就绪，`connect()` 会抛出 `RuntimeError`。
+  请查看 `~/.cloudxr/logs` 下的启动器日志。常见
+  原因：从未接受 EULA（请以交互方式运行一次 `python -m isaacteleop.cloudxr --accept-eula`；
+  自动启动会在 stdin 上提示，在无头环境中会挂起），或者运行时已经
+  在外部运行（设置 `LEROBOT_CLOUDXR_SKIP_AUTOLAUNCH=1` 或 `auto_launch_cloudxr=False` 即可
+  跳过自动启动）。
+- **手臂不动**：离合是一个死人开关，你必须按住挤压键/握持键并超过
+  `clutch_threshold`。如果你的控制器报告的挤压值偏小，请调低该阈值。
+- **运动方向感觉不对**：请确认头显/游玩空间的朝向。控制器数据流
+  会通过 `XRControllerConfig` 上的 `base_T_anchor` 变换重新定位到机器人基座坐标系
+  （默认：标准 OpenXR → 机器人坐标轴约定）；如果你的锚点坐标系不同，请调整它。
+
+## 了解更多[[learn-more]]
+
+NVIDIA Isaac Teleop 文档（[文档首页](https://nvidia.github.io/IsaacTeleop/)、
+[GitHub](https://github.com/NVIDIA/IsaacTeleop)）：
+
+- [快速入门](https://nvidia.github.io/IsaacTeleop/main/getting_started/quick_start.html)：
+  安装、运行 CloudXR 服务器、连接头显、运行遥操作示例。
+- [TeleopSession](https://nvidia.github.io/IsaacTeleop/main/getting_started/teleop_session.html)：
+  `XRController` 所封装的会话 API。
+- [重定向接口](https://nvidia.github.io/IsaacTeleop/main/references/retargeting/index.html)
+  和[架构概览](https://nvidia.github.io/IsaacTeleop/main/overview/architecture.html)：
+  源节点和重定向器如何组合成一条流水线。
+- [从源码构建](https://nvidia.github.io/IsaacTeleop/main/getting_started/build_from_source/index.html)：
+  从本地代码目录构建 `isaacteleop`
+  （及其 C++ 插件，包括上文使用的 `so101_leader` 插件）。
+- [系统要求](https://nvidia.github.io/IsaacTeleop/main/references/requirements.html)以及
+  [CloudXR SDK 文档](https://docs.nvidia.com/cloudxr-sdk)：受支持的平台、GPU、
+  CloudXR/OpenXR 运行时版本以及头显。

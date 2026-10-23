@@ -1,0 +1,151 @@
+# 机器人与遥操作器的处理器[[processors-for-robots-and-teleoperators]]
+
+本指南展示如何构建和修改将遥操作器（例如手机）连接到机器人和数据集的处理流水线。流水线标准化了不同动作/观测空间之间的转换，因此你无需重写胶水代码即可更换遥操作设备和机器人。
+
+我们使用手机到 SO-100 从臂示例来具体说明，但相同的模式也适用于其他机器人。
+
+**你将学到**
+
+- 绝对与相对 EE 控制：各自的含义、权衡，以及如何为你的任务做选择。
+- 三条流水线模式：如何将遥操作动作 → 数据集动作 → 机器人命令，以及机器人观测 → 数据集观测进行映射。
+- 适配器（`to_transition` / `to_output`）：它们如何将原始字典转换为 `EnvTransition` 并再转换回来，以减少样板代码。
+- 数据集特征契约：步骤如何通过 `transform_features(...)` 声明特征，以及如何为记录聚合/合并这些特征。
+- 选择表示形式：何时存储关节、绝对 EE 位姿或相对 EE 增量——以及这如何影响训练。
+- 流水线自定义指南：如何安全地替换机器人/URDF，并调整边界、步长以及 IK 初始化等选项。
+
+### 绝对与相对 EE 控制[[absolute-vs-relative-ee-control]]
+
+本指南中的示例使用绝对末端执行器（EE）位姿，因为它们易于推理。在实践中，相对 EE 增量或关节位置通常更适合作为学习特征。
+
+借助处理器，你可以选择希望用于策略（policy）的学习特征。这可以是关节位置/速度、绝对 EE 或相对 EE 位置。你也可以选择存储其他特征，例如关节力矩、电机电流等。
+
+## 三条流水线[[three-pipelines]]
+
+我们通常会组合三条流水线。根据你的设置，如果动作空间和观测空间已经匹配，其中一些流水线可以为空。
+每条流水线都处理不同动作空间和观测空间之间的不同转换。下面是对每条流水线的简要说明。
+
+1. 流水线 1：遥操作动作空间 → 数据集动作空间（手机位姿 → EE 目标）
+2. 流水线 2：数据集动作空间 → 机器人命令空间（EE 目标 → 关节）
+3. 流水线 3：机器人观测空间 → 数据集观测空间（关节 → EE 位姿）
+
+下面是我们用于手机到 SO-100 从臂示例的三条流水线示例：
+
+```python
+phone_to_robot_ee_pose_processor = RobotProcessorPipeline[RobotAction, RobotAction]( # 遥操作 -> 数据集动作
+    steps=[
+        MapPhoneActionToRobotAction(platform=teleop_config.phone_os),
+        EEReferenceAndDelta(
+            kinematics=kinematics_solver, end_effector_step_sizes={"x": 0.5, "y": 0.5, "z": 0.5}, motor_names=list(robot.bus.motors.keys()),
+        ),
+        EEBoundsAndSafety(
+            end_effector_bounds={"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]}, max_ee_step_m=0.20,
+        ),
+        GripperVelocityToJoint(),
+    ],
+    to_transition=robot_action_to_transition,
+    to_output=transition_to_robot_action,
+)
+
+robot_ee_to_joints_processor = RobotProcessorPipeline[RobotAction, RobotAction]( # 数据集动作 -> 机器人
+    steps=[
+        InverseKinematicsEEToJoints(
+            kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()), initial_guess_current_joints=True,
+        ),
+    ],
+    to_transition=robot_action_to_transition,
+    to_output=transition_to_robot_action,
+)
+
+robot_joints_to_ee_pose = RobotProcessorPipeline[RobotObservation, RobotObservation]( # 机器人观测 -> 数据集观测
+    steps=[
+        ForwardKinematicsJointsToEE(kinematics=kinematics_solver, motor_names=list(robot.bus.motors.keys()))
+    ],
+    to_transition=observation_to_transition,
+    to_output=transition_to_observation,
+)
+```
+
+## 为什么需要 to_transition / to_output[[why-totransition-tooutput]]
+
+为了从机器人/遥操作器转换到流水线并再转换回来，我们使用 `to_transition` 和 `to_output` 流水线适配器。
+它们标准化转换以减少样板代码，并在机器人和遥操作器的原始字典与流水线的 `EnvTransition` 格式之间架起桥梁。
+在手机到 SO-100 从臂示例中，我们使用以下适配器：
+
+- `robot_action_to_transition`：将遥操作动作字典转换为流水线 transition 对象。
+- `transition_to_robot_action`：将流水线 transition 对象转换为机器人动作字典。
+- `observation_to_transition`：将机器人观测字典转换为流水线 transition 对象。
+- `transition_to_observation`：将流水线 transition 对象转换为观测字典。
+
+更多细节请查看 [src/lerobot/processor/converters.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/processor/converters.py)。
+
+## 数据集特征契约[[dataset-feature-contracts]]
+
+数据集特征由数据集中保存的键决定。每个步骤都可以在名为 `transform_features(...)` 的契约中声明它修改哪些特征。构建处理器后，处理器可以使用 `aggregate_pipeline_dataset_features()` 聚合所有这些特征，并使用 `combine_feature_dicts(...)` 合并多个特征字典。
+
+下面是一个示例，展示我们在手机到 SO-100 从臂示例中如何使用 `transform_features` 方法声明特征：
+
+```python
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # 我们在数据集中只使用 EE 位姿，因此不需要关节位置
+        for n in self.motor_names:
+            features[PipelineFeatureType.ACTION].pop(f"{n}.pos", None)
+        # 我们指定该步骤中希望存储到数据集中的数据集特征
+        for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
+            features[PipelineFeatureType.ACTION][f"ee.{k}"] = PolicyFeature(
+                type=FeatureType.STATE, shape=(1,)
+            )
+        return features
+```
+
+这里我们声明了在该步骤中修改哪些 PolicyFeatures，这样在运行处理器时就知道可以预期哪些特征。随后可以聚合这些特征，并用它们创建数据集特征。
+
+下面是我们在手机到 SO-100 记录示例中如何聚合和合并特征的示例：
+
+```python
+features=combine_feature_dicts(
+        # 运行流水线的特征契约
+        # 这会告诉你经过流水线步骤后特征会是什么样子
+        aggregate_pipeline_dataset_features(
+            pipeline=phone_to_robot_ee_pose_processor,
+            initial_features=create_initial_features(action=phone.action_features), # <- 我们可以预期的动作特征，这些来自我们的遥操作设备（手机）和动作处理器
+            use_videos=True,
+        ),
+        aggregate_pipeline_dataset_features(
+            pipeline=robot_joints_to_ee_pose,
+            initial_features=create_initial_features(observation=robot.observation_features), # <- 我们可以预期的观测特征，这些来自我们的机器人和观测处理器
+            use_videos=True,
+            patterns=["observation.state.ee"], # <- 这里你可以选择使用特定模式过滤我们想存储到数据集中的特征
+
+        ),
+    ),
+```
+
+工作原理：
+
+- `aggregate_pipeline_dataset_features(...)`：在整个流水线上应用 `transform_features`，并按模式（patterns）过滤（当 `use_videos=True` 时包含图像，当指定 `patterns` 时包含状态特征）。
+- `combine_feature_dicts(...)`：合并多个特征字典。
+- 使用 `record_loop(...)` 录制时，会使用 `build_dataset_frame(...)` 构建与 `dataset.features` 一致的帧，然后调用 `add_frame(...)` 将帧添加到数据集。
+
+## 自定义机器人流水线时的指南[[guidance-when-customizing-robot-pipelines]]
+
+你可以将以下任意特征存储为动作/观测空间：
+
+- 关节位置
+- 绝对 EE 位姿
+- 相对 EE 增量
+- 其他特征：关节速度、力矩等。
+
+选择你希望用于策略（policy）动作和观测空间的内容，并相应地配置/修改流水线和步骤。
+
+### 不同的机器人[[different-robots]]
+
+- 你可以轻松复用流水线，例如要将另一台机器人用于手机遥操作，可以修改示例，并替换机器人的 `RobotKinematics`（URDF）和 `motor_names`，以便将你自己的机器人用于手机遥操作。此外，你应确保 `target_frame_name` 指向你的夹爪/腕部。
+
+### 安全优先[[safety-first]]
+
+- 更改流水线时，先从较紧的边界开始；在真实机器人上工作时，实施安全步骤。
+- 建议先在仿真中开始，然后再迁移到真实机器人。
+
+就是这样！我们希望本指南能帮助你开始自定义机器人流水线。如果你在任何时候遇到问题，欢迎加入我们的 [Discord 社区](https://discord.com/invite/s3KuuzsPFb) 寻求支持。

@@ -1,0 +1,21 @@
+# 数据集[[datasets]]
+
+[`LeRobotDataset`] 是每个 LeRobot 脚本读写所用的格式。它具备片段感知能力，可即时解码视频观测（observation），并能与 Hugging Face Hub 往返互通。
+
+参见[使用 LeRobotDataset](../lerobot-dataset-v3) 了解该格式与常用操作，参见[移植大型数据集](../porting_datasets_v3) 了解迁移，参见[工具](../tools) 了解 CLI。
+
+## LeRobotDataset[[lerobotdataset]]
+
+[[autodoc]] lerobot.datasets.LeRobotDataset
+
+## LeRobotDatasetMetadata[[lerobotdatasetmetadata]]
+
+[[autodoc]] lerobot.datasets.LeRobotDatasetMetadata
+
+## MultiLeRobotDataset[[multilerobotdataset]]
+
+[[autodoc]] lerobot.datasets.MultiLeRobotDataset
+
+## StreamingLeRobotDataset[[streaminglerobotdataset]]
+
+[[autodoc]] lerobot.datasets.StreamingLeRobotDataset

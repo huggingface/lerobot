@@ -1,0 +1,20 @@
+# 处理器[[processors]]
+
+处理器（processor）是机器人、数据集与策略（policy）之间的数据转换层。流水线（pipeline）是一连串的
+[`ProcessorStep`]；每个步骤会声明它如何转换数据以及特征契约（feature contract）。
+
+有关概念，请参阅[机器人处理器简介](../introduction_processors)，
+要编写步骤，请参阅[实现你自己的处理器](../implement_your_own_processor)，以及
+当流水线行为异常时，请参阅[调试你的处理器流水线](../debug_processor_pipeline)。
+
+## ProcessorStep[[processorstep]]
+
+[[autodoc]] lerobot.processor.pipeline.ProcessorStep
+
+## DataProcessorPipeline[[dataprocessorpipeline]]
+
+[[autodoc]] lerobot.processor.pipeline.DataProcessorPipeline
+
+## PolicyProcessorPipeline[[policyprocessorpipeline]]
+
+[[autodoc]] lerobot.processor.pipeline.PolicyProcessorPipeline

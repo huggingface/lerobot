@@ -1,0 +1,401 @@
+# Unitree G1[[unitree-g1]]
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/unitree_thumbnail.jpg"
+  alt="Unitree G1 移动操作演示"
+  style={{ width: "100%" }}
+/>
+
+LeRobot 现已支持 Unitree G1 人形机器人！你可以进行遥操作（teleoperation）、训练移动操作策略（policy）、在仿真中测试等。29 和 23 自由度（DoF）版本均受支持。
+
+---
+
+## 第 1 部分：入门[[part-1-getting-started]]
+
+### 安装 Unitree SDK[[install-the-unitree-sdk]]
+
+请遵循 [unitree_sdk2_python 安装指南](https://github.com/unitreerobotics/unitree_sdk2_python#installation)。已使用 `unitree_sdk2py==1.0.1` 和 `cyclonedds==0.10.2` 测试：
+
+```bash
+conda create -y -n lerobot python=3.12
+conda activate lerobot
+git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+cd unitree_sdk2_python
+pip install -e .
+cd ..
+```
+
+### 安装 LeRobot[[install-lerobot]]
+
+```bash
+conda install ffmpeg -c conda-forge
+conda install -c conda-forge "pinocchio>=3.0.0,<4.0.0"
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+pip install -e '.[unitree_g1]'
+```
+
+<Tip>
+  目前，必须从 conda-forge（而不是 pip）安装 pinocchio，以包含
+  手臂逆运动学（IK）所需的 CasADi 绑定。
+</Tip>
+
+### 测试安装（仿真）[[test-the-installation-simulation]]
+
+仿真环境有它自己的依赖项。请查看仿真环境依赖项：[Unitree G1 Mujoco EnvHub](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。
+
+```bash
+pip install mujoco loguru msgpack msgpack-numpy
+```
+
+```bash
+lerobot-teleoperate \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --teleop.type=unitree_g1 \
+  --teleop.id=wbc_unitree \
+  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
+  --display_data=true \
+  --robot.controller=GrootLocomotionController
+```
+
+这将为 G1 启动一个 [MuJoCo 仿真实例](https://huggingface.co/lerobot/unitree-g1-mujoco/tree/main)。你可以在启动前将游戏手柄连接到你的机器，以便在仿真中控制机器人的运动（locomotion）。我们通过 `--robot.controller` 同时支持 [HolosomaLocomotionController](https://github.com/amazon-far/holosoma) 和 [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl)。
+
+- 按 `9` 释放机器人
+- 按 `7` / `8` 升高 / 降低腰部高度
+
+#### 选择末端执行器[[choosing-the-end-effector]]
+
+`--robot.end_effector` 指定手臂承载的末端执行器（end effector）：`dex1` 表示平行夹爪（默认），`dex3` 表示三指手，`dummy` 表示裸露手腕。在仿真中，它会选择 MuJoCo 模型，从而决定手指执行器以及场景包含哪些相机——腕部相机安装在末端执行器上，因此 `dummy` 只有 `head_camera`。
+
+```bash
+lerobot-teleoperate \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.end_effector=dex3 \
+  --teleop.id=wbc_unitree \
+  --robot.controller=GrootLocomotionController
+```
+
+仿真通过 ZMQ 在 `--robot.sim_camera_port`（默认 5555）上发布模型的相机画面，`--robot.cameras` 中的 `zmq` 相机就从这里读取。传入 `--robot.sim_publish_images=false` 则会改为打开 MuJoCo 的交互式窗口：仿真只会渲染其相机或窗口中的一种，绝不会同时渲染两者，因为离屏上下文属于创建它们的线程，而不是查看器的线程。`--robot.sim_onscreen` 直接指定该选择，而不是把它留给相机，同时请求两者会被拒绝；将其与 `--robot.sim_publish_images` 都设为 false 可两者都不渲染，这正是没有显示器的机器可以做的。
+
+### 连接实体机器人[[connect-to-the-physical-robot]]
+
+G1 的以太网 IP 固定为 `192.168.123.164`。你的机器必须在同一子网中拥有静态 IP：`192.168.123.x`，其中 `x ≠ 164`。
+
+```bash
+# 将 'enp131s0' 替换为你的以太网接口名称（可使用 `ip a` 查看）
+sudo ip addr flush dev enp131s0
+sudo ip addr add 192.168.123.200/24 dev enp131s0
+sudo ip link set enp131s0 up
+```
+
+### SSH 登录机器人[[ssh-into-the-robot]]
+
+```bash
+ssh unitree@192.168.123.164
+# 密码：123
+```
+
+### 通过以太网共享互联网[[share-internet-via-ethernet]]
+
+G1 需要互联网访问来克隆仓库和安装软件包。通过以太网共享你笔记本电脑的连接：
+
+**在你的笔记本电脑上：**
+
+```bash
+sudo sysctl -w net.ipv4.ip_forward=1
+
+# 将 wlp132s0f0 替换为你的 WiFi 接口名称
+sudo iptables -t nat -A POSTROUTING -o wlp132s0f0 -s 192.168.123.0/24 -j MASQUERADE
+sudo iptables -A FORWARD -i wlp132s0f0 -o enp131s0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -A FORWARD -i enp131s0 -o wlp132s0f0 -j ACCEPT
+```
+
+**在 G1 上：**
+
+```bash
+sudo ip route del default 2>/dev/null || true
+sudo ip route add default via 192.168.123.200 dev eth0
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+
+# 验证
+ping -c 3 8.8.8.8
+```
+
+### 在 G1 上安装 Unitree SDK[[install-the-unitree-sdk-on-the-g1]]
+
+请遵循 [unitree_sdk2_python 安装指南](https://github.com/unitreerobotics/unitree_sdk2_python#installation)：
+
+```bash
+conda create -y -n lerobot python=3.12
+conda activate lerobot
+git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+cd unitree_sdk2_python
+python -m pip install -e .
+cd ..
+```
+
+### 在 G1 上安装 LeRobot[[install-lerobot-on-the-g1]]
+
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+conda install -c conda-forge "pinocchio>=3.0.0,<4.0.0"
+python -m pip install -e '.[unitree_g1]'
+```
+
+<Tip>
+  目前，必须从 conda-forge（而不是 pip）安装 pinocchio，以包含
+  手臂逆运动学（IK）所需的 CasADi 绑定。
+</Tip>
+
+### （可选）在机器人上启用 WiFi[[optional-enable-wifi-on-the-robot]]
+
+为了进行无线 SSH 访问，你可以在 G1 上启用 WiFi（默认情况下它被禁用）：
+
+```bash
+sudo rfkill unblock all
+sudo ip link set wlan0 up
+sudo nmcli radio wifi on
+sudo nmcli device set wlan0 managed yes
+sudo systemctl restart NetworkManager
+```
+
+**连接到 WiFi 网络：**
+
+```bash
+nmcli device wifi list
+
+sudo nmcli connection add type wifi ifname wlan0 con-name "YourNetwork" ssid "YourNetwork"
+sudo nmcli connection modify "YourNetwork" wifi-sec.key-mgmt wpa-psk
+sudo nmcli connection modify "YourNetwork" wifi-sec.psk "YourPassword"
+sudo nmcli connection modify "YourNetwork" connection.autoconnect yes
+sudo nmcli connection up "YourNetwork"
+
+ip a show wlan0
+```
+
+然后你就可以通过 WiFi 而不是以太网进行 SSH：
+
+```bash
+ssh unitree@<ROBOT_WIFI_IP>
+# 密码：123
+```
+
+---
+
+## 第 2 部分：遥操作与运动[[part-2-teleoperation-locomotion]]
+
+### 运行机器人服务器[[run-the-robot-server]]
+
+在机器人上（从 `~/lerobot` 目录）：
+
+```bash
+cd ~/lerobot
+python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
+```
+
+### 运行运动策略[[run-the-locomotion-policy]]
+
+你可以从笔记本电脑通过以太网、WiFi（实验性）运行遥操作（teleoperation）客户端，或直接在机器人本身上运行。请注意你的网络可能引入的延迟。
+
+**从你的笔记本电脑：**
+
+```bash
+lerobot-teleoperate \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=false \
+  --robot.robot_ip=<ROBOT_IP> \
+  --teleop.type=unitree_g1 \
+  --teleop.id=wbc_unitree \
+  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
+  --display_data=true \
+  --robot.controller=HolosomaLocomotionController
+```
+
+我们通过 `--robot.controller` 同时支持 [GrootLocomotionController](https://github.com/NVlabs/GR00T-WholeBodyControl) 和 [HolosomaLocomotionController](https://github.com/amazon-far/holosoma)。
+
+---
+
+## 第 3 部分：使用 Homunculus 外骨骼进行移动操作[[part-3-loco-manipulation-with-the-homunculus-exoskeleton]]
+
+我们通过 Homunculus Exoskeleton 提供一个移动操作（loco-manipulation）解决方案——一个用于全身控制（whole-body control）的开源 7 自由度外骨骼。请在[这里](https://github.com/nepyope/hmc_exo)查看。
+
+### 校准[[calibrate]]
+
+```bash
+lerobot-calibrate \
+  --teleop.type=unitree_g1 \
+  --teleop.left_arm_config.port=/dev/ttyACM1 \
+  --teleop.right_arm_config.port=/dev/ttyACM0 \
+  --teleop.id=exo
+```
+
+校准期间，请让每个关节在其整个运动范围内移动。拟合完成后，将关节移动到中立位置并按 `n` 继续。
+
+### 记录数据集[[record-a-dataset]]
+
+```bash
+lerobot-record \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
+  --teleop.type=unitree_g1 \
+  --teleop.left_arm_config.port=/dev/ttyACM1 \
+  --teleop.right_arm_config.port=/dev/ttyACM0 \
+  --teleop.id=exo \
+  --dataset.repo_id=your-username/dataset-name \
+  --dataset.single_task="Test" \
+  --dataset.num_episodes=2 \
+  --dataset.episode_time_s=5 \
+  --dataset.reset_time_s=5 \
+  --dataset.push_to_hub=true \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2
+```
+
+> **注意：** 如果你只使用操纵杆，请省略 `--teleop.left_arm_config.port` 和 `--teleop.right_arm_config.port`。
+
+示例数据集：[nepyope/unitree_box_move_blue_full](https://huggingface.co/datasets/nepyope/unitree_box_move_blue_full)
+
+---
+
+## 第 4 部分：训练与推理[[part-4-training-inference]]
+
+### 训练[[train]]
+
+```bash
+python src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=your-username/dataset-name  \
+  --policy.type=pi05 \
+  --output_dir=./outputs/pi05_training \
+  --job_name=pi05_training \
+  --policy.repo_id=your-username/your-repo-id \
+  --policy.pretrained_path=lerobot/pi05_base \
+  --policy.compile_model=true \
+  --policy.gradient_checkpointing=true \
+  --wandb.enable=true \
+  --policy.dtype=bfloat16 \
+  --policy.freeze_vision_encoder=false \
+  --policy.train_expert_only=false \
+  --steps=3000 \
+  --policy.device=cuda \
+  --batch_size=32
+```
+
+### 使用 RTC 推理[[inference-with-rtc]]
+
+兼容的已训练策略（policy）可以使用本地推理时的 RTC：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=your-username/your-repo-id \
+  --policy.device=cuda \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=false \
+  --robot.controller=HolosomaLocomotionController \
+  --robot.cameras='{"global_view": {"type": "zmq", "server_address": "<ROBOT_IP>", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30}}' \
+  --task="task_description" \
+  --duration=1000 \
+  --fps=30 \
+  --inference.type=rtc
+```
+
+G1 运动控制器未声明 rollout 的可恢复等待所使用的保留目标契约。在运动开始后，耗尽它们的动作缓冲区因此会导致终止性故障，而不是宽限期等待。请求截止时间和观测（observation）年龄限制也适用。在使用此配方之前，请验证策略（policy）的可用动作块覆盖推理延迟；请参阅[本地 RTC 等待和预算](./inference#inference-backends)。SONIC 有一个单独的保留 token 契约，如下所述。
+
+---
+
+## 第 5 部分：SONIC 全身控制（潜在 token 策略）[[part-5-sonic-whole-body-control-latent-token-policies]]
+
+LeRobot 现在将 NVIDIA [SONIC](https://nvlabs.github.io/GEAR-SONIC/) 全身部署栈的**解码器**部分移植为 `SonicWholeBodyController`。该策略（policy）不再直接命令关节，而是在每个 tick 输出一个 64 维**潜在运动 token**（`motion_token.{i}.pos`）；SONIC 解码器将该 token 与最近的本体感受历史一起映射为残差动作，再经过缩放并添加到站立姿态上，从而为全部 29 个自由度生成 50 Hz 的关节位置目标。
+
+该控制器从 [`lerobot/sonic_decoder`](https://huggingface.co/lerobot/sonic_decoder) 加载其 ONNX 解码器以及所有部署常量（PD 增益、`default_angles`、`action_scale` 和中性 token）。该仓库还提供了一个蒸馏的低延迟解码器，可通过控制器的 `policy_type="low_latency"` 参数选择（默认为 `"default"`）。
+
+### 在仿真中测试[[test-in-simulation]]
+
+任何在 SONIC 运动 token 上训练的 token 输出策略（policy），例如 [`nepyope/sonic_walk`](https://huggingface.co/nepyope/sonic_walk)，都可以驱动它：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --policy.path=nepyope/sonic_walk \
+  --policy.device=cuda \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=true \
+  --robot.controller=SonicWholeBodyController \
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "localhost", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 15}}'
+```
+
+### 在实体机器人上运行[[run-on-the-physical-robot]]
+
+在 GPU 机器上运行[远程推理](./remote_inference)策略（policy）服务器，并将机器人桥接、SONIC 解码器和 rollout 客户端保留在 G1 Jetson 上。网络中只传输 64 维 token 块；解码器和 50 Hz 的 `rt/lowcmd` 循环仍留在机器人上。
+
+在两台机器上安装 remote extra。在 G1 上保留 Unitree extra：
+
+```bash
+# GPU 机器
+python -m pip install -e '.[remote]'
+
+# G1 Jetson
+python -m pip install -e '.[unitree_g1,remote]'
+```
+
+在 GPU 机器上，从仓库根目录启动策略（policy）服务器。维护的配置文件与 `nepyope/sonic_walk` 匹配；若要用于另一个策略，请一并复制并更新其检查点和特征契约。
+
+```bash
+lerobot-policy-server \
+  --config_path=examples/remote_inference/unitree_g1_sonic.yaml
+```
+
+在 G1 上，保持桥接和相机运行：
+
+```bash
+python src/lerobot/robots/unitree_g1/run_g1_server.py --camera
+```
+
+然后在第二个 G1 终端中启动 rollout 客户端，并替换 `<GPU_MACHINE_IP>`：
+
+```bash
+lerobot-rollout \
+  --strategy.type=base \
+  --inference.type=remote \
+  --inference.endpoint=tcp/<GPU_MACHINE_IP>:7447 \
+  --inference.deployment=g1-sonic \
+  --inference.semantics=unitree-g1-sonic-motion-token-v1 \
+  --inference.encoding=jpeg \
+  --inference.action_starvation_grace_s=1.0 \
+  --robot.type=unitree_g1 \
+  --robot.is_simulation=false \
+  --robot.robot_ip=127.0.0.1 \
+  --robot.controller=SonicWholeBodyController \
+  --robot.cameras='{"ego_view": {"type": "zmq", "server_address": "127.0.0.1", "port": 5555, "camera_name": "head_camera", "width": 640, "height": 480, "fps": 30, "warmup_s": 5}}' \
+  --task='walk forward' \
+  --fps=30 \
+  --return_to_initial_position=false \
+  --interactive=true
+```
+
+只有在 G1 可以安全移动后，才输入 `/start`。SONIC 声明支持等待，因为重新发送最后一个完整 token 会让机载解码器保持平衡。在第一个策略（policy）结果出现之前，rollout 会发送解码器的中性 token。如果动作缓冲区耗尽，它会重复最后应用的 token，持续时间最多为 `action_starvation_grace_s`（上面的示例中为一秒）；如果没有新的预测到达，rollout 会故障并遵循其配置的关闭/断开路径。G1 运动控制器仍不受支持，因为它们的操纵杆速度无法以这种方式保留。
+
+该配方禁用了返回初始位置：在 SONIC 的潜在 token 空间中进行插值
+并不是经过验证的物理归位轨迹。出于同样的原因，请避免使用 `/reset`，因为它会将
+token 扫回连接时的值。`/stop` 仍会关闭远程会话，并通过正常的控制器关闭路径断开
+机器人连接。
+
+使用 `SonicWholeBodyController` 时，观测（observation）状态是 64 维 token 回显，而不是 29 个关节位置，因此兼容的检查点必须针对该状态进行训练。连接时，机器人会在控制器接管之前将关节缓慢移动到解码器的 `default_angles`。
+
+---
+
+## 其他资源[[additional-resources]]
+
+- [Unitree SDK 文档](https://github.com/unitreerobotics/unitree_sdk2_python)
+- [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl)
+- [Holosoma](https://github.com/amazon-far/holosoma)
+- [LeRobot 文档](https://github.com/huggingface/lerobot)
+- [Unitree IL LeRobot](https://github.com/unitreerobotics/unitree_IL_lerobot)
+
+---
+
+_最后更新：2026 年 7 月_
