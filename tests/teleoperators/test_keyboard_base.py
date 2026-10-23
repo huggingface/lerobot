@@ -14,8 +14,7 @@
 
 """Keyboard mapping, configuration, and pipeline persistence without hardware."""
 
-from dataclasses import dataclass
-from unittest.mock import PropertyMock, patch
+from dataclasses import dataclass, field
 
 import draccus
 import pytest
@@ -28,14 +27,11 @@ from lerobot.processor.keyboard_base_processor import (
     default_base_key_bindings,
     make_keyboard_base_processor,
 )
-from lerobot.teleoperators import TeleoperatorConfig
-from lerobot.teleoperators.keyboard import KeyboardBaseTeleop, KeyboardBaseTeleopConfig, KeyboardTeleop
-from lerobot.teleoperators.utils import make_teleoperator_from_config
 
 
 @dataclass
 class _Config:
-    teleop: TeleoperatorConfig
+    mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
 
 
 @pytest.mark.parametrize(
@@ -95,41 +91,12 @@ def test_invalid_mapping_config_is_rejected(kwargs):
         KeyboardToBaseActionProcessorStep(**kwargs)
 
 
-def test_config_and_factory_support_custom_bindings_and_speeds():
+def test_processor_config_supports_custom_bindings_and_speeds():
     config = draccus.parse(
-        _Config,
-        args=[
-            "--teleop.type=keyboard_base",
-            '--teleop.key_bindings={"forward":"i","backward":"k","left":"j","right":"l","rotate_left":"u","rotate_right":"o","speed_up":"+","speed_down":"-"}',
-            "--teleop.linear_speeds=[0.4,0.8]",
-            "--teleop.angular_speeds=[10,20]",
-        ],
+        _Config, args=["--mapping.linear_speeds=[0.4,0.8]", "--mapping.angular_speeds=[10,20]"]
     )
-    with patch("lerobot.teleoperators.keyboard.teleop_keyboard.require_package"):
-        teleop = make_teleoperator_from_config(config.teleop)
-    assert isinstance(teleop, KeyboardBaseTeleop)
-    with patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=True):
-        teleop.event_queue.put(("i", True))
-        teleop.event_queue.put(("u", True))
-        assert teleop.get_action() == {"x.vel": 0.4, "y.vel": 0.0, "theta.vel": 10.0}
-        teleop.event_queue.put(("i", False))
-        assert teleop.get_action()["x.vel"] == 0.0
-    assert set(teleop.action_features) == {"x.vel", "y.vel", "theta.vel"}
-
-
-def test_reconnect_resets_speed_and_stale_keys():
-    with patch("lerobot.teleoperators.keyboard.teleop_keyboard.require_package"):
-        teleop = KeyboardBaseTeleop(KeyboardBaseTeleopConfig())
-    with patch.object(KeyboardTeleop, "is_connected", new_callable=PropertyMock, return_value=True):
-        teleop.event_queue.put(("w", True))
-        teleop.event_queue.put(("+", True))
-        assert teleop.get_action()["x.vel"] == 0.2
-        teleop.event_queue.put(("w", True))
-        with patch.object(KeyboardTeleop, "connect"):
-            teleop.connect()
-        assert teleop.get_action() == {"x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0}
-        teleop.event_queue.put(("w", True))
-        assert teleop.get_action()["x.vel"] == 0.1
+    assert config.mapping.action({"w": None})["x.vel"] == 0.4
+    assert config.mapping.action({"w": None, "+": None})["x.vel"] == 0.8
 
 
 def test_pipeline_roundtrip_and_feature_mapping(tmp_path):

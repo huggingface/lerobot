@@ -91,7 +91,7 @@ lerobot-record \\
 
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pprint import pformat
 
 from lerobot.cameras import CameraConfig  # noqa: F401
@@ -100,6 +100,7 @@ from lerobot.cameras.reachy2_camera import Reachy2CameraConfig  # noqa: F401
 from lerobot.cameras.realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.cameras.zmq import ZMQCameraConfig  # noqa: F401
 from lerobot.common.control_utils import sanity_check_dataset_robot_compatibility
+from lerobot.common.teleop_setup import make_mobile_teleop
 from lerobot.configs import parser
 from lerobot.configs.dataset import DatasetRecordConfig
 from lerobot.datasets import (
@@ -115,6 +116,7 @@ from lerobot.processor import (
     RobotProcessorPipeline,
     make_default_processors,
 )
+from lerobot.processor.keyboard_base_processor import KeyboardToBaseActionProcessorStep
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
@@ -150,7 +152,6 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.teleoperators.mobile_base import MobileBaseTeleop, make_mobile_base_teleop
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
@@ -173,9 +174,11 @@ class RecordConfig:
     dataset: DatasetRecordConfig
     # Teleoperator to control the robot. Optional when `base_teleop` drives a mobile robot alone.
     teleop: TeleoperatorConfig | None = None
-    # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard_base`, alongside `teleop`
+    # Teleoperator driving a mobile robot's base, e.g. `--base_teleop.type=keyboard`, alongside `teleop`
     # for the arms. Without `teleop`, the arms hold the position they had when recording started.
     base_teleop: TeleoperatorConfig | None = None
+    # Keyboard-to-base mapping, applied in the action pipeline when base_teleop is a raw keyboard.
+    base_mapping: KeyboardToBaseActionProcessorStep = field(default_factory=KeyboardToBaseActionProcessorStep)
     # Display all cameras on screen
     display_data: bool = False
     # Visualization backend used when display_data is True: "rerun" or "foxglove".
@@ -242,7 +245,7 @@ def record_loop(
         RobotObservation, RobotObservation
     ],  # runs after robot
     dataset: LeRobotDataset | None = None,
-    teleop: Teleoperator | list[Teleoperator] | None = None,
+    teleop: Teleoperator | None = None,
     control_time_s: float | None = None,
     single_task: str | None = None,
     display_data: bool = False,
@@ -264,9 +267,8 @@ def record_loop(
     if control_time_s is None:
         raise ValueError("`control_time_s` is required: it is how long the loop runs.")
 
-    # A list is the Python form of a mobile robot's teleop: `[arm, keyboard]` or `[keyboard]`.
     if isinstance(teleop, list):
-        teleop = MobileBaseTeleop.from_list(robot, teleop)
+        raise TypeError("Pass a CompositeTeleoperator and its action processor instead of a device list.")
 
     if timer is None:
         timer = CycleTimer(fps, records_data=dataset is not None)
@@ -297,8 +299,7 @@ def record_loop(
         with timer.section("teleop"):
             # Get action from teleop
             if isinstance(teleop, Teleoperator):
-                teleop.on_observation(obs)
-                act = teleop.get_action()
+                act = teleop.get_action(observation=obs)
 
                 # Applies a pipeline to the raw teleop action, default is IdentityProcessor
                 act_processed_teleop = teleop_action_processor((act, obs))
@@ -373,14 +374,6 @@ def record(
     robot = make_robot_from_config(cfg.robot)
     arm_teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
     teleop: Teleoperator | None = arm_teleop
-    if cfg.base_teleop is not None:
-        teleop = make_mobile_base_teleop(
-            robot,
-            base=make_teleoperator_from_config(cfg.base_teleop),
-            arm=arm_teleop,
-            hold_uncommanded=True,
-        )
-
     # Fall back to identity pipelines when the caller doesn't supply processors.
     if (
         teleop_action_processor is None
@@ -391,6 +384,15 @@ def record(
         teleop_action_processor = teleop_action_processor or _t
         robot_action_processor = robot_action_processor or _r
         robot_observation_processor = robot_observation_processor or _o
+
+    if cfg.base_teleop is not None:
+        teleop, teleop_action_processor = make_mobile_teleop(
+            robot,
+            base=make_teleoperator_from_config(cfg.base_teleop),
+            arm=arm_teleop,
+            keyboard_mapping=cfg.base_mapping,
+            action_processor=teleop_action_processor,
+        )
 
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(

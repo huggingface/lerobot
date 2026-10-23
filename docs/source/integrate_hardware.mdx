@@ -491,3 +491,20 @@ Once your robot class is complete, you can leverage the LeRobot ecosystem:
 - Integrate it into RL or imitation learning pipelines
 
 Don't hesitate to reach out to the community for help on our [Discord](https://discord.gg/s3KuuzsPFb) 🤗
+
+### Robot observations in teleoperator actions
+
+Control loops pass the latest raw robot observation directly to the teleoperator:
+
+```python
+observation = robot.get_observation()
+action = teleop.get_action(observation=observation)
+```
+
+Custom teleoperators must accept `get_action(self, observation: RobotObservation | None = None)`,
+even when they ignore robot state. Import `RobotObservation` from `lerobot.lerobot_types`.
+Do not modify the observation dictionary. The optional default keeps direct calls to
+`get_action()` available for devices that do not require robot state.
+
+`send_feedback(command)` is separate: it commands the input device, for example moving a
+motorized leader arm during handover. It is not the per-tick observation channel.

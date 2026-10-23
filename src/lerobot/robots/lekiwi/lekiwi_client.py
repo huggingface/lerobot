@@ -85,11 +85,6 @@ class LeKiwiClient(Robot):
         self._is_connected = False
         self.logs: dict[str, float] = {}
 
-    @property
-    def legacy_keyboard_bindings(self) -> dict[str, str]:
-        """Expose legacy controls for teleoperator-side keyboard mapping."""
-        return self.config.teleop_keys
-
     @cached_property
     def _state_ft(self) -> dict[str, type]:
         return dict.fromkeys(

@@ -1174,24 +1174,13 @@ def test_episodic_observations_reach_teleop_before_handover_and_reset_actions(mo
         single_task="task", episode_time_s=0.0, reset_time_s=10.0, num_episodes=2
     )
     observations = []
-    pending_observation = None
 
-    def on_observation(observation):
-        nonlocal pending_observation
-        assert pending_observation is None
-        pending_observation = observation
+    def get_action(observation):
+        assert observation is not None, "An action needs a fresh robot observation"
         observations.append(observation["m.pos"])
+        return {"m.pos": observation["m.pos"] + 10.0}
 
-    def get_action():
-        nonlocal pending_observation
-        assert pending_observation is not None, "An action needs a fresh robot observation"
-        action = {"m.pos": pending_observation["m.pos"] + 10.0}
-        pending_observation = None
-        return action
-
-    ctx.hardware.teleop = SimpleNamespace(
-        feedback_features={}, on_observation=on_observation, get_action=get_action
-    )
+    ctx.hardware.teleop = SimpleNamespace(feedback_features={}, get_action=get_action)
     strategy = EpisodicStrategy(EpisodicStrategyConfig(smooth_handover=smooth_handover))
     strategy._engine = ctx.policy.inference
     strategy._interpolator = ActionInterpolator(multiplier=1)
@@ -1203,7 +1192,6 @@ def test_episodic_observations_reach_teleop_before_handover_and_reset_actions(mo
     strategy.run(ctx)
 
     assert observations == [1.0, 2.0, 3.0]
-    assert pending_observation is None
     sent = [call.args[0]["m.pos"] for call in ctx.hardware.robot_wrapper.send_action.call_args_list]
     assert sent == ([12.0, 13.0] if smooth_handover else [11.0, 12.0, 13.0])
     if smooth_handover:
@@ -1571,9 +1559,13 @@ def test_sync_engine_without_a_relative_step_binds_nothing():
 def test_rollout_connects_and_cleans_up_mobile_teleoperator(monkeypatch, with_arm):
     from lerobot.configs.dataset import DatasetRecordConfig
     from lerobot.rollout import DAggerStrategyConfig, RolloutConfig
-    from lerobot.rollout.context import _connect_rollout_hardware, _disconnect_setup_hardware
+    from lerobot.rollout.context import (
+        _connect_rollout_hardware,
+        _disconnect_setup_hardware,
+        _resolve_robot_processors,
+    )
     from lerobot.teleoperators import Teleoperator
-    from lerobot.teleoperators.mobile_base import MobileBaseTeleop
+    from lerobot.teleoperators.composite import CompositeTeleoperator
     from tests.mocks.mock_robot import MockRobot, MockRobotConfig
     from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
 
@@ -1595,10 +1587,13 @@ def test_rollout_connects_and_cleans_up_mobile_teleoperator(monkeypatch, with_ar
         "lerobot.rollout.context.make_teleoperator_from_config",
         lambda config: base if config is cfg.base_teleop else arm,
     )
-    hw = _connect_rollout_hardware(cfg)
-    assert isinstance(hw.teleop, MobileBaseTeleop)
+    processors = _resolve_robot_processors(None, None, None)
+    hw = _connect_rollout_hardware(cfg, processors)
+    assert isinstance(hw.teleop, CompositeTeleoperator) if with_arm else hw.teleop is base
     assert isinstance(hw.teleop, Teleoperator)
-    assert set(hw.teleop.get_action()) == set(robot.action_features)
+    observation = robot.get_observation()
+    action = processors.teleop_action_processor((hw.teleop.get_action(observation=observation), observation))
+    assert set(action) == set(robot.action_features)
     base.disconnect()
     if arm:
         assert hw.teleop.is_connected
@@ -1611,7 +1606,7 @@ def test_dagger_records_corrections_from_composite_teleoperator():
     from lerobot.rollout import DAggerStrategyConfig
     from lerobot.rollout.strategies import DAggerStrategy
     from lerobot.teleoperators import Teleoperator
-    from lerobot.teleoperators.mobile_base import MobileBaseTeleop
+    from lerobot.teleoperators.composite import CompositeTeleoperator
     from lerobot.utils.action_interpolator import ActionInterpolator
 
     strategy = DAggerStrategy(
@@ -1629,8 +1624,8 @@ def test_dagger_records_corrections_from_composite_teleoperator():
     base.action_features = base.feedback_features = arm.feedback_features = {}
     arm.action_features = {"pos": float}
     base.get_action.return_value = {}
-    arm.get_action.side_effect = lambda: {"pos": arm.on_observation.call_args.args[0]["m.pos"] + 10.0}
-    ctx.hardware.teleop = MobileBaseTeleop(ctx.hardware.robot_wrapper, base, arm, arm_action_prefix="m.")
+    arm.get_action.side_effect = lambda observation: {"pos": observation["m.pos"] + 10.0}
+    ctx.hardware.teleop = CompositeTeleoperator([(base, ""), (arm, "m.")])
     strategy._engine = ctx.policy.inference
     strategy._interpolator = ActionInterpolator(multiplier=2)
     strategy._episode_duration_s = 1e9
@@ -1649,24 +1644,27 @@ def test_dagger_composite_handover_primes_observation_and_routes_feedback(monkey
     from lerobot.rollout.strategies import DAggerStrategy
     from lerobot.rollout.strategies.dagger import DAggerPhase
     from lerobot.teleoperators import Teleoperator
-    from lerobot.teleoperators.mobile_base import MobileBaseTeleop
+    from lerobot.teleoperators.composite import CompositeTeleoperator
     from lerobot.utils.action_interpolator import ActionInterpolator
 
     ctx, _ = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=10)
     base, arm = MagicMock(spec=Teleoperator), MagicMock(spec=Teleoperator)
     base.feedback_features = {}
-    arm.feedback_features = {"pos": float}
+    base.action_features = {"x.vel": float}
+    arm.action_features = arm.feedback_features = {"pos": float}
     base.get_action.return_value = {"x.vel": 0.0}
     arm.get_action.return_value = {"pos": 0.0}
     arm.enable_torque = MagicMock()
     arm.disable_torque = MagicMock()
-    teleop = MobileBaseTeleop(ctx.hardware.robot_wrapper, base, arm, arm_action_prefix="m.")
+    teleop = CompositeTeleoperator([(base, ""), (arm, "m.")])
     strategy = DAggerStrategy(DAggerStrategyConfig())
     monkeypatch.setattr(strategy, "hold_control_state", lambda hw: None)
     monkeypatch.setattr("lerobot.common.control_utils.time.sleep", lambda _: None)
     monkeypatch.setattr(
         "lerobot.rollout.strategies.dagger.teleop_smooth_move_to",
-        lambda t, target: teleop_smooth_move_to(t, target, duration_s=0.0),
+        lambda t, target, observation: teleop_smooth_move_to(
+            t, target, duration_s=0.0, observation=observation
+        ),
     )
     strategy._apply_transition(
         DAggerPhase.AUTONOMOUS,
@@ -1677,7 +1675,8 @@ def test_dagger_composite_handover_primes_observation_and_routes_feedback(monkey
         ctx,
         {"m.pos": 15.0},
     )
-    assert arm.on_observation.call_count == 1
+    assert arm.get_action.call_count == 1
+    assert arm.get_action.call_args.kwargs["observation"] is not None
     arm.send_feedback.assert_called_with({"pos": 15.0})
     base.send_feedback.assert_not_called()
     strategy._apply_transition(
@@ -1698,7 +1697,7 @@ def test_rollout_cli_accepts_mobile_base_configuration(with_arm):
 
     from lerobot.policies.act.configuration_act import ACTConfig
     from lerobot.rollout import RolloutConfig
-    from lerobot.teleoperators.keyboard import KeyboardBaseTeleopConfig
+    from lerobot.teleoperators.keyboard import KeyboardTeleopConfig
     from tests.mocks.mock_robot import MockRobotConfig
     from tests.mocks.mock_teleop import MockTeleopConfig
 
@@ -1708,12 +1707,12 @@ def test_rollout_cli_accepts_mobile_base_configuration(with_arm):
         "--policy.device=cpu",
         "--strategy.type=dagger",
         "--dataset.repo_id=user/mobile_rollout",
-        "--base_teleop.type=keyboard_base",
+        "--base_teleop.type=keyboard",
     ]
     if with_arm:
         args.append("--teleop.type=mock_teleop")
     cfg = draccus.parse(RolloutConfig, args=args)
     assert isinstance(cfg.robot, MockRobotConfig)
     assert isinstance(cfg.policy, ACTConfig)
-    assert isinstance(cfg.base_teleop, KeyboardBaseTeleopConfig)
+    assert isinstance(cfg.base_teleop, KeyboardTeleopConfig)
     assert isinstance(cfg.teleop, MockTeleopConfig) if with_arm else cfg.teleop is None

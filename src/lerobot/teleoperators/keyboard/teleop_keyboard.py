@@ -20,11 +20,6 @@ from queue import Queue
 from typing import TYPE_CHECKING, Any, cast
 
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.processor import RobotProcessorPipeline
-from lerobot.processor.keyboard_base_processor import (
-    KeyboardToBaseActionProcessorStep,
-    make_keyboard_base_processor,
-)
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.import_utils import _pynput_available, require_package
 from lerobot.utils.keyboard_input import pynput_can_capture
@@ -69,10 +64,6 @@ class KeyboardTeleop(Teleoperator):
         self.current_pressed: dict[str | keyboard.Key | None, bool] = {}
         self.listener: keyboard.Listener | None = None
         self.logs: dict[str, float] = {}
-        self._base_key_bindings: dict[str, str] | None = None
-        self._base_action_processor: (
-            RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction] | None
-        ) = None
 
     @property
     def action_features(self) -> dict:
@@ -94,8 +85,9 @@ class KeyboardTeleop(Teleoperator):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
-        if self._base_action_processor is not None:
-            self._base_action_processor.reset()
+        self.current_pressed.clear()
+        while not self.event_queue.empty():
+            self.event_queue.get_nowait()
         if PYNPUT_AVAILABLE and pynput_can_capture():
             logging.info("pynput is available - enabling local keyboard listener.")
             self.listener = keyboard.Listener(
@@ -112,17 +104,6 @@ class KeyboardTeleop(Teleoperator):
                 "gamepad, or a leader-arm teleoperator instead."
             )
             self.listener = None
-
-    def get_base_action_processor(
-        self, key_bindings: dict[str, str]
-    ) -> RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]:
-        """Keep legacy base speed selections across recording and reset phases."""
-        if self._base_action_processor is None or self._base_key_bindings != key_bindings:
-            self._base_action_processor = make_keyboard_base_processor(
-                KeyboardToBaseActionProcessorStep(key_bindings=dict(key_bindings))
-            )
-            self._base_key_bindings = dict(key_bindings)
-        return self._base_action_processor
 
     def calibrate(self) -> None:
         pass
@@ -149,8 +130,9 @@ class KeyboardTeleop(Teleoperator):
     def configure(self):
         pass
 
-    @check_if_not_connected
     def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
+        if not self.is_connected:
+            return {}
         before_read_t = time.perf_counter()
 
         self._drain_pressed_keys()

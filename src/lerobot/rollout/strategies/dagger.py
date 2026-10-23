@@ -426,8 +426,7 @@ class DAggerStrategy(RolloutStrategy):
                         with timer.section("process_obs"):
                             obs_processed = ctx.processors.robot_observation_processor(obs)
                         with timer.section("teleop"):
-                            teleop.on_observation(obs)
-                            teleop_action = teleop.get_action()
+                            teleop_action = teleop.get_action(observation=obs)
                             processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                             robot_action_to_send = ctx.processors.robot_action_processor(
                                 (processed_teleop, obs)
@@ -641,8 +640,7 @@ class DAggerStrategy(RolloutStrategy):
                         with timer.section("process_obs"):
                             obs_processed = ctx.processors.robot_observation_processor(obs)
                         with timer.section("teleop"):
-                            teleop.on_observation(obs)
-                            teleop_action = teleop.get_action()
+                            teleop_action = teleop.get_action(observation=obs)
                             processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                             robot_action_to_send = ctx.processors.robot_action_processor(
                                 (processed_teleop, obs)
@@ -755,8 +753,8 @@ class DAggerStrategy(RolloutStrategy):
                 # does non-trivial key renaming (e.g. a rename_map on action keys), the interpolation in
                 # teleop_smooth_move_to silently no-ops and the arm doesn't move.
                 logger.info("Smooth handover: moving leader arm to follower position")
-                teleop.on_observation(robot.get_observation())
-                teleop_smooth_move_to(teleop, prev_action)
+
+                teleop_smooth_move_to(teleop, prev_action, observation=robot.get_observation())
 
         elif old_phase == DAggerPhase.PAUSED and new_phase == DAggerPhase.CORRECTING:
             logger.info("Entering correction mode - human teleop control")
@@ -767,8 +765,8 @@ class DAggerStrategy(RolloutStrategy):
             ):
                 logger.info("Smooth handover: sliding follower to teleop position")
                 obs = robot.get_observation()
-                teleop.on_observation(obs)
-                teleop_action = teleop.get_action()
+
+                teleop_action = teleop.get_action(observation=obs)
                 processed = ctx.processors.teleop_action_processor((teleop_action, obs))
                 target = ctx.processors.robot_action_processor((processed, obs))
                 follower_smooth_move_to(robot, prev_action, target)

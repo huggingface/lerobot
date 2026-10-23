@@ -173,8 +173,6 @@ def sanity_check_dataset_robot_compatibility(
 class ActuatedTeleoperator(Protocol):
     """A teleoperator whose arm can be driven: position feedback plus torque control."""
 
-    def on_observation(self, observation: dict[str, Any]) -> None: ...
-
     @property
     def feedback_features(self) -> dict[str, Any]: ...
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Exercise the proposed pipeline with actual interfaces, without connecting hardware."""
+"""Exercise the composite and action pipeline with actual interfaces, without connecting hardware."""
 
 import inspect
 from pathlib import Path
@@ -53,9 +53,6 @@ class ObservedLeader(MockTeleop):
         if observation is None:
             return {"joint.pos": 0.0}
         return {"joint.pos": observation["arm_joint.pos"] + 1.0}
-
-    def on_observation(self, observation: RobotObservation) -> None:
-        raise AssertionError("The prototype must use get_action(observation=...), not the legacy hook")
 
     def send_feedback(self, feedback: RobotAction) -> None:
         self.feedback.append(feedback)
@@ -102,7 +99,7 @@ def test_standard_keyboard_alone_uses_processors_without_a_wrapper(keyboard):
 def test_keyboard_and_leader_receive_fresh_observations_without_hook(keyboard, tmp_path):
     leader = ObservedLeader(tmp_path)
     composite = CompositeTeleoperator(
-        {"": keyboard, "arm_": leader}, TeleoperatorConfig(calibration_dir=tmp_path)
+        [(keyboard, ""), (leader, "arm_")], TeleoperatorConfig(calibration_dir=tmp_path)
     )
     pipeline = make_pipeline(KeyboardToBaseActionProcessorStep())
     keyboard.event_queue.put(("w", True))
@@ -195,7 +192,7 @@ def test_features_and_serialization_preserve_arm_and_held_channels(tmp_path):
 def test_feedback_routing_and_smooth_handover_are_separate_from_observation(keyboard, tmp_path, monkeypatch):
     leader = ObservedLeader(tmp_path)
     composite = CompositeTeleoperator(
-        {"": keyboard, "arm_": leader}, TeleoperatorConfig(calibration_dir=tmp_path)
+        [(keyboard, ""), (leader, "arm_")], TeleoperatorConfig(calibration_dir=tmp_path)
     )
     assert teleop_supports_feedback(composite)
     composite.send_feedback({"arm_joint.pos": 12.0})
@@ -217,7 +214,9 @@ def test_feedback_routing_and_smooth_handover_are_separate_from_observation(keyb
 
 def test_composition_supports_more_than_two_devices(tmp_path):
     devices = {prefix: ObservedLeader(tmp_path) for prefix in ("left_", "right_", "camera_")}
-    composite = CompositeTeleoperator(devices, TeleoperatorConfig(calibration_dir=tmp_path))
+    composite = CompositeTeleoperator(
+        [(device, prefix) for prefix, device in devices.items()], TeleoperatorConfig(calibration_dir=tmp_path)
+    )
     assert composite.get_action() == {"left_joint.pos": 0.0, "right_joint.pos": 0.0, "camera_joint.pos": 0.0}
     assert set(composite.action_features) == set(composite.get_action())
     composite.connect()
@@ -229,7 +228,7 @@ def test_composition_supports_more_than_two_devices(tmp_path):
 def test_runtime_collisions_are_rejected(keyboard, tmp_path):
     leader = ObservedLeader(tmp_path)
     composite = CompositeTeleoperator(
-        {"": keyboard, "arm_": leader}, TeleoperatorConfig(calibration_dir=tmp_path)
+        [(keyboard, ""), (leader, "arm_")], TeleoperatorConfig(calibration_dir=tmp_path)
     )
     keyboard.event_queue.put(("arm_joint.pos", True))
     with pytest.raises(ValueError, match="overlapping keys"):
@@ -239,7 +238,7 @@ def test_runtime_collisions_are_rejected(keyboard, tmp_path):
 def test_partial_connection_failure_cleans_up_every_device(tmp_path, monkeypatch):
     left, right = ObservedLeader(tmp_path), ObservedLeader(tmp_path)
     composite = CompositeTeleoperator(
-        {"left_": left, "right_": right}, TeleoperatorConfig(calibration_dir=tmp_path)
+        [(left, "left_"), (right, "right_")], TeleoperatorConfig(calibration_dir=tmp_path)
     )
 
     def fail(calibrate=True):
@@ -255,7 +254,7 @@ def test_partial_connection_failure_cleans_up_every_device(tmp_path, monkeypatch
 def test_failed_disconnect_still_cleans_up_other_children(tmp_path, monkeypatch):
     left, right = ObservedLeader(tmp_path), ObservedLeader(tmp_path)
     composite = CompositeTeleoperator(
-        {"left_": left, "right_": right}, TeleoperatorConfig(calibration_dir=tmp_path)
+        [(left, "left_"), (right, "right_")], TeleoperatorConfig(calibration_dir=tmp_path)
     )
     composite.connect()
 
@@ -269,7 +268,7 @@ def test_failed_disconnect_still_cleans_up_other_children(tmp_path, monkeypatch)
     right._is_connected = False
 
 
-def test_builtin_devices_accept_the_prototype_observation_argument():
+def test_builtin_devices_accept_the_observation_argument():
     # Check source signatures without importing optional hardware SDKs.
     import ast
 
