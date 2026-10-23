@@ -44,13 +44,18 @@ def verify_assets(config: HandBackendConfig) -> dict:
     return assets
 
 
-def download_release(profile: dict, token: str, root: Path) -> dict:
-    """Download immutable model assets; authentication never reaches native inference."""
+def download_release(profile: dict, token: str | None, root: Path) -> dict:
+    """Download public immutable assets without forwarding the caller's Job token."""
     from huggingface_hub import hf_hub_download, snapshot_download
 
-    manifest = Path(
-        hf_hub_download(profile["repo"], "assets.json", revision=profile["revision"], token=token)
-    )
+    # Keep the token argument for existing callers. Asset distribution is public;
+    # authentication belongs to Jobs and the user's datasets, never model downloads.
+    options = {
+        "repo_type": profile.get("repo_type", "model"),
+        "revision": profile["revision"],
+        "token": False,
+    }
+    manifest = Path(hf_hub_download(profile["repo"], "assets.json", **options))
     if file_checksum(manifest)[0] != profile["manifest_sha256"]:
         raise ValueError("The hand asset release manifest changed")
     document = json.loads(manifest.read_text())
@@ -61,8 +66,7 @@ def download_release(profile: dict, token: str, root: Path) -> dict:
             raise ValueError("Unexpected file in the native hand release")
     snapshot_download(
         profile["repo"],
-        revision=profile["revision"],
-        token=token,
+        **options,
         local_dir=root,
         allow_patterns=[entry["path"] for entry in document["files"]],
         max_workers=16,

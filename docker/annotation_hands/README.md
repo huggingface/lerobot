@@ -31,8 +31,10 @@ checkpoint and TensorRT paths. Both camera compilation and inference require
 
 Pin the built image's HF Space revision and `image-version.json` checksum in
 Studio's `hand-worker-image.json`. Also pin the model release revision and
-`assets.json` checksum. Model files are fetched with the Job user's HF login;
-native inference then runs offline without that token. Preserve upstream terms
+`assets.json` checksum. Publish the checksummed model package in the public worker
+Space and set the asset profile's `repo_type` to `space`. Model files are fetched
+anonymously; native inference then runs offline. The user's HF login is needed
+for Jobs and private datasets. Preserve upstream terms
 and notices when preparing the runtime and model releases.
 
 The CPU health endpoint reports build readiness. Before enabling a new image,

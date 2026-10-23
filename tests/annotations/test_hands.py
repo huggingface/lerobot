@@ -243,17 +243,25 @@ def asset_fixture(tmp_path):
     return document, config
 
 
-def test_asset_download_is_allowlisted_and_pinned(tmp_path, monkeypatch):
+@pytest.mark.parametrize("repo_type", ["model", "space"])
+def test_asset_download_is_allowlisted_pinned_and_anonymous(tmp_path, monkeypatch, repo_type):
     document, config = asset_fixture(tmp_path)
     download = Mock(return_value=config.assets_manifest)
     snapshot = Mock()
     monkeypatch.setattr("huggingface_hub.hf_hub_download", download)
     monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot)
-    profile = {"repo": "private/hand-runtime", "revision": "a" * 40, "manifest_sha256": config.assets_sha256}
+    profile = {
+        "repo": "public/hand-runtime",
+        "repo_type": repo_type,
+        "revision": "a" * 40,
+        "manifest_sha256": config.assets_sha256,
+    }
     receipt = download_release(profile, "token", tmp_path / "download")
     assert receipt["files"] == 3
     assert snapshot.call_args.kwargs["allow_patterns"] == [x["path"] for x in document["files"]]
     assert snapshot.call_args.kwargs["revision"] == "a" * 40
+    assert download.call_args.kwargs["repo_type"] == snapshot.call_args.kwargs["repo_type"] == repo_type
+    assert download.call_args.kwargs["token"] is snapshot.call_args.kwargs["token"] is False
     document["files"][0]["path"] = "../escape"
     Path(config.assets_manifest).write_text(json.dumps(document))
     profile["manifest_sha256"] = file_checksum(Path(config.assets_manifest))[0]
