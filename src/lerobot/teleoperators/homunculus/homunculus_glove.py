@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from pprint import pformat
 from typing import TYPE_CHECKING
 
+from lerobot.lerobot_types import RobotObservation
 from lerobot.motors import MotorCalibration
 from lerobot.motors.motors_bus import MotorNormMode
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -330,7 +331,7 @@ class HomunculusGlove(Teleoperator):
                 logger.debug(f"Error reading frame in background thread for {self}: {e}")
 
     @check_if_not_connected
-    def get_action(self) -> dict[str, float]:
+    def get_action(self, observation: RobotObservation | None = None) -> dict[str, float]:
         joint_positions = self._read()
         return homunculus_glove_to_hope_jr_hand(
             {f"{joint}.pos": pos for joint, pos in joint_positions.items()}

@@ -196,23 +196,23 @@ class Teleoperator(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         """
         Retrieve the current action from the teleoperator.
+
+        Args:
+            observation: Latest raw robot state. Implementations may use it to compute the action
+                but must not mutate it. Devices independent of robot state may ignore it.
+
+        Control loops pass the current observation in the same call. Custom implementations must
+        accept this optional argument, even when they do not use robot state. Device actuation
+        (such as driving a motorized leader during handover) remains in :meth:`send_feedback`.
 
         Returns:
             RobotAction: A flat dictionary representing the teleoperator's current actions. Its
                 structure should match :pymeth:`observation_features`.
         """
         pass
-
-    def on_observation(self, observation: RobotObservation) -> None:
-        """Receive the latest raw robot observation before get_action().
-
-        Override when actions depend on robot state. The default does nothing.
-        Implementations must not mutate the observation.
-        """
-        return None
 
     @abc.abstractmethod
     def send_feedback(self, feedback: dict[str, Any]) -> None:

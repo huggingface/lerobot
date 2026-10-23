@@ -1174,24 +1174,13 @@ def test_episodic_observations_reach_teleop_before_handover_and_reset_actions(mo
         single_task="task", episode_time_s=0.0, reset_time_s=10.0, num_episodes=2
     )
     observations = []
-    pending_observation = None
 
-    def on_observation(observation):
-        nonlocal pending_observation
-        assert pending_observation is None
-        pending_observation = observation
+    def get_action(observation):
+        assert observation is not None, "An action needs a fresh robot observation"
         observations.append(observation["m.pos"])
+        return {"m.pos": observation["m.pos"] + 10.0}
 
-    def get_action():
-        nonlocal pending_observation
-        assert pending_observation is not None, "An action needs a fresh robot observation"
-        action = {"m.pos": pending_observation["m.pos"] + 10.0}
-        pending_observation = None
-        return action
-
-    ctx.hardware.teleop = SimpleNamespace(
-        feedback_features={}, on_observation=on_observation, get_action=get_action
-    )
+    ctx.hardware.teleop = SimpleNamespace(feedback_features={}, get_action=get_action)
     strategy = EpisodicStrategy(EpisodicStrategyConfig(smooth_handover=smooth_handover))
     strategy._engine = ctx.policy.inference
     strategy._interpolator = ActionInterpolator(multiplier=1)
@@ -1203,7 +1192,6 @@ def test_episodic_observations_reach_teleop_before_handover_and_reset_actions(mo
     strategy.run(ctx)
 
     assert observations == [1.0, 2.0, 3.0]
-    assert pending_observation is None
     sent = [call.args[0]["m.pos"] for call in ctx.hardware.robot_wrapper.send_action.call_args_list]
     assert sent == ([12.0, 13.0] if smooth_handover else [11.0, 12.0, 13.0])
     if smooth_handover:

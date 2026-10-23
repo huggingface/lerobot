@@ -178,18 +178,18 @@ class EpisodicStrategy(RolloutStrategy):
                             # engage).
                             if self.config.smooth_handover:
                                 obs = robot.get_observation()
-                                teleop.on_observation(obs)
+
                                 current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
                                 if (
                                     teleop_supports_feedback(teleop)
                                     and self.config.smooth_leader_to_follower_handover
                                 ):
                                     logger.info("Smooth handover: moving leader arm to follower position")
-                                    teleop_smooth_move_to(teleop, current_pos, duration_s=2)
+                                    teleop_smooth_move_to(teleop, current_pos, duration_s=2, observation=obs)
                                     teleop.disable_torque()
                                 else:
                                     logger.info("Smooth handover: sliding follower to teleop position")
-                                    teleop_action = teleop.get_action()
+                                    teleop_action = teleop.get_action(observation=obs)
                                     processed = ctx.processors.teleop_action_processor((teleop_action, obs))
                                     target = ctx.processors.robot_action_processor((processed, obs))
                                     follower_smooth_move_to(robot, current_pos, target, duration_s=1)
@@ -325,8 +325,7 @@ class EpisodicStrategy(RolloutStrategy):
             obs = robot.get_observation()
 
             if teleop is not None:
-                teleop.on_observation(obs)
-                act = teleop.get_action()
+                act = teleop.get_action(observation=obs)
                 act_teleop = processors.teleop_action_processor((act, obs))
                 robot_action = processors.robot_action_processor((act_teleop, obs))
                 robot.send_action(robot_action)

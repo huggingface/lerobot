@@ -199,10 +199,8 @@ def teleop_loop(
                 obs = robot.get_observation()
 
             with timer.section("teleop"):
-                teleop.on_observation(obs)
-
                 # Get teleop action
-                raw_action = teleop.get_action()
+                raw_action = teleop.get_action(observation=obs)
 
                 # Process teleop action through pipeline
                 teleop_action = teleop_action_processor((raw_action, obs))

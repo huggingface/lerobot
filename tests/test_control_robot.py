@@ -74,26 +74,18 @@ def test_teleoperate(cadence_log):
 
 
 def _spy_on_observation():
-    """Patches MockTeleop so each tick records whether `on_observation` ran before `get_action`."""
+    """Require the current robot observation in each action request."""
     from tests.mocks.mock_teleop import MockTeleop
 
-    calls: list[str] = []
+    observations: list[RobotObservation] = []
     get_action = MockTeleop.get_action
 
-    def on_observation(self, observation):
+    def spy_get_action(self, observation: RobotObservation | None = None):
         assert observation and all(key.endswith(".pos") for key in observation)
-        calls.append("on_observation")
+        observations.append(observation)
+        return get_action(self, observation=observation)
 
-    def spy_get_action(self):
-        calls.append("get_action")
-        return get_action(self)
-
-    return calls, patch.multiple(MockTeleop, on_observation=on_observation, get_action=spy_get_action)
-
-
-def _observed_before_every_action(calls: list[str]) -> bool:
-    pairs = list(zip(calls[::2], calls[1::2], strict=False))
-    return bool(pairs) and all(pair == ("on_observation", "get_action") for pair in pairs)
+    return observations, patch.object(MockTeleop, "get_action", spy_get_action)
 
 
 def test_teleoperate_hands_the_observation_to_the_teleop():
@@ -101,7 +93,7 @@ def test_teleoperate_hands_the_observation_to_the_teleop():
     cfg = TeleoperateConfig(robot=MockRobotConfig(), teleop=MockTeleopConfig(), fps=30, teleop_time_s=0.1)
     with spy:
         teleoperate(cfg)
-    assert _observed_before_every_action(calls)
+    assert calls
 
 
 def test_record_hands_the_observation_to_the_teleop(tmp_path):
@@ -120,7 +112,7 @@ def test_record_hands_the_observation_to_the_teleop(tmp_path):
     )
     with spy:
         record(cfg)
-    assert _observed_before_every_action(calls)
+    assert calls
 
 
 def test_record_multi_teleop_receives_fresh_observations_before_actions() -> None:
@@ -132,21 +124,15 @@ def test_record_multi_teleop_receives_fresh_observations_before_actions() -> Non
     observations = [{"arm_shoulder.pos": float(tick)} for tick in range(3)]
     robot.get_observation.side_effect = observations
     events = {"exit_early": False}
-    pending: dict[str, RobotObservation] = {}
     received: dict[str, list[RobotObservation]] = {"arm": [], "keyboard": []}
     sent: list[RobotAction] = []
 
-    def observe(device: str, observation: RobotObservation) -> None:
-        assert device not in pending
-        pending[device] = observation
-        received[device].append(observation)
-
-    def arm_action() -> RobotAction:
-        observation = pending.pop("arm")
+    def arm_action(observation: RobotObservation) -> RobotAction:
+        received["arm"].append(observation)
         return {"shoulder.pos": observation["arm_shoulder.pos"] + 10.0}
 
-    def keyboard_action() -> dict[str, bool]:
-        observation = pending.pop("keyboard")
+    def keyboard_action(observation: RobotObservation) -> dict[str, bool]:
+        received["keyboard"].append(observation)
         assert observation is received["arm"][-1]
         return {"w": True}
 
@@ -156,8 +142,6 @@ def test_record_multi_teleop_receives_fresh_observations_before_actions() -> Non
             events["exit_early"] = True
         return action
 
-    arm.on_observation.side_effect = lambda obs: observe("arm", obs)
-    keyboard.on_observation.side_effect = lambda obs: observe("keyboard", obs)
     arm.get_action.side_effect = arm_action
     keyboard.get_action.side_effect = keyboard_action
     robot._from_keyboard_to_base_action.return_value = {"x.vel": 0.2}
@@ -175,7 +159,6 @@ def test_record_multi_teleop_receives_fresh_observations_before_actions() -> Non
         control_time_s=10.0,
     )
 
-    assert not pending
     for device in received:
         assert len(received[device]) == len(observations)
         assert all(

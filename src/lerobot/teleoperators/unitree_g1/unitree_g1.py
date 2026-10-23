@@ -270,7 +270,9 @@ class UnitreeG1Teleoperator(Teleoperator):
     def configure(self) -> None:
         pass
 
-    def get_action(self) -> dict[str, float]:
+    def get_action(self, observation: RobotObservation | None = None) -> dict[str, float]:
+        if observation is not None:
+            self._update_wireless_remote(observation)
         joint_action: dict[str, float] = {}
         left_raw = None
         right_raw = None
@@ -296,17 +298,17 @@ class UnitreeG1Teleoperator(Teleoperator):
         rc._sync_remote_action()
         return {**joint_action, **rc.remote_action}
 
-    def on_observation(self, observation: RobotObservation) -> None:
+    def _update_wireless_remote(self, observation: RobotObservation) -> None:
         wireless_remote = observation.get("wireless_remote")
         if wireless_remote is not None:
             self.remote_controller.set_from_wireless(wireless_remote)
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        """Deprecated for observation delivery; use :meth:`on_observation` before :meth:`get_action`.
+        """Deprecated for observation delivery; pass observations to :meth:`get_action` instead.
 
         Kept as a compatibility alias for callers that send wireless-remote observations here.
         """
-        self.on_observation(feedback)
+        self._update_wireless_remote(feedback)
 
     def disconnect(self) -> None:
         self.left_arm.disconnect()

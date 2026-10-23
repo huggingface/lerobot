@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
-from lerobot.lerobot_types import RobotAction
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.teleoperators import Teleoperator, TeleoperatorConfig
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
@@ -86,7 +86,7 @@ class MockTeleop(Teleoperator):
         pass
 
     @check_if_not_connected
-    def get_action(self) -> RobotAction:
+    def get_action(self, observation: RobotObservation | None = None) -> RobotAction:
         if self.config.random_values:
             return {f"{motor}.pos": random.uniform(-100, 100) for motor in self.motors}
         else:
