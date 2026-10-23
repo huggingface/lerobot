@@ -228,15 +228,23 @@ def convert_lerobot_dataset_to_cropped_lerobot_dataset(
             new_frame[key] = value
 
         new_frame["task"] = task
-        new_dataset.add_frame(new_frame)
 
+        # Close the previous episode BEFORE adding the first frame of the new one.
+        # (Upstream adds first and checks after, so every episode absorbs the first
+        # frame of its successor and the episode boundaries drift by one frame.)
         if frame["episode_index"].item() != prev_episode_index:
-            # Save the episode
             new_dataset.save_episode()
             prev_episode_index = frame["episode_index"].item()
 
+        new_dataset.add_frame(new_frame)
+
     # Save the last episode
     new_dataset.save_episode()
+    # Flush buffered episode metadata. Without this the trailing episodes are
+    # written to data/ and videos/ but never appear in meta/episodes/, and the
+    # dataset reader then raises IndexError on the first missing episode.
+    # dataset_tools.py:933 does this; upstream crop_dataset_roi.py does not.
+    new_dataset.finalize()
 
     if push_to_hub:
         new_dataset.push_to_hub()
