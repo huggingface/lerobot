@@ -27,3 +27,14 @@ def test_native_diagnostics_are_bounded_and_tolerate_absent_logs(tmp_path):
     assert "old messages" not in error
     assert error.endswith("last native failure")
     assert len(error) < 6100
+
+
+def test_failed_camera_worker_keeps_native_log_after_registry_removal(tmp_path):
+    camera_log = tmp_path / "back.log"
+    camera_log.write_text("TensorRT context failure from removed native worker")
+    workers = SimpleNamespace(_WORKERS={}, _STATE=SimpleNamespace(name=str(tmp_path)))
+    error = native_failure_detail(
+        RuntimeError("DROID failed"), workers, SimpleNamespace(log_path=tmp_path / "hand.log")
+    )
+    assert "camera service back native stderr" in error
+    assert "TensorRT context failure from removed native worker" in error

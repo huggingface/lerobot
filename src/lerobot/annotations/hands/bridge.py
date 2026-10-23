@@ -23,10 +23,22 @@ def native_failure_detail(error, camera_workers, hand):
     """Keep native CUDA/TensorRT stderr that Python stream redirects do not catch."""
     paths = [("hand worker", hand.log_path)]
     paths.extend((f"camera worker {name}", worker.log) for name, worker in camera_workers._WORKERS.items())
+    # The camera adapter removes a failed worker from its process registry before
+    # returning. Its private IPC directory still owns the C-native service logs.
+    state = getattr(camera_workers, "_STATE", None)
+    if state is not None:
+        paths.extend(
+            (f"camera service {name}", Path(state.name) / f"{name}.log") for name in ("front", "back")
+        )
     details = [str(error)]
+    seen = set()
     for name, path in paths:
+        path = Path(path)
+        if path in seen:
+            continue
+        seen.add(path)
         try:
-            with Path(path).open("rb") as source:
+            with path.open("rb") as source:
                 source.seek(0, os.SEEK_END)
                 source.seek(max(0, source.tell() - 6000))
                 text = source.read().decode(errors="replace")
