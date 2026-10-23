@@ -118,6 +118,7 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    asimov,
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
@@ -260,6 +261,12 @@ def record_loop(
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
     if control_time_s is None:
         raise ValueError("`control_time_s` is required: it is how long the loop runs.")
+    if dataset is not None and robot.record_sent_action:
+        recorded_names = dataset.features.get(ACTION, {}).get("names", [])
+        if set(recorded_names) != set(robot.action_features):
+            raise ValueError(
+                "Recording sent actions requires dataset action names to match robot.action_features."
+            )
 
     # Multi-teleop is LeKiwi-only: one arm leader plus a keyboard that drives the base.
     multi_teleop: tuple[Teleoperator, KeyboardTeleop] | None = None
@@ -355,11 +362,11 @@ def record_loop(
             continue
 
         with timer.section("send"):
-            # Send action to robot
-            # Action can eventually be clipped using `max_relative_target`,
-            # so action actually sent is saved in the dataset. action = postprocessor.process(action)
-            # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-            _sent_action = robot.send_action(robot_action_to_send)
+            # Drivers that opt in record their clamped commands. Otherwise preserve
+            # the teleop representation, which may differ from the motor action space.
+            sent_action = robot.send_action(robot_action_to_send)
+            if robot.record_sent_action:
+                action_values = sent_action
 
         # Write to dataset
         if dataset is not None:
