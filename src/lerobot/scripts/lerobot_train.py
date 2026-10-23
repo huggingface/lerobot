@@ -28,12 +28,14 @@ torchrun --nproc-per-node=8 $(which lerobot-train) \
 ```
 """
 
+import ctypes
 import dataclasses
+import gc
 import logging
 import sys
 import time
 from collections.abc import Iterator
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from pprint import pformat
 from typing import TYPE_CHECKING, Any
 
@@ -337,6 +339,45 @@ def update_policy(
     if output_dict:
         train_metrics.update_metrics(output_dict)
     return train_metrics, output_dict
+
+
+def _find_sampler(dataloader):
+    """Return the resumable sampler behind a (possibly accelerate-wrapped) DataLoader, or None."""
+    batch_sampler = dataloader.batch_sampler
+    for obj in (batch_sampler, getattr(batch_sampler, "batch_sampler", None)):  # BatchSamplerShard
+        sampler = getattr(obj, "sampler", None)
+        if hasattr(sampler, "load_state_dict"):
+            return sampler
+    return None
+
+
+def _recycle_dataloader_iterator(
+    dl_iter: Iterator, dataloader, step: int, cfg: TrainPipelineConfig, parallel_dims: ParallelDims
+) -> Iterator:
+    """Replace the DataLoader workers with fresh ones, resuming at the same sample."""
+    if hasattr(dl_iter, "close"):  # accelerate's DataLoaderShard iterator is a generator
+        dl_iter.close()
+    if hasattr(dl_iter, "_shutdown_workers"):
+        dl_iter._shutdown_workers()
+    # persistent_workers=True caches the iterator, and iter() would return the closed workers.
+    for loader in filter(None, (dataloader, getattr(dataloader, "base_dataloader", None))):
+        if getattr(loader, "_iterator", None) is not None:
+            loader._iterator._shutdown_workers()
+            loader._iterator = None
+    gc.collect()
+    with suppress(OSError, AttributeError):
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+
+    sampler = _find_sampler(dataloader)
+    if sampler is not None:
+        state = compute_sampler_state(step, len(sampler), cfg.batch_size, parallel_dims.dp_world_size)
+        sampler.load_state_dict(state)
+        # accelerate's __iter__ calls sampler.set_epoch(self.iteration), which would undo the load.
+        if hasattr(dataloader, "iteration"):
+            dataloader.iteration = state["epoch"]
+    if is_main_process():
+        logging.info(f"Recycled DataLoader workers at step {step}")
+    return iter(dataloader)
 
 
 def make_dataloaders(
@@ -810,7 +851,7 @@ def train(cfg: TrainPipelineConfig) -> None:
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
-    dl_iter = cycle(dataloader)
+    dl_iter = iter(dataloader) if cfg.worker_recycle_every > 0 else cycle(dataloader)
     policy.train()
 
     # EMA shadow of the policy weights (Chi et al. 2023, Diffusion Policy, section V.D). The shadow
@@ -922,8 +963,14 @@ def train(cfg: TrainPipelineConfig) -> None:
         )
 
     for _ in range(step, cfg.steps):
+        if cfg.worker_recycle_every > 0 and step > 0 and step % cfg.worker_recycle_every == 0:
+            dl_iter = _recycle_dataloader_iterator(dl_iter, dataloader, step, cfg, parallel_dims)
         step_start = time.perf_counter()
-        batch = next(dl_iter)
+        try:
+            batch = next(dl_iter)
+        except StopIteration:  # end of epoch, only reached when recycling replaced cycle()
+            dl_iter = iter(dataloader)
+            batch = next(dl_iter)
         if cfg.dataset.streaming:
             batch = send_to_device(batch, device, non_blocking=device.type == "cuda")
         preprocessing_start = time.perf_counter()

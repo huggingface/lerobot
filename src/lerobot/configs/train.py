@@ -133,6 +133,8 @@ class TrainPipelineConfig(HubMixin):
     batch_size: int = 8
     prefetch_factor: int = 4
     persistent_workers: bool = True
+    # Restart DataLoader workers every N steps to bound host memory growth in long runs (0 = off).
+    worker_recycle_every: int = 0
     # DataLoader worker start method. "spawn" is safer than "fork" with
     # non-fork-safe libs (PyAV / torchcodec / ffmpeg), but adds some
     # worker-startup time per run since workers re-import modules instead
@@ -269,6 +271,14 @@ class TrainPipelineConfig(HubMixin):
                 "`dataloader_multiprocessing_context` must be None or one of "
                 f"{available_contexts} on this platform, got "
                 f"{self.dataloader_multiprocessing_context!r}."
+            )
+
+        if self.worker_recycle_every < 0:
+            raise ValueError(f"`worker_recycle_every` must be >= 0, got {self.worker_recycle_every}.")
+        if self.worker_recycle_every > 0 and self.dataset.streaming:
+            raise ValueError(
+                "`worker_recycle_every` is not supported with streaming datasets: re-creating the "
+                "iterator would restart the stream."
             )
 
         self._resolve_pretrained_from_cli()
