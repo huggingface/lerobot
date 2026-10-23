@@ -26,7 +26,7 @@ from tests.utils import require_cuda, skip_if_package_missing
 @skip_if_package_missing("transformers")
 @require_cuda
 def test_smolvla_tuple_kv_and_compile_parity():
-    from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+    from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy, make_att_2d_masks
 
     set_seed(42)
 
@@ -69,6 +69,45 @@ def test_smolvla_tuple_kv_and_compile_parity():
     noise = policy.model.sample_noise((1, config.chunk_size, 7), device)
 
     with torch.no_grad():
+        # 0. Direct DynamicCache vs static tuple KV parity across denoise_step calls
+        images, img_masks = policy.prepare_images(batch)
+        state = policy.prepare_state(batch)
+        lang_tokens = batch["observation.language.tokens"]
+        lang_masks = batch["observation.language.attention_mask"]
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = policy.model.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, state=state
+        )
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+
+        _, dynamic_kv = policy.model.vlm_with_expert.forward(
+            attention_mask=prefix_att_2d_masks,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+        tuple_kv = tuple((layer.keys.clone(), layer.values.clone()) for layer in dynamic_kv.layers)
+        tuple_kv_snapshot = tuple((k.clone(), v.clone()) for k, v in tuple_kv)
+
+        prefix_len = prefix_pad_masks.shape[1]
+        x_dyn = noise.clone()
+        x_tup = noise.clone()
+        dt = -1.0 / config.num_steps
+        for step in range(config.num_steps):
+            t = torch.tensor(1.0 + step * dt, dtype=torch.float32, device=device).expand(1)
+            dynamic_kv.crop(prefix_len)
+            v_dyn = policy.model.denoise_step(prefix_pad_masks, dynamic_kv, x_dyn, t)
+            v_tup = policy.model.denoise_step(prefix_pad_masks, tuple_kv, x_tup, t)
+            torch.testing.assert_close(v_dyn, v_tup, atol=1e-5, rtol=1e-5)
+            x_dyn = x_dyn + dt * v_dyn
+            x_tup = x_tup + dt * v_tup
+
+        torch.testing.assert_close(x_dyn, x_tup, atol=1e-5, rtol=1e-5)
+        for (k, v), (k_orig, v_orig) in zip(tuple_kv, tuple_kv_snapshot, strict=True):
+            assert torch.equal(k, k_orig) and torch.equal(v, v_orig), "Tuple KV prefix was mutated"
+
         # 1. Eager mode with tuple KV cache
         policy.config.compile_denoise = False
         actions_eager = policy.predict_action_chunk(batch, noise=noise.clone())

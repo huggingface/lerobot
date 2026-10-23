@@ -796,10 +796,15 @@ class VLAFlowMatching(nn.Module):
             past_key_values = tuple((layer.keys, layer.values) for layer in past_key_values.layers)
 
         if getattr(self.config, "compile_denoise", False):
-            if getattr(self, "_compiled_denoise_step", None) is None:
+            compile_mode = getattr(self.config, "compile_mode", "max-autotune")
+            if (
+                getattr(self, "_compiled_denoise_step", None) is None
+                or getattr(self, "_compiled_denoise_mode", None) != compile_mode
+            ):
                 self._compiled_denoise_step = torch.compile(
-                    self.denoise_step, mode="max-autotune", dynamic=True
+                    self.denoise_step, mode=compile_mode, dynamic=True
                 )
+                self._compiled_denoise_mode = compile_mode
             step_fn = self._compiled_denoise_step
         else:
             step_fn = self.denoise_step
