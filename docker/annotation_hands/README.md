@@ -37,6 +37,11 @@ DROID-W uses `lietorch_backends` and its own `droid_backends`. Vendor inference
 sources and compiler optimization flags stay unchanged. This changes build
 packaging, not model precision or runtime sampling.
 
+The frozen FP64 sparse wrapper uses cuDSS 0.8.0.10's separate CSR offset/index
+types. The CPU startup check compares its call with the installed header. Each
+GPU Job also solves a known SPD system before compiling engines or reading videos.
+Camera engine build and execution both require `NVIDIA_TF32_OVERRIDE=0`.
+
 The private model release `finerobotics/egohand-soma-runtime` contains the verified
 inference-only checkpoint, FP32 detector ONNX, native SOMA/MHR assets, MoGe/DROID
 weights, exact camera ONNX graphs, local initialization caches and model notices.
@@ -47,6 +52,7 @@ After a successful CPU build, provision Studio's `hand-worker-image.json` with t
 image revision and image-version hash, plus the immutable model release and asset
 manifest hash. Its backend paths must match the Dockerfile. Mark `build_verified`
 only after the image passes its CPU import checks and serves the health receipt.
+Keep public hand launches gated until a GPU Job writes validated native outputs.
 
 On the user's GPU Job, `hand_setup.py` compiles the frozen camera graphs using the
 validated TensorRT 10.13.3.9 settings. The detector builds its own FP32 provider

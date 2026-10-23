@@ -1,7 +1,9 @@
 """Exercise native startup imports on CPU without models, recordings or inference."""
 
+import ast
 import importlib
 import os
+import re
 import runpy
 import sys
 from pathlib import Path
@@ -19,6 +21,24 @@ def verify_checkpoint_alias(root: Path):
         raise RuntimeError("Frozen DROID checkpoint does not resolve the Job asset mount")
 
 
+def verify_solver_signature(source: Path, header: Path):
+    """Match the frozen ctypes CSR call against the installed cuDSS ABI."""
+    declaration = re.search(r"cudssMatrixCreateCsr\((.*?)\)\s*;", header.read_text(), re.DOTALL)
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source.read_text()))
+        if isinstance(node, ast.Call)
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "cudssMatrixCreateCsr"
+    ]
+    if declaration is None or len(calls) != 1:
+        raise RuntimeError("Cannot verify the frozen cuDSS CSR interface")
+    parameters = declaration.group(1).split(",")
+    if len(calls[0].args) - 1 != len(parameters) or "offsetType" not in declaration.group(1):
+        raise RuntimeError("The installed cuDSS CSR ABI does not match the frozen wrapper")
+
+
 def main():
     """Import the actual camera bootstrap or concrete hand inference entry points."""
     import torch
@@ -29,6 +49,12 @@ def main():
         os.environ.update(DROIDW_LEAN_STARTUP="1", MPLBACKEND="Agg")
         root = Path("/opt/hand-camera/DROID-on")
         verify_checkpoint_alias(root)
+        from importlib.metadata import distribution
+
+        solver = distribution("nvidia-cudss-cu12")
+        if solver.version != "0.8.0.10":
+            raise RuntimeError("The frozen CSR wrapper requires cuDSS 0.8.0.10")
+        verify_solver_signature(root / "cudss_solver.py", solver.locate_file("nvidia/cu12/include/cudss.h"))
         sys.path.insert(0, str(root))
         # The frozen bootstrap installs its wrappers at import time. A distinct
         # run name leaves the socket service, model loading and inference idle.

@@ -13,6 +13,6 @@ imageio==2.37.3
 pandas==2.3.3
 tqdm==4.70.0
 termcolor==3.3.0
-nvidia-cudss-cu12==0.7.1.6
+nvidia-cudss-cu12==0.8.0.10
 tensorrt-cu12==10.13.3.9
 utils3d-moge @ git+https://github.com/EasternJournalist/utils3d-moge.git@62f09d58509485564e24d5d9f6aac9ee9ebc0c37
