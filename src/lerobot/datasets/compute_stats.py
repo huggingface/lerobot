@@ -140,33 +140,123 @@ class RunningQuantileStats:
 
         return stats
 
+    def merge(self, other: RunningQuantileStats) -> RunningQuantileStats:
+        """Merge another ``RunningQuantileStats`` into this one, in place.
+
+        Combines counts, means, and per-dimension histograms so that the merged
+        object yields the same statistics as if every batch seen by ``other``
+        had instead been passed to ``self.update``. Crucially, the resulting
+        quantiles are *global* over the union of all data (accurate to histogram
+        resolution) -- not a count-weighted average of the two objects'
+        quantiles, which biases distribution tails inward.
+
+        ``mean``/``std``/``min``/``max`` remain exact; only quantiles carry the
+        usual histogram discretization error. Returns ``self`` for chaining.
+        """
+        if other._count == 0:
+            return self
+        if (
+            other._mean is None
+            or other._mean_of_squares is None
+            or other._min is None
+            or other._max is None
+            or other._histograms is None
+            or other._bin_edges is None
+        ):
+            raise RuntimeError("Running statistics of `other` are not initialized; call update() first.")
+        if self._count == 0:
+            # Merging into an empty accumulator yields a faithful clone of ``other``:
+            # adopt its full configuration too, otherwise ``self``'s histogram length
+            # (now ``other._num_quantile_bins``) would disagree with a stale
+            # ``self._num_quantile_bins`` and silently rebin on the next update/merge.
+            self._num_quantile_bins = other._num_quantile_bins
+            self._quantile_list = list(other._quantile_list)
+            self._quantile_keys = list(other._quantile_keys)
+            self._count = other._count
+            self._mean = other._mean.copy()
+            self._mean_of_squares = other._mean_of_squares.copy()
+            self._min = other._min.copy()
+            self._max = other._max.copy()
+            self._histograms = [h.copy() for h in other._histograms]
+            self._bin_edges = [e.copy() for e in other._bin_edges]
+            return self
+        if (
+            self._mean is None
+            or self._mean_of_squares is None
+            or self._min is None
+            or self._max is None
+            or self._histograms is None
+            or self._bin_edges is None
+        ):
+            raise RuntimeError("Running statistics are not initialized; call update() first.")
+
+        if self._num_quantile_bins != other._num_quantile_bins:
+            raise ValueError(
+                "Cannot merge RunningQuantileStats with different num_quantile_bins "
+                f"({self._num_quantile_bins} != {other._num_quantile_bins})."
+            )
+        if self._mean.size != other._mean.size:
+            raise ValueError(
+                "Cannot merge RunningQuantileStats with different vector lengths "
+                f"({self._mean.size} != {other._mean.size})."
+            )
+
+        total_count = self._count + other._count
+        # Mean and mean-of-squares are exact count-weighted averages of the two parts.
+        self._mean = (self._mean * self._count + other._mean * other._count) / total_count
+        self._mean_of_squares = (
+            self._mean_of_squares * self._count + other._mean_of_squares * other._count
+        ) / total_count
+
+        new_min = np.minimum(self._min, other._min)
+        new_max = np.maximum(self._max, other._max)
+
+        # Re-bin both histograms onto the union range, then sum the counts.
+        for i in range(len(self._histograms)):
+            new_edges = self._make_bin_edges(new_min[i], new_max[i], self._num_quantile_bins)
+            self._histograms[i] = self._rebin_histogram(
+                self._histograms[i], self._bin_edges[i], new_edges
+            ) + self._rebin_histogram(other._histograms[i], other._bin_edges[i], new_edges)
+            self._bin_edges[i] = new_edges
+
+        self._min = new_min
+        self._max = new_max
+        self._count = total_count
+        return self
+
+    @staticmethod
+    def _make_bin_edges(low: float | np.ndarray, high: float | np.ndarray, num_bins: int) -> np.ndarray:
+        """Build ``num_bins + 1`` edges spanning ``[low, high]`` with tiny padding.
+
+        The padding guarantees strictly increasing edges even for a constant
+        feature (``low == high``), so downstream histogram/quantile math is safe.
+        """
+        span = high - low
+        padding = span * 1e-10 if span > 0 else 1e-10
+        return np.linspace(low - padding, high + padding, num_bins + 1)
+
+    @staticmethod
+    def _rebin_histogram(hist: np.ndarray, old_edges: np.ndarray, new_edges: np.ndarray) -> np.ndarray:
+        """Redistribute ``hist`` counts from ``old_edges`` onto ``new_edges``.
+
+        Each old bin's count is assigned to the new bin that contains the old
+        bin's center. This is the mapping used both when a single histogram's
+        range expands and when two histograms are merged.
+        """
+        num_bins = len(new_edges) - 1
+        old_centers = (old_edges[:-1] + old_edges[1:]) / 2
+        bin_idx = np.clip(np.searchsorted(new_edges, old_centers) - 1, 0, num_bins - 1)
+        new_hist = np.zeros(num_bins)
+        np.add.at(new_hist, bin_idx, hist)
+        return new_hist
+
     def _adjust_histograms(self) -> None:
         """Adjust histograms when min or max changes."""
         if self._histograms is None or self._bin_edges is None or self._min is None or self._max is None:
             raise RuntimeError("Running statistics are not initialized; call update() first.")
         for i in range(len(self._histograms)):
-            old_edges = self._bin_edges[i]
-            old_hist = self._histograms[i]
-
-            # Create new edges with small padding to ensure range coverage
-            padding = (self._max[i] - self._min[i]) * 1e-10
-            new_edges = np.linspace(
-                self._min[i] - padding, self._max[i] + padding, self._num_quantile_bins + 1
-            )
-
-            # Redistribute existing histogram counts to new bins
-            # We need to map each old bin center to the new bins
-            old_centers = (old_edges[:-1] + old_edges[1:]) / 2
-            new_hist = np.zeros(self._num_quantile_bins)
-
-            for old_center, count in zip(old_centers, old_hist, strict=False):
-                if count > 0:
-                    # Find which new bin this old center belongs to
-                    bin_idx = int(np.searchsorted(new_edges, old_center)) - 1
-                    bin_idx = max(0, min(bin_idx, self._num_quantile_bins - 1))
-                    new_hist[bin_idx] += count
-
-            self._histograms[i] = new_hist
+            new_edges = self._make_bin_edges(self._min[i], self._max[i], self._num_quantile_bins)
+            self._histograms[i] = self._rebin_histogram(self._histograms[i], self._bin_edges[i], new_edges)
             self._bin_edges[i] = new_edges
 
     def _update_histograms(self, batch: np.ndarray) -> None:
