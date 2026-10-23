@@ -285,3 +285,18 @@ def test_history_eviction_and_padding(config, mode):
         data[f"{key}_is_pad"].fill_(True)
     loss, _ = policy(data)
     assert loss.item() == 0
+
+
+@pytest.mark.parametrize("boundary", ["meta", "assigned_state"])
+def test_restore_shared_text_weights_after_loading_boundary(config, boundary):
+    policy = LongWAMPolicy(config)
+    assert policy.text_encoder.shared.weight is policy.text_encoder.encoder.embed_tokens.weight
+    if boundary == "meta":
+        policy.to("meta")
+    else:
+        state = {name: value.clone() for name, value in policy.state_dict().items()}
+        policy.load_state_dict(state, assign=True)
+    assert policy.text_encoder.shared.weight is not policy.text_encoder.encoder.embed_tokens.weight
+    policy.tie_weights()
+    assert policy.text_encoder.shared.weight is policy.text_encoder.encoder.embed_tokens.weight
+    assert not policy.text_encoder.shared.weight.requires_grad

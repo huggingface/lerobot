@@ -70,6 +70,10 @@ class LongWAMPolicy(PreTrainedPolicy):
         self.to(dtype=config.dtype)
         self.reset()
 
+    def tie_weights(self) -> None:
+        """Restore backbone sharing after meta placement or assigned state loading."""
+        self.text_encoder.tie_weights()
+
     def train(self, mode: bool = True) -> Self:
         super().train(mode)
         self.vae.eval()
