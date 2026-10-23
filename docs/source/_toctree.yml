@@ -189,6 +189,8 @@
 - sections:
   - local: cameras
     title: Cameras
+  - local: microphones
+    title: Microphones
   - local: third_party_sensors
     title: Third-Party Cameras & Sensors
   title: "Sensors"
@@ -215,6 +217,8 @@
     title: Teleoperators
   - local: api/cameras
     title: Cameras
+  - local: api/microphones
+    title: Microphones
   - local: api/motors
     title: Motors
   - local: api/datasets
