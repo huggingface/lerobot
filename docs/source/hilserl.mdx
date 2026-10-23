@@ -101,6 +101,7 @@ class ObservationConfig:
 class ImagePreprocessingConfig:
     crop_params_dict: dict[str, tuple[int, int, int, int]] | None = None    # Image cropping parameters
     resize_size: tuple[int, int] | None = None    # Target image size
+    image_device: str = "cpu"    # Device for image conversion, normalization and crop/resize
 
 class GripperConfig:
     use_gripper: bool = True    # Enable gripper control
@@ -347,6 +348,20 @@ lerobot-find-joint-limits \
 ```
 
 ### Collecting Demonstrations
+
+To preprocess camera images on CUDA, set `env.processor.image_preprocessing.image_device` to `"cuda"` (or a specific device such as `"cuda:0"`). For example, the image preprocessing section of your environment configuration can contain:
+
+```json
+{
+  "image_device": "cuda",
+  "crop_params_dict": {},
+  "resize_size": [128, 128]
+}
+```
+
+The default is `"cpu"`. With CUDA selected, images are transferred as `uint8` before channel conversion and float32 normalization; the real-robot pipeline then crops and resizes them on that device. Joint state and kinematics keep their existing CPU processing until the final device step. The `gym_hil` pipeline uses the same setting for image conversion and normalization and keeps its existing simulator image sizes.
+
+Use the same CUDA device as the policy to avoid an additional transfer at the final device step. CUDA must be available when processing images. This setting is a performance option: measure your own image pipeline after warmup, synchronizing CUDA before and after timing. Its effect depends on camera sizes, crop sizes and hardware; it does not set or guarantee the robot's control frequency.
 
 With the bounds defined, you can safely collect demonstrations for training. Training RL with off-policy algorithm allows us to use offline datasets collected in order to improve the efficiency of the learning process.
 
