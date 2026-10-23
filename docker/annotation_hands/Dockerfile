@@ -2,7 +2,7 @@
 ARG PYTORCH_IMAGE=pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime@sha256:eee11b3b3872a8c838e35ef48f08b2d5def2080902c7f666831310ca1a0ef2be
 FROM ${PYTORCH_IMAGE} AS base
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends git ffmpeg libglib2.0-0 \
+RUN apt-get update && apt-get install -y --no-install-recommends git ffmpeg libglib2.0-0 python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # Isolate the controller, camera and hand dependencies to retain their CUDA ABIs.
