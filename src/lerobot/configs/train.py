@@ -133,9 +133,7 @@ class TrainPipelineConfig(HubMixin):
     batch_size: int = 8
     prefetch_factor: int = 4
     persistent_workers: bool = True
-    # Rebuild the training DataLoader iterator (and its workers) every N steps to bound host memory
-    # that grows in long-lived workers, e.g. from video decoder allocations. 0 disables it. The
-    # sampler is reloaded at the consumed sample count, so no sample is repeated or skipped.
+    # Restart DataLoader workers every N steps to bound host memory growth in long runs (0 = off).
     worker_recycle_every: int = 0
     # DataLoader worker start method. "spawn" is safer than "fork" with
     # non-fork-safe libs (PyAV / torchcodec / ffmpeg), but adds some
