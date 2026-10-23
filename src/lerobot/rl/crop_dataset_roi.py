@@ -198,10 +198,17 @@ def convert_lerobot_dataset_to_cropped_lerobot_dataset(
     )
 
     # Update the metadata for every image key that will be cropped:
-    # (Here we simply set the shape to be the final resize_size.)
+    # (Here we simply set the spatial dimensions to the final resize_size.)
+    # Keep the layout the feature's names declare, as the frame validator reads it: (H, W, C) when the
+    # last name is the channel axis, (C, H, W) otherwise. The channel count is unchanged.
     for key in crop_params_dict:
         if key in new_dataset.meta.info.features:
-            new_dataset.meta.info.features[key]["shape"] = (3, *resize_size)
+            feature = new_dataset.meta.info.features[key]
+            names, shape = feature.get("names"), feature["shape"]
+            if isinstance(names, (list, tuple)) and len(names) == 3 and names[2] in ["channel", "channels"]:
+                feature["shape"] = (*resize_size, shape[2])
+            else:
+                feature["shape"] = (shape[0], *resize_size)
 
     # TODO:  Directly modify the mp4 video + meta info features, instead of recreating a dataset
     prev_episode_index = 0
