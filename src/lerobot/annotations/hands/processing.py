@@ -34,10 +34,13 @@ def provisioned_environment(config: HandBackendConfig) -> dict[str, str]:
     if git is None:
         raise ValueError("The native image requires Git to verify its frozen source")
     for root, revision in ((config.gem_root, GEM_REVISION),):
-        head = subprocess.check_output([git, "-C", root, "rev-parse", "HEAD"], text=True).strip()
+        # The immutable image checkout belongs to root; Jobs run as UID 1000.
+        # Trust only this configured checkout for these read-only checks.
+        command = [git, "-c", f"safe.directory={Path(root).resolve()}", "-C", root]
+        head = subprocess.check_output([*command, "rev-parse", "HEAD"], text=True).strip()
         if head != revision:
             raise ValueError(f"Native source must be pinned to {revision}")
-        subprocess.run([git, "-C", root, "diff", "--quiet", "HEAD", "--"], check=True)
+        subprocess.run([*command, "diff", "--quiet", "HEAD", "--"], check=True)
     if not re.fullmatch(r"[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*", config.module):
         raise ValueError("The image must configure its installed camera module")
     for name in ("python", "egohand_python", "droid_python", "droid_moge_checkpoint"):

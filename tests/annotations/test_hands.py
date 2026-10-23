@@ -4,6 +4,7 @@
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import Mock
@@ -432,9 +433,38 @@ for line in sys.stdin:
 
 
 def test_native_interpreters_isolate_cuda_libraries_and_strip_hub_credentials(tmp_path, monkeypatch):
-    from lerobot.annotations.hands.config import GEM_REVISION, RUNTIME_REVISION
+    from lerobot.annotations.hands.config import RUNTIME_REVISION
     from lerobot.annotations.hands.processing import provisioned_environment
 
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    source = tmp_path / "source.py"
+    source.write_text("# frozen source\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "source.py"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-m",
+            "Fixture",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    revision = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
+    monkeypatch.setattr("lerobot.annotations.hands.processing.GEM_REVISION", revision)
+    monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+    untrusted = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], capture_output=True)
+    assert untrusted.returncode != 0 and b"dubious ownership" in untrusted.stderr
     receipt = tmp_path / "runtime-source.json"
     receipt.write_text(json.dumps({"revision": RUNTIME_REVISION, "files": []}))
     checkpoint = tmp_path / "moge.pt"
@@ -455,10 +485,6 @@ def test_native_interpreters_isolate_cuda_libraries_and_strip_hub_credentials(tm
     monkeypatch.setenv("DROID_LIBRARY_PATH", "/camera/lib")
     monkeypatch.setenv("EGO_LIBRARY_PATH", "/hand/lib")
     monkeypatch.setattr(
-        "lerobot.annotations.hands.processing.subprocess.check_output", lambda *a, **kw: GEM_REVISION
-    )
-    monkeypatch.setattr("lerobot.annotations.hands.processing.subprocess.run", Mock())
-    monkeypatch.setattr(
         "lerobot.annotations.hands.processing.verify_assets",
         lambda config: {"environment": {"HF_HOME": str(tmp_path / "offline-cache")}},
     )
@@ -468,3 +494,6 @@ def test_native_interpreters_isolate_cuda_libraries_and_strip_hub_credentials(tm
     assert environment["LD_LIBRARY_PATH"] == "/camera/lib"
     assert environment["EGO_LIBRARY_PATH"] == "/hand/lib"
     assert os.environ["LD_LIBRARY_PATH"] == "/controller/lib"
+    source.write_text("# changed source\n")
+    with pytest.raises(subprocess.CalledProcessError):
+        provisioned_environment(config)
