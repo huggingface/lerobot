@@ -690,6 +690,16 @@ def reencode_video(
         raise OSError(f"Video re-encoding did not work. File not found: {output_video_path}.")
 
 
+def _ffconcat_path(path: Path | str) -> str:
+    """Quote ``path`` for an ffconcat ``file`` directive.
+
+    Single quotes delimit the path. An apostrophe in the path is escaped by
+    closing the quote, writing a backslash-escaped apostrophe, and reopening it.
+    """
+    resolved = str(Path(path).resolve()).replace("'", "'\\''")
+    return f"'{resolved}'"
+
+
 def concatenate_video_files(
     input_video_paths: Sequence[Path | str],
     output_video_path: Path,
@@ -746,7 +756,7 @@ def concatenate_video_files(
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
         tmp_concatenate_file.write("ffconcat version 1.0\n")
         for input_path in input_video_paths:
-            tmp_concatenate_file.write(f"file '{Path(input_path).resolve()}'\n")
+            tmp_concatenate_file.write(f"file {_ffconcat_path(input_path)}\n")
         tmp_concatenate_file.flush()
         tmp_concatenate_path = tmp_concatenate_file.name
 
