@@ -324,17 +324,19 @@ lerobot-find-joint-limits \
 **Workflow**
 
 1. Run the script and move the robot through the space that solves the task
-2. The script will record the minimum and maximum end-effector positions and the joint angles and prints them to the console, for example:
+2. The script will record the minimum and maximum end-effector positions and the joint positions and prints them to the console, for example:
 
    ```
    # End Effector Bounds (x, y, z):
    max_ee = [0.2417, 0.2012, 0.1027]
    min_ee = [0.1663, -0.0823, 0.0336]
 
-   # Joint Position Limits (radians):
+   # Joint Position Limits (robot observation units):
    max_pos = [...]
    min_pos = [...]
    ```
+
+   For the SO-100/SO-101 in the example, the first five values (arm joints) are in degrees (`use_degrees=True` by default) and the sixth (gripper) is normalized to 0 to 100.
 
 3. Use these values in your environment configuration under `env.processor.inverse_kinematics.end_effector_bounds` (see `InverseKinematicsConfig` in `lerobot/envs/configs.py`)
 
