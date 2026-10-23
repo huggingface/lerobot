@@ -73,3 +73,12 @@ def test_rtc_config_partial_initialization():
     assert config.prefix_attention_schedule == RTCAttentionSchedule.LINEAR
     assert config.execution_horizon == 10
     assert config.debug is False
+
+
+def test_rtc_config_guidance_jacobian_default():
+    assert RTCConfig().guidance_jacobian == "identity"
+
+
+def test_rtc_config_rejects_unknown_guidance_jacobian():
+    with pytest.raises(ValueError, match="guidance_jacobian"):
+        RTCConfig(guidance_jacobian="hessian")
