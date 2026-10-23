@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+import logging
 
 import numpy as np
 import pytest
@@ -145,6 +146,8 @@ def test_stats(audio_dataset):
     assert np.all(stats["min"][:, 0] >= all_audio.min(axis=0) - ATOL)
     assert np.all(stats["max"][:, 0] <= all_audio.max(axis=0) + ATOL)
     np.testing.assert_allclose(stats["std"][:, 0], all_audio.std(axis=0), rtol=0.1)
+    # Episodes are weighted by their number of samples, not by the size of their subsample
+    assert stats["count"].tolist() == [len(all_audio)]
 
 
 def test_info(audio_dataset, tmp_path):
@@ -275,6 +278,42 @@ def test_add_episode_audio_invalid(tmp_path, audio_key, audio, start_time_s, err
     )
     with pytest.raises(error, match=match):
         dataset.add_episode_audio(audio_key, audio, start_time_s=start_time_s)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("from_file", [False, True])
+def test_add_episode_audio_not_finite(tmp_path, value, from_file):
+    dataset = LeRobotDataset.create(
+        DUMMY_REPO_ID, fps=FPS, features=FEATURES, root=tmp_path / "dataset", use_videos=False
+    )
+    audio = np.zeros((10, NUM_CHANNELS), dtype=np.float32)
+    audio[3, 1] = value
+    if from_file:
+        sf.write(tmp_path / "recording.wav", audio, SAMPLE_RATE, subtype="FLOAT")
+        audio = tmp_path / "recording.wav"
+
+    with pytest.raises(ValueError, match="finite"):
+        dataset.add_episode_audio(AUDIO_KEY, audio)
+
+
+@pytest.mark.parametrize("from_file", [False, True])
+def test_out_of_range_audio_is_clipped(tmp_path, caplog, from_file):
+    root = tmp_path / "dataset"
+    dataset = LeRobotDataset.create(DUMMY_REPO_ID, fps=FPS, features=FEATURES, root=root, use_videos=False)
+    audio = make_audio(10, seed=0)
+    audio[100] = [2.0, -1.5]
+    expected = np.clip(audio, -1.0, 1.0)
+    if from_file:
+        sf.write(tmp_path / "recording.wav", audio, SAMPLE_RATE, subtype="FLOAT")
+        audio = tmp_path / "recording.wav"
+
+    with caplog.at_level(logging.WARNING):
+        add_episode(dataset, 10, audio)
+    dataset.finalize()
+
+    assert "Clipping 2 audio sample(s)" in caplog.text
+    stored, _ = sf.read(root / dataset.meta.get_audio_file_path(0, AUDIO_KEY), dtype="float32")
+    np.testing.assert_allclose(stored, expected, atol=ATOL)
 
 
 def test_add_episode_audio_wrong_sample_rate(tmp_path):

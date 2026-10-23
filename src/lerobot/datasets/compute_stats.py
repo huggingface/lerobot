@@ -580,10 +580,12 @@ def compute_audio_stats(
 
     Returns:
         Statistics of shape ``(num_channels, 1)``, which broadcast over the ``(num_channels, window_size)``
-        windows returned by the dataset, and the number of samples used as ``count``.
+        windows returned by the dataset. Like for images, ``count`` is the number of samples in the episode,
+        not in the subsample, so that episodes are weighted by their length when aggregated.
     """
     sampled = samples[sample_indices(len(samples))]
     stats = get_feature_stats(sampled, axis=0, keepdims=False, quantile_list=quantile_list)
+    stats["count"] = np.array([len(samples)])
     return {k: v if k == "count" else v.reshape(-1, 1) for k, v in stats.items()}
 
 
