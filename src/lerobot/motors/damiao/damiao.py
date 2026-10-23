@@ -46,13 +46,16 @@ from .tables import (
     CAN_CMD_ENABLE,
     CAN_CMD_REFRESH,
     CAN_CMD_SET_ZERO,
+    CAN_CMD_WRITE_PARAM,
     CAN_PARAM_ID,
     DEFAULT_BAUDRATE,
     DEFAULT_TIMEOUT_MS,
     MIT_KD_RANGE,
     MIT_KP_RANGE,
     MOTOR_LIMIT_PARAMS,
+    ControlMode,
     MotorType,
+    MotorVariable,
 )
 
 logger = logging.getLogger(__name__)
@@ -150,6 +153,9 @@ class DamiaoMotorsBus(MotorsBusBase):
         # Defaults: Kp=10.0 (Stiffness), Kd=0.5 (Damping)
         self._gains: dict[str, dict[str, float]] = {name: {"kp": 10.0, "kd": 0.5} for name in self.motors}
 
+        # Motor Mode
+        self.operation_mode: dict[str, ControlMode | None] = dict.fromkeys(self.motors)
+
     @property
     def is_connected(self) -> bool:
         """Check if the CAN bus is connected."""
@@ -160,10 +166,13 @@ class DamiaoMotorsBus(MotorsBusBase):
         """
         Open the CAN bus and initialize communication.
 
+        Call configure_motors() after connecting and before sending MIT control commands.
+
         Args:
             handshake: If True, ping all motors to verify they're present
         """
 
+        self.operation_mode = dict.fromkeys(self.motors)
         try:
             # Auto-detect interface type based on port name
             if self.can_interface == "auto":
@@ -265,13 +274,63 @@ class DamiaoMotorsBus(MotorsBusBase):
             self.canbus.shutdown()
             self.canbus = None
         self._is_connected = False
+        self.operation_mode = dict.fromkeys(self.motors)
         logger.debug(f"{self.__class__.__name__} disconnected.")
 
+    def _switch_operation_mode(self, motor: NameOrID, mode: ControlMode) -> None:
+        """Write the mode to RAM and confirm the echoed parameter acknowledgement."""
+        motor_id = self._get_motor_id(motor)
+        motor_name = self._get_motor_name(motor)
+        recv_id = self._get_motor_recv_id(motor)
+        val = int(mode)
+        data = [
+            motor_id & 0xFF,
+            (motor_id >> 8) & 0xFF,
+            CAN_CMD_WRITE_PARAM,
+            int(MotorVariable.CTRL_MODE),
+            val & 0xFF,
+            (val >> 8) & 0xFF,
+            (val >> 16) & 0xFF,
+            (val >> 24) & 0xFF,
+        ]
+
+        if self.canbus is None:
+            raise RuntimeError("CAN bus is not initialized.")
+
+        msg = can.Message(arbitration_id=CAN_PARAM_ID, data=data, is_extended_id=False, is_fd=self.use_can_fd)
+        # A failed write must not leave a previously confirmed mode in the cache.
+        self.operation_mode[motor_name] = None
+        self.canbus.send(msg)
+        deadline = time.monotonic() + LONG_TIMEOUT_SEC
+        while (remaining := deadline - time.monotonic()) > 0:
+            response = self.canbus.recv(timeout=remaining)
+            # State replies (including late DISABLE replies) share the same CAN ID.
+            # A parameter acknowledgement echoes the motor ID, command, RID and value.
+            if (
+                response is not None
+                and not response.is_error_frame
+                and not response.is_remote_frame
+                and response.arbitration_id == recv_id
+                and response.data == bytes(data)
+            ):
+                self.operation_mode[motor_name] = mode
+                return
+
+        raise TimeoutError(
+            f"Motor '{motor_name}' did not acknowledge CTRL_MODE={mode.name} "
+            f"within {LONG_TIMEOUT_SEC}s. Check the CAN connection and motor configuration."
+        )
+
     def configure_motors(self) -> None:
-        """Configure all motors with default settings."""
+        """Switch all motors to MIT mode in RAM and enable them.
+
+        Call after each connect(), before sending MIT control commands.
+        Raises TimeoutError if a motor does not acknowledge the mode write.
+        """
         # Damiao motors don't require much configuration in MIT mode
-        # Just ensure they're enabled
+        # Just ensure they're switched to MIT and enabled
         for motor in self.motors:
+            self._switch_operation_mode(motor, ControlMode.MIT)
             self._send_simple_command(motor, CAN_CMD_ENABLE)
             time.sleep(MEDIUM_TIMEOUT_SEC)
 
@@ -475,6 +534,11 @@ class DamiaoMotorsBus(MotorsBusBase):
         motor_name = self._get_motor_name(motor)
         motor_type = self._motor_types[motor_name]
 
+        if self.operation_mode.get(motor_name) != ControlMode.MIT:
+            raise RuntimeError(
+                f"Motor '{motor_name}' is not in MIT control mode. Call configure_motors() after connect()."
+            )
+
         if self.canbus is None:
             raise RuntimeError("CAN bus is not initialized.")
 
@@ -507,6 +571,16 @@ class DamiaoMotorsBus(MotorsBusBase):
 
         if self.canbus is None:
             raise RuntimeError("CAN bus is not initialized.")
+
+        not_mit = [
+            name
+            for name in map(self._get_motor_name, commands)
+            if self.operation_mode.get(name) != ControlMode.MIT
+        ]
+        if not_mit:
+            raise RuntimeError(
+                f"Motors {not_mit} are not in MIT control mode. Call configure_motors() after connect()."
+            )
 
         # Step 1: Send all MIT control commands
         for motor, (kp, kd, position_degrees, velocity_deg_per_sec, torque) in commands.items():

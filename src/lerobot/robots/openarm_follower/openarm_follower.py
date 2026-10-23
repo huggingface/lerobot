@@ -213,10 +213,18 @@ class OpenArmFollower(Robot):
         print(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
-        """Configure motors with appropriate settings."""
-        # TODO(Steven, Pepijn): Slightly different from what it is happening in the leader
-        with self.bus.torque_disabled():
+        """Configure and enable motors, attempting to disable all motors on failure."""
+        self.bus.disable_torque()
+        try:
             self.bus.configure_motors()
+        except Exception:
+            # Configuration may already have enabled some motors. Do not restore
+            # torque on motors whose mode could not be confirmed.
+            try:
+                self.bus.disable_torque()
+            except Exception:
+                logger.exception("Failed to disable torque after motor configuration failed")
+            raise
 
     def setup_motors(self) -> None:
         raise NotImplementedError(
