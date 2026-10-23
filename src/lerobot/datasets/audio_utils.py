@@ -22,6 +22,7 @@ the frames. Samples are handled as float32 arrays of shape ``(num_samples, num_c
 the layout returned by :meth:`lerobot.microphones.Microphone.read`.
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -33,6 +34,8 @@ from lerobot.utils.import_utils import _soundfile_available, require_package
 
 if TYPE_CHECKING or _soundfile_available:
     import soundfile as sf
+
+logger = logging.getLogger(__name__)
 
 AUDIO_CODEC = "flac"
 DEFAULT_AUDIO_WINDOW_S = 0.5
@@ -77,23 +80,40 @@ def load_audio(audio: NDArray[Any] | str | Path) -> tuple[NDArray[np.float32], i
 
     Returns:
         The float32 samples of shape ``(num_samples, num_channels)``, and the sample rate of the file
-        (``None`` for an array).
+        (``None`` for an array). Samples outside ``[-1, 1]`` are clipped, with a warning.
+
+    Raises:
+        ValueError: If the samples are not finite.
     """
     if isinstance(audio, (str, Path)):
         require_package("soundfile", extra="audio")
-        samples, sample_rate = sf.read(audio, dtype="float32", always_2d=True)
-        return samples, int(sample_rate)
+        samples, file_sample_rate = sf.read(audio, dtype="float32", always_2d=True)
+        sample_rate: int | None = int(file_sample_rate)
+    else:
+        samples = np.asarray(audio)
+        if not np.issubdtype(samples.dtype, np.floating):
+            raise TypeError(
+                f"Audio samples must be floating point values in [-1, 1], got dtype {samples.dtype}."
+            )
+        if samples.ndim == 1:
+            samples = samples[:, None]
+        if samples.ndim != 2:
+            raise ValueError(
+                f"Audio samples must have a shape of (num_samples, num_channels), got {samples.shape}."
+            )
+        samples = samples.astype(np.float32)
+        sample_rate = None
 
-    samples = np.asarray(audio)
-    if not np.issubdtype(samples.dtype, np.floating):
-        raise TypeError(f"Audio samples must be floating point values in [-1, 1], got dtype {samples.dtype}.")
-    if samples.ndim == 1:
-        samples = samples[:, None]
-    if samples.ndim != 2:
-        raise ValueError(
-            f"Audio samples must have a shape of (num_samples, num_channels), got {samples.shape}."
+    if not np.isfinite(samples).all():
+        raise ValueError("Audio samples must be finite, got NaN or infinite values.")
+    # The FLAC encoder would clip them anyway: do it explicitly so that it is not silent.
+    num_clipped = int(np.count_nonzero(np.abs(samples) > 1.0))
+    if num_clipped > 0:
+        logger.warning(
+            f"Clipping {num_clipped} audio sample(s) outside [-1, 1] (peak {np.abs(samples).max():.3f})."
         )
-    return samples.astype(np.float32), None
+        np.clip(samples, -1.0, 1.0, out=samples)
+    return samples, sample_rate
 
 
 def write_audio_file(path: Path, samples: NDArray[np.float32], sample_rate: int) -> None:

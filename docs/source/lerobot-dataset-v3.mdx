@@ -201,7 +201,8 @@ dataset = LeRobotDataset.create("user/my_dataset", fps=30, features=features)
 
 Audio is not added frame by frame. The recording of each audio feature is added once per episode,
 before saving it, as float samples in `[-1, 1]` of shape `(num_samples, num_channels)` or as the path
-of an audio file (e.g. a WAV file written by a microphone):
+of an audio file (e.g. a WAV file written by a microphone). Samples outside `[-1, 1]` are clipped with a
+warning, and non-finite samples are rejected:
 
 ```python
 for frame in frames:

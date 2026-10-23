@@ -79,6 +79,7 @@ def test_streaming_dataset_sidecar_lock_timeout(tmp_path, monkeypatch):
         video_keys=[],
         depth_keys=[],
         image_keys=[],
+        audio_keys=[],
         rescale_depth_stats=Mock(),
     )
     ensure_sidecar = Mock(side_effect=TimeoutError("Timed out waiting 5s for MP4 sidecar lock"))
