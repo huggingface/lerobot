@@ -1,0 +1,40 @@
+# 电机[[motors]]
+
+`SerialMotorsBus` 是串行总线上一条由 Feetech 或 Dynamixel 伺服电机组成的链的底层接口。机器人使用它读取位置并写入目标位置；除非你要添加硬件，否则很少直接接触它。每个电机的型号都会在 [rustypot](https://github.com/pollen-robotics/rustypot) 中查找，其中存放着控制表和各系列之间存在差异的信息，并负责管理串口。`FeetechMotorsBus` 和 `DynamixelMotorsBus` 是它的已弃用别名，会保留一个版本。
+
+### 从基于 SDK 的总线迁移[[migrating-from-the-sdk-based-buses]]
+
+这些别名保留了类名，但不保留旧的 SDK 属性和型号表：
+
+- `bus.model_resolution_table[model]` 改为 `bus.resolution(model)`；其他型号表（`model_ctrl_table`、`model_number_table` 等）现在都是 rustypot 的伺服定义。
+- 运行模式通过名称选择，例如 `bus.set_operating_mode("position")`，而不再将 `OperatingMode` 值写入 `Operating_Mode` 寄存器。
+- SDK 端口和数据包处理器不再暴露：串口由 rustypot 管理。
+- `protocol_version` 会被忽略：每个电机的型号决定其协议。
+
+要添加新总线，请参阅[自带硬件](../integrate_hardware)；有关特定设备的说明，请参阅[更新 Feetech 固件](../feetech)和 [Damiao 电机与 CAN 总线](../damiao)。
+
+## SerialMotorsBus[[serialmotorsbus]]
+
+[[autodoc]] lerobot.motors.motors_bus.SerialMotorsBus
+
+## Motor[[motor]]
+
+[[autodoc]] lerobot.motors.Motor
+
+## MotorCalibration[[motorcalibration]]
+
+[[autodoc]] lerobot.motors.MotorCalibration
+
+## MotorNormMode[[motornormmode]]
+
+[[autodoc]] lerobot.motors.MotorNormMode
+
+## DriveMode[[drivemode]]
+
+`DriveMode` 有两个成员：`NON_INVERTED = 0` 和 `INVERTED = 1`。当需要整数值时（例如在 `Drive_Mode` 寄存器中或 `MotorCalibration.drive_mode` 中），请使用 `.value`：
+
+```python
+bus.write("Drive_Mode", "elbow_flex", DriveMode.INVERTED.value)
+```
+
+[[autodoc]] lerobot.motors.DriveMode

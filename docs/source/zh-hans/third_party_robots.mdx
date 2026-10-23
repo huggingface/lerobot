@@ -1,0 +1,339 @@
+# 第三方机器人与遥操作器[[third-party-robots-teleoperators]]
+
+LeRobot 生态系统远不止其官方支持的硬件。得益于 LeRobot 的插件架构，社区已为各种机械臂和遥操作（teleoperation）设备构建了集成——从工业机械臂到价格亲民的爱好者平台、VR 头显、触觉设备，以及完整的机械臂加遥操作器套件。本页展示了社区维护的集成，可用于遥操作、数据采集和策略（policy）部署。
+
+> [!IMPORTANT]
+> 这些项目由第三方开发和维护。请参阅各个代码仓库以获取安装说明、硬件要求和支持信息。
+
+即插即用插件会按包名自动发现：LeRobot 会导入任何已安装且以 `lerobot_robot_` 或 `lerobot_teleoperator_` 为前缀的包。安装后，可直接在任意 LeRobot 命令中引用插件注册的 `type`（参见其 README——它可能与包名不同）：
+
+```bash
+pip install lerobot_robot_<name> lerobot_teleoperator_<name>
+
+lerobot-record \
+    --robot.type=<robot_name> \
+    --teleop.type=<teleoperator_name> \
+    --dataset.repo_id=${HF_USER}/my-dataset \
+    --dataset.num_episodes=5
+```
+
+> [!TIP]
+> ⚠️ 标记的是 LeRobot 的分支/扩展项目。它们可能需要自定义设置，而不能在未修改的安装环境中直接使用。其他所有条目均为即插即用插件。
+
+## 工业与协作机械臂[[industrial-collaborative-arms]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/SpesRobotics/lerobot-robot-xarm">lerobot-robot-xarm</a></td>
+      <td>用于 <a href="https://www.ufactory.cc/">UFACTORY</a> 的 xArm 协作机械臂系列的插件。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/lebai-robotics/lerobot_lebai">lerobot_lebai</a></td>
+      <td>用于 <a href="https://lebai.ltd/en/">Lebai</a> 的六轴协作机械臂的插件。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/wengmister/LeFranX">LeFranX</a> ⚠️</td>
+      <td>用于 <a href="https://franka.de/">Franka</a> 研究机械臂的 LeRobot 扩展，搭配 <a href="https://www.robotera.com/">RobotEra XHand</a> 手部进行 VR 遥操作。</td>
+    </tr>
+  </tbody>
+</table>
+
+#### Universal Robots UR5e[[universal-robots-ur5e]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/yechen056/UR5e-LeRobot">UR5e-LeRobot</a> ⚠️</td>
+      <td>用于 <a href="https://www.universal-robots.com/">Universal Robots UR5e</a> 的 LeRobot 扩展，支持单臂和双臂。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/scy-v/lerobot_ur5e_auto">lerobot_ur5e_auto</a> ⚠️</td>
+      <td>用于移动式 <a href="https://www.universal-robots.com/">Universal Robots UR5e</a> 的 LeRobot 扩展，增加在极少监督下的大规模自动录制。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/F-Fer/lerobot_ur5e_gello">lerobot_robot_ur5e</a></td>
+      <td>用于配备 <a href="https://robotiq.com/">Robotiq</a> 夹爪的 <a href="https://www.universal-robots.com/">Universal Robots UR5e</a> 的插件，通过 RTDE 控制。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 研究与学习机械臂[[research-learning-arms]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/TrossenRobotics/lerobot_trossen">lerobot_trossen</a></td>
+      <td>用于 <a href="https://www.trossenrobotics.com/">Trossen Robotics</a> 的 WidowX 和 ALOHA 风格机械臂的插件。</td>
+    </tr>
+  </tbody>
+</table>
+
+#### AgileX Piper[[agilex-piper]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/AgRoboticsResearch/lerobot_robot_piper">lerobot_robot_piper (AgRobotics Research)</a></td>
+      <td>用于 <a href="https://global.agilex.ai/">AgileX Piper</a> 机械臂的插件。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/WeGo-Robotics/lerobot_robot_piper">lerobot_robot_piper (WeGo Robotics)</a></td>
+      <td>用于 <a href="https://global.agilex.ai/">AgileX Piper</a> 机械臂的插件，支持多机械臂遥操作、安全限制和 GUI 工具。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 平价与爱好者机械臂[[affordable-hobbyist-arms]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/servodevelop/fashionstar-lerobot-robot-cello">fashionstar-lerobot-robot-cello</a></td>
+      <td>用于 <a href="https://fashionstar.com.hk/">FashionStar</a> 的 StarAI Cello 6+1 自由度机械臂的插件。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/servodevelop/fashionstar-lerobot-robot-viola">fashionstar-lerobot-robot-viola</a></td>
+      <td>用于 <a href="https://fashionstar.com.hk/">FashionStar</a> 的小型 StarAI Viola 6+1 自由度机械臂的插件。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 服务、移动与实用机器人[[service-mobile-utility-robots]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/ugo-plus/lerobot-robot-ugo-pro">lerobot-robot-ugo-pro</a></td>
+      <td>用于 <a href="https://ugo.plus/products/ugo-pro/">ugo</a> 的 ugo Pro 双臂服务机器人的插件。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/zuoxingdong/lerobot_robot_lekiwi_pincopen">lerobot_robot_lekiwi_pincopen</a></td>
+      <td>用于配备 <a href="https://github.com/pollen-robotics/PincOpen">PincOpen</a> 夹爪的 LeKiwi 移动操作机器人的插件。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/KillingJacky/lerobot-robot-dummy">lerobot-robot-dummy</a></td>
+      <td>用于在没有硬件的情况下模拟机器人进行录制的插件。对调试很有用！</td>
+    </tr>
+  </tbody>
+</table>
+
+## 遥操作器[[teleoperators]]
+
+### VR 与运动控制器[[vr-motion-controllers]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/SpesRobotics/lerobot-teleoperator-teleop">lerobot-teleoperator-teleop</a></td>
+      <td>通过 <a href="https://immersiveweb.dev">WebXR</a> 将手机或 VR 头显变为遥操作器的插件，封装了开源 <a href="https://github.com/SpesRobotics/teleop"><code>teleop</code></a> 库。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/Jas000n/lerobot-teleoperator-spacemouse">lerobot-teleoperator-spacemouse</a></td>
+      <td>用于 <a href="https://3dconnexion.com/">3Dconnexion SpaceMouse</a> 的插件，为 SO-ARMS 机器人提供逆运动学。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/Dream-Machines-Robotics/vr-teleop-kit">vr-teleop-kit</a></td>
+      <td>通过 <a href="https://www.meta.com/quest/">Meta Quest</a>（WebXR）遥操作机械臂的插件，依赖 URDF 描述进行逆运动学计算。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/xensedyl/lerobot-teleoperator-pico4">lerobot-teleoperator-pico4</a></td>
+      <td>用于 <a href="https://www.picoxr.com/">PICO 4</a> VR 头显的插件，并附带一个无需控制器的 <a href="https://github.com/xensedyl/lerobot-teleoperator-pico4-hand">手部追踪变体</a>。</td>
+    </tr>
+  </tbody>
+</table>
+
+### 主臂[[leader-arms]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/F-Fer/lerobot_ur5e_gello">lerobot_teleoperator_gello</a></td>
+      <td>用于 7 自由度 <a href="https://wuphilipp.github.io/gello_site/">GELLO</a> 遥操作器的插件。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/uynitsuj/lerobot_teleoperator_yamactiveleader">lerobot_teleoperator_yamactiveleader</a></td>
+      <td>用于 <a href="https://i2rt.com/">I2RT</a> 的主动式 YAM 遥操作器的插件，这是一种双边力反馈机械臂。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/charlie8612/lerobot_teleoperator_omy">lerobot_teleoperator_omy</a></td>
+      <td>用于 <a href="https://www.robotis.com/">ROBOTIS</a> 的 OMY-L100 6 自由度遥操作器的插件。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://pypi.org/project/lerobot-teleoperator-pipermate/">lerobot-teleoperator-pipermate</a></td>
+      <td>用于 PiperMate 遥操作器（<a href="https://fashionstar.com.hk/">FashionStar</a> UART 舵机）的插件，可驱动 <a href="https://global.agilex.ai/">AgileX Piper</a> 机械臂。</td>
+    </tr>
+  </tbody>
+</table>
+
+### 触觉设备[[haptic-devices]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/chohh7391/lerobot_teleoperator_inverse3">lerobot_teleoperator_inverse3</a></td>
+      <td>用于 <a href="https://www.haply.co/">Haply Inverse3</a> 触觉设备的插件，增加力反馈遥操作。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/hzhz112/lerobot_teleoperator_omega7">lerobot_teleoperator_omega7</a></td>
+      <td>用于 <a href="https://www.forcedimension.com/">Force Dimension omega.7</a> 触觉设备的插件，增加力反馈遥操作。</td>
+    </tr>
+  </tbody>
+</table>
+
+### 网络与远程[[networked-remote]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://pypi.org/project/lerobot-teleoperator-livekit/">lerobot-teleoperator-livekit</a></td>
+      <td>通过 <a href="https://livekit.io/">LiveKit</a> Portal（WebRTC）接收遥操作命令以进行远程控制的插件。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 完整套件（机器人 + 遥操作器）[[full-kits-robot-teleoperator]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/villekuosmanen/lerobot-arx5">lerobot-arx5</a></td>
+      <td>用于 <a href="https://www.arx-x.com/">ARX5</a> 机械臂的插件：<a href="https://pypi.org/project/lerobot-robot-arx5/"><code>lerobot-arx5</code></a> 机械臂及其 <a href="https://pypi.org/project/lerobot-teleoperator-arx5/"><code>lerobot-teleoperator-arx5</code></a> 遥操作臂。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/robertorobotics/Nextis-AIRA-3D">Nextis-AIRA-3D</a></td>
+      <td>用于 <a href="https://www.nextis.tech">Nextis</a> 的 7 自由度机械臂的插件：机械臂 <code>aira_follower</code> 和遥操作臂 <code>aira_leader</code>。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/pravsels/lerobot_yam">lerobot_yam</a></td>
+      <td>用于 <a href="https://i2rt.com/">I2RT</a> 的 YAM 机械臂的插件套件：机械臂 <code>yam_follower</code> 和遥操作臂 <code>yam_leader</code>。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/robot-learning-co/trlc-dk1">trlc-dk1</a></td>
+      <td>用于 <a href="https://www.robot-learning.co/">The Robot Learning Company</a> 开发套件的插件：单臂和双臂的从臂/遥操作器类型。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/hexfellow/hex_lerobot_drivers">hex_lerobot_drivers</a></td>
+      <td>用于 <a href="https://hexfellow.com/">HEXFELLOW</a> 设备的插件套件：机器人、遥操作器和摄像头（参见 <a href="./third_party_sensors">摄像头与传感器</a>）。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/Hiwonder-official/lerobot-robot-nexarm-follower">lerobot-robot-nexarm-follower</a></td>
+      <td>用于 <a href="https://www.hiwonder.com/">Hiwonder</a> 的 NexArm 的插件：<a href="https://github.com/Hiwonder-official/lerobot-robot-nexarm-follower">机械臂</a>及其配套的 <a href="https://github.com/Hiwonder-official/lerobot-teleoperator-nexarm-leader">遥操作臂</a>。</td>
+    </tr>
+  </tbody>
+</table>
+
+## ROS 2 桥接[[ros-2-bridges]]
+
+<!-- prettier-ignore -->
+<table width="100%" style="display:table; width:100%; table-layout:fixed;">
+  <colgroup>
+    <col width="30%" />
+    <col width="70%" />
+  </colgroup>
+  <thead style="border:0">
+    <tr style="border:0"><th>项目</th><th>描述</th></tr>
+  </thead>
+  <tbody>
+    <tr style="border:0">
+      <td><a href="https://github.com/ngres/leros2">leros2</a></td>
+      <td>将 ROS 2 话题和动作桥接到 LeRobot 机器人和遥操作器的插件。</td>
+    </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/ROBOTIS-GIT/lerobot_robot_ros2_zenoh">lerobot_robot_ros2_zenoh</a></td>
+      <td>通过 <a href="https://zenoh.io">Zenoh</a> 发布/订阅传输将 ROS 2 机器人桥接到 LeRobot 的插件。</td>
+    </tr>
+  </tbody>
+</table>
+
+## 参与贡献[[contributing]]
+
+构建了自己的 LeRobot 硬件集成？插件系统让添加新机器人和遥操作器变得简单——请查看[自带硬件（Bring Your Own Hardware）](./integrate_hardware)指南开始使用，并与社区分享你的项目！

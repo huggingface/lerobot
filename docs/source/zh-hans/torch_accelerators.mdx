@@ -1,4 +1,4 @@
-# PyTorch 加速器
+# PyTorch 加速器[[pytorch-accelerators]]
 
 LeRobot 支持多种用于训练与推理的硬件加速选项。
 
@@ -9,14 +9,14 @@ LeRobot 支持多种用于训练与推理的硬件加速选项。
 - **MPS**：使用 Apple 芯片（Apple Silicon）GPU 加速
 - **XPU**：使用 Intel 集成 GPU 和独立 GPU 加速
 
-## 入门
+## 入门[[getting-started]]
 
 若要使用特定的加速器，需要安装与之匹配的 PyTorch 版本。
 
 对于 CPU、CUDA 和 MPS 后端，请按照 [PyTorch 安装页面](https://pytorch.org/get-started/locally)提供的说明操作。
 对于 XPU 后端，请按照 [PyTorch 文档](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html)中的说明操作。
 
-### 验证安装
+### 验证安装[[verifying-the-installation]]
 
 安装完成后，可以运行以下代码检查加速器是否可用：
 
@@ -25,7 +25,7 @@ import torch
 print(torch.<backend_name>.is_available())  # <backend_name> 为 cuda、mps 或 xpu
 ```
 
-## 如何运行训练或评估
+## 如何运行训练或评估[[how-to-run-training-or-evaluation]]
 
 运行 `lerobot-train` 或 `lerobot-eval` 时，可通过 `--policy.device` 参数选择所需的加速器。例如，若要在 Apple 芯片上使用 MPS，请运行：
 
@@ -40,3 +40,33 @@ lerobot-eval \
 ```
 
 不过，在大多数情况下，系统会自动检测可用的加速器，因此可在 CLI 命令中省略 `policy.device` 参数。
+
+## 混合精度[[mixed-precision]]
+
+训练精度由 `--accelerator.mixed_precision` 控制，它接受 `no`（默认）、`bf16` 和 `fp16`：
+
+```bash
+lerobot-train \
+    --policy.type=act \
+    --accelerator.mixed_precision=bf16 ...
+```
+
+`fp16` 需要加速器：在 `--policy.device=cpu` 上会被拒绝，因为此时 accelerate 不会构建损失缩放器（loss scaler），运行会静默回退到全精度。`bf16` 在 CPU 上同样会执行自动转换（autocast），因此不受此限制。
+
+`bf16` 需要硬件支持（NVIDIA GPU 上为 Ampere 或更新架构）。在 V100 或 T4 等较旧的加速器上，请使用 `fp16`。
+
+### fp16 与损失缩放器[[fp16-and-the-loss-scaler]]
+
+`fp16` 的指数范围远小于 `bf16`，因此梯度会在反向传播之前被放大，并在优化器更新之前缩小回来。LeRobot 将这项工作交给 accelerate 的 `GradScaler`，它还会检测溢出的梯度并跳过相应的优化器更新。在分片（sharded）训练下，梯度是 `DTensor`，PyTorch 会在设备网格（device mesh）上对溢出标志进行归约，因此某个 rank 上的溢出会跳过所有 rank 的更新。
+
+跳过更新是正常现象，尤其是在最初几步、缩放系数正从初始值向下校准的过程中。它们在日志中表现为 `scale` 指标下降。缩放系数会随每个检查点（checkpoint）一起保存（`training_state/scaler_state.json`），并在恢复训练时还原，因此恢复后的运行无需重新校准。
+
+如果默认值不适合某个策略（policy），可以对缩放器进行调优：
+
+```bash
+lerobot-train \
+    --policy.type=act \
+    --accelerator.mixed_precision=fp16 \
+    --accelerator.grad_scaler.init_scale=1024 \
+    --accelerator.grad_scaler.growth_interval=2000 ...
+```

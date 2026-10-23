@@ -1,4 +1,4 @@
-# SmolVLA
+# SmolVLA[[smolvla]]
 
 SmolVLA 是 Hugging Face 面向机器人领域推出的轻量级基础模型（foundation model）。它专为在 LeRobot 数据集上轻松进行微调（fine-tuning）而设计，帮助你加快开发进程！
 
@@ -17,7 +17,7 @@ SmolVLA 是 Hugging Face 面向机器人领域推出的轻量级基础模型（f
   </em>
 </p>
 
-## 配置环境
+## 配置环境[[set-up-your-environment]]
 
 1. 按照我们的[安装指南](./installation)安装 LeRobot。
 2. 运行以下命令安装 SmolVLA 依赖项：
@@ -26,7 +26,7 @@ SmolVLA 是 Hugging Face 面向机器人领域推出的轻量级基础模型（f
    pip install -e ".[smolvla]"
    ```
 
-## 收集数据集
+## 收集数据集[[collect-a-dataset]]
 
 SmolVLA 是一个基础模型，因此，如果要在你的使用环境中获得最佳性能，就需要使用你自己的数据对其进行微调。
 我们建议首先录制约 50 个任务回合（episode）。请按照我们的指南开始操作：[录制数据集](./il_robots)
@@ -44,7 +44,7 @@ SmolVLA 是一个基础模型，因此，如果要在你的使用环境中获得
 
 </Tip>
 
-## 使用你的数据微调 SmolVLA
+## 使用你的数据微调 SmolVLA[[finetune-smolvla-on-your-data]]
 
 使用我们的 450M 预训练模型 [`smolvla_base`](https://hf.co/lerobot/smolvla_base)，并在你的数据上对其进行微调。
 在单张 A100 GPU 上训练 20k 步大约需要 4 小时。你应根据模型性能和具体使用场景调整训练步数。
@@ -90,9 +90,9 @@ lerobot-train --help
   </em>
 </p>
 
-## 评估微调后的模型并实时运行
+## 评估微调后的模型并实时运行[[evaluate-the-finetuned-model-and-run-it-in-real-time]]
 
-与录制回合时一样，建议你先登录 Hugging Face Hub。可以按照相应步骤操作：[录制数据集](./il_robots)。
+与录制回合时一样，建议你先登录 Hugging Face Hub。可以按照相应步骤操作：[录制数据集](./il_robots#record-a-dataset)。
 登录后，可以运行以下命令，在你的使用环境中执行推理：
 
 ```bash

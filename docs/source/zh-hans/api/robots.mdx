@@ -1,0 +1,113 @@
+# 机器人[[robots]]
+
+LeRobot 中的每个机器人都实现了 [`Robot`] 接口：连接、读取观测（observation）、发送动作、断开连接。针对该接口编写策略（policy）或录制脚本，意味着它无需改动即可适用于任何受支持的机械臂。
+
+本页是自动生成的参考文档。有关接线、校准和首次运行的说明，请先查阅硬件指南——[SO-101](../so101)、[LeKiwi](../lekiwi)、[Hope Jr](../hope_jr)、[Reachy 2](../reachy2)、[OpenArm](../openarm)——或参阅[机器人模仿学习](../il_robots)了解端到端工作流程。若要添加自己的机器人，请参见[自带硬件](../integrate_hardware)。
+
+## Robot[[robot]]
+
+抽象基类。子类实现下面每一个方法；这里描述的契约是策略或录制循环可以依赖的。
+
+[[autodoc]] lerobot.robots.Robot - connect - disconnect - configure - calibrate - get_observation - send_action - observation_features - action_features - is_connected - is_calibrated
+
+## RobotConfig[[robotconfig]]
+
+[[autodoc]] lerobot.robots.RobotConfig
+
+## make_robot_from_config[[makerobotfromconfig]]
+
+[[autodoc]] lerobot.robots.make_robot_from_config
+
+## SO-100 与 SO-101 从臂[[so-100-and-so-101-followers]]
+
+`SO100Follower` 和 `SO101Follower` 是同一个 `SOFollower` 类的别名；这两种机械臂的差异在于配置，而不在于控制代码。`SO100FollowerConfig` 和 `SO101FollowerConfig` 同样是 `SOFollowerRobotConfig` 的别名。
+
+[[autodoc]] lerobot.robots.so_follower.SOFollower - all
+
+[[autodoc]] lerobot.robots.so_follower.SOFollowerRobotConfig
+
+## BiSOFollower[[bisofollower]]
+
+两个 SO 从臂作为一台双臂机器人驱动。
+
+[[autodoc]] lerobot.robots.bi_so_follower.BiSOFollower - all
+
+[[autodoc]] lerobot.robots.bi_so_follower.BiSOFollowerConfig
+
+## KochFollower[[kochfollower]]
+
+[[autodoc]] lerobot.robots.koch_follower.KochFollower - all
+
+[[autodoc]] lerobot.robots.koch_follower.KochFollowerConfig
+
+## LeKiwi[[lekiwi]]
+
+`LeKiwi` 运行在机器人本体上。`LeKiwiClient` 是主机侧代理（proxy），通过网络与其通信，并呈现相同的 [`Robot`] 接口。
+
+[[autodoc]] lerobot.robots.lekiwi.LeKiwi - all
+
+[[autodoc]] lerobot.robots.lekiwi.LeKiwiConfig
+
+[[autodoc]] lerobot.robots.lekiwi.LeKiwiClient - all
+
+[[autodoc]] lerobot.robots.lekiwi.LeKiwiClientConfig
+
+## OpenArmFollower[[openarmfollower]]
+
+[[autodoc]] lerobot.robots.openarm_follower.OpenArmFollower - all
+
+[[autodoc]] lerobot.robots.openarm_follower.OpenArmFollowerConfig
+
+## BiOpenArmFollower[[biopenarmfollower]]
+
+[[autodoc]] lerobot.robots.bi_openarm_follower.BiOpenArmFollower - all
+
+[[autodoc]] lerobot.robots.bi_openarm_follower.BiOpenArmFollowerConfig
+
+## OmxFollower[[omxfollower]]
+
+[[autodoc]] lerobot.robots.omx_follower.OmxFollower - all
+
+[[autodoc]] lerobot.robots.omx_follower.OmxFollowerConfig
+
+## Reachy2Robot[[reachy2robot]]
+
+[[autodoc]] lerobot.robots.reachy2.Reachy2Robot - all
+
+[[autodoc]] lerobot.robots.reachy2.Reachy2RobotConfig
+
+## UnitreeG1[[unitreeg1]]
+
+[[autodoc]] lerobot.robots.unitree_g1.UnitreeG1 - all
+
+[[autodoc]] lerobot.robots.unitree_g1.UnitreeG1Config
+
+## Hope Jr[[hope-jr]]
+
+Hope Jr 人形机器人（humanoid）以两个独立的机器人形式对外提供：一个机械臂和一个手部。
+
+[[autodoc]] lerobot.robots.hope_jr.HopeJrArm - all
+
+[[autodoc]] lerobot.robots.hope_jr.HopeJrArmConfig
+
+[[autodoc]] lerobot.robots.hope_jr.HopeJrHand - all
+
+[[autodoc]] lerobot.robots.hope_jr.HopeJrHandConfig
+
+## RebotB601Follower[[rebotb601follower]]
+
+[[autodoc]] lerobot.robots.rebot_b601_follower.RebotB601Follower - all
+
+[[autodoc]] lerobot.robots.rebot_b601_follower.RebotB601FollowerRobotConfig
+
+## BiRebotB601Follower[[birebotb601follower]]
+
+[[autodoc]] lerobot.robots.bi_rebot_b601_follower.BiRebotB601Follower - all
+
+[[autodoc]] lerobot.robots.bi_rebot_b601_follower.BiRebotB601FollowerConfig
+
+## EarthRoverMiniPlus[[earthroverminiplus]]
+
+[[autodoc]] lerobot.robots.earthrover_mini_plus.EarthRoverMiniPlus - all
+
+[[autodoc]] lerobot.robots.earthrover_mini_plus.EarthRoverMiniPlusConfig

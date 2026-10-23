@@ -1,0 +1,238 @@
+# EarthRover Mini Plus[[earthrover-mini-plus]]
+
+<img
+  src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Earth_Rover_Mini_5_240c9adc-4f9e-44b7-982f-5d1dc24af1d8.png.webp"
+  alt="EarthRover Mini Plus"
+  width="70%"
+/>
+
+EarthRover Mini Plus 是一款完全开源的移动机器人（mobile robot），通过 Frodobots SDK 连接到云端。这样你就可以控制机器人并记录数据集（dataset），用于训练 AI 模型。
+
+## 你需要什么[[what-you-need]]
+
+### 硬件[[hardware]]
+
+- EarthRover Mini 机器人
+- 装有 Python 3.12 或更高版本的计算机
+- 互联网连接
+
+### 设置 Frodobots SDK[[setting-up-the-frodobots-sdk]]
+
+机器人需要在你电脑上运行 [Frodobots SDK](https://github.com/frodobots-org/earth-rovers-sdk)。具体操作如下：
+
+1. 下载并安装 SDK：
+
+```bash
+git clone https://github.com/frodobots-org/earth-rovers-sdk.git
+cd earth-rovers-sdk
+pip install -r requirements.txt
+```
+
+2. 保存凭据：
+
+使用 Frodobots 团队提供的 SDK API 密钥和机器人名称（bot name），填写你的 .env 变量。
+
+```bash
+SDK_API_TOKEN=your_sdk_api_token_here
+BOT_SLUG=your_bot_slug_here
+CHROME_EXECUTABLE_PATH=/path/to/chrome_or_chromium
+# 默认值为 MAP_ZOOM_LEVEL=18 https://wiki.openstreetmap.org/wiki/Zoom_levels
+MAP_ZOOM_LEVEL=18
+MISSION_SLUG=your_mission_slug_here
+# 图像质量，取值范围为 0.1 到 1.0（默认值：0.8）
+# 推荐：0.8，以获得更好的性能
+IMAGE_QUALITY=0.8
+# 图像格式：jpeg、png 或 webp（默认值：png）
+# 推荐：jpeg，以获得更好的性能和更低带宽占用
+IMAGE_FORMAT=jpeg
+```
+
+3. 启动 SDK：
+
+```bash
+hypercorn main:app --reload
+```
+
+4. 打开网页浏览器并访问 `http://localhost:8000`，然后点击“Join”
+
+SDK 会为你提供：
+
+- 来自前、后摄像头的实时视频
+
+> [!IMPORTANT]
+> 使用机器人前，SDK 必须处于运行状态。
+
+## 安装 LeRobot[[install-lerobot]]
+
+请按照我们的[安装指南](./installation)安装 LeRobot。
+
+在基础安装之外，还要安装带有硬件依赖的 EarthRover Mini：
+
+```bash
+pip install -e ".[hardware]"
+```
+
+## 工作原理[[how-it-works]]
+
+机器人通过互联网进行通信：
+
+- **移动命令**：通过 SDK 发送
+- **摄像头视频**：从 SDK 接收
+- **机器人信息**：来自 SDK 的电池电量、位置和速度
+
+你不需要插入任何东西——一切都通过 SDK 运行。
+
+## 校准[[calibration]]
+
+无需校准！只要 SDK 正在运行，机器人就可以立即使用。
+
+## 控制机器人[[controlling-the-robot]]
+
+你使用键盘控制机器人——就像用 WASD 键玩电子游戏一样。
+
+### 键盘控制[[keyboard-controls]]
+
+| 按键 | 操作                 |
+| ---- | -------------------- |
+| W    | 前进                 |
+| S    | 后退                 |
+| A    | 左转（伴随前进运动） |
+| D    | 右转（伴随前进运动） |
+| Q    | 原地左转             |
+| E    | 原地右转             |
+| X    | 停止所有移动         |
+| +/=  | 提高速度             |
+| -    | 降低速度             |
+| ESC  | 断开连接             |
+
+### 速度设置[[speed-settings]]
+
+你可以调整机器人的移动速度：
+
+- **前进/后退速度**：默认为全速（1.0）
+- **转向速度**：默认为全速（1.0）
+- **速度变化**：使用 +/- 键每次调整 0.1
+
+### 试一试[[try-it-out]]
+
+在记录数据前，先测试驾驶机器人：
+
+```python
+from lerobot.robots.earthrover_mini_plus import EarthRoverMiniPlus, EarthRoverMiniPlusConfig
+from lerobot.teleoperators.keyboard import KeyboardRoverTeleop, KeyboardRoverTeleopConfig
+
+# 初始化机器人
+robot_config = EarthRoverMiniPlusConfig()
+robot = EarthRoverMiniPlus(robot_config)
+
+# 初始化遥操作器
+teleop_config = KeyboardRoverTeleopConfig(
+    linear_speed=1.0,
+    angular_speed=1.0,
+    speed_increment=0.1
+)
+teleop = KeyboardRoverTeleop(teleop_config)
+
+# 连接
+robot.connect()
+teleop.connect()
+
+# 遥操作（使用键盘控制）
+try:
+    while True:
+        action = teleop.get_action()
+        robot.send_action(action)
+except KeyboardInterrupt:
+    pass
+finally:
+    robot.disconnect()
+    teleop.disconnect()
+```
+
+> [!TIP]
+> 如果你使用的是 Mac，可能需要授予“终端”访问键盘的权限才能进行遥操作。前往“系统偏好设置”>“安全性与隐私”>“输入监控”，然后勾选“终端”对应的复选框。
+
+## 记录数据[[recording-data]]
+
+当你能够熟练驾驶机器人后，就可以开始记录数据来训练 AI 模型。系统会记录：
+
+- **你的操作**：你如何移动机器人（前进、后退、转向）
+- **机器人看到的内容**：
+  - 来自两个摄像头的视频
+  - 机器人速度和方向
+  - 电池电量和位置
+  - GPS 位置和信号
+  - 其他传感器数据
+- **发生时间**：所有内容的时间戳
+
+### 设置 Hugging Face[[setting-up-hugging-face]]
+
+我们使用 Hugging Face 在线存储你的数据。首先，使用你在 [Hugging Face 设置](https://huggingface.co/settings/tokens)中获取的令牌登录：
+
+```bash
+hf auth login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
+```
+
+保存你的 Hugging Face 用户名：
+
+```bash
+HF_USER=$(hf auth whoami | awk -F': *' 'NR==1 {print $2}')
+echo $HF_USER
+```
+
+### 开始记录[[start-recording]]
+
+使用标准记录命令：
+
+```bash
+lerobot-record \
+    --robot.type=earthrover_mini_plus \
+    --teleop.type=keyboard_rover \
+    --dataset.repo_id=your_username/dataset_name \
+    --dataset.num_episodes=2 \
+    --dataset.fps=10 \
+    --dataset.single_task="Navigate around obstacles" \
+    --dataset.streaming_encoding=true \
+    --dataset.encoder_threads=2 \
+    --display_data=true
+# 可选：--dataset.rgb_encoder.vcodec=auto
+```
+
+将 `your_username/dataset_name` 替换为你的 Hugging Face 用户名和数据集名称。
+
+### 保存的内容[[what-gets-saved]]
+
+你的数据集包括：
+
+**你的动作**（2 个特征）：
+
+- `linear_velocity`：你向前/向后移动了多少
+- `angular_velocity`：你向左/向右转了多少
+
+**机器人观测**（24 个特征）：
+
+- 前摄像头视频
+- 后摄像头视频
+- 当前速度
+- 电池电量
+- 朝向
+- GPS（纬度、经度、信号强度）
+- 网络信号强度
+- 振动水平
+- 灯状态（开/关）
+- 加速度计（x、y、z）
+- 陀螺仪（x、y、z）
+- 磁力计（x、y、z）
+- 车轮 RPM（4 个车轮）
+
+### 数据的存放位置[[where-your-data-goes]]
+
+在你的计算机上：`~/.cache/huggingface/lerobot/{repo-id}`
+
+记录完成后，你的数据会自动上传到你的 Hugging Face 页面：
+
+```bash
+echo https://huggingface.co/datasets/${HF_USER}/earthrover-navigation
+```
+
+你的数据集会被标记为 `LeRobot`，以便社区发现。

@@ -1,4 +1,4 @@
-# 编写 docstring
+# 编写 docstring[[writing-docstrings]]
 
 LeRobot 的 API 参考文档直接从 `src/lerobot/` 中的 docstring 生成。docstring 不是
 注释，而是该对象发布出去的文档；下面的格式会被渲染器和
@@ -11,7 +11,7 @@ CI 检查解析。
 > docstring 的成员：没有警告，没有错误，它只是不出现在渲染后的页面上。覆盖率和
 > API 参考完整性是同一个问题。
 
-## 一个完整示例中的格式
+## 一个完整示例中的格式[[the-format-in-one-example]]
 
 Google section headers，Hugging Face type formatting。二者都要使用，不能只选其一。
 
@@ -45,19 +45,19 @@ def send_action(self, action: RobotAction, rate_hz: float = 30.0) -> RobotAction
     """
 ````
 
-本页示例中省略了交叉引用。请参阅 [交叉引用](#交叉引用) 了解
+本页示例中省略了交叉引用。请参阅 [交叉引用](#cross-references) 了解
 其语法，以及为什么它们不能显示在代码块中。
 
-## 规则
+## 规则[[rules]]
 
-### Sections
+### Sections[[sections]]
 
 `Args:` · `Returns:` · `Raises:` · `Yields:` · `Example:` · `Note:`
 
 按这个顺序。不要使用其他 section headers。先写一行摘要，然后是可选的自由格式
 说明，之后再写各 section。
 
-### `Args:` 行会被机器解析
+### `Args:` 行会被机器解析[[the-args-line-is-machine-parsed]]
 
 ```
 name (`type`, *optional*, defaults to `X`):
@@ -81,7 +81,7 @@ name (`type`, *optional*, defaults to `X`):
 类型要放在反引号中。当默认值为 `None` 或不值得再次说明时，使用不带 `defaults to` 的
 `*optional*`。
 
-### `Returns:` 要类型优先
+### `Returns:` 要类型优先[[returns-is-type-first]]
 
 一行缩进内容，先写类型，再写冒号，然后是描述：
 
@@ -92,7 +92,7 @@ name (`type`, *optional*, defaults to `X`):
 
 `Yields:` 使用相同格式。
 
-### 使用 `**Attributes**:`，不要使用 `Attributes:`
+### 使用 `**Attributes**:`，不要使用 `Attributes:`[[attributes-never-attributes]]
 
 doc-builder 会把裸的 `Attributes:` 解析为 **`Parameters:` 的同义词**，因此你的 attributes 会被渲染为
 构造函数参数。这是静默且错误的。只要 attributes 与构造函数
@@ -110,7 +110,7 @@ class Robot(abc.ABC):
 
 注意使用 `--`，而不是 `:`。
 
-### 交叉引用
+### 交叉引用[[cross-references]]
 
 使用 doc-builder 的方括号语法：方括号中放一个反引号包裹的路径。**不支持 Sphinx roles（`:pymeth:`、
 `:pyattr:`）**，它们会在页面上渲染为纯文本。
@@ -131,7 +131,7 @@ class Robot(abc.ABC):
 > 一个交叉引用，它会渲染成解析后的链接，而不是你需要输入的语法。在你自己的 docstring 中，可以自由使用
 > 交叉引用；这个限制只影响介绍该语法的文档。
 
-### Callouts
+### Callouts[[callouts]]
 
 使用 GitHub 风格的 blockquotes：
 
@@ -145,7 +145,7 @@ class Robot(abc.ABC):
 
 `<Tip>` 组件按 doc-builder 规则属于旧式写法；不要再新增。
 
-### 示例必须使用 fence
+### 示例必须使用 fence[[examples-must-be-fenced]]
 
 示例应放在包含 `>>> ` 的 fenced ` ```python ` 代码块中。fence 会让它渲染为
 代码块，也是 doctest 预处理器正则表达式查找的对象：
@@ -179,9 +179,9 @@ class Robot(abc.ABC):
 
 只在模块中三到五个真正的入口点上放示例。给琐碎的 accessor 添加示例只会制造噪音。
 
-## 你会反复遇到的三种模式
+## 你会反复遇到的三种模式[[three-patterns-you-will-hit-constantly]]
 
-### Config dataclasses
+### Config dataclasses[[config-dataclasses]]
 
 配置字段过去通常用每个字段上方的 `#` 注释记录。**doc-builder 看不到
 行内注释**，因此这样的类会渲染出所有字段，却没有任何描述。把它们
@@ -222,15 +222,15 @@ class SOFollowerConfig:
 > 不管基类文档写得多好。`Args:` 块必须写在
 > `[[autodoc]]` 命名的具体类上，并且也必须覆盖继承字段。
 
-### 先基类，再具体子类
+### 先基类，再具体子类[[base-class-then-concrete-subclass]]
 
 抽象基类承载标准契约。子类只记录偏离之处，例如 port 语义、
 校准细节、电机布局、支持的 feature keys。不要把基类契约复制到每个子类中。
 
-`Robot`、`Teleoperator`、`Camera`、`MotorsBus`、`ProcessorStep` 和 `PreTrainedPolicy` 都遵循这种
+`Robot`、`Teleoperator`、`Camera`、`MotorsBusBase`、`ProcessorStep` 和 `PreTrainedPolicy` 都遵循这种
 模式。
 
-### 模块级别的别名
+### 模块级别的别名[[module-level-aliases]]
 
 几个公开名称是别名，而不是不同的类：
 
@@ -244,7 +244,7 @@ SO101FollowerConfig = SOFollowerRobotConfig
 规范类，并在页面正文中提到这些别名，而不是给每个别名单独写
 autodoc block。
 
-## 不要记录什么
+## 不要记录什么[[what-not-to-document]]
 
 - **私有成员。** 任何以 `_` 开头的内容都不是公开 API 的一部分。
 - **把类型注解改写成普通句子。** `port (`str`): A string.` 没有增加任何信息。说明它的用途。
@@ -252,7 +252,7 @@ autodoc block。
   `transformers` vendored 过来的，并且已经带有 upstream 风格的 docstring。不要动它；重写风格只会在
   下次同步时制造冲突。它已从 API 参考和 docstring 检查中排除。
 
-## 如何强制执行
+## 如何强制执行[[how-this-is-enforced]]
 
 | 检查                      | 捕获的问题                                                  |
 | ------------------------- | ----------------------------------------------------------- |
@@ -275,7 +275,7 @@ make check-docstrings && make doctest && pre-commit run --all-files
 doc-builder build lerobot docs/source/ --build_dir /tmp/doc-build
 ```
 
-## 检查清单
+## 检查清单[[checklist]]
 
 - [ ] 你触碰的每个公开成员都有 docstring。
 - [ ] 每个 `Args:` 条目都与签名匹配，包括 `*optional*, defaults to` 子句。

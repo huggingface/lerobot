@@ -1,33 +1,115 @@
-# 使用数据集工具
+# 使用数据集工具[[using-dataset-tools]]
 
-本指南介绍 LeRobot 中用于修改和编辑现有数据集的工具。
+本指南介绍如何在线或本地探索 LeRobot 数据集，然后介绍 LeRobot 提供的用于修改和编辑现有数据集的实用工具。
 
-## 概述
+## 在浏览器中探索数据集[[explore-a-dataset-in-the-browser]]
 
-LeRobot 提供了以下几种数据集操作工具：
+最快查看 LeRobot 数据集内容的方式是使用 [LeRobot 数据集可视化工具](https://huggingface.co/spaces/lerobot/visualize_dataset)（LeRobot Dataset Visualizer），这是一个 Hugging Face Space，可直接播放 Hub 上的任意 LeRobot 数据集，无需安装任何东西。除非你选择退出，否则使用 `lerobot` 录制的数据集会自动推送到 Hub，因此你自己的录制内容也可以在那里打开。
 
-1. **删除片段（Delete Episodes）** - 从数据集中删除特定片段
-2. **拆分数据集（Split Dataset）** - 将数据集划分为多个较小的数据集
-3. **合并数据集（Merge Datasets）** - 将多个数据集合并为一个。各数据集必须具有相同的特征，片段按 `repo_ids` 中指定的顺序拼接
-4. **添加特征（Add Features）** - 向数据集添加新特征
-5. **删除特征（Remove Features）** - 从数据集中删除特征
-6. **转换为视频（Convert to Video）** - 将基于图像的数据集转换为视频格式以节省存储空间
-7. **显示数据集信息（Show the Info of Datasets）** - 显示数据集的摘要信息，如片段数量等
+<div class="flex justify-center">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-episode-v2.webp"
+    alt="LeRobot 数据集可视化工具显示 lerobot/svla_so101_pickplace 的第 0 个片段：片段列表、两路同步摄像头录像、任务以及关节曲线图"
+    width="800"
+  />
+</div>
+
+要在真实数据集上试用，请打开 [lerobot/svla_so101_pickplace 的第 0 个片段](https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0)，这是一个 SO-101 机械臂将乐高积木放入盒子的示例，然后跟随以下步骤操作：
+
+1. **选择数据集。** 在可视化工具主页上，输入诸如 `lerobot/svla_so101_pickplace` 的 repo id，或从示例中选择一个。登录后即可打开你的私有数据集。
+
+   <div class="flex justify-center">
+     <img
+       src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-home-v2.webp"
+       alt="可视化工具主页，包含用于输入数据集 repo id 的搜索框和示例数据集"
+       width="640"
+     />
+   </div>
+
+2. **选择片段。** 侧边栏会在数据集的总帧数、片段数和 FPS 下方列出每个片段。点击某个片段即可打开，或使用 `↑` / `↓` 逐个切换。
+3. **观看录像。** 数据集中的每个摄像头都会同步播放。你可以放大其中一个，或隐藏不需要的摄像头。片段的任务（即其语言指令）显示在视频下方。
+4. **同步查看数据。** 视频下方会以图表形式展示整个片段中机器人的状态（state）和动作（action），每个关节一条线。光标会跟随播放进度，图例会显示当前帧的每个值（或将鼠标悬停时指针所指位置的值）。按 `Space` 播放或暂停，拖动进度条，或点击图表跳转到对应时刻。
+
+   <div class="flex justify-center">
+     <img
+       src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-charts-v2.webp"
+       alt="各关节 observation.state 和 action 的同步曲线图，以及播放光标和当前值"
+       width="800"
+     />
+   </div>
+
+5. **进一步探索。** **3D 回放**（3D Replay）会根据录制的关节位置（在 v3.0 数据集上支持 SO-100/SO-101、OpenArm 和 Unitree G1）为机器人制作动画。**高级**（Advanced）中提供数据集统计、用于标记问题片段的过滤、首帧/末帧概览以及动作洞见。
+
+<Tip>
+
+使用 `https://huggingface.co/spaces/lerobot/visualize_dataset?path=/<repo_id>/episode_<index>` 可直接链接到某个片段，例如用于与团队分享失败案例。
+
+</Tip>
+
+## 本地可视化数据集[[visualize-a-dataset-locally]]
+
+你也可以使用我们的命令行工具在本地可视化数据集中的片段。
+
+**从 Hugging Face Hub 加载：**
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --episode-index 0
+```
+
+对于私有或受限数据集，请先使用 `hf auth login` 进行身份验证，或设置
+`HF_TOKEN` 环境变量。随后 Hub 客户端会自动发现凭据；无需传入 token 参数。
+
+**从本地文件夹加载：**
+添加 `--root` 选项并设置 `--mode local`。例如，要在 `./my_local_data_dir/lerobot/pusht` 中搜索：
+
+```bash
+lerobot-dataset-viz \
+    --repo-id lerobot/pusht \
+    --root ./my_local_data_dir \
+    --mode local \
+    --episode-index 0
+```
+
+执行后，该工具会打开 `rerun.io`，并显示所选片段的摄像头视频流、机器人状态和动作。
+
+如果想使用 [Foxglove](https://foxglove.dev) 而不是 Rerun，请安装相应的 extra 并添加 `--display-mode foxglove`。这会启动一个 WebSocket 服务器（将 Foxglove 应用连接到 `ws://127.0.0.1:8765`），该服务器会将片段作为可定位时间线提供，你可以播放/暂停和拖动进度。
+
+如需高级用法——包括可视化存储在远程服务器上的数据集——请运行：
+
+```bash
+lerobot-dataset-viz --help
+```
+
+## 编辑数据集[[editing-datasets]]
+
+LeRobot 提供了以下几种用于操作数据集的实用工具：
+
+1. **删除片段**（Delete Episodes）——从数据集中删除特定片段
+2. **拆分数据集**（Split Dataset）——将数据集划分为多个较小的数据集
+3. **合并数据集**（Merge Datasets）——将多个数据集合并为一个。各数据集必须具有相同的特征，片段按 `repo_ids` 中指定的顺序拼接
+4. **添加特征**（Add Features）——向数据集添加新特征
+5. **删除特征**（Remove Features）——从数据集中删除特征
+6. **修改任务**（Modify Tasks）——更改与片段关联的自然语言任务描述
+7. **转换为视频**（Convert to Video）——将基于图像的数据集转换为视频格式以节省存储空间（RGB 和深度摄像头会使用不同的编码器进行编码）
+8. **重新编码视频**（Re-encode Videos）——使用新的编码器设置重新编码现有视频数据集的 RGB 和/或深度流
+9. **显示数据集信息**（Show the Info of Datasets）——显示数据集信息的摘要，如片段数量等。
 
 核心实现位于 `lerobot.datasets.dataset_tools`。
-An example script detailing how to use the tools API is available in `examples/dataset/use_dataset_tools.py`。
+一个详细说明如何使用工具 API 的示例脚本位于 `examples/dataset/use_dataset_tools.py`。
 
-## 命令行工具：lerobot-edit-dataset
+## 命令行工具：lerobot-edit-dataset[[command-line-tool-lerobot-edit-dataset]]
 
-`lerobot-edit-dataset` 是用于编辑数据集的命令行脚本，支持删除片段、拆分数据集、合并数据集、添加特征、删除特征以及将图像数据集转换为视频格式。
+`lerobot-edit-dataset` 是一个用于编辑数据集的命令行脚本。它可用于删除片段、拆分数据集、合并数据集、添加特征、删除特征以及将图像数据集转换为视频格式。
 
-运行 `lerobot-edit-dataset --help` 可查看各操作的配置说明。
+运行 `lerobot-edit-dataset --help` 可查看各操作配置的更多信息。
 
-### 使用示例
+### 使用示例[[usage-examples]]
 
-#### 删除片段
+#### 删除片段[[delete-episodes]]
 
-从数据集中删除特定片段，适用于过滤不需要的数据。
+从数据集中删除特定片段。这适用于过滤掉不需要的数据。
 
 ```bash
 # 删除第 0、2、5 个片段（直接修改原数据集）
@@ -44,16 +126,16 @@ lerobot-edit-dataset \
     --operation.episode_indices "[0, 2, 5]"
 ```
 
-#### 拆分数据集
+#### 拆分数据集[[split-dataset]]
 
 将数据集划分为多个子集。
 
 ```bash
-# 按比例拆分（例如：80% 训练集、20% 测试集、20% 验证集）
+# 按比例拆分（例如：60% 训练集、20% 验证集、20% 测试集）
 lerobot-edit-dataset \
     --repo_id lerobot/pusht \
     --operation.type split \
-    --operation.splits '{"train": 0.8, "test": 0.2, "val": 0.2}'
+    --operation.splits '{"train": 0.6, "val": 0.2, "test": 0.2}'
 
 # 按指定片段索引拆分
 lerobot-edit-dataset \
@@ -62,11 +144,11 @@ lerobot-edit-dataset \
     --operation.splits '{"task1": [0, 1, 2, 3], "task2": [4, 5]}'
 ```
 
-拆分名称没有限制，可由用户自定义。结果数据集以原 repo id 加拆分名称的形式保存，例如 `lerobot/pusht_train`、`lerobot/pusht_task1`、`lerobot/pusht_task2`。
+拆分名称没有限制，可由用户自行确定。结果数据集会以原 repo id 加拆分名称的形式保存，例如 `lerobot/pusht_train`、`lerobot/pusht_task1`、`lerobot/pusht_task2`。
 
-#### 合并数据集
+#### 合并数据集[[merge-datasets]]
 
-将多个数据集合并为一个。
+将多个数据集合并为一个数据集。
 
 ```bash
 # 将训练集和验证集合并回一个数据集
@@ -76,7 +158,7 @@ lerobot-edit-dataset \
     --operation.repo_ids "['lerobot/pusht_train', 'lerobot/pusht_val']"
 ```
 
-#### 删除特征
+#### 删除特征[[remove-features]]
 
 从数据集中删除特征。
 
@@ -88,12 +170,59 @@ lerobot-edit-dataset \
     --operation.feature_names "['observation.images.top']"
 ```
 
-#### 转换为视频
+#### 修改任务[[modify-tasks]]
 
-将基于图像的数据集转换为视频格式，生成一个新的 LeRobotDataset，其中图像以视频形式存储。此操作可减少存储占用并提升数据加载性能。新数据集与原数据集结构完全相同，但图像以 LeRobot 标准格式编码为 MP4 视频。
+更改附加到片段上的自然语言任务描述。这适用于修正拼写错误、统一措辞或重新标注片段。
+
+> [!WARNING]
+> `modify_tasks` 会**就地**修改数据集（更新 `meta/tasks.parquet`、数据文件中的 `task_index` 列、片段元数据中的 `tasks` 列，以及 `meta/info.json` 中的 `total_tasks`）。对于此操作，`--new_repo_id` 和 `--new_root` 参数会被忽略。
 
 ```bash
-# 仅本地保存：指定自定义输出目录（不推送到 Hub）
+# 为所有片段设置单一任务
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type modify_tasks \
+    --operation.new_task "Pick up the cube and place it"
+
+# 为特定片段设置不同任务
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type modify_tasks \
+    --operation.episode_tasks '{"0": "Task A", "1": "Task B", "2": "Task A"}'
+
+# 替换出现的所有现有任务字符串
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type modify_tasks \
+    --operation.task_replacements '{"Pick up the red cube": "Lift the red cube"}'
+
+# 在一次运行中组合多种模式
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type modify_tasks \
+    --operation.new_task "Default task" \
+    --operation.task_replacements '{"Pick up the red cube": "Lift the red cube"}' \
+    --operation.episode_tasks '{"5": "Special task for episode 5"}'
+```
+
+**参数：**
+
+- `new_task`：单个任务字符串，用作未被其他方式覆盖的片段的默认任务。
+- `episode_tasks`：从片段索引到任务字符串的映射。
+- `task_replacements`：从现有任务字符串到其替换项的映射，应用于当前任务匹配某个键的片段。每个键都必须是数据集中已有的任务。
+
+这些模式可以在一次运行中组合使用。对于每个片段，任务按以下优先级解析：
+
+`episode_tasks` > `task_replacements` > `new_task` > 原始任务
+
+必须至少指定 `new_task`、`episode_tasks` 或 `task_replacements` 之一。如果某个片段最终没有任务，则会引发错误。
+
+#### 转换为视频[[convert-to-video]]
+
+将基于图像的数据集转换为视频格式，创建一个新的 LeRobotDataset，其中图像以视频形式存储。这有助于减少存储需求并提升数据加载性能。新数据集的结构将与原数据集完全相同，但图像会以符合 LeRobot 格式的 MP4 视频进行编码。
+
+```bash
+# 仅本地：保存到自定义输出目录（不推送到 Hub）
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_image_to_video \
@@ -117,10 +246,19 @@ lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_image_to_video \
     --operation.output_dir outputs/pusht_video \
-    --operation.vcodec libsvtav1 \
-    --operation.pix_fmt yuv420p \
-    --operation.g 2 \
-    --operation.crf 30
+    --operation.rgb_encoder.vcodec libsvtav1 \
+    --operation.rgb_encoder.pix_fmt yuv420p \
+    --operation.rgb_encoder.g 2 \
+    --operation.rgb_encoder.crf 30
+
+# 转换包含深度图的数据集，并自定义深度编码器
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_image \
+    --operation.type convert_image_to_video \
+    --operation.output_dir outputs/pusht_video \
+    --operation.depth_encoder.depth_min 0.01 \
+    --operation.depth_encoder.depth_max 10.0 \
+    --operation.depth_encoder.use_log true
 
 # 仅转换指定片段
 lerobot-edit-dataset \
@@ -136,7 +274,7 @@ lerobot-edit-dataset \
     --operation.output_dir outputs/pusht_video \
     --operation.num_workers 8
 
-# 对内存受限的系统，可指定批处理限制：
+# 对于内存受限的系统，现在可以指定限制：
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type convert_to_video \
@@ -144,43 +282,73 @@ lerobot-edit-dataset \
     --operation.max_frames_per_batch 10000
 ```
 
-**参数说明：**
+**参数：**
 
-- `output_dir`：自定义输出目录（可选，默认使用 `new_repo_id` 或 `{repo_id}_video`）
-- `vcodec`：视频编解码器，可选：`h264`、`hevc`、`libsvtav1`（默认：`libsvtav1`）
-- `pix_fmt`：像素格式，可选：`yuv420p`、`yuv444p`（默认：`yuv420p`）
-- `g`：图像组（GOP）大小，值越小质量越高但文件越大（默认：2）
-- `crf`：恒定码率因子，值越小质量越高但文件越大，0 为无损（默认：30）
-- `fast_decode`：快速解码调优选项（默认：0）
-- `episode_indices`：指定要转换的片段列表（默认：全部片段）
-- `num_workers`：并行处理的 worker 数量（默认：4）
+- `output_dir`：自定义输出目录（可选——默认使用 `new_repo_id` 或 `{repo_id}_video`）
+- `rgb_encoder`：应用于 RGB 摄像头的视频编码器设置——所有子字段均可通过 `--operation.rgb_encoder.<field>` 访问。更多详情请参见[视频编码参数](./video_encoding_parameters)。
+- `depth_encoder`：应用于深度图摄像头（例如来自 Intel RealSense 的摄像头）的视频编码器设置。除标准编码器字段外，它还提供深度量化选项（`depth_min`、`depth_max`、`shift`、`use_log`），可通过 `--operation.depth_encoder.<field>` 访问。这些量化设置会持久化到数据集元数据中，以便在加载时将深度反量化回物理单位。详情请参见[深度流](./video_encoding_parameters#depth-streams)部分。
+- `episode_indices`：要转换的特定片段列表（默认：所有片段）
+- `num_workers`：用于处理的并行 worker 数量（默认：4）
 
-**注意：** 生成的数据集是完整的 LeRobotDataset，所有摄像头均以视频形式编码至 `videos/` 目录，parquet 文件仅包含元数据（不含原始图像数据）。所有片段、统计信息和任务均完整保留。
+**注意：** 生成的数据集将是一个完整的 LeRobotDataset，所有摄像头都会以视频形式编码到 `videos/` 目录中，parquet 文件仅包含元数据（不含原始图像数据）。深度图摄像头会被自动检测并路由到 `depth_encoder`，而 RGB 摄像头使用 `rgb_encoder`。所有片段、统计信息和任务都会保留。
 
-### 显示数据集信息
+#### 重新编码视频[[re-encode-videos]]
 
-显示数据集信息，如片段数量、帧数、文件大小等。此操作不会对数据集做任何修改。
+使用不同的编码器设置重新编码现有视频数据集的视频，而无需回到原始帧。RGB 视频使用 `rgb_encoder`，深度视频使用 `depth_encoder`。只需提供你想要重新编码的编码器；另一种流类型将保持不变。
 
 ```bash
-# 不显示特征详情
+# 使用新设置重新编码所有 RGB 视频（默认保存到 lerobot/pusht_reencoded）
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht \
+    --operation.type reencode_videos \
+    --operation.rgb_encoder.vcodec h264 \
+    --operation.rgb_encoder.pix_fmt yuv420p \
+    --operation.rgb_encoder.crf 23
+
+# 重新编码包含深度图的数据集中的 RGB 和深度视频
+lerobot-edit-dataset \
+    --repo_id lerobot/pusht_depth \
+    --operation.type reencode_videos \
+    --operation.rgb_encoder.vcodec h264 \
+    --operation.depth_encoder.crf 50
+```
+
+**参数：**
+
+- `rgb_encoder`：应用于每个 RGB 视频的编码器设置。省略则跳过重新编码 RGB 视频。
+- `depth_encoder`：应用于每个深度视频的编码器设置。省略则跳过重新编码深度视频。
+- `num_workers`：用于处理的并行 worker 数量。
+
+> [!NOTE]
+> 重新编码深度视频时，现有的深度量化参数（`depth_min`、`depth_max`、`shift`、`use_log`）和 `is_depth_map` 标志会**保留**——重新编码只会更改所存储流的编解码器/质量，而不会改变加载时深度反量化的方式。
+
+### 显示数据集信息[[show-the-information-of-datasets]]
+
+显示数据集信息，如片段数量、帧数、文件大小等。
+不会对数据集做任何修改
+
+```bash
+
+# 显示数据集信息，不包含特征详情
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type info \
 
-# 显示特征详情
+# 显示数据集信息，包含特征详情
 lerobot-edit-dataset \
     --repo_id lerobot/pusht_image \
     --operation.type info \
     --operation.show_features true
+
 ```
 
-**参数说明：**
+**参数：**
 
-- `parameters`：控制是否显示特征详情的标志（默认：false）
+- `parameters`：控制是否显示包含特征详情的数据集信息的标志。（默认：false）
 
-### 推送到 Hub
+### 推送到 Hub[[push-to-hub]]
 
-在任意命令中添加 `--push_to_hub true` 标志，可将结果数据集自动上传至 Hugging Face Hub：
+在任意命令中添加 `--push_to_hub true` 标志，即可自动将生成的数据集上传到 Hugging Face Hub：
 
 ```bash
 lerobot-edit-dataset \
@@ -191,42 +359,4 @@ lerobot-edit-dataset \
     --push_to_hub true
 ```
 
-目前 `lerobot-edit-dataset` 尚未涵盖向数据集添加特征的工具。
-
-# 数据集可视化
-
-## 在线可视化
-
-使用 `lerobot` 录制数据集时，除非另行指定，数据集会自动上传至 Hugging Face Hub。可通过我们的 **LeRobot 数据集可视化工具** 在线查看数据集：
-https://huggingface.co/spaces/lerobot/visualize_dataset
-
-## 本地可视化
-
-也可使用命令行工具在本地可视化数据集中的片段。
-
-**从 Hugging Face Hub 加载：**
-
-```bash
-lerobot-dataset-viz \
-    --repo-id lerobot/pusht \
-    --episode-index 0
-```
-
-**从本地文件夹加载：**
-添加 `--root` 选项并设置 `--mode local`。例如，在 `./my_local_data_dir/lerobot/pusht` 中搜索：
-
-```bash
-lerobot-dataset-viz \
-    --repo-id lerobot/pusht \
-    --root ./my_local_data_dir \
-    --mode local \
-    --episode-index 0
-```
-
-执行后，工具将打开 `rerun.io`，展示所选片段的摄像头画面、机器人状态及动作。
-
-如需高级用法（包括可视化远程服务器上的数据集），请运行：
-
-```bash
-lerobot-dataset-viz --help
-```
+还有一个用于向数据集添加特征的工具，尚未包含在 `lerobot-edit-dataset` 中。

@@ -1,0 +1,187 @@
+# LingBot-VA[[lingbot-va]]
+
+LingBot-VA 是一个基于 **Wan2.2** 视频扩散技术栈构建的**自回归视频-动作世界模型策略**。
+它在同一个自回归序列中交替预测
+未来的**视频潜变量**（video latent）和**机器人动作**（“VA” = Video-Action）。LeRobot
+集成把 LingBot-VA 接入了标准的训练、评估和处理器
+接口。
+
+## 模型概览[[model-overview]]
+
+LingBot-VA 是一个**双流“混合 Transformer”（mixture-of-transformers）**：视频/潜变量流
+（`patch_embedding_mlp → blocks → proj_out`）和动作流
+（`action_embedder → blocks → action_proj_out`）共享同样的 30 个 Transformer 块和
+文本条件。
+
+| 组件               | 类                      | 作用                                         |
+| ------------------ | ----------------------- | -------------------------------------------- |
+| DiT 主干（可训练） | `WanTransformer3DModel` | 约 5B 参数的双流 Transformer。               |
+| VAE（冻结）        | `AutoencoderKLWan`      | Wan2.2 VAE，`z_dim=48`。按需从源仓库拉取。   |
+| 文本编码器（冻结） | `UMT5EncoderModel`      | UMT5-XXL，`d_model=4096`。按需从源仓库拉取。 |
+
+推理时，策略对每个分块（chunk）执行一个自回归循环：它使用两个独立的
+流匹配（flow matching）调度器，分别对视频潜变量流（CFG，约 20 步）和动作流（约 50 步）去噪，
+并在各分块之间维护 KV 缓存。在执行分块的过程中，真实观测到的关键帧会被
+回填到 KV 缓存中（闭环世界建模）。
+
+### LeRobot 集成涵盖的内容[[what-the-lerobot-integration-covers]]
+
+- 通过 LeRobot 使用标准的 `policy.type=lingbot_va` 配置。
+- Hub 上提供可直接使用的 LeRobot 格式检查点（由上游发布的检查点转换而来）。
+- 通过标准的 `select_action` 接口提供自回归双流推理
+  （单环境评估，`--eval.batch_size=1`）。
+- 可选择在评估/训练期间保存策略的**预测（想象）视频**。
+- 使用 `lerobot-eval` 在 LIBERO 和 RoboTwin 上进行评估。
+- 通过双流流匹配损失（`policy.forward`）进行训练/微调，详见下文。
+
+## 安装[[installation]]
+
+1. 按照[安装指南](./installation)安装 LeRobot。
+2. 安装 LingBot-VA extra：
+
+```bash
+pip install -e ".[lingbot_va]"
+```
+
+## 检查点[[checkpoints]]
+
+上游发布的检查点已转换为 LeRobot 格式并推送到 Hub：
+
+| 变体               | LeRobot 检查点                   |
+| ------------------ | -------------------------------- |
+| LIBERO-Long 后训练 | `lerobot/lingbot_va_libero_long` |
+| RoboTwin 后训练    | `lerobot/lingbot_va_robotwin`    |
+| 预训练基础模型     | `lerobot/lingbot_va_base`        |
+
+LeRobot 的 `model.safetensors` 中只存储了约 5B 参数的可训练
+Transformer。冻结的 VAE、UMT5 和分词器（约 20 GB）会在加载时从
+`config.wan_pretrained_path` 拉取（默认是源 `robbyant/*` 仓库）。
+UMT5-XXL 文本编码器默认在 CPU 上运行（`config.text_encoder_device`），这样 5B
+Transformer 加上 VAE 就能放进单张 24～32 GB 的 GPU。
+
+## 评估（LIBERO）[[evaluation-libero]]
+
+```bash
+lerobot-eval \
+    --policy.path=lerobot/lingbot_va_libero_long \
+    --policy.device=cuda \
+    --env.type=libero --env.task=libero_10 \
+    --env.observation_height=128 --env.observation_width=128 \
+    --eval.n_episodes=50 --eval.batch_size=1 \
+    --output_dir=outputs/eval/lingbot_va_libero
+```
+
+LingBot-VA 的流式推理（KV 缓存 + 观测关键帧反馈）是针对
+单环境评估实现的；请使用 `--eval.batch_size=1`。
+
+## 评估（RoboTwin）[[evaluation-robotwin]]
+
+RoboTwin 2.0 需要 SAPIEN + CuRobo 仿真器技术栈。你可以使用基准测试 Docker 镜像
+（`docker/Dockerfile.benchmark.robotwin`，它还需要 `warp-lang==1.3.1`，以及在 `TORCH_CUDA_ARCH_LIST`
+中设置 GPU 计算能力后编译的 CuRobo）。RoboTwin 使用**末端执行器位姿
+控制**，因此请使用 `--env.action_mode=ee` 运行：策略为每条手臂预测 `xyz+quaternion+gripper`
+增量（`robotwin_tshape` 潜变量布局），这些增量会叠加到该回合的初始末端执行器位姿上，
+并通过 CuRobo IK 执行。
+
+```bash
+lerobot-eval \
+    --policy.path=lerobot/lingbot_va_robotwin \
+    --policy.device=cuda \
+    --env.type=robotwin --env.task=beat_block_hammer --env.action_mode=ee \
+    --eval.n_episodes=10 --eval.batch_size=1 \
+    --output_dir=outputs/eval/lingbot_va_robotwin
+```
+
+### 保存预测（想象）视频[[saving-predicted-imagined-videos]]
+
+设置 `--policy.save_predicted_video=true`，即可额外用 VAE 解码预测的视频
+潜变量，并在环境渲染的 `eval_episode_*.mp4` 视频旁写入 `pred_episode_*.mp4`。
+同一参数也适用于 `lerobot-train` 期间的定期评估。
+
+## 训练/微调[[training-fine-tuning]]
+
+`LingBotVAPolicy.forward(batch)` 实现了论文中的双流**流匹配**损失
+（`latent_loss + action_loss`，按时间步加权，并对动作做掩码）：它用 VAE 把
+相机片段编码为视频潜变量，用 UMT5 编码任务，对两个流加噪，执行
+Transformer 的块因果（block-causal）训练前向，并返回 `(loss, metrics)`。优化器预设为 AdamW，
+搭配先线性预热、再保持常数的学习率调度（与上游一致）。
+
+要求：
+
+- 块因果掩码使用 PyTorch **flex-attention**，因此训练时请使用
+  `--policy.attn_mode=flex` 构建策略（默认的 `torch` SDPA 仅用于推理）。
+- 完整的 5B DiT 在使用 AdamW 时无法放进单张 24～32 GB 的 GPU；请使用 **LoRA**
+  （`--policy.use_peft=true`）和/或优化器卸载进行微调。`get_optim_params` 只返回
+  可训练的参数（例如适配器参数）；VAE 和 UMT5 文本编码器保持冻结。
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/lingbot_va_libero_long --policy.attn_mode=flex \
+  --policy.use_peft=true \
+  --dataset.repo_id=<your LeRobot-format dataset> \
+  --batch_size=1 --steps=... --output_dir=outputs/train/lingbot_va
+```
+
+数据集的每个样本都必须提供相机片段（每个相机一个时间窗口，经 VAE 编码为
+`frame_chunk_size` 个潜变量帧），以及 `frame_chunk_size * action_per_frame` 个动作步。
+
+## 数据格式（动作通道与相机顺序）[[data-format-action-channels-camera-order]]
+
+LingBot-VA 是一个**末端执行器（笛卡尔）位姿**策略，它预测的是末端执行器位姿和夹爪，而不是
+关节位置。动作采用固定的多本体（multi-embodiment）**30 维**布局；请把你的机器人的
+动作维度映射到这些通道上，其余部分用 `0` 填充（`used_action_channel_ids` 用于选择
+特定检查点实际使用的通道）：
+
+| 通道   | 含义                             |
+| ------ | -------------------------------- |
+| 0～6   | 左臂末端执行器位姿               |
+| 7～13  | 右臂末端执行器位姿               |
+| 14～20 | 左臂关节（已发布的检查点未使用） |
+| 21～27 | 右臂关节（已发布的检查点未使用） |
+| 28     | 左夹爪                           |
+| 29     | 右夹爪                           |
+
+- **LIBERO** 使用通道 `0–6`：6 自由度末端执行器增量（xyz + 旋转）+ 夹爪（单臂）。
+- **RoboTwin** 使用通道 `[0–6, 28, 7–13, 29]`：左末端执行器（xyz + 四元数）+ 左夹爪 +
+  右末端执行器 + 右夹爪（16 维）。环境会通过 CuRobo IK 把这些位姿转换为关节轨迹，
+  关节本身从不被预测。
+
+关节空间数据集（或采用不同末端执行器约定的数据集）在微调这些检查点之前，
+必须先重新映射到该格式。
+
+**相机顺序是固定的，并且对顺序敏感**：各相机的潜变量会按
+`obs_cam_keys` 的顺序在空间上拼接，因此物理相机到槽位的映射必须与训练时一致：
+
+| 基准测试 | `obs_cam_keys`（按顺序）                                                                                | `camera_layout`                                                         |
+| -------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| LIBERO   | `observation.images.image`（agentview / 第三人称视角），`observation.images.image2`（eye-in-hand 腕部） | `width_concat`（潜变量沿宽度拼接）                                      |
+| RoboTwin | `observation.images.head_camera`、`observation.images.left_camera`、`observation.images.right_camera`   | `robotwin_tshape`（下方为全分辨率头部视角，上方为两个半分辨率腕部视角） |
+
+第一个相机是外部/头部视角，其余为腕部视角。
+
+## 推理超参数（LIBERO）[[inference-hyperparameters-libero]]
+
+| 键                                     | 值                                                                                  |
+| -------------------------------------- | ----------------------------------------------------------------------------------- |
+| 高 × 宽                                | 128 × 128                                                                           |
+| 相机                                   | `observation.images.image`（agentview），`observation.images.image2`（eye-in-hand） |
+| 使用的动作通道                         | 0～6（7 自由度手臂 + 夹爪）                                                         |
+| action_per_frame / frame_chunk_size    | 4 / 4                                                                               |
+| attn_window                            | 30                                                                                  |
+| 视频/动作去噪步数                      | 20 / 50                                                                             |
+| guidance_scale / action_guidance_scale | 5 / 1                                                                               |
+| snr_shift / action_snr_shift           | 5.0 / 0.05                                                                          |
+
+这些是 `LingBotVAConfig` 的默认值；可以通过 `--policy.<name>=...` 覆盖其中任意一项。
+
+## 备注[[notes]]
+
+- **注意力后端：** 推理使用 `torch` SDPA 后端（始终可用）。
+  `flashattn` 和 `flex` 后端是可选的；只有训练时才需要 `flex`。
+- **模型规模：** DiT 约有 5B 参数，冻结的 VAE 和 UMT5 另外占用约 20 GB；推理大约需要
+  18～24 GB 显存。
+
+## 许可证[[license]]
+
+LingBot-VA 以 Apache-2.0 许可证发布。请参阅
+[上游仓库](https://github.com/Robbyant/lingbot-va)。

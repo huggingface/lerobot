@@ -1,31 +1,35 @@
-# LeRobotDataset v3.0
+# LeRobotDataset v3.0[[lerobotdataset-v30]]
 
 `LeRobotDataset v3.0` 是一种用于机器人学习数据的标准化格式。它提供对多模态时序数据、感觉运动信号和多摄像头视频的统一访问，以及丰富的元数据，支持在 Hugging Face Hub 上进行索引、搜索和可视化。
 
+在阅读其布局说明之前，若想了解这种格式的数据集中包含什么，可在浏览器中打开 [LeRobot Dataset Visualizer](https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0) 查看：摄像头录像、同步的状态和动作图表，以及每个片段（episode）。参见[在浏览器中探索数据集](./using_dataset_tools#explore-a-dataset-in-the-browser)。
+
 本文档将引导你：
 
-- 了解 v3.0 的设计理念和目录结构
+- 理解 v3.0 的设计和目录结构
 - 录制数据集并推送到 Hub
 - 使用 `LeRobotDataset` 加载数据集用于训练
 - 使用 `StreamingLeRobotDataset` 无需下载即可流式访问数据集
 - 在训练时应用图像变换进行数据增强
 - 将现有 `v2.1` 数据集迁移到 `v3.0`
+- 试验其他 `LeRobotDataset` 格式和实现，例如 Lance
 
-## v3 的新特性
+## `v3` 的新特性[[whats-new-in-v3]]
 
 - **基于文件的存储**：每个 Parquet/MP4 文件包含多个片段（v2 每个片段对应一个文件）。
 - **关系型元数据**：片段边界和查找通过元数据解析，而非文件名。
 - **Hub 原生流式访问**：通过 `StreamingLeRobotDataset` 直接从 Hub 消费数据集。
 - **更低的文件系统压力**：更少、更大的文件 ⇒ 更快的初始化，规模扩展时问题更少。
 - **统一的组织结构**：清晰的目录布局，数据和视频的路径模板保持一致。
+- **数据集存储后端**：数据集也可以存储为 [LanceDB](https://lancedb.com) 表，以便直接从对象存储进行随机访问和索引（参见 [LanceDB 数据集后端](#lancedb-dataset-backend)）。
 
-## 安装
+## 安装[[installation]]
 
 `LeRobotDataset v3.0` 将包含在 `lerobot >= 0.4.0` 中。
 
 在稳定版本发布之前，你可以按照[从源代码构建的说明](./installation#from-source)使用 main 分支。
 
-## 录制数据集
+## 录制数据集[[record-a-dataset]]
 
 运行以下命令使用 SO-101 录制数据集并推送到 Hub：
 
@@ -43,13 +47,13 @@ lerobot-record \
   --dataset.num_episodes=5 \
   --dataset.single_task="Grab the black cube" \
   --dataset.streaming_encoding=true \
-  # --dataset.vcodec=auto \
   --dataset.encoder_threads=2
+# 可选：--dataset.rgb_encoder.vcodec=auto
 ```
 
 详细信息请参阅[录制指南](./il_robots#record-a-dataset)。
 
-## 格式设计
+## 格式设计[[format-design]]
 
 v3 的核心原则是**存储与用户 API 解耦**：数据以高效方式存储（少量大文件），而公共 API 提供直观的片段级访问。
 
@@ -74,22 +78,22 @@ v3 的核心原则是**存储与用户 API 解耦**：数据以高效方式存�
   </figure>
 </div>
 
-### 目录结构（简化版）
+### 目录结构（简化版）[[directory-layout-simplified]]
 
 - **`meta/info.json`**：规范模式（特征、形状/数据类型）、FPS、代码库版本，以及定位数据/视频分片的**路径模板**。
 - **`meta/stats.json`**：用于归一化的全局特征统计信息（均值/标准差/最小值/最大值），通过 `dataset.meta.stats` 访问。
-- **`meta/tasks.jsonl`**：自然语言任务描述，映射为整数 ID，供任务条件策略使用。
+- **`meta/tasks.jsonl`**：自然语言任务描述，映射为整数 ID，供任务条件策略（policy）使用。
 - **`meta/episodes/`**：每个片段的记录（长度、任务、偏移量），以**分块 Parquet** 格式存储以保证可扩展性。
 - **`data/`**：逐帧 **Parquet** 分片，每个文件通常包含**多个片段**。
 - **`videos/`**：按摄像头划分的 **MP4** 分片，每个文件通常包含**多个片段**。
 
-## 加载数据集用于训练
+## 加载数据集用于训练[[load-a-dataset-for-training]]
 
 `LeRobotDataset` 返回 PyTorch 张量的 Python 字典，并与 `torch.utils.data.DataLoader` 集成。以下是使用示例：
 
 ```python
 import torch
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 repo_id = "yaak-ai/L2D-v3"
 
@@ -130,16 +134,30 @@ for batch in data_loader:
     # model.forward(batch)
 ```
 
-## 流式访问数据集（无需下载）
+## 在训练期间流式访问数据集[[stream-a-dataset-during-training]]
 
-使用 `StreamingLeRobotDataset` 直接从 Hub 迭代数据，无需本地副本。这允许在不将大型数据集下载到磁盘或加载到内存的情况下进行流式访问，是新数据集格式的核心特性。
+设置 `--dataset.streaming=true`，即可在无需先下载数据集的 Parquet 和视频文件的情况下进行训练。片段会即时拉取到一个有界的内存池中，每个选中的帧在每个 epoch 中仍会被恰好访问一次：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=yaak-ai/L2D-v3 \
+  --dataset.streaming=true \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+同一个读取器也可在 Python 中使用，适用于 Hub 数据集以及存储在 [HF Storage Bucket](https://huggingface.co/docs/hub/storage-buckets) 中的数据集：
 
 ```python
-from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
+from lerobot.datasets import StreamingLeRobotDataset
 
-repo_id = "yaak-ai/L2D-v3"
-dataset = StreamingLeRobotDataset(repo_id)  # 直接从 Hub 流式传输
+dataset = StreamingLeRobotDataset("yaak-ai/L2D-v3")
+bucket_dataset = StreamingLeRobotDataset("my-org/my-bucket", repo_type="bucket")
 ```
+
+在 CLI 中，可以使用 `--dataset.repo_type=bucket` 或 `--dataset.root=hf://buckets/my-org/my-bucket` 选择 bucket。
+
+参见[训练数据集流式访问](./training_dataset_streaming)，了解 worker 和分片如何映射到流式并发、MP4 sidecar 索引、内存设置、恢复和故障排查。
 
 <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
   <figure style="margin:0; text-align:center;">
@@ -154,21 +172,21 @@ dataset = StreamingLeRobotDataset(repo_id)  # 直接从 Hub 流式传输
   </figure>
 </div>
 
-## 图像变换
+## 图像变换[[image-transforms]]
 
 图像变换是在训练期间应用于摄像头帧的数据增强操作，用于提升模型的鲁棒性和泛化能力。LeRobot 支持多种变换，包括亮度、对比度、饱和度、色调和锐度调整。
 
-### 在数据集创建/录制时使用变换
+### 在数据集创建/录制时使用变换[[using-transforms-during-dataset-creationrecording]]
 
 目前，变换仅在**训练时**应用，录制时不应用。创建或录制数据集时，原始图像直接存储，不做变换。这样你可以在不重新录制数据的情况下尝试不同的增强方案。
 
-### 通过 API 为现有数据集添加变换
+### 通过 API 为现有数据集添加变换[[adding-transforms-to-existing-datasets-api]]
 
 加载训练数据集时使用 `image_transforms` 参数：
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
+from lerobot.datasets import LeRobotDataset
+from lerobot.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
 
 # 方式一：使用默认变换配置（默认禁用）
 transforms_config = ImageTransformsConfig(
@@ -226,46 +244,61 @@ dataset = LeRobotDataset(
 )
 ```
 
-### 可用变换类型
+### 可用变换类型[[available-transform-types]]
 
 LeRobot 提供以下几种变换类型：
 
 - **`ColorJitter`**：调整亮度、对比度、饱和度和色调
 - **`SharpnessJitter`**：随机调整图像锐度
+- **`RandomAffine`**、**`RandomRotation`**：几何抖动
+- **`GaussianNoise`**、**`MotionBlur`**、**`JPEGCompression`**、**`GaussianPatchBrightness`**、**`RandomShadow`**、**`CoarseDropout`**、**`GammaCorrection`**、**`PlanckianJitter`**：真实机器人上可观察到的摄像头和光照效果
 - **`Identity`**：不做任何变换（适用于测试）
 
-也可以将任意 `torchvision.transforms.v2` 变换直接传入 `image_transforms` 参数。
+任何其他 `torchvision.transforms.v2` 类也可以作为 `type` 指定（例如 `RandomResizedCrop` 或 `GaussianBlur`）；它会一次应用于一个样本。你也可以将 torchvision 变换直接传给 `image_transforms` 参数。
 
-### 配置选项
+现在每种变换都已批处理化，且相同的批处理变换会在两种后端上运行。逐样本类（`SharpnessJitter`、`GaussianNoise`、`MotionBlur`、`GaussianPatchBrightness`、`RandomShadow`、`CoarseDropout`、`GammaCorrection`、`PlanckianJitter`、`RandomSubsetApply`）和 `make_transform_from_config` 仍可作为已弃用的前端导入，它们封装在对应的 `Batched*` 替代实现之上，并在使用时发出警告；这些接口将在未来版本中移除。`ImageTransforms` 是一个普通的 `torch.nn.Module`，接受 `(C, H, W)` 或 `(T, C, H, W)` 张量。通过 `type` 指定变换的配置不受影响。
+
+<Tip warning={true}>
+
+**现有配方的行为变化。** 训练将帧读取为 `uint8`，而除 `ColorJitter`、`RandomAffine` 和 `RandomRotation` 之外，LeRobot 变换过去会原样返回非 float 输入。因此，启用 `GaussianNoise`、`MotionBlur`、`GaussianPatchBrightness`、`RandomShadow`、`CoarseDropout`、`GammaCorrection` 或 `PlanckianJitter` 的配方实际上没有使用这些变换进行训练。现在它们会在两种后端上生效，因此这类配方的训练行为与之前不同：它会获得所要求的增强。已经在生效的变换除了舍入之外没有变化，因为批处理路径以 float 计算，并在最后统一舍入一次，而不是在每次变换后都舍入。
+
+</Tip>
+
+### 配置选项[[configuration-options]]
 
 - **`enable`**：启用/禁用变换（默认：`False`）
 - **`max_num_transforms`**：每帧最多应用的变换数量（默认：`3`）
 - **`random_order`**：是否随机顺序应用变换（默认：`False`）
 - **`weight`**：每种变换的采样概率（值越高概率越大；若权重之和不为 1，将自动归一化）
 - **`kwargs`**：变换专属参数（如亮度范围）
+- **`backend`**：训练期间变换运行的位置，`"dataloader"`（默认）或 `"gpu"`；见下文
+- **`gpu_compile`**：在 `"gpu"` 后端上，是否对批处理变换使用 `torch.compile`（默认：`True`）
+- **`gpu_chunk_size`**：在 `"gpu"` 后端上，每次增强多少个样本，以限制瞬时内存（默认：`32`）
 
-### 可视化变换效果
+### 在 GPU 上运行变换[[running-transforms-on-the-gpu]]
 
-使用可视化脚本预览变换对数据的影响：
+默认情况下，变换会在 DataLoader worker 中逐样本运行。当有多个摄像头时，这通常是 worker 最耗时的操作，GPU 最终会等待数据。设置 `backend=gpu`，可让 worker 只进行解码，并在策略（policy）设备上对每个批次应用相同的变换：
 
 ```bash
-lerobot-imgtransform-viz \
-  --repo-id=your-username/your-dataset \
-  --output-dir=./transform_examples \
-  --n-examples=5
+lerobot-train \
+  --dataset.repo_id=your-username/your-dataset \
+  --dataset.image_transforms.enable=true \
+  --dataset.image_transforms.backend=gpu \
+  --policy.type=act \
+  --policy.device=cuda
 ```
 
-该脚本保存展示每种变换效果的示例图像，帮助你调整参数。
+随机化保持不变：每个样本抽取自己的变换和参数，而同一摄像头历史中的帧共享这些变换和参数。增强仅应用于训练批次，并在策略预处理器之前进行；eval 批次、rollout 和保存的 checkpoint 不受影响。
 
-### 最佳实践
+注意事项：
 
-- **从保守值开始**：先使用较小范围（如亮度 0.9-1.1），再逐步增大
-- **先测试**：使用可视化脚本确认变换效果合理
-- **监控训练**：过于激进的增强可能损害性能
-- **匹配使用场景**：若机器人在变化的光照环境中工作，使用亮度/对比度变换
-- **合理组合**：同时使用过多变换可能导致训练不稳定
+- 需要加速器；`--policy.device=cpu` 会被拒绝。手动构建并自带 `image_transforms` 可调用对象的数据集也会被拒绝，因为这类变换会在 worker 中运行。
+- 支持 dataloader 后端支持的所有变换类型。没有批处理实现的类型（`JPEGCompression`，以及除 `ColorJitter`、`RandomAffine`、`RandomRotation` 和 `Identity` 之外的 torchvision 类）会在批次内逐样本应用，因此无法获得加速；`JPEGCompression` 还会往返 CPU。会改变帧大小的变换在样本数大于 1 的批次上会被拒绝。
+- 可通过 `--seed` 复现，且每个进程使用不同的种子。增强不会消耗策略（policy）的随机流，`gpu_compile` 和 `gpu_chunk_size` 也不会改变实际应用的增强。
+- 两种后端都会以 float 运行相同的批处理变换，并在最后统一舍入一次，因此在相同参数下，同一样本在任一后端上增强的结果相同。
+- `gpu_compile` 会针对每种图像形状花费一次 15-30 秒。峰值内存约为批次图像的两份 float 副本加上一个 chunk 的几份副本；如果内存紧张，请降低 `gpu_chunk_size`。`random_order=true` 会使变换耗时乘以 `max_num_transforms`。
 
-## 将 `v2.1` 迁移到 `v3.0`
+## 将 `v2.1` 迁移到 `v3.0`[[migrate-v21-v30]]
 
 转换器将按片段存储的文件聚合为更大的分片，并写入片段偏移量/元数据。按以下说明转换你的数据集。
 
@@ -274,7 +307,7 @@ lerobot-imgtransform-viz \
 pip install "https://github.com/huggingface/lerobot/archive/33cad37054c2b594ceba57463e8f11ee374fa93c.zip"
 
 # 转换 Hub 上现有的 v2.1 数据集：
-python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DATASET_ID>
+python -m lerobot.scripts.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DATASET_ID>
 ```
 
 **转换内容**
@@ -283,14 +316,14 @@ python -m lerobot.datasets.v30.convert_dataset_v21_to_v30 --repo-id=<HF_USER/DAT
 - 聚合 mp4 文件：`episode-0000.mp4`、`episode-0001.mp4`、… → **`file-0000.mp4`**、…
 - 更新 `meta/episodes/*`（分块 Parquet），写入每个片段的长度、任务及字节/帧偏移量。
 
-## 常见问题
+## 常见问题[[common-issues]]
 
-### 推送前务必调用 `finalize()`
+### 推送前务必调用 `finalize()`[[always-call-finalize-before-pushing]]
 
 创建或录制数据集时，**必须**调用 `dataset.finalize()` 以正确关闭 parquet 写入器。详情见 [PR #1903](https://github.com/huggingface/lerobot/pull/1903)。
 
 ```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 # 创建数据集并录制片段
 dataset = LeRobotDataset.create(...)
@@ -315,3 +348,50 @@ Dataset v3.0 使用增量 parquet 写入和缓冲元数据以提升效率。`fin
 - 确保数据集可正常加载
 
 若不调用 `finalize()`，parquet 文件将不完整，数据集将无法正常加载。
+
+## 其他格式和实现[[other-formats-and-implementations]]
+
+### LanceDB 数据集后端[[lancedb-dataset-backend]]
+
+`v3` 数据集也可以存储为 [LanceDB](https://lancedb.com) 表。LanceDB 是构建在 Lance 格式之上的多模态数据湖仓，面向 AI 访问模式：可快速随机访问任意行及其视频字节，并在同一组表上提供标量、向量和全文索引，因此 EDA、挖掘、筛选和训练可以直接从对象存储运行。该布局保持 `meta/` 不变，并新增一个用于表格数据的 `frames` 表，以及一个以 blob 形式保存 MP4 的 `videos` 表。`meta/info.json` 中的 `"storage_format": "lance"` 会选择读取器；`LeRobotDataset` API、数据项和训练流水线均保持不变。
+
+- **直接从 Hub 或 HF Storage Bucket 训练，且 GPU 始终有数据可用。** 随机帧会就地读取，每个批次只读取所需的字节，因此每个批次都是全局打乱，且无需预先下载任何内容。
+- **转换成本约等于一次文件复制。** 视频不会重新编码，因此数据项与源数据逐位一致。DROID 可在 34 分钟内完成转换。
+- **零拷贝特征工程。** 向训练器读取的表添加分数、嵌入或修正标签等列，而无需重写视频或复制数据集，然后使用索引对这些列进行过滤和搜索。读取器会忽略它不认识的列。
+
+有关其工作原理、基准测试和示例，请参阅 [LanceDB LeRobot 指南](https://docs.lancedb.com/training/lerobot)。
+
+摄像头特征必须由视频支持。将摄像头帧存储为图像的数据集不受读取器支持，需要在转换前重新编码为视频。
+
+读取 Lance 数据集需要 `lancedb` extra（`pip install "lerobot[lancedb]"`）。该格式为只读：请以默认格式录制和编辑数据集，然后使用 [`lerobot-lancedb`](https://pypi.org/project/lerobot-lancedb/) 包进行转换：
+
+```bash
+pip install "lerobot-lancedb"
+lerobot-lance-convert --repo-id lerobot/pusht --out ./pusht-lance  # 或 --root <local dataset dir>
+```
+
+加载使用同一个类：
+
+```python
+from lerobot.datasets import LeRobotDataset
+
+# Hub 数据集仓库
+dataset = LeRobotDataset("lance-format/pusht-lance")
+
+# HF Storage Bucket，就地读取
+dataset = LeRobotDataset("my-org/pusht-lance", repo_type="bucket")
+
+# 同一个 bucket 作为 root URI（其他对象存储 URI 的工作方式相同）
+dataset = LeRobotDataset("lerobot/pusht", root="hf://buckets/my-org/pusht-lance")
+```
+
+HF Storage Bucket 选项也可在 `lerobot-train` 中使用：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=my-org/pusht-lance \
+  --dataset.repo_type=bucket \
+  --policy.type=act
+```
+
+可视化对两种查看器都可用。`lerobot-dataset-viz --repo-id lance-format/pusht-lance --episode-index 0` 会像往常一样在 Rerun 中打开一个片段，而 `--display-mode foxglove` 会通过 WebSocket 将其提供给 [Foxglove](https://foxglove.dev)。无论哪种方式，都只会获取屏幕上显示的帧，无需导出或下载 MCAP。

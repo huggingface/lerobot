@@ -1,0 +1,99 @@
+# RoboCerebra[[robocerebra]]
+
+[RoboCerebra](https://robocerebra.github.io/) 是一个长时程操作基准，用于评估 VLA 中的**高级推理、规划和记忆**。片段（episode）将多个子目标与基于语言的中间指令串联起来，并构建在 LIBERO 的仿真器栈（MuJoCo + robosuite，Franka Panda 7-DOF）之上。
+
+- 论文：[RoboCerebra: A Large-scale Benchmark for Long-horizon Robotic Manipulation Evaluation](https://arxiv.org/abs/2506.06677)
+- 项目网站：[robocerebra.github.io](https://robocerebra.github.io/)
+- 数据集：[`lerobot/robocerebra_unified`](https://huggingface.co/datasets/lerobot/robocerebra_unified)——LeRobot v3.0，6,660 个片段 / 571,116 帧，20 fps，1,728 个基于语言的子任务。
+- 预训练策略（policy）：[`lerobot/smolvla_robocerebra`](https://huggingface.co/lerobot/smolvla_robocerebra)
+
+## 可用任务[[available-tasks]]
+
+RoboCerebra 复用了 LIBERO 的仿真器，因此评估会针对 LIBERO 的 `libero_10` 长时程套件运行：
+
+| 套件      | CLI 名称    | 任务数 | 描述                                   |
+| --------- | ----------- | ------ | -------------------------------------- |
+| LIBERO-10 | `libero_10` | 10     | 长时程厨房/客厅任务，串联 3–6 个子目标 |
+
+数据集中的每个 RoboCerebra 片段都被分割成多个带有自然语言指令的子任务，统一数据集会将这些子任务作为独立监督信号提供出来。
+
+## 安装[[installation]]
+
+RoboCerebra 依托 LIBERO，因此你只需要 `libero` extra：
+
+```bash
+pip install -e ".[libero]"
+```
+
+<Tip>
+RoboCerebra 需要 Linux（MuJoCo / robosuite）。在训练或评估前设置渲染后端：
+
+```bash
+export MUJOCO_GL=egl  # 用于无头服务器（HPC、云）
+```
+
+</Tip>
+
+## 评估[[evaluation]]
+
+RoboCerebra 评估会针对 LIBERO 的 `libero_10` 套件运行，并使用 RoboCerebra 的相机命名（`image` + `wrist_image`）以及一个额外的空相机槽位，以便使用三视角训练的策略（policy）接收到预期的输入布局：
+
+```bash
+lerobot-eval \
+  --policy.path=lerobot/smolvla_robocerebra \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --env.fps=20 \
+  --env.obs_type=pixels_agent_pos \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  '--env.camera_name_mapping={"agentview_image": "image", "robot0_eye_in_hand_image": "wrist_image"}' \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --eval.use_async_envs=false \
+  --policy.device=cuda \
+  '--rename_map={"observation.images.image": "observation.images.camera1", "observation.images.wrist_image": "observation.images.camera2"}' \
+  --policy.empty_cameras=1
+```
+
+### 推荐的评估片段数[[recommended-evaluation-episodes]]
+
+**每个任务 10 个片段**，覆盖 `libero_10` 套件（共 100 个），用于可复现的基准测试。与 RoboCerebra 论文中使用的协议一致。
+
+## 策略输入与输出[[policy-inputs-and-outputs]]
+
+**观测：**
+
+- `observation.state`——8 维本体感受状态（7 个关节位置 + 夹爪）
+- `observation.images.image`——第三人称视角，256×256 HWC uint8
+- `observation.images.wrist_image`——腕装相机视角，256×256 HWC uint8
+
+**动作：**
+
+- 在 `Box(-1, 1, shape=(7,))` 中进行连续控制——末端执行器增量（6D）+ 夹爪（1D）
+
+## 训练[[training]]
+
+位于 [`lerobot/robocerebra_unified`](https://huggingface.co/datasets/lerobot/robocerebra_unified) 的统一数据集提供两个 RGB 流以及基于语言的子任务标注：
+
+| 特征                             | 形状          | 描述                  |
+| -------------------------------- | ------------- | --------------------- |
+| `observation.images.image`       | (256, 256, 3) | 第三人称视角          |
+| `observation.images.wrist_image` | (256, 256, 3) | 腕装相机              |
+| `observation.state`              | (8,)          | 关节位置 + 夹爪       |
+| `action`                         | (7,)          | 末端执行器增量 + 夹爪 |
+
+在此基础上微调 SmolVLA 基础模型：
+
+```bash
+lerobot-train \
+  --policy.path=lerobot/smolvla_base \
+  --dataset.repo_id=lerobot/robocerebra_unified \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --output_dir=outputs/smolvla_robocerebra
+```
+
+## 复现已发表结果[[reproducing-published-results]]
+
+已发布的检查点 [`lerobot/smolvla_robocerebra`](https://huggingface.co/lerobot/smolvla_robocerebra) 是在 `lerobot/robocerebra_unified` 上训练的，并使用[评估](#evaluation)部分中的命令进行评估。CI 会在每个涉及该基准测试的 PR 上，以 `--eval.n_episodes=1` 运行同一命令作为冒烟测试。

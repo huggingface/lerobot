@@ -1,0 +1,134 @@
+# LaWAM[[lawam]]
+
+`lawam` 是 LeRobot 针对 [LaWAM](https://github.com/RLinf/LaWAM) 的适配器。LaWAM 是一种用于动态感知机器人策略的潜在世界动作模型。它结合了 Qwen3-VL 主干网络、潜在动作/世界模型和流匹配动作头，同时暴露 LeRobot 标准策略、训练和评估接口。
+
+资源：
+
+| 资源            | 链接                                                                                                         | 用途                |
+| --------------- | ------------------------------------------------------------------------------------------------------------ | ------------------- |
+| 项目页面        | [rlinf.github.io/LaWAM](https://rlinf.github.io/LaWAM/)                                                      | 方法概览            |
+| 论文            | [arXiv:2606.15768](https://arxiv.org/abs/2606.15768)                                                         | 引用与方法细节      |
+| 代码            | [RLinf/LaWAM](https://github.com/RLinf/LaWAM)                                                                | 原始训练与评估代码  |
+| 原生预训练      | [lawam-pretrain-lerobot](https://huggingface.co/jialei02/lawam-pretrain-lerobot)                             | LeRobot 微调初始化  |
+| 原生 LIBERO SFT | [lawam-libero-sft-lerobot](https://huggingface.co/jialei02/lawam-libero-sft-lerobot)                         | LIBERO 评估         |
+| 源检查点        | [lawam-checkpoints](https://huggingface.co/collections/jialei02/lawam-checkpoints)                           | 原始 LaWAM 发布产物 |
+| LIBERO 数据集   | [jialei02/libero_merged_no_noops_20hz](https://huggingface.co/datasets/jialei02/libero_merged_no_noops_20hz) | LIBERO SFT          |
+
+## 安装[[installation]]
+
+安装带 LaWAM extra 的 LeRobot：
+
+```bash
+pip install -e ".[lawam]"
+```
+
+安装 LIBERO 基准依赖，并在复现已发布的 LaWAM LIBERO 评估时将 MuJoCo 固定到 3.3.2：
+
+```bash
+pip install -e ".[lawam,libero]" "mujoco==3.3.2"
+```
+
+LIBERO 基准成功率对 MuJoCo 模拟器版本很敏感。较新的 MuJoCo 版本可能会大幅降低测得的 LIBERO 成功率，包括 LaWAM 之外的策略也是如此。这是评估环境兼容性问题，而不是 LaWAM 适配器问题。使用 `mujoco==3.3.2` 可以精确复现已发布的 LaWAM LIBERO 结果和论文结果。
+
+LaWAM 检查点使用 LeRobot 原生的 `model.safetensors` 格式。完整的 LAM、VLM 适配器和流匹配头状态通过 `policy.path` 恢复；适配器不会加载原始 LaWAM `.pt` 文件。LAM 和 DINOv3 架构由 `LaWAMConfig` 直接表示，不需要单独下载检查点。
+
+将 `policy.base_vlm` 保持为可移植的 Hub 模型 ID。Hugging Face 的标准缓存设置（例如 `HF_HOME`）控制 Qwen 文件在本地存储的位置，而无需在策略或处理器配置中添加机器特定路径。
+
+## 微调[[fine-tuning]]
+
+从原生预训练的 LaWAM 策略进行微调：
+
+```bash
+lerobot-train \
+  --policy.path=jialei02/lawam-pretrain-lerobot \
+  --dataset.repo_id=jialei02/libero_merged_no_noops_20hz \
+  --dataset.image_transforms.enable=false \
+  --rename_map='{"observation.images.wrist_image":"observation.images.image2"}' \
+  --policy.action_horizon=8 \
+  --policy.n_action_steps=8 \
+  --policy.clip_normalized_actions=true \
+  --policy.pre_snap_gripper_action=true \
+  --policy.binarize_gripper_action=true \
+  --policy.repo_id=your_org/lawam_sft
+```
+
+适配器在构建 LaWAM 训练批次之前，使用 LeRobot 数据集统计信息进行动作和状态归一化。位姿动作使用最小-最大归一化，而 LIBERO 配方会显式将夹爪通道二值化为 `0/1` 值，以匹配原生 LaWAM 训练约定。这会将 `-1/+1` 和 `0/1` 两种数据集约定映射到相同的模型目标。预训练检查点保留其预训练值 `action_horizon=24` 和 `n_action_steps=24`；LIBERO SFT 配方将两者覆盖为 `8`，同时保留 `chunk_size=50` 作为填充后的 Flow 序列长度。训练使用当前数据集 FPS 进行 LaWAM 的自然时间编码，处理器将该频率持久化作为评估回退。`policy.num_video_frames` 控制观测帧窗口。
+
+已发布的 LaWAM 预训练和 LIBERO SFT 配方不使用随机图像增强。策略处理器仅应用 Qwen 和 LAM 主干网络所需的确定性缩放和 ImageNet 归一化。LeRobot 的数据集级图像变换仍可用于单独设计的训练配方。
+
+已发布的 LaWAM 检查点在内部使用 32 维填充动作/状态空间。除非你训练的检查点具有不同的流维度，否则请保持 `policy.flow_action_dim=32` 和 `policy.flow_state_dim=32`。
+
+## 评估[[evaluation]]
+
+通过标准评估器评估原生 LIBERO SFT 检查点：
+
+```bash
+lerobot-eval \
+  --policy.path=jialei02/lawam-libero-sft-lerobot \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.n_episodes=10
+```
+
+Hub 仓库包含策略配置以及完整的预处理器和后处理器流水线，包括归一化张量和 LIBERO 夹爪处理。
+
+若要使用已发布的 LIBERO SFT 检查点进行可复现的 LIBERO 基准运行，请在单次调用中评估所有套件和任务 ID：
+
+```bash
+lerobot-eval \
+  --policy.path=jialei02/lawam-libero-sft-lerobot \
+  --policy.device=cuda \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --env.task_ids=[0,1,2,3,4,5,6,7,8,9] \
+  --eval.n_episodes=50 \
+  --output_dir=outputs/lawam_libero
+```
+
+报告每个套件中全部 10 个任务的成功率。报告基准数值时，每个任务至少使用 50 个回合。
+
+已发布 LIBERO SFT 检查点在每个任务 50 个回合下的参考结果。这些数值使用 MuJoCo 3.3.2 生成。作为环境检查，`libero_spatial` 任务 5 从使用 MuJoCo 3.8.1 时的 18/50 次成功提升到使用 MuJoCo 3.3.2 时的 47/50 次成功。
+
+| 套件             | 成功数 | 回合数 | 成功率 |
+| ---------------- | -----: | -----: | -----: |
+| `libero_spatial` |    492 |    500 |  98.4% |
+| `libero_object`  |    498 |    500 |  99.6% |
+| `libero_goal`    |    490 |    500 |  98.0% |
+| `libero_10`      |    490 |    500 |  98.0% |
+| `总体`           |   1970 |   2000 |  98.5% |
+
+## 摄像头选择[[camera-selection]]
+
+LaWAM 检查点显式存储主摄像头和腕部摄像头角色，而不是从 `image2` 等名称推断语义。在构建新的多摄像头 LaWAM 策略时，请配置这两个角色：
+
+```bash
+--policy.primary_image_features='["observation.images.front"]' \
+--policy.wrist_image_features='["observation.images.wrist"]'
+```
+
+`policy.lam_image_feature` 选择其时间帧会被潜在动作模型使用的主摄像头。它默认使用第一个配置的主摄像头，并在保存策略配置时显式写入。
+
+## 运行时字段[[runtime-fields]]
+
+常见的 LaWAM 专用策略字段：
+
+| 字段              | 描述                                                       |
+| ----------------- | ---------------------------------------------------------- |
+| `base_vlm`        | 存储在已发布策略配置中的可移植 Qwen/Qwen3-VL Hub 模型 ID。 |
+| `action_horizon`  | 每个动作块预测的动作数，最多为 `chunk_size`。              |
+| `flow_action_dim` | LaWAM 流匹配头使用的内部填充动作维度。                     |
+| `flow_state_dim`  | LaWAM 流匹配头使用的内部填充状态维度。                     |
+| `embodiment_id`   | 当 LeRobot 数据集未提供时使用的 LaWAM 具身 ID。            |
+
+## 引用[[citation]]
+
+```bibtex
+@misc{chen2026lawam,
+  title = {LaWAM: Latent World Action Models for Efficient Dynamics-Aware Robot Policies},
+  author = {Chen, Jialei and Wang, Kai and Chen, Kang and Chen, Shuaihang and Gao, Feng and Tang, Wenhao and Li, Zhiyuan and Liu, Weilin and Yao, Zhuyu and Li, Boxun and Xu, Yuanbo and Yu, Chao},
+  journal = {arXiv preprint arXiv:2606.15768},
+  year = {2026},
+  archiveprefix = {arXiv},
+  primaryclass = {cs.RO},
+}
+```

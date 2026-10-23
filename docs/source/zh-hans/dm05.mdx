@@ -1,0 +1,123 @@
+# 用于 LeRobot 的 DM0.5[[dm05-for-lerobot]]
+
+DM05（也以 DM0.5 发布）是 Dexmal 用于开放世界机器人控制的视觉-语言-动作模型（Vision-Language-Action model）。LeRobot
+适配器保留了 OpenDM 模型路径，同时使用标准的 LeRobot 数据集、处理器、训练、
+检查点保存、Hub 加载和评估。
+
+有关模型详情，请参阅 [DM0.5 技术博客](https://www.dexmal.com/blog/dm0.5/index_en.html)、
+[OpenDM 仓库](https://github.com/Dexmal/OpenDM)，以及原始
+[Dexmal/DM05](https://huggingface.co/Dexmal/DM05) 发布版。
+
+## 安装[[installation]]
+
+```bash
+pip install -e ".[training,dm05]"   # 训练
+pip install -e ".[libero,dm05]"     # 在 Linux 上进行 LIBERO 评估
+```
+
+## 检查点[[checkpoint]]
+
+将 `lerobot/dm05_base` 与 `--policy.path` 一起使用。它是原始 OpenDM
+检查点的自包含 LeRobot 转换版本，并支持 `DM05Policy.from_pretrained()`。
+
+基础配置记录了 OpenDM 的 14 维状态/动作契约。DM05 的核心模型最多支持 32
+维；全新微调会根据目标数据集解析实际生效的图像、状态和动作特征。
+
+## 数据集契约[[dataset-contract]]
+
+DM05 接受具有以下内容的标准 LeRobot 数据集：
+
+- 一个或多个图像或视频观测（observation）；
+- `observation.state`；
+- `action`；
+- 任务描述。
+
+当必须明确摄像头顺序时，设置 `policy.image_keys`。RoboTwin、ALOHA 及其他来源在转换为标准 LeRobot 模式后，不需要
+DM05 专用的读取器。保留标准的 `observation.state` 和
+`action` 键；仅使用 `rename_map` 对齐摄像头名称。
+
+## 训练[[training]]
+
+LIBERO 配方遵循 OpenDM：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=lerobot/libero \
+  --rename_map='{"observation.images.image": "observation.images.front", "observation.images.image2": "observation.images.wrist"}' \
+  --dataset.video_backend=pyav \
+  --policy.path=lerobot/dm05_base \
+  --policy.add_state=false \
+  --policy.chunk_size=10 \
+  --policy.n_action_steps=10 \
+  --policy.repo_id=your_repo_id \
+  --output_dir=outputs/train/dm05-libero \
+  --steps=50000 \
+  --batch_size=8 \
+  --policy.device=cuda
+```
+
+### 关键训练参数[[key-training-parameters]]
+
+| 参数                          | LIBERO 取值                         | 含义                                                      |
+| ----------------------------- | ----------------------------------- | --------------------------------------------------------- |
+| `dataset.repo_id`             | `lerobot/libero`                    | 标准 LeRobot 训练数据集                                   |
+| `policy.path`                 | `lerobot/dm05_base`                 | 自包含的基础检查点                                        |
+| `rename_map`                  | `image`/`image2` 到 `front`/`wrist` | 评估命令和 `lerobot/dm05_libero` 使用的摄像头名称         |
+| `policy.add_state`            | `false`                             | 匹配 OpenDM 的 LIBERO 提示词，不使用状态 token            |
+| `policy.use_relative_actions` | `false`（检查点默认值）             | 按原样学习存储的动作；相对模式需显式启用                  |
+| `policy.chunk_size`           | `10`                                | 每个 chunk 预测的动作数量                                 |
+| `policy.n_action_steps`       | `10`                                | 下一次模型调用前执行的动作数；至多 `chunk_size`           |
+| `policy.repo_id`              | `your_repo_id`                      | Hub 目标位置；仅本地运行时使用 `policy.push_to_hub=false` |
+
+环境控制模式与策略动作表示（policy action representation）分开配置。相对模式要求
+状态/动作维度匹配。
+
+### 摄像头[[cameras]]
+
+摄像头集合是策略配置（policy config）的一部分，提示词始终精确渲染这些摄像头。从
+`lerobot/dm05_base` 进行微调时（该检查点未声明任何摄像头），会采用训练数据集的摄像头。微调后的检查点会保留自己的摄像头名称：使用 `--rename_map` 将名称不同的数据集映射到这些名称，例如
+`--rename_map='{"observation.images.top": "observation.images.front"}'`。
+
+### 归一化统计量[[normalization-statistics]]
+
+训练使用 `meta/stats.json` 中数据集的状态/动作统计量。动作统计量必须与训练所用的表示一致。当 `policy.use_relative_actions=true` 时，请在相对动作变换之后计算它们，并使用相同的 chunk 大小和排除维度。参见[相对动作指南](./action_representations#using-relative-actions-in-lerobot)。
+
+## 评估[[evaluation]]
+
+LIBERO 检查点 `lerobot/dm05_libero` 训练了 50,000 步，并在全部 40 个
+LIBERO 任务上评估，每个任务 5 个片段：
+
+```bash
+MUJOCO_GL=egl lerobot-eval \
+  --policy.path=lerobot/dm05_libero \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --env.camera_name_mapping='{"agentview_image":"front","robot0_eye_in_hand_image":"wrist"}' \
+  --env.observation_height=256 \
+  --env.observation_width=256 \
+  --env.control_mode=relative \
+  --eval.n_episodes=5 \
+  --eval.batch_size=1 \
+  --seed=7 \
+  --policy.device=cuda
+```
+
+| 套件      |             成功次数 |
+| --------- | -------------------: |
+| Spatial   |                49/50 |
+| Object    |                50/50 |
+| Goal      |                50/50 |
+| LIBERO-10 |                48/50 |
+| **总计**  | **197/200（98.5%）** |
+
+这是一次 200 个片段的复现检查，而不是 2,000 个片段的 LIBERO 基准协议。
+
+## 检查点布局[[checkpoint-layout]]
+
+使用完整的检查点目录，其中包含策略权重、配置和处理器状态。单独的
+`model.safetensors` 不足以进行训练或推理。
+
+## 许可证[[license]]
+
+LeRobot 集成采用 Apache-2.0。模型权重遵循相应 DM05
+模型卡片所附的许可证。

@@ -1,0 +1,210 @@
+# 工具[[tools]]
+
+LeRobot v3.1 支持在策略中进行**工具调用（tool call）**：assistant 消息可以
+输出结构化的调用，例如 `say(text="OK, starting now")`，再由运行时
+分派给真正的实现（TTS、控制器、日志记录器等）。
+
+本页涵盖：
+
+1. 工具目录存放在哪里。
+2. 标注流水线如何生成工具调用原子（atom）。
+3. 如何添加你自己的工具。
+
+## 工具在哪里声明[[where-tools-are-declared]]
+
+分为两层。
+
+**目录（catalog）**：一组 OpenAI 风格的函数 schema，存放在
+每个数据集的 `meta/info.json["tools"]` 中。示例：
+
+```json
+{
+  "features": { "...": "..." },
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "say",
+        "description": "Speak a short utterance to the user via the TTS executor.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "The verbatim text to speak."
+            }
+          },
+          "required": ["text"]
+        }
+      }
+    }
+  ]
+}
+```
+
+通过数据集元数据访问器读取：
+
+```python
+from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+
+meta = LeRobotDatasetMetadata(repo_id="pepijn/super_poulain_final_annotations")
+tools = meta.tools     # list[dict]：OpenAI 工具 schema
+```
+
+如果数据集的 `info.json` 没有声明任何工具，`meta.tools`
+会返回 `lerobot.datasets.language` 中的 `DEFAULT_TOOLS`，目前它是
+只包含标准 `say` schema 的单元素列表。因此，未标注的
+数据集和聊天模板的使用方无需任何配置
+即可继续正常工作：
+
+```python
+prompt_str = tokenizer.apply_chat_template(
+    sample["messages"],
+    tools=meta.tools,                 # 两种情况下都能工作
+    add_generation_prompt=False,
+    tokenize=False,
+)
+```
+
+**实现（implementation）**：可运行的 Python 代码，将放在
+`src/lerobot/tools/` 下，每个工具一个文件。运行时分派器和
+标准的 `say` 实现（封装 Kyutai 的 pocket-tts）
+不属于本文介绍的目录层；目前这一层只提供
+schema 存储以及 `DEFAULT_TOOLS` 后备常量。
+
+## 逐行的工具*调用*[[per-row-tool-invocations]]
+
+上面的目录描述的是*可以调用什么*。实际的*调用*（即
+函数名加上参数值）则按行存储在
+`language_events` 中的 assistant 原子上：
+
+```python
+{
+  "role": "assistant",
+  "content": null,
+  "style": null,
+  "timestamp": 12.4,
+  "camera": null,
+  "tool_calls": [
+    { "type": "function",
+      "function": { "name": "say", "arguments": { "text": "On it." } } }
+  ]
+}
+```
+
+配方（recipe）通过 `tool_calls_from` 把这些调用拼接到渲染后的消息中：
+
+```yaml
+user_interjection_response:
+  bindings:
+    speech: "emitted_at(t, role=assistant, tool_name=say)"
+  messages:
+    - { role: user, content: "${task}", stream: high_level }
+    - {
+        role: assistant,
+        content: "${current_plan}",
+        stream: high_level,
+        target: true,
+        tool_calls_from: speech,
+      }
+```
+
+模型的训练目标是一个 assistant 轮次，其中同时包含
+计划文本*和* `say` 工具调用。推理时，运行时会把
+生成的文本解析回结构化的 `tool_calls`，并分派给
+对应的实现。
+
+## 如何添加你自己的工具[[how-to-add-your-own-tool]]
+
+> **注意：** 下面的步骤 2 和步骤 3 描述的是运行时层
+> （`src/lerobot/tools/`、`Tool` 协议、`TOOL_REGISTRY`、
+> `get_tools(meta)`），它不属于目前已发布的
+> 目录层，这些模块尚未出现在代码树中。仅完成步骤 1
+> 就足以让工具通过 `meta.tools` 出现在聊天模板中，
+> 从而让模型学会*生成*该调用；
+> 若要在推理时执行该调用，则需要运行时层。
+
+共三个步骤。具体示例：一个 `record_observation` 工具，策略
+可以调用它，在常规控制循环之外
+额外采集一次观测。
+
+### 步骤 1：声明 schema[[step-1-declare-the-schema]]
+
+在 `meta/info.json["tools"]` 下添加一个条目。你可以在运行标注流水线*之前*
+直接编辑磁盘上的该文件（它会被
+保留），也可以通过配置参数把它交给 `lerobot-annotate`。
+
+```json
+{
+  "tools": [
+    { "type": "function", "function": { "name": "say", "...": "..." } },
+    {
+      "type": "function",
+      "function": {
+        "name": "record_observation",
+        "description": "Capture a high-resolution still image for the user.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "description": "Short label for the saved image."
+            }
+          },
+          "required": ["label"]
+        }
+      }
+    }
+  ]
+}
+```
+
+该 schema 完全遵循 OpenAI 的函数调用（function calling）约定，因此
+聊天模板可以原生渲染它。
+
+### 步骤 2：实现调用[[step-2-implement-the-call]]
+
+创建 `src/lerobot/tools/record_observation.py`：
+
+```python
+from .base import Tool
+from typing import Any
+
+RECORD_OBSERVATION_SCHEMA: dict[str, Any] = { "...": "..." }   # 与上面的 JSON 一致
+
+
+class RecordObservationTool:
+    name = "record_observation"
+    schema = RECORD_OBSERVATION_SCHEMA
+
+    def __init__(self, schema: dict | None = None, output_dir: str = "."):
+        self.output_dir = output_dir
+
+    def call(self, arguments: dict) -> str:
+        label = arguments["label"]
+        # ... 把最新的相机帧保存到 <output_dir>/<label>.png ...
+        return f"saved {label}.png"
+```
+
+每个工具一个文件可以让依赖彼此隔离：`record_observation`
+可能会引入 `pillow`，而 `say` 会引入 `pocket-tts`。用户只安装
+自己需要的工具，就能避免沉重的传递依赖。
+
+### 步骤 3：注册[[step-3-register-it]]
+
+添加到 `src/lerobot/tools/registry.py`：
+
+```python
+from .record_observation import RecordObservationTool
+
+TOOL_REGISTRY["record_observation"] = RecordObservationTool
+```
+
+就这样。运行时，`get_tools(meta)` 会在
+`meta.tools` 中查找每个 schema，实例化对应的已注册类，并返回
+一个“名称 → 实例”的字典，供分派器进行路由。
+
+如果你想*不*编写实现就使用某个工具（例如
+只用于训练时的聊天模板格式化），仅完成步骤 1 就足够了，
+模型仍然会学会*生成*该调用。只有在推理时真正*执行*它，
+才需要步骤 2 和步骤 3。

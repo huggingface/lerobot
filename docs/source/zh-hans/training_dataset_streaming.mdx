@@ -1,0 +1,221 @@
+# 训练数据集流式加载[[training-dataset-streaming]]
+
+训练时的数据集流式加载让 `lerobot-train` 能直接使用 LeRobotDataset v3，而不必先
+下载完整的 Parquet 与视频有效载荷（payload）。通过现有的公开开关启用它：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=OWNER/DATASET \
+  --dataset.streaming=true \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+这项功能与 `--dataset.streaming_encoding=true` 无关。`streaming_encoding` 控制的是
+录制时如何写入视频；`dataset.streaming` 控制的则是如何读取现有的数据集
+进行训练。这条训练路径不会使用录制与 rollout 的编码器。
+
+## 如何读取一个 epoch[[how-an-epoch-is-read]]
+
+每个分布式 rank 都拥有一组确定性、按帧数均衡、由完整片段（episode）组成的集合。每个
+DataLoader worker 各有一个精确覆盖池（exact-coverage pool），用来混合该 worker 负责的那部分片段，同时在
+每个覆盖 epoch 中恰好访问每个选定的帧一次。Parquet 字段与压缩后的 MP4 字节范围，会从
+同一个考虑字节数的准入前缘（admission frontier）预取（prefetch）。时间上的历史与未来窗口都会在
+完整片段内解析，包含与 map-style 加载相同的边界填充掩码。
+
+当 `--dataset.streaming=false` 时，默认的 map-style `LeRobotDataset` 行为不变。
+
+## Worker、分片与并行度[[workers-shards-and-concurrency]]
+
+每个 rank 拥有一个按帧数均衡、由完整片段组成的分片（shard）。在 rank 内，`--num_workers` 设置
+DataLoader worker 进程的数量，与 map-style 数据集相同。每个 worker 拥有 rank 片段中互不重叠、
+按帧数均衡的一部分，并拥有自己的精确覆盖池、自己那一份
+字节预算，以及自己的线程池：
+
+| 阶段              | 并行度                                       | 设置                                      |
+| ----------------- | -------------------------------------------- | ----------------------------------------- |
+| Rank 分片         | 每个 rank 一个互不重叠、由完整片段组成的分片 | 分布式的 world size                       |
+| DataLoader worker | 每个 worker 负责 rank 分片中互不重叠的一部分 | `--num_workers`                           |
+| 片段获取          | Parquet 列与 MP4 字节范围，并行进行          | `max_num_shards`，由 `--num_workers` 设置 |
+| 样本组装与解码    | 时间窗口与视频帧，并行进行                   | `--dataset.streaming_decode_threads`      |
+| 有序样本缓冲区    | 预先保留的已解码样本，按规划器顺序排列       | `--dataset.streaming_decoded_queue_size`  |
+
+**为什么要用多个 worker。** 样本组装与批量交接都会运行 Python 代码，而一个进程
+同一时间只能在一个线程上运行 Python 代码（GIL）。只有一个 worker 时，rank 的解码线程
+会彼此等待，因此该 rank 只会用到大约 2 个 CPU 核心。每个 worker 都是独立的进程，因此
+N 个 worker 能并行组装与解码样本。
+
+**池大小与批量多样性。** `streaming_episode_pool_size` 设置每个 worker 的池。若
+你没有设置，rank 会混合 32 个片段，N 个 worker 各分到 32/N 个。每个
+worker 也会预取（prefetch）`streaming_prefetch_episodes` 个片段，并且是独立的 Python 进程，因此
+worker 越多，使用的内存也越多：在一个有 3 台相机的数据集上，4 个 worker 总共使用约 8 GB，
+而一个 worker 约为 3 GB。DataLoader 的每个批量都取自同一个
+worker，因此一个批量只会混合单一 worker 池中的片段。池越大，每个
+批量混合的片段越多，但会使用更多内存，并在第一个样本之前获取更多数据。
+
+**限制。** 字节预算（`streaming_byte_budget_gb`）与明确设置的 `video_decoder_cache_size`
+都是以 rank 为单位：每个 worker 分到其中的 1/N。每个 worker 至少需要一个片段，因此 `lerobot-train`
+使用的 worker 数最多等于该 rank 拥有的片段数。`--num_workers=0` 会让数据集留在
+训练进程中。
+
+## MP4 sidecar 与第一次运行[[mp4-sidecars-and-the-first-run]]
+
+视频流式读取会使用 MP4 索引 sidecar。数据集初始化时会先检查
+以修订版本（revision）为键的本地缓存，再寻找有效的已发布 sidecar。若两者都没有，
+LeRobot 会在持有进程锁的情况下于本地创建 sidecar，并以原子方式安装它。
+创建失败或中断时，不会取代先前的有效文件。
+
+Hub 有效载荷（payload）的读取会固定在元数据快照的 commit。Bucket 索引会
+与最新的对象列表（包含内容哈希）进行比对，因此在相同
+路径替换视频时，即使文件大小不变，也会使其 sidecar 失效。这份列表会增加启动时的工作，
+但不会下载视频有效载荷。运行期间请保持元数据与有效载荷不变。
+没有稳定对象标识的一般远程文件系统，每次打开时都会重建索引。
+没有对象指纹的现有 Bucket sidecar 会在本地重建一次；
+发布更新后的 sidecar 仍需由维护者明确运行。
+
+训练是只读的：它绝不会上传 sidecar 或修改数据集仓库。在使用
+节点本地缓存的集群上，第一个作业可能会在每个节点各创建一次。共用的 LeRobot 缓存可以避免这种
+重复。
+
+压缩的 v3 sidecar 会转换一次，成为只读的内存映射（memory-mapped）索引，位于
+`$HF_LEROBOT_HOME/streaming-indexes` 下。转换过程会上锁，并以原子方式发布；
+共用该缓存的 rank 会重复使用相同的文件支持的数组页面，而不是各自解压缩
+每个数组的私有副本。每个 rank 只会为其片段所使用的来源文件构建记录。
+衍生的索引需要容纳**未压缩样本表**的磁盘空间，但不会保存视频
+有效载荷。第一次转换会有成本；之后的打开会重复使用它。替换 sidecar
+会创建新一代的不可变映射索引，而不会使正在读取的读取器失效。
+
+这并不会让所有元数据都维持固定大小：片段元数据与区间表仍会随着
+数据集增长，而打乱后的 rank 分片可能会碰到重叠的来源文件。常驻于操作系统的映射
+页面也会计入 RSS；测量 rank 之间共用的内存时，请使用比例集大小（PSS）。
+Parquet 读取会利用片段统计信息修剪 row group，再筛选出完整的片段。
+没有统计信息的 group 仍会是候选，因此没有有效边界的文件仍可能需要
+对整个文件进行投影读取。
+
+数据集维护者可以事先创建 sidecar：
+
+```bash
+lerobot-build-mp4-sidecar \
+  --repo-id=OWNER/DATASET \
+  --revision=COMMIT_SHA \
+  --data-root=hf://datasets/OWNER/DATASET@COMMIT_SHA \
+  --output=/tmp/dataset-mp4-sidecar.npz
+```
+
+发布一律需要明确操作。只有在验证过完整数据集的 sidecar 之后，才加上 `--push`。
+子集的 sidecar 无法发布。
+
+对于数据集仓库，`--push` 会创建或更新专用的 `lerobot-sidecars` 分支。
+来源数据集的分支/标签不会改变。训练会在那里寻找以
+固定的视频来源 commit 为键的索引，并在使用前验证它。标签与其解析出的 commit 共用
+同一个已发布的索引；现有以修订版本为键的本地缓存仍可重复使用。Bucket 仍会
+直接发布在 `meta/mp4-sidecars/` 下。发布需要仓库或 bucket 的写入权限；
+训练只需要读取权限，而且绝不会创建分支或上传文件。
+
+Sidecar schema v3 会保留 MP4 的组合时序（composition timing）与编码器延迟的编辑，包括 B-frame
+视频。较旧的 sidecar 会自动重建到另一个以修订版本为键的缓存条目中；
+在明确发布之前，它们也必须重建。重新排序的视频会在每个获取的区间中包含
+最后一个 GOP 的结尾，让解码后的帧索引保持连续。重复或非单位速率的
+MP4 编辑时间轴会被拒绝，而不是默默返回对齐错误的帧。
+
+## 配置[[configuration]]
+
+生产环境的默认值如下：
+
+| 选项                                |      默认值 | 意义                                           |
+| ----------------------------------- | ----------: | ---------------------------------------------- |
+| `streaming_episode_pool_size`       |   各 32 / N | 每个 worker 混合的完整片段数上限               |
+| `streaming_sampling_strategy`       | `remaining` | 按剩余帧数加权，或打乱的 `round_robin`         |
+| `streaming_prefetch_episodes`       |           8 | 在每个 worker 的池之前预取（prefetch）的片段数 |
+| `streaming_byte_budget_gb`          |           8 | 每个 rank 合成 MP4 字节的上限                  |
+| `streaming_decode_threads`          |           2 | 并行的样本组装与视频解码 worker                |
+| `streaming_decoded_queue_size`      |           8 | 按规划器顺序预先缓冲的已解码样本               |
+| `video_decoder_cache_size`          | 池 × 相机数 | 每个 worker 打开的视频解码器 LRU 上限          |
+| `streaming_native_http_connections` |      未设置 | 每个 rank 的原生 HTTP 连接上限                 |
+| `streaming_native_http_subranges`   |           1 | 每次原生 HTTP 范围读取的并行子范围数           |
+| `max_num_shards`（`--num_workers`） |          16 | 每个 worker 并行获取的片段数                   |
+
+除了 `max_num_shards` 之外，所有选项都是 `--dataset.*` 参数。`max_num_shards` 是
+`StreamingLeRobotDataset` 的参数；`lerobot-train` 会根据 `--num_workers` 设置它（至少为 1）。
+
+若要让片段混合得更平均，可以通过 `--dataset.streaming_sampling_strategy=round_robin` 选择启用。
+每一轮会打乱当前常驻的片段，并从每个片段采样一个打乱后的帧；
+在某一轮中准入的片段会加入下一轮。两种采样方式都保有每个 epoch 恰好一次的
+覆盖，以及相同的资源上限。两者都不是全局均匀的排列：round-robin
+在有限前缀中会偏向较短的片段，并可能增加解码器的频繁替换、降低吞吐量。
+顺序来自 `--seed`（默认 1000），与策略（policy）的初始化以及
+其他使用种子的随机数生成器相同。不同的种子会产生不同的片段与锚点顺序，而
+相同的种子会重现相同的顺序。`--seed=null` 会使用固定的流式种子 42。从检查点（checkpoint）恢复训练时，请保持相同的采样方式、
+`--seed` 与池设置。检查点会保存种子，因此单纯的
+`--resume` 会保留顺序。若检查点来自 `--seed` 尚未应用到
+流式数据集之前就开始的运行，其顺序使用的是种子 42：恢复该检查点时请传入 `--seed=42`，以保留该顺序。
+
+活跃的片段集合同时受到片段数，以及从 sidecar 计算出的精确合成迷你 MP4 大小
+所限制。大于整个 rank 预算的片段，会在训练
+获取其有效载荷（payload）之前就失败。保留量覆盖待处理的获取、已完成的预取，以及仍在
+解码中的片段。预算满载时，推测性的预取会暂停，替换的准入则会等待
+最后一次解码释放其字节。`EpisodeByteCache.reserved_bytes` 会报告这些保留量；
+`resident_bytes` 则会报告所有已完成的有效载荷，即使其第一个样本尚未被请求。
+
+这是压缩有效载荷的预算，而不是进程的 RSS 上限：范围获取/合成的临时缓冲区、
+解码器状态、Parquet 表格与解码后的张量都需要额外的内存。解码器 LRU 与
+已解码样本队列另有各自的上限。
+在内存受限的主机上，请先从较小的池或预算开始：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=OWNER/DATASET \
+  --dataset.streaming=true \
+  --dataset.streaming_episode_pool_size=16 \
+  --dataset.streaming_prefetch_episodes=4 \
+  --dataset.streaming_byte_budget_gb=4 \
+  --dataset.streaming_decode_threads=2 \
+  --dataset.streaming_decoded_queue_size=8 \
+  --num_workers=4 \
+  --policy.type=act \
+  --output_dir=outputs/train/act_streaming
+```
+
+若完整数据集保存在 HF Storage Bucket 中，请使用该 bucket 的标识符与仓库
+类型，或将 bucket URI 传入 `--dataset.root=hf://buckets/OWNER/BUCKET`。元数据（`meta/`）、
+Parquet 与视频文件都必须位于该 bucket 的根目录：
+
+```bash
+lerobot-train \
+  --dataset.repo_id=OWNER/BUCKET \
+  --dataset.repo_type=bucket \
+  --dataset.streaming=true \
+  --policy.type=act \
+  --output_dir=outputs/train/act_bucket_streaming
+```
+
+Hub 数据集默认使用 `repo_type=dataset`。若是完整的本地数据集，请将 `--dataset.root` 设为
+其目录。训练会从同一个来源解析元数据与有效载荷；不需要另外的
+流式有效载荷位置参数。
+
+## 恢复训练与打乱方式的迁移[[resume-and-shuffle-migration]]
+
+较早的流式读取器使用有上限的列打乱缓冲区。新的片段读取器则改为
+根据种子与 epoch 推导出确定性的精确覆盖顺序。从检查点（checkpoint）恢复训练时，会使用检查点的批量大小来还原
+每个 rank 的样本偏移量。有多个 worker 时，每个 worker 会从中推导出
+自己的偏移量，因为 DataLoader 会轮流从各个 worker 获取批量。变更
+分布式的 world size、批量大小或 `--num_workers`，都会改变归属或批量边界。
+若要进行逐样本完全一致的比较，请使用相同的 world size、批量大小与 worker 数恢复训练。比较性能时，请保持相同的内部获取并行度。
+
+检查点元数据无法识别较早的多 worker 采样器。它的检查点
+无法通过 world size 与批量大小的检查可靠地区分，因此不得用于
+逐样本完全一致的流式恢复训练。请改为从其保存的策略权重开始新的运行。
+恢复训练的保证涉及的是锚点顺序，而不是随机图像转换的逐比特重放。
+随机图像转换在解码线程上运行，与解码并行进行，因此固定的种子
+并不会在每次运行时重现相同的数据增强。
+
+## 故障排除[[troubleshooting]]
+
+| 症状                     | 处理方式                                                                                     |
+| ------------------------ | -------------------------------------------------------------------------------------------- |
+| 第一个批量花了很长的时间 | 检查日志中是否有 sidecar 创建。重复使用共用缓存，或明确发布一个经过验证的完整 sidecar。      |
+| sidecar 锁超时           | 可能有另一个进程仍在为同一个修订版本创建索引。移除过时的锁之前，请先确认该进程运行正常。     |
+| 某个 rank 没有任何数据   | 减少 rank 数量，让每个 rank 至少拥有一个选定的片段。                                         |
+| 超出字节预算             | 缩小片段池、提高每个 rank 的字节预算，或使用片段范围较小的有效载荷（payload）排列方式。      |
+| 远程读取无法验证身份     | 让每个 worker 都能获取 Hugging Face 令牌或 fsspec 凭证。Sidecar 绝不会内嵌凭证。             |
+| 重新填充的停顿过高       | 比较 p95/p99 的批量等待时间、降低网络竞争、逐步提高预取量，并检查 sidecar 是否符合修订版本。 |

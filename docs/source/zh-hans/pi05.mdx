@@ -1,0 +1,382 @@
+# π₀.₅ (Pi05) 策略[[-pi05-policy]]
+
+π₀.₅ 是来自 Physical Intelligence 的**具有开放世界泛化能力的视觉-语言-动作模型**（Vision-Language-Action model with open-world generalization）。LeRobot 实现改编自其开源 [OpenPI](https://github.com/Physical-Intelligence/openpi) 仓库。
+
+## 模型概述[[model-overview]]
+
+π₀.₅ 是 π₀ 的一次重大演进，由 [Physical Intelligence](https://www.physicalintelligence.company/blog/pi05) 开发，旨在解决机器人领域的一个重大挑战：**开放世界泛化**（open-world generalization）。虽然机器人可以在受控环境中完成令人印象深刻的任务，但 π₀.₅ 的设计目标是泛化到训练期间从未见过的全新环境和情境。
+
+### 泛化挑战[[the-generalization-challenge]]
+
+正如 Physical Intelligence 所解释的那样，根本挑战并不是完成敏捷或灵巧的任务，而是泛化，即在新的环境中使用新物体正确执行任务的能力。设想一个打扫不同家庭的机器人：每个家庭都有不同的物体，且摆放在不同位置。泛化必须发生在多个层面：
+
+- **物理层面**（Physical Level）：理解如何拿起勺子（握住手柄）或盘子（拿住边缘），即使在杂乱环境中面对未见过的物体也是如此
+- **语义层面**（Semantic Level）：理解任务语义，衣服和鞋子该放在哪里（洗衣篮，而不是床上），以及清理洒出物时适合使用什么工具
+- **环境层面**（Environmental Level）：适应“凌乱”的真实世界环境，例如家庭、杂货店、办公室和医院
+
+### 异构数据协同训练[[co-training-on-heterogeneous-data]]
+
+π₀.₅ 的突破性创新是**在异构数据源上进行协同训练**（co-training on heterogeneous data sources）。该模型从以下内容中学习：
+
+1. **多模态网络数据**（Multimodal Web Data）：图像描述、视觉问答、目标检测
+2. **口头指令**（Verbal Instructions）：人类逐步指导机器人完成复杂任务
+3. **子任务命令**（Subtask Commands）：高层语义行为标签（例如，对未整理的床说“把枕头拿起来”）
+4. **跨具身机器人数据**（Cross-Embodiment Robot Data）：来自具有不同能力的各种机器人平台的数据
+5. **多环境数据**（Multi-Environment Data）：部署在许多不同家庭中的静态机器人
+6. **移动操作数据**（Mobile Manipulation Data）：约 400 小时的移动机器人演示
+
+这种多样化的训练组合创造了一种“课程”，使模型能够同时在物理、视觉和语义层面进行泛化。
+
+## 安装要求[[installation-requirements]]
+
+1. 按照我们的[安装指南](./installation)安装 LeRobot。
+2. 运行以下命令安装 Pi0.5 依赖项：
+
+   ```bash
+   pip install -e ".[pi]"
+   ```
+
+   如果你从 PyPI 安装了 LeRobot：
+
+   ```bash
+   pip install 'lerobot[pi]'
+   ```
+
+## 用法[[usage]]
+
+要在 LeRobot 配置中使用 π₀.₅，请将策略类型指定为：
+
+```python
+policy.type=pi05
+```
+
+## 训练[[training]]
+
+### LIBERO 快速开始[[quickstart-on-libero]]
+
+在 [lerobot/libero](https://huggingface.co/datasets/lerobot/libero) 上微调 LIBERO 基础模型，这是一个约 1.9 GB 的视频编码副本，包含[下方结果](#libero-benchmark-results)所用演示。
+
+它包含 π₀.₅ 读取的键，这些键也是 LIBERO 环境在评估时生成的键：
+
+| 特征                        | 数据集中的形状                 | π₀.₅ 如何使用它                    |
+| --------------------------- | ------------------------------ | ---------------------------------- |
+| `observation.images.image`  | 256×256×3，主视角（agentview） | 缩放至 224×224                     |
+| `observation.images.image2` | 256×256×3，腕部（wrist）       | 缩放至 224×224                     |
+| `observation.state`         | 8                              | 离散化为 256 个桶，并写入提示词    |
+| `action`                    | 7                              | 内部填充到 32；损失使用前 7 个维度 |
+
+**这里不需要 `--rename_map`**——这些键已经匹配；如果你的键不同，请参阅 [Rename Map and Empty Cameras](./rename_map)。
+
+<Tip>
+  π₀.₅ 使用受门控的
+  [google/paligemma-3b-pt-224](https://huggingface.co/google/paligemma-3b-pt-224)
+  分词器——请先在 Hub 上接受其许可证，并使用 `hf auth login` 登录，
+  然后再开始训练。
+</Tip>
+
+适用于单块 80 GB GPU：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=lerobot/libero \
+    --policy.type=pi05 \
+    --policy.pretrained_path=lerobot/pi05_libero_base \
+    --policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}' \
+    --policy.n_action_steps=10 \
+    --policy.empty_cameras=1 \
+    --policy.freeze_vision_encoder=false \
+    --policy.train_expert_only=false \
+    --policy.gradient_checkpointing=true \
+    --policy.dtype=bfloat16 \
+    --policy.device=cuda \
+    --policy.push_to_hub=false \
+    --output_dir=./outputs/pi05_libero \
+    --job_name=pi05_libero \
+    --batch_size=64 \
+    --num_workers=8 \
+    --steps=30000 \
+    --save_freq=5000 \
+    --seed=1000
+```
+
+**使用均值/标准差归一化，而不是 π₀.₅ 的 [分位数默认设置](#quantile-statistics)**——与 [pi05_libero_finetuned_v044](https://huggingface.co/lerobot/pi05_libero_finetuned_v044) 一致，下方结果就是在此检查点上测量的。
+
+**`--policy.n_action_steps=10` 和 `--policy.empty_cameras=1` 是显式指定的**，因为 `--policy.pretrained_path` 只加载权重——`lerobot/pi05_libero_base` 存储了这两个参数，否则它们会回退到 `50` 和 `0`（请参阅[加载检查点](#loading-a-checkpoint)）。
+
+然后使用 `lerobot-eval` 评估检查点，并与参考成功率进行比较——请参阅 [LIBERO](./libero)。
+
+### 分位数统计[[quantile-statistics]]
+
+π₀.₅ 使用分位数对 `STATE` 和 `ACTION` 进行归一化，因此数据集的 `meta/stats.json` 需要包含 `q01` 和 `q99`。较旧的数据集只包含 `min`/`max`/`mean`/`std`，会在第一个批次上失败：
+
+```
+ValueError: QUANTILES normalization mode requires q01 and q99 stats
+```
+
+重新计算它们：
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --new_repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.overwrite true
+```
+
+**结果会落在 `$HF_LEROBOT_HOME/your_dataset`**，而不是 `--dataset.repo_id` 读取的缓存——因此请使用 `--dataset.root=$HF_LEROBOT_HOME/your_dataset` 进行训练，或者在上面的命令中添加 `--push_to_hub true`。
+
+或者保持数据集原样，并传入 `--policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'`。
+
+录制、恢复和合并会从每个片段的摘要中聚合分位数，因此 `meta/stats.json` 最终保存的是一个保守包络（`q <= 50` 时取 `min`，`q > 50` 时取 `max`），而不是整个数据集的分位数。要估计后者，请使用运行直方图扫描每个片段：
+
+```bash
+python src/lerobot/scripts/augment_dataset_quantile_stats.py \
+    --repo-id=your_dataset \
+    --overwrite \
+    --skip-images
+```
+
+`--skip-images` 会保留已有的图像统计信息，并在只需要重新计算 `STATE`/`ACTION` 时避免下载或解码视频数据；而 `--root` 会读取本地数据集，而不是从 Hub 读取。这些值是直方图估计值，会受到离散化和重新分箱误差的影响，因此可能与保守值不同——这会改变 π₀.₅ 的归一化目标，从而改变其损失尺度。已保存在现有检查点内的统计信息不受影响。
+
+### 训练命令示例[[training-command-example]]
+
+同样的微调，但冻结 VLM：内存占用更少，但会牺牲一些成功率。将 `--dataset.repo_id` 替换为你自己的数据集。
+
+```bash
+lerobot-train \
+    --dataset.repo_id=lerobot/libero \
+    --policy.type=pi05 \
+    --policy.pretrained_path=lerobot/pi05_libero_base \
+    --policy.normalization_mapping='{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}' \
+    --policy.n_action_steps=10 \
+    --policy.empty_cameras=1 \
+    --policy.freeze_vision_encoder=true \
+    --policy.train_expert_only=true \
+    --policy.gradient_checkpointing=true \
+    --policy.dtype=bfloat16 \
+    --policy.device=cuda \
+    --policy.push_to_hub=false \
+    --output_dir=./outputs/pi05_libero_expert \
+    --job_name=pi05_libero_expert \
+    --batch_size=64 \
+    --num_workers=8 \
+    --steps=30000 \
+    --save_freq=5000 \
+    --seed=1000
+```
+
+### 关键训练参数[[key-training-parameters]]
+
+- **`--policy.compile_model=true`**：启用模型编译以加快训练
+- **`--policy.gradient_checkpointing=true`**：显著减少训练期间的内存占用
+- **`--policy.dtype=bfloat16`**：使用混合精度训练以提高效率
+- **`--batch_size=64`**：训练批次大小，请根据你的 GPU 内存进行调整
+- **`--policy.pretrained_path=lerobot/pi05_base`**：你想微调的基础 π₀.₅ 模型，选项包括：
+  - [lerobot/pi05_base](https://huggingface.co/lerobot/pi05_base)
+  - [lerobot/pi05_libero_base](https://huggingface.co/lerobot/pi05_libero_base)（专门在 Libero 数据集上训练）
+
+### 可选的训练时 RTC[[optional-training-time-rtc]]
+
+Pi05 可以选择学习动作前缀条件化，以实现高效的
+[实时分块](./rtc)，其方法遵循
+[Training-Time Action Conditioning for Efficient Real-Time Chunking](https://arxiv.org/abs/2512.05964)。
+将 `policy.rtc_training_max_delay` 设置为以控制器步数表示的
+最大预期推理延迟：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/my_dataset \
+    --policy.type=pi05 \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.rtc_training_max_delay=10 \
+    --policy.dtype=bfloat16 \
+    --policy.device=cuda \
+    --batch_size=8 \
+    --steps=30000 \
+    --output_dir=outputs/pi05_rtc \
+    --job_name=pi05_rtc
+```
+
+默认值为 `0`，这会禁用训练时 RTC，并使标准
+Pi05 目标保持不变。配置的延迟必须小于
+`chunk_size`。在训练期间，Pi05 会为每个样本独立采样一个干净前缀长度，
+并仅在剩余后缀上计算流损失。
+
+使用生成的检查点时，需要显式启用训练后的 RTC：
+
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=outputs/pi05_rtc/checkpoints/last/pretrained_model \
+    --inference.type=rtc \
+    --inference.rtc.mode=trained \
+    --inference.rtc.execution_horizon=10 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/ttyACM0 \
+    --task="pick up the cube" \
+    --fps=50 \
+    --device=cuda
+```
+
+将 `inference.rtc.execution_horizon` 设置为介于检查点的
+`rtc_training_max_delay` 与 `chunk_size - rtc_training_max_delay` 之间，并将
+`inference.queue_threshold` 设置为至少 `rtc_training_max_delay`。如果出现一次
+超出训练范围的延迟尖峰，会丢弃该分块并重试；只有当延迟持续超出范围时，
+rollout 才会因显式错误而停止。默认的
+`--inference.rtc.mode=guided` 仍可用于普通检查点。
+
+### 加载检查点[[loading-a-checkpoint]]
+
+这两种形式不能互换：
+
+|                                   | `--policy.path`                    | `--policy.pretrained_path`               |
+| --------------------------------- | ---------------------------------- | ---------------------------------------- |
+| 加载内容                          | 权重**以及**检查点的 `config.json` | 仅权重                                   |
+| 特征名称                          | 来自检查点                         | 来自你的数据集，在应用 `--rename_map` 后 |
+| 存储的设置，例如 `n_action_steps` | 继承                               | 重置为默认值                             |
+| `--policy.type`                   | 必须省略                           | 必需                                     |
+| `--rename_map`                    | 当你的相机键不同时需要             | 支持用于规范化数据集键                   |
+
+当原始数据集特征名称与策略
+特征名称不同时，两种加载形式都可以使用 `--rename_map`。例如，RoboMME 微调命令会在使用
+`--policy.pretrained_path` 初始化权重的同时，映射其原始的 `image`、`wrist_image`、
+`state` 和 `actions` 列。
+
+### 训练参数说明[[training-parameters-explained]]
+
+| 参数                    | 默认值  | 说明                     |
+| ----------------------- | ------- | ------------------------ |
+| `freeze_vision_encoder` | `false` | 不冻结视觉编码器         |
+| `train_expert_only`     | `false` | 不冻结 VLM，训练所有参数 |
+
+**💡 提示**：设置 `train_expert_only=true` 会冻结 VLM，并只训练动作专家和投影层，从而以更低的内存占用进行微调。
+
+## 短时观测记忆（MEM）[[short-horizon-observation-memory-mem]]
+
+Pi05 可以选择基于
+[MEM](https://arxiv.org/abs/2603.03596) 使用短时视觉和本体感觉上下文。两条路径默认都禁用，因此
+现有检查点和训练命令仍保持单帧 Pi05 行为。
+
+<Tip warning={true}>
+
+这里仅实现了 MEM 的短时记忆——即第
+III-C 节的视频编码器和第 III-D 节的本体感觉投影。MEM 的长时
+_语言_ 记忆（第 III-B 节）尚未实现，其中高层策略会预测下一个
+子任务以及到目前为止所发生情况的压缩自然语言摘要。在论文的消融实验中，仅使用视频记忆只能恢复完整 MEM 在长时任务上任务进度的一部分。
+
+从没有使用记忆预训练的检查点进行微调时引入记忆，也对应于论文中较弱的 `MEM-Posttrain-Only` 消融设置。MEM 的主要结果来自在机器人和非机器人视频的多样化混合数据上预训练视频编码器，而目前没有公开的 Pi05 检查点提供这种预训练。
+
+</Tip>
+
+在微调时通过以下方式启用：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi05 \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.use_visual_memory=true \
+    --policy.memory_frames=6 \
+    --policy.memory_stride=30 \
+    --policy.memory_temporal_attention_every=4 \
+    ...
+```
+
+`memory_frames` 包含当前观测。`memory_stride` 以
+**数据集帧**为单位，而不是秒，因此请根据数据集的 `fps` 进行缩放：MEM
+在六个相隔一秒的观测上进行预训练，对于
+30 fps 数据集（默认值），这对应 `memory_stride=30`，但对于诸如
+`lerobot/robomme` 的 10 fps 数据集，则对应 `memory_stride=10`。
+
+每第四个 SigLIP 层都会将其注意力替换为 MEM 的组合时空
+注意力：在匹配的图块 token 之间进行因果时间注意力，并与
+标准空间注意力组合，同时复用预训练投影，因此不会向视觉塔添加
+可学习参数。最后一个此类层运行后，过去帧的 token 会被丢弃，
+从而保持下游语言/动作前缀长度不变。
+
+片段开始处不可用的历史会被填充并掩码。在
+推理时，Pi05 会在内部维护相同的跨步图像历史，并在策略重置时
+清除它。
+
+历史本体感觉是一个独立选项：
+
+```bash
+--policy.use_proprioceptive_memory=true
+```
+
+启用后，每个保留的帧都会添加一个投影后的连续状态 token，
+并且离散化状态会从文本提示词中移除，因此状态只会被
+表示一次（MEM 第 III-D 节）。这会改变提示词格式，因此
+请从训练一开始就启用它，而不是中途启用。视觉记忆和
+本体感觉记忆使用相同的 `memory_frames` 和 `memory_stride` 设置，
+但任一路径都可以独立启用。请使用选定的
+记忆选项进行训练或微调；仅在推理时启用它们，并不会让单帧
+检查点获得学习到的记忆行为。
+
+在 PEFT 下，`proprio_history_proj` 会通过
+`modules_to_save` 完整训练并保存，因为它没有可供适配的预训练权重。
+
+在推理时，MEM 会维护一个批量历史队列，并假设每个批次行
+共享片段边界。`lerobot-eval` 通过在每个批量 rollout 之前以及重置向量
+环境之前调用 `policy.reset()` 来满足这一点。不支持在异步向量批次中
+独立自动重置各行；请启动新的 rollout，以便完整的策略和动作队列
+一起重置。
+
+## 相对动作[[relative-actions]]
+
+默认情况下，π₀.₅ 预测绝对动作。你可以启用**相对动作**，使模型预测相对于当前机器人状态的偏移量。对于某些设置，这可以提高训练稳定性。
+
+要使用相对动作，请先通过 CLI 在相对空间中重新计算数据集统计信息：
+
+```bash
+lerobot-edit-dataset \
+    --repo_id your_dataset \
+    --operation.type recompute_stats \
+    --operation.relative_action true \
+    --operation.chunk_size 50 \
+    --operation.relative_exclude_joints "['gripper']" \
+    --push_to_hub true
+```
+
+或者在 Python 中等效地执行：
+
+```python
+from lerobot.datasets import LeRobotDataset, recompute_stats
+
+dataset = LeRobotDataset("your_dataset")
+recompute_stats(dataset, relative_action=True, chunk_size=50, relative_exclude_joints=["gripper"])
+dataset.push_to_hub()
+```
+
+`chunk_size` 应与策略的 `chunk_size` 匹配（π₀.₅ 默认为 50）。`relative_exclude_joints` 列出应保持绝对空间的关节名称（例如夹爪命令）。使用 `--push_to_hub true` 将更新后的统计信息上传到 Hub。
+
+然后启用相对动作进行训练：
+
+```bash
+lerobot-train \
+    --dataset.repo_id=your_dataset \
+    --policy.type=pi05 \
+    --policy.use_relative_actions=true \
+    --policy.relative_exclude_joints='["gripper"]' \
+    ...
+```
+
+## 性能结果[[performance-results]]
+
+### Libero 基准测试结果[[libero-benchmark-results]]
+
+π₀.₅ 在 Libero 基准测试套件上表现出强劲性能。为了比较并测试其 LeRobot 实现，我们在 Libero 数据集上对 libero 基础模型额外微调了 6k 步，并将结果与 OpenPI 参考结果进行了比较。
+
+| 基准测试           | LeRobot 实现 | OpenPI 参考 |
+| ------------------ | ------------ | ----------- |
+| **Libero Spatial** | 97.0%        | 98.8%       |
+| **Libero Object**  | 99.0%        | 98.2%       |
+| **Libero Goal**    | 98.0%        | 98.0%       |
+| **Libero 10**      | 96.0%        | 92.4%       |
+| **平均值**         | 97.5%        | 96.85%      |
+
+这些结果展示了 π₀.₅ 在多样化机器人操作任务中的强大泛化能力。要复现这些结果，你可以按照 [Libero](https://huggingface.co/docs/lerobot/libero) 部分中的说明进行操作。
+
+## 许可证[[license]]
+
+此模型遵循 **Apache 2.0 许可证**，与原始 [OpenPI 仓库](https://github.com/Physical-Intelligence/openpi) 一致。

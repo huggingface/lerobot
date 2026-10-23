@@ -1,0 +1,449 @@
+# SO-101[[so-101]]
+
+<div style="display: flex; align-items: center; gap: 10px;">
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Follower.webp"
+    alt="SO-101"
+    width="60%"
+  />
+  <img
+    src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/SO101_Leader.webp"
+    alt="SO-101"
+    width="60%"
+  />
+</div>
+
+在以下步骤中，我们将说明如何组装我们的旗舰机器人 SO-101。
+
+## 采购零件[[source-the-parts]]
+
+遵循这个 [README](https://github.com/TheRobotStudio/SO-ARM100)。它包含物料清单，其中附有采购零件的链接，以及 3D 打印零件的说明。
+并且在你第一次打印或没有 3D 打印机时提供建议。
+
+## 安装 LeRobot 🤗[[install-lerobot-]]
+
+要安装 LeRobot，请遵循我们的[安装指南](./installation)
+
+除这些说明外，你还需要安装 Feetech 电机支持：
+
+```bash
+pip install -e ".[feetech]"
+```
+
+## 分步组装说明[[step-by-step-assembly-instructions]]
+
+从臂（follower arm）使用 6 个 STS3215 电机，齿轮减速比为 1/345。而主臂（leader arm）使用三个不同齿轮减速比的电机，以确保它既能支撑自身重量，又无需很大力就能移动。下表显示了每个关节（joint）需要使用哪个电机。
+
+| 主臂轴              | 电机 | 齿轮比  |
+| ------------------- | :--: | :-----: |
+| 底座 / 肩部水平旋转 |  1   | 1 / 191 |
+| 肩部抬升            |  2   | 1 / 345 |
+| 肘部弯曲            |  3   | 1 / 191 |
+| 腕部弯曲            |  4   | 1 / 147 |
+| 腕部滚转            |  5   | 1 / 147 |
+| 夹爪                |  6   | 1 / 147 |
+
+## 配置电机[[configure-the-motors]]
+
+### 1. 找到与每个机械臂关联的 USB 端口[[1-find-the-usb-ports-associated-with-each-arm]]
+
+要找到每个总线舵机适配器（bus servo adapter）的端口，请通过 USB 和电源将 MotorBus 连接到计算机。运行以下脚本，并在出现提示时断开 MotorBus：
+
+```bash
+lerobot-find-port
+```
+
+<hfoptions id="example">
+<hfoption id="Mac">
+
+示例输出：
+
+```
+Finding all available ports for the MotorBus.
+['/dev/tty.usbmodem575E0032081', '/dev/tty.usbmodem575E0031751']
+Remove the USB cable from your MotorsBus and press Enter when done.
+
+[...Disconnect corresponding leader or follower arm and press Enter...]
+
+The port of this MotorsBus is /dev/tty.usbmodem575E0032081
+Reconnect the USB cable.
+```
+
+找到的端口是：`/dev/tty.usbmodem575E0032081`，对应你的主臂或从臂。
+
+</hfoption>
+<hfoption id="Linux">
+
+在 Linux 上，你可能需要通过运行以下命令来授予 USB 端口访问权限：
+
+```bash
+sudo chmod 666 /dev/ttyACM0
+sudo chmod 666 /dev/ttyACM1
+```
+
+示例输出：
+
+```
+Finding all available ports for the MotorBus.
+['/dev/ttyACM0', '/dev/ttyACM1']
+Remove the usb cable from your MotorsBus and press Enter when done.
+
+[...Disconnect corresponding leader or follower arm and press Enter...]
+
+The port of this MotorsBus is /dev/ttyACM1
+Reconnect the USB cable.
+```
+
+找到的端口是：`/dev/ttyACM1`，对应你的主臂或从臂。
+
+</hfoption>
+</hfoptions>
+
+### 2. 设置电机 ID 和波特率[[2-set-the-motors-ids-and-baudrates]]
+
+每个电机通过总线上的唯一 ID 进行标识。全新电机通常带有默认 ID `1`。为了让电机与控制器之间的通信正常工作，我们首先需要为每个电机设置一个不同的唯一 ID。此外，总线上数据传输的速度由波特率（baudrate）决定。为了相互通信，控制器和所有电机都需要配置为相同的波特率。
+
+为此，我们首先需要将控制器分别连接到每个电机来进行设置。由于我们会将这些参数写入电机内部存储器的非易失性区域（EEPROM），因此只需执行一次。
+
+如果你要改装来自另一台机器人的电机，可能也需要执行此步骤，因为 ID 和波特率很可能不匹配。
+
+下面的视频展示了设置电机 ID 的步骤序列。
+
+##### 设置电机视频[[setup-motors-video]]
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/setup_motors_so101_2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+#### 从臂[[follower]]
+
+将计算机的 USB 电缆和电源连接到从臂的控制板（controller board）。然后，使用你在上一步获取的端口运行以下命令，或运行 API 示例。你还需要通过 `id` 参数为从臂命名。
+
+<hfoptions id="setup_motors">
+<hfoption id="命令">
+
+```bash
+lerobot-setup-motors \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem585A0076841  # <- 在此粘贴上一步找到的端口
+```
+
+</hfoption>
+<hfoption id="API 示例">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+
+config = SO101FollowerConfig(
+    port="/dev/tty.usbmodem585A0076841",
+    id="my_awesome_follower_arm",
+)
+follower = SO101Follower(config)
+follower.setup_motors()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+你应该会看到以下提示
+
+```bash
+Connect the controller board to the 'gripper' motor only and press enter.
+```
+
+按照提示，插入夹爪电机。确保它是唯一连接到控制板的电机，并且该电机本身尚未以菊花链方式连接到任何其他电机。当你按 `[Enter]` 时，脚本将自动为该电机设置 ID 和波特率。
+
+<details>
+<summary>故障排除</summary>
+
+如果此时出现错误，请检查电缆并确保它们已正确插入：
+
+<ul>
+  <li>电源</li>
+  <li>计算机与控制板之间的 USB 电缆</li>
+  <li>从控制板到电机的 3 针电缆</li>
+</ul>
+
+如果你使用的是 Waveshare 控制板，请确保两个跳线都设置在 `B` 通道（USB）。
+
+</details>
+
+然后你应该会看到以下消息：
+
+```bash
+'gripper' motor id set to 6
+```
+
+接着是下一条提示：
+
+```bash
+Connect the controller board to the 'wrist_roll' motor only and press enter.
+```
+
+你可以断开控制板上的 3 针电缆，但另一端可以继续连接到夹爪电机，因为它已经处于正确位置。现在，将另一根 3 针电缆插入腕部滚转电机，并将其连接到控制板。与前一个电机一样，确保它是唯一连接到控制板的电机，并且该电机本身未连接到任何其他电机。
+
+按照提示对每个电机重复该操作。
+
+> [!TIP]
+> 在按 Enter 之前，每一步都要检查布线。例如，在操作控制板时，电源电缆可能会断开。
+
+完成后，脚本会直接结束，此时电机即可使用。现在，你可以将每个电机的 3 针电缆连接到下一个电机，并将第一个电机（id=1 的“shoulder pan”）的电缆连接到控制板，随后可以将控制板安装到机械臂底座上。
+
+#### 主臂[[leader]]
+
+对主臂执行相同步骤。
+
+<hfoptions id="setup_motors">
+<hfoption id="命令">
+
+```bash
+lerobot-setup-motors \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem575E0031751  # <- 在此粘贴上一步找到的端口
+```
+
+</hfoption>
+<hfoption id="API 示例">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+
+config = SO101LeaderConfig(
+    port="/dev/tty.usbmodem585A0076841",
+    id="my_awesome_leader_arm",
+)
+leader = SO101Leader(config)
+leader.setup_motors()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+### 清理零件[[clean-parts]]
+
+从 3D 打印零件上移除所有支撑材料。最简单的方法是用小螺丝刀从支撑材料下方撬起。
+
+建议在将电机放置到位后、继续组装前，先给电机安装一根 3 针电缆。
+
+### 关节 1[[joint-1]]
+
+- 安装两个电机舵盘（motor horn）。用一颗 M3x6mm 螺丝固定顶部舵盘。底部舵盘无需螺丝。
+- 将第一个电机放入底座。
+- 用 4 颗 M2x6mm 螺丝（最小的螺丝）固定电机。两颗从顶部拧入，两颗从底部拧入。
+- 套上第一个电机支架，并用两颗 M2x6mm 螺丝固定（每侧一颗）。
+- 安装肩部部件。
+- 用 4 颗 M3x6mm 螺丝从顶部、4 颗 M3x6mm 螺丝从底部拧紧肩部部件
+- 安装肩部电机支架。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint1_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 关节 2[[joint-2]]
+
+- 安装两个电机舵盘。用一颗 M3x6mm 螺丝固定顶部舵盘。底部舵盘无需螺丝。
+- 将第二个电机从顶部滑入。
+- 用 4 颗 M2x6mm 螺丝固定第二个电机。
+- 用每侧 4 颗 M3x6mm 螺丝安装上臂。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint2_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 关节 3[[joint-3]]
+
+- 安装两个电机舵盘。用一颗 M3x6mm 螺丝固定顶部舵盘。底部舵盘无需螺丝。
+- 插入电机 3，并用 4 颗 M2x6mm 螺丝固定。
+- 用每侧 4 颗 M3x6mm 螺丝将前臂连接到电机 3。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint3_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 关节 4[[joint-4]]
+
+- 安装两个电机舵盘。用一颗 M3x6mm 螺丝固定顶部舵盘。底部舵盘无需螺丝。
+- 套上电机支架 4。
+- 滑入电机 4。
+- 用 4 颗 M2x6mm 螺丝固定电机 4。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint4_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 关节 5[[joint-5]]
+
+- 将电机 5 插入腕部支架，并用 2 颗 M2x6mm 前部螺丝固定。
+- 在腕部电机上仅安装一个舵盘，并用一颗 M3x6mm 舵盘螺丝固定。
+- 用两侧的 4 颗 M3x6mm 螺丝将腕部固定到电机 4。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Joint5_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+### 夹爪 / 手柄[[gripper-handle]]
+
+<hfoptions id="assembly">
+<hfoption id="从臂">
+
+- 将夹爪安装到电机 5，并用 4 颗 M3x6mm 螺丝将其固定到腕部电机舵盘。
+- 插入夹爪电机，并用每侧 2 颗 M2x6mm 螺丝固定。
+- 在夹爪电机上安装两个舵盘。用一颗 M3x6mm 螺丝固定顶部舵盘；底部舵盘无需螺丝。
+- 安装夹爪钳口，并用两侧的 4 颗 M3x6mm 螺丝固定。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Gripper_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+</hfoption>
+<hfoption id="主臂">
+
+- 将主臂支架安装到腕部，并用 4 颗 M3x6mm 螺丝固定。
+- 用 1 颗 M2x6mm 螺丝将手柄安装到主臂支架。
+- 插入夹爪电机，用每侧 2 颗 M2x6mm 螺丝固定，并用一颗 M3x6mm 舵盘螺丝安装一个舵盘。
+- 用 4 颗 M3x6mm 螺丝安装从臂扳机。
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/Leader_v2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+</hfoption>
+</hfoptions>
+
+## 校准[[calibrate]]
+
+接下来，你需要对机器人进行校准（calibration），以确保主臂和从臂处于相同物理位置时具有相同的位置值。校准过程非常重要，因为它能让在一个机器人上训练的神经网络适用于另一个机器人。
+
+#### 从臂[[follower-1]]
+
+运行以下命令或 API 示例来校准从臂：
+
+<hfoptions id="calibrate_follower">
+<hfoption id="命令">
+
+```bash
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/tty.usbmodem58760431551 \ # <- 你的机器人端口
+    --robot.id=my_awesome_follower_arm # <- 给机器人取一个唯一名称
+```
+
+</hfoption>
+<hfoption id="API 示例">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.robots.so_follower import SO101FollowerConfig, SO101Follower
+
+config = SO101FollowerConfig(
+    port="/dev/tty.usbmodem585A0076891",
+    id="my_awesome_follower_arm",
+)
+
+follower = SO101Follower(config)
+follower.connect(calibrate=False)
+follower.calibrate()
+follower.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+下面的视频展示了如何执行校准。首先，你需要将机器人移动到所有关节都处于其运动范围中间的位置。然后，按下 Enter 后，你必须让每个关节完成其完整运动范围。
+
+##### 校准视频[[calibration-video]]
+
+<div class="video-container">
+  <video controls width="600">
+    <source
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibrate_so101_2.mp4"
+      type="video/mp4"
+    />
+  </video>
+</div>
+
+#### 主臂[[leader-1]]
+
+执行相同步骤来校准主臂，运行以下命令或 API 示例：
+
+<hfoptions id="calibrate_leader">
+<hfoption id="命令">
+
+```bash
+lerobot-calibrate \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- 你的机器人端口
+    --teleop.id=my_awesome_leader_arm # <- 给机器人取一个唯一名称
+```
+
+</hfoption>
+<hfoption id="API 示例">
+
+<!-- prettier-ignore-start -->
+```python
+from lerobot.teleoperators.so_leader import SO101LeaderConfig, SO101Leader
+
+config = SO101LeaderConfig(
+    port="/dev/tty.usbmodem58760431551",
+    id="my_awesome_leader_arm",
+)
+
+leader = SO101Leader(config)
+leader.connect(calibrate=False)
+leader.calibrate()
+leader.disconnect()
+```
+<!-- prettier-ignore-end -->
+
+</hfoption>
+</hfoptions>
+
+恭喜 🎉，你的机器人已经准备好自行学习任务了。按照以下教程开始训练它：[真实世界机器人入门](./il_robots)
+
+> [!TIP]
+> 如果你有任何问题或需要帮助，请在 [Discord](https://discord.com/invite/s3KuuzsPFb) 上联系我们。

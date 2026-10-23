@@ -1,4 +1,4 @@
-# 第三方摄像头与传感器
+# 第三方摄像头与传感器[[third-party-cameras-sensors]]
 
 LeRobot 生态远不止原生支持的摄像头（OpenCV、Intel RealSense、ZMQ、Reachy 2）。得益于 LeRobot 的插件架构，社区开发了即装即用的摄像头和传感器集成，从深度摄像头到基于视觉的触觉传感器。本页介绍由社区维护的摄像头和传感器集成，可用于遥操作、数据采集和策略部署。
 
@@ -18,7 +18,7 @@ lerobot-record \
     --dataset.num_episodes=5
 ```
 
-## 触觉传感器
+## 触觉传感器[[tactile-sensors]]
 
 <!-- prettier-ignore -->
 <table width="100%" style="display:table; width:100%; table-layout:fixed;">
@@ -34,10 +34,14 @@ lerobot-record \
       <td><a href="https://github.com/xensedyl/lerobot-camera-xense">lerobot-camera-xense</a></td>
       <td>用于 <a href="https://www.xenserobotics.com/">Xense</a> 视觉触觉传感器的插件，提供校正图像、差分图像、深度信息和二维标记。</td>
     </tr>
+    <tr style="border:0">
+      <td><a href="https://github.com/Jingyi-Z/lerobot-paxini">lerobot_camera_paxini</a></td>
+      <td>用于 <a href="https://www.paxini.com/">Paxini</a> PX-6AX GEN3 多维触觉传感器的插件，每个触觉单元（taxel）提供 3 轴力，包含 9-239 个触觉单元；可将触觉单元阵列渲染为力向量图或热力图。</td>
+    </tr>
   </tbody>
 </table>
 
-## 深度摄像头
+## 深度摄像头[[depth-cameras]]
 
 <!-- prettier-ignore -->
 <table width="100%" style="display:table; width:100%; table-layout:fixed;">
@@ -56,7 +60,7 @@ lerobot-record \
   </tbody>
 </table>
 
-## 网络摄像头
+## 网络摄像头[[networked-cameras]]
 
 <!-- prettier-ignore -->
 <table width="100%" style="display:table; width:100%; table-layout:fixed;">
@@ -75,7 +79,7 @@ lerobot-record \
   </tbody>
 </table>
 
-## 虚拟摄像头
+## 虚拟摄像头[[virtual-cameras]]
 
 <!-- prettier-ignore -->
 <table width="100%" style="display:table; width:100%; table-layout:fixed;">
@@ -94,6 +98,6 @@ lerobot-record \
   </tbody>
 </table>
 
-## 参与贡献
+## 参与贡献[[contributing]]
 
 自己开发了 LeRobot 摄像头或传感器集成？将它打包成可安装的 `lerobot_camera_<name>` 插件，LeRobot CLI 就会自动发现它。请参阅[接入自己的硬件](./integrate_hardware)指南和[摄像头](./cameras)参考文档开始操作，然后与社区分享你的项目！

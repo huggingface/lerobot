@@ -1,6 +1,6 @@
-# 实时分块（RTC）
+# 实时分块（RTC）[[real-time-chunking-rtc]]
 
-实时分块（Real-Time Chunking，RTC）是一种推理时方法，使基于流匹配的大型机器人策略（如 [Pi0](./pi0)、[Pi0.5](./pi05) 和 [SmolVLA](./smolvla)）能够在推理延迟较高的情况下，依然产生流畅、连续且响应灵敏的运动。
+实时分块（Real-Time Chunking，RTC）使基于流匹配的大型机器人策略（如 [Pi0](./pi0)、[Pi0.5](./pi05) 和 [SmolVLA](./smolvla)）能够在推理延迟较高的情况下，依然产生流畅、连续且响应灵敏的运动。LeRobot 提供原始的推理时引导模式；对于兼容的 Pi05 检查点，还提供训练时动作条件化，推理时只需开销很低的硬前缀（hard prefix）。
 
 这些策略每次生成一批未来动作（例如一次 50 步），而非单个动作。
 由于模型体量较大，生成每一批动作所需的时间往往超过机器人执行该批动作的时间。
@@ -8,19 +8,19 @@
 
 RTC 的解决方案是：在机器人继续执行当前动作块的同时，异步生成下一批动作；并通过引导新动作块与已执行部分的前一批动作平滑对齐，消除上述问题。
 
-## RTC 工作原理（简述）
+## RTC 工作原理（简述）[[how-rtc-works-simplified]]
 
 RTC 让机器人在运动过程中提前规划。当机器人正在执行一批动作时，RTC 提前开始生成下一批动作。
 但由于新动作块准备好时机器人已经移动了一段距离，RTC 需要确保新动作块与机器人当前运动平滑衔接。
 
-为此，RTC 将新动作块的起始部分视为一个图像修复（inpainting）或"填补空缺"问题：
+为此，RTC 将新动作块的起始部分视为一个图像修复（inpainting）或“填补空缺”问题：
 对新动作块的前几步进行柔和调整，使其自然融入机器人正在进行的运动，从而实现无暂停、无突变的平滑过渡。
 
 从技术层面看，RTC 在流匹配去噪过程中加入了一个引导项，迫使新动作块与前一批动作的已执行部分在重叠时间步上保持接近，通常采用软过渡掩码实现。
 
-## 快速开始
+## 快速开始[[quick-start]]
 
-### 安装
+### 安装[[installation]]
 
 RTC 已内置于 LeRobot，只需安装所需策略的依赖即可：
 
@@ -32,16 +32,15 @@ pip install -e ".[pi]"
 pip install -e ".[smolvla]"
 ```
 
-### 配合 Pi0 使用 RTC
+### 配合 Pi0 使用 RTC[[using-rtc-with-pi0]]
 
-完整参考实现见 [eval_with_real_robot.py](examples/rtc/eval_with_real_robot.py)。
+可以使用 `lerobot-rollout --strategy.type=base --inference.type=rtc` 在真实机器人上部署 RTC。
 以下代码片段提供了 RTC 与 Pi0 在流水线中配合使用的简化伪示例：
 
 ```python
 from lerobot.policies.pi0 import PI0Policy, PI0Config
-from lerobot.configs.types import RTCAttentionSchedule
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.rtc.action_queue import ActionQueue
+from lerobot.configs import RTCAttentionSchedule
+from lerobot.policies.rtc import RTCConfig, ActionQueue
 
 # 加载启用 RTC 的 Pi0
 policy_cfg = PI0Config()
@@ -89,9 +88,29 @@ for step in range(num_steps):
     execute_actions(action)
 ```
 
-## 关键参数
+## 关键参数[[key-parameters]]
 
 `RTCConfig` 包含以下可调参数：
+
+**`mode`** 用于选择动作前缀的条件化方式：
+
+- `guided`（默认）在去噪过程中应用原始的雅可比（Jacobian）引导，适用于普通的流匹配检查点。
+- `trained` 以逐动作的流时间步，对前一个动作块的前缀进行硬修复（hard inpainting）。它目前要求使用以 `policy.rtc_training_max_delay > 0` 训练的 Pi05 检查点，并且省去了引导所需的反向传播。
+
+本地 rollout 与策略服务器采用相同的保守 trained 模式
+准入规则：`rtc_training_max_delay <= execution_horizon <= prediction_steps - rtc_training_max_delay`。
+对于 Pi05，`prediction_steps` 是检查点的 `chunk_size`。这保留了
+现有的本地限制：配置的前缀覆盖训练时的最大延迟，
+并在前缀之外至少保留同样多的预测步。本地 rollout 还
+要求在连接机器人之前满足 `inference.queue_threshold >= rtc_training_max_delay`；
+远程请求的时序则使用其自身的补充（refill）设置。
+
+这里的 `execution_horizon` 是提供的前缀容量，而不是两次请求之间的
+播放量。Pi05 只对 `inference_delay` 前缀进行硬条件化。该
+准入规则既不是延迟保证，也不表示更大的容量一定会
+在运行时失败；返回的动作块能否执行，仍由测得的重叠、剩余动作与新鲜度检查
+决定。普通动作块与 guided RTC 都
+不受这条仅适用于 trained 模式的规则影响。
 
 **`execution_horizon`**：与前一批动作保持一致性的时间步数。值越大，过渡越平滑，但响应性可能下降。
 
@@ -112,7 +131,7 @@ RTCConfig(execution_horizon=10)
 
 **`inference_delay`**：系统推理延迟的时间步数。此参数传入 `predict_action_chunk()` 而非配置中，因为它在运行时可能有所变化。
 
-## 离线测试 RTC
+## 离线测试 RTC[[testing-rtc-offline]]
 
 在真实机器人上运行前，可使用数据集样本测试 RTC 并可视化其工作方式：
 
@@ -125,6 +144,10 @@ python examples/rtc/eval_dataset.py \
     --device=cuda
 ```
 
+评估兼容的训练时 RTC Pi05
+检查点时，请加上 `--rtc.mode=trained`。不支持的策略会拒绝 trained 模式，而不是退回
+guided RTC。
+
 该脚本生成去噪过程的可视化图，对比标准生成（左）与 RTC（右）的效果。在 RTC 图中，可以看到前几步（蓝/紫色线）如何被引导以匹配红色地面真实轨迹（前一批动作的末尾），从而确保动作块之间的平滑过渡。
 
 <p align="center">
@@ -135,11 +158,16 @@ python examples/rtc/eval_dataset.py \
   />
 </p>
 
-## 在真实机器人上测试 RTC
+## 在真实机器人上测试 RTC[[testing-rtc-with-a-real-robot]]
 
 ```bash
-python examples/rtc/eval_with_real_robot.py \
+lerobot-rollout \
+    --strategy.type=base \
     --policy.path=${HF_USERNAME}/policy_repo_id \
+    --inference.type=rtc \
+    --inference.rtc.mode=guided \
+    --inference.rtc.execution_horizon=10 \
+    --inference.rtc.max_guidance_weight=10.0 \
     --robot.type=so100_follower \
     --robot.port=/dev/tty.usbmodem58FA0834591 \
     --robot.cameras="{ gripper: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
@@ -148,20 +176,42 @@ python examples/rtc/eval_with_real_robot.py \
     --device=cuda
 ```
 
-## 与 LeRobot 异步推理的区别
+对于训练时 RTC 的 Pi05 检查点，将模式改为 `trained`。
+检查点会记录其支持的最大延迟，rollout 会据此验证测得的
+延迟：
 
-RTC 和[异步推理](./async)都能改善实时机器人控制，但它们解决的是不同的问题。
+```bash
+lerobot-rollout \
+    --strategy.type=base \
+    --policy.path=${HF_USERNAME}/pi05_training_rtc \
+    --inference.type=rtc \
+    --inference.rtc.mode=trained \
+    --inference.rtc.execution_horizon=10 \
+    --robot.type=so100_follower \
+    --robot.port=/dev/tty.usbmodem58FA0834591 \
+    --task="Move green small object into the purple platform" \
+    --duration=120 \
+    --device=cuda
+```
 
-| 方面         | 异步推理               | RTC                          |
-| ------------ | ---------------------- | ---------------------------- |
-| **问题**     | 等待推理时的空闲帧     | 动作块之间的不连续性         |
-| **方案**     | 将预测与执行解耦       | 引导新动作块从前一批平滑延续 |
-| **优势**     | 无等待，持续动作       | 平滑过渡，自然运动           |
-| **适用场景** | 推理延迟较高的大型模型 | 基于流匹配的策略             |
+## RTC 与远程推理的关系[[how-rtc-relates-to-remote-inference]]
 
-**两者结合使用**，可实现最高的平滑性与响应性！
+`--inference.type=rtc` 是本地 RTC：推理在 rollout 进程的后台线程中运行，不使用任何传输层。若要在同一台机器上把策略服务器与机器人客户端作为独立进程运行，请改用远程后端。
 
-## 进阶：调试追踪
+两种异步后端在受支持的机器人上都采用相同的[有界等待与关机行为](./remote_inference#what-the-robot-does-while-waiting-or-stopping)。其超时默认值请参阅[本地 RTC 预算](./inference#inference-backends)。等待不会放宽 RTC 的前缀、延迟或新鲜度检查。
+
+RTC 和[远程推理](./remote_inference)都能改善实时机器人控制，但它们解决的是不同的问题。
+
+| 方面     | 远程推理                             | RTC                                       |
+| -------- | ------------------------------------ | ----------------------------------------- |
+| **用途** | 在另一个进程或另一台计算机上运行推理 | 根据剩余轨迹对预测进行条件化              |
+| **执行** | 本地缓冲播放，可选对齐与混合         | 为受支持的策略提供 guided 或 trained 延续 |
+| **关系** | 可提供普通动作块或 RTC               | 可在本地执行，也可通过远程后端执行        |
+| **限制** | 延迟、新鲜度与缓冲覆盖仍会限制运动   | 要求策略声明的 RTC 契约                   |
+
+当检查点支持协商的 RTC 模式时，远程推理即可使用 RTC。普通动作块也支持可选的游标对齐与混合；模式、兼容性与调优请参阅[远程推理指南](./remote_inference)。
+
+## 进阶：调试追踪[[advanced-debug-tracking]]
 
 RTC 内置调试追踪功能，帮助你了解推理过程中的状态：
 
@@ -179,10 +229,12 @@ visualizer = RTCDebugVisualizer()
 # ... 创建图表
 ```
 
-完整可视化示例见 `examples/rtc/eval_dataset.py`。
+完整的离线 RTC 可视化示例见 `examples/rtc/eval_dataset.py`。
 
-## 参考资料
+## 参考资料[[references]]
 
 - [Smooth-As-Butter Robot Policies](https://alexander-soare.github.io/robotics/2025/08/05/smooth-as-butter-robot-policies.html) - 附真实机器人结果的优质技术解析
 - [Physical Intelligence - Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking) - 原始论文与研究
 - [Kinetix RTC Implementation](https://github.com/Physical-Intelligence/real-time-chunking-kinetix) - Physical Intelligence 的参考实现
+- [Training-Time Action Conditioning](https://arxiv.org/abs/2512.05964) - 在训练时以干净前缀进行条件化的高效 RTC
+- [RLDX-1](https://github.com/RLWRLD/RLDX-1) - 训练时 RTC 集成所参考的 PyTorch 实现

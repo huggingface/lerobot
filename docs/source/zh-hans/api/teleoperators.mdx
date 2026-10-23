@@ -1,0 +1,17 @@
+# 遥操作器[[teleoperators]]
+
+遥操作器（teleoperator）会为机器人产生要跟随的动作，它可以是主臂（leader arm）、游戏手柄、键盘或手机。它们都实现 [`Teleoperator`] 接口，因此针对该接口编写的录制脚本可与任何输入设备配合使用。
+
+有关设置指南，请参阅[手机遥操作](../phone_teleop)和 [Isaac Teleop](../isaac_teleop)；有关录制工作流程，请参阅[机器人模仿学习](../il_robots)。
+
+## Teleoperator[[teleoperator]]
+
+[[autodoc]] lerobot.teleoperators.Teleoperator - connect - disconnect - configure - calibrate - get_action - send_feedback - action_features - feedback_features - is_connected - is_calibrated
+
+## TeleoperatorConfig[[teleoperatorconfig]]
+
+[[autodoc]] lerobot.teleoperators.TeleoperatorConfig
+
+## make_teleoperator_from_config[[maketeleoperatorfromconfig]]
+
+[[autodoc]] lerobot.teleoperators.make_teleoperator_from_config

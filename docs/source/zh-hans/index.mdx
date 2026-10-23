@@ -1,23 +1,213 @@
+# LeRobot[[lerobot]]
+
 <div class="flex justify-center">
   <a target="_blank" href="https://huggingface.co/lerobot">
     <img
-      alt="HuggingFace Expert Acceleration Program"
+      alt="LeRobot, Hugging Face Robotics Library"
       src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/lerobot-logo-thumbnail.png"
-      style="width: 100%"
     ></img>
   </a>
 </div>
 
-# LeRobot
-
 **面向现实世界机器人的最先进的机器学习技术**
 
-🤗 LeRobot 的目标是为现实世界机器人提供基于 PyTorch 的模型、数据集、以及操作工具。我们的目标是降低学习机器人的准入门槛，让每一个人都可以参与到机器人数据集和预训练模型的开源运动中，并且从中受益。
+🤗 LeRobot 提供了硬件无关、原生 Python 的接口，用于控制真实机器人——从 SO-ARM101 这样经济实惠的机械臂到完整的类人机器人。此外还提供录制、存储和分享它们所生成数据集的工具。每个数据集都使用标准化的 **LeRobotDataset** 格式（同步的视频 + 动作/状态数据），并且可以直接从 [Hugging Face Hub](https://huggingface.co/lerobot) 流式加载。
 
-🤗 LeRobot 实现了许多可用于现实世界的最先进的模仿学习，强化学习算法。
+🤗 在这些数据之上，LeRobot 实现了最先进的策略（policy）——从 ACT 这样的轻量级模仿学习模型，到 π₀ 和 SmolVLA 这样的大型视觉-语言-动作模型——它们都可以通过同样少数几条 CLI 命令来训练、分享和部署。
 
-🤗 LeRobot 已经提供了一套让每个人都可以轻松开始的机器人预训练模型、基于人类演示的机器人数据集、以及仿真环境。
+目标：降低机器人技术的准入门槛，让每个人都能为共享数据集和预训练模型做出贡献，并从中受益。
 
-🤗 LeRobot 将这套预训练模型和数据集存储在 [LeRobot HuggingFace](https://huggingface.co/lerobot) 页面上。
+<div align="center" style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 20px 0;">
+  <a href="https://discord.gg/s3KuuzsPFb" target="_blank">
+    <img alt="Discord" src="https://img.shields.io/badge/Discord-Join_the_Community-5865F2?style=flat&logo=discord&logoColor=white">
+  </a>
+  <a href="https://x.com/LeRobotHF" target="_blank">
+    <img alt="X (Twitter)" src="https://img.shields.io/badge/X-Follow_%40LeRobotHF-black?style=flat&logo=x&logoColor=white">
+  </a>
+  <a href="https://huggingface.co/lerobot" target="_blank">
+    <img alt="Hugging Face Hub" src="https://img.shields.io/badge/HF_Hub-Models_%26_Datasets-FFD21E?style=flat">
+  </a>
+</div>
 
-加入 LeRobot 的 [Discord](https://discord.gg/s3KuuzsPFb) 社区。
+<div align="center">
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/robots_control_video.webp" width="640px" alt="Reachy 2 Demo">
+</div>
+
+## 工作原理[[how-it-works]]
+
+**遥操作 → 录制 → 训练 → 部署**
+
+1. **遥操作**（Teleoperate）——自己使用主臂（leader arm）、键盘或手机来控制机器人，让它从你的动作中学习。
+2. **录制**（Record）——每次演示都会保存为一个数据集：同步的摄像头视频，加上你所执行的动作。
+3. **训练**（Train）——策略（policy，也就是将来控制机器人的神经网络）会学习模仿你的演示。
+4. **部署**（Deploy）——在机器人上运行训练好的策略，看它自行完成任务。
+
+## 快速开始[[get-started]]
+
+初次接触？在安装任何东西之前，先看看 LeRobot 数据集长什么样：
+
+<div class="border dark:border-gray-700 rounded-lg p-4 my-6 flex flex-col md:flex-row gap-4 items-center shadow">
+  <a
+    target="_blank"
+    href="https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0"
+    class="shrink-0"
+  >
+    <img
+      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/visualizer-episode-v2.webp"
+      alt="The LeRobot Dataset Visualizer playing an SO-101 dataset"
+      width="320"
+    />
+  </a>
+  <div>
+    <div class="text-lg font-semibold mb-1">👀 先看看数据集</div>
+    <!-- prettier-ignore -->
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      打开 <a
+        target="_blank"
+        href="https://huggingface.co/spaces/lerobot/visualize_dataset?path=/lerobot/svla_so101_pickplace/episode_0"
+      ><code>lerobot/svla_so101_pickplace</code></a>，在 <a
+        target="_blank"
+        href="https://huggingface.co/spaces/lerobot/visualize_dataset"
+      >LeRobot Dataset Visualizer</a> 中逐帧观看它的摄像头录像与机器人状态和动作的对照，无需安装任何东西。它适用于 Hub 上的任何 LeRobot 数据集，包括你自己的数据集。请参阅 <a
+        href="./using_dataset_tools#explore-a-dataset-in-the-browser"
+      >如何使用它</a>。
+    </p>
+  </div>
+</div>
+
+准备好自己尝试了吗？[安装 LeRobot](./installation)，然后选择你的路径：
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
+  <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
+    <div class="text-lg font-semibold mb-2">🔧 我有机器人</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      LeRobot 支持各种机械臂和移动机器人。热门选择：
+    </p>
+    <ul class="text-gray-700 dark:text-gray-300 text-sm list-disc pl-5 mb-2">
+      <li>
+        <a href="./so101">SO-101</a>——我们的旗舰级低成本机械臂
+      </li>
+      <li>
+        <a href="./lekiwi">LeKiwi</a>——上方装有机械臂的移动底座
+      </li>
+      <li>
+        <a href="./koch">Koch v1.1</a>——社区长期以来的最爱
+      </li>
+      <li>
+        或者在侧边栏的 <strong>Robots</strong> 下找到你的机器人
+      </li>
+    </ul>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      一旦组装并校准完成，就可以参照 <a href="./il_robots">模仿学习教程</a>
+      录制数据集并训练你的第一个策略（policy）——或者使用{" "}
+      <a href="./lelab">LeLab</a>（一个用于相同工作流程的浏览器 GUI）完全跳过
+      CLI。
+    </p>
+  </div>
+  <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
+    <div class="text-lg font-semibold mb-2">💻 还没有硬件</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      即使没有机器人，你仍然可以训练和评估策略（policy）：
+    </p>
+    <ul class="text-gray-700 dark:text-gray-300 text-sm list-disc pl-5 mb-2">
+      <li>
+        在
+        <a href="https://huggingface.co/spaces/lerobot/visualize_dataset">
+          Dataset Visualizer
+        </a>
+        中探索任何数据集
+      </li>
+      <li>
+        使用 Hub 上现有的
+        <a href="https://huggingface.co/datasets?other=LeRobot">
+          LeRobot 数据集
+        </a>
+        进行训练
+      </li>
+      <li>
+        在<a href="./envhub">仿真环境</a>中对照 LIBERO 或 Meta-World
+        等基准进行评估
+      </li>
+      <li>
+        试试免费的 <a href="./notebooks">Colab notebook</a>——无需安装
+      </li>
+    </ul>
+  </div>
+  <div class="border dark:border-gray-700 rounded-lg p-4 shadow">
+    <div class="text-lg font-semibold mb-2">🤝 我想做出贡献</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      从<a href="./contributing">贡献指南</a>开始，然后
+      <a href="./bring_your_own_policies">添加新策略</a>或
+      <a href="./integrate_hardware">接入你自己的硬件</a>。
+    </p>
+  </div>
+</div>
+
+## 浏览文档[[explore-the-docs]]
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./cheat-sheet"
+  >
+    <div class="font-semibold mb-1">📋 速查表</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      每条 LeRobot CLI 命令，复制粘贴即可使用。
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./hardware_guide"
+  >
+    <div class="font-semibold mb-1">🖥️ 计算与硬件指南</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      哪种策略适合你的 GPU，以及训练需要多长时间。
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./lerobot-dataset-v3"
+  >
+    <div class="font-semibold mb-1">🗂️ LeRobotDataset</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      从 Hub 加载、流式传输和可视化机器人数据集。
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./lelab"
+  >
+    <div class="font-semibold mb-1">🖼 LeLab</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      用于校准、录制和训练的浏览器 GUI——无需 CLI。
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./act"
+  >
+    <div class="font-semibold mb-1">🧠 策略</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      从 ACT 开始，这是我们推荐的首选策略（policy）——或者在侧边栏浏览
+      SmolVLA、π₀ 等更多内容。
+    </p>
+  </a>
+  <a
+    class="!no-underline border dark:border-gray-700 rounded-lg p-4 shadow hover:shadow-lg"
+    href="./envhub"
+  >
+    <div class="font-semibold mb-1">🎮 仿真与基准</div>
+    <p class="text-gray-700 dark:text-gray-300 text-sm">
+      在接触真实硬件之前，先在仿真环境中进行训练和评估。
+    </p>
+  </a>
+</div>
+
+## 常见问题[[common-problems]]
+
+遇到问题了？以下是几个最常见的问题：
+
+- **摄像头画面模糊或不可用**——光照比分辨率更重要。请参阅[摄像头](./cameras)指南。
+- **构建或安装错误**（`cmake`、`ffmpeg`、CUDA）——请参阅[安装指南](./installation#troubleshooting)的故障排除部分。
+- **不确定哪种策略适合你的 GPU**——请查看[计算与硬件指南](./hardware_guide)。
+- **还是卡住了？** 在 [Discord](https://discord.gg/s3KuuzsPFb) 上提问——社区（以及 LeRobot 团队）随时提供帮助。

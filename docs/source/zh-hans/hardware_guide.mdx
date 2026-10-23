@@ -1,10 +1,10 @@
-# LeRobot 训练硬件指南
+# LeRobot 训练硬件指南[[compute-hw-guide-for-lerobot-training]]
 
 本指南提供训练 LeRobot 策略所需硬件的粗略估算：每种策略需要多少显存（VRAM）、训练耗时大致如何，以及本地硬件不足时可在哪里运行。
 
 以下数值仅供**参考**，是用于选择硬件的数量级估算，而非精确预测。吞吐量很大程度上取决于数据集 I/O、图像分辨率、批量大小和 GPU 数量。
 
-## 各策略组的显存需求
+## 各策略组的显存需求[[memory-by-policy-group]]
 
 各策略可按骨干网络（backbone）大小分组；下表给出了每组策略大致所需的显存范围，避免逐个策略重复列出数值。显存占用大致随批量大小线性增长；AdamW（LeRobot 的默认优化器）还需要保存优化器状态，相比仅进行前向传播和反向传播，显存开销会增加约 30%–100%。
 
@@ -19,7 +19,7 @@
 
 遇到显存瓶颈？可以减小批量大小（显存用量近似线性下降），使用梯度累积恢复有效批量大小，或者对于 SmolVLA，保持 `freeze_vision_encoder=True`。
 
-## 训练时间
+## 训练时间[[training-time]]
 
 机器人模仿学习通常遍历数据集 **5–10 轮（epoch）** 即可收敛，而非需要数十万次训练迭代。确定训练轮数后，实际耗时（wall-clock time）可大致按以下方式估算：
 
@@ -32,7 +32,7 @@ wall_clock      ≈ total_steps × per_step_time
 
 单步耗时取决于策略和 GPU。下表中的数值可作为基准：选择最接近你配置的一行；训练步数增减时，可按 `total_steps` 对耗时作线性估算。
 
-### 常见场景
+### 常见场景[[common-scenarios]]
 
 使用默认优化器（AdamW）和 640×480 图像，在**约 50 个片段的数据集（以 30 fps 录制 30 秒，共约 4.5 万帧）上训练 5 轮（epoch）**时，实际耗时参考如下：
 
@@ -50,7 +50,7 @@ wall_clock      ≈ total_steps × per_step_time
 
 这些是数量级估算。实际运行结果会因图像分辨率、数据集 I/O、数据加载器（dataloader）线程数和具体 GPU 型号而产生 ±50% 的偏差。它们适合帮助判断“一次运行需要一小时还是一天”，而不应视为服务等级协议（SLA）。
 
-### 多 GPU 训练可显著提速
+### 多 GPU 训练可显著提速[[multi-gpu-matters-a-lot]]
 
 `accelerate launch --num_processes=N` 是缩短训练时间最简单的方法。每次优化器更新可在与单 GPU 大致相同的时间内处理 `N × batch_size` 个样本，因此对于算力受限的训练，4 张 GPU 可带来约 4 倍加速。完整配置方法请参阅[多 GPU 训练](./multi_gpu_training)指南。
 
@@ -62,13 +62,13 @@ wall_clock      ≈ total_steps × per_step_time
 | `smolvla`   | 27 分 49 秒  |      0.312 |           0.011 | ~80%       | `--policy.path=lerobot/smolvla_base`、`freeze_vision_encoder=false`、`train_expert_only=false`                                          |
 | `pi05`      | 3 小时 41 分 |      2.548 |           0.014 | ~95%       | `--policy.pretrained_path=lerobot/pi05_base`、`gradient_checkpointing=true`、`dtype=bfloat16`，视觉编码器与专家网络（expert）均参与训练 |
 
-`dataloading_s` 与 `update_s` 的比值是重要的诊断指标：当 `dataloading_s` 接近 `update_s` 时，增加 GPU 将不再有帮助——此时数据加载器是瓶颈，应先检查 `--num_workers`、图像分辨率和磁盘速度，再增加算力。
+训练日志将完整迭代拆分为 `dataloading_s`（`next(dl_iter)`）、`preprocessing_s`（图像转换和策略流水线）和 `update_s`（优化器更新）。`step_s` 涵盖这三者，并驱动 `samples_per_s`。上文的基准测试早于这一拆分，因此其 `dataloading_s` 包含预处理。
 
-### 调度与检查点
+### 调度与检查点[[schedule-and-checkpoints]]
 
 如果减少训练步数（例如在小型数据集上训练 5k–10k 步），也应通过 `--policy.scheduler_decay_steps≈--steps` 缩短学习率调度。否则学习率会一直维持在峰值附近，无法衰减。`--save_freq` 也应相应调整。
 
-## 在哪里运行
+## 在哪里运行[[where-to-run]]
 
 显存是首要筛选条件。在同一档位内，应根据预算和可用性选择；`$`–`$$$$` 列表示相对成本，请查看你实际使用的服务提供商的当前价格。
 
@@ -80,7 +80,7 @@ wall_clock      ≈ total_steps × per_step_time
 | A100 80 GB / H100 80 GB   | 80 GB | `$$$$`   | 多 GPU 集群；适合以大批量运行 VLA。                               |
 | **仅 CPU**                | —     | —        | 不要用于训练；请使用 Colab 或租用 GPU。                           |
 
-### Hugging Face Jobs
+### Hugging Face Jobs[[hugging-face-jobs]]
 
 [Hugging Face Jobs](https://huggingface.co/docs/hub/jobs) 可让你在 Hugging Face 托管的基础设施上运行训练，按秒计费，无需自有 GPU。`lerobot-train` 会替你提交作业并持续输出日志——只需在常规训练命令中添加 `--job.target=<flavor>`：
 
