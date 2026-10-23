@@ -121,11 +121,11 @@ def main():
             or evidence.get("counts", {}).get("depth_predictions", 0) < 1
         ):
             raise ValueError("The camera worker did not verify DROID-W+MoGe without GT scale fitting")
-        return row, hands, archive, statistics, calibration
+        return row, hands, archive, statistics, calibration, evidence
 
     def finish(request, pending):
         try:
-            row, hands, archive, statistics, calibration = pending.result()
+            row, hands, archive, statistics, calibration, evidence = pending.result()
             hand_result = hands.result(timeout=config.timeout_s)
             report = export_actions(
                 Path(hand_result["prediction"]),
@@ -139,6 +139,7 @@ def main():
                 hand_components=hand_result["components"],
                 orientation=request["orientation"],
                 camera_intrinsics=calibration,
+                camera_depth_prior=evidence,
             )
             response = {"id": request["id"], "status": "ok", "result": report}
         except Exception as error:

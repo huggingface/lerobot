@@ -146,4 +146,5 @@ def attach_actions(table: pa.Table, report: dict, *, directory: Path, fps: float
         "action_schema": ACTION_SCHEMA,
         "action_dimension": 156,
         **({"camera_intrinsics": report["camera_intrinsics"]} if "camera_intrinsics" in report else {}),
+        **({"camera_depth_prior": report["camera_depth_prior"]} if "camera_depth_prior" in report else {}),
     }
