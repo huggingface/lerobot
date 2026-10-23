@@ -183,7 +183,13 @@ def annotations_from_candidates(raw, matrix, width, fps):
     from gem.common.detectors.hand_tracking import track_hand_detections
 
     detections = [[HandDetection(**d) for d in frame] for frame in raw]
-    with patch("gem.common.detectors.hand_tracking._assign", partial(assign_physical, fps=fps)):
+    # The native pixel/frame cap can leave a crop far behind a fast hand on
+    # high-resolution, low-FPS videos. Keep its size stabilization and the
+    # adaptive bbox filter, but let centers follow the assigned detections.
+    with (
+        patch("gem.common.detectors.hand_tracking._assign", partial(assign_physical, fps=fps)),
+        patch("gem.common.detectors.hand_tracking.MAX_CENTER_SPEED", float("inf")),
+    ):
         tracks = track_hand_detections(detections, width, enforce_lr_order=False)
     tracks = smooth_hand_boxes(tracks, np.arange(len(raw)) / fps)
     annotations = {
@@ -206,5 +212,6 @@ def annotations_from_candidates(raw, matrix, width, fps):
         "policy": "physical-anchor-bidirectional-v3",
         "parameters": asdict(Policy()),
         "stats": tracks.stats,
+        "crop_center_motion_cap_px_per_frame": None,
         "limitation": "Box/temporal evidence only; ambiguous real hand overlap may be rejected. Offline anchor assumes ego screen order when separated.",
     }

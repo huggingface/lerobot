@@ -1,11 +1,18 @@
 # Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License").
+import sys
 from copy import deepcopy
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
 
-from lerobot.annotations.hands.egohand.association import Policy, assign_physical, proposals
+from lerobot.annotations.hands.egohand.association import (
+    Policy,
+    annotations_from_candidates,
+    assign_physical,
+    proposals,
+)
 
 
 def c(x, y=100, w=80, h=80, score=0.9, label=1):
@@ -96,3 +103,68 @@ def test_one_frame_bimanual_false_positive_cannot_anchor():
 def test_invalid_fps_rejected():
     with pytest.raises(ValueError):
         assign_physical([], fps=0)
+
+
+@pytest.mark.parametrize("fail_tracking", [False, True])
+def test_crop_centers_follow_detections_without_changing_identity_or_native_defaults(
+    monkeypatch, fail_tracking
+):
+    """Exercise the adapter boundary; the frozen GPU runtime covers real stabilization."""
+    tracking = ModuleType("gem.common.detectors.hand_tracking")
+    original_assign = object()
+    tracking._assign = original_assign
+    tracking.MAX_CENTER_SPEED = 90.0
+    centers = np.array([[100, 100, 614.4], [500, 100, 614.4]], dtype=np.float32)
+    observed = np.array([True, False])
+    tracks = SimpleNamespace(
+        boxes_xys={side: centers.copy() for side in ("left", "right")},
+        raw_present={side: observed.copy() for side in ("left", "right")},
+        emitted={side: np.ones(2, dtype=bool) for side in ("left", "right")},
+        stats={},
+    )
+    calls = []
+
+    def track(detections, width, *, enforce_lr_order):
+        assert np.isinf(tracking.MAX_CENTER_SPEED)
+        assert tracking._assign.func is assign_physical
+        assert tracking._assign.keywords == {"fps": 10}
+        assert not enforce_lr_order
+        assert width == 3840
+        assert len(detections) == 2
+        calls.append("track")
+        if fail_tracking:
+            raise RuntimeError("native tracking failed")
+        return tracks
+
+    def smooth(value, timestamps):
+        assert value is tracks
+        np.testing.assert_array_equal(timestamps, [0, 0.1])
+        calls.append("smooth")
+        return value
+
+    tracking.track_hand_detections = track
+    modules = {
+        "gem": ModuleType("gem"),
+        "gem.common": ModuleType("gem.common"),
+        "gem.common.detectors": ModuleType("gem.common.detectors"),
+        "gem.common.detectors.hand": ModuleType("gem.common.detectors.hand"),
+        "gem.common.detectors.hand_boxes": ModuleType("gem.common.detectors.hand_boxes"),
+        tracking.__name__: tracking,
+    }
+    modules["gem.common.detectors.hand"].HandDetection = lambda **kwargs: SimpleNamespace(**kwargs)
+    modules["gem.common.detectors.hand_boxes"].smooth_hand_boxes = smooth
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    if fail_tracking:
+        with pytest.raises(RuntimeError, match="native tracking failed"):
+            annotations_from_candidates([[], []], np.eye(3), 3840, 10)
+        assert calls == ["track"]
+    else:
+        annotations, diagnostic = annotations_from_candidates([[], []], np.eye(3), 3840, 10)
+        assert calls == ["track", "smooth"]
+        assert diagnostic["crop_center_motion_cap_px_per_frame"] is None
+        assert [row["side"] for row in annotations[1]["instances"]] == ["left", "right"]
+        assert not any(row["bbox_observed"] for row in annotations[1]["instances"])
+        np.testing.assert_array_equal(annotations[1]["instances"][0]["bbox"], centers[1])
+    assert tracking.MAX_CENTER_SPEED == 90.0
+    assert tracking._assign is original_assign

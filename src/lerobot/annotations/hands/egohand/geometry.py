@@ -8,7 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
-FloatArray = NDArray[np.float64]
+type FloatArray = NDArray[np.float64]
 FLU_FROM_OPTICAL = np.asarray([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
 
 
