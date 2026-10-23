@@ -1016,7 +1016,8 @@ def _tiny_trunks(tmp_path):
 
 
 def _lean_config(**overrides) -> Flux3Config:
-    return droid_config(augment=False, caption_dropout=0.0, **overrides)
+    # One denoising step already runs every trunk weight, which is all the equivalence checks compare.
+    return droid_config(augment=False, caption_dropout=0.0, num_inference_steps=1, **overrides)
 
 
 def _with_full_streams(policy: Flux3Policy) -> Flux3Policy:
