@@ -88,11 +88,9 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
 
+      # lancedb-convert converts the fixtures for the lance backend tests
       - name: Install lerobot with all extras
-        run: uv sync --locked --extra all # TODO(Steven): Make flash-attn optional
-
-      - name: Install lerobot-lancedb (converts fixtures for the lance backend tests)
-        run: uv sync --locked --extra all --extra lancedb-convert
+        run: uv sync --locked --extra all --extra lancedb-convert # TODO(Steven): Make flash-attn optional
 
       - name: Login to Hugging Face
         if: env.HF_USER_TOKEN != ''
