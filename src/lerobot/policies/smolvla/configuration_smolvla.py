@@ -62,6 +62,14 @@ class SmolVLAConfig(PreTrainedConfig):
     # Decoding
     num_steps: int = 10
 
+    # Optional torch.compile for the action expert denoise loop.
+    # When enabled, torch.compile is applied to `denoise_step` using `compile_mode` (default: "max-autotune")
+    # with `dynamic=True`. Prefer `compile_denoise=True` (with `compile_model=False`) for CUDA-graph
+    # acceleration of the 10-step denoise loop; if combining with whole-model `compile_model=True`, use
+    # `compile_mode="max-autotune-no-cudagraphs"`. For optimal inference latency and zero recompilation,
+    # setting `pad_language_to="max_length"` ensures constant prefix lengths during deployment.
+    compile_denoise: bool = False
+
     # Attention utils
     use_cache: bool = True
 
