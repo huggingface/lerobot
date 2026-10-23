@@ -24,7 +24,7 @@ from gymnasium.envs.registration import register, registry as gym_registry
 from gymnasium.utils.env_checker import check_env
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.envs.configs import EnvConfig
+from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import (
     _normalize_hub_result,
@@ -272,3 +272,11 @@ def test_make_env_from_hub_async():
 
     # clean up
     env.close()
+
+
+def test_gym_manipulator_points_to_the_real_robot_entry_points():
+    # It drives a physical robot, so make_env must not look for a `gym_gym_manipulator` package.
+    with pytest.raises(NotImplementedError, match="real-robot environment") as e:
+        make_env(HILSerlRobotEnvConfig(), n_envs=1)
+    assert "lerobot.rl.gym_manipulator" in str(e.value)
+    assert "lerobot.rl.eval_policy" in str(e.value)
