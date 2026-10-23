@@ -11,32 +11,73 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import abc
 import builtins
+import importlib
+import importlib.util
 import json
 import os
+import pkgutil
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from logging import getLogger
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import draccus
-import torch
 from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
-from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.utils.hub import HubMixin
 
 from .types import FeatureType, PolicyFeature
 
+if TYPE_CHECKING:
+    import torch
+
+    from lerobot.optim import LRSchedulerConfig, OptimizerConfig
+
 T = TypeVar("T", bound="PreTrainedConfig")
 logger = getLogger(__name__)
+
+
+def _decode_dtype(value: Any, path: Sequence[str] = ()) -> torch.dtype:
+    """Resolve a dtype name coming from config.json or the command line.
+
+    Args:
+        value: The raw serialized value, e.g. "bfloat16".
+        path: The field breadcrumb draccus prefixes onto error messages, e.g. ("policy", "dtype").
+    """
+    dtype = getattr(torch, str(value).removeprefix("torch."), None)
+    if not isinstance(dtype, torch.dtype):
+        raise ValueError(f"Invalid dtype {value!r}: expected a torch dtype name.")
+    return dtype
+
+
+def _encode_dtype(value: torch.dtype, declared_type: type | None = None) -> str:
+    """Serialize a dtype to its bare name, e.g. torch.bfloat16 -> "bfloat16"."""
+    return str(value).removeprefix("torch.")
+
+
+def _import_torch() -> None:
+    """Import torch into this module and register the draccus codecs for `torch.dtype`, once.
+
+    This module imports torch only for type checking, so the commands that read it without parsing a
+    policy config never load torch. A policy config needs it as soon as its class is defined: draccus
+    resolves the `torch.dtype` annotation through this module's globals.
+    """
+    global torch
+    if "torch" in globals():
+        return
+    import torch
+
+    draccus.decode.register(torch.dtype, _decode_dtype)
+    draccus.encode.register(torch.dtype, _encode_dtype)
 
 
 @dataclass
@@ -86,28 +127,17 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
     # Optional Hub revision (commit hash, branch, or tag) to pin the pretrained model version.
     pretrained_revision: str | None = None
 
-    # Register draccus encode/decode functions for the torch.dtype values held by dtype fields.
-    @staticmethod
-    @draccus.decode.register(torch.dtype)
-    def _decode_dtype(value: Any, path: Sequence[str] = ()) -> torch.dtype:
-        """Resolve a dtype name coming from config.json or the command line.
-
-        Args:
-            value: The raw serialized value, e.g. "bfloat16".
-            path: The field breadcrumb draccus prefixes onto error messages, e.g. ("policy", "dtype").
-        """
-        dtype = getattr(torch, str(value).removeprefix("torch."), None)
-        if not isinstance(dtype, torch.dtype):
-            raise ValueError(f"Invalid dtype {value!r}: expected a torch dtype name.")
-        return dtype
-
-    @staticmethod
-    @draccus.encode.register(torch.dtype)
-    def _encode_dtype(value: torch.dtype, declared_type: type | None = None) -> str:
-        """Serialize a dtype to its bare name, e.g. torch.bfloat16 -> "bfloat16"."""
-        return str(value).removeprefix("torch.")
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _import_torch()
 
     def __post_init__(self) -> None:
+        from lerobot.utils.device_utils import (
+            auto_select_torch_device,
+            is_amp_available,
+            is_torch_device_available,
+        )
+
         if self.dtype is not None and not isinstance(self.dtype, torch.dtype):
             raise ValueError(f"config.dtype must be a torch.dtype or None, got {self.dtype!r}.")
 
@@ -122,6 +152,43 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
                 f"Automatic Mixed Precision (amp) is not available on device '{self.device}'. Deactivating AMP."
             )
             self.use_amp = False
+
+    @classmethod
+    def register_subclass(cls, name: str, choice_type: builtins.type | None = None) -> Any:
+        # Built-in names stay reserved: the built-in registers first, so a plugin that reuses its name fails.
+        if choice_type is not None and name not in cls._choice_registry:
+            cls._import_builtin_policy(name)
+        return super().register_subclass(name, choice_type)
+
+    @classmethod
+    def get_choice_class(cls, name: str) -> builtins.type[PreTrainedConfig]:
+        if not isinstance(name, str):
+            raise KeyError(name)
+        if name not in cls._choice_registry:
+            cls._import_builtin_policy(name)
+        if name not in cls._choice_registry:
+            cls.load_all_choices()
+        return super().get_choice_class(name)
+
+    @staticmethod
+    def _import_builtin_policy(name: str) -> None:
+        """Import the built-in policy package named `name`, if there is one, which registers that policy."""
+        package = f"lerobot.policies.{name}"
+        if (
+            name.isidentifier()
+            and (spec := importlib.util.find_spec(package))
+            and spec.submodule_search_locations
+        ):
+            importlib.import_module(package)
+
+    @classmethod
+    def load_all_choices(cls) -> None:
+        """Import every built-in policy package, so each registers its config and whatever else it adds."""
+        import lerobot.policies
+
+        for module in pkgutil.iter_modules(lerobot.policies.__path__, "lerobot.policies."):
+            if module.ispkg:
+                importlib.import_module(module.name)
 
     @property
     def type(self) -> str:
@@ -249,7 +316,7 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             raise ValueError(f"Missing 'type' field in {CONFIG_NAME} of {model_id}")
         try:
             config_cls = cls.get_choice_class(policy_type)
-        except Exception as e:
+        except KeyError as e:
             raise ValueError(
                 f"Policy type '{policy_type}' (from {CONFIG_NAME} of {model_id}) is not registered. "
                 f"Available policy types: {cls.get_known_choices()}"
