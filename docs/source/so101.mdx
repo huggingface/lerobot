@@ -444,6 +444,20 @@ leader.disconnect()
 </hfoption>
 </hfoptions>
 
+### Optional stall protection
+
+SO-100 and SO-101 followers can monitor motor current while executing actions and disable torque when a
+joint remains both heavily loaded and far from its commanded position. The protection is opt-in because
+current varies with the arm, payload, and task. Configure only the motors you want to monitor by passing a
+motor-to-threshold mapping to `--robot.stall_current_thresholds`. Thresholds use the raw
+`Present_Current` register units and must be measured on your own hardware under its expected payload.
+`--robot.stall_position_tolerance` and `--robot.stall_timeout_s` control how far and how long a motor must
+miss its target before the high-current condition trips.
+
+When protection trips, `send_action()` raises `MotorStallError` and remains latched until the robot
+reconnects. Do not use this host-side check as a substitute for an emergency stop or the motor controller's
+own protections.
+
 Congrats 🎉, your robot is all set to learn a task on its own. Start training it by following this tutorial: [Getting started with real-world robots](./il_robots)
 
 > [!TIP]
