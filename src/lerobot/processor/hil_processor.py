@@ -627,8 +627,12 @@ class RewardClassifierProcessorStep(ProcessorStep):
         if observation is None or self.reward_classifier is None:
             return new_transition
 
-        # Extract images from observation
-        images = {key: value for key, value in observation.items() if "image" in key}
+        # This step can run before `DeviceProcessorStep`, so move the images to the classifier's device.
+        images = {
+            key: value.to(self.device) if isinstance(value, torch.Tensor) else value
+            for key, value in observation.items()
+            if "image" in key
+        }
 
         if not images:
             return new_transition
