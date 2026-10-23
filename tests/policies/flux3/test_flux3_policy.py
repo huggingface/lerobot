@@ -16,6 +16,7 @@
 """CPU tests of the flux3 policy: registration, config, processors, the packing contract, a tiny end-to-end
 model with a fake video VAE and the mock text encoder, checkpoint round trips and the key remap."""
 
+import functools
 import json
 import math
 import sys
@@ -80,6 +81,16 @@ def fake_vae(monkeypatch, fake_text_encoder):
 
 
 def droid_batch(b: int = 2, frames: int | None = None, pad_second: bool = False) -> dict:
+    # The batch is seeded, so build it once per arguments and hand out copies: the camera frames are
+    # large enough that generating them dominated several tests.
+    return {
+        k: v.clone() if isinstance(v, torch.Tensor) else list(v)
+        for k, v in _droid_batch(b, frames, pad_second).items()
+    }
+
+
+@functools.cache
+def _droid_batch(b: int, frames: int | None, pad_second: bool) -> dict:
     t = frames or 1
     gen = torch.Generator().manual_seed(1)
     batch = {}
@@ -1005,7 +1016,8 @@ def _tiny_trunks(tmp_path):
 
 
 def _lean_config(**overrides) -> Flux3Config:
-    return droid_config(augment=False, caption_dropout=0.0, **overrides)
+    # One denoising step already runs every trunk weight, which is all the equivalence checks compare.
+    return droid_config(augment=False, caption_dropout=0.0, num_inference_steps=1, **overrides)
 
 
 def _with_full_streams(policy: Flux3Policy) -> Flux3Policy:
