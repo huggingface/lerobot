@@ -33,7 +33,7 @@ This guide provides step-by-step instructions for training a robot policy using 
 
 - A gamepad (recommended) or keyboard to control the robot
 - A Nvidia GPU
-- A real robot with a follower and leader arm (optional if you use the keyboard or the gamepad)
+- A real robot with a follower and leader arm (the leader arm is only used by `lerobot-find-joint-limits`; recording and interventions use the gamepad or keyboard)
 - A URDF file for the robot for the kinematics package (check `lerobot/model/kinematics.py`)
 
 ## What kind of tasks can I train?
@@ -365,7 +365,6 @@ Example configuration section:
 ```json
 {
   "env": {
-    "type": "gym_manipulator",
     "name": "real_robot",
     "fps": 10,
     "processor": {
@@ -406,10 +405,12 @@ Example configuration section:
 }
 ```
 
+**Note**: Do not add `"type": "gym_manipulator"` to `env` in this file. `python -m lerobot.rl.gym_manipulator` stops with ``error: `env`: The fields `type` are not valid for HILSerlRobotEnvConfig``. Only the training config used by the learner and actor sets `"type": "gym_manipulator"`.
+
 ### Using a Teleoperation Device
 
 Along with your robot, you will need a teleoperation device to control it in order to collect datasets of your task and perform interventions during the online training.
-We support using a gamepad or a keyboard or the leader arm of the robot.
+We support using a gamepad or a keyboard.
 
 HIL-Serl learns actions in the end-effector space of the robot. Therefore, the teleoperation will control the end-effector's x,y,z displacements.
 
@@ -471,47 +472,9 @@ To setup the gamepad, you need to set the `control_mode` to `"gamepad"` and defi
   <i>Gamepad button mapping for robot control and episode management</i>
 </p>
 
-**Setting up the SO101 leader**
+**Leader arms**
 
-The SO101 leader arm has reduced gears that allows it to move and track the follower arm during exploration. Therefore, taking over is much smoother than the gearless SO100.
-
-To setup the SO101 leader, you need to set the `control_mode` to `"leader"` and define the `teleop` section in the configuration file.
-
-```json
-{
-  "env": {
-    "teleop": {
-      "type": "so101_leader",
-      "port": "/dev/tty.usbmodem585A0077921",
-      "use_degrees": true
-    },
-    "processor": {
-      "control_mode": "leader",
-      "gripper": {
-        "use_gripper": true
-      }
-    }
-  }
-}
-```
-
-In order to annotate the success/failure of the episode, **you will need** to use a keyboard to press `s` for success, `esc` for failure.
-During the online training, press `space` to take over the policy and `space` again to give the control back to the policy.
-
-<details>
-<summary><strong>Video: SO101 leader teleoperation</strong></summary>
-
-<div class="video-container">
-  <video controls width="600">
-    <source
-      src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/so101_leader_tutorial.mp4"
-      type="video/mp4"
-    />
-  </video>
-</div>
-
-<p align="center"><i>SO101 leader teleoperation example, the leader tracks the follower, press `space` to intervene</i></p>
-</details>
+Leader arms such as `so101_leader` cannot be used as the HIL-SERL teleoperator yet. Recording and interventions need a teleoperator that implements `get_teleop_events()` and sends end-effector deltas, which only `gamepad` and `keyboard_ee` do. With a leader arm, `gym_manipulator` stops with `TypeError: Teleoperator SOLeader must implement get_teleop_events() method. Compatible teleoperators: GamepadTeleop, KeyboardEndEffectorTeleop`, and setting `control_mode` to `"leader"` does not change this. See [#2952](https://github.com/huggingface/lerobot/issues/2952).
 
 **Recording Demonstrations**
 
@@ -556,7 +519,7 @@ python -m lerobot.rl.crop_dataset_roi --repo-id username/pick_lift_cube
 2. Draw a rectangle around the relevant workspace area
 3. Press 'c' to confirm the selection
 4. Repeat for all camera views
-5. The script outputs cropping parameters and creates a new cropped dataset
+5. The script outputs cropping parameters and creates a new dataset, cropped and resized to 128×128, named `<repo-id>_cropped_resized` (set `--new-repo-id` to change the name)
 
 Example output:
 
@@ -597,6 +560,8 @@ Add these crop parameters to your training configuration:
 }
 ```
 
+**Important**: `crop_dataset_roi` shows the frames as they are stored in the dataset, which are already resized if you recorded with `resize_size`. At runtime, `crop_params_dict` is applied to the raw camera frame before the resize, so scale the printed values first: `top` and `height` by `raw_height / stored_height`, `left` and `width` by `raw_width / stored_width`. For example, for a 640×480 camera recorded at 128×128, multiply `top` and `height` by 3.75 and `left` and `width` by 5. Round the results to whole pixels and keep the rectangle inside the camera frame.
+
 **Recommended image resolution**
 
 Most vision-based policies have been validated on square inputs of either **128×128** (default) or **64×64** pixels. We therefore advise setting the resize_size parameter to [128, 128] – or [64, 64] if you need to save GPU memory and bandwidth. Other resolutions are possible but have not been extensively tested.
@@ -630,7 +595,7 @@ python -m lerobot.rl.gym_manipulator --config_path src/lerobot/configs/reward_cl
 - **env.fps**: Number of frames per second to record
 - **dataset.push_to_hub**: Whether to push the dataset to the hub
 
-The `env.processor.reset.terminate_on_success` parameter allows you to control episode termination behavior. When set to `false`, episodes will continue even after success is detected, allowing you to collect more positive examples with the reward=1 label. This is crucial for training reward classifiers as it provides more success state examples in your dataset. When set to `true` (default), episodes terminate immediately upon success detection.
+The `env.processor.reset.terminate_on_success` parameter allows you to control episode termination behavior. When set to `false`, episodes will continue even after success is detected, allowing you to collect more frames of the success state. This is crucial for training reward classifiers as it provides more success state examples in your dataset. When set to `true` (default), episodes terminate immediately upon success detection.
 
 **Important**: For reward classifier training, set `terminate_on_success: false` to collect sufficient positive examples. For regular HIL-SERL training, keep it as `true` to enable automatic episode termination when the task is completed successfully.
 
@@ -639,7 +604,6 @@ Example configuration section for data collection:
 ```json
 {
   "env": {
-    "type": "gym_manipulator",
     "name": "real_robot",
     "fps": 10,
     "processor": {
@@ -670,6 +634,16 @@ Example configuration section for data collection:
   "mode": "record",
   "device": "cpu"
 }
+```
+
+**Important**: The recorder does not keep the reward at 1 after success. It writes `next.reward = 1` only on the steps where the teleoperator reports success (one or a few steps per press, depending on the device) and `next.reward = 0` on the steps after. The reward classifier uses `next.reward` as its label, so before training, set `next.reward` to 1 on every frame that shows the success state. Filling from the first success step to the end of the episode is only correct if the success lasts until the episode ends. To count the positive frames per episode:
+
+```python
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+dataset = LeRobotDataset("hf_username/dataset_name")
+rewards = dataset.hf_dataset.to_pandas()
+print(rewards.groupby("episode_index")["next.reward"].agg(["sum", "count"]))
 ```
 
 **Reward Classifier Configuration**
@@ -824,7 +798,7 @@ Create a training configuration file (example available [here](https://huggingfa
 
 1. Configure the policy settings (`type="gaussian_actor"`, `device`, etc.)
 2. Configure the algorithm settings under the top-level `algorithm` block (`type="sac"`, learning rates, discount, etc., defined in `lerobot/rl/algorithms/sac/configuration_sac.py`).
-3. Set `dataset` to your cropped dataset
+3. Set `dataset` to your cropped dataset (`<repo-id>_cropped_resized` by default)
 4. Configure environment settings with crop parameters
 5. Check the other parameters related to the Gaussian Actor in [configuration_gaussian_actor.py](https://github.com/huggingface/lerobot/blob/main/src/lerobot/policies/gaussian_actor/configuration_gaussian_actor.py#L79).
 6. Verify that the `policy` config is correct with the right `input_features` and `output_features` for your task.
