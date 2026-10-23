@@ -128,6 +128,103 @@ How it works:
 - `combine_feature_dicts(...)`: combine multiple feature dicts.
 - Recording with `record_loop(...)` uses `build_dataset_frame(...)` to build frames consistent with `dataset.features` before we call `add_frame(...)` to add the frame to the dataset.
 
+## Optional camera undistortion
+
+`ImageUndistortProcessorStep` corrects lens distortion in raw robot observations. Add it to the robot observation pipeline when recording, then reuse the same saved processor during deployment. Train normally on the corrected recordings; applying undistortion again during training would correct the images twice.
+
+First calibrate each camera using OpenCV's standard pinhole model. Calibration must match the incoming image resolution, orientation, lens, focus and zoom. If the camera driver already returns rectified images, use those directly. This step does not estimate calibration parameters or support the separate `cv2.fisheye` model.
+
+Create a calibration JSON file with these fields. **The numbers below illustrate the format only; replace them with your camera's measured calibration.** `image_size` is `[width, height]`, and `distortion_coefficients` is a flat vector in OpenCV order (`k1, k2, p1, p2[, k3, ...]`), with 4, 5, 8, 12 or 14 values.
+
+```json
+{
+  "camera_key": "front",
+  "camera_matrix": [
+    [520.0, 0.0, 320.0],
+    [0.0, 520.0, 240.0],
+    [0.0, 0.0, 1.0]
+  ],
+  "distortion_coefficients": [-0.2, 0.03, 0.0, 0.0, 0.0],
+  "image_size": [640, 480]
+}
+```
+
+Use the camera's raw observation key, such as `front`, rather than the stored dataset key `observation.images.front`. Frames must be NumPy arrays with shape `(height, width, 3)` and dtype `uint8`. RGB or BGR channel order is preserved. The output uses the original camera matrix and image size, without automatic cropping or zooming, so black borders may appear. A size mismatch raises an error rather than silently scaling the calibration.
+
+Build and save the processor:
+
+```python
+import json
+
+from lerobot.processor import (
+    ImageUndistortProcessorStep,
+    RobotObservation,
+    RobotProcessorPipeline,
+    observation_to_transition,
+    transition_to_observation,
+)
+
+with open("calibration.json") as calibration_file:
+    calibration = json.load(calibration_file)
+
+robot_observation_processor = RobotProcessorPipeline[RobotObservation, RobotObservation](
+    steps=[ImageUndistortProcessorStep(**calibration)],
+    to_transition=observation_to_transition,
+    to_output=transition_to_observation,
+)
+robot_observation_processor.save_pretrained(
+    "camera_processor", config_filename="robot_observation_processor.json"
+)
+```
+
+For multiple cameras, add one step per camera, each with its own calibration. If your observation pipeline also changes robot state, include those existing steps in the same pipeline. Undistortion leaves feature names, image shapes and other observation values unchanged. Its remapping tables are built on the first frame and cached in memory; the saved JSON contains calibration parameters only.
+
+For recording, pass this pipeline through the existing Python API, using your `RecordConfig` as `record_cfg`:
+
+```python
+from lerobot.scripts.lerobot_record import record
+
+record(record_cfg, robot_observation_processor=robot_observation_processor)
+```
+
+For deployment, load it with the raw observation adapters again. These adapters are not stored in the JSON; the pipeline's default adapters are intended for policy batches. The minimal example below requires a non-interactive `RolloutConfig` (`interactive=False`) as `rollout_cfg`; it does not implement the interactive session that waits for `/start`.
+
+```python
+from lerobot.rollout.context import build_rollout_context
+from lerobot.rollout.strategies import create_strategy
+from lerobot.utils.process import ProcessSignalHandler
+
+if rollout_cfg.interactive:
+    raise ValueError("This deployment example requires interactive=False.")
+
+robot_observation_processor = RobotProcessorPipeline.from_pretrained(
+    "camera_processor",
+    config_filename="robot_observation_processor.json",
+    to_transition=observation_to_transition,
+    to_output=transition_to_observation,
+)
+signal_handler = ProcessSignalHandler(use_threads=True)
+ctx = build_rollout_context(
+    rollout_cfg,
+    signal_handler.shutdown_event,
+    robot_observation_processor=robot_observation_processor,
+)
+strategy = create_strategy(rollout_cfg.strategy)
+try:
+    strategy.setup(ctx)
+    strategy.run(ctx)
+finally:
+    strategy.teardown(ctx)
+```
+
+These examples use Python integration; there is no dedicated undistortion CLI flag. To preview a calibration on an image without connecting hardware, run:
+
+```bash
+uv run examples/cameras/undistort_image.py --calibration calibration.json --input frame.png --output corrected.png --processor-dir camera_processor
+```
+
+This step runs on the CPU before policy preprocessing. It accepts raw camera frames, not batched training tensors. Existing datasets recorded with distortion need a separate conversion workflow before they can be used with a policy expecting corrected images.
+
 ## Guidance when customizing robot pipelines
 
 You can store any of the following features as your action/observation space:
