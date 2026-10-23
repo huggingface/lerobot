@@ -14,7 +14,7 @@
 
 [build-system]
 requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+build-backend = "setuptools*"
 
 [project.urls]
 homepage = "https://huggingface.co/lerobot"
@@ -90,7 +90,7 @@ dependencies = [
 
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
-    "setuptools>=71.0.0,<82.0.0",  # torch 2.11 requires setuptools<82; a higher cap makes the resolver downgrade torch
+    "setuptools>=71.0.0,<84.0.0",  # torch 2.11 requires setuptools<82; a higher cap makes the resolver downgrade torch
 ]
 
 # Optional dependencies
@@ -106,7 +106,7 @@ lancedb-convert = [
     "lerobot-lancedb>=0.3.1,<0.4.0",
 ]
 dataset = [
-    "datasets>=4.8.0,<5.0.0",
+    "datasets>=4.8.0,<6.0.0",
     "pandas>=2.0.0,<3.0.0", # NOTE: Transitive dependency of datasets
     "pyarrow>=21.0.0,<30.0.0", # NOTE: Transitive dependency of datasets
     "lerobot[av-dep]",
@@ -160,7 +160,7 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 # fails at load with "liburdfdom_sensor.so.4.0: cannot open shared object file" (see #3755).
 # There is no cmeel-urdfdom 5.x; <5 selects the 4.x ABI the placo/pin wheels are built against.
 placo-dep = ["placo>=0.9.6,<0.9.16", "cmeel-urdfdom>=4,<5", "cmeel-tinyxml2<11"]
-transformers-dep = ["transformers>=5.4.0,<5.6.0"]
+transformers-dep = ["transformers>=5.4.0,<5.11.0"]
 sentencepiece-dep = ["sentencepiece>=0.2.0,<0.3.0"] # FAST action tokenizer backend (fineart_vla)
 grpcio-dep = ["grpcio>=1.73.1,<2.0.0", "protobuf>=6.31.1,<8.0.0"]
 accelerate-dep = ["accelerate>=1.14.0,<2.0.0"]
