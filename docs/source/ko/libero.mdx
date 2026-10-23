@@ -1,0 +1,181 @@
+# LIBERO
+
+LIBERO는 **평생 로봇 학습(lifelong robot learning)**, 즉 로봇이 한 번 사전 학습되는 것이 아니라 사용자와 함께 시간이 지나면서 계속 학습하고 적응해야 한다는 개념을 연구하기 위해 설계된 벤치마크입니다. **지식 전이(knowledge transfer)**, 즉 로봇이 이미 학습한 것을 새로운 상황에 얼마나 잘 적용할 수 있는지에 초점을 둔 표준화된 조작(manipulation) 작업 집합을 제공합니다. LIBERO에서 평가함으로써 서로 다른 알고리즘을 공정하게 비교할 수 있고 연구자들이 서로의 연구를 기반으로 발전시킬 수 있습니다.
+
+- 논문: [Benchmarking Knowledge Transfer for Lifelong Robot Learning](https://arxiv.org/abs/2306.03310)
+- GitHub: [Lifelong-Robot-Learning/LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO)
+- 프로젝트 웹사이트: [libero-project.github.io](https://libero-project.github.io)
+
+![An overview of the LIBERO benchmark](https://libero-project.github.io/assets/img/libero/fig1.png)
+
+## 제공되는 작업
+
+LIBERO는 단순한 물체 조작에서 복잡한 다단계 시나리오에 이르는 **130개의 작업**을 다루는 **다섯 개의 작업 스위트**를 포함합니다:
+
+| Suite          | CLI name         | Tasks | Description                                        |
+| -------------- | ---------------- | ----- | -------------------------------------------------- |
+| LIBERO-Spatial | `libero_spatial` | 10    | 공간 관계에 대한 추론이 필요한 작업                |
+| LIBERO-Object  | `libero_object`  | 10    | 다양한 물체 조작에 중점을 둔 작업                  |
+| LIBERO-Goal    | `libero_goal`    | 10    | 목표가 바뀌는 목표 조건 작업                       |
+| LIBERO-90      | `libero_90`      | 90    | LIBERO-100 컬렉션의 단기(short-horizon) 작업       |
+| LIBERO-Long    | `libero_10`      | 10    | LIBERO-100 컬렉션의 장기(long-horizon) 작업        |
+
+## 설치
+
+LeRobot 설치 지침을 따른 뒤:
+
+```bash
+pip install -e ".[libero]"
+```
+
+<Tip>
+LIBERO는 Linux가 필요합니다(`sys_platform == 'linux'`). LeRobot은 시뮬레이션에 MuJoCo를 사용하므로 학습 또는 평가 전에 렌더링 백엔드를 설정하세요:
+
+```bash
+export MUJOCO_GL=egl  # 헤드리스 서버(HPC, 클라우드)용
+```
+
+</Tip>
+
+## 평가
+
+### 기본 평가(권장)
+
+네 개의 표준 스위트에서 평가합니다(작업당 10 에피소드):
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --env.max_parallel_tasks=1
+```
+
+### 단일 스위트 평가
+
+LIBERO의 단일 스위트에서 평가합니다:
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero \
+  --env.task=libero_object \
+  --eval.batch_size=2 \
+  --eval.n_episodes=3
+```
+
+- `--env.task`는 스위트를 선택합니다(`libero_object`, `libero_spatial` 등).
+- `--env.task_ids`는 특정 작업 인덱스로 제한합니다(`[0]`, `[1,2,3]` 등). 생략하면 스위트의 모든 작업을 실행합니다.
+- `--eval.batch_size`는 병렬로 실행되는 환경의 수를 제어합니다.
+- `--eval.n_episodes`는 작업당 실행할 에피소드 수를 설정합니다.
+
+### 다중 스위트 평가
+
+쉼표로 구분된 목록을 전달하여 한 번에 여러 스위트에서 정책을 벤치마킹합니다:
+
+```bash
+lerobot-eval \
+  --policy.path="your-policy-id" \
+  --env.type=libero \
+  --env.task=libero_object,libero_spatial \
+  --eval.batch_size=1 \
+  --eval.n_episodes=2
+```
+
+### 제어 모드
+
+LIBERO는 두 가지 제어 모드 — `relative`(기본값)와 `absolute`를 지원합니다. 서로 다른 VLA 체크포인트는 서로 다른 액션 매개변수화(action parameterization)로 학습되므로, 모드가 정책과 일치하는지 확인하세요:
+
+```bash
+--env.control_mode=relative   # 또는 "absolute"
+```
+
+### 정책 입력 및 출력
+
+**관측(Observations):**
+
+- `observation.state` — 8차원 고유수용감각(proprioceptive) 특징 (eef 위치, 축-각도 방향, 그리퍼 qpos)
+- `observation.images.image` — 메인 카메라 뷰 (`agentview_image`), HWC uint8
+- `observation.images.image2` — 손목 카메라 뷰 (`robot0_eye_in_hand_image`), HWC uint8
+
+<Tip warning={true}>
+  LeRobot은 시각 특징에 대해 `.images.*` 접두사를 강제합니다. 정책 구성의
+  `input_features`가 동일한 키 이름을 사용하는지, 그리고 데이터셋 메타데이터
+  키가 이 관례를 따르는지 확인하세요. 데이터에 다른 키가 포함되어 있는 경우,
+  이름 키가 정규화 통계 계층 내부에 인코딩되어 있으므로, 관측을 정책이
+  기대하는 이름과 일치하도록 변경해야 합니다.
+</Tip>
+
+**액션(Actions):**
+
+- `Box(-1, 1, shape=(7,))`의 연속 제어 — 6D 엔드이펙터 델타 + 1D 그리퍼
+
+### 권장 평가 에피소드 수
+
+재현 가능한 벤치마킹을 위해, 네 개의 표준 스위트(Spatial, Object, Goal, Long) 전체에 걸쳐 **작업당 10 에피소드**를 사용하세요. 이렇게 하면 총 400 에피소드가 되며, 공식 결과에서 사용된 프로토콜과 일치합니다.
+
+## 학습
+
+### 데이터셋
+
+LeRobot과 완전히 호환되는 전처리된 LIBERO 데이터셋을 제공합니다:
+
+- [HuggingFaceVLA/libero](https://huggingface.co/datasets/HuggingFaceVLA/libero)
+
+참고로, Physical Intelligence가 공개한 원본 데이터셋:
+
+- [physical-intelligence/libero](https://huggingface.co/datasets/physical-intelligence/libero)
+
+### 학습 명령 예시
+
+```bash
+lerobot-train \
+  --policy.type=smolvla \
+  --policy.repo_id=${HF_USER}/libero-test \
+  --policy.load_vlm_weights=true \
+  --dataset.repo_id=HuggingFaceVLA/libero \
+  --env.type=libero \
+  --env.task=libero_10 \
+  --output_dir=./outputs/ \
+  --steps=100000 \
+  --batch_size=4 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=1 \
+  --eval_freq=1000
+```
+
+## 공식 결과 재현
+
+LIBERO 벤치마크에서 Pi0.5의 결과를 재현합니다. Physical Intelligence의 LIBERO 베이스 모델(`pi05_libero`)을 가져와 [HuggingFace LIBERO 데이터셋](https://huggingface.co/datasets/HuggingFaceVLA/libero)을 사용하여 8개의 H100 GPU에서 배치 크기 256, bfloat16으로 추가 6k 스텝 동안 파인튜닝합니다.
+
+파인튜닝된 모델: [lerobot/pi05_libero_finetuned](https://huggingface.co/lerobot/pi05_libero_finetuned)
+
+### 평가 명령
+
+```bash
+lerobot-eval \
+  --output_dir=./eval_logs/ \
+  --env.type=libero \
+  --env.task=libero_spatial,libero_object,libero_goal,libero_10 \
+  --eval.batch_size=1 \
+  --eval.n_episodes=10 \
+  --policy.path=pi05_libero_finetuned \
+  --policy.n_action_steps=10 \
+  --env.max_parallel_tasks=1
+```
+
+원본 OpenPI 구현과 일치하도록 `n_action_steps=10`으로 설정합니다.
+
+### 결과
+
+| Model               | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average  |
+| ------------------- | -------------- | ------------- | ----------- | --------- | -------- |
+| **Pi0.5 (LeRobot)** | 97.0           | 99.0          | 98.0        | 96.0      | **97.5** |
+
+이 결과들은 Physical Intelligence가 보고한 [원본 결과](https://github.com/Physical-Intelligence/openpi/tree/main/examples/libero#results)와 일치합니다:
+
+| Model              | LIBERO Spatial | LIBERO Object | LIBERO Goal | LIBERO 10 | Average   |
+| ------------------ | -------------- | ------------- | ----------- | --------- | --------- |
+| **Pi0.5 (OpenPI)** | 98.8           | 98.2          | 98.0        | 92.4      | **96.85** |
