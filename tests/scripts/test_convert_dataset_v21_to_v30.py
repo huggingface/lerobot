@@ -16,11 +16,17 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
-import pandas as pd
-import pyarrow.parquet as pq
 import pytest
 
-from lerobot.scripts.convert_dataset_v21_to_v30 import convert_data, validate_episode_labels
+pytest.importorskip("pandas", reason="pandas is required (install lerobot[dataset])")
+pytest.importorskip("pyarrow", reason="pyarrow is required (install lerobot[dataset])")
+pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
+pytest.importorskip("jsonlines", reason="jsonlines is required (install lerobot[dataset])")
+
+import pandas as pd  # noqa: E402
+import pyarrow.parquet as pq  # noqa: E402
+
+from lerobot.scripts.convert_dataset_v21_to_v30 import convert_data, validate_episode_labels  # noqa: E402
 
 
 @pytest.fixture
