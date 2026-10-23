@@ -310,6 +310,15 @@ class AcceleratorConfig:
         if parallelism.is_sharded:
             kwargs["fsdp_plugin"] = self.fsdp.build_plugin()
             kwargs["parallelism_config"] = _accelerate_parallelism_config(parallelism)
+            if self.fsdp.cpu_offload and not cpu:
+                import torch
+
+                if torch.cuda.is_available():
+                    from accelerate.utils import InitProcessGroupKwargs
+
+                    # Offloaded DTensor gradient norms reduce CPU tensors. Retain NCCL
+                    # for CUDA collectives and provide Gloo for their CPU counterparts.
+                    handlers.append(InitProcessGroupKwargs(backend="cpu:gloo,cuda:nccl"))
         elif parallelism.is_replicated_only:
             handlers.append(self.ddp.build_kwargs_handler())
         if self.mixed_precision == "fp16":

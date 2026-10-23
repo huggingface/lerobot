@@ -119,6 +119,30 @@ class TestRuntimeBuilders:
         assert plugin.min_num_params == 1024
         assert plugin.transformer_cls_names_to_wrap is None
 
+    @pytest.mark.parametrize(
+        "shards,offload,cpu,cuda,expected",
+        [
+            (2, True, False, True, True),
+            (2, False, False, True, False),
+            (2, True, True, True, False),
+            (2, True, False, False, False),
+            (1, True, False, True, False),
+        ],
+    )
+    def test_cpu_offload_collective_backend(self, monkeypatch, shards, offload, cpu, cuda, expected):
+        from accelerate.utils import InitProcessGroupKwargs
+
+        captured = {}
+        monkeypatch.setattr("torch.cuda.is_available", lambda: cuda)
+        monkeypatch.setattr("accelerate.Accelerator", lambda **kwargs: captured.update(kwargs))
+        parallelism = ParallelismConfig(dp_shard=shards)
+        parallelism.resolve(shards)
+        AcceleratorConfig(fsdp=FSDPConfig(cpu_offload=offload)).build(parallelism, cpu=cpu)
+        handlers = [h for h in captured.get("kwargs_handlers", []) if isinstance(h, InitProcessGroupKwargs)]
+        assert len(handlers) == int(expected)
+        if expected:
+            assert handlers[0].backend == "cpu:gloo,cuda:nccl"
+
     def test_ddp_kwargs_translation(self):
         handler = DDPConfig(find_unused_parameters=False, gradient_as_bucket_view=True).build_kwargs_handler()
         assert handler.find_unused_parameters is False
