@@ -34,6 +34,7 @@ import httpx
 import torch.distributed as dist
 from huggingface_hub import HfApi, ModelCard, ModelCardData, is_offline_mode, model_info, snapshot_download
 from huggingface_hub.errors import HFValidationError, OfflineModeIsEnabled
+from safetensors.torch import save_file
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -64,12 +65,14 @@ from lerobot.utils.constants import (
     CHECKPOINTS_DIR,
     LAST_CHECKPOINT_LINK,
     PRETRAINED_MODEL_DIR,
+    RNG_STATE,
     TRAINING_STATE_DIR,
     TRAINING_STEP,
 )
 from lerobot.utils.hub import find_latest_hub_checkpoint
 from lerobot.utils.io_utils import load_json, write_json
-from lerobot.utils.random_utils import load_rng_state, save_rng_state
+from lerobot.utils.random_utils import load_rng_state, save_rng_state, serialize_rng_state
+from lerobot.utils.utils import flatten_dict
 
 if TYPE_CHECKING:
     from accelerate import Accelerator
@@ -147,7 +150,8 @@ def save_training_metadata(step: int, save_dir: Path, cfg: TrainPipelineConfig) 
     the sampler resume offset is `step x batch_size x dp_world_size` with no grad-accum factor.
     `grad_accum_steps`, `mixed_precision` and the parallelism snapshot are recorded so a resume
     can warn precisely when the optimizer-update cadence, the precision, or the sharding
-    topology changed.
+    topology changed. Distributed checkpoints also record `rng_state_world_size` to
+    identify the per-rank random-state layout.
 
     Args:
         step (int): The training step (micro-batch counter) to record.
@@ -168,6 +172,8 @@ def save_training_metadata(step: int, save_dir: Path, cfg: TrainPipelineConfig) 
             "ulysses_degree": cfg.parallelism.context_parallel.ulysses_degree,
         },
     }
+    if dist.is_initialized() and dist.get_world_size() > 1:
+        state["rng_state_world_size"] = dist.get_world_size()
     write_json(state, save_dir / TRAINING_STEP)
 
 
@@ -183,10 +189,11 @@ def load_training_metadata(training_state_dir: Path) -> dict[str, Any]:
     Returns:
         dict[str, Any]: `step` plus the `dp_world_size`, `batch_size`, `grad_accum_steps`,
             `mixed_precision` and `parallelism` snapshot recorded alongside it (None where
-            not recorded).
+            not recorded). `rng_state_world_size` is included when the checkpoint
+            records per-rank random states.
     """
     state = load_json(training_state_dir / TRAINING_STEP)
-    return {
+    metadata = {
         "step": int(state["step"]),
         "dp_world_size": state.get("dp_world_size", state.get("num_processes")),
         "batch_size": state.get("batch_size"),
@@ -194,6 +201,9 @@ def load_training_metadata(training_state_dir: Path) -> dict[str, Any]:
         "mixed_precision": state.get("mixed_precision"),
         "parallelism": state.get("parallelism"),
     }
+    if "rng_state_world_size" in state:
+        metadata["rng_state_world_size"] = state["rng_state_world_size"]
+    return metadata
 
 
 # ---------------------------------------------------------------------------------------------
@@ -228,7 +238,8 @@ def save_checkpoint(
         ├── optimizer_param_groups.json  # optimizer param groups (non-sharded runs)
         ├── optimizer_state.safetensors  # optimizer state (non-sharded runs)
         ├── optimizer_0/  # DCP optimizer shards (sharded runs)
-        ├── rng_state.safetensors  # rng states
+        ├── rng_state.safetensors  # rank-0 RNG, retained for legacy readers
+        ├── rng_states/rank_*/rng_state.safetensors  # distributed per-rank RNG
         ├── scheduler_state.json  # scheduler state (if scheduler provided)
         ├── scaler_state.json  # fp16 loss-scaler state (mixed_precision=fp16 only)
         └── training_step.json  # step + dp_world_size/batch_size/grad_accum/precision + topology
@@ -302,7 +313,7 @@ def save_training_state(
     sharded: bool = False,
     model: PreTrainedPolicy | None = None,
 ) -> None:
-    """Write training_state/. Collective under sharding: call on every rank.
+    """Write training_state/. Collective in distributed runs: call on every rank.
 
     Args:
         checkpoint_dir (Path): The checkpoint step directory; `training_state/` is created inside it.
@@ -333,7 +344,22 @@ def save_training_state(
         # Collective — all ranks write their DCP shards into optimizer_0/.
         save_sharded_optimizer(accelerator, optimizer, model, save_dir)
 
+    # Gather small CPU RNG payloads to the existing checkpoint writer. Independent
+    # rank writes would leave incomplete checkpoints on node-local filesystems.
+    rng_states: list[dict[str, Any] | None] | None = None
+    if dist.is_initialized() and dist.get_world_size() > 1:
+        if is_main_process():
+            rng_states = [None] * dist.get_world_size()
+        dist.gather_object(serialize_rng_state(), rng_states, dst=0)
+
     if is_main_process():  # ONE grouped gate for the whole rank-0-only region
+        if rng_states is not None:
+            for rank, rng_state in enumerate(rng_states):
+                if rng_state is None:
+                    raise RuntimeError(f"Missing gathered RNG state for rank {rank}.")
+                rank_dir = save_dir / "rng_states" / f"rank_{rank}"
+                rank_dir.mkdir(parents=True, exist_ok=True)
+                save_file(flatten_dict(rng_state), rank_dir / RNG_STATE)
         save_training_metadata(step, save_dir, cfg)
         save_rng_state(save_dir)
         if scheduler is not None:
@@ -377,6 +403,7 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
 
     Raises:
         NotADirectoryError: If the checkpoint has no `training_state/` directory.
+        FileNotFoundError: If a checkpoint declaring per-rank RNG is missing a rank file.
         ValueError: If `cfg.checkpoint_path` is unset, or if the resumed topology crosses the
             sharded/non-sharded boundary relative to the one recorded in the checkpoint.
     """
@@ -385,8 +412,62 @@ def resume_before_prepare(cfg: TrainPipelineConfig) -> int:
         raise NotADirectoryError(training_state_dir)
     metadata = load_training_metadata(training_state_dir)
     _guard_resume_changes(cfg, metadata)
-    load_rng_state(training_state_dir)
+    _load_checkpoint_rng_state(training_state_dir, metadata)
     return metadata["step"]
+
+
+def _load_checkpoint_rng_state(training_state_dir: Path, metadata: dict[str, Any]) -> None:
+    """Restore the calling rank's stream, checking missing files before mutation.
+
+    Legacy checkpoints and changed-world-size resumes keep their previous rank-0
+    fallback, with an explicit warning that exact per-rank recovery is unavailable.
+    """
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    saved_world_size = metadata.get("rng_state_world_size")
+    rng_dir = training_state_dir / "rng_states"
+    if saved_world_size is None:
+        if rng_dir.exists():
+            raise ValueError("Checkpoint has rank RNG files but no rng_state_world_size metadata.")
+        if world_size > 1:
+            logging.warning(
+                "Legacy checkpoint has no per-rank RNG states; restoring rank-0 RNG on every rank. "
+                "Exact continuation is not guaranteed when the original rank streams differed."
+            )
+        load_rng_state(training_state_dir)
+        return
+    if type(saved_world_size) is not int or saved_world_size < 2:
+        raise ValueError("Checkpoint rng_state_world_size must be an integer greater than one.")
+    # Check all expected files on every rank, so a missing peer's file cannot
+    # let one rank continue into prepare() while another fails before it.
+    # Validate against recorded topology before enumerating untrusted metadata.
+    topology = metadata.get("parallelism")
+    if topology:
+        recorded_world_size = (
+            topology["dp_replicate"]
+            * topology["dp_shard"]
+            * topology["ring_degree"]
+            * topology["ulysses_degree"]
+        )
+        if saved_world_size != recorded_world_size:
+            raise ValueError("Checkpoint RNG world size disagrees with its recorded parallelism.")
+    missing = [
+        rng_dir / f"rank_{i}" / RNG_STATE
+        for i in range(saved_world_size)
+        if not (rng_dir / f"rank_{i}" / RNG_STATE).is_file()
+    ]
+    if missing:
+        raise FileNotFoundError(f"Checkpoint is missing per-rank RNG state: {missing}")
+    if saved_world_size != world_size:
+        logging.warning(
+            "Checkpoint RNG world size changed from %s to %s; restoring rank-0 RNG on every rank. "
+            "Exact per-rank continuation requires the original world size.",
+            saved_world_size,
+            world_size,
+        )
+        load_rng_state(training_state_dir)
+        return
+    load_rng_state(rng_dir / f"rank_{rank}")
 
 
 def _guard_resume_changes(cfg: TrainPipelineConfig, metadata: dict[str, Any]) -> None:
