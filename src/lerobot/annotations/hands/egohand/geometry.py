@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
-type FloatArray = NDArray[np.float64]
+FloatArray: TypeAlias = NDArray[np.float64]  # noqa: UP040 - native GPU worker uses Python 3.10
 FLU_FROM_OPTICAL = np.asarray([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
 
 

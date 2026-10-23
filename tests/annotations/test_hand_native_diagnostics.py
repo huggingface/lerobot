@@ -1,8 +1,18 @@
 """Retain native process stderr hidden by per-request Python stream redirection."""
 
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 
+import lerobot.annotations.hands
 from lerobot.annotations.hands.bridge import native_failure_detail
+
+
+def test_hand_modules_parse_on_native_gpu_python310():
+    """The controller's newer Python must not hide native worker syntax errors."""
+    root = Path(lerobot.annotations.hands.__file__).parent
+    for source in root.rglob("*.py"):
+        ast.parse(source.read_text(), filename=str(source), feature_version=(3, 10))
 
 
 def test_cuda_error_from_camera_service_log_is_in_failure(tmp_path):
