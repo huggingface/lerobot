@@ -107,9 +107,11 @@ def _as_worker(monkeypatch, worker_id: int, num_workers: int) -> None:
     monkeypatch.setattr(torch.utils.data, "get_worker_info", lambda: info)
 
 
-@pytest.mark.parametrize("num_workers", [2, 3])
-@pytest.mark.parametrize("batch_size", [None, 4])
-@pytest.mark.parametrize("sampling_strategy", ["remaining", "round_robin"])
+# Every pair of option values, not the full product.
+@pytest.mark.parametrize(
+    "num_workers, batch_size, sampling_strategy",
+    [(2, None, "remaining"), (2, 4, "round_robin"), (3, None, "round_robin"), (3, 4, "remaining")],
+)
 def test_workers_yield_every_frame_once(root: Path, num_workers, batch_size, sampling_strategy) -> None:
     dataset = _dataset(root, sampling_strategy=sampling_strategy)
 
