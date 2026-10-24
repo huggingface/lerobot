@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import datasets
 import torch
@@ -26,14 +27,17 @@ import torch
 from lerobot.configs import DEFAULT_DEPTH_UNIT
 
 from .dataset_metadata import LeRobotDatasetMetadata
+from .dataset_view import DatasetColumnView
 from .feature_utils import (
     check_delta_timestamps,
     get_delta_indices,
     get_hf_features_from_features,
 )
 from .io_utils import (
+    DatasetImage,
     hf_transform_to_torch,
     load_nested_dataset,
+    require_image,
 )
 from .utils import delta_window, resolve_episode_indices, shift_timestamps, task_name
 from .video_utils import (
@@ -97,6 +101,36 @@ class BaseDatasetReader(ABC):
     def __len__(self) -> int:
         return self.num_frames
 
+    @property
+    def supports_raw_reads(self) -> bool:
+        """Whether this reader implements the optional base-row read contract."""
+        return type(self).read_rows is not BaseDatasetReader.read_rows
+
+    @property
+    def read_features(self) -> datasets.Features:
+        """Feature schema for base rows, excluding video-backed columns."""
+        raise NotImplementedError("This reader does not expose base-row features.")
+
+    def read_rows(
+        self,
+        indices: list[int],
+        columns: list[str] | None = None,
+        *,
+        query_type: str = "batch",
+        format_type: str | None = "custom",
+        **format_kwargs: Any,
+    ) -> Any:
+        """Read projected base rows without windows, video decoding or augmentations."""
+        raise NotImplementedError("This reader does not support base-row reads.")
+
+    def get_raw_item(self, idx: int) -> dict:
+        """Read one base row using the default tensor conversion."""
+        return self.read_rows([idx], query_type="row")
+
+    def select_columns(self, column_names: str | list[str]) -> DatasetColumnView | datasets.Dataset:
+        """Return a read-only projection using this reader's base-row semantics."""
+        return DatasetColumnView(self, column_names)
+
     def set_image_transforms(self, image_transforms: Callable | None) -> None:
         """Replace the transform applied to visual observations."""
         if image_transforms is not None and not callable(image_transforms):
@@ -125,6 +159,7 @@ class DatasetReader(BaseDatasetReader):
         image_transforms: Callable | None,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        token: str | bool | None = None,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -155,6 +190,7 @@ class DatasetReader(BaseDatasetReader):
         self.set_image_transforms(image_transforms)
         self._return_uint8 = return_uint8
         self._depth_output_unit = depth_output_unit
+        self._token = token
 
         self.hf_dataset: datasets.Dataset | None = None
         self._absolute_to_relative_idx: dict[int, int] | None = None
@@ -224,8 +260,45 @@ class DatasetReader(BaseDatasetReader):
         features = get_hf_features_from_features(self._meta.features)
         self._validate_language_columns_declared(features)
         hf_dataset = load_nested_dataset(self.root / "data", features=features, episodes=self.episodes)
+        # Parquet loading reconstructs the persisted Image schema. Add the
+        # runtime root/token context afterward, without changing its Arrow type.
+        for key in self._meta.image_keys:
+            hf_dataset.info.features[key] = DatasetImage(self.root, token=self._token)
         hf_dataset.set_transform(hf_transform_to_torch)
         return hf_dataset
+
+    @property
+    def read_features(self) -> datasets.Features:
+        """HF features of base rows in the currently loaded dataset."""
+        return self._loaded_dataset().features
+
+    def _loaded_dataset(self) -> datasets.Dataset:
+        """Return the active HF dataset, loading it on first access."""
+        return self.hf_dataset if self.hf_dataset is not None else self.load_and_activate()
+
+    def select_columns(self, column_names: str | list[str]) -> datasets.Dataset:
+        """Keep the default backend's existing HF Dataset return type."""
+        return self._loaded_dataset().select_columns(column_names)
+
+    def read_rows(
+        self,
+        indices: list[int],
+        columns: list[str] | None = None,
+        *,
+        query_type: str = "batch",
+        format_type: str | None = "custom",
+        **format_kwargs: Any,
+    ) -> Any:
+        """Read HF rows or columns with their existing formatting behavior."""
+        dataset = self._loaded_dataset()
+        if columns is not None:
+            dataset = dataset.select_columns(columns)
+        if format_type != "custom":
+            dataset = dataset.with_format(format_type, **format_kwargs)
+        if query_type == "row":
+            return dataset[indices[0]]
+        batch = dataset[indices]
+        return batch[dataset.column_names[0]] if query_type == "column" else batch
 
     def _validate_language_columns_declared(self, features: datasets.Features) -> None:
         """Require language columns stored in Parquet to be declared in metadata."""
@@ -419,6 +492,18 @@ class DatasetReader(BaseDatasetReader):
         for key, rows in per_key_rows.items():
             rel_sorted = sorted(rows)
             column = self._column_view(key)[rel_sorted][key]
+            if key in self._meta.image_keys:
+                absolute_rows = {
+                    relative: absolute
+                    for queries in query_indices_per_item
+                    for absolute, relative in zip(
+                        (queries or {}).get(key, []),
+                        self._to_relative((queries or {}).get(key, [])),
+                        strict=True,
+                    )
+                }
+                for value, relative in zip(column, rel_sorted, strict=True):
+                    require_image(value, key, absolute_rows[relative])
             gathered[key] = (column, {rel: j for j, rel in enumerate(rel_sorted)})
 
         return [
@@ -504,6 +589,9 @@ class DatasetReader(BaseDatasetReader):
         items: list[dict] = [{key: base[key][i] for key in base} for i in range(n)]
         ep_idxs = [int(items[i]["episode_index"]) for i in range(n)]
         abs_idxs = [int(items[i]["index"]) for i in range(n)]
+        for item, abs_idx in zip(items, abs_idxs, strict=True):
+            for key in self._meta.image_keys:
+                require_image(item[key], key, abs_idx)
 
         # Delta windows: per-item absolute query indices + padding, then one
         # batched tabular gather across the whole batch.

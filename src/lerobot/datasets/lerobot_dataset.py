@@ -310,7 +310,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
             }
             if video_decoder_cache_size is not None:
                 reader_kwargs["video_decoder_cache_size"] = video_decoder_cache_size
-            self.reader = make_dataset_reader(self.meta.storage_format, **reader_kwargs)
+            self.reader = make_dataset_reader(
+                self.meta.storage_format, video_backend=self._video_backend, **reader_kwargs
+            )
             self.episodes = self.reader.episodes
             self.writer = None
             self._is_finalized = False
@@ -329,6 +331,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_transforms=image_transforms,
             return_uint8=return_uint8,
             depth_output_unit=depth_output_unit,
+            token=token,
         )
         self.reader = reader
 
@@ -608,17 +611,24 @@ class LeRobotDataset(torch.utils.data.Dataset):
         """Select specific columns from the underlying dataset.
 
         Useful for extracting action sequences during replay without loading all features.
-        Returns a ``datasets.Dataset`` containing only the requested columns.
+        Returns a projected dataset with indexing, iteration and format selection.
+        The default backend returns a ``datasets.Dataset``; other readers may
+        return a lazy read-only view.
         """
-        return self.hf_dataset.select_columns(column_names)
+        return self._ensure_reader().select_columns(column_names)
 
-    def get_raw_item(self, idx) -> dict:
+    @property
+    def supports_raw_reads(self) -> bool:
+        """Whether the active reader supports base rows and column projection."""
+        return self._ensure_reader().supports_raw_reads
+
+    def get_raw_item(self, idx: int) -> dict:
         """Get a raw frame without image transforms applied.
 
-        Unlike ``__getitem__``, this returns the raw HF dataset row at the given
+        Unlike ``__getitem__``, this returns the base storage row at the given
         index with no delta-timestamp expansion, video decoding, or image transforms.
         """
-        return self.hf_dataset[idx]
+        return self._ensure_reader().get_raw_item(idx)
 
     def __repr__(self):
         feature_keys = list(self.features)
