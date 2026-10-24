@@ -160,14 +160,29 @@ class ZMQCamera(Camera):
             raise RuntimeError(f"Failed to connect to {self}: {e}") from e
 
     def _cleanup(self):
-        """Clean up ZMQ resources."""
-        self._connected = False
-        if self.socket:
-            self.socket.close()
+        """Stop background reads and release the ZMQ socket/context, including after partial setup."""
+        read_thread = self.thread
+        socket = self.socket
+        context = self.context
+
+        try:
+            self._stop_read_thread()
+        finally:
+            self._connected = False
             self.socket = None
-        if self.context:
-            self.context.term()
             self.context = None
+            try:
+                if socket is not None:
+                    socket.close()
+                if context is not None:
+                    context.term()
+            finally:
+                # Closing the socket may unblock a recv that outlived the first
+                # bounded join in _stop_read_thread().
+                if read_thread is not None and read_thread.is_alive():
+                    read_thread.join(timeout=2.0)
+                    if read_thread.is_alive():  # pragma: no cover
+                        logger.warning(f"{self} read thread remained alive after closing the socket.")
 
     @staticmethod
     def find_cameras() -> list[dict[str, Any]]:
@@ -377,14 +392,6 @@ class ZMQCamera(Camera):
         if not self.is_connected and self.thread is None:
             raise DeviceNotConnectedError(f"{self} not connected.")
 
-        if self.thread is not None:
-            self._stop_read_thread()
-
         self._cleanup()
-
-        with self.frame_lock:
-            self.latest_frame = None
-            self.latest_timestamp = None
-            self.new_frame_event.clear()
 
         logger.info(f"{self} disconnected.")
