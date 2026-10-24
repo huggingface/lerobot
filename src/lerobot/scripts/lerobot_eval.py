@@ -82,7 +82,7 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
-from lerobot.envs.utils import NEW_ROLLOUT_OPTION
+from lerobot.envs.utils import NEW_ROLLOUT_OPTION, _sub_env_has_attr
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
@@ -252,10 +252,8 @@ def rollout(
                 )
             )
         raw_observation = deepcopy(observation)
-        try:
+        if _sub_env_has_attr(env, "task_description"):
             task_desc = list(env.call("task_description"))[0]
-        except (AttributeError, NotImplementedError):
-            task_desc = ""
 
     all_observations = []
     all_actions = []
@@ -286,6 +284,9 @@ def rollout(
         leave=False,
     )
     check_env_attributes_and_types(env)
+    # Probe once instead of catching a failed env.call(): with AsyncVectorEnv, the error shuts the
+    # workers down.
+    task_attr = next((name for name in ("task_description", "task") if _sub_env_has_attr(env, name)), None)
     try:
         while not np.all(done) and step < max_steps:
             # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
@@ -295,13 +296,10 @@ def rollout(
 
             # Infer "task" from sub-environments (prefer natural language description).
             # env.call() works with both SyncVectorEnv and AsyncVectorEnv.
-            try:
-                observation["task"] = list(env.call("task_description"))
-            except (AttributeError, NotImplementedError):
-                try:
-                    observation["task"] = list(env.call("task"))
-                except (AttributeError, NotImplementedError):
-                    observation["task"] = [""] * env.num_envs
+            if task_attr is not None:
+                observation["task"] = list(env.call(task_attr))
+            else:
+                observation["task"] = [""] * env.num_envs
 
             # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
             observation = env_preprocessor(observation)
