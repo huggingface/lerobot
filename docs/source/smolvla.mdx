@@ -65,6 +65,8 @@ cd lerobot && lerobot-train \
   --wandb.enable=true
 ```
 
+If you're constrained by GPU memory, add `--policy.gradient_checkpointing=true` to trade some training speed for a significantly larger batch size.
+
 <Tip>
   You can start with a small batch size and increase it incrementally, if the
   GPU allows it, as long as loading times remain short.
