@@ -16,6 +16,7 @@
 
 import logging
 import random
+from collections.abc import Iterator
 from copy import copy, deepcopy
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
@@ -688,25 +689,36 @@ def _compute_horizon_relative_action_stats(
     return computed
 
 
-def _iter_action_state_training_samples(dataset: Any):
+def _iter_action_state_training_samples(dataset: Any) -> Iterator[tuple[Any, Any, torch.Tensor | None]]:
     ensure_reader = getattr(dataset, "_ensure_reader", None)
-    # Only the default parquet reader exposes hf_dataset; other readers
-    # (e.g. lance) fall through to the generic per-item loop below.
-    if callable(ensure_reader) and hasattr(reader := ensure_reader(), "hf_dataset"):
-        if reader.hf_dataset is None:
-            reader.load_and_activate()
+    select_columns = getattr(dataset, "select_columns", None)
+    if callable(ensure_reader) and callable(select_columns) and getattr(dataset, "supports_raw_reads", True):
+        reader = ensure_reader()
+        columns = [key for key in (ACTION, OBS_STATE, "index", "episode_index") if key in dataset.features]
+        rows = select_columns(columns)
+        action_rows = select_columns(ACTION) if ACTION in columns else None
+        relative_indices = dataset.absolute_to_relative_idx
         delta_indices = getattr(reader, "delta_indices", None)
-        for idx in range(len(dataset)):
-            item = reader.hf_dataset[idx]
+        for item in rows:
             action = item.get(ACTION)
             state = item.get(OBS_STATE)
             pad_mask = None
-            if delta_indices is not None and ACTION in delta_indices:
+            if action_rows is not None and delta_indices is not None and ACTION in delta_indices:
                 ep_idx = _as_int(item["episode_index"])
                 abs_idx = _as_int(item["index"])
-                query_indices, padding = reader._get_query_indices(abs_idx, ep_idx)
-                action = reader._query_hf_dataset([{ACTION: query_indices[ACTION]}])[0][ACTION]
-                pad_mask = padding.get(f"{ACTION}_is_pad")
+                episode = dataset.meta.episodes[ep_idx]
+                start, stop = episode["dataset_from_index"], episode["dataset_to_index"]
+                indices = [abs_idx + delta for delta in delta_indices[ACTION]]
+                pad_mask = torch.tensor(
+                    [index < start or index >= stop for index in indices], dtype=torch.bool
+                )
+                clipped = [min(max(index, start), stop - 1) for index in indices]
+                selected = (
+                    [relative_indices[index] for index in clipped]
+                    if relative_indices is not None
+                    else clipped
+                )
+                action = torch.stack([torch.as_tensor(value) for value in action_rows[selected][ACTION]])
             yield action, state, pad_mask
         return
 

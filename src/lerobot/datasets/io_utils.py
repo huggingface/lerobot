@@ -13,10 +13,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import datasets
+import fsspec
 import numpy as np
 import pandas
 import pandas as pd
@@ -26,10 +29,13 @@ import pyarrow.parquet as pq
 import torch
 from datasets import Dataset
 from datasets.table import embed_table_storage
+from huggingface_hub.constants import ENDPOINT as HF_ENDPOINT
+from huggingface_hub.utils import get_token_to_send
 from numpy.typing import DTypeLike
 from PIL import Image as PILImage
 from torchvision import transforms
 
+from lerobot.streaming.location import StorageLocation
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.utils import SuppressProgressBars, flatten_dict, unflatten_dict
 
@@ -253,6 +259,81 @@ def load_image_as_numpy(
 UINT16_PIL_MODES = {"I;16", "I;16B", "I;16L"}
 
 
+class DatasetImage(datasets.Image):
+    """HF Image decoding with a dataset root and external-resource credentials.
+
+    Root and credentials are runtime attributes, outside the inherited Image
+    dataclass fields, so the persisted HF schema remains the standard Image
+    schema. The context is retained by copies and worker pickling.
+    """
+
+    def __init__(
+        self,
+        root: str | Path,
+        token: str | bool | None = None,
+        storage_options: dict | None = None,
+    ) -> None:
+        super().__init__()
+        self._root = str(root)
+        self._token = token
+        self._storage_options = dict(storage_options or {})
+
+    def __eq__(self, other: object) -> bool:
+        """Compare the persisted feature definition, excluding runtime context."""
+        return isinstance(other, datasets.Image) and asdict(self) == asdict(other)
+
+    def decode_example(
+        self, value: dict, token_per_repo_id: dict[str, str | bool | None] | None = None
+    ) -> PILImage.Image:
+        """Decode embedded bytes or an accessible local/remote image path."""
+        if value.get("bytes") is not None:
+            return super().decode_example({"bytes": value["bytes"], "path": None}, token_per_repo_id)
+        path = value.get("path")
+        if path is None:
+            raise ValueError("An image must contain either bytes or a path.")
+        if "://" not in path and not Path(path).is_absolute():
+            path = (
+                f"{self._root.rstrip('/')}/{Path(path).as_posix()}"
+                if "://" in self._root
+                else str(Path(self._root).expanduser() / path)
+            )
+        options: dict = StorageLocation.parse(path).storage_options(self._token)
+        parsed_path, hub_endpoint = urlsplit(path), urlsplit(HF_ENDPOINT)
+        if parsed_path.scheme in {"http", "https"} and (parsed_path.scheme, parsed_path.netloc) == (
+            hub_endpoint.scheme,
+            hub_endpoint.netloc,
+        ):
+            access_token = get_token_to_send(self._token)
+            if access_token is not None:
+                options["headers"] = {"Authorization": f"Bearer {access_token}"}
+        if path.startswith("s3://"):
+            # Lance/object_store names its S3 credentials differently from fsspec.
+            for source, target in (
+                ("aws_access_key_id", "key"),
+                ("aws_secret_access_key", "secret"),
+                ("aws_session_token", "token"),
+            ):
+                if source in self._storage_options:
+                    options[target] = self._storage_options[source]
+            client = {
+                target: self._storage_options[source]
+                for source, target in (("aws_endpoint", "endpoint_url"), ("aws_region", "region_name"))
+                if source in self._storage_options
+            }
+            if client:
+                options["client_kwargs"] = client
+        with fsspec.open(path, "rb", **options) as file:
+            data = file.read()
+        return super().decode_example({"bytes": data, "path": None}, token_per_repo_id)
+
+
+def require_image(image: torch.Tensor | None, key: str, frame_index: int) -> torch.Tensor:
+    """Require an image when assembling a training sample, with a useful error."""
+    if image is None:
+        raise ValueError(f"Missing image for feature {key!r} at frame {frame_index}.")
+    return image
+
+
 def pil_to_chw_tensor(img: PILImage.Image) -> torch.Tensor:
     """Convert a PIL image to a channel-first tensor.
 
@@ -264,7 +345,7 @@ def pil_to_chw_tensor(img: PILImage.Image) -> torch.Tensor:
     return transforms.ToTensor()(img)
 
 
-def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[torch.Tensor | str]]:
+def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[Any]]:
     """Convert a batch from a Hugging Face dataset to torch tensors.
 
     This transform function converts items from Hugging Face dataset format (pyarrow)
@@ -283,13 +364,14 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
     for key in items_dict:
         if key in LANGUAGE_COLUMNS:
             continue
-        first_item = items_dict[key][0]
-        if isinstance(first_item, PILImage.Image):
-            items_dict[key] = [pil_to_chw_tensor(img) for img in items_dict[key]]
-        elif first_item is None or isinstance(first_item, dict):
-            pass
-        else:
-            items_dict[key] = [x if isinstance(x, str) else torch.tensor(x) for x in items_dict[key]]
+        items_dict[key] = [
+            pil_to_chw_tensor(value)
+            if isinstance(value, PILImage.Image)
+            else value
+            if value is None or isinstance(value, str | dict | torch.Tensor)
+            else torch.tensor(value)
+            for value in items_dict[key]
+        ]
     return items_dict
 
 
