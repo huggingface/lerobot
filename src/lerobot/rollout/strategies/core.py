@@ -23,6 +23,7 @@ import math
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
+from lerobot.rollout.hardware_gate import send_action_checked_with_approval
 from lerobot.configs import DatasetRecordConfig
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
@@ -333,7 +334,7 @@ class RolloutStrategy(abc.ABC):
                 interp = {}
                 for k in current_pos:
                     interp[k] = current_pos[k] * (1 - t) + target[k] * t
-                robot.send_action(interp)
+                send_action_checked_with_approval(robot, interp)
                 precise_sleep(1 / fps)
         except Exception as e:
             logger.warning("Could not return to initial position: %s", e)
@@ -528,6 +529,6 @@ def send_next_action(
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
     with section("send"):
         processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
-        if not commit_action(engine, interpolator, lambda: wrapper.send_action(processed), hold=hold):
+        if not commit_action(engine, interpolator, lambda: send_action_checked_with_approval(wrapper, processed), hold=hold):
             return None
     return action_dict
