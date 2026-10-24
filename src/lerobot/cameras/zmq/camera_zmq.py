@@ -257,6 +257,9 @@ class ZMQCamera(Camera):
                 capture_time = time.perf_counter()
 
                 with self.frame_lock:
+                    # Under the lock, so a late frame cannot resurrect the buffer _stop_read_thread() cleared.
+                    if stop_event.is_set():
+                        break
                     self.latest_frame = frame
                     self.latest_timestamp = capture_time
                 self.new_frame_event.set()
