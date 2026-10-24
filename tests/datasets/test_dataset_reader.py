@@ -15,19 +15,28 @@
 # limitations under the License.
 """Contract tests for DatasetReader."""
 
+import importlib
 import json
 import sys
+import threading
+import time
 import types
+from importlib.metadata import EntryPoint
 
 import pytest
 import torch
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.datasets import LeRobotDataset, register_dataset_reader
+from lerobot.datasets import LeRobotDataset, register_dataset_reader, storage as storage_module
 from lerobot.datasets.dataset_reader import DatasetReader
 from lerobot.datasets.io_utils import hf_transform_to_torch
-from lerobot.datasets.storage import _DATASET_READER_MODULES, DEFAULT_STORAGE_FORMAT, localize_remote_root
+from lerobot.datasets.storage import (
+    _DATASET_READER_MODULES,
+    DATASET_READER_ENTRY_POINT_GROUP,
+    DEFAULT_STORAGE_FORMAT,
+    localize_remote_root,
+)
 from lerobot.utils.constants import LANGUAGE_EVENTS
 from lerobot.utils.import_utils import get_safe_default_video_backend
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_REPO_ID
@@ -251,6 +260,311 @@ def test_register_dataset_reader(tmp_path, lerobot_dataset_factory, monkeypatch)
         assert localize_remote_root(DUMMY_REPO_ID, "s3://bucket/ds") == root
     finally:
         _DATASET_READER_MODULES.pop("toyfmt", None)
+
+
+# ── Reader registry: entry point discovery ───────────────────────────
+
+
+def _fake_entry_points(monkeypatch, *entries):
+    """Make discovery see exactly ``entries``, on a scratch registry.
+
+    Each entry is ``(name, value)`` or ``(name, value, distribution)``; the
+    distribution is what the messages about a contested format have to name.
+    Returns the list the fake appends to on every scan, so a test can assert how
+    many times the entry points were read.
+    """
+    points = []
+    for name, value, *dist in entries:
+        point = EntryPoint(name=name, value=value, group=DATASET_READER_ENTRY_POINT_GROUP)
+        if dist:
+            # EntryPoint is immutable; this is how importlib.metadata itself
+            # attaches the distribution (see EntryPoint._for).
+            vars(point).update(dist=types.SimpleNamespace(name=dist[0], version="1.0"))
+        points.append(point)
+    scans = []
+
+    def fake_entry_points(group=None):
+        scans.append(group)
+        return points if group == DATASET_READER_ENTRY_POINT_GROUP else []
+
+    monkeypatch.setattr(storage_module, "entry_points", fake_entry_points)
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", dict(_DATASET_READER_MODULES))
+    monkeypatch.setattr(storage_module, "_AMBIGUOUS_READER_PROVIDERS", {})
+    monkeypatch.setattr(storage_module, "_PLUGINS_DISCOVERED", False)
+    return scans
+
+
+def test_entry_point_plugin_serves_a_dataset(tmp_path, lerobot_dataset_factory, monkeypatch):
+    """An installed package's storage format loads without the caller importing it."""
+    root = tmp_path / "src"
+    lerobot_dataset_factory(
+        root=root, total_episodes=2, total_frames=60, use_videos=False, camera_features={}
+    )
+    plain_item = LeRobotDataset(DUMMY_REPO_ID, root=root)[0]
+
+    module = types.ModuleType("plugin_reader")
+    module.DATASET_READER = ToyDatasetReader
+    monkeypatch.setitem(sys.modules, "plugin_reader", module)
+    _fake_entry_points(monkeypatch, ("plugfmt", "plugin_reader"))
+
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["storage_format"] = "plugfmt"
+    info_path.write_text(json.dumps(info))
+
+    # Note there is no register_dataset_reader() call and no import of the
+    # plugin anywhere in this test: declaring the entry point is the whole setup.
+    ds = LeRobotDataset(DUMMY_REPO_ID, root=root)
+
+    assert isinstance(ds.reader, ToyDatasetReader)
+    item = ds[0]
+    for key, expected in plain_item.items():
+        if isinstance(expected, torch.Tensor):
+            torch.testing.assert_close(item[key], expected, rtol=0, atol=0)
+
+
+def test_entry_points_cannot_shadow_builtin_formats(monkeypatch):
+    """Installing a package cannot change how built-in formats are read."""
+    _fake_entry_points(monkeypatch, ("lerobot", "hijack_reader"), ("lance", "hijack_reader"))
+
+    storage_module._discover_plugin_readers()
+
+    assert DEFAULT_STORAGE_FORMAT not in storage_module._DATASET_READER_MODULES
+    assert storage_module._DATASET_READER_MODULES["lance"] == "lerobot.datasets.lance_backend"
+
+
+def test_broken_entry_point_does_not_block_the_others(monkeypatch):
+    """One unusable plugin is skipped; the rest still register."""
+    _fake_entry_points(
+        monkeypatch,
+        ("brokenfmt", "not a module path!"),
+        ("contestedfmt", "first_reader", "pkg-a"),
+        ("contestedfmt", "second_reader", "pkg-b"),
+        ("goodfmt", "good_reader"),
+    )
+
+    storage_module._discover_plugin_readers()
+
+    registry = storage_module._DATASET_READER_MODULES
+    assert "brokenfmt" not in registry
+    assert "contestedfmt" not in registry
+    assert registry["goodfmt"] == "good_reader"
+
+
+def test_contested_format_is_an_error_naming_every_claimant(monkeypatch):
+    """Two packages claiming one format fails loudly instead of picking a winner."""
+    _fake_entry_points(
+        monkeypatch,
+        ("contestedfmt", "a_pkg.reader", "pkg-a"),
+        ("contestedfmt", "b_pkg.reader", "pkg-b"),
+    )
+
+    with pytest.raises(ValueError) as caught:
+        storage_module._reader_module("contestedfmt")
+
+    message = str(caught.value)
+    # Every claimant, by distribution and module, or the user cannot tell what to uninstall.
+    for expected in ("contestedfmt", "pkg-a 1.0", "a_pkg.reader", "pkg-b 1.0", "b_pkg.reader"):
+        assert expected in message
+    assert "register_dataset_reader" in message  # and how to settle it
+
+
+def test_contested_format_does_not_depend_on_scan_order(monkeypatch):
+    """Which package entry_points() lists first must not change the outcome.
+
+    Ordering follows sys.path, so a first-wins rule would read the same install
+    differently on different machines -- the failure this test exists to prevent.
+    """
+    claims = [("contestedfmt", "a_pkg.reader", "pkg-a"), ("contestedfmt", "b_pkg.reader", "pkg-b")]
+    messages = []
+    for ordered in (claims, list(reversed(claims))):
+        _fake_entry_points(monkeypatch, *ordered)
+        with pytest.raises(ValueError) as caught:
+            storage_module._reader_module("contestedfmt")
+        messages.append(str(caught.value))
+
+    assert messages[0] == messages[1]
+
+
+def test_contested_format_does_not_disturb_the_others(monkeypatch):
+    """A conflict over one format leaves every other format loadable."""
+    _fake_entry_points(
+        monkeypatch,
+        ("contestedfmt", "a_pkg.reader", "pkg-a"),
+        ("contestedfmt", "b_pkg.reader", "pkg-b"),
+        ("goodfmt", "good_reader", "pkg-c"),
+    )
+
+    storage_module._discover_plugin_readers()
+
+    assert storage_module._DATASET_READER_MODULES["goodfmt"] == "good_reader"
+    assert storage_module._DATASET_READER_MODULES["lance"] == "lerobot.datasets.lance_backend"
+
+
+def test_two_packages_naming_the_same_module_is_not_a_conflict(monkeypatch):
+    """Nothing is ambiguous when the claims agree -- e.g. a package and its meta-package."""
+    _fake_entry_points(
+        monkeypatch,
+        ("sharedfmt", "shared_reader", "pkg-a"),
+        ("sharedfmt", "shared_reader:DATASET_READER", "pkg-b"),
+    )
+
+    storage_module._discover_plugin_readers()
+
+    assert storage_module._DATASET_READER_MODULES["sharedfmt"] == "shared_reader"
+
+
+@pytest.mark.parametrize("register_first", [True, False])
+def test_explicit_registration_settles_a_contested_format(monkeypatch, register_first):
+    """The documented way out of a conflict works whichever side of discovery it lands on."""
+    _fake_entry_points(
+        monkeypatch,
+        ("contestedfmt", "a_pkg.reader", "pkg-a"),
+        ("contestedfmt", "b_pkg.reader", "pkg-b"),
+    )
+    if not register_first:
+        storage_module._discover_plugin_readers()  # conflict recorded first
+
+    register_dataset_reader("contestedfmt", "a_pkg.reader")
+
+    assert storage_module._DATASET_READER_MODULES["contestedfmt"] == "a_pkg.reader"
+    assert "contestedfmt" not in storage_module._AMBIGUOUS_READER_PROVIDERS
+
+
+def test_contested_format_is_reported_when_localizing_a_remote_root(monkeypatch):
+    """An unresolved conflict shows up in the probe error, not as 'no dataset found'."""
+    _fake_entry_points(
+        monkeypatch,
+        ("contestedfmt", "a_pkg.reader", "pkg-a"),
+        ("contestedfmt", "b_pkg.reader", "pkg-b"),
+    )
+    # No built-in probes, so the error is about the conflict and nothing else.
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", {})
+
+    with pytest.raises(FileNotFoundError, match="contestedfmt"):
+        localize_remote_root(DUMMY_REPO_ID, "s3://bucket/ds")
+
+
+def test_discovery_does_not_import_plugin_modules(monkeypatch):
+    """Registration records the module name only, so plugin deps stay optional."""
+    module_name = "lerobot_absent_plugin_module"
+    assert module_name not in sys.modules
+    _fake_entry_points(monkeypatch, ("lazyfmt", module_name))
+
+    storage_module._discover_plugin_readers()
+
+    assert storage_module._DATASET_READER_MODULES["lazyfmt"] == module_name
+    assert module_name not in sys.modules
+
+
+def test_entry_points_are_scanned_once(monkeypatch):
+    """Discovery runs on first lookup and is not repeated on later ones."""
+    scans = _fake_entry_points(monkeypatch, ("oncefmt", "once_reader"))
+
+    for _ in range(3):
+        storage_module._discover_plugin_readers()
+
+    assert scans == [DATASET_READER_ENTRY_POINT_GROUP]
+
+
+def test_discovery_is_safe_under_concurrent_first_use(monkeypatch):
+    """Threads opening datasets at once all see a fully built registry.
+
+    Discovery is triggered by first use, so two threads reach it together. The
+    scan has to finish before either reads the registry -- otherwise the thread
+    that did not run it gets "Unknown storage_format" for a format that is in
+    the middle of being registered.
+    """
+    scans = _fake_entry_points(monkeypatch, ("racefmt", "race_reader"))
+    scanning = storage_module.entry_points
+
+    def slow_entry_points(group=None):
+        points = scanning(group=group)
+        time.sleep(0.05)  # widen the window a correct implementation has to close
+        return points
+
+    monkeypatch.setattr(storage_module, "entry_points", slow_entry_points)
+    monkeypatch.setitem(sys.modules, "race_reader", types.ModuleType("race_reader"))
+
+    started = threading.Barrier(8)
+    results = []
+
+    def open_dataset():
+        started.wait()
+        try:
+            results.append(storage_module._reader_module("racefmt"))
+        except Exception as error:  # noqa: BLE001 -- the failure is the assertion
+            results.append(error)
+
+    threads = [threading.Thread(target=open_dataset) for _ in range(started.parties)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert [r for r in results if isinstance(r, Exception)] == []
+    assert len(results) == started.parties
+    assert len(scans) == 1  # and the scan still ran exactly once
+
+
+def test_discovery_reads_real_distribution_metadata(tmp_path, monkeypatch):
+    """The scan goes through importlib.metadata, so a pip-installed package is found.
+
+    Every other test here fakes ``entry_points``; this one puts a real
+    ``.dist-info`` on ``sys.path`` and lets importlib find it, which is what
+    actually happens for an installed plugin.
+    """
+    dist_info = tmp_path / "lerobot_fake_plugin-0.1.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text("Metadata-Version: 2.1\nName: lerobot-fake-plugin\nVersion: 0.1.0\n")
+    (dist_info / "entry_points.txt").write_text(
+        f"[{DATASET_READER_ENTRY_POINT_GROUP}]\nrealfmt = lerobot_fake_plugin.reader\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", dict(_DATASET_READER_MODULES))
+    monkeypatch.setattr(storage_module, "_PLUGINS_DISCOVERED", False)
+
+    storage_module._discover_plugin_readers()
+
+    assert storage_module._DATASET_READER_MODULES["realfmt"] == "lerobot_fake_plugin.reader"
+    assert "lerobot_fake_plugin.reader" not in sys.modules
+
+
+def test_real_conflicting_distributions_are_named_in_the_error(tmp_path, monkeypatch):
+    """The conflict message reads real ``.dist-info``, so it names installed packages.
+
+    Companion to the test above: two genuine distributions on ``sys.path``
+    claiming one format, which is the situation a user actually hits.
+    """
+    for dist_name, module in (("lerobot-fake-a", "fake_a.reader"), ("lerobot-fake-b", "fake_b.reader")):
+        dist_info = tmp_path / f"{dist_name.replace('-', '_')}-2.3.4.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {dist_name}\nVersion: 2.3.4\n")
+        (dist_info / "entry_points.txt").write_text(
+            f"[{DATASET_READER_ENTRY_POINT_GROUP}]\nrivalfmt = {module}\n"
+        )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    monkeypatch.setattr(storage_module, "_DATASET_READER_MODULES", dict(_DATASET_READER_MODULES))
+    monkeypatch.setattr(storage_module, "_AMBIGUOUS_READER_PROVIDERS", {})
+    monkeypatch.setattr(storage_module, "_PLUGINS_DISCOVERED", False)
+
+    with pytest.raises(ValueError) as caught:
+        storage_module._reader_module("rivalfmt")
+
+    message = str(caught.value)
+    for expected in ("lerobot-fake-a 2.3.4", "fake_a.reader", "lerobot-fake-b 2.3.4", "fake_b.reader"):
+        assert expected in message
+    assert "rivalfmt" not in storage_module._DATASET_READER_MODULES
+
+
+def test_unknown_storage_format_lists_discovered_plugins(monkeypatch):
+    """The 'unknown format' error names plugin formats, so a typo is diagnosable."""
+    _fake_entry_points(monkeypatch, ("plugfmt", "plugin_reader"))
+
+    with pytest.raises(ValueError, match="plugfmt"):
+        storage_module._reader_module("nosuchfmt")
 
 
 # ── Delta queries ────────────────────────────────────────────────────
