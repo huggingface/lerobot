@@ -83,6 +83,16 @@ and constructing the optimizer: converting an already BF16-loaded model to FP32
 cannot recover precision lost during loading. These choices specify storage and
 computation; they do not establish equivalent convergence or LIBERO performance.
 
+The released checkpoints convert the last action dimension from a `[0, 1]`
+gripper convention to signed commands. If fine-tuning already produces the
+signed commands required by your environment, pass
+`--policy.toggle_action_dimensions=[]` to avoid applying that conversion again.
+Check which value opens and closes the gripper in both the dataset and the
+environment; the numeric range alone does not establish the physical convention.
+The active policy setting also applies when loading saved processors. Explicit
+`postprocessor_overrides` take precedence, and saved normalization statistics
+remain in use unless separately overridden.
+
 Keep the checkpoint's camera order, action/state definitions, and denoising mode.
 `past_obs_steps` is measured in control ticks. Training samples video every
 `video_stride=4` ticks. `action_horizon` sets the training chunk length;

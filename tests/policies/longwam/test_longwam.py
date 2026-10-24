@@ -111,6 +111,86 @@ def batch(cfg, temporal=False, value=0.25, task="pick"):
 
 
 @pytest.mark.parametrize(
+    "saved_dimensions,active_dimensions", [([-1], []), ([-1], [0]), ([], [-1]), ([-1], [-1]), ([], [])]
+)
+def test_pretrained_postprocessor_honors_active_toggle(config, tmp_path, saved_dimensions, active_dimensions):
+    config.toggle_action_dimensions = saved_dimensions
+    pre, post = make_pre_post_processors(config, dataset_stats=stats(config))
+    saved = tmp_path / "processors"
+    pre.save_pretrained(saved)
+    post.save_pretrained(saved)
+    config.toggle_action_dimensions = active_dimensions
+    _, loaded = make_pre_post_processors(config, pretrained_path=saved)
+    _, fresh = make_pre_post_processors(config, dataset_stats=stats(config))
+    actions = torch.tensor([[-0.5, 0.25, -0.5], [0.5, -0.25, 0.5]])
+    unchanged = actions.clone()
+    torch.testing.assert_close(loaded(actions), fresh(actions), atol=0, rtol=0)
+    torch.testing.assert_close(actions, unchanged, atol=0, rtol=0)
+    post.save_pretrained(tmp_path / "saved-again")
+    assert (saved / "policy_postprocessor.json").read_bytes() == (
+        tmp_path / "saved-again/policy_postprocessor.json"
+    ).read_bytes()
+
+
+def test_pretrained_postprocessor_preserves_explicit_overrides(config, tmp_path):
+    config.toggle_action_dimensions = [-1]
+    pre, post = make_pre_post_processors(config, dataset_stats=stats(config))
+    pre.save_pretrained(tmp_path, config_filename="input.json")
+    post.save_pretrained(tmp_path, config_filename="output.json")
+    config.toggle_action_dimensions = []
+    overrides = {"longwam_action_toggle": {"dimensions": [0]}}
+    _, loaded = make_pre_post_processors(
+        config,
+        pretrained_path=tmp_path,
+        preprocessor_config_filename="input.json",
+        postprocessor_config_filename="output.json",
+        postprocessor_overrides=overrides,
+    )
+    actions = torch.tensor([[-0.5, 0.25, -0.5], [0.5, -0.25, 0.5]])
+    expected = torch.tensor([[1.0, 0.5, -1.0], [-1.0, -0.5, 1.0]])
+    torch.testing.assert_close(loaded(actions), expected, atol=0, rtol=0)
+    assert overrides == {"longwam_action_toggle": {"dimensions": [0]}}
+    assert config.toggle_action_dimensions == []
+
+
+def test_pretrained_toggle_preserves_normalization_override(config, tmp_path):
+    config.toggle_action_dimensions = [-1]
+    pre, post = make_pre_post_processors(config, dataset_stats=stats(config))
+    pre.save_pretrained(tmp_path)
+    post.save_pretrained(tmp_path)
+    config.toggle_action_dimensions = []
+    replacement = stats(config)
+    replacement["action"] = {"min": torch.full((3,), -4.0), "max": torch.full((3,), 4.0)}
+    _, loaded = make_pre_post_processors(
+        config,
+        pretrained_path=tmp_path,
+        postprocessor_overrides={"unnormalizer_processor": {"stats": replacement}},
+    )
+    actions = torch.tensor([[0.25, -0.25, 0.5]])
+    torch.testing.assert_close(loaded(actions), torch.tensor([[1.0, -1.0, 2.0]]), atol=0, rtol=0)
+
+
+@pytest.mark.parametrize("malformed", ["duplicate_toggle", "missing_unnormalizer"])
+def test_pretrained_toggle_rejects_ambiguous_pipeline(config, tmp_path, malformed):
+    from lerobot.policies.longwam.processor_longwam import LongWAMActionToggle
+    from lerobot.processor import UnnormalizerProcessorStep
+
+    config.toggle_action_dimensions = []
+    pre, post = make_pre_post_processors(config, dataset_stats=stats(config))
+    if malformed == "duplicate_toggle":
+        post.steps.extend([LongWAMActionToggle([-1]), LongWAMActionToggle([-1])])
+        message = "at most one action toggle"
+    else:
+        post.steps = [step for step in post.steps if not isinstance(step, UnnormalizerProcessorStep)]
+        message = "exactly one action unnormalizer"
+    pre.save_pretrained(tmp_path)
+    post.save_pretrained(tmp_path)
+    config.toggle_action_dimensions = [-1]
+    with pytest.raises(ValueError, match=message):
+        make_pre_post_processors(config, pretrained_path=tmp_path)
+
+
+@pytest.mark.parametrize(
     "input_size,camera_size",
     [
         ((16, 32), (16, 16)),

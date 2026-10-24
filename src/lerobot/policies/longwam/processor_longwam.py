@@ -19,9 +19,12 @@ from lerobot.processor import (
     ProcessorStep,
     ProcessorStepRegistry,
     TokenizerProcessorStep,
+    UnnormalizerProcessorStep,
+    load_pretrained_policy_processors,
     make_default_policy_processor_steps,
     make_policy_processor_pipelines,
 )
+from lerobot.utils.constants import POLICY_POSTPROCESSOR_DEFAULT_NAME, POLICY_PREPROCESSOR_DEFAULT_NAME
 
 from .configuration_longwam import LongWAMConfig
 
@@ -174,3 +177,43 @@ def make_longwam_pre_post_processors(
         post.append(LongWAMActionToggle(config.toggle_action_dimensions))
     post.append(steps.to_cpu)
     return make_policy_processor_pipelines(input_steps=pre, output_steps=post)
+
+
+def make_longwam_pre_post_processors_from_pretrained(
+    config: LongWAMConfig,
+    pretrained_path: str,
+    *,
+    revision: str | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+    postprocessor_overrides: dict[str, Any] | None = None,
+    preprocessor_config_filename: str = f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json",
+    postprocessor_config_filename: str = f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json",
+    **_: Any,
+) -> tuple[PolicyProcessorPipeline, PolicyProcessorPipeline]:
+    """Keep saved normalization while applying the active action-toggle configuration."""
+    pre, post = load_pretrained_policy_processors(
+        pretrained_path,
+        revision=revision,
+        preprocessor_overrides=preprocessor_overrides,
+        postprocessor_overrides=postprocessor_overrides,
+        preprocessor_config_filename=preprocessor_config_filename,
+        postprocessor_config_filename=postprocessor_config_filename,
+    )
+    # Explicit processor overrides retain precedence over the policy configuration.
+    if "dimensions" in (postprocessor_overrides or {}).get("longwam_action_toggle", {}):
+        return pre, post
+    toggles = [step for step in post.steps if isinstance(step, LongWAMActionToggle)]
+    if len(toggles) > 1:
+        raise ValueError("LongWAM postprocessor must contain at most one action toggle")
+    dimensions = list(config.toggle_action_dimensions)
+    if toggles:
+        toggles[0].dimensions = dimensions
+    elif dimensions:
+        unnormalizers = [
+            i for i, step in enumerate(post.steps) if isinstance(step, UnnormalizerProcessorStep)
+        ]
+        if len(unnormalizers) != 1:
+            raise ValueError("LongWAM action toggle requires exactly one action unnormalizer")
+        index = unnormalizers[0] + 1
+        post.steps = [*post.steps[:index], LongWAMActionToggle(dimensions), *post.steps[index:]]
+    return pre, post
