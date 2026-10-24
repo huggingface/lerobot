@@ -19,7 +19,7 @@ from typing import Any
 
 import gymnasium as gym
 
-from .configs import EnvConfig, HubEnvConfig
+from .configs import EnvConfig, HubEnvConfig, LiberoEnv
 from .utils import _call_make_env, _download_hub_file, _import_hub_module, _normalize_hub_result
 
 
@@ -42,12 +42,12 @@ def make_env_pre_post_processors(
     Create preprocessor and postprocessor pipelines for environment observations.
 
     Returns a tuple of (preprocessor, postprocessor). By default, delegates to
-    ``env_cfg.get_env_processors()``.  The XVLAConfig policy-specific override
+    ``env_cfg.get_env_processors()``.  The XVLAConfig override for LIBERO environments
     stays here because it depends on the *policy* config, not the env config.
     """
     from lerobot.policies.xvla.configuration_xvla import XVLAConfig
 
-    if isinstance(policy_cfg, XVLAConfig):
+    if isinstance(policy_cfg, XVLAConfig) and isinstance(env_cfg, LiberoEnv):
         from lerobot.policies.xvla.processor_xvla import make_xvla_libero_pre_post_processors
 
         return make_xvla_libero_pre_post_processors()
