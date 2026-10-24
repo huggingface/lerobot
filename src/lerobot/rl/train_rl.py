@@ -23,6 +23,7 @@ from lerobot.configs.train import TrainPipelineConfig
 
 from .algorithms.configs import RLAlgorithmConfig
 from .algorithms.factory import make_algorithm_config
+from .algorithms.qf3 import QF3AlgorithmConfig  # noqa: F401
 from .algorithms.sac import SACAlgorithmConfig  # noqa: F401
 
 
