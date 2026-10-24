@@ -513,8 +513,8 @@ def make_dataloaders(
                 )
             )
             eval_ds = torch.utils.data.Subset(eval_dataset, valid_frames)
-        if cfg.max_eval_samples > 0 and hasattr(eval_dataset, "hf_dataset"):
-            task_arr = eval_dataset.hf_dataset.data.column("task_index").to_numpy()
+        if cfg.max_eval_samples > 0 and getattr(eval_dataset, "supports_raw_reads", False):
+            task_arr = eval_dataset.select_columns("task_index").with_format("numpy")[:]["task_index"]
             if valid_frames is not None:
                 task_arr = task_arr[valid_frames]
             unique_tasks = sorted(set(task_arr.tolist()))

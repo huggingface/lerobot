@@ -376,11 +376,11 @@ def _feature_dim_names(feature: dict | None) -> list[str] | None:
     labels: list[str] | None = None
     if isinstance(names, dict):
         values = list(names.values())
-        if values and all(isinstance(v, (list, tuple)) for v in values):
+        if values and all(isinstance(v, list | tuple) for v in values):
             labels = [str(n) for group in values for n in group]
         elif values and all(isinstance(v, int) and not isinstance(v, bool) for v in values):
             labels = [name for name, _ in sorted(names.items(), key=lambda kv: kv[1])]
-    elif isinstance(names, (list, tuple)):
+    elif isinstance(names, list | tuple):
         labels = [str(n) for n in names]
     if labels is not None and dim is not None and len(labels) == dim:
         return labels
@@ -413,9 +413,11 @@ def _frame_to_scalars(sample: dict, key: str, labels: list[str] | None = None) -
 
 def _playback_times_ns(dataset) -> list[int]:
     """Per-frame timestamps in nanoseconds, read without decoding video."""
+    if callable(getattr(dataset, "select_columns", None)) and getattr(dataset, "supports_raw_reads", True):
+        return [int(round(float(t) * 1e9)) for t in dataset.select_columns("timestamp")["timestamp"]]
     if hasattr(dataset, "hf_dataset"):
         return [int(round(float(t) * 1e9)) for t in dataset.hf_dataset["timestamp"]]
-    # Storage formats without hf_dataset (e.g. lance): timestamps lie on the fps grid.
+    # Iterable datasets without random-access columns use the fps grid.
     return [int(round(i * 1e9 / dataset.fps)) for i in range(len(dataset))]
 
 

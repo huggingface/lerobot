@@ -25,7 +25,7 @@ import torch
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets import LeRobotDataset, register_dataset_reader
-from lerobot.datasets.dataset_reader import DatasetReader
+from lerobot.datasets.dataset_reader import BaseDatasetReader, DatasetReader
 from lerobot.datasets.io_utils import hf_transform_to_torch
 from lerobot.datasets.storage import _DATASET_READER_MODULES, DEFAULT_STORAGE_FORMAT, localize_remote_root
 from lerobot.utils.constants import LANGUAGE_EVENTS
@@ -51,6 +51,32 @@ def test_try_load_returns_true_when_data_exists(tmp_path, lerobot_dataset_factor
     )
     assert reader.try_load() is True
     assert reader.hf_dataset is not None
+
+
+def test_legacy_reader_can_keep_its_existing_contract():
+    class LegacyReader(BaseDatasetReader):
+        episodes = None
+
+        @property
+        def num_frames(self):
+            return 1
+
+        @property
+        def num_episodes(self):
+            return 1
+
+        @property
+        def absolute_to_relative_idx(self):
+            return None
+
+        def get_item(self, idx):
+            return {"index": torch.tensor(idx)}
+
+    reader = LegacyReader()
+    assert not reader.supports_raw_reads
+    assert reader.get_item(0)["index"].item() == 0
+    with pytest.raises(NotImplementedError, match="base-row"):
+        reader.get_raw_item(0)
 
 
 def test_try_load_returns_false_when_no_data(tmp_path):
