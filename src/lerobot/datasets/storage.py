@@ -54,6 +54,7 @@ def register_dataset_reader(storage_format: str, module: str) -> None:
 
 
 register_dataset_reader("lance", "lerobot.datasets.lance_backend")
+register_dataset_reader("paimon", "lerobot.datasets.paimon_backend")
 
 
 def is_remote_uri(root: str | Path) -> bool:

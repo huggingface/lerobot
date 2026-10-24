@@ -130,6 +130,7 @@ def require_package(pkg_name: str, extra: str, import_name: str | None = None) -
 
 # ML / training
 _lancedb_available = is_package_available("lancedb")
+_pypaimon_available = is_package_available("pypaimon")
 _transformers_available = is_package_available("transformers")
 _peft_available = is_package_available("peft")
 _accelerate_available = is_package_available("accelerate")
