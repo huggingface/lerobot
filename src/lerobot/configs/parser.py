@@ -51,17 +51,22 @@ _config_yaml_overrides: dict[str, list[str]] = {}
 
 
 def _flatten_to_cli_args(d: dict, prefix: str = "") -> list[str]:
-    """Recursively flatten a nested dict to CLI-style args (e.g. {"lr": 1e-4} -> ["--lr=0.0001"])."""
+    """Flatten a config dict to CLI-style args (e.g. {"lr": 1e-4} -> ["--lr=0.0001"]).
+
+    Dict and list values are emitted as one JSON argument. draccus accepts ``--field={...}`` for
+    both dict fields and nested dataclasses, and merges the object with the loaded config so unset
+    keys keep their saved values. Dotted keys only work for dataclass fields, so a dict field such
+    as ``normalization_mapping`` (or a key that itself contains a dot, like ``observation.state``)
+    is rejected as an unrecognized argument. See #4840.
+    """
     args = []
     for key, value in d.items():
         if key in (PATH_KEY, draccus.CHOICE_TYPE_KEY):
             continue
         full_key = f"{prefix}.{key}" if prefix else key
         if isinstance(value, bool):
-            value = str(value).lower()
-        if isinstance(value, dict):
-            args.extend(_flatten_to_cli_args(value, full_key))
-        elif isinstance(value, list):
+            args.append(f"--{full_key}={str(value).lower()}")
+        elif isinstance(value, (dict, list)):
             args.append(f"--{full_key}={json.dumps(value)}")
         elif value is not None:
             args.append(f"--{full_key}={value}")
