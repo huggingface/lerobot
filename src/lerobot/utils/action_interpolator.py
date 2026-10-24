@@ -19,6 +19,7 @@ Useful with RTC and action-chunking policies to reduce jerkiness.
 """
 
 from torch import Tensor
+from lerobot.rollout.hardware_gate import send_action_checked_with_approval
 
 
 class ActionInterpolator:
@@ -43,7 +44,7 @@ class ActionInterpolator:
 
         action = interpolator.get()
         if action:
-            robot.send_action(action)
+            send_action_checked_with_approval(robot, action)
     """
 
     def __init__(self, multiplier: int = 1):

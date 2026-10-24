@@ -71,6 +71,7 @@ from lerobot.utils.utils import log_say
 from ..configs import DAggerKeyboardConfig, DAggerPedalConfig, DAggerStrategyConfig
 from ..context import RolloutContext
 from .core import RolloutStrategy, estimate_max_episode_seconds, safe_push_to_hub, send_next_action
+from ..hardware_gate import send_action_checked_with_approval
 
 logger = logging.getLogger(__name__)
 
@@ -388,7 +389,7 @@ class DAggerStrategy(RolloutStrategy):
                         teleop_action = teleop.get_action()
                         processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                         robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
-                        robot.send_action(robot_action_to_send)
+                        send_action_checked_with_approval(ctx.hardware.robot_wrapper, robot_action_to_send)
                         last_action = robot_action_to_send
                         self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
                         if record_tick % record_stride == 0:
@@ -590,7 +591,7 @@ class DAggerStrategy(RolloutStrategy):
                         teleop_action = teleop.get_action()
                         processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
                         robot_action_to_send = ctx.processors.robot_action_processor((processed_teleop, obs))
-                        robot.send_action(robot_action_to_send)
+                        send_action_checked_with_approval(ctx.hardware.robot_wrapper, robot_action_to_send)
                         last_action = robot_action_to_send
                         self._log_telemetry(obs_processed, processed_teleop, ctx.runtime)
 

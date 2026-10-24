@@ -77,6 +77,7 @@ from lerobot.utils.utils import (
     init_logging,
     log_say,
 )
+from lerobot.rollout.hardware_gate import send_action_checked_with_approval
 
 
 @dataclass
@@ -127,7 +128,7 @@ def replay(cfg: ReplayConfig):
 
             processed_action = robot_action_processor((action, robot_obs))
 
-            _ = robot.send_action(processed_action)
+            _ = send_action_checked_with_approval(robot, processed_action)
 
             dt_s = time.perf_counter() - start_episode_t
             precise_sleep(max(1 / dataset.fps - dt_s, 0.0))

@@ -129,6 +129,7 @@ from lerobot.utils.visualization_utils import (
     log_visualization_data,
     shutdown_visualization,
 )
+from lerobot.rollout.hardware_gate import send_action_checked_with_approval
 
 
 @dataclass
@@ -207,7 +208,7 @@ def teleop_loop(
         robot_action_to_send = robot_action_processor((teleop_action, obs))
 
         # Send processed action to robot (robot_action_processor.to_output should return RobotAction)
-        _ = robot.send_action(robot_action_to_send)
+        _ = send_action_checked_with_approval(robot, robot_action_to_send)
 
         if display_data:
             # Process robot observation through pipeline

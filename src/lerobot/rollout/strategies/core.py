@@ -141,6 +141,7 @@ class RolloutStrategy(abc.ABC):
     def _return_to_initial_position(hw: HardwareContext, duration_s: float = 3.0, fps: int = 50) -> None:
         """Smoothly interpolate the robot back to its initial position."""
         robot = hw.robot_wrapper
+        from lerobot.rollout.hardware_gate import send_action_checked_with_approval
         target = hw.initial_position
         try:
             current_obs = robot.get_observation()
@@ -151,7 +152,7 @@ class RolloutStrategy(abc.ABC):
                 interp = {}
                 for k in current_pos:
                     interp[k] = current_pos[k] * (1 - t) + target[k] * t
-                robot.send_action(interp)
+                send_action_checked_with_approval(robot, interp)
                 precise_sleep(1 / fps)
         except Exception as e:
             logger.warning("Could not return to initial position: %s", e)
@@ -443,7 +444,6 @@ def send_next_action(
         if lateral_result is not None:
             try:
                 from lerobot.rollout.lateral_residual_control import (
-                    LATERAL_ACTIVE_SCALE,
                     apply_lateral_residual,
                 )
 
@@ -455,6 +455,7 @@ def send_next_action(
                 )
             except Exception as exc:
                 import math
+
                 import lerobot.rollout.lateral_residual_control as lateral_control
 
                 lateral_scale = float(
@@ -499,6 +500,7 @@ def send_next_action(
 
         # Fail closed when PPO residual control is active.
         import math
+
         import lerobot.rollout.residual_control as residual_control
 
         scale = float(residual_control.ACTIVE_SCALE)
@@ -536,7 +538,11 @@ def send_next_action(
 
     processed = validate_normalized_gripper(processed)
 
-    dispatched = ctx.hardware.robot_wrapper.send_action(processed)
+    from lerobot.rollout.hardware_gate import send_action_checked_with_approval
+
+    dispatched = send_action_checked_with_approval(
+        ctx.hardware.robot_wrapper, processed
+    )
 
     # Diagnostic logging only; never modify the dispatched action.
     try:
