@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import importlib
+import logging
+from importlib.metadata import entry_points
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -33,6 +35,12 @@ if TYPE_CHECKING:
     from .dataset_reader import BaseDatasetReader
 
 DEFAULT_STORAGE_FORMAT = "lerobot"
+
+# Third-party backends may advertise themselves under this entry-point group:
+# each entry point is named after the ``storage_format`` it serves and points
+# at the module implementing the reader contract described below. They are
+# discovered lazily, the first time a backend is resolved.
+ENTRY_POINT_GROUP = "lerobot.dataset_readers"
 
 # Supported non-default storage formats and the module implementing each.
 # Modules are imported lazily so their optional dependencies stay optional;
@@ -54,6 +62,27 @@ def register_dataset_reader(storage_format: str, module: str) -> None:
 
 
 register_dataset_reader("lance", "lerobot.datasets.lance_backend")
+
+_entry_points_loaded = False
+logger = logging.getLogger(__name__)
+
+
+def load_entry_point_backends() -> None:
+    """Register backend modules advertised under ``ENTRY_POINT_GROUP``.
+
+    Runs at most once per process. A malformed or conflicting entry point is
+    skipped with a warning rather than breaking the import of unrelated
+    backends; conflicts with built-in registrations keep the built-in.
+    """
+    global _entry_points_loaded
+    if _entry_points_loaded:
+        return
+    _entry_points_loaded = True
+    for ep in entry_points(group=ENTRY_POINT_GROUP):
+        try:
+            register_dataset_reader(ep.name, ep.value)
+        except ValueError as error:
+            logger.warning("Skipping storage backend entry point %r: %s", ep.name, error)
 
 
 def is_remote_uri(root: str | Path) -> bool:
@@ -92,6 +121,7 @@ def is_bucket_root(repo_id: str, root: str | Path | None) -> bool:
 
 
 def _reader_module(storage_format: str):
+    load_entry_point_backends()
     module_name = _DATASET_READER_MODULES.get(storage_format)
     if module_name is None:
         raise ValueError(
@@ -124,6 +154,7 @@ def localize_remote_root(
     root. Data files are never downloaded — backends read them in place.
     """
     errors = []
+    load_entry_point_backends()
     for storage_format in _DATASET_READER_MODULES:
         try:
             return _reader_module(storage_format).localize_root(
