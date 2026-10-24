@@ -138,7 +138,7 @@ def mock_snapshot_download_factory(
             if request_data:
                 create_hf_dataset(local_dir, hf_dataset, data_files_size_in_mb, chunks_size)
             if request_videos:
-                create_videos(root=local_dir, info=info)
+                create_videos(root=local_dir, info=info, episodes=episodes)
 
             return str(local_dir)
 
