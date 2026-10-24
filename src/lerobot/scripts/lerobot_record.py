@@ -94,6 +94,7 @@ import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
 
+from lerobot.rollout.hardware_gate import send_action_checked_with_approval
 from lerobot.cameras import CameraConfig  # noqa: F401
 from lerobot.cameras.opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.reachy2_camera import Reachy2CameraConfig  # noqa: F401
@@ -359,7 +360,7 @@ def record_loop(
             # Action can eventually be clipped using `max_relative_target`,
             # so action actually sent is saved in the dataset. action = postprocessor.process(action)
             # TODO(steven, pepijn, adil): we should use a pipeline step to clip the action, so the sent action is the action that we input to the robot.
-            _sent_action = robot.send_action(robot_action_to_send)
+            _sent_action = send_action_checked_with_approval(robot, robot_action_to_send)
 
         # Write to dataset
         if dataset is not None:
@@ -517,6 +518,7 @@ def record(
                     display_compressed_images=display_compressed_images,
                     timer=timer,
                 )
+                print("\n===== STOP =====\n", flush=True)
 
                 # Execute a few seconds without recording to give time to manually reset the environment
                 # Skip reset for the last episode to be recorded
