@@ -89,6 +89,7 @@ class MotorTemperatureMonitor:
             ):
                 raise ValueError("Missing or invalid temperature telemetry")
         except (ConnectionError, OSError, RuntimeError, ValueError) as exc:
+            self.pending_stage.clear()
             if not self.unavailable:
                 self._warn(f"Motor temperatures UNAVAILABLE: {exc}. Monitoring will retry in one second.")
             self.unavailable = True
