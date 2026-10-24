@@ -93,7 +93,9 @@ def _(
     # Check for numpy scalars (0-dimensional arrays) and treat them as scalars.
     if value.ndim == 0:
         # Numpy scalars should be converted to 0-dimensional tensors.
-        return torch.tensor(value.item(), dtype=dtype, device=device)
+        # Keep the NumPy dtype available when dtype=None instead of inferring
+        # a new dtype from a Python scalar returned by value.item().
+        return torch.tensor(value, dtype=dtype, device=device)
 
     # Create tensor from numpy array.
     tensor = torch.from_numpy(value)
