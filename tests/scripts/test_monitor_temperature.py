@@ -247,3 +247,32 @@ def test_cli_defaults_to_live_rerun(monkeypatch):
     monkeypatch.setattr(cli, "monitor_temperature", run)
     cli.main()
     run.assert_called_once_with("unused", "temperature_monitor", "rerun")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [ConnectionError("No reply"), {}, dict.fromkeys(NAMES, float("nan")), dict.fromkeys(NAMES, 128)],
+)
+def test_failed_sample_breaks_pending_warning_streak(setup, failure):
+    monitor, bus, clock = setup
+    hot = {**dict.fromkeys(NAMES, 30), "shoulder_pan": 58}
+    bus.sync_read.return_value = hot
+    monitor.poll()
+    assert monitor._warn.call_count == 0
+    clock[0] = 1
+    if isinstance(failure, Exception):
+        bus.sync_read.side_effect = failure
+    else:
+        bus.sync_read.return_value = failure
+    assert monitor.poll() == {}
+    assert monitor._warn.call_count == 1
+    assert "UNAVAILABLE" in monitor._warn.call_args.args[0]
+    bus.sync_read.side_effect = None
+    bus.sync_read.return_value = hot
+    clock[0] = 2
+    monitor.poll()
+    assert monitor._warn.call_count == 1, "a failed sample must break the consecutive-sample streak"
+    clock[0] = 3
+    monitor.poll()
+    assert monitor._warn.call_count == 2
+    assert "Overheating" in monitor._warn.call_args.args[0]
