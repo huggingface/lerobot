@@ -34,8 +34,10 @@ from lerobot.policies.flow_actor.modeling_flow_actor import FlowActorPolicy  # n
 from lerobot.rl.algorithms.configs import RLAlgorithmConfig  # noqa: E402
 from lerobot.rl.algorithms.factory import get_algorithm_class, make_algorithm  # noqa: E402
 from lerobot.rl.algorithms.qf3.configuration_qf3 import QF3AlgorithmConfig  # noqa: E402
-from lerobot.rl.algorithms.qf3.losses import qf3_actor_terms  # noqa: E402
-from lerobot.rl.algorithms.qf3.qf3_algorithm import QF3Algorithm  # noqa: E402
+from lerobot.rl.algorithms.qf3.qf3_algorithm import (  # noqa: E402
+    QF3Algorithm,
+    qf3_actor_terms,
+)
 from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
 
 

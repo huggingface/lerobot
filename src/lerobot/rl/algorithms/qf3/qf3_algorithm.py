@@ -22,12 +22,15 @@ to True. Setting it False is the paper's direct-Q ablation.
 ``RLTrainer.training_step`` can call this update in-process. This class does not
 start ``lerobot.rl.learner`` or ``lerobot.rl.actor``. ``FlowActorConfig`` does
 not carry the SAC service fields those processes read.
+
+The scalar twin Q and ``qf3_actor_terms`` live in this module.
 """
 
 from __future__ import annotations
 
 import copy
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -35,14 +38,170 @@ from torch import Tensor, nn
 from torch.optim import Optimizer
 
 from lerobot.lerobot_types import BatchType
-from lerobot.policies.flow_actor.modeling_flow_actor import FlowActorPolicy, FlowVelocityMLP
+from lerobot.policies.flow_actor.modeling_flow_actor import (
+    FlowActorPolicy,
+    FlowVelocityMLP,
+    euler_integrate,
+)
 from lerobot.utils.constants import OBS_STATE
 
 from ..base import RLAlgorithm
 from ..configs import TrainingStats
 from .configuration_qf3 import QF3AlgorithmConfig
-from .losses import critic_td_loss, qf3_actor_terms
-from .networks import TwinQ, polyak_update
+
+
+class QNetwork(nn.Module):
+    """MLP Q(s, a) with SiLU hidden layers.
+
+    The MuJoCo supplement says the critic is identical to the CleanRL TD3 baseline.
+    CleanRL's Q network uses ReLU. SiLU is a departure from that stated identity.
+    The from-scratch appendix specifies SiLU for the actor.
+    """
+
+    def __init__(self, state_dim: int, action_dim: int, hidden: int | list[int]) -> None:
+        super().__init__()
+        hidden_dims = [hidden, hidden] if isinstance(hidden, int) else list(hidden)
+        if not hidden_dims:
+            raise ValueError("hidden width list is empty.")
+        layers: list[nn.Module] = []
+        in_dim = state_dim + action_dim
+        for width in hidden_dims:
+            layers.append(nn.Linear(in_dim, width))
+            layers.append(nn.SiLU())
+            in_dim = width
+        layers.append(nn.Linear(in_dim, 1))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, state: Tensor, action: Tensor) -> Tensor:
+        return self.net(torch.cat((state, action), dim=-1))
+
+
+class TwinQ(nn.Module):
+    """Two scalar critics. The QF3 actor uses q1 only."""
+
+    def __init__(self, state_dim: int, action_dim: int, hidden: int | list[int]) -> None:
+        super().__init__()
+        self.q1 = QNetwork(state_dim, action_dim, hidden)
+        self.q2 = QNetwork(state_dim, action_dim, hidden)
+
+    def forward(self, state: Tensor, action: Tensor) -> tuple[Tensor, Tensor]:
+        return self.q1(state, action), self.q2(state, action)
+
+
+@torch.no_grad()
+def polyak_update(source: nn.Module, target: nn.Module, tau: float) -> None:
+    """``target <- (1 - tau) target + tau source``."""
+    for src, dst in zip(source.parameters(), target.parameters(), strict=True):
+        dst.mul_(1.0 - tau).add_(src, alpha=tau)
+
+
+@dataclass
+class ActorTerms:
+    """Tensors from one evaluation of the actor objective."""
+
+    loss: Tensor
+    cfm: Tensor
+    q_mean: Tensor
+    mask_fraction: Tensor
+    identity_error: Tensor
+    endpoint_gap: Tensor
+    bound_violation: Tensor
+
+
+def flow_path(noise: Tensor, replay_action: Tensor, flow_time: Tensor) -> tuple[Tensor, Tensor]:
+    """Linear path. ``x_tau = (1-tau) eps + tau a_buf``, ``u_buf = a_buf - eps``."""
+    x_tau = (1.0 - flow_time) * noise + flow_time * replay_action
+    u_buf = replay_action - noise
+    return x_tau, u_buf
+
+
+def qf3_actor_terms(
+    actor: nn.Module,
+    q1: nn.Module,
+    state: Tensor,
+    replay_action: Tensor,
+    noise: Tensor,
+    flow_time: Tensor,
+    *,
+    alpha: float,
+    lambda_cfm: float,
+    use_q: bool,
+    clip: bool,
+) -> ActorTerms:
+    """QF3 actor loss, the direct-Q ablation, or the CFM term alone.
+
+    ``clip=True`` is eq:actor-loss. ``clip=False`` is the paper's direct-Q ablation.
+    ``use_q=False`` keeps only the CFM term. The CFM residual is never clipped.
+    ``L_cfm`` is the batch mean of the squared L2 from the main text, not the
+    supplement's ``1/d_a`` form. ``Q`` is ``q1`` only, matching CleanRL TD3.
+    """
+    x_tau, u_buf = flow_path(noise, replay_action, flow_time)
+    velocity = actor(state, x_tau, flow_time)
+    delta = velocity - u_buf
+    if clip:
+        delta_clip = delta.clamp(-alpha, alpha)
+        mask = (delta.abs() < alpha).to(dtype=delta.dtype)
+        delta_for_q = delta_clip.detach() + (delta - delta.detach()) * mask
+    else:
+        delta_for_q = delta
+    endpoint = replay_action + (1.0 - flow_time) * delta_for_q
+    reconstruction = x_tau + (1.0 - flow_time) * u_buf
+    cfm = delta.square().sum(dim=-1).mean()
+    if use_q:
+        q_values = q1(state, endpoint)
+        loss = -q_values.mean() + lambda_cfm * cfm
+        q_mean = q_values.mean().detach()
+    else:
+        with torch.no_grad():
+            q_mean = q1(state, endpoint).mean()
+        loss = lambda_cfm * cfm
+    inside = delta.abs() < alpha
+    allowed = (1.0 - flow_time) * alpha
+    excess = (endpoint - replay_action).abs() - allowed
+    return ActorTerms(
+        loss=loss,
+        cfm=cfm.detach(),
+        q_mean=q_mean,
+        mask_fraction=inside.float().mean().detach(),
+        identity_error=(reconstruction - replay_action).abs().max().detach(),
+        endpoint_gap=(endpoint - replay_action).abs().max().detach(),
+        bound_violation=excess.max().clamp(min=0).detach(),
+    )
+
+
+def critic_td_loss(
+    critic: TwinQ,
+    target_actor: nn.Module,
+    target_critic: TwinQ,
+    state: Tensor,
+    action: Tensor,
+    reward: Tensor,
+    next_state: Tensor,
+    done: Tensor,
+    euler_noise: Tensor,
+    smooth_noise: Tensor,
+    *,
+    euler_steps: int,
+    policy_noise: float,
+    noise_clip: float,
+    gamma: float,
+) -> Tensor:
+    """Twin-Q TD3 target. The next action is an Euler sample plus clipped noise.
+
+    The action is not squashed with tanh and is not clamped to [-1, 1]. The paper
+    rejects endpoint tanh and does not state an action bound. Noise scale, noise
+    clip, and the min of the two target critics are the CleanRL TD3 target. The
+    paper says the MuJoCo critic matches that baseline and does not restate the
+    noise numbers.
+    """
+    with torch.no_grad():
+        next_action = euler_integrate(target_actor, next_state, euler_noise, euler_steps)
+        clipped_noise = (smooth_noise * policy_noise).clamp(-noise_clip, noise_clip)
+        next_action = next_action + clipped_noise
+        next_q1, next_q2 = target_critic(next_state, next_action)
+        target = reward + gamma * (1.0 - done) * torch.minimum(next_q1, next_q2)
+    q1, q2 = critic(state, action)
+    return (q1 - target).square().mean() + (q2 - target).square().mean()
 
 
 class QF3Algorithm(RLAlgorithm):
