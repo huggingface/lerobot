@@ -57,12 +57,11 @@ import pyarrow.parquet as pq
 from lerobot.datasets.io_utils import write_table_one_row_group_per_episode
 from lerobot.datasets.language import (
     EVENT_ONLY_STYLES,
-    LANGUAGE_EVENTS,
-    LANGUAGE_PERSISTENT,
     PERSISTENT_STYLES,
     column_for_style,
     validate_camera_field,
 )
+from lerobot.utils.constants import LANGUAGE_EVENTS, LANGUAGE_PERSISTENT
 
 from .reader import EpisodeRecord
 from .staging import EpisodeStaging

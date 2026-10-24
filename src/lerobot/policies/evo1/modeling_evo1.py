@@ -18,24 +18,18 @@ import builtins
 from collections import deque
 from contextlib import nullcontext
 from pathlib import Path
-from typing import TypedDict, Unpack
+from typing import Any, Unpack
 
 import torch
 from torch import Tensor
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pretrained import PreTrainedPolicy, T
+from lerobot.policies.pretrained import PreTrainedPolicy, RTCActionSelectKwargs, T
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_evo1 import Evo1Config
 from .evo1_model import Evo1Model
-
-
-class ActionSelectKwargs(TypedDict, total=False):
-    inference_delay: int | None
-    prev_chunk_left_over: Tensor | None
-    execution_horizon: int | None
 
 
 class Evo1Policy(PreTrainedPolicy):
@@ -169,7 +163,7 @@ class Evo1Policy(PreTrainedPolicy):
             return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
         return nullcontext()
 
-    def get_optim_params(self) -> list[dict]:
+    def get_optim_params(self) -> list[dict[str, Any]]:
         decay, no_decay = [], []
         for name, param in self.named_parameters():
             if not param.requires_grad:
@@ -485,7 +479,9 @@ class Evo1Policy(PreTrainedPolicy):
         }
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs: Unpack[ActionSelectKwargs]) -> Tensor:
+    def predict_action_chunk(
+        self, batch: dict[str, Tensor], **kwargs: Unpack[RTCActionSelectKwargs]
+    ) -> Tensor:
         inference_delay = kwargs.get("inference_delay")
         prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
         execution_horizon = kwargs.get("execution_horizon")

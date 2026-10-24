@@ -11,6 +11,8 @@ def send_action_checked_with_approval(robot_wrapper, action):
         )
 
     dispatch = getattr(robot_wrapper, "send_action_checked", None)
-    if callable(dispatch):
-        return dispatch(action)
-    return robot_wrapper.send_action(action)
+    if not callable(dispatch):
+        raise RuntimeError(
+            "SO101 safety gate: checked dispatch unavailable"
+        )
+    return dispatch(action)

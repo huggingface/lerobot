@@ -362,6 +362,7 @@ class SARMRewardModel(PreTrainedRewardModel):
     Training uses 75%/25% GT/predicted stage conditioning (teacher forcing).
     """
 
+    config: SARMConfig
     name = "sarm"
     config_class = SARMConfig
 
@@ -520,50 +521,64 @@ class SARMRewardModel(PreTrainedRewardModel):
         Returns:
             Rewards and optionally stage probs/confidence.
         """
-        if isinstance(text_embeddings, np.ndarray):
-            text_embeddings = torch.tensor(text_embeddings, dtype=torch.float32)
-        if isinstance(video_embeddings, np.ndarray):
-            video_embeddings = torch.tensor(video_embeddings, dtype=torch.float32)
-        if state_features is not None and isinstance(state_features, np.ndarray):
-            state_features = torch.tensor(state_features, dtype=torch.float32)
+        text_tensor: torch.Tensor = (
+            torch.tensor(text_embeddings, dtype=torch.float32)
+            if isinstance(text_embeddings, np.ndarray)
+            else text_embeddings
+        )
+        video_tensor: torch.Tensor = (
+            torch.tensor(video_embeddings, dtype=torch.float32)
+            if isinstance(video_embeddings, np.ndarray)
+            else video_embeddings
+        )
+        state_tensor: torch.Tensor | None = (
+            torch.tensor(state_features, dtype=torch.float32)
+            if isinstance(state_features, np.ndarray)
+            else state_features
+        )
 
         # Handle single sample case
-        if text_embeddings.dim() == 1:
-            text_embeddings = text_embeddings.unsqueeze(0)
-            video_embeddings = video_embeddings.unsqueeze(0)
-            if state_features is not None:
-                state_features = state_features.unsqueeze(0)
+        if text_tensor.dim() == 1:
+            text_tensor = text_tensor.unsqueeze(0)
+            video_tensor = video_tensor.unsqueeze(0)
+            if state_tensor is not None:
+                state_tensor = state_tensor.unsqueeze(0)
             single_sample = True
         else:
             single_sample = False
 
-        batch_size = video_embeddings.shape[0]
-        seq_len = video_embeddings.shape[1]
+        batch_size = video_tensor.shape[0]
+        seq_len = video_tensor.shape[1]
 
         scheme = head_mode
 
         # Default lengths if not provided
+        lengths_tensor: torch.Tensor
         if lengths is None:
-            lengths = torch.full((batch_size,), seq_len, dtype=torch.int32)
+            lengths_tensor = torch.full((batch_size,), seq_len, dtype=torch.int32)
         elif isinstance(lengths, np.ndarray):
-            lengths = torch.tensor(lengths, dtype=torch.int32)
+            lengths_tensor = torch.tensor(lengths, dtype=torch.int32)
+        else:
+            lengths_tensor = lengths
 
         # Reshape video to (B, N, T, D) for multi-camera format
         # Currently single camera: (B, T, D) -> (B, 1, T, D)
-        img_seq = video_embeddings.unsqueeze(1).to(self.device)
-        lang_emb = text_embeddings.to(self.device)
+        img_seq = video_tensor.unsqueeze(1).to(self.device)
+        lang_emb = text_tensor.to(self.device)
         state = (
-            state_features.to(self.device)
-            if state_features is not None
+            state_tensor.to(self.device)
+            if state_tensor is not None
             else torch.zeros(batch_size, seq_len, self.config.max_state_dim, device=self.device)
         )
-        lens = lengths.to(self.device)
+        lens = lengths_tensor.to(self.device)
 
         # Pad state to max_state_dim
         state = pad_state_to_max_dim(state, self.config.max_state_dim)
 
         # Get num_classes for this scheme
         num_classes = self.config.num_sparse_stages if scheme == "sparse" else self.config.num_dense_stages
+        if num_classes is None:
+            raise ValueError(f"num_dense_stages must be configured to use the {scheme!r} head")
 
         # Run stage model
         stage_logits = self.stage_model(img_seq, lang_emb, state, lens, scheme=scheme)
@@ -675,6 +690,8 @@ class SARMRewardModel(PreTrainedRewardModel):
             Dict with stage_loss, subtask_loss, total_loss
         """
         num_classes = self.config.num_sparse_stages if scheme == "sparse" else self.config.num_dense_stages
+        if num_classes is None:
+            raise ValueError(f"num_dense_stages must be configured to train the {scheme!r} head")
 
         # Ground truth: stage (integer) and tau (fractional)
         # Clamp stage indices to valid range [0, num_classes-1] to handle edge cases

@@ -271,6 +271,13 @@ def test_act_backbone_lr():
     assert len(optimizer.param_groups[1]["params"]) == 20
 
 
+@pytest.mark.parametrize("policy_name", ["act", "groot", "pi0", "pi05", "pi0_fast", "smolvla"])
+@pytest.mark.parametrize("fused", [None, True, False])
+def test_optimizer_preset_forwards_fused(policy_name: str, fused: bool | None):
+    cfg = make_policy_config(policy_name, optimizer_fused=fused, push_to_hub=False)
+    assert cfg.get_optimizer_preset().fused is fused
+
+
 @pytest.mark.parametrize("policy_name", AVAILABLE_POLICIES)
 def test_policy_defaults(dummy_dataset_metadata, policy_name: str):
     """Check that the policy can be instantiated with defaults."""
@@ -301,8 +308,12 @@ def test_save_and_load_pretrained(dummy_dataset_metadata, tmp_path, policy_name:
     torch.testing.assert_close(list(policy.parameters()), list(loaded_policy.parameters()), rtol=0, atol=0)
 
 
-def test_save_pretrained_with_state_dict(dummy_dataset_metadata, tmp_path):
-    """Exercise the FSDP checkpoint path: save_pretrained with a pre-gathered state_dict."""
+def test_save_pretrained_single_file_artifact(dummy_dataset_metadata, tmp_path):
+    """The distributable checkpoint is one unsharded safetensors file.
+
+    The former `state_dict=` variant of this test died with the #3810 save override: the
+    kwarg would now be silently swallowed by HubMixin's **push_to_hub_kwargs.
+    """
     policy_cls = get_policy_class("act")
     policy_cfg = make_policy_config("act")
     features = dataset_to_policy_features(dummy_dataset_metadata.features)
@@ -313,8 +324,8 @@ def test_save_pretrained_with_state_dict(dummy_dataset_metadata, tmp_path):
     policy = policy_cls(policy_cfg)
     policy.to(policy_cfg.device)
 
-    save_dir = tmp_path / "fsdp_state_dict"
-    policy.save_pretrained(save_dir, state_dict=policy.state_dict())
+    save_dir = tmp_path / "single_file_artifact"
+    policy.save_pretrained(save_dir)
 
     # A single, unsharded safetensors file (no sharded set + index).
     assert (save_dir / SAFETENSORS_SINGLE_FILE).is_file()
