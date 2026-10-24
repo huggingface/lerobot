@@ -358,7 +358,7 @@ Without calling `finalize()`, your parquet files will be incomplete and the data
 
 ### LanceDB dataset backend
 
-A `v3` dataset can also be stored as [LanceDB](https://lancedb.com) tables. LanceDB is a multimodal data lakehouse built on the Lance format for AI access patterns: fast random access to any row and its video bytes, and scalar, vector and full-text indexes on the same tables, so EDA, mining, curation and training run directly from object storage. The layout keeps `meta/` unchanged and adds a `frames` table for the tabular data and a `videos` table holding the MP4s as blobs. `"storage_format": "lance"` in `meta/info.json` selects the reader; the `LeRobotDataset` API, the items and the training pipeline are unchanged.
+A `v3` dataset can also be stored as [LanceDB](https://lancedb.com) tables. LanceDB is a multimodal data lakehouse built on the Lance format for AI access patterns: fast random access to any row and its video bytes, and scalar, vector and full-text indexes on the same tables, so EDA, mining, curation and training run directly from object storage. The layout keeps `meta/` unchanged and adds a `frames` table for the tabular data and embedded images, and a `videos` table holding the MP4s as blobs. `"storage_format": "lance"` in `meta/info.json` selects the reader; the `LeRobotDataset` API, the items and the training pipeline are unchanged.
 
 - **Train straight from the Hub or HF Storage Buckets with the GPUs fed.** Random frames are read in place, only the bytes each batch needs, so every batch is a global shuffle and nothing is downloaded first.
 - **Convert at about the cost of a file copy.** Videos are not re-encoded, so items are bit-identical to the source. DROID converts in 34 minutes.
@@ -366,7 +366,13 @@ A `v3` dataset can also be stored as [LanceDB](https://lancedb.com) tables. Lanc
 
 For how this works, benchmarks and examples, see the [LanceDB LeRobot guide](https://docs.lancedb.com/training/lerobot).
 
-Camera features must be video-backed. Datasets that store camera frames as images are not supported by the reader and need to be re-encoded as video before conversion.
+Camera features can be image-backed, video-backed, or a mixture of both. Image-backed features (`"dtype": "image"`) use the same `{"bytes": ..., "path": ...}` structure as the default Parquet format in the corresponding `frames` column. Embedded bytes take precedence over paths. External paths can be absolute local paths or URIs; relative paths resolve from the dataset's storage root, including when metadata is cached locally. URI reads use `fsspec` and require the relevant filesystem driver and credentials. The dataset token is used for Hub reads; S3 access keys, session tokens, region and endpoint options can also be supplied through the Lance reader's `storage_options`. Images are decoded with the default reader's RGB normalization, depth precision and unit conversion, image transforms, and temporal-window padding. RGB image features return normalized `float32` tensors, including when `return_uint8=True`; that option applies to RGB video features.
+
+Both readers preserve missing images as `None` in base-row reads. Reading a training sample whose current frame or requested image window contains a missing image raises a `ValueError` naming the feature and frame. Missing images are never replaced with synthetic pixels.
+
+`get_raw_item(index)` returns a base row with the standard tensor conversion, without temporal-window expansion, video decoding or image augmentations. Image-backed depth values remain in their stored unit in base rows; `depth_output_unit` is applied when assembling training samples. `select_columns(names)` provides the same base-row semantics while reading only the selected columns. The default reader returns a Hugging Face `Dataset`; Lance returns a lazy, read-only view supporting indexing, slices, lists of indices, row and column iteration, `features`, and `with_format(...)` for Python, NumPy, Torch, Arrow and Pandas. It does not expose Hugging Face dataset editing methods. Older custom readers can opt into this base-row contract; `dataset.supports_raw_reads` reports whether it is implemented.
+
+RGB videos support `video_backend="torchcodec"` or `video_backend="pyav"`, with the same automatic default selection as the default reader. Choosing PyAV explicitly does not require TorchCodec. Depth videos decode through PyAV regardless of the RGB backend.
 
 Reading Lance datasets needs the `lancedb` extra (`pip install "lerobot[lancedb]"`). The format is read-only: record and edit datasets in the default format, then convert them with the [`lerobot-lancedb`](https://pypi.org/project/lerobot-lancedb/) package:
 

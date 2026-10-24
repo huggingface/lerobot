@@ -17,9 +17,10 @@
 """Lance storage backend for :class:`~lerobot.datasets.lerobot_dataset.LeRobotDataset`.
 
 Serves datasets whose ``meta/info.json`` declares ``"storage_format": "lance"``:
-tabular features live in a ``frames.lance`` table and mp4 files in a blob-encoded
-``videos.lance`` table, next to the standard ``meta/`` directory. Tables are read
-in place — locally, from the Hub (``hf://``), or from any object store.
+tabular features and embedded images live in a ``frames.lance`` table and mp4
+files in a blob-encoded ``videos.lance`` table, next to the standard ``meta/``
+directory. Tables are read in place — locally, from the Hub (``hf://``), or from
+any object store.
 
 Everything here is an implementation detail of the ``"lance"`` storage format;
 the public entry point is ``LeRobotDataset`` (see :mod:`lerobot.datasets.storage`).
@@ -36,14 +37,17 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from itertools import batched
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import numpy as np
 import torch
+from datasets import Features
+from datasets.formatting import format_table, get_formatter
+from pyarrow import Table as ArrowTable
 
 from lerobot.configs.video import DEFAULT_DEPTH_UNIT, DepthEncoderConfig
 from lerobot.streaming.location import hf_dataset_uri
-from lerobot.utils.import_utils import _lancedb_available, require_package
+from lerobot.utils.import_utils import _lancedb_available, get_safe_default_video_backend, require_package
 
 if TYPE_CHECKING or _lancedb_available:
     from lancedb.permutation import Permutation
@@ -52,7 +56,8 @@ if TYPE_CHECKING or _lancedb_available:
 from .dataset_metadata import LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader
 from .depth_utils import dequantize_depth
-from .feature_utils import check_delta_timestamps, get_delta_indices
+from .feature_utils import check_delta_timestamps, get_delta_indices, get_hf_features_from_features
+from .io_utils import DatasetImage, hf_transform_to_torch, pil_to_chw_tensor, require_image
 
 # Re-exported: storage.py resolves localize_root on this module; the others are
 # this format's public helpers (converters, DataLoader worker context).
@@ -75,7 +80,13 @@ from .lance_utils import (  # noqa: F401
     to_lance_column,
 )
 from .utils import resolve_episode_indices
-from .video_utils import FrameTimestampError, decode_video_frames_pyav
+from .video_utils import (
+    FrameTimestampError,
+    apply_rgb_transforms,
+    convert_image_depth_units,
+    decode_video_frames_pyav,
+    image_depth_units,
+)
 
 # Per-call limits for multi-sample RGB decoding within each DataLoader worker.
 # Concurrent file decodes have independent budgets; final sample outputs,
@@ -119,14 +130,19 @@ class LanceDatasetReader(BaseDatasetReader):
             in :class:`LeRobotDataset`.
         tolerance_s: Timestamp synchronization tolerance in seconds.
         revision: Hub revision, as passed to :class:`LeRobotDataset`.
-        return_uint8: Return RGB frames as raw uint8 instead of normalized float32.
+        return_uint8: Return RGB video frames as raw uint8 instead of normalized
+            float32. Image-backed RGB features keep the default reader's
+            normalized float32 output.
         depth_output_unit: Unit depth features dequantize to (``'mm'`` or ``'m'``).
-            Depth decodes through pyav (16-bit planes torchcodec cannot emit).
+            Depth videos decode through pyav (16-bit planes torchcodec cannot
+            emit); depth images retain their stored precision.
         storage_options: Extra options forwarded to ``lancedb.connect``.
         video_decoder_cache_size: Max open video decoders per worker (default 256, also
             bounded by a 2 GiB per-worker byte budget). Each cached decoder costs a few MB, so
             on datasets with more video files than this, RAM grows with the cache times the
             number of workers.
+        video_backend: RGB decoder, ``'torchcodec'`` or ``'pyav'``. If unset, use
+            the default reader's automatic selection. Depth videos always use PyAV.
     """
 
     def __init__(
@@ -143,6 +159,7 @@ class LanceDatasetReader(BaseDatasetReader):
         storage_options: dict | None = None,
         video_decoder_cache_size: int | None = None,
         token: str | bool | None = None,
+        video_backend: str | None = None,
     ):
         require_package("lancedb", extra="lancedb")
         self.meta = meta
@@ -154,26 +171,31 @@ class LanceDatasetReader(BaseDatasetReader):
         self._db_uri, _ = resolve_lance_root(self.repo_id, root, self._storage_options, revision, token)
         self._hub_revision = meta.revision if self._db_uri == hf_dataset_uri(self.repo_id) else None
 
-        if self.meta.image_keys:
-            raise NotImplementedError(
-                f"Image-backed features are not supported by the lance backend: {self.meta.image_keys}. "
-                "Re-encode them as video."
-            )
-        if self.meta.video_keys:
+        self._video_backend = video_backend or get_safe_default_video_backend()
+        if self.meta.video_keys and self._video_backend not in {"torchcodec", "pyav", "video_reader"}:
+            raise ValueError(f"Unsupported video backend: {self._video_backend}")
+        rgb_video_keys = set(self.meta.video_keys) - set(self.meta.depth_keys)
+        if rgb_video_keys and self._video_backend == "torchcodec":
             try:
                 importlib.import_module("torchcodec")
             except Exception as error:
                 raise ImportError(
                     "The lance reader decodes RGB video with torchcodec, which is not available "
-                    "on this platform. Video lance datasets cannot be read here; the default "
-                    "storage format supports video_backend='pyav'."
+                    "on this platform. Use video_backend='pyav' to read these videos."
                 ) from error
         # Depth videos decode through pyav over the same prefetched sources.
         self._depth_output_unit = depth_output_unit
         self._depth_encoder_configs = {
             key: DepthEncoderConfig.from_video_info(self.meta.features[key].get("info"))
             for key in self.meta.depth_keys
+            if key in self.meta.video_keys
         }
+        self._image_depth_units = image_depth_units(meta)
+        self._read_features = get_hf_features_from_features(meta.features)
+        for key in self.meta.image_keys:
+            self._read_features[key] = DatasetImage(
+                self._db_uri, token=token, storage_options=storage_options
+            )
         self.set_image_transforms(image_transforms)
         self.return_uint8 = return_uint8
 
@@ -273,6 +295,9 @@ class LanceDatasetReader(BaseDatasetReader):
 
         # Opened lazily by ``_ensure_open()``; reset by ``close()`` and when pickled.
         self._frames_perm: Permutation | None = None
+        self._base_perm: Permutation | None = None
+        self._image_perms: dict[str, Permutation] = {}
+        self._raw_perms: OrderedDict[tuple[str, ...], Permutation] = OrderedDict()
         self._videos_table: Table | None = None
         self._file_meta: OrderedDict[tuple, dict] = OrderedDict()
         self._prefetch_pool: ThreadPoolExecutor | None = None
@@ -297,17 +322,24 @@ class LanceDatasetReader(BaseDatasetReader):
                 f"frames table has {n_rows} rows but meta declares "
                 f"{self.meta.total_frames} frames; the dataset is truncated or corrupt."
             )
-        frames_perm = Permutation.identity(table).select_columns(self._fetch_columns).with_format("arrow")
+        base_perm = Permutation.identity(table).with_format("arrow")
+        frames_perm = base_perm.select_columns(self._fetch_columns)
+        image_perms = {key: base_perm.select_columns([to_lance_column(key)]) for key in self.meta.image_keys}
         if self.meta.video_keys:
             self._videos_table = db.open_table(VIDEOS_TABLE)
             self._prefetch_pool = ThreadPoolExecutor(max_workers=1)
             self._decode_pool = ThreadPoolExecutor(max_workers=16)
         # Publish last: a failure above leaves the reader closed rather than half-open.
+        self._base_perm = base_perm
+        self._image_perms = image_perms
         self._frames_perm = frames_perm
 
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
         state["_frames_perm"] = None
+        state["_base_perm"] = None
+        state["_image_perms"] = {}
+        state["_raw_perms"] = OrderedDict()
         state["_videos_table"] = None
         state["_file_meta"] = OrderedDict()
         state["_prefetch_pool"] = None
@@ -325,6 +357,9 @@ class LanceDatasetReader(BaseDatasetReader):
                 pool.shutdown(wait=False, cancel_futures=True)
             setattr(self, name, None)
         self._frames_perm = None
+        self._base_perm = None
+        self._image_perms = {}
+        self._raw_perms.clear()
         self._videos_table = None
 
     def __del__(self) -> None:
@@ -343,11 +378,60 @@ class LanceDatasetReader(BaseDatasetReader):
     def absolute_to_relative_idx(self) -> dict[int, int] | None:
         return self._absolute_to_relative_idx
 
+    @property
+    def read_features(self) -> Features:
+        """HF feature schema for the frames table's declared base columns."""
+        return self._read_features
+
+    def read_rows(
+        self,
+        indices: list[int],
+        columns: list[str] | None = None,
+        *,
+        query_type: str = "batch",
+        format_type: str | None = "custom",
+        **format_kwargs: Any,
+    ) -> Any:
+        """Read base rows with native column projection and HF feature formatting."""
+        self._ensure_open()
+        keys = list(self._read_features) if columns is None else list(columns)
+        missing = set(keys) - self._read_features.keys()
+        if missing:
+            raise ValueError(f"Columns {sorted(missing)} not in the dataset: {list(self._read_features)}")
+        features = Features({key: self._read_features[key] for key in keys})
+        if indices:
+            absolute = [self._resolve_abs_idx(index) for index in indices]
+            rows = sorted(set(absolute))
+            cache_key = tuple(keys)
+            if cache_key not in self._raw_perms:
+                self._raw_perms[cache_key] = _opened(self._base_perm).select_columns(
+                    [to_lance_column(key) for key in keys]
+                )
+                if len(self._raw_perms) > 32:
+                    self._raw_perms.popitem(last=False)
+            self._raw_perms.move_to_end(cache_key)
+            batch = self._raw_perms[cache_key].__getitems__(rows)
+            # Permutation's Arrow format returns a RecordBatch, whose schema
+            # names are the stored Lance names rather than the public keys.
+            table = batch if isinstance(batch, ArrowTable) else ArrowTable.from_batches([batch])
+            table = table.rename_columns(keys)
+            positions = {row: position for position, row in enumerate(rows)}
+            table = table.take([positions[row] for row in absolute])
+        else:
+            table = ArrowTable.from_batches([], schema=features.arrow_schema)
+        if format_type == "custom":
+            format_kwargs = {"transform": hf_transform_to_torch, **format_kwargs}
+        formatter = get_formatter(format_type, features=features, **format_kwargs)
+        key = 0 if query_type == "row" else keys[0] if query_type == "column" else list(range(len(indices)))
+        return format_table(table, key, formatter)
+
     def get_item(self, idx: int) -> dict:
         return self.get_items([idx])[0]
 
     def get_items(self, indices: list[int]) -> list[dict]:
-        """Batched fetch: one deduplicated frames-table read and one blob fetch per batch."""
+        """Fetch tabular rows, embedded images, and video windows for a batch."""
+        if not indices:
+            return []
         self._ensure_open()
         plans = self._plan_batch(indices)
         rows, row_pos = self._batch_rows(plans)
@@ -363,18 +447,52 @@ class LanceDatasetReader(BaseDatasetReader):
 
         columns = self._fetch_rows(rows)
         items = [self._build_item(plan, columns, row_pos) for plan in plans]
+        if self.meta.image_keys:
+            for item, images in zip(items, self._read_images(plans), strict=True):
+                item.update(images)
 
         if prepared_future is not None:
             decoded = self._decode_videos(plans, columns, row_pos, prepared_future.result())
             for item, frames in zip(items, decoded, strict=True):
                 item.update(frames)
-        if self._image_transforms is not None:
-            for item in items:
-                for cam_key in self.meta.camera_keys:
-                    if cam_key in self.meta.depth_keys:
-                        continue
-                    item[cam_key] = self._image_transforms(item[cam_key])
+        for item in items:
+            apply_rgb_transforms(item, self._image_transforms, self.meta.camera_keys, self.meta.depth_keys)
+            convert_image_depth_units(item, self._image_depth_units, self._depth_output_unit)
         return items
+
+    def _read_images(self, plans: list[_SamplePlan]) -> list[dict[str, torch.Tensor]]:
+        """Read and decode each (camera, row) once, then assemble independent samples.
+
+        Each image column reads only its own frame windows, so action or other
+        cameras' windows never fetch unrelated images. Image delta windows keep
+        their time dimension even when they contain a single frame, matching the
+        default reader's non-video column stacking.
+        """
+        items: list[dict[str, torch.Tensor]] = [{} for _ in plans]
+        for key, permutation in self._image_perms.items():
+            windows = [plan["windows"].get(key, [plan["abs_idx"]]) for plan in plans]
+            rows = sorted({row for window in windows for row in window})
+            column = permutation.__getitems__(rows).column(to_lance_column(key))
+            decoded = {
+                row: require_image(self._decode_image(column[pos].as_py(), key, row), key, row)
+                for pos, row in enumerate(rows)
+            }
+            for item, plan, window in zip(items, plans, windows, strict=True):
+                # Copy before augmentations: duplicate samples must not share
+                # writable pixels with each other or with overlapping windows.
+                item[key] = (
+                    torch.stack([decoded[row] for row in window])
+                    if key in plan["windows"]
+                    else decoded[window[0]].clone()
+                )
+        return items
+
+    def _decode_image(self, value: dict | None, key: str, row: int) -> torch.Tensor | None:
+        """Decode the HF Image storage struct using the default reader's conventions."""
+        if value is None:
+            return None
+        with self._read_features[key].decode_example(value) as image:
+            return pil_to_chw_tensor(image)
 
     def _plan_file_windows(self, plans: list[_SamplePlan]) -> dict[tuple, list[tuple[int, int]]]:
         """Map each batch sample's video windows to (file key -> frame spans).
@@ -487,6 +605,14 @@ class LanceDatasetReader(BaseDatasetReader):
             if key in self.meta.depth_keys:
                 for sample_idx, shifted_ts in file_requests:
                     results[sample_idx][key] = self._decode_depth_window(source, shifted_ts, file_key)
+                return
+            if self._video_backend != "torchcodec":
+                for sample_idx, shifted_ts in file_requests:
+                    source.seek(0)
+                    frames = decode_video_frames_pyav(
+                        source, shifted_ts, self.tolerance_s, return_uint8=self.return_uint8
+                    )
+                    results[sample_idx][key] = frames.squeeze(0)
                 return
             fps = decoder.metadata.average_fps
             request_indices = [[round(ts * fps) for ts in shifted_ts] for _, shifted_ts in file_requests]
@@ -615,9 +741,6 @@ class LanceDatasetReader(BaseDatasetReader):
         self, file_keys: list[tuple], windows: dict[tuple, list[tuple[int, int]]] | None = None
     ) -> dict[tuple, tuple]:
         """Stage 1 of video decoding: everything that doesn't need timestamps"""
-        # Lazy load torchcodec
-        from torchcodec.decoders import VideoDecoder
-
         file_meta = self._load_file_meta(file_keys)
 
         prepared: dict[tuple, tuple] = {}
@@ -651,11 +774,17 @@ class LanceDatasetReader(BaseDatasetReader):
             self._fetch_spans(spans_by_key, sources)
 
             rgb_files = [key for key in new_files if key[0] not in self.meta.depth_keys]
-            created = _opened(self._decode_pool).map(
-                lambda key: VideoDecoder(sources[key], seek_mode="approximate"), rgb_files
-            )
-            for key, decoder in zip(rgb_files, created, strict=True):
-                prepared[key] = (decoder, sources[key])
+            if rgb_files and self._video_backend == "torchcodec":
+                from torchcodec.decoders import VideoDecoder  # noqa: PLC0415
+
+                created = _opened(self._decode_pool).map(
+                    lambda key: VideoDecoder(sources[key], seek_mode="approximate"), rgb_files
+                )
+                for key, decoder in zip(rgb_files, created, strict=True):
+                    prepared[key] = (decoder, sources[key])
+            else:
+                for key in rgb_files:
+                    prepared[key] = (None, sources[key])
             for key in new_files:
                 if key[0] in self.meta.depth_keys:
                     prepared[key] = (None, sources[key])

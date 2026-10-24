@@ -117,3 +117,16 @@ def test_playback_times_ns():
 
     assert fv._playback_times_ns(WithHF()) == [0, 100_000_000, 200_000_000]
     assert fv._playback_times_ns(NoHF()) == [0, 100_000_000, 200_000_000]
+
+
+def test_playback_times_reads_projected_timestamps():
+    class ProjectedDataset:
+        @property
+        def hf_dataset(self):
+            raise AssertionError("playback used the HF-specific surface")
+
+        def select_columns(self, key):
+            assert key == "timestamp"
+            return {key: [0.0, 0.11, 0.27]}
+
+    assert fv._playback_times_ns(ProjectedDataset()) == [0, 110_000_000, 270_000_000]

@@ -188,7 +188,9 @@ def apply_normalization(
     raise ValueError(f"Unsupported normalization mode: {mode}")
 
 
-def process_episode(args):
+def process_episode(
+    args: tuple[LeRobotDataset, int, int, list[int] | None, float, str, bool],
+) -> np.ndarray | None:
     """Process single episode and return action chunks."""
     dataset, ep_idx, action_horizon, relative_dims, sample_fraction, state_key, use_relative_transform = args
 
@@ -206,18 +208,21 @@ def process_episode(args):
         # if dataset has episode filtering, we need to use the mapping
         states = []
         actions = []
+        columns = list(dict.fromkeys([ACTION, state_key])) if state_key in dataset.features else [ACTION]
+        frames = dataset.select_columns(columns)
+        absolute_to_relative = dataset.absolute_to_relative_idx
 
         for abs_idx in range(from_idx, to_idx):
             # map absolute index to relative index if needed
-            if dataset.reader._absolute_to_relative_idx is not None:
-                if abs_idx not in dataset.reader._absolute_to_relative_idx:
+            if absolute_to_relative is not None:
+                if abs_idx not in absolute_to_relative:
                     # this episode's frames aren't in the filtered dataset
                     return None
-                rel_idx = dataset.reader._absolute_to_relative_idx[abs_idx]
+                rel_idx = absolute_to_relative[abs_idx]
             else:
                 rel_idx = abs_idx
 
-            frame = dataset.get_raw_item(rel_idx)
+            frame = frames[rel_idx]
 
             # get state (could be from observation.state or other state key)
             if state_key in frame:
@@ -480,7 +485,7 @@ def train_tokenizer(cfg: TokenizerTrainingConfig) -> None:
         # extract stats for encoded dimensions only
         encoded_stats = {}
         for stat_name, stat_values in action_stats.items():
-            if isinstance(stat_values, (list, np.ndarray)):
+            if isinstance(stat_values, list | np.ndarray):
                 stat_array = np.array(stat_values)
                 if len(stat_array) > max(encoded_dim_indices):
                     encoded_stats[stat_name] = stat_array[encoded_dim_indices]

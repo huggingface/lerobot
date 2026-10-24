@@ -16,8 +16,10 @@
 """Lance storage backend: LeRobotDataset over a Lance root must return the same
 items as over the default parquet/mp4 layout, through the same public class."""
 
+import io
 import json
 import pickle
+import shutil
 import weakref
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -32,12 +34,15 @@ pytest.importorskip("lancedb")
 pytest.importorskip("lerobot_lancedb", reason="lerobot-lancedb converts the test fixtures")
 
 import lancedb
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from lerobot_lancedb.convert import convert
+from PIL import Image
 
 from lerobot.configs.default import DatasetConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.video import RGBEncoderConfig
 from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
@@ -87,7 +92,9 @@ def dataset_roots(tmp_path, lerobot_dataset_factory) -> tuple[Path, Path]:
 def assert_items_equal(actual: dict, expected: dict) -> None:
     assert set(actual) == set(expected)
     for key, expected_val in expected.items():
-        if isinstance(expected_val, str):
+        if expected_val is None:
+            assert actual[key] is None, key
+        elif isinstance(expected_val, str):
             assert actual[key] == expected_val, key
         else:
             assert actual[key].dtype == expected_val.dtype, key
@@ -107,6 +114,16 @@ class _FakeRGBDecoder:
             data=torch.stack([torch.full((3, 2, 2), index, dtype=torch.uint8) for index in indices]),
             pts_seconds=torch.tensor(indices, dtype=torch.float64) / self.metadata.average_fps,
         )
+
+
+def _rgb_reader(file_key, file_requests, shape=(2, 2, 3), return_uint8=True):
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": shape}})
+    reader.return_uint8 = return_uint8
+    reader._video_backend = "torchcodec"
+    reader.tolerance_s = 1e-4
+    reader._build_video_requests = lambda *args: {file_key: file_requests}
+    return reader
 
 
 def test_tabular_parity(dataset_roots):
@@ -173,6 +190,269 @@ def test_tabular_parity(dataset_roots):
     # close() releases pools/handles; the next read reopens
     lance_ds.reader.close()
     assert_items_equal(lance_ds[0], upstream[0])
+
+
+def _record_image_dataset(root: Path, mixed: bool = False) -> tuple[Path, Path]:
+    """Record real RGB and both integer/float depth images before converting."""
+    src_root = root / "src"
+    features = {
+        "observation.images.front": {
+            "dtype": "image",
+            "shape": (64, 64, 3),
+            "names": ["height", "width", "channels"],
+        },
+        "observation.images.wrist": {
+            "dtype": "video" if mixed else "image",
+            "shape": (64, 64, 3),
+            "names": ["height", "width", "channels"],
+        },
+        **{
+            f"observation.images.{name}": {
+                "dtype": "image",
+                "shape": (64, 64, 1),
+                "names": ["height", "width", "channels"],
+                "info": {"is_depth_map": True},
+            }
+            for name in ("depth_uint16", "depth_float")
+        },
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+    }
+    dataset = LeRobotDataset.create(
+        DUMMY_REPO_ID,
+        root=src_root,
+        fps=30,
+        features=features,
+        use_videos=mixed,
+        rgb_encoder=RGBEncoderConfig(vcodec="h264", preset="ultrafast"),
+    )
+    pixels = np.arange(64 * 64, dtype=np.uint16).reshape(64, 64, 1)
+    for episode in range(3):
+        for frame_index in range(6):
+            index = episode * 6 + frame_index
+            rgb = np.repeat(((pixels + index) % 256).astype(np.uint8), 3, axis=2)
+            dataset.add_frame(
+                {
+                    "observation.images.front": rgb,
+                    "observation.images.wrist": 255 - rgb,
+                    "observation.images.depth_uint16": pixels + 1000 + index,
+                    "observation.images.depth_float": pixels.astype(np.float32) / 1000 + index / 100,
+                    "observation.state": np.array([index, -index], dtype=np.float32),
+                    "action": np.array([index / 10, index / 20], dtype=np.float32),
+                    "task": "test images",
+                }
+            )
+        dataset.save_episode()
+    dataset.finalize()
+    lance_root = root / "lance"
+    convert(lance_root, root=src_root)
+    return src_root, lance_root
+
+
+@pytest.fixture(scope="module")
+def image_dataset_roots(tmp_path_factory) -> tuple[Path, Path]:
+    return _record_image_dataset(tmp_path_factory.mktemp("image_lance"))
+
+
+@pytest.fixture(scope="module")
+def mixed_image_dataset_roots(tmp_path_factory) -> tuple[Path, Path]:
+    return _record_image_dataset(tmp_path_factory.mktemp("mixed_image_lance"), mixed=True)
+
+
+@pytest.fixture(params=["image_dataset_roots", "mixed_image_dataset_roots"])
+def camera_dataset_roots(request) -> tuple[Path, Path]:
+    return request.getfixturevalue(request.param)
+
+
+@pytest.mark.parametrize("offsets", [None, [0], [-2, -1, 0, 1]], ids=["single", "one_frame", "history"])
+def test_image_parity(camera_dataset_roots, offsets):
+    src_root, lance_root = camera_dataset_roots
+    meta = LeRobotDatasetMetadata(DUMMY_REPO_ID, root=src_root)
+    delta_timestamps = (
+        {key: [offset / meta.fps for offset in offsets] for key in meta.camera_keys}
+        if offsets is not None
+        else None
+    )
+    upstream = LeRobotDataset(
+        DUMMY_REPO_ID, root=src_root, delta_timestamps=delta_timestamps, video_backend="torchcodec"
+    )
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, delta_timestamps=delta_timestamps)
+    # Unsorted, duplicate indices and episode edges exercise ordering and padding.
+    indices = [7, 0, 5, 6, 7, 17, -1]
+    for idx, actual in zip(indices, lance_ds.__getitems__(indices), strict=True):
+        assert_items_equal(actual, upstream[idx])
+    assert lance_ds.__getitems__([]) == []
+
+
+@pytest.mark.parametrize("unit", ["m", "mm"])
+def test_image_depth_units_and_uint8(camera_dataset_roots, unit):
+    src_root, lance_root = camera_dataset_roots
+    upstream = LeRobotDataset(
+        DUMMY_REPO_ID, root=src_root, depth_output_unit=unit, return_uint8=True, video_backend="torchcodec"
+    )
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, depth_output_unit=unit, return_uint8=True)
+    actual = lance_ds[7]
+    assert_items_equal(actual, upstream[7])
+    for key in lance_ds.meta.image_keys:
+        assert actual[key].dtype == torch.float32
+    assert actual["observation.images.depth_uint16"][0, 0, 0].item() == pytest.approx(
+        1.007 if unit == "m" else 1007
+    )
+    assert actual["observation.images.depth_float"][0, 0, 0].item() == pytest.approx(
+        0.07 if unit == "m" else 70
+    )
+
+
+@pytest.mark.parametrize("history", [False, True])
+def test_image_transforms_keep_duplicate_samples_independent(camera_dataset_roots, history):
+    src_root, lance_root = camera_dataset_roots
+
+    def increment_rgb(image):
+        return image.add_(0.25)
+
+    meta = LeRobotDatasetMetadata(DUMMY_REPO_ID, root=src_root)
+    kwargs = {"image_transforms": increment_rgb}
+    if history:
+        kwargs["delta_timestamps"] = {key: [-1 / meta.fps, 0.0] for key in meta.camera_keys}
+    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="torchcodec", **kwargs)
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, **kwargs)
+    expected = upstream.__getitems__([7, 7, 8])
+    actual = lance_ds.__getitems__([7, 7, 8])
+    for item, reference in zip(actual, expected, strict=True):
+        assert_items_equal(item, reference)
+    for key in meta.image_keys:
+        actual[0][key].zero_()
+        torch.testing.assert_close(actual[1][key], expected[1][key], rtol=0, atol=0)
+
+
+def test_image_fetches_only_required_rows(image_dataset_roots, monkeypatch):
+    _, lance_root = image_dataset_roots
+    key = "observation.images.front"
+    lance_ds = LeRobotDataset(
+        DUMMY_REPO_ID,
+        root=lance_root,
+        delta_timestamps={key: [-1 / 30, 0.0], "action": [0.0, 1 / 30, 2 / 30]},
+    )
+    calls = []
+    decode = lance_ds.reader._decode_image
+
+    def capture(value, image_key, row):
+        calls.append((image_key, row))
+        return decode(value, image_key, row)
+
+    monkeypatch.setattr(lance_ds.reader, "_decode_image", capture)
+    lance_ds.__getitems__([7, 7, 8])
+    assert calls.count((key, 7)) == 1
+    assert {row for image_key, row in calls if image_key == key} == {6, 7, 8}
+    for other in set(lance_ds.meta.image_keys) - {key}:
+        assert {row for image_key, row in calls if image_key == other} == {7, 8}
+    assert len(calls) == 3 + 2 * (len(lance_ds.meta.image_keys) - 1)
+
+
+def test_image_only_reads_without_video_table_or_torchcodec(image_dataset_roots, tmp_path, monkeypatch):
+    src_root, original_lance_root = image_dataset_roots
+    lance_root = tmp_path / "lance"
+    shutil.copytree(original_lance_root, lance_root)
+    db = lancedb.connect(str(lance_root))
+    db.drop_table("videos")
+    import_module = lance_backend.importlib.import_module
+
+    def without_torchcodec(name, *args, **kwargs):
+        if name == "torchcodec":
+            raise ImportError("torchcodec unavailable")
+        return import_module(name, *args, **kwargs)
+
+    monkeypatch.setattr(lance_backend.importlib, "import_module", without_torchcodec)
+    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=f"file://{lance_root}")
+    assert_items_equal(lance_ds[7], upstream[7])
+
+
+@pytest.mark.parametrize("storage", ["jpeg_exif", "path_only", "null"])
+def test_image_storage(camera_dataset_roots, tmp_path, storage):
+    original_src_root, _ = camera_dataset_roots
+    src_root = tmp_path / "src"
+    shutil.copytree(original_src_root, src_root)
+    key = "observation.images.front"
+    image = Image.fromarray(np.arange(64 * 64 * 3, dtype=np.uint8).reshape(64, 64, 3))
+    exif = image.getexif()
+    exif[274] = 6  # 90 degree rotation; the reader must follow HF Image's EXIF handling.
+    encoded = io.BytesIO()
+    image.save(encoded, format="JPEG", exif=exif)
+    value = {
+        "jpeg_exif": {"bytes": encoded.getvalue(), "path": "/unavailable/original.jpg"},
+        "path_only": {"bytes": None, "path": "/unavailable/original.jpg"},
+        "null": None,
+    }[storage]
+    data_path = src_root / "data" / "chunk-000" / "file-000.parquet"
+    table = pq.read_table(data_path)
+    column = table.column(key)
+    values = column.to_pylist()
+    values[7] = value
+    table = table.set_column(
+        table.schema.get_field_index(key), table.schema.field(key), pa.array(values, type=column.type)
+    )
+    pq.write_table(table, data_path)
+    lance_root = tmp_path / "lance"
+    convert(lance_root, root=src_root)
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    if storage == "jpeg_exif":
+        upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="torchcodec")
+        assert_items_equal(lance_ds[7], upstream[7])
+    elif storage == "null":
+        upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="pyav")
+        assert_items_equal(lance_ds.get_raw_item(7), upstream.get_raw_item(7))
+        for dataset in (lance_ds, upstream):
+            with pytest.raises(ValueError, match="Missing image.*observation.images.front.*frame 7"):
+                dataset[7]
+        kwargs = {"episodes": [1], "delta_timestamps": {key: [-1 / 30, 0.0]}, "video_backend": "pyav"}
+        for root in (src_root, lance_root):
+            subset = LeRobotDataset(DUMMY_REPO_ID, root=root, **kwargs)
+            projected = subset.select_columns(key)
+            for rows in ([1, 2], [2, 1]):
+                batch = projected[rows][key]
+                assert batch[rows.index(1)] is None
+                assert isinstance(batch[rows.index(2)], torch.Tensor)
+            with pytest.raises(ValueError, match="Missing image.*frame 7"):
+                subset[2]
+    else:
+        with pytest.raises(FileNotFoundError):
+            lance_ds[7]
+
+
+def test_image_pickle_subset_and_dataloader(camera_dataset_roots):
+    src_root, lance_root = camera_dataset_roots
+    kwargs = {
+        "episodes": [2, 0],
+        "delta_timestamps": {"observation.images.front": [-1 / 30, 0.0]},
+    }
+    upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root, video_backend="torchcodec", **kwargs)
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, **kwargs)
+    assert len(lance_ds) == len(upstream) == 12
+    assert lance_ds.absolute_to_relative_idx == upstream.absolute_to_relative_idx
+    assert_items_equal(lance_ds[7], upstream[7])
+    restored = pickle.loads(pickle.dumps(lance_ds))
+    assert_items_equal(restored[7], upstream[7])
+    restored.reader.close()
+    assert not restored.reader._image_perms
+    assert_items_equal(restored[0], upstream[0])
+
+    indices = [7, 0, 7, 11]
+    loader = torch.utils.data.DataLoader(
+        restored, batch_size=2, sampler=indices, num_workers=2, multiprocessing_context=lance_mp_context()
+    )
+    expected = torch.utils.data.default_collate(upstream.__getitems__(indices))
+    batches = list(loader)
+    for key in expected:
+        actual = (
+            [task for batch in batches for task in batch[key]]
+            if key == "task"
+            else torch.cat([batch[key] for batch in batches])
+        )
+        if key == "task":
+            assert actual == expected[key]
+        else:
+            torch.testing.assert_close(actual, expected[key], rtol=0, atol=0, msg=key)
 
 
 @pytest.fixture
@@ -250,11 +530,7 @@ def test_rgb_batch_decode_deduplicates_overlapping_frames():
     ]
 
     decoder = _FakeRGBDecoder()
-    reader = LanceDatasetReader.__new__(LanceDatasetReader)
-    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
-    reader.return_uint8 = True
-    reader.tolerance_s = 1e-4
-    reader._build_video_requests = lambda *args: {file_key: file_requests}
+    reader = _rgb_reader(file_key, file_requests)
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
         decoded = reader._decode_videos([{}, {}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
@@ -286,11 +562,7 @@ def test_rgb_batch_decode_limits_and_releases_chunks():
             return batch
 
     decoder = Decoder()
-    reader = LanceDatasetReader.__new__(LanceDatasetReader)
-    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
-    reader.return_uint8 = True
-    reader.tolerance_s = 1e-4
-    reader._build_video_requests = lambda *args: {file_key: file_requests}
+    reader = _rgb_reader(file_key, file_requests)
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
         decoded = reader._decode_videos([{}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
@@ -320,11 +592,7 @@ def test_rgb_batch_decode_rejects_bad_pts_after_chunk_scatter():
             return batch
 
     decoder = Decoder()
-    reader = LanceDatasetReader.__new__(LanceDatasetReader)
-    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
-    reader.return_uint8 = True
-    reader.tolerance_s = 1e-4
-    reader._build_video_requests = lambda *args: {file_key: file_requests}
+    reader = _rgb_reader(file_key, file_requests)
 
     with (
         ThreadPoolExecutor(max_workers=1) as reader._decode_pool,
@@ -343,11 +611,7 @@ def test_rgb_batch_decode_respects_byte_limit_for_float_output():
     ]
 
     decoder = _FakeRGBDecoder()
-    reader = LanceDatasetReader.__new__(LanceDatasetReader)
-    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (1024, 1024, 3)}})
-    reader.return_uint8 = False
-    reader.tolerance_s = 1e-4
-    reader._build_video_requests = lambda *args: {file_key: file_requests}
+    reader = _rgb_reader(file_key, file_requests, shape=(1024, 1024, 3), return_uint8=False)
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
         decoded = reader._decode_videos([{}, {}], {"timestamp": []}, {}, {file_key: (decoder, None)})
@@ -374,11 +638,7 @@ def test_rgb_single_request_keeps_direct_decode_result():
             assert indices == [1, 2]
             return SimpleNamespace(data=batch_data, pts_seconds=torch.tensor([0.1, 0.2]))
 
-    reader = LanceDatasetReader.__new__(LanceDatasetReader)
-    reader.meta = SimpleNamespace(depth_keys=[], features={file_key[0]: {"shape": (2, 2, 3)}})
-    reader.return_uint8 = True
-    reader.tolerance_s = 1e-4
-    reader._build_video_requests = lambda *args: {file_key: [(0, [0.1, 0.2])]}
+    reader = _rgb_reader(file_key, [(0, [0.1, 0.2])])
 
     with ThreadPoolExecutor(max_workers=1) as reader._decode_pool:
         decoded = reader._decode_videos([{}], {"timestamp": []}, {}, {file_key: (Decoder(), None)})
@@ -667,6 +927,7 @@ def test_language_columns_parity(tmp_path, lerobot_dataset_factory):
         up_item, lance_item = upstream[idx], lance_ds[idx]
         for col in LANGUAGE_COLUMNS:
             assert lance_item[col] == up_item[col], (idx, col)
+            assert lance_ds.get_raw_item(idx)[col] == upstream.get_raw_item(idx)[col], (idx, col)
         assert_items_equal(
             {k: v for k, v in lance_item.items() if k not in LANGUAGE_COLUMNS},
             {k: v for k, v in up_item.items() if k not in LANGUAGE_COLUMNS},
