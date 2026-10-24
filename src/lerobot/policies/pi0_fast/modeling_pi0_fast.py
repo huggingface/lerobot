@@ -204,7 +204,7 @@ class PI0FastPaliGemma(nn.Module):
                 position_ids=position_ids,
                 past_key_values=past_key_values,
                 use_cache=use_cache,
-                adarms_cond=adarms_cond[0] if adarms_cond is not None else None,
+                adarms_cond=adarms_cond[0],
             )
             prefix_past_key_values = prefix_output.past_key_values
             # prefix_output to be used for the language head
@@ -820,7 +820,9 @@ class PI0FastPolicy(PreTrainedPolicy):
             "This implementation follows the original OpenPI structure for compatibility. \n"
             "Original implementation: https://github.com/Physical-Intelligence/openpi"
         )
-        if pretrained_name_or_path is None:
+        # Guard against untyped/base-class call paths that bypass this override's own
+        # str | Path annotation (this overrides HubMixin.from_pretrained).
+        if pretrained_name_or_path is None:  # type: ignore[comparison-overlap]
             raise ValueError("pretrained_name_or_path is required")
 
         # Use provided config if available, otherwise create default config

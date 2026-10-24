@@ -40,8 +40,12 @@ def ensure_multiprocessing_start_method(start_method: str | None) -> None:
             f"got {start_method!r}."
         )
 
+    # multiprocessing.get_start_method resolves to DefaultContext.get_start_method, which
+    # typeshed stubs as always returning `str` regardless of `allow_none`, discarding the
+    # `allow_none`-aware overload its own base class defines. At runtime it does return None
+    # before any start method is set, so this guard is real.
     current_method = multiprocessing.get_start_method(allow_none=True)
-    if current_method is None:
+    if current_method is None:  # type: ignore[comparison-overlap]
         multiprocessing.set_start_method(start_method)
     elif current_method != start_method:
         raise RuntimeError(
