@@ -1,0 +1,4 @@
+- sections:
+    - local: peft_training
+      title: 使用 PEFT 进行训练（例如 LoRA）
+  title: 教程
