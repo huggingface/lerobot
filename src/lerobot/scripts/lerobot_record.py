@@ -470,6 +470,13 @@ def record(
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+                print("\nREADY 3", flush=True)
+                time.sleep(1)
+                print("READY 2", flush=True)
+                time.sleep(1)
+                print("READY 1", flush=True)
+                time.sleep(1)
+                print("\n===== START =====\n", flush=True)
                 record_loop(
                     robot=robot,
                     events=events,
@@ -485,6 +492,7 @@ def record(
                     display_mode=cfg.display_mode,
                     display_compressed_images=display_compressed_images,
                 )
+                print("\n===== STOP =====\n", flush=True)
 
                 # Execute a few seconds without recording to give time to manually reset the environment
                 # Skip reset for the last episode to be recorded

@@ -405,8 +405,9 @@ class DAggerStrategy(RolloutStrategy):
 
                     # --- PAUSED: hold position ---
                     elif phase == DAggerPhase.PAUSED:
-                        if last_action:
-                            robot.send_action(last_action)
+                        # Do not repeatedly resend the same action while paused.
+                        # The servos keep holding their last goal position.
+                        pass
 
                     # --- AUTONOMOUS: policy control ---
                     else:
@@ -464,9 +465,13 @@ class DAggerStrategy(RolloutStrategy):
             finally:
                 logger.info("DAgger continuous control loop ended — pausing engine")
                 engine.pause()
-                with contextlib.suppress(Exception):
+                logger.info("Attempting to save final in-progress episode")
+                try:
                     with self._episode_lock:
                         dataset.save_episode()
+                except Exception:
+                    logger.exception("FINAL EPISODE SAVE FAILED")
+                else:
                     self._needs_push.set()
                     logger.info("Final in-progress episode saved")
 
@@ -526,6 +531,11 @@ class DAggerStrategy(RolloutStrategy):
                     transition = events.consume_transition()
                     if transition is not None:
                         old_phase, new_phase = transition
+                        logger.info(
+                            "DAGGER TRACE TRANSITION: %s -> %s",
+                            old_phase.value,
+                            new_phase.value,
+                        )
                         self._apply_transition(
                             old_phase,
                             new_phase,
@@ -557,13 +567,25 @@ class DAggerStrategy(RolloutStrategy):
                         self._background_push(dataset, cfg)
 
                     phase = events.phase
-                    obs = robot.get_observation()
+
+                    if phase == DAggerPhase.CORRECTING and record_tick == 0:
+                        logger.info("DAGGER TRACE PRE-OBS PHASE: CORRECTING")
+                    try:
+                        obs = robot.get_observation()
+                    except TimeoutError as exc:
+                        logger.warning(
+                            "DAgger correction-only: skipping stale camera frame: %s",
+                            exc,
+                        )
+                        continue
 
                     # --- CORRECTING: human teleop control + recording ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To
                     # decouple the two, sample teleop at its native rate and
                     # interpolate to the control loop's tick rate.
                     if phase == DAggerPhase.CORRECTING:
+                        if record_tick == 0:
+                            logger.info("DAGGER TRACE PHASE ENTERED: CORRECTING")
                         obs_processed = ctx.processors.robot_observation_processor(obs)
                         teleop_action = teleop.get_action()
                         processed_teleop = ctx.processors.teleop_action_processor((teleop_action, obs))
@@ -583,12 +605,16 @@ class DAggerStrategy(RolloutStrategy):
                                     "intervention": np.array([True], dtype=bool),
                                 }
                             )
+                            logger.info(
+                                "DAGGER TRACE CORRECTION FRAME ADDED: tick=%d",
+                                record_tick,
+                            )
                         record_tick += 1
 
                     # --- PAUSED: hold position ---
                     elif phase == DAggerPhase.PAUSED:
-                        if last_action:
-                            robot.send_action(last_action)
+                        # Hold current servo goal without repeatedly resending it.
+                        pass
 
                     # --- AUTONOMOUS: policy control (no recording) ---
                     else:
@@ -613,9 +639,13 @@ class DAggerStrategy(RolloutStrategy):
             finally:
                 logger.info("DAgger corrections-only loop ended — pausing engine")
                 engine.pause()
-                with contextlib.suppress(Exception):
+                logger.info("Attempting to save final in-progress episode")
+                try:
                     with self._episode_lock:
                         dataset.save_episode()
+                except Exception:
+                    logger.exception("FINAL EPISODE SAVE FAILED")
+                else:
                     self._needs_push.set()
                     logger.info("Final in-progress episode saved")
 
@@ -669,6 +699,11 @@ class DAggerStrategy(RolloutStrategy):
                 # teleop_smooth_move_to silently no-ops and the arm doesn't move.
                 logger.info("Smooth handover: moving leader arm to follower position")
                 teleop_smooth_move_to(teleop, prev_action)
+
+            # One-key correction workflow:
+            # after the normal AUTONOMOUS -> PAUSED handover,
+            # automatically request the standard PAUSED -> CORRECTING transition.
+            self._events.request_transition("correction")
 
         elif old_phase == DAggerPhase.PAUSED and new_phase == DAggerPhase.CORRECTING:
             logger.info("Entering correction mode - human teleop control")

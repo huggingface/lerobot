@@ -300,6 +300,290 @@ def send_next_action(
     if len(interp) != len(ordered_keys):
         raise ValueError(f"Interpolated tensor length ({len(interp)}) != action keys ({len(ordered_keys)})")
     action_dict = {k: interp[i].item() for i, k in enumerate(ordered_keys)}
+
+    # ------------------------------------------------------------
+    # SAFETY CANDIDATE:
+    # Clamp the postprocessed ACT base action to stay 0.5 degrees
+    # inside calibration-derived body-joint limits BEFORE residual.
+    # ------------------------------------------------------------
+    _base_margin_deg = 0.5
+    _inner_robot = ctx.hardware.robot_wrapper.inner
+
+    if getattr(
+        _inner_robot,
+        "robot_type",
+        None,
+    ) in {"so100_follower", "so101_follower"}:
+
+        if getattr(
+            _inner_robot.config,
+            "use_degrees",
+            None,
+        ) is not True:
+            raise RuntimeError(
+                "Base margin requires use_degrees=True"
+            )
+
+        from dataclasses import asdict, is_dataclass
+
+        from lerobot.rollout.joint_limit_guard import (
+            JointLimitGuard,
+        )
+
+        _calibration = getattr(
+            _inner_robot,
+            "calibration",
+            None,
+        )
+
+        if not isinstance(_calibration, dict):
+            raise RuntimeError(
+                "Base margin requires robot calibration"
+            )
+
+        _guard_calibration = {}
+
+        for _name, _entry in _calibration.items():
+            if is_dataclass(_entry):
+                _guard_calibration[_name] = asdict(_entry)
+            elif isinstance(_entry, dict):
+                _guard_calibration[_name] = dict(_entry)
+            else:
+                raise RuntimeError(
+                    "Unsupported calibration entry "
+                    f"{_name}: {type(_entry)}"
+                )
+
+        _base_guard = JointLimitGuard(
+            _guard_calibration
+        )
+
+        _safe_action = dict(action_dict)
+
+        for _joint, (_lo, _hi) in (
+            _base_guard.limits.items()
+        ):
+            if _joint not in _safe_action:
+                continue
+
+            _safe_lo = float(_lo) + _base_margin_deg
+            _safe_hi = float(_hi) - _base_margin_deg
+
+            if _safe_lo > _safe_hi:
+                raise RuntimeError(
+                    f"Base margin too large for {_joint}"
+                )
+
+            _value = float(_safe_action[_joint])
+
+            _safe_action[_joint] = min(
+                max(_value, _safe_lo),
+                _safe_hi,
+            )
+
+        if "gripper.pos" in _safe_action:
+            _gripper = float(
+                _safe_action["gripper.pos"]
+            )
+            _safe_action["gripper.pos"] = min(
+                max(_gripper, 0.0),
+                100.0,
+            )
+
+        _base_guard.validate(_safe_action)
+
+        action_dict = _safe_action
+
+    try:
+        if not getattr(send_next_action, "_residual_obs_checked", False):
+            from lerobot.rollout.residual_observation import build_residual_observation
+
+            residual_obs = build_residual_observation(obs_raw)
+            print(
+                "REAL RESIDUAL OBS OK:",
+                residual_obs.shape,
+                residual_obs.dtype,
+            )
+            send_next_action._residual_obs_checked = True
+
+        from lerobot.rollout.shadow_residual import log_shadow_residual
+        candidate_residual = log_shadow_residual(obs_raw, action_dict)
+        from lerobot.rollout.residual_control import apply_residual
+        act_vector = [action_dict[k] for k in ordered_keys]
+
+        # Independent lateral trigger + shadow logging.
+        # The lateral control path has its own safety gate and is
+        # independent from the PPO ACTIVE_SCALE.
+        lateral_result = None
+        try:
+            from lerobot.rollout.lateral_shadow import (
+                compute_lateral_shadow_candidate,
+                log_lateral_shadow,
+            )
+
+            lateral_result = compute_lateral_shadow_candidate(
+                act_vector
+            )
+            log_lateral_shadow(
+                act_vector,
+                result=lateral_result,
+            )
+        except Exception as exc:
+            print("LATERAL_SHADOW_ERROR:", repr(exc))
+
+        # Original PPO residual path.
+        final_action, active_residual = apply_residual(
+            act_vector,
+            candidate_residual,
+        )
+
+        # Independent lateral residual path.
+        lateral_active_residual = None
+
+        if lateral_result is not None:
+            try:
+                from lerobot.rollout.lateral_residual_control import (
+                    LATERAL_ACTIVE_SCALE,
+                    apply_lateral_residual,
+                )
+
+                final_action, lateral_active_residual = (
+                    apply_lateral_residual(
+                        final_action,
+                        lateral_result["shadow_candidate"],
+                    )
+                )
+            except Exception as exc:
+                import math
+                import lerobot.rollout.lateral_residual_control as lateral_control
+
+                lateral_scale = float(
+                    lateral_control.LATERAL_ACTIVE_SCALE
+                )
+
+                if (
+                    not math.isfinite(lateral_scale)
+                    or lateral_scale != 0.0
+                ):
+                    raise RuntimeError(
+                        "Lateral residual failure while lateral "
+                        "control is active; robot action dispatch blocked"
+                    ) from exc
+
+                print(
+                    "LATERAL_CONTROL_ERROR_ZERO_GATE:",
+                    repr(exc),
+                )
+
+        control_modified = any(
+            float(x) != 0.0
+            for x in active_residual
+        )
+
+        if lateral_active_residual is not None:
+            control_modified = (
+                control_modified
+                or any(
+                    float(x) != 0.0
+                    for x in lateral_active_residual
+                )
+            )
+
+        if control_modified:
+            action_dict = {
+                k: float(final_action[i])
+                for i, k in enumerate(ordered_keys)
+            }
+    except Exception as exc:
+        print("SHADOW_LOG_ERROR:", repr(exc))
+
+        # Fail closed when PPO residual control is active.
+        import math
+        import lerobot.rollout.residual_control as residual_control
+
+        scale = float(residual_control.ACTIVE_SCALE)
+
+        if not math.isfinite(scale) or scale != 0.0:
+            raise RuntimeError(
+                "PPO failure while residual control is active; "
+                "robot action dispatch blocked"
+            ) from exc
+
     processed = ctx.processors.robot_action_processor((action_dict, obs_raw))
-    ctx.hardware.robot_wrapper.send_action(processed)
+    # Final finite-value safety gate before robot dispatch.
+    import math
+
+    if not isinstance(processed, dict):
+        raise ValueError("Robot action must be a dictionary")
+
+    if not processed:
+        raise ValueError("Robot action dictionary is empty")
+
+    for joint_name, joint_value in processed.items():
+        try:
+            value = float(joint_value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                f"Invalid robot action value for {joint_name}"
+            ) from exc
+
+        if not math.isfinite(value):
+            raise ValueError(
+                f"Non-finite robot action for {joint_name}"
+            )
+
+    from lerobot.rollout.action_guard import validate_normalized_gripper
+
+    processed = validate_normalized_gripper(processed)
+
+    dispatched = ctx.hardware.robot_wrapper.send_action(processed)
+
+    # Diagnostic logging only; never modify the dispatched action.
+    try:
+        import csv
+        import time
+        from pathlib import Path
+
+        log_path = Path("outputs/rl_shadow/final_dispatched_actions.csv")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        keys = [
+            "shoulder_pan.pos",
+            "shoulder_lift.pos",
+            "elbow_flex.pos",
+            "wrist_flex.pos",
+            "wrist_roll.pos",
+            "gripper.pos",
+        ]
+
+        if not isinstance(dispatched, dict):
+            raise RuntimeError("Dispatched action is not a dictionary")
+
+        if set(dispatched) != set(keys):
+            raise RuntimeError("Dispatched action keys mismatch")
+
+        new_file = not log_path.exists() or log_path.stat().st_size == 0
+
+        with log_path.open("a", newline="") as f:
+            writer = csv.writer(f)
+
+            if new_file:
+                writer.writerow(
+                    ["timestamp"]
+                    + [f"requested_{i}" for i in range(6)]
+                    + [f"dispatched_{i}" for i in range(6)]
+                )
+
+            writer.writerow(
+                [time.time()]
+                + [float(processed[k]) for k in keys]
+                + [float(dispatched[k]) for k in keys]
+            )
+
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Dispatch diagnostic logging failed: %s", exc
+        )
+
     return action_dict
