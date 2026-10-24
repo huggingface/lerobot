@@ -331,12 +331,13 @@ def rollout(
             if "final_info" in info:
                 final_info = info["final_info"]
                 if isinstance(final_info, dict):
-                    is_success = final_info.get("is_success", [False] * env.num_envs)
-                    successes = (
-                        is_success.tolist()
-                        if hasattr(is_success, "tolist")
-                        else [bool(is_success)] * env.num_envs
-                    )
+                    is_success = np.broadcast_to(final_info.get("is_success", False), (env.num_envs,))
+                    successes = [
+                        bool(value) if valid else False
+                        for value, valid in zip(
+                            is_success, final_info.get("_is_success", [True] * env.num_envs), strict=True
+                        )
+                    ]
                 else:
                     # Gymnasium < 1.0 returns final_info as a per-env sequence/object array,
                     # with entries set to a dict only for envs that just finished.
@@ -347,12 +348,13 @@ def rollout(
                         else:
                             successes.append(False)
             elif "is_success" in info:
-                is_success = info["is_success"]
-                successes = (
-                    is_success.tolist()
-                    if hasattr(is_success, "tolist")
-                    else [bool(is_success)] * env.num_envs
-                )
+                is_success = np.broadcast_to(info["is_success"], (env.num_envs,))
+                successes = [
+                    bool(value) if valid else False
+                    for value, valid in zip(
+                        is_success, info.get("_is_success", [True] * env.num_envs), strict=True
+                    )
+                ]
             else:
                 successes = [False] * env.num_envs
 
