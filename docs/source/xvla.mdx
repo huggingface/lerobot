@@ -402,15 +402,62 @@ lerobot-train \
 
 ### Multi-Camera Support
 
-X-VLA supports multiple camera views through the `num_image_views` parameter:
+X-VLA's configuration does not define a fixed three-camera limit. `lerobot/xvla-base` declares three visual input features (`observation.images.image`, `observation.images.image2`, and `observation.images.image3`) and sets `num_image_views=3`, but these values describe that checkpoint rather than a maximum supported by X-VLA.
 
-```python
-# Configure for 3 camera views
-policy.num_image_views=3
+Names such as `image` and `image2` are feature keys, not fixed camera slots. X-VLA collects every input feature whose type is `VISUAL`. The first visual feature is the primary view, while later features are auxiliary views, so preserve a consistent feature order between training and inference. Each real camera must have its own visual feature; increasing `num_image_views` alone does not make X-VLA read an additional dataset camera. For four real cameras, the features could be:
 
-# Add empty cameras if you have fewer physical cameras
-policy.empty_cameras=1  # Adds 1 zero-padded camera view
+```text
+observation.images.image
+observation.images.image2
+observation.images.image3
+observation.images.image4
 ```
+
+During feature validation, X-VLA determines the view count as follows:
+
+- If `num_image_views` is unset, it becomes the number of declared visual features plus `empty_cameras`.
+- If it is set explicitly, X-VLA uses at least that same total: `max(num_image_views, number of visual features + empty_cameras)`.
+
+For example, to fine-tune the base checkpoint on a dataset with the four features above, clear the checkpoint's input feature list so LeRobot infers all four features from the dataset. Then request four views and no placeholders:
+
+```bash
+lerobot-train \
+  --dataset.repo_id=YOUR_DATASET \
+  --output_dir=./outputs/xvla_four_cameras \
+  --job_name=xvla_four_cameras \
+  --policy.path=lerobot/xvla-base \
+  --policy.device=cuda \
+  --policy.dtype=bfloat16 \
+  --policy.action_mode=auto \
+  --policy.input_features=null \
+  --policy.num_image_views=4 \
+  --policy.empty_cameras=0 \
+  --steps=20000
+```
+
+The following table contrasts real camera features with placeholders:
+
+| Setup                                         | Real visual features | `num_image_views` | `empty_cameras` |
+| --------------------------------------------- | -------------------: | ----------------: | --------------: |
+| Four real cameras                             |                    4 |                 4 |               0 |
+| Three real cameras and one masked placeholder |                    3 |                 4 |               1 |
+
+`empty_cameras` represents missing views. For example, `--policy.empty_cameras=1` adds `observation.images.empty_camera_0` to the policy configuration. Do not map a real camera to this key. The placeholder is absent from the batch; X-VLA supplies a zero-filled view with a false attention mask, so it is ignored as an image input.
+
+If your dataset uses different camera names, add a `--rename_map` to the training command. Keys on the left are dataset feature names, and values on the right become policy input names. For a dataset with `front`, `side`, `wrist`, and `overhead` cameras, use:
+
+```bash
+--rename_map='{
+  "observation.images.front": "observation.images.image",
+  "observation.images.side": "observation.images.image2",
+  "observation.images.wrist": "observation.images.image3",
+  "observation.images.overhead": "observation.images.image4"
+}'
+```
+
+See [Rename Map and Empty Cameras](./rename_map) for more examples and the mapping convention.
+
+There is no single practical maximum camera count. Each additional view contributes visual tokens and increases memory use. The combined transformer sequence must fit `policy.max_len_seq` (512 in `lerobot/xvla-base`), or X-VLA raises a sequence-length error. Image resolution and batch size also affect GPU memory, so choose the number of views together with those settings.
 
 ### Custom Preprocessing Pipeline
 
