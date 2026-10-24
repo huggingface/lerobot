@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Offline end-to-end checks with real, reduced Wan/VAE/UMT5 backbones."""
 
+import json
+
 import pytest
 import torch
 
@@ -132,13 +134,21 @@ def test_pretrained_postprocessor_honors_active_toggle(config, tmp_path, saved_d
     ).read_bytes()
 
 
-def test_pretrained_postprocessor_preserves_explicit_overrides(config, tmp_path):
+@pytest.mark.parametrize("step_key", ["longwam_action_toggle", "LongWAMActionToggle"])
+def test_pretrained_postprocessor_preserves_explicit_overrides(config, tmp_path, step_key):
     config.toggle_action_dimensions = [-1]
     pre, post = make_pre_post_processors(config, dataset_stats=stats(config))
     pre.save_pretrained(tmp_path, config_filename="input.json")
     post.save_pretrained(tmp_path, config_filename="output.json")
+    if step_key == "LongWAMActionToggle":
+        path = tmp_path / "output.json"
+        saved = json.loads(path.read_text())
+        entry = next(step for step in saved["steps"] if step.get("registry_name") == "longwam_action_toggle")
+        del entry["registry_name"]
+        entry["class"] = "lerobot.policies.longwam.processor_longwam.LongWAMActionToggle"
+        path.write_text(json.dumps(saved))
     config.toggle_action_dimensions = []
-    overrides = {"longwam_action_toggle": {"dimensions": [0]}}
+    overrides = {step_key: {"dimensions": [0]}}
     _, loaded = make_pre_post_processors(
         config,
         pretrained_path=tmp_path,
@@ -149,7 +159,7 @@ def test_pretrained_postprocessor_preserves_explicit_overrides(config, tmp_path)
     actions = torch.tensor([[-0.5, 0.25, -0.5], [0.5, -0.25, 0.5]])
     expected = torch.tensor([[1.0, 0.5, -1.0], [-1.0, -0.5, 1.0]])
     torch.testing.assert_close(loaded(actions), expected, atol=0, rtol=0)
-    assert overrides == {"longwam_action_toggle": {"dimensions": [0]}}
+    assert overrides == {step_key: {"dimensions": [0]}}
     assert config.toggle_action_dimensions == []
 
 

@@ -200,7 +200,10 @@ def make_longwam_pre_post_processors_from_pretrained(
         postprocessor_config_filename=postprocessor_config_filename,
     )
     # Explicit processor overrides retain precedence over the policy configuration.
-    if "dimensions" in (postprocessor_overrides or {}).get("longwam_action_toggle", {}):
+    if any(
+        "dimensions" in (postprocessor_overrides or {}).get(key, {})
+        for key in ("longwam_action_toggle", "LongWAMActionToggle")
+    ):
         return pre, post
     toggles = [step for step in post.steps if isinstance(step, LongWAMActionToggle)]
     if len(toggles) > 1:
