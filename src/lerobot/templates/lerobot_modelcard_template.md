@@ -25,6 +25,8 @@
 [VLA-JEPA](https://arxiv.org/abs/2602.10098) is a Vision-Language-Action model that combines a Qwen3-VL language backbone with a self-supervised video world model (V-JEPA2) and a flow-matching DiT action head.
 {% elif model_name == "gaussian_actor" %}
 This is a Gaussian Actor policy (Gaussian policy with a tanh squash) — the policy-side component used by [Soft Actor-Critic (SAC)](https://huggingface.co/papers/1801.01290) and related maximum-entropy continuous-control algorithms.
+{% elif model_name == "flow_actor" %}
+This is a state-only flow actor for [QF3](https://arxiv.org/abs/2610.08789): `select_action` integrates a velocity field with explicit Euler steps, and the QF3 algorithm owns the training loss.
 {% elif model_name == "pi0_fast" %}
 [π₀-FAST (Pi0-FAST)](https://www.physicalintelligence.company/research/fast) is a Vision-Language-Action model for general robot control, from Physical Intelligence. It models continuous robot actions with autoregressive next-token prediction using FAST (Frequency-space Action Sequence Tokenization), training up to 5x faster than diffusion-based π₀.
 {% elif model_name == "eo1" %}
