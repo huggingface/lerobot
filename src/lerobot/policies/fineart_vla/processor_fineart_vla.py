@@ -317,6 +317,9 @@ class FineARTVLATextTokenizerStep(ProcessorStep):
 
         tokenizer = self._ensure_tokenizer()
         state_all = (transition.get(TransitionKey.OBSERVATION) or {}).get(OBS_STATE)
+        # Proprioceptive memory yields (B, T, D) in training; prompt the current state as inference does.
+        if state_all is not None and state_all.ndim == 3:
+            state_all = state_all[:, -1]
         if _is_batched_messages(messages):
             encoded = [
                 self._encode_messages(
