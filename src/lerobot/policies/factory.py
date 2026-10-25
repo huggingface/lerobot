@@ -437,6 +437,7 @@ def make_policy(
         policy = policy_cls.from_pretrained(**kwargs)
         if defer_weight_load:
             peft_config.inference_mode = False  # trainable, as `is_trainable=True` below
+            policy.name_or_path = peft_config.base_model_name_or_path
             policy = get_peft_model(policy, peft_config)
         else:
             policy = PeftModel.from_pretrained(

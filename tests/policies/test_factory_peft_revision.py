@@ -89,6 +89,7 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch,
         # DCP resume: the base weights load, the adapter weights do not.
         get_peft_model.assert_called_once_with(base_policy, peft_config)
         assert peft_config.inference_mode is False
+        assert base_policy.name_or_path == "user/base-policy"
         peft_model_from_pretrained.assert_not_called()
         return
     peft_model_from_pretrained.assert_called_once_with(
