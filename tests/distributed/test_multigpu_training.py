@@ -56,7 +56,7 @@ import torch.multiprocessing as mp
 from safetensors.torch import load_file
 
 from lerobot.common.train_utils import resume_after_prepare, resume_before_prepare, save_checkpoint
-from lerobot.configs.default import DatasetConfig
+from lerobot.configs.default import DatasetConfig, PeftConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.distributed.checkpoint import full_model_state_dict, is_sharded_module
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, SCALER_STATE, TRAINING_STATE_DIR
@@ -170,6 +170,7 @@ def _make_cfg(
     checkpoint_format: CheckpointFormat = CheckpointFormat.SAFETENSORS,
     grad_accum: int = 1,
     mixed_precision: str = "no",
+    peft: bool = False,
 ) -> TrainPipelineConfig:
     cfg = TrainPipelineConfig(dataset=DatasetConfig(repo_id="lerobot/dummy"), batch_size=BATCH_SIZE)
     cfg.checkpoint_format = checkpoint_format
@@ -185,6 +186,10 @@ def _make_cfg(
     # The dummy policy declares no _fsdp_wrap_modules; the size-based wrap policy shards its
     # Linear without needing class names (the set_fsdp_wrap_modules no-op branch).
     cfg.accelerator.fsdp.min_num_params = 1
+    if peft:
+        cfg.peft = PeftConfig()
+        # Above PEFT's ModuleDict containers: accelerate's size policy would pass them to fully_shard.
+        cfg.accelerator.fsdp.min_num_params = 100
     cfg.parallelism.resolve(world_size)
     return cfg
 
@@ -203,6 +208,13 @@ def _make_policy(seed: int) -> DummyCheckpointPolicy:
     """Identically seeded on every rank, so shard/replicate starts from one common init."""
     torch.manual_seed(seed)
     return DummyCheckpointPolicy(DummyCheckpointConfig(hidden=HIDDEN, device="cpu"))
+
+
+def _wrap_with_lora(policy: DummyCheckpointPolicy):
+    """LoRA on the dummy policy's Linear, with the base frozen (`PreTrainedPolicy.wrap_with_peft`)."""
+    import peft
+
+    return peft.get_peft_model(policy, peft.LoraConfig(r=4, target_modules=["net"]))
 
 
 def _batch(step: int, rank: int, device: torch.device) -> dict[str, torch.Tensor]:
@@ -274,17 +286,23 @@ def _train_and_save_worker(
     world_size: int,
     port: int,
     tmp_dir: str,
-    fmt_value: str,
+    checkpoint_format: str,
     mixed_precision: str = "no",
+    peft: bool = False,
 ) -> None:
     """FSDP2 (dp_shard=world_size): train SAVE_STEP steps, save_checkpoint, store the gathered
     full model/optimizer state as the rank-0 reference for the resume workers."""
     _init_worker_env(rank, world_size, port)
     tmp = Path(tmp_dir)
-    fmt = CheckpointFormat(fmt_value)
-    cfg = _make_cfg(world_size, dp_shard=world_size, checkpoint_format=fmt, mixed_precision=mixed_precision)
+    cfg = _make_cfg(
+        world_size,
+        dp_shard=world_size,
+        checkpoint_format=CheckpointFormat(checkpoint_format),
+        mixed_precision=mixed_precision,
+        peft=peft,
+    )
     accelerator = _build_accelerator(cfg)
-    policy = _make_policy(SEED)
+    policy = _wrap_with_lora(_make_policy(SEED)) if peft else _make_policy(SEED)
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-2)
     # FSDP2 requires model and optimizer in one prepare() call (accelerate rebinds param groups).
     policy, optimizer = accelerator.prepare(policy, optimizer)
@@ -320,8 +338,14 @@ def _train_and_save_worker(
 
         pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
         training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
-        assert (pretrained_dir / f"{FSDP_MODEL_NAME}_0").is_dir() == fmt.wants_dcp
-        assert (pretrained_dir / "model.safetensors").is_file() == fmt.wants_safetensors
+        assert (pretrained_dir / f"{FSDP_MODEL_NAME}_0").is_dir() == (
+            cfg.checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP)
+        )
+        weights = "adapter_model.safetensors" if peft else "model.safetensors"
+        assert (pretrained_dir / weights).is_file() == (
+            cfg.checkpoint_format in (CheckpointFormat.SAFETENSORS, CheckpointFormat.SAFETENSORS_DCP)
+        )
+        assert (pretrained_dir / "adapter_config.json").is_file() == peft
         assert (pretrained_dir / "config.json").is_file()
         assert (pretrained_dir / "train_config.json").is_file()
         # Sharded runs always use the DCP optimizer channel, never the safetensors one.
@@ -342,8 +366,9 @@ def _resume_and_verify_worker(
     world_size: int,
     port: int,
     tmp_dir: str,
-    fmt_value: str,
+    checkpoint_format: str,
     mixed_precision: str = "no",
+    peft: bool = False,
 ) -> None:
     """Two-phase resume at dp_shard=world_size; the gathered state must match the saved
     reference exactly (DCP round-trips are bit-exact).
@@ -357,16 +382,31 @@ def _resume_and_verify_worker(
     cfg = _make_cfg(
         world_size,
         dp_shard=world_size,
-        checkpoint_format=CheckpointFormat(fmt_value),
+        checkpoint_format=CheckpointFormat(checkpoint_format),
         mixed_precision=mixed_precision,
+        peft=peft,
     )
     cfg.checkpoint_path = tmp / "checkpoint"
     accelerator = _build_accelerator(cfg)
 
     assert resume_before_prepare(cfg) == SAVE_STEP  # phase 1: RNG + step counter only
 
-    # Deliberately different init: the DCP load must overwrite every parameter.
-    policy = _make_policy(SEED + 1)
+    if peft:
+        import peft as peft_lib
+
+        # As make_policy builds it: the base from its own checkpoint, the adapter over a different init.
+        pretrained_dir = cfg.checkpoint_path / PRETRAINED_MODEL_DIR
+        policy = _make_policy(SEED)
+        torch.manual_seed(SEED + 1)
+        if cfg.checkpoint_format in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_DCP):
+            peft_config = peft_lib.PeftConfig.from_pretrained(pretrained_dir)
+            peft_config.inference_mode = False
+            policy = peft_lib.get_peft_model(policy, peft_config)
+        else:
+            policy = peft_lib.PeftModel.from_pretrained(policy, pretrained_dir, is_trainable=True)
+    else:
+        # Deliberately different init: the DCP load must overwrite every parameter.
+        policy = _make_policy(SEED + 1)
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-2)
     policy, optimizer = accelerator.prepare(policy, optimizer)
     resume_after_prepare(cfg, accelerator, policy, optimizer, None)  # phase 2: DCP reshard-load
@@ -597,9 +637,9 @@ def test_fsdp2_train_save_resume_round_trip(tmp_path):
     state tensors must match the pre-save gathered reference exactly (DCP round-trips are
     bit-exact).
     """
-    fmt = CheckpointFormat.SAFETENSORS_AND_DCP.value
-    _spawn(4, _train_and_save_worker, str(tmp_path), fmt)
-    _spawn(4, _resume_and_verify_worker, str(tmp_path), fmt)
+    checkpoint_format = CheckpointFormat.SAFETENSORS_DCP.value
+    _spawn(4, _train_and_save_worker, str(tmp_path), checkpoint_format)
+    _spawn(4, _resume_and_verify_worker, str(tmp_path), checkpoint_format)
 
 
 @pytest.mark.multigpu
@@ -631,9 +671,22 @@ def test_changed_topology_resume(tmp_path):
     change; the post-resume gathered state must equal the pre-save gathered reference exactly
     (cross-topology resharding is runtime-verified).
     """
-    fmt = CheckpointFormat.DCP.value
-    _spawn(4, _train_and_save_worker, str(tmp_path), fmt)
-    _spawn(2, _resume_and_verify_worker, str(tmp_path), fmt)
+    checkpoint_format = CheckpointFormat.DCP.value
+    _spawn(4, _train_and_save_worker, str(tmp_path), checkpoint_format)
+    _spawn(2, _resume_and_verify_worker, str(tmp_path), checkpoint_format)
+
+
+@pytest.mark.multigpu
+@pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires 4 GPUs")
+@pytest.mark.parametrize("checkpoint_format", [CheckpointFormat.SAFETENSORS, CheckpointFormat.DCP])
+def test_peft_train_save_resume_round_trip(tmp_path, checkpoint_format):
+    """LoRA under FSDP2: save at dp_shard=4, resume at dp_shard=2.
+
+    The gathered model (frozen base and adapter) and Adam state must equal the pre-save reference.
+    """
+    pytest.importorskip("peft")
+    _spawn(4, _train_and_save_worker, str(tmp_path), checkpoint_format.value, "no", True)
+    _spawn(2, _resume_and_verify_worker, str(tmp_path), checkpoint_format.value, "no", True)
 
 
 @pytest.mark.multigpu
@@ -658,9 +711,9 @@ def test_fp16_fsdp2_train_save_resume_round_trip(tmp_path):
     uninitialized GradScaler — so this test fails loudly if the unwrap in
     `lerobot.distributed.checkpoint` is ever removed.
     """
-    fmt = CheckpointFormat.SAFETENSORS_AND_DCP.value
-    _spawn(4, _train_and_save_worker, str(tmp_path), fmt, "fp16")
-    _spawn(4, _resume_and_verify_worker, str(tmp_path), fmt, "fp16")
+    checkpoint_format = CheckpointFormat.SAFETENSORS_DCP.value
+    _spawn(4, _train_and_save_worker, str(tmp_path), checkpoint_format, "fp16")
+    _spawn(4, _resume_and_verify_worker, str(tmp_path), checkpoint_format, "fp16")
 
 
 @pytest.mark.multigpu

@@ -23,7 +23,8 @@ from lerobot.configs import FeatureType
 from lerobot.utils.constants import ACTION
 
 
-def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch):
+@pytest.mark.parametrize("defer_weight_load", [False, True])
+def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch, defer_weight_load):
     cfg = SimpleNamespace(
         type="mock",
         device="cpu",
@@ -49,10 +50,13 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
     peft_config = SimpleNamespace(
         base_model_name_or_path="user/base-policy",
         revision="base-sha",
+        inference_mode=True,
     )
     peft_config_from_pretrained = MagicMock(return_value=peft_config)
     adapted_policy = torch.nn.Linear(1, 1)
     peft_model_from_pretrained = MagicMock(return_value=adapted_policy)
+    get_peft_model = MagicMock(return_value=adapted_policy)
+    monkeypatch.setattr(policy_factory, "get_peft_model", get_peft_model)
     require_package = MagicMock()
     monkeypatch.setattr(policy_factory, "require_package", require_package)
     monkeypatch.setattr(
@@ -66,7 +70,7 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
         SimpleNamespace(from_pretrained=peft_model_from_pretrained),
     )
 
-    policy = policy_factory.make_policy(cfg, ds_meta=dataset_meta)
+    policy = policy_factory.make_policy(cfg, ds_meta=dataset_meta, defer_weight_load=defer_weight_load)
 
     assert policy is adapted_policy
     require_package.assert_called_once_with("peft", extra="peft")
@@ -81,6 +85,12 @@ def test_make_policy_keeps_peft_adapter_and_base_revisions_separate(monkeypatch)
         pretrained_name_or_path="user/base-policy",
         revision="base-sha",
     )
+    if defer_weight_load:
+        # DCP resume: the base weights load, the adapter weights do not.
+        get_peft_model.assert_called_once_with(base_policy, peft_config)
+        assert peft_config.inference_mode is False
+        peft_model_from_pretrained.assert_not_called()
+        return
     peft_model_from_pretrained.assert_called_once_with(
         base_policy,
         "user/adapter",
