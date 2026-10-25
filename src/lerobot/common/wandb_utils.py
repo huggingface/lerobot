@@ -18,6 +18,7 @@ import os
 import re
 from glob import glob
 from pathlib import Path
+from typing import Literal, cast
 
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from termcolor import colored
@@ -94,7 +95,15 @@ class WandBLogger:
             if self.log_dir is None:
                 raise ValueError("Resuming a WandB run requires `cfg.output_dir` to locate the previous run.")
             wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir)
-        wandb.init(
+        resume = self.cfg.resume or ("must" if cfg.resume else None)
+        if resume is not None and resume not in {"allow", "must", "never", "auto"}:
+            raise ValueError(f"Unsupported WandB resume mode: {resume!r}")
+        mode: Literal["online", "offline", "disabled"] = "online"
+        if self.cfg.mode == "offline":
+            mode = "offline"
+        elif self.cfg.mode == "disabled":
+            mode = "disabled"
+        run = wandb.init(
             id=wandb_run_id,
             project=self.cfg.project,
             entity=self.cfg.entity,
@@ -107,22 +116,22 @@ class WandBLogger:
             save_code=False,
             # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
             job_type="train_eval",
-            resume=self.cfg.resume or ("must" if cfg.resume else None),
-            mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
+            resume=cast(Literal["allow", "must", "never", "auto"] | None, resume),
+            mode=mode,
             settings=wandb.Settings(
                 console=self.cfg.console,
                 console_multipart=self.cfg.console_multipart,
                 console_chunk_max_seconds=self.cfg.console_chunk_max_seconds,
             ),
         )
-        run_id = wandb.run.id
+        run_id = run.id
         # NOTE: We will override the cfg.wandb.run_id with the wandb run id.
         # This is because we want to be able to resume the run from the wandb run id.
         cfg.wandb.run_id = run_id
         # Handle custom step key for rl asynchronous training.
         self._wandb_custom_step_key: set[str] | None = None
         logging.info(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
-        logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
+        logging.info(f"Track this run --> {colored(run.get_url(), 'yellow', attrs=['bold'])}")
         self._wandb = wandb
 
     def log_policy(self, checkpoint_dir: Path):

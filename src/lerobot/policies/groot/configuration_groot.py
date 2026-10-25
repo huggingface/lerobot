@@ -344,6 +344,7 @@ class GrootConfig(PreTrainedConfig):
     optimizer_betas: tuple[float, float] = (0.9, 0.999)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 1e-5
+    optimizer_fused: bool | None = None
     warmup_ratio: float = 0.05
     use_bf16: bool = True
     # The native N1.7 fine-tuning recipe keeps model parameters in FP32 and computes under BF16 autocast.
@@ -506,6 +507,7 @@ class GrootConfig(PreTrainedConfig):
             eps=self.optimizer_eps,
             weight_decay=self.optimizer_weight_decay,
             grad_clip_norm=1.0,
+            fused=self.optimizer_fused,
         )
 
     def get_scheduler_preset(self) -> DiffuserSchedulerConfig:
