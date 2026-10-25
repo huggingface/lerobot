@@ -522,6 +522,8 @@ def eval_policy(
     # Collect predicted-video latents across a rollout (world-model policies only). The latents are
     # concatenated and decoded once after the rollout, matching upstream LingBot-VA's visualization path.
     def collect_predicted_latents(policy: PreTrainedPolicy):
+        if _peft_available and isinstance(policy, PeftModel):
+            policy = policy.get_base_model()
         latents = getattr(policy, "last_predicted_latents", None)
         if latents is not None:
             pred_latents.append(
