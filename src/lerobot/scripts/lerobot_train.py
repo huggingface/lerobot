@@ -184,6 +184,29 @@ def _make_image_augmentation(
     )
 
 
+def _warn_pretrained_stats_replaced(pretrained_path: str | None) -> None:
+    """Log when a fresh fine-tune replaces a pretrained checkpoint's processor stats.
+
+    On a non-resume run with `pretrained_path` set, the normalizer/unnormalizer are rebuilt with
+    the fine-tune dataset's stats: the base checkpoint's saved stats are NOT kept. That is the
+    intended contract (see the resume rule below and #4006), but it is easy to miss: model
+    outputs unnormalize against the new dataset's mean/std, so with a small dataset whose
+    actions barely vary, near-constant normalized outputs collapse to near the dataset mean and
+    rollout must load the processors saved with this run's checkpoints, not the base model's.
+    """
+    if pretrained_path is None:
+        return
+    logging.warning(
+        "Fine-tuning from '%s': normalizer/unnormalizer stats are overridden with the "
+        "fine-tune dataset's stats (dataset.meta.stats); the pretrained checkpoint's own "
+        "stats are not preserved. If the fine-tune dataset is small or its actions vary "
+        "little, unnormalized actions will cluster near the dataset mean (amplitude "
+        "collapse). Make sure rollout loads the pre/post processors saved with this run's "
+        "checkpoints.",
+        pretrained_path,
+    )
+
+
 def _preprocess_dataset_batch(
     batch: dict[str, Any],
     camera_keys: list[str],
@@ -700,6 +723,7 @@ def train(cfg: TrainPipelineConfig) -> None:
         # and force-feeding raw dataset stats over them crashes normalization (#4006).
         # This mirrors the `dataset_stats` kwarg above, which is also skipped on resume.
         if not cfg.resume:
+            _warn_pretrained_stats_replaced(processor_pretrained_path)
             preprocessor_overrides["normalizer_processor"]["stats"] = processor_dataset_stats
             postprocessor_overrides["unnormalizer_processor"]["stats"] = processor_dataset_stats
         if getattr(active_cfg, "use_relative_actions", False):
