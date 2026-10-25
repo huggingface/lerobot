@@ -19,9 +19,10 @@ the actor when ``optimization_step % policy_frequency == 0``, which includes the
 first call. The actor loss is ``qf3_actor_terms``. ``clip_velocity`` defaults
 to True. Setting it False is the paper's direct-Q ablation.
 
-``RLTrainer.training_step`` can call this update in-process. This class does not
-start ``lerobot.rl.learner`` or ``lerobot.rl.actor``. ``FlowActorConfig`` does
-not carry the SAC service fields those processes read.
+``RLTrainer.training_step`` calls this update. ``FlowActorConfig`` carries the
+SAC actor-learner fields, so ``python -m lerobot.rl.learner`` and
+``python -m lerobot.rl.actor`` can train this algorithm. The actor still builds
+its environment only through ``make_robot_env``.
 
 The scalar twin Q and ``qf3_actor_terms`` live in this module.
 """

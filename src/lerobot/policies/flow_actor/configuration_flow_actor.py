@@ -17,6 +17,10 @@ from dataclasses import dataclass, field
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.configs.types import FeatureType
 from lerobot.optim import AdamConfig, LRSchedulerConfig
+from lerobot.policies.gaussian_actor.configuration_gaussian_actor import (
+    ActorLearnerConfig,
+    ConcurrencyConfig,
+)
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 
@@ -31,6 +35,7 @@ class FlowActorConfig(PreTrainedConfig):
 
     Defaults for width, time embedding, and Euler steps follow appendix table
     ``tab:qf3-arch``. QF3 training hyperparameters live on ``QF3AlgorithmConfig``.
+    The actor-learner fields are the SAC service objects those processes already read.
     """
 
     normalization_mapping: dict[str, NormalizationMode] = field(
@@ -46,6 +51,18 @@ class FlowActorConfig(PreTrainedConfig):
     time_dim: int = 64
     # Appendix Euler step count. Rollouts and the critic bootstrap should use the same count.
     euler_steps: int = 5
+
+    # Shared with the SAC actor-learner service. See GaussianActorConfig.
+    storage_device: str = "cpu"
+    online_steps: int = 1000000
+    online_buffer_capacity: int = 100000
+    offline_buffer_capacity: int = 100000
+    online_step_before_learning: int = 100
+    actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
+    concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
+    # Continuous actions only. The actor reads this and skips its discrete suffix.
+    num_discrete_actions: int | None = None
+    dataset_stats: dict[str, dict[str, list[float]]] | None = None
 
     def get_optimizer_preset(self) -> AdamConfig:
         # RL training builds its own Adam from QF3AlgorithmConfig. This preset only

@@ -14,11 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""QF3 clip gradient, checkpoint roundtrip, and one registered update."""
+"""QF3 clip gradient, checkpoint roundtrip, and actor-learner wiring."""
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
+import draccus
 import pytest
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
@@ -26,11 +28,17 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 import torch  # noqa: E402
 from torch import Tensor, nn  # noqa: E402
 
+from lerobot.configs.default import DatasetConfig  # noqa: E402
 from lerobot.configs.policies import PreTrainedConfig  # noqa: E402
 from lerobot.configs.types import FeatureType, PolicyFeature  # noqa: E402
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors  # noqa: E402
 from lerobot.policies.flow_actor.configuration_flow_actor import FlowActorConfig  # noqa: E402
 from lerobot.policies.flow_actor.modeling_flow_actor import FlowActorPolicy  # noqa: E402
+from lerobot.policies.gaussian_actor.configuration_gaussian_actor import (  # noqa: E402
+    ActorLearnerConfig,
+    ConcurrencyConfig,
+    GaussianActorConfig,
+)
 from lerobot.rl.algorithms.configs import RLAlgorithmConfig  # noqa: E402
 from lerobot.rl.algorithms.factory import get_algorithm_class, make_algorithm  # noqa: E402
 from lerobot.rl.algorithms.qf3.configuration_qf3 import QF3AlgorithmConfig  # noqa: E402
@@ -38,6 +46,7 @@ from lerobot.rl.algorithms.qf3.qf3_algorithm import (  # noqa: E402
     QF3Algorithm,
     qf3_actor_terms,
 )
+from lerobot.rl.train_rl import TrainRLServerPipelineConfig  # noqa: E402
 from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
 
 
@@ -172,3 +181,146 @@ def test_qf3_registers_updates_and_roundtrips(tmp_path: Path):
         assert torch.equal(loaded.state_dict()[key], value)
     for key, value in policy.velocity.state_dict().items():
         assert torch.equal(loaded_policy.velocity.state_dict()[key], value)
+
+
+@dataclass
+class _CLIConfig:
+    policy: PreTrainedConfig
+
+
+def _pipeline(policy: PreTrainedConfig, output_dir: Path, algorithm=None) -> TrainRLServerPipelineConfig:
+    policy.push_to_hub = False
+    cfg = TrainRLServerPipelineConfig(
+        dataset=DatasetConfig(repo_id="local/qf3-service"),
+        policy=policy,
+        output_dir=output_dir,
+        batch_size=4,
+        save_checkpoint=False,
+        algorithm=algorithm,
+    )
+    cfg.validate()
+    return cfg
+
+
+def test_flow_actor_service_fields_match_sac_and_parse():
+    """The actor-learner fields are the SAC dataclasses, and the CLI can set them."""
+    config = FlowActorConfig(device="cpu")
+    gaussian = GaussianActorConfig(device="cpu")
+    assert type(config.actor_learner_config) is ActorLearnerConfig
+    assert type(config.concurrency) is ConcurrencyConfig
+    assert config.online_steps == gaussian.online_steps
+    assert config.online_buffer_capacity == gaussian.online_buffer_capacity
+    assert config.offline_buffer_capacity == gaussian.offline_buffer_capacity
+    assert config.online_step_before_learning == gaussian.online_step_before_learning
+    assert config.storage_device == gaussian.storage_device
+    assert config.num_discrete_actions is None
+    assert config.dataset_stats is None
+
+    parsed = draccus.parse(
+        _CLIConfig,
+        args=[
+            "--policy.type=flow_actor",
+            "--policy.device=cpu",
+            "--policy.online_steps=12",
+            "--policy.online_step_before_learning=3",
+            "--policy.storage_device=cpu",
+            "--policy.actor_learner_config.learner_port=50052",
+            "--policy.concurrency.actor=threads",
+        ],
+    ).policy
+    assert isinstance(parsed, FlowActorConfig)
+    assert parsed.online_steps == 12
+    assert parsed.online_step_before_learning == 3
+    assert parsed.actor_learner_config.learner_port == 50052
+    assert parsed.concurrency.actor == "threads"
+    restored = draccus.decode(FlowActorConfig, draccus.encode(parsed))
+    assert restored.online_steps == 12
+    assert restored.actor_learner_config.learner_port == 50052
+    assert type(restored.concurrency) is ConcurrencyConfig
+
+
+def test_unset_algorithm_follows_the_policy(tmp_path: Path):
+    """An omitted algorithm is QF3 for a flow actor and SAC for a Gaussian actor."""
+    flow = FlowActorConfig(device="cpu", euler_steps=2)
+    flow_cfg = _pipeline(flow, tmp_path / "flow")
+    assert flow_cfg.algorithm.type == "qf3"
+    assert flow_cfg.algorithm.policy_config is flow
+    assert flow_cfg.algorithm.euler_steps == 2
+
+    gaussian = GaussianActorConfig(device="cpu")
+    sac_cfg = _pipeline(gaussian, tmp_path / "sac")
+    assert sac_cfg.algorithm.type == "sac"
+    assert sac_cfg.algorithm.policy_config is gaussian
+
+    explicit = QF3AlgorithmConfig(euler_steps=4)
+    kept = _pipeline(flow, tmp_path / "explicit", algorithm=explicit)
+    assert kept.algorithm is explicit
+    assert kept.algorithm.euler_steps == 4
+    assert kept.algorithm.policy_config is flow
+
+
+def test_learner_step_updates_qf3_and_actor_loads_weights(tmp_path: Path):
+    """One learner step uses the service buffer, then the actor receives those weights."""
+    from queue import Queue
+
+    from lerobot.rl.actor import update_policy_parameters
+    from lerobot.rl.data_sources import OnlineOfflineMixer
+    from lerobot.rl.learner import initialize_replay_buffer, push_actor_policy_to_queue
+    from lerobot.rl.trainer import RLTrainer
+
+    torch.manual_seed(0)
+    policy_cfg = FlowActorConfig(
+        input_features={OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,))},
+        output_features={ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,))},
+        hidden_dims=[8, 8],
+        time_dim=4,
+        euler_steps=2,
+        device="cpu",
+        online_buffer_capacity=16,
+        online_step_before_learning=2,
+        storage_device="cpu",
+    )
+    cfg = _pipeline(policy_cfg, tmp_path / "run")
+    assert cfg.policy.online_buffer_capacity == 16
+    policy = FlowActorPolicy(policy_cfg)
+    algorithm = make_algorithm(cfg.algorithm, policy)
+    buffer = initialize_replay_buffer(cfg, device="cpu", storage_device=cfg.policy.storage_device)
+    for _ in range(4):
+        buffer.add(
+            state={OBS_STATE: torch.randn(1, 4)},
+            action=torch.randn(1, 3),
+            reward=0.0,
+            next_state={OBS_STATE: torch.randn(1, 4)},
+            done=False,
+            truncated=False,
+        )
+    preprocessor, _postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy,
+        dataset_stats=cfg.policy.dataset_stats,
+    )
+    trainer = RLTrainer(
+        algorithm=algorithm,
+        data_mixer=OnlineOfflineMixer(online_buffer=buffer, offline_buffer=None),
+        batch_size=cfg.batch_size,
+        preprocessor=preprocessor,
+    )
+    before_critic = torch.nn.utils.parameters_to_vector(algorithm.critic.parameters()).detach().clone()
+    stats = trainer.training_step()
+    after_critic = torch.nn.utils.parameters_to_vector(algorithm.critic.parameters()).detach()
+    assert torch.linalg.vector_norm(after_critic - before_critic) > 0
+    assert math.isfinite(stats.losses["loss_critic"])
+    assert algorithm.optimization_step == 1
+
+    actor_policy = FlowActorPolicy(policy_cfg)
+    actor_algorithm = make_algorithm(cfg.algorithm, actor_policy)
+    before_actor = torch.nn.utils.parameters_to_vector(actor_policy.velocity.parameters()).detach().clone()
+    trained = torch.nn.utils.parameters_to_vector(policy.velocity.parameters()).detach()
+    assert torch.linalg.vector_norm(trained - before_actor) > 0
+
+    # A thread queue makes put visible immediately. A process queue feeds in the background,
+    # so a non-blocking read in this same call can observe it empty.
+    parameters_queue: Queue = Queue()
+    push_actor_policy_to_queue(parameters_queue, algorithm)
+    update_policy_parameters(actor_algorithm, parameters_queue, device="cpu")
+    loaded = torch.nn.utils.parameters_to_vector(actor_policy.velocity.parameters()).detach()
+    assert torch.equal(loaded, trained)
