@@ -51,12 +51,14 @@ Training the model for 20k steps will roughly take ~4 hrs on a single A100 GPU. 
 
 If you don't have a gpu device, you can train using our notebook on [![Google Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/notebooks/blob/main/lerobot/training-smolvla.ipynb)
 
-Pass your dataset to the training script using `--dataset.repo_id`. If you want to test your installation, run the following command where we use one of the datasets we collected for the [SmolVLA Paper](https://huggingface.co/papers/2506.01844).
+Pass your dataset to the training script using `--dataset.repo_id`. If you want to test your installation, run the following command where we use one of the datasets we collected for the [SmolVLA Paper](https://huggingface.co/papers/2506.01844). Replace it with your own dataset to fine-tune on your data.
 
 ```bash
-cd lerobot && lerobot-train \
+lerobot-train \
   --policy.path=lerobot/smolvla_base \
-  --dataset.repo_id=${HF_USER}/mydataset \
+  --dataset.repo_id=lerobot/svla_so100_pickplace \
+  --policy.repo_id=${HF_USER}/my_smolvla \
+  --rename_map='{"observation.images.top": "observation.images.camera1", "observation.images.wrist": "observation.images.camera2"}' \
   --batch_size=64 \
   --steps=20000 \
   --output_dir=outputs/train/my_smolvla \
@@ -64,6 +66,9 @@ cd lerobot && lerobot-train \
   --policy.device=cuda \
   --wandb.enable=true
 ```
+
+- `--policy.repo_id` is the Hub repo the fine-tuned model is pushed to.
+- `--rename_map` maps the dataset's camera names to the `camera1`, `camera2` and `camera3` names that `smolvla_base` expects. Without it, training stops with a feature mismatch error. Map your own camera names the same way (see [Rename Map](./rename_map)).
 
 <Tip>
   You can start with a small batch size and increase it incrementally, if the
@@ -100,20 +105,20 @@ Once you are logged in, you can run inference in your setup by doing:
 lerobot-rollout \
   --strategy.type=base \
   --robot.type=so101_follower \
-  --robot.port=/dev/ttyACM0 \ # <- Use your port
-  --robot.id=my_blue_follower_arm \ # <- Use your robot id
-  --robot.cameras="{ front: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}}" \ # <- Use your cameras
-  --task="Grasp a lego block and put it in the bin." \ # <- Use the same task description you used in your dataset recording
-  # <- RTC optional, use when running on low power hardware \
-  # --inference.type=rtc \
-  # --inference.rtc.execution_horizon=10 \
-  # --inference.rtc.max_guidance_weight=10.0 \
-  # <- Teleop optional if you want to teleoperate in between episodes \
-  # --teleop.type=so100_leader \
-  # --teleop.port=/dev/ttyACM0 \
-  # --teleop.id=my_red_leader_arm \
-  # --display_data=true #optional use if you want to see the camera stream \
-  --policy.path=HF_USER/FINETUNE_MODEL_NAME # <- Use your fine-tuned model
+  --robot.port=/dev/ttyACM0 \
+  --robot.id=my_blue_follower_arm \
+  --robot.cameras="{ top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}}" \
+  --rename_map='{"observation.images.top": "observation.images.camera1", "observation.images.wrist": "observation.images.camera2"}' \
+  --task="Grasp a lego block and put it in the bin." \
+  --policy.path=${HF_USER}/FINETUNE_MODEL_NAME
 ```
 
-Depending on your evaluation setup, you can configure the duration and the number of episodes to record for your evaluation suite.
+Replace `--robot.port`, `--robot.id`, `--robot.cameras` and `--policy.path` with your own port, robot ID, cameras (the same camera names and resolution as in your dataset) and fine-tuned model. Pass the same `--rename_map` you used for training, and the same `--task` description as in your dataset recording.
+
+Optional flags you can add to the command above:
+
+- **RTC** (smoother motion when inference is slow, e.g. on low-power hardware): `--inference.type=rtc --inference.rtc.execution_horizon=10 --inference.rtc.max_guidance_weight=10.0`
+- **See the camera stream**: `--display_data=true`
+- **Stop automatically**: `--duration=60` (in seconds). By default the policy runs until you press Ctrl+C.
+
+To record evaluation episodes, with an optional teleoperator to reset the scene between them, use `--strategy.type=episodic` instead. See [Policy Deployment](./inference) for all strategies.

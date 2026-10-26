@@ -62,7 +62,6 @@ cd ..
 git clone https://github.com/huggingface/lerobot.git
 cd lerobot
 pip install -e ".[evaluation]"
-cd ..
 
 
 # 6. Install additional dependencies
@@ -377,7 +376,7 @@ sudo apt update && sudo apt install -y libglu1-mesa libxt6
 
 ## See Also
 
-- [EnvHub Documentation](./envhub.mdx) - General EnvHub usage
+- [EnvHub Documentation](./envhub) - General EnvHub usage
 - [IsaacLab Arena GitHub](https://github.com/isaac-sim/IsaacLab-Arena)
 - [IsaacLab Documentation](https://isaac-sim.github.io/IsaacLab/)
 
@@ -398,9 +397,9 @@ pip install numpy==1.26.0 # revert numpy to version 1.26
 sudo apt-get install git-lfs && git lfs install
 
 git clone https://github.com/LightwheelAI/lw_benchhub
+cd lw_benchhub
 git lfs pull # Ensure LFS files (e.g., .usd assets) are downloaded
 
-cd lw_benchhub
 pip install -e .
 ```
 
