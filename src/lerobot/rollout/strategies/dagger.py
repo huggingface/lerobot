@@ -62,7 +62,6 @@ from lerobot.datasets import VideoEncodingManager
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine
 from lerobot.lerobot_types import RobotAction
-from lerobot.robots.sim import is_simulation_done
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils import ACTION, OBS_STR, ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
@@ -368,8 +367,8 @@ class DAggerStrategy(RolloutStrategy):
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
-        if not self._reset_simulation(ctx):
-            self.reset_control_state()
+        engine.reset()
+        interpolator.reset()
         events.reset()
         engine.resume()
 
@@ -418,8 +417,6 @@ class DAggerStrategy(RolloutStrategy):
                     phase = events.phase
                     with timer.section("observe"):
                         obs = robot.get_observation()
-                    if is_simulation_done(robot.inner):
-                        break
 
                     # --- CORRECTING: human teleop control ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To
@@ -559,8 +556,8 @@ class DAggerStrategy(RolloutStrategy):
         task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         play_sounds = cfg.play_sounds
 
-        if not self._reset_simulation(ctx):
-            self.reset_control_state()
+        engine.reset()
+        interpolator.reset()
         events.reset()
         engine.resume()
 
@@ -634,9 +631,6 @@ class DAggerStrategy(RolloutStrategy):
                     phase = events.phase
                     with timer.section("observe"):
                         obs = robot.get_observation()
-
-                    if is_simulation_done(robot.inner):
-                        break
 
                     # --- CORRECTING: human teleop control + recording ---
                     # TODO(Steven): teleop runs at the same FPS as the policy. To

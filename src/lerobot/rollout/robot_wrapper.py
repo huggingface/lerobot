@@ -22,7 +22,6 @@ from threading import Lock
 from typing import Any
 
 from lerobot.robots import Robot
-from lerobot.robots.sim import SimRobot
 
 
 class ThreadSafeRobot:
@@ -76,16 +75,6 @@ class ThreadSafeRobot:
             except Exception as exc:
                 self._record_hardware_failure("send_action", exc)
                 raise
-
-    def reset_simulation(self) -> None:
-        """Reset the simulated episode while excluding concurrent observation reads."""
-        with self._lock:
-            if not isinstance(self._robot, SimRobot):
-                raise TypeError("Only a simulated robot can reset its environment")
-            self._robot.reset()
-            self._last_applied_action = None
-            self._observed_positions.clear()
-            self._observation_time = None
 
     def _record_hardware_failure(self, operation: str, error: Exception) -> None:
         # Caller owns the I/O lock. Failed commands prohibit further shutdown movement.

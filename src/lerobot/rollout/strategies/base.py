@@ -19,7 +19,6 @@ from __future__ import annotations
 import logging
 import time
 
-from lerobot.robots.sim import is_simulation_done
 from lerobot.utils.cycle_timer import CycleTimer
 
 from ..context import RolloutContext
@@ -54,9 +53,8 @@ class BaseStrategy(RolloutStrategy):
             report=ctx.runtime.cadence_report,
         )
 
-        self._reset_simulation(ctx)
-        engine.resume()
         start_time = time.perf_counter()
+        engine.resume()
         logger.info("Base strategy control loop started")
 
         try:
@@ -65,8 +63,6 @@ class BaseStrategy(RolloutStrategy):
 
                 if cfg.duration > 0 and (time.perf_counter() - start_time) >= cfg.duration:
                     logger.info("Duration limit reached (%.0fs)", cfg.duration)
-                    break
-                if is_simulation_done(robot.inner):
                     break
 
                 with timer.section("observe"):

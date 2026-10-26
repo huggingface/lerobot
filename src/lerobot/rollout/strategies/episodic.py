@@ -40,7 +40,6 @@ from lerobot.common.control_utils import (
 )
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
-from lerobot.robots.sim import is_simulation_done
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
@@ -143,9 +142,8 @@ class EpisodicStrategy(RolloutStrategy):
                         break
 
                     # Reset policy state at episode start (discard leftover hidden state / queue)
-                    simulated = self._reset_simulation(ctx)
-                    if not simulated:
-                        self.reset_control_state()
+                    engine.reset()
+                    interpolator.reset()
                     # A reset interpolator re-primes over two consecutive inference
                     # ticks, exactly like loop start-up, so exempt the group that
                     # spans them instead of reporting a healthy episode as slow.
@@ -164,10 +162,8 @@ class EpisodicStrategy(RolloutStrategy):
                     )
 
                     # Reset phase, skip after the last episode (but run when re-recording)
-                    if (
-                        not simulated
-                        and not events["stop_recording"]
-                        and (recorded_episodes < num_episodes - 1 or events["rerecord_episode"])
+                    if not events["stop_recording"] and (
+                        recorded_episodes < num_episodes - 1 or events["rerecord_episode"]
                     ):
                         log_say("Reset the environment", play_sounds)
 
@@ -221,7 +217,7 @@ class EpisodicStrategy(RolloutStrategy):
                         timer.log_episode_summary("discarded episode")
 
                         # returns to its initial joint positions captured at startup
-                        if not simulated and not teleop and self.config.reset_to_initial_position:
+                        if not teleop and self.config.reset_to_initial_position:
                             self.return_to_initial_position(hw=ctx.hardware, duration_s=1)
 
                         continue
@@ -266,8 +262,6 @@ class EpisodicStrategy(RolloutStrategy):
                 break
 
             if ctx.runtime.shutdown_event.is_set():
-                break
-            if is_simulation_done(robot.inner):
                 break
 
             with timer.section("observe"):

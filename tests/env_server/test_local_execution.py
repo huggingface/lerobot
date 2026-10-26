@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from lerobot.robots.sim import SimRobot, SimRobotConfig, is_simulation_done
+from lerobot.robots.sim import SimRobot, SimRobotConfig
 from lerobot.sims.types import SimConfig
 from tests.env_server.toy_env import ToyEnvConfig
 
@@ -241,40 +241,19 @@ def test_batched_env_works_under_gymnasium_vector_wrappers():
 
 
 @pytest.mark.parametrize("where", ["local", "served"])
-def test_sim_robot_preserves_episode_end_until_explicit_reset(where, request, tmp_path):
+def test_a_finished_sim_world_starts_the_next_episode(where, request, tmp_path):
     config = ToyEnvConfig(endpoint=request.getfixturevalue("server")[1] if where == "served" else None)
     robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
     try:
         robot.connect()
-        assert robot.task_description == "Move to the target"
-
-        # The toy terminates once x passes 1. Preserve that transition for the episode owner.
+        # The toy terminates once x passes 1: one step of 2 ends the episode, and the world restarts.
         robot.send_action({"command_0": 2.0, "command_1": 0.0})
-        assert robot.latest.terminated[0]
-        assert robot.latest.is_success[0]
-        assert robot.latest.reward[0] == 1
-        assert robot.latest.step[0] == 1
-        terminal_observation = robot.get_observation()
-        assert terminal_observation["state_0"] >= 1
-
-        # Further commands cannot advance a terminal environment.
-        robot.send_action({"command_0": -1.0, "command_1": 0.0})
-        assert is_simulation_done(robot)
-        assert robot.latest.step[0] == 1
-        frozen_observation = robot.get_observation()
-        for name, value in terminal_observation.items():
-            np.testing.assert_array_equal(frozen_observation[name], value)
-
-        initial_observation = robot.reset(seed=3)
-        assert not is_simulation_done(robot)
-        assert robot.latest.step[0] == 0
-        assert initial_observation["state_0"] < 1
-
-        # Truncation is preserved in the same way.
+        assert robot.latest.step[0] == 0 and not robot.latest.terminated[0]
+        assert robot.get_observation()["state_0"] < 1
+        # It truncates after 5 steps: the 5th step starts the next episode too.
         for _ in range(5):
             robot.send_action({"command_0": 0.0, "command_1": 0.0})
-        assert robot.latest.truncated[0]
-        assert robot.latest.step[0] == 5
+        assert robot.latest.step[0] == 0 and not robot.latest.truncated[0]
     finally:
         robot.disconnect()
 
@@ -289,7 +268,6 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
     from lerobot.configs import FeatureType, PolicyFeature
     from lerobot.configs.dataset import DatasetRecordConfig
     from lerobot.datasets import LeRobotDataset
-    from lerobot.processor import make_default_processors
     from lerobot.scripts import lerobot_record
     from lerobot.teleoperators import Teleoperator
     from tests.mocks.mock_teleop import MockTeleopConfig
@@ -318,23 +296,21 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
             single_task="Move to the target",
             fps=20,
             num_episodes=2,
-            episode_time_s=10,
-            reset_time_s=10,
+            episode_time_s=0.1,
+            reset_time_s=0.1,
             video=False,
             push_to_hub=False,
             no_stamp=True,
         ),
     )
-    processors = [MagicMock(wraps=pipeline) for pipeline in make_default_processors()]
-    dataset = lerobot_record.record(cfg, *processors)
+    dataset = lerobot_record.record(cfg)
+    # Episodes are timed as on hardware, with an unrecorded reset phase between them.
     assert dataset.num_episodes == 2
-    assert teleop.get_action.call_count == 2
-    for processor in processors:
-        assert processor.reset.call_count == 2
-
     reader = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root)
-    assert len(reader) == 2
-    samples = [reader[index] for index in range(2)]
+    assert len(reader) >= 2 * dataset.num_episodes
+    assert teleop.get_action.call_count > len(reader)
+    samples = [reader[index] for index in range(len(reader))]
+    # Every action ends the toy's episode, so every recorded frame starts from a restarted world.
     assert all(sample["observation.state"][0] < 1 for sample in samples)
     checkpoint_config = SimpleNamespace(
         input_features={
@@ -374,7 +350,7 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
     )
     batch = {name: torch.stack([sample[name] for sample in samples]) for name in policy.config.input_features}
     batch["action"] = torch.stack([sample["action"] for sample in samples]).unsqueeze(1)
-    batch["action_is_pad"] = torch.zeros((2, 1), dtype=torch.bool)
+    batch["action_is_pad"] = torch.zeros((len(samples), 1), dtype=torch.bool)
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-4)
     loss, _ = policy(batch)
     assert torch.isfinite(loss)
@@ -399,29 +375,5 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
                 }
             )
             robot.send_action(dict(zip(robot.action_features, action[0].tolist(), strict=True)))
-            if is_simulation_done(robot):
-                break
-        assert is_simulation_done(robot)
-    finally:
-        robot.disconnect()
-
-
-def test_teleop_resets_simulation_and_processors(tmp_path, monkeypatch, clock):
-    from unittest.mock import MagicMock
-
-    from lerobot.processor import make_default_processors
-    from lerobot.scripts import lerobot_teleoperate
-
-    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
-    teleop = MagicMock()
-    teleop.get_action.return_value = {"command_0": 2.0, "command_1": 0.0}
-    processors = [MagicMock(wraps=pipeline) for pipeline in make_default_processors()]
-    monkeypatch.setattr(lerobot_teleoperate, "time", clock)
-    try:
-        robot.connect()
-        lerobot_teleoperate.teleop_loop(teleop, robot, 20, *processors, duration=0.12)
-        assert teleop.get_action.call_count >= 2
-        for processor in processors:
-            assert processor.reset.call_count == teleop.get_action.call_count - 1
     finally:
         robot.disconnect()

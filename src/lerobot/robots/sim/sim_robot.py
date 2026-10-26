@@ -32,11 +32,11 @@ if TYPE_CHECKING:
 
 
 class SimRobot(Robot):
-    """A simulated environment through the Robot interface, with explicit episode state.
+    """A simulated environment as a robot: swappable with hardware, and like it, with no episode controls.
 
-    Each sent action advances the environment exactly once. A terminal environment remains terminal until
-    ``reset`` is called; ``latest`` holds the last observation, reward, termination and success. Its
-    ``robot_type`` is the simulated body the environment declares, else ``sim``; ``name`` stays ``sim``.
+    Each sent action advances the environment exactly once; when its episode ends, the next one starts, as
+    Gymnasium's autoreset does. Its ``robot_type`` is the simulated body the environment declares, else
+    ``sim``; ``name`` stays ``sim``.
     """
 
     config_class = SimRobotConfig
@@ -135,7 +135,11 @@ class SimRobot(Robot):
         if self._env is None:
             self._make_env()
         assert self._env is not None
-        self._env.reset()
+        try:
+            self._env.reset()
+        except BaseException:
+            self.disconnect()
+            raise
         self.latest = self._env.latest
         self._connected = True
 
@@ -156,18 +160,6 @@ class SimRobot(Robot):
     def get_observation(self) -> dict[str, Any]:
         return self._observation(self._snapshot())
 
-    def reset(self, seed: int | None = None) -> dict[str, Any]:
-        """Start a new episode explicitly and return its initial robot observation."""
-        if not self._connected or self._env is None:
-            raise RuntimeError("Connect before resetting the environment")
-        self._env.reset(seed=seed)
-        self.latest = self._env.latest
-        return self._observation(self._snapshot())
-
-    @property
-    def task_description(self) -> str:
-        return self._snapshot().task[0]
-
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         names = self.descriptor.action_feature.names
         if set(action) != set(names):
@@ -181,6 +173,11 @@ class SimRobot(Robot):
             raise RuntimeError("Connect before sending an action")
         self._env.step(values)
         self.latest = self._env.latest
+        result = self._snapshot()
+        if result.terminated[0] or result.truncated[0]:
+            # A finished episode stays frozen at its last state; as Gymnasium's autoreset, start the next one.
+            self._env.reset()
+            self.latest = self._env.latest
         return {name: float(value) for name, value in zip(names, values[0], strict=True)}
 
     def hold(self) -> None:
@@ -200,11 +197,3 @@ def check_control_rate(robot: Robot, fps: float) -> None:
         raise ValueError(
             f"The control loop runs at {fps} fps but the simulator control rate is {robot.descriptor.fps} Hz"
         )
-
-
-def is_simulation_done(robot: Robot) -> bool:
-    """Whether the last simulated action ended its episode; false for hardware."""
-    if not isinstance(robot, SimRobot):
-        return False
-    latest = robot._snapshot()
-    return bool(latest.terminated[0] or latest.truncated[0])

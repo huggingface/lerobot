@@ -28,7 +28,6 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine, commit_action, next_interpolated_action
 from lerobot.lerobot_types import RobotObservation
-from lerobot.robots.sim import SimRobot
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils import OBS_STR, ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
@@ -157,19 +156,6 @@ class RolloutStrategy(abc.ABC):
         if self._interpolator is not None:
             self._interpolator.reset()
         self._cached_obs_processed = None
-
-    def _reset_simulation(self, ctx: RolloutContext) -> bool:
-        """Start a simulated episode and discard state from the previous one."""
-        robot = ctx.hardware.robot_wrapper
-        if not isinstance(robot.inner, SimRobot):
-            return False
-        self._require_engine().pause()
-        robot.reset_simulation()
-        ctx.processors.teleop_action_processor.reset()
-        ctx.processors.robot_action_processor.reset()
-        ctx.processors.robot_observation_processor.reset()
-        self.reset_control_state()
-        return True
 
     def hold_control_state(self, hw: HardwareContext) -> None:
         """Apply a segment-end hold on the control thread after background dispatch is revoked."""

@@ -58,12 +58,7 @@ lerobot-rollout \
 
 A sim robot is a robot: swap `--robot.type=sim --robot.env.*` for the real follower's `--robot.*`, and everything else stays. A teleoperator drives it as it drives the real follower (`--teleop.type=so101_leader` for an SO-101 twin), when the environment declares the follower's action names and units; a mismatch is reported at the first action. `lerobot-record` stores the body the environment declares as the dataset's `robot_type` (`panda` for LIBERO), or `sim` when it declares none.
 
-A sim robot remains a normal `Robot`, but also exposes its last reward, termination and success through
-`latest` and an explicit `reset(seed=...)` method. An environment that succeeds, terminates, or reaches
-its step limit stays at its terminal observation until its caller resets it. This keeps episode ownership
-with recording, evaluation, or RL code instead of hiding a reset inside `send_action()`.
-
-Teleoperation resets after each episode. Recording and episodic rollout save each episode and start the next from a reset simulator, without a manual reset phase. Other rollout strategies stop at the simulator's episode end; interactive sessions can start another run. Policy queues, interpolation and robot processors are cleared before a new simulated rollout episode.
+Like a real robot, a sim robot has no episode controls: rollout and record run their episodes as on hardware, with the task given on the command line (`--task`, or `--dataset.single_task` when recording) and episodes timed by their duration. When the environment's own episode ends (success, termination or its step limit), the sim robot starts the next one by itself, as Gymnasium's autoreset does, so the environment never stays frozen. For success rates and per-episode resets, evaluate with `lerobot-eval` and a batched env.
 
 Robot camera features use the same `observation.images.<camera>` names as real-hardware recording. A single unnamed camera is `observation.images.image`. Native batched evaluation keeps legacy benchmark names such as `observation.image`; when deploying a checkpoint with that name through `SimRobot`, use `--rename_map='{"observation.images.image": "observation.image"}'`.
 
