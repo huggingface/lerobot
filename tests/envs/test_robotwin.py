@@ -29,7 +29,7 @@ import gymnasium as gym
 import numpy as np
 import pytest
 
-from lerobot.envs.robotwin import (
+from lerobot.sims.native.robotwin import (
     ACTION_DIM,
     ROBOTWIN_CAMERA_NAMES,
     ROBOTWIN_TASKS,
@@ -87,8 +87,8 @@ def _patch_runtime(mock_task_instance: MagicMock):
         "task_config": "demo_clean",
     }
     with (
-        patch("lerobot.envs.robotwin._load_robotwin_task", return_value=task_cls),
-        patch("lerobot.envs.robotwin._load_robotwin_setup_kwargs", return_value=fake_setup),
+        patch("lerobot.sims.native.robotwin._load_robotwin_task", return_value=task_cls),
+        patch("lerobot.sims.native.robotwin._load_robotwin_setup_kwargs", return_value=fake_setup),
     ):
         yield
 
