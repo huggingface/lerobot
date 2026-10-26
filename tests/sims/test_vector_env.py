@@ -88,3 +88,39 @@ def test_env_config_saves_only_its_settings():
     config = ToyEnvConfig()
     config.create_env().close()
     assert "descriptor" not in draccus.encode(config)
+
+
+def test_episode_limit_is_found_through_wrappers(monkeypatch):
+    import sys
+    from types import ModuleType
+
+    import gymnasium as gym
+
+    from lerobot.sims.integrations.utils import canonical_observation
+    from lerobot.sims.types import SimConfig
+    from lerobot.sims.vector_env import VectorEnv
+
+    class Reach(gym.Env):
+        observation_space = gym.spaces.Dict({"agent_pos": gym.spaces.Box(-1, 1, (2,), np.float32)})
+        action_space = gym.spaces.Box(-1, 1, (2,), np.float32)
+
+        def reset(self, seed=None, options=None):
+            return {"agent_pos": np.zeros(2, np.float32)}, {}
+
+        def step(self, action):
+            return {"agent_pos": np.zeros(2, np.float32)}, 0.0, False, False, {}
+
+    def create_envs(task, n_envs, env_cls, **kwargs):
+        # TimeLimit sits under another wrapper, so it is not the outermost environment.
+        return {task: {0: env_cls([lambda: gym.wrappers.ClipAction(gym.wrappers.TimeLimit(Reach(), 1000))])}}
+
+    integration = ModuleType("lerobot.sims.integrations.wrapped")
+    integration.create_envs = create_envs  # type: ignore[attr-defined]
+    integration.canonical_observation = canonical_observation  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "lerobot.sims.integrations.wrapped", integration)
+    env = VectorEnv(SimConfig(type="wrapped", task="reach"))
+    try:
+        assert env.call("_max_episode_steps") == (1000,)
+        assert env.descriptor.max_episode_steps == 1000
+    finally:
+        env.close()

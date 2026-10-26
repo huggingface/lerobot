@@ -16,6 +16,7 @@
 
 import contextlib
 import importlib
+import logging
 import multiprocessing
 import traceback
 from collections.abc import Callable
@@ -31,8 +32,22 @@ from gymnasium.vector.utils import CloudpickleWrapper, batch_space
 from lerobot.sims.types import EnvDescriptor, SimConfig, StepResult
 from lerobot.utils.feature_spec import FeatureSpec
 
+logger = logging.getLogger(__name__)
+
 # Environment attributes copied back from a worker process.
-_ENV_ATTRS = ("task_description", "task", "_max_episode_steps")
+_ENV_ATTRS = ("task_description", "task")
+# Episode length of an environment that declares none.
+_DEFAULT_MAX_EPISODE_STEPS = 500
+
+
+def _max_episode_steps(env: Any) -> int | None:
+    """The episode limit an environment declares, looked up through Gymnasium wrappers."""
+    get_wrapper_attr = getattr(env, "get_wrapper_attr", None)
+    try:
+        limit = get_wrapper_attr("_max_episode_steps") if get_wrapper_attr else env._max_episode_steps
+    except AttributeError:
+        return None
+    return None if limit is None else int(limit)
 
 
 def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
@@ -57,6 +72,7 @@ def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
                     result = (env.observation_space, env.action_space)
                 else:
                     result = {name: getattr(env, name) for name in _ENV_ATTRS if hasattr(env, name)}
+                    result["_max_episode_steps"] = _max_episode_steps(env)
                 pipe.send((True, result))
             except Exception:
                 pipe.send((False, traceback.format_exc()))
@@ -161,6 +177,7 @@ class VectorEnv(gym.vector.VectorEnv):
         self._envs: list[Any] = []
         self._last: list[tuple[dict[str, np.ndarray], float, bool, bool, bool]] = []
         self._steps: np.ndarray = np.zeros(num_envs, dtype=np.int64)
+        self._max_steps: list[int] = []
         self._sim_time = 0.0
         self._latest: StepResult | None = None
         self.closed = False
@@ -201,6 +218,14 @@ class VectorEnv(gym.vector.VectorEnv):
         except BaseException:
             self._close_envs()
             raise
+        limits = [_max_episode_steps(env) for env in self._envs]
+        if None in limits:
+            logger.warning(
+                "%s declares no episode limit; episodes are truncated after %d steps",
+                self.config.type,
+                _DEFAULT_MAX_EPISODE_STEPS,
+            )
+        self._max_steps = [limit or _DEFAULT_MAX_EPISODE_STEPS for limit in limits]
 
     def _describe(self) -> EnvDescriptor:
         """Describe the canonical observations and actions of the built environments."""
@@ -231,7 +256,7 @@ class VectorEnv(gym.vector.VectorEnv):
             config.control,
             config.fps,
             self.tasks,
-            int(getattr(env, "_max_episode_steps", 500)),
+            self._max_steps[0],
             config.robot_type,
             asdict(config),
         )
@@ -289,7 +314,7 @@ class VectorEnv(gym.vector.VectorEnv):
                 env.receive() if self.use_async_envs else env.step(actions[i])
             )
             self._steps[i] += 1
-            truncated = bool(truncated or self._steps[i] >= getattr(env, "_max_episode_steps", 500))
+            truncated = bool(truncated or self._steps[i] >= self._max_steps[i])
             self._last[i] = (
                 self._canonical_observation(obs),
                 float(reward),
@@ -349,7 +374,7 @@ class VectorEnv(gym.vector.VectorEnv):
             raise TypeError("Environment attributes do not take arguments")
         if name == "_max_episode_steps":
             self._ensure()
-            return (int(getattr(self._envs[0], "_max_episode_steps", 500)),) * self.num_envs
+            return (self._max_steps[0],) * self.num_envs
         if name == "task":
             return (self.task_group,) * self.num_envs
         if name == "task_description":
