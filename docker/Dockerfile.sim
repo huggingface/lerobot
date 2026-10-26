@@ -182,8 +182,11 @@ RUN apt-get update \
     && chown -R user_lerobot:user_lerobot ${ROBOTWIN_ROOT} \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 USER user_lerobot
-# pytorch3d and CuRobo compile CUDA code with one nvcc job per core; --build-arg MAX_JOBS=4 bounds the memory.
+# pytorch3d and CuRobo compile CUDA code with one nvcc job per core, and CuRobo's nvcc compiles every
+# architecture in parallel. On a small machine, bound the memory with --build-arg MAX_JOBS=1 and only the
+# local GPU's architecture, e.g. --build-arg CUROBO_CUDA_ARCHS=8.6.
 ARG MAX_JOBS
+ARG CUROBO_CUDA_ARCHS="7.0;7.5;8.0;8.6;8.9;9.0"
 # RoboTwin plans with CuRobo and pytorch3d, so this image ships its own torch.
 # SAPIEN imports pkg_resources, which setuptools 82 removed.
 RUN uv pip install "torch==2.7.1" "torchvision==0.22.1" "setuptools<82" av scipy ninja
@@ -198,7 +201,7 @@ ARG CUROBO_REF=v0.7.8
 RUN cd ${ROBOTWIN_ROOT}/envs \
     && git clone --branch ${CUROBO_REF} --depth 1 https://github.com/NVlabs/curobo.git \
     && cd curobo \
-    && TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0" \
+    && TORCH_CUDA_ARCH_LIST="${CUROBO_CUDA_ARCHS}" \
        uv pip install -e . "warp-lang==1.12.1" --no-build-isolation --no-cache
 # Upstream fixes RoboTwin relies on: mplib collision check and sapien SRDF loading.
 RUN python - <<'EOF'
@@ -318,10 +321,12 @@ RUN case "${SIM}" in \
     esac \
     && if [ -n "$module" ]; then python -c "import sys; sys.modules['torch'] = None; \
 import lerobot.env_server.server; import lerobot.sims.native.$module"; fi
-# Simulators with their own torch import their world dependencies lazily; import those here (no GPU needed).
+# Simulators with their own torch import their world dependencies lazily; import those here. A build has
+# no GPU driver, so RoboTwin's planner (CuRobo's motion generator) is only importable at runtime.
 RUN case "${SIM}" in \
         robomme) python -c "import lerobot.env_server.server, scipy.sparse, trimesh, mani_skill.utils.common" ;; \
-        robotwin) cd "$ROBOTWIN_ROOT" && python -c "import lerobot.env_server.server, warp; warp.torch; import envs.beat_block_hammer" ;; \
+        robotwin) python -c "import lerobot.env_server.server, warp, sapien.core, mplib, toppra, open3d, cv2, \
+pytorch3d, trimesh; warp.torch; from curobo.types.math import Pose" ;; \
     esac
 # The server runs where its simulator expects: RoboTwin reads its assets relative to the working directory.
 ENV SIM_WORKDIR=${SIM_WORKDIR:-/lerobot}
