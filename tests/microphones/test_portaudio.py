@@ -27,7 +27,11 @@ from lerobot.microphones.portaudio.interface_sounddevice_sdk import (
     SounddeviceSDKAdapter,
 )
 from lerobot.microphones.portaudio.microphone_portaudio import PortAudioMicrophone
-from lerobot.microphones.utils import async_microphones_start_recording, async_microphones_stop_recording
+from lerobot.microphones.utils import (
+    async_microphones_start_recording,
+    async_microphones_stop_recording,
+    wait_for_first_sample_time,
+)
 from lerobot.utils.errors import (
     DeviceAlreadyConnectedError,
     DeviceAlreadyRecordingError,
@@ -693,3 +697,30 @@ def test_make_microphones_from_configs(default_config):
     """Test the microphone factory."""
     microphones = make_microphones_from_configs({"main": default_config})
     assert isinstance(microphones["main"], PortAudioMicrophone)
+
+
+def test_wait_for_first_sample_time(default_config, make_microphone):
+    """Test that the first sample is dated consistently with the samples read later."""
+    microphone = make_microphone(default_config)
+    microphone.connect()
+    num_samples_read = 0
+    read = microphone.read
+
+    def counting_read():
+        nonlocal num_samples_read
+        samples = read()
+        num_samples_read += len(samples)
+        return samples
+
+    microphone.read = counting_read
+    before = time.perf_counter()
+    microphone.start_recording()
+
+    first_sample_time = wait_for_first_sample_time(microphone)
+    assert before - 0.5 < first_sample_time < time.perf_counter()
+
+    precise_sleep(0.5)
+    microphone.read()
+    # Samples are evenly spaced: the last one read is dated from the first one.
+    expected_last_time = first_sample_time + (num_samples_read - 1) / microphone.sample_rate
+    assert abs(microphone.last_read_timestamp - expected_last_time) < 0.01

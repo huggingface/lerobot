@@ -90,8 +90,11 @@ lerobot-record \\
 """
 
 import logging
+import shutil
+import tempfile
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from pprint import pformat
 
 from lerobot.cameras import CameraConfig  # noqa: F401
@@ -109,6 +112,13 @@ from lerobot.datasets import (
     create_initial_features,
     safe_stop_image_writer,
 )
+from lerobot.microphones import (
+    Microphone,
+    async_microphones_start_recording,
+    async_microphones_stop_recording,
+    wait_for_first_sample_time,
+)
+from lerobot.microphones.portaudio import PortAudioMicrophoneConfig  # noqa: F401
 from lerobot.processor import (
     RobotAction,
     RobotObservation,
@@ -153,7 +163,11 @@ from lerobot.teleoperators import (  # noqa: F401
 from lerobot.teleoperators.keyboard import KeyboardTeleop
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
-from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
+from lerobot.utils.feature_utils import (
+    build_dataset_frame,
+    combine_feature_dicts,
+    microphones_to_dataset_features,
+)
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.keyboard_input import init_keyboard_listener
 from lerobot.utils.utils import (
@@ -382,6 +396,30 @@ def record_loop(
         timestamp = time.perf_counter() - start_episode_t
 
 
+def start_episode_audio(microphones: dict[str, Microphone]) -> tuple[Path, dict[str, float]]:
+    """Start recording each microphone to a WAV file in a new temporary directory.
+
+    Returns:
+        The temporary directory, and the capture time of the first sample of each microphone.
+    """
+    audio_dir = Path(tempfile.mkdtemp(prefix="lerobot_audio_"))
+    async_microphones_start_recording(microphones, [audio_dir / f"{key}.wav" for key in microphones])
+    first_sample_times = {key: wait_for_first_sample_time(mic) for key, mic in microphones.items()}
+    return audio_dir, first_sample_times
+
+
+def add_episode_audio(
+    dataset: LeRobotDataset, audio_dir: Path, first_sample_times: dict[str, float], episode_start_t: float
+) -> None:
+    """Add the WAV file of each microphone to the current episode of `dataset`."""
+    for key, first_sample_time in first_sample_times.items():
+        dataset.add_episode_audio(
+            f"{OBS_STR}.audio.{key}",
+            audio_dir / f"{key}.wav",
+            start_time_s=episode_start_t - first_sample_time,
+        )
+
+
 @parser.wrap()
 def record(
     cfg: RecordConfig,
@@ -415,6 +453,7 @@ def record(
         robot_action_processor = robot_action_processor or _r
         robot_observation_processor = robot_observation_processor or _o
 
+    microphones: dict[str, Microphone] = getattr(robot, "microphones", {})
     dataset_features = combine_feature_dicts(
         aggregate_pipeline_dataset_features(
             pipeline=teleop_action_processor,
@@ -428,7 +467,10 @@ def record(
             initial_features=create_initial_features(observation=robot.observation_features),
             use_videos=cfg.dataset.video,
         ),
+        # Audio is recorded per episode, so it does not go through the observation processor.
+        microphones_to_dataset_features(microphones),
     )
+    audio_dir: Path | None = None
 
     dataset = None
     listener = None
@@ -501,6 +543,10 @@ def record(
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 episode_index = dataset.num_episodes
                 log_say(f"Recording episode {episode_index}", cfg.play_sounds)
+                if microphones:
+                    audio_dir, first_sample_times = start_episode_audio(microphones)
+                # The first frame is observed right after the loop starts.
+                episode_start_t = time.perf_counter()
                 record_loop(
                     robot=robot,
                     events=events,
@@ -517,6 +563,8 @@ def record(
                     display_compressed_images=display_compressed_images,
                     timer=timer,
                 )
+                if microphones:
+                    async_microphones_stop_recording(microphones)
 
                 # Execute a few seconds without recording to give time to manually reset the environment
                 # Skip reset for the last episode to be recorded
@@ -545,11 +593,19 @@ def record(
                     events["rerecord_episode"] = False
                     events["exit_early"] = False
                     dataset.clear_episode_buffer()
+                    if audio_dir is not None:
+                        shutil.rmtree(audio_dir, ignore_errors=True)
+                        audio_dir = None
                     timer.log_episode_summary("discarded episode")
                     timer.restart()
                     continue
 
+                if audio_dir is not None:
+                    add_episode_audio(dataset, audio_dir, first_sample_times, episode_start_t)
                 dataset.save_episode()
+                if audio_dir is not None:
+                    shutil.rmtree(audio_dir, ignore_errors=True)
+                    audio_dir = None
                 recorded_episodes += 1
                 # Close the window on the episode just saved.  The digest is emitted on
                 # the next episode's first tick, so the reset phase, `save_episode` and
@@ -570,6 +626,8 @@ def record(
 
         if robot.is_connected:
             robot.disconnect()
+        if audio_dir is not None:
+            shutil.rmtree(audio_dir, ignore_errors=True)
         if teleop and teleop.is_connected:
             teleop.disconnect()
 

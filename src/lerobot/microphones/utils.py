@@ -14,6 +14,7 @@
 
 """Helpers to create microphones from configurations and to drive several microphones together."""
 
+import time
 from pathlib import Path
 from threading import Barrier, BrokenBarrierError, Thread
 from typing import cast
@@ -131,6 +132,37 @@ def async_microphones_stop_recording(microphones: dict[str, Microphone]) -> None
         [Thread(target=stop_recording, args=(key, microphone)) for key, microphone in microphones.items()]
     )
     _raise_first_error(errors, "stop recording")
+
+
+def wait_for_first_sample_time(microphone: Microphone, timeout_s: float = 1.0) -> float:
+    """Return the capture time of the first sample of the current recording.
+
+    Call it right after `start_recording`: it reads the samples captured so far, which does not affect the
+    file being written, and dates the first one from the capture time of the last one.
+
+    Args:
+        microphone (`Microphone`):
+            A recording microphone.
+        timeout_s (`float`, *optional*, defaults to `1.0`):
+            Maximum time to wait for the first samples.
+
+    Returns:
+        `float`: The capture time of the first sample, in the `time.perf_counter()` clock.
+
+    Raises:
+        TimeoutError: If no sample is captured within `timeout_s`.
+    """
+    if microphone.sample_rate is None:
+        raise ValueError(f"{microphone} has no sample rate.")
+    num_samples = 0
+    deadline = time.perf_counter() + timeout_s
+    while True:
+        num_samples += len(microphone.read())
+        if num_samples > 0 and microphone.last_read_timestamp is not None:
+            return microphone.last_read_timestamp - (num_samples - 1) / microphone.sample_rate
+        if time.perf_counter() > deadline:
+            raise TimeoutError(f"{microphone} captured no audio within {timeout_s} s.")
+        time.sleep(0.005)
 
 
 def _run_in_threads(threads: list[Thread]) -> None:
