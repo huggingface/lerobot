@@ -122,7 +122,6 @@ from lerobot.teleoperators import (  # noqa: F401
     so_leader,
     unitree_g1,
 )
-from lerobot.common.control_utils import smooth_teleop_session_start
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.utils import init_logging, move_cursor_up
