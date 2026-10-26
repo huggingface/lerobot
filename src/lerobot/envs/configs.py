@@ -48,7 +48,6 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     # Set from the environment's description when it is created.
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
-    descriptor: EnvDescriptor | None = field(init=False, default=None, repr=False)
     max_parallel_tasks: int = 1
     disable_env_checker: bool = True
     # Where `lerobot-env-server` serves this environment; unset, it runs in this process.
@@ -189,7 +188,6 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=descriptor.action_feature.shape)
         # Canonical keys reach the policy unchanged; --rename_map aliases them like any env.
         self.features_map = {name: name for name in self.features}
-        self.descriptor = descriptor
         return descriptor, make
 
     def get_env_processors(self):
@@ -259,7 +257,6 @@ class HubEnvConfig(EnvConfig):
             raise ValueError("--env.hub_path is required for an EnvHub environment")
         from .factory import make_hub_envs
 
-        self.descriptor = None
         return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
 
     @property

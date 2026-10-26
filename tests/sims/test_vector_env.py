@@ -14,6 +14,7 @@
 
 """Local vector environments built from a simulator integration."""
 
+import draccus
 import numpy as np
 import pytest
 
@@ -80,3 +81,10 @@ def test_batched_env_works_under_gymnasium_vector_wrappers():
         env.step(np.zeros((2, 2), np.float32))
     finally:
         env.close()
+
+
+def test_env_config_saves_only_its_settings():
+    # Saved with a training config after its env is built; the env's description is runtime state.
+    config = ToyEnvConfig()
+    config.create_env().close()
+    assert "descriptor" not in draccus.encode(config)

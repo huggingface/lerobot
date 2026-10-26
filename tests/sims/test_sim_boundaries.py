@@ -184,7 +184,7 @@ def test_envhub_native_batch_preserves_provider_and_options(monkeypatch) -> None
         env.reset(seed=2)
         assert env.step(np.zeros(2, dtype=np.int64))[1].tolist() == [51, 51]
         assert calls == [(2, False, 50)]
-        assert config.descriptor is None
+        assert not hasattr(env, "descriptor")
     finally:
         env.close()
     config.endpoint = "tcp/127.0.0.1:7448"

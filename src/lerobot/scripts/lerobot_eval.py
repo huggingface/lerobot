@@ -805,7 +805,8 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         trust_remote_code=cfg.trust_remote_code,
     )
 
-    descriptor = getattr(cfg.env, "descriptor", None)
+    # Hub-only and native-batch environments carry no descriptor.
+    descriptor = getattr(next(iter(next(iter(envs.values())).values())), "descriptor", None)
     if descriptor is not None:
         descriptor.validate_checkpoint(cfg.policy, cfg.rename_map)
 
