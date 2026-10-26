@@ -272,7 +272,7 @@ def test_rollout_rejects_checkpoint_schema_before_opening_environment(server, tm
         context._connect_rollout_hardware(cfg)
     # A control rate other than the simulator's would replay actions too fast or too slow.
     cfg.fps = robot.descriptor.fps * 2
-    with pytest.raises(ValueError, match="control rate"):
+    with pytest.raises(ValueError, match=f"control rate is {robot.descriptor.fps:g} Hz: pass --fps="):
         context._connect_rollout_hardware(cfg)
     assert not server[0].sessions
     assert not robot.is_connected

@@ -178,9 +178,14 @@ class SimRobot(Robot):
         self._connected = False
 
 
-def check_control_rate(robot: Robot, fps: float) -> None:
-    """A sim robot ticks at its env's rate: a loop at another fps would play or record at the wrong speed."""
+def check_control_rate(robot: Robot, fps: float, flag: str | None = None) -> None:
+    """A sim robot ticks at its env's rate: a loop at another fps would play or record at the wrong speed.
+
+    ``flag`` is the command-line option that sets ``fps``, named in the error.
+    """
     if isinstance(robot, SimRobot) and not math.isclose(fps, robot.descriptor.fps):
+        rate = robot.descriptor.fps
+        hint = f": pass {flag}={rate:g}" if flag else ""
         raise ValueError(
-            f"The control loop runs at {fps} fps but the simulator control rate is {robot.descriptor.fps} Hz"
+            f"The control loop runs at {fps:g} fps but the simulator control rate is {rate:g} Hz{hint}"
         )

@@ -404,7 +404,7 @@ def record(
     )
 
     robot = make_robot_from_config(cfg.robot)
-    check_control_rate(robot, cfg.dataset.fps)
+    check_control_rate(robot, cfg.dataset.fps, "--dataset.fps")
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
     # Fall back to identity pipelines when the caller doesn't supply processors.

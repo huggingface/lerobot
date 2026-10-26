@@ -339,7 +339,7 @@ def _connect_rollout_hardware(
     wrapper = ThreadSafeRobot(robot)
     teleop = None
     try:
-        check_control_rate(robot, cfg.fps)
+        check_control_rate(robot, cfg.fps, "--fps")
         if isinstance(robot, SimRobot):
             if simulator_admission is not None:
                 simulator_admission(robot)
