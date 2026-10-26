@@ -377,6 +377,28 @@ def test_history_eviction_and_padding(config, mode):
     assert loss.item() == 0
 
 
+@pytest.mark.parametrize("mode", ["idm", "cod"])
+@pytest.mark.parametrize("seed", [1, None])
+def test_inference_seed_across_chunks_and_reset(config, mode, seed):
+    config.denoising, config.inference_seed = mode, seed
+    policy = LongWAMPolicy(config).eval()
+    pre, _ = make_pre_post_processors(config, dataset_stats=stats(config))
+    observation = pre(batch(config))
+    before = torch.get_rng_state().clone()
+    first = policy.predict_action_chunk(observation)
+    second = policy.predict_action_chunk(observation)
+    policy.reset()
+    third = policy.predict_action_chunk(observation)
+    if seed is not None:
+        torch.testing.assert_close(first, second, atol=0, rtol=0)
+        torch.testing.assert_close(first, third, atol=0, rtol=0)
+        assert torch.equal(before, torch.get_rng_state())
+    else:
+        assert not torch.equal(first, second)
+        assert not torch.equal(second, third)
+        assert not torch.equal(before, torch.get_rng_state())
+
+
 @pytest.mark.parametrize("boundary", ["meta", "assigned_state"])
 def test_restore_shared_text_weights_after_loading_boundary(config, boundary):
     policy = LongWAMPolicy(config)

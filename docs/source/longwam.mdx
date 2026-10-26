@@ -48,6 +48,12 @@ is executing, so the history stays current. `predict_action_chunk` returns
 `reset()` and `drop_queued_actions()` clear both history and queued actions.
 This integration supports synchronous execution; generic async/RTC is not yet validated.
 
+By default, `inference_seed=1` restarts separate video/action noise generators
+with the same seed for each chunk, preserving released inference behavior.
+Set `inference_seed=None` in Python (`--policy.inference_seed=null` in the CLI)
+to use the advancing global RNG instead; `reset()` does not reseed that stream.
+Training always samples fresh noise.
+
 For LIBERO, install `lerobot[libero]` and use the standard evaluator:
 
 ```bash

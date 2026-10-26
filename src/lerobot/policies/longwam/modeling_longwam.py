@@ -246,6 +246,7 @@ class LongWAMPolicy(PreTrainedPolicy):
         context = self._context(batch, batch["observation.state"], cache=True)
 
         def noise(shape):
+            # Match released inference: separate, same-seeded draws per chunk.
             generator = (
                 None if cfg.inference_seed is None else torch.Generator().manual_seed(cfg.inference_seed)
             )
