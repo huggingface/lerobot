@@ -1,4 +1,4 @@
-# Conventions (fps, control, semantics, component names) come from lerobot/sims/conventions.py.
+# Settings left out (fps, control, semantics, component names) come from the integration's conventions().
 deployment: robocerebra
 sim:
   type: robocerebra
