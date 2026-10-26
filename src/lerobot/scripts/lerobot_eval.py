@@ -290,7 +290,7 @@ def rollout(
         while not np.all(done) and step < max_steps:
             # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
             if getattr(env, "canonical_observations", False):
-                from lerobot.envs.batched import prepare_canonical_observation
+                from lerobot.envs.utils import prepare_canonical_observation
 
                 observation = prepare_canonical_observation(observation)
             else:
@@ -413,7 +413,7 @@ def rollout(
     # Track the final observation.
     if return_observations:
         if getattr(env, "canonical_observations", False):
-            from lerobot.envs.batched import prepare_canonical_observation
+            from lerobot.envs.utils import prepare_canonical_observation
 
             observation = prepare_canonical_observation(observation)
         else:
@@ -807,9 +807,7 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
 
     descriptor = getattr(cfg.env, "descriptor", None)
     if descriptor is not None:
-        from lerobot.env_server.admission import validate_checkpoint
-
-        validate_checkpoint(descriptor, cfg.policy, cfg.rename_map)
+        descriptor.validate_checkpoint(cfg.policy, cfg.rename_map)
 
     logging.info("Making policy.")
     policy = make_policy(

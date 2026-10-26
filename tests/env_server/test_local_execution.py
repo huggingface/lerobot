@@ -127,7 +127,7 @@ def _served(deployment: str):
 
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_env_config_creates_vector_envs_locally_or_served(where):
-    from lerobot.envs.batched import BatchedEnv
+    from lerobot.env_server.client import BatchedEnv
     from lerobot.sims.vector_env import VectorEnv
 
     config = ToyEnvConfig()
@@ -289,7 +289,6 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
     from lerobot.configs import FeatureType, PolicyFeature
     from lerobot.configs.dataset import DatasetRecordConfig
     from lerobot.datasets import LeRobotDataset
-    from lerobot.env_server.admission import validate_checkpoint
     from lerobot.processor import make_default_processors
     from lerobot.scripts import lerobot_record
     from lerobot.teleoperators import Teleoperator
@@ -344,14 +343,14 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
         },
         output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
     )
-    validate_checkpoint(robot.descriptor, checkpoint_config, {})
+    robot.descriptor.validate_checkpoint(checkpoint_config, {})
     # Native benchmark camera names remain unchanged.
     assert "observation.image" in env.features
     legacy_config = SimpleNamespace(
         input_features={"observation.image": checkpoint_config.input_features["observation.images.image"]},
         output_features=checkpoint_config.output_features,
     )
-    validate_checkpoint(robot.descriptor, legacy_config, {"observation.images.image": "observation.image"})
+    robot.descriptor.validate_checkpoint(legacy_config, {"observation.images.image": "observation.image"})
 
     pytest.importorskip("torchvision")
     from lerobot.policies.act.configuration_act import ACTConfig
@@ -384,7 +383,7 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
     checkpoint = tmp_path / "policy"
     policy.save_pretrained(checkpoint)
     policy = ACTPolicy.from_pretrained(checkpoint)
-    validate_checkpoint(robot.descriptor, policy.config, {})
+    robot.descriptor.validate_checkpoint(policy.config, {})
     try:
         robot.connect()
         for _ in range(5):

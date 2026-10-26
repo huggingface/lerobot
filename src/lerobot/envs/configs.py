@@ -33,7 +33,7 @@ from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 if TYPE_CHECKING:
-    from lerobot.envs.batched import BatchedEnv
+    from lerobot.env_server.client import BatchedEnv
     from lerobot.sims.vector_env import VectorEnv
 
 logger = logging.getLogger(__name__)
@@ -142,9 +142,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         settings = self.sim_settings()
         endpoint = self.endpoint
         if endpoint is not None:
-            from lerobot.env_server.client import EnvClient
-
-            from .batched import BatchedEnv
+            from lerobot.env_server.client import BatchedEnv, EnvClient
 
             if self.max_parallel_tasks != 1:
                 raise ValueError("A served environment runs one task at a time")

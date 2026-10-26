@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Explicit, non-retrying simulator RPC client."""
+"""Explicit, non-retrying simulator client, and the vector environment it serves."""
 
 import uuid
 from threading import RLock
 from typing import Any
+
+import gymnasium as gym
+import numpy as np
+from gymnasium.vector.utils import batch_space
 
 from lerobot.sims.types import EnvDescriptor, StepResult
 from lerobot.transport.wire.client import query_reply
@@ -24,8 +28,15 @@ from lerobot.transport.wire.features import feature_mismatch
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import PresenceToken, ZenohConfig, ZenohTransport
 
-from .contracts import decode_descriptor, decode_step_result, validate_result
-from .protocol import any_deployment_describe, deployment_prefix, instance_prefix, session_prefix
+from .contracts import (
+    any_deployment_describe,
+    decode_descriptor,
+    decode_step_result,
+    deployment_prefix,
+    instance_prefix,
+    session_prefix,
+    validate_result,
+)
 
 
 class EnvClient:
@@ -198,3 +209,126 @@ class EnvClient:
                 self.instance = ""
                 self.descriptor = None
                 self.failed = False
+
+
+class BatchedEnv(gym.vector.VectorEnv):
+    """``num_envs`` served environments of one task, stepped explicitly."""
+
+    canonical_observations = True
+
+    def __init__(
+        self,
+        client: EnvClient,
+        num_envs: int = 1,
+        task_group: str | None = None,
+        task_id: int = 0,
+        descriptor: EnvDescriptor | None = None,
+        use_async_envs: bool = False,
+    ):
+        """Describe the served task; its session opens on the first reset or step."""
+        self.client = client
+        self.use_async_envs = use_async_envs
+        self.descriptor = descriptor or self.client.describe()
+        self.num_envs = num_envs
+        self.task_group = task_group or next(iter(self.descriptor.tasks))
+        self.task_id = task_id
+        self.metadata = {
+            "render_fps": self.descriptor.fps,
+            "autoreset_mode": gym.vector.AutoresetMode.DISABLED,
+        }
+        self.render_mode = "rgb_array"
+        self.single_observation_space = gym.spaces.Dict(
+            {
+                f.name: gym.spaces.Box(0, 255, f.shape, np.uint8)
+                if f.kind == "rgb"
+                else gym.spaces.Box(-np.inf, np.inf, f.shape, np.dtype(f.dtype))
+                for f in self.descriptor.features
+            }
+        )
+        self.single_action_space = gym.spaces.Box(
+            -np.inf, np.inf, self.descriptor.action_feature.shape, np.float32
+        )
+        self.observation_space = batch_space(self.single_observation_space, num_envs)
+        self.action_space = batch_space(self.single_action_space, num_envs)
+        self.latest: StepResult | None = None
+        self.closed = False
+
+    def _open_session(self, seeds=None):
+        # Not named `_ensure`: eval_policy_all prefetches envs exposing `_ensure`, and an
+        # unseeded prefetch open would reset the environments before the seeded rollout reset.
+        if not self.client.session:
+            self.latest = self.client.open(
+                self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs
+            )
+            assert self.client.descriptor is not None
+            self.descriptor = self.client.descriptor
+            return True
+        return False
+
+    def _result(self, body):
+        self.latest = decode_step_result(body["result"])
+        return self.latest
+
+    def reset(self, *, seed=None, options=None):
+        """Reset every served environment with explicit seeds."""
+        if isinstance(seed, int):
+            seed = [seed + i for i in range(self.num_envs)]
+        result = (
+            self.latest
+            if self._open_session(seed)
+            else self._result(self.client.request("reset", seeds=seed))
+        )
+        assert result is not None
+        return result.obs, self._info(result)
+
+    def step(self, actions):
+        """Advance every unfinished served environment once."""
+        self._open_session()
+        result = self._result(self.client.request("step", actions=np.asarray(actions, dtype=np.float32)))
+        return (
+            result.obs,
+            result.reward,
+            result.terminated,
+            result.truncated,
+            self._info(result),
+        )
+
+    @staticmethod
+    def _info(result: StepResult) -> dict[str, object]:
+        return {
+            "is_success": result.is_success,
+            "task": result.task,
+            "step": result.step,
+            "sim_time": result.sim_time,
+        }
+
+    def call(self, name, *args, **kwargs):
+        """Return a supported per-environment attribute."""
+        if name == "_max_episode_steps":
+            return (self.descriptor.max_episode_steps,) * self.num_envs
+        if name == "task":
+            return (self.task_group,) * self.num_envs
+        self._open_session()
+        if name == "task_description":
+            assert self.latest is not None
+            return self.latest.task
+        if name == "render":
+            return tuple(self.client.request("render")["frames"])
+        raise AttributeError(f"Simulator vector attribute is not exposed: {name}")
+
+    def get_attr(self, name):
+        """Return a supported per-environment attribute."""
+        return self.call(name)
+
+    def render(self):
+        """Return the latest RGB frame of every served environment."""
+        return self.call("render")
+
+    def close_extras(self, **kwargs):
+        """Close the served session."""
+        self.client.close()
+
+    def close(self, **kwargs):
+        """Close the served session."""
+        self.client.close()
+        self.closed = True

@@ -19,6 +19,8 @@ from typing import Any
 
 import numpy as np
 
+_EMPTY_CAMERA_PREFIX = "observation.images.empty_camera_"
+
 
 @dataclass
 class SimConfig:
@@ -110,6 +112,38 @@ class EnvDescriptor:
             raise ValueError("Actions require ordered component names")
         if len({feature.name for feature in self.features}) != len(self.features):
             raise ValueError("Duplicate observation features")
+
+    def validate_checkpoint(self, config: Any, rename_map: dict[str, str]) -> None:
+        """Reject a checkpoint whose inputs or action do not fit this environment.
+
+        Environment keys are renamed with ``rename_map``, as for any robot. RGB spatial dimensions are left to
+        policy preprocessing, which owns resizing.
+        """
+        available = {rename_map.get(f.name, f.name): f for f in self.features}
+        for name, expected in config.input_features.items():
+            # Placeholder cameras come from the checkpoint's own `empty_cameras` setting.
+            if name.startswith(_EMPTY_CAMERA_PREFIX) and name.removeprefix(_EMPTY_CAMERA_PREFIX).isdigit():
+                continue
+            if name not in available:
+                raise ValueError(
+                    f"Checkpoint feature missing from the simulator (check --rename_map): {name}"
+                )
+            actual = available[name]
+            shape: tuple[int, ...]
+            if actual.kind == "rgb":
+                compatible = len(expected.shape) == 3 and expected.shape[0] == actual.shape[2]
+                shape = (actual.shape[2], actual.shape[0], actual.shape[1])
+            else:
+                compatible = tuple(expected.shape) == actual.shape
+                shape = actual.shape
+            if not compatible:
+                raise ValueError(
+                    f"Checkpoint feature shape mismatch for {name}: expected {expected.shape}, got {shape}"
+                )
+        if "action" not in config.output_features:
+            raise ValueError("Checkpoint must declare the canonical action feature")
+        if tuple(config.output_features["action"].shape) != self.action_feature.shape:
+            raise ValueError("Checkpoint action dimension differs from the simulator")
 
 
 @dataclass(frozen=True)

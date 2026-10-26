@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Validation and wire encoding at the environment-service boundary."""
+"""Keys, validation and wire encoding at the environment-service boundary.
+
+Keys carry the shared envelope version, so a wire bump moves both services together.
+"""
 
 from dataclasses import asdict, fields
 from typing import Any
@@ -21,6 +24,27 @@ import numpy as np
 
 from lerobot.sims.types import EnvDescriptor, FeatureSpec, StepResult
 from lerobot.transport.wire.features import validate_array
+from lerobot.transport.wire.protocol import PROTOCOL_VERSION, validate_segment
+
+
+def deployment_prefix(deployment: str) -> str:
+    """Return a validated simulator deployment key."""
+    return f"lerobot/env/v{PROTOCOL_VERSION}/deployments/{validate_segment(deployment)}"
+
+
+def any_deployment_describe() -> str:
+    """Return the describe key every server answers, for clients that take whichever deployment is served."""
+    return f"lerobot/env/v{PROTOCOL_VERSION}/describe"
+
+
+def instance_prefix(deployment: str, instance: str) -> str:
+    """Return a simulator boot key under its deployment."""
+    return f"{deployment_prefix(deployment)}/instances/{validate_segment(instance)}"
+
+
+def session_prefix(deployment: str, instance: str, session: str) -> str:
+    """Return an admitted environment-session key."""
+    return f"{instance_prefix(deployment, instance)}/sessions/{validate_segment(session)}"
 
 
 def encode_descriptor(descriptor: EnvDescriptor) -> dict[str, Any]:

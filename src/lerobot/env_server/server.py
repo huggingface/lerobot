@@ -20,13 +20,14 @@ import uuid
 from dataclasses import dataclass, field
 from queue import Empty
 from threading import Event
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
-from lerobot.sims.types import EnvDescriptor, SimConfig
+from lerobot.sims.types import EnvDescriptor, SimConfig, StepResult
 from lerobot.sims.vector_env import VectorEnv
 from lerobot.transport.wire.codec import CodecLimits, RGBImage, decode_message, encode_message
+from lerobot.transport.wire.features import validate_array
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import (
     BoundedSubscriber,
@@ -37,9 +38,15 @@ from lerobot.transport.zenoh import (
     ZenohTransport,
 )
 
-from .contracts import encode_descriptor, encode_step_result
-from .protocol import any_deployment_describe, deployment_prefix, instance_prefix, session_prefix
-from .session import EnvSession, check_open
+from .contracts import (
+    any_deployment_describe,
+    deployment_prefix,
+    encode_descriptor,
+    encode_step_result,
+    instance_prefix,
+    session_prefix,
+    validate_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,20 +64,32 @@ class ServerConfig:
     presence_grace_s: float = 10
 
 
-class _Session(EnvSession):
-    """An environment session served while the client's presence token is alive."""
+class _Session:
+    """One served batch of environments, stepped only on request, alive while its client's presence is."""
 
     def __init__(
         self,
         server: "EnvServer",
         prefix: str,
-        *args: Any,
-        encoding: str = "raw",
-        jpeg_quality: int = 90,
-        **kwargs: Any,
+        num_envs: int,
+        task_group: str | None,
+        task_id: int,
+        seeds: list[int | None] | None,
+        encoding: str,
+        jpeg_quality: int,
+        use_async_envs: bool,
     ):
-        super().__init__(*args, **kwargs)
-        self.server = server
+        self.descriptor = server.descriptor
+        self.env = VectorEnv(server.config.sim, num_envs, task_group, task_id, use_async_envs)
+        self.generation = 0
+        self.fault: str | None = None
+        try:
+            self.env.reset(seed=seeds)
+            self.opened = self._latest()
+            validate_result(self.opened, self.env.descriptor, num_envs)
+        except BaseException:
+            self.env.close()
+            raise
         self.prefix = prefix
         self.encoding = encoding
         self.jpeg_quality = jpeg_quality
@@ -81,6 +100,45 @@ class _Session(EnvSession):
             prefix + "/client_alive"
         )
         self.token: PresenceToken = server.transport.declare_token(prefix + "/alive")
+
+    def _latest(self) -> StepResult:
+        assert self.env.latest is not None
+        return self.env.latest
+
+    def handle(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Reset, step, or render the owned environments."""
+        if self.fault is not None:
+            raise ProtocolError(ErrorCode.EXECUTION, self.fault)
+        if operation == "reset":
+            try:
+                self.env.reset(seed=body.get("seeds"))
+            except Exception as exc:
+                self.fault = f"Simulator reset failed: {exc}"
+                raise
+            self.generation += 1
+            return {"generation": self.generation, "result": encode_step_result(self._latest())}
+        if operation == "step":
+            try:
+                self.env.step(self.actions(body.get("actions")))
+            except Exception as exc:
+                self.fault = f"Simulator step failed: {exc}"
+                raise
+            return {"result": encode_step_result(self._latest())}
+        if operation == "render":
+            return {"frames": self.env.render()}
+        raise ProtocolError(ErrorCode.UNSUPPORTED, f"Unsupported operation: {operation}")
+
+    def actions(self, value: Any) -> np.ndarray:
+        """Validate a batch of actions against the environment contract."""
+        try:
+            validate_array(value, self.descriptor.action_feature, leading_shape=(self.env.num_envs,))
+        except ValueError as exc:
+            raise ProtocolError(ErrorCode.INCOMPATIBLE, "Action shape, dtype or values invalid") from exc
+        return cast(np.ndarray, value)
+
+    def close(self) -> None:
+        """Release the environments."""
+        self.env.close()
 
     def encode(self, reply: dict[str, Any]) -> dict[str, Any]:
         """Send each environment's camera frames as JPEG when requested at open."""
@@ -208,7 +266,10 @@ class EnvServer:
         use_async_envs = body.get("use_async_envs", False)
         encoding = body.get("encoding", "raw")
         jpeg_quality = body.get("jpeg_quality", 90)
-        check_open(count, self.config.max_envs)
+        if type(count) is not int or not 1 <= count <= self.config.max_envs:
+            raise ProtocolError(
+                ErrorCode.INCOMPATIBLE, f"Batch size {count!r} is not between 1 and {self.config.max_envs}"
+            )
         if type(use_async_envs) is not bool:
             raise ProtocolError(ErrorCode.MALFORMED, "use_async_envs must be a boolean")
         if encoding not in {"raw", "jpeg"} or type(jpeg_quality) is not int or not 1 <= jpeg_quality <= 100:
@@ -232,15 +293,13 @@ class EnvServer:
         session = _Session(
             self,
             session_prefix(self.config.deployment, self.instance, session_id),
-            self.config.sim,
-            self.descriptor,
             count,
             body.get("task_group"),
             body.get("task_id", 0),
             body.get("seeds"),
-            encoding=encoding,
-            jpeg_quality=jpeg_quality,
-            use_async_envs=use_async_envs,
+            encoding,
+            jpeg_quality,
+            use_async_envs,
         )
         self.sessions[session_id] = session
         return session.encode(

@@ -110,7 +110,7 @@ def test_admission_and_stale_generation(server):
 
 
 def test_jpeg_observations_match_raw(server):
-    from lerobot.envs.batched import BatchedEnv
+    from lerobot.env_server.client import BatchedEnv
 
     _, endpoint = server
     obs = {}
@@ -129,7 +129,8 @@ def test_jpeg_observations_match_raw(server):
 
 
 def test_vector_client(server):
-    from lerobot.envs.batched import BatchedEnv, prepare_canonical_observation
+    from lerobot.env_server.client import BatchedEnv
+    from lerobot.envs.utils import prepare_canonical_observation
 
     _, endpoint = server
     env = BatchedEnv(EnvClient(endpoint), num_envs=2)
@@ -263,7 +264,6 @@ def test_checkpoint_admission(server):
     from types import SimpleNamespace
 
     from lerobot.configs.types import FeatureType, PolicyFeature
-    from lerobot.env_server.admission import validate_checkpoint
 
     _, endpoint = server
     client = EnvClient(endpoint)
@@ -278,33 +278,33 @@ def test_checkpoint_admission(server):
         },
         output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
     )
-    validate_checkpoint(descriptor, config, {})
+    descriptor.validate_checkpoint(config, {})
     # Acquisition resolution is independent of policy-side image preparation.
     for shape in ((3, 256, 256), (3, 480, 640)):
         config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, shape)
-        validate_checkpoint(descriptor, config, {})
+        descriptor.validate_checkpoint(config, {})
     for shape in ((4, 256, 256), (256, 256)):
         config.input_features["observation.image"] = PolicyFeature(FeatureType.VISUAL, shape)
         with pytest.raises(ValueError, match="shape mismatch"):
-            validate_checkpoint(descriptor, config, {})
+            descriptor.validate_checkpoint(config, {})
     # A checkpoint camera named differently is admitted through --rename_map, as for any robot.
     del config.input_features["observation.image"]
     config.input_features["observation.images.front"] = PolicyFeature(FeatureType.VISUAL, (3, 8, 8))
     with pytest.raises(ValueError, match="missing from the simulator"):
-        validate_checkpoint(descriptor, config, {})
-    validate_checkpoint(descriptor, config, {"observation.image": "observation.images.front"})
+        descriptor.validate_checkpoint(config, {})
+    descriptor.validate_checkpoint(config, {"observation.image": "observation.images.front"})
     # Checkpoint placeholder cameras are policy-owned: admission skips them whatever their shape.
     config.input_features["observation.images.empty_camera_0"] = PolicyFeature(
         FeatureType.VISUAL, (3, 480, 640)
     )
-    validate_checkpoint(descriptor, config, {"observation.image": "observation.images.front"})
+    descriptor.validate_checkpoint(config, {"observation.image": "observation.images.front"})
     config.input_features["observation.state"] = PolicyFeature(FeatureType.STATE, (3,))
     with pytest.raises(ValueError, match="shape mismatch"):
-        validate_checkpoint(descriptor, config, {"observation.image": "observation.images.front"})
+        descriptor.validate_checkpoint(config, {"observation.image": "observation.images.front"})
     config.input_features["observation.state"] = PolicyFeature(FeatureType.STATE, (2,))
     config.output_features["action"] = PolicyFeature(FeatureType.ACTION, (7,))
     with pytest.raises(ValueError, match="action dimension"):
-        validate_checkpoint(descriptor, config, {"observation.image": "observation.images.front"})
+        descriptor.validate_checkpoint(config, {"observation.image": "observation.images.front"})
 
 
 def test_eval_loop_accepts_canonical_observations(server):
@@ -312,7 +312,7 @@ def test_eval_loop_accepts_canonical_observations(server):
 
     import torch
 
-    from lerobot.envs.batched import BatchedEnv
+    from lerobot.env_server.client import BatchedEnv
     from lerobot.processor import PolicyProcessorPipeline
     from lerobot.scripts.lerobot_eval import rollout
 
@@ -515,7 +515,7 @@ def test_sim_robot_remote_inference_engine(server, tmp_path):
 
 
 def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
-    from lerobot.envs.batched import BatchedEnv
+    from lerobot.env_server.client import BatchedEnv
     from lerobot.sims.native.toy import ToyEnv
 
     original = ToyEnv.reset

@@ -138,6 +138,19 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
     return return_observations
 
 
+def prepare_canonical_observation(observations: dict[str, np.ndarray]) -> dict[str, Tensor]:
+    """Convert canonical simulator observations to policy tensors: RGB to float CHW in [0, 1]."""
+    result = {}
+    for name, value in observations.items():
+        tensor = torch.from_numpy(value)
+        if value.dtype == np.uint8 and value.ndim == 4:
+            tensor = tensor.permute(0, 3, 1, 2).contiguous().float() / 255
+        elif tensor.is_floating_point():
+            tensor = tensor.float()
+        result[name] = tensor
+    return result
+
+
 def env_to_policy_features(env_cfg: EnvConfig) -> dict[str, PolicyFeature]:
     # TODO(jadechoghari, imstevenpmwork): remove this hardcoding of keys and just use the nested keys as is
     # (need to also refactor preprocess_observation and externalize normalization from policies)

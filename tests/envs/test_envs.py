@@ -24,12 +24,12 @@ from gymnasium.envs.registration import register, registry as gym_registry
 from gymnasium.utils.env_checker import check_env
 
 from lerobot.configs.types import PolicyFeature
-from lerobot.envs.batched import prepare_canonical_observation
 from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import (
     _normalize_hub_result,
     _parse_hub_url,
+    prepare_canonical_observation,
     preprocess_observation,
 )
 from tests.utils import require_env
