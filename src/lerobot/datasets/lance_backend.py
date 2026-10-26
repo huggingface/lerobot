@@ -31,7 +31,7 @@ import contextlib
 import importlib
 import json
 from collections import OrderedDict, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from itertools import batched
@@ -83,11 +83,32 @@ from .video_utils import FrameTimestampError, decode_video_frames_pyav
 _RGB_DECODE_MAX_FRAMES = 64
 _RGB_DECODE_MAX_BYTES = 64 << 20
 
+# Limit the temporal span when merging multiple depth windows, further bounded
+# by the byte budget. Individual windows keep the direct decode path; these
+# limits do not split an individual window.
 _DEPTH_DECODE_MAX_SPAN_FRAMES = 64
 _DEPTH_DECODE_MAX_BYTES = 64 << 20
 # PyAV retains decoded uint16 frames while dequantization creates float32 output.
 # Leave extra headroom for the selected-frame stack and allocator overhead.
 _DEPTH_DECODE_BYTES_PER_VALUE = 8
+
+
+def _decode_frame_limit(
+    shape: Sequence[int] | None,
+    *,
+    max_frames: int,
+    max_bytes: int,
+    bytes_per_value: int,
+) -> int:
+    """Bound frame capacity by estimated memory, allowing at least one frame.
+
+    Missing or zero-sized shapes fall back to the frame cap. Callers apply the
+    capacity to unique RGB frames or the temporal span of merged depth windows.
+    """
+    frame_values = int(np.prod(shape)) if shape else 0
+    if not frame_values:
+        return max_frames
+    return min(max_frames, max(1, max_bytes // (frame_values * bytes_per_value)))
 
 
 class _SamplePlan(TypedDict):
@@ -525,19 +546,17 @@ class LanceDatasetReader(BaseDatasetReader):
                 return
 
             unique_indices = sorted({index for indices in request_indices for index in indices})
-            shape = self.meta.features[key].get("shape") or ()
-            frame_values = int(np.prod(shape)) if shape else 0
             # Normalization allocates float32 output while ``batch`` still owns the
             # decoder's uint8 tensor, so both storages contribute to peak decode memory.
             value_bytes = np.dtype(np.uint8).itemsize
             if not self.return_uint8:
                 value_bytes += np.dtype(np.float32).itemsize
-            byte_limited_frames = (
-                max(1, _RGB_DECODE_MAX_BYTES // (frame_values * value_bytes))
-                if frame_values
-                else _RGB_DECODE_MAX_FRAMES
+            decode_batch_size = _decode_frame_limit(
+                self.meta.features[key].get("shape"),
+                max_frames=_RGB_DECODE_MAX_FRAMES,
+                max_bytes=_RGB_DECODE_MAX_BYTES,
+                bytes_per_value=value_bytes,
             )
-            decode_batch_size = min(_RGB_DECODE_MAX_FRAMES, byte_limited_frames)
 
             # Keep the low-overhead gather/scatter path when all unique frames
             # already fit within the configured per-decode limits.
@@ -706,12 +725,8 @@ class LanceDatasetReader(BaseDatasetReader):
         base = float(from_ts_arr[ep_idx])
         return [base + float(timestamps[row_pos[row]]) for row in window]
 
-    def _decode_depth_window(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
-        """Decode one depth window with upstream's pyav decoder over our sparse source."""
-        return self._decode_depth_frames(source, shifted_ts, file_key).squeeze(0)
-
     def _decode_depth_frames(self, source, shifted_ts: list[float], file_key: tuple) -> torch.Tensor:
-        """Decode and dequantize a depth timestamp batch, preserving its timestamp order."""
+        """Decode and dequantize to (N, C, H, W), preserving timestamp order and the time axis."""
         source.seek(0)
         frames = decode_video_frames_pyav(
             source, shifted_ts, self.tolerance_s, return_uint8=False, is_depth=True
@@ -732,17 +747,15 @@ class LanceDatasetReader(BaseDatasetReader):
         """Merge nearby sample windows so each depth span opens and seeks PyAV once."""
         if len(file_requests) == 1:
             sample_idx, shifted_ts = file_requests[0]
-            return [(sample_idx, self._decode_depth_window(source, shifted_ts, file_key))]
+            return [(sample_idx, self._decode_depth_frames(source, shifted_ts, file_key).squeeze(0))]
 
         fps = float(self.meta.fps)
-        shape = self.meta.features[file_key[0]].get("shape") or ()
-        frame_values = int(np.prod(shape)) if shape else 0
-        byte_limited_frames = (
-            max(1, _DEPTH_DECODE_MAX_BYTES // (frame_values * _DEPTH_DECODE_BYTES_PER_VALUE))
-            if frame_values
-            else _DEPTH_DECODE_MAX_SPAN_FRAMES
+        max_span_frames = _decode_frame_limit(
+            self.meta.features[file_key[0]].get("shape"),
+            max_frames=_DEPTH_DECODE_MAX_SPAN_FRAMES,
+            max_bytes=_DEPTH_DECODE_MAX_BYTES,
+            bytes_per_value=_DEPTH_DECODE_BYTES_PER_VALUE,
         )
-        max_span_frames = min(_DEPTH_DECODE_MAX_SPAN_FRAMES, byte_limited_frames)
         merge_gap_s = 1.0 / fps + self.tolerance_s
 
         ordered = sorted(file_requests, key=lambda request: min(request[1]))
@@ -767,7 +780,9 @@ class LanceDatasetReader(BaseDatasetReader):
         for group in groups:
             if len(group) == 1:
                 sample_idx, timestamps = group[0]
-                decoded.append((sample_idx, self._decode_depth_window(source, timestamps, file_key)))
+                decoded.append(
+                    (sample_idx, self._decode_depth_frames(source, timestamps, file_key).squeeze(0))
+                )
                 continue
             unique_ts = sorted({timestamp for _, timestamps in group for timestamp in timestamps})
             frames = self._decode_depth_frames(source, unique_ts, file_key)

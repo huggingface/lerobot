@@ -109,6 +109,22 @@ class _FakeRGBDecoder:
         )
 
 
+def _depth_decode_reader(
+    file_key: tuple[str, int, int], shape: tuple[int, int, int] = (2, 2, 1)
+) -> tuple[LanceDatasetReader, list[list[float]]]:
+    reader = LanceDatasetReader.__new__(LanceDatasetReader)
+    reader.meta = SimpleNamespace(fps=10, features={file_key[0]: {"shape": shape}})
+    reader.tolerance_s = 1e-4
+    calls: list[list[float]] = []
+
+    def decode_depth_frames(source, timestamps: list[float], key: tuple) -> torch.Tensor:
+        calls.append(timestamps)
+        return torch.tensor(timestamps, dtype=torch.float32).reshape(-1, 1, 1, 1)
+
+    reader._decode_depth_frames = decode_depth_frames
+    return reader, calls
+
+
 def test_tabular_parity(dataset_roots):
     src_root, lance_root = dataset_roots
     upstream = LeRobotDataset(DUMMY_REPO_ID, root=src_root)
@@ -245,6 +261,30 @@ def test_video_parity(video_dataset_roots):
     indices = [3, 3, 17, 18]
     for idx, item in zip(indices, lance_u8.__getitems__(indices), strict=True):
         assert_items_equal(item, lance_u8[idx])
+
+
+@pytest.mark.parametrize(
+    ("shape", "bytes_per_value", "expected_frames"),
+    [
+        pytest.param((1024, 1024, 3), 1, 21, id="rgb-uint8"),
+        pytest.param((1024, 1024, 3), 5, 4, id="rgb-float32"),
+        pytest.param((720, 1280, 1), 8, 9, id="depth"),
+        pytest.param((2, 2, 1), 8, 64, id="frame-cap"),
+        pytest.param((4096, 4096, 3), 5, 1, id="oversized-frame"),
+        pytest.param(None, 8, 64, id="unknown-shape"),
+        pytest.param((), 8, 64, id="empty-shape"),
+        pytest.param((0, 2, 1), 8, 64, id="zero-sized-shape"),
+    ],
+)
+def test_decode_frame_limit(
+    shape: tuple[int, ...] | None, bytes_per_value: int, expected_frames: int
+) -> None:
+    assert (
+        lance_backend._decode_frame_limit(
+            shape, max_frames=64, max_bytes=64 << 20, bytes_per_value=bytes_per_value
+        )
+        == expected_frames
+    )
 
 
 def test_rgb_batch_decode_deduplicates_overlapping_frames():
@@ -399,17 +439,7 @@ def test_depth_batch_decode_merges_nearby_windows() -> None:
         (1, [0.1, 0.2, 0.3]),
         (2, [5.0]),
     ]
-    calls = []
-
-    reader = LanceDatasetReader.__new__(LanceDatasetReader)
-    reader.meta = SimpleNamespace(fps=10, features={file_key[0]: {"shape": (2, 2, 1)}})
-    reader.tolerance_s = 1e-4
-
-    def decode_depth_frames(source, timestamps, key):
-        calls.append(timestamps)
-        return torch.tensor(timestamps, dtype=torch.float32).reshape(-1, 1, 1, 1)
-
-    reader._decode_depth_frames = decode_depth_frames
+    reader, calls = _depth_decode_reader(file_key)
     decoded = dict(reader._decode_depth_file_requests(None, file_requests, file_key))
 
     assert calls == [[0.0, 0.1, 0.2, 0.3], [5.0]]
@@ -429,24 +459,37 @@ def test_depth_batch_decode_merges_nearby_windows() -> None:
 def test_depth_batch_decode_limits_merged_span(shape: tuple[int, int, int], max_frames: int) -> None:
     file_key = ("observation.images.depth", 0, 0)
     file_requests = [(index, [index / 10]) for index in range(max_frames + 6)]
-    calls = []
-
-    reader = LanceDatasetReader.__new__(LanceDatasetReader)
-    reader.meta = SimpleNamespace(fps=10, features={file_key[0]: {"shape": shape}})
-    reader.tolerance_s = 1e-4
-
-    def decode_depth_frames(source, timestamps, key):
-        calls.append(timestamps)
-        return torch.tensor(timestamps, dtype=torch.float32).reshape(-1, 1, 1, 1)
-
-    reader._decode_depth_frames = decode_depth_frames
+    reader, calls = _depth_decode_reader(file_key, shape)
     decoded = dict(reader._decode_depth_file_requests(None, file_requests, file_key))
 
-    assert calls == [
-        [index / 10 for index in range(max_frames)],
-        [index / 10 for index in range(max_frames, max_frames + 6)],
-    ]
-    assert len(decoded) == max_frames + 6
+    assert len(calls) == 2  # Nearby requests still merge while respecting the limit.
+    # Requests lie on the 10 FPS grid, so rounding measures span without testing
+    # the implementation's floating-point ceiling or exact partition boundary.
+    assert all(round((max(timestamps) - min(timestamps)) * 10) + 1 <= max_frames for timestamps in calls)
+    assert set(decoded) == set(range(max_frames + 6))
+    for sample_idx, timestamps in file_requests:
+        torch.testing.assert_close(decoded[sample_idx], torch.tensor(timestamps).reshape(1, 1, 1))
+
+
+@pytest.mark.parametrize(
+    "timestamps",
+    [
+        pytest.param([0.1], id="single-request"),
+        pytest.param([0.1, 0.1], id="shared-frame"),
+        pytest.param([0.1, 5.0], id="separate-windows"),
+    ],
+)
+def test_depth_single_frame_keeps_channel_dimension(timestamps: list[float]) -> None:
+    file_key = ("observation.images.depth", 0, 0)
+    reader, _ = _depth_decode_reader(file_key)
+    decoded = dict(
+        reader._decode_depth_file_requests(
+            None, [(index, [timestamp]) for index, timestamp in enumerate(timestamps)], file_key
+        )
+    )
+
+    for sample_idx, timestamp in enumerate(timestamps):
+        torch.testing.assert_close(decoded[sample_idx], torch.full((1, 1, 1), timestamp))
 
 
 def test_reader_reopens_after_failed_open(video_dataset_roots, monkeypatch):
