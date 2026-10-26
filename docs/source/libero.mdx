@@ -188,6 +188,8 @@ The Hub checkpoints [`lerobot/smolvla_libero`](https://huggingface.co/lerobot/sm
 
 `n_action_steps` is how many actions from each predicted chunk are executed before the policy looks at the scene again. SmolVLA's `chunk_size` is 50, and some Hub configs set `n_action_steps=50`, which plays the full chunk open-loop.
 
+In time, LIBERO runs at 20 Hz, so each action lasts 0.05 s: `n_action_steps=10` replans every 0.5 s, while `n_action_steps=50` plays 2.5 s open-loop. This is also why a non-20 Hz `fps` triggers a warning: at a different control rate the same `n_action_steps` covers a different stretch of time.
+
 The [SmolVLA paper](https://huggingface.co/papers/2506.01844) Table 13 already shows that executing 50 actions is the worst setting on LIBERO (about 51.8% average), while **10 steps averages about 82.8%** and 1 step about 80.3%. Independent paired evals on `lerobot/smolvla_libero` see a similar ~20 pp drop when forcing 50 vs 10 (see [#4614](https://github.com/huggingface/lerobot/issues/4614)).
 
 Use **`--policy.n_action_steps=10`** for the paper-aligned recipe. `--policy.n_action_steps=1` is also strong and matches `HuggingFaceVLA/smolvla_libero`'s saved config.
