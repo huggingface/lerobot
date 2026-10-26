@@ -16,8 +16,7 @@
 
 from typing import Any
 
-from .libero import conventions, create_envs as _create_envs
-from .libero_observation import canonical_observation
+from .libero import canonical_observation, conventions, create_envs as _create_envs
 
 __all__ = ["canonical_observation", "conventions", "create_envs"]
 

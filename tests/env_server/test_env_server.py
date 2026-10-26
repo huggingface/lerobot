@@ -22,7 +22,6 @@ import numpy as np
 import pytest
 
 from lerobot.env_server.client import EnvClient
-from lerobot.sims.integrations.libero_observation import canonical_observation
 from lerobot.transport.wire.protocol import ErrorCode, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig
 from tests.env_server.toy_env import ToyEnvConfig
@@ -183,9 +182,12 @@ def test_sim_robot_registration(server, tmp_path):
         robot.disconnect()
 
 
-def test_libero_numpy_adapter_parity():
+def test_libero_numpy_adapter_parity(monkeypatch):
     from lerobot.envs.utils import preprocess_observation
     from lerobot.processor.env_processor import LiberoProcessorStep
+    from tests.utils import import_without_simulator
+
+    canonical_observation = import_without_simulator("libero", monkeypatch).canonical_observation
 
     native = {
         "pixels": {"camera1": np.arange(6 * 7 * 3, dtype=np.uint8).reshape(6, 7, 3)},

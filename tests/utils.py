@@ -13,12 +13,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib
 import os
 import platform
 import sys
 import time
 from collections.abc import Callable
 from functools import wraps
+from types import ModuleType
 from unittest.mock import MagicMock
 
 import pytest
@@ -204,19 +206,25 @@ def wait_for(predicate: Callable[[], bool], timeout: float = 3.0) -> bool:
     return predicate()
 
 
-def resolve_without_simulator(settings: dict, monkeypatch: pytest.MonkeyPatch) -> SimConfig:
-    """``SimConfig.resolve``, stubbing the simulator's own packages when they are not installed."""
+def import_without_simulator(name: str, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """Import the integration ``name``, stubbing the simulator's own packages when they are not installed."""
     before = set(sys.modules)
     try:
         while True:
             try:
-                return SimConfig.resolve(settings)
+                return importlib.import_module(f"lerobot.sims.integrations.{name}")
             except ModuleNotFoundError as error:
                 if not error.name or error.name.startswith("lerobot"):
                     raise
                 monkeypatch.setitem(sys.modules, error.name, MagicMock())
     finally:
         # An integration imported against stubs must not leak into other tests.
-        for name in set(sys.modules) - before:
-            if name.startswith("lerobot.sims.integrations."):
-                monkeypatch.setitem(sys.modules, name, sys.modules.pop(name))
+        for module in set(sys.modules) - before:
+            if module.startswith("lerobot.sims.integrations."):
+                monkeypatch.setitem(sys.modules, module, sys.modules.pop(module))
+
+
+def resolve_without_simulator(settings: dict, monkeypatch: pytest.MonkeyPatch) -> SimConfig:
+    """``SimConfig.resolve``, stubbing the simulator's own packages when they are not installed."""
+    import_without_simulator(settings["type"], monkeypatch)
+    return SimConfig.resolve(settings)

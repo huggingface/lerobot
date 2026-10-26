@@ -29,12 +29,34 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
-from .libero_observation import canonical_observation
-from .utils import parse_camera_names
+from .utils import canonical_observation as _canonical_observation, parse_camera_names
 
 __all__ = ["canonical_observation", "conventions", "create_envs"]
 
 RobotObservation = dict[str, Any]
+
+
+def _quat_to_axisangle(quat: np.ndarray) -> np.ndarray:
+    """Convert LIBERO's xyzw quaternion with its legacy numerical convention."""
+    quat = np.asarray(quat, dtype=np.float32)
+    if quat.shape[-1:] != (4,):
+        raise ValueError("Quaternion must end in four xyzw components")
+    w = np.clip(quat[..., 3], -1, 1)
+    den = np.sqrt(np.maximum(1 - w * w, 0))
+    scale = np.divide(2 * np.arccos(w), den, out=np.zeros_like(den), where=den > 1e-10)
+    return (quat[..., :3] * scale[..., None]).astype(np.float32)
+
+
+def canonical_observation(obs: Mapping) -> dict[str, np.ndarray]:
+    """Apply LIBERO's camera orientation and build its 8-D state: eef position, axis-angle, gripper joints."""
+    adapted = dict(obs)
+    state = adapted.pop("robot_state", None)
+    if state is not None:
+        adapted["agent_pos"] = np.concatenate(
+            (state["eef"]["pos"], _quat_to_axisangle(state["eef"]["quat"]), state["gripper"]["qpos"]),
+            axis=-1,
+        ).astype(np.float32)
+    return _canonical_observation(adapted, flip_images=True)
 
 
 def _get_suite(name: str) -> benchmark.Benchmark:
