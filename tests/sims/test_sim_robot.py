@@ -24,7 +24,7 @@ import pytest
 
 from lerobot.robots.sim import SimRobot, SimRobotConfig
 from lerobot.transport.zenoh import ZenohConfig
-from tests.sims.toy_env import ToyEnvConfig
+from tests.sims.toy_env import ToyEnv, ToyEnvConfig
 
 
 def test_sim_robot_config_needs_an_environment():
@@ -557,5 +557,16 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
                 }
             )
             robot.send_action(dict(zip(robot.action_features, action[0].tolist(), strict=True)))
+    finally:
+        robot.disconnect()
+
+
+def test_sim_robot_builds_its_simulator_once(tmp_path):
+    before = ToyEnv.builds
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
+    try:
+        robot.connect()
+        robot.send_action({"command_0": 0.1, "command_1": 0.0})
+        assert ToyEnv.builds - before == 1
     finally:
         robot.disconnect()

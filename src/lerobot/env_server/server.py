@@ -71,22 +71,19 @@ class _Session:
         self,
         server: "EnvServer",
         prefix: str,
-        num_envs: int,
-        task_group: str | None,
-        task_id: int,
+        env: VectorEnv,
         seeds: list[int | None] | None,
         encoding: str,
         jpeg_quality: int,
-        use_async_envs: bool,
     ):
         self.descriptor = server.descriptor
-        self.env = VectorEnv(server.config.sim, num_envs, task_group, task_id, use_async_envs)
+        self.env = env
         self.generation = 0
         self.fault: str | None = None
         try:
             self.env.reset(seed=seeds)
             self.opened = self.env.latest
-            validate_result(self.opened, self.env.descriptor, num_envs)
+            validate_result(self.opened, self.env.descriptor, env.num_envs)
         except BaseException:
             self.env.close()
             raise
@@ -161,6 +158,7 @@ class EnvServer:
         self.instance = uuid.uuid4().hex
         self.transport = ZenohTransport(config.zenoh)
         self.sessions: dict[str, _Session] = {}
+        self._probe: VectorEnv | None = None
         self.ready = Event()
         self.stop = Event()
         self.descriptor: EnvDescriptor
@@ -170,12 +168,10 @@ class EnvServer:
         try:
             # Listen first: clients connecting while a slow simulator starts wait instead of failing.
             self.transport.open()
-            # Simulators are built here, on the thread that later steps them.
-            probe = VectorEnv(self.config.sim)
-            try:
-                self.descriptor = probe.descriptor
-            finally:
-                probe.close()
+            # Simulators are built here, on the thread that later steps them. The environment built to read the
+            # description serves the first session: some simulators (Isaac Sim) start only once per process.
+            self._probe = VectorEnv(self.config.sim)
+            self.descriptor = self._probe.descriptor
             root = deployment_prefix(self.config.deployment)
             instance = instance_prefix(self.config.deployment, self.instance)
             describe = self.transport.declare_queryable(
@@ -206,6 +202,8 @@ class EnvServer:
                     self._close_session(session_id)
                 except Exception:
                     logger.exception("Failed to close simulator session %s", session_id)
+            if self._probe is not None:
+                self._probe.close()
             self.transport.close()
 
     @staticmethod
@@ -284,17 +282,27 @@ class EnvServer:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Observation batch exceeds transport payload budget")
         if len(self.sessions) >= self.config.max_sessions:
             raise ProtocolError(ErrorCode.BUSY, "Simulator capacity is owned by another session")
+        task_group, task_id = body.get("task_group"), body.get("task_id", 0)
+        probe, self._probe = self._probe, None
+        if probe is not None and (count, task_group or probe.task_group, task_id, use_async_envs) == (
+            probe.num_envs,
+            probe.task_group,
+            probe.task_id,
+            probe.use_async_envs,
+        ):
+            env = probe
+        else:
+            if probe is not None:
+                probe.close()
+            env = VectorEnv(self.config.sim, count, task_group, task_id, use_async_envs)
         session_id = uuid.uuid4().hex
         session = _Session(
             self,
             session_prefix(self.config.deployment, self.instance, session_id),
-            count,
-            body.get("task_group"),
-            body.get("task_id", 0),
+            env,
             body.get("seeds"),
             encoding,
             jpeg_quality,
-            use_async_envs,
         )
         self.sessions[session_id] = session
         return session.encode(

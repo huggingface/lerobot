@@ -23,7 +23,7 @@ import pytest
 
 from lerobot.env_server.client import EnvClient
 from lerobot.transport.wire.protocol import ErrorCode, ProtocolError
-from tests.sims.toy_env import ToyEnvConfig
+from tests.sims.toy_env import ToyEnv, ToyEnvConfig
 
 
 def test_torch_free_import():
@@ -271,7 +271,6 @@ def test_eval_loop_accepts_canonical_observations(server):
 
 def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
     from lerobot.env_server.client import BatchedEnv
-    from tests.sims.toy_env import ToyEnv
 
     original = ToyEnv.reset
 
@@ -323,3 +322,16 @@ def test_served_env_must_be_the_env_the_command_describes(server):
     config = ToyEnvConfig(endpoint=server[1], fps=30)  # the server's toy runs at 20 fps
     with pytest.raises(ValueError, match="fps: server 20"):
         config.create_envs(n_envs=1)
+
+
+def test_first_session_uses_the_environment_built_to_describe(server):
+    from lerobot.env_server.client import BatchedEnv
+
+    before = ToyEnv.builds
+    env = BatchedEnv(EnvClient(server[1]))
+    try:
+        env.reset(seed=1)
+        env.step(np.zeros((1, 2), np.float32))
+        assert ToyEnv.builds == before
+    finally:
+        env.close()

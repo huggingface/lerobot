@@ -168,15 +168,20 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                 )
         else:
             sim = self.sim_config()
-            probe = VectorEnv(sim)
-            try:
-                descriptor = probe.descriptor
-            finally:
-                probe.close()
+            parallel = use_async_envs and n_envs > 1
+            # The environment built to read the description is handed out, not built again: some simulators
+            # (Isaac Sim) start only once per process.
+            first = [VectorEnv(sim, n_envs, use_async_envs=parallel)]
+            descriptor = first[0].descriptor
 
-            # Given the descriptor, each task builds its simulators on first use, not all tasks at once.
             def make(group: str, task_id: int) -> VectorEnv | BatchedEnv:
-                return VectorEnv(sim, n_envs, group, task_id, use_async_envs and n_envs > 1, descriptor)
+                if first:
+                    env = first.pop()
+                    if (group, task_id) == (env.task_group, env.task_id):
+                        return env
+                    env.close()
+                # Given the descriptor, the other tasks build their simulators on first use.
+                return VectorEnv(sim, n_envs, group, task_id, parallel, descriptor)
 
         self.fps = int(descriptor.fps)
         self.features = {

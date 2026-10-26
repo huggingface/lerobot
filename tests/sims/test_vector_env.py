@@ -18,7 +18,7 @@ import draccus
 import numpy as np
 import pytest
 
-from tests.sims.toy_env import ToyEnvConfig
+from tests.sims.toy_env import ToyEnv, ToyEnvConfig
 
 
 @pytest.mark.parametrize("where", ["local", "served"])
@@ -61,14 +61,32 @@ def test_environments_in_separate_processes_match_sequential_environments():
         assert parallel.task == sequential.task
 
 
-def test_local_tasks_build_their_simulators_on_first_use():
-    # lerobot-eval creates every task's environment up front, then prefetches the next one with _ensure.
+def test_env_config_builds_each_simulator_once():
+    # Some simulators (Isaac Sim) start only once per process: the environments built to read the
+    # description are the ones used.
+    before = ToyEnv.builds
     env = ToyEnvConfig().create_envs(n_envs=2)["reach"][0]
+    try:
+        env.reset(seed=[1, 2])
+        env.step(np.zeros((2, 2), np.float32))
+        assert ToyEnv.builds - before == 2
+    finally:
+        env.close()
+
+
+def test_other_tasks_build_their_simulators_on_first_use():
+    # lerobot-eval creates every task's environment up front, then prefetches the next one with _ensure.
+    from lerobot.sims.vector_env import VectorEnv
+
+    config = ToyEnvConfig()
+    first = config.create_env(num_envs=2)
+    env = VectorEnv(config.sim_config(), 2, descriptor=first.descriptor)
     try:
         assert not env._envs
         env.reset(seed=[1, 2])
         assert len(env._envs) == 2
     finally:
+        first.close()
         env.close()
 
 

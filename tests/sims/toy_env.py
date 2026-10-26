@@ -31,7 +31,10 @@ __all__ = ["ToyEnv", "ToyEnvConfig", "canonical_observation", "create_envs"]
 class ToyEnv:
     """A 2-D point that starts near the origin and succeeds past x = 1."""
 
+    builds = 0
+
     def __init__(self) -> None:
+        ToyEnv.builds += 1
         self.observation_space = spaces.Dict(
             {
                 "agent_pos": spaces.Box(-100, 100, (2,), np.float32),
