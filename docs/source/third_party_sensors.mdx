@@ -13,8 +13,13 @@ pip install lerobot_camera_<name>
 lerobot-record \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
+    --robot.id=my_follower_arm \
     --robot.cameras="{ front: {type: <name>, width: 640, height: 480, fps: 30} }" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=my_leader_arm \
     --dataset.repo_id=${HF_USER}/my-dataset \
+    --dataset.single_task="Describe your task here" \
     --dataset.num_episodes=5
 ```
 

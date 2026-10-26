@@ -57,7 +57,7 @@ In case you need to fully fine-tune a layer instead of just adapting it, you can
 to the `--peft.full_training_modules` parameter:
 
 ```
---peft.full_training_modules=["state_proj"]
+--peft.full_training_modules='["state_proj"]'
 ```
 
 The learning rate and the scheduled target learning rate can usually be scaled by a factor of 10 compared to the
