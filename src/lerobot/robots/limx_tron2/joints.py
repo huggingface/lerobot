@@ -257,12 +257,18 @@ def servoj_vector(
 
     Raises:
         KeyError: If the action is missing one of the expected joint keys.
+        ValueError: If a joint value is not finite.
     """
     keys = [pos_key(name) for name in joint_names]
     missing = [key for key in keys if key not in action]
     if missing:
         raise KeyError(f"action is missing joint keys: {missing}")
-    return np.asarray([action[key] for key in keys], dtype=np.float64)
+    vector = np.asarray([action[key] for key in keys], dtype=np.float64)
+    if not np.all(np.isfinite(vector)):
+        # A NaN or an infinity would otherwise be handed straight to the motion controller and
+        # interpolated towards, which is not recoverable from the LeRobot side.
+        raise ValueError("joint target contains non-finite values")
+    return vector
 
 
 def gripper_openings(
@@ -285,6 +291,7 @@ def gripper_openings(
 
     Raises:
         KeyError: If the action carries exactly one of the two keys.
+        ValueError: If an opening is not finite.
     """
     keys = [pos_key(name) for name in gripper_names]
     present = [key in action for key in keys]
@@ -293,4 +300,7 @@ def gripper_openings(
     if not all(present):
         missing = [k for k, ok in zip(keys, present, strict=True) if not ok]
         raise KeyError(f"action specifies only one side of the gripper pair; missing {missing}")
-    return float(action[keys[0]]), float(action[keys[1]])
+    left, right = float(action[keys[0]]), float(action[keys[1]])
+    if not np.all(np.isfinite([left, right])):
+        raise ValueError("gripper target contains non-finite values")
+    return left, right

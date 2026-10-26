@@ -247,18 +247,23 @@ class LimxTron2(Robot):
         controller = self._require_controller()
 
         servoj = servoj_vector(action, self.config.joint_names)
+        # Resolve the gripper targets before anything is sent.  `gripper_openings` validates the
+        # pair and its values, and failing after `command_joints` had already gone out would leave
+        # the arm moving while the gripper command was rejected.
+        openings = (
+            gripper_openings(action, self.config.gripper_names) if self.config.include_grippers else None
+        )
+
         controller.command_joints(servoj)
         sent: RobotAction = {
             pos_key(name): float(value) for name, value in zip(self.config.joint_names, servoj, strict=True)
         }
 
-        if self.config.include_grippers:
-            openings = gripper_openings(action, self.config.gripper_names)
-            if openings is not None:
-                left, right = openings
-                controller.command_end_effector(np.asarray([left]), np.asarray([right]))
-                sent[pos_key(self.config.gripper_names[0])] = left
-                sent[pos_key(self.config.gripper_names[1])] = right
+        if openings is not None:
+            left, right = openings
+            controller.command_end_effector(np.asarray([left]), np.asarray([right]))
+            sent[pos_key(self.config.gripper_names[0])] = left
+            sent[pos_key(self.config.gripper_names[1])] = right
 
         return sent
 

@@ -336,3 +336,46 @@ def test_configure_surfaces_controller_faults():
         robot.configure()  # healthy controller: no fault, no error
     finally:
         robot.disconnect()
+
+
+# ------------------------------------------------ non-finite target rejection
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_joint_target_never_reaches_the_controller(bad):
+    """A NaN handed to the motion controller would be interpolated towards and not recoverable."""
+    transport = FakeTransport()
+    robot = HarnessRobot(make_config(), transport)
+    robot.connect()
+    try:
+        before = len(transport.sent_frames())
+        action = {f"{name}.pos": 0.0 for name in robot.config.joint_names}
+        action[f"{robot.config.joint_names[0]}.pos"] = bad
+        with pytest.raises(ValueError, match="non-finite"):
+            robot.send_action(action)
+        time.sleep(0.12)
+        frames = transport.sent_frames()[before:]
+        assert all(np.all(np.isfinite(frame)) for frame in frames), "a non-finite setpoint was sent"
+    finally:
+        robot.disconnect()
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_a_non_finite_gripper_target_is_rejected_before_the_joints_are_sent(bad):
+    """The gripper pair is validated up front, so a bad opening cannot leave the arm moving."""
+    transport = FakeTransport()
+    robot = HarnessRobot(make_config(include_grippers=True), transport)
+    robot.connect()
+    try:
+        before = len(transport.sent_frames())
+        action = {f"{name}.pos": 0.0 for name in robot.config.joint_names}
+        action["left_gripper.pos"] = bad
+        action["right_gripper.pos"] = 0.5
+        with pytest.raises(ValueError, match="non-finite"):
+            robot.send_action(action)
+        time.sleep(0.12)
+        assert transport.gripper_commands == [], "a non-finite gripper opening was sent"
+        frames = transport.sent_frames()[before:]
+        assert all(np.all(np.isfinite(frame)) for frame in frames), "a non-finite setpoint was sent"
+    finally:
+        robot.disconnect()
