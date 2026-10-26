@@ -18,6 +18,7 @@ import json
 
 import draccus
 import pytest
+import torch
 
 from lerobot.configs.accelerator import (
     AcceleratorConfig,
@@ -28,6 +29,7 @@ from lerobot.configs.accelerator import (
     FSDPConfig,
     GradientAccumulationConfig,
     GradScalerConfig,
+    MixedPrecisionPolicyConfig,
 )
 from lerobot.configs.parallelism import ParallelismConfig
 
@@ -71,12 +73,15 @@ class TestDraccusRoundTrip:
             AcceleratorConfig(),
             AcceleratorConfig(
                 mixed_precision="bf16",
-                gradient_accumulation=GradientAccumulationConfig(steps=4),
+                gradient_accumulation=GradientAccumulationConfig(steps=4, sync_each_batch=True),
                 fsdp=FSDPConfig(
                     reshard_after_forward=False,
                     wrap_modules=["ACTEncoderLayer", "ACTDecoderLayer"],
                     cpu_offload=True,
                     ignored_modules=r".*pos_embed.*",
+                    mixed_precision_policy=MixedPrecisionPolicyConfig(
+                        param_dtype=torch.bfloat16, cast_forward_inputs=False
+                    ),
                 ),
                 ddp=DDPConfig(find_unused_parameters=False, static_graph=True),
                 grad_scaler=GradScalerConfig(init_scale=1024.0, growth_interval=500),
@@ -113,6 +118,8 @@ class TestRuntimeBuilders:
         # LeRobot never switches state_dict_type: FSDP2's SHARDED default must hold
         assert plugin.state_dict_type.name == "SHARDED_STATE_DICT"
         assert not plugin.activation_checkpointing
+        # torch's defaults leave the policy to accelerate, which derives it from mixed_precision
+        assert plugin.mixed_precision_policy is None
 
     def test_fsdp_plugin_size_based_policy(self):
         plugin = FSDPConfig(min_num_params=1024).build_plugin()
@@ -125,9 +132,10 @@ class TestRuntimeBuilders:
         assert handler.gradient_as_bucket_view is True
 
     def test_gradient_accumulation_plugin_translation(self):
-        plugin = GradientAccumulationConfig(steps=4).build_plugin()
+        plugin = GradientAccumulationConfig(steps=4, sync_each_batch=True).build_plugin()
         assert plugin.num_steps == 4
         assert plugin.sync_with_dataloader is False
+        assert plugin.sync_each_batch is True
 
     def test_grad_scaler_kwargs_translation(self):
         handler = GradScalerConfig(

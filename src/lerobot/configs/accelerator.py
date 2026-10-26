@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+import torch
+
 from lerobot.configs.parallelism import ParallelismConfig
 
 if TYPE_CHECKING:
@@ -35,6 +37,43 @@ if TYPE_CHECKING:
         GradientAccumulationPlugin,
         GradScalerKwargs,
     )
+    from torch.distributed.fsdp import MixedPrecisionPolicy
+
+
+@dataclass
+class MixedPrecisionPolicyConfig:
+    """Mirror of `torch.distributed.fsdp.MixedPrecisionPolicy`, applied to every FSDP2 unit.
+
+    At torch's defaults no policy is built and accelerate derives one from `mixed_precision`.
+    Otherwise the policy is built from these four fields alone.
+    """
+
+    # Dtype of the unsharded parameters: the forward, the backward and the all-gather.
+    # None keeps their dtype.
+    param_dtype: torch.dtype | None = None
+    # Dtype of the gradient reduction. None follows `param_dtype`.
+    reduce_dtype: torch.dtype | None = None
+    # Dtype every FSDP unit casts its floating-point outputs to. None leaves them unchanged.
+    output_dtype: torch.dtype | None = None
+    # Cast the floating-point forward inputs of every FSDP unit to `param_dtype`.
+    cast_forward_inputs: bool = True
+
+    def build(self) -> "MixedPrecisionPolicy | None":
+        """Build the policy for `FullyShardedDataParallelPlugin(mixed_precision_policy=...)`.
+
+        Returns:
+            MixedPrecisionPolicy | None: The mirrored policy, or None at torch's defaults so
+                that accelerate derives it from `mixed_precision`.
+        """
+        from torch.distributed.fsdp import MixedPrecisionPolicy
+
+        policy = MixedPrecisionPolicy(
+            param_dtype=self.param_dtype,
+            reduce_dtype=self.reduce_dtype,
+            output_dtype=self.output_dtype,
+            cast_forward_inputs=self.cast_forward_inputs,
+        )
+        return None if policy == MixedPrecisionPolicy() else policy
 
 
 @dataclass
@@ -53,6 +92,7 @@ class FSDPConfig:
     cpu_offload: bool = False
     # Regex matched against module FQNs to exclude their parameters from sharding.
     ignored_modules: str | None = None
+    mixed_precision_policy: MixedPrecisionPolicyConfig = field(default_factory=MixedPrecisionPolicyConfig)
 
     def __post_init__(self) -> None:
         """Validate the wrap-policy fields.
@@ -88,6 +128,7 @@ class FSDPConfig:
             min_num_params=self.min_num_params,
             cpu_offload=self.cpu_offload,
             ignored_modules=self.ignored_modules,
+            mixed_precision_policy=self.mixed_precision_policy.build(),
             # state_dict_type stays at the FSDP2 default (SHARDED_STATE_DICT) and is never
             # switched: full gathers go through torch's state-dict API, which does not consult
             # the plugin. activation_checkpointing stays False: AC is LeRobot-owned.
@@ -182,13 +223,15 @@ class GradScalerConfig:
 class GradientAccumulationConfig:
     """Mirror of the `GradientAccumulationPlugin` subset LeRobot supports.
 
-    Only the step count is a knob. ``sync_with_dataloader`` is pinned to False by
-    :meth:`build_plugin`: the training loop cycles a finite dataloader, so accelerate's default
-    of syncing at every dataloader end would force an optimizer step at every dataset epoch
-    boundary instead of every ``steps`` micro-batches.
+    The step count and ``sync_each_batch`` are the knobs. ``sync_with_dataloader`` is pinned to
+    False by :meth:`build_plugin`: the training loop cycles a finite dataloader, so accelerate's
+    default of syncing at every dataloader end would force an optimizer step at every dataset
+    epoch boundary instead of every ``steps`` micro-batches.
     """
 
     steps: int = 1
+    # Reduce the gradients at every micro-batch instead of only at the last one.
+    sync_each_batch: bool = False
 
     def __post_init__(self) -> None:
         """Validate the accumulation step count.
@@ -207,12 +250,14 @@ class GradientAccumulationConfig:
         it `to_kwargs()`, so the consumption site, not the inheritance, decides its role.
 
         Returns:
-            GradientAccumulationPlugin: Carrying the mirrored step count, with
-                ``sync_with_dataloader=False`` pinned (see the class docstring).
+            GradientAccumulationPlugin: Carrying the mirrored step count and ``sync_each_batch``,
+                with ``sync_with_dataloader=False`` pinned (see the class docstring).
         """
         from accelerate.utils import GradientAccumulationPlugin
 
-        return GradientAccumulationPlugin(num_steps=self.steps, sync_with_dataloader=False)
+        return GradientAccumulationPlugin(
+            num_steps=self.steps, sync_with_dataloader=False, sync_each_batch=self.sync_each_batch
+        )
 
 
 @dataclass
@@ -251,7 +296,8 @@ class AcceleratorConfig:
     """Builds the `Accelerator` — the runtime counterpart of the `parallelism` topology.
 
     `mixed_precision` selects accelerate-native AMP for DDP/single-GPU runs and the FSDP2
-    `MixedPrecisionPolicy` for sharded runs (accelerate derives it). All three values work on
+    `MixedPrecisionPolicy` for sharded runs (accelerate derives it unless
+    `fsdp.mixed_precision_policy` sets one). All three values work on
     every topology; "fp16" additionally gets a `torch.amp.GradScaler`, built by accelerate and
     tuned through `grad_scaler`. Under FSDP2 the gradients it inspects are DTensors, whose
     overflow flag torch reduces across the mesh, so a single rank's overflow skips the
