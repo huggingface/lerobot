@@ -63,7 +63,7 @@ class SimConfig:
 
         Imports the integration, so it runs where the simulator is installed.
         """
-        integration = importlib.import_module(f"lerobot.sims.native.{settings['type']}")
+        integration = importlib.import_module(f"lerobot.sims.integrations.{settings['type']}")
         conventions = getattr(integration, "conventions", None)
         declared = conventions(settings.get("kwargs") or {}) if conventions else {}
         return cls(**{**declared, **{key: value for key, value in settings.items() if value is not None}})

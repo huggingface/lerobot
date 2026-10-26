@@ -24,7 +24,7 @@ def canonical_observation(
     *,
     flip_images: bool = False,
 ) -> dict[str, np.ndarray]:
-    """Map the native wrappers' common values to canonical LeRobot observations."""
+    """Map the observation values integrations share to canonical LeRobot names."""
     result = {}
     pixels = obs.get("pixels")
     if pixels is not None:

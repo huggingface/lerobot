@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from lerobot.env_server.client import EnvClient
-from lerobot.sims.native.libero_observation import canonical_observation
+from lerobot.sims.integrations.libero_observation import canonical_observation
 from lerobot.transport.wire.protocol import ErrorCode, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig
 from tests.env_server.toy_env import ToyEnvConfig
@@ -37,7 +37,7 @@ def test_torch_free_import():
 import sys
 sys.modules['torch'] = None
 import numpy as np
-import lerobot.env_server.server, lerobot.sims.vector_env, lerobot.sims.native.envhub
+import lerobot.env_server.server, lerobot.sims.vector_env, lerobot.sims.integrations.envhub
 from lerobot.transport.wire.client import query_reply, decode_reply
 from lerobot.utils.feature_spec import FeatureSpec, feature_mismatch, validate_array
 from lerobot.transport.wire.protocol import Envelope, MessageType, correlate_reply, raise_peer_error, validate_reply
@@ -666,7 +666,7 @@ def make_env(n_envs=1, use_async_envs=False):
 
 
 def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
-    from lerobot.sims.native import envhub
+    from lerobot.sims.integrations import envhub
     from lerobot.sims.types import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
@@ -702,7 +702,7 @@ def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
 
 def test_envhub_make_env_takes_the_options_of_the_command(tmp_path, monkeypatch):
     from lerobot.envs.configs import HubEnvConfig
-    from lerobot.sims.native import envhub
+    from lerobot.sims.integrations import envhub
     from lerobot.sims.vector_env import VectorEnv
 
     # The repository's make_env sizes its camera from an option of its own.
@@ -735,7 +735,7 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
 
 
 def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
-    from lerobot.sims.native import envhub
+    from lerobot.sims.integrations import envhub
     from lerobot.sims.types import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
@@ -762,7 +762,7 @@ def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
 def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
     import builtins
 
-    from lerobot.sims.native import envhub
+    from lerobot.sims.integrations import envhub
     from lerobot.sims.types import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
@@ -786,7 +786,7 @@ def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
 
 
 def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
-    from lerobot.sims.native import envhub
+    from lerobot.sims.integrations import envhub
     from lerobot.sims.types import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
@@ -809,7 +809,7 @@ def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
 
 
 def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
-    from lerobot.sims.native import envhub
+    from lerobot.sims.integrations import envhub
     from lerobot.sims.types import SimConfig
 
     declared = (

@@ -126,7 +126,7 @@ class _ProcessEnv:
 class VectorEnv(gym.vector.VectorEnv):
     """``num_envs`` environments of one simulator task, stepped explicitly.
 
-    The simulator integration ``lerobot.sims.native.<config.type>`` supplies the environments and their
+    The simulator integration ``lerobot.sims.integrations.<config.type>`` supplies the environments and their
     canonical observations. A finished environment keeps its terminal observation and flags, and earns no
     reward, until ``reset``. With ``use_async_envs``, each environment runs in its own process and the batch
     steps in parallel.
@@ -144,7 +144,7 @@ class VectorEnv(gym.vector.VectorEnv):
         descriptor: EnvDescriptor | None = None,
     ) -> None:
         """Select the task. Given its ``descriptor``, the simulators are built on first use rather than now."""
-        integration = importlib.import_module(f"lerobot.sims.native.{config.type}")
+        integration = importlib.import_module(f"lerobot.sims.integrations.{config.type}")
         self._canonical_observation = integration.canonical_observation
         # env_cls=list returns each task's environment factories without building them.
         factories = integration.create_envs(task=config.task, n_envs=num_envs, env_cls=list, **config.kwargs)

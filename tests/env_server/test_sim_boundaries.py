@@ -25,7 +25,7 @@ from tests.env_server.toy_env import ToyEnvConfig
 
 def test_shared_simulation_code_names_no_simulator() -> None:
     root = Path(__file__).parents[2] / "src" / "lerobot"
-    simulators = {path.stem for path in (root / "sims" / "native").glob("*.py")} - {"__init__", "utils"}
+    simulators = {path.stem for path in (root / "sims" / "integrations").glob("*.py")} - {"__init__", "utils"}
     shared = [
         *(root / "sims").glob("*.py"),
         *(root / "env_server").glob("*.py"),
@@ -125,10 +125,10 @@ def test_vector_env_delegates_native_observation_conventions(monkeypatch) -> Non
         return {task: {0: env_cls([NativeEnv] * n_envs)}}
 
     # A new simulator is a module of these two functions; the shared environment never names it.
-    integration = ModuleType("lerobot.sims.native.new_engine")
+    integration = ModuleType("lerobot.sims.integrations.new_engine")
     integration.create_envs = create_envs  # type: ignore[attr-defined]
     integration.canonical_observation = canonical_observation  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "lerobot.sims.native.new_engine", integration)
+    monkeypatch.setitem(sys.modules, "lerobot.sims.integrations.new_engine", integration)
     env = VectorEnv(SimConfig(type="new_engine", task="pick", semantics="new-engine-v1"))
     try:
         assert env.single_observation_space["observation.state"].shape == (1,)
@@ -143,7 +143,7 @@ def test_envhub_rejects_custom_vector_behavior_without_unwrapping_it() -> None:
     import gymnasium as gym
     import pytest
 
-    from lerobot.sims.native.envhub import _env_factories
+    from lerobot.sims.integrations.envhub import _env_factories
 
     class CustomBatch(gym.vector.SyncVectorEnv):
         def step(self, actions):

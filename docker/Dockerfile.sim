@@ -320,7 +320,7 @@ RUN case "${SIM}" in \
         *) module=${SIM} ;; \
     esac \
     && if [ -n "$module" ]; then python -c "import sys; sys.modules['torch'] = None; \
-import lerobot.env_server.server; import lerobot.sims.native.$module"; fi
+import lerobot.env_server.server; import lerobot.sims.integrations.$module"; fi
 # Simulators with their own torch import environment dependencies lazily; import those here. A build has
 # no GPU driver, so RoboTwin's planner (CuRobo's motion generator) is only importable at runtime.
 RUN case "${SIM}" in \

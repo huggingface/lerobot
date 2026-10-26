@@ -18,7 +18,12 @@ import json
 from pathlib import Path
 
 CONFIG_PATH = (
-    Path(__file__).resolve().parents[2] / "src" / "lerobot" / "sims" / "native" / "metaworld_config.json"
+    Path(__file__).resolve().parents[2]
+    / "src"
+    / "lerobot"
+    / "sims"
+    / "integrations"
+    / "metaworld_config.json"
 )
 
 

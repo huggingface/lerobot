@@ -4,15 +4,15 @@ A benchmark is a simulator that LeRobot drives in one place, the shared env core
 
 ## What to add
 
-| Component            | Location                                      | What to add                                                                                                      |
-| -------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Native integration   | `src/lerobot/sims/native/<benchmark>.py`      | The `gym.Env`, `create_envs()` factory, `canonical_observation()` adapter and `conventions()` for that simulator |
-| Config               | `src/lerobot/envs/configs.py`                 | An `EnvConfig` subclass whose `sim_settings()` maps its options to the factory's kwargs                          |
-| Server configuration | `docker/sims/configs/<benchmark>.yaml`        | The task and factory kwargs the server and CI use                                                                |
-| Simulator image      | `docker/Dockerfile.sim`                       | A `<benchmark>_native` stage: pinned native dependencies and asset revisions; the final stage adds the server    |
-| CI manifest          | `benchmarks/benchmarks.yaml`                  | Name, tasks, checkpoint revision and camera `rename_map`; policy, image, config and extras default from the name |
-| Dependencies         | `pyproject.toml`                              | An optional-dependency group for local use                                                                       |
-| Documentation        | `docs/source/<benchmark>.mdx`, `_toctree.yml` | A user-facing page                                                                                               |
+| Component            | Location                                       | What to add                                                                                                      |
+| -------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Integration          | `src/lerobot/sims/integrations/<benchmark>.py` | The `gym.Env`, `create_envs()` factory, `canonical_observation()` adapter and `conventions()` for that simulator |
+| Config               | `src/lerobot/envs/configs.py`                  | An `EnvConfig` subclass whose `sim_settings()` maps its options to the factory's kwargs                          |
+| Server configuration | `docker/sims/configs/<benchmark>.yaml`         | The task and factory kwargs the server and CI use                                                                |
+| Simulator image      | `docker/Dockerfile.sim`                        | A `<benchmark>_native` stage: pinned native dependencies and asset revisions; the final stage adds the server    |
+| CI manifest          | `benchmarks/benchmarks.yaml`                   | Name, tasks, checkpoint revision and camera `rename_map`; policy, image, config and extras default from the name |
+| Dependencies         | `pyproject.toml`                               | An optional-dependency group for local use                                                                       |
+| Documentation        | `docs/source/<benchmark>.mdx`, `_toctree.yml`  | A user-facing page                                                                                               |
 
 Both paths expose the same environment behavior:
 
@@ -22,7 +22,7 @@ native simulator → local vector env or environment service → canonical NumPy
   → policy → saved action postprocessing → native simulator
 ```
 
-Put image orientation, quaternion conversion and state ordering in that simulator's `canonical_observation()` adapter, and its control conventions in its `conventions()`, so that evaluation and rollout agree. Reuse `sims/native/utils.py` only for mappings shared by native integrations; shared environment code must not branch on simulator names. A new benchmark needs no [environment processor](./env_processor): observations reach the policy's own processors already canonical.
+Put image orientation, quaternion conversion and state ordering in that simulator's `canonical_observation()` adapter, and its control conventions in its `conventions()`, so that evaluation and rollout agree. Reuse `sims/integrations/utils.py` only for mappings shared by integrations; shared environment code must not branch on simulator names. A new benchmark needs no [environment processor](./env_processor): observations reach the policy's own processors already canonical.
 
 ## What your environment must provide
 

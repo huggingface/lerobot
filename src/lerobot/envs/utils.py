@@ -27,7 +27,7 @@ from torch import Tensor
 from lerobot.configs import FeatureType, PolicyFeature
 
 # Compatibility exports of the torch-free Hub loader, shared with the simulator server.
-from lerobot.sims.native.envhub import (
+from lerobot.sims.integrations.envhub import (
     _call_make_env as _call_make_env,
     _download_hub_file as _download_hub_file,
     _import_hub_module as _import_hub_module,
@@ -35,7 +35,7 @@ from lerobot.sims.native.envhub import (
     _normalize_hub_result as _normalize_hub_result,
     _parse_hub_url as _parse_hub_url,
 )
-from lerobot.sims.native.utils import parse_camera_names as parse_camera_names
+from lerobot.sims.integrations.utils import parse_camera_names as parse_camera_names
 from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 

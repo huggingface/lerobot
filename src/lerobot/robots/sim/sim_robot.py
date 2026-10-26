@@ -74,7 +74,7 @@ class SimRobot(Robot):
             for feature in descriptor.features
             if feature.kind == "rgb"
         }
-        # Robot cameras use the recorder's names; native envs keep their benchmark names.
+        # Robot cameras use the recorder's names; evaluation envs keep their benchmark names.
         self.descriptor: EnvDescriptor = replace(
             descriptor,
             features=tuple(

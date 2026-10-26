@@ -218,5 +218,5 @@ def resolve_without_simulator(settings: dict, monkeypatch: pytest.MonkeyPatch) -
     finally:
         # An integration imported against stubs must not leak into other tests.
         for name in set(sys.modules) - before:
-            if name.startswith("lerobot.sims.native."):
+            if name.startswith("lerobot.sims.integrations."):
                 monkeypatch.setitem(sys.modules, name, sys.modules.pop(name))
