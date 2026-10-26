@@ -24,6 +24,7 @@ relies on -- ``init`` returning a boolean, a ``subscribeRobotState`` push callba
 
 import os
 import sys
+import threading
 import time
 import types
 
@@ -414,3 +415,134 @@ def test_stale_state_is_rejected():
             robot.get_observation()
     finally:
         robot.disconnect()
+
+
+# ------------------------------------------- command ordering and reconnects
+
+
+class OwnedLock:
+    """A lock that records which thread holds it.
+
+    ``threading.Lock`` cannot answer "is the current thread the one holding this?", which is what
+    the ordering test needs: the publish loop has to read the target while holding the lock that
+    `send_action` also takes, and there is no other way to observe that from outside.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._owner: int | None = None
+
+    def __enter__(self):
+        self._lock.acquire()
+        self._owner = threading.get_ident()
+        return self
+
+    def __exit__(self, *exc_info):
+        self._owner = None
+        self._lock.release()
+        return False
+
+    def owned_by_current_thread(self) -> bool:
+        return self._owner == threading.get_ident()
+
+
+class LockScopeHarness(HarnessRobot):
+    """``HarnessRobot`` that flags every read of the target made outside the publish lock."""
+
+    def __init__(self, config: LimxHumanoidConfig, vendor: FakeVendorRobot) -> None:
+        super().__init__(config, vendor)
+        self.target_reads_outside_lock = 0
+        self._publish_lock = OwnedLock()
+
+    @property
+    def _target(self):
+        lock = self.__dict__.get("_publish_lock")
+        if lock is not None and not lock.owned_by_current_thread():
+            self.target_reads_outside_lock += 1
+        return self.__dict__.get("_target_storage")
+
+    @_target.setter
+    def _target(self, value):
+        self.__dict__["_target_storage"] = value
+
+
+def test_the_publish_loop_reads_the_target_inside_the_publish_lock():
+    """Reading the target outside the lock is what let an older setpoint overtake a newer one."""
+    vendor = FakeVendorRobot()
+    config = make_config(publish_rate=1000.0)
+    config.start_pose = [0.1] * HUMANOID_DIM
+    robot = LockScopeHarness(config, vendor)
+
+    robot.connect()
+    try:
+        names = robot.config.joint_names
+        for step in range(20):
+            robot.send_action({pos_key(name): 0.2 + step * 0.01 for name in names})
+            time.sleep(0.01)
+    finally:
+        robot.disconnect()
+
+    assert robot.target_reads_outside_lock == 0, (
+        f"the publish loop read the target {robot.target_reads_outside_lock} times without the "
+        "lock, so a stale target can be published after a newer one"
+    )
+
+
+class BlockingVendorRobot(FakeVendorRobot):
+    """Holds the first ``publishRobotCmd`` open so a disconnect can time out joining it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def publishRobotCmd(self, cmd: FakeRobotCmd) -> None:  # noqa: N802 - vendor method name
+        self.entered.set()
+        self.release.wait(timeout=10)
+        super().publishRobotCmd(cmd)
+
+
+class SwappableHarness(LimxHumanoid):
+    """``LimxHumanoid`` that hands out a different vendor handle on each connection."""
+
+    def __init__(self, config: LimxHumanoidConfig, vendors: list) -> None:
+        super().__init__(config)
+        self._vendors = list(vendors)
+
+    def _make_robot(self):
+        vendor = self._vendors.pop(0)
+        vendor.subscribeRobotState(self._on_state)
+        return vendor, FakeDatatypes
+
+
+def test_a_publisher_stranded_by_disconnect_does_not_outlive_that_connection():
+    """A thread still blocked inside the SDK when ``disconnect`` times out must not survive."""
+    first = BlockingVendorRobot()
+    second = FakeVendorRobot()
+    config = make_config(publish_rate=1000.0)
+    # A target has to exist before the loop will call the SDK at all.
+    config.start_pose = [0.1] * HUMANOID_DIM
+    robot = SwappableHarness(config, [first, second])
+
+    robot.connect()
+    assert first.entered.wait(5), "the publish loop never reached the SDK"
+    stranded = robot._publisher
+
+    robot.disconnect()  # join times out: the loop is still blocked in the SDK call
+    assert stranded.is_alive(), "expected the publisher to be stranded inside publishRobotCmd"
+
+    robot.connect()  # second connection, second stop event
+    first.release.set()  # let the stranded thread return from the SDK
+
+    stranded.join(timeout=5)
+    try:
+        assert not stranded.is_alive(), "a publisher from the previous connection is still running"
+    finally:
+        robot.disconnect()
+
+
+@pytest.mark.parametrize("field", ["start_pose", "kp", "kd"])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_tables_are_rejected_before_anything_reaches_the_sdk(field, bad):
+    with pytest.raises(ValueError, match="non-finite"):
+        make_config(**{field: [bad] * HUMANOID_DIM})
