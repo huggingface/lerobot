@@ -27,7 +27,6 @@ if TYPE_CHECKING or _transformers_available:
         AutoModelForImageTextToText,
         AutoProcessor,
         DynamicCache,
-        SmolVLMForConditionalGeneration,
     )
 else:
     AutoConfig = None
@@ -35,7 +34,6 @@ else:
     AutoModelForImageTextToText = None
     AutoProcessor = None
     DynamicCache = None
-    SmolVLMForConditionalGeneration = None
 
 
 def apply_rope(x, positions, max_wavelength=10_000):
@@ -84,20 +82,23 @@ class SmolVLMWithExpertModel(nn.Module):
         self_attn_every_n_layers: int = -1,
         expert_width_multiplier: float = 0.5,
         device: str = "auto",
+        dtype: torch.dtype | None = None,
     ):
         super().__init__()
         require_package("transformers", extra="smolvla")
+        dtype = dtype or torch.get_default_dtype()
+        vlm_dtype = torch.bfloat16 if train_expert_only else dtype
         if load_vlm_weights:
             print(f"Loading  {model_id} weights ...")
             self.vlm = AutoModelForImageTextToText.from_pretrained(
                 model_id,
-                torch_dtype="bfloat16",
+                dtype=vlm_dtype,
                 low_cpu_mem_usage=True,
             )
             config = self.vlm.config
         else:
             config = AutoConfig.from_pretrained(model_id)
-            self.vlm = SmolVLMForConditionalGeneration(config=config)
+            self.vlm = AutoModelForImageTextToText.from_config(config, dtype=vlm_dtype)
         self.processor = AutoProcessor.from_pretrained(model_id)
         if num_vlm_layers > 0:
             print(f"Reducing the number of VLM layers to {num_vlm_layers} ...")
@@ -115,7 +116,9 @@ class SmolVLMWithExpertModel(nn.Module):
                 f"Number of layers in the VLM {len(self.get_vlm_model().text_model.layers)} are not multiple of num_expert_layers {num_expert_layers}"
             )
             lm_expert_config.num_hidden_layers = num_expert_layers
-        self.lm_expert = AutoModel.from_config(lm_expert_config)
+        # The VLM's text config can carry bf16 even when the expert is trainable.
+        # Keep its storage dtype independent of the frozen VLM and autocast.
+        self.lm_expert = AutoModel.from_config(lm_expert_config, dtype=dtype)
 
         self.num_expert_layers = len(self.lm_expert.layers)
         self.self_attn_every_n_layers = self_attn_every_n_layers
@@ -128,11 +131,13 @@ class SmolVLMWithExpertModel(nn.Module):
                     config.text_config.num_key_value_heads * config.text_config.head_dim,
                     lm_expert_config.num_key_value_heads * lm_expert_config.head_dim,
                     bias=lm_expert_config.attention_bias,
+                    dtype=dtype,
                 )
                 self.lm_expert.layers[layer_idx].self_attn.v_proj = nn.Linear(
                     config.text_config.num_key_value_heads * config.text_config.head_dim,
                     lm_expert_config.num_key_value_heads * lm_expert_config.head_dim,
                     bias=lm_expert_config.attention_bias,
+                    dtype=dtype,
                 )
         # Remove unused embed_tokens
         self.lm_expert.embed_tokens = None
