@@ -39,7 +39,7 @@ sys.modules['torch'] = None
 import numpy as np
 import lerobot.env_server.server, lerobot.sims.vector_env, lerobot.sims.native.envhub
 from lerobot.transport.wire.client import query_reply, decode_reply
-from lerobot.transport.wire.features import FeatureSpec, feature_mismatch, validate_array
+from lerobot.utils.feature_spec import FeatureSpec, feature_mismatch, validate_array
 from lerobot.transport.wire.protocol import Envelope, MessageType, correlate_reply, raise_peer_error, validate_reply
 feature = FeatureSpec('state', (2,), 'float32', semantics='state-v1')
 assert feature_mismatch(feature, feature) is None

@@ -22,9 +22,9 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.sims.types import EnvDescriptor, FeatureSpec, StepResult
-from lerobot.transport.wire.features import validate_array
+from lerobot.sims.types import EnvDescriptor, StepResult
 from lerobot.transport.wire.protocol import PROTOCOL_VERSION, validate_segment
+from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
 
 def deployment_prefix(deployment: str) -> str:

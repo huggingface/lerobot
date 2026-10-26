@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from lerobot.robots.robot import Robot
-from lerobot.sims.types import EnvDescriptor, FeatureSpec, StepResult
+from lerobot.sims.types import EnvDescriptor, StepResult
+from lerobot.utils.feature_spec import FeatureSpec
 
 from .configuration_sim import SimRobotConfig
 

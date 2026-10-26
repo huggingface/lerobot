@@ -48,8 +48,8 @@ from lerobot.transport import (
     ZenohTransport,
 )
 from lerobot.transport.wire.client import decode_reply, query_reply
-from lerobot.transport.wire.features import feature_mismatch
 from lerobot.transport.wire.protocol import validate_reply
+from lerobot.utils.feature_spec import feature_mismatch
 
 from .chunk_contract import (
     RTC_MODEL_SPACE,

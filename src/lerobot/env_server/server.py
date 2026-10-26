@@ -27,7 +27,6 @@ import numpy as np
 from lerobot.sims.types import EnvDescriptor, SimConfig, StepResult
 from lerobot.sims.vector_env import VectorEnv
 from lerobot.transport.wire.codec import CodecLimits, RGBImage, decode_message, encode_message
-from lerobot.transport.wire.features import validate_array
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import (
     BoundedSubscriber,
@@ -37,6 +36,7 @@ from lerobot.transport.zenoh import (
     ZenohConfig,
     ZenohTransport,
 )
+from lerobot.utils.feature_spec import validate_array
 
 from .contracts import (
     any_deployment_describe,

@@ -17,7 +17,6 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from lerobot.transport.wire.features import FeatureSpec, feature_mismatch, validate_array
 from lerobot.transport.wire.protocol import (
     Envelope,
     ErrorCode,
@@ -26,6 +25,7 @@ from lerobot.transport.wire.protocol import (
     correlate_reply,
     validate_reply,
 )
+from lerobot.utils.feature_spec import FeatureSpec, feature_mismatch, validate_array
 
 
 def request():

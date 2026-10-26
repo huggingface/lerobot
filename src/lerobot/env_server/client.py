@@ -24,9 +24,9 @@ from gymnasium.vector.utils import batch_space
 
 from lerobot.sims.types import EnvDescriptor, StepResult
 from lerobot.transport.wire.client import query_reply
-from lerobot.transport.wire.features import feature_mismatch
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import PresenceToken, ZenohConfig, ZenohTransport
+from lerobot.utils.feature_spec import feature_mismatch
 
 from .contracts import (
     any_deployment_describe,

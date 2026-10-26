@@ -52,7 +52,7 @@ from lerobot.transport import (
     PresenceEvent,
     ZenohTransport,
 )
-from lerobot.transport.wire.features import feature_mismatch
+from lerobot.utils.feature_spec import feature_mismatch
 
 from .chunk_contract import (
     CHUNK_ALIGNMENT,

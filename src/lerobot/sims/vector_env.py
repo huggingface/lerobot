@@ -28,7 +28,8 @@ import numpy as np
 from gymnasium import spaces
 from gymnasium.vector.utils import CloudpickleWrapper, batch_space
 
-from lerobot.sims.types import EnvDescriptor, FeatureSpec, SimConfig, StepResult
+from lerobot.sims.types import EnvDescriptor, SimConfig, StepResult
+from lerobot.utils.feature_spec import FeatureSpec
 
 # Attributes an environment may expose, read back from its process after it is built and reset.
 _ENV_ATTRS = ("task_description", "task", "_max_episode_steps")
