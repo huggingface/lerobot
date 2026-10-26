@@ -157,6 +157,7 @@ class DepthDodgeController(RobotController):
 
     control_dt = CONTROL_DT
     timing: dict[str, float]
+    last_action: np.ndarray
     depth_ring: deque[np.ndarray]
     _ref_quat: np.ndarray | None
 
