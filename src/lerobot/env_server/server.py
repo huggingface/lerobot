@@ -185,6 +185,14 @@ class EnvServer:
                 instance + "/**", reply_timeout=self.config.request_timeout_s
             )
             self.transport.declare_token(instance + "/alive")
+            zenoh = self.config.zenoh
+            logger.info(
+                "Serving %s task %r as deployment %r on %s",
+                self.config.sim.type,
+                self.config.sim.task,
+                self.config.deployment,
+                ", ".join(zenoh.listen_endpoints or zenoh.connect_endpoints),
+            )
             self.ready.set()
             while not self.stop.is_set():
                 for channel in (describe, any_describe, requests):
