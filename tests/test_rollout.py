@@ -1040,6 +1040,83 @@ def _make_sentry(ctx, multiplier: int):
     return strategy
 
 
+@pytest.mark.parametrize(
+    "kind", ["base", "sentry", "highlight", "dagger_continuous", "dagger_corrections", "episodic"]
+)
+def test_rollout_strategies_respect_simulated_episode_boundaries(kind, tmp_path, monkeypatch, clock):
+    from lerobot.robots.sim import SimRobot, SimRobotConfig
+    from lerobot.rollout import (
+        BaseStrategyConfig,
+        DAggerStrategyConfig,
+        EpisodicStrategyConfig,
+        HighlightStrategyConfig,
+    )
+    from lerobot.rollout.context import _aggregate_rollout_features, _resolve_robot_processors
+    from lerobot.rollout.ring_buffer import RolloutRingBuffer
+    from lerobot.rollout.robot_wrapper import ThreadSafeRobot
+    from lerobot.rollout.strategies import BaseStrategy, DAggerStrategy, EpisodicStrategy, HighlightStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+    from tests.env_server.toy_env import ToyEnvConfig
+
+    ctx, dataset = _make_loop_ctx(fps=20, multiplier=1, num_ticks=100)
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
+    ctx.hardware.robot_wrapper = ThreadSafeRobot(robot)
+    ctx.processors = _resolve_robot_processors(None, None, None)
+    ctx.data.dataset_features = _aggregate_rollout_features(
+        ctx.processors, robot.action_features, robot.observation_features, use_videos=False
+    )
+    processors = vars(ctx.processors).values()
+    for processor in processors:
+        monkeypatch.setattr(processor, "reset", MagicMock(wraps=processor.reset))
+    ctx.data.ordered_action_keys = list(robot.action_features)
+    ctx.policy.inference.get_action.side_effect = lambda _: torch.tensor([2.0, 0.0])
+    ctx.runtime.cfg.duration = 1
+    ctx.runtime.cfg.dataset = SimpleNamespace(
+        single_task="Move to the target",
+        episode_time_s=10,
+        reset_time_s=10,
+        num_episodes=2,
+        push_to_hub=False,
+        tags=None,
+        private=False,
+    )
+    if kind == "base":
+        strategy = BaseStrategy(BaseStrategyConfig())
+    elif kind == "sentry":
+        strategy = _make_sentry(ctx, 1)
+    elif kind == "highlight":
+        strategy = HighlightStrategy(HighlightStrategyConfig())
+        strategy._ring = RolloutRingBuffer(fps=20)
+    elif kind == "episodic":
+        strategy = EpisodicStrategy(EpisodicStrategyConfig())
+        strategy._events = {"exit_early": False, "stop_recording": False, "rerecord_episode": False}
+    else:
+        strategy = DAggerStrategy(
+            DAggerStrategyConfig(record_autonomous=kind == "dagger_continuous", num_episodes=1)
+        )
+        strategy._episode_duration_s = 100
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=1)
+    monkeypatch.setattr(sys.modules[type(strategy).__module__], "time", clock)
+    try:
+        robot.connect()
+        if kind.startswith("dagger"):
+            run = strategy._run_continuous if kind == "dagger_continuous" else strategy._run_corrections_only
+            run(ctx)
+        else:
+            strategy.run(ctx)
+        assert robot.episode_status.done
+        assert robot.episode_status.step == 1
+        episodes = 2 if kind == "episodic" else 1
+        assert ctx.policy.inference.get_action.call_count == episodes
+        assert ctx.policy.inference.reset.call_count == episodes
+        for processor in processors:
+            assert processor.reset.call_count == episodes
+        assert not ctx.runtime.shutdown_event.is_set()
+    finally:
+        robot.disconnect()
+
+
 def test_sentry_records_once_per_interpolation_cycle():
     ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=2, num_ticks=8)
 

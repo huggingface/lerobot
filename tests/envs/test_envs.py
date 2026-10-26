@@ -24,6 +24,7 @@ from gymnasium.envs.registration import register, registry as gym_registry
 from gymnasium.utils.env_checker import check_env
 
 from lerobot.configs.types import PolicyFeature
+from lerobot.envs.batched import prepare_canonical_observation
 from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import (
@@ -81,7 +82,11 @@ def test_factory(env_name):
     task_id = next(iter(envs[suite_name]))
     env = envs[suite_name][task_id]
     obs, _ = env.reset()
-    obs = preprocess_observation(obs)
+    obs = (
+        prepare_canonical_observation(obs)
+        if getattr(env, "canonical_observations", False)
+        else preprocess_observation(obs)
+    )
 
     # test image keys are float32 in range [0,1]
     for key in obs:

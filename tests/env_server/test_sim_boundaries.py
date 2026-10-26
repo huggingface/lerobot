@@ -117,3 +117,59 @@ def test_backend_delegates_native_observation_conventions(monkeypatch) -> None:
         assert len(adapted) == 2
     finally:
         backend.close()
+
+
+def test_envhub_rejects_custom_vector_behavior_without_unwrapping_it() -> None:
+    import gymnasium as gym
+    import pytest
+
+    from lerobot.sims.native.envhub import _env_factories
+
+    class CustomBatch(gym.vector.SyncVectorEnv):
+        def step(self, actions):
+            obs, reward, terminated, truncated, info = super().step(actions)
+            return obs, reward + 50, terminated, truncated, info
+
+    env = CustomBatch([lambda: gym.make("CartPole-v1")])
+    with pytest.raises(ValueError, match="use_native_batch"):
+        _env_factories(env, 1)
+    assert env.closed
+
+
+def test_envhub_native_batch_preserves_provider_and_options(monkeypatch) -> None:
+    import gymnasium as gym
+    import pytest
+
+    from lerobot.envs import factory
+    from lerobot.envs.configs import HubEnvConfig
+
+    calls = []
+
+    class Provider:
+        @staticmethod
+        def make_env(n_envs, use_async_envs, bonus):
+            calls.append((n_envs, use_async_envs, bonus))
+            return gym.wrappers.vector.TransformReward(
+                gym.vector.SyncVectorEnv([lambda: gym.make("CartPole-v1")] * n_envs),
+                lambda reward: reward + bonus,
+            )
+
+    monkeypatch.setattr(factory, "_download_hub_file", lambda *args: ("user/repo", "env.py", "unused", None))
+    monkeypatch.setattr(factory, "_import_hub_module", lambda *args: Provider)
+    config = HubEnvConfig(
+        hub_path="user/repo", trust_remote_code=True, use_native_batch=True, make_env_kwargs={"bonus": 50}
+    )
+    env = next(iter(config.create_envs(2).values()))[0]
+    try:
+        env.reset(seed=2)
+        assert env.step(np.zeros(2, dtype=np.int64))[1].tolist() == [51, 51]
+        assert calls == [(2, False, 50)]
+        assert config.descriptor is None
+    finally:
+        env.close()
+    config.endpoint = "tcp/127.0.0.1:7448"
+    with pytest.raises(ValueError, match="endpoint"):
+        config.create_envs(1)
+    config.endpoint = None
+    with pytest.raises(ValueError, match="SimRobot"):
+        config.create_env()

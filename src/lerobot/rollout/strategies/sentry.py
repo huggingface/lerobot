@@ -24,6 +24,7 @@ from threading import Event, Lock
 
 from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
+from lerobot.robots.sim import is_simulation_done
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -112,6 +113,7 @@ class SentryStrategy(RolloutStrategy):
         # Per-segment timer, never hoisted onto the instance (see ``RolloutStrategy.run``).
         timer = CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)
 
+        self._reset_simulation(ctx)
         engine.resume()
         episode_duration_s = self._episode_duration_s
 
@@ -129,6 +131,8 @@ class SentryStrategy(RolloutStrategy):
 
                 with timer.section("observe"):
                     obs = robot.get_observation()
+                if is_simulation_done(robot.inner):
+                    break
                 with timer.section("process_obs"):
                     obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 

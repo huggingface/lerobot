@@ -264,3 +264,152 @@ def test_sim_robot_preserves_episode_end_until_explicit_reset(where, request, tm
         assert robot.episode_status.step == 5
     finally:
         robot.disconnect()
+
+
+@pytest.mark.parametrize("where", ["local", "served"])
+def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp_path, monkeypatch, clock):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import torch
+
+    from lerobot.configs import FeatureType, PolicyFeature
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.datasets import LeRobotDataset
+    from lerobot.env_server.admission import validate_checkpoint
+    from lerobot.processor import make_default_processors
+    from lerobot.scripts import lerobot_record
+    from lerobot.teleoperators import Teleoperator
+    from tests.mocks.mock_teleop import MockTeleopConfig
+
+    env = ToyEnvConfig(endpoint=request.getfixturevalue("server")[1] if where == "served" else None)
+    robot = SimRobot(SimRobotConfig(env=env, calibration_dir=tmp_path / "calibration"))
+    teleop = MagicMock(spec=Teleoperator)
+    teleop.get_action.return_value = {"command_0": 2.0, "command_1": 0.0}
+    monkeypatch.setattr(lerobot_record, "make_robot_from_config", lambda _: robot)
+    monkeypatch.setattr(lerobot_record, "make_teleoperator_from_config", lambda _: teleop)
+    monkeypatch.setattr(lerobot_record, "init_logging", lambda: None)
+    monkeypatch.setattr(lerobot_record, "log_say", lambda *args, **kwargs: None)
+    monkeypatch.setattr(lerobot_record, "time", clock)
+    monkeypatch.setattr(
+        lerobot_record,
+        "init_keyboard_listener",
+        lambda: (None, {"exit_early": False, "stop_recording": False, "rerecord_episode": False}),
+    )
+    cfg = lerobot_record.RecordConfig(
+        robot=robot.config,
+        teleop=MockTeleopConfig(),
+        play_sounds=False,
+        dataset=DatasetRecordConfig(
+            repo_id="local/sim_demo",
+            root=tmp_path / "dataset",
+            single_task="Move to the target",
+            fps=20,
+            num_episodes=2,
+            episode_time_s=10,
+            reset_time_s=10,
+            video=False,
+            push_to_hub=False,
+            no_stamp=True,
+        ),
+    )
+    processors = [MagicMock(wraps=pipeline) for pipeline in make_default_processors()]
+    dataset = lerobot_record.record(cfg, *processors)
+    assert dataset.num_episodes == 2
+    assert teleop.get_action.call_count == 2
+    for processor in processors:
+        assert processor.reset.call_count == 2
+
+    reader = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root)
+    assert len(reader) == 2
+    samples = [reader[index] for index in range(2)]
+    assert all(sample["observation.state"][0] < 1 for sample in samples)
+    checkpoint_config = SimpleNamespace(
+        input_features={
+            "observation.state": PolicyFeature(FeatureType.STATE, (2,)),
+            "observation.images.image": PolicyFeature(FeatureType.VISUAL, (3, 8, 8)),
+        },
+        output_features={"action": PolicyFeature(FeatureType.ACTION, (2,))},
+    )
+    validate_checkpoint(robot.descriptor, checkpoint_config, {})
+    # Native benchmark camera names remain unchanged.
+    assert "observation.image" in env.features
+    legacy_config = SimpleNamespace(
+        input_features={"observation.image": checkpoint_config.input_features["observation.images.image"]},
+        output_features=checkpoint_config.output_features,
+    )
+    validate_checkpoint(robot.descriptor, legacy_config, {"observation.images.image": "observation.image"})
+
+    pytest.importorskip("torchvision")
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.policies.act.modeling_act import ACTPolicy
+
+    policy = ACTPolicy(
+        ACTConfig(
+            input_features=checkpoint_config.input_features,
+            output_features=checkpoint_config.output_features,
+            device="cpu",
+            pretrained_backbone_weights=None,
+            chunk_size=1,
+            n_action_steps=1,
+            dim_model=16,
+            n_heads=4,
+            dim_feedforward=32,
+            n_encoder_layers=1,
+            n_decoder_layers=1,
+            use_vae=False,
+        )
+    )
+    batch = {name: torch.stack([sample[name] for sample in samples]) for name in policy.config.input_features}
+    batch["action"] = torch.stack([sample["action"] for sample in samples]).unsqueeze(1)
+    batch["action_is_pad"] = torch.zeros((2, 1), dtype=torch.bool)
+    optimizer = torch.optim.Adam(policy.parameters(), lr=1e-4)
+    loss, _ = policy(batch)
+    assert torch.isfinite(loss)
+    loss.backward()
+    optimizer.step()
+    checkpoint = tmp_path / "policy"
+    policy.save_pretrained(checkpoint)
+    policy = ACTPolicy.from_pretrained(checkpoint)
+    validate_checkpoint(robot.descriptor, policy.config, {})
+    try:
+        robot.connect()
+        for _ in range(5):
+            observation = robot.get_observation()
+            action = policy.select_action(
+                {
+                    "observation.state": torch.tensor([[observation["state_0"], observation["state_1"]]]),
+                    "observation.images.image": torch.from_numpy(observation["image"])
+                    .permute(2, 0, 1)
+                    .unsqueeze(0)
+                    .float()
+                    / 255,
+                }
+            )
+            robot.send_action(dict(zip(robot.action_features, action[0].tolist(), strict=True)))
+            if robot.episode_status.done:
+                break
+        assert robot.episode_status.done
+    finally:
+        robot.disconnect()
+
+
+def test_teleop_resets_simulation_and_processors(tmp_path, monkeypatch, clock):
+    from unittest.mock import MagicMock
+
+    from lerobot.processor import make_default_processors
+    from lerobot.scripts import lerobot_teleoperate
+
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
+    teleop = MagicMock()
+    teleop.get_action.return_value = {"command_0": 2.0, "command_1": 0.0}
+    processors = [MagicMock(wraps=pipeline) for pipeline in make_default_processors()]
+    monkeypatch.setattr(lerobot_teleoperate, "time", clock)
+    try:
+        robot.connect()
+        lerobot_teleoperate.teleop_loop(teleop, robot, 20, *processors, duration=0.12)
+        assert teleop.get_action.call_count >= 2
+        for processor in processors:
+            assert processor.reset.call_count == teleop.get_action.call_count - 1
+    finally:
+        robot.disconnect()

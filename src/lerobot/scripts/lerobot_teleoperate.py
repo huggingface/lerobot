@@ -102,6 +102,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
+from lerobot.robots.sim import SimRobot, check_control_rate, is_simulation_done
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -245,6 +246,13 @@ def teleop_loop(
 
             if duration is not None and time.perf_counter() - start >= duration:
                 return
+            if is_simulation_done(robot):
+                assert isinstance(robot, SimRobot)
+                robot.reset()
+                teleop_action_processor.reset()
+                robot_action_processor.reset()
+                robot_observation_processor.reset()
+                timer.restart()
     finally:
         # In `finally` so ^C — how a teleop session normally ends — still reports.
         timer.log_run_summary()
@@ -266,6 +274,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop = make_teleoperator_from_config(cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
+    check_control_rate(robot, cfg.fps)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
     teleop.connect()

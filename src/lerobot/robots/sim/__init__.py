@@ -17,4 +17,5 @@ from .sim_robot import (
     EpisodeStatus as EpisodeStatus,
     SimRobot as SimRobot,
     check_control_rate as check_control_rate,
+    is_simulation_done as is_simulation_done,
 )

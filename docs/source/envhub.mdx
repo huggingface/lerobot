@@ -25,7 +25,9 @@ This `env.py` file needs to expose a small API so LeRobot can load and run it. I
 - A single `gym.Env` (will be automatically wrapped)
 - A dict mapping `{suite_name: {task_id: VectorEnv}}` (for multi-task benchmarks)
 
-A returned vector env must be built from per-environment factories (`SyncVectorEnv` or `AsyncVectorEnv`): LeRobot takes its `env_fns` and builds each environment itself.
+By default, a returned vector env must be an unwrapped `SyncVectorEnv` or `AsyncVectorEnv`: LeRobot takes its `env_fns` and builds each environment itself. Custom vector wrappers and subclasses are rejected rather than silently removed.
+
+For provider-owned vector wrappers or GPU-native batches, use `--env.use_native_batch=true`. This keeps the repository's vector environment intact for local batched evaluation, including its preprocessing requirements. It cannot be combined with an endpoint or `SimRobot`. The string API (`make_env("user/repo")`) also keeps the provider's environment intact.
 
 `env.py` may also define an optional `LEROBOT_SIM` dictionary describing the environment (fps, control, component names; see [EnvHub and the simulator server](#envhub-and-the-simulator-server)). It applies locally and when served.
 

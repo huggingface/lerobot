@@ -133,7 +133,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.robots.sim import check_control_rate
+from lerobot.robots.sim import SimRobot, check_control_rate, is_simulation_done
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -382,6 +382,8 @@ def record_loop(
         timer.wait()
 
         timestamp = time.perf_counter() - start_episode_t
+        if is_simulation_done(robot):
+            break
 
 
 @parser.wrap()
@@ -503,6 +505,11 @@ def record(
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 episode_index = dataset.num_episodes
+                if isinstance(robot, SimRobot):
+                    robot.reset()
+                    teleop_action_processor.reset()
+                    robot_action_processor.reset()
+                    robot_observation_processor.reset()
                 log_say(f"Recording episode {episode_index}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -523,8 +530,10 @@ def record(
 
                 # Execute a few seconds without recording to give time to manually reset the environment
                 # Skip reset for the last episode to be recorded
-                if not events["stop_recording"] and (
-                    (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
+                if (
+                    not isinstance(robot, SimRobot)
+                    and not events["stop_recording"]
+                    and ((recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"])
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
 
@@ -571,7 +580,7 @@ def record(
         if dataset:
             dataset.finalize()
 
-        if robot.is_connected:
+        if robot.is_connected or isinstance(robot, SimRobot):
             robot.disconnect()
         if teleop and teleop.is_connected:
             teleop.disconnect()

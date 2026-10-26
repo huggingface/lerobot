@@ -63,6 +63,10 @@ A sim robot remains a normal `Robot`, but also exposes its simulator episode sta
 its step limit stays at its terminal observation until its caller resets it. This keeps episode ownership
 with recording, evaluation, or RL code instead of hiding a reset inside `send_action()`.
 
+Teleoperation resets after each episode. Recording and episodic rollout save each episode and start the next from a reset simulator, without a manual reset phase. Other rollout strategies stop at the simulator's episode end; interactive sessions can start another run. Policy queues, interpolation and robot processors are cleared before a new simulated rollout episode.
+
+Robot camera features use the same `observation.images.<camera>` names as real-hardware recording. A single unnamed camera is `observation.images.image`. Native batched evaluation keeps legacy benchmark names such as `observation.image`; when deploying a checkpoint with that name through `SimRobot`, use `--rename_map='{"observation.images.image": "observation.image"}'`.
+
 For remote inference, keep the same `--robot.*` options and replace the local policy and inference options with:
 
 ```bash
@@ -74,7 +78,7 @@ For remote inference, keep the same `--robot.*` options and replace the local po
 
 Start the policy server separately using [remote inference setup](./remote_inference). Its schema must match the robot's observations after `--rename_map`. `docker/sims/policy_libero.yaml` provides the LIBERO policy-server configuration. Omit `--policy.path` from the rollout command because the policy server loads the checkpoint. For local RTC, use `--inference.type=rtc` with the policy's RTC settings.
 
-Delta-controller hold sends zero motion while retaining the gripper command; position hold retains applied targets. Simulator failures propagate to rollout shutdown.
+Holding an explicitly stepped simulator does not advance physics. Simulator failures propagate to rollout shutdown.
 
 ## Serve an environment
 

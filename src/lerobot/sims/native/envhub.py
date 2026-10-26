@@ -205,13 +205,18 @@ def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorE
 
 def _env_factories(vec: Any, n_envs: int) -> list:
     """Take a vector env's per-environment factories, then close it for lazy server construction."""
-    fns = list(getattr(vec, "env_fns", None) or getattr(vec, "_env_fns", None) or ())
-    if len(fns) != n_envs:
-        raise ValueError(
-            f"Hub make_env must return vector envs built from {n_envs} per-environment factories"
-        )
-    vec.close()
-    return fns
+    try:
+        if type(vec) not in {gym.vector.SyncVectorEnv, gym.vector.AsyncVectorEnv}:
+            raise ValueError(
+                "The shared simulation path requires an unwrapped SyncVectorEnv or AsyncVectorEnv. "
+                "Use --env.use_native_batch=true to keep provider-owned vector behavior locally."
+            )
+        fns = list(vec.env_fns)
+        if len(fns) != n_envs:
+            raise ValueError(f"Hub make_env must return {n_envs} per-environment factories")
+        return fns
+    finally:
+        vec.close()
 
 
 def create_envhub_envs(

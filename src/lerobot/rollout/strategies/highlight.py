@@ -23,6 +23,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event as ThreadingEvent, Lock
 
 from lerobot.datasets import LeRobotDataset, VideoEncodingManager
+from lerobot.robots.sim import is_simulation_done
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.feature_utils import build_dataset_frame
@@ -104,6 +105,7 @@ class HighlightStrategy(RolloutStrategy):
 
         timer = CycleTimer(cfg.fps, interpolator.multiplier)
 
+        self._reset_simulation(ctx)
         engine.resume()
         play_sounds = cfg.play_sounds
 
@@ -121,6 +123,8 @@ class HighlightStrategy(RolloutStrategy):
 
                     with timer.section("observe"):
                         obs = robot.get_observation()
+                    if is_simulation_done(robot.inner):
+                        break
                     with timer.section("process_obs"):
                         obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 

@@ -15,7 +15,7 @@
 """One simulated environment driven through the Robot interface, locally or served."""
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import gymnasium as gym
@@ -91,11 +91,21 @@ class SimRobot(Robot):
             for feature in descriptor.features
             if feature.kind == "rgb"
         }
+        # Robot cameras use the recorder's names; native envs keep their benchmark names.
+        self.descriptor = replace(
+            descriptor,
+            features=tuple(
+                replace(feature, name=f"observation.images.{self._camera_keys[feature.name]}")
+                if feature.kind == "rgb"
+                else feature
+                for feature in descriptor.features
+            ),
+        )
 
     @property
     def cameras(self) -> dict[str, str]:
         """Simulator camera features keyed by descriptor name; sized like a real robot's cameras."""
-        return self._camera_keys
+        return {f"observation.images.{camera}": camera for camera in self._camera_keys.values()}
 
     def feature_names(self, rename_map: dict[str, str]) -> dict[str, str]:
         """Map each descriptor feature to its policy key with ``rename_map``, as for any robot."""
@@ -105,7 +115,11 @@ class SimRobot(Robot):
     def observation_features(self) -> dict[str, type | tuple[int, ...]]:
         return {
             **dict.fromkeys(self._state.names, float),
-            **{self._camera_keys[f.name]: f.shape for f in self.descriptor.features if f.kind == "rgb"},
+            **{
+                f.name.removeprefix("observation.images."): f.shape
+                for f in self.descriptor.features
+                if f.kind == "rgb"
+            },
         }
 
     @property
@@ -251,3 +265,8 @@ def check_control_rate(robot: Robot, fps: float) -> None:
         raise ValueError(
             f"The control loop runs at {fps} fps but the simulator control rate is {robot.descriptor.fps} Hz"
         )
+
+
+def is_simulation_done(robot: Robot) -> bool:
+    """Whether the last simulated action ended its episode; false for hardware."""
+    return isinstance(robot, SimRobot) and robot.episode_status.done

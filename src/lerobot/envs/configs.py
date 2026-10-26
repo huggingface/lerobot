@@ -222,6 +222,22 @@ class HubEnvConfig(EnvConfig):
     trust_remote_code: bool = False
     # Keyword arguments of the repository's make_env, e.g. '{"episode_length": 9000}'.
     make_env_kwargs: dict[str, Any] = field(default_factory=dict)
+    use_native_batch: bool = False
+
+    def create_envs(
+        self, n_envs: int, use_async_envs: bool = False
+    ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
+        """Optionally keep the provider's vector wrappers and device-native batches."""
+        if not self.use_native_batch:
+            return super().create_envs(n_envs, use_async_envs)
+        if self.endpoint is not None:
+            raise ValueError("use_native_batch runs locally; it cannot use an endpoint")
+        if not self.hub_path:
+            raise ValueError("--env.hub_path is required for an EnvHub environment")
+        from .factory import make_hub_envs
+
+        self.descriptor = None
+        return make_hub_envs(self.hub_path, n_envs, use_async_envs, self.trust_remote_code, cfg=self)
 
     @property
     def gym_kwargs(self) -> dict:
@@ -229,6 +245,8 @@ class HubEnvConfig(EnvConfig):
         return {}
 
     def sim_settings(self) -> dict[str, Any]:
+        if self.use_native_batch:
+            raise ValueError("use_native_batch is for batched evaluation, not SimRobot or the env server")
         if not self.hub_path:
             raise ValueError("--env.hub_path is required for an EnvHub environment")
         # The suites come from the repository; --env.task selects among them.

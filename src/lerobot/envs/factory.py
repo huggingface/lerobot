@@ -67,7 +67,11 @@ def make_hub_envs(
     # _download_hub_file raises unless trust_remote_code is set.
     repo_id, _, local_file, _ = _download_hub_file(hub_path, trust_remote_code, hub_cache_dir)
     module = _import_hub_module(local_file, repo_id)
-    raw_result = _call_make_env(module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg)
+    options = cfg.make_env_kwargs if isinstance(cfg, HubEnvConfig) else {}
+    provider_cfg = None if type(cfg) is HubEnvConfig else cfg
+    raw_result = _call_make_env(
+        module, n_envs=n_envs, use_async_envs=use_async_envs, cfg=provider_cfg, **options
+    )
     return _normalize_hub_result(raw_result)
 
 
