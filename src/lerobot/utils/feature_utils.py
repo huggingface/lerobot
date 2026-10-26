@@ -22,13 +22,16 @@ without triggering the ``lerobot.datasets`` package guard.
 """
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from lerobot.configs import FeatureType, PolicyFeature
 
 from .constants import ACTION, DEFAULT_FEATURES, OBS_ENV_STATE, OBS_STR
+
+if TYPE_CHECKING:
+    from lerobot.microphones import Microphone, MicrophoneConfig
 
 
 def _validate_feature_names(features: dict[str, dict]) -> None:
@@ -103,6 +106,34 @@ def hw_to_dataset_features(
                 f"Camera feature '{key}' has shape {shape}. "
                 f"Expected a 3-tuple (H, W, C), e.g. (480, 640, 3) for RGB or (480, 640, 1) for depth."
             )
+
+    _validate_feature_names(features)
+    return features
+
+
+def microphones_to_dataset_features(
+    microphones: Mapping[str, "Microphone | MicrophoneConfig"], prefix: str = OBS_STR
+) -> dict[str, dict[str, Any]]:
+    """Create the dataset audio features of a robot's microphones.
+
+    Args:
+        microphones (Mapping): Microphones or microphone configurations keyed by name. Their `sample_rate`
+            and `channels` must be set.
+        prefix (str): The prefix of the feature keys.
+
+    Returns:
+        dict: One `"audio"` feature per microphone, named `{prefix}.audio.{name}`.
+    """
+    features: dict[str, dict[str, Any]] = {}
+    for key, microphone in microphones.items():
+        if microphone.sample_rate is None or microphone.channels is None:
+            raise ValueError(f"Microphone '{key}' must set `sample_rate` and `channels`.")
+        features[f"{prefix}.audio.{key}"] = {
+            "dtype": "audio",
+            "shape": (len(microphone.channels),),
+            "names": [f"channel_{channel}" for channel in microphone.channels],
+            "info": {"audio.sample_rate": microphone.sample_rate},
+        }
 
     _validate_feature_names(features)
     return features
@@ -189,8 +220,8 @@ def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFea
 def combine_feature_dicts(*dicts: dict) -> dict:
     """Merge LeRobot grouped feature dicts.
 
-    - For 1D numeric specs (dtype not image/video/string) with "names": we merge the names and recompute the shape.
-    - For others (e.g. `observation.images.*`), the last one wins (if they are identical).
+    - For 1D numeric specs (dtype not image/video/string/audio) with "names": we merge the names and recompute the shape.
+    - For others (e.g. `observation.images.*`, `observation.audio.*`), the last one wins (if they are identical).
 
     Args:
         *dicts: A variable number of LeRobot feature dictionaries to merge.
@@ -211,7 +242,7 @@ def combine_feature_dicts(*dicts: dict) -> dict:
             dtype = value.get("dtype")
             shape = value.get("shape")
             is_vector = (
-                dtype not in ("image", "video", "string")
+                dtype not in ("image", "video", "string", "audio")
                 and isinstance(shape, tuple)
                 and len(shape) == 1
                 and "names" in value

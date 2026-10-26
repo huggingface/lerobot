@@ -18,6 +18,7 @@ from .utils import (
     async_microphones_start_recording,
     async_microphones_stop_recording,
     make_microphones_from_configs,
+    wait_for_first_sample_time,
 )
 
 # NOTE: Microphone backend configs and implementations (PortAudioMicrophoneConfig, etc.) are
@@ -30,4 +31,5 @@ __all__ = [
     "async_microphones_start_recording",
     "async_microphones_stop_recording",
     "make_microphones_from_configs",
+    "wait_for_first_sample_time",
 ]

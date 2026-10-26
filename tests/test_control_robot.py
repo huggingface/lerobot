@@ -112,6 +112,46 @@ def test_record_and_resume(tmp_path):
     assert dataset.meta.total_tasks == 1
 
 
+def test_record_with_microphone(tmp_path):
+    pytest.importorskip("soundfile", reason="soundfile is required (install lerobot[audio])")
+    from lerobot.datasets import LeRobotDataset
+    from lerobot.microphones.portaudio import PortAudioMicrophoneConfig
+    from lerobot.microphones.portaudio.interface_sounddevice_sdk import FakeSounddeviceSDKAdapter
+
+    sample_rate = 48000
+    microphone_cfg = PortAudioMicrophoneConfig(microphone_index=0, sample_rate=sample_rate, channels=[1, 2])
+    robot_cfg = MockRobotConfig(microphones={"mic": microphone_cfg})
+    dataset_cfg = DatasetRecordConfig(
+        repo_id=DUMMY_REPO_ID,
+        single_task="Dummy task",
+        root=tmp_path / "record",
+        num_episodes=2,
+        episode_time_s=0.5,
+        reset_time_s=0,
+        push_to_hub=False,
+    )
+    cfg = RecordConfig(robot=robot_cfg, dataset=dataset_cfg, teleop=MockTeleopConfig(), play_sounds=False)
+
+    with patch(
+        "lerobot.microphones.portaudio.microphone_portaudio.SounddeviceSDKAdapter", FakeSounddeviceSDKAdapter
+    ):
+        record(cfg)
+
+    dataset = LeRobotDataset(DUMMY_REPO_ID, root=tmp_path / "record")
+    assert dataset.meta.features["observation.audio.mic"]["shape"] == (2,)
+    for episode_index in range(2):
+        episode = dataset.meta.episodes[episode_index]
+        audio_duration = (
+            episode["audio/observation.audio.mic/to_timestamp"]
+            - episode["audio/observation.audio.mic/from_timestamp"]
+        )
+        start_time_s = episode["audio/observation.audio.mic/start_time_s"]
+        # The microphone starts just before the first frame and stops after the last one.
+        assert 0 <= start_time_s < 0.2
+        assert audio_duration >= start_time_s + (episode["length"] - 1) / dataset.fps
+    assert dataset[0]["observation.audio.mic"].shape == (2, sample_rate // 2)
+
+
 def test_record_and_replay(tmp_path, cadence_log):
     robot_cfg = MockRobotConfig()
     teleop_cfg = MockTeleopConfig()
