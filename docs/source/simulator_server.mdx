@@ -83,7 +83,7 @@ From a LeRobot source checkout (the image is built from it), run from the reposi
 lerobot-env-server --docker --config=docker/sims/configs/libero.yaml
 ```
 
-`--docker` uses `docker/sims/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Swap the YAML to select another simulator. Each simulator's control rate, action convention and component names come from `src/lerobot/sims/conventions.py`, so a YAML only names the task and the simulator's options.
+`--docker` uses `docker/sims/compose.server.yaml`, selects the image from `sim.type`, mounts the effective YAML, and publishes localhost port 7448. Swap the YAML to select another simulator. Each simulator's control rate, action convention and component names come from its integration's `conventions()`, so a YAML only names the task and the simulator's options.
 
 `--set` overrides keys of the YAML (values parsed as YAML) and leaves the file unchanged:
 

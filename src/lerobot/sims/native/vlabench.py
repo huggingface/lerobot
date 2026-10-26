@@ -39,7 +39,7 @@ from scipy.spatial.transform import Rotation
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "create_envs"]
 
 RobotObservation = dict[str, Any]
 
@@ -580,3 +580,9 @@ def create_vlabench_envs(
 
 
 create_envs = create_vlabench_envs
+
+
+def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """VLABench's control rate, controller and component names."""
+    names = ("eef.x", "eef.y", "eef.z", "eef.euler.x", "eef.euler.y", "eef.euler.z", "gripper.opening")
+    return {"fps": 10, "control": "eef_pose", "state_names": names, "action_names": names}

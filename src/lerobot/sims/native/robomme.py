@@ -40,7 +40,7 @@ from gymnasium import spaces
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "create_envs"]
 
 ROBOMME_TASKS = [
     "BinFill",
@@ -283,3 +283,15 @@ def create_robomme_envs(
 
 
 create_envs = create_robomme_envs
+
+
+def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """RoboMME's control rate, controller and component names."""
+    joints = tuple(f"command_{i}.pos" for i in range(8))
+    joint_actions = kwargs.get("action_space_type", "joint_angle") == "joint_angle"
+    return {
+        "fps": 10,
+        "control": "position" if joint_actions else "eef_pose",
+        "state_names": joints,
+        "action_names": joints if joint_actions else (),
+    }

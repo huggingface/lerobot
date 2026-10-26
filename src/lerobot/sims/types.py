@@ -14,6 +14,7 @@
 
 """Transport-free simulation values and environment metadata."""
 
+import importlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,13 +27,18 @@ _EMPTY_CAMERA_PREFIX = "observation.images.empty_camera_"
 
 @dataclass
 class SimConfig:
-    """The simulator an environment runs: its integration, task, options and control conventions."""
+    """The simulator an environment runs: its integration, task, options and control conventions.
+
+    ``semantics`` defaults to ``<type>-<control>-v1``. ``robot_type`` is recorded as a sim robot's dataset
+    ``robot_type`` (the hardware robot's name when the body has one, e.g. ``so_follower``); left empty, a sim
+    robot records ``sim``.
+    """
 
     type: str
     task: str
-    semantics: str
     fps: float = 30
     control: str = "position"
+    semantics: str = ""
     kwargs: dict[str, Any] = field(default_factory=dict)
     state_names: tuple[str, ...] = ()
     action_names: tuple[str, ...] = ()
@@ -44,11 +50,23 @@ class SimConfig:
         self.action_names = tuple(self.action_names)
         if (
             self.control not in {"position", "delta", "eef_pose"}
-            or not self.semantics
             or not np.isfinite(self.fps)
             or self.fps <= 0
         ):
-            raise ValueError("A simulator requires explicit semantics, controller, and positive FPS")
+            raise ValueError("A simulator requires a known controller and a positive FPS")
+        if not self.semantics:
+            self.semantics = f"{self.type}-{self.control.replace('_', '-')}-v1"
+
+    @classmethod
+    def resolve(cls, settings: dict[str, Any]) -> "SimConfig":
+        """Build from ``settings``, filling those left out or null from the integration's ``conventions``.
+
+        Imports the integration, so it runs where the simulator is installed.
+        """
+        integration = importlib.import_module(f"lerobot.sims.native.{settings['type']}")
+        conventions = getattr(integration, "conventions", None)
+        declared = conventions(settings.get("kwargs") or {}) if conventions else {}
+        return cls(**{**declared, **{key: value for key, value in settings.items() if value is not None}})
 
 
 @dataclass(frozen=True)

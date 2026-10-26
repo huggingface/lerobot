@@ -21,6 +21,7 @@ import yaml
 
 from lerobot.scripts import lerobot_env_server
 from lerobot.scripts.lerobot_env_server import load_config
+from tests.utils import resolve_without_simulator
 
 
 def test_native_config_overrides_preserve_source(tmp_path):
@@ -129,10 +130,7 @@ def test_build_and_stop_require_docker(monkeypatch):
 @pytest.mark.parametrize(
     "path", sorted((Path(__file__).resolve().parents[2] / "docker/sims/configs").glob("*.yaml")), ids=str
 )
-def test_server_configs_take_their_conventions_from_the_simulator(path):
-    from lerobot.sims.conventions import resolve
-    from lerobot.sims.types import SimConfig
-
-    sim = SimConfig(**resolve(load_config(path, [])["sim"]))
+def test_server_configs_take_their_conventions_from_the_simulator(path, monkeypatch):
+    sim = resolve_without_simulator(load_config(path, [])["sim"], monkeypatch)
     assert sim.semantics == f"{sim.type}-{sim.control.replace('_', '-')}-v1"
     assert sim.action_names

@@ -27,7 +27,6 @@ import yaml
 
 from lerobot.env_server.client import EnvClient
 from lerobot.env_server.contracts import decode_step_result
-from lerobot.sims.conventions import resolve
 from lerobot.sims.types import SimConfig
 from lerobot.sims.vector_env import VectorEnv
 from lerobot.utils import init_logging
@@ -35,7 +34,7 @@ from lerobot.utils import init_logging
 
 def check(config_path: Path, steps: int = 5):
     config = yaml.safe_load(config_path.read_text())
-    env = VectorEnv(SimConfig(**resolve(config["sim"])))
+    env = VectorEnv(SimConfig.resolve(config["sim"]))
     try:
         descriptor = env.descriptor
         actions = (

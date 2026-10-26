@@ -27,7 +27,6 @@ import gymnasium as gym
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sims.conventions import resolve
 from lerobot.sims.types import EnvDescriptor, SimConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -95,7 +94,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
     def sim_config(self) -> SimConfig:
         """The resolved simulator settings, as the env server and local environments run them."""
-        return SimConfig(**resolve(self.sim_settings()))
+        return SimConfig.resolve(self.sim_settings())
 
     def create_envs(
         self,
@@ -201,8 +200,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 def check_served(served: dict[str, Any], expected: dict[str, Any], endpoint: str) -> None:
     """Refuse a server that runs another environment than the one expected; warn on other options.
 
-    Only the settings ``expected`` sets are compared; EnvHub settings left null are not resolved here, which
-    would run the repository's code in the client.
+    Only the settings ``expected`` sets are compared: the others follow the server's simulator, which the
+    client may not have installed.
     """
 
     def plain(value: Any) -> Any:
@@ -213,8 +212,6 @@ def check_served(served: dict[str, Any], expected: dict[str, Any], endpoint: str
             return [plain(item) for item in value]
         return value
 
-    if expected.get("type") != "envhub":
-        expected = resolve(expected)
     errors = [
         f"{key}: server {served.get(key)!r}, expected {value!r}"
         for key, value in expected.items()

@@ -6,8 +6,7 @@ A benchmark is a simulator that LeRobot drives in one place, the shared env core
 
 | Component            | Location                                      | What to add                                                                                                      |
 | -------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Native integration   | `src/lerobot/sims/native/<benchmark>.py`      | The `gym.Env`, `create_envs()` factory and `canonical_observation()` adapter for that simulator                  |
-| Conventions          | `src/lerobot/sims/conventions.py`             | Control rate, controller (`position`, `delta`, `eef_pose`), ordered state/action names and the simulated body    |
+| Native integration   | `src/lerobot/sims/native/<benchmark>.py`      | The `gym.Env`, `create_envs()` factory, `canonical_observation()` adapter and `conventions()` for that simulator |
 | Config               | `src/lerobot/envs/configs.py`                 | An `EnvConfig` subclass whose `sim_settings()` maps its options to the factory's kwargs                          |
 | Server configuration | `docker/sims/configs/<benchmark>.yaml`        | The task and factory kwargs the server and CI use                                                                |
 | Simulator image      | `docker/Dockerfile.sim`                       | A `<benchmark>_native` stage: pinned native dependencies and asset revisions; the final stage adds the server    |
@@ -23,7 +22,7 @@ native simulator → local vector env or environment service → canonical NumPy
   → policy → saved action postprocessing → native simulator
 ```
 
-Put image orientation, quaternion conversion and state ordering in that simulator's `canonical_observation()` adapter, and control conventions in `conventions.py`, so that evaluation and rollout agree. Reuse `sims/native/utils.py` only for mappings shared by native integrations; shared environment code must not branch on simulator names. A new benchmark needs no [environment processor](./env_processor): observations reach the policy's own processors already canonical.
+Put image orientation, quaternion conversion and state ordering in that simulator's `canonical_observation()` adapter, and its control conventions in its `conventions()`, so that evaluation and rollout agree. Reuse `sims/native/utils.py` only for mappings shared by native integrations; shared environment code must not branch on simulator names. A new benchmark needs no [environment processor](./env_processor): observations reach the policy's own processors already canonical.
 
 ## What your environment must provide
 
@@ -79,9 +78,9 @@ Any other array is passed as `observation.<key>`. Rename your simulator's output
 
 **GPU-based simulators (e.g. MuJoCo with EGL rendering):** if your simulator allocates GPU/EGL contexts during `__init__`, defer that allocation to a `_ensure_env()` helper called on first `reset()`/`step()`, so that an environment built in a worker process does not inherit stale GPU handles. See `LiberoEnv._ensure_env()` for the pattern.
 
-### Conventions (`src/lerobot/sims/conventions.py`)
+### Conventions (`conventions()` in the integration)
 
-Declare the simulator's control rate, controller and ordered component names in `CONVENTIONS`, keyed by the simulator type. They name the state and action components for robots, datasets and checkpoints, and define how a sim robot holds still. `semantics` defaults to `<type>-<control>-v1`. When they depend on the simulator's options (an action mode), declare a function of the kwargs, as for RoboTwin. `robot_type` names the simulated body, recorded by a sim robot: the type the real robot records when lerobot has a class for it (`so_follower`), else a short name (`panda`, `sawyer`); left out, datasets record `sim`.
+Return the simulator's control rate, controller and ordered component names from `conventions(kwargs)`, a function of the simulator's options (they can depend on an action mode, as for RoboTwin). They fill the settings a configuration leaves out, and name the state and action components for robots, datasets and checkpoints. `semantics` defaults to `<type>-<control>-v1`. `robot_type` names the simulated body, recorded by a sim robot: the type the real robot records when lerobot has a class for it (`so_follower`), else a short name (`panda`, `sawyer`); left out, datasets record `sim`.
 
 ### The config (`src/lerobot/envs/configs.py`)
 

@@ -23,6 +23,23 @@ import numpy as np
 from tests.env_server.toy_env import ToyEnvConfig
 
 
+def test_shared_simulation_code_names_no_simulator() -> None:
+    root = Path(__file__).parents[2] / "src" / "lerobot"
+    simulators = {path.stem for path in (root / "sims" / "native").glob("*.py")} - {"__init__", "utils"}
+    shared = [
+        *(root / "sims").glob("*.py"),
+        *(root / "env_server").glob("*.py"),
+        *(root / "robots" / "sim").glob("*.py"),
+    ]
+    named = [
+        f"{path.relative_to(root)}: {node.value}"
+        for path in shared
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Constant) and node.value in simulators
+    ]
+    assert named == []
+
+
 def test_simulation_package_does_not_import_service_or_transport() -> None:
     sims = Path(__file__).parents[2] / "src" / "lerobot" / "sims"
     forbidden: list[str] = []

@@ -16,10 +16,10 @@
 
 from typing import Any
 
-from .libero import create_envs as _create_envs
+from .libero import conventions, create_envs as _create_envs
 from .libero_observation import canonical_observation
 
-__all__ = ["canonical_observation", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "create_envs"]
 
 
 def create_envs(**kwargs: Any) -> dict[str, dict[int, Any]]:

@@ -32,7 +32,7 @@ from libero.libero.envs import OffScreenRenderEnv
 from .libero_observation import canonical_observation
 from .utils import parse_camera_names
 
-__all__ = ["canonical_observation", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "create_envs"]
 
 RobotObservation = dict[str, Any]
 
@@ -526,3 +526,31 @@ def create_libero_envs(
 
 
 create_envs = create_libero_envs
+
+
+def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """LIBERO's control rate, controller, component names and simulated body."""
+    return {
+        "fps": 20,
+        "control": "delta",
+        "state_names": (
+            "eef.x",
+            "eef.y",
+            "eef.z",
+            "eef.axis_angle.x",
+            "eef.axis_angle.y",
+            "eef.axis_angle.z",
+            "gripper.left.pos",
+            "gripper.right.pos",
+        ),
+        "action_names": (
+            "eef.delta.x",
+            "eef.delta.y",
+            "eef.delta.z",
+            "eef.delta.axis_angle.x",
+            "eef.delta.axis_angle.y",
+            "eef.delta.axis_angle.z",
+            "gripper.command",
+        ),
+        "robot_type": "panda",
+    }

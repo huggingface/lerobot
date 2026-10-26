@@ -16,5 +16,6 @@
 
 Each module defines ``create_envs(task, n_envs, env_cls, **kwargs)``, returning
 ``{suite: {task_id: env_cls([factory, ...])}}``, and ``canonical_observation(obs)``, mapping a native
-observation to canonical LeRobot names.
+observation to canonical LeRobot names. It may define ``conventions(kwargs)``: its control rate, controller,
+ordered component names and simulated body, for the settings a configuration leaves out.
 """

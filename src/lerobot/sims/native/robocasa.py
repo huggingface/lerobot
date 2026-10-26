@@ -27,7 +27,7 @@ from gymnasium import spaces
 
 from .utils import canonical_observation, parse_camera_names
 
-__all__ = ["canonical_observation", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "create_envs"]
 
 RobotObservation = dict[str, Any]
 
@@ -427,3 +427,27 @@ def create_robocasa_envs(
 
 
 create_envs = create_robocasa_envs
+
+
+def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """RoboCasa's control rate, controller, component names and simulated body."""
+    return {
+        "fps": 20,
+        "control": "delta",
+        "state_names": (
+            *(f"base.position.{a}" for a in "xyz"),
+            *(f"base.quaternion.{a}" for a in "xyzw"),
+            *(f"eef.position.{a}" for a in "xyz"),
+            *(f"eef.quaternion.{a}" for a in "xyzw"),
+            "gripper.left.pos",
+            "gripper.right.pos",
+        ),
+        "action_names": (
+            *(f"base.motion.{a}" for a in ("x", "y", "z", "yaw")),
+            "controller.mode",
+            *(f"eef.delta.{a}" for a in "xyz"),
+            *(f"eef.delta.rotation.{a}" for a in "xyz"),
+            "gripper.command",
+        ),
+        "robot_type": "panda_omron",
+    }

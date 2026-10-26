@@ -810,6 +810,7 @@ def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
 
 def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
     from lerobot.sims.native import envhub
+    from lerobot.sims.types import SimConfig
 
     declared = (
         'LEROBOT_SIM = {"fps": 15, "control": "delta", "semantics": "reach-delta-v1",'
@@ -817,25 +818,18 @@ def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
     )
     env_file = tmp_path / "env.py"
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    sim = {
-        "type": "envhub",
-        "kwargs": {"hub_path": "user/reach", "trust_remote_code": True},
-        **dict.fromkeys(envhub.SIM_DEFAULTS),
-    }
-    # Repository values fill the null settings; an explicit value wins over them.
+    sim = {"type": "envhub", "task": "", "kwargs": {"hub_path": "user/reach", "trust_remote_code": True}}
+    # Repository values fill the settings left out; an explicit value wins over them.
     env_file.write_text(_ENVHUB_ENV + declared)
-    resolved = envhub.resolve_envhub_sim({**sim, "fps": 50})
-    assert (resolved["fps"], resolved["control"], resolved["semantics"]) == (50, "delta", "reach-delta-v1")
-    assert (resolved["state_names"], resolved["action_names"]) == (["x", "y"], ["dx", "dy"])
-    assert resolved["robot_type"] == "so_follower"
+    resolved = SimConfig.resolve({**sim, "fps": 50})
+    assert (resolved.fps, resolved.control, resolved.semantics) == (50, "delta", "reach-delta-v1")
+    assert (resolved.state_names, resolved.action_names) == (("x", "y"), ("dx", "dy"))
+    assert resolved.robot_type == "so_follower"
     # Repositories without LEROBOT_SIM keep working with the defaults.
     env_file.write_text(_ENVHUB_ENV)
-    assert {key: envhub.resolve_envhub_sim(sim)[key] for key in envhub.SIM_DEFAULTS} == envhub.SIM_DEFAULTS
+    resolved = SimConfig.resolve(sim)
+    assert (resolved.fps, resolved.control, resolved.semantics) == (30, "position", "envhub-v1")
     # A typo in LEROBOT_SIM is an error, not a silently ignored setting.
     env_file.write_text(_ENVHUB_ENV + 'LEROBOT_SIM = {"fsp": 30}\n')
     with pytest.raises(ValueError, match="unknown keys"):
-        envhub.resolve_envhub_sim(sim)
-    # Nothing is downloaded when every setting is explicit.
-    monkeypatch.setattr(envhub, "hf_hub_download", None)
-    explicit = {**sim, **envhub.SIM_DEFAULTS}
-    assert envhub.resolve_envhub_sim(explicit) is explicit
+        SimConfig.resolve(sim)

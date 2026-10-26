@@ -15,13 +15,16 @@
 # limitations under the License.
 import os
 import platform
+import sys
 import time
 from collections.abc import Callable
 from functools import wraps
+from unittest.mock import MagicMock
 
 import pytest
 import torch
 
+from lerobot.sims.types import SimConfig
 from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import is_package_available
 
@@ -199,3 +202,21 @@ def wait_for(predicate: Callable[[], bool], timeout: float = 3.0) -> bool:
             return True
         time.sleep(0.005)
     return predicate()
+
+
+def resolve_without_simulator(settings: dict, monkeypatch: pytest.MonkeyPatch) -> SimConfig:
+    """``SimConfig.resolve``, stubbing the simulator's own packages when they are not installed."""
+    before = set(sys.modules)
+    try:
+        while True:
+            try:
+                return SimConfig.resolve(settings)
+            except ModuleNotFoundError as error:
+                if not error.name or error.name.startswith("lerobot"):
+                    raise
+                monkeypatch.setitem(sys.modules, error.name, MagicMock())
+    finally:
+        # An integration imported against stubs must not leak into other tests.
+        for name in set(sys.modules) - before:
+            if name.startswith("lerobot.sims.native."):
+                monkeypatch.setitem(sys.modules, name, sys.modules.pop(name))

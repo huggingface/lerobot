@@ -33,7 +33,7 @@ from lerobot.utils.import_utils import _scipy_available
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "create_envs"]
 
 RobotObservation = dict[str, Any]
 
@@ -641,3 +641,16 @@ def create_robotwin_envs(
 
 
 create_envs = create_robotwin_envs
+
+
+def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """RoboTwin's control rate, controller, component names and simulated body."""
+    joints = tuple(f"command_{i}.pos" for i in range(14))
+    # Joint mode commands and observes the 14 joints; ee mode commands 16-D poses, left unnamed.
+    return {
+        "fps": 25,
+        "control": "position",
+        "state_names": joints,
+        "action_names": joints if kwargs.get("action_mode", "joint") == "joint" else (),
+        "robot_type": "aloha_agilex",
+    }

@@ -37,7 +37,6 @@ from huggingface_hub import snapshot_download
 
 import lerobot
 from lerobot.env_server.server import EnvServer, ServerConfig
-from lerobot.sims.conventions import resolve
 from lerobot.sims.types import SimConfig
 from lerobot.transport.zenoh import ZenohConfig
 
@@ -209,7 +208,7 @@ def main() -> None:
     # force: an imported module may already have installed a WARNING-level root handler.
     logging.basicConfig(level=logging.INFO, force=True)
     # Settings left null come from the simulator's conventions (an EnvHub repository's LEROBOT_SIM).
-    data["sim"] = SimConfig(**resolve(data["sim"]))
+    data["sim"] = SimConfig.resolve(data["sim"])
     if "zenoh" in data:
         data["zenoh"] = ZenohConfig(**data["zenoh"])
     server = EnvServer(ServerConfig(**data))

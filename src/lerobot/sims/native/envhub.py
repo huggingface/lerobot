@@ -24,7 +24,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 
 from .utils import canonical_observation
 
-__all__ = ["canonical_observation", "create_envs"]
+__all__ = ["canonical_observation", "conventions", "create_envs"]
 
 logger = logging.getLogger(__name__)
 
@@ -236,15 +236,8 @@ def create_envs(
     }
 
 
-def resolve_envhub_sim(sim: dict[str, Any]) -> dict[str, Any]:
-    """Fill the server settings left null with the repository's ``LEROBOT_SIM``, else the defaults.
-
-    Explicit values (YAML or ``--set``) win; repositories without ``LEROBOT_SIM`` use the defaults.
-    """
-    missing = [key for key in SIM_DEFAULTS if sim.get(key) is None]
-    if not missing:
-        return sim
-    kwargs = sim.get("kwargs", {})
+def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The repository's ``LEROBOT_SIM``, over the EnvHub defaults."""
     repo_id, module = _load_hub_module(
         kwargs["hub_path"], kwargs.get("trust_remote_code", False), kwargs.get("hub_cache_dir")
     )
@@ -254,13 +247,5 @@ def resolve_envhub_sim(sim: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(
             f"{repo_id} LEROBOT_SIM has unknown keys {sorted(unknown)}; expected {list(SIM_DEFAULTS)}"
         )
-    resolved = dict(sim)
-    for key in missing:
-        resolved[key] = declared.get(key, SIM_DEFAULTS[key])
-    logger.info(
-        "EnvHub %s settings: from LEROBOT_SIM %s, defaults %s",
-        repo_id,
-        sorted(key for key in missing if key in declared),
-        sorted(key for key in missing if key not in declared),
-    )
-    return resolved
+    logger.info("EnvHub %s declares %s in LEROBOT_SIM", repo_id, sorted(declared))
+    return {**SIM_DEFAULTS, **declared}
