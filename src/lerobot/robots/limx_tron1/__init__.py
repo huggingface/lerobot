@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2026 HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,10 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Wall-OSS-0.5 policy integration."""
+from .config_limx_tron1 import LimxTron1Config
+from .limx_tron1 import LimxTron1
 
-from .configuration_wall_oss_05 import WallOSS05Config
-from .modeling_wall_oss_05 import WallOSS05Policy
-from .processor_wall_oss_05 import make_wall_oss_05_pre_post_processors
-
-__all__ = ["WallOSS05Config", "WallOSS05Policy", "make_wall_oss_05_pre_post_processors"]
+__all__ = ["LimxTron1", "LimxTron1Config"]

@@ -545,8 +545,6 @@ class ConditionalFlowMatchingHead(nn.Module):
         cfg_scale: float | None = None,
         num_inference_steps: int | None = None,
         attention_mask: torch.Tensor | None = None,
-        *,
-        noise: torch.Tensor | None = None,
     ) -> torch.Tensor:
         device = h_t.device
         model_dtype = self._compute_dtype()
@@ -584,13 +582,11 @@ class ConditionalFlowMatchingHead(nn.Module):
             num_inference_steps = int(getattr(self.config, "num_inference_steps", self.config.num_steps))
         if cfg_scale is None:
             cfg_scale = float(self.config.cfg_guidance_scale)
-        if noise is None:
-            noise = self.sample_noise(
-                shape=(batch_size, action_horizon, self.config.action_dim),
-                device=device,
-                dtype=model_dtype,
-            )
-        x_t = noise.to(device=device, dtype=model_dtype)
+        x_t = self.sample_noise(
+            shape=(batch_size, action_horizon, self.config.action_dim),
+            device=device,
+            dtype=model_dtype,
+        )
         x_t = x_t * time_valid.unsqueeze(-1).to(dtype=x_t.dtype)
 
         dt = 1.0 / float(num_inference_steps)

@@ -312,7 +312,7 @@ def validate_feature_dtype_and_shape(
 
 
 def validate_feature_numpy_array(
-    name: str, expected_dtype: str, expected_shape: list[int], value: object
+    name: str, expected_dtype: str, expected_shape: list[int], value: np.ndarray
 ) -> str:
     """Validate a feature that is expected to be a numpy array.
 
@@ -320,7 +320,7 @@ def validate_feature_numpy_array(
         name (str): The name of the feature.
         expected_dtype (str): The expected numpy dtype as a string.
         expected_shape (list[int]): The expected shape.
-        value: The value to validate, including inputs with an incorrect type.
+        value (np.ndarray): The numpy array to validate.
 
     Returns:
         str: An error message if validation fails, otherwise an empty string.
@@ -371,12 +371,12 @@ def validate_feature_image_or_video(
     return error_message
 
 
-def validate_feature_string(name: str, value: object) -> str:
+def validate_feature_string(name: str, value: str) -> str:
     """Validate a feature that is expected to be a string.
 
     Args:
         name (str): The name of the feature.
-        value: The value to validate, including inputs with an incorrect type.
+        value (str): The value to validate.
 
     Returns:
         str: An error message if validation fails, otherwise an empty string.

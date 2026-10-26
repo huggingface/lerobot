@@ -193,6 +193,8 @@ openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]
+# Vendor SDK wheels: 4.1.1 for Linux, 4.1.0 for Windows, none for macOS.
+limx_tron1 = ["limxsdk>=4.1.0,<5.0.0 ; sys_platform != 'darwin'"]
 unitree_g1 = [
     # "unitree-sdk2==1.0.1",
     "lerobot[pyzmq-dep]",
