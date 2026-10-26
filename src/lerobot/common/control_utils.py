@@ -100,15 +100,13 @@ def sanity_check_dataset_name(repo_id, policy_cfg):
     if and only if a policy configuration is provided for evaluation purposes.
 
     Args:
-        repo_id: The Hugging Face Hub repository ID of the dataset, or a local
-            dataset name with no namespace.
+        repo_id: The Hugging Face Hub repository ID of the dataset.
         policy_cfg: The configuration object for the policy, or `None`.
 
     Raises:
         ValueError: If the naming convention is violated.
     """
-    # Hub IDs are "namespace/name"; local recordings may pass a name with no slash.
-    dataset_name = repo_id.split("/")[-1]
+    _, dataset_name = repo_id.split("/")
     # either repo_id doesnt start with "eval_" and there is no policy
     # or repo_id starts with "eval_" and there is a policy
 
