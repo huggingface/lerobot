@@ -14,6 +14,8 @@
 
 """Local vector environments built from a simulator integration."""
 
+import os
+
 import draccus
 import numpy as np
 import pytest
@@ -140,5 +142,23 @@ def test_episode_limit_is_found_through_wrappers(monkeypatch):
     try:
         assert env.call("_max_episode_steps") == (1000,)
         assert env.descriptor.max_episode_steps == 1000
+    finally:
+        env.close()
+
+
+class _CrashingEnv(ToyEnv):
+    def reset(self, seed=None):
+        os._exit(3)
+
+
+def test_a_dead_environment_process_is_reported():
+    # MuJoCo rendering can kill worker processes (macOS): say so instead of raising a bare EOFError.
+    from lerobot.sims.vector_env import _ProcessEnv
+
+    env = _ProcessEnv(_CrashingEnv)
+    try:
+        env.ready()
+        with pytest.raises(RuntimeError, match="exited with code 3.*use_async_envs=false"):
+            env.reset()
     finally:
         env.close()

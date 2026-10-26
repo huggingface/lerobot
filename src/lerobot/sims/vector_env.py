@@ -99,14 +99,25 @@ class _ProcessEnv:
         self.observation_space, self.action_space = self._call("spaces")
         self._refresh()
 
+    def _exited(self) -> RuntimeError:
+        self._process.join(1)
+        return RuntimeError(
+            f"Environment process exited with code {self._process.exitcode}. If its simulator cannot run in worker "
+            "processes on this platform, run it in the main process (use_async_envs=false, e.g. "
+            "--eval.use_async_envs=false)"
+        )
+
     def _receive(self) -> Any:
-        ok, value = self._pipe.recv()
+        try:
+            ok, value = self._pipe.recv()
+        except EOFError:
+            raise self._exited() from None
         if not ok:
             raise RuntimeError(f"Environment process failed: {value}")
         return value
 
     def _call(self, command: str, argument: Any = None) -> Any:
-        self._pipe.send((command, argument))
+        self.send(command, argument)
         return self._receive()
 
     def _refresh(self) -> None:
@@ -114,7 +125,10 @@ class _ProcessEnv:
             setattr(self, name, value)
 
     def send(self, command: str, argument: Any = None) -> None:
-        self._pipe.send((command, argument))
+        try:
+            self._pipe.send((command, argument))
+        except BrokenPipeError:
+            raise self._exited() from None
 
     def receive(self, refresh: bool = False) -> Any:
         result = self._receive()
