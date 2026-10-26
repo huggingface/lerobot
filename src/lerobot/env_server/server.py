@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bounded simulator serving. All environment mutations run on the serving worker."""
+"""Serve simulator environments; one thread owns and steps them."""
 
 import logging
 import time
@@ -24,7 +24,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from lerobot.sims.types import EnvDescriptor, SimConfig, StepResult
+from lerobot.sims.types import EnvDescriptor, SimConfig
 from lerobot.sims.vector_env import VectorEnv
 from lerobot.transport.wire.codec import CodecLimits, RGBImage, decode_message, encode_message
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ServerConfig:
-    """Bound simulator resources and select explicit Zenoh endpoints."""
+    """The simulator a server runs, its resource limits and its Zenoh endpoints."""
 
     sim: SimConfig
     deployment: str = "default"
@@ -85,7 +85,7 @@ class _Session:
         self.fault: str | None = None
         try:
             self.env.reset(seed=seeds)
-            self.opened = self._latest()
+            self.opened = self.env.latest
             validate_result(self.opened, self.env.descriptor, num_envs)
         except BaseException:
             self.env.close()
@@ -101,10 +101,6 @@ class _Session:
         )
         self.token: PresenceToken = server.transport.declare_token(prefix + "/alive")
 
-    def _latest(self) -> StepResult:
-        assert self.env.latest is not None
-        return self.env.latest
-
     def handle(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
         """Reset, step, or render the owned environments."""
         if self.fault is not None:
@@ -116,14 +112,14 @@ class _Session:
                 self.fault = f"Simulator reset failed: {exc}"
                 raise
             self.generation += 1
-            return {"generation": self.generation, "result": encode_step_result(self._latest())}
+            return {"generation": self.generation, "result": encode_step_result(self.env.latest)}
         if operation == "step":
             try:
                 self.env.step(self.actions(body.get("actions")))
             except Exception as exc:
                 self.fault = f"Simulator step failed: {exc}"
                 raise
-            return {"result": encode_step_result(self._latest())}
+            return {"result": encode_step_result(self.env.latest)}
         if operation == "render":
             return {"frames": self.env.render()}
         raise ProtocolError(ErrorCode.UNSUPPORTED, f"Unsupported operation: {operation}")
@@ -158,7 +154,7 @@ class EnvServer:
     """Serve explicit environment operations from one owner thread."""
 
     def __init__(self, config: ServerConfig):
-        """Initialize owned resources without advancing simulation time."""
+        """Create the transport; simulators are built when serving starts."""
         self.config = config
         if config.max_envs < 1 or config.max_sessions < 1:
             raise ValueError("Server resource bounds must be positive")
@@ -172,10 +168,9 @@ class EnvServer:
     def serve(self) -> None:
         """Pump bounded requests until stopped."""
         try:
-            # Listen before probing: slow simulators must not exceed the clients' connect timeout.
-            # Describe queries wait for the queryable declared below, within their own deadline.
+            # Listen first: clients connecting while a slow simulator starts wait instead of failing.
             self.transport.open()
-            # Includes descriptor probing; native renderer setup stays on the owner thread.
+            # Simulators are built here, on the thread that later steps them.
             probe = VectorEnv(self.config.sim)
             try:
                 self.descriptor = probe.descriptor

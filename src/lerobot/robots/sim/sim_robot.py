@@ -44,35 +44,29 @@ class SimRobot(Robot):
 
     def __init__(self, config: SimRobotConfig):
         super().__init__(config)
+        if config.env is None:
+            raise ValueError("A sim robot needs --robot.env.type")
         self.config = config
-        env = config.env
-        assert env is not None
+        self._env_config = config.env
         # The env's suite, when it names exactly one; otherwise the simulator's first.
-        self._task_group: str | None = env.task if env.task and "," not in env.task else None
-        self._env_config = env
-        self._env: VectorEnv | BatchedEnv | None = None
+        task = config.env.task
+        self._task_group = task if task and "," not in task else None
         self._connected = False
         self.latest: StepResult | None = None
-        try:
-            self._make_env()
-        except BaseException:
-            if self._env is not None:
-                self._env.close()
-            raise
+        self._env: VectorEnv | BatchedEnv | None = self._make_env()
 
-    def _make_env(self) -> None:
-        self._env = self._env_config.create_env(self._task_group, self.config.task_id)
-        descriptor = self._env_config.descriptor
-        assert descriptor is not None
-        self.descriptor: EnvDescriptor = descriptor
+    def _make_env(self) -> "VectorEnv | BatchedEnv":
+        env = self._env_config.create_env(self._task_group, self.config.task_id)
+        descriptor = env.descriptor
         self.robot_type = descriptor.robot_type or self.name
-        # Waiting does not step an environment, regardless of its controller convention.
+        # Holding is a no-op, see hold().
         self.supports_position_hold = False
         self.supports_command_hold = True
         state = next(
             (feature for feature in descriptor.features if feature.name == "observation.state"), None
         )
         if state is None or not state.names:
+            env.close()
             raise ValueError("Robot face requires explicit state component names")
         self._state: FeatureSpec = state
         self._camera_keys: dict[str, str] = {
@@ -81,7 +75,7 @@ class SimRobot(Robot):
             if feature.kind == "rgb"
         }
         # Robot cameras use the recorder's names; native envs keep their benchmark names.
-        self.descriptor = replace(
+        self.descriptor: EnvDescriptor = replace(
             descriptor,
             features=tuple(
                 replace(feature, name=f"observation.images.{self._camera_keys[feature.name]}")
@@ -90,10 +84,11 @@ class SimRobot(Robot):
                 for feature in descriptor.features
             ),
         )
+        return env
 
     @property
     def cameras(self) -> dict[str, str]:
-        """Simulator camera features keyed by descriptor name; sized like a real robot's cameras."""
+        """Camera names keyed by observation feature; recording sizes its image writers from them."""
         return {f"observation.images.{camera}": camera for camera in self._camera_keys.values()}
 
     def feature_names(self, rename_map: dict[str, str]) -> dict[str, str]:
@@ -133,8 +128,7 @@ class SimRobot(Robot):
         if self._connected:
             raise RuntimeError("Sim robot is already connected")
         if self._env is None:
-            self._make_env()
-        assert self._env is not None
+            self._env = self._make_env()
         try:
             self._env.reset()
         except BaseException:
@@ -170,17 +164,14 @@ class SimRobot(Robot):
         if not self._connected or self._env is None:
             raise RuntimeError("Connect before sending an action")
         self._env.step(values)
-        self.latest = self._env.latest
-        result = self._snapshot()
-        if result.terminated[0] or result.truncated[0]:
-            # A finished episode stays frozen at its last state; as Gymnasium's autoreset, start the next one.
+        if self._env.latest.terminated[0] or self._env.latest.truncated[0]:
+            # As Gymnasium's autoreset does, a finished episode starts the next one.
             self._env.reset()
-            self.latest = self._env.latest
+        self.latest = self._env.latest
         return {name: float(value) for name, value in zip(names, values[0], strict=True)}
 
     def hold(self) -> None:
-        # An explicitly stepped environment stays where it is until the next action.
-        pass
+        """Nothing to do: the simulation advances only on send_action()."""
 
     def disconnect(self) -> None:
         if self._env is not None:

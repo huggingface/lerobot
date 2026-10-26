@@ -72,7 +72,7 @@ def _load_initial_states(path: Path) -> np.ndarray:
         return np.load(portable, allow_pickle=False)
     if os.environ.get("LEROBOT_SIM_REQUIRE_NUMPY") == "1":
         raise FileNotFoundError(f"Convert initial-state asset before serving: {portable}")
-    # Compatibility with original assets for the legacy in-process path.
+    # Original assets are torch pickles; served images ship the converted .npy files instead.
     import torch
 
     return np.asarray(torch.load(path, weights_only=False))  # nosec B614

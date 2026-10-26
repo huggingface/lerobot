@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Explicit, non-retrying simulator client, and the vector environment it serves."""
+"""Client of a simulator server, and the vector environment it backs."""
 
 import uuid
 from threading import RLock
@@ -40,7 +40,7 @@ from .contracts import (
 
 
 class EnvClient:
-    """Own one explicitly negotiated simulator session without replaying mutations."""
+    """One session with a simulator server; operations are never retried."""
 
     def __init__(
         self,
@@ -51,7 +51,7 @@ class EnvClient:
         encoding: str = "raw",
         jpeg_quality: int = 90,
     ):
-        """Initialize owned resources without advancing simulation time.
+        """Configure the connection; nothing is opened before ``describe`` or ``open``.
 
         ``timeout_s`` bounds per-tick operations; ``setup_timeout_s`` (default: the same)
         bounds describe/open/reset, which may build or rebuild native simulators. Without a
@@ -63,7 +63,7 @@ class EnvClient:
         self.encoding = encoding
         self.jpeg_quality = jpeg_quality
         self.transport = ZenohTransport(ZenohConfig(connect_endpoints=[endpoint]))
-        self.deployment = deployment
+        self.deployment = deployment or ""
         self.timeout_s = timeout_s
         self.setup_timeout_s = max(timeout_s, setup_timeout_s or timeout_s)
         self.instance = ""
@@ -95,7 +95,7 @@ class EnvClient:
     @property
     def prefix(self) -> str:
         """Return the address of the currently owned environment session."""
-        if not self.session or self.deployment is None:
+        if not self.session:
             raise RuntimeError("Simulator session is not open")
         return session_prefix(self.deployment, self.instance, self.session)
 
@@ -114,9 +114,7 @@ class EnvClient:
         with self.lock:
             if self.session:
                 raise RuntimeError("Simulator session already open")
-            if self.descriptor is None:
-                self.describe()
-            assert self.deployment is not None
+            descriptor = self.descriptor or self.describe()
             body = self._query(
                 instance_prefix(self.deployment, self.instance) + "/open",
                 MessageType.OPEN,
@@ -131,19 +129,16 @@ class EnvClient:
                 },
                 self.setup_timeout_s,
             )
-            assert self.descriptor is not None
             opened_descriptor = decode_descriptor(body["descriptor"])
             if (
                 tuple(f.name for f in opened_descriptor.features)
-                != tuple(f.name for f in self.descriptor.features)
+                != tuple(f.name for f in descriptor.features)
                 or any(
                     feature_mismatch(actual, expected)
-                    for actual, expected in zip(
-                        opened_descriptor.features, self.descriptor.features, strict=True
-                    )
+                    for actual, expected in zip(opened_descriptor.features, descriptor.features, strict=True)
                 )
-                or feature_mismatch(opened_descriptor.action_feature, self.descriptor.action_feature)
-                or opened_descriptor.semantics != self.descriptor.semantics
+                or feature_mismatch(opened_descriptor.action_feature, descriptor.action_feature)
+                or opened_descriptor.semantics != descriptor.semantics
             ):
                 self.transport.close()
                 raise ProtocolError(
@@ -163,6 +158,9 @@ class EnvClient:
         with self.lock:
             if self.failed:
                 raise RuntimeError("Simulator session failed; close and reopen before continuing")
+            descriptor = self.descriptor
+            if not self.session or descriptor is None:
+                raise RuntimeError("Simulator session is not open")
             key = self.prefix + (f"/{operation}" if operation in {"reset", "step"} else "/control")
             if operation not in {"reset", "step"}:
                 body["operation"] = operation
@@ -170,8 +168,7 @@ class EnvClient:
                 timeout = self.setup_timeout_s if operation == "reset" else self.timeout_s
                 result = self._query(key, MessageType.CONTROL, body, timeout)
                 if "result" in result:
-                    assert self.descriptor is not None
-                    validate_result(decode_step_result(result["result"]), self.descriptor, self.num_envs)
+                    validate_result(decode_step_result(result["result"]), descriptor, self.num_envs)
                 if "generation" in result:
                     self.generation = result["generation"]
                 return result
@@ -250,36 +247,37 @@ class BatchedEnv(gym.vector.VectorEnv):
         )
         self.observation_space = batch_space(self.single_observation_space, num_envs)
         self.action_space = batch_space(self.single_action_space, num_envs)
-        self.latest: StepResult | None = None
+        self._latest: StepResult | None = None
         self.closed = False
 
+    @property
+    def latest(self) -> StepResult:
+        """The result of the last reset or step."""
+        if self._latest is None:
+            raise RuntimeError("Reset before reading the environment")
+        return self._latest
+
     def _open_session(self, seeds=None):
-        # Not named `_ensure`: eval_policy_all prefetches envs exposing `_ensure`, and an
-        # unseeded prefetch open would reset the environments before the seeded rollout reset.
+        # Not `_ensure`: lerobot-eval prefetches through `_ensure`, and opening resets the environments.
         if not self.client.session:
-            self.latest = self.client.open(
+            self._latest = self.client.open(
                 self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs
             )
-            assert self.client.descriptor is not None
-            self.descriptor = self.client.descriptor
+            self.descriptor = self.client.descriptor or self.descriptor
             return True
         return False
 
     def _result(self, body):
-        self.latest = decode_step_result(body["result"])
-        return self.latest
+        self._latest = decode_step_result(body["result"])
+        return self._latest
 
     def reset(self, *, seed=None, options=None):
         """Reset every served environment with explicit seeds."""
         if isinstance(seed, int):
             seed = [seed + i for i in range(self.num_envs)]
-        result = (
-            self.latest
-            if self._open_session(seed)
-            else self._result(self.client.request("reset", seeds=seed))
-        )
-        assert result is not None
-        return result.obs, self._info(result)
+        if not self._open_session(seed):
+            self._result(self.client.request("reset", seeds=seed))
+        return self.latest.obs, self._info(self.latest)
 
     def step(self, actions):
         """Advance every unfinished served environment once."""
@@ -310,7 +308,6 @@ class BatchedEnv(gym.vector.VectorEnv):
             return (self.task_group,) * self.num_envs
         self._open_session()
         if name == "task_description":
-            assert self.latest is not None
             return self.latest.task
         if name == "render":
             return tuple(self.client.request("render")["frames"])

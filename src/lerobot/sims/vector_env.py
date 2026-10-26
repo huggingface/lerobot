@@ -31,7 +31,7 @@ from gymnasium.vector.utils import CloudpickleWrapper, batch_space
 from lerobot.sims.types import EnvDescriptor, SimConfig, StepResult
 from lerobot.utils.feature_spec import FeatureSpec
 
-# Attributes an environment may expose, read back from its process after it is built and reset.
+# Environment attributes copied back from a worker process.
 _ENV_ATTRS = ("task_description", "task", "_max_episode_steps")
 
 
@@ -146,7 +146,7 @@ class VectorEnv(gym.vector.VectorEnv):
         """Select the task. Given its ``descriptor``, the simulators are built on first use rather than now."""
         integration = importlib.import_module(f"lerobot.sims.native.{config.type}")
         self._canonical_observation = integration.canonical_observation
-        # With env_cls=list, an integration returns each task's environment factories unbuilt.
+        # env_cls=list returns each task's environment factories without building them.
         factories = integration.create_envs(task=config.task, n_envs=num_envs, env_cls=list, **config.kwargs)
         self.config = config
         self.num_envs = num_envs
@@ -162,7 +162,7 @@ class VectorEnv(gym.vector.VectorEnv):
         self._last: list[tuple[dict[str, np.ndarray], float, bool, bool, bool]] = []
         self._steps: np.ndarray = np.zeros(num_envs, dtype=np.int64)
         self._sim_time = 0.0
-        self.latest: StepResult | None = None
+        self._latest: StepResult | None = None
         self.closed = False
         try:
             self.descriptor = descriptor or self._describe()
@@ -277,7 +277,7 @@ class VectorEnv(gym.vector.VectorEnv):
         running = []
         for i, env in enumerate(self._envs):
             if self._last[i][2] or self._last[i][3]:
-                # Absorbing terminal state: keep the observation and flags, earn no further reward.
+                # A finished environment keeps its terminal observation and flags, and earns no reward.
                 self._last[i] = (self._last[i][0], 0.0, *self._last[i][2:])
                 continue
             if self.use_async_envs:
@@ -306,7 +306,7 @@ class VectorEnv(gym.vector.VectorEnv):
         task = tuple(
             str(getattr(env, "task_description", getattr(env, "task", self.task_group))) for env in self._envs
         )
-        self.latest = StepResult(
+        self._latest = StepResult(
             obs,
             task,
             np.array([last[1] for last in self._last], dtype=np.float32),
@@ -316,7 +316,14 @@ class VectorEnv(gym.vector.VectorEnv):
             self._sim_time,
             self._steps.copy(),
         )
-        return self.latest
+        return self._latest
+
+    @property
+    def latest(self) -> StepResult:
+        """The result of the last reset or step."""
+        if self._latest is None:
+            raise RuntimeError("Reset before reading the environment")
+        return self._latest
 
     @staticmethod
     def _info(result: StepResult) -> dict[str, Any]:
@@ -346,8 +353,6 @@ class VectorEnv(gym.vector.VectorEnv):
         if name == "task":
             return (self.task_group,) * self.num_envs
         if name == "task_description":
-            if self.latest is None:
-                raise RuntimeError("Reset before reading the task description")
             return self.latest.task
         if name == "render":
             return tuple(self.render())

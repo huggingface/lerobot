@@ -15,6 +15,7 @@
 """Compare seeded native and server transitions in the same simulator image."""
 
 import argparse
+import logging
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,7 @@ from lerobot.env_server.contracts import decode_step_result
 from lerobot.sims.conventions import resolve
 from lerobot.sims.types import SimConfig
 from lerobot.sims.vector_env import VectorEnv
+from lerobot.utils import init_logging
 
 
 def check(config_path: Path, steps: int = 5):
@@ -42,7 +44,6 @@ def check(config_path: Path, steps: int = 5):
             .astype(np.float32)
         )
         env.reset(seed=[123])
-        assert env.latest is not None
         expected = [env.latest]
         for action in actions:
             env.step(action)
@@ -77,7 +78,7 @@ def check(config_path: Path, steps: int = 5):
                     decode_step_result(client.request("step", actions=action)["result"]) for action in actions
                 )
                 for reference, remote in zip(expected, actual, strict=True):
-                    assert reference.task == remote.task
+                    np.testing.assert_equal(remote.task, reference.task)
                     for key in reference.obs:
                         np.testing.assert_allclose(
                             reference.obs[key], remote.obs[key], rtol=0, atol=1e-6, err_msg=key
@@ -86,7 +87,7 @@ def check(config_path: Path, steps: int = 5):
                         np.testing.assert_array_equal(
                             getattr(reference, field), getattr(remote, field), err_msg=field
                         )
-                print(f"Seeded native/server parity passed: {descriptor.sim_type}, {steps} steps")
+                logging.info("Seeded native/server parity passed: %s, %d steps", descriptor.sim_type, steps)
             finally:
                 client.close()
                 server.terminate()
@@ -102,6 +103,7 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=5)
     args = parser.parse_args()
+    init_logging()
     check(args.config, args.steps)
 
 

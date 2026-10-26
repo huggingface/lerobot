@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Per-tick bound for a served environment; opening and resetting it get the same.
+# Timeout of each request to a served environment.
 SERVED_TIMEOUT_S = 120.0
 
 
@@ -46,7 +46,7 @@ SERVED_TIMEOUT_S = 120.0
 class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     task: str | None = None
     fps: int = 30
-    # Filled from the environment's description when it is created: its canonical observation names.
+    # Set from the environment's description when it is created.
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
     descriptor: EnvDescriptor | None = field(init=False, default=None, repr=False)
@@ -694,7 +694,6 @@ class IsaaclabArenaEnv(HubEnvConfig):
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
         from .factory import make_hub_envs
 
-        assert self.hub_path is not None
         if self.endpoint is not None:
             raise ValueError(f"--env.type={self.type} runs in-process only; --env.endpoint is not supported")
         if self.make_env_kwargs:
@@ -766,7 +765,6 @@ class UnitreeG1MujocoEnv(HubEnvConfig):
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
         from .factory import make_hub_envs
 
-        assert self.hub_path is not None
         if self.endpoint is not None:
             raise ValueError(f"--env.type={self.type} runs in-process only; --env.endpoint is not supported")
         if self.make_env_kwargs:

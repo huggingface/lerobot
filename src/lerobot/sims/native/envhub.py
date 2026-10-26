@@ -40,7 +40,6 @@ SIM_DEFAULTS: dict[str, Any] = {
 }
 
 
-# helper to safely load a python file as a module
 def _load_module_from_path(path: str, module_name: str | None = None):
     module_name = module_name or f"hub_env_{os.path.basename(path).replace('.', '_')}"
     spec = importlib.util.spec_from_file_location(module_name, path)
@@ -51,13 +50,8 @@ def _load_module_from_path(path: str, module_name: str | None = None):
     return module
 
 
-# helper to parse hub string (supports "user/repo", "user/repo@rev", optional path)
-# examples:
-#   "user/repo" -> will look for env.py at repo root
-#   "user/repo@main:envs/my_env.py" -> explicit revision and path
 def _parse_hub_url(hub_uri: str):
-    # very small parser: [repo_id][@revision][:path]
-    # repo_id is required (user/repo or org/repo)
+    """Split ``user/repo[@revision][:path]``; the path defaults to ``env.py``."""
     revision = None
     file_path = "env.py"
     if "@" in hub_uri:
@@ -108,7 +102,6 @@ def _download_hub_file(
             repo_id=repo_id, filename=file_path, revision=revision, cache_dir=hub_cache_dir
         )
     except Exception as e:
-        # fallback to snapshot download
         snapshot_dir = snapshot_download(repo_id=repo_id, revision=revision, cache_dir=hub_cache_dir)
         local_file = os.path.join(snapshot_dir, file_path)
         if not os.path.exists(local_file):
@@ -166,7 +159,6 @@ def _call_make_env(module: Any, n_envs: int, use_async_envs: bool, cfg: Any | No
             f"The hub module {getattr(module, '__name__', 'hub_module')} must expose `make_env(n_envs=int, use_async_envs=bool)`."
         )
     entry_fn = module.make_env
-    # Only pass cfg if it's not None (i.e., when an EnvConfig was provided, not a string hub ID)
     if cfg is not None:
         return entry_fn(n_envs=n_envs, use_async_envs=use_async_envs, cfg=cfg, **kwargs)
     else:
@@ -185,12 +177,10 @@ def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorE
     if isinstance(result, dict):
         return result
 
-    # VectorEnv: use its spec.id if available
     if isinstance(result, gym.vector.VectorEnv):
         suite_name = getattr(result, "spec", None) and getattr(result.spec, "id", None) or "hub_env"
         return {suite_name: {0: result}}
 
-    # Single Env: wrap into SyncVectorEnv
     if isinstance(result, gym.Env):
         vec = gym.vector.SyncVectorEnv([lambda: result])
         suite_name = getattr(result, "spec", None) and getattr(result.spec, "id", None) or "hub_env"
@@ -218,7 +208,7 @@ def _env_factories(vec: Any, n_envs: int) -> list:
         vec.close()
 
 
-def create_envhub_envs(
+def create_envs(
     task: str,
     n_envs: int,
     env_cls: Any,
@@ -274,6 +264,3 @@ def resolve_envhub_sim(sim: dict[str, Any]) -> dict[str, Any]:
         sorted(key for key in missing if key not in declared),
     )
     return resolved
-
-
-create_envs = create_envhub_envs

@@ -62,7 +62,7 @@ def decode_descriptor(data: dict[str, Any]) -> EnvDescriptor:
 
 def encode_step_result(result: StepResult) -> dict[str, Any]:
     """Encode a simulation result for transport."""
-    return {name: getattr(result, name) for name in result.__dataclass_fields__}
+    return {field.name: getattr(result, field.name) for field in fields(result)}
 
 
 def decode_step_result(data: dict[str, Any]) -> StepResult:

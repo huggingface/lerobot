@@ -15,16 +15,20 @@
 """Convert trusted LIBERO initial-state files during image build, before removing torch."""
 
 import argparse
+import logging
 from pathlib import Path
 
 import numpy as np
 import torch
+
+from lerobot.utils import init_logging
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     args = parser.parse_args()
+    init_logging()
     count = 0
     for path in args.root.rglob("*.pruned_init"):
         value = torch.load(path, weights_only=False)  # nosec B614: trusted image-build assets
@@ -37,7 +41,7 @@ def main() -> None:
         count += 1
     if not count:
         raise ValueError(f"No LIBERO initial-state assets found: {args.root}")
-    print(f"Converted {count} initial-state assets")
+    logging.info("Converted %d initial-state assets", count)
 
 
 if __name__ == "__main__":

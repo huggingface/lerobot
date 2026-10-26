@@ -14,7 +14,7 @@
 
 """Torch-free canonical feature schemas and value validation, shared by environments, policies and services."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 import numpy as np
@@ -22,7 +22,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class FeatureSpec:
-    """Named canonical values, ordered components, and semantic conventions."""
+    """Schema of one named value: shape, dtype, modality, component names and semantics."""
 
     name: str
     shape: tuple[int, ...]
@@ -58,16 +58,13 @@ class FeatureSpec:
             raise ValueError("Feature component names must be unique.")
 
 
-_FEATURE_FIELDS = ("name", "shape", "dtype", "kind", "names", "semantics")
-
-
 def feature_mismatch(actual: FeatureSpec, expected: FeatureSpec) -> str | None:
-    """Describe the first incompatible schema field, without assigning service error semantics."""
-    for field in _FEATURE_FIELDS:
-        actual_value, expected_value = getattr(actual, field), getattr(expected, field)
+    """Describe the first field that differs, or return None."""
+    for field in fields(FeatureSpec):
+        actual_value, expected_value = getattr(actual, field.name), getattr(expected, field.name)
         if actual_value != expected_value:
             return (
-                f"Feature {expected.name!r} field {field!r} differs: "
+                f"Feature {expected.name!r} field {field.name!r} differs: "
                 f"client={actual_value!r}, server={expected_value!r}"
             )
     return None

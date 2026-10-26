@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Each simulator's control conventions, in one place for the env server and in-process environments.
+"""Each simulator's control conventions: rate, controller, component names and simulated body.
 
-Importable without the simulators themselves, so a client of a served simulator can resolve them too.
-A configuration's explicit values win; the ones left null come from here.
-
-``robot_type`` names the simulated body, recorded as a sim robot's dataset ``robot_type``: the one a
-lerobot robot class records on hardware when the body has one (``so_follower``), else the body's short
-name. Left empty, a sim robot records ``sim``.
+Importable without the simulators, so a client of a served simulator can resolve them too. Explicit
+configuration values win; the ones left null come from here. ``robot_type`` is recorded as a sim robot's
+dataset ``robot_type`` (the hardware robot's name when the body has one, e.g. ``so_follower``); left empty,
+a sim robot records ``sim``.
 """
 
 from typing import Any
