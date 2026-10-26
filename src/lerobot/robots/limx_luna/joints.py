@@ -142,13 +142,19 @@ def resolve_joint_vector(values: Sequence[float] | None, field: str) -> tuple[fl
         `tuple[float, ...]`: The `LUNA_DIM`-long table.
 
     Raises:
-        ValueError: If the table has the wrong length.
+        ValueError: If the table has the wrong length or holds a non-finite value.
     """
     if values is None:
         return (0.0,) * LUNA_DIM
     resolved = tuple(float(value) for value in values)
     if len(resolved) != LUNA_DIM:
         raise ValueError(f"{field} must have {LUNA_DIM} entries, got {len(resolved)}")
+    if not np.all(np.isfinite(resolved)):
+        # These tables seed `start_pose`, `kp` and `kd`, which reach the SDK without passing
+        # through `joint_vector` -- the action path already rejects non-finite targets, and a
+        # NaN that only ever arrives through the configuration would otherwise be published
+        # for as long as the robot is connected.
+        raise ValueError(f"{field} contains non-finite values")
     return resolved
 
 

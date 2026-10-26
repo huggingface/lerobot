@@ -144,8 +144,20 @@ class LimxLuna(Robot):
         self._datatypes = datatypes
         self._sdk_motor_names = self._query_motor_names(robot)
 
-        self._stop.clear()
-        self._publisher = threading.Thread(target=self._publish_loop, name="limx-luna-publish", daemon=True)
+        # Each connection gets its own stop event and its own handle, and the publish thread
+        # closes over both.  A thread left behind by a previous connection (one that was still
+        # inside a blocking `publishRobotCmd` when `disconnect` gave up joining it) therefore
+        # sees its own event already set and its own handle no longer current, so it can never
+        # publish to the new connection.  Clearing a shared event instead -- as this used to do
+        # -- let such a thread resume against the freshly opened handle.
+        stop = threading.Event()
+        self._stop = stop
+        self._publisher = threading.Thread(
+            target=self._publish_loop,
+            args=(stop, robot, datatypes),
+            name="limx-luna-publish",
+            daemon=True,
+        )
         self._publisher.start()
 
         if calibrate:
@@ -246,22 +258,37 @@ class LimxLuna(Robot):
             self._latest_state = positions
             self._state_received_at = time.monotonic()
 
-    def _publish_loop(self) -> None:
-        """Republish the latest joint target at `publish_rate` until asked to stop."""
+    def _publish_loop(self, stop: threading.Event, robot: Any, datatypes: Any) -> None:
+        """Republish the latest joint target at `publish_rate` until this connection ends.
+
+        The target is read inside the publish lock rather than before it.  Reading it outside
+        let a stale snapshot win: the loop would take a copy of target A, then `send_action`
+        would install and send B and return, and only then would the loop publish A -- so the
+        robot received B followed by the older A.  Holding the lock across "read the target and
+        publish it" means the two callers are serialised over the whole operation, not just over
+        the SDK call.
+        """
         period = 1.0 / self.config.publish_rate
-        while not self._stop.is_set():
-            target = self._target
-            if target is not None:
-                try:
-                    self._publish(target)
-                except Exception:  # a transient publish failure must not kill the loop
-                    logger.exception("Failed to publish a LimX Luna joint command")
-            self._stop.wait(period)
+        while not stop.is_set():
+            with self._publish_lock:
+                # Checked under the lock as well: `disconnect` may have set it while this
+                # thread was waiting, and this thread must not touch the SDK after that.
+                if stop.is_set() or self._robot is not robot:
+                    return
+                target = self._target
+                if target is not None:
+                    try:
+                        self._send(robot, datatypes, target)
+                    except Exception:  # a transient publish failure must not kill the loop
+                        logger.exception("Failed to publish a LimX Luna joint command")
+            stop.wait(period)
 
-    def _publish(self, target: np.ndarray) -> None:
-        """Send one joint-position command built from the configured gains and names."""
-        robot, datatypes = self._require_connected()
+    def _send(self, robot: Any, datatypes: Any, target: np.ndarray) -> None:
+        """Send one joint-position command built from the configured gains and names.
 
+        Callers hold `_publish_lock`; this never takes it itself, so `send_action` can install a
+        new target and publish it as one atomic step.
+        """
         command = datatypes.RobotCmd()
         command.stamp = time.time_ns()
         # mode 0 is the SDK's "torque-position hybrid" mode (see datatypes.h); with zero
@@ -280,8 +307,7 @@ class LimxLuna(Robot):
         # space, so ask the controller to solve the linkages rather than treat the ankle and waist
         # values as motor positions (the vendor's "serial" joint space; see the module docstring).
         command.parallel_solve_required = [True] * LUNA_DIM
-        with self._publish_lock:
-            robot.publishRobotCmd(command)
+        robot.publishRobotCmd(command)
 
     # --------------------------------------------------------------- features
 
@@ -347,12 +373,14 @@ class LimxLuna(Robot):
         """
         # Check the connection first: "not connected" is a more useful failure than
         # "the action is missing a key" when the caller has not opened the robot yet.
-        self._require_connected()
+        robot, datatypes = self._require_connected()
         target = joint_vector(action, self.config.joint_names)
-        # Hand the target to the publish loop first, so a failure to send it once does not leave
-        # the loop republishing the previous pose.
-        self._target = target
-        self._publish(target)
+        # Install the target and publish it as one step under the publish lock.  Splitting these
+        # let the publish loop send the previous target after this call had already returned,
+        # which is how an older setpoint could land on the robot after a newer one.
+        with self._publish_lock:
+            self._target = target
+            self._send(robot, datatypes, target)
         return {
             pos_key(name): float(value) for name, value in zip(self.config.joint_names, target, strict=True)
         }
