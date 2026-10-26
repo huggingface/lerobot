@@ -85,3 +85,7 @@ lerobot-train \
     --accelerator.grad_scaler.init_scale=1024 \
     --accelerator.grad_scaler.growth_interval=2000 ...
 ```
+
+### TF32
+
+On Ampere and newer NVIDIA GPUs, LeRobot makes float32 matmuls and cuDNN convolutions use TF32 by default (`--tf32=true`). Use `--tf32=false` to keep them in full float32 precision, and `--tf32=null` leaves PyTorch's default settings.

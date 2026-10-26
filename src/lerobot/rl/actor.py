@@ -264,7 +264,9 @@ def act_with_policy(
     device = get_safe_torch_device(cfg.policy.device, log=True)
 
     torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = True
+    if cfg.tf32 is not None:
+        torch.backends.cuda.matmul.allow_tf32 = cfg.tf32
+        torch.backends.cudnn.allow_tf32 = cfg.tf32
 
     logging.info("make_policy")
 
