@@ -128,12 +128,14 @@ def test_a_finished_sim_world_starts_the_next_episode(where, request, tmp_path):
         robot.connect()
         # The toy terminates once x passes 1: one step of 2 ends the episode, and the world restarts.
         robot.send_action({"command_0": 2.0, "command_1": 0.0})
-        assert robot.latest.step[0] == 0 and not robot.latest.terminated[0]
+        # The finished step stays readable, while observations come from the next episode.
+        assert robot.latest.terminated[0] and robot.latest.is_success[0] and robot.latest.reward[0] == 1
         assert robot.get_observation()["state_0"] < 1
         # It truncates after 5 steps: the 5th step starts the next episode too.
         for _ in range(5):
             robot.send_action({"command_0": 0.0, "command_1": 0.0})
-        assert robot.latest.step[0] == 0 and not robot.latest.truncated[0]
+        assert robot.latest.truncated[0] and robot.latest.step[0] == 5
+        assert robot.get_observation()["state_0"] < 1
     finally:
         robot.disconnect()
 

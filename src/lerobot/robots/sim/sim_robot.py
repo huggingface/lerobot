@@ -35,8 +35,9 @@ class SimRobot(Robot):
     """A simulated environment as a robot: swappable with hardware, and like it, with no episode controls.
 
     Each sent action advances the environment exactly once; when its episode ends, the next one starts, as
-    Gymnasium's autoreset does. Its ``robot_type`` is the simulated body the environment declares, else
-    ``sim``; ``name`` stays ``sim``.
+    Gymnasium's autoreset does. ``latest`` keeps the result of the last step, so a finished episode's reward,
+    termination and success stay readable while observations come from the next episode. Its ``robot_type``
+    is the simulated body the environment declares, else ``sim``; ``name`` stays ``sim``.
     """
 
     config_class = SimRobotConfig
@@ -137,13 +138,10 @@ class SimRobot(Robot):
         self.latest = self._env.latest
         self._connected = True
 
-    def _snapshot(self) -> StepResult:
-        if self.latest is None:
-            raise RuntimeError("Connect before reading the environment")
-        return self.latest
-
     def get_observation(self) -> dict[str, Any]:
-        result = self._snapshot()
+        if not self._connected or self._env is None:
+            raise RuntimeError("Connect before reading the environment")
+        result = self._env.latest
         return {
             **{
                 key: float(value)
@@ -164,10 +162,10 @@ class SimRobot(Robot):
         if not self._connected or self._env is None:
             raise RuntimeError("Connect before sending an action")
         self._env.step(values)
-        if self._env.latest.terminated[0] or self._env.latest.truncated[0]:
+        self.latest = self._env.latest
+        if self.latest.terminated[0] or self.latest.truncated[0]:
             # As Gymnasium's autoreset does, a finished episode starts the next one.
             self._env.reset()
-        self.latest = self._env.latest
         return {name: float(value) for name, value in zip(names, values[0], strict=True)}
 
     def hold(self) -> None:
