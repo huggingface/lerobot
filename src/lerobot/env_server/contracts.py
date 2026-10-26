@@ -34,8 +34,6 @@ def decode_descriptor(data: dict[str, Any]) -> EnvDescriptor:
     values = {key: value for key, value in data.items() if key in known}
     values["features"] = tuple(FeatureSpec(**feature) for feature in values["features"])
     values["action_feature"] = FeatureSpec(**values["action_feature"])
-    values["gripper_indices"] = tuple(values.get("gripper_indices", ()))
-    values["command_retention_indices"] = tuple(values.get("command_retention_indices", ()))
     return EnvDescriptor(**values)
 
 

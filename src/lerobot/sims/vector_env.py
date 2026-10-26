@@ -16,7 +16,6 @@
 
 import contextlib
 import importlib
-import importlib.metadata
 import multiprocessing
 import traceback
 from collections.abc import Callable
@@ -232,9 +231,6 @@ class VectorEnv(gym.vector.VectorEnv):
             config.fps,
             self.tasks,
             int(getattr(env, "_max_episode_steps", 500)),
-            {"numpy": np.__version__, "gymnasium": importlib.metadata.version("gymnasium")},
-            config.gripper_indices,
-            config.command_retention_indices,
             config.robot_type,
             asdict(config),
         )

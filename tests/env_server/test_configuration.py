@@ -132,4 +132,4 @@ def test_server_configs_take_their_conventions_from_the_simulator(path):
 
     sim = SimConfig(**resolve(load_config(path, [])["sim"]))
     assert sim.semantics == f"{sim.type}-{sim.control.replace('_', '-')}-v1"
-    assert sim.action_names and set(sim.gripper_indices) <= set(range(len(sim.action_names)))
+    assert sim.action_names

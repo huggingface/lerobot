@@ -32,18 +32,14 @@ class SimConfig:
     kwargs: dict[str, Any] = field(default_factory=dict)
     state_names: tuple[str, ...] = ()
     action_names: tuple[str, ...] = ()
-    gripper_indices: tuple[int, ...] = ()
-    command_retention_indices: tuple[int, ...] = ()
     robot_type: str = ""
 
     def __post_init__(self) -> None:
         """Normalize component order and reject invalid controller declarations."""
         self.state_names = tuple(self.state_names)
         self.action_names = tuple(self.action_names)
-        self.gripper_indices = tuple(self.gripper_indices)
-        self.command_retention_indices = tuple(self.command_retention_indices)
         if (
-            self.control not in {"position", "delta", "eef_pose", "velocity"}
+            self.control not in {"position", "delta", "eef_pose"}
             or not self.semantics
             or not np.isfinite(self.fps)
             or self.fps <= 0
@@ -101,15 +97,12 @@ class EnvDescriptor:
     fps: float
     tasks: dict[str, list[str]]
     max_episode_steps: int
-    sim_build: dict[str, str]
-    gripper_indices: tuple[int, ...] = ()
-    command_retention_indices: tuple[int, ...] = ()
     robot_type: str = ""
     config: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Reject invalid environment metadata."""
-        if self.control not in {"position", "delta", "eef_pose", "velocity"}:
+        if self.control not in {"position", "delta", "eef_pose"}:
             raise ValueError("Unknown controller convention")
         if not np.isfinite(self.fps) or self.fps <= 0 or self.max_episode_steps <= 0:
             raise ValueError("FPS and episode limit must be positive")
@@ -117,11 +110,6 @@ class EnvDescriptor:
             raise ValueError("Actions require ordered component names")
         if len({feature.name for feature in self.features}) != len(self.features):
             raise ValueError("Duplicate observation features")
-        if any(
-            index < 0 or index >= self.action_feature.shape[0]
-            for index in self.gripper_indices + self.command_retention_indices
-        ):
-            raise ValueError("Invalid gripper component")
 
 
 @dataclass(frozen=True)

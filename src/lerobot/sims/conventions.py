@@ -48,7 +48,6 @@ _LIBERO = {
     "control": "delta",
     "state_names": _LIBERO_STATE,
     "action_names": _LIBERO_ACTION,
-    "gripper_indices": (6,),
     "robot_type": "panda",
 }
 _VLABENCH_NAMES = ("eef.x", "eef.y", "eef.z", "eef.euler.x", "eef.euler.y", "eef.euler.z", "gripper.opening")
@@ -89,7 +88,6 @@ CONVENTIONS: dict[str, Any] = {
         "control": "delta",
         "state_names": ("eef.x", "eef.y", "eef.z", "gripper.opening"),
         "action_names": ("eef.delta.x", "eef.delta.y", "eef.delta.z", "gripper.command"),
-        "gripper_indices": (3,),
         "robot_type": "sawyer",
     },
     "robocasa": {
@@ -110,8 +108,6 @@ CONVENTIONS: dict[str, Any] = {
             *(f"eef.delta.rotation.{a}" for a in "xyz"),
             "gripper.command",
         ),
-        "gripper_indices": (11,),
-        "command_retention_indices": (4,),
         "robot_type": "panda_omron",
     },
     "vlabench": {
@@ -119,7 +115,6 @@ CONVENTIONS: dict[str, Any] = {
         "control": "eef_pose",
         "state_names": _VLABENCH_NAMES,
         "action_names": _VLABENCH_NAMES,
-        "gripper_indices": (6,),
     },
     "robotwin": _robotwin,
     "robomme": _robomme,
@@ -131,8 +126,6 @@ DEFAULTS: dict[str, Any] = {
     "control": "position",
     "state_names": (),
     "action_names": (),
-    "gripper_indices": (),
-    "command_retention_indices": (),
     "robot_type": "",
 }
 

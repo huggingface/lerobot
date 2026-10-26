@@ -807,11 +807,7 @@ def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
     env_file.write_text(_ENVHUB_ENV + declared)
     resolved = envhub.resolve_envhub_sim({**sim, "fps": 50})
     assert (resolved["fps"], resolved["control"], resolved["semantics"]) == (50, "delta", "reach-delta-v1")
-    assert (resolved["state_names"], resolved["action_names"], resolved["gripper_indices"]) == (
-        ["x", "y"],
-        ["dx", "dy"],
-        [],
-    )
+    assert (resolved["state_names"], resolved["action_names"]) == (["x", "y"], ["dx", "dy"])
     assert resolved["robot_type"] == "so_follower"
     # Repositories without LEROBOT_SIM keep working with the defaults.
     env_file.write_text(_ENVHUB_ENV)
