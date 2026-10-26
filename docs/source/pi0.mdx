@@ -81,6 +81,7 @@ lerobot-train \
 - **`--policy.pretrained_path=lerobot/pi0_base`**: The base π₀ model you want to finetune, options are:
   - [lerobot/pi0_base](https://huggingface.co/lerobot/pi0_base)
   - [lerobot/pi0_libero](https://huggingface.co/lerobot/pi0_libero) (specifically trained on the Libero dataset)
+- **`--policy.optimizer_fused=true`**: Uses fused AdamW for faster optimizer steps; this flag is ignored when resuming a run
 
 ### Training Parameters Explained
 

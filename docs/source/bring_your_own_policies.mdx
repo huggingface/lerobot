@@ -24,6 +24,7 @@ Inherit from [`PreTrainedConfig`](https://github.com/huggingface/lerobot/blob/ma
 ```python
 # configuration_my_policy.py
 from dataclasses import dataclass, field
+import torch
 from lerobot.configs import PreTrainedConfig
 from lerobot.optim import AdamWConfig
 from lerobot.optim import CosineDecayWithWarmupSchedulerConfig
@@ -40,6 +41,8 @@ class MyPolicyConfig(PreTrainedConfig):
         hidden_dim: Hidden dimension for the policy network
         # Add your policy-specific parameters here
     """
+
+    dtype: torch.dtype | None = torch.bfloat16
 
     horizon: int = 50
     n_action_steps: int = 50
@@ -90,7 +93,7 @@ class MyPolicyConfig(PreTrainedConfig):
         return None
 ```
 
-The string you pass to `@register_subclass` must match `MyPolicy.name` (next section) and is what users supply as `--policy.type` on the CLI. Default to `AdamW` from `lerobot.optim` for `get_optimizer_preset` unless you genuinely need otherwise.
+The string you pass to `@register_subclass` must match `MyPolicy.name` (next section) and is what users supply as `--policy.type` on the CLI. Default to `AdamW` from `lerobot.optim` for `get_optimizer_preset` unless you genuinely need otherwise. `PreTrainedConfig` already declares `dtype: torch.dtype | None`; to give your policy a default precision, redeclare it with a `torch.dtype` value (e.g. `dtype: torch.dtype | None = torch.bfloat16`).
 
 ### Policy class
 

@@ -204,7 +204,7 @@ def main() -> None:
     lowstate_sub.Init()
 
     # initialize ZMQ
-    ctx = zmq.Context.instance()
+    ctx: zmq.Context = zmq.Context.instance()
 
     # receive commands from remote client
     lowcmd_sock = ctx.socket(zmq.PULL)

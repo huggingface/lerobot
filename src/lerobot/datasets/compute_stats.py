@@ -199,9 +199,9 @@ class RunningQuantileStats:
         idx = np.searchsorted(cumsum, target_count)
 
         if idx == 0:
-            return edges[0]
+            return float(edges[0])
         if idx >= len(cumsum):
-            return edges[-1]
+            return float(edges[-1])
 
         # If not edge case, interpolate within the bin
         count_before = cumsum[idx - 1]
@@ -209,11 +209,11 @@ class RunningQuantileStats:
 
         # If no samples in this bin, use the bin edge
         if count_in_bin == 0:
-            return edges[idx]
+            return float(edges[idx])
 
         # Linear interpolation within the bin
         fraction = (target_count - count_before) / count_in_bin
-        return edges[idx] + fraction * (edges[idx + 1] - edges[idx])
+        return float(edges[idx] + fraction * (edges[idx + 1] - edges[idx]))
 
 
 def estimate_num_samples(
@@ -492,7 +492,7 @@ def get_feature_stats(
     if reshaped.shape[0] < 2:
         stats = _compute_basic_stats(reshaped, sample_count, quantile_list)
     else:
-        running_stats = RunningQuantileStats()
+        running_stats = RunningQuantileStats(quantile_list=quantile_list)
         running_stats.update(reshaped)
         stats = running_stats.get_statistics()
         stats["count"] = np.array([sample_count])
@@ -528,6 +528,9 @@ def compute_episode_stats(
         leading channel axis (e.g. shape (3, 1, 1) for RGB). RGB stats are divided by
         255 to land in [0, 1]; depth maps (features flagged with ``is_depth_map``) skip
         this rescaling and remain in their stored units (stored in ``depth_unit``).
+        The count represents all episode frames, so sampled image/video estimates
+        are weighted by episode length when aggregated. Existing saved statistics
+        are not retroactively updated.
     """
     if quantile_list is None:
         quantile_list = DEFAULT_QUANTILES
@@ -556,6 +559,7 @@ def compute_episode_stats(
         )
 
         if features[key]["dtype"] in ["image", "video"]:
+            ep_stats[key]["count"] = np.array([len(data)])
             normalization_factor = 1.0 if is_depth_map(features[key]) else 255.0
             ep_stats[key] = {
                 k: v if k == "count" else np.squeeze(v / normalization_factor, axis=0)
