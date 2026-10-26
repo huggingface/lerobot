@@ -101,7 +101,8 @@ ENV LEROBOT_SIM_REQUIRE_NUMPY=1
 
 # ---------------------------------------------------------------------------- MetaWorld
 FROM base AS metaworld_native
-RUN uv pip install "metaworld==3.0.0"
+# MuJoCo 3.17 changed the equality-constraint data layout, which metaworld 3.0.0's mocap welds assume.
+RUN uv pip install "metaworld==3.0.0" "mujoco==3.15.0"
 
 # ---------------------------------------------------------------------------- EnvHub
 # Any EnvHub repository (user/repo[@revision][:env.py]). The launcher passes the repository's optional
@@ -184,7 +185,8 @@ USER user_lerobot
 # pytorch3d and CuRobo compile CUDA code with one nvcc job per core; --build-arg MAX_JOBS=4 bounds the memory.
 ARG MAX_JOBS
 # RoboTwin plans with CuRobo and pytorch3d, so this image ships its own torch.
-RUN uv pip install "torch==2.7.1" "torchvision==0.22.1" av scipy ninja
+# SAPIEN imports pkg_resources, which setuptools 82 removed.
+RUN uv pip install "torch==2.7.1" "torchvision==0.22.1" "setuptools<82" av scipy ninja
 RUN uv pip install --no-cache \
         "sapien==3.0.0b1" "mplib==0.2.1" "transforms3d==0.4.2" "trimesh==4.4.3" \
         "opencv-python-headless==4.10.0.84" \
