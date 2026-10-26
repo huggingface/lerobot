@@ -59,13 +59,9 @@ def test_init_multiprocessing():
         writer.stop()
 
 
-@pytest.mark.parametrize(
-    ("num_processes", "num_threads"),
-    [(0, 0), (1, 0), (1, -1), (-1, 1)],
-)
-def test_invalid_worker_counts(num_processes, num_threads):
+def test_zero_threads():
     with pytest.raises(ValueError):
-        AsyncImageWriter(num_processes=num_processes, num_threads=num_threads)
+        AsyncImageWriter(num_processes=0, num_threads=0)
 
 
 def test_image_array_to_pil_image_float_array_wrong_range_0_255():

@@ -1,1 +1,0 @@
-../../../../docs/source/policy_lingbot_vla_v2_README.md

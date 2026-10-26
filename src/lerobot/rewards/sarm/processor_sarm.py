@@ -262,11 +262,7 @@ class SARMEncodingProcessorStep(ProcessorStep):
         if any(column not in episodes_df.columns for column in columns) or ep_idx >= len(episodes_df):
             return None, None, None
 
-        annotations = (
-            episodes_df.at[ep_idx, columns[0]],
-            episodes_df.at[ep_idx, columns[1]],
-            episodes_df.at[ep_idx, columns[2]],
-        )
+        annotations = tuple(episodes_df.loc[ep_idx, column] for column in columns)
         if not self._annotations_are_usable(*annotations):
             return None, None, None
 

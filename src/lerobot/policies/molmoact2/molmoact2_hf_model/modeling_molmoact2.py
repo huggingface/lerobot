@@ -3086,7 +3086,6 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
         generator: torch.Generator | None = None,
         encoder_kv_states: Sequence[tuple[torch.Tensor, torch.Tensor]] | None = None,
         encoder_attention_mask: torch.Tensor | None = None,
-        noise: torch.Tensor | None = None,
     ) -> torch.Tensor:
         action_expert = self._require_action_expert()
         if encoder_kv_states is None:
@@ -3133,16 +3132,14 @@ class MolmoAct2Model(MolmoAct2PreTrainedModel):
         device = source_tensor.device
         action_horizon = self._resolve_action_horizon(action_horizon)
         trajectory_dtype = action_expert.action_embed.weight.dtype
-        if noise is None:
-            noise = torch.randn(
-                (batch_size, action_horizon, self.config.max_action_dim),
-                device=device,
-                dtype=trajectory_dtype,
-                generator=generator,
-            )
-        # The CUDA graph buffer reuses these strides, so an expanded noise has to be made contiguous.
+        trajectory = torch.randn(
+            (batch_size, action_horizon, self.config.max_action_dim),
+            device=device,
+            dtype=trajectory_dtype,
+            generator=generator,
+        )
         trajectory = self._mask_action_dim_tensor(
-            noise.to(device=device, dtype=trajectory_dtype).contiguous(),
+            trajectory,
             action_dim_is_pad=action_dim_is_pad,
             enabled=self.config.mask_action_dim_padding,
         )
