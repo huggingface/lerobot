@@ -20,7 +20,7 @@ At inference time only the Qwen backbone and action head are used; the world mod
 
 The rotary frequency expansion comes from [V-JEPA 2](https://github.com/facebookresearch/vjepa2/blob/main/src/models/utils/modules.py). [Upstream PR #15](https://github.com/facebookresearch/vjepa2/pull/15) by echosprint proposed the pairwise correction; [PR #75](https://github.com/facebookresearch/vjepa2/pull/75) documented it while keeping the original expansion for released-checkpoint compatibility. This VLA-JEPA change applies that known correction to the training-only world predictor.
 
-The correction to pairwise rotary frequencies keeps the world predictor's parameter names and shapes unchanged. Existing checkpoints continue to load, but predictor outputs and world-model training losses change relative to the earlier frequency-block repetition. Pretrained world-model quality needs separate evaluation when continuing training.
+The correction to pairwise rotary frequencies keeps the world predictor's parameter names and shapes unchanged. Existing checkpoints continue to load, but predictor outputs and world-model training losses change relative to the earlier frequency-block repetition. Pretrained world-model quality needs separate evaluation when continuing training. Checkpoints whose world model was trained before this fix can set `world_model_rope_legacy=true` to keep the expansion they were trained with.
 
 ---
 

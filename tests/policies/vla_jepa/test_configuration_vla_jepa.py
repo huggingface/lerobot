@@ -99,3 +99,7 @@ def test_dataset_metadata_survives_validate_features() -> None:
     assert config.state_dim == 14
     assert config.action_dim == 14
     assert config.input_features[OBS_STATE].shape == (14,)
+
+
+def test_world_model_rope_legacy_defaults_off() -> None:
+    assert VLAJEPAConfig.__dataclass_fields__["world_model_rope_legacy"].default is False
