@@ -1,0 +1,33 @@
+{
+  "name": "policy_postprocessor",
+  "steps": [
+    {
+      "config": {
+        "eps": 1e-08,
+        "features": {
+          "action": {
+            "shape": [
+              6
+            ],
+            "type": "ACTION"
+          }
+        },
+        "norm_map": {
+          "ACTION": "MIN_MAX",
+          "ENV": "IDENTITY",
+          "STATE": "IDENTITY",
+          "VISUAL": "IDENTITY"
+        }
+      },
+      "registry_name": "unnormalizer_processor",
+      "state_file": "policy_postprocessor_step_0_unnormalizer_processor.safetensors"
+    },
+    {
+      "config": {
+        "device": "cpu",
+        "float_dtype": null
+      },
+      "registry_name": "device_processor"
+    }
+  ]
+}
