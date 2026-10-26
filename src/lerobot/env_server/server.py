@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bounded simulator serving. All physics and world mutations run on the serving worker."""
+"""Bounded simulator serving. All environment mutations run on the serving worker."""
 
 import logging
 import time
@@ -25,6 +25,8 @@ from typing import Any
 import numpy as np
 
 from lerobot.sims.backend import Backend, BackendConfig
+from lerobot.sims.metadata import describe_backend
+from lerobot.sims.types import EnvDescriptor
 from lerobot.transport.wire.codec import CodecLimits, RGBImage, decode_message, encode_message
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import (
@@ -36,9 +38,9 @@ from lerobot.transport.zenoh import (
     ZenohTransport,
 )
 
-from .contracts import EnvDescriptor
+from .contracts import encode_descriptor, encode_step_result
 from .protocol import any_deployment_describe, deployment_prefix, instance_prefix, session_prefix
-from .session import Command, SimSession, check_open
+from .session import EnvSession, check_open
 
 logger = logging.getLogger(__name__)
 
@@ -54,19 +56,10 @@ class ServerConfig:
     max_sessions: int = 1
     request_timeout_s: float = 120
     presence_grace_s: float = 10
-    command_timeout_s: float = 1
 
 
-@dataclass
-class _Command(Command):
-    """A realtime command and the query waiting for its execution."""
-
-    message: Envelope | None = None
-    pending: PendingQuery | None = None
-
-
-class _Session(SimSession):
-    """A world session served to one client, alive while the client's presence token is."""
+class _Session(EnvSession):
+    """An environment session served while the client's presence token is alive."""
 
     def __init__(
         self,
@@ -91,7 +84,7 @@ class _Session(SimSession):
         self.token: PresenceToken = server.transport.declare_token(prefix + "/alive")
 
     def encode(self, reply: dict[str, Any]) -> dict[str, Any]:
-        """Send each world's camera frames as JPEG when the client asked for it at open."""
+        """Send each environment's camera frames as JPEG when requested at open."""
         result = reply.get("result")
         if self.encoding == "raw" or result is None:
             return reply
@@ -103,22 +96,14 @@ class _Session(SimSession):
         }
         return {**reply, "result": {**result, "obs": obs}}
 
-    def _command_done(self, command: Command, reply: dict[str, Any]) -> None:
-        assert isinstance(command, _Command) and command.message is not None and command.pending is not None
-        self.server._send(command.pending, command.message.reply(MessageType.ACK, self.encode(reply)))
-
-    def _command_failed(self, command: Command, code: ErrorCode, reason: str) -> None:
-        assert isinstance(command, _Command) and command.message is not None and command.pending is not None
-        self.server._send(command.pending, command.message.error(code, reason))
-
 
 class EnvServer:
-    """Serve world operations and physics ticks from one owner thread."""
+    """Serve explicit environment operations from one owner thread."""
 
     def __init__(self, config: ServerConfig):
         """Initialize owned resources without advancing simulation time."""
         self.config = config
-        if config.max_envs < 1 or config.max_sessions < 1 or config.command_timeout_s <= 0:
+        if config.max_envs < 1 or config.max_sessions < 1:
             raise ValueError("Server resource bounds must be positive")
         self.instance = uuid.uuid4().hex
         self.transport = ZenohTransport(config.zenoh)
@@ -128,7 +113,7 @@ class EnvServer:
         self.descriptor: EnvDescriptor
 
     def serve(self) -> None:
-        """Pump bounded requests and realtime worlds until stopped."""
+        """Pump bounded requests until stopped."""
         try:
             # Listen before probing: slow simulators must not exceed the clients' connect timeout.
             # Describe queries wait for the queryable declared below, within their own deadline.
@@ -136,7 +121,7 @@ class EnvServer:
             # Includes descriptor probing; native renderer setup stays on the owner thread.
             probe = Backend(self.config.sim)
             try:
-                self.descriptor = probe.descriptor()
+                self.descriptor = describe_backend(probe)
             finally:
                 probe.close()
             root = deployment_prefix(self.config.deployment)
@@ -161,7 +146,7 @@ class EnvServer:
                         except Empty:
                             break
                         self._reply(pending)
-                self._tick()
+                self._reap_sessions()
                 self.stop.wait(0.002)
         finally:
             for session_id in list(self.sessions):
@@ -186,9 +171,7 @@ class EnvServer:
         message = None
         try:
             message = decode_message(pending.payload)
-            body = self._dispatch(pending.key, message, pending)
-            if body is None:
-                return
+            body = self._dispatch(pending.key, message)
             reply = message.reply(MessageType.ACK if message.session_id else MessageType.ACCEPTED, body)
         except Exception as exc:
             code = exc.code if isinstance(exc, ProtocolError) else ErrorCode.EXECUTION
@@ -196,14 +179,12 @@ class EnvServer:
             logger.debug("Simulator request failed", exc_info=True)
         self._send(pending, reply)
 
-    def _dispatch(
-        self, key: str, message: Envelope, pending: PendingQuery | None = None
-    ) -> dict[str, Any] | None:
+    def _dispatch(self, key: str, message: Envelope) -> dict[str, Any]:
         if key in (deployment_prefix(self.config.deployment) + "/describe", any_deployment_describe()):
             return {
                 "deployment": self.config.deployment,
                 "instance": self.instance,
-                "descriptor": self.descriptor.to_dict(),
+                "descriptor": encode_descriptor(self.descriptor),
             }
         if message.instance_id != self.instance:
             raise ProtocolError(ErrorCode.STALE, "Simulator boot changed")
@@ -213,7 +194,7 @@ class EnvServer:
         if session is None or not key.startswith(session.prefix + "/"):
             raise ProtocolError(ErrorCode.STALE, "Unknown simulator session")
         if message.generation != session.generation:
-            raise ProtocolError(ErrorCode.STALE, "World generation changed")
+            raise ProtocolError(ErrorCode.STALE, "Environment generation changed")
         operation = key.rsplit("/", 1)[-1]
         body = message.body
         if operation == "control":
@@ -221,19 +202,16 @@ class EnvServer:
         if operation == "close":
             self._close_session(message.session_id)
             return {}
-        command = _Command(message.request_id, np.empty(0), message, pending) if pending else None
-        reply = session.handle(operation, body, command)
-        return None if reply is None else session.encode(reply)
+        return session.encode(session.handle(operation, body))
 
     def _open(self, body: dict) -> dict:
         count = body.get("num_envs", 1)
-        clock = body.get("clock", "lockstep")
-        async_worlds = body.get("async_worlds", False)
+        use_async_envs = body.get("use_async_envs", False)
         encoding = body.get("encoding", "raw")
         jpeg_quality = body.get("jpeg_quality", 90)
-        check_open(self.descriptor, count, clock, self.config.max_envs)
-        if type(async_worlds) is not bool:
-            raise ProtocolError(ErrorCode.MALFORMED, "async_worlds must be a boolean")
+        check_open(count, self.config.max_envs)
+        if type(use_async_envs) is not bool:
+            raise ProtocolError(ErrorCode.MALFORMED, "use_async_envs must be a boolean")
         if encoding not in {"raw", "jpeg"} or type(jpeg_quality) is not int or not 1 <= jpeg_quality <= 100:
             raise ProtocolError(
                 ErrorCode.UNSUPPORTED, "Image encoding must be raw or jpeg, quality in [1, 100]"
@@ -258,26 +236,24 @@ class EnvServer:
             self.config.sim,
             self.descriptor,
             count,
-            clock,
             body.get("task_group"),
             body.get("task_id", 0),
             body.get("seeds"),
-            self.config.command_timeout_s,
             encoding=encoding,
             jpeg_quality=jpeg_quality,
-            async_worlds=async_worlds,
+            use_async_envs=use_async_envs,
         )
         self.sessions[session_id] = session
         return session.encode(
             {
                 "session": session_id,
-                "result": session.opened.to_dict(),
+                "result": encode_step_result(session.opened),
                 "generation": 0,
-                "descriptor": session.backend.descriptor().to_dict(),
+                "descriptor": encode_descriptor(describe_backend(session.backend)),
             }
         )
 
-    def _tick(self) -> None:
+    def _reap_sessions(self) -> None:
         now = time.monotonic()
         for session_id, session in list(self.sessions.items()):
             lost = session.presence.dropped > 0
@@ -292,18 +268,6 @@ class EnvServer:
                     break
             if lost or (not session.seen_client and now - session.opened_at > self.config.presence_grace_s):
                 self._close_session(session_id)
-                continue
-            command = session.command
-            if (
-                session.due(now)
-                and isinstance(command, _Command)
-                and command.pending is not None
-                and command.pending.expired
-            ):
-                # The client already gave up; never execute a command it can no longer see.
-                command.pending.drop()
-                session.command = None
-            session.tick(now)
 
     def _close_session(self, session_id: str) -> None:
         session = self.sessions.pop(session_id)

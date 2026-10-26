@@ -25,7 +25,9 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from .utils import parse_camera_names
+from .utils import canonical_observation, parse_camera_names
+
+__all__ = ["canonical_observation", "create_envs"]
 
 RobotObservation = dict[str, Any]
 
@@ -422,3 +424,6 @@ def create_robocasa_envs(
         logger.info("Built vec env | task=%s | n_envs=%d", task_name, n_envs)
 
     return {name: dict(task_map) for name, task_map in out.items()}
+
+
+create_envs = create_robocasa_envs

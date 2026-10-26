@@ -14,7 +14,41 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+
+import numpy as np
+
+
+def canonical_observation(
+    obs: Mapping,
+    *,
+    flip_images: bool = False,
+) -> dict[str, np.ndarray]:
+    """Map the native wrappers' common values to canonical LeRobot observations."""
+    result = {}
+    pixels = obs.get("pixels")
+    if pixels is not None:
+        images = pixels if isinstance(pixels, dict) else {None: pixels}
+        for name, image in images.items():
+            image = np.asarray(image)
+            if image.ndim != 3 or image.shape[-1] != 3 or image.dtype != np.uint8:
+                raise ValueError("Canonical RGB requires HWC uint8")
+            if flip_images:
+                image = image[::-1, ::-1]
+            key = f"observation.images.{name}" if name is not None else "observation.image"
+            result[key] = np.ascontiguousarray(image)
+    for raw, canonical in (
+        ("agent_pos", "observation.state"),
+        ("environment_state", "observation.environment_state"),
+    ):
+        if raw in obs:
+            result[canonical] = np.asarray(obs[raw], dtype=np.float32)
+    handled = {"pixels", "agent_pos", "environment_state"}
+    for key, value in obs.items():
+        if key not in handled and isinstance(value, np.ndarray):
+            target = key if key.startswith("observation.") else f"observation.{key}"
+            result[target] = np.asarray(value, dtype=np.float32)
+    return result
 
 
 def parse_camera_names(camera_name: str | Sequence[str]) -> list[str]:

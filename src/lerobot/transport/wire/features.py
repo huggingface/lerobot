@@ -14,8 +14,8 @@
 
 """Torch-free canonical feature schemas and value validation shared by both services."""
 
-from dataclasses import dataclass, fields
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -58,13 +58,38 @@ class FeatureSpec:
             raise ValueError("Feature component names must be unique.")
 
 
-def feature_mismatch(actual: FeatureSpec, expected: FeatureSpec) -> str | None:
+class FeatureSpecLike(Protocol):
+    """Structural feature metadata accepted at transport boundaries."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def shape(self) -> tuple[int, ...]: ...
+
+    @property
+    def dtype(self) -> str: ...
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def names(self) -> tuple[str, ...]: ...
+
+    @property
+    def semantics(self) -> str: ...
+
+
+_FEATURE_FIELDS = ("name", "shape", "dtype", "kind", "names", "semantics")
+
+
+def feature_mismatch(actual: FeatureSpecLike, expected: FeatureSpecLike) -> str | None:
     """Describe the first incompatible schema field, without assigning service error semantics."""
-    for field in fields(FeatureSpec):
-        actual_value, expected_value = getattr(actual, field.name), getattr(expected, field.name)
+    for field in _FEATURE_FIELDS:
+        actual_value, expected_value = getattr(actual, field), getattr(expected, field)
         if actual_value != expected_value:
             return (
-                f"Feature {expected.name!r} field {field.name!r} differs: "
+                f"Feature {expected.name!r} field {field!r} differs: "
                 f"client={actual_value!r}, server={expected_value!r}"
             )
     return None
@@ -74,7 +99,7 @@ class NonFiniteArrayError(ValueError):
     """Distinguish malformed values from incompatible array schemas."""
 
 
-def validate_array(value: Any, feature: FeatureSpec, *, leading_shape: tuple[int, ...] = ()) -> None:
+def validate_array(value: Any, feature: FeatureSpecLike, *, leading_shape: tuple[int, ...] = ()) -> None:
     """Validate canonical NumPy values with optional batch or action-horizon dimensions."""
     shape = (*leading_shape, *feature.shape)
     if not isinstance(value, np.ndarray) or value.shape != shape or value.dtype.name != feature.dtype:

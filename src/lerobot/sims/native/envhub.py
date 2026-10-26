@@ -22,6 +22,10 @@ from typing import Any
 import gymnasium as gym
 from huggingface_hub import hf_hub_download, snapshot_download
 
+from .utils import canonical_observation
+
+__all__ = ["canonical_observation", "create_envs"]
+
 logger = logging.getLogger(__name__)
 
 # Simulator settings an EnvHub env.py may declare in a module-level LEROBOT_SIM dict, with the
@@ -199,11 +203,13 @@ def _normalize_hub_result(result: Any) -> dict[str, dict[int, gym.vector.VectorE
     )
 
 
-def _world_factories(vec: Any, n_envs: int) -> list:
-    """Take the per-world factories of a built vector env, then close it: the server builds worlds lazily."""
+def _env_factories(vec: Any, n_envs: int) -> list:
+    """Take a vector env's per-environment factories, then close it for lazy server construction."""
     fns = list(getattr(vec, "env_fns", None) or getattr(vec, "_env_fns", None) or ())
     if len(fns) != n_envs:
-        raise ValueError(f"Hub make_env must return vector envs built from {n_envs} per-world factories")
+        raise ValueError(
+            f"Hub make_env must return vector envs built from {n_envs} per-environment factories"
+        )
     vec.close()
     return fns
 
@@ -217,7 +223,7 @@ def create_envhub_envs(
     hub_cache_dir: str | None = None,
     make_env_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, dict[int, Any]]:
-    """Serve the worlds of a Hub repository's ``make_env``, called with ``make_env_kwargs``.
+    """Serve environments from a Hub repository's ``make_env``, called with ``make_env_kwargs``.
 
     ``task`` is unused: suites and task ids come from the repository, and clients select them.
     """
@@ -225,13 +231,13 @@ def create_envhub_envs(
     options = make_env_kwargs or {}
     result = _call_make_env(module, n_envs=n_envs, use_async_envs=False, cfg=None, **options)
     if isinstance(result, gym.Env):
-        # A single env has no reusable factory, so each world calls make_env again.
+        # A single env has no reusable factory, so each environment calls make_env again.
         suite = getattr(result.spec, "id", None) if result.spec else None
         result.close()
         fns = [lambda: _call_make_env(module, n_envs=1, use_async_envs=False, cfg=None, **options)] * n_envs
         return {suite or "hub_env": {0: env_cls(fns)}}
     return {
-        suite: {task_id: env_cls(_world_factories(vec, n_envs)) for task_id, vec in tasks.items()}
+        suite: {task_id: env_cls(_env_factories(vec, n_envs)) for task_id, vec in tasks.items()}
         for suite, tasks in _normalize_hub_result(result).items()
     }
 
@@ -264,3 +270,6 @@ def resolve_envhub_sim(sim: dict[str, Any]) -> dict[str, Any]:
         sorted(key for key in missing if key not in declared),
     )
     return resolved
+
+
+create_envs = create_envhub_envs

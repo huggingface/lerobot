@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import abc
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from typing import Any
@@ -28,6 +29,7 @@ from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipelin
 from lerobot.robots import RobotConfig
 from lerobot.sims.backend import BackendConfig
 from lerobot.sims.conventions import resolve, served_differences
+from lerobot.sims.types import EnvDescriptor
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
@@ -44,6 +46,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
     # Filled from the environment's description when it is created: its canonical observation names.
     features: dict[str, PolicyFeature] = field(default_factory=dict)
     features_map: dict[str, str] = field(default_factory=dict)
+    descriptor: EnvDescriptor | None = field(init=False, default=None, repr=False)
     max_parallel_tasks: int = 1
     disable_env_checker: bool = True
     # Where `lerobot-env-server` serves this environment; unset, it runs in this process.
@@ -96,19 +99,52 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         n_envs: int,
         use_async_envs: bool = False,
     ) -> dict[str, dict[int, gym.vector.VectorEnv]]:
-        """Create {suite: {task_id: BatchedEnv}} of ``n_envs`` worlds each, in-process or served.
+        """Create local or served vector environments grouped by suite and task.
 
-        ``use_async_envs`` runs each world in its own process, in-process or on the server, so a batch
-        steps in parallel.
+        ``use_async_envs`` runs each environment in its own worker process, locally or on the server.
         """
-        from lerobot.env_server.client import EnvClient
-        from lerobot.env_server.in_process import InProcessEnvClient
+        descriptor, make = self._environment_factory(n_envs, use_async_envs)
+        groups = [task.strip() for task in self.task.split(",")] if self.task else list(descriptor.tasks)
+        result = {}
+        for group in groups:
+            if group not in descriptor.tasks:
+                raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
+            result[group] = {int(task_id): make(group, int(task_id)) for task_id in descriptor.tasks[group]}
+        return result
 
-        from .batched import BatchedEnv
+    def create_env(
+        self,
+        task_group: str | None = None,
+        task_id: int = 0,
+        num_envs: int = 1,
+        use_async_envs: bool = False,
+    ) -> gym.vector.VectorEnv:
+        """Create one local or served environment for a specific task."""
+        descriptor, make = self._environment_factory(num_envs, use_async_envs)
+        group = task_group or next(iter(descriptor.tasks))
+        if group not in descriptor.tasks:
+            raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
+        task_ids = {int(value) for value in descriptor.tasks[group]}
+        if task_id not in task_ids:
+            raise ValueError(f"Unknown task ID {task_id} for {group!r}; this suite has {sorted(task_ids)}")
+        return make(group, task_id)
+
+    def _environment_factory(
+        self,
+        n_envs: int,
+        use_async_envs: bool,
+    ) -> tuple[EnvDescriptor, Callable[[str, int], gym.vector.VectorEnv]]:
+        from lerobot.sims.backend import Backend
+        from lerobot.sims.metadata import describe_backend
+        from lerobot.sims.vector_env import VectorEnv
 
         settings = self.sim_settings()
         endpoint = self.endpoint
         if endpoint is not None:
+            from lerobot.env_server.client import EnvClient
+
+            from .batched import BatchedEnv
+
             if self.max_parallel_tasks != 1:
                 raise ValueError("A served environment runs one task at a time")
             probe = EnvClient(endpoint, self.type, SERVED_TIMEOUT_S)
@@ -118,24 +154,31 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                 probe.close()
             check_served(descriptor.config, settings, endpoint)
 
-            def client() -> EnvClient | InProcessEnvClient:
-                return EnvClient(
-                    endpoint,
-                    self.type,
-                    SERVED_TIMEOUT_S,
-                    encoding=self.encoding,
-                    jpeg_quality=self.jpeg_quality,
+            def make(group: str, task_id: int) -> gym.vector.VectorEnv:
+                return BatchedEnv(
+                    EnvClient(
+                        endpoint,
+                        self.type,
+                        SERVED_TIMEOUT_S,
+                        encoding=self.encoding,
+                        jpeg_quality=self.jpeg_quality,
+                    ),
+                    n_envs,
+                    group,
+                    task_id,
+                    descriptor,
+                    use_async_envs and n_envs > 1,
                 )
         else:
             sim = self.backend_config()
-            local = InProcessEnvClient(sim)
+            local = Backend(sim)
             try:
-                descriptor = local.describe()
+                descriptor = describe_backend(local)
             finally:
                 local.close()
 
-            def client() -> EnvClient | InProcessEnvClient:
-                return InProcessEnvClient(sim, descriptor=descriptor)
+            def make(group: str, task_id: int) -> gym.vector.VectorEnv:
+                return VectorEnv(sim, n_envs, group, task_id, use_async_envs and n_envs > 1)
 
         self.fps = int(descriptor.fps)
         self.features = {
@@ -148,16 +191,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         # Canonical keys reach the policy unchanged; --rename_map aliases them like any env.
         self.features_map = {name: name for name in self.features}
         self.descriptor = descriptor
-        groups = [t.strip() for t in self.task.split(",")] if self.task else list(descriptor.tasks)
-        result = {}
-        for group in groups:
-            if group not in descriptor.tasks:
-                raise ValueError(f"Unknown task {group!r}; this environment has {sorted(descriptor.tasks)}")
-            result[group] = {
-                int(i): BatchedEnv(client(), n_envs, group, int(i), descriptor, use_async_envs and n_envs > 1)
-                for i in descriptor.tasks[group]
-            }
-        return result
+        return descriptor, make
 
     def get_env_processors(self):
         """Return (preprocessor, postprocessor) for this env. Default: identity."""

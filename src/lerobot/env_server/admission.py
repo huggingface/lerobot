@@ -16,7 +16,7 @@
 
 from typing import Any
 
-from .contracts import EnvDescriptor
+from lerobot.sims.types import EnvDescriptor
 
 # Placeholder cameras come from the checkpoint's own `empty_cameras` setting;
 # their values and shapes belong to policy preparation, not the simulator.

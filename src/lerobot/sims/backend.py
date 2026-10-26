@@ -15,12 +15,10 @@
 """Environment batches with explicit reset and absorbing terminal transitions."""
 
 import contextlib
-import importlib
-import importlib.metadata
 import multiprocessing
 import traceback
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from multiprocessing.connection import Connection
 from typing import Any
 
@@ -28,9 +26,8 @@ import numpy as np
 from gymnasium import spaces
 from gymnasium.vector.utils import CloudpickleWrapper
 
-from lerobot.env_server.contracts import EnvDescriptor, StepResult
-from lerobot.sims.adapters import canonical_observation
-from lerobot.transport.wire.features import FeatureSpec
+from lerobot.sims.native import load_native_integration
+from lerobot.sims.types import StepResult
 
 
 @dataclass
@@ -69,12 +66,12 @@ class _Factories:
         self.env_fns = env_fns
 
 
-# Attributes a world may expose, read back from its process after it is built and reset.
-_WORLD_ATTRS = ("task_description", "task", "_max_episode_steps")
+# Attributes an environment may expose, read back from its process after it is built and reset.
+_ENV_ATTRS = ("task_description", "task", "_max_episode_steps")
 
 
-def _world_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
-    """Build one world and run its reset/step commands until told to close."""
+def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
+    """Build one environment and run its reset/step commands until told to close."""
     try:
         env = make()
     except BaseException:
@@ -94,7 +91,7 @@ def _world_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
                 elif command == "spaces":
                     result = (env.observation_space, env.action_space)
                 else:
-                    result = {name: getattr(env, name) for name in _WORLD_ATTRS if hasattr(env, name)}
+                    result = {name: getattr(env, name) for name in _ENV_ATTRS if hasattr(env, name)}
                 pipe.send((True, result))
             except Exception:
                 pipe.send((False, traceback.format_exc()))
@@ -103,20 +100,20 @@ def _world_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
         pipe.close()
 
 
-class _ProcessWorld:
-    """One world in its own process. A batch of them steps in parallel: send all, then receive all."""
+class _ProcessEnv:
+    """One environment in its own process. A batch steps in parallel: send all, then receive all."""
 
     def __init__(self, make: Callable[[], Any]):
         context = multiprocessing.get_context("forkserver")
         self._pipe, child = context.Pipe()
         self._process = context.Process(
-            target=_world_worker, args=(child, CloudpickleWrapper(make)), daemon=True
+            target=_env_worker, args=(child, CloudpickleWrapper(make)), daemon=True
         )
         self._process.start()
         child.close()
 
     def ready(self) -> None:
-        """Wait until the world is built, then read its spaces and attributes."""
+        """Wait until the environment is built, then read its spaces and attributes."""
         self._receive()
         self.observation_space, self.action_space = self._call("spaces")
         self._refresh()
@@ -124,7 +121,7 @@ class _ProcessWorld:
     def _receive(self) -> Any:
         ok, value = self._pipe.recv()
         if not ok:
-            raise RuntimeError(f"World process failed: {value}")
+            raise RuntimeError(f"Environment process failed: {value}")
         return value
 
     def _call(self, command: str, argument: Any = None) -> Any:
@@ -162,9 +159,9 @@ class _ProcessWorld:
 
 
 class Backend:
-    """Own a batch of worlds and retain absorbing terminal transitions.
+    """Own a batch of environments and retain absorbing terminal transitions.
 
-    With ``async_worlds``, each world runs in its own process and the batch steps in parallel.
+    With ``use_async_envs``, each environment runs in its own process and the batch steps in parallel.
     """
 
     def __init__(
@@ -173,27 +170,24 @@ class Backend:
         num_envs: int = 1,
         group: str | None = None,
         task_id: int = 0,
-        async_worlds: bool = False,
+        use_async_envs: bool = False,
     ):
         """Initialize owned resources without advancing simulation time."""
         self.config = config
-        self.async_worlds = async_worlds
+        self.use_async_envs = use_async_envs
         self.num_envs = num_envs
         self.envs: list[Any] = []
         self.last: list[Any] = []
         self.steps: np.ndarray = np.zeros(num_envs, dtype=np.int64)
         self.sim_time = 0.0
-        if config.type == "toy":
-            factories = {"reach": {0: _Factories([lambda: ToyEnv() for _ in range(num_envs)])}}
-        else:
-            module_name = "libero" if config.type in {"libero_plus", "robocerebra"} else config.type
-            module = importlib.import_module(f"lerobot.sims.native.{module_name}")
-            kwargs = dict(config.kwargs)
-            if config.type == "libero_plus":
-                kwargs["is_libero_plus"] = True
-            factories = getattr(module, f"create_{module_name}_envs")(
-                task=config.task, n_envs=num_envs, env_cls=_Factories, **kwargs
-            )
+        integration = load_native_integration(config.type)
+        self.canonical_observation = integration.canonical_observation
+        factories = integration.create_envs(
+            task=config.task,
+            n_envs=num_envs,
+            env_cls=_Factories,
+            **dict(config.kwargs),
+        )
         self.tasks = {key: [str(i) for i in tasks] for key, tasks in factories.items()}
         group = group or next(iter(factories))
         try:
@@ -206,11 +200,11 @@ class Backend:
     def _ensure(self) -> None:
         if not self.envs:
             try:
-                if self.async_worlds:
-                    # Start every process before waiting, so the worlds build in parallel.
-                    self.envs.extend(_ProcessWorld(fn) for fn in self.fns)
-                    for world in self.envs:
-                        world.ready()
+                if self.use_async_envs:
+                    # Start every process before waiting, so the environments build in parallel.
+                    self.envs.extend(_ProcessEnv(fn) for fn in self.fns)
+                    for env in self.envs:
+                        env.ready()
                 else:
                     for fn in self.fns:
                         self.envs.append(fn())
@@ -218,74 +212,58 @@ class Backend:
                 self.close()
                 raise
 
-    def descriptor(self) -> EnvDescriptor:
-        """Describe this task using its observation and action spaces."""
+    def single_spaces(self) -> tuple[spaces.Dict, spaces.Box]:
+        """Return canonical single-environment observation and action spaces."""
         self._ensure()
         env = self.envs[0]
         if not isinstance(env.observation_space, spaces.Dict):
             raise ValueError(
-                "The simulator server needs dict observations, as in-process LeRobot does "
+                "LeRobot simulation needs dict observations "
                 f"(pixels, agent_pos, environment_state), got {env.observation_space}"
             )
-        obs = canonical_observation(env.observation_space.sample(), self.config.type)
-        features = []
-        for name, array in obs.items():
-            rgb = array.dtype == np.uint8
-            names = self.config.state_names if name == "observation.state" else ()
-            if not names and array.ndim == 1:
-                names = tuple(f"state_{i}" for i in range(array.shape[0]))
-            features.append(
-                FeatureSpec(
-                    name,
-                    array.shape,
-                    array.dtype.name,
-                    "rgb" if rgb else "tensor",
-                    names,
-                    self.config.semantics,
-                )
-            )
+        obs = self.canonical_observation(env.observation_space.sample())
         if not isinstance(env.action_space, spaces.Box) or len(env.action_space.shape) != 1:
-            raise ValueError(f"The simulator server needs a 1-D Box action space, got {env.action_space}")
-        dim = env.action_space.shape[0]
-        action_names = self.config.action_names or tuple(f"command_{i}" for i in range(dim))
-        return EnvDescriptor(
-            self.config.type,
-            self.config.semantics,
-            tuple(features),
-            FeatureSpec("action", (dim,), "float32", names=action_names, semantics=self.config.semantics),
-            self.config.control,
-            self.config.fps,
-            ("lockstep", "realtime"),
-            self.tasks,
-            int(getattr(env, "_max_episode_steps", 500)),
-            {"numpy": np.__version__, **{name: importlib.metadata.version(name) for name in ("gymnasium",)}},
-            self.config.gripper_indices,
-            self.config.command_retention_indices,
-            self.config.robot_type,
-            asdict(self.config),
+            raise ValueError(f"LeRobot simulation needs a 1-D Box action space, got {env.action_space}")
+        observation_space = spaces.Dict(
+            {
+                name: spaces.Box(
+                    0 if array.dtype == np.uint8 else -np.inf,
+                    255 if array.dtype == np.uint8 else np.inf,
+                    array.shape,
+                    array.dtype,
+                )
+                for name, array in obs.items()
+            }
         )
+        return observation_space, env.action_space
+
+    @property
+    def max_episode_steps(self) -> int:
+        """Maximum task duration declared by the selected environment."""
+        self._ensure()
+        return int(getattr(self.envs[0], "_max_episode_steps", 500))
 
     def reset(self, seeds: list[int | None] | None = None) -> StepResult:
-        """Reset every world with explicit seeds and clear terminal latches."""
+        """Reset every environment with explicit seeds and clear terminal latches."""
         self._ensure()
         seeds = seeds if seeds is not None else [None] * self.num_envs
         if len(seeds) != self.num_envs:
             raise ValueError("Seed count must match the batch size")
         self.last = []
-        if self.async_worlds:
+        if self.use_async_envs:
             for env, seed in zip(self.envs, seeds, strict=True):
                 env.send("reset", seed)
             results = [env.receive(refresh=True) for env in self.envs]
         else:
             results = [env.reset(seed=seed) for env, seed in zip(self.envs, seeds, strict=True)]
         for obs, _ in results:
-            self.last.append((canonical_observation(obs, self.config.type), 0.0, False, False, False))
+            self.last.append((self.canonical_observation(obs), 0.0, False, False, False))
         self.steps[:] = 0
         self.sim_time = 0.0
         return self.snapshot()
 
     def step(self, actions: np.ndarray) -> StepResult:
-        """Advance each unfinished world once and retain terminal transitions."""
+        """Advance each unfinished environment once and retain terminal transitions."""
         self._ensure()
         if not self.last:
             raise ValueError("Reset before stepping")
@@ -299,18 +277,18 @@ class Backend:
                 # Absorbing terminal state: keep the observation and flags, earn no further reward.
                 self.last[i] = (self.last[i][0], 0.0, *self.last[i][2:])
                 continue
-            if self.async_worlds:
+            if self.use_async_envs:
                 env.send("step", actions[i])
             running.append(i)
         for i in running:
             env = self.envs[i]
             obs, reward, terminated, truncated, info = (
-                env.receive() if self.async_worlds else env.step(actions[i])
+                env.receive() if self.use_async_envs else env.step(actions[i])
             )
             self.steps[i] += 1
             truncated = bool(truncated or self.steps[i] >= getattr(env, "_max_episode_steps", 500))
             self.last[i] = (
-                canonical_observation(obs, self.config.type),
+                self.canonical_observation(obs),
                 float(reward),
                 bool(terminated),
                 truncated,
@@ -349,47 +327,8 @@ class Backend:
         return [v[0][key].copy() for v in self.last]
 
     def close(self) -> None:
-        """Close every world, even when one of them fails to close."""
+        """Close every environment, even when one of them fails to close."""
         envs, self.envs = self.envs, []
         with contextlib.ExitStack() as stack:
             for env in envs:
                 stack.callback(env.close)
-
-
-class ToyEnv:
-    """Deterministic lightweight backend for protocol and rollout integration tests."""
-
-    def __init__(self):
-        """A 2-D point that starts near the origin and succeeds past x = 1."""
-        self.observation_space = spaces.Dict(
-            {
-                "agent_pos": spaces.Box(-100, 100, (2,), np.float32),
-                "pixels": spaces.Box(0, 255, (8, 8, 3), np.uint8),
-            }
-        )
-        self.action_space = spaces.Box(-1, 1, (2,), np.float32)
-        self._max_episode_steps = 5
-        self.task = "reach"
-        self.task_description = "Move to the target"
-        self.state: np.ndarray = np.zeros(2, dtype=np.float32)
-
-    def _obs(self):
-        return {"agent_pos": self.state.copy(), "pixels": self.render()}
-
-    def reset(self, seed=None):
-        """Place the point near the origin, from ``seed``."""
-        self.state = np.random.default_rng(seed).uniform(-0.1, 0.1, 2).astype(np.float32)
-        return self._obs(), {}
-
-    def step(self, action):
-        """Move the point by ``action``."""
-        self.state += action
-        success = bool(self.state[0] >= 1)
-        return self._obs(), float(success), success, False, {"is_success": success}
-
-    def render(self):
-        """An 8x8 image whose brightness encodes x."""
-        return np.full((8, 8, 3), int(np.clip(self.state[0] * 10 + 100, 0, 255)), dtype=np.uint8)
-
-    def close(self) -> None:
-        """Nothing to release."""

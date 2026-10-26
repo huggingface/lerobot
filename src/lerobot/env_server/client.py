@@ -18,12 +18,13 @@ import uuid
 from threading import RLock
 from typing import Any
 
+from lerobot.sims.types import EnvDescriptor, StepResult
 from lerobot.transport.wire.client import query_reply
 from lerobot.transport.wire.features import feature_mismatch
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import PresenceToken, ZenohConfig, ZenohTransport
 
-from .contracts import EnvDescriptor, ExecutionFeedback, StepResult, validate_result
+from .contracts import decode_descriptor, decode_step_result, validate_result
 from .protocol import any_deployment_describe, deployment_prefix, instance_prefix, session_prefix
 
 
@@ -62,10 +63,9 @@ class EnvClient:
         self.lock = RLock()
         self.failed = False
         self.num_envs = 0
-        self.execution: ExecutionFeedback | None = None
 
     def describe(self) -> EnvDescriptor:
-        """Discover the simulator boot and canonical schema without opening a world session."""
+        """Discover the simulator boot and canonical schema without opening an environment session."""
         with self.lock:
             self.transport.open()
             body = self._query(
@@ -78,12 +78,12 @@ class EnvClient:
             )
             self.deployment = body["deployment"]
             self.instance = body["instance"]
-            self.descriptor = EnvDescriptor.from_dict(body["descriptor"])
+            self.descriptor = decode_descriptor(body["descriptor"])
             return self.descriptor
 
     @property
     def prefix(self) -> str:
-        """Return the address of the currently owned world session."""
+        """Return the address of the currently owned environment session."""
         if not self.session or self.deployment is None:
             raise RuntimeError("Simulator session is not open")
         return session_prefix(self.deployment, self.instance, self.session)
@@ -91,15 +91,14 @@ class EnvClient:
     def open(
         self,
         num_envs: int,
-        clock: str,
         task_group: str | None = None,
         task_id: int = 0,
         seeds: list[int | None] | None = None,
-        async_worlds: bool = False,
+        use_async_envs: bool = False,
     ) -> StepResult:
-        """Admit an exclusive environment batch with the requested clock.
+        """Admit an explicitly stepped environment batch.
 
-        ``async_worlds`` asks the server to run each world in its own process, so the batch steps in parallel.
+        ``use_async_envs`` asks the server to run each environment in its own process.
         """
         with self.lock:
             if self.session:
@@ -112,18 +111,17 @@ class EnvClient:
                 MessageType.OPEN,
                 {
                     "num_envs": num_envs,
-                    "clock": clock,
                     "task_group": task_group,
                     "task_id": task_id,
                     "seeds": seeds,
-                    "async_worlds": async_worlds,
+                    "use_async_envs": use_async_envs,
                     "encoding": self.encoding,
                     "jpeg_quality": self.jpeg_quality,
                 },
                 self.setup_timeout_s,
             )
             assert self.descriptor is not None
-            opened_descriptor = EnvDescriptor.from_dict(body["descriptor"])
+            opened_descriptor = decode_descriptor(body["descriptor"])
             if (
                 tuple(f.name for f in opened_descriptor.features)
                 != tuple(f.name for f in self.descriptor.features)
@@ -145,12 +143,12 @@ class EnvClient:
             self.generation = body["generation"]
             self.token = self.transport.declare_token(self.prefix + "/client_alive")
             self.num_envs = num_envs
-            result = StepResult.from_dict(body["result"])
+            result = decode_step_result(body["result"])
             validate_result(result, self.descriptor, num_envs)
             return result
 
     def request(self, operation: str, **body: Any) -> dict[str, Any]:
-        """Issue one correlated world operation and fail on an ambiguous result."""
+        """Issue one correlated environment operation and fail on an ambiguous result."""
         with self.lock:
             if self.failed:
                 raise RuntimeError("Simulator session failed; close and reopen before continuing")
@@ -160,15 +158,14 @@ class EnvClient:
             try:
                 timeout = self.setup_timeout_s if operation == "reset" else self.timeout_s
                 result = self._query(key, MessageType.CONTROL, body, timeout)
-                # Execution feedback already validated its paired result in _query.
-                if "result" in result and "execution" not in result:
+                if "result" in result:
                     assert self.descriptor is not None
-                    validate_result(StepResult.from_dict(result["result"]), self.descriptor, self.num_envs)
+                    validate_result(decode_step_result(result["result"]), self.descriptor, self.num_envs)
                 if "generation" in result:
                     self.generation = result["generation"]
                 return result
             except Exception:
-                # A timed-out mutation may have executed. Never continue on an ambiguous world.
+                # A timed-out mutation may have executed. Never continue with ambiguous environment state.
                 self.failed = True
                 raise
 
@@ -186,22 +183,6 @@ class EnvClient:
             # Mutations are never retried, so a reply dropped under congestion is fatal: block instead.
             congestion_control="block",
         )
-        if "execution" in response.body:
-            assert self.descriptor is not None
-            execution = ExecutionFeedback.from_dict(
-                response.body["execution"], StepResult.from_dict(response.body["result"])
-            )
-            execution.validate(self.descriptor, self.num_envs)
-            if execution.generation != message.generation or (
-                body.get("operation", key.rsplit("/", 1)[-1]) in {"apply", "step"}
-                and execution.request_id != message.request_id
-            ):
-                raise ProtocolError(ErrorCode.STALE, "Execution differs from the active command")
-            if self.execution is not None and execution.sequence < self.execution.sequence:
-                raise ProtocolError(ErrorCode.STALE, "Execution sequence moved backwards")
-            self.execution = execution
-        elif "generation" in response.body:
-            self.execution = None
         return response.body
 
     def close(self) -> None:
@@ -217,4 +198,3 @@ class EnvClient:
                 self.instance = ""
                 self.descriptor = None
                 self.failed = False
-                self.execution = None

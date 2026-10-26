@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Batched lockstep worlds as a Gymnasium vector env, in this process or served; no native imports."""
+"""Served Gymnasium vector environments; no native simulator imports."""
 
 import gymnasium as gym
 import numpy as np
@@ -20,29 +20,26 @@ import torch
 from gymnasium.vector.utils import batch_space
 
 from lerobot.env_server.client import EnvClient
-from lerobot.env_server.contracts import EnvDescriptor, StepResult
-from lerobot.env_server.in_process import InProcessEnvClient
+from lerobot.env_server.contracts import decode_step_result
+from lerobot.sims.types import EnvDescriptor, StepResult
 
 
 class BatchedEnv(gym.vector.VectorEnv):
-    """``num_envs`` worlds of one task, stepped together in lockstep, with canonical observations.
-
-    ``client`` runs them in this process (``InProcessEnvClient``) or on an env server (``EnvClient``).
-    """
+    """``num_envs`` served environments of one task, stepped explicitly."""
 
     canonical_observations = True
 
     def __init__(
         self,
-        client: EnvClient | InProcessEnvClient,
+        client: EnvClient,
         num_envs: int = 1,
         task_group: str | None = None,
         task_id: int = 0,
         descriptor: EnvDescriptor | None = None,
-        async_worlds: bool = False,
+        use_async_envs: bool = False,
     ):
         self.client = client
-        self.async_worlds = async_worlds
+        self.use_async_envs = use_async_envs
         self.descriptor = descriptor or self.client.describe()
         self.num_envs = num_envs
         self.task_group = task_group or next(iter(self.descriptor.tasks))
@@ -70,10 +67,10 @@ class BatchedEnv(gym.vector.VectorEnv):
 
     def _open_session(self, seeds=None):
         # Not named `_ensure`: eval_policy_all prefetches envs exposing `_ensure`, and an
-        # unseeded prefetch open would reset the worlds before the seeded rollout reset.
+        # unseeded prefetch open would reset the environments before the seeded rollout reset.
         if not self.client.session:
             self.latest = self.client.open(
-                self.num_envs, "lockstep", self.task_group, self.task_id, seeds, self.async_worlds
+                self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs
             )
             assert self.client.descriptor is not None
             self.descriptor = self.client.descriptor
@@ -81,7 +78,7 @@ class BatchedEnv(gym.vector.VectorEnv):
         return False
 
     def _result(self, body):
-        self.latest = StepResult.from_dict(body["result"])
+        self.latest = decode_step_result(body["result"])
         return self.latest
 
     def reset(self, *, seed=None, options=None):
@@ -93,7 +90,7 @@ class BatchedEnv(gym.vector.VectorEnv):
             else self._result(self.client.request("reset", seeds=seed))
         )
         assert result is not None
-        return result.obs, {"is_success": result.is_success}
+        return result.obs, self._info(result)
 
     def step(self, actions):
         self._open_session()
@@ -103,8 +100,17 @@ class BatchedEnv(gym.vector.VectorEnv):
             result.reward,
             result.terminated,
             result.truncated,
-            {"is_success": result.is_success},
+            self._info(result),
         )
+
+    @staticmethod
+    def _info(result: StepResult) -> dict[str, object]:
+        return {
+            "is_success": result.is_success,
+            "task": result.task,
+            "step": result.step,
+            "sim_time": result.sim_time,
+        }
 
     def call(self, name, *args, **kwargs):
         if name == "_max_episode_steps":

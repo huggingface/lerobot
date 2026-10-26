@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A toy environment config, served or in-process, for the env server tests."""
+"""A toy environment config for local and served execution tests."""
 
 from dataclasses import dataclass
 

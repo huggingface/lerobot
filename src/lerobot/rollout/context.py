@@ -65,7 +65,7 @@ from lerobot.processor import (
 )
 from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
 from lerobot.robots import Robot, make_robot_from_config
-from lerobot.robots.sim import SimRobot, check_control_rate, check_teleop_clock
+from lerobot.robots.sim import SimRobot, check_control_rate
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.transport.wire.features import feature_mismatch
 from lerobot.utils.constants import OBS_STATE
@@ -336,7 +336,6 @@ def _connect_rollout_hardware(
     """Connect devices and capture the initial pose after policy/descriptor validation."""
     if cfg.robot is None:
         raise ValueError("--robot.type is required for rollout")
-    check_teleop_clock(cfg.robot, cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
     wrapper = ThreadSafeRobot(robot)
     teleop = None

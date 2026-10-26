@@ -21,8 +21,6 @@ from draccus.choice_types import ChoiceType
 from lerobot.envs.configs import EnvConfig
 from lerobot.robots.config import RobotConfig
 
-CLOCKS = ("realtime", "lockstep")
-
 
 def _embeds_robot(config_class: type) -> bool:
     return any(
@@ -60,7 +58,7 @@ class _SimulatedEnvChoices(ChoiceType):
 
 
 if TYPE_CHECKING:
-    SimulatedEnvConfig = EnvConfig
+    type SimulatedEnvConfig = EnvConfig
 else:
     SimulatedEnvConfig = _SimulatedEnvChoices
 
@@ -68,36 +66,18 @@ else:
 @RobotConfig.register_subclass("sim")
 @dataclass
 class SimRobotConfig(RobotConfig):
-    """One simulated world driven as a robot, in this process or served.
+    """One simulated environment driven as a robot, locally or served.
 
     ``env`` names the environment (``--robot.env.type=libero``); its ``task`` selects the suite and
-    ``task_id`` the task in it. With ``--robot.env.endpoint`` set, the world runs behind
+    ``task_id`` the task in it. With ``--robot.env.endpoint`` set, the environment runs behind
     ``lerobot-env-server``, which must serve that environment, as for a batched env.
-    A simulated world needs no calibration: ``calibration_dir`` is unused.
+    A simulated environment needs no calibration: ``calibration_dir`` is unused.
     """
 
     env: SimulatedEnvConfig | None = None
     task_id: int = 0
-    # realtime: the world advances at its control rate, also while the policy computes, as hardware does.
-    # lockstep: each sent action advances the world exactly one step.
-    clock: str = "realtime"
-    # Per-tick snapshot/apply/hold bound: a dead simulator must not stall the control loop.
-    timeout_s: float = 5.0
-    # Session open and world reset may build or rebuild native simulators.
-    setup_timeout_s: float = 120.0
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.clock not in CLOCKS:
-            raise ValueError(f"--robot.clock must be one of {CLOCKS}, got {self.clock!r}")
         if self.env is None:
             raise ValueError("A sim robot needs --robot.env.type")
-
-
-def check_teleop_clock(robot: RobotConfig | None, teleop: object | None) -> None:
-    """A person drives a world that moves on its own: refuse a teleoperator for a lockstep sim robot."""
-    if teleop is not None and isinstance(robot, SimRobotConfig) and robot.clock == "lockstep":
-        raise ValueError(
-            "--teleop needs --robot.clock=realtime: a lockstep world waits for each action instead of "
-            "moving with the person driving it"
-        )

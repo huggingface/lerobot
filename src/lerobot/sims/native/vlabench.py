@@ -37,6 +37,10 @@ import numpy as np
 from gymnasium import spaces
 from scipy.spatial.transform import Rotation
 
+from .utils import canonical_observation
+
+__all__ = ["canonical_observation", "create_envs"]
+
 RobotObservation = dict[str, Any]
 
 logger = logging.getLogger(__name__)
@@ -573,3 +577,6 @@ def create_vlabench_envs(
             out[group][tid] = env_cls(fns)
 
     return {group: dict(task_map) for group, task_map in out.items()}
+
+
+create_envs = create_vlabench_envs

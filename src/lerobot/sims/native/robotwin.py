@@ -31,6 +31,10 @@ from gymnasium import spaces
 
 from lerobot.utils.import_utils import _scipy_available
 
+from .utils import canonical_observation
+
+__all__ = ["canonical_observation", "create_envs"]
+
 RobotObservation = dict[str, Any]
 
 # scipy is only used for end-effector-pose composition (``--env.action_mode=ee``); guard it so this
@@ -634,3 +638,6 @@ def create_robotwin_envs(
         logger.info("Built vec env | task=%s | n_envs=%d", task_name, n_envs)
 
     return {k: dict(v) for k, v in out.items()}
+
+
+create_envs = create_robotwin_envs

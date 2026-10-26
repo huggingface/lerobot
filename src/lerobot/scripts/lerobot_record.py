@@ -133,7 +133,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.robots.sim import check_control_rate, check_teleop_clock
+from lerobot.robots.sim import check_control_rate
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -403,7 +403,6 @@ def record(
         else cfg.display_compressed_images
     )
 
-    check_teleop_clock(cfg.robot, cfg.teleop)
     robot = make_robot_from_config(cfg.robot)
     check_control_rate(robot, cfg.dataset.fps)
     teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None

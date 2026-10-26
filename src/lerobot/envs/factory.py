@@ -84,7 +84,7 @@ def make_env(
         cfg (EnvConfig | str): Either an `EnvConfig` object describing the environment, or a Hugging Face
             Hub repository identifier (e.g. `"username/repo"`), whose `env.py` builds the environments.
         n_envs (int, optional): The number of parallelized env to return. Defaults to 1.
-        use_async_envs (bool, optional): Whether to step the worlds in parallel processes. Defaults to
+        use_async_envs (bool, optional): Whether to step environments in parallel processes. Defaults to
             False.
         hub_cache_dir (str | None): Optional cache path for downloaded hub files.
         trust_remote_code (bool): **Explicit consent** to execute remote code from the Hub.

@@ -12,5 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_sim import SimRobotConfig as SimRobotConfig, check_teleop_clock as check_teleop_clock
-from .sim_robot import SimRobot as SimRobot, check_control_rate as check_control_rate
+from .configuration_sim import SimRobotConfig as SimRobotConfig
+from .sim_robot import (
+    EpisodeStatus as EpisodeStatus,
+    SimRobot as SimRobot,
+    check_control_rate as check_control_rate,
+)

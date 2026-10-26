@@ -25,6 +25,10 @@ import metaworld.policies as policies
 import numpy as np
 from gymnasium import spaces
 
+from .utils import canonical_observation
+
+__all__ = ["canonical_observation", "create_envs"]
+
 RobotObservation = dict[str, Any]
 
 # ---- Load configuration data from the external JSON file ----
@@ -321,3 +325,6 @@ def create_metaworld_envs(
 
     # return a plain dict for consistency
     return {group: dict(task_map) for group, task_map in out.items()}
+
+
+create_envs = create_metaworld_envs

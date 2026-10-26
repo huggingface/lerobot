@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Simulator backends; native dependencies are imported only when selected."""
+"""Simulation environments; native dependencies are imported only when selected."""

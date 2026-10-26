@@ -37,5 +37,5 @@ def instance_prefix(deployment: str, instance: str) -> str:
 
 
 def session_prefix(deployment: str, instance: str, session: str) -> str:
-    """Return an admitted world-session key."""
+    """Return an admitted environment-session key."""
     return f"{instance_prefix(deployment, instance)}/sessions/{validate_segment(session)}"

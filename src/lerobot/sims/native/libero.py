@@ -29,7 +29,10 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
+from .libero_observation import canonical_observation
 from .utils import parse_camera_names
+
+__all__ = ["canonical_observation", "create_envs"]
 
 RobotObservation = dict[str, Any]
 
@@ -520,3 +523,6 @@ def create_libero_envs(
             print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
 
     return {suite: dict(task_map) for suite, task_map in out.items()}
+
+
+create_envs = create_libero_envs

@@ -38,6 +38,10 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from .utils import canonical_observation
+
+__all__ = ["canonical_observation", "create_envs"]
+
 ROBOMME_TASKS = [
     "BinFill",
     "PickXtimes",
@@ -276,3 +280,6 @@ def create_robomme_envs(
             envs_by_task[task_id] = env_cls(fns)
         out[task_name] = envs_by_task
     return out
+
+
+create_envs = create_robomme_envs

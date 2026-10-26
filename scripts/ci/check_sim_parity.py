@@ -25,16 +25,17 @@ import numpy as np
 import yaml
 
 from lerobot.env_server.client import EnvClient
-from lerobot.env_server.contracts import StepResult
+from lerobot.env_server.contracts import decode_step_result
 from lerobot.sims.backend import Backend, BackendConfig
 from lerobot.sims.conventions import resolve
+from lerobot.sims.metadata import describe_backend
 
 
 def check(config_path: Path, steps: int = 5):
     config = yaml.safe_load(config_path.read_text())
     backend = Backend(BackendConfig(**resolve(config["sim"])))
     try:
-        descriptor = backend.descriptor()
+        descriptor = describe_backend(backend)
         actions = (
             np.random.default_rng(17)
             .uniform(-0.1, 0.1, (steps, 1, descriptor.action_feature.shape[0]))
@@ -67,10 +68,9 @@ def check(config_path: Path, steps: int = 5):
                             log.seek(0)
                             raise RuntimeError("Simulator startup failed:\n" + log.read()) from None
                 client.timeout_s = client.setup_timeout_s = 120
-                actual = [client.open(1, "lockstep", seeds=[123])]
+                actual = [client.open(1, seeds=[123])]
                 actual.extend(
-                    StepResult.from_dict(client.request("step", actions=action)["result"])
-                    for action in actions
+                    decode_step_result(client.request("step", actions=action)["result"]) for action in actions
                 )
                 for reference, remote in zip(expected, actual, strict=True):
                     assert reference.task == remote.task

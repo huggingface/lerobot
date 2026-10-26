@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Environments driven in this process behave as the same environments behind the env server."""
+"""Local environments behave like the same environments behind the env server."""
 
 import time
 from dataclasses import dataclass
@@ -20,57 +20,42 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from lerobot.env_server.client import EnvClient
-from lerobot.env_server.in_process import InProcessEnvClient
 from lerobot.robots.sim import SimRobot, SimRobotConfig
 from lerobot.sims.backend import BackendConfig
 from tests.env_server.toy_env import ToyEnvConfig
 
 
-def _episode(client: EnvClient | InProcessEnvClient) -> list[dict]:
+def _episode(config: ToyEnvConfig) -> list[tuple]:
+    env = config.create_env("reach", 0, num_envs=2)
     try:
-        client.open(2, "lockstep", seeds=[10, 20])
-        results = [client.request("reset", seeds=[10, 20])["result"]]
+        obs, info = env.reset(seed=[10, 20])
+        results = [(obs, np.zeros(2, np.float32), np.zeros(2, bool), np.zeros(2, bool), info)]
         for actions in ([[2, 0], [0, 0]], [[0.1, 0.1], [0.1, 0.1]], [[0.5, 0], [0.5, 0]]):
-            results.append(client.request("step", actions=np.array(actions, np.float32))["result"])
+            results.append(env.step(np.array(actions, np.float32)))
         return results
     finally:
-        client.close()
+        env.close()
 
 
-def test_in_process_client_matches_the_server(server):
-    served = _episode(EnvClient(server[1]))
-    local = _episode(InProcessEnvClient(BackendConfig()))
-    for expected, actual in zip(served, local, strict=True):
-        for key in ("reward", "terminated", "truncated", "is_success", "step"):
-            np.testing.assert_array_equal(actual[key], expected[key])
-        for name, value in expected["obs"].items():
-            np.testing.assert_array_equal(actual["obs"][name], value)
-        assert tuple(actual["task"]) == tuple(expected["task"])
+def test_local_environment_matches_the_server(server):
+    local = _episode(ToyEnvConfig())
+    served = _episode(ToyEnvConfig(endpoint=server[1]))
+    for expected, actual in zip(local, served, strict=True):
+        for expected_array, actual_array in zip(expected[1:4], actual[1:4], strict=True):
+            np.testing.assert_array_equal(actual_array, expected_array)
+        for name, value in expected[0].items():
+            np.testing.assert_array_equal(actual[0][name], value)
+        for key in ("is_success", "step"):
+            np.testing.assert_array_equal(actual[4][key], expected[4][key])
+        assert tuple(actual[4]["task"]) == tuple(expected[4]["task"])
 
 
-def test_in_process_realtime_world_keeps_ticking_while_idle(tmp_path):
-    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
-    try:
-        robot.connect()
-        robot.send_action(dict.fromkeys(robot.action_features, 0.0))
-        commanded = robot.latest.step[0]
-        # 20 fps: the world advances on its own while no new command arrives, as hardware does.
-        time.sleep(0.15)
-        robot.get_observation()
-        assert robot.latest.step[0] > commanded
-    finally:
-        robot.disconnect()
-
-
-@pytest.mark.parametrize("where", ["in_process", "served"])
-def test_lockstep_sim_robot_advances_once_per_action(where, request, tmp_path):
+@pytest.mark.parametrize("where", ["local", "served"])
+def test_sim_robot_advances_once_per_action(where, request, tmp_path):
     if where == "served":
-        config = SimRobotConfig(
-            env=ToyEnvConfig(endpoint=request.getfixturevalue("server")[1]), clock="lockstep"
-        )
+        config = SimRobotConfig(env=ToyEnvConfig(endpoint=request.getfixturevalue("server")[1]))
     else:
-        config = SimRobotConfig(env=ToyEnvConfig(), clock="lockstep")
+        config = SimRobotConfig(env=ToyEnvConfig())
     config.calibration_dir = tmp_path
     robot = SimRobot(config)
     try:
@@ -91,11 +76,9 @@ def test_lockstep_sim_robot_advances_once_per_action(where, request, tmp_path):
         robot.disconnect()
 
 
-def test_sim_robot_config_needs_an_env_or_an_endpoint():
+def test_sim_robot_config_needs_an_environment():
     with pytest.raises(ValueError, match="--robot.env.type"):
         SimRobotConfig()
-    with pytest.raises(ValueError, match="--robot.clock"):
-        SimRobotConfig(env=ToyEnvConfig(), clock="fast")
 
 
 def test_sim_robot_env_choices_exclude_envs_built_around_a_robot():
@@ -115,11 +98,11 @@ def test_sim_robot_env_choices_exclude_envs_built_around_a_robot():
     limit = sys.getrecursionlimit()
     sys.setrecursionlimit(300)
     try:
-        args = ["--robot.type=sim", "--robot.env.type=toy_test", "--robot.clock=lockstep"]
+        args = ["--robot.type=sim", "--robot.env.type=toy_test"]
         cfg = draccus.parse(Wrapper, args=args)
     finally:
         sys.setrecursionlimit(limit)
-    assert isinstance(cfg.robot.env, ToyEnvConfig) and cfg.robot.clock == "lockstep"
+    assert isinstance(cfg.robot.env, ToyEnvConfig)
     with pytest.raises(SystemExit):
         draccus.parse(Wrapper, args=["--robot.type=sim", "--robot.env.type=gym_manipulator"])
 
@@ -142,9 +125,10 @@ def _served(deployment: str):
     return server, thread, endpoint
 
 
-@pytest.mark.parametrize("where", ["in_process", "served"])
-def test_env_config_creates_batched_envs_in_process_or_served(where):
+@pytest.mark.parametrize("where", ["local", "served"])
+def test_env_config_creates_vector_envs_locally_or_served(where):
     from lerobot.envs.batched import BatchedEnv
+    from lerobot.sims.vector_env import VectorEnv
 
     config = ToyEnvConfig()
     server = thread = None
@@ -153,7 +137,8 @@ def test_env_config_creates_batched_envs_in_process_or_served(where):
     try:
         envs = config.create_envs(n_envs=2)
         env = envs["reach"][0]
-        assert isinstance(env, BatchedEnv)
+        expected_type = BatchedEnv if where == "served" else VectorEnv
+        assert isinstance(env, expected_type)
         # Canonical observation names, as the server describes them.
         assert set(config.features) == {"observation.state", "observation.image", "action"}
         obs, _ = env.reset(seed=[1, 2])
@@ -179,15 +164,15 @@ def test_served_env_must_be_the_env_the_command_describes():
 
 
 def test_sim_robot_records_the_body_its_env_declares(tmp_path):
-    from lerobot.env_server.contracts import EnvDescriptor
+    from lerobot.env_server.contracts import decode_descriptor, encode_descriptor
 
     for declared, expected in ((None, "sim"), ("so_follower", "so_follower")):
         robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(robot_type=declared), calibration_dir=tmp_path))
         try:
             assert (robot.name, robot.robot_type) == ("sim", expected)
             # A newer server may declare more: this client keeps what it knows.
-            wire = {**robot.descriptor.to_dict(), "joint_units": ["rad", "rad"]}
-            assert EnvDescriptor.from_dict(wire).robot_type == robot.descriptor.robot_type
+            wire = {**encode_descriptor(robot.descriptor), "joint_units": ["rad", "rad"]}
+            assert decode_descriptor(wire).robot_type == robot.descriptor.robot_type
         finally:
             robot.disconnect()
     # Served, a server simulating another body is refused: its datasets would record the wrong robot.
@@ -201,12 +186,12 @@ def test_sim_robot_records_the_body_its_env_declares(tmp_path):
         thread.join(5)
 
 
-def test_worlds_in_their_own_processes_match_sequential_worlds():
+def test_environments_in_separate_processes_match_sequential_environments():
     from lerobot.sims.backend import Backend
 
     results = []
-    for async_worlds in (False, True):
-        backend = Backend(BackendConfig(), num_envs=3, async_worlds=async_worlds)
+    for use_async_envs in (False, True):
+        backend = Backend(BackendConfig(), num_envs=3, use_async_envs=use_async_envs)
         try:
             steps = [backend.reset([4, 5, 6])]
             for actions in ([[2, 0], [0.1, 0], [0, 0]], [[0.3, 0.1]] * 3):
@@ -219,14 +204,6 @@ def test_worlds_in_their_own_processes_match_sequential_worlds():
         np.testing.assert_array_equal(parallel.terminated, sequential.terminated)
         np.testing.assert_array_equal(parallel.step, sequential.step)
         assert parallel.task == sequential.task
-
-
-def test_teleop_needs_a_realtime_sim_robot():
-    from lerobot.robots.sim import check_teleop_clock
-
-    check_teleop_clock(SimRobotConfig(env=ToyEnvConfig()), teleop=object())
-    with pytest.raises(ValueError, match="--robot.clock=realtime"):
-        check_teleop_clock(SimRobotConfig(env=ToyEnvConfig(), clock="lockstep"), teleop=object())
 
 
 def test_sim_robot_names_the_actions_it_takes(tmp_path):
@@ -250,17 +227,40 @@ def test_batched_env_works_under_gymnasium_vector_wrappers():
         env.close()
 
 
-def test_a_finished_sim_world_starts_the_next_episode(tmp_path):
-    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), clock="lockstep", calibration_dir=tmp_path))
+@pytest.mark.parametrize("where", ["local", "served"])
+def test_sim_robot_preserves_episode_end_until_explicit_reset(where, request, tmp_path):
+    config = ToyEnvConfig(endpoint=request.getfixturevalue("server")[1] if where == "served" else None)
+    robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
     try:
         robot.connect()
-        # The toy terminates once x passes 1: one step of 2 ends the episode, and the world restarts.
+        assert robot.task_description == "Move to the target"
+
+        # The toy terminates once x passes 1. Preserve that transition for the episode owner.
         robot.send_action({"command_0": 2.0, "command_1": 0.0})
-        assert robot.latest.step[0] == 0 and not robot.latest.terminated[0]
-        assert robot.get_observation()["state_0"] < 1
-        # It truncates after 5 steps: the 5th step starts the next episode too.
+        assert robot.episode_status.terminated
+        assert robot.episode_status.is_success
+        assert robot.episode_status.reward == 1
+        assert robot.episode_status.step == 1
+        terminal_observation = robot.get_observation()
+        assert terminal_observation["state_0"] >= 1
+
+        # Further commands cannot advance a terminal environment.
+        robot.send_action({"command_0": -1.0, "command_1": 0.0})
+        assert robot.episode_status.done
+        assert robot.episode_status.step == 1
+        frozen_observation = robot.get_observation()
+        for name, value in terminal_observation.items():
+            np.testing.assert_array_equal(frozen_observation[name], value)
+
+        initial_observation = robot.reset(seed=3)
+        assert not robot.episode_status.done
+        assert robot.episode_status.step == 0
+        assert initial_observation["state_0"] < 1
+
+        # Truncation is preserved in the same way.
         for _ in range(5):
             robot.send_action({"command_0": 0.0, "command_1": 0.0})
-        assert robot.latest.step[0] == 0 and not robot.latest.truncated[0]
+        assert robot.episode_status.truncated
+        assert robot.episode_status.step == 5
     finally:
         robot.disconnect()

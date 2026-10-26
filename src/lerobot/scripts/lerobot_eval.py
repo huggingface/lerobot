@@ -805,10 +805,11 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
         trust_remote_code=cfg.trust_remote_code,
     )
 
-    if getattr(cfg.env, "descriptor", None) is not None:
+    descriptor = getattr(cfg.env, "descriptor", None)
+    if descriptor is not None:
         from lerobot.env_server.admission import validate_checkpoint
 
-        validate_checkpoint(cfg.env.descriptor, cfg.policy, cfg.rename_map)
+        validate_checkpoint(descriptor, cfg.policy, cfg.rename_map)
 
     logging.info("Making policy.")
     policy = make_policy(

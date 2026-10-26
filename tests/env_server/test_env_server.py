@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from lerobot.env_server.client import EnvClient
-from lerobot.sims.adapters import canonical_observation, hold_action
+from lerobot.sims.native.libero_observation import canonical_observation
 from lerobot.transport.wire.protocol import ErrorCode, ProtocolError
 from lerobot.transport.zenoh import ZenohConfig
 from tests.env_server.toy_env import ToyEnvConfig
@@ -58,14 +58,14 @@ for prefix in ('torch', 'lerobot.policies', 'lerobot.remote_inference'):
     )
 
 
-@pytest.mark.parametrize("async_worlds", [False, True])
-def test_batch_terminal_freeze_and_seed_parity(server, async_worlds):
+@pytest.mark.parametrize("use_async_envs", [False, True])
+def test_batch_terminal_freeze_and_seed_parity(server, use_async_envs):
     _, endpoint = server
     with_client = EnvClient(endpoint)
     try:
         descriptor = with_client.describe()
         assert descriptor.action_feature.shape == (2,)
-        with_client.open(2, "lockstep", async_worlds=async_worlds)
+        with_client.open(2, use_async_envs=use_async_envs)
         first = with_client.request("reset", seeds=[10, 20])["result"]
         second = with_client.request("reset", seeds=[10, 20])["result"]
         np.testing.assert_array_equal(first["obs"]["observation.state"], second["obs"]["observation.state"])
@@ -93,10 +93,10 @@ def test_admission_and_stale_generation(server):
     other = EnvClient(endpoint)
     try:
         with pytest.raises(ProtocolError, match="between 1 and 32"):
-            client.open(33, "lockstep")
-        client.open(1, "lockstep")
+            client.open(33)
+        client.open(1)
         with pytest.raises(ProtocolError) as error:
-            other.open(1, "lockstep")
+            other.open(1)
         assert error.value.code == ErrorCode.BUSY
         client.request("reset")
         client.generation = 0
@@ -146,7 +146,7 @@ def test_vector_client(server):
         env.close()
 
 
-def test_robot_and_command_hold(server, tmp_path):
+def test_robot_hold_does_not_advance_environment(server, tmp_path):
     from lerobot.robots.sim import SimRobot, SimRobotConfig
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 
@@ -158,8 +158,9 @@ def test_robot_and_command_hold(server, tmp_path):
         robot.connect()
         assert len(wrapper.get_observation()) == 3
         wrapper.send_action({"command_0": 0.5, "command_1": 0})
+        step = robot.episode_status.step
         wrapper.hold()
-        np.testing.assert_array_equal(server[0].sessions[robot.client.session].target, 0)
+        assert robot.episode_status.step == step
     finally:
         robot.disconnect()
 
@@ -176,8 +177,7 @@ def test_sim_robot_registration(server, tmp_path):
         robot.connect()
         action = dict.fromkeys(robot.action_features, 0.0)
         assert robot.send_action(action) == action
-        assert robot.client.execution.generation == robot.client.generation
-        assert robot.client.execution.result.step[0] == robot.latest.step[0]
+        assert robot.episode_status.step == 1
     finally:
         robot.disconnect()
 
@@ -198,7 +198,7 @@ def test_libero_numpy_adapter_parity():
         return {k: batch(v) for k, v in value.items()} if isinstance(value, dict) else value[None]
 
     expected = LiberoProcessorStep().observation(preprocess_observation(batch(native)))
-    actual = canonical_observation(native, "libero")
+    actual = canonical_observation(native)
     np.testing.assert_allclose(
         actual["observation.state"], expected["observation.state"][0].numpy(), atol=1e-6
     )
@@ -208,16 +208,11 @@ def test_libero_numpy_adapter_parity():
     )
 
 
-def test_delta_hold_retains_gripper():
-    action = np.array([[1, 2, 3, 0.7]], np.float32)
-    np.testing.assert_array_equal(hold_action(action, "delta", (3,)), [[0, 0, 0, action[0, 3]]])
-
-
 def test_server_loss_fails_session(server):
     running, endpoint = server
     client = EnvClient(endpoint, timeout_s=0.1)
     try:
-        client.open(1, "lockstep")
+        client.open(1)
         running.stop.set()
         assert running.stop.is_set()
         time.sleep(0.03)
@@ -228,32 +223,10 @@ def test_server_loss_fails_session(server):
         client.close()
 
 
-def test_failed_robot_stays_connected_until_disconnect(server, tmp_path):
-    from lerobot.robots.sim import SimRobot, SimRobotConfig
-
-    running, endpoint = server
-    robot = SimRobot(
-        SimRobotConfig(env=ToyEnvConfig(endpoint=endpoint), calibration_dir=tmp_path, timeout_s=0.1)
-    )
-    robot.connect()
-    session = robot.client.session
-    with pytest.raises(ValueError):
-        robot.client.request("step", actions=np.zeros((1, 2), np.float32))  # realtime rejects step
-    assert robot.client.failed
-    # Rollout teardown only disconnects connected robots; a failed session must still be released.
-    assert robot.is_connected
-    robot.disconnect()
-    assert not robot.is_connected
-    deadline = time.monotonic() + 2
-    while session in running.sessions and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert session not in running.sessions
-
-
 def test_client_loss_releases_ownership(server):
     running, endpoint = server
     client = EnvClient(endpoint)
-    client.open(1, "lockstep")
+    client.open(1)
     time.sleep(0.03)
     client.transport.close()  # No close query: exercise liveliness cleanup.
     deadline = time.monotonic() + 2
@@ -262,7 +235,7 @@ def test_client_loss_releases_ownership(server):
     assert not running.sessions
     other = EnvClient(endpoint)
     try:
-        other.open(1, "lockstep")
+        other.open(1)
     finally:
         other.close()
 
@@ -543,7 +516,7 @@ def test_sim_robot_remote_inference_engine(server, tmp_path):
 
 def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
     from lerobot.envs.batched import BatchedEnv
-    from lerobot.sims.backend import ToyEnv
+    from lerobot.sims.native.toy import ToyEnv
 
     original = ToyEnv.reset
 
@@ -566,7 +539,7 @@ def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
         env.close()
 
 
-def test_rollout_rejects_checkpoint_schema_before_opening_world(server, tmp_path, monkeypatch):
+def test_rollout_rejects_checkpoint_schema_before_opening_environment(server, tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     from lerobot.configs.types import FeatureType, PolicyFeature
@@ -592,7 +565,7 @@ def test_rollout_rejects_checkpoint_schema_before_opening_world(server, tmp_path
     with pytest.raises(ValueError, match="control rate"):
         context._connect_rollout_hardware(cfg)
     assert not server[0].sessions
-    assert robot.client.descriptor is None
+    assert not robot.is_connected
 
 
 def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
@@ -694,6 +667,7 @@ def make_env(n_envs=1, use_async_envs=False):
 
 def test_envhub_backend_serves_a_hub_repository(tmp_path, monkeypatch):
     from lerobot.sims import backend as backend_module
+    from lerobot.sims.metadata import describe_backend
     from lerobot.sims.native import envhub
 
     env_file = tmp_path / "env.py"
@@ -705,7 +679,7 @@ def test_envhub_backend_serves_a_hub_repository(tmp_path, monkeypatch):
     )
     backend = backend_module.Backend(config, num_envs=2)
     try:
-        descriptor = backend.descriptor()
+        descriptor = describe_backend(backend)
         assert backend.tasks == {"reach_suite": ["0"]}
         assert {f.name: (f.shape, f.kind) for f in descriptor.features} == {
             "observation.images.front": ((8, 8, 3), "rgb"),
@@ -727,6 +701,7 @@ def test_envhub_backend_serves_a_hub_repository(tmp_path, monkeypatch):
 def test_envhub_make_env_takes_the_options_of_the_command(tmp_path, monkeypatch):
     from lerobot.envs.configs import HubEnvConfig
     from lerobot.sims import backend as backend_module
+    from lerobot.sims.metadata import describe_backend
     from lerobot.sims.native import envhub
 
     # The repository's make_env sizes its camera from an option of its own.
@@ -752,7 +727,7 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
     config = HubEnvConfig(hub_path="user/reach", trust_remote_code=True, make_env_kwargs={"size": 4})
     backend = backend_module.Backend(backend_module.BackendConfig(**config.sim_settings()), num_envs=1)
     try:
-        shapes = {f.name: f.shape for f in backend.descriptor().features}
+        shapes = {f.name: f.shape for f in describe_backend(backend).features}
         assert shapes["observation.images.front"] == (4, 4, 3)
     finally:
         backend.close()
@@ -802,10 +777,11 @@ def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
 
 def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
     from lerobot.sims import backend as backend_module
+    from lerobot.sims.metadata import describe_backend
     from lerobot.sims.native import envhub
 
     env_file = tmp_path / "env.py"
-    # A flat array observation, which in-process LeRobot does not accept either.
+    # A flat array observation, which local LeRobot execution does not accept either.
     env_file.write_text(
         "import gymnasium as gym\n"
         "def make_env(n_envs=1, use_async_envs=False):\n"
@@ -818,7 +794,7 @@ def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
     backend = backend_module.Backend(config, num_envs=1)
     try:
         with pytest.raises(ValueError, match="dict observations"):
-            backend.descriptor()
+            describe_backend(backend)
     finally:
         backend.close()
 
