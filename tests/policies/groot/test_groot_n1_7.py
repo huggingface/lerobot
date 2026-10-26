@@ -34,9 +34,9 @@ from lerobot.policies.groot.configuration_groot import (
     GROOT_N1_7,
     GROOT_N1_7_BASE_MODEL,
     GrootConfig,
-    infer_groot_n1_7_action_execution_horizon,
-    infer_groot_n1_7_action_horizon,
+    groot_n1_7_action_execution_horizon,
     normalize_groot_model_version,
+    read_groot_n1_7_action_horizons,
 )
 from lerobot.policies.groot.modeling_groot import GrootPolicy
 from lerobot.policies.groot.processor_groot import (
@@ -2769,8 +2769,8 @@ def test_groot_n1_7_libero_execution_horizon_uses_core_eight_action_cadence(tmp_
     model_path = tmp_path / "libero_spatial"
     _write_raw_n1_7_libero_checkpoint(model_path)
 
-    assert infer_groot_n1_7_action_horizon(model_path, "libero_sim") == 16
-    assert infer_groot_n1_7_action_execution_horizon(model_path, "libero_sim") == 8
+    assert read_groot_n1_7_action_horizons(model_path)["libero_sim"] == 16
+    assert groot_n1_7_action_execution_horizon(16, "libero_sim") == 8
 
 
 def test_groot_select_action_rejects_relative_action_policies():
