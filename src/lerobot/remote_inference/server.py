@@ -52,6 +52,7 @@ from lerobot.transport import (
     PresenceEvent,
     ZenohTransport,
 )
+from lerobot.transport.wire.features import feature_mismatch
 
 from .chunk_contract import (
     CHUNK_ALIGNMENT,
@@ -441,7 +442,14 @@ class SessionWorker:
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Policy action interval differs")
         features = tuple(FeatureSpec(**value) for value in body["features"])
         action = FeatureSpec(**body["action_feature"])
-        if features != caps.features or action != caps.action_feature:
+        if (
+            len(features) != len(caps.features)
+            or any(
+                feature_mismatch(actual, expected)
+                for actual, expected in zip(features, caps.features, strict=True)
+            )
+            or feature_mismatch(action, caps.action_feature)
+        ):
             raise ProtocolError(ErrorCode.INCOMPATIBLE, "Ordered feature schema or semantics differ")
         if body.get("encoding") not in {"raw", "jpeg"}:
             raise ProtocolError(ErrorCode.UNSUPPORTED, "Unsupported image encoding")
