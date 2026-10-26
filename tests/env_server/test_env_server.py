@@ -516,7 +516,7 @@ def test_sim_robot_remote_inference_engine(server, tmp_path):
 
 def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
     from lerobot.env_server.client import BatchedEnv
-    from lerobot.sims.native.toy import ToyEnv
+    from tests.env_server.toy_env import ToyEnv
 
     original = ToyEnv.reset
 
@@ -674,7 +674,12 @@ def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
     env_file.write_text(_ENVHUB_ENV)
     # Only the network download is stubbed; the consent check and URL parsing run for real.
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    config = SimConfig(type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True})
+    config = SimConfig(
+        type="envhub",
+        task="",
+        semantics="envhub-v1",
+        kwargs={"hub_path": "user/reach", "trust_remote_code": True},
+    )
     env = VectorEnv(config, num_envs=2)
     try:
         assert env.tasks == {"reach_suite": ["0"]}
@@ -698,7 +703,6 @@ def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
 def test_envhub_make_env_takes_the_options_of_the_command(tmp_path, monkeypatch):
     from lerobot.envs.configs import HubEnvConfig
     from lerobot.sims.native import envhub
-    from lerobot.sims.types import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
     # The repository's make_env sizes its camera from an option of its own.
@@ -722,7 +726,7 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
     )
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
     config = HubEnvConfig(hub_path="user/reach", trust_remote_code=True, make_env_kwargs={"size": 4})
-    env = VectorEnv(SimConfig(**config.sim_settings()))
+    env = VectorEnv(config.sim_config())
     try:
         shapes = {f.name: f.shape for f in env.descriptor.features}
         assert shapes["observation.images.front"] == (4, 4, 3)
@@ -742,7 +746,12 @@ def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
 
     monkeypatch.setattr(envhub, "hf_hub_download", no_download)
     env = VectorEnv(
-        SimConfig(type="envhub", task="", kwargs={"hub_path": str(tmp_path), "trust_remote_code": True})
+        SimConfig(
+            type="envhub",
+            task="",
+            semantics="envhub-v1",
+            kwargs={"hub_path": str(tmp_path), "trust_remote_code": True},
+        )
     )
     try:
         assert env.tasks == {"reach_suite": ["0"]}
@@ -762,7 +771,12 @@ def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
     env_file.write_text("import builtins\nbuiltins.envhub_imports += 1\n" + _ENVHUB_ENV)
     monkeypatch.setattr(builtins, "envhub_imports", 0, raising=False)
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    config = SimConfig(type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True})
+    config = SimConfig(
+        type="envhub",
+        task="",
+        semantics="envhub-v1",
+        kwargs={"hub_path": "user/reach", "trust_remote_code": True},
+    )
     # The probe and two sessions each build their environments.
     for _ in range(3):
         env = VectorEnv(config)
@@ -784,7 +798,12 @@ def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
         "    return gym.vector.SyncVectorEnv([lambda: gym.make('CartPole-v1')] * n_envs)\n"
     )
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    config = SimConfig(type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True})
+    config = SimConfig(
+        type="envhub",
+        task="",
+        semantics="envhub-v1",
+        kwargs={"hub_path": "user/reach", "trust_remote_code": True},
+    )
     with pytest.raises(ValueError, match="dict observations"):
         VectorEnv(config)
 

@@ -28,11 +28,11 @@ _EMPTY_CAMERA_PREFIX = "observation.images.empty_camera_"
 class SimConfig:
     """The simulator an environment runs: its integration, task, options and control conventions."""
 
-    type: str = "toy"
-    task: str = "reach"
-    fps: float = 20
-    control: str = "delta"
-    semantics: str = "toy-delta-v1"
+    type: str
+    task: str
+    semantics: str
+    fps: float = 30
+    control: str = "position"
     kwargs: dict[str, Any] = field(default_factory=dict)
     state_names: tuple[str, ...] = ()
     action_names: tuple[str, ...] = ()

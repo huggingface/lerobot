@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 class ServerConfig:
     """Bound simulator resources and select explicit Zenoh endpoints."""
 
-    sim: SimConfig = field(default_factory=SimConfig)
+    sim: SimConfig
     deployment: str = "default"
     zenoh: ZenohConfig = field(default_factory=lambda: ZenohConfig(listen_endpoints=["tcp/0.0.0.0:7448"]))
     max_envs: int = 32

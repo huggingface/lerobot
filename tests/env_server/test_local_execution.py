@@ -21,7 +21,6 @@ import numpy as np
 import pytest
 
 from lerobot.robots.sim import SimRobot, SimRobotConfig
-from lerobot.sims.types import SimConfig
 from tests.env_server.toy_env import ToyEnvConfig
 
 
@@ -118,7 +117,13 @@ def _served(deployment: str):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         endpoint = f"tcp/127.0.0.1:{sock.getsockname()[1]}"
-    server = EnvServer(ServerConfig(deployment=deployment, zenoh=ZenohConfig(listen_endpoints=[endpoint])))
+    server = EnvServer(
+        ServerConfig(
+            sim=ToyEnvConfig().sim_config(),
+            deployment=deployment,
+            zenoh=ZenohConfig(listen_endpoints=[endpoint]),
+        )
+    )
     thread = threading.Thread(target=server.serve)
     thread.start()
     assert server.ready.wait(5)
@@ -191,7 +196,7 @@ def test_environments_in_separate_processes_match_sequential_environments():
 
     results = []
     for use_async_envs in (False, True):
-        env = VectorEnv(SimConfig(), num_envs=3, use_async_envs=use_async_envs)
+        env = VectorEnv(ToyEnvConfig().sim_config(), num_envs=3, use_async_envs=use_async_envs)
         try:
             env.reset(seed=[4, 5, 6])
             steps = [env.latest]

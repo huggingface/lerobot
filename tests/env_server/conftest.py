@@ -19,6 +19,7 @@ import pytest
 
 from lerobot.env_server.server import EnvServer, ServerConfig
 from lerobot.transport.zenoh import ZenohConfig
+from tests.env_server.toy_env import ToyEnvConfig
 
 
 @pytest.fixture
@@ -32,7 +33,10 @@ def server():
     endpoint = f"tcp/127.0.0.1:{port}"
     server = EnvServer(
         ServerConfig(
-            deployment="toy_test", zenoh=ZenohConfig(listen_endpoints=[endpoint]), presence_grace_s=0.5
+            sim=ToyEnvConfig().sim_config(),
+            deployment="toy_test",
+            zenoh=ZenohConfig(listen_endpoints=[endpoint]),
+            presence_grace_s=0.5,
         )
     )
     thread = threading.Thread(target=server.serve)
