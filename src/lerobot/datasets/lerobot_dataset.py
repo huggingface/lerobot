@@ -330,7 +330,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if video_decoder_cache_size is not None:
             raise ValueError("video_decoder_cache_size only applies to non-default storage formats.")
         if storage_options:
-            raise ValueError("storage_options is not supported by the default 'lerobot' storage format.")
+            raise ValueError(
+                "storage_options is not supported by LeRobotDataset for the default 'lerobot' storage format. "
+                "Use StreamingLeRobotDataset, or set dataset.streaming=true when training."
+            )
         # The default format is always served by DatasetReader.
         reader = DatasetReader(
             meta=self.meta,
