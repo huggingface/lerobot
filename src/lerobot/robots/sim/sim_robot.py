@@ -148,7 +148,8 @@ class SimRobot(Robot):
             raise RuntimeError("Connect before reading the environment")
         return self.latest
 
-    def _observation(self, result: StepResult) -> dict[str, Any]:
+    def get_observation(self) -> dict[str, Any]:
+        result = self._snapshot()
         return {
             **{
                 key: float(value)
@@ -156,9 +157,6 @@ class SimRobot(Robot):
             },
             **{camera: result.obs[name][0] for name, camera in self._camera_keys.items()},
         }
-
-    def get_observation(self) -> dict[str, Any]:
-        return self._observation(self._snapshot())
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         names = self.descriptor.action_feature.names

@@ -19,9 +19,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from lerobot.env_server import launcher
-from lerobot.env_server.configuration import load_config
 from lerobot.scripts import lerobot_env_server
+from lerobot.scripts.lerobot_env_server import load_config
 
 
 def test_native_config_overrides_preserve_source(tmp_path):
@@ -47,7 +46,7 @@ def test_docker_launch_selects_backend_from_overridden_config(tmp_path, monkeypa
         calls.append((command, kwargs))
         return types.SimpleNamespace(returncode=0 if image_exists else 1)
 
-    monkeypatch.setattr(launcher.subprocess, "run", run)
+    monkeypatch.setattr(lerobot_env_server.subprocess, "run", run)
     argv = ["lerobot-env-server", "--docker", f"--config={config}", "--set", "sim.task=libero_goal"]
     monkeypatch.setattr(sys, "argv", argv)
     lerobot_env_server.main()
@@ -70,7 +69,9 @@ def test_docker_launch_selects_backend_from_overridden_config(tmp_path, monkeypa
 
 def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     calls = []
-    monkeypatch.setattr(launcher.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)))
+    monkeypatch.setattr(
+        lerobot_env_server.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs))
+    )
     snapshot = tmp_path / "snapshot"
     snapshot.mkdir()
     (snapshot / "env.py").write_text("")
@@ -80,8 +81,8 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
         downloads.append((repo, revision))
         return str(snapshot)
 
-    monkeypatch.setattr(launcher, "snapshot_download", download)
-    monkeypatch.setattr(launcher.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(lerobot_env_server, "snapshot_download", download)
+    monkeypatch.setattr(lerobot_env_server.tempfile, "gettempdir", lambda: str(tmp_path))
     argv = ["lerobot-env-server", "--docker", "--envhub=User/My-Env@v1", "--set", "sim.fps=50", "--build"]
     argv[-1:-1] = ["--set", "sim.kwargs.make_env_kwargs={episode_length: 900}"]
     monkeypatch.setattr(sys, "argv", argv)
@@ -96,7 +97,7 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
     # The server loads the copy baked into the image.
     sim = yaml.safe_load(Path(env["SIM_CONFIG"]).read_text())["sim"]
     assert sim["kwargs"] == {
-        "hub_path": launcher.ENVHUB_IMAGE_DIR,
+        "hub_path": lerobot_env_server.ENVHUB_IMAGE_DIR,
         "trust_remote_code": True,
         "make_env_kwargs": {"episode_length": 900},
     }
@@ -105,7 +106,9 @@ def test_docker_launch_serves_an_envhub_repository(tmp_path, monkeypatch):
 
 def test_docker_launch_builds_a_local_envhub_directory(tmp_path, monkeypatch):
     calls = []
-    monkeypatch.setattr(launcher.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs)))
+    monkeypatch.setattr(
+        lerobot_env_server.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs))
+    )
     (tmp_path / "custom.py").write_text("")
     argv = ["lerobot-env-server", "--docker", f"--envhub={tmp_path}:custom.py", "--build"]
     monkeypatch.setattr(sys, "argv", argv)
@@ -114,7 +117,7 @@ def test_docker_launch_builds_a_local_envhub_directory(tmp_path, monkeypatch):
     assert env["ENVHUB_DIR"] == str(tmp_path.resolve())
     assert env["SIM_TAG"] == f"local-{tmp_path.name.lower()}"
     hub_path = yaml.safe_load(Path(env["SIM_CONFIG"]).read_text())["sim"]["kwargs"]["hub_path"]
-    assert hub_path == f"{launcher.ENVHUB_IMAGE_DIR}:custom.py"
+    assert hub_path == f"{lerobot_env_server.ENVHUB_IMAGE_DIR}:custom.py"
 
 
 def test_build_and_stop_require_docker(monkeypatch):

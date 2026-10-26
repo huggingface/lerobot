@@ -27,7 +27,7 @@ import gymnasium as gym
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sims.conventions import resolve, served_differences
+from lerobot.sims.conventions import resolve
 from lerobot.sims.types import EnvDescriptor, SimConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
@@ -199,8 +199,34 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
 
 
 def check_served(served: dict[str, Any], expected: dict[str, Any], endpoint: str) -> None:
-    """Refuse a server that runs another environment than the one expected; warn on other options."""
-    errors, warnings = served_differences(served, expected)
+    """Refuse a server that runs another environment than the one expected; warn on other options.
+
+    Only the settings ``expected`` sets are compared; EnvHub settings left null are not resolved here, which
+    would run the repository's code in the client.
+    """
+
+    def plain(value: Any) -> Any:
+        # YAML, wire and dataclass values compare alike: tuples as lists, recursively.
+        if isinstance(value, dict):
+            return {key: plain(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [plain(item) for item in value]
+        return value
+
+    if expected.get("type") != "envhub":
+        expected = resolve(expected)
+    errors = [
+        f"{key}: server {served.get(key)!r}, expected {value!r}"
+        for key, value in expected.items()
+        if key != "kwargs" and value is not None and plain(value) != plain(served.get(key))
+    ]
+    served_kwargs = served.get("kwargs") or {}
+    # The env server loads an EnvHub repository from where its image put it.
+    warnings = [
+        f"kwargs.{key}: server {served_kwargs.get(key)!r}, expected {value!r}"
+        for key, value in (expected.get("kwargs") or {}).items()
+        if key not in ("hub_path", "trust_remote_code") and plain(value) != plain(served_kwargs.get(key))
+    ]
     if errors:
         raise ValueError(
             f"The env server at {endpoint} runs another environment than this command describes "

@@ -39,7 +39,7 @@ from lerobot.transport.zenoh import (
 from lerobot.utils.feature_spec import validate_array
 
 from .contracts import (
-    any_deployment_describe,
+    ANY_DEPLOYMENT_DESCRIBE,
     deployment_prefix,
     encode_descriptor,
     encode_step_result,
@@ -188,7 +188,7 @@ class EnvServer:
             )
             # Answered too for clients that take whichever deployment this endpoint serves.
             any_describe = self.transport.declare_queryable(
-                any_deployment_describe(), reply_timeout=self.config.request_timeout_s
+                ANY_DEPLOYMENT_DESCRIBE, reply_timeout=self.config.request_timeout_s
             )
             requests = self.transport.declare_queryable(
                 instance + "/**", reply_timeout=self.config.request_timeout_s
@@ -237,7 +237,7 @@ class EnvServer:
         self._send(pending, reply)
 
     def _dispatch(self, key: str, message: Envelope) -> dict[str, Any]:
-        if key in (deployment_prefix(self.config.deployment) + "/describe", any_deployment_describe()):
+        if key in (deployment_prefix(self.config.deployment) + "/describe", ANY_DEPLOYMENT_DESCRIBE):
             return {
                 "deployment": self.config.deployment,
                 "instance": self.instance,

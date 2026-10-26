@@ -149,34 +149,3 @@ def resolve(sim: dict[str, Any]) -> dict[str, Any]:
     if resolved.get("semantics") is None:
         resolved["semantics"] = f"{resolved['type']}-{resolved['control'].replace('_', '-')}-v1"
     return resolved
-
-
-def _plain(value: Any) -> Any:
-    """Compare YAML, wire and dataclass values alike: tuples as lists, recursively."""
-    if isinstance(value, dict):
-        return {key: _plain(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_plain(item) for item in value]
-    return value
-
-
-def served_differences(served: dict[str, Any], expected: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Compare a server's resolved simulator with the one a client expects.
-
-    Returns the differences that change the environment (type, task, control conventions), then the
-    kwargs that differ. Only the settings ``expected`` sets are compared; EnvHub settings left null are
-    not resolved here, which would run the repository's code in the client.
-    """
-    if expected.get("type") != "envhub":
-        expected = resolve(expected)
-    errors, warnings = [], []
-    for key, value in expected.items():
-        if key == "kwargs" or value is None or _plain(value) == _plain(served.get(key)):
-            continue
-        errors.append(f"{key}: server {served.get(key)!r}, expected {value!r}")
-    served_kwargs = served.get("kwargs") or {}
-    for key, value in (expected.get("kwargs") or {}).items():
-        # The env server loads an EnvHub repository from where its image put it.
-        if key not in ("hub_path", "trust_remote_code") and _plain(value) != _plain(served_kwargs.get(key)):
-            warnings.append(f"kwargs.{key}: server {served_kwargs.get(key)!r}, expected {value!r}")
-    return errors, warnings

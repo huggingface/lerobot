@@ -33,18 +33,13 @@ def _make(gym_id: str, gym_kwargs: dict[str, Any]) -> gym.Env:
     return gym.make(gym_id, disable_env_checker=True, **gym_kwargs)
 
 
-def create_gym_envs(
+def create_envs(
     task: str,
     n_envs: int,
+    env_cls: Callable,
     gym_id: str,
     gym_kwargs: dict[str, Any] | None = None,
-    env_cls: Callable | None = None,
 ) -> dict[str, dict[int, Any]]:
     """One suite and task with ``n_envs`` environments made by ``gym.make(gym_id)``."""
-    if env_cls is None:
-        raise ValueError("env_cls must be provided")
     make = partial(_make, gym_id, dict(gym_kwargs or {}))
     return {task: {0: env_cls([make] * n_envs)}}
-
-
-create_envs = create_gym_envs

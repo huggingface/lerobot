@@ -73,14 +73,10 @@ def feature_mismatch(actual: FeatureSpec, expected: FeatureSpec) -> str | None:
     return None
 
 
-class NonFiniteArrayError(ValueError):
-    """Distinguish malformed values from incompatible array schemas."""
-
-
 def validate_array(value: Any, feature: FeatureSpec, *, leading_shape: tuple[int, ...] = ()) -> None:
     """Validate canonical NumPy values with optional batch or action-horizon dimensions."""
     shape = (*leading_shape, *feature.shape)
     if not isinstance(value, np.ndarray) or value.shape != shape or value.dtype.name != feature.dtype:
         raise ValueError(f"Feature {feature.name!r} shape/dtype mismatch: expected {shape}, {feature.dtype}")
     if value.dtype.kind == "f" and not np.isfinite(value).all():
-        raise NonFiniteArrayError(f"Non-finite feature values: {feature.name}")
+        raise ValueError(f"Non-finite feature values: {feature.name}")

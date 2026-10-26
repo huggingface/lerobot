@@ -32,9 +32,8 @@ def deployment_prefix(deployment: str) -> str:
     return f"lerobot/env/v{PROTOCOL_VERSION}/deployments/{validate_segment(deployment)}"
 
 
-def any_deployment_describe() -> str:
-    """Return the describe key every server answers, for clients that take whichever deployment is served."""
-    return f"lerobot/env/v{PROTOCOL_VERSION}/describe"
+# The describe key every server answers, for clients that take whichever deployment is served.
+ANY_DEPLOYMENT_DESCRIBE = f"lerobot/env/v{PROTOCOL_VERSION}/describe"
 
 
 def instance_prefix(deployment: str, instance: str) -> str:

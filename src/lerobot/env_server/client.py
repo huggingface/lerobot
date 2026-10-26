@@ -29,7 +29,7 @@ from lerobot.transport.zenoh import PresenceToken, ZenohConfig, ZenohTransport
 from lerobot.utils.feature_spec import feature_mismatch
 
 from .contracts import (
-    any_deployment_describe,
+    ANY_DEPLOYMENT_DESCRIBE,
     decode_descriptor,
     decode_step_result,
     deployment_prefix,
@@ -82,7 +82,7 @@ class EnvClient:
             body = self._query(
                 deployment_prefix(self.deployment) + "/describe"
                 if self.deployment
-                else any_deployment_describe(),
+                else ANY_DEPLOYMENT_DESCRIBE,
                 MessageType.DESCRIBE,
                 {},
                 self.setup_timeout_s,

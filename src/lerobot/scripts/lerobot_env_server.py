@@ -20,15 +20,153 @@ lerobot-env-server --config=docker/sims/configs/metaworld.yaml         # in this
 """
 
 import argparse
+import copy
+import hashlib
 import logging
+import os
+import re
+import shutil
 import signal
+import subprocess  # nosec B404
+import tempfile
+from pathlib import Path
+from typing import Any
 
-from lerobot.env_server.configuration import envhub_config, load_config
-from lerobot.env_server.launcher import run_in_docker
+import yaml
+from huggingface_hub import snapshot_download
+
+import lerobot
 from lerobot.env_server.server import EnvServer, ServerConfig
 from lerobot.sims.conventions import resolve
 from lerobot.sims.types import SimConfig
 from lerobot.transport.zenoh import ZenohConfig
+
+COMPOSE_FILE = "docker/sims/compose.server.yaml"
+DOCKERFILE = "docker/Dockerfile.sim"
+# Where the EnvHub stage of the Dockerfile copies the repository.
+ENVHUB_IMAGE_DIR = "/envhub"
+
+# Serving an EnvHub repository. Settings left null come from the repository's optional LEROBOT_SIM dict in
+# env.py, else from defaults (fps 30, position control, generic component names); --set overrides either.
+ENVHUB_CONFIG: dict[str, Any] = {
+    "deployment": "envhub",
+    "sim": {
+        "type": "envhub",
+        "task": "",
+        "fps": None,
+        "control": None,
+        "semantics": None,
+        "kwargs": {"hub_path": "", "trust_remote_code": False, "make_env_kwargs": {}},
+        "state_names": None,
+        "action_names": None,
+    },
+}
+
+
+def load_config(path: str | Path, overrides: list[str]) -> dict[str, Any]:
+    """Read a YAML configuration and override existing dotted keys; reject typos and malformed paths."""
+    return apply_overrides(yaml.safe_load(Path(path).read_text()), overrides)
+
+
+def envhub_config(repo: str, overrides: list[str], path: str | Path | None = None) -> dict[str, Any]:
+    """The configuration serving an EnvHub repository (``user/repo[@revision]``), from ``path`` if given.
+
+    Passing the repository is the explicit consent to run its ``env.py``, like ``trust_remote_code=True``.
+    """
+    data = yaml.safe_load(Path(path).read_text()) if path else copy.deepcopy(ENVHUB_CONFIG)
+    serve = [f"sim.kwargs.hub_path={repo}", "sim.kwargs.trust_remote_code=true"]
+    return apply_overrides(data, [*serve, *overrides])
+
+
+def apply_overrides(data: Any, overrides: list[str]) -> dict[str, Any]:
+    """Override existing dotted keys of a configuration mapping, in place."""
+    if not isinstance(data, dict):
+        raise ValueError("Simulator configuration must be a YAML mapping")
+    for override in overrides:
+        key, separator, value = override.partition("=")
+        if not separator or not key or any(not part for part in key.split(".")):
+            raise ValueError(f"Expected a dotted key=value override, got {override!r}")
+        target = data
+        parts = key.split(".")
+        for part in parts[:-1]:
+            if part not in target or not isinstance(target[part], dict):
+                raise ValueError(f"Unknown simulator override path: {key}")
+            target = target[part]
+        if parts[-1] not in target:
+            raise ValueError(f"Unknown simulator override key: {key}")
+        target[parts[-1]] = yaml.safe_load(value)
+    return data
+
+
+def envhub_context(hub_path: str, directory: Path) -> Path:
+    """The build context holding an EnvHub repository: a local directory as is, else a Hub download.
+
+    The download uses the host's Hugging Face login, so private repositories build without passing a token
+    to Docker. The Hub cache links its files into a blob store outside the context: copy them as files
+    under ``directory``.
+    """
+    location = hub_path.split(":")[0]
+    if Path(location).is_dir():
+        return Path(location).resolve()
+    repo, _, revision = location.partition("@")
+    snapshot = snapshot_download(repo, revision=revision or None)
+    context = directory / "envhub" / re.sub(r"[^a-z0-9_.-]+", "-", repo.lower())
+    shutil.rmtree(context, ignore_errors=True)
+    shutil.copytree(snapshot, context)
+    return context
+
+
+def run_in_docker(data: dict[str, Any], build: bool = False, stop: bool = False) -> None:
+    """Start the server for configuration ``data`` in its image on localhost (or stop it).
+
+    The image is selected by ``sim.type`` and built from the LeRobot checkout this package is installed
+    from, when missing or when ``build`` is set.
+    """
+    root = Path(lerobot.__file__).resolve().parents[2]
+    if not (root / DOCKERFILE).is_file():
+        raise RuntimeError(
+            f"--docker builds simulator images from a LeRobot source checkout ({DOCKERFILE}); "
+            "install LeRobot from a clone of https://github.com/huggingface/lerobot"
+        )
+    backend = data["sim"]["type"]
+    # Each backend is a `<sim>_native` stage of the Dockerfile.
+    dockerfile = (root / DOCKERFILE).read_text()
+    supported = set(re.findall(r"^FROM \S+ AS (\w+)_native$", dockerfile, flags=re.MULTILINE))
+    if backend not in supported:
+        raise ValueError(f"Unsupported backend {backend!r}; choose from {sorted(supported)}")
+    directory = Path(tempfile.gettempdir()) / f"lerobot-sim-{os.getuid()}"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    env = {**os.environ, "SIM": backend}
+    if backend == "envhub":
+        # The image bakes in the repository at ENVHUB_IMAGE_DIR, so each repository gets its own tag.
+        hub_path = data["sim"]["kwargs"]["hub_path"]
+        location = Path(hub_path.split(":")[0])
+        name = f"local-{location.resolve().name}" if location.is_dir() else hub_path
+        env.setdefault("SIM_TAG", re.sub(r"[^a-z0-9_.-]+", "-", name.lower()).lstrip("-.")[:128])
+        # A repository's simulator may take minutes to start (e.g. Isaac Sim compiling shaders).
+        env.setdefault("SIM_START_PERIOD", "600s")
+        _, separator, file_path = hub_path.partition(":")
+        data = copy.deepcopy(data)
+        data["sim"]["kwargs"]["hub_path"] = ENVHUB_IMAGE_DIR + separator + file_path
+    # Keep the bind-mounted effective configuration after startup, for container restarts.
+    content = yaml.safe_dump(data, sort_keys=False)
+    config = directory / f"{hashlib.sha256(content.encode()).hexdigest()}.yaml"
+    config.write_text(content)
+    env["SIM_CONFIG"] = str(config)
+    command = ["docker", "compose", "-f", str(root / COMPOSE_FILE)]
+    if stop:
+        command.append("down")
+    else:
+        command.extend(["up", "-d", "--wait"])
+        image = f"lerobot-sim-{backend}:{env.get('SIM_TAG', 'local')}"
+        inspect = ["docker", "image", "inspect", image]
+        # Docker from PATH, as for docker compose below.
+        if build or subprocess.run(inspect, capture_output=True).returncode:  # nosec B603
+            command.append("--build")
+            if backend == "envhub":
+                env["ENVHUB_DIR"] = str(envhub_context(hub_path, directory))
+        command.append("sim")
+    subprocess.run(command, env=env, check=True)  # nosec B603
 
 
 def main() -> None:
