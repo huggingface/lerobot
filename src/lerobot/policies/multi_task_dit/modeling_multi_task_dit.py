@@ -132,14 +132,12 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
             },
         ]
 
-    def _generate_actions(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+    def _generate_actions(self, batch: dict[str, Tensor]) -> Tensor:
         batch_size, n_obs_steps = batch[OBS_STATE].shape[:2]
         assert n_obs_steps == self.config.n_obs_steps
 
         conditioning_vec = self.observation_encoder.encode(batch)
-        actions = self.objective.conditional_sample(
-            self.noise_predictor, batch_size, conditioning_vec, noise=noise
-        )
+        actions = self.objective.conditional_sample(self.noise_predictor, batch_size, conditioning_vec)
 
         start = n_obs_steps - 1
         end = start + self.config.n_action_steps
@@ -157,19 +155,15 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
             self._queues[OBS_IMAGES] = deque(maxlen=self.config.n_obs_steps)
 
     @torch.no_grad()
-    def predict_action_chunk(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
-        """Predict a chunk of actions given environment observations.
-
-        `noise` is the optional starting sample of shape `(B, horizon, action_dim)`. The DDPM scheduler still
-        adds fresh noise at every step, so only DDIM and flow matching are fully driven by `noise`.
-        """
+    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+        """Predict a chunk of actions given environment observations"""
         self.eval()
 
         for k in batch:
             if k in self._queues:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
 
-        actions = self._generate_actions(batch, noise=noise)
+        actions = self._generate_actions(batch)
         return actions
 
     def _prepare_batch(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -181,7 +175,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         return batch
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor], *, noise: Tensor | None = None) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations"""
         if ACTION in batch:
             batch = dict(batch)  # shallow copy to avoid modifying original
@@ -192,7 +186,7 @@ class MultiTaskDiTPolicy(PreTrainedPolicy):
         self._queues = populate_queues(self._queues, batch)
 
         if len(self._queues[ACTION]) == 0:
-            actions = self.predict_action_chunk(batch, noise=noise)
+            actions = self.predict_action_chunk(batch)
             self._queues[ACTION].extend(actions.transpose(0, 1))
 
         action = self._queues[ACTION].popleft()
@@ -724,19 +718,15 @@ class DiffusionObjective(nn.Module):
 
         return loss.mean()
 
-    def conditional_sample(
-        self, model: nn.Module, batch_size: int, conditioning_vec: Tensor, *, noise: Tensor | None = None
-    ) -> Tensor:
+    def conditional_sample(self, model: nn.Module, batch_size: int, conditioning_vec: Tensor) -> Tensor:
         device = next(model.parameters()).device
         dtype = next(model.parameters()).dtype
 
-        if noise is None:
-            noise = torch.randn(
-                size=(batch_size, self.horizon, self.action_dim),
-                dtype=dtype,
-                device=device,
-            )
-        sample = noise.to(device=device, dtype=dtype)
+        sample = torch.randn(
+            size=(batch_size, self.horizon, self.action_dim),
+            dtype=dtype,
+            device=device,
+        )
 
         self.noise_scheduler.set_timesteps(self.num_inference_steps)
         for t in self.noise_scheduler.timesteps:
@@ -793,15 +783,11 @@ class FlowMatchingObjective(nn.Module):
 
         return loss.mean()
 
-    def conditional_sample(
-        self, model: nn.Module, batch_size: int, conditioning_vec: Tensor, *, noise: Tensor | None = None
-    ) -> Tensor:
+    def conditional_sample(self, model: nn.Module, batch_size: int, conditioning_vec: Tensor) -> Tensor:
         device = next(model.parameters()).device
         dtype = next(model.parameters()).dtype
 
-        if noise is None:
-            noise = torch.randn((batch_size, self.horizon, self.action_dim), dtype=dtype, device=device)
-        x = noise.to(device=device, dtype=dtype)
+        x = torch.randn((batch_size, self.horizon, self.action_dim), dtype=dtype, device=device)
 
         num_steps = self.config.num_integration_steps
         time_grid = torch.linspace(0, 1, num_steps + 1, device=device)

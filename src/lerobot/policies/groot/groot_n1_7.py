@@ -653,19 +653,13 @@ class GR00TN17ActionHead(nn.Module):
         backbone_output: BatchFeature,
         action_input: BatchFeature,
         options: dict[str, Any] | None = None,
-        *,
-        noise: torch.Tensor | None = None,
     ) -> BatchFeature:
         vl_embeds = backbone_features
         batch_size = vl_embeds.shape[0]
         device = vl_embeds.device
-        if noise is None:
-            actions = sample_noise(
-                (batch_size, self.config.action_horizon, self.action_dim), device, dtype=vl_embeds.dtype
-            )
-        else:
-            # The RTC prefix below writes into the actions in place, so keep the caller's tensor intact.
-            actions = noise.to(device=device, dtype=vl_embeds.dtype).clone()
+        actions = sample_noise(
+            (batch_size, self.config.action_horizon, self.action_dim), device, dtype=vl_embeds.dtype
+        )
         vel_strength = torch.ones_like(actions)
 
         if "action" in action_input:
@@ -738,8 +732,6 @@ class GR00TN17ActionHead(nn.Module):
         backbone_output: BatchFeature,
         action_input: BatchFeature,
         options: dict[str, Any] | None = None,
-        *,
-        noise: torch.Tensor | None = None,
     ) -> BatchFeature:
         features = self._encode_features(backbone_output, action_input)
         return self.get_action_with_features(
@@ -749,7 +741,6 @@ class GR00TN17ActionHead(nn.Module):
             backbone_output=backbone_output,
             action_input=action_input,
             options=options,
-            noise=noise,
         )
 
     @property
@@ -891,16 +882,10 @@ class GR00TN17(PreTrainedModel):
         backbone_outputs = self.backbone(backbone_inputs)
         return self.action_head(backbone_outputs, action_inputs)
 
-    def get_action(
-        self,
-        inputs: dict[str, Any],
-        options: dict[str, Any] | None = None,
-        *,
-        noise: torch.Tensor | None = None,
-    ) -> BatchFeature:
+    def get_action(self, inputs: dict[str, Any], options: dict[str, Any] | None = None) -> BatchFeature:
         backbone_inputs, action_inputs = self.prepare_input(inputs)
         backbone_outputs = self.backbone(backbone_inputs)
-        return self.action_head.get_action(backbone_outputs, action_inputs, options, noise=noise)
+        return self.action_head.get_action(backbone_outputs, action_inputs, options)
 
     @property
     def device(self) -> torch.device:

@@ -616,14 +616,16 @@ def compute_sarm_progress(
         # All frame indices for this episode
         all_frame_idx_array = np.arange(ep_start, ep_end)
 
-        interp_sparse: np.ndarray | None = computed_sparse
-        interp_dense: np.ndarray | None = computed_dense
         if stride > 1 and len(computed_indices) > 1:
             # Interpolate progress values
-            if computed_sparse is not None:
+            if compute_sparse:
                 interp_sparse = interpolate_progress(computed_indices, computed_sparse, all_frame_idx_array)
-            if computed_dense is not None:
+            if compute_dense:
                 interp_dense = interpolate_progress(computed_indices, computed_dense, all_frame_idx_array)
+        else:
+            # No interpolation needed
+            interp_sparse = computed_sparse if compute_sparse else None
+            interp_dense = computed_dense if compute_dense else None
 
         # Store results for all frames
         for i, frame_idx in enumerate(all_frame_idx_array):
@@ -633,7 +635,6 @@ def compute_sarm_progress(
             all_frame_indices.append(local_idx)
             if compute_sparse:
                 if stride > 1 and len(computed_indices) > 1:
-                    assert interp_sparse is not None
                     all_progress_sparse.append(float(interp_sparse[i]))
                 elif frame_idx in frame_results:
                     all_progress_sparse.append(frame_results[frame_idx][0])
@@ -641,7 +642,6 @@ def compute_sarm_progress(
                     all_progress_sparse.append(np.nan)
             if compute_dense:
                 if stride > 1 and len(computed_indices) > 1:
-                    assert interp_dense is not None
                     all_progress_dense.append(float(interp_dense[i]))
                 elif frame_idx in frame_results:
                     all_progress_dense.append(frame_results[frame_idx][1])
