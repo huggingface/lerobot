@@ -132,6 +132,7 @@ def main():
             f"--rename_map={json.dumps(entry['rename_map'])}",
             f"--eval.n_episodes={entry['episodes']}",
             f"--eval.batch_size={entry['batch_size']}",
+            f"--eval.max_episode_steps={entry['max_episode_steps']}",
             "--eval.use_async_envs=false",
             "--output_dir=/tmp/eval-artifacts",
         ]
@@ -178,6 +179,7 @@ def main():
                 "--env_eval_freq=1",
                 "--eval.n_episodes=1",
                 "--eval.batch_size=1",
+                f"--eval.max_episode_steps={entry['max_episode_steps']}",
                 "--eval.use_async_envs=false",
                 "--save_freq=1",
                 "--policy.push_to_hub=false",

@@ -179,6 +179,7 @@ def rollout(
     recording_repo_id: str | None = None,
     recording_private: bool = False,
     predicted_latents_callback: Callable[[PreTrainedPolicy], None] | None = None,
+    max_episode_steps: int | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -276,6 +277,8 @@ def rollout(
     # Keep track of which environments are done.
     done = np.array([False] * env.num_envs)
     max_steps = env.call("_max_episode_steps")[0]
+    if max_episode_steps is not None:
+        max_steps = min(max_steps, max_episode_steps)
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
@@ -453,6 +456,7 @@ def eval_policy(
     recording_repo_id: str | None = None,
     recording_private: bool = False,
     save_predicted_video: bool = False,
+    max_episode_steps: int | None = None,
 ) -> dict:
     """
     Args:
@@ -570,6 +574,7 @@ def eval_policy(
             recording_repo_id=recording_repo_id,
             recording_private=recording_private,
             predicted_latents_callback=collect_predicted_latents if save_predicted_video else None,
+            max_episode_steps=max_episode_steps,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -852,6 +857,7 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
             env_features=cfg.env.features if cfg.eval.recording else None,
             recording_repo_id=cfg.eval.recording_repo_id,
             recording_private=cfg.eval.recording_private,
+            max_episode_steps=cfg.eval.max_episode_steps,
         )
         logger.info("Overall Aggregated Metrics:")
         logger.info(info["overall"])
@@ -917,6 +923,7 @@ def eval_one(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    max_episode_steps: int | None = None,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -938,6 +945,7 @@ def eval_one(
         env_features=env_features,
         recording_repo_id=recording_repo_id,
         recording_private=recording_private,
+        max_episode_steps=max_episode_steps,
     )
 
     per_episode = task_result["per_episode"]
@@ -969,6 +977,7 @@ def run_one(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    max_episode_steps: int | None = None,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -1003,6 +1012,7 @@ def run_one(
         env_features=env_features,
         recording_repo_id=task_repo_id,
         recording_private=recording_private,
+        max_episode_steps=max_episode_steps,
     )
 
     if max_episodes_rendered > 0:
@@ -1039,6 +1049,7 @@ def eval_policy_all(
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    max_episode_steps: int | None = None,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -1098,6 +1109,7 @@ def eval_policy_all(
         env_features=env_features,
         recording_repo_id=recording_repo_id,
         recording_private=recording_private,
+        max_episode_steps=max_episode_steps,
     )
 
     # Set the shared policy's mode before launching any workers. Restoring it

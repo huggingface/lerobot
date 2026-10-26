@@ -162,10 +162,15 @@ class EvalConfig:
     recording_repo_id: str | None = None
     # Whether the pushed recording repositories should be private.
     recording_private: bool = False
+    # If set, end each rollout after at most this many steps, below the env's own limit
+    # (e.g. a CI smoke test that checks the eval runs end to end).
+    max_episode_steps: int | None = None
 
     def __post_init__(self) -> None:
         if self.recording_repo_id is not None and not self.recording:
             raise ValueError("eval.recording_repo_id requires eval.recording=true.")
+        if self.max_episode_steps is not None and self.max_episode_steps < 1:
+            raise ValueError(f"eval.max_episode_steps must be at least 1, got {self.max_episode_steps}.")
         if self.batch_size == 0:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:

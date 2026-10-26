@@ -67,6 +67,8 @@ def with_defaults(entry: dict) -> dict:
         "policy_extras": ["remote", "evaluation", "smolvla", "training", "hardware"],
         "episodes": 1,
         "batch_size": 1,
+        # An end-to-end check, not a success-rate measure: short rollouts are enough.
+        "max_episode_steps": 30,
         "train_smoke": False,
     }
     merged = {**defaults, **entry}
