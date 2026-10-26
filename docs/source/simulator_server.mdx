@@ -1,15 +1,15 @@
-# Simulation: in-process or served
+# Simulation: local or served
 
 A simulated environment can be driven in two ways:
 
-- as a **batched env** (`--env.*`): many worlds of one task, stepped together in lockstep. `lerobot-eval` and evaluation during training use it.
-- as a **sim robot** (`--robot.type=sim`): one world behind the `Robot` interface, swappable with real hardware. `lerobot-rollout`, `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay` use it.
+- as a **batched env** (`--env.*`): many environments for one task, stepped together by each `step()` call. `lerobot-eval` and evaluation during training use it.
+- as a **sim robot** (`--robot.type=sim`): one environment behind the `Robot` interface, swappable with real hardware. `lerobot-rollout`, `lerobot-record`, `lerobot-teleoperate` and `lerobot-replay` use it.
 
-Either runs **in-process**, in the policy's Python environment, or **served** by `lerobot-env-server`, usually in its own Docker image, so that the simulator's dependencies never meet the policy's. Setting an `endpoint` is the only difference: both run the same session code, with the same canonical observations (HWC uint8 images, flat float32 state), the same episode ends and the same control conventions.
+Either runs **locally**, through the environment API, or **served** by `lerobot-env-server`, usually in its own Docker image, so that the simulator's dependencies never meet the policy's. Setting an `endpoint` selects served execution; both paths expose the same canonical observations (HWC uint8 images, flat float32 state), episode ends, and control conventions.
 
 ## Evaluate a checkpoint
 
-In-process, with the simulator installed next to LeRobot (see [LIBERO](./libero)):
+Locally, with the simulator installed next to LeRobot (see [LIBERO](./libero)):
 
 ```bash
 lerobot-eval \
@@ -35,7 +35,7 @@ Observation names come from the environment (`observation.images.<camera>`, `obs
 
 Before the first step, every checkpoint input must exist in the environment after renaming, with matching state and action dimensions and RGB channel count. Image height and width may differ: policy preprocessing owns resizing. Controller conventions (delta vs absolute actions, rotation format) are not checked; use a checkpoint trained on the environment's convention.
 
-The worlds of a batch advance in lockstep. A world that ends keeps its terminal observation until the next reset; stepping the others never restarts it. With `--eval.use_async_envs=true` (the default), each world runs in its own process, in-process or on the server, and the batch steps in parallel. A server admits up to `max_envs` worlds per batch (32 by default). `--env.encoding=jpeg` (or `--robot.env.encoding=jpeg`, with `jpeg_quality`, 90 by default) sends served camera frames as JPEG: smaller replies for a remote server and larger batches, at the cost of encoding time and lossy frames. On localhost, raw frames are faster.
+Each `step()` advances every unfinished environment in the batch once. An environment that ends keeps its terminal observation until the next reset; stepping the others never restarts it. With `--eval.use_async_envs=true` (the default), each environment runs in its own worker process, locally or on the server, and the batch steps in parallel. A server admits up to `max_envs` environments per batch (32 by default). `--env.encoding=jpeg` (or `--robot.env.encoding=jpeg`, with `jpeg_quality`, 90 by default) sends served camera frames as JPEG: smaller replies for a remote server and larger batches, at the cost of encoding time and lossy frames. On localhost, raw frames are faster.
 
 ## Run a sim robot
 
@@ -52,13 +52,16 @@ lerobot-rollout \
 ```
 
 - `--robot.env.*` takes the same options as `--env.*` in evaluation. EnvHub environments are `--robot.env.type=envhub --robot.env.hub_path=<user/repo> --robot.env.trust_remote_code=true`.
-- `--robot.env.endpoint=tcp/...` drives the world on an env server instead, as `--env.endpoint` does for a batched env. The robot checks that the server runs that environment.
-- `--robot.clock=realtime` (the default) advances the world at its control rate, also while the policy computes, as hardware does. `--robot.clock=lockstep` advances it exactly one step per action, which makes a rollout reproducible.
+- `--robot.env.endpoint=tcp/...` drives the environment on an env server instead, as `--env.endpoint` does for a batched env. The robot checks that the server runs that environment.
+- Each `send_action()` advances the environment exactly once. Observation reads, policy inference, and waiting do not advance simulation; the existing control loop owns wall-clock pacing.
 - `--fps` must equal the environment's control rate; rollout refuses to start otherwise.
 
-A sim robot is a robot: swap `--robot.type=sim --robot.env.*` for the real follower's `--robot.*`, and everything else stays. A teleoperator drives it as it drives the real follower (`--teleop.type=so101_leader` for an SO-101 twin), when the environment declares the follower's action names and units; a mismatch is reported at the first action. Teleoperation needs the realtime clock. `lerobot-record` stores the body the environment declares as the dataset's `robot_type` (`panda` for LIBERO), or `sim` when it declares none.
+A sim robot is a robot: swap `--robot.type=sim --robot.env.*` for the real follower's `--robot.*`, and everything else stays. A teleoperator drives it as it drives the real follower (`--teleop.type=so101_leader` for an SO-101 twin), when the environment declares the follower's action names and units; a mismatch is reported at the first action. `lerobot-record` stores the body the environment declares as the dataset's `robot_type` (`panda` for LIBERO), or `sim` when it declares none.
 
-Like a real robot, a sim robot has no episode controls: rollout and record run their episodes as on hardware, with the task given on the command line (`--task`, or `--dataset.single_task` when recording) and episodes timed by their duration. When the world's own episode ends (success, termination or its step limit), the sim robot starts the next one by itself, as Gymnasium's autoreset does, so the world never stays frozen. For success rates and per-episode resets, evaluate with `lerobot-eval` and a batched env.
+A sim robot remains a normal `Robot`, but also exposes its simulator episode state through
+`episode_status` and an explicit `reset(seed=...)` method. An environment that succeeds, terminates, or reaches
+its step limit stays at its terminal observation until its caller resets it. This keeps episode ownership
+with recording, evaluation, or RL code instead of hiding a reset inside `send_action()`.
 
 For remote inference, keep the same `--robot.*` options and replace the local policy and inference options with:
 

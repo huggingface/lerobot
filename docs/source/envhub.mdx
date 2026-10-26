@@ -19,15 +19,15 @@ This design means you can go from discovering an interesting environment on the 
 
 When you create an EnvHub package, you can build anything you want inside it and use any simulation tool you like: this is your own space to play with. The only requirement is that the package contains an `env.py` file that defines the environment and allows LeRobot to load and use your EnvHub package.
 
-This `env.py` file needs to expose a small API so LeRobot can load and run it. In particular, you must provide a `make_env(n_envs: int = 1, use_async_envs: bool = False)` function, which is the main entry point for LeRobot. LeRobot calls it without a config, in-process and served alike. It should return one of:
+This `env.py` file needs to expose a small API so LeRobot can load and run it. In particular, you must provide a `make_env(n_envs: int = 1, use_async_envs: bool = False)` function, which is the main entry point for LeRobot. LeRobot calls it without a config, locally and when served. It should return one of:
 
 - A `gym.vector.VectorEnv` (most common)
 - A single `gym.Env` (will be automatically wrapped)
 - A dict mapping `{suite_name: {task_id: VectorEnv}}` (for multi-task benchmarks)
 
-A returned vector env must be built from per-world factories (`SyncVectorEnv` or `AsyncVectorEnv`): LeRobot takes its `env_fns` and builds each world itself.
+A returned vector env must be built from per-environment factories (`SyncVectorEnv` or `AsyncVectorEnv`): LeRobot takes its `env_fns` and builds each environment itself.
 
-`env.py` may also define an optional `LEROBOT_SIM` dictionary describing the environment (fps, control, component names; see [EnvHub and the simulator server](#envhub-and-the-simulator-server)). It applies in-process and served alike.
+`env.py` may also define an optional `LEROBOT_SIM` dictionary describing the environment (fps, control, component names; see [EnvHub and the simulator server](#envhub-and-the-simulator-server)). It applies locally and when served.
 
 ## Quick Start
 
@@ -300,22 +300,22 @@ lerobot-eval --policy.path=<checkpoint> \
   --eval.n_episodes=10
 ```
 
-Without `--env.endpoint`, the same command runs the environment in-process (with `--trust_remote_code=true`); a sim robot takes the same options under `--robot.env.*`.
+Without `--env.endpoint`, the same command runs the environment locally (with `--trust_remote_code=true`); a sim robot takes the same options under `--robot.env.*`.
 
 The server reads the control rate, action convention and component names from the repository's [`LEROBOT_SIM`](#optional-files), and uses the defaults for anything it does not declare. Override a value with `--set`, which wins over the repository, e.g. `--set sim.fps=15`.
 
 To be served, an environment must follow these conventions:
 
-- `make_env` returns vector environments built from per-world factories (`SyncVectorEnv`/`AsyncVectorEnv`, as in the examples above) or a single `gym.Env`. The server builds its own worlds from those factories, and closes them when a session ends.
+- `make_env` returns vector environments built from per-environment factories (`SyncVectorEnv`/`AsyncVectorEnv`, as in the examples above) or a single `gym.Env`. The server builds its own environments from those factories and closes them when a session ends.
 - `env.py` is executed once per server process, so it can keep process-wide state, such as a simulator application that can only start once (Isaac Sim's `SimulationApp`).
-- Observations are the dictionaries in-process LeRobot reads: `pixels` (one HWC uint8 image or a dictionary of cameras), `agent_pos` and `environment_state`, as NumPy arrays.
+- Observations are the dictionaries LeRobot reads locally: `pixels` (one HWC uint8 image or a dictionary of cameras), `agent_pos` and `environment_state`, as NumPy arrays.
 - Actions are a one-dimensional continuous `Box`.
 - Episodes end through `terminated`/`truncated` or `_max_episode_steps` (default 500), and `info["is_success"]` reports success. The task text comes from the environment's `task_description` (or `task`) attribute.
 - `LEROBOT_SIM` is optional, but declare it whenever the defaults (30 fps, position control) do not match your environment.
 
 For examples, see the [EnvHub environments collection](https://huggingface.co/collections/lerobot/envhub-environments-6ad0f5bf3fac8dbe626c17dc): [`lerobot/so101-tabletop-mujoco`](https://huggingface.co/lerobot/so101-tabletop-mujoco) (MuJoCo) and [`lerobot/so101-tabletop-isaac`](https://huggingface.co/lerobot/so101-tabletop-isaac) (Isaac Sim, installed through `requirements.txt` and `packages.txt`) serve the same SO-101 scene with the same observations, actions and `LEROBOT_SIM`.
 
-The repository is downloaded on your machine with your Hugging Face login (`HF_TOKEN` or `hf auth login`), so private repositories work too, and the image build never sees a token. `--envhub` also takes a local directory holding `env.py`, to serve an environment before pushing it: `lerobot-env-server --docker --envhub=./my-env`. `--build` rebuilds only what changed: the apt packages when `packages.txt` changes, the requirements when `requirements.txt` changes, and otherwise just the repository's files. Test a new environment in-process first (see [Step 2: Test Locally](#step-2-test-locally)).
+The repository is downloaded on your machine with your Hugging Face login (`HF_TOKEN` or `hf auth login`), so private repositories work too, and the image build never sees a token. `--envhub` also takes a local directory holding `env.py`, to serve an environment before pushing it: `lerobot-env-server --docker --envhub=./my-env`. `--build` rebuilds only what changed: the apt packages when `packages.txt` changes, the requirements when `requirements.txt` changes, and otherwise just the repository's files. Test a new environment locally first (see [Step 2: Test Locally](#step-2-test-locally)).
 
 ## Multi-Task Environments
 

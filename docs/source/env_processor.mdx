@@ -4,9 +4,9 @@ Environment processors transform an environment's observations before the policy
 
 ## Simulated environments need none
 
-Simulated environments reach the policy already canonical: images as `observation.images.<camera>` (or `observation.image`), the state as one flat `observation.state`, with each simulator's image orientation and state composition handled once, in `src/lerobot/sims/adapters.py`, for evaluation, rollout and recording alike, in-process or served (see [Simulation: in-process or served](./simulator_server)). For LIBERO, for example, the adapter flips both cameras and builds the 8-D state (end-effector position, axis-angle orientation, gripper joints), so its environment processors are identity.
+Simulated environments reach the policy already canonical: images as `observation.images.<camera>` (or `observation.image`), the state as one flat `observation.state`, with each simulator's image orientation and state composition handled once by its `src/lerobot/sims/native/<simulator>.py` integration, for evaluation, rollout and recording alike, locally or served (see [Simulation: local or served](./simulator_server)). For LIBERO, for example, its observation adapter flips both cameras and builds the 8-D state (end-effector position, axis-angle orientation, gripper joints), so its environment processors are identity.
 
-Put a new simulator's conventions in that adapter and in `src/lerobot/sims/conventions.py` rather than in an environment processor, so that a sim robot and a served environment get them too (see [Adding a benchmark](./adding_benchmarks)).
+Put a new simulator's observation mapping in its native integration and its control conventions in `src/lerobot/sims/conventions.py` rather than in an environment processor, so that a sim robot and a served environment get them too (see [Adding a benchmark](./adding_benchmarks)).
 
 ## When an environment processor is still the tool
 

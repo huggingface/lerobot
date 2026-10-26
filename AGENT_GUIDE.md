@@ -387,7 +387,7 @@ lerobot-eval \
 
 ### 8.2b Simulator servers for benchmark eval
 
-Benchmark simulators often have native dependencies that conflict with LeRobot's. Each one can run in its own image built from [`docker/Dockerfile.sim`](./docker/Dockerfile.sim) (one `<benchmark>_native` stage per simulator: LIBERO, LIBERO+, MetaWorld, RoboCasa, RoboCerebra, RoboMME, RoboTwin, VLABench); `--env.endpoint` points `lerobot-eval` at it, and everything else is the in-process command:
+Benchmark simulators often have native dependencies that conflict with LeRobot's. Each one can run in its own image built from [`docker/Dockerfile.sim`](./docker/Dockerfile.sim) (one `<benchmark>_native` stage per simulator: LIBERO, LIBERO+, MetaWorld, RoboCasa, RoboCerebra, RoboMME, RoboTwin, VLABench); `--env.endpoint` points `lerobot-eval` at it, and everything else is the local command:
 
 ```bash
 lerobot-env-server --docker --config=docker/sims/configs/libero.yaml   # builds and starts the server on :7448
@@ -396,7 +396,7 @@ lerobot-eval --policy.path=<your_policy> \
   --eval.n_episodes=50
 ```
 
-A simulated world is also a robot: `lerobot-rollout --robot.type=sim --robot.env.type=libero ...`. See [`docs/source/simulator_server.mdx`](./docs/source/simulator_server.mdx) for camera renames, sim robots, and remote inference.
+A simulated environment can also be used through the robot interface: `lerobot-rollout --robot.type=sim --robot.env.type=libero ...`. See [`docs/source/simulator_server.mdx`](./docs/source/simulator_server.mdx) for camera renames, sim robots, and remote inference.
 
 ### 8.3 Target success rates
 
