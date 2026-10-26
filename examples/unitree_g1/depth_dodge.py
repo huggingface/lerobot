@@ -287,7 +287,7 @@ writer_proc = None
 if args.camera == "shm":
     w, h, fps = args.rs_res.split("x")
     script = str(Path(__file__).resolve().parents[2] / "src/lerobot/cameras/depth_shm.py")
-    subprocess.run(["pkill", "-f", "depth_shm.py --width"], check=False)
+    subprocess.run(["pkill", "-f", "depth_shm.py --width"], check=False)  # nosec B607
     writer_cmd = [args.rs_python, script, "--width", w, "--height", h, "--fps", fps]
     if args.ball_only:
         writer_cmd += ["--ball-only"]

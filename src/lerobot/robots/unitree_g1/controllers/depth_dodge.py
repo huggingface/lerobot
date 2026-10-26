@@ -156,6 +156,9 @@ class DepthDodgeController(RobotController):
     """
 
     control_dt = CONTROL_DT
+    timing: dict[str, float]
+    depth_ring: deque[np.ndarray]
+    _ref_quat: np.ndarray | None
 
     def __init__(
         self,
@@ -262,14 +265,14 @@ class DepthDodgeController(RobotController):
         self.h_dq: deque[np.ndarray] = deque(maxlen=HISTORY_LEN)
         self.h_act: deque[np.ndarray] = deque(maxlen=HISTORY_LEN)
         self.h_grav: deque[np.ndarray] = deque(maxlen=HISTORY_LEN)
-        self.depth_ring: deque[np.ndarray] = deque([self.black_tokens] * DEPTH_HISTORY, maxlen=DEPTH_HISTORY)
+        self.depth_ring = deque([self.black_tokens] * DEPTH_HISTORY, maxlen=DEPTH_HISTORY)
         self.ring_times: deque[float] = deque(maxlen=DEPTH_HISTORY)
         # EMA timings (ms) for the run log: Theia per frame, actor+perception per tick, tick period.
         self.timing = {"theia_ms": 0.0, "tick_ms": 0.0, "period_ms": 0.0}
         self._last_tick_t: float | None = None
         self._percept_stale = True
         self._cached_percept = None
-        self._ref_quat: np.ndarray | None = None  # heading the stand reference is anchored to
+        self._ref_quat = None  # heading the stand reference is anchored to
 
     def _tokenizer(self, quat: np.ndarray) -> np.ndarray:
         """Held-stand reference: SONIC's flat chop of 10 future frames of (joint pos, joint vel)

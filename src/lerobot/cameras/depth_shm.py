@@ -45,8 +45,8 @@ import time
 
 import numpy as np
 
-DEFAULT_PATH = "/dev/shm/g1_depth"
-DEFAULT_TOKENS_PATH = "/dev/shm/g1_tokens"
+DEFAULT_PATH = "/dev/shm/g1_depth"  # nosec B108
+DEFAULT_TOKENS_PATH = "/dev/shm/g1_tokens"  # nosec B108
 
 # seq(u64) t_capture(f64) width(u32) height(u32) fx fy cx cy(f32 x4) depth_scale(f32) pad(u32)
 _HEADER = struct.Struct("<QdIIfffffI")
@@ -430,7 +430,7 @@ class MjpegView:
                     with view._cond:
                         view._clients -= 1
 
-        self._server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+        self._server = ThreadingHTTPServer(("0.0.0.0", port), Handler)  # nosec B104
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
         threading.Thread(target=self._worker, daemon=True).start()
 
@@ -701,7 +701,7 @@ def main() -> None:
                 det, far = masker.last, masker.last_far
                 seen = det is not None
                 if seen != ball_seen:
-                    if seen:
+                    if det is not None:
                         print(
                             f"[{t_cap % 1000:7.3f}] ball APPEARED z={det['z']:.2f}m r={det['r_px']:.0f}px "
                             f"circ={det['circ']:.2f} after {n_missing} frames without",
@@ -718,7 +718,7 @@ def main() -> None:
                 n_seen += seen
                 n_missing += not seen
                 if args.trace and (seen or far or masker.rejects):
-                    if seen:
+                    if det is not None:
                         print(
                             f"[{t_cap % 1000:7.3f}] z={det['z']:.2f} px=({det['u']:.0f},{det['v']:.0f}) "
                             f"r={det['r_px']:.0f} circ={det['circ']:.2f}",
@@ -729,7 +729,7 @@ def main() -> None:
                         print(f"[{t_cap % 1000:7.3f}] miss: {why}", flush=True)
             writer.write(depth_mm, t_cap)
             policy_img = None
-            if theia is not None:
+            if theia is not None and pwriter is not None:
                 t0 = time.perf_counter()
                 roi = depth_mm[y0:y1, x0:x1]
                 small = cv2.resize(
@@ -743,7 +743,8 @@ def main() -> None:
                 theia_ms = 0.9 * theia_ms + 0.1 * dt_ms
                 pwriter.write(tokens, depth_m, t_cap, dt_ms)
             n += 1
-            if view is not None and view.wanted and n % 4 == 0:  # ~15 fps, rendered on the view's thread
+            # ~15 fps, rendered on the view's thread
+            if view is not None and masker is not None and view.wanted and n % 4 == 0:
                 status = f"cam->host {cam_lat_ms:.0f}ms  theia {theia_ms:.1f}ms"
                 view.submit(
                     render_panel,
