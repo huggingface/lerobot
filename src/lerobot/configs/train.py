@@ -18,6 +18,7 @@ import multiprocessing
 import os
 import tempfile
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -26,17 +27,47 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
+from lerobot.configs.accelerator import AcceleratorConfig, ActivationCheckpointingMode
+from lerobot.configs.parallelism import ParallelismConfig
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 from lerobot.utils.hub import HubMixin, find_latest_hub_checkpoint
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
+from .default import DatasetConfig, EMAConfig, EvalConfig, JobConfig, PeftConfig, WandBConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
+
+
+class CheckpointFormat(str, Enum):
+    """Model-artifact format inside training checkpoints.
+
+    Selects only the *model* artifact; the training_state layout is format-independent (the
+    optimizer channel is always DCP under sharded runs, safetensors+json otherwise).
+
+    - SAFETENSORS (default): a full `model.safetensors` — maximum compatibility, one gather per
+      save under sharding.
+    - DCP: sharded `pytorch_model_fsdp_0/*.distcp` only — fastest save/resume; convert with
+      `lerobot-convert-dcp` before distributing.
+    - SAFETENSORS_AND_DCP: both artifacts, written independently.
+    """
+
+    SAFETENSORS = "safetensors"
+    DCP = "dcp"
+    SAFETENSORS_AND_DCP = "safetensors_dcp"
+
+    @property
+    def wants_safetensors(self) -> bool:
+        """True when a full `model.safetensors` artifact should be written."""
+        return self in (CheckpointFormat.SAFETENSORS, CheckpointFormat.SAFETENSORS_AND_DCP)
+
+    @property
+    def wants_dcp(self) -> bool:
+        """True when sharded DCP model shards (`pytorch_model_fsdp_0/`) should be written."""
+        return self in (CheckpointFormat.DCP, CheckpointFormat.SAFETENSORS_AND_DCP)
 
 
 def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
@@ -111,7 +142,7 @@ class TrainPipelineConfig(HubMixin):
     steps: int = 100_000
     # Run policy in the simulation environment every N steps to measure reward/success (0 = disabled).
     env_eval_freq: int = 20_000
-    log_freq: int = 200
+    log_freq: int = 200  # 0 or negative disables periodic logging
     # Compute eval loss on held-out episodes every N steps (0 = disabled). Requires eval_split > 0.
     eval_steps: int = 0
     # Cap on total eval samples, split uniformly across tasks (0 = use all held-out data).
@@ -121,10 +152,19 @@ class TrainPipelineConfig(HubMixin):
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     # A non-positive value disables periodic saving, keeping only the final checkpoint.
     save_freq: int = 20_000
+    # Model-artifact format inside checkpoints; non-default values require a sharded run.
+    checkpoint_format: CheckpointFormat = CheckpointFormat.SAFETENSORS
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
+    # Process topology: dp_replicate / dp_shard (HSDP) and context-parallel degree placeholders.
+    parallelism: ParallelismConfig = field(default_factory=ParallelismConfig)
+    # Execution runtime handed to the Accelerator: mixed precision, gradient accumulation,
+    # FSDP/DDP tuning knobs, compile & activation-checkpointing placeholders.
+    accelerator: AcceleratorConfig = field(default_factory=AcceleratorConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
+    # Maintain an EMA shadow of the policy weights during training (see EMAConfig).
+    ema: EMAConfig = field(default_factory=EMAConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
     peft: PeftConfig | None = None
 
@@ -180,7 +220,7 @@ class TrainPipelineConfig(HubMixin):
             self._resolve_resume_checkpoint()
 
     def _resolve_resume_checkpoint(self) -> None:
-        """Point the trainable config at the checkpoint named by `--config_path`.
+        """Resolve the checkpoint named by `--config_path` into `checkpoint_path`.
 
         `config_path` is either a local path (to a checkpoint's train_config.json or its
         pretrained_model/ dir) or a Hub repo id. For a Hub repo, the latest checkpoint is downloaded
@@ -216,12 +256,8 @@ class TrainPipelineConfig(HubMixin):
                 now = dt.datetime.now()
                 self.output_dir = Path("outputs/train") / f"{now:%Y-%m-%d}/{now:%H-%M-%S}_resume"
             self.checkpoint_path = resolve_resume_checkpoint(config_path, self.output_dir)
-            policy_dir = self.checkpoint_path / PRETRAINED_MODEL_DIR
-
-        if self.policy is not None:
-            self.policy.pretrained_path = policy_dir
-        if self.reward_model is not None:
-            self.reward_model.pretrained_path = str(policy_dir)
+        # `pretrained_path` keeps naming the model the run started from (the model card's
+        # `base_model`); the resumed weights and processors load from `checkpoint_path`.
 
     def validate(self) -> None:
         available_contexts = multiprocessing.get_all_start_methods()
@@ -244,7 +280,7 @@ class TrainPipelineConfig(HubMixin):
             )
 
         active_cfg = self.trainable_config
-        if self.rename_map and active_cfg.pretrained_path is None:
+        if self.rename_map and active_cfg.pretrained_path is None and not self.resume:
             raise ValueError(
                 "`rename_map` requires a pretrained policy checkpoint. "
                 "Fresh initialization derives feature names from the current dataset, so no rename is applied."
@@ -275,6 +311,13 @@ class TrainPipelineConfig(HubMixin):
             self.optimizer = active_cfg.get_optimizer_preset()
             self.scheduler = active_cfg.get_scheduler_preset()
 
+        image_transforms = self.dataset.image_transforms
+        if image_transforms.enable and image_transforms.backend == "gpu" and active_cfg.device == "cpu":
+            raise ValueError(
+                "dataset.image_transforms.backend='gpu' needs an accelerator device, but policy.device is 'cpu'. "
+                "Use image_transforms.backend='dataloader' to augment in the DataLoader workers."
+            )
+
         if self.eval_steps > 0 and self.dataset.eval_split == 0.0:
             raise ValueError("eval_steps > 0 requires dataset.eval_split > 0.0 to hold out eval data.")
 
@@ -291,13 +334,75 @@ class TrainPipelineConfig(HubMixin):
         if self.save_checkpoint_to_hub and not (self.policy is not None and self.policy.repo_id):
             raise ValueError("save_checkpoint_to_hub requires --policy.repo_id.")
 
+        self._validate_distributed()
+
+    def _validate_distributed(self) -> None:
+        """Fail-fasts for the distributed-training scope.
+
+        Raises:
+            ValueError: If the config requests anything outside the verified scope: context
+                parallelism or CFG parallelism (reserved placeholders), the compile or
+                activation-checkpointing placeholders, a DCP checkpoint format on a
+                non-sharded run, fp16 on a CPU device, or — under sharded training — PEFT,
+                reward-model training, in-training environment evaluation, or multi-optimizer
+                configs.
+        """
+        if self.parallelism.cp_size > 1:
+            raise ValueError(
+                "Context parallelism is not implemented yet: --parallelism.context_parallel.* "
+                "degrees must be 1 (reserved for the CP engine round)."
+            )
+        if self.parallelism.cfg_parallel != 1:
+            raise ValueError(
+                "CFG parallelism is inference-only and must be 1 for training "
+                "(cfg_parallel is reserved for the serving round)."
+            )
+        if self.accelerator.compile.enabled:
+            raise ValueError("--accelerator.compile is a placeholder and not wired yet.")
+        if self.accelerator.activation_checkpointing.mode is not ActivationCheckpointingMode.NONE:
+            raise ValueError("--accelerator.activation_checkpointing is a placeholder and not wired yet.")
+        if self.checkpoint_format is not CheckpointFormat.SAFETENSORS and not self.parallelism.is_sharded:
+            raise ValueError(
+                f"checkpoint_format={self.checkpoint_format.value} requires a sharded run "
+                "(--parallelism.dp_shard != 1); non-sharded checkpoints are always safetensors."
+            )
+        # `getattr`, not attribute access: `validate()` guarantees a trainable config before
+        # calling this, but the fail-fasts are also exercised on bare configs in isolation.
+        if self.accelerator.mixed_precision == "fp16" and (
+            getattr(self.trainable_config, "device", None) == "cpu"
+        ):
+            # accelerate skips the whole fp16 branch on CPU (no autocast, no GradScaler), so
+            # the run would silently execute in fp32. Say so instead of quietly downgrading.
+            raise ValueError(
+                "mixed_precision=fp16 requires an accelerator device; on CPU accelerate "
+                "builds no GradScaler and the run silently falls back to full precision. "
+                "Use --policy.device=cuda, or --accelerator.mixed_precision=bf16 "
+                "(which does autocast on CPU) or =no."
+            )
+        if self.parallelism.is_sharded:
+            if self.peft is not None:
+                raise ValueError("PEFT is not supported under sharded training yet.")
+            if self.is_reward_model_training:
+                raise ValueError(
+                    "Reward-model training is not supported under sharded training yet "
+                    "(reward models declare no FSDP wrap units and have no sharded save path)."
+                )
+            if self.env is not None and self.env_eval_freq > 0:
+                raise ValueError(
+                    "In-training environment evaluation is not supported under sharded training "
+                    "(a rank-0-only rollout of a sharded model deadlocks on collectives); set "
+                    "--env_eval_freq=0 and evaluate with lerobot-eval on saved checkpoints."
+                )
+            if self.optimizer is not None and self.optimizer.builds_multiple_optimizers:
+                raise ValueError("Multi-optimizer configs are not supported under sharded training.")
+
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
         """Keys for draccus pretrained-path loading."""
         return ["policy", "reward_model"]
 
     def to_dict(self) -> dict[str, Any]:
-        return draccus.encode(self)  # type: ignore[no-any-return]  # because of the third-party library draccus uses Any as the return type
+        return draccus.encode(self)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         with open(save_directory / TRAIN_CONFIG_NAME, "w") as f, draccus.config_type("json"):

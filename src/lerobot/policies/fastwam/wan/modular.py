@@ -33,6 +33,7 @@ from .components import (
     load_wan_video_dit,
     resolve_wan_dit_paths,
 )
+from .model import sinusoidal_embedding_1d
 from .video_dit import (
     FastWAMAttentionBlock,
     WanContinuousFlowMatchScheduler,
@@ -40,7 +41,7 @@ from .video_dit import (
     gradient_checkpoint_forward,
     modulate,
     precompute_freqs_cis,
-    sinusoidal_embedding_1d,
+    retract_video_rope,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,8 +82,10 @@ class ActionDiT(nn.Module):
         num_layers: int,
         use_gradient_checkpointing: bool = False,
         fp32_attention: bool = True,
+        use_text_cross_attention: bool = True,
     ):
         super().__init__()
+        self.use_text_cross_attention = bool(use_text_cross_attention)
         self.hidden_dim = hidden_dim
         self.action_dim = action_dim
         self.ffn_dim = ffn_dim
@@ -99,10 +102,16 @@ class ActionDiT(nn.Module):
             raise ValueError(f"`attn_head_dim` must be even for RoPE, got {attn_head_dim}")
 
         self.action_encoder = nn.Linear(action_dim, hidden_dim)
-        self.text_embedding = nn.Sequential(
-            nn.Linear(text_dim, hidden_dim),
-            nn.GELU(approximate="tanh"),
-            nn.Linear(hidden_dim, hidden_dim),
+        # Faster-WAM world-model-only conditioning: no text cross-attention, so no text
+        # embedding module (the paper's 28.6M single-layer expert has none).
+        self.text_embedding = (
+            nn.Sequential(
+                nn.Linear(text_dim, hidden_dim),
+                nn.GELU(approximate="tanh"),
+                nn.Linear(hidden_dim, hidden_dim),
+            )
+            if self.use_text_cross_attention
+            else None
         )
         self.time_embedding = nn.Sequential(
             nn.Linear(freq_dim, hidden_dim),
@@ -119,6 +128,7 @@ class ActionDiT(nn.Module):
                     ffn_dim=ffn_dim,
                     eps=eps,
                     fp32_attention=fp32_attention,
+                    use_text_cross_attention=self.use_text_cross_attention,
                 )
                 for _ in range(num_layers)
             ]
@@ -133,9 +143,19 @@ class ActionDiT(nn.Module):
         self,
         action_tokens: torch.Tensor,
         timestep: torch.Tensor,
-        context: torch.Tensor,
+        context: torch.Tensor | None,
         context_mask: torch.Tensor | None = None,
     ) -> dict[str, Any]:
+        if not self.use_text_cross_attention:
+            if context is not None:
+                raise ValueError(
+                    "Text context was passed to an action expert built without text "
+                    "cross-attention (`use_text_cross_attention=False`); Faster-WAM "
+                    "world-model-only conditioning routes all context through the video "
+                    "backbone."
+                )
+        elif context is None:
+            raise ValueError("`context` is required when text cross-attention is enabled.")
         if action_tokens.ndim != 3:
             raise ValueError(
                 f"`action_tokens` must be 3D [B, T, action_dim], got shape {tuple(action_tokens.shape)}"
@@ -146,11 +166,11 @@ class ActionDiT(nn.Module):
             )
         if timestep.ndim != 1:
             raise ValueError(f"`timestep` must be 1D [B] or [1], got shape {tuple(timestep.shape)}")
-        if context.ndim != 3:
+        if context is not None and context.ndim != 3:
             raise ValueError(f"`context` must be 3D [B, L, D], got shape {tuple(context.shape)}")
 
         batch_size = action_tokens.shape[0]
-        if context.shape[0] != batch_size:
+        if context is not None and context.shape[0] != batch_size:
             raise ValueError(
                 f"Batch mismatch between action tokens and text context: {batch_size} vs {context.shape[0]}"
             )
@@ -163,7 +183,9 @@ class ActionDiT(nn.Module):
                 raise ValueError("During training, action timestep length must match batch_size.")
             timestep = timestep.expand(batch_size)
 
-        if context_mask is None:
+        if context is None:
+            context_mask = None
+        elif context_mask is None:
             context_mask = torch.ones((batch_size, context.shape[1]), dtype=torch.bool, device=context.device)
         else:
             if context_mask.ndim != 2:
@@ -179,14 +201,20 @@ class ActionDiT(nn.Module):
 
         model_dtype = self.action_encoder.weight.dtype
         action_tokens = action_tokens.to(dtype=model_dtype)
-        context = context.to(dtype=model_dtype)
         t_emb = sinusoidal_embedding_1d(self.freq_dim, timestep).to(dtype=model_dtype)
         t = self.time_embedding(t_emb)
         t_mod = self.time_projection(t).unflatten(1, (6, self.hidden_dim))
 
         tokens = self.action_encoder(action_tokens)
-        context_emb = self.text_embedding(context)
-        context_attn_mask = context_mask.unsqueeze(1).expand(-1, seq_len, -1)
+        context_emb = None
+        context_attn_mask = None
+        if context is not None:
+            context = context.to(dtype=model_dtype)
+            if self.text_embedding is None:
+                raise ValueError("Text cross-attention requires an action expert text embedding module.")
+            context_emb = self.text_embedding(context)
+            if context_mask is not None:
+                context_attn_mask = context_mask.unsqueeze(1).expand(-1, seq_len, -1)
         freqs = self.freqs[:seq_len].view(seq_len, 1, -1).to(tokens.device)
 
         return {
@@ -209,7 +237,7 @@ class ActionDiT(nn.Module):
         self,
         action_tokens: torch.Tensor,
         timestep: torch.Tensor,
-        context: torch.Tensor,
+        context: torch.Tensor | None,
         context_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         pre_state = self.pre_dit(
@@ -597,11 +625,94 @@ class MoTLayer(nn.Module):
         )
 
 
+class LiteKVFusion(nn.Module):
+    """Lite KV-Fusion of the Dock of Transformers (DoT) architecture (Faster-WAM,
+    arXiv 2608.02365, Eq. 1).
+
+    Each action layer ``j`` learns, per attention head ``h``, a softmax distribution over
+    the video backbone's ``L_v`` layers and fuses the NATIVE cached keys and values
+    (already QK-Normed and RoPE-transformed by the backbone, the paper's adopted N+R->F
+    variant):
+
+        beta_jhl = softmax_l(alpha_jhl)
+        K_hat_jh = sum_l beta_jhl * K_lh
+        V_hat_jh = sum_l beta_jhl * V_lh
+
+    The same ``beta`` is used for keys and values (keys and values are strictly paired).
+    Logits are initialized to zero so every video layer starts with equal weight.
+    Parameter count: ``H * L_v`` per action layer (720 for the paper's 24 heads x 30
+    video layers x 1 action layer).
+    """
+
+    def __init__(self, num_action_layers: int, num_heads: int, num_video_layers: int):
+        super().__init__()
+        if num_action_layers < 1:
+            raise ValueError(f"`num_action_layers` must be >= 1, got {num_action_layers}")
+        if num_heads < 1:
+            raise ValueError(f"`num_heads` must be >= 1, got {num_heads}")
+        if num_video_layers < 1:
+            raise ValueError(f"`num_video_layers` must be >= 1, got {num_video_layers}")
+        self.num_action_layers = num_action_layers
+        self.num_heads = num_heads
+        self.num_video_layers = num_video_layers
+        # Indexed [action layer j, head h, video layer l] exactly as Eq. 1 writes it.
+        self.logits = nn.Parameter(torch.zeros(num_action_layers, num_heads, num_video_layers))
+
+    def mixing_weights(self, action_layer_idx: int) -> torch.Tensor:
+        """Return the normalized mixing weights beta for one action layer, [H, L_v]."""
+        if not 0 <= action_layer_idx < self.num_action_layers:
+            raise ValueError(
+                f"`action_layer_idx` must be in [0, {self.num_action_layers}), got {action_layer_idx}"
+            )
+        # Keep normalization in float32 even when FSDP requires low-precision parameter storage.
+        # The cache mixing below retains the cache dtype, as in the original implementation.
+        return functional.softmax(self.logits[action_layer_idx], dim=-1, dtype=torch.float32)
+
+    def forward(
+        self,
+        video_kv_cache: list[dict[str, torch.Tensor]],
+        action_layer_idx: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Fuse the per-layer video cache into one (K, V) pair for one action layer.
+
+        Args:
+            video_kv_cache: list of L_v entries ``{"k": [B, S, H*D], "v": ...}`` as
+                produced by ``MoT.prefill_video_cache``.
+            action_layer_idx: which action layer's mixing weights to use.
+
+        Returns:
+            (k_fused, v_fused), each [B, S, H*D].
+        """
+        if len(video_kv_cache) != self.num_video_layers:
+            raise ValueError(
+                f"`video_kv_cache` must contain {self.num_video_layers} layers, got {len(video_kv_cache)}"
+            )
+        beta = self.mixing_weights(action_layer_idx)  # [H, L_v]
+        k_stack = torch.stack([entry["k"] for entry in video_kv_cache], dim=0)  # [L_v, B, S, HD]
+        v_stack = torch.stack([entry["v"] for entry in video_kv_cache], dim=0)
+        batch_size, seq_len, width = k_stack.shape[1:]
+        num_heads = self.num_heads
+        head_dim = width // num_heads
+        if width != num_heads * head_dim:
+            raise ValueError(f"Cache width {width} is not divisible by num_heads {num_heads}")
+        # Mix per head: [L_v, B, S, H, D] weighted by beta[h, l] -> [B, S, H, D].
+        beta = beta.to(dtype=k_stack.dtype).permute(1, 0).view(self.num_video_layers, 1, 1, num_heads, 1)
+        k_fused = (k_stack.view(self.num_video_layers, batch_size, seq_len, num_heads, head_dim) * beta).sum(
+            dim=0
+        )
+        v_fused = (v_stack.view(self.num_video_layers, batch_size, seq_len, num_heads, head_dim) * beta).sum(
+            dim=0
+        )
+        return k_fused.flatten(2), v_fused.flatten(2)
+
+
 class MoT(nn.Module):
     def __init__(
         self,
         mixtures: dict[str, nn.Module],
         mot_checkpoint_mixed_attn: bool = True,
+        lite_kv_fusion: LiteKVFusion | None = None,
+        retracted_1d_rope: bool = False,
     ):
         super().__init__()
         if not mixtures:
@@ -623,11 +734,35 @@ class MoT(nn.Module):
         self.attn_head_dim = first_expert.attn_head_dim
         self.fp32_attention = bool(getattr(first_expert, "fp32_attention", True))
 
+        self.lite_kv_fusion = lite_kv_fusion
+        self.retracted_1d_rope = bool(retracted_1d_rope)
+        if self.retracted_1d_rope and lite_kv_fusion is None:
+            raise ValueError("`retracted_1d_rope` requires `lite_kv_fusion`.")
+        if lite_kv_fusion is not None:
+            if "action" not in self.mixtures:
+                raise ValueError("Lite KV-Fusion requires an 'action' expert.")
+            action_expert = self.mixtures["action"]
+            if len(action_expert.blocks) != lite_kv_fusion.num_action_layers:
+                raise ValueError(
+                    f"LiteKVFusion was built for {lite_kv_fusion.num_action_layers} action layers, "
+                    f"but the action expert has {len(action_expert.blocks)}."
+                )
+            if lite_kv_fusion.num_video_layers != self.num_layers:
+                raise ValueError(
+                    f"LiteKVFusion was built for {lite_kv_fusion.num_video_layers} video layers, "
+                    f"but the video expert has {self.num_layers}."
+                )
+
         for name in self.expert_order[1:]:
             expert = self.mixtures[name]
-            if len(expert.blocks) != self.num_layers:
+            if len(expert.blocks) != self.num_layers and lite_kv_fusion is None:
                 raise ValueError(
                     f"All experts must have same number of layers; got {self.num_layers} and {len(expert.blocks)}"
+                )
+            if len(expert.blocks) > self.num_layers:
+                raise ValueError(
+                    f"Expert '{name}' cannot be deeper than the video backbone; "
+                    f"got {len(expert.blocks)} and {self.num_layers}"
                 )
             if expert.num_heads != self.num_heads:
                 raise ValueError(
@@ -640,6 +775,7 @@ class MoT(nn.Module):
                 )
             if bool(getattr(expert, "fp32_attention", True)) != self.fp32_attention:
                 raise ValueError("All experts must use the same `fp32_attention` setting.")
+        self.num_action_layers = len(self.mixtures["action"].blocks)
 
         logger.info(f"Initialized MoT with experts: {self.expert_order}, num_layers={self.num_layers}")
         for name in self.expert_order:
@@ -657,7 +793,14 @@ class MoT(nn.Module):
         self.layers = nn.ModuleList(
             [
                 MoTLayer(
-                    blocks={name: self.mixtures[name].blocks[layer_idx] for name in self.expert_order},
+                    # Experts may be shallower than the video backbone (Faster-WAM DoT,
+                    # arXiv 2608.02365): action block j lives in layer j for j < L_a, and
+                    # deeper layers own only their video block.
+                    blocks={
+                        name: self.mixtures[name].blocks[layer_idx]
+                        for name in self.expert_order
+                        if layer_idx < len(self.mixtures[name].blocks)
+                    },
                     experts={name: self.mixtures[name] for name in self.expert_order},
                     num_heads=self.num_heads,
                     attn_head_dim=self.attn_head_dim,
@@ -692,20 +835,21 @@ class MoT(nn.Module):
         state_dict.update(moved)
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
-    def prefill_video_cache(
+    def run_video_prefill(
         self,
         video_tokens: torch.Tensor,
         video_freqs: torch.Tensor,
         video_t_mod: torch.Tensor,
         video_context_payload: dict | None,
         video_attention_mask: torch.Tensor,
-    ) -> list[dict[str, torch.Tensor]]:
-        """Prefill video branch once and cache per-layer K/V for action denoising.
+    ) -> tuple[torch.Tensor, list[dict[str, torch.Tensor]]]:
+        """Prefill video branch once; return the final video tokens and per-layer K/V.
 
-        Returns a list of length ``num_layers``, each entry ``{"k": ..., "v": ...}``.
+        Unlike ``prefill_video_cache`` this also returns the video stream's final hidden
+        states, which the Faster-WAM (DoT) training path needs for the video loss.
         """
         if "video" not in self.mixtures:
-            raise ValueError("MoT requires `video` expert for `prefill_video_cache`.")
+            raise ValueError("MoT requires `video` expert for `run_video_prefill`.")
         if video_attention_mask.ndim != 2:
             raise ValueError(
                 f"`video_attention_mask` must be 2D [S,S], got shape {tuple(video_attention_mask.shape)}"
@@ -732,7 +876,80 @@ class MoT(nn.Module):
                 video_attention_mask=video_attention_mask,
             )
             kv_cache.append({"k": k, "v": v})
+        return x, kv_cache
+
+    def prefill_video_cache(
+        self,
+        video_tokens: torch.Tensor,
+        video_freqs: torch.Tensor,
+        video_t_mod: torch.Tensor,
+        video_context_payload: dict | None,
+        video_attention_mask: torch.Tensor,
+    ) -> list[dict[str, torch.Tensor]]:
+        """Prefill video branch once and cache per-layer K/V for action denoising.
+
+        Returns a list of length ``num_layers``, each entry ``{"k": ..., "v": ...}``.
+        """
+        _, kv_cache = self.run_video_prefill(
+            video_tokens=video_tokens,
+            video_freqs=video_freqs,
+            video_t_mod=video_t_mod,
+            video_context_payload=video_context_payload,
+            video_attention_mask=video_attention_mask,
+        )
         return kv_cache
+
+    def prepare_action_kv_context(
+        self,
+        video_kv_cache: list[dict[str, torch.Tensor]],
+        video_freqs: torch.Tensor | dict[str, torch.Tensor] | None = None,
+    ) -> list[dict[str, torch.Tensor]]:
+        """Prepare the per-action-layer video K/V context from the prefilled cache.
+
+        With Lite KV-Fusion (Faster-WAM, arXiv 2608.02365): each action layer's keys and
+        values are the per-head softmax mixture (Eq. 1) over ALL video layers' native
+        cached K/V, and the keys are de-rotated back to the action expert's 1D temporal
+        basis (retracted 1D-RoPE, Eq. 3) when that option is enabled. Without fusion,
+        the layer-aligned cache is returned unchanged (the Fast-WAM behavior).
+
+        Called once per chunk; the returned context is fixed across action denoising
+        steps (paper Sec. 2.4).
+
+        Args:
+            video_kv_cache: per-layer cache from ``run_video_prefill``/``prefill_video_cache``.
+            video_freqs: the video ``freqs`` payload (dict with ``grid_sizes`` and
+                ``freqs``) used to rotate the cached keys; required for retracted
+                1D-RoPE, ignored otherwise.
+        """
+        if self.lite_kv_fusion is None:
+            if len(video_kv_cache) != self.num_action_layers:
+                raise ValueError(
+                    f"`video_kv_cache` must contain {self.num_action_layers} entries for the "
+                    f"action expert, got {len(video_kv_cache)}."
+                )
+            return video_kv_cache
+        if len(video_kv_cache) != self.lite_kv_fusion.num_video_layers:
+            raise ValueError(
+                f"`video_kv_cache` must contain {self.lite_kv_fusion.num_video_layers} video "
+                f"layers, got {len(video_kv_cache)}."
+            )
+        retract_rope = self.retracted_1d_rope
+        if retract_rope:
+            if video_freqs is None or not isinstance(video_freqs, dict):
+                raise ValueError("Retracted 1D-RoPE requires the video freqs payload with `grid_sizes`.")
+            grid_sizes = video_freqs["grid_sizes"]
+            video_rope_freqs = video_freqs["freqs"]
+        action_kv: list[dict[str, torch.Tensor]] = []
+        for j in range(self.num_action_layers):
+            k_fused, v_fused = self.lite_kv_fusion(video_kv_cache, j)
+            if retract_rope:
+                k_fused = retract_video_rope(
+                    keys=k_fused,
+                    video_freqs=video_rope_freqs,
+                    grid_sizes=grid_sizes,
+                )
+            action_kv.append({"k": k_fused, "v": v_fused})
+        return action_kv
 
     def forward_action_with_video_cache(
         self,
@@ -747,9 +964,10 @@ class MoT(nn.Module):
         """Run action branch with cached video K/V instead of recomputing video tokens."""
         if "action" not in self.mixtures:
             raise ValueError("MoT requires `action` expert for `forward_action_with_video_cache`.")
-        if len(video_kv_cache) != self.num_layers:
+        if len(video_kv_cache) != self.num_action_layers:
             raise ValueError(
-                f"`video_kv_cache` must contain {self.num_layers} layers, got {len(video_kv_cache)}."
+                f"`video_kv_cache` must contain {self.num_action_layers} entries (one per action "
+                f"layer, from `prepare_action_kv_context`), got {len(video_kv_cache)}."
             )
         if attention_mask.ndim != 2:
             raise ValueError(f"`attention_mask` must be 2D [S,S], got shape {tuple(attention_mask.shape)}")
@@ -767,7 +985,9 @@ class MoT(nn.Module):
         action_attention_mask = attention_mask[video_seq_len:total_seq_len, :total_seq_len]
 
         x = action_tokens
-        for layer_idx, layer in enumerate(self.layers):
+        # The action expert may be shallower than the video backbone (Faster-WAM DoT):
+        # run only its L_a blocks, each against its own prepared K/V context entry.
+        for layer_idx, layer in enumerate(self.layers[: self.num_action_layers]):
             layer_cache = video_kv_cache[layer_idx]
             if "k" not in layer_cache or "v" not in layer_cache:
                 raise ValueError(f"`video_kv_cache[{layer_idx}]` must contain `k` and `v`.")
@@ -795,6 +1015,12 @@ class MoT(nn.Module):
         context_all: dict[str, dict | None],
         t_mod_all: dict[str, torch.Tensor],
     ):
+        if self.num_action_layers != self.num_layers:
+            raise ValueError(
+                "Joint MoT forward requires the action expert to match the video backbone "
+                f"depth (got {self.num_action_layers} vs {self.num_layers}); shallow action "
+                "experts use the cached/DoT action path only."
+            )
         missing = [k for k in self.expert_order if k not in embeds_all]
         if missing:
             raise ValueError(f"Missing expert tokens for {missing}")
@@ -848,9 +1074,14 @@ class FastWAM(torch.nn.Module):
         action_num_train_timesteps: int = 1000,
         loss_lambda_video: float = 1.0,
         loss_lambda_action: float = 1.0,
+        world_model_only_conditioning: bool = False,
     ):
         super().__init__()
         self.mot = mot
+        # Faster-WAM (arXiv 2608.02365) world-model-only conditioning: the action expert
+        # never receives a text/proprioceptive context; it reads all conditioning through
+        # the video backbone's fused representations.
+        self.world_model_only_conditioning = bool(world_model_only_conditioning)
         # `video_expert` / `action_expert` are the very same module objects as
         # `mot.mixtures["video"]` / `["action"]`, and `dit` is an alias of `mot`. Registering
         # them as submodules too would give every expert tensor three names in `state_dict()`
@@ -941,6 +1172,8 @@ class FastWAM(torch.nn.Module):
             raise ValueError("`video_dit_config` is required for FastWAM.from_wan22_pretrained().")
         if "text_dim" not in video_dit_config:
             raise ValueError("`video_dit_config['text_dim']` is required for FastWAM.")
+        if action_dit_config is None:
+            raise ValueError("`action_dit_config` is required for FastWAM.from_wan22_pretrained().")
 
         # Custom MoT video DiT from the original Wan2.2 repo; frozen VAE / UMT5 from
         # the diffusers conversion. This is the offline base-creation path; the
@@ -1308,6 +1541,7 @@ class FastWAM(torch.nn.Module):
         }
 
     def _run_training_mot(self, inputs: dict[str, torch.Tensor], targets: dict[str, torch.Tensor]):
+        action_context = None if self.world_model_only_conditioning else inputs["context"]
         video_pre = self.video_expert.pre_dit(
             x=targets["latents"],
             timestep=targets["timestep_video"],
@@ -1319,8 +1553,8 @@ class FastWAM(torch.nn.Module):
         action_pre = self.action_expert.pre_dit(
             action_tokens=targets["noisy_action"],
             timestep=targets["timestep_action"],
-            context=inputs["context"],
-            context_mask=inputs["context_mask"],
+            context=action_context,
+            context_mask=inputs["context_mask"] if action_context is not None else None,
         )
         video_tokens = video_pre["tokens"]
         action_tokens = action_pre["tokens"]
@@ -1330,31 +1564,67 @@ class FastWAM(torch.nn.Module):
             video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
             device=video_tokens.device,
         )
-        tokens_out = self.mot(
-            embeds_all={
-                "video": video_tokens,
-                "action": action_tokens,
-            },
-            attention_mask=attention_mask,
-            freqs_all={
-                "video": video_pre["freqs"],
-                "action": action_pre["freqs"],
-            },
-            context_all={
-                "video": {
+        if self.mot.lite_kv_fusion is not None:
+            # Faster-WAM (DoT) training: the video stream runs through the full backbone
+            # once (its rows never attend to action rows, so this equals the joint path's
+            # video stream), then each action block attends to action tokens plus its
+            # fused (and optionally retracted) video K/V context. Gradients from the
+            # action loss reach the video backbone through the fused cache.
+            video_tokens_out, video_kv_cache = self.mot.run_video_prefill(
+                video_tokens=video_tokens,
+                video_freqs=video_pre["freqs"],
+                video_t_mod=video_pre["t_mod"],
+                video_context_payload={
                     "context": video_pre["context"],
                     "mask": video_pre["context_mask"],
                 },
-                "action": {
+                video_attention_mask=attention_mask[: video_tokens.shape[1], : video_tokens.shape[1]],
+            )
+            action_kv = self.mot.prepare_action_kv_context(video_kv_cache, video_pre["freqs"])
+            action_context_payload = (
+                None
+                if self.world_model_only_conditioning
+                else {
                     "context": action_pre["context"],
                     "mask": action_pre["context_mask"],
+                }
+            )
+            action_tokens_out = self.mot.forward_action_with_video_cache(
+                action_tokens=action_tokens,
+                action_freqs=action_pre["freqs"],
+                action_t_mod=action_pre["t_mod"],
+                action_context_payload=action_context_payload,
+                video_kv_cache=action_kv,
+                attention_mask=attention_mask,
+                video_seq_len=video_tokens.shape[1],
+            )
+            tokens_out = {"video": video_tokens_out, "action": action_tokens_out}
+        else:
+            tokens_out = self.mot(
+                embeds_all={
+                    "video": video_tokens,
+                    "action": action_tokens,
                 },
-            },
-            t_mod_all={
-                "video": video_pre["t_mod"],
-                "action": action_pre["t_mod"],
-            },
-        )
+                attention_mask=attention_mask,
+                freqs_all={
+                    "video": video_pre["freqs"],
+                    "action": action_pre["freqs"],
+                },
+                context_all={
+                    "video": {
+                        "context": video_pre["context"],
+                        "mask": video_pre["context_mask"],
+                    },
+                    "action": {
+                        "context": action_pre["context"],
+                        "mask": action_pre["context_mask"],
+                    },
+                },
+                t_mod_all={
+                    "video": video_pre["t_mod"],
+                    "action": action_pre["t_mod"],
+                },
+            )
         pred_video = self.video_expert.post_dit(tokens_out["video"], video_pre)
         pred_action = self.action_expert.post_dit(tokens_out["action"], action_pre)
         return pred_video, pred_action
@@ -1555,20 +1825,25 @@ class FastWAM(torch.nn.Module):
         attention_mask: torch.Tensor,
         video_seq_len: int,
     ) -> torch.Tensor:
+        action_context = None if self.world_model_only_conditioning else context
         action_pre = self.action_expert.pre_dit(
             action_tokens=latents_action,
             timestep=timestep_action,
-            context=context,
-            context_mask=context_mask,
+            context=action_context,
+            context_mask=context_mask if action_context is not None else None,
         )
         action_tokens = self.mot.forward_action_with_video_cache(
             action_tokens=action_pre["tokens"],
             action_freqs=action_pre["freqs"],
             action_t_mod=action_pre["t_mod"],
-            action_context_payload={
-                "context": action_pre["context"],
-                "mask": action_pre["context_mask"],
-            },
+            action_context_payload=(
+                None
+                if self.world_model_only_conditioning
+                else {
+                    "context": action_pre["context"],
+                    "mask": action_pre["context_mask"],
+                }
+            ),
             video_kv_cache=video_kv_cache,
             attention_mask=attention_mask,
             video_seq_len=video_seq_len,
@@ -1652,14 +1927,18 @@ class FastWAM(torch.nn.Module):
         context_mask = context_mask.to(device=self.device, dtype=torch.bool, non_blocking=True)
         return context, context_mask
 
-    def _make_action_latents(self, action_horizon: int, seed: int | None, rand_device: str):
-        generator = None if seed is None else torch.Generator(device=rand_device).manual_seed(seed)
-        return torch.randn(
-            (1, action_horizon, self.action_expert.action_dim),
-            generator=generator,
-            device=rand_device,
-            dtype=torch.float32,
-        ).to(device=self.device, dtype=self.torch_dtype)
+    def _make_action_latents(
+        self, action_horizon: int, seed: int | None, rand_device: str, *, noise: torch.Tensor | None = None
+    ):
+        if noise is None:
+            generator = None if seed is None else torch.Generator(device=rand_device).manual_seed(seed)
+            noise = torch.randn(
+                (1, action_horizon, self.action_expert.action_dim),
+                generator=generator,
+                device=rand_device,
+                dtype=torch.float32,
+            )
+        return noise.to(device=self.device, dtype=self.torch_dtype)
 
     def _make_video_latents(self, num_video_frames: int, height: int, width: int, seed, rand_device):
         latent_t = (num_video_frames - 1) // self.vae.temporal_downsample_factor + 1
@@ -1799,6 +2078,9 @@ class FastWAM(torch.nn.Module):
         seed: int | None = None,
         rand_device: str = "cpu",
         tiled: bool = False,
+        compile_action_infer: bool = False,
+        *,
+        noise: torch.Tensor | None = None,
     ) -> dict[str, Any]:
         self.eval()
         if str(getattr(self.video_expert, "video_attention_mask_mode", "")) != "first_frame_causal":
@@ -1806,7 +2088,7 @@ class FastWAM(torch.nn.Module):
 
         input_image, _, _ = self._normalize_infer_input_image(input_image)
         proprio = self._normalize_infer_proprio(proprio)
-        latents_action = self._make_action_latents(action_horizon, seed, rand_device)
+        latents_action = self._make_action_latents(action_horizon, seed, rand_device, noise=noise)
 
         input_image = input_image.to(device=self.device, dtype=self.torch_dtype)
         first_frame_latents = self._encode_input_image_latents_tensor(input_image=input_image, tiled=tiled)
@@ -1834,7 +2116,27 @@ class FastWAM(torch.nn.Module):
             video_tokens_per_frame=int(video_pre["meta"]["tokens_per_frame"]),
             device=video_pre["tokens"].device,
         )
-        video_kv_cache = self.mot.prefill_video_cache(
+        video_prefiller = self.mot.prefill_video_cache
+        action_denoiser = self._predict_action_noise_with_cache
+        if compile_action_infer:
+            if not hasattr(self, "_compiled_video_prefiller"):
+                self._compiled_video_prefiller = torch.compile(
+                    self.mot.prefill_video_cache,
+                    mode="reduce-overhead",
+                    fullgraph=True,
+                )
+            if not hasattr(self, "_compiled_action_denoiser"):
+                self._compiled_action_denoiser = torch.compile(
+                    self._predict_action_noise_with_cache,
+                    mode="reduce-overhead",
+                    fullgraph=True,
+                )
+            video_prefiller = self._compiled_video_prefiller
+            action_denoiser = self._compiled_action_denoiser
+            if self.device.type == "cuda":
+                torch.compiler.cudagraph_mark_step_begin()
+
+        video_kv_cache = video_prefiller(
             video_tokens=video_pre["tokens"],
             video_freqs=video_pre["freqs"],
             video_t_mod=video_pre["t_mod"],
@@ -1844,6 +2146,19 @@ class FastWAM(torch.nn.Module):
             },
             video_attention_mask=attention_mask[:video_seq_len, :video_seq_len],
         )
+        if compile_action_infer:
+            # Inductor's reduce-overhead mode can return CUDA Graph-owned output
+            # buffers. The denoising graph replays repeatedly, so keep stable cache
+            # tensors that cannot be overwritten by a later graph replay.
+            video_kv_cache = [
+                {"k": layer_cache["k"].clone(), "v": layer_cache["v"].clone()}
+                for layer_cache in video_kv_cache
+            ]
+        # Lite KV-Fusion / retracted 1D-RoPE (Faster-WAM): fuse the native per-layer
+        # cache into the per-action-layer context ONCE; the result is a fixed context
+        # reused across all action denoising steps (paper Sec. 2.4). Without the DoT
+        # options this is the layer-aligned cache, unchanged.
+        action_kv = self.mot.prepare_action_kv_context(video_kv_cache, video_pre["freqs"])
 
         infer_timesteps_action, infer_deltas_action = self.infer_action_scheduler.build_inference_schedule(
             num_inference_steps=num_inference_steps,
@@ -1852,14 +2167,16 @@ class FastWAM(torch.nn.Module):
             shift_override=sigma_shift,
         )
         for step_t_action, step_delta_action in zip(infer_timesteps_action, infer_deltas_action, strict=True):
+            if compile_action_infer and self.device.type == "cuda":
+                torch.compiler.cudagraph_mark_step_begin()
             timestep_action = step_t_action.unsqueeze(0).to(dtype=latents_action.dtype, device=self.device)
 
-            pred_action = self._predict_action_noise_with_cache(
+            pred_action = action_denoiser(
                 latents_action=latents_action,
                 timestep_action=timestep_action,
                 context=context,
                 context_mask=context_mask,
-                video_kv_cache=video_kv_cache,
+                video_kv_cache=action_kv,
                 attention_mask=attention_mask,
                 video_seq_len=video_seq_len,
             )

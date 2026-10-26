@@ -26,6 +26,8 @@ from lerobot.utils.random_utils import (
     deserialize_rng_state,
     deserialize_torch_rng_state,
     get_rng_state,
+    load_rng_state,
+    save_rng_state,
     seeded_context,
     serialize_numpy_rng_state,
     serialize_python_rng_state,
@@ -55,6 +57,40 @@ def test_serialize_deserialize_python_rng(fixed_seed):
     assert val2 == val3
 
 
+@pytest.mark.parametrize("draws_before_save", [0, 1, 2, 3])
+def test_python_gaussian_checkpoint_continuation(fixed_seed, tmp_path, draws_before_save):
+    for _ in range(draws_before_save):
+        random.gauss(0, 1)
+    save_rng_state(tmp_path)
+    expected = [random.gauss(0, 1) for _ in range(6)]
+
+    random.seed(999)
+    load_rng_state(tmp_path)
+    assert [random.gauss(0, 1) for _ in range(6)] == expected
+
+
+@pytest.mark.parametrize("cached_gaussian", [None, 0.0, 0.12345678901234568])
+def test_python_rng_cached_gaussian_roundtrip(fixed_seed, cached_gaussian):
+    original = (*random.getstate()[:2], cached_gaussian)
+    random.setstate(original)
+    state = serialize_python_rng_state()
+
+    random.gauss(0, 1)
+    deserialize_python_rng_state(state)
+    assert random.getstate() == original
+
+
+def test_deserialize_python_rng_legacy_state(fixed_seed):
+    state = serialize_python_rng_state()
+    state.pop("py_rng_cached_gaussian", None)
+    expected = random.random()
+    random.gauss(0, 1)
+
+    deserialize_python_rng_state(state)
+    assert random.getstate()[2] is None
+    assert random.random() == expected
+
+
 def test_serialize_deserialize_numpy_rng(fixed_seed):
     _ = np.random.rand()
     st = serialize_numpy_rng_state()
@@ -62,6 +98,28 @@ def test_serialize_deserialize_numpy_rng(fixed_seed):
     deserialize_numpy_rng_state(st)
     val3 = np.random.rand()
     assert val2 == val3
+
+
+@pytest.mark.parametrize("draws_before_save", [0, 1, 2, 3])
+def test_numpy_gaussian_checkpoint_continuation(fixed_seed, tmp_path, draws_before_save):
+    np.random.standard_normal(draws_before_save)
+    save_rng_state(tmp_path)
+    expected = np.random.standard_normal(6)
+
+    np.random.seed(999)
+    load_rng_state(tmp_path)
+    np.testing.assert_array_equal(np.random.standard_normal(6), expected)
+
+
+def test_deserialize_numpy_rng_legacy_float32_cache(fixed_seed):
+    np.random.standard_normal()
+    state = serialize_numpy_rng_state()
+    state["np_rng_cached_gaussian"] = state["np_rng_cached_gaussian"].float()
+    expected = state["np_rng_cached_gaussian"].item()
+
+    np.random.seed(999)
+    deserialize_numpy_rng_state(state)
+    assert np.random.standard_normal() == expected
 
 
 def test_serialize_deserialize_torch_rng(fixed_seed):
@@ -134,3 +192,74 @@ def test_seeded_context(fixed_seed):
     assert seeded_val1 == seeded_val2
     assert all(a != b for a, b in zip(val1, seeded_val1, strict=True))  # changed inside the context
     assert all(a != b for a, b in zip(val2, seeded_val2, strict=True))  # changed again after exiting
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
+def test_seeded_context_restores_rng_after_exception(fixed_seed, error_type):
+    original = get_rng_state()
+    expected = (random.random(), np.random.rand(), torch.rand(3))
+    set_rng_state(original)
+    error = error_type("context failed")
+
+    with pytest.raises(error_type) as exc_info, seeded_context(1337):
+        random.random()
+        np.random.rand()
+        torch.rand(3)
+        raise error
+
+    assert exc_info.value is error
+    assert random.random() == expected[0]
+    assert np.random.rand() == expected[1]
+    torch.testing.assert_close(torch.rand(3), expected[2], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("seed", [-1, 2**32])
+def test_seeded_context_restores_rng_after_invalid_seed(fixed_seed, seed):
+    original = get_rng_state()
+    expected = (random.random(), np.random.rand(), torch.rand(3))
+    set_rng_state(original)
+
+    with pytest.raises(ValueError), seeded_context(seed):
+        pytest.fail("An invalid NumPy seed must fail before entering the context")
+
+    assert random.random() == expected[0]
+    assert np.random.rand() == expected[1]
+    torch.testing.assert_close(torch.rand(3), expected[2], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("inner_seed, error_type", [(456, RuntimeError), (-1, ValueError)])
+def test_nested_seeded_context_restores_outer_rng_after_exception(fixed_seed, inner_seed, error_type):
+    with seeded_context(123):
+        original = get_rng_state()
+        expected = (random.random(), np.random.rand(), torch.rand(3))
+        set_rng_state(original)
+
+        with pytest.raises(error_type), seeded_context(inner_seed):
+            raise error_type("inner context failed")
+
+        assert random.random() == expected[0]
+        assert np.random.rand() == expected[1]
+        torch.testing.assert_close(torch.rand(3), expected[2], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_seeded_context_preserves_gaussian_caches(fixed_seed, fail):
+    random.gauss(0, 1)
+    np.random.standard_normal()
+    original = get_rng_state()
+    expected_python = [random.gauss(0, 1) for _ in range(6)]
+    expected_numpy = np.random.standard_normal(6)
+    set_rng_state(original)
+
+    try:
+        with seeded_context(1337):
+            random.gauss(0, 1)
+            np.random.standard_normal()
+            if fail:
+                raise RuntimeError("context failed")
+    except RuntimeError:
+        if not fail:
+            raise
+
+    assert [random.gauss(0, 1) for _ in range(6)] == expected_python
+    np.testing.assert_array_equal(np.random.standard_normal(6), expected_numpy)

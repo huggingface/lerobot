@@ -84,8 +84,9 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
 
         observation = raw_observation.copy()
 
-        if self.use_ik_solution and "IK_solution" in self.transition.get(TransitionKey.COMPLEMENTARY_DATA):
-            q_raw = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)["IK_solution"]
+        complementary_data = self.transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if self.use_ik_solution and complementary_data is not None and "IK_solution" in complementary_data:
+            q_raw = complementary_data["IK_solution"]
         else:
             q_raw = np.array(
                 [
@@ -131,9 +132,9 @@ class EEReferenceAndDelta(RobotActionProcessorStep):
                 ],
                 dtype=float,
             )
-            r_abs = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+            r_abs = Rotation.from_rotvec(np.array([wx, wy, wz])).as_matrix()
             desired = np.eye(4, dtype=float)
-            desired[:3, :3] = ref[:3, :3] @ r_abs
+            desired[:3, :3] = r_abs @ ref[:3, :3]
             desired[:3, 3] = ref[:3, 3] + delta_p
 
             self._command_when_disabled = desired.copy()
@@ -334,7 +335,7 @@ class InverseKinematicsEEToJoints(RobotActionProcessorStep):
 
         # Build desired 4x4 transform from pos + rotvec (twist)
         t_des = np.eye(4, dtype=float)
-        t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+        t_des[:3, :3] = Rotation.from_rotvec(np.array([wx, wy, wz])).as_matrix()
         t_des[:3, 3] = [x, y, z]
 
         # Compute inverse kinematics
@@ -570,7 +571,7 @@ class InverseKinematicsRLStep(ProcessorStep):
     initial_guess_current_joints: bool = True
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
-        new_transition = dict(transition)
+        new_transition = transition.copy()
         action = new_transition.get(TransitionKey.ACTION)
         if action is None:
             raise ValueError("Action is required for InverseKinematicsEEToJoints")
@@ -610,7 +611,7 @@ class InverseKinematicsRLStep(ProcessorStep):
 
         # Build desired 4x4 transform from pos + rotvec (twist)
         t_des = np.eye(4, dtype=float)
-        t_des[:3, :3] = Rotation.from_rotvec([wx, wy, wz]).as_matrix()
+        t_des[:3, :3] = Rotation.from_rotvec(np.array([wx, wy, wz])).as_matrix()
         t_des[:3, 3] = [x, y, z]
 
         # Compute inverse kinematics
@@ -625,7 +626,9 @@ class InverseKinematicsRLStep(ProcessorStep):
                 action["gripper.pos"] = float(gripper_pos)
 
         new_transition[TransitionKey.ACTION] = action
-        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+        complementary_data = new_transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            complementary_data = {}
         complementary_data["IK_solution"] = q_target
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
         return new_transition

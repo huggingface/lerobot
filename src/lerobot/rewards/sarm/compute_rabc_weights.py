@@ -48,6 +48,7 @@ The output is saved to the dataset's local cache directory as 'sarm_progress.par
 import argparse
 import logging
 from pathlib import Path
+from typing import Any
 
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
@@ -58,6 +59,7 @@ import torch
 from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
+from lerobot.processor import PolicyProcessorPipeline
 
 from .modeling_sarm import SARMRewardModel
 from .processor_sarm import make_sarm_pre_post_processors
@@ -81,7 +83,7 @@ def load_sarm_resources(
     dataset_repo_id: str,
     reward_model_path: str,
     device: str = "cuda",
-) -> tuple[LeRobotDataset, SARMRewardModel, any]:
+) -> tuple[LeRobotDataset, SARMRewardModel, PolicyProcessorPipeline[dict[str, Any], dict[str, Any]]]:
     """
     Load SARM model, dataset, and preprocessor.
 
@@ -212,13 +214,13 @@ def visualize_episode(
 def visualize_sarm_predictions(
     dataset: LeRobotDataset,
     reward_model: SARMRewardModel,
-    preprocess,
+    preprocess: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     episode_indices: list[int],
     head_mode: str,
     output_dir: Path,
     num_display_frames: int = 5,
     stride: int = 1,
-):
+) -> None:
     """
     Visualize SARM predictions for multiple episodes.
 
@@ -470,7 +472,7 @@ def compute_sarm_progress(
     num_visualizations: int = 5,
     output_dir: str = "./sarm_viz",
     stride: int = 1,
-):
+) -> Path:
     """
     Compute SARM progress predictions for all frames in a dataset.
 
@@ -509,8 +511,8 @@ def compute_sarm_progress(
     all_indices = []
     all_episode_indices = []
     all_frame_indices = []
-    all_progress_sparse = [] if compute_sparse else None
-    all_progress_dense = [] if compute_dense else None
+    all_progress_sparse: list[float] = []
+    all_progress_dense: list[float] = []
 
     if stride > 1:
         logging.info(f"Using stride={stride}: computing every {stride} frames, interpolating the rest")
@@ -614,16 +616,14 @@ def compute_sarm_progress(
         # All frame indices for this episode
         all_frame_idx_array = np.arange(ep_start, ep_end)
 
+        interp_sparse: np.ndarray | None = computed_sparse
+        interp_dense: np.ndarray | None = computed_dense
         if stride > 1 and len(computed_indices) > 1:
             # Interpolate progress values
-            if compute_sparse:
+            if computed_sparse is not None:
                 interp_sparse = interpolate_progress(computed_indices, computed_sparse, all_frame_idx_array)
-            if compute_dense:
+            if computed_dense is not None:
                 interp_dense = interpolate_progress(computed_indices, computed_dense, all_frame_idx_array)
-        else:
-            # No interpolation needed
-            interp_sparse = computed_sparse if compute_sparse else None
-            interp_dense = computed_dense if compute_dense else None
 
         # Store results for all frames
         for i, frame_idx in enumerate(all_frame_idx_array):
@@ -633,6 +633,7 @@ def compute_sarm_progress(
             all_frame_indices.append(local_idx)
             if compute_sparse:
                 if stride > 1 and len(computed_indices) > 1:
+                    assert interp_sparse is not None
                     all_progress_sparse.append(float(interp_sparse[i]))
                 elif frame_idx in frame_results:
                     all_progress_sparse.append(frame_results[frame_idx][0])
@@ -640,6 +641,7 @@ def compute_sarm_progress(
                     all_progress_sparse.append(np.nan)
             if compute_dense:
                 if stride > 1 and len(computed_indices) > 1:
+                    assert interp_dense is not None
                     all_progress_dense.append(float(interp_dense[i]))
                 elif frame_idx in frame_results:
                     all_progress_dense.append(frame_results[frame_idx][1])
@@ -667,12 +669,12 @@ def compute_sarm_progress(
     final_table = final_table.replace_schema_metadata(metadata)
 
     # Determine output path
-    output_path = Path(dataset.root) / "sarm_progress.parquet" if output_path is None else Path(output_path)
+    save_path = Path(dataset.root) / "sarm_progress.parquet" if output_path is None else Path(output_path)
 
     # Save
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(final_table, output_path)
-    logging.info(f"Saved {len(final_table)} frame progress values to {output_path}")
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(final_table, save_path)
+    logging.info(f"Saved {len(final_table)} frame progress values to {save_path}")
 
     # Print statistics
     if "progress_sparse" in df.columns:
@@ -703,7 +705,7 @@ def compute_sarm_progress(
             stride=stride,
         )
 
-    return output_path
+    return save_path
 
 
 def main():

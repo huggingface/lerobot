@@ -1,0 +1,30 @@
+# Teleoperators
+
+A teleoperator produces actions for a robot to follow — a leader arm, a gamepad, a keyboard, a phone. All of
+them implement the [`Teleoperator`] interface, so a recording script written against it works with any input
+device.
+
+See [Phone teleoperation](../phone_teleop) and [Isaac Teleop](../isaac_teleop) for setup guides, and
+[Imitation Learning for Robots](../il_robots) for the recording workflow.
+
+## Teleoperator
+
+[[autodoc]] lerobot.teleoperators.Teleoperator
+    - connect
+    - disconnect
+    - configure
+    - calibrate
+    - get_action
+    - send_feedback
+    - action_features
+    - feedback_features
+    - is_connected
+    - is_calibrated
+
+## TeleoperatorConfig
+
+[[autodoc]] lerobot.teleoperators.TeleoperatorConfig
+
+## make_teleoperator_from_config
+
+[[autodoc]] lerobot.teleoperators.make_teleoperator_from_config

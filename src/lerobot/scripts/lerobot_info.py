@@ -29,7 +29,7 @@ import importlib
 import platform
 import shutil
 import subprocess
-from importlib.metadata import PackageNotFoundError, distribution
+from importlib.metadata import PackageNotFoundError, distribution, version as metadata_version
 
 PACKAGE_NAME = "lerobot"
 
@@ -55,6 +55,14 @@ def get_package_version(package_name: str) -> str:
         return getattr(module, "__version__", "Installed (version not found)")
     except ImportError:
         return "N/A"
+    except Exception as e:
+        # Installed but broken, e.g. torchcodec raises RuntimeError when it can't load FFmpeg.
+        # Report it instead of crashing: this is exactly what a bug report needs to show.
+        try:
+            version = metadata_version(package_name)
+        except PackageNotFoundError:
+            version = "Installed"
+        return f"{version} (import failed: {type(e).__name__})"
 
 
 def get_sys_info() -> dict[str, str]:
@@ -73,7 +81,7 @@ def get_sys_info() -> dict[str, str]:
 
     # PyTorch and GPU specific information
     torch_version = "N/A"
-    torch_cuda_available = "N/A"
+    torch_cuda_available: str | bool = "N/A"
     cuda_version = "N/A"
     gpu_model = "N/A"
     try:
@@ -99,7 +107,7 @@ def get_sys_info() -> dict[str, str]:
             "Using GPU in script?": "<fill in>",
         }
     )
-    scripts = "N/A"
+    scripts: str | list[str] = "N/A"
     try:
         dist = distribution(PACKAGE_NAME)
         scripts = [ep.name for ep in dist.entry_points if ep.group == "console_scripts"]

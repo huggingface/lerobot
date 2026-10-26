@@ -416,6 +416,22 @@ def get_output_path(
     return output_repo_id, output_path, backup_path
 
 
+def _require_repo_id(cfg: EditDatasetConfig) -> str:
+    """Return the input dataset identifier; every operation except merge needs one."""
+    if not cfg.repo_id:
+        raise ValueError(
+            f"--repo_id is required for {cfg.operation.type} operation (the input dataset identifier)"
+        )
+    return cfg.repo_id
+
+
+def _require_new_repo_id(cfg: EditDatasetConfig) -> str:
+    """Return the merged dataset identifier; the merge operation needs one."""
+    if not cfg.new_repo_id:
+        raise ValueError("--new_repo_id is required for merge operation (the merged dataset identifier)")
+    return cfg.new_repo_id
+
+
 def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, DeleteEpisodesConfig):
         raise ValueError("Operation config must be DeleteEpisodesConfig")
@@ -423,9 +439,10 @@ def handle_delete_episodes(cfg: EditDatasetConfig) -> None:
     if not cfg.operation.episode_indices:
         raise ValueError("episode_indices must be specified for delete_episodes operation")
 
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    repo_id = _require_repo_id(cfg)
+    dataset = LeRobotDataset(repo_id, root=cfg.root)
     output_repo_id, output_dir, backup_path = get_output_path(
-        cfg.repo_id,
+        repo_id,
         new_repo_id=cfg.new_repo_id,
         root=cfg.root,
         new_root=cfg.new_root,
@@ -465,9 +482,10 @@ def handle_split(cfg: EditDatasetConfig) -> None:
             "split uses the original dataset identifier --repo_id to generate split names. The --new_repo_id parameter is ignored."
         )
 
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    repo_id = _require_repo_id(cfg)
+    dataset = LeRobotDataset(repo_id, root=cfg.root)
 
-    logging.info(f"Splitting dataset {cfg.repo_id} with splits: {cfg.operation.splits}")
+    logging.info(f"Splitting dataset {repo_id} with splits: {cfg.operation.splits}")
     split_datasets = split_dataset(
         dataset,
         splits=cfg.operation.splits,
@@ -508,12 +526,13 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         logging.info(f"Loading {len(cfg.operation.repo_ids)} datasets to merge")
         datasets = [LeRobotDataset(repo_id) for repo_id in cfg.operation.repo_ids]
 
-    output_dir = Path(cfg.new_root) if cfg.new_root else HF_LEROBOT_HOME / cfg.new_repo_id
+    new_repo_id = _require_new_repo_id(cfg)
+    output_dir = Path(cfg.new_root) if cfg.new_root else HF_LEROBOT_HOME / new_repo_id
 
-    logging.info(f"Merging datasets into {cfg.new_repo_id}")
+    logging.info(f"Merging datasets into {new_repo_id}")
     merged_dataset = merge_datasets(
         datasets,
-        output_repo_id=cfg.new_repo_id,
+        output_repo_id=new_repo_id,
         output_dir=output_dir,
         concatenate_videos=cfg.operation.concatenate_videos,
         concatenate_data=cfg.operation.concatenate_data,
@@ -536,9 +555,10 @@ def handle_remove_feature(cfg: EditDatasetConfig) -> None:
     if not cfg.operation.feature_names:
         raise ValueError("feature_names must be specified for remove_feature operation")
 
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    repo_id = _require_repo_id(cfg)
+    dataset = LeRobotDataset(repo_id, root=cfg.root)
     output_repo_id, output_dir, backup_path = get_output_path(
-        cfg.repo_id,
+        repo_id,
         new_repo_id=cfg.new_repo_id,
         root=cfg.root,
         new_root=cfg.new_root,
@@ -582,7 +602,8 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
             "modify_tasks modifies datasets in-place. The --new_repo_id and --new_root parameters are ignored."
         )
 
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    repo_id = _require_repo_id(cfg)
+    dataset = LeRobotDataset(repo_id, root=cfg.root)
     logging.warning(f"Modifying dataset in-place at {dataset.root}. Original data will be overwritten.")
 
     # Convert episode_tasks keys from string to int if needed (CLI passes strings)
@@ -616,7 +637,8 @@ def handle_modify_tasks(cfg: EditDatasetConfig) -> None:
 def handle_convert_image_to_video(cfg: EditDatasetConfig) -> None:
     # Note: Parser may create any config type with the right fields, so we access fields directly
     # instead of checking isinstance()
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    repo_id = _require_repo_id(cfg)
+    dataset = LeRobotDataset(repo_id, root=cfg.root)
 
     # Determine output directory and repo_id
     # Priority: 1) new_root, 2) new_repo_id, 3) operation.output_dir, 4) auto-generated name
@@ -675,13 +697,14 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, RecomputeStatsConfig):
         raise ValueError("Operation config must be RecomputeStatsConfig")
 
+    repo_id = _require_repo_id(cfg)
     # Determine whether this is an in-place operation
     output_repo_id, input_root, output_root = _resolve_io_paths(
-        cfg.repo_id,
+        repo_id,
         cfg.new_repo_id,
         cfg.root,
         cfg.new_root,
-        default_new_repo_id=f"{cfg.repo_id}_recomputed_stats",
+        default_new_repo_id=f"{repo_id}_recomputed_stats",
     )
     in_place = _is_in_place(input_root, output_root)
 
@@ -697,7 +720,7 @@ def handle_recompute_stats(cfg: EditDatasetConfig) -> None:
         logging.warning(
             f"Overwriting dataset stats in-place at {input_root}. The original stats will be lost."
         )
-        dataset = LeRobotDataset(cfg.repo_id, root=input_root)
+        dataset = LeRobotDataset(repo_id, root=input_root)
     else:
         logging.info(f"Copying dataset from {input_root} to {output_root}")
         if output_root.exists():
@@ -736,12 +759,13 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, ReencodeVideosConfig):
         raise ValueError("Operation config must be ReencodeVideosConfig")
 
+    repo_id = _require_repo_id(cfg)
     output_repo_id, input_root, output_root = _resolve_io_paths(
-        cfg.repo_id,
+        repo_id,
         cfg.new_repo_id,
         cfg.root,
         cfg.new_root,
-        default_new_repo_id=f"{cfg.repo_id}_reencoded",
+        default_new_repo_id=f"{repo_id}_reencoded",
     )
     in_place = _is_in_place(input_root, output_root)
 
@@ -757,7 +781,7 @@ def handle_reencode_videos(cfg: EditDatasetConfig) -> None:
         logging.warning(
             f"Overwriting dataset videos in-place at {input_root}. The original videos will be lost."
         )
-        dataset = LeRobotDataset(cfg.repo_id, root=input_root)
+        dataset = LeRobotDataset(repo_id, root=input_root)
     else:
         logging.info(f"Copying dataset from {input_root} to {output_root}")
         if output_root.exists():
@@ -801,11 +825,12 @@ def _get_dataset_size(repo_path):
     return total
 
 
-def handle_info(cfg: EditDatasetConfig):
+def handle_info(cfg: EditDatasetConfig) -> None:
     if not isinstance(cfg.operation, InfoConfig):
         raise ValueError("Operation config must be InfoConfig")
 
-    dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+    repo_id = _require_repo_id(cfg)
+    dataset = LeRobotDataset(repo_id, root=cfg.root)
     sys.stdout.write(f"======Info {dataset.meta.repo_id}\n")
     sys.stdout.write(f"Repository ID: {dataset.meta.repo_id} \n")
     sys.stdout.write(f"Total episode: {dataset.meta.total_episodes} \n")
@@ -833,13 +858,9 @@ def handle_info(cfg: EditDatasetConfig):
 
 def _validate_config(cfg: EditDatasetConfig) -> None:
     if isinstance(cfg.operation, MergeConfig):
-        if not cfg.new_repo_id:
-            raise ValueError("--new_repo_id is required for merge operation (the merged dataset identifier)")
+        _require_new_repo_id(cfg)
     else:
-        if not cfg.repo_id:
-            raise ValueError(
-                f"--repo_id is required for {cfg.operation.type} operation (the input dataset identifier)"
-            )
+        _require_repo_id(cfg)
 
 
 @parser.wrap()
@@ -872,7 +893,7 @@ def edit_dataset(cfg: EditDatasetConfig) -> None:
 
 def main() -> None:
     init_logging()
-    edit_dataset()
+    edit_dataset()  # type: ignore[call-arg]
 
 
 if __name__ == "__main__":
