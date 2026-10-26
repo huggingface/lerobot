@@ -19,7 +19,8 @@ benchmarks:
     observation.images.left_camera: observation.images.camera2
     observation.images.right_camera: observation.images.camera3
 - name: robocasa
-  task: CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle
+  # Not TurnOnMicrowave: it samples objects only objaverse has, and the image ships the lightwheel set.
+  task: CloseFridge,OpenCabinet,OpenDrawer,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle
   revision: f7af588d11e30b0069f200792fb285904b74c80b
   rename_map:
     observation.images.robot0_agentview_left: observation.images.camera1
@@ -41,7 +42,8 @@ benchmarks:
     observation.images.image: observation.images.camera1
     observation.images.image2: observation.images.camera2
 - name: vlabench
-  task: select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower
+  # Not insert_flower: its reset raises mjWARN_BADQACC (unstable physics), as on main.
+  task: select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment
   build_args:
     VLABENCH_ASSETS_REPO: lerobot/vlabench-assets
   revision: 7ef370813eb35823caa94088b50f5389a51e4c47

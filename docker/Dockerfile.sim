@@ -157,7 +157,8 @@ RUN apt-get update \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 USER user_lerobot
 # mani-skill (pulled by robomme) pins gymnasium==0.29.1 and numpy<2; it also ships its own torch.
-RUN printf 'gymnasium==0.29.1\nnumpy==1.26.4\n' > /tmp/robomme_override.txt \
+# SciPy must match that NumPy: the latest SciPy needs NumPy 2 and fails at import against 1.26.
+RUN printf 'gymnasium==0.29.1\nnumpy==1.26.4\nscipy==1.15.3\n' > /tmp/robomme_override.txt \
     && uv pip install --no-cache --override /tmp/robomme_override.txt \
                   "robomme @ git+https://github.com/RoboMME/robomme_benchmark.git@016ac1c4ef3df2b88488abc19db08f3de83647b5" \
     && python -c "import robomme; print('robomme import OK')"
@@ -180,19 +181,23 @@ RUN apt-get update \
     && chown -R user_lerobot:user_lerobot ${ROBOTWIN_ROOT} \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 USER user_lerobot
+# pytorch3d and CuRobo compile CUDA code with one nvcc job per core; --build-arg MAX_JOBS=4 bounds the memory.
+ARG MAX_JOBS
 # RoboTwin plans with CuRobo and pytorch3d, so this image ships its own torch.
 RUN uv pip install "torch==2.7.1" "torchvision==0.22.1" av scipy ninja
 RUN uv pip install --no-cache \
         "sapien==3.0.0b1" "mplib==0.2.1" "transforms3d==0.4.2" "trimesh==4.4.3" \
+        "opencv-python-headless==4.10.0.84" \
         "open3d==0.19.0" "imageio==2.34.2" termcolor zarr pydantic h5py
 RUN uv pip install --no-cache --no-build-isolation \
         "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+# CuRobo v0.7.8 uses warp.torch, which warp-lang 1.13 removed.
 ARG CUROBO_REF=v0.7.8
 RUN cd ${ROBOTWIN_ROOT}/envs \
     && git clone --branch ${CUROBO_REF} --depth 1 https://github.com/NVlabs/curobo.git \
     && cd curobo \
     && TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0" \
-       uv pip install -e . --no-build-isolation --no-cache
+       uv pip install -e . "warp-lang==1.12.1" --no-build-isolation --no-cache
 # Upstream fixes RoboTwin relies on: mplib collision check and sapien SRDF loading.
 RUN python - <<'EOF'
 import pathlib, re, site
@@ -228,7 +233,8 @@ for fname in ("embodiments.zip", "objects.zip"):
 EOF
 WORKDIR ${ROBOTWIN_ROOT}
 RUN python script/update_embodiment_config_path.py
-ENV PYTHONPATH="${ROBOTWIN_ROOT}"
+ENV PYTHONPATH="${ROBOTWIN_ROOT}" \
+    SIM_WORKDIR="${ROBOTWIN_ROOT}"
 RUN python - <<'EOF'
 from pathlib import Path
 from curobo.types.math import Pose
@@ -310,4 +316,12 @@ RUN case "${SIM}" in \
     esac \
     && if [ -n "$module" ]; then python -c "import sys; sys.modules['torch'] = None; \
 import lerobot.env_server.server; import lerobot.sims.native.$module"; fi
+# Simulators with their own torch import their world dependencies lazily; import those here (no GPU needed).
+RUN case "${SIM}" in \
+        robomme) python -c "import lerobot.env_server.server, scipy.sparse, trimesh, mani_skill.utils.common" ;; \
+        robotwin) cd "$ROBOTWIN_ROOT" && python -c "import lerobot.env_server.server, warp; warp.torch; import envs.beat_block_hammer" ;; \
+    esac
+# The server runs where its simulator expects: RoboTwin reads its assets relative to the working directory.
+ENV SIM_WORKDIR=${SIM_WORKDIR:-/lerobot}
+WORKDIR ${SIM_WORKDIR}
 CMD ["sh", "-c", "exec lerobot-env-server --config /lerobot/docker/sims/configs/${SIM}.yaml"]

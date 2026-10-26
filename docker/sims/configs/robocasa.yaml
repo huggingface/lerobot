@@ -2,7 +2,7 @@
 deployment: robocasa
 sim:
   type: robocasa
-  task: CloseFridge,OpenCabinet,OpenDrawer,TurnOnMicrowave,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle
+  task: CloseFridge,OpenCabinet,OpenDrawer,TurnOffStove,CloseToasterOvenDoor,SlideDishwasherRack,TurnOnSinkFaucet,NavigateKitchen,TurnOnElectricKettle
   kwargs:
     gym_kwargs:
       obs_type: pixels_agent_pos

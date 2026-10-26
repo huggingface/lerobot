@@ -2,7 +2,7 @@
 deployment: vlabench
 sim:
   type: vlabench
-  task: select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment,insert_flower
+  task: select_fruit,select_toy,select_book,select_painting,select_drink,select_ingredient,select_billiards,select_poker,add_condiment
   kwargs:
     gym_kwargs:
       obs_type: pixels_agent_pos

@@ -303,7 +303,7 @@ def _load_robotwin_task(task_name: str) -> type:
         module = importlib.import_module(f"envs.{task_name}")
     except ModuleNotFoundError as e:
         raise ModuleNotFoundError(
-            f"Could not import RoboTwin task '{task_name}'. "
+            f"Could not import RoboTwin task '{task_name}' ({e}). "
             "Ensure RoboTwin 2.0 is installed and its 'envs/' directory is on PYTHONPATH. "
             "See the RoboTwin installation guide: https://robotwin-platform.github.io/doc/usage/robotwin-install.html"
         ) from e
