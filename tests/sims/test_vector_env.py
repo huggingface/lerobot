@@ -1,0 +1,82 @@
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Local vector environments built from a simulator integration."""
+
+import numpy as np
+import pytest
+
+from tests.sims.toy_env import ToyEnvConfig
+
+
+@pytest.mark.parametrize("where", ["local", "served"])
+def test_env_config_creates_vector_envs_locally_or_served(where, request):
+    from lerobot.env_server.client import BatchedEnv
+    from lerobot.sims.vector_env import VectorEnv
+
+    config = ToyEnvConfig(endpoint=request.getfixturevalue("server")[1] if where == "served" else None)
+    env = config.create_envs(n_envs=2)["reach"][0]
+    try:
+        assert isinstance(env, BatchedEnv if where == "served" else VectorEnv)
+        # Canonical observation names, as the server describes them.
+        assert set(config.features) == {"observation.state", "observation.image", "action"}
+        obs, _ = env.reset(seed=[1, 2])
+        assert obs["observation.state"].shape == (2, 2)
+        env.step(np.zeros((2, 2), np.float32))
+    finally:
+        env.close()
+
+
+def test_environments_in_separate_processes_match_sequential_environments():
+    from lerobot.sims.vector_env import VectorEnv
+
+    results = []
+    for use_async_envs in (False, True):
+        env = VectorEnv(ToyEnvConfig().sim_config(), num_envs=3, use_async_envs=use_async_envs)
+        try:
+            env.reset(seed=[4, 5, 6])
+            steps = [env.latest]
+            for actions in ([[2, 0], [0.1, 0], [0, 0]], [[0.3, 0.1]] * 3):
+                env.step(np.array(actions, np.float32))
+                steps.append(env.latest)
+            results.append(steps)
+        finally:
+            env.close()
+    for sequential, parallel in zip(*results, strict=True):
+        np.testing.assert_array_equal(parallel.obs["observation.state"], sequential.obs["observation.state"])
+        np.testing.assert_array_equal(parallel.terminated, sequential.terminated)
+        np.testing.assert_array_equal(parallel.step, sequential.step)
+        assert parallel.task == sequential.task
+
+
+def test_local_tasks_build_their_simulators_on_first_use():
+    # lerobot-eval creates every task's environment up front, then prefetches the next one with _ensure.
+    env = ToyEnvConfig().create_envs(n_envs=2)["reach"][0]
+    try:
+        assert not env._envs
+        env.reset(seed=[1, 2])
+        assert len(env._envs) == 2
+    finally:
+        env.close()
+
+
+def test_batched_env_works_under_gymnasium_vector_wrappers():
+    from gymnasium.wrappers.vector import RecordEpisodeStatistics
+
+    env = RecordEpisodeStatistics(ToyEnvConfig().create_envs(n_envs=2)["reach"][0])
+    try:
+        env.reset(seed=[1, 2])
+        env.step(np.zeros((2, 2), np.float32))
+    finally:
+        env.close()

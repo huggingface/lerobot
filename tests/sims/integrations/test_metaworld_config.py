@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 
 CONFIG_PATH = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[3]
     / "src"
     / "lerobot"
     / "sims"

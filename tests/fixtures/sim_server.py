@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""A toy simulator served by an env server, for served-execution tests."""
+
 import socket
 import threading
 
 import pytest
-
-from lerobot.env_server.server import EnvServer, ServerConfig
-from lerobot.transport.zenoh import ZenohConfig
-from tests.env_server.toy_env import ToyEnvConfig
 
 
 @pytest.fixture
@@ -27,6 +25,10 @@ def server():
     # Live-server tests need the `remote` extra; the base-dependency tier skips them.
     pytest.importorskip("zenoh")
     pytest.importorskip("msgpack")
+    from lerobot.env_server.server import EnvServer, ServerConfig
+    from lerobot.transport.zenoh import ZenohConfig
+    from tests.sims.toy_env import ToyEnvConfig
+
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]

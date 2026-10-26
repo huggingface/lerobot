@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tests.env_server.toy_env import ToyEnvConfig
+from tests.sims.toy_env import ToyEnvConfig
 
 
 def test_shared_simulation_code_names_no_simulator() -> None:
