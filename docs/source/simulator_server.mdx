@@ -42,6 +42,7 @@ The worlds of a batch advance in lockstep. A world that ends keeps its terminal 
 ```bash
 lerobot-rollout \
   --robot.type=sim --robot.env.type=libero --robot.env.task=libero_spatial --robot.task_id=0 \
+  --task="pick up the black bowl between the plate and the ramekin and place it on the plate" \
   --policy.path=lerobot/smolvla_libero \
   --policy.pretrained_revision=a24f1f380461b665158d52acd140152c79e8b36d \
   --rename_map='{"observation.images.image": "observation.images.camera1", "observation.images.image2": "observation.images.camera2"}' \
@@ -57,7 +58,7 @@ lerobot-rollout \
 
 A sim robot is a robot: swap `--robot.type=sim --robot.env.*` for the real follower's `--robot.*`, and everything else stays. A teleoperator drives it as it drives the real follower (`--teleop.type=so101_leader` for an SO-101 twin), when the environment declares the follower's action names and units; a mismatch is reported at the first action. Teleoperation needs the realtime clock. `lerobot-record` stores the body the environment declares as the dataset's `robot_type` (`panda` for LIBERO), or `sim` when it declares none.
 
-The episodic rollout strategy resets the world between episodes and stops on success or termination. The policy follows, and recordings use, the world's task description. In interactive mode, an instruction set with `/subtask` survives the world reset of the next `/start`; `/reset` restores the world's task.
+Like a real robot, a sim robot has no episode controls: rollout and record run their episodes as on hardware, with the task given on the command line (`--task`, or `--dataset.single_task` when recording) and episodes timed by their duration. When the world's own episode ends (success, termination or its step limit), the sim robot starts the next one by itself, as Gymnasium's autoreset does, so the world never stays frozen. For success rates and per-episode resets, evaluate with `lerobot-eval` and a batched env.
 
 For remote inference, keep the same `--robot.*` options and replace the local policy and inference options with:
 

@@ -148,12 +148,10 @@ def test_vector_client(server):
 
 def test_robot_and_command_hold(server, tmp_path):
     from lerobot.robots.sim import SimRobot, SimRobotConfig
-    from lerobot.robots.sim.world import World
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 
     _, endpoint = server
     robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=endpoint), calibration_dir=tmp_path))
-    assert isinstance(robot, World)
     wrapper = ThreadSafeRobot(robot)
     wrapper.configure_hold()
     try:
@@ -162,24 +160,19 @@ def test_robot_and_command_hold(server, tmp_path):
         wrapper.send_action({"command_0": 0.5, "command_1": 0})
         wrapper.hold()
         np.testing.assert_array_equal(server[0].sessions[robot.client.session].target, 0)
-        wrapper.reset_world(seed=10)
-        assert robot.episode_status.step == 0
     finally:
         robot.disconnect()
 
 
-def test_sim_robot_registration_and_optional_world(server, tmp_path):
+def test_sim_robot_registration(server, tmp_path):
     from lerobot.robots import make_robot_from_config
     from lerobot.robots.sim import SimRobot, SimRobotConfig
-    from lerobot.robots.sim.world import get_world
 
     robot = make_robot_from_config(
         SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path)
     )
     try:
         assert isinstance(robot, SimRobot)
-        assert get_world(robot) is robot
-        assert get_world(object()) is None
         robot.connect()
         action = dict.fromkeys(robot.action_features, 0.0)
         assert robot.send_action(action) == action
@@ -442,9 +435,7 @@ def test_sim_robot_local_inference_engines(server, tmp_path, mode):
         wrapper.send_action(dict(zip(names, action.tolist(), strict=True)))
         wrapper.hold()
         engine.pause()
-        wrapper.reset_world(seed=42)
         engine.reset()
-        assert robot.episode_status.step == 0
         if mode == "rtc":
             assert engine.action_queue.qsize() == 0
     finally:
@@ -527,7 +518,7 @@ def test_sim_robot_remote_inference_engine(server, tmp_path):
         robot.connect()
         wrapper.configure_hold()
         features = {state.name: {"dtype": "float32", "shape": state.shape, "names": state.names}}
-        engine = RemoteInferenceEngine(client, remote_config, features, {}, wrapper, robot.task_description)
+        engine = RemoteInferenceEngine(client, remote_config, features, {}, wrapper, "Move to the target")
         engine.start()
         engine.resume()
         engine.notify_observation(wrapper.get_observation())
@@ -535,9 +526,7 @@ def test_sim_robot_remote_inference_engine(server, tmp_path):
         wrapper.send_action(dict.fromkeys(robot.action_features, 0.0))
         wrapper.hold()
         engine.pause()
-        wrapper.reset_world(seed=7)
         engine.reset()
-        assert robot.episode_status.step == 0
         assert not engine.failed
     finally:
         if engine is not None:
@@ -648,7 +637,7 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
         frame = {
             **build_dataset_frame(features, observation, "observation"),
             **build_dataset_frame(features, action, "action"),
-            "task": robot.task_description,
+            "task": "Move to the target",
         }
         dataset.add_frame(frame)
         dataset.save_episode()
@@ -661,53 +650,11 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
         np.testing.assert_array_equal(sample["action"].numpy(), [0, 0])
         image = sample["observation.images.image"].permute(1, 2, 0).numpy()
         np.testing.assert_allclose(image * 255, observation["image"], atol=1e-5)
-        assert sample["task"] == robot.task_description
+        assert sample["task"] == "Move to the target"
     finally:
         if dataset is not None:
             dataset.finalize()
         robot.disconnect()
-
-
-def test_world_reset_keeps_operator_instruction():
-    pytest.importorskip("datasets", reason="rollout requires the dataset extra")
-    from types import SimpleNamespace
-
-    from lerobot.robots.sim.world import EpisodeStatus
-    from lerobot.rollout.strategies.core import RolloutStrategy
-
-    class World:
-        task_description = "put the bowl on the plate"
-        episode_status = EpisodeStatus(False, False, False, 0, 0.0)
-
-        def reset_world(self, seed=None):
-            pass
-
-    class Engine:
-        task = "put the bowl on the plate"
-
-        def set_task(self, task):
-            self.task = task
-
-        def pause(self):
-            pass
-
-        def reset(self):
-            pass
-
-    world, engine = World(), Engine()
-    wrapper = SimpleNamespace(inner=world, reset_world=world.reset_world)
-    strategy = SimpleNamespace(
-        _require_engine=lambda: engine, _require_interpolator=lambda: SimpleNamespace(reset=lambda: None)
-    )
-    ctx = SimpleNamespace(hardware=SimpleNamespace(robot_wrapper=wrapper))
-    # Unchanged instruction: the policy follows the world's task.
-    world.task_description = "put the bowl on the stove"
-    engine.task = "put the bowl on the stove"
-    assert RolloutStrategy._reset_sim_world(strategy, ctx) == "put the bowl on the stove"
-    # An operator /subtask survives /start's world reset.
-    engine.task = "pick up the ketchup"
-    assert RolloutStrategy._reset_sim_world(strategy, ctx) == "pick up the ketchup"
-    assert engine.task == "pick up the ketchup"
 
 
 _ENVHUB_ENV = """

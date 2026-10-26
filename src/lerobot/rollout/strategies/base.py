@@ -22,7 +22,7 @@ import time
 from lerobot.utils.cycle_timer import CycleTimer
 
 from ..context import RolloutContext
-from .core import RolloutStrategy, send_next_action, world_finished
+from .core import RolloutStrategy, send_next_action
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,6 @@ class BaseStrategy(RolloutStrategy):
         )
 
         start_time = time.perf_counter()
-        self._reset_sim_world(ctx)
         engine.resume()
         logger.info("Base strategy control loop started")
 
@@ -68,8 +67,6 @@ class BaseStrategy(RolloutStrategy):
 
                 with timer.section("observe"):
                     obs = robot.get_observation()
-                if world_finished(robot):
-                    break
                 with timer.section("process_obs"):
                     obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 

@@ -25,7 +25,6 @@ from lerobot.env_server.in_process import InProcessEnvClient
 from lerobot.robots.sim import SimRobot, SimRobotConfig
 from lerobot.sims.backend import BackendConfig
 from tests.env_server.toy_env import ToyEnvConfig
-from tests.utils import skip_if_package_missing
 
 
 def _episode(client: EnvClient | InProcessEnvClient) -> list[dict]:
@@ -55,11 +54,11 @@ def test_in_process_realtime_world_keeps_ticking_while_idle(tmp_path):
     try:
         robot.connect()
         robot.send_action(dict.fromkeys(robot.action_features, 0.0))
-        commanded = robot.episode_status.step
+        commanded = robot.latest.step[0]
         # 20 fps: the world advances on its own while no new command arrives, as hardware does.
         time.sleep(0.15)
         robot.get_observation()
-        assert robot.episode_status.step > commanded
+        assert robot.latest.step[0] > commanded
     finally:
         robot.disconnect()
 
@@ -78,18 +77,16 @@ def test_lockstep_sim_robot_advances_once_per_action(where, request, tmp_path):
         robot.connect()
         action = dict.fromkeys(robot.action_features, 0.1)
         assert robot.send_action(action) == pytest.approx(action)
-        assert robot.episode_status.step == 1
+        assert robot.latest.step[0] == 1
         state = [name for name, kind in robot.observation_features.items() if kind is float]
         before = robot.get_observation()
         time.sleep(0.1)
         robot.hold()
         after = robot.get_observation()
         assert [after[name] for name in state] == [before[name] for name in state]
-        assert robot.episode_status.step == 1
+        assert robot.latest.step[0] == 1
         robot.send_action(action)
-        assert robot.episode_status.step == 2
-        robot.reset_world(seed=3)
-        assert robot.episode_status.step == 0
+        assert robot.latest.step[0] == 2
     finally:
         robot.disconnect()
 
@@ -253,30 +250,17 @@ def test_batched_env_works_under_gymnasium_vector_wrappers():
         env.close()
 
 
-@skip_if_package_missing("datasets")
-def test_recording_a_sim_robot_ends_the_episode_with_the_world(tmp_path):
-    from lerobot.scripts.lerobot_record import record_loop
-    from tests.mocks.mock_teleop import MockTeleop, MockTeleopConfig
-
-    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), calibration_dir=tmp_path))
-    teleop = MockTeleop(MockTeleopConfig(n_motors=2))
+def test_a_finished_sim_world_starts_the_next_episode(tmp_path):
+    robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(), clock="lockstep", calibration_dir=tmp_path))
     try:
         robot.connect()
-        teleop.connect()
-        start = time.perf_counter()
-        record_loop(
-            robot=robot,
-            events={"exit_early": False},
-            fps=20,
-            # The toy succeeds once x passes 1: one step of 2 ends the episode.
-            teleop_action_processor=lambda _: {"command_0": 2.0, "command_1": 0.0},
-            robot_action_processor=lambda transition: transition[0],
-            robot_observation_processor=lambda obs: obs,
-            teleop=teleop,
-            control_time_s=30,
-        )
-        assert time.perf_counter() - start < 5
-        assert robot.episode_status.terminated
+        # The toy terminates once x passes 1: one step of 2 ends the episode, and the world restarts.
+        robot.send_action({"command_0": 2.0, "command_1": 0.0})
+        assert robot.latest.step[0] == 0 and not robot.latest.terminated[0]
+        assert robot.get_observation()["state_0"] < 1
+        # It truncates after 5 steps: the 5th step starts the next episode too.
+        for _ in range(5):
+            robot.send_action({"command_0": 0.0, "command_1": 0.0})
+        assert robot.latest.step[0] == 0 and not robot.latest.truncated[0]
     finally:
-        teleop.disconnect()
         robot.disconnect()

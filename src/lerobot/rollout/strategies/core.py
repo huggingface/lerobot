@@ -28,7 +28,6 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.inference import InferenceEngine, commit_action, next_interpolated_action
 from lerobot.lerobot_types import RobotObservation
-from lerobot.robots.sim.world import get_world
 from lerobot.teleoperators import Teleoperator
 from lerobot.utils import OBS_STR, ActionInterpolator
 from lerobot.utils.cycle_timer import CycleTimer
@@ -47,15 +46,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
-
-
-def world_finished(robot) -> bool:
-    """Read terminal status from the latest serialized simulator observation."""
-    world = get_world(robot.inner)
-    if world is not None:
-        status = world.episode_status
-        return status.success or status.terminated or status.truncated
-    return False
 
 
 class RolloutStrategy(abc.ABC):
@@ -366,26 +356,6 @@ class RolloutStrategy(abc.ABC):
             action=action_dict,
             compress_images=cfg.display_compressed_images,
         )
-
-    def _reset_sim_world(self, ctx: RolloutContext) -> str | None:
-        """Start a new world, discard previous inference, and return the task followed (None on hardware).
-
-        The policy follows the world's task unless the operator chose another instruction
-        (interactive ``/subtask``), which a world reset must not overwrite.
-        """
-        robot = ctx.hardware.robot_wrapper
-        world = get_world(robot.inner)
-        if world is None:
-            return None
-        engine = self._require_engine()
-        previous_world_task = world.task_description
-        engine.pause()
-        robot.reset_world()
-        engine.reset()
-        self._require_interpolator().reset()
-        if engine.task in ("", previous_world_task):
-            engine.set_task(world.task_description)
-        return engine.task
 
     def setup(self, ctx: RolloutContext) -> None:
         """Strategy-specific initialisation (keyboard listeners, buffers, etc.).

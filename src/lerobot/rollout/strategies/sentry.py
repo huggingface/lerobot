@@ -36,7 +36,6 @@ from .core import (
     estimate_max_episode_seconds,
     safe_push_to_hub,
     send_next_action,
-    world_finished,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,7 +112,6 @@ class SentryStrategy(RolloutStrategy):
         # Per-segment timer, never hoisted onto the instance (see ``RolloutStrategy.run``).
         timer = CycleTimer(cfg.fps, interpolator.multiplier, report=ctx.runtime.cadence_report)
 
-        self._reset_sim_world(ctx)
         engine.resume()
         episode_duration_s = self._episode_duration_s
 
@@ -131,8 +129,6 @@ class SentryStrategy(RolloutStrategy):
 
                 with timer.section("observe"):
                     obs = robot.get_observation()
-                if world_finished(robot):
-                    break
                 with timer.section("process_obs"):
                     obs_processed = self._process_observation_and_notify(ctx.processors, obs)
 

@@ -26,11 +26,10 @@ from lerobot.envs.configs import check_served
 from lerobot.robots.robot import Robot
 
 from .configuration_sim import SimRobotConfig
-from .world import EpisodeStatus
 
 
 class SimRobot(Robot):
-    """A simulated world as a robot: swappable with hardware, plus the ``World`` episode controls.
+    """A simulated world as a robot: swappable with hardware, and like it, with no episode controls.
 
     The world runs in this process, or behind ``lerobot-env-server`` when ``env.endpoint`` is set; both run
     the same session code. In lockstep, each sent action advances the world exactly one step. Its
@@ -118,18 +117,24 @@ class SimRobot(Robot):
     def connect(self, calibrate: bool = True) -> None:
         if self.client.session:
             raise RuntimeError("Sim robot is already connected")
-        self.latest = self.client.open(1, self.config.clock, self._task_group, self.config.task_id)
+        self._update(self.client.open(1, self.config.clock, self._task_group, self.config.task_id))
 
     @property
     def lockstep(self) -> bool:
         return self.config.clock == "lockstep"
 
+    def _update(self, result: StepResult) -> StepResult:
+        # A finished world stays frozen at its last state; as Gymnasium's autoreset, start the next episode.
+        if result.terminated[0] or result.truncated[0]:
+            result = StepResult.from_dict(self.client.request("reset", seeds=[None])["result"])
+        self.latest = result
+        return result
+
     def _snapshot(self) -> StepResult:
         if self.lockstep and self.latest is not None:
             # The world only moves on send_action, which already returned its observation.
             return self.latest
-        self.latest = StepResult.from_dict(self.client.request("snapshot")["result"])
-        return self.latest
+        return self._update(StepResult.from_dict(self.client.request("snapshot")["result"]))
 
     def get_observation(self) -> dict[str, Any]:
         result = self._snapshot()
@@ -151,38 +156,18 @@ class SimRobot(Robot):
             )
         values = np.asarray([[action[name] for name in names]], dtype=np.float32)
         if self.lockstep:
-            self.latest = StepResult.from_dict(self.client.request("step", actions=values)["result"])
+            self._update(StepResult.from_dict(self.client.request("step", actions=values)["result"]))
             return {name: float(value) for name, value in zip(names, values[0], strict=True)}
         body = self.client.request("apply", actions=values)
-        self.latest = StepResult.from_dict(body["result"])
         assert self.client.execution is not None
         applied = self.client.execution.applied[0]
+        self._update(StepResult.from_dict(body["result"]))
         return {name: float(value) for name, value in zip(names, applied, strict=True)}
 
     def hold(self) -> None:
         # A lockstep world stays where it is until the next action.
         if not self.lockstep:
             self.client.request("hold")
-
-    def reset_world(self, seed: int | None = None) -> None:
-        self.latest = StepResult.from_dict(self.client.request("reset", seeds=[seed])["result"])
-
-    @property
-    def task_description(self) -> str:
-        return self.latest.task[0] if self.latest is not None else ""
-
-    @property
-    def episode_status(self) -> EpisodeStatus:
-        result = self.latest
-        if result is None:
-            raise RuntimeError("Connect before reading world status")
-        return EpisodeStatus(
-            bool(result.is_success[0]),
-            bool(result.terminated[0]),
-            bool(result.truncated[0]),
-            int(result.step[0]),
-            float(result.reward[0]),
-        )
 
     def disconnect(self) -> None:
         self.client.close()

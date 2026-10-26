@@ -66,7 +66,6 @@ from lerobot.processor import (
 from lerobot.remote_inference import RemoteClient, RemoteInferenceEngine
 from lerobot.robots import Robot, make_robot_from_config
 from lerobot.robots.sim import SimRobot, check_control_rate, check_teleop_clock
-from lerobot.robots.sim.world import get_world
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.transport.wire.features import feature_mismatch
 from lerobot.utils.constants import OBS_STATE
@@ -606,12 +605,7 @@ def build_rollout_context(
             "Creating inference engine (type=%s)...",
             cfg.inference.type if hasattr(cfg.inference, "type") else "sync",
         )
-        world = get_world(robot)
-        task_str = (
-            world.task_description
-            if world is not None
-            else (cfg.dataset.single_task if cfg.dataset else cfg.task)
-        )
+        task_str = cfg.dataset.single_task if cfg.dataset else cfg.task
         inference_strategy = create_inference_engine(
             cfg.inference,
             policy=policy,
@@ -765,9 +759,6 @@ def build_remote_rollout_context(
         hardware = _connect_rollout_hardware(cfg, require_hold=True, simulator_admission=validate_simulator)
         wrapper = hardware.robot_wrapper
         robot = wrapper.inner
-        world = get_world(robot)
-        if world is not None:
-            task = world.task_description
 
         observation_hw: dict[str, type | tuple] = {
             key: value

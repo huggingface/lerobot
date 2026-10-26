@@ -22,7 +22,6 @@ from threading import Lock
 from typing import Any
 
 from lerobot.robots import Robot
-from lerobot.robots.sim.world import get_world
 
 
 class ThreadSafeRobot:
@@ -112,16 +111,6 @@ class ThreadSafeRobot:
             self._command_hold_enabled = True
         else:
             self.configure_position_hold()
-
-    def reset_world(self, seed: int | None = None) -> None:
-        with self._lock:
-            world = get_world(self._robot)
-            if world is None:
-                raise TypeError("This robot does not expose a simulator world")
-            world.reset_world(seed)
-            self._last_applied_action = None
-            self._observed_positions.clear()
-            self._observation_time = None
 
     @property
     def supports_hold(self) -> bool:
