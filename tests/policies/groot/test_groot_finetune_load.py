@@ -209,12 +209,125 @@ def test_finetune_loads_by_hub_repo_id(tmp_path, monkeypatch):
     (repo / "refs").mkdir()
     (repo / "refs" / "main").write_text(commit)
 
-    (base / "model.safetensors").unlink()
+    shutil.rmtree(base)
     policy = GrootPolicy.from_pretrained(
         "someone/groot-finetune", cache_dir=tmp_path / "hub", local_files_only=True
     )
 
     _assert_same(expected, _tensors(policy))
+
+
+def test_finetune_loads_without_the_base_model(tmp_path, monkeypatch):
+    base = _write_tiny_base(tmp_path)
+    # Caps the action horizon at 2 steps, so a load that loses this file gives 4.
+    processor_kwargs = {"modality_configs": {"new_embodiment": {"action": {"delta_indices": [0, 1]}}}}
+    (base / "processor_config.json").write_text(json.dumps({"processor_kwargs": processor_kwargs}))
+    GrootPolicy(_policy_config(base)).save_pretrained(tmp_path / "finetune")
+    finetune = tmp_path / "finetune"
+    regular = _load_regular(finetune, monkeypatch)
+    assert regular._action_queue_steps == 2
+    expected = _tensors(regular)
+
+    shutil.rmtree(base)
+    policy = GrootPolicy.from_pretrained(finetune)
+
+    _assert_same(expected, _tensors(policy))
+    assert policy._action_queue_steps == 2
+    assert policy.chunk_inference_spec().prediction_steps == 2
+    assert policy.config.action_delta_indices == [0, 1]
+    assert policy.config.drop_n_last_frames == 1
+    # Saving again keeps the fine-tune self-contained, also over the folder it was loaded from or after
+    # that folder is gone.
+    policy.save_pretrained(finetune)
+    shutil.rmtree(finetune)
+    policy.save_pretrained(tmp_path / "resaved")
+    assert GrootPolicy.from_pretrained(tmp_path / "resaved")._action_queue_steps == 2
+
+
+@pytest.mark.parametrize("subclass", [False, True])
+def test_regular_load_agrees_with_the_config_on_the_horizon(tmp_path, monkeypatch, subclass):
+    # A frozen backbone keeps bfloat16 weights, so this fp32 fine-tune loads the regular way.
+    base = _write_tiny_base(tmp_path, tune_backbone=False)
+    action = {"delta_indices": [0, 1]}
+    processor_config = {"processor_kwargs": {"modality_configs": {"new_embodiment": {"action": action}}}}
+    (base / "processor_config.json").write_text(json.dumps(processor_config))
+    GrootPolicy(_policy_config(base)).save_pretrained(tmp_path / "finetune")
+    # A copy of the base that gives 3 steps, so a load that reads it instead disagrees with the config.
+    other_base = shutil.copytree(base, tmp_path / "other_base")
+    action["delta_indices"] = [0, 1, 2]
+    (other_base / "processor_config.json").write_text(json.dumps(processor_config))
+    config = GrootConfig.from_pretrained(tmp_path / "finetune")
+    config.base_model_path = str(other_base)
+
+    class Subclass(GrootPolicy):
+        pass
+
+    built = _record_builds(monkeypatch)
+
+    policy = (Subclass if subclass else GrootPolicy).from_pretrained(tmp_path / "finetune", config=config)
+
+    assert built[-1] == str(other_base)
+    assert policy._action_queue_steps == 2
+    assert policy.config.action_delta_indices == [0, 1]
+
+
+@pytest.mark.parametrize("regular_load", [False, True])
+def test_policy_saves_the_config_its_model_was_built_from(tmp_path, regular_load):
+    base, finetune = _save_finetune(tmp_path)
+    # A base whose own config gives the model another native horizon than the checkpoint's copy.
+    other_base = shutil.copytree(base, tmp_path / "other_base")
+    model_config = json.loads((other_base / "config.json").read_text())
+    (other_base / "config.json").write_text(json.dumps({**model_config, "action_horizon": 2}))
+    config = GrootConfig.from_pretrained(finetune)
+    config.base_model_path = str(other_base)
+
+    class Subclass(GrootPolicy):
+        pass
+
+    # Without the weight load, the policy is built as make_policy builds it to resume a sharded run.
+    policy = Subclass.from_pretrained(finetune, config=config) if regular_load else GrootPolicy(config)
+    policy.save_pretrained(tmp_path / "resaved")
+    shutil.rmtree(base)
+    shutil.rmtree(other_base)
+    reloaded = GrootPolicy.from_pretrained(tmp_path / "resaved")
+
+    assert policy._groot_model.config.action_horizon == 4
+    assert reloaded._groot_model.config.action_horizon == 4
+    _assert_same(_tensors(policy), _tensors(reloaded))
+
+
+def test_checkpoint_without_base_config_files_reads_them_from_the_base_model(tmp_path, monkeypatch):
+    base, finetune = _save_finetune(tmp_path)
+    expected = _tensors(_load_regular(finetune, monkeypatch))
+    shutil.rmtree(finetune / modeling_groot._BASE_CONFIG_DIR)
+
+    (base / "model.safetensors").unlink()
+    policy = GrootPolicy.from_pretrained(finetune)
+
+    _assert_same(expected, _tensors(policy))
+
+
+def test_hub_base_model_saves_its_config(tmp_path, monkeypatch):
+    base = _write_tiny_base(tmp_path)
+    (base / "processor_config.json").write_text("{}")
+    local_base_policy = GrootPolicy(_policy_config(base))
+    # Leaves a processor_config.json copy that the save below must not keep.
+    local_base_policy.save_pretrained(tmp_path / "finetune")
+    lookups = []
+
+    def cached_file(repo_id, filename, **kwargs):
+        lookups.append((repo_id, filename))
+        return str(base / filename)
+
+    monkeypatch.setattr(modeling_groot, "try_to_load_from_cache", cached_file)
+    policy = GrootPolicy(_policy_config("someone/groot-base"), _groot_model=local_base_policy._groot_model)
+    policy.save_pretrained(tmp_path / "finetune")
+
+    assert lookups == [("someone/groot-base", "config.json")]
+    saved = tmp_path / "finetune" / modeling_groot._BASE_CONFIG_DIR
+    assert sorted(path.name for path in saved.iterdir()) == ["config.json"]
+    shutil.rmtree(base)
+    _assert_same(_tensors(policy), _tensors(GrootPolicy.from_pretrained(tmp_path / "finetune")))
 
 
 def test_force_download_downloads_once_and_loads_the_regular_way(tmp_path, monkeypatch, caplog):
@@ -362,8 +475,8 @@ def test_bfloat16_parts_of_the_base_keep_an_fp32_checkpoint_exact(tmp_path, monk
 
 def test_base_config_without_dtype_loads_bfloat16_the_regular_way(tmp_path, monkeypatch, caplog):
     base, finetune = _save_finetune(tmp_path)
-    config_file = base / "config.json"
-    config_file.write_text(json.dumps({**json.loads(config_file.read_text()), "dtype": None}))
+    for path in (base / "config.json", finetune / modeling_groot._BASE_CONFIG_DIR / "config.json"):
+        path.write_text(json.dumps({**json.loads(path.read_text()), "dtype": None}))
     config = GrootConfig.from_pretrained(finetune)
     config.dtype = torch.bfloat16
     with monkeypatch.context() as patch:
