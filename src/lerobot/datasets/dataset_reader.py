@@ -21,11 +21,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import datasets
+import numpy as np
+import pyarrow as pa
 import torch
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT
 
 from .dataset_metadata import LeRobotDatasetMetadata
+from .episode_subset_index import _EpisodeSubsetIndexMapping
 from .feature_utils import (
     check_delta_timestamps,
     get_delta_indices,
@@ -44,6 +47,25 @@ from .video_utils import (
     dequantize_depth_frames,
     image_depth_units,
 )
+
+
+def _index_matches_episode_ranges(
+    indices: pa.ChunkedArray, episode_starts: np.ndarray, episode_ends: np.ndarray
+) -> bool:
+    """Check loaded row order using bounded buffers before trusting metadata intervals."""
+    if (episode_ends < episode_starts).any() or (episode_starts[1:] < episode_ends[:-1]).any():
+        return False
+    if int(np.sum(episode_ends - episode_starts)) != len(indices):
+        return False
+    row_offset = 0
+    for start, end in zip(episode_starts.tolist(), episode_ends.tolist(), strict=True):
+        for batch_start in range(start, end, 64 * 1024):
+            count = min(64 * 1024, end - batch_start)
+            expected: np.ndarray = np.arange(batch_start, batch_start + count, dtype=np.int64)
+            if not np.array_equal(indices.slice(row_offset, count).to_numpy(), expected):
+                return False
+            row_offset += count
+    return True
 
 
 class BaseDatasetReader(ABC):
@@ -160,7 +182,7 @@ class DatasetReader(BaseDatasetReader):
         self._depth_output_unit = depth_output_unit
 
         self.hf_dataset: datasets.Dataset | None = None
-        self._absolute_to_relative_idx: dict[int, int] | None = None
+        self._absolute_to_relative_idx: Mapping[int, int] | None = None
         self._column_views: dict[str, datasets.Dataset] = {}
         self._column_views_source: datasets.Dataset | None = None
         self._column_views_transform: Callable | None = None
@@ -197,11 +219,26 @@ class DatasetReader(BaseDatasetReader):
         return self.hf_dataset
 
     def _build_index_mapping(self) -> None:
-        """Build absolute-to-relative index mapping from loaded hf_dataset."""
+        """Use compact episode intervals when they match the loaded row indices."""
         self._absolute_to_relative_idx = None
         if self.episodes is not None and self.hf_dataset is not None:
-            indices = self.hf_dataset.data.column("index").to_numpy()
-            self._absolute_to_relative_idx = dict(zip(indices.tolist(), range(len(indices)), strict=True))
+            indices = self.hf_dataset.data.column("index")
+            self._meta.ensure_readable()
+            if self._meta.episodes is not None:
+                bounds = (
+                    self._meta.episodes.select_columns(["dataset_from_index", "dataset_to_index"])
+                    .select(sorted(set(self.episodes)))
+                    .with_format(None)[:]
+                )
+                starts = np.asarray(bounds["dataset_from_index"], dtype=np.int64)
+                ends = np.asarray(bounds["dataset_to_index"], dtype=np.int64)
+                if _index_matches_episode_ranges(indices, starts, ends):
+                    self._absolute_to_relative_idx = _EpisodeSubsetIndexMapping(starts, ends)
+                    return
+            # Preserve the actual row mapping for incomplete or reordered data.
+            self._absolute_to_relative_idx = dict(
+                zip(indices.to_numpy().tolist(), range(len(indices)), strict=True)
+            )
 
     @property
     def num_frames(self) -> int:
@@ -216,7 +253,7 @@ class DatasetReader(BaseDatasetReader):
         return len(self.episodes) if self.episodes is not None else self._meta.total_episodes
 
     @property
-    def absolute_to_relative_idx(self) -> dict[int, int] | None:
+    def absolute_to_relative_idx(self) -> Mapping[int, int] | None:
         """Mapping from absolute frame indices to HF dataset row positions."""
         if self.hf_dataset is None:
             self.load_and_activate()

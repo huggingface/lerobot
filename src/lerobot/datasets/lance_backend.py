@@ -31,7 +31,7 @@ import contextlib
 import importlib
 import json
 from collections import OrderedDict, defaultdict
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from itertools import batched
@@ -52,6 +52,7 @@ if TYPE_CHECKING or _lancedb_available:
 from .dataset_metadata import LeRobotDatasetMetadata
 from .dataset_reader import BaseDatasetReader
 from .depth_utils import dequantize_depth
+from .episode_subset_index import _EpisodeSubsetIndexMapping
 from .feature_utils import check_delta_timestamps, get_delta_indices
 
 # Re-exported: storage.py resolves localize_root on this module; the others are
@@ -119,74 +120,6 @@ class _SamplePlan(TypedDict):
     rows: set[int]
     windows: dict[str, list[int]]
     padding: dict[str, torch.Tensor]
-
-
-class _EpisodeSubsetIndex(Mapping[int, int]):
-    """Absolute<->relative frame mapping for an episode subset, stored as O(num_episodes).
-
-    When ``LeRobotDataset`` selects a subset of episodes, the reader serves rows in storage
-    order (selected episodes in ascending index order) while callers still address frames by
-    their absolute position in the full dataset. This class maps between the two without
-    materializing one entry per frame: it keeps only the selected episodes' absolute
-    ``[start, stop)`` bounds plus their cumulative relative lengths, and resolves either
-    direction with a binary search (:func:`numpy.searchsorted`). A 100M-frame subset therefore
-    costs a handful of KiB instead of the ~800 MiB an ``int64`` row and a Python ``dict`` would
-    (the mapping is also copied into every ``DataLoader`` worker via pickling).
-
-    It subclasses :class:`~collections.abc.Mapping` so the public
-    ``LeRobotDataset.absolute_to_relative_idx`` keeps its old ``{absolute: relative}`` contract
-    (``in``, ``[]``, iteration, equality against a plain ``dict``) for existing consumers such as
-    ``EpisodeAwareSampler`` and ``lerobot_train_tokenizer``, which only do membership tests and
-    lookups. Keys are the selected absolute frame indices; frames in unselected episodes raise
-    ``KeyError`` just as the old dict did.
-    """
-
-    def __init__(self, selected_from: np.ndarray, selected_to: np.ndarray):
-        """Build the index from the selected episodes' absolute bounds (ascending, non-overlapping)."""
-        self._sel_from = np.ascontiguousarray(selected_from, dtype=np.int64)
-        self._sel_to = np.ascontiguousarray(selected_to, dtype=np.int64)
-        # Relative position just past each selected episode: _rel_ends[i] rows precede episode i+1.
-        self._rel_ends = np.cumsum(self._sel_to - self._sel_from)
-        self._num_frames = int(self._rel_ends[-1]) if len(self._rel_ends) else 0
-
-    @property
-    def num_frames(self) -> int:
-        """Total number of frames across the selected episodes (the relative index range)."""
-        return self._num_frames
-
-    def rel_to_abs(self, rel_idx: int) -> int:
-        """Map a relative row position in ``[0, num_frames)`` to its absolute frame index."""
-        block = int(np.searchsorted(self._rel_ends, rel_idx, side="right"))
-        rel_base = int(self._rel_ends[block - 1]) if block > 0 else 0
-        return int(self._sel_from[block]) + (rel_idx - rel_base)
-
-    def __getitem__(self, abs_idx: int) -> int:
-        block = int(np.searchsorted(self._sel_from, abs_idx, side="right")) - 1
-        if block < 0 or abs_idx >= int(self._sel_to[block]):
-            raise KeyError(abs_idx)
-        rel_base = int(self._rel_ends[block - 1]) if block > 0 else 0
-        return rel_base + (abs_idx - int(self._sel_from[block]))
-
-    def __len__(self) -> int:
-        return self._num_frames
-
-    def __iter__(self) -> Iterator[int]:
-        for start, stop in zip(self._sel_from.tolist(), self._sel_to.tolist(), strict=True):
-            yield from range(start, stop)
-
-    def __eq__(self, other: object) -> bool:
-        # Preserve the old dict's value-equality (used by tests and any caller that compared
-        # the mapping), independent of whether the stdlib Mapping ABC supplies an __eq__.
-        if isinstance(other, Mapping):
-            if len(self) != len(other):
-                return False
-            try:
-                return all(other[key] == value for key, value in self.items())
-            except KeyError:
-                return False
-        return NotImplemented
-
-    __hash__ = None  # type: ignore[assignment]  # mutable-mapping semantics: unhashable like dict
 
 
 def _opened[T](resource: T | None) -> T:
@@ -294,7 +227,7 @@ class LanceDatasetReader(BaseDatasetReader):
                 "the dataset metadata is inconsistent."
             )
 
-        self._subset_index: _EpisodeSubsetIndex | None = None
+        self._subset_index_mapping: _EpisodeSubsetIndexMapping | None = None
         if self.episodes is not None:
             # Rows are served in storage order regardless of the episodes list
             # order, matching the default reader's parquet predicate pushdown;
@@ -302,7 +235,9 @@ class LanceDatasetReader(BaseDatasetReader):
             # The index keeps only per-episode bounds (O(num_episodes)) and resolves
             # either direction with a binary search instead of one entry per frame.
             selected = sorted(set(self.episodes))
-            self._subset_index = _EpisodeSubsetIndex(self._ep_from[selected], self._ep_to[selected])
+            self._subset_index_mapping = _EpisodeSubsetIndexMapping(
+                self._ep_from[selected], self._ep_to[selected]
+            )
 
         self._task_names = list(self.meta.tasks.index)
 
@@ -426,7 +361,11 @@ class LanceDatasetReader(BaseDatasetReader):
 
     @property
     def num_frames(self) -> int:
-        return self._subset_index.num_frames if self._subset_index is not None else self.meta.total_frames
+        return (
+            len(self._subset_index_mapping)
+            if self._subset_index_mapping is not None
+            else self.meta.total_frames
+        )
 
     @property
     def num_episodes(self) -> int:
@@ -434,7 +373,7 @@ class LanceDatasetReader(BaseDatasetReader):
 
     @property
     def absolute_to_relative_idx(self) -> Mapping[int, int] | None:
-        return self._subset_index
+        return self._subset_index_mapping
 
     def get_item(self, idx: int) -> dict:
         return self.get_items([idx])[0]
@@ -515,7 +454,7 @@ class LanceDatasetReader(BaseDatasetReader):
             idx += self.num_frames
         if not 0 <= idx < self.num_frames:
             raise IndexError(f"Index {idx} is out of range for a dataset of {self.num_frames} frames.")
-        return self._subset_index.rel_to_abs(idx) if self._subset_index is not None else idx
+        return self._subset_index_mapping.rel_to_abs(idx) if self._subset_index_mapping is not None else idx
 
     def _episode_index_for_abs_idx(self, abs_idx: int) -> int:
         return int(np.searchsorted(self._ep_from, abs_idx, side="right") - 1)

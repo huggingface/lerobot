@@ -32,7 +32,6 @@ pytest.importorskip("lancedb")
 pytest.importorskip("lerobot_lancedb", reason="lerobot-lancedb converts the test fixtures")
 
 import lancedb
-import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from lerobot_lancedb.convert import convert
@@ -42,6 +41,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets import lance_backend, lance_utils
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
 from lerobot.datasets.dataset_reader import DatasetReader
+from lerobot.datasets.episode_subset_index import _EpisodeSubsetIndexMapping
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lance_backend import LanceDatasetReader, lance_mp_context
 from lerobot.datasets.language import (
@@ -178,7 +178,8 @@ def test_tabular_parity(dataset_roots):
     lance_s = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[1])
     assert len(lance_s) == len(upstream_s)
     assert lance_s.num_episodes == upstream_s.num_episodes
-    assert lance_s.absolute_to_relative_idx == upstream_s.reader._absolute_to_relative_idx
+    assert isinstance(lance_s.absolute_to_relative_idx, _EpisodeSubsetIndexMapping)
+    assert lance_s.absolute_to_relative_idx == upstream_s.absolute_to_relative_idx
     for idx in [0, len(upstream_s) - 1]:
         assert_items_equal(lance_s[idx], upstream_s[idx])
 
@@ -193,7 +194,7 @@ def test_tabular_parity(dataset_roots):
     upstream_dup = LeRobotDataset(DUMMY_REPO_ID, root=src_root, episodes=[1, 1])
     lance_dup = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[1, 1])
     assert len(lance_dup) == len(upstream_dup) == len(upstream_s)
-    assert lance_dup.absolute_to_relative_idx == upstream_dup.reader._absolute_to_relative_idx
+    assert lance_dup.absolute_to_relative_idx == upstream_dup.absolute_to_relative_idx
     for idx in [0, len(upstream_dup) - 1]:
         assert_items_equal(lance_dup[idx], upstream_dup[idx])
 
@@ -587,44 +588,6 @@ def test_sparse_source_fetches_handle_once():
     assert Handle.opened == 1  # one handle for every miss
 
 
-def test_episode_subset_index_matches_dense_mapping():
-    """The compact O(num_episodes) index reproduces the dense per-frame mapping exactly."""
-    # episodes tile [0, 14): ep0=[0,5) ep1=[5,10) ep2=[10,14); select 0 and 2 (gap at ep1)
-    ep_from = np.array([0, 5, 10])
-    ep_to = np.array([5, 10, 14])
-    selected = [0, 2]
-    index = lance_backend._EpisodeSubsetIndex(ep_from[selected], ep_to[selected])
-
-    # Reference: the dense construction the index replaces.
-    rel_to_abs = np.concatenate([np.arange(ep_from[e], ep_to[e]) for e in selected])
-    dense = {int(abs_idx): rel for rel, abs_idx in enumerate(rel_to_abs)}
-
-    assert index.num_frames == len(index) == len(dense) == 9
-    # forward (relative -> absolute) round-trips the dense list
-    assert [index.rel_to_abs(r) for r in range(index.num_frames)] == rel_to_abs.tolist()
-    # reverse (absolute -> relative) matches on every selected key
-    assert {abs_idx: index[abs_idx] for abs_idx in index} == dense
-    # Mapping contract used by EpisodeAwareSampler / tokenizer: membership, lookup, equality
-    assert 2 in index and 13 in index
-    assert 7 not in index and 14 not in index and -1 not in index  # gap and out-of-range
-    assert index == dense and dense == index
-    assert index != {0: 0}
-    for missing in [7, 14, 100]:
-        with pytest.raises(KeyError):
-            index[missing]
-
-
-def test_episode_subset_index_survives_pickle():
-    """Workers receive the index by value; it must round-trip through pickle."""
-    index = lance_backend._EpisodeSubsetIndex(np.array([0, 10]), np.array([5, 14]))
-    restored = pickle.loads(pickle.dumps(index))
-    assert restored.num_frames == index.num_frames
-    assert dict(restored) == dict(index)
-    assert [restored.rel_to_abs(r) for r in range(restored.num_frames)] == [
-        index.rel_to_abs(r) for r in range(index.num_frames)
-    ]
-
-
 def test_storage_format_routing(video_dataset_roots):
     src_root, lance_root = video_dataset_roots
 
@@ -720,7 +683,7 @@ def test_force_cache_sync_refreshes_remote_meta(video_dataset_roots):
 
 def test_pickle_and_dataloader(dataset_roots):
     _, lance_root = dataset_roots
-    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root)
+    lance_ds = LeRobotDataset(DUMMY_REPO_ID, root=lance_root, episodes=[2, 0, 2])
     restored = pickle.loads(pickle.dumps(lance_ds))
     assert_items_equal(restored[7], lance_ds[7])
 
