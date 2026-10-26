@@ -15,10 +15,9 @@
 """One simulated environment driven through the Robot interface, locally or served."""
 
 import math
-from dataclasses import dataclass, replace
-from typing import Any
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any
 
-import gymnasium as gym
 import numpy as np
 
 from lerobot.robots.robot import Robot
@@ -26,28 +25,17 @@ from lerobot.sims.types import EnvDescriptor, FeatureSpec, StepResult
 
 from .configuration_sim import SimRobotConfig
 
-
-@dataclass(frozen=True)
-class EpisodeStatus:
-    """Latest outcome for the environment owned by a ``SimRobot``."""
-
-    reward: float
-    terminated: bool
-    truncated: bool
-    is_success: bool
-    step: int
-
-    @property
-    def done(self) -> bool:
-        return self.terminated or self.truncated
+if TYPE_CHECKING:
+    from lerobot.envs.batched import BatchedEnv
+    from lerobot.sims.vector_env import VectorEnv
 
 
 class SimRobot(Robot):
     """A simulated environment through the Robot interface, with explicit episode state.
 
     Each sent action advances the environment exactly once. A terminal environment remains terminal until
-    ``reset`` is called. Its ``robot_type`` is the simulated body the environment declares, else ``sim``;
-    ``name`` stays ``sim``.
+    ``reset`` is called; ``latest`` holds the last observation, reward, termination and success. Its
+    ``robot_type`` is the simulated body the environment declares, else ``sim``; ``name`` stays ``sim``.
     """
 
     config_class = SimRobotConfig
@@ -61,7 +49,7 @@ class SimRobot(Robot):
         # The env's suite, when it names exactly one; otherwise the simulator's first.
         self._task_group: str | None = env.task if env.task and "," not in env.task else None
         self._env_config = env
-        self._env: gym.vector.VectorEnv | None = None
+        self._env: VectorEnv | BatchedEnv | None = None
         self._connected = False
         self.latest: StepResult | None = None
         try:
@@ -146,50 +134,9 @@ class SimRobot(Robot):
         if self._env is None:
             self._make_env()
         assert self._env is not None
-        obs, info = self._env.reset()
+        self._env.reset()
+        self.latest = self._env.latest
         self._connected = True
-        self._update_reset(obs, info)
-
-    def _update(self, result: StepResult) -> StepResult:
-        self.latest = result
-        return result
-
-    def _update_reset(self, obs: dict[str, np.ndarray], info: dict[str, Any]) -> StepResult:
-        zeros: np.ndarray = np.zeros(1, dtype=np.float32)
-        done: np.ndarray = np.zeros(1, dtype=np.bool_)
-        return self._update(
-            StepResult(
-                obs=obs,
-                task=tuple(info["task"]),
-                reward=zeros,
-                terminated=done,
-                truncated=done.copy(),
-                is_success=np.asarray(info["is_success"], dtype=np.bool_),
-                sim_time=float(info["sim_time"]),
-                step=np.asarray(info["step"], dtype=np.int64),
-            )
-        )
-
-    def _update_step(
-        self,
-        obs: dict[str, np.ndarray],
-        reward: np.ndarray,
-        terminated: np.ndarray,
-        truncated: np.ndarray,
-        info: dict[str, Any],
-    ) -> StepResult:
-        return self._update(
-            StepResult(
-                obs=obs,
-                task=tuple(info["task"]),
-                reward=np.asarray(reward, dtype=np.float32),
-                terminated=np.asarray(terminated, dtype=np.bool_),
-                truncated=np.asarray(truncated, dtype=np.bool_),
-                is_success=np.asarray(info["is_success"], dtype=np.bool_),
-                sim_time=float(info["sim_time"]),
-                step=np.asarray(info["step"], dtype=np.int64),
-            )
-        )
 
     def _snapshot(self) -> StepResult:
         if self.latest is None:
@@ -212,27 +159,13 @@ class SimRobot(Robot):
         """Start a new episode explicitly and return its initial robot observation."""
         if not self._connected or self._env is None:
             raise RuntimeError("Connect before resetting the environment")
-        obs, info = self._env.reset(seed=seed)
-        result = self._update_reset(obs, info)
-        return self._observation(result)
+        self._env.reset(seed=seed)
+        self.latest = self._env.latest
+        return self._observation(self._snapshot())
 
     @property
     def task_description(self) -> str:
-        if self.latest is None:
-            raise RuntimeError("Connect before reading the simulator task")
-        return self.latest.task[0]
-
-    @property
-    def episode_status(self) -> EpisodeStatus:
-        if self.latest is None:
-            raise RuntimeError("Connect before reading episode status")
-        return EpisodeStatus(
-            reward=float(self.latest.reward[0]),
-            terminated=bool(self.latest.terminated[0]),
-            truncated=bool(self.latest.truncated[0]),
-            is_success=bool(self.latest.is_success[0]),
-            step=int(self.latest.step[0]),
-        )
+        return self._snapshot().task[0]
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         names = self.descriptor.action_feature.names
@@ -245,7 +178,8 @@ class SimRobot(Robot):
         values = np.asarray([[action[name] for name in names]], dtype=np.float32)
         if not self._connected or self._env is None:
             raise RuntimeError("Connect before sending an action")
-        self._update_step(*self._env.step(values))
+        self._env.step(values)
+        self.latest = self._env.latest
         return {name: float(value) for name, value in zip(names, values[0], strict=True)}
 
     def hold(self) -> None:
@@ -269,4 +203,7 @@ def check_control_rate(robot: Robot, fps: float) -> None:
 
 def is_simulation_done(robot: Robot) -> bool:
     """Whether the last simulated action ended its episode; false for hardware."""
-    return isinstance(robot, SimRobot) and robot.episode_status.done
+    if not isinstance(robot, SimRobot):
+        return False
+    latest = robot._snapshot()
+    return bool(latest.terminated[0] or latest.truncated[0])

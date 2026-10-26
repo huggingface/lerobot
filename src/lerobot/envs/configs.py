@@ -19,7 +19,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import draccus
 import gymnasium as gym
@@ -27,11 +27,14 @@ import gymnasium as gym
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sims.backend import BackendConfig
 from lerobot.sims.conventions import resolve, served_differences
-from lerobot.sims.types import EnvDescriptor
+from lerobot.sims.types import EnvDescriptor, SimConfig
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
+
+if TYPE_CHECKING:
+    from lerobot.envs.batched import BatchedEnv
+    from lerobot.sims.vector_env import VectorEnv
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +93,9 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
             "kwargs": {"gym_id": self.gym_id, "gym_kwargs": self.gym_kwargs},
         }
 
-    def backend_config(self) -> BackendConfig:
-        """The resolved simulator settings, as the env server and the in-process client run them."""
-        return BackendConfig(**resolve(self.sim_settings()))
+    def sim_config(self) -> SimConfig:
+        """The resolved simulator settings, as the env server and local environments run them."""
+        return SimConfig(**resolve(self.sim_settings()))
 
     def create_envs(
         self,
@@ -118,7 +121,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         task_id: int = 0,
         num_envs: int = 1,
         use_async_envs: bool = False,
-    ) -> gym.vector.VectorEnv:
+    ) -> VectorEnv | BatchedEnv:
         """Create one local or served environment for a specific task."""
         descriptor, make = self._environment_factory(num_envs, use_async_envs)
         group = task_group or next(iter(descriptor.tasks))
@@ -133,9 +136,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         self,
         n_envs: int,
         use_async_envs: bool,
-    ) -> tuple[EnvDescriptor, Callable[[str, int], gym.vector.VectorEnv]]:
-        from lerobot.sims.backend import Backend
-        from lerobot.sims.metadata import describe_backend
+    ) -> tuple[EnvDescriptor, Callable[[str, int], VectorEnv | BatchedEnv]]:
         from lerobot.sims.vector_env import VectorEnv
 
         settings = self.sim_settings()
@@ -154,7 +155,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                 probe.close()
             check_served(descriptor.config, settings, endpoint)
 
-            def make(group: str, task_id: int) -> gym.vector.VectorEnv:
+            def make(group: str, task_id: int) -> VectorEnv | BatchedEnv:
                 return BatchedEnv(
                     EnvClient(
                         endpoint,
@@ -170,15 +171,16 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                     use_async_envs and n_envs > 1,
                 )
         else:
-            sim = self.backend_config()
-            local = Backend(sim)
+            sim = self.sim_config()
+            probe = VectorEnv(sim)
             try:
-                descriptor = describe_backend(local)
+                descriptor = probe.descriptor
             finally:
-                local.close()
+                probe.close()
 
-            def make(group: str, task_id: int) -> gym.vector.VectorEnv:
-                return VectorEnv(sim, n_envs, group, task_id, use_async_envs and n_envs > 1)
+            # Given the descriptor, each task builds its simulators on first use, not all tasks at once.
+            def make(group: str, task_id: int) -> VectorEnv | BatchedEnv:
+                return VectorEnv(sim, n_envs, group, task_id, use_async_envs and n_envs > 1, descriptor)
 
         self.fps = int(descriptor.fps)
         self.features = {

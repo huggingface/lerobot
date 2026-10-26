@@ -58,8 +58,8 @@ lerobot-rollout \
 
 A sim robot is a robot: swap `--robot.type=sim --robot.env.*` for the real follower's `--robot.*`, and everything else stays. A teleoperator drives it as it drives the real follower (`--teleop.type=so101_leader` for an SO-101 twin), when the environment declares the follower's action names and units; a mismatch is reported at the first action. `lerobot-record` stores the body the environment declares as the dataset's `robot_type` (`panda` for LIBERO), or `sim` when it declares none.
 
-A sim robot remains a normal `Robot`, but also exposes its simulator episode state through
-`episode_status` and an explicit `reset(seed=...)` method. An environment that succeeds, terminates, or reaches
+A sim robot remains a normal `Robot`, but also exposes its last reward, termination and success through
+`latest` and an explicit `reset(seed=...)` method. An environment that succeeds, terminates, or reaches
 its step limit stays at its terminal observation until its caller resets it. This keeps episode ownership
 with recording, evaluation, or RL code instead of hiding a reset inside `send_action()`.
 

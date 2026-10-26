@@ -127,9 +127,9 @@ def test_build_and_stop_require_docker(monkeypatch):
     "path", sorted((Path(__file__).resolve().parents[2] / "docker/sims/configs").glob("*.yaml")), ids=str
 )
 def test_server_configs_take_their_conventions_from_the_simulator(path):
-    from lerobot.sims.backend import BackendConfig
     from lerobot.sims.conventions import resolve
+    from lerobot.sims.types import SimConfig
 
-    sim = BackendConfig(**resolve(load_config(path, [])["sim"]))
+    sim = SimConfig(**resolve(load_config(path, [])["sim"]))
     assert sim.semantics == f"{sim.type}-{sim.control.replace('_', '-')}-v1"
     assert sim.action_names and set(sim.gripper_indices) <= set(range(len(sim.action_names)))

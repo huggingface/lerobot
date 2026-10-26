@@ -147,7 +147,7 @@ _MODULES: dict[tuple[str, int, int], Any] = {}
 def _load_hub_module(hub_path: str, trust_remote_code: bool, hub_cache_dir: str | None) -> tuple[str, Any]:
     """Download and import a Hub env.py once per process.
 
-    The server builds a Backend for its probe and for every session; executing env.py only once
+    The server builds environments for its probe and for every session; executing env.py only once
     lets a repository keep process-wide state, such as a simulator app that can start only once.
     """
     repo_id, _, local_file, _ = _download_hub_file(hub_path, trust_remote_code, hub_cache_dir)

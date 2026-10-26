@@ -1044,7 +1044,7 @@ def _make_sentry(ctx, multiplier: int):
     "kind", ["base", "sentry", "highlight", "dagger_continuous", "dagger_corrections", "episodic"]
 )
 def test_rollout_strategies_respect_simulated_episode_boundaries(kind, tmp_path, monkeypatch, clock):
-    from lerobot.robots.sim import SimRobot, SimRobotConfig
+    from lerobot.robots.sim import SimRobot, SimRobotConfig, is_simulation_done
     from lerobot.rollout import (
         BaseStrategyConfig,
         DAggerStrategyConfig,
@@ -1105,8 +1105,8 @@ def test_rollout_strategies_respect_simulated_episode_boundaries(kind, tmp_path,
             run(ctx)
         else:
             strategy.run(ctx)
-        assert robot.episode_status.done
-        assert robot.episode_status.step == 1
+        assert is_simulation_done(robot)
+        assert robot.latest.step[0] == 1
         episodes = 2 if kind == "episodic" else 1
         assert ctx.policy.inference.get_action.call_count == episodes
         assert ctx.policy.inference.reset.call_count == episodes

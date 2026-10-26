@@ -107,7 +107,7 @@ def test_robomme_settings_name_the_cameras_and_action_space():
 def test_robomme_conventions_follow_the_action_space(action_space, control, names):
     from lerobot.envs.configs import RoboMMEEnv
 
-    sim = RoboMMEEnv(action_space=action_space).backend_config()
+    sim = RoboMMEEnv(action_space=action_space).sim_config()
     assert sim.control == control and len(sim.action_names) == names
 
 

@@ -20,6 +20,37 @@ from typing import Any
 import numpy as np
 
 
+@dataclass
+class SimConfig:
+    """The simulator an environment runs: its integration, task, options and control conventions."""
+
+    type: str = "toy"
+    task: str = "reach"
+    fps: float = 20
+    control: str = "delta"
+    semantics: str = "toy-delta-v1"
+    kwargs: dict[str, Any] = field(default_factory=dict)
+    state_names: tuple[str, ...] = ()
+    action_names: tuple[str, ...] = ()
+    gripper_indices: tuple[int, ...] = ()
+    command_retention_indices: tuple[int, ...] = ()
+    robot_type: str = ""
+
+    def __post_init__(self) -> None:
+        """Normalize component order and reject invalid controller declarations."""
+        self.state_names = tuple(self.state_names)
+        self.action_names = tuple(self.action_names)
+        self.gripper_indices = tuple(self.gripper_indices)
+        self.command_retention_indices = tuple(self.command_retention_indices)
+        if (
+            self.control not in {"position", "delta", "eef_pose", "velocity"}
+            or not self.semantics
+            or not np.isfinite(self.fps)
+            or self.fps <= 0
+        ):
+            raise ValueError("A simulator requires explicit semantics, controller, and positive FPS")
+
+
 @dataclass(frozen=True)
 class FeatureSpec:
     """Shape, dtype, components, and semantics of one environment value."""

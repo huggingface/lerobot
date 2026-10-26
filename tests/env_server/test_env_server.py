@@ -37,7 +37,7 @@ def test_torch_free_import():
 import sys
 sys.modules['torch'] = None
 import numpy as np
-import lerobot.env_server.server, lerobot.sims.backend, lerobot.sims.native.envhub
+import lerobot.env_server.server, lerobot.sims.vector_env, lerobot.sims.native.envhub
 from lerobot.transport.wire.client import query_reply, decode_reply
 from lerobot.transport.wire.features import FeatureSpec, feature_mismatch, validate_array
 from lerobot.transport.wire.protocol import Envelope, MessageType, correlate_reply, raise_peer_error, validate_reply
@@ -158,9 +158,9 @@ def test_robot_hold_does_not_advance_environment(server, tmp_path):
         robot.connect()
         assert len(wrapper.get_observation()) == 3
         wrapper.send_action({"command_0": 0.5, "command_1": 0})
-        step = robot.episode_status.step
+        step = robot.latest.step[0]
         wrapper.hold()
-        assert robot.episode_status.step == step
+        assert robot.latest.step[0] == step
     finally:
         robot.disconnect()
 
@@ -177,7 +177,7 @@ def test_sim_robot_registration(server, tmp_path):
         robot.connect()
         action = dict.fromkeys(robot.action_features, 0.0)
         assert robot.send_action(action) == action
-        assert robot.episode_status.step == 1
+        assert robot.latest.step[0] == 1
     finally:
         robot.disconnect()
 
@@ -531,10 +531,10 @@ def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
     assert not hasattr(env, "_ensure")
     try:
         env.reset(seed=123)
-        backend = server[0].sessions[env.client.session].backend
-        assert backend.envs[0].reset_count == 1
+        served = server[0].sessions[env.client.session].env
+        assert served._envs[0].reset_count == 1
         env.reset(seed=123)
-        assert backend.envs[0].reset_count == 2
+        assert served._envs[0].reset_count == 2
     finally:
         env.close()
 
@@ -665,44 +665,41 @@ def make_env(n_envs=1, use_async_envs=False):
 """
 
 
-def test_envhub_backend_serves_a_hub_repository(tmp_path, monkeypatch):
-    from lerobot.sims import backend as backend_module
-    from lerobot.sims.metadata import describe_backend
+def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
     from lerobot.sims.native import envhub
+    from lerobot.sims.types import SimConfig
+    from lerobot.sims.vector_env import VectorEnv
 
     env_file = tmp_path / "env.py"
     env_file.write_text(_ENVHUB_ENV)
     # Only the network download is stubbed; the consent check and URL parsing run for real.
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    config = backend_module.BackendConfig(
-        type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True}
-    )
-    backend = backend_module.Backend(config, num_envs=2)
+    config = SimConfig(type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True})
+    env = VectorEnv(config, num_envs=2)
     try:
-        descriptor = describe_backend(backend)
-        assert backend.tasks == {"reach_suite": ["0"]}
-        assert {f.name: (f.shape, f.kind) for f in descriptor.features} == {
+        assert env.tasks == {"reach_suite": ["0"]}
+        assert {f.name: (f.shape, f.kind) for f in env.descriptor.features} == {
             "observation.images.front": ((8, 8, 3), "rgb"),
             "observation.state": ((2,), "tensor"),
         }
-        assert descriptor.action_feature.shape == (2,)
-        first = backend.reset([3, 4]).obs["observation.state"]
-        np.testing.assert_array_equal(backend.reset([3, 4]).obs["observation.state"], first)
-        result = backend.step(np.full((2, 2), 0.5, np.float32))
-        assert result.task == ("reach the goal", "reach the goal")
+        assert env.descriptor.action_feature.shape == (2,)
+        first = env.reset(seed=[3, 4])[0]["observation.state"]
+        np.testing.assert_array_equal(env.reset(seed=[3, 4])[0]["observation.state"], first)
+        info = env.step(np.full((2, 2), 0.5, np.float32))[4]
+        assert info["task"] == ("reach the goal", "reach the goal")
     finally:
-        backend.close()
+        env.close()
     # Running remote code needs explicit consent.
     config.kwargs["trust_remote_code"] = False
     with pytest.raises(RuntimeError, match="Refusing"):
-        backend_module.Backend(config, num_envs=1)
+        VectorEnv(config, num_envs=1)
 
 
 def test_envhub_make_env_takes_the_options_of_the_command(tmp_path, monkeypatch):
     from lerobot.envs.configs import HubEnvConfig
-    from lerobot.sims import backend as backend_module
-    from lerobot.sims.metadata import describe_backend
     from lerobot.sims.native import envhub
+    from lerobot.sims.types import SimConfig
+    from lerobot.sims.vector_env import VectorEnv
 
     # The repository's make_env sizes its camera from an option of its own.
     env_file = tmp_path / "env.py"
@@ -725,17 +722,18 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
     )
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
     config = HubEnvConfig(hub_path="user/reach", trust_remote_code=True, make_env_kwargs={"size": 4})
-    backend = backend_module.Backend(backend_module.BackendConfig(**config.sim_settings()), num_envs=1)
+    env = VectorEnv(SimConfig(**config.sim_settings()))
     try:
-        shapes = {f.name: f.shape for f in describe_backend(backend).features}
+        shapes = {f.name: f.shape for f in env.descriptor.features}
         assert shapes["observation.images.front"] == (4, 4, 3)
     finally:
-        backend.close()
+        env.close()
 
 
-def test_envhub_backend_serves_a_local_directory(tmp_path, monkeypatch):
-    from lerobot.sims import backend as backend_module
+def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
     from lerobot.sims.native import envhub
+    from lerobot.sims.types import SimConfig
+    from lerobot.sims.vector_env import VectorEnv
 
     (tmp_path / "env.py").write_text(_ENVHUB_ENV)
 
@@ -743,42 +741,40 @@ def test_envhub_backend_serves_a_local_directory(tmp_path, monkeypatch):
         raise AssertionError("A local directory is not downloaded")
 
     monkeypatch.setattr(envhub, "hf_hub_download", no_download)
-    config = backend_module.BackendConfig(
-        type="envhub", task="", kwargs={"hub_path": str(tmp_path), "trust_remote_code": True}
+    env = VectorEnv(
+        SimConfig(type="envhub", task="", kwargs={"hub_path": str(tmp_path), "trust_remote_code": True})
     )
-    backend = backend_module.Backend(config, num_envs=1)
     try:
-        assert backend.tasks == {"reach_suite": ["0"]}
+        assert env.tasks == {"reach_suite": ["0"]}
     finally:
-        backend.close()
+        env.close()
 
 
 def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
     import builtins
 
-    from lerobot.sims import backend as backend_module
     from lerobot.sims.native import envhub
+    from lerobot.sims.types import SimConfig
+    from lerobot.sims.vector_env import VectorEnv
 
     # A simulator app that can start only once per process (e.g. Isaac Sim) lives in module state.
     env_file = tmp_path / "env.py"
     env_file.write_text("import builtins\nbuiltins.envhub_imports += 1\n" + _ENVHUB_ENV)
     monkeypatch.setattr(builtins, "envhub_imports", 0, raising=False)
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    config = backend_module.BackendConfig(
-        type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True}
-    )
-    # The probe and two sessions each build a Backend.
+    config = SimConfig(type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True})
+    # The probe and two sessions each build their environments.
     for _ in range(3):
-        backend = backend_module.Backend(config, num_envs=1)
-        backend.reset([0])
-        backend.close()
+        env = VectorEnv(config)
+        env.reset(seed=[0])
+        env.close()
     assert builtins.envhub_imports == 1
 
 
 def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
-    from lerobot.sims import backend as backend_module
-    from lerobot.sims.metadata import describe_backend
     from lerobot.sims.native import envhub
+    from lerobot.sims.types import SimConfig
+    from lerobot.sims.vector_env import VectorEnv
 
     env_file = tmp_path / "env.py"
     # A flat array observation, which local LeRobot execution does not accept either.
@@ -788,15 +784,9 @@ def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
         "    return gym.vector.SyncVectorEnv([lambda: gym.make('CartPole-v1')] * n_envs)\n"
     )
     monkeypatch.setattr(envhub, "hf_hub_download", lambda **kwargs: str(env_file))
-    config = backend_module.BackendConfig(
-        type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True}
-    )
-    backend = backend_module.Backend(config, num_envs=1)
-    try:
-        with pytest.raises(ValueError, match="dict observations"):
-            describe_backend(backend)
-    finally:
-        backend.close()
+    config = SimConfig(type="envhub", task="", kwargs={"hub_path": "user/reach", "trust_remote_code": True})
+    with pytest.raises(ValueError, match="dict observations"):
+        VectorEnv(config)
 
 
 def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):

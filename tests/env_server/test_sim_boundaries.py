@@ -73,11 +73,14 @@ def test_local_environment_does_not_import_deployment_code(monkeypatch) -> None:
         env.close()
 
 
-def test_backend_delegates_native_observation_conventions(monkeypatch) -> None:
+def test_vector_env_delegates_native_observation_conventions(monkeypatch) -> None:
+    import sys
+    from types import ModuleType
+
     from gymnasium import spaces
 
-    from lerobot.sims import backend as backend_module
-    from lerobot.sims.native import NativeIntegration
+    from lerobot.sims.types import SimConfig
+    from lerobot.sims.vector_env import VectorEnv
 
     class NativeEnv:
         observation_space = spaces.Dict({"native_state": spaces.Box(-1, 1, (1,), np.float32)})
@@ -104,19 +107,19 @@ def test_backend_delegates_native_observation_conventions(monkeypatch) -> None:
     def create_envs(task, n_envs, env_cls, **kwargs):
         return {task: {0: env_cls([NativeEnv] * n_envs)}}
 
-    integration = NativeIntegration(create_envs, canonical_observation)
-    monkeypatch.setattr(backend_module, "load_native_integration", lambda name: integration)
-    backend = backend_module.Backend(
-        backend_module.BackendConfig(type="new_engine", task="pick", semantics="new-engine-v1")
-    )
+    # A new simulator is a module of these two functions; the shared environment never names it.
+    integration = ModuleType("lerobot.sims.native.new_engine")
+    integration.create_envs = create_envs  # type: ignore[attr-defined]
+    integration.canonical_observation = canonical_observation  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "lerobot.sims.native.new_engine", integration)
+    env = VectorEnv(SimConfig(type="new_engine", task="pick", semantics="new-engine-v1"))
     try:
-        observation_space, _ = backend.single_spaces()
-        assert observation_space["observation.state"].shape == (1,)
-        result = backend.reset([7])
-        np.testing.assert_array_equal(result.obs["observation.state"], [[0.25]])
+        assert env.single_observation_space["observation.state"].shape == (1,)
+        obs, _ = env.reset(seed=[7])
+        np.testing.assert_array_equal(obs["observation.state"], [[0.25]])
         assert len(adapted) == 2
     finally:
-        backend.close()
+        env.close()
 
 
 def test_envhub_rejects_custom_vector_behavior_without_unwrapping_it() -> None:

@@ -24,9 +24,8 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.sims.backend import Backend, BackendConfig
-from lerobot.sims.metadata import describe_backend
-from lerobot.sims.types import EnvDescriptor
+from lerobot.sims.types import EnvDescriptor, SimConfig
+from lerobot.sims.vector_env import VectorEnv
 from lerobot.transport.wire.codec import CodecLimits, RGBImage, decode_message, encode_message
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import (
@@ -49,7 +48,7 @@ logger = logging.getLogger(__name__)
 class ServerConfig:
     """Bound simulator resources and select explicit Zenoh endpoints."""
 
-    sim: BackendConfig = field(default_factory=BackendConfig)
+    sim: SimConfig = field(default_factory=SimConfig)
     deployment: str = "default"
     zenoh: ZenohConfig = field(default_factory=lambda: ZenohConfig(listen_endpoints=["tcp/0.0.0.0:7448"]))
     max_envs: int = 32
@@ -119,9 +118,9 @@ class EnvServer:
             # Describe queries wait for the queryable declared below, within their own deadline.
             self.transport.open()
             # Includes descriptor probing; native renderer setup stays on the owner thread.
-            probe = Backend(self.config.sim)
+            probe = VectorEnv(self.config.sim)
             try:
-                self.descriptor = describe_backend(probe)
+                self.descriptor = probe.descriptor
             finally:
                 probe.close()
             root = deployment_prefix(self.config.deployment)
@@ -249,7 +248,7 @@ class EnvServer:
                 "session": session_id,
                 "result": encode_step_result(session.opened),
                 "generation": 0,
-                "descriptor": encode_descriptor(describe_backend(session.backend)),
+                "descriptor": encode_descriptor(session.env.descriptor),
             }
         )
 

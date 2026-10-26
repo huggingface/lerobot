@@ -20,8 +20,8 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from lerobot.robots.sim import SimRobot, SimRobotConfig
-from lerobot.sims.backend import BackendConfig
+from lerobot.robots.sim import SimRobot, SimRobotConfig, is_simulation_done
+from lerobot.sims.types import SimConfig
 from tests.env_server.toy_env import ToyEnvConfig
 
 
@@ -187,23 +187,36 @@ def test_sim_robot_records_the_body_its_env_declares(tmp_path):
 
 
 def test_environments_in_separate_processes_match_sequential_environments():
-    from lerobot.sims.backend import Backend
+    from lerobot.sims.vector_env import VectorEnv
 
     results = []
     for use_async_envs in (False, True):
-        backend = Backend(BackendConfig(), num_envs=3, use_async_envs=use_async_envs)
+        env = VectorEnv(SimConfig(), num_envs=3, use_async_envs=use_async_envs)
         try:
-            steps = [backend.reset([4, 5, 6])]
+            env.reset(seed=[4, 5, 6])
+            steps = [env.latest]
             for actions in ([[2, 0], [0.1, 0], [0, 0]], [[0.3, 0.1]] * 3):
-                steps.append(backend.step(np.array(actions, np.float32)))
+                env.step(np.array(actions, np.float32))
+                steps.append(env.latest)
             results.append(steps)
         finally:
-            backend.close()
+            env.close()
     for sequential, parallel in zip(*results, strict=True):
         np.testing.assert_array_equal(parallel.obs["observation.state"], sequential.obs["observation.state"])
         np.testing.assert_array_equal(parallel.terminated, sequential.terminated)
         np.testing.assert_array_equal(parallel.step, sequential.step)
         assert parallel.task == sequential.task
+
+
+def test_local_tasks_build_their_simulators_on_first_use():
+    # lerobot-eval creates every task's environment up front, then prefetches the next one with _ensure.
+    env = ToyEnvConfig().create_envs(n_envs=2)["reach"][0]
+    try:
+        assert not env._envs
+        env.reset(seed=[1, 2])
+        assert len(env._envs) == 2
+    finally:
+        env.close()
 
 
 def test_sim_robot_names_the_actions_it_takes(tmp_path):
@@ -237,31 +250,31 @@ def test_sim_robot_preserves_episode_end_until_explicit_reset(where, request, tm
 
         # The toy terminates once x passes 1. Preserve that transition for the episode owner.
         robot.send_action({"command_0": 2.0, "command_1": 0.0})
-        assert robot.episode_status.terminated
-        assert robot.episode_status.is_success
-        assert robot.episode_status.reward == 1
-        assert robot.episode_status.step == 1
+        assert robot.latest.terminated[0]
+        assert robot.latest.is_success[0]
+        assert robot.latest.reward[0] == 1
+        assert robot.latest.step[0] == 1
         terminal_observation = robot.get_observation()
         assert terminal_observation["state_0"] >= 1
 
         # Further commands cannot advance a terminal environment.
         robot.send_action({"command_0": -1.0, "command_1": 0.0})
-        assert robot.episode_status.done
-        assert robot.episode_status.step == 1
+        assert is_simulation_done(robot)
+        assert robot.latest.step[0] == 1
         frozen_observation = robot.get_observation()
         for name, value in terminal_observation.items():
             np.testing.assert_array_equal(frozen_observation[name], value)
 
         initial_observation = robot.reset(seed=3)
-        assert not robot.episode_status.done
-        assert robot.episode_status.step == 0
+        assert not is_simulation_done(robot)
+        assert robot.latest.step[0] == 0
         assert initial_observation["state_0"] < 1
 
         # Truncation is preserved in the same way.
         for _ in range(5):
             robot.send_action({"command_0": 0.0, "command_1": 0.0})
-        assert robot.episode_status.truncated
-        assert robot.episode_status.step == 5
+        assert robot.latest.truncated[0]
+        assert robot.latest.step[0] == 5
     finally:
         robot.disconnect()
 
@@ -387,9 +400,9 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
                 }
             )
             robot.send_action(dict(zip(robot.action_features, action[0].tolist(), strict=True)))
-            if robot.episode_status.done:
+            if is_simulation_done(robot):
                 break
-        assert robot.episode_status.done
+        assert is_simulation_done(robot)
     finally:
         robot.disconnect()
 

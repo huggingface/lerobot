@@ -26,25 +26,29 @@ import yaml
 
 from lerobot.env_server.client import EnvClient
 from lerobot.env_server.contracts import decode_step_result
-from lerobot.sims.backend import Backend, BackendConfig
 from lerobot.sims.conventions import resolve
-from lerobot.sims.metadata import describe_backend
+from lerobot.sims.types import SimConfig
+from lerobot.sims.vector_env import VectorEnv
 
 
 def check(config_path: Path, steps: int = 5):
     config = yaml.safe_load(config_path.read_text())
-    backend = Backend(BackendConfig(**resolve(config["sim"])))
+    env = VectorEnv(SimConfig(**resolve(config["sim"])))
     try:
-        descriptor = describe_backend(backend)
+        descriptor = env.descriptor
         actions = (
             np.random.default_rng(17)
             .uniform(-0.1, 0.1, (steps, 1, descriptor.action_feature.shape[0]))
             .astype(np.float32)
         )
-        expected = [backend.reset([123])]
-        expected.extend(backend.step(action) for action in actions)
+        env.reset(seed=[123])
+        assert env.latest is not None
+        expected = [env.latest]
+        for action in actions:
+            env.step(action)
+            expected.append(env.latest)
     finally:
-        backend.close()
+        env.close()
     config["zenoh"] = {"listen_endpoints": ["tcp/127.0.0.1:7458"]}
     client = EnvClient("tcp/127.0.0.1:7458", config.get("deployment", "default"), timeout_s=1)
     with tempfile.TemporaryDirectory() as directory:
