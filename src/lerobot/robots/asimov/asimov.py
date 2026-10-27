@@ -26,6 +26,7 @@ from lerobot.utils.errors import DeviceNotConnectedError
 from lerobot.utils.import_utils import _menlo_sdk_available, require_package
 
 from ..robot import Robot
+from .asimov_kinematics import ASIMOV_ARM_JOINTS
 from .config_asimov import AsimovConfig
 
 if TYPE_CHECKING or _menlo_sdk_available:
@@ -65,14 +66,18 @@ ASIMOV_JOINTS = (
     "Neck_Pitch",
 )
 BASE_ACTIONS = ("x.vel", "y.vel", "theta.vel")
+ARM_JOINTS = (*ASIMOV_ARM_JOINTS["left"], *ASIMOV_ARM_JOINTS["right"])
+ARM_ACTIONS = tuple(f"{name}.pos" for name in ARM_JOINTS)
 
 
 class Asimov(Robot):
-    """Asimov 1 with onboard balancing and bounded velocity commands.
+    """Asimov 1 with onboard balancing and bounded velocity commands, or arm joint control.
 
-    Connect only observes. An operator must put the robot in MOVE using Asimov
-    Manager before sending actions. Joint positions are observations in radians;
-    locomotion actions follow LeRobot's mobile-base convention (m/s, m/s, deg/s).
+    Connect only observes. In ``velocity`` mode an operator must put the robot in MOVE
+    using Asimov Manager before sending actions; locomotion actions follow LeRobot's
+    mobile-base convention (m/s, m/s, deg/s). In ``arms`` mode actions are arm joint
+    targets in radians, streamed as full-body trajectories with the walking policy off.
+    Joint positions are observations in radians.
     """
 
     config_class = AsimovConfig
@@ -86,11 +91,16 @@ class Asimov(Robot):
         self._client: menlo.Robot | None = None
         self.cameras = make_cameras_from_configs(config.cameras)
         self._command_sent = False
+        # Full-body trajectory targets in firmware order, set from the measured pose on the
+        # first arm command and cleared by stop().
+        self._joint_targets: list[float] | None = None
         # Validate camera names before any resources are opened.
         _ = self.observation_features
 
     @cached_property
     def action_features(self) -> dict[str, type]:
+        if self.config.control_mode == "arms":
+            return dict.fromkeys(ARM_ACTIONS, float)
         return dict.fromkeys(BASE_ACTIONS, float)
 
     @cached_property
@@ -199,6 +209,8 @@ class Asimov(Robot):
         unknown = action.keys() - self.action_features.keys()
         if unknown:
             raise ValueError(f"Unknown Asimov action keys: {sorted(unknown)}")
+        if self.config.control_mode == "arms":
+            return self._send_arm_action(action)
         # Omitted axes stop; never inherit a preceding nonzero command.
         values = {key: float(action.get(key, 0.0)) for key in BASE_ACTIONS}
         if any(not isfinite(value) for value in values.values()):
@@ -222,8 +234,45 @@ class Asimov(Robot):
             raise TypeError("Menlo SDK returned a non-velocity command.")
         return {"x.vel": command.vx, "y.vel": command.vy, "theta.vel": degrees(command.vyaw)}
 
+    def _send_arm_action(self, action: RobotAction) -> RobotAction:
+        # Omitted joints keep their previous target.
+        requested = {key.removesuffix(".pos"): float(value) for key, value in action.items()}
+        if any(not isfinite(value) for value in requested.values()):
+            raise ValueError("Asimov joint targets must be finite.")
+        state = self._get_state()
+        if state.faulted:
+            raise RuntimeError("Asimov reports a fault; refusing joint targets.")
+        if self._joint_targets is None:
+            # The firmware follows a trajectory from an armed STAND or MOVE, not from DAMP.
+            if state.mode not in (menlo.Mode.STAND, menlo.Mode.MOVE):
+                raise RuntimeError("Asimov must be in STAND or MOVE before arm control. Use Asimov Manager.")
+            if tuple(joint.name for joint in state.joints) != ASIMOV_JOINTS:
+                raise ValueError("Asimov joint names/order changed; refusing joint targets.")
+            # Legs, waist and neck stay at the measured pose; arms ramp from it.
+            self._joint_targets = [float(joint.pos) for joint in state.joints]
+        elif state.mode in (menlo.Mode.DAMP, menlo.Mode.FAULT_DAMP):
+            # Asimov Edge DAMPs when setpoints stop for 2 s, or an operator damped it.
+            self._joint_targets = None
+            raise RuntimeError("Asimov left arm control (DAMP). Re-prepare it in Asimov Manager.")
+
+        step = self.config.max_arm_step_rad
+        for name, value in requested.items():
+            i = ASIMOV_JOINTS.index(name)
+            current = self._joint_targets[i]
+            self._joint_targets[i] = current + max(-step, min(step, value - current))
+        assert self._client is not None
+        self._client.trajectory(self._joint_targets, timeout=0.0)
+        return {f"{name}.pos": self._joint_targets[ASIMOV_JOINTS.index(name)] for name in ARM_JOINTS}
+
     def stop(self) -> None:
-        """End our velocity hold, keeping onboard balancing active."""
+        """End our velocity hold, keeping onboard balancing active.
+
+        In arm mode this stops streaming setpoints; Asimov Edge DAMPs 2 s later. It never
+        starts the walking policy under a robot that may be hanging or seated.
+        """
+        if self.config.control_mode == "arms":
+            self._joint_targets = None
+            return
         if self._client is not None and self._command_sent:
             # An operator may already have changed mode. Do not re-enter MOVE.
             if self._client.get_state().mode == menlo.Mode.MOVE:
@@ -238,6 +287,7 @@ class Asimov(Robot):
                 self._client.close()
                 self._client = None
                 self._command_sent = False
+                self._joint_targets = None
             except Exception as exc:
                 errors.append(exc)
         for camera in self.cameras.values():
