@@ -3,26 +3,93 @@
 
 # Long-WAM
 
-[Long-WAM](https://nvlabs.github.io/LongLive/Long-WAM/) predicts actions from a
-language instruction and a history of camera observations. **IDM** imagines
-future video before denoising actions; **COD** denoises video and actions jointly.
+[Paper](https://arxiv.org/abs/2610.10528) ·
+[Project and demos](https://nvlabs.github.io/LongLive/Long-WAM/) ·
+[Code](https://github.com/NVlabs/LongLive/tree/main/Long-WAM)
+
+Long-WAM is a long-context world-action model: it uses a language instruction,
+robot state, and visual history to predict future dynamics and generate actions.
+
+## Model overview
+
+- **Learn to use history.** LongLive2.0-Robot autoregressive video pretraining
+  learns history-to-future dependencies before adaptation to robot actions.
+- **Predict, then act.** IDM conditions action generation on observed history
+  and predicted future latents, without decoding future RGB images.
+- **Scale temporal context.** Longer observation windows capture motion and
+  task progress; the history length is separate from the action horizon.
+
+LeRobot supports both IDM and joint video/action co-denoising (COD), with native
+checkpoint loading, fine-tuning, and synchronous action-chunk inference.
 Wan backbones come from Diffusers and the UMT5 text encoder from Transformers.
+
+## Results
+
+Results below are reported in the [paper](https://arxiv.org/html/2610.10528v1),
+using its benchmark-specific checkpoints and evaluation protocols.
+
+### LIBERO
+
+Success rate (%) as reported in Table 1:
+
+| Model          |  Spatial |    Object |     Goal |     Long |     Avg. |
+| -------------- | -------: | --------: | -------: | -------: | -------: |
+| Fast-WAM       |     98.2 |     100.0 |     97.0 |     95.2 |     97.6 |
+| Long-WAM (COD) |     98.6 |      99.8 |     96.8 |     95.8 |     97.8 |
+| Long-WAM (IDM) | **99.5** | **100.0** | **98.0** | **99.5** | **99.5** |
+
+In the context-scaling study, adding 2.4 s of history raises LIBERO-Long success
+from 94.5% to 99.5% with robot-domain AR pretraining (Figure 6).
+
+### Dynamic and long-horizon tasks
+
+| Benchmark     | Setting                          | Reported result                   |
+| ------------- | -------------------------------- | --------------------------------- |
+| RoboTwin 2.0  | IDM, Clean / Randomized          | 94.7% / 94.2% SR                  |
+| DOMINO        | Dynamic-data fine-tuning         | 34.9% SR, 45.1 manipulation score |
+| RoboCasa GR-1 | 19.2 s history                   | 78.7% SR                          |
+| RoboCasa365   | Long-WAM + GPT-6 Astra, 50 tasks | 54.4% SR                          |
+
+### Real-world deployment and efficiency
+
+- **Unitree G1:** 95% success on dynamic cup stacking (19/20 trials).
+- **YAM:** 81.7% mean success on three long-horizon manipulation tasks.
+- **Edge inference:** 107.4 ms on RTX 5090, 328.2 ms on DGX Spark, and
+  378.7 ms on Jetson AGX Thor per chunk, including future prediction and VAE computation.
+
+The edge timings use the paper's optimized V4/A4 runtime, available in the
+[upstream infrastructure](https://github.com/NVlabs/LongLive/tree/main/Long-WAM/infra).
+They are not timings of this LeRobot implementation.
 
 ## Install
 
+From a LeRobot source checkout:
+
 ```bash
-pip install "lerobot[longwam]"
+pip install -e ".[longwam]"
 ```
 
 ## Checkpoints
 
-LeRobot-native checkpoints include the model and saved pre/post-processors;
-the tokenizer loads from `google/umt5-xxl`:
+LeRobot-native checkpoints include full model weights and saved pre/post-processors.
+The tokenizer loads from `google/umt5-xxl`.
 
-- [LIBERO IDM](https://huggingface.co/Efficient-Large-Model/Long-WAM-LIBERO-IDM-LeRobot)
-- [LIBERO COD](https://huggingface.co/Efficient-Large-Model/Long-WAM-LIBERO-COD-LeRobot)
+| Mode | Inference                                  | Checkpoint                                                                             |
+| ---- | ------------------------------------------ | -------------------------------------------------------------------------------------- |
+| IDM  | Imagine future video, then denoise actions | [LIBERO IDM](https://huggingface.co/Efficient-Large-Model/Long-WAM-LIBERO-IDM-LeRobot) |
+| COD  | Denoise video and actions jointly          | [LIBERO COD](https://huggingface.co/Efficient-Large-Model/Long-WAM-LIBERO-COD-LeRobot) |
 
-Original Long-WAM `model.pt` bundles cannot be loaded directly.
+Both use P48 history (2.4 s at 20 Hz), two 224×224 camera views, 7-D actions,
+and an 8-D robot state. Use the checkpoint matching the desired denoising mode;
+original Long-WAM `model.pt` bundles cannot be loaded directly.
+
+## Data requirements
+
+Use a LeRobot dataset with RGB cameras, `observation.state`, `action`, and task
+instructions. The released LIBERO camera keys are `observation.images.image`
+and `observation.images.image2`, in that order. Supply RGB tensors in `[0, 1]`;
+the processor resizes and center-crops each view, and the policy concatenates views
+horizontally. Keep camera order and action/state conventions aligned with the checkpoint.
 
 ## Inference
 
@@ -38,7 +105,8 @@ preprocess, postprocess = make_pre_post_processors(
     preprocessor_overrides={"device_processor": {"device": "cuda"}},
 )
 policy.reset()
-# Each control tick: current RGB images in [0,1], robot state, and task text.
+# observation contains both current camera images, observation.state, and task.
+# Repeat on every control tick, including ticks that consume queued actions.
 action = postprocess(policy.select_action(preprocess(observation)))
 ```
 
@@ -46,7 +114,7 @@ Call `select_action` on **every control tick**, including while an action chunk
 is executing, so the history stays current. `predict_action_chunk` returns
 `[batch, prediction_steps, action_dim]`; each call records the supplied current frame.
 `reset()` and `drop_queued_actions()` clear both history and queued actions.
-This integration supports synchronous execution; generic async/RTC is not yet validated.
+Generic async/RTC is not yet validated in this integration.
 
 By default, `inference_seed=1` restarts separate video/action noise generators
 with the same seed for each chunk, preserving released inference behavior.
@@ -54,13 +122,39 @@ Set `inference_seed=None` in Python (`--policy.inference_seed=null` in the CLI)
 to use the advancing global RNG instead; `reset()` does not reseed that stream.
 Training always samples fresh noise.
 
-For LIBERO, install `lerobot[libero]` and use the standard evaluator:
+## Evaluation
+
+Install the benchmark extra and evaluate a native checkpoint:
 
 ```bash
+pip install -e ".[longwam,libero]"
+
 lerobot-eval --policy.path=Efficient-Large-Model/Long-WAM-LIBERO-IDM-LeRobot \
-  --policy.device=cuda \
-  --env.type=libero --env.task=libero_spatial --eval.batch_size=1
+  --policy.device=cuda --policy.dtype=bfloat16 \
+  --env.type=libero --env.task=libero_spatial \
+  --env.observation_height=256 --env.observation_width=256 \
+  --env.episode_length=300 \
+  --eval.batch_size=1 --eval.n_episodes=50 --seed=1
 ```
+
+Use `libero_object` or `libero_goal` for the other short suites. For LIBERO-Long,
+set `--env.task=libero_10 --env.episode_length=600`.
+Replace `IDM` with `COD` in the checkpoint path to evaluate co-denoising.
+
+### History and action chunking
+
+| Parameter                  | Meaning                                    | Released LIBERO value |
+| -------------------------- | ------------------------------------------ | --------------------- |
+| `past_obs_steps`           | Past control ticks retained                | 48                    |
+| `video_stride`             | Control ticks between sampled video frames | 4                     |
+| `future_video_steps`       | Future video supervision horizon           | 32                    |
+| `action_horizon`           | Training action chunk length               | 32                    |
+| `inference_action_horizon` | Predicted action chunk length              | 80                    |
+| `n_action_steps`           | Actions executed before a new prediction   | 10                    |
+
+History duration is `past_obs_steps / control_frequency`. Early history is padded
+with the first observation. Use a checkpoint trained for the intended history;
+changing the window at inference is not context-scaling training.
 
 ## Fine-tuning
 
@@ -73,35 +167,39 @@ lerobot-train --policy.path=Efficient-Large-Model/Long-WAM-LIBERO-IDM-LeRobot \
   --policy.push_to_hub=false
 ```
 
-Set parameter storage and autocast separately. `--policy.dtype` sets the model's
-parameter dtype **before checkpoint loading**; `--accelerator.mixed_precision`
-selects autocast during training. The example explicitly uses BF16 for both,
-matching the parameter dtype selected by the
-[original Long-WAM BF16 configuration](https://github.com/NVlabs/LongLive/blob/1b9e348897cafa206fc6dd6feb80b59e2a8b1aa9/Long-WAM/src/longwam/runtime/factory.py#L616-L619).
-The native AdamW optimizer keeps gradients and its first/second moments in the
-parameter dtype; BF16 autocast does not create FP32 master weights.
+`--policy.dtype` selects parameter storage **before loading**; the native AdamW
+gradients and moments use that dtype. `--accelerator.mixed_precision` controls
+autocast, not FP32 master weights. The example uses BF16 for both, matching the
+[original parameter dtype](https://github.com/NVlabs/LongLive/blob/1b9e348897cafa206fc6dd6feb80b59e2a8b1aa9/Long-WAM/src/longwam/runtime/factory.py#L616-L619).
+For FP32 parameters/gradients/moments with BF16 autocast, use
+`--policy.dtype=float32 --accelerator.mixed_precision=bf16`; the frozen VAE and
+text encoder also use FP32, increasing memory. Choose this before loading:
+casting BF16-loaded weights to FP32 cannot recover lost precision.
 
-For FP32 parameters, gradients and AdamW moments with BF16 autocast, replace the
-dtype argument with `--policy.dtype=float32` and keep
-`--accelerator.mixed_precision=bf16`. This also loads the frozen VAE and text
-encoder in FP32, increasing memory use. Select the dtype before loading the model
-and constructing the optimizer: converting an already BF16-loaded model to FP32
-cannot recover precision lost during loading. These choices specify storage and
-computation; they do not establish equivalent convergence or LIBERO performance.
+The released gripper postprocessor converts the last action dimension from
+`[0, 1]` to signed commands. Use `--policy.toggle_action_dimensions=[]` if your
+fine-tuning data already uses the environment's signed open/close convention.
+The active setting also applies to saved processors; explicit
+`postprocessor_overrides` take precedence. Saved normalization statistics are
+retained unless overridden, so align them with your fine-tuning data.
 
-The released checkpoints convert the last action dimension from a `[0, 1]`
-gripper convention to signed commands. If fine-tuning already produces the
-signed commands required by your environment, pass
-`--policy.toggle_action_dimensions=[]` to avoid applying that conversion again.
-Check which value opens and closes the gripper in both the dataset and the
-environment; the numeric range alone does not establish the physical convention.
-The active policy setting also applies when loading saved processors. Explicit
-`postprocessor_overrides` take precedence, and saved normalization statistics
-remain in use unless separately overridden.
+Training supervises future video and action chunks; inference receives only
+past/current observations. Adjust `--batch_size` to GPU memory and keep the
+checkpoint's camera order, action/state definitions, and denoising mode.
 
-Keep the checkpoint's camera order, action/state definitions, and denoising mode.
-`past_obs_steps` is measured in control ticks. Training samples video every
-`video_stride=4` ticks. `action_horizon` sets the training chunk length;
-`inference_action_horizon` optionally overrides it at inference, and
-`n_action_steps` sets the executed length. Training uses future frames as supervision;
-inference only sees past/current observations.
+## Citation
+
+```bibtex
+@misc{huang2026longwamscalingcontextworldaction,
+  title={Long-WAM: Scaling the Context of World-Action Models},
+  author={Wei Huang and Bohan Zhang and Chenzhi Liu and Isabella Liu and
+          Shuai Yang and Weian Mao and Luozhou Wang and Yicheng Xiao and
+          Weifeng Lin and Qixin Hu and Bryan Chu and Sifei Liu and
+          Linxi Fan and Xiaojuan Qi and Song Han and Yukang Chen},
+  year={2026},
+  eprint={2610.10528},
+  archivePrefix={arXiv},
+  primaryClass={cs.RO},
+  url={https://arxiv.org/abs/2610.10528},
+}
+```
