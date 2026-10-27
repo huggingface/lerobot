@@ -360,8 +360,10 @@ def test_actual_trainer_peft_ema_checkpoint_and_resume(tmp_path, monkeypatch):
     for package in ("accelerate", "peft", "diffusers"):
         pytest.importorskip(package)
 
-    # Restore the global precision setting changed by train() at teardown.
+    # Restore the global precision/determinism settings changed by train() at teardown.
     monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32)
+    monkeypatch.setattr(torch.backends.cudnn, "benchmark", torch.backends.cudnn.benchmark)
+    monkeypatch.setattr(torch.backends.cudnn, "deterministic", torch.backends.cudnn.deterministic)
 
     root = tmp_path / "dataset"
     dataset = LeRobotDataset.create(

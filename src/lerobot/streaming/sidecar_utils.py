@@ -15,11 +15,12 @@ import json
 import os
 import tempfile
 from collections import deque
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import closing
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 from zipfile import BadZipFile, ZipFile
 
 import numpy as np
@@ -27,7 +28,10 @@ from filelock import FileLock
 from huggingface_hub.constants import HF_HOME
 from numpy.typing import NDArray
 
-from lerobot.streaming.mp4 import Mp4Index
+from .location import StorageLocation
+from .mp4 import IntegerArray, Mp4Index, compact_integer_array
+
+SIDECAR_SCHEMA_VERSION = 3
 
 ARRAY_NAMES = (
     "sample_pts",
@@ -37,7 +41,106 @@ ARRAY_NAMES = (
     "sample_offsets",
     "sync_samples",
 )
-_MAGIC = b"LRIDX001"
+_MAGIC = b"LRIDX003"
+_CACHE_VERSION = 3
+
+
+@dataclass(frozen=True)
+class SidecarSpec:
+    """Identity and source-file contract for an MP4 index sidecar."""
+
+    repo_id: str
+    revision: str
+    data_root: str
+    source_files: tuple[tuple[str, int | None], ...]
+    schema_version: int = SIDECAR_SCHEMA_VERSION
+    source_fingerprints: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        """Validate and normalize the immutable source-file list."""
+        if not self.repo_id:
+            raise ValueError("repo_id must not be empty")
+        if not self.revision:
+            raise ValueError("revision must not be empty")
+        normalized = tuple(
+            sorted((str(path), None if size is None else int(size)) for path, size in self.source_files)
+        )
+        if any(not path or size is not None and size < 0 for path, size in normalized):
+            raise ValueError("source file paths must be non-empty and sizes must be non-negative")
+        object.__setattr__(self, "source_files", normalized)
+        fingerprints = tuple(sorted(self.source_fingerprints))
+        if fingerprints and {path for path, _value in fingerprints} != {path for path, _ in normalized}:
+            raise ValueError("Source fingerprints must cover every source file")
+        if any(not value for _path, value in fingerprints):
+            raise ValueError("Source fingerprints must not be empty")
+        object.__setattr__(self, "source_fingerprints", fingerprints)
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize the sidecar specification."""
+        return {
+            "schema_version": self.schema_version,
+            "repo_id": self.repo_id,
+            "revision": self.revision,
+            "data_root": self.data_root,
+            "source_files": [{"path": path, "size": size} for path, size in self.source_files],
+            "source_fingerprints": dict(self.source_fingerprints),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> SidecarSpec:
+        """Parse and validate a serialized sidecar specification."""
+        source_files = data.get("source_files")
+        if not isinstance(source_files, list):
+            raise ValueError("MP4 sidecar source_files must be a list")
+        parsed_files: list[tuple[str, int | None]] = []
+        fingerprints = data.get("source_fingerprints", {})
+        if not isinstance(fingerprints, dict) or any(
+            not isinstance(path, str) or not isinstance(value, str) for path, value in fingerprints.items()
+        ):
+            raise ValueError("Invalid MP4 source fingerprints")
+        for item in source_files:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                raise ValueError("Invalid MP4 sidecar source file entry")
+            size = item.get("size")
+            parsed_files.append((item["path"], None if size is None else int(size)))
+        return cls(
+            schema_version=int(data["schema_version"]),
+            repo_id=str(data["repo_id"]),
+            revision=str(data["revision"]),
+            data_root=str(data["data_root"]),
+            source_files=tuple(parsed_files),
+            source_fingerprints=tuple(fingerprints.items()),
+        )
+
+    def with_source_files(self, source_files: tuple[tuple[str, int], ...]) -> SidecarSpec:
+        """Return a copy with resolved source sizes."""
+        return SidecarSpec(
+            repo_id=self.repo_id,
+            revision=self.revision,
+            data_root=self.data_root,
+            source_files=source_files,
+            schema_version=self.schema_version,
+            source_fingerprints=self.source_fingerprints,
+        )
+
+    def matches(self, candidate: SidecarSpec) -> bool:
+        """Return whether a candidate satisfies this expected specification."""
+        # Tags/branches may name the same immutable payload snapshot. Other roots still
+        # require the metadata revision to match; source paths/sizes/fingerprints always do.
+        pinned_repository = StorageLocation.parse(self.data_root).pinned_commit is not None
+        if (
+            self.schema_version != candidate.schema_version
+            or self.repo_id != candidate.repo_id
+            or (self.revision != candidate.revision and not pinned_repository)
+            or self.data_root != candidate.data_root
+            or self.source_fingerprints != candidate.source_fingerprints
+        ):
+            return False
+        expected = dict(self.source_files)
+        actual = dict(candidate.source_files)
+        if expected.keys() != actual.keys():
+            return False
+        return all(size is None or actual[path] == size for path, size in expected.items())
 
 
 def _content_digest(source: BinaryIO) -> str:
@@ -68,13 +171,16 @@ def _cache_path(path: Path, signature: tuple[int | str, ...] | None = None) -> P
             signature = _signature(os.fstat(source.fileno()), _content_digest(source))
     digest = hashlib.sha256(repr(signature).encode()).hexdigest()[:24]
     cache_root = Path(os.environ.get("HF_LEROBOT_HOME", str(Path(HF_HOME) / "lerobot"))).expanduser()
-    return cache_root / "streaming-indexes" / f"mp4-{digest}.bin"
+    # Each mapped layout uses a separate path so older readers cannot open it.
+    return cache_root / "streaming-indexes" / "v3" / f"mp4-{digest}.bin"
 
 
 def _read_metadata(path: Path) -> dict[str, Any]:
     """Read the index footer and validate array bounds before mapping."""
     with path.open("rb") as source:
         size = os.fstat(source.fileno()).st_size
+        if size < 16:
+            raise ValueError("Invalid mapped MP4 index footer")
         source.seek(-16, os.SEEK_END)
         length = int.from_bytes(source.read(8), "little")
         if source.read(8) != _MAGIC or not 0 < length <= size - 16:
@@ -84,6 +190,7 @@ def _read_metadata(path: Path) -> dict[str, Any]:
     if (
         not isinstance(payload, dict)
         or payload.get("version") != 3
+        or payload.get("cache_version") != _CACHE_VERSION
         or not isinstance(payload.get("sidecar"), dict)
         or not isinstance(payload.get("files"), list)
     ):
@@ -91,17 +198,36 @@ def _read_metadata(path: Path) -> dict[str, Any]:
     for item in payload["files"]:
         if not isinstance(item, dict) or not isinstance(item.get("arrays"), dict):
             raise ValueError("Invalid mapped MP4 index record")
+        if set(item["arrays"]) != set(ARRAY_NAMES):
+            raise ValueError("Invalid mapped MP4 index arrays")
+        data_end = size - 16 - length
         for name in ARRAY_NAMES:
-            offset, count, dtype_string = item["arrays"][name]
-            dtype = np.dtype(dtype_string)
+            descriptor = item["arrays"][name]
             if (
-                type(offset) is not int
-                or type(count) is not int
-                or dtype.kind not in "iuf"
+                not isinstance(descriptor, list)
+                or len(descriptor) != 4
+                or type(descriptor[0]) is not int
+                or type(descriptor[1]) is not int
+                or type(descriptor[2]) is not str
+                or type(descriptor[3]) is not int
+            ):
+                raise ValueError("Invalid mapped MP4 index array descriptor")
+            offset, count, dtype_string, stored_count = descriptor
+            try:
+                dtype = np.dtype(dtype_string)
+            except (TypeError, ValueError) as error:
+                raise ValueError("Invalid mapped MP4 index array dtype") from error
+            if (
+                (name == "sample_pts" and (dtype.kind != "f" or dtype.itemsize != 8))
+                or (name != "sample_pts" and dtype.kind not in "iu")
                 or count < 0
+                or count > np.iinfo(np.intp).max // dtype.itemsize
                 or offset < 0
                 or offset % dtype.alignment
-                or offset + count * dtype.itemsize > size - 16 - length
+                or stored_count < 0
+                or offset + stored_count * dtype.itemsize > data_end
+                or (stored_count != count and not (dtype.kind in "iu" and count > 0 and stored_count == 1))
+                or (name in ("sample_pts", "sync_samples") and stored_count != count)
             ):
                 raise ValueError("Invalid mapped MP4 index array")
         counts = {item["arrays"][name][1] for name in ARRAY_NAMES if name != "sync_samples"}
@@ -192,7 +318,12 @@ def _iter_arrays(
 def _validate_arrays(arrays: dict[str, NDArray[np.generic]]) -> None:
     """Check numeric one-dimensional arrays and consistent sample counts."""
     for name, array in arrays.items():
-        if array.ndim != 1 or array.dtype.kind not in "iuf":
+        valid_dtype = (
+            array.dtype.kind == "f" and array.dtype.itemsize == 8
+            if name == "sample_pts"
+            else array.dtype.kind in "iu"
+        )
+        if array.ndim != 1 or not valid_dtype:
             raise ValueError(f"Invalid MP4 sample array: {name}")
     if len({len(array) for name, array in arrays.items() if name != "sync_samples"}) != 1:
         raise ValueError("Inconsistent MP4 sample counts")
@@ -246,14 +377,30 @@ def mapped_sidecar(path: Path, *, workers: int = 4) -> tuple[Path, dict[str, Any
                             for arrays in records:
                                 item = next(items)
                                 item["arrays"] = {}
-                                for name, array in arrays.items():
+                                for name in ARRAY_NAMES:
+                                    array = arrays.pop(name)
+                                    if name != "sample_pts" and array.dtype.kind in "iu":
+                                        array = compact_integer_array(cast(IntegerArray, array))
                                     out.write(b"\0" * (-out.tell() % 8))
-                                    item["arrays"][name] = [out.tell(), array.size, array.dtype.str]
-                                    out.write(array.tobytes())
-                                # zip/enumerate retain a tuple with the previous arrays.
-                                del arrays, array
+                                    is_constant = (
+                                        name not in ("sample_pts", "sync_samples")
+                                        and array.dtype.kind in "iu"
+                                        and array.size > 0
+                                        and int(array.min()) == int(array.max())
+                                    )
+                                    stored = array[:1] if is_constant else array
+                                    item["arrays"][name] = [
+                                        out.tell(),
+                                        array.size,
+                                        array.dtype.str,
+                                        stored.size,
+                                    ]
+                                    out.write(stored.tobytes())
+                                    # Release this array before the next member.
+                                    del stored, array
                         if _signature(os.fstat(source.fileno()), content) != signature:
                             raise OSError("MP4 sidecar changed during index conversion")
+                        payload["cache_version"] = _CACHE_VERSION
                         metadata = json.dumps(payload, separators=(",", ":")).encode()
                         out.write(metadata)
                         out.write(len(metadata).to_bytes(8, "little"))
@@ -291,7 +438,10 @@ def install_sidecar(source: Path, destination: Path) -> None:
 
 def mapped_arrays(buffer: np.memmap[Any, Any], item: dict[str, Any]) -> dict[str, NDArray[np.generic]]:
     """Return views whose base retains the single shared read-only mapping."""
-    return {
-        name: np.ndarray((count,), dtype=np.dtype(dtype), buffer=buffer, offset=offset)
-        for name, (offset, count, dtype) in item["arrays"].items()
-    }
+    arrays: dict[str, NDArray[np.generic]] = {}
+    for name, (offset, count, dtype, stored_count) in item["arrays"].items():
+        strides = (0,) if stored_count == 1 and count > 1 else None
+        arrays[name] = np.ndarray(
+            (count,), dtype=np.dtype(dtype), buffer=buffer, offset=offset, strides=strides
+        )
+    return arrays

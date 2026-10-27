@@ -14,6 +14,7 @@
 import builtins
 import datetime as dt
 import json
+import logging
 import multiprocessing
 import os
 import tempfile
@@ -142,7 +143,7 @@ class TrainPipelineConfig(HubMixin):
     steps: int = 100_000
     # Run policy in the simulation environment every N steps to measure reward/success (0 = disabled).
     env_eval_freq: int = 20_000
-    log_freq: int = 200
+    log_freq: int = 200  # 0 or negative disables periodic logging
     # Compute eval loss on held-out episodes every N steps (0 = disabled). Requires eval_split > 0.
     eval_steps: int = 0
     # Cap on total eval samples, split uniformly across tasks (0 = use all held-out data).
@@ -280,6 +281,22 @@ class TrainPipelineConfig(HubMixin):
             )
 
         active_cfg = self.trainable_config
+
+        # `--peft.*` and `--policy.use_peft=true` both request PEFT training: normalize them so that
+        # `make_policy` and the training loop see the same thing.
+        if self.policy is not None and (self.peft is not None or self.policy.use_peft):
+            if self.policy.pretrained_path is None and not self.resume:
+                raise ValueError(
+                    "Training from scratch using PEFT is unlikely to yield good results. "
+                    "Supply a `--policy.path` to fine-tune an existing model."
+                )
+            self.policy.use_peft = True
+            if self.peft is None:
+                logging.info(
+                    "`policy.use_peft=true` without `--peft.*` options: using the default PEFT config."
+                )
+                self.peft = PeftConfig()
+
         if self.rename_map and active_cfg.pretrained_path is None and not self.resume:
             raise ValueError(
                 "`rename_map` requires a pretrained policy checkpoint. "

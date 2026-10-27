@@ -167,8 +167,14 @@ def test_shared_peft_recipe_preserves_checkpoint_contract(tmp_path, monkeypatch,
     train = parse_recipe()
     assert str(train.policy.pretrained_path) == str(checkpoint)
     for key in vars(original):
-        if key not in overrides and key not in runtime_overrides and key != "pretrained_path":
+        # `use_peft` is derived from the recipe's `peft` section by `validate()`.
+        if (
+            key not in overrides
+            and key not in runtime_overrides
+            and key not in ("pretrained_path", "use_peft")
+        ):
             assert getattr(train.policy, key) == getattr(original, key), key
+    assert train.policy.use_peft
     for key, value in runtime_overrides.items():
         assert getattr(train.policy, key) == value
     assert train.dataset.repo_id == f"test/{robot}-task" and train.dataset.eval_split == 0.2

@@ -54,9 +54,10 @@ CONTROL_DT = 0.02  # 50 Hz control period (s)
 TOKEN_DIM = 64  # decoder latent size
 HISTORY_LEN = 10  # proprioception frames the decoder conditions on
 
-# Latent-token feature-key prefixes: action carries the token, obs echoes it back.
+# Latent-token feature-key prefixes: action carries the token, obs echoes it back under the
+# same keys (like an arm's ``<joint>.pos``), so rollout can hold and home to an observed token.
 TOKEN_ACTION_PREFIX = "motion_token"  # nosec B105 - feature-key prefix, not a secret
-TOKEN_STATE_PREFIX = "motion_token_state"  # nosec B105 - feature-key prefix, not a secret
+TOKEN_STATE_PREFIX = TOKEN_ACTION_PREFIX
 
 # SONIC decoder checkpoint. Deploy constants (kp/kd, default_angles, action_scale,
 # neutral_token) are baked into the ONNX metadata; see upload_sonic_decoder.py.
@@ -140,18 +141,19 @@ class SonicWholeBodyController(RobotController):
 
     def reset(self) -> None:
         """Reset internal state for a new episode: held token and proprioception history."""
-        self.last_action_mj = np.zeros(NUM_MOTORS, np.float32)
-        self.h_q_mj = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
-        self.h_dq_mj = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
-        self.h_ang = [np.zeros(3, np.float32) for _ in range(HISTORY_LEN)]
-        self.h_act_mj = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
+        self.last_action_mj: np.ndarray = np.zeros(NUM_MOTORS, np.float32)
+        self.h_q_mj: list[np.ndarray] = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
+        self.h_dq_mj: list[np.ndarray] = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
+        self.h_ang: list[np.ndarray] = [np.zeros(3, np.float32) for _ in range(HISTORY_LEN)]
+        self.h_act_mj: list[np.ndarray] = [np.zeros(NUM_MOTORS, np.float32) for _ in range(HISTORY_LEN)]
         self.h_quat = [np.array([1, 0, 0, 0], np.float32) for _ in range(HISTORY_LEN)]
-        self._last_token = None  # neutral token is re-seeded on the first tick
+        self._last_token: np.ndarray | None = None  # neutral token is re-seeded on the first tick
 
     def observation_state(self) -> dict[str, float]:
         """Echo the last decoded token as ``observation.state`` so a token-output VLA closes
-        the loop on its own previous token."""
-        token = self._last_token if self._last_token is not None else np.zeros(TOKEN_DIM, dtype=np.float32)
+        the loop on its own previous token. Before the first tick this is the neutral token the
+        decoder is about to hold; an all-zeros token decodes to a bent-over pose, not a stand."""
+        token = self._last_token if self._last_token is not None else self.neutral_token
         return {f"{TOKEN_STATE_PREFIX}.{i}.pos": float(v) for i, v in enumerate(token)}
 
     def run_step(self, action: dict, lowstate) -> dict:
@@ -193,7 +195,7 @@ class SonicWholeBodyController(RobotController):
         self.h_quat = [quat] + self.h_quat[:-1]
 
         # Assemble the 994-D decoder input: token + oldest->newest history + gravity.
-        obs = np.zeros(DECODER_INPUT_DIM, np.float32)
+        obs: np.ndarray = np.zeros(DECODER_INPUT_DIM, np.float32)
         obs[:TOKEN_DIM] = self._last_token
         off = TOKEN_DIM
         for hist, sz in (
