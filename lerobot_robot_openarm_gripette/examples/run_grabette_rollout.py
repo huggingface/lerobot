@@ -26,6 +26,7 @@ from huggingface_hub import snapshot_download
 from openarm_gripette_model import OPENARM_RIGHT_DIR
 
 from lerobot.configs import DatasetRecordConfig, PreTrainedConfig
+from lerobot.inference import SyncInferenceConfig
 from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.processor import (
@@ -43,7 +44,6 @@ from lerobot.rollout import (
     build_rollout_context,
     create_strategy,
 )
-from lerobot.rollout.inference import SyncInferenceConfig
 from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 from lerobot.rollout.strategies import EpisodicStrategy
 from lerobot.utils.device_utils import auto_select_torch_device
