@@ -26,7 +26,7 @@ import pytest
 from lerobot.cameras import DepthCamera
 from lerobot.robots import RobotConfig, make_robot_from_config
 from lerobot.robots.asimov import Asimov, AsimovConfig, asimov as module
-from lerobot.robots.asimov.asimov import ASIMOV_JOINTS, BASE_ACTIONS
+from lerobot.robots.asimov.asimov import ARM_ACTIONS, ASIMOV_JOINTS, BASE_ACTIONS
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 
@@ -57,7 +57,7 @@ def setup_robot(monkeypatch, tmp_path):
         UdpConfig=Mock(side_effect=lambda **kw: SimpleNamespace(**kw)),
         Limits=Velocity,
         Velocity=Velocity,
-        Mode=SimpleNamespace(MOVE=2),
+        Mode=SimpleNamespace(DAMP=0, STAND=1, MOVE=2, FAULT_DAMP=5),
     )
 
     def set_velocity(vx, vy, vyaw, *, duration, wait, timeout):
@@ -322,6 +322,82 @@ def test_cleanup_continues_after_camera_failure_and_can_be_retried(setup_robot):
     assert not robot.is_connected
 
 
+def make_arms_robot(env, **kwargs):
+    robot = env.make(control_mode="arms", robot_supported=True, **kwargs)
+    robot.connect()
+    return robot
+
+
+def test_arm_mode_features(setup_robot):
+    robot = setup_robot.make(control_mode="arms", robot_supported=True)
+    assert tuple(robot.action_features) == ARM_ACTIONS
+    assert len(ARM_ACTIONS) == 10
+    assert set(ARM_ACTIONS) <= set(robot.observation_features)
+
+
+def test_arm_targets_ramp_from_measured_pose_and_hold_other_joints(setup_robot):
+    env = setup_robot
+    robot = make_arms_robot(env, max_arm_step_rad=0.1)
+    measured = [joint.pos for joint in env.state.joints]
+    elbow = ASIMOV_JOINTS.index("L_Elbow")
+
+    sent = robot.send_action({"L_Elbow.pos": measured[elbow] + 1.0})
+    (positions,), kwargs = env.client.trajectory.call_args
+    assert kwargs == {"timeout": 0.0}
+    expected = list(measured)
+    expected[elbow] += 0.1
+    assert positions == pytest.approx(expected)
+    assert sent["L_Elbow.pos"] == pytest.approx(measured[elbow] + 0.1)
+    assert set(sent) == set(ARM_ACTIONS)
+
+    # Later commands step from the previous target, not from new measurements.
+    env.state.joints = tuple(SimpleNamespace(name=j.name, pos=0.0) for j in env.state.joints)
+    robot.send_action({"L_Elbow.pos": measured[elbow] + 1.0})
+    (positions,), _ = env.client.trajectory.call_args
+    assert positions[elbow] == pytest.approx(measured[elbow] + 0.2)
+    assert positions[:12] == pytest.approx(measured[:12])  # Legs held.
+    env.client.set_velocity.assert_not_called()
+
+
+def test_arm_control_requires_stand_or_move_and_stops_after_damp(setup_robot):
+    env = setup_robot
+    robot = make_arms_robot(env)
+    env.state.mode = 0
+    with pytest.raises(RuntimeError, match="STAND or MOVE"):
+        robot.send_action({"L_Elbow.pos": 0.0})
+    env.client.trajectory.assert_not_called()
+
+    env.state.mode = 1
+    robot.send_action({"L_Elbow.pos": 0.0})
+    env.state.mode = 0
+    with pytest.raises(RuntimeError, match="DAMP"):
+        robot.send_action({"L_Elbow.pos": 0.0})
+    with pytest.raises(RuntimeError, match="STAND or MOVE"):
+        robot.send_action({"L_Elbow.pos": 0.0})
+    assert env.client.trajectory.call_count == 1
+
+
+@pytest.mark.parametrize("action", [{"x.vel": 0.1}, {"L_Elbow.pos": float("nan")}])
+def test_invalid_arm_actions_never_reach_sdk(setup_robot, action):
+    robot = make_arms_robot(setup_robot)
+    with pytest.raises(ValueError):
+        robot.send_action(action)
+    setup_robot.client.trajectory.assert_not_called()
+
+
+def test_arm_stop_never_starts_walking_policy(setup_robot):
+    env = setup_robot
+    robot = make_arms_robot(env)
+    robot.send_action({"L_Elbow.pos": 0.0})
+    robot.stop()
+    env.client.balance.assert_not_called()
+    env.client.set_velocity.assert_not_called()
+    # The next command restarts from the measured pose.
+    robot.send_action({})
+    (positions,), _ = env.client.trajectory.call_args
+    assert positions == pytest.approx([joint.pos for joint in env.state.joints])
+
+
 def test_disconnected_calls_fail(setup_robot):
     robot = setup_robot.make()
     with pytest.raises(DeviceNotConnectedError):
@@ -343,6 +419,9 @@ def test_disconnected_calls_fail(setup_robot):
         {"max_linear_velocity": -1},
         {"max_lateral_velocity": 0.5},
         {"max_angular_velocity": 90},
+        {"control_mode": "torque"},
+        {"control_mode": "arms"},  # An unsupported robot would fall with the walking policy off.
+        {"control_mode": "arms", "robot_supported": True, "max_arm_step_rad": 0},
     ],
 )
 def test_invalid_config(kwargs):

@@ -23,7 +23,7 @@ from ..config import RobotConfig
 @RobotConfig.register_subclass("asimov")
 @dataclass
 class AsimovConfig(RobotConfig):
-    """Asimov 1 locomotion over the Menlo SDK's UDP transport."""
+    """Asimov 1 locomotion or arm control over the Menlo SDK's UDP transport."""
 
     host: str
     command_port: int = 8850
@@ -42,11 +42,29 @@ class AsimovConfig(RobotConfig):
     max_angular_velocity: float = 30.0
     # Cameras use the standard LeRobot backends; UDP does not carry onboard video.
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
+    # "velocity": walk with x.vel/y.vel/theta.vel on the onboard balancing policy.
+    # "arms": stream arm joint targets (<joint>.pos, radians). Menlo joint control puts
+    # every joint under position control with the walking policy OFF: legs, waist and
+    # neck are held where they were, and the robot does not balance.
+    control_mode: str = "velocity"
+    # Required for "arms": the robot hangs from its gantry or sits on a stool or bench.
+    robot_supported: bool = False
+    # Largest change of any arm target per send_action() call (rad).
+    max_arm_step_rad: float = 0.1
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if not self.host.strip():
             raise ValueError("host must be the Asimov robot's address.")
+        if self.control_mode not in ("velocity", "arms"):
+            raise ValueError("control_mode must be 'velocity' or 'arms'.")
+        if self.control_mode == "arms" and not self.robot_supported:
+            raise ValueError(
+                "Arm control turns Asimov's walking policy off, so a free-standing robot falls. "
+                "Support the robot (gantry or seated), then pass --robot.robot_supported=true."
+            )
+        if not isfinite(self.max_arm_step_rad) or not 0 < self.max_arm_step_rad <= 0.5:
+            raise ValueError("max_arm_step_rad must be finite and in (0, 0.5].")
         for name in ("command_port", "state_port", "version_port"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
