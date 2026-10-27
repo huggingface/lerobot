@@ -1737,6 +1737,8 @@ def convert_image_to_video_dataset(
 
     Creates a new LeRobotDataset with images encoded as videos, following the proper
     LeRobot dataset structure with videos stored in chunked MP4 files.
+    Source normalization statistics, including visual features, are preserved rather
+    than recomputed from the encoded videos.
 
     Args:
         dataset: The source LeRobot dataset with images.
@@ -1955,9 +1957,8 @@ def convert_image_to_video_dataset(
 
         # Copy stats and tasks
         if dataset.meta.stats is not None:
-            # Remove image stats
-            new_stats = {k: v for k, v in dataset.meta.stats.items() if k not in img_keys}
-            write_stats(new_stats, new_meta.root)
+            # Image and video features use the same normalization statistics format.
+            write_stats(dataset.meta.stats, new_meta.root)
 
         if dataset.meta.tasks is not None:
             write_tasks(dataset.meta.tasks, new_meta.root)

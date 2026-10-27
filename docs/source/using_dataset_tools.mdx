@@ -222,6 +222,8 @@ At least one of `new_task`, `episode_tasks`, or `task_replacements` must be spec
 
 Convert an image-based dataset to video format, creating a new LeRobotDataset where images are stored as videos. This is useful for reducing storage requirements and improving data loading performance. The new dataset will have the exact same structure as the original, but with images encoded as MP4 videos in the proper LeRobot format.
 
+The conversion preserves the source normalization statistics, including RGB and depth features. These statistics are copied from the source dataset, not recomputed from the encoded videos.
+
 ```bash
 # Local-only: Save to a custom output directory (no hub push)
 lerobot-edit-dataset \
