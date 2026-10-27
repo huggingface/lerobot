@@ -202,6 +202,8 @@ def comparison(row: dict, mode: str, points: list[dict], started_at: datetime) -
             continue
         if mode == "inference" and old.get("inference_context") != row.get("inference_context"):
             continue
+        if old.get("cpu_threads") != row.get("cpu_threads"):
+            continue
         if any(key not in old or old[key] != row[key] for key in SETUP_FIELDS):
             continue
         date = run.get("run_started_at") or run.get("created_at")

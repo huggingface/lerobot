@@ -253,6 +253,15 @@ def test_unrecorded_configuration_cannot_be_a_baseline(measured_policy):
     )
 
 
+def test_different_recorded_cpu_thread_counts_are_not_compared(measured_policy):
+    old = deepcopy(measured_policy)
+    old["cpu_threads"] = 16
+    now = datetime(2026, 10, 26, 1, tzinfo=UTC)
+    assert ci.comparison(measured_policy, "inference", [history_point(old)], now)["baseline"] is None
+    measured_policy["cpu_threads"] = 16
+    assert ci.comparison(measured_policy, "inference", [history_point(old)], now)["baseline"] is not None
+
+
 def test_archive_preserves_run_attempt_and_only_public_report_files(monkeypatch, tmp_path):
     run = {
         "id": 123,
