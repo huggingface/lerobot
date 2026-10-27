@@ -82,6 +82,7 @@ from lerobot.envs import (
     make_env_pre_post_processors,
     preprocess_observation,
 )
+from lerobot.envs.utils import prepare_canonical_observation
 from lerobot.lerobot_types import PolicyAction
 from lerobot.policies import PreTrainedPolicy, make_policy, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, bind_relative_anchor
@@ -291,8 +292,6 @@ def rollout(
         while not np.all(done) and step < max_steps:
             # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
             if getattr(env, "canonical_observations", False):
-                from lerobot.envs.utils import prepare_canonical_observation
-
                 observation = prepare_canonical_observation(observation)
             else:
                 observation = preprocess_observation(observation)
@@ -414,8 +413,6 @@ def rollout(
     # Track the final observation.
     if return_observations:
         if getattr(env, "canonical_observations", False):
-            from lerobot.envs.utils import prepare_canonical_observation
-
             observation = prepare_canonical_observation(observation)
         else:
             observation = preprocess_observation(observation)

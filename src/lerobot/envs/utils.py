@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 import warnings
 from collections.abc import Mapping, Sequence
 from functools import singledispatch
@@ -26,20 +27,20 @@ from torch import Tensor
 
 from lerobot.configs import FeatureType, PolicyFeature
 
-# Compatibility exports of the torch-free Hub loader, shared with the simulator server.
+# Still importable from here: envhub.mdx documents these helpers for testing an env.py locally, and
+# parse_camera_names was public in this module. They live in the simulator integrations now.
 from lerobot.sim.integrations.envhub import (
     _call_make_env as _call_make_env,
-    _download_hub_file as _download_hub_file,
-    _import_hub_module as _import_hub_module,
     _load_module_from_path as _load_module_from_path,
     _normalize_hub_result as _normalize_hub_result,
-    _parse_hub_url as _parse_hub_url,
 )
 from lerobot.sim.integrations.utils import parse_camera_names as parse_camera_names
 from lerobot.utils.constants import OBS_ENV_STATE, OBS_IMAGE, OBS_IMAGES, OBS_STATE, OBS_STR
 from lerobot.utils.utils import get_channel_first_image_shape
 
 from .configs import EnvConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _convert_nested_dict(d):
@@ -78,12 +79,11 @@ def preprocess_observation(observations: dict[str, np.ndarray]) -> dict[str, Ten
             # This is the case for human-in-the-loop RL where there is only one environment.
             if img_tensor.ndim == 3:
                 img_tensor = img_tensor.unsqueeze(0)
-            # sanity check that images are channel last
             _, h, w, c = img_tensor.shape
-            assert c < h and c < w, f"expect channel last images, but instead got {img_tensor.shape=}"
-
-            # sanity check that images are uint8
-            assert img_tensor.dtype == torch.uint8, f"expect torch.uint8, but instead {img_tensor.dtype=}"
+            if not (c < h and c < w):
+                raise ValueError(f"Expected channel-last images, got shape {tuple(img_tensor.shape)}")
+            if img_tensor.dtype != torch.uint8:
+                raise ValueError(f"Expected uint8 images, got {img_tensor.dtype}")
 
             # convert to channel first of type float32 in range [0,1]
             img_tensor = einops.rearrange(img_tensor, "b h w c -> b c h w").contiguous()
@@ -175,7 +175,7 @@ def _sub_env_has_attr(env: gym.vector.VectorEnv, attr: str) -> bool:
     try:
         env.get_attr(attr)
         return True
-    except (AttributeError, Exception):
+    except Exception:
         return False
 
 
@@ -195,7 +195,7 @@ def _close_single_env(env: Any) -> None:
     try:
         env.close()
     except Exception as exc:
-        print(f"Exception while closing env {env}: {exc}")
+        logger.warning("Failed to close env %s: %s", env, exc)
 
 
 @singledispatch

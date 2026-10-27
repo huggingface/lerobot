@@ -28,10 +28,10 @@ from lerobot.envs.configs import EnvConfig, HILSerlRobotEnvConfig
 from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import (
     _normalize_hub_result,
-    _parse_hub_url,
     prepare_canonical_observation,
     preprocess_observation,
 )
+from lerobot.sim.integrations.envhub import _parse_hub_url
 from tests.utils import require_env
 
 
