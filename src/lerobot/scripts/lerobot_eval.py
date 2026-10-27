@@ -281,6 +281,12 @@ def rollout(
     max_steps = env.call("_max_episode_steps")[0]
     if max_episode_steps is not None:
         max_steps = min(max_steps, max_episode_steps)
+    # Simulator integrations return canonical observations; other envs return their own format.
+    prepare_observation = (
+        prepare_canonical_observation
+        if getattr(env, "canonical_observations", False)
+        else preprocess_observation
+    )
     progbar = trange(
         max_steps,
         desc=f"Running rollout with at most {max_steps} steps",
@@ -291,10 +297,7 @@ def rollout(
     try:
         while not np.all(done) and step < max_steps:
             # Numpy array to tensor and changing dictionary keys to LeRobot policy format.
-            if getattr(env, "canonical_observations", False):
-                observation = prepare_canonical_observation(observation)
-            else:
-                observation = preprocess_observation(observation)
+            observation = prepare_observation(observation)
             if return_observations:
                 all_observations.append(deepcopy(observation))
 
@@ -412,10 +415,7 @@ def rollout(
 
     # Track the final observation.
     if return_observations:
-        if getattr(env, "canonical_observations", False):
-            observation = prepare_canonical_observation(observation)
-        else:
-            observation = preprocess_observation(observation)
+        observation = prepare_observation(observation)
         all_observations.append(deepcopy(observation))
 
     # Stack the sequence along the first dimension so that we have (batch, sequence, *) tensors.
@@ -804,7 +804,8 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     )
 
     # Hub-only and native-batch environments carry no descriptor.
-    descriptor = getattr(next(iter(next(iter(envs.values())).values())), "descriptor", None)
+    first_env = next(env for tasks in envs.values() for env in tasks.values())
+    descriptor = getattr(first_env, "descriptor", None)
     if descriptor is not None:
         descriptor.validate_checkpoint(cfg.policy, cfg.rename_map)
 
@@ -876,6 +877,7 @@ def eval_main(cfg: EvalPipelineConfig) -> None:
     # Close all vec envs
     close_envs(envs)
 
+    # Each task's language instruction, saved next to the metrics (the benchmark CI report reads it).
     descriptions = {
         f"{group}_{task_id}": env.latest.task[0]
         for group, tasks in envs.items()
