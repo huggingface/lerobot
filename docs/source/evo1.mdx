@@ -142,9 +142,10 @@ every finetuning flag.
 Try it out with a trained EVO1 checkpoint:
 
 ```bash
+# --inference.type=rtc is optional
 lerobot-rollout \
   --policy.path=your-org/your-evo1-checkpoint \
-  --inference.type=rtc \ # optional
+  --inference.type=rtc \
   ...
 ```
 

@@ -18,14 +18,16 @@ from .components import (
     load_pretrained_wan_text_encoder,
     load_pretrained_wan_vae,
 )
-from .modular import ActionDiT, FastWAM, MoT
-from .video_dit import WanVideoDiT
+from .modular import ActionDiT, FastWAM, LiteKVFusion, MoT
+from .video_dit import WanVideoDiT, retract_video_rope
 
 __all__ = [
     "ActionDiT",
     "FastWAM",
+    "LiteKVFusion",
     "MoT",
     "WanVideoDiT",
+    "retract_video_rope",
     "WanVideoVAE38",
     "build_wan_tokenizer",
     "load_pretrained_wan_text_encoder",

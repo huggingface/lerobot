@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "(python_full_version >= '3.15' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')",
@@ -1570,18 +1570,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dynamixel-sdk"
-version = "3.8.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyserial" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/50/0a/e5234a2fb086cd8cd1d2a37b5b3b7b41f593676544d90c80fa97a8e63b7d/dynamixel_sdk-3.8.4.tar.gz", hash = "sha256:7177da5199230ff9732c7cb9e71a7d3cc4dbf90f4537ee7ea9566147954c7288", size = 16833, upload-time = "2025-09-12T00:09:29.514Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/80/a70f6b08b5e5a26f37638c49be96f5ec16a3b03b86932428f310aa1ae770/dynamixel_sdk-3.8.4-py3-none-any.whl", hash = "sha256:e5e837dad3a4cf497cd59fcd9d16396aec0013aa938e3f9c7cfba18e28b1828a", size = 24714, upload-time = "2025-09-12T00:09:28.616Z" },
-]
-
-[[package]]
 name = "easydict"
 version = "1.13"
 source = { registry = "https://pypi.org/simple" }
@@ -1736,15 +1724,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/33/a4/9473c7c3b87009d9c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/49/82/2755c7c982086f00d4dab85bc120ec35045a9fc2191893a6ce79afe94443/fastjsonschema-2.22.2-py3-none-any.whl", hash = "sha256:0fb3915616adac85ccfdd737d26be1089845d2019819505b42d39888458f74d4", size = 27413, upload-time = "2026-08-15T19:47:04.406Z" },
 ]
-
-[[package]]
-name = "feetech-servo-sdk"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyserial" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/8e/c53d6f9a8bf3a86a635b58eeb675723f1b040f1665a0681467756c8989aa/feetech-servo-sdk-1.0.0.tar.gz", hash = "sha256:d4d3832e4b1b22a8222133a414db9f868224c2fb639426a1b11d96ddfe84e69c", size = 8392, upload-time = "2022-11-08T03:44:45.269Z" }
 
 [[package]]
 name = "filelock"
@@ -3252,11 +3231,9 @@ all = [
     { name = "diffusers" },
     { name = "dm-tree", version = "0.1.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "dm-tree", version = "0.1.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
-    { name = "dynamixel-sdk" },
     { name = "eclipse-zenoh" },
     { name = "faker" },
     { name = "fastapi" },
-    { name = "feetech-servo-sdk" },
     { name = "foxglove-sdk" },
     { name = "grpcio" },
     { name = "grpcio-tools" },
@@ -3299,6 +3276,7 @@ all = [
     { name = "reachy2-sdk" },
     { name = "rerun-sdk" },
     { name = "ruff" },
+    { name = "rustypot" },
     { name = "scikit-image" },
     { name = "scipy" },
     { name = "sentencepiece" },
@@ -3400,9 +3378,8 @@ dm05 = [
     { name = "transformers" },
 ]
 dynamixel = [
-    { name = "deepdiff" },
-    { name = "dynamixel-sdk" },
     { name = "pyserial" },
+    { name = "rustypot" },
 ]
 eo1 = [
     { name = "qwen-vl-utils" },
@@ -3419,9 +3396,8 @@ fastwam = [
     { name = "transformers" },
 ]
 feetech = [
-    { name = "deepdiff" },
-    { name = "feetech-servo-sdk" },
     { name = "pyserial" },
+    { name = "rustypot" },
 ]
 fineart-vla = [
     { name = "scipy" },
@@ -3484,10 +3460,9 @@ hilserl = [
     { name = "transformers" },
 ]
 hopejr = [
-    { name = "deepdiff" },
-    { name = "feetech-servo-sdk" },
     { name = "pygame" },
     { name = "pyserial" },
+    { name = "rustypot" },
 ]
 intelrealsense = [
     { name = "pyrealsense2", marker = "sys_platform != 'darwin'" },
@@ -3524,10 +3499,9 @@ lawam = [
     { name = "transformers" },
 ]
 lekiwi = [
-    { name = "deepdiff" },
-    { name = "feetech-servo-sdk" },
     { name = "pyserial" },
     { name = "pyzmq" },
+    { name = "rustypot" },
 ]
 libero = [
     { name = "av" },
@@ -3544,6 +3518,10 @@ libero = [
 lingbot-va = [
     { name = "accelerate" },
     { name = "diffusers" },
+    { name = "transformers" },
+]
+lingbot-vla-v2 = [
+    { name = "scipy" },
     { name = "transformers" },
 ]
 matplotlib-dep = [
@@ -3652,6 +3630,9 @@ robometer = [
 robstride = [
     { name = "python-can" },
 ]
+rustypot-dep = [
+    { name = "rustypot" },
+]
 sarm = [
     { name = "contourpy" },
     { name = "faker" },
@@ -3665,6 +3646,10 @@ scipy-dep = [
 ]
 sentencepiece-dep = [
     { name = "sentencepiece" },
+]
+serial-motors = [
+    { name = "pyserial" },
+    { name = "rustypot" },
 ]
 smolvla = [
     { name = "accelerate" },
@@ -3722,6 +3707,9 @@ vla-jepa = [
     { name = "qwen-vl-utils" },
     { name = "transformers" },
 ]
+wall-oss-05 = [
+    { name = "transformers" },
+]
 wallx = [
     { name = "peft" },
     { name = "qwen-vl-utils" },
@@ -3747,12 +3735,10 @@ requires-dist = [
     { name = "diffusers", marker = "extra == 'diffusers-dep'", specifier = ">=0.38.0,<0.40.0" },
     { name = "dm-tree", marker = "extra == 'groot'", specifier = ">=0.1.8,<1.0.0" },
     { name = "draccus", specifier = ">=0.11.6,<0.12.0" },
-    { name = "dynamixel-sdk", marker = "extra == 'dynamixel'", specifier = ">=3.7.31,<3.9.0" },
     { name = "eclipse-zenoh", marker = "extra == 'remote'", specifier = ">=1.9.0,<1.11.0" },
     { name = "einops", specifier = ">=0.8.0,<0.9.0" },
     { name = "faker", marker = "extra == 'sarm'", specifier = ">=33.0.0,<35.0.0" },
     { name = "fastapi", marker = "extra == 'phone'", specifier = "<1.0" },
-    { name = "feetech-servo-sdk", marker = "extra == 'feetech'", specifier = ">=1.0.0,<2.0.0" },
     { name = "filelock", specifier = ">=3.12.0,<4.0.0" },
     { name = "foxglove-sdk", marker = "extra == 'viz'", specifier = ">=0.25.1,<0.26.0" },
     { name = "fsspec", specifier = ">=2023.5.0,<2027.0.0" },
@@ -3795,8 +3781,6 @@ requires-dist = [
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'metaworld'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'pusht'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'training'" },
-    { name = "lerobot", extras = ["deepdiff-dep"], marker = "extra == 'dynamixel'" },
-    { name = "lerobot", extras = ["deepdiff-dep"], marker = "extra == 'feetech'" },
     { name = "lerobot", extras = ["deepdiff-dep"], marker = "extra == 'hardware'" },
     { name = "lerobot", extras = ["dev"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["diffusers-dep"], marker = "extra == 'diffusion'" },
@@ -3833,6 +3817,7 @@ requires-dist = [
     { name = "lerobot", extras = ["lekiwi"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["libero"], marker = "sys_platform == 'linux' and extra == 'all'" },
     { name = "lerobot", extras = ["lingbot-va"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["lingbot-vla-v2"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'sarm'" },
     { name = "lerobot", extras = ["matplotlib-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["metaworld"], marker = "extra == 'all'" },
@@ -3858,9 +3843,8 @@ requires-dist = [
     { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'hopejr'" },
     { name = "lerobot", extras = ["pygame-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["pynput-dep"], marker = "extra == 'hardware'" },
-    { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'dynamixel'" },
-    { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'feetech'" },
     { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'hardware'" },
+    { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'serial-motors'" },
     { name = "lerobot", extras = ["pyserial-dep"], marker = "extra == 'unitree-g1'" },
     { name = "lerobot", extras = ["pyzmq-dep"], marker = "extra == 'lekiwi'" },
     { name = "lerobot", extras = ["pyzmq-dep"], marker = "extra == 'unitree-g1'" },
@@ -3874,15 +3858,19 @@ requires-dist = [
     { name = "lerobot", extras = ["remote"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["robometer"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["robstride"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["rustypot-dep"], marker = "extra == 'serial-motors'" },
     { name = "lerobot", extras = ["sarm"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'aloha'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'libero'" },
+    { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'lingbot-vla-v2'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'metaworld'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'molmoact2'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'phone'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'pi'" },
     { name = "lerobot", extras = ["scipy-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["sentencepiece-dep"], marker = "extra == 'pi'" },
+    { name = "lerobot", extras = ["serial-motors"], marker = "extra == 'dynamixel'" },
+    { name = "lerobot", extras = ["serial-motors"], marker = "extra == 'feetech'" },
     { name = "lerobot", extras = ["smolvla"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["test"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["timm-dep"], marker = "extra == 'groot'" },
@@ -3899,6 +3887,7 @@ requires-dist = [
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'lawam'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'libero'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'lingbot-va'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'lingbot-vla-v2'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'molmoact2'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'multi-task-dit'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'peft'" },
@@ -3908,6 +3897,7 @@ requires-dist = [
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'smolvla'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'topreward'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'vla-jepa'" },
+    { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'wall-oss-05'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'wallx'" },
     { name = "lerobot", extras = ["transformers-dep"], marker = "extra == 'xvla'" },
     { name = "lerobot", extras = ["video-benchmark"], marker = "extra == 'all'" },
@@ -3915,6 +3905,7 @@ requires-dist = [
     { name = "lerobot", extras = ["viz"], marker = "extra == 'core-scripts'" },
     { name = "lerobot", extras = ["viz"], marker = "extra == 'dataset-viz'" },
     { name = "lerobot", extras = ["vla-jepa"], marker = "extra == 'all'" },
+    { name = "lerobot", extras = ["wall-oss-05"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["wallx"], marker = "extra == 'all'" },
     { name = "lerobot", extras = ["xvla"], marker = "extra == 'all'" },
     { name = "lerobot-lancedb", marker = "extra == 'lancedb-convert'", specifier = ">=0.3.1,<0.4.0" },
@@ -3959,6 +3950,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.0,<3.0.0" },
     { name = "rerun-sdk", marker = "extra == 'viz'", specifier = ">=0.24.0,<0.34.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.1" },
+    { name = "rustypot", marker = "extra == 'rustypot-dep'", specifier = ">=1.13.1,<2.0.0" },
     { name = "safetensors", specifier = ">=0.4.3,<1.0.0" },
     { name = "scikit-image", marker = "extra == 'video-benchmark'", specifier = ">=0.23.2,<0.26.0" },
     { name = "scipy", marker = "extra == 'all'", specifier = ">=1.14.0,<2.0.0" },
@@ -3981,7 +3973,7 @@ requires-dist = [
     { name = "trackio", extras = ["gpu"], marker = "sys_platform != 'darwin' and extra == 'training'", specifier = ">=0.38.1,<1.0.0" },
     { name = "transformers", marker = "extra == 'transformers-dep'", specifier = ">=5.4.0,<5.6.0" },
 ]
-provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "sentencepiece-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "dm05", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "flux3", "evo1", "fineart-vla", "fineart-vla-kernels", "hilserl", "vla-jepa", "lingbot-va", "lawam", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
+provides-extras = ["lancedb", "lancedb-convert", "dataset", "training", "hardware", "viz", "core-scripts", "evaluation", "dataset-viz", "av-dep", "pygame-dep", "placo-dep", "transformers-dep", "sentencepiece-dep", "grpcio-dep", "accelerate-dep", "can-dep", "peft-dep", "scipy-dep", "diffusers-dep", "qwen-vl-utils-dep", "matplotlib-dep", "pyserial-dep", "rustypot-dep", "deepdiff-dep", "pynput-dep", "pyzmq-dep", "motorbridge-dep", "motorbridge-smart-servo-dep", "timm-dep", "serial-motors", "feetech", "dynamixel", "damiao", "robstride", "openarms", "gamepad", "hopejr", "lekiwi", "unitree-g1", "reachy2", "rebot", "kinematics", "intelrealsense", "phone", "diffusion", "wallx", "pi", "dm05", "molmoact2", "smolvla", "multi-task-dit", "groot", "sarm", "robometer", "topreward", "xvla", "eo1", "fastwam", "flux3", "evo1", "fineart-vla", "fineart-vla-kernels", "hilserl", "vla-jepa", "lingbot-va", "lingbot-vla-v2", "wall-oss-05", "lawam", "remote", "peft", "annotations", "dev", "notebook", "test", "video-benchmark", "aloha", "pusht", "libero", "metaworld", "all"]
 
 [[package]]
 name = "lerobot-lancedb"
@@ -6900,6 +6892,40 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3d/02/7f10ef4700bc223c30a3fdd10631a29830c45524b810a3c7ed947af64591/ruff-0.16.8-py3-none-win32.whl", hash = "sha256:55793ba85c69921e89be061426d91a78652d6e50317c962240922747a4eb713f", size = 10093472, upload-time = "2026-09-16T15:54:37.47Z" },
     { url = "https://files.pythonhosted.org/packages/1e/5d/a509c07d714b6da88f2c518b4637cf6f1d46b074be8f0f1e5fb9ff5126fe/ruff-0.16.8-py3-none-win_amd64.whl", hash = "sha256:a6b85621fd3c81e31fc5f5add09c9c078b430db3595ca632efafdec9e64ebfaa", size = 10586899, upload-time = "2026-09-16T15:54:40.488Z" },
     { url = "https://files.pythonhosted.org/packages/fe/a0/50787329e4f20bf9dc9f6230015d46ec69c51a97ace5bc202dae4755365d/ruff-0.16.8-py3-none-win_arm64.whl", hash = "sha256:d075e820af612102ce217f07cc93e69f9490b10ec13ea85fa87bd03d996cef8a", size = 10386316, upload-time = "2026-09-16T15:54:43.332Z" },
+]
+
+[[package]]
+name = "rustypot"
+version = "1.13.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/54/1b/c8d543afe054ce04c593e9b2c25787270a537ce15f693e22c2b0aeb8c5d3/rustypot-1.13.1.tar.gz", hash = "sha256:516bbec63b69c0f73c9c1e6c82f362339472a604b8492ff1194be441202bee00", size = 144785, upload-time = "2026-10-14T16:09:27.853Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/fc/88293925304e4836f089de9055216663dd272d2454f66cd1468e8e3d1901/rustypot-1.13.1-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:f2540d17ba70c1699284d8c2ffe6a911ca5ee8c385e5cff7a0f262775d4e9dcb", size = 2190607, upload-time = "2026-10-14T16:08:51.322Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/fa/a53f5109daee7e186f4bfe3cd4efc14ecc67a14492e4a60297be0073fd1f/rustypot-1.13.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:be4e0d8306ea897bb20160695ce447098e057a79a5a9eb004fdebc1ed62b6ebc", size = 2055838, upload-time = "2026-10-14T16:08:41.226Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/87/780735f89cd17a24f492fcbf5674ed0e1547934bc6f0b3576f16ffdd0d93/rustypot-1.13.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5035ca9f64ad007664f638026e3d4bd5651f677cf6dd8803e9711ff83faf67b2", size = 2360056, upload-time = "2026-10-14T16:08:10.114Z" },
+    { url = "https://files.pythonhosted.org/packages/51/34/96f0dd7ef14479699d775e69ebb9a1141cffd85fbc0e8bb6453f04483fd5/rustypot-1.13.1-cp312-cp312-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:fc38bfdb3f160c21c822f5185456736b9059d5e879506f810a43165334dad879", size = 2276115, upload-time = "2026-10-14T16:08:18.204Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/9d/4810ffd92b89fff48860af14bcc3d2239fe0211a4a8325168175dcd28105/rustypot-1.13.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:98f8502f96af9e103489e31884e3348a1a7b4b5674f6383386f076d45a973ebe", size = 2240753, upload-time = "2026-10-14T16:08:33.916Z" },
+    { url = "https://files.pythonhosted.org/packages/48/be/73d6b9e36b7308149ad7e032ed17e354dd9d970594b9ce95e23046fb9f7d/rustypot-1.13.1-cp312-cp312-manylinux_2_5_i686.manylinux1_i686.whl", hash = "sha256:eb1015ef08e5fe58e2587a062f8442285c0582e29bafbc64bb932074d2b8a75a", size = 2316535, upload-time = "2026-10-14T16:08:26.212Z" },
+    { url = "https://files.pythonhosted.org/packages/02/5e/fcb645d2e248ba36f44c45a00042850d7f350ac0ccfd18cd50b8ac7a317c/rustypot-1.13.1-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:cfed196df787ff313774f8e03d9639e3d21b8110edf6d0ce4a90cea2093f9185", size = 2534965, upload-time = "2026-10-14T16:09:00.784Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/36/6e471ef39986522abb686d470608c6d16234028355bf652350d021e8767b/rustypot-1.13.1-cp312-cp312-musllinux_1_2_armv7l.whl", hash = "sha256:b37c57f58bc9e8c95494c6445176b152e1029d53e785d9953d1f6f47daae569d", size = 2546449, upload-time = "2026-10-14T16:09:08.899Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/e4/c0d139b4fcf72e90be41fe7e28a3249ba9d42b9fa0d5ba5155f08ad4d452/rustypot-1.13.1-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:d06d4f83350238f35588aefe7ac7f5998bfc5e0af399ee4343c9040c89f662d5", size = 2458373, upload-time = "2026-10-14T16:09:16.227Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/b7/8145c1545e9caa4bfbcb18215f98160e360e2a5197f2890aa4993d8a774a/rustypot-1.13.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:9306538c5dc50f3b42c72963b541de589dbf74f07bbabb6eddc1efefa1b626b1", size = 2583538, upload-time = "2026-10-14T16:09:23.976Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/0c/da7825319f3d37e7ec250a6c95b1f645867ea122a36f282b198e71fa7b34/rustypot-1.13.1-cp312-cp312-win_amd64.whl", hash = "sha256:7552bec398c7e1351d138dd00677fae5d032708fa12d2ad77e2b0cd4367ce46b", size = 2236017, upload-time = "2026-10-14T16:09:33.016Z" },
+    { url = "https://files.pythonhosted.org/packages/89/e3/a57bd7983286966c6ef3adeb50e873a14b71ef2436ed9c26ee511352da36/rustypot-1.13.1-cp313-cp313-macosx_10_12_x86_64.whl", hash = "sha256:ec762250ac0efbc36860263bd00a63944000bf4cababdba2153da67c019ad6fa", size = 2190090, upload-time = "2026-10-14T16:08:53.411Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/f7/3efe4423035e5f8164b153f99c4d0510a1cbb9fbe713ec8a3b1ed7fb4d2a/rustypot-1.13.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:f3db535f1eb9908c7847f38a8952d1bc876f2daccbd80a58574c686dbd6bc992", size = 2055198, upload-time = "2026-10-14T16:08:43.251Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/3e/893903f257fb59ba6432d84a26f3dce65e693e4d2e701a6098f39893c240/rustypot-1.13.1-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6963fad39392e2ce920ba6fc6045359a352288f6f565222fa47fd3771e4eaedc", size = 2360898, upload-time = "2026-10-14T16:08:12.335Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/03/4b8d70877828c815ce0abbc95c84e840b1f1b7ce50e8344c48540e4aef78/rustypot-1.13.1-cp313-cp313-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:84f574eb6607b891226fbadb7dbeffd1d7e55466eb8e6d0affdc505f99ce77df", size = 2276318, upload-time = "2026-10-14T16:08:20.438Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/f9/940b2028580f77fcb29442aa2a3ce8166175925087a24462e01bbf191194/rustypot-1.13.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a610174d59cc89deb75a3442f3049eafb76cd01ec9cc251b0f175a6c2ec8b97a", size = 2239481, upload-time = "2026-10-14T16:08:35.836Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/90/9c96f6d969b6e8d14944937a624578d39d42d894ebaaa044976e88ba29dd/rustypot-1.13.1-cp313-cp313-manylinux_2_5_i686.manylinux1_i686.whl", hash = "sha256:b092b53c48e6260332fcc1b3189b3f9e48a4371ca2536b591ec0d472a4d0ce41", size = 2320375, upload-time = "2026-10-14T16:08:28.025Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/f3/ca6953d7b3b2dc2c6a0bc918b2a070c3381642c2ff5c79749091e03d5d4e/rustypot-1.13.1-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:6d398af27a878206aa487d7b9170febe9eb917e31b3a476c4b49776a4a044b4e", size = 2534950, upload-time = "2026-10-14T16:09:02.884Z" },
+    { url = "https://files.pythonhosted.org/packages/04/c6/b02ab08e415622dafa3f7297b8e6a7a4e8c6d882ae3a874a30217cfd4607/rustypot-1.13.1-cp313-cp313-musllinux_1_2_armv7l.whl", hash = "sha256:4c347f21e68a94f70880df9003293ee23911201189d0f5b343730e6560c40eac", size = 2547017, upload-time = "2026-10-14T16:09:10.94Z" },
+    { url = "https://files.pythonhosted.org/packages/19/85/de91e84efb33cdb1fbde030d2b2f794565db6a147a0da3c3ab8aae59cd02/rustypot-1.13.1-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:572503ebc7693f007e4390dd1a8a54c6aa43f541b69b2ff968683c9d35f680aa", size = 2460230, upload-time = "2026-10-14T16:09:18.066Z" },
+    { url = "https://files.pythonhosted.org/packages/44/70/d984517caba9bc1b442dc0b2b9a0b76ae8b3b10d0762999b0af4ff68a2d4/rustypot-1.13.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:bc7509557ffe24ddebef60bf3254a4c0c3141ea950378aa59bf60da81dde0be4", size = 2584789, upload-time = "2026-10-14T16:09:26.015Z" },
+    { url = "https://files.pythonhosted.org/packages/61/52/7ddd9295ab6d6e0a284aaec5010709c258690c193ee8463801edc8039dae/rustypot-1.13.1-cp313-cp313-win_amd64.whl", hash = "sha256:f2e2089dbb9632abea2b599ff9c5e4f99c1ac120cfdf7a54ce2f72d051fca628", size = 2235750, upload-time = "2026-10-14T16:09:34.831Z" },
+    { url = "https://files.pythonhosted.org/packages/48/54/ed012ee3d4220e0c06d1851983e619a372b26e45f356ab49ae54199b865e/rustypot-1.13.1-cp314-cp314-macosx_10_12_x86_64.whl", hash = "sha256:5252366422e1c0159e940dca62263ab61f350c234ab434cd310958ecf9a7e300", size = 2195068, upload-time = "2026-10-14T16:08:55.236Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/fb/e63a36a2d7a4902642319dffdf4b7242f3743fc2814b0f356b80eace49d4/rustypot-1.13.1-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:418428383822ddbe578fea658ccf216a0bcf4ac384612fffc6fc43b57abb83d9", size = 2067678, upload-time = "2026-10-14T16:08:45.149Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/c1/f4e3ca61f6c491928472fa50c3b34ace99f270287247a7244194ca1b3932/rustypot-1.13.1-cp314-cp314-win_amd64.whl", hash = "sha256:765089973ecc58b7e23c6a30c39605bde6a6658d03663e769626dba0a6f56ec2", size = 2243890, upload-time = "2026-10-14T16:09:37.013Z" },
+    { url = "https://files.pythonhosted.org/packages/85/9e/f8214814e573270fbbb065e089240f53ae29685d6e7f302df7a2e589d07e/rustypot-1.13.1-cp315-cp315-win32.whl", hash = "sha256:c62602a507a87f89e871a81f9de5ebff49e73ffa1ae8b095ab5d7614ebced1e8", size = 1606765, upload-time = "2026-10-14T16:09:38.714Z" },
 ]
 
 [[package]]

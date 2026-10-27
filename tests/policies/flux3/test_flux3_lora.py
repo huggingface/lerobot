@@ -41,6 +41,8 @@ from lerobot.scripts.lerobot_train import make_dataloaders, train
 from lerobot.utils.constants import ACTION, OBS_STATE
 from tests.policies.flux3.helpers import TaskVideoVAE, rich_task_config, single_config, task_config
 
+pytestmark = pytest.mark.dataset
+
 
 def reference_range(x, config, stream, *, inverse=False):
     stats = config.normalization_stats[stream]
@@ -360,8 +362,10 @@ def test_actual_trainer_peft_ema_checkpoint_and_resume(tmp_path, monkeypatch):
     for package in ("accelerate", "peft", "diffusers"):
         pytest.importorskip(package)
 
-    # Restore the global precision setting changed by train() at teardown.
+    # Restore the global precision/determinism settings changed by train() at teardown.
     monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32)
+    monkeypatch.setattr(torch.backends.cudnn, "benchmark", torch.backends.cudnn.benchmark)
+    monkeypatch.setattr(torch.backends.cudnn, "deterministic", torch.backends.cudnn.deterministic)
 
     root = tmp_path / "dataset"
     dataset = LeRobotDataset.create(

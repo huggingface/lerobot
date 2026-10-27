@@ -21,6 +21,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.scripts import lerobot_eval  # noqa: E402
 
+pytestmark = pytest.mark.dataset
+
 _SUCCESSES = {
     ("suite_a", 0): [True] * 9 + [False],
     ("suite_a", 1): [True] * 5 + [False] * 5,

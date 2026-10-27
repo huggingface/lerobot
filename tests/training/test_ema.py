@@ -28,12 +28,28 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
 
+pytestmark = pytest.mark.dataset
+
 DUMMY_REPO_ID = "dummy/repo"
 DUMMY_STATE_DIM = 6
 DUMMY_ACTION_DIM = 6
 IMAGE_SIZE = 32
 N_EPISODES = 2
 EPISODE_LENGTH = 12
+
+
+@pytest.fixture(autouse=True)
+def _restore_cuda_backends():
+    """train() unconditionally sets these global torch.backends flags; several tests in this file
+    call train() for real, so restore them at teardown instead of leaking precision/determinism
+    settings into whatever test runs next."""
+    benchmark = torch.backends.cudnn.benchmark
+    deterministic = torch.backends.cudnn.deterministic
+    allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+    yield
+    torch.backends.cudnn.benchmark = benchmark
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cuda.matmul.allow_tf32 = allow_tf32
 
 
 def test_ema_config_defaults_match_the_reference():
@@ -215,6 +231,7 @@ def load_safetensors(path):
     return load_file(path)
 
 
+@pytest.mark.gpu
 def test_train_diffusion_with_ema_checkpoint_and_resume(tmp_path):
     pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
     pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")

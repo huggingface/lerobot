@@ -19,9 +19,10 @@ from typing import overload
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
+from numpy.typing import NDArray
 
-type SubtaskNames = Sequence[str] | np.ndarray
-type SubtaskFrames = Sequence[int] | np.ndarray
+type SubtaskNames = Sequence[str] | NDArray[np.object_]
+type SubtaskFrames = Sequence[int] | NDArray[np.int64]
 
 
 def find_stage_and_tau(

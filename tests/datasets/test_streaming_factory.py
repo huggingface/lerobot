@@ -23,6 +23,8 @@ from lerobot.datasets.storage import is_bucket_root
 from lerobot.datasets.streaming_dataset import DEFAULT_STREAMING_SEED, StreamingLeRobotDataset
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize(
     ("repo_type", "root", "expected_repo_type"),
@@ -67,6 +69,7 @@ def test_factory_wires_production_streaming_settings(
         video_decoder_cache_size=17,
         streaming_native_http_connections=9,
         streaming_native_http_subranges=3,
+        streaming_sidecar_lock_timeout_s=60,
     )
     cfg = SimpleNamespace(
         dataset=dataset_config,
@@ -96,6 +99,7 @@ def test_factory_wires_production_streaming_settings(
     assert captured["kwargs"]["video_decoder_cache_size"] == 17
     assert captured["kwargs"]["native_http_connections"] == 9
     assert captured["kwargs"]["native_http_subranges"] == 3
+    assert captured["kwargs"]["sidecar_lock_timeout_s"] == 60
     assert captured["kwargs"]["max_num_shards"] == 1
     assert captured["kwargs"]["video_backend"] == "pyav"
     assert captured["kwargs"]["return_uint8"] is True

@@ -28,6 +28,7 @@ from huggingface_hub import snapshot_download
 from lerobot.configs import PreTrainedConfig
 from lerobot.inference import ExecutionMode, ObservationSnapshot, PolicyRunner
 from lerobot.policies import PreTrainedPolicy, get_policy_class, make_pre_post_processors
+from lerobot.policies.factory import has_peft_adapter_config
 from lerobot.processor import RenderRuntimeMessagesStep
 from lerobot.utils.import_utils import _peft_available, require_package
 
@@ -139,7 +140,8 @@ def load_deployment(cfg: ServerConfig) -> tuple[PolicyRunner, str]:
         # rather than declaring a saved field. The runner still verifies support.
         policy_cfg.rtc_config = deepcopy(cfg.execution.rtc)
     policy_class = get_policy_class(policy_cfg.type)
-    if policy_cfg.use_peft:
+    # A `use_peft=True` config can still point at a base model (see `has_peft_adapter_config`).
+    if policy_cfg.use_peft and has_peft_adapter_config(path):
         require_package("peft", extra="peft")
         adapter = PeftConfig.from_pretrained(str(path))
         base = resolve_artifact(adapter.base_model_name_or_path, adapter.revision)

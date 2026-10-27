@@ -18,13 +18,13 @@ In the steps below, we explain how to assemble our flagship robot, the SO-101.
 ## Source the parts
 
 Follow this [README](https://github.com/TheRobotStudio/SO-ARM100). It contains the bill of materials, with a link to source the parts, as well as the instructions to 3D print the parts.
-And advise if it's your first time printing or if you don't own a 3D printer.
+It also has advice if it's your first time printing or if you don't own a 3D printer.
 
 ## Install LeRobot 🤗
 
 To install LeRobot, follow our [Installation Guide](./installation)
 
-In addition to these instructions, you need to install the Feetech SDK:
+In addition to these instructions, you need to install the Feetech SDK (if you installed LeRobot from PyPI, run `pip install 'lerobot[feetech]'` instead):
 
 ```bash
 pip install -e ".[feetech]"
@@ -367,10 +367,11 @@ Run the following command or API example to calibrate the follower arm:
 <hfoption id="Command">
 
 ```bash
+# Use the port of your follower arm, and give the arm a unique name with --robot.id
 lerobot-calibrate \
     --robot.type=so101_follower \
-    --robot.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
-    --robot.id=my_awesome_follower_arm # <- Give the robot a unique name
+    --robot.port=/dev/tty.usbmodem58760431551 \
+    --robot.id=my_awesome_follower_arm
 ```
 
 </hfoption>
@@ -416,10 +417,11 @@ Do the same steps to calibrate the leader arm, run the following command or API 
 <hfoption id="Command">
 
 ```bash
+# Use the port of your leader arm, and give the arm a unique name with --teleop.id
 lerobot-calibrate \
     --teleop.type=so101_leader \
-    --teleop.port=/dev/tty.usbmodem58760431551 \ # <- The port of your robot
-    --teleop.id=my_awesome_leader_arm # <- Give the robot a unique name
+    --teleop.port=/dev/tty.usbmodem58760431551 \
+    --teleop.id=my_awesome_leader_arm
 ```
 
 </hfoption>

@@ -1250,8 +1250,10 @@ def get_video_info(
         video_info["video.codec"] = video_stream.codec.canonical_name
         video_info["video.pix_fmt"] = video_stream.pix_fmt
 
-        # Calculate fps from r_frame_rate
-        video_info["video.fps"] = int(video_stream.base_rate)
+        # base_rate is a rational. int() truncates 30000/1001 (29.97 fps) to 29.
+        # An exact integer rate stays an int so a 30 fps stream is still reported as 30.
+        rate = float(video_stream.base_rate)
+        video_info["video.fps"] = int(rate) if rate.is_integer() else rate
         video_info["video.channels"] = get_pix_fmt_channels(video_stream.pix_fmt)
 
     # Reset logging level

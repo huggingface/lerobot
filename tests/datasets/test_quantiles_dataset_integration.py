@@ -23,6 +23,8 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
+pytestmark = pytest.mark.dataset
+
 
 def mock_load_image_as_numpy(path, dtype, channel_first):
     """Mock image loading for consistent test results."""

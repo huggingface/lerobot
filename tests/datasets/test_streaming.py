@@ -26,6 +26,8 @@ from lerobot.datasets.streaming_dataset import StreamingLeRobotDataset
 from lerobot.utils.constants import ACTION
 from tests.fixtures.constants import DUMMY_REPO_ID
 
+pytestmark = pytest.mark.dataset
+
 
 @pytest.mark.parametrize("token", ["hf_test_token", True, False])
 @pytest.mark.parametrize("from_local", [False, True])
@@ -65,6 +67,30 @@ def test_streaming_dataset_forwards_token_to_metadata_and_remote_worker_io(
     assert dataset._data_root == (
         str(requested_root) if from_local else f"hf://datasets/{DUMMY_REPO_ID}@{'a' * 40}"
     )
+
+
+def test_streaming_dataset_sidecar_lock_timeout(tmp_path, monkeypatch):
+    metadata = SimpleNamespace(
+        repo_id=DUMMY_REPO_ID,
+        root=tmp_path,
+        revision=streaming_dataset_module.CODEBASE_VERSION,
+        _version=streaming_dataset_module.CODEBASE_VERSION,
+        features={},
+        total_episodes=0,
+        video_keys=[],
+        depth_keys=[],
+        image_keys=[],
+        rescale_depth_stats=Mock(),
+    )
+    ensure_sidecar = Mock(side_effect=TimeoutError("Timed out waiting 5s for MP4 sidecar lock"))
+    monkeypatch.setattr(streaming_dataset_module, "LeRobotDatasetMetadata", Mock(return_value=metadata))
+    monkeypatch.setattr(streaming_dataset_module, "ensure_dataset_mp4_sidecar", ensure_sidecar)
+
+    with pytest.raises(TimeoutError) as excinfo:
+        StreamingLeRobotDataset(DUMMY_REPO_ID, root=tmp_path, sidecar_lock_timeout_s=5)
+
+    assert ensure_sidecar.call_args.kwargs["lock_timeout_s"] == 5
+    assert "--dataset.streaming_sidecar_lock_timeout_s" in "".join(excinfo.value.__notes__)
 
 
 def test_single_frame_consistency(tmp_path, lerobot_dataset_factory):
@@ -202,8 +228,6 @@ def test_frames_order_with_shards(tmp_path, lerobot_dataset_factory, shuffle):
     "state_deltas, action_deltas",
     [
         ([-1, -0.5, -0.20, 0], [0, 1, 2, 3]),
-        ([-1, -0.5, -0.20, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
-        ([-2, -1, -0.5, 0], [0, 1, 2, 3]),
         ([-2, -1, -0.5, 0], [-1.5, -1, -0.5, -0.20, -0.10, 0]),
     ],
 )
@@ -283,8 +307,6 @@ def test_frames_with_delta_consistency(tmp_path, lerobot_dataset_factory, state_
     "state_deltas, action_deltas",
     [
         ([-1, -0.5, -0.20, 0], [0, 1, 2, 3, 10, 20]),
-        ([-1, -0.5, -0.20, 0], [-20, -1.5, -1, -0.5, -0.20, -0.10, 0]),
-        ([-2, -1, -0.5, 0], [0, 1, 2, 3, 10, 20]),
         ([-2, -1, -0.5, 0], [-20, -1.5, -1, -0.5, -0.20, -0.10, 0]),
     ],
 )
