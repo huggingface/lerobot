@@ -27,11 +27,6 @@ from lerobot.transport.zenoh import ZenohConfig
 from tests.sim.toy_env import ToyEnv, ToyEnvConfig
 
 
-def test_sim_robot_config_needs_an_environment():
-    with pytest.raises(ValueError, match="--robot.env.type"):
-        SimRobotConfig()
-
-
 def test_sim_robot_env_choices_exclude_envs_built_around_a_robot():
     import sys
     from dataclasses import field

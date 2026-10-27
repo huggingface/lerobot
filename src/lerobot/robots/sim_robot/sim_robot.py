@@ -46,8 +46,6 @@ class SimRobot(Robot):
 
     def __init__(self, config: SimRobotConfig):
         super().__init__(config)
-        if config.env is None:
-            raise ValueError("A sim robot needs --robot.env.type")
         self.config = config
         self._env_config = config.env
         # The env's suite, when it names exactly one; otherwise the simulator's first.

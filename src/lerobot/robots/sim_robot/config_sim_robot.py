@@ -12,26 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args, get_type_hints
 
 from draccus.choice_types import ChoiceType
 
 from lerobot.envs.configs import EnvConfig
-from lerobot.robots.config import RobotConfig
+
+from ..config import RobotConfig
 
 
 def _embeds_robot(config_class: type) -> bool:
     return any(
         isinstance(arg, type) and issubclass(arg, RobotConfig)
-        for hint in typing.get_type_hints(config_class).values()
-        for arg in (hint, *typing.get_args(hint))
+        for hint in get_type_hints(config_class).values()
+        for arg in (hint, *get_args(hint))
     )
 
 
-# A dataclass, so that draccus routes `_SimulatedEnvChoices | None` through its choice handling.
-@dataclass
 class _SimulatedEnvChoices(ChoiceType):
     """The environments a sim robot can run: every ``EnvConfig`` except those built around a robot.
 
@@ -66,18 +64,10 @@ else:
 @RobotConfig.register_subclass("sim")
 @dataclass
 class SimRobotConfig(RobotConfig):
-    """One simulated environment driven as a robot, locally or served.
+    """A simulated environment driven as a robot. It needs no calibration."""
 
-    ``env`` names the environment (``--robot.env.type=libero``); its ``task`` selects the suite and
-    ``task_id`` the task in it. With ``--robot.env.endpoint`` set, the environment runs behind
-    ``lerobot-env-server``, which must serve that environment, as for a batched env.
-    A simulated environment needs no calibration: ``calibration_dir`` is unused.
-    """
-
-    env: SimulatedEnvConfig | None = None
+    # The environment, e.g. --robot.env.type=libero; its `task` selects the suite. With
+    # --robot.env.endpoint set, it runs in lerobot-env-server instead of in this process.
+    env: SimulatedEnvConfig
+    # Index of the task within the suite.
     task_id: int = 0
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.env is None:
-            raise ValueError("A sim robot needs --robot.env.type")
