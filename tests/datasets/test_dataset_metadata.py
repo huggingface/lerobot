@@ -16,6 +16,8 @@
 """Contract tests for LeRobotDatasetMetadata."""
 
 import json
+from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -23,6 +25,7 @@ import pytest
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+from lerobot.datasets.language import DEFAULT_TOOLS
 from lerobot.datasets.utils import INFO_PATH
 from tests.fixtures.constants import DEFAULT_FPS, DUMMY_ROBOT_TYPE
 
@@ -429,6 +432,42 @@ def test_finalize_flushes_buffered_metadata(tmp_path):
 
 
 # ── Tools accessor ───────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("declared", [False, True], ids=["default", "declared"])
+def test_tools_nested_mutation_does_not_change_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared: bool
+) -> None:
+    # Isolate the module default so a failing regression cannot affect other tests.
+    expected = deepcopy(DEFAULT_TOOLS)
+    default_tools = deepcopy(expected)
+    monkeypatch.setattr("lerobot.datasets.dataset_metadata.DEFAULT_TOOLS", default_tools)
+    meta = LeRobotDatasetMetadata.create(
+        repo_id="test/tools_copy",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=tmp_path / "first",
+        use_videos=False,
+    )
+    if declared:
+        meta.tools = expected
+
+    tools = meta.tools
+    tools[0]["function"]["name"] = "renamed"
+    tools[0]["function"]["parameters"]["required"].append("extra")
+    tools[0]["function"]["parameters"]["properties"]["extra"] = {"type": "string"}
+
+    assert meta.tools == expected
+    assert meta.info.tools == (expected if declared else None)
+    assert default_tools == expected
+    other = LeRobotDatasetMetadata.create(
+        repo_id="test/other_tools_copy",
+        fps=DEFAULT_FPS,
+        features=SIMPLE_FEATURES,
+        root=tmp_path / "second",
+        use_videos=False,
+    )
+    assert other.tools == expected
 
 
 def test_tools_falls_back_to_default_when_info_has_no_tools_field(tmp_path):
