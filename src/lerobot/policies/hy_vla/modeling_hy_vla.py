@@ -2004,9 +2004,14 @@ class HyVLAPolicy(PreTrainedPolicy):
 
     def prepare_state(self, batch: dict[str, Any]) -> Tensor:
         model_device, model_dtype = self._model_device_dtype()
-        return _pad_last(batch[OBS_STATE], self.config.max_state_dim).to(
-            device=model_device, dtype=model_dtype
-        )
+        state = batch[OBS_STATE]
+        # Dataset delta_indices=[0] adds a singleton observation-time axis.
+        # The action expert embeds one state token, so it expects a BD tensor.
+        if state.ndim == 3 and state.shape[1] == 1:
+            state = state[:, 0]
+        if state.ndim != 2:
+            raise ValueError("Hy-VLA requires one current state vector per sample, shaped BD or B1D.")
+        return _pad_last(state, self.config.max_state_dim).to(device=model_device, dtype=model_dtype)
 
     def prepare_action(self, batch: dict[str, Any]) -> Tensor:
         model_device, model_dtype = self._model_device_dtype()

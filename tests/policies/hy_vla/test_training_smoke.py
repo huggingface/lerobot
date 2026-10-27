@@ -140,6 +140,17 @@ def test_processor_tensors_are_cast_to_loaded_model_dtype():
     assert policy.prepare_action(batch).dtype == policy.model.scale.dtype
 
 
+def test_dataset_current_state_time_axis_is_removed_before_embedding():
+    policy = _lightweight_policy()
+    state = torch.arange(40).reshape(2, 1, 20).float()
+    actual = policy.prepare_state({"observation.state": state})
+    assert actual.shape == (2, 32)
+    torch.testing.assert_close(actual[:, :20], state[:, 0])
+    assert not actual[:, 20:].any()
+    with pytest.raises(ValueError, match="one current state"):
+        policy.prepare_state({"observation.state": state.expand(2, 3, 20)})
+
+
 def test_finite_forward_backward_update_and_tiny_overfit():
     policy = _lightweight_policy()
     optimizer = torch.optim.SGD(policy.parameters(), lr=0.2)
