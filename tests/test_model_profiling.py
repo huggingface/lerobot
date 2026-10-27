@@ -292,6 +292,42 @@ def test_runner_propagates_failure_and_writes_row(monkeypatch, tmp_path):
     assert row["status"] == "failed"
 
 
+def test_timeout_keeps_completed_inference_and_marks_training(tmp_path):
+    run = tmp_path / "lingbot_va" / "run"
+    run.mkdir(parents=True)
+    (run / "result.json").write_text(
+        json.dumps(
+            {
+                "policy": "lingbot_va",
+                "status": "failed",
+                "inference_context": "cached_episode_prompt",
+                "inference": {"status": "success", "median_ms": 12.5},
+            }
+        )
+    )
+    ci.mark_timeout("lingbot_va", tmp_path, "both")
+    row = json.loads((tmp_path / "lingbot_va/result.json").read_text())
+    assert row["inference"]["median_ms"] == 12.5
+    assert row["training"]["status"] == "failed"
+    assert ci.metric_label(row, "training", {"median_ms": None}) == "Time limit"
+
+
+def test_timeout_during_setup_marks_both_operations(tmp_path):
+    ci.mark_timeout("act", tmp_path, "both")
+    row = json.loads((tmp_path / "act/result.json").read_text())
+    assert row["policy"] == "act"
+    assert all("Time limit" in row[mode]["error"] for mode in ("inference", "training"))
+
+
+def test_inference_comparison_excludes_different_prompt_context(measured_policy):
+    row = deepcopy(measured_policy)
+    row["inference_context"] = "cached_episode_prompt"
+    old = history_point(measured_policy)
+    now = datetime(2026, 10, 26, 1, tzinfo=UTC)
+    assert ci.comparison(row, "inference", [old], now)["baseline"] is None
+    assert ci.comparison(row, "training", [old], now)["baseline"] is not None
+
+
 @pytest.fixture
 def benchmark():
     pytest.importorskip("datasets")
@@ -299,6 +335,39 @@ def benchmark():
     from benchmarks import profile_policies
 
     return profile_policies
+
+
+def test_lingbot_inference_resets_chunk_but_reuses_episode_prompt(benchmark):
+    class Policy:
+        config = SimpleNamespace(type="lingbot_va")
+
+        def __init__(self):
+            self.encodes = 0
+            self.chunks = 0
+            self._prompt = self._prompt_embeds = self._negative_prompt_embeds = None
+            self.queue = []
+
+        def reset(self):
+            self._prompt = self._prompt_embeds = self._negative_prompt_embeds = None
+            self.queue.clear()
+
+        def select_action(self):
+            if self._prompt_embeds is None:
+                self.encodes += 1
+                self._prompt = "task"
+                self._prompt_embeds = object()
+                self._negative_prompt_embeds = object()
+            if not self.queue:
+                self.chunks += 1
+                self.queue.extend([1, 2])
+            return self.queue.pop(0)
+
+    policy = Policy()
+    for _ in range(3):
+        benchmark.reset_for_inference(policy)
+        assert policy.select_action() == 1
+    assert policy.encodes == 1
+    assert policy.chunks == 3
 
 
 def test_matrix_matches_runtime_registry(benchmark):

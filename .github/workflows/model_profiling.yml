@@ -105,8 +105,7 @@ jobs:
       TORCH_HOME: /mnt/cache/.cache/torch
       UV_CACHE_DIR: /mnt/cache/.cache/uv
       UV_PROJECT_ENVIRONMENT: /tmp/venv
-    # LingBot's CPU text encoder makes fresh-action samples substantially slower.
-    timeout-minutes: ${{ matrix.policy == 'lingbot_va' && 180 || 90 }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -134,6 +133,9 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           python3 scripts/ci/model_profiling.py init --policy "$POLICY"
+          # Leave time to save partial measurements and upload them before the job limit.
+          status=0
+          timeout --signal=TERM --kill-after=5s 525s bash -euo pipefail <<'PROFILE' || status=$?
           test -d /mnt/cache
           mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$HF_LEROBOT_HOME" "$TORCH_HOME" "$UV_CACHE_DIR"
           extras=(--extra training)
@@ -146,6 +148,11 @@ jobs:
           uv run --no-sync python scripts/ci/model_profiling.py run \
             --policy "$POLICY" --profile_mode="$MODE" --trace="$TRACE" \
             --gradient-checkpointing="$GRADIENT_CHECKPOINTING"
+          PROFILE
+          if [[ "$status" == 124 || ( "$status" == 137 && "$SECONDS" -ge 525 ) ]]; then
+            python3 scripts/ci/model_profiling.py timeout --policy "$POLICY" --mode "$MODE"
+          fi
+          exit "$status"
       - name: Upload results even when profiling fails
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -157,6 +157,21 @@ def run_policy(
     return result.returncode
 
 
+def mark_timeout(policy: str, output_dir: Path, mode: str) -> None:
+    """Keep finished measurements and mark unfinished operations after the policy budget."""
+    run_dir = output_dir / policy
+    output = run_dir / "result.json"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    partial = run_dir / "run/result.json"
+    row = json.loads(partial.read_text()) if partial.exists() else {"policy": policy}
+    error = "Time limit: profiling stopped to keep the job under 10 minutes"
+    row.update(status="failed", error=error)
+    for operation in ("inference", "training"):
+        if mode in ("both", operation) and operation not in row:
+            row[operation] = {"status": "failed", "error": error}
+    output.write_text(json.dumps(row, indent=2) + "\n")
+
+
 def measured(row: dict, mode: str) -> float | None:
     result = row.get(mode, {})
     value = result.get("median_ms")
@@ -183,6 +198,8 @@ def comparison(row: dict, mode: str, points: list[dict], started_at: datetime) -
         if run.get("status") != "completed" or run.get("conclusion") == "cancelled":
             continue
         if old.get("policy") != row["policy"] or measured(old, mode) is None:
+            continue
+        if mode == "inference" and old.get("inference_context") != row.get("inference_context"):
             continue
         if any(key not in old or old[key] != row[key] for key in SETUP_FIELDS):
             continue
@@ -214,6 +231,8 @@ def metric_label(row: dict, mode: str, metric: dict) -> str:
     if metric["median_ms"] is not None:
         return f"{metric['median_ms']:.2f}"
     error = (row.get(mode, {}).get("error") or row.get("error", "")).lower()
+    if "time limit" in error or "timed out" in error:
+        return "Time limit"
     if "out of memory" in error or "outofmemory" in error:
         return "GPU limit"
     if "gated" in error or "403" in error or "401" in error:
@@ -408,9 +427,10 @@ def archive(output_dir: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["matrix", "init", "run", "summary", "archive"])
+    parser.add_argument("command", choices=["matrix", "init", "run", "summary", "archive", "timeout"])
     parser.add_argument("--policy")
     parser.add_argument("--output-dir", type=Path, default=Path("profiling-results"))
+    parser.add_argument("--mode", choices=["inference", "training", "both"], default="both")
     parser.add_argument("--gradient-checkpointing", choices=["true", "false"], default="false")
     parser.add_argument("--compare-history", action="store_true")
     parser.add_argument("--publish-latest", choices=["true", "false"], default="false")
@@ -453,6 +473,8 @@ def main() -> int:
                     latest=args.publish_latest == "true",
                 )
             )
+    elif args.command == "timeout":
+        mark_timeout(args.policy, args.output_dir, args.mode)
     elif args.command == "run":
         return run_policy(
             args.policy, args.output_dir.resolve(), overrides, args.gradient_checkpointing == "true"

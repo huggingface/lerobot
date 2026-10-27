@@ -62,6 +62,8 @@ def measure(
     warmup: int,
     iterations: int,
     trace_path: Path | None = None,
+    *,
+    label: str = "profile",
 ) -> dict[str, Any]:
     """Keep batch copying, warmup and optional tracing outside latency samples."""
     if warmup < 0 or iterations < 1:
@@ -73,14 +75,16 @@ def measure(
         elif device.type == "mps":
             torch.mps.synchronize()
 
-    for _ in range(warmup):
+    for i in range(warmup):
+        print(f"{label}: warmup {i + 1}/{warmup}", flush=True)
         step(deepcopy(batch))
     synchronize()
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     samples = []
     allocated, reserved = [], []
-    for _ in range(iterations):
+    for i in range(iterations):
+        print(f"{label}: sample {i + 1}/{iterations}", flush=True)
         sample = deepcopy(batch)
         synchronize()
         start = time.perf_counter()
@@ -108,6 +112,22 @@ def measure(
             synchronize()
         prof.export_chrome_trace(str(trace_path))
     return result
+
+
+def reset_for_inference(policy: Any) -> None:
+    """Generate a fresh chunk while retaining LingBot's fixed per-episode prompt."""
+    prompt = None
+    if policy.config.type == "lingbot_va" and policy._prompt_embeds is not None:
+        prompt = (policy._prompt, policy._prompt_embeds, policy._negative_prompt_embeds)
+    policy.reset()
+    if prompt is not None:
+        policy._prompt, policy._prompt_embeds, policy._negative_prompt_embeds = prompt
+
+
+def write_result(path: Path, row: dict[str, Any]) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(row, indent=2) + "\n")
+    temporary.replace(path)
 
 
 def current_observation(batch: dict[str, Any], policy_cfg: Any) -> dict[str, Any]:
@@ -284,6 +304,8 @@ def main(cfg: ProfileConfig) -> None:
         "checkpoint_revision": cfg.policy.pretrained_revision,
         "run_url": os.environ.get("PROFILE_RUN_URL"),
     }
+    if cfg.policy.type == "lingbot_va":
+        row["inference_context"] = "cached_episode_prompt"
     try:
         accelerator = make_accelerator(cfg)
         if accelerator.device.type != device.type:
@@ -326,7 +348,7 @@ def main(cfg: ProfileConfig) -> None:
 
                     def step(batch: dict[str, Any]) -> Any:
                         # Every sample computes a fresh action, including chunk generation.
-                        policy.reset()
+                        reset_for_inference(policy)
                         policy.eval()
                         with torch.inference_mode(), accelerator.autocast():
                             return policy.select_action(batch)
@@ -341,10 +363,13 @@ def main(cfg: ProfileConfig) -> None:
                     cfg.warmup,
                     cfg.iterations,
                     cfg.output_dir / f"{mode}.trace.json" if cfg.trace else None,
+                    label=mode,
                 )
             except Exception as exc:
                 traceback.print_exc()
                 row[mode] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+            # Preserve completed measurements if a later operation exceeds the job budget.
+            write_result(cfg.output_dir / "result.json", row)
         row["status"] = (
             "success"
             if all(row[m]["status"] == "success" for m in ("inference", "training") if m in row)
@@ -354,7 +379,7 @@ def main(cfg: ProfileConfig) -> None:
         traceback.print_exc()
         row["error"] = f"{type(exc).__name__}: {exc}"
     finally:
-        (cfg.output_dir / "result.json").write_text(json.dumps(row, indent=2) + "\n")
+        write_result(cfg.output_dir / "result.json", row)
     if row["status"] != "success":
         raise SystemExit(1)
 
