@@ -33,9 +33,11 @@ USER root
 # Pinned upstream SHA for reproducible benchmark runs. Bump when we need
 # an upstream fix; don't rely on `main` drift.
 ARG ROBOTWIN_SHA=0aeea2d669c0f8516f4d5785f0aa33ba812c14b4
-RUN apt-get update \
+# nvcc must match torch's CUDA major version, or torch's extension builder refuses to compile.
+RUN CUDA_PKG_VERSION=$(python -c "import torch; print(torch.version.cuda.replace('.', '-'))") \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
-         cuda-nvcc-12-8 cuda-cudart-dev-12-8 \
+         cuda-nvcc-${CUDA_PKG_VERSION} cuda-cudart-dev-${CUDA_PKG_VERSION} \
          libvulkan1 vulkan-tools \
     && mkdir -p /usr/share/vulkan/icd.d \
     && echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libGLX_nvidia.so.0","api_version":"1.3.0"}}' \
@@ -62,7 +64,7 @@ ARG CUROBO_REF=v0.7.8
 RUN cd ${ROBOTWIN_ROOT}/envs \
     && git clone --branch ${CUROBO_REF} --depth 1 https://github.com/NVlabs/curobo.git \
     && cd curobo \
-    && TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0" \
+    && TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0" \
        uv pip install -e . --no-build-isolation --no-cache
 
 # Upstream patches (mirror RoboTwin's script/_install.sh).
