@@ -75,7 +75,7 @@ class EnvClient:
         self.num_envs = 0
 
     def describe(self) -> EnvDescriptor:
-        """Discover the simulator boot and canonical schema without opening an environment session."""
+        """Ask the server which environment it runs, without opening a session."""
         with self.lock:
             self.transport.open()
             body = self._query(
@@ -93,7 +93,7 @@ class EnvClient:
 
     @property
     def prefix(self) -> str:
-        """Return the address of the currently owned environment session."""
+        """The address of the open session."""
         if not self.session:
             raise RuntimeError("Simulator session is not open")
         return session_prefix(self.deployment, self.instance, self.session)
@@ -106,7 +106,7 @@ class EnvClient:
         seeds: list[int | None] | None = None,
         use_async_envs: bool = False,
     ) -> StepResult:
-        """Admit an explicitly stepped environment batch.
+        """Open a session with ``num_envs`` environments of one task and return its first result.
 
         ``use_async_envs`` asks the server to run each environment in its own process.
         """
@@ -144,7 +144,10 @@ class EnvClient:
             return result
 
     def request(self, operation: str, **body: Any) -> dict[str, Any]:
-        """Issue one correlated environment operation and fail on an ambiguous result."""
+        """Send one operation on the open session and return its reply, ``result`` decoded and validated.
+
+        A failed or timed-out operation fails the session, since it may have run.
+        """
         with self.lock:
             if self.failed:
                 raise RuntimeError("Simulator session failed; close and reopen before continuing")
@@ -185,7 +188,7 @@ class EnvClient:
         return response.body
 
     def close(self) -> None:
-        """Release owned simulator resources and transport declarations."""
+        """Close the session and the connection."""
         with self.lock:
             try:
                 if self.session and not self.failed:
@@ -239,7 +242,7 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             raise RuntimeError("Reset before reading the environment")
         return self._latest
 
-    def _open_session(self, seeds=None):
+    def _open_session(self, seeds: list[int | None] | None = None) -> bool:
         if not self.client.session:
             self._latest = self.client.open(
                 self.num_envs, self.task_group, self.task_id, seeds, self.use_async_envs
@@ -248,21 +251,29 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             return True
         return False
 
-    def _result(self, reply):
+    def _result(self, reply: dict[str, Any]) -> StepResult:
         self._latest = reply["result"]
         return self._latest
 
-    def reset(self, *, seed=None, options=None):
+    def reset(
+        self,
+        *,
+        seed: int | list[int | None] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         """Reset every served environment with explicit seeds."""
         if options:
             raise ValueError("This environment does not define reset options")
-        if isinstance(seed, int):
-            seed = [seed + i for i in range(self.num_envs)]
-        if not self._open_session(seed):
-            self._result(self.client.request("reset", seeds=seed))
+        seeds: list[int | None] | None = (
+            [seed + i for i in range(self.num_envs)] if isinstance(seed, int) else seed
+        )
+        if not self._open_session(seeds):
+            self._result(self.client.request("reset", seeds=seeds))
         return self.latest.obs, self.latest.info()
 
-    def step(self, actions):
+    def step(
+        self, actions: np.ndarray
+    ) -> tuple[dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
         """Advance every unfinished served environment once."""
         self._open_session()
         result = self._result(self.client.request("step", actions=np.asarray(actions, dtype=np.float32)))
@@ -274,7 +285,7 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             result.info(),
         )
 
-    def call(self, name, *args, **kwargs):
+    def call(self, name: str, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
         """Return a supported per-environment attribute."""
         if name == "_max_episode_steps":
             return (self.descriptor.max_episode_steps,) * self.num_envs
@@ -287,14 +298,14 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
             return tuple(self.render())
         raise AttributeError(f"Simulator vector attribute is not exposed: {name}")
 
-    def get_attr(self, name):
+    def get_attr(self, name: str) -> tuple[Any, ...]:
         """Return a supported per-environment attribute."""
         return self.call(name)
 
-    def render(self):
+    def render(self) -> list[np.ndarray]:
         """Return the latest RGB frame of every served environment, terminal frames included."""
         return self.latest.frames()
 
-    def close_extras(self, **kwargs):
+    def close_extras(self, **kwargs: Any) -> None:
         """Close the served session."""
         self.client.close()
