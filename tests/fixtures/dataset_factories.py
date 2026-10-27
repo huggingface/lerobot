@@ -39,7 +39,7 @@ from lerobot.datasets.utils import (
     DEFAULT_VIDEO_PATH,
     DatasetInfo,
 )
-from lerobot.datasets.video_utils import concatenate_video_files, encode_video_frames
+from lerobot.datasets.video_utils import encode_video_frames
 from lerobot.utils.constants import DEFAULT_FEATURES
 from tests.fixtures.constants import (
     DEFAULT_FPS,
@@ -356,7 +356,6 @@ def create_videos(info_factory, img_array_factory):
         total_episodes: int = 3,
         total_frames: int = 150,
         total_tasks: int = 1,
-        episodes: datasets.Dataset | None = None,
     ):
         if info is None:
             info = info_factory(
@@ -364,33 +363,22 @@ def create_videos(info_factory, img_array_factory):
             )
 
         video_feats = {key: feats for key, feats in info.features.items() if feats["dtype"] == "video"}
-        episode_ranges = (
-            [(int(ep["dataset_from_index"]), int(ep["dataset_to_index"])) for ep in episodes]
-            if episodes is not None
-            else [(0, info.total_frames)]
-        )
         for key, ft in video_feats.items():
-            tmp_root = root / "tmp_videos" / key.replace("/", "_")
-            episode_video_paths = []
-            for episode_index, (start, end) in enumerate(episode_ranges):
-                if start == end:
-                    continue
-                frames_dir = tmp_root / f"episode-{episode_index:06d}" / "frames"
-                frames_dir.mkdir(parents=True, exist_ok=True)
-                for frame_index in range(start, end):
-                    content = f"{key}-{frame_index}"
-                    img = img_array_factory(height=ft["shape"][0], width=ft["shape"][1], content=content)
-                    pil_img = PIL.Image.fromarray(img)
-                    path = frames_dir / f"frame-{frame_index - start:06d}.png"
-                    pil_img.save(path)
-
-                episode_video_path = tmp_root / f"episode-{episode_index:06d}.mp4"
-                encode_video_frames(frames_dir, episode_video_path, fps=info.fps)
-                episode_video_paths.append(episode_video_path)
+            # create and save images with identifiable content
+            tmp_dir = root / "tmp_images"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            for frame_index in range(info.total_frames):
+                content = f"{key}-{frame_index}"
+                img = img_array_factory(height=ft["shape"][0], width=ft["shape"][1], content=content)
+                pil_img = PIL.Image.fromarray(img)
+                path = tmp_dir / f"frame-{frame_index:06d}.png"
+                pil_img.save(path)
 
             video_path = root / DEFAULT_VIDEO_PATH.format(video_key=key, chunk_index=0, file_index=0)
-            concatenate_video_files(episode_video_paths, video_path)
-            shutil.rmtree(tmp_root)
+            video_path.parent.mkdir(parents=True, exist_ok=True)
+            # Use the global fps from info, not video-specific fps which might not exist
+            encode_video_frames(tmp_dir, video_path, fps=info.fps)
+            shutil.rmtree(tmp_dir)
 
     return _create_video_directory
 
