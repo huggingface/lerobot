@@ -99,12 +99,6 @@ def _make_packed_video_dataset(root, dataset_factory, vcodec):
     return dataset
 
 
-@pytest.fixture
-def sample_video_dataset(tmp_path, empty_lerobot_dataset_factory):
-    """Create a sample H.264 video-backed dataset whose episodes share one video file."""
-    return _make_packed_video_dataset(tmp_path / "test_video_dataset", empty_lerobot_dataset_factory, "h264")
-
-
 def test_delete_single_episode(sample_dataset, tmp_path):
     """Test deleting a single episode."""
     output_dir = tmp_path / "filtered"
@@ -1104,15 +1098,16 @@ def test_delete_episodes_packed_videos(stream_copy, tmp_path, empty_lerobot_data
 
 
 @require_h264
-def test_stream_copy_declines_when_boundaries_are_not_gop_aligned(sample_video_dataset, tmp_path):
+def test_stream_copy_declines_when_boundaries_are_not_gop_aligned(tmp_path, empty_lerobot_dataset_factory):
     """A range starting mid-GOP is refused so the caller can re-encode instead."""
-    video_key = sample_video_dataset.meta.video_keys[0]
-    src_video_path = sample_video_dataset.root / sample_video_dataset.meta.get_video_file_path(0, video_key)
+    src_dataset = _make_packed_video_dataset(tmp_path / "src", empty_lerobot_dataset_factory, "h264")
+    video_key = src_dataset.meta.video_keys[0]
+    src_video_path = src_dataset.root / src_dataset.meta.get_video_file_path(0, video_key)
     output_path = tmp_path / "declined.mp4"
 
     # Frame 3 sits inside the first episode's GOP rather than on its boundary.
     assert not _try_keep_episodes_from_video_by_stream_copy(
-        src_video_path, output_path, [(3, 10)], sample_video_dataset.meta.fps
+        src_video_path, output_path, [(3, 10)], src_dataset.meta.fps
     )
     assert not output_path.exists(), "declining must not leave a partial file behind"
 
