@@ -29,8 +29,10 @@ import gymnasium as gym
 import numpy as np
 import pytest
 
+from lerobot.envs.configs import RoboTwinEnvConfig
 from lerobot.envs.robotwin import (
     ACTION_DIM,
+    EEF_ACTION_DIM,
     ROBOTWIN_CAMERA_NAMES,
     ROBOTWIN_TASKS,
     RoboTwinEnv,
@@ -56,7 +58,12 @@ def _make_mock_task_env(
     obs_dict = {
         "observation": {cam: {"rgb": np.zeros((height, width, 3), dtype=np.uint8)} for cam in cameras},
         "joint_action": {"vector": np.zeros(ACTION_DIM, dtype=np.float32)},
-        "endpose": {},
+        "endpose": {
+            "left_endpose": [0.1, 0.2, 0.3, 1.0, 0.0, 0.0, 0.0],
+            "left_gripper": 0.4,
+            "right_endpose": [0.5, 0.6, 0.7, 1.0, 0.0, 0.0, 0.0],
+            "right_gripper": 0.8,
+        },
     }
 
     mock = MagicMock()
@@ -117,6 +124,29 @@ class TestRoboTwinEnv:
         env = RoboTwinEnv(task_name="beat_block_hammer")
         assert env.action_space.shape == (ACTION_DIM,)
         assert env.action_space.dtype == np.float32
+
+    def test_absolute_eef_mode_observes_and_passes_through_native_pose(self):
+        mock_task = _make_mock_task_env()
+        env = RoboTwinEnv(task_name="beat_block_hammer", action_mode="ee_absolute")
+        action = np.arange(EEF_ACTION_DIM, dtype=np.float32) / EEF_ACTION_DIM
+
+        with _patch_runtime(mock_task):
+            obs, _ = env.reset()
+            env.step(action)
+
+        assert env.observation_space["agent_pos"].shape == (EEF_ACTION_DIM,)
+        assert env.action_space.shape == (EEF_ACTION_DIM,)
+        np.testing.assert_allclose(
+            obs["agent_pos"],
+            [0.1, 0.2, 0.3, 1.0, 0.0, 0.0, 0.0, 0.4, 0.5, 0.6, 0.7, 1.0, 0.0, 0.0, 0.0, 0.8],
+        )
+        passed_action = mock_task.take_action.call_args.args
+        np.testing.assert_array_equal(passed_action[0], action.astype(np.float64))
+        assert mock_task.take_action.call_args.kwargs["action_type"] == "ee"
+
+    def test_invalid_action_mode_raises(self):
+        with pytest.raises(ValueError, match="action_mode must be"):
+            RoboTwinEnv(task_name="beat_block_hammer", action_mode="unsupported")
 
     def test_reset_returns_correct_obs_keys(self):
         mock_task = _make_mock_task_env()
@@ -280,3 +310,9 @@ def test_all_tasks_are_strings():
 
 def test_no_duplicate_tasks():
     assert len(ROBOTWIN_TASKS) == len(set(ROBOTWIN_TASKS))
+
+
+def test_robotwin_absolute_eef_config_features():
+    config = RoboTwinEnvConfig(action_mode="ee_absolute")
+    assert config.features["action"].shape == (EEF_ACTION_DIM,)
+    assert config.features["agent_pos"].shape == (EEF_ACTION_DIM,)

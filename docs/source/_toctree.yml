@@ -79,6 +79,8 @@
     title: LingBot-VA
   - local: lingbot_vla_v2
     title: LingBot-VLA 2.0
+  - local: hy_vla
+    title: Hy-Embodied-0.5-VLA
   - local: fastwam
     title: FastWAM
   - local: flux3
