@@ -163,6 +163,7 @@ def test_uniform_weighter_compute_batch_weights_scans_all_keys():
     assert torch.allclose(weights, torch.ones(7))
 
 
+@pytest.mark.gpu
 def test_uniform_weighter_compute_batch_weights_on_cuda():
     """Test that weights are placed on the correct device."""
     if not torch.cuda.is_available():

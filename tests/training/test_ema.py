@@ -231,6 +231,7 @@ def load_safetensors(path):
     return load_file(path)
 
 
+@pytest.mark.gpu
 def test_train_diffusion_with_ema_checkpoint_and_resume(tmp_path):
     pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
     pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")

@@ -114,7 +114,8 @@ def test_get_policy_and_config_classes(policy_name: str):
 @pytest.mark.parametrize(
     "ds_repo_id,env_name,env_kwargs,policy_name,policy_kwargs",
     [
-        ("lerobot/pusht", "pusht", {}, "diffusion", {}),
+        # Diffusion denoises 100 times per action by default; 10 runs the same sampling loop.
+        ("lerobot/pusht", "pusht", {}, "diffusion", {"num_inference_steps": 10}),
         ("lerobot/pusht", "pusht", {}, "vqbet", {}),
         ("lerobot/pusht", "pusht", {}, "act", {}),
         ("lerobot/aloha_sim_insertion_human", "aloha", {"task": "AlohaInsertion-v0"}, "act", {}),
@@ -130,7 +131,7 @@ def test_get_policy_and_config_classes(policy_name: str):
             "aloha",
             {"task": "AlohaInsertion-v0"},
             "diffusion",
-            {},
+            {"num_inference_steps": 10},
         ),
         (
             "lerobot/aloha_sim_transfer_cube_human",
