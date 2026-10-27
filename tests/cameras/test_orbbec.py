@@ -293,6 +293,19 @@ def test_read_depth(fake_ob, depth_scale):
     camera.disconnect()
 
 
+def test_incomplete_aligned_frame_set_is_skipped(fake_ob):
+    # The align filter returns None until both streams are in sync, here more often than the failure limit.
+    process = fake_ob.AlignFilter.return_value.process
+    align = process.side_effect
+    calls = iter(range(20))
+    process.side_effect = lambda f: None if next(calls, None) is not None else align(f)
+    camera = OrbbecCamera(OrbbecCameraConfig(serial_number_or_name=SERIAL_NUMBER, use_depth=True))
+    camera.connect()
+    assert camera.async_read_depth(timeout_ms=2000).shape == (DEFAULT_HEIGHT, DEFAULT_WIDTH, 1)
+    assert camera.thread.is_alive()
+    camera.disconnect()
+
+
 def test_read_depth_disabled_raises(fake_ob):
     camera = OrbbecCamera(OrbbecCameraConfig(serial_number_or_name=SERIAL_NUMBER))
     camera.connect()

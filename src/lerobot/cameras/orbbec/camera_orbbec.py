@@ -21,9 +21,9 @@ import time
 from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
 
-import cv2  # type: ignore  # TODO: add type stubs for OpenCV
-import numpy as np  # type: ignore  # TODO: add type stubs for numpy
-from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
+import cv2
+import numpy as np
+from numpy.typing import NDArray
 
 from lerobot.utils.import_utils import _pyorbbecsdk_available, require_package
 
@@ -117,6 +117,8 @@ class OrbbecCamera(Camera):
         super().__init__(config)
 
         self.config = config
+        # Devices and pipelines need the context alive, so it lives as long as the camera.
+        self.context = ob.Context()
         self.serial_number = self._find_serial_number_from_name(config.serial_number_or_name)
         self.color_mode = config.color_mode
         self.use_rgb = config.use_rgb
@@ -172,7 +174,9 @@ class OrbbecCamera(Camera):
         """
         require_package("pyorbbecsdk2", extra="orbbec", import_name="pyorbbecsdk")
         found_cameras_info = []
-        devices = ob.Context().query_devices()
+        # Keep the context alive: devices obtained from the list need its device manager.
+        context = ob.Context()
+        devices = context.query_devices()
 
         for index in range(devices.get_count()):
             device = devices.get_device_by_index(index)
@@ -209,7 +213,7 @@ class OrbbecCamera(Camera):
         Unlike RealSense serial numbers, Orbbec ones are alphanumeric and cannot be told
         apart from names, so serial numbers and names are matched in the same pass.
         """
-        devices = ob.Context().query_devices()
+        devices = self.context.query_devices()
         found_serial_numbers = []
         for index in range(devices.get_count()):
             serial_number = devices.get_device_serial_number_by_index(index)
@@ -267,7 +271,7 @@ class OrbbecCamera(Camera):
         self._reset_connection_settings()
 
         try:
-            device = ob.Context().query_devices().get_device_by_serial_number(self.serial_number)
+            device = self.context.query_devices().get_device_by_serial_number(self.serial_number)
             pipeline = ob.Pipeline(device)
             profiles = self._select_profiles(pipeline)
             ob_config = ob.Config()
@@ -467,7 +471,11 @@ class OrbbecCamera(Camera):
                 if frames is None:
                     raise RuntimeError(f"{self} read failed (no frames received).")
                 if self.align_filter is not None:
-                    frames = self.align_filter.process(frames).as_frame_set()
+                    aligned_frames = self.align_filter.process(frames)
+                    # Incomplete frame set (streams not yet in sync), wait for the next one.
+                    if aligned_frames is None:
+                        continue
+                    frames = aligned_frames.as_frame_set()
 
                 if self.use_rgb:
                     color_frame = frames.get_color_frame()
