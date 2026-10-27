@@ -59,6 +59,7 @@ from lerobot.common.train_utils import resume_after_prepare, resume_before_prepa
 from lerobot.configs.default import DatasetConfig, PeftConfig
 from lerobot.configs.train import CheckpointFormat, TrainPipelineConfig
 from lerobot.distributed.checkpoint import full_model_state_dict, is_sharded_module
+from lerobot.optim.ema import EMA, PowerEMAConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR, SCALER_STATE, TRAINING_STATE_DIR
 
 # The spawned children re-import this module by name, so this import must resolve there too:
@@ -289,9 +290,10 @@ def _train_and_save_worker(
     checkpoint_format: str,
     mixed_precision: str = "no",
     peft: bool = False,
+    ema: bool = False,
 ) -> None:
     """FSDP2 (dp_shard=world_size): train SAVE_STEP steps, save_checkpoint, store the gathered
-    full model/optimizer state as the rank-0 reference for the resume workers."""
+    full model/optimizer state (and EMA averages) as the rank-0 reference for the resume workers."""
     _init_worker_env(rank, world_size, port)
     tmp = Path(tmp_dir)
     cfg = _make_cfg(
@@ -308,6 +310,7 @@ def _train_and_save_worker(
     policy, optimizer = accelerator.prepare(policy, optimizer)
     assert is_sharded_module(accelerator.unwrap_model(policy)), "prepare() did not shard the policy"
     assert (accelerator.scaler is not None) == (mixed_precision == "fp16")
+    averager = EMA(accelerator.unwrap_model(policy), PowerEMAConfig()) if ema else None
 
     for step in range(SAVE_STEP):
         with accelerator.autocast():
@@ -315,6 +318,8 @@ def _train_and_save_worker(
         accelerator.backward(loss)
         optimizer.step()
         optimizer.zero_grad()
+        if averager is not None:
+            averager.step(accelerator.unwrap_model(policy))
         # The pinned scale makes a finite step impossible to skip, so the optimizer state the
         # checkpoint captures is real (and `_growth_tracker` counts the applied updates).
         assert not accelerator.optimizer_step_was_skipped
@@ -329,10 +334,17 @@ def _train_and_save_worker(
 
     checkpoint_dir = tmp / "checkpoint"
     save_checkpoint(
-        checkpoint_dir, step=SAVE_STEP, cfg=cfg, policy=policy, optimizer=optimizer, accelerator=accelerator
+        checkpoint_dir,
+        step=SAVE_STEP,
+        cfg=cfg,
+        policy=policy,
+        optimizer=optimizer,
+        accelerator=accelerator,
+        ema=averager,
     )
 
     model_state, optimizer_state = _gather_full(policy, optimizer)
+    averages = {} if averager is None else {k: v.full_tensor().cpu() for k, v in averager.averages.items()}
     if accelerator.is_main_process:
         from accelerate.utils.constants import FSDP_MODEL_NAME, OPTIMIZER_NAME
 
@@ -354,7 +366,7 @@ def _train_and_save_worker(
         # The scaler sidecar exists exactly when there is a scaler to persist.
         assert (training_state_dir / SCALER_STATE).is_file() == (mixed_precision == "fp16")
         torch.save(
-            {"model": model_state, "optimizer": optimizer_state, "scaler": scaler_state},
+            {"model": model_state, "optimizer": optimizer_state, "scaler": scaler_state, "ema": averages},
             tmp / "reference_state.pt",
         )
     accelerator.wait_for_everyone()
@@ -369,6 +381,7 @@ def _resume_and_verify_worker(
     checkpoint_format: str,
     mixed_precision: str = "no",
     peft: bool = False,
+    ema: bool = False,
 ) -> None:
     """Two-phase resume at dp_shard=world_size; the gathered state must match the saved
     reference exactly (DCP round-trips are bit-exact).
@@ -409,7 +422,8 @@ def _resume_and_verify_worker(
         policy = _make_policy(SEED + 1)
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-2)
     policy, optimizer = accelerator.prepare(policy, optimizer)
-    resume_after_prepare(cfg, accelerator, policy, optimizer, None)  # phase 2: DCP reshard-load
+    averager = EMA(accelerator.unwrap_model(policy), PowerEMAConfig()) if ema else None
+    resume_after_prepare(cfg, accelerator, policy, optimizer, None, averager)  # phase 2: DCP reshard-load
 
     reference = torch.load(tmp / "reference_state.pt", map_location="cpu", weights_only=True)
     if accelerator.scaler is not None:
@@ -417,9 +431,12 @@ def _resume_and_verify_worker(
         assert accelerator.scaler.state_dict() == reference["scaler"]
 
     model_state, optimizer_state = _gather_full(policy, optimizer)
+    averages = {} if averager is None else {k: v.full_tensor().cpu() for k, v in averager.averages.items()}
     if accelerator.is_main_process:
         _assert_tree_equal(reference["model"], model_state, "model")
         _assert_tree_equal(reference["optimizer"], optimizer_state, "optimizer")
+        _assert_tree_equal(reference["ema"], averages, "ema")
+        assert averager is None or averager.num_updates == SAVE_STEP
     accelerator.wait_for_everyone()
     dist.destroy_process_group()
 
@@ -667,13 +684,13 @@ def test_hsdp_loss_parity_with_ddp(tmp_path):
 def test_changed_topology_resume(tmp_path):
     """Save at dp_shard=4 (format=dcp), resume at dp_shard=2 on 2 ranks.
 
-    The DCP load reshards both the model weights and the optimizer state across the topology
-    change; the post-resume gathered state must equal the pre-save gathered reference exactly
-    (cross-topology resharding is runtime-verified).
+    The DCP load reshards the model weights, the optimizer state and the EMA averages across the
+    topology change; the post-resume gathered state must equal the pre-save gathered reference
+    exactly (cross-topology resharding is runtime-verified).
     """
     checkpoint_format = CheckpointFormat.DCP.value
-    _spawn(4, _train_and_save_worker, str(tmp_path), checkpoint_format)
-    _spawn(2, _resume_and_verify_worker, str(tmp_path), checkpoint_format)
+    _spawn(4, _train_and_save_worker, str(tmp_path), checkpoint_format, "no", False, True)
+    _spawn(2, _resume_and_verify_worker, str(tmp_path), checkpoint_format, "no", False, True)
 
 
 @pytest.mark.multigpu

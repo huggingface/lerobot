@@ -21,15 +21,17 @@ import draccus
 import numpy as np
 import pytest
 import torch
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 pytest.importorskip("datasets")
 
 from examples.flux3 import export_base as exporter
-from lerobot.configs.default import DatasetConfig, EMAConfig, PeftConfig
+from lerobot.configs.default import DatasetConfig, PeftConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.optim.ema import ConstantEMAConfig
 from lerobot.policies import factory
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.flux3 import Flux3Config, Flux3Policy, make_flux3_pre_post_processors
@@ -352,7 +354,7 @@ def test_exporter_creates_cli_config_without_training(tmp_path, monkeypatch, use
         output.resolve()
     )
     assert not train.policy.use_peft
-    assert train.peft.r == 32 and train.ema.enable
+    assert train.peft.r == 32 and train.ema is not None
     assert (output / "policy_preprocessor.json").exists()
     with pytest.raises(FileExistsError):
         exporter.export_base(source, "test/so101", stats, None, output)
@@ -415,7 +417,7 @@ def test_actual_trainer_peft_ema_checkpoint_and_resume(tmp_path, monkeypatch):
             log_freq=0,
             seed=42,
             peft=PeftConfig(r=32, lora_alpha=32),
-            ema=EMAConfig(enable=True, decay=0.999),
+            ema=ConstantEMAConfig(decay=0.999),
         )
         result.accelerator.gradient_accumulation.steps = 2
         result.optimizer = policy_config.get_optimizer_preset()
@@ -437,8 +439,8 @@ def test_actual_trainer_peft_ema_checkpoint_and_resume(tmp_path, monkeypatch):
     checkpoint = tmp_path / "train/checkpoints/000004"
     train_config = json.loads((checkpoint / "pretrained_model/train_config.json").read_text())
     assert train_config["policy"]["use_peft"] is True
-    saved = torch.load(checkpoint / "training_state/ema_state.pt", weights_only=True)
-    assert saved["optimization_step"] == 2
+    with safe_open(checkpoint / "training_state/ema_state.safetensors", framework="pt") as saved:
+        assert saved.metadata()["num_updates"] == "2"
     assert (checkpoint / "pretrained_model_ema/config.json").exists()
     assert (checkpoint / "pretrained_model_ema/adapter_model.safetensors").exists()
     resume_policy = Flux3Config.from_pretrained(checkpoint / "pretrained_model")
@@ -447,8 +449,10 @@ def test_actual_trainer_peft_ema_checkpoint_and_resume(tmp_path, monkeypatch):
     resume.resume = True
     resume.checkpoint_path = checkpoint
     train(resume)
-    saved = torch.load(tmp_path / "train/checkpoints/000012/training_state/ema_state.pt", weights_only=True)
-    assert saved["optimization_step"] == 6
+    with safe_open(
+        tmp_path / "train/checkpoints/000012/training_state/ema_state.safetensors", framework="pt"
+    ) as saved:
+        assert saved.metadata()["num_updates"] == "6"
     # Compare against an uninterrupted run with the same seed/data order.
 
     uninterrupted_policy = Flux3Config.from_pretrained(base)

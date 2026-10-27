@@ -61,17 +61,17 @@ When `use_relative_actions=true`, the training script automatically:
 
 ## EMA of the policy weights
 
-OpenPI maintains an exponential moving average of the weights during training (`ema_decay=0.99` by default) and keeps the EMA copy for inference. To reproduce this with the LeRobot trainer, enable the EMA shadow with a constant decay:
+OpenPI maintains an exponential moving average of the weights during training (`ema_decay=0.99` by default) and keeps the EMA copy for inference. To reproduce this with the LeRobot trainer, enable the EMA with a constant decay:
 
 ```bash
 python -m lerobot.scripts.lerobot_train \
   --policy.type=pi05 \
   --dataset.repo_id=your_org/your_dataset \
-  --ema.enable=true \
+  --ema.type=constant \
   --ema.decay=0.99
 ```
 
-Checkpoints then contain a directly loadable copy of the EMA weights in `pretrained_model_ema/` next to the live ones. Note that the shadow is a full extra copy of the parameters on the GPU. Like OpenPI (which disables EMA in its LoRA configs), EMA is not supported together with PEFT adapters.
+Checkpoints then contain a directly loadable copy of the EMA weights in `pretrained_model_ema/` next to the live ones. The EMA keeps a float32 copy of the trainable parameters on the GPU, sharded like the parameters under FSDP2.
 
 ---
 

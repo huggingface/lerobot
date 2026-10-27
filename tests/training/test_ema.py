@@ -14,19 +14,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the opt-in EMA shadow maintained by the training pipeline (--ema.enable=true)."""
+"""Tests for the opt-in EMA of the trainable policy weights maintained by the training pipeline (--ema.type=...)."""
 
 import draccus
 import numpy as np
 import pytest
 import torch
+from safetensors import safe_open
+from safetensors.torch import load_file
 
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
-from lerobot.configs.default import EMAConfig
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import TrainPipelineConfig, _migrate_legacy_ema_fields
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.utils.constants import PRETRAINED_MODEL_DIR, TRAINING_STATE_DIR
+from lerobot.optim.ema import EMA, ConstantEMAConfig, EMAConfig, PowerEMAConfig, WarmupEMAConfig
+from lerobot.utils.constants import (
+    EMA_STATE,
+    PRETRAINED_MODEL_DIR,
+    PRETRAINED_MODEL_EMA_DIR,
+    TRAINING_STATE_DIR,
+)
 
 pytestmark = pytest.mark.dataset
 
@@ -52,108 +59,59 @@ def _restore_cuda_backends():
     torch.backends.cuda.matmul.allow_tf32 = allow_tf32
 
 
-def test_ema_config_defaults_match_the_reference():
-    cfg = EMAConfig()
-    assert not cfg.enable
-    assert cfg.inv_gamma == 1.0
-    assert cfg.power == 0.75
-    assert cfg.update_after_step == 0
+def test_ema_averages_trainable_parameters_in_float32():
+    """The first update copies, later ones blend into float32 averages, the swap is undone exactly."""
+    torch.manual_seed(0)
+    model = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.Linear(4, 4)).to(torch.bfloat16)
+    model[0].requires_grad_(False)
+    ema = EMA(model, ConstantEMAConfig(decay=0.999))
+    assert list(ema.averages) == ["1.weight", "1.bias"]
+
+    for value in (1.0, 2.0):
+        with torch.no_grad():
+            model[1].weight.fill_(value)
+        ema.step(model)
+    # 1.001 is not representable in bfloat16.
+    torch.testing.assert_close(ema.averages["1.weight"], torch.full((4, 4), 1.001))
+
+    live = [param.detach().clone() for param in model.parameters()]
+    with ema.average_parameters(model):
+        assert torch.equal(model[1].weight, ema.averages["1.weight"].to(torch.bfloat16))
+        assert torch.equal(model[0].weight, live[0])
+    assert all(torch.equal(a, b) for a, b in zip(live, model.parameters(), strict=True))
+
+
+def test_ema_decay_schedules():
+    """The diffusers warmup schedule (the default) and the EDM2 power function EMA."""
+    assert WarmupEMAConfig().get_decay(11) == 1 - 11**-0.75
+    assert WarmupEMAConfig().get_decay(10**9) == 0.9999
+    # sigma_rel 0.1 is gamma 6.94 in EDM2.
+    assert PowerEMAConfig(sigma_rel=0.1).get_decay(11) == pytest.approx((10 / 11) ** (6.9372 + 1), rel=1e-4)
+
+
+LEGACY_EMA = {
+    "enable": True,
+    "decay": None,
+    "update_after_step": 0,
+    "inv_gamma": 1.0,
+    "power": 0.8,
+    "min_decay": 0.0,
+    "max_decay": 0.9999,
+    "use_for_eval": True,
+}
 
 
 @pytest.mark.parametrize(
-    "kwargs",
+    "legacy, expected",
     [
-        {"min_decay": 0.5, "max_decay": 0.1},
-        {"max_decay": 1.5},
-        {"min_decay": -0.1},
-        {"inv_gamma": 0.0},
-        {"power": -1.0},
-        {"update_after_step": -1},
-        {"decay": 1.5},
-        {"decay": -0.1},
-        {"decay": 0.99, "min_decay": 0.5},
-        {"decay": 0.99, "max_decay": 0.9},
+        ({**LEGACY_EMA, "enable": False}, None),
+        (LEGACY_EMA, WarmupEMAConfig(power=0.8)),
+        ({**LEGACY_EMA, "decay": 0.99}, ConstantEMAConfig(decay=0.99)),
     ],
 )
-def test_ema_config_rejects_invalid_values(kwargs):
-    with pytest.raises(ValueError):
-        EMAConfig(**kwargs)
-
-
-def test_ema_config_cli_parsing():
-    cfg = draccus.parse(
-        TrainPipelineConfig,
-        None,
-        args=[
-            f"--dataset.repo_id={DUMMY_REPO_ID}",
-            "--ema.enable=true",
-            "--ema.power=0.8",
-            "--ema.update_after_step=10",
-        ],
-    )
-    assert cfg.ema.enable
-    assert cfg.ema.power == 0.8
-    assert cfg.ema.update_after_step == 10
-
-
-def test_ema_config_cli_parsing_constant_decay():
-    cfg = draccus.parse(
-        TrainPipelineConfig,
-        None,
-        args=[
-            f"--dataset.repo_id={DUMMY_REPO_ID}",
-            "--ema.enable=true",
-            "--ema.decay=0.99",
-        ],
-    )
-    assert cfg.ema.enable
-    assert cfg.ema.decay == 0.99
-
-
-def test_ema_constant_decay_pins_the_schedule():
-    """min_decay == max_decay clamps the warmup curve to a constant (how --ema.decay is implemented)."""
-    pytest.importorskip("diffusers")
-    from diffusers.training_utils import EMAModel
-
-    model = torch.nn.Linear(4, 4)
-    ema = EMAModel(
-        model.parameters(), decay=0.99, min_decay=0.99, use_ema_warmup=True, inv_gamma=1.0, power=0.75
-    )
-    # The first update is a hard copy (decay 0); every one after uses the constant decay.
-    for step in range(1, 6):
-        ema.step(model.parameters())
-        if step > 1:
-            assert ema.cur_decay_value == 0.99
-
-
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.float16])
-def test_ema_weights_context_swaps_and_restores(dtype):
-    pytest.importorskip("diffusers")
-    from diffusers.training_utils import EMAModel
-
-    from lerobot.scripts.lerobot_train import _ema_weights
-
-    torch.manual_seed(0)
-    model = torch.nn.Linear(4, 4).to(dtype=dtype)
-    ema = EMAModel(model.parameters(), decay=0.9999, use_ema_warmup=True, inv_gamma=1.0, power=0.75)
-    ema.to(dtype=torch.float32)
-
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
-    for _ in range(3):
-        model(torch.randn(2, 4, dtype=dtype)).sum().backward()
-        optimizer.step()
-        optimizer.zero_grad()
-        ema.step(model.parameters())
-
-    live = [p.detach().clone() for p in model.parameters()]
-    with _ema_weights(ema, model):
-        swapped = [p.detach().clone() for p in model.parameters()]
-    restored = list(model.parameters())
-
-    assert any(not torch.equal(a, b) for a, b in zip(live, swapped, strict=True))
-    assert all(torch.equal(a, b.detach()) for a, b in zip(live, restored, strict=True))
-    assert all(p.dtype == dtype for p in model.parameters())
-    assert all(p.dtype == torch.float32 for p in ema.shadow_params)
+def test_legacy_ema_config_is_migrated(legacy, expected):
+    migrated = _migrate_legacy_ema_fields({"ema": legacy})
+    assert draccus.decode(EMAConfig | None, migrated["ema"]) == expected
 
 
 def make_dummy_dataset(tmp_path):
@@ -186,7 +144,7 @@ def make_dummy_dataset(tmp_path):
     return root
 
 
-def make_train_config(root, output_dir, steps, ema_enable, ema_decay=None):
+def make_train_config(root, output_dir, steps):
     from lerobot.configs.default import DatasetConfig
     from lerobot.policies.factory import make_policy_config
 
@@ -215,9 +173,10 @@ def make_train_config(root, output_dir, steps, ema_enable, ema_decay=None):
         seed=42,
         log_freq=0,
         env_eval_freq=0,
-        save_freq=2,
-        ema=EMAConfig(enable=ema_enable, decay=ema_decay),
+        save_freq=4,
+        ema=WarmupEMAConfig(),
     )
+    cfg.accelerator.gradient_accumulation.steps = 2
     cfg.optimizer = policy_config.get_optimizer_preset()
     cfg.scheduler = policy_config.get_scheduler_preset()
     # The config is built in-process, so skip the CLI-oriented validation.
@@ -225,170 +184,37 @@ def make_train_config(root, output_dir, steps, ema_enable, ema_decay=None):
     return cfg
 
 
-def load_safetensors(path):
-    from safetensors.torch import load_file
-
-    return load_file(path)
+def load_ema_state(checkpoint_dir):
+    with safe_open(checkpoint_dir / TRAINING_STATE_DIR / EMA_STATE, framework="pt") as file:
+        averages = {name: file.get_tensor(name) for name in file.keys()}  # noqa: SIM118
+        return int(file.metadata()["num_updates"]), averages
 
 
 @pytest.mark.gpu
-def test_train_diffusion_with_ema_checkpoint_and_resume(tmp_path):
+def test_train_with_ema_checkpoint_and_resume(tmp_path):
+    """The EMA counts optimizer updates, pretrained_model_ema holds the averages, resume is exact."""
     pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
     pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
-    from lerobot.scripts.lerobot_train import EMA_STATE_FILENAME, train
+    from lerobot.scripts.lerobot_train import train
 
     root = make_dummy_dataset(tmp_path)
-    output_dir = tmp_path / "_output"
+    train(make_train_config(root, tmp_path / "run", steps=4))
+    checkpoint_dir = tmp_path / "run" / "checkpoints" / "000004"
+    step, averages = load_ema_state(checkpoint_dir)
+    # 4 micro-batches / 2 accumulation steps = 2 optimizer updates.
+    assert step == 2
+    live = load_file(checkpoint_dir / PRETRAINED_MODEL_DIR / "model.safetensors")
+    ema = load_file(checkpoint_dir / PRETRAINED_MODEL_EMA_DIR / "model.safetensors")
+    assert all(torch.equal(ema[name], average) for name, average in averages.items())
+    assert all(torch.equal(ema[name], live[name]) for name in live.keys() - averages.keys())
+    assert any(not torch.equal(ema[name], live[name]) for name in averages)
 
-    cfg = make_train_config(root, output_dir, steps=4, ema_enable=True)
-    train(cfg)
-
-    checkpoint_dir = output_dir / "checkpoints" / "000004"
-    ema_state_path = checkpoint_dir / TRAINING_STATE_DIR / EMA_STATE_FILENAME
-    ema_model_dir = checkpoint_dir / f"{PRETRAINED_MODEL_DIR}_ema"
-
-    # The shadow state is saved for resume and tracks every optimizer step.
-    assert ema_state_path.exists()
-    ema_state = torch.load(ema_state_path, weights_only=True)
-    assert ema_state["optimization_step"] == 4
-
-    # A directly loadable EMA model is saved next to the live one, with different weights.
-    live_weights = load_safetensors(checkpoint_dir / PRETRAINED_MODEL_DIR / "model.safetensors")
-    ema_weights = load_safetensors(ema_model_dir / "model.safetensors")
-    assert set(live_weights) == set(ema_weights)
-    assert any(not torch.equal(live_weights[k], ema_weights[k]) for k in live_weights)
-
-    from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
-
-    policy = DiffusionPolicy.from_pretrained(str(ema_model_dir))
-    assert isinstance(policy, DiffusionPolicy)
-
-    # Resuming picks the shadow up where it left off instead of restarting it.
-    resume_cfg = make_train_config(root, output_dir, steps=6, ema_enable=True)
+    resume_cfg = make_train_config(root, tmp_path / "run", steps=8)
     resume_cfg.resume = True
     resume_cfg.checkpoint_path = checkpoint_dir
     train(resume_cfg)
-
-    resumed_state = torch.load(
-        output_dir / "checkpoints" / "000006" / TRAINING_STATE_DIR / EMA_STATE_FILENAME,
-        weights_only=True,
-    )
-    assert resumed_state["optimization_step"] == 6
-
-
-@pytest.mark.parametrize("saved_shadow_dtype", [torch.float32, torch.bfloat16])
-def test_train_bf16_ema_preserves_small_updates_and_resume(tmp_path, monkeypatch, saved_shadow_dtype):
-    pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
-    pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
-    trainer = pytest.importorskip("lerobot.scripts.lerobot_train")
-    make_policy = trainer.make_policy
-
-    def make_bf16_policy(*args, **kwargs):
-        return make_policy(*args, **kwargs).to(dtype=torch.bfloat16)
-
-    updates = 0
-
-    def controlled_update(metrics, policy, *args, **kwargs):
-        # Isolate EMA arithmetic from the optimizer and CPU BF16 model kernels.
-        nonlocal updates
-        updates += 1
-        with torch.no_grad():
-            for parameter in policy.parameters():
-                assert parameter.dtype == torch.bfloat16
-                parameter.fill_(1.0 if updates == 1 else 2.0)
-        return metrics, None
-
-    monkeypatch.setattr(trainer, "make_policy", make_bf16_policy)
-    monkeypatch.setattr(trainer, "update_policy", controlled_update)
-    root = make_dummy_dataset(tmp_path)
-    output_dir = tmp_path / "_output"
-    cfg = make_train_config(root, output_dir, steps=2, ema_enable=True, ema_decay=0.999)
-    assert cfg.peft is None
-    trainer.train(cfg)
-
-    checkpoint_dir = output_dir / "checkpoints" / "000002"
-    state_path = checkpoint_dir / TRAINING_STATE_DIR / trainer.EMA_STATE_FILENAME
-    state = torch.load(state_path, weights_only=True)
-    assert state["optimization_step"] == 2
-    assert all(p.dtype == torch.float32 for p in state["shadow_params"])
-    # BF16 would round 1.001 back to 1.0 and lose this update completely.
-    torch.testing.assert_close(state["shadow_params"][0], torch.full_like(state["shadow_params"][0], 1.001))
-    live = load_safetensors(checkpoint_dir / PRETRAINED_MODEL_DIR / "model.safetensors")
-    assert all(p.dtype == torch.bfloat16 for p in live.values() if p.is_floating_point())
-
-    # Cover both new FP32 checkpoints and older BF16 shadows without resetting their step.
-    state["shadow_params"] = [p.to(saved_shadow_dtype) for p in state["shadow_params"]]
-    torch.save(state, state_path)
-    previous = state["shadow_params"][0].float()
-    expected = previous - 0.001 * (previous - 2.0)
-    resume_cfg = make_train_config(root, output_dir, steps=3, ema_enable=True, ema_decay=0.999)
-    resume_cfg.resume = True
-    resume_cfg.checkpoint_path = checkpoint_dir
-    trainer.train(resume_cfg)
-
-    resumed = torch.load(
-        output_dir / "checkpoints" / "000003" / TRAINING_STATE_DIR / trainer.EMA_STATE_FILENAME,
-        weights_only=True,
-    )
-    assert resumed["optimization_step"] == 3
-    assert all(p.dtype == torch.float32 for p in resumed["shadow_params"])
-    torch.testing.assert_close(resumed["shadow_params"][0], expected)
-
-
-def test_train_with_constant_ema_decay(tmp_path):
-    pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
-    pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
-    from lerobot.scripts.lerobot_train import EMA_STATE_FILENAME, train
-
-    root = make_dummy_dataset(tmp_path)
-    output_dir = tmp_path / "_output"
-
-    cfg = make_train_config(root, output_dir, steps=2, ema_enable=True, ema_decay=0.99)
-    train(cfg)
-
-    ema_state = torch.load(
-        output_dir / "checkpoints" / "000002" / TRAINING_STATE_DIR / EMA_STATE_FILENAME,
-        weights_only=True,
-    )
-    # The constant decay is implemented by pinning the schedule clamp to that value.
-    assert ema_state["decay"] == 0.99
-    assert ema_state["min_decay"] == 0.99
-    assert ema_state["optimization_step"] == 2
-
-
-def test_train_with_ema_and_gradient_accumulation(tmp_path):
-    """The shadow tracks optimizer steps, not micro-batches, under gradient accumulation."""
-    pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
-    pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
-    from lerobot.scripts.lerobot_train import EMA_STATE_FILENAME, train
-
-    root = make_dummy_dataset(tmp_path)
-    output_dir = tmp_path / "_output"
-
-    cfg = make_train_config(root, output_dir, steps=4, ema_enable=True)
-    cfg.accelerator.gradient_accumulation.steps = 2
-    train(cfg)
-
-    ema_state = torch.load(
-        output_dir / "checkpoints" / "000004" / TRAINING_STATE_DIR / EMA_STATE_FILENAME,
-        weights_only=True,
-    )
-    # 4 micro-batches / 2 accumulation steps = 2 optimizer updates.
-    assert ema_state["optimization_step"] == 2
-
-
-def test_train_without_ema_writes_no_ema_files(tmp_path):
-    pytest.importorskip("accelerate", reason="accelerate is required (install lerobot[training])")
-    pytest.importorskip("diffusers", reason="diffusers is required (install lerobot[diffusion])")
-    from lerobot.scripts.lerobot_train import EMA_STATE_FILENAME, train
-
-    root = make_dummy_dataset(tmp_path)
-    output_dir = tmp_path / "_output"
-
-    cfg = make_train_config(root, output_dir, steps=2, ema_enable=False)
-    train(cfg)
-
-    checkpoint_dir = output_dir / "checkpoints" / "000002"
-    assert (checkpoint_dir / PRETRAINED_MODEL_DIR / "model.safetensors").exists()
-    assert not (checkpoint_dir / TRAINING_STATE_DIR / EMA_STATE_FILENAME).exists()
-    assert not (checkpoint_dir / f"{PRETRAINED_MODEL_DIR}_ema").exists()
+    train(make_train_config(root, tmp_path / "uninterrupted", steps=8))
+    resumed_step, resumed = load_ema_state(tmp_path / "run" / "checkpoints" / "000008")
+    uninterrupted_step, uninterrupted = load_ema_state(tmp_path / "uninterrupted" / "checkpoints" / "000008")
+    assert resumed_step == uninterrupted_step == 4
+    assert all(torch.equal(average, uninterrupted[name]) for name, average in resumed.items())
