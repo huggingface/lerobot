@@ -121,23 +121,44 @@ def test_robot_hold_does_not_advance_environment(server, tmp_path):
 
 
 @pytest.mark.parametrize("where", ["local", "served"])
-def test_a_finished_sim_world_starts_the_next_episode(where, request, tmp_path):
+def test_a_sim_episode_ends_and_restarts_as_in_gymnasium(where, request, tmp_path):
     config = ToyEnvConfig(endpoint=request.getfixturevalue("server")[1] if where == "served" else None)
     robot = SimRobot(SimRobotConfig(env=config, calibration_dir=tmp_path))
     try:
         robot.connect()
-        # The toy terminates once x passes 1: one step of 2 ends the episode, and the world restarts.
+        assert not robot.episode_ended
+        # The toy terminates once x passes 1: one step of 2 ends the episode, which keeps its last state.
         robot.send_action({"command_0": 2.0, "command_1": 0.0})
-        # The finished step stays readable, while observations come from the next episode.
+        assert robot.episode_ended
         assert robot.latest.terminated[0] and robot.latest.is_success[0] and robot.latest.reward[0] == 1
+        assert robot.get_observation()["state_0"] >= 1
+        # As in Gymnasium's autoreset, the next action starts the next episode instead of moving the robot.
+        robot.send_action({"command_0": 2.0, "command_1": 0.0})
+        assert not robot.episode_ended and robot.latest.elapsed_steps[0] == 0
         assert robot.get_observation()["state_0"] < 1
-        # It truncates after 5 steps: the 5th step starts the next episode too.
+        # It truncates after 5 steps.
         for _ in range(5):
             robot.send_action({"command_0": 0.0, "command_1": 0.0})
-        assert robot.latest.truncated[0] and robot.latest.elapsed_steps[0] == 5
-        assert robot.get_observation()["state_0"] < 1
+        assert robot.episode_ended and robot.latest.truncated[0] and robot.latest.elapsed_steps[0] == 5
+        # A caller running episodes starts each one, from a seed when given.
+        robot.start_episode(seed=3)
+        start = robot.get_observation()["state_0"]
+        robot.start_episode(seed=3)
+        assert not robot.episode_ended and robot.get_observation()["state_0"] == start
     finally:
         robot.disconnect()
+
+
+def test_episode_functions_leave_real_robots_alone():
+    from unittest.mock import MagicMock
+
+    from lerobot.robots import Robot
+    from lerobot.robots.sim import episode_ended, start_episode
+
+    robot = MagicMock(spec=Robot)
+    start_episode(robot)
+    assert not episode_ended(robot)
+    assert not robot.method_calls
 
 
 def test_sim_robot_names_the_actions_it_takes(tmp_path):
@@ -486,13 +507,13 @@ def test_recorded_sim_episodes_can_train_and_reload_a_policy(where, request, tmp
         ),
     )
     dataset = lerobot_record.record(cfg)
-    # Episodes are timed as on hardware, with an unrecorded reset phase between them.
+    # A recorded episode ends with the simulator's: here its first action succeeds, so each holds one frame,
+    # recorded from the start of a new world. The unrecorded reset phase still runs between them.
     assert dataset.num_episodes == 2
     reader = LeRobotDataset(cfg.dataset.repo_id, root=cfg.dataset.root)
-    assert len(reader) >= 2 * dataset.num_episodes
+    assert len(reader) == dataset.num_episodes
     assert teleop.get_action.call_count > len(reader)
     samples = [reader[index] for index in range(len(reader))]
-    # Every action ends the toy's episode, so every recorded frame starts from a restarted world.
     assert all(sample["observation.state"][0] < 1 for sample in samples)
     checkpoint_config = SimpleNamespace(
         input_features={

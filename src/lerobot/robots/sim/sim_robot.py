@@ -32,12 +32,13 @@ if TYPE_CHECKING:
 
 
 class SimRobot(Robot):
-    """A simulated environment as a robot: swappable with hardware, and like it, with no episode controls.
+    """A simulated environment as a robot: swappable with hardware.
 
-    Each sent action advances the environment exactly once; when its episode ends, the next one starts, as
-    Gymnasium's autoreset does. ``latest`` keeps the result of the last step, so a finished episode's reward,
-    termination and success stay readable while observations come from the next episode. Its ``robot_type``
-    is the simulated body the environment declares, else ``sim``; ``name`` stays ``sim``.
+    Each sent action advances the environment exactly once. Callers that run episodes start each one with
+    ``start_episode`` and end it when ``episode_ended``; until then a finished episode keeps its last state,
+    and ``latest`` its reward, termination and success. As in Gymnasium's default autoreset, an action sent
+    after a finished episode starts the next one instead of moving the robot. Its ``robot_type`` is the
+    simulated body the environment declares, else ``sim``; ``name`` stays ``sim``.
     """
 
     config_class = SimRobotConfig
@@ -161,12 +162,22 @@ class SimRobot(Robot):
         values = np.asarray([[action[name] for name in names]], dtype=np.float32)
         if not self._connected or self._env is None:
             raise RuntimeError("Connect before sending an action")
-        self._env.step(values)
-        self.latest = self._env.latest
-        if self.latest.terminated[0] or self.latest.truncated[0]:
-            # As Gymnasium's autoreset does, a finished episode starts the next one.
-            self._env.reset()
+        if self.episode_ended:
+            self.start_episode()
+        else:
+            self._env.step(values)
+            self.latest = self._env.latest
         return {name: float(value) for name, value in zip(names, values[0], strict=True)}
+
+    def start_episode(self, seed: int | None = None) -> None:
+        if not self._connected or self._env is None:
+            raise RuntimeError("Connect before starting an episode")
+        self._env.reset(seed=seed)
+        self.latest = self._env.latest
+
+    @property
+    def episode_ended(self) -> bool:
+        return self.latest is not None and bool(self.latest.terminated[0] or self.latest.truncated[0])
 
     def hold(self) -> None:
         """Nothing to do: the simulation advances only on send_action()."""
@@ -189,3 +200,17 @@ def check_control_rate(robot: Robot, fps: float, flag: str | None = None) -> Non
         raise ValueError(
             f"The control loop runs at {fps:g} fps but the simulator control rate is {rate:g} Hz{hint}"
         )
+
+
+def start_episode(robot: Robot) -> None:
+    """Start a recorded episode: a sim robot restarts its world, while a real robot's scene is reset by hand."""
+    if isinstance(robot, SimRobot):
+        robot.start_episode()
+
+
+def episode_ended(robot: Robot) -> bool:
+    """Whether a sim robot's own episode (success, failure or step limit) ended at the last action.
+
+    A real robot's episodes are timed by the caller.
+    """
+    return isinstance(robot, SimRobot) and robot.episode_ended

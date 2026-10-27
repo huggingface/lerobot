@@ -133,7 +133,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
     unitree_g1 as unitree_g1_robot,
 )
-from lerobot.robots.sim import check_control_rate
+from lerobot.robots.sim import check_control_rate, episode_ended, start_episode
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -379,6 +379,10 @@ def record_loop(
                     compress_images=display_compressed_images,
                 )
 
+        # A sim robot's own episode end (success, failure or step limit) ends the recorded episode.
+        if dataset is not None and episode_ended(robot):
+            break
+
         timer.wait()
 
         timestamp = time.perf_counter() - start_episode_t
@@ -503,6 +507,7 @@ def record(
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 episode_index = dataset.num_episodes
+                start_episode(robot)
                 log_say(f"Recording episode {episode_index}", cfg.play_sounds)
                 record_loop(
                     robot=robot,

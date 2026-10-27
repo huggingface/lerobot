@@ -13,4 +13,9 @@
 # limitations under the License.
 
 from .config_sim import SimRobotConfig as SimRobotConfig
-from .sim_robot import SimRobot as SimRobot, check_control_rate as check_control_rate
+from .sim_robot import (
+    SimRobot as SimRobot,
+    check_control_rate as check_control_rate,
+    episode_ended as episode_ended,
+    start_episode as start_episode,
+)

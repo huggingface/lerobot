@@ -1163,6 +1163,36 @@ def test_episodic_records_once_per_interpolation_cycle():
     assert _recorded_actions(dataset) == [1.0, 2.0, 3.0, 4.0]
 
 
+def test_episodic_episode_ends_with_the_robots():
+    from unittest.mock import PropertyMock
+
+    from lerobot.robots.sim import SimRobot
+    from lerobot.rollout import EpisodicStrategyConfig
+    from lerobot.rollout.strategies import EpisodicStrategy
+    from lerobot.utils.action_interpolator import ActionInterpolator
+
+    ctx, dataset = _make_loop_ctx(fps=200.0, multiplier=1, num_ticks=8)
+    # The sim robot's episode ends at the third action, before the loop's own time is up.
+    sim_robot = MagicMock(spec=SimRobot)
+    type(sim_robot).episode_ended = PropertyMock(side_effect=[False, False, True])
+    ctx.hardware.robot_wrapper.inner = sim_robot
+    strategy = EpisodicStrategy(EpisodicStrategyConfig())
+    strategy._engine = ctx.policy.inference
+    strategy._interpolator = ActionInterpolator(multiplier=1)
+
+    strategy._policy_loop(
+        ctx=ctx,
+        robot=ctx.hardware.robot_wrapper,
+        events={"exit_early": False},
+        features=_LOOP_FEATURES,
+        timer=CycleTimer(200.0, 1),
+        control_time_s=10.0,
+        dataset=dataset,
+    )
+
+    assert _recorded_actions(dataset) == [1.0, 2.0, 3.0]
+
+
 def test_dagger_continuous_records_once_per_interpolation_cycle():
     from lerobot.rollout import DAggerStrategyConfig
     from lerobot.rollout.strategies import DAggerStrategy
