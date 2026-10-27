@@ -26,7 +26,6 @@ from lerobot.sim.types import EnvDescriptor, StepResult
 from lerobot.transport.wire.client import query_reply
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError
 from lerobot.transport.zenoh import PresenceToken, ZenohConfig, ZenohTransport
-from lerobot.utils.feature_spec import feature_mismatch
 
 from .contracts import (
     ANY_DEPLOYMENT_DESCRIBE,
@@ -130,16 +129,7 @@ class EnvClient:
                 self.setup_timeout_s,
             )
             opened_descriptor = decode_descriptor(body["descriptor"])
-            if (
-                tuple(f.name for f in opened_descriptor.features)
-                != tuple(f.name for f in descriptor.features)
-                or any(
-                    feature_mismatch(actual, expected)
-                    for actual, expected in zip(opened_descriptor.features, descriptor.features, strict=True)
-                )
-                or feature_mismatch(opened_descriptor.action_feature, descriptor.action_feature)
-                or opened_descriptor.semantics != descriptor.semantics
-            ):
+            if not opened_descriptor.same_schema(descriptor):
                 self.transport.close()
                 raise ProtocolError(
                     ErrorCode.INCOMPATIBLE, "Selected task differs from the negotiated simulator schema"

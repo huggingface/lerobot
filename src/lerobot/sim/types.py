@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 from gymnasium import spaces
 
-from lerobot.utils.feature_spec import FeatureSpec
+from lerobot.utils.feature_spec import FeatureSpec, feature_mismatch
 
 _EMPTY_CAMERA_PREFIX = "observation.images.empty_camera_"
 
@@ -65,6 +65,15 @@ class EnvDescriptor:
     def action_space(self) -> spaces.Box:
         """One environment's action space."""
         return spaces.Box(-np.inf, np.inf, self.action_feature.shape, np.float32)
+
+    def same_schema(self, other: "EnvDescriptor") -> bool:
+        """Whether ``other`` declares the same observations, action and semantics."""
+        return (
+            [f.name for f in self.features] == [f.name for f in other.features]
+            and not any(feature_mismatch(a, b) for a, b in zip(self.features, other.features, strict=True))
+            and not feature_mismatch(self.action_feature, other.action_feature)
+            and self.semantics == other.semantics
+        )
 
     def validate_checkpoint(self, config: Any, rename_map: dict[str, str]) -> None:
         """Reject a checkpoint whose inputs or action do not fit this environment.
