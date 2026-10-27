@@ -564,6 +564,8 @@ def mean_std_unnormalize(value: Tensor, mean: Tensor, std: Tensor, eps: float = 
     """Inverse of :func:`mean_std_normalize`; constant dimensions return their mean."""
 
     dtype = torch.promote_types(value.dtype, torch.promote_types(mean.dtype, std.dtype))
+    if value.device.type == "mps" and dtype == torch.float64:
+        dtype = torch.float32
     value = value.to(dtype=dtype)
     mean = mean.to(device=value.device, dtype=dtype)
     std = std.to(device=value.device, dtype=dtype)

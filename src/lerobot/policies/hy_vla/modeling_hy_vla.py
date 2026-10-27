@@ -28,10 +28,13 @@ import sys
 import types
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+from huggingface_hub import hf_hub_download
+from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
+from safetensors import safe_open
 from torch import Tensor, nn
 from transformers import AutoTokenizer, PretrainedConfig, PreTrainedModel
 
@@ -39,12 +42,17 @@ from lerobot.configs import PreTrainedConfig
 from lerobot.policies.chunk import ChunkPolicySpec
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.import_utils import _accelerate_available, require_package
 from lerobot.utils.language import require_single_text_output
 
 from .configuration_hy_vla import HyVLAConfig
 from .modeling.hunyuan_vl_mot import HunYuanVLMoTConfig, HunYuanVLMoTForConditionalGeneration
 from .modeling.hunyuan_vl_mot.modeling_hunyuan_vl_mot import _HunYuanVLMoTTextForCausalLM
 from .processor_hy_vla import HY_VLA_ATTENTION_MASK, HY_VLA_INPUT_IDS, HY_VLA_PREDICT_ACTIONS
+
+if TYPE_CHECKING or _accelerate_available:
+    from accelerate import init_empty_weights
+    from accelerate.utils import set_module_tensor_to_device
 
 # -----------------------------------------------------------------------------
 # Space-time video attention
@@ -1852,6 +1860,7 @@ class HyVLAPolicy(PreTrainedPolicy):
         config: PreTrainedConfig | None = None,
         revision: str | None = None,
         strict: bool = True,
+        low_cpu_mem_usage: bool | None = None,
         **kwargs: Any,
     ) -> HyVLAPolicy:
         if config is None:
@@ -1865,10 +1874,39 @@ class HyVLAPolicy(PreTrainedPolicy):
             )
         if not isinstance(config, HyVLAConfig):
             raise TypeError(f"Expected HyVLAConfig, got {type(config)!r}.")
+        if config.device is None:
+            raise ValueError("Hy-VLA checkpoint loading requires a device.")
         # Transient fields are intentionally not dataclass fields, so absolute
         # local paths are never baked into config.json on the next save.
         config._tokenizer_source = str(pretrained_name_or_path)
         config._tokenizer_revision = revision
+        if low_cpu_mem_usage is None:
+            low_cpu_mem_usage = torch.device(config.device).type == "mps" and strict
+        if low_cpu_mem_usage:
+            if not strict:
+                raise ValueError("Streaming Hy-VLA checkpoint loading requires strict=True.")
+            require_package("accelerate", extra="hy_vla")
+            model_path = Path(pretrained_name_or_path)
+            if model_path.is_dir():
+                model_file = model_path / SAFETENSORS_SINGLE_FILE
+            else:
+                model_file = Path(
+                    hf_hub_download(
+                        repo_id=str(pretrained_name_or_path),
+                        filename=SAFETENSORS_SINGLE_FILE,
+                        revision=revision,
+                        force_download=kwargs.get("force_download", False),
+                        cache_dir=kwargs.get("cache_dir"),
+                        local_files_only=kwargs.get("local_files_only", False),
+                        token=kwargs.get("token"),
+                    )
+                )
+            # Keep small, non-persistent rotary buffers real. Parameter-only meta
+            # initialization avoids allocating random FP32 and BF16 model copies.
+            with init_empty_weights(include_buffers=False):
+                policy = cls(config)
+            cls._load_streamed_state(policy, model_file, config.device)
+            return policy.to(config.device).eval()
         return super().from_pretrained(
             pretrained_name_or_path,
             config=config,
@@ -1876,6 +1914,47 @@ class HyVLAPolicy(PreTrainedPolicy):
             strict=strict,
             **kwargs,
         )
+
+    @staticmethod
+    def _load_streamed_state(policy: nn.Module, model_file: Path, device: str) -> None:
+        """Load one tensor at a time, restoring aliases recorded by safe_save_model."""
+        require_package("accelerate", extra="hy_vla")
+        expected = policy.state_dict()
+        with safe_open(model_file, framework="pt", device="cpu") as weights:
+            names = weights.keys()
+            saved_names = set(names)
+            metadata = weights.metadata() or {}
+            aliases = {
+                name: metadata[name]
+                for name in set(expected) - saved_names
+                if metadata.get(name) in saved_names
+            }
+            missing = set(expected) - saved_names - aliases.keys()
+            unexpected = saved_names - set(expected)
+            if missing or unexpected:
+                raise RuntimeError(
+                    f"Hy-VLA checkpoint keys do not match: missing={sorted(missing)}, unexpected={sorted(unexpected)}"
+                )
+            for name in names:
+                value = weights.get_tensor(name)
+                if value.shape != expected[name].shape:
+                    raise RuntimeError(
+                        f"Hy-VLA checkpoint shape mismatch for {name}: {value.shape} != {expected[name].shape}"
+                    )
+                set_module_tensor_to_device(policy, name, device, value=value)
+                del value
+            # Meta initialization can break parameter ties. Reconnect the exact
+            # aliases declared in the saved checkpoint without allocating copies.
+            for alias, source in aliases.items():
+                if expected[alias].shape != expected[source].shape:
+                    raise RuntimeError(f"Hy-VLA checkpoint alias shape mismatch: {alias} -> {source}")
+                parent, _, field = alias.rpartition(".")
+                source_parent, _, source_field = source.rpartition(".")
+                setattr(
+                    policy.get_submodule(parent),
+                    field,
+                    getattr(policy.get_submodule(source_parent), source_field),
+                )
 
     def _save_pretrained(self, save_directory: Path) -> None:
         from lerobot.distributed.utils import is_main_process

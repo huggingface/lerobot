@@ -3401,6 +3401,7 @@ hopejr = [
     { name = "rustypot" },
 ]
 hy-vla = [
+    { name = "accelerate" },
     { name = "av" },
     { name = "datasets" },
     { name = "jsonlines" },
@@ -3703,6 +3704,7 @@ requires-dist = [
     { name = "jupyter", marker = "extra == 'notebook'", specifier = ">=1.0.0,<2.0.0" },
     { name = "kernels", marker = "extra == 'fineart-vla-kernels'", specifier = ">=0.14.1,<0.15.0" },
     { name = "lancedb", marker = "extra == 'lancedb'", specifier = ">=0.37.1,<0.40.0" },
+    { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'hy-vla'" },
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'lingbot-va'" },
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'smolvla'" },
     { name = "lerobot", extras = ["accelerate-dep"], marker = "extra == 'training'" },

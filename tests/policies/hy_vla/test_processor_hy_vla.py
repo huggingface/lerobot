@@ -23,6 +23,7 @@ from lerobot.policies.hy_vla.configuration_hy_vla import HyVLAConfig
 from lerobot.policies.hy_vla.processor_hy_vla import (
     HyVLATokenizerStep,
     make_hy_vla_pre_post_processors,
+    mean_std_unnormalize,
     reconnect_hy_vla_processors,
 )
 from lerobot.processor import (
@@ -33,6 +34,17 @@ from lerobot.processor import (
     transition_to_batch,
     transition_to_policy_action,
 )
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="Requires Apple MPS")
+def test_mps_unnormalization_accepts_saved_float64_statistics():
+    value = torch.tensor([0.25, -0.5, 1.0], dtype=torch.bfloat16, device="mps")
+    mean = torch.tensor([0.1, 0.2, 0.3], dtype=torch.float64)
+    std = torch.tensor([0.3, 0.4, 0.0], dtype=torch.float64)
+    actual = mean_std_unnormalize(value, mean, std)
+    expected = value.cpu().double() * std + mean
+    assert actual.device.type == "mps" and actual.dtype == torch.float32
+    torch.testing.assert_close(actual.cpu(), expected.float(), rtol=1e-6, atol=1e-7)
 
 
 class _FakeTokenizer:

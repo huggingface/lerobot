@@ -67,6 +67,22 @@ needs more GPU memory than fused attention implementations.
 
 ## Checkpoints
 
+### Apple silicon inference
+
+Set the loaded policy configuration's `device` to `mps` before calling
+`HyVLAPolicy.from_pretrained`. Strict MPS loading initializes parameters without
+allocating random model weights, then streams each saved tensor onto Metal.
+Checkpoint-declared tied weights are restored and non-persistent rotary buffers
+are initialized normally. The saved weights are unchanged.
+
+The `hy_vla` extra includes Accelerate for this loading path. To request streaming
+on another device, pass `low_cpu_mem_usage=True` with `strict=True`; CPU and CUDA
+keep their existing default loading path. Saved float64 normalization statistics
+are evaluated in float32 on MPS, which does not support float64 tensors.
+
+Measure chunk-generation latency before selecting a robot control rate. Loading
+and inference support alone do not establish real-time control performance.
+
 | Variant  | LeRobot checkpoint                                                          | Action chunk                           | Image history |
 | -------- | --------------------------------------------------------------------------- | -------------------------------------- | ------------: |
 | UMI      | [`lerobot/hy_vla_umi`](https://huggingface.co/lerobot/hy_vla_umi)           | 50 relative actions at 10 Hz           |       1 frame |
