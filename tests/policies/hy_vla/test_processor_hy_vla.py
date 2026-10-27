@@ -46,7 +46,10 @@ class _FakeTokenizer:
 
 @pytest.mark.parametrize("query_kind", ["vqa", "next_subtask"])
 def test_runtime_query_reaches_tokenizer(query_kind):
-    config = HyVLAConfig(device="cpu")
+    if query_kind == "next_subtask":
+        pytest.importorskip("datasets", reason="Subtask recipes require lerobot[dataset]")
+        pytest.importorskip("av", reason="Subtask recipes require lerobot[dataset]")
+    config = HyVLAConfig(device="cpu", **({"recipe": None} if query_kind == "vqa" else {}))
     preprocessor, _ = make_hy_vla_pre_post_processors(config, norm_stats=_stats(50))
     _stub_tokenizer(preprocessor)
     processed = preprocessor(
@@ -104,7 +107,7 @@ def _batch(state: torch.Tensor, action: torch.Tensor | None = None) -> dict:
 
 
 def test_processor_preserves_task_and_serializes_stats(tmp_path: Path):
-    config = HyVLAConfig(device="cpu")
+    config = HyVLAConfig(device="cpu", recipe=None)
     stats = _stats(50)
     stats["action_std"] = stats["action_std"].double()
     preprocessor, postprocessor = make_hy_vla_pre_post_processors(config, norm_stats=stats)
@@ -148,6 +151,7 @@ def test_processor_preserves_task_and_serializes_stats(tmp_path: Path):
 def test_relative_absolute_tokens_are_paired_and_blended():
     config = HyVLAConfig(
         device="cpu",
+        recipe=None,
         chunk_size=40,
         n_action_steps=40,
         action_representation="relative_absolute",

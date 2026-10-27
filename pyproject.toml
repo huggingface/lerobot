@@ -271,7 +271,7 @@ vla_jepa = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[qwen
 lingbot_va = ["lerobot[transformers-dep]", "lerobot[diffusers-dep]", "lerobot[accelerate-dep]"]
 lingbot_vla_v2 = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 wall_oss_05 = ["lerobot[transformers-dep]"]
-hy_vla = ["lerobot[transformers-dep]"]
+hy_vla = ["lerobot[transformers-dep]", "lerobot[dataset]"]
 lawam = [
     "lerobot[transformers-dep]",
     "lerobot[diffusers-dep]",
