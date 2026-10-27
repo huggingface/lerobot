@@ -63,6 +63,7 @@ def setup(monkeypatch, tmp_path):
         dataset=SimpleNamespace(single_task="recorded instruction", video=False),
         rename_map={},
         fps=10,
+        interpolation_multiplier=1,
     )
     return cfg, client, robot, make_robot
 

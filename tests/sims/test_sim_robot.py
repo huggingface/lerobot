@@ -284,6 +284,7 @@ def test_rollout_rejects_checkpoint_schema_before_opening_environment(server, tm
         teleop=None,
         rename_map={},
         fps=robot.descriptor.fps,
+        interpolation_multiplier=1,
         policy=SimpleNamespace(
             input_features={"observation.state": PolicyFeature(type=FeatureType.STATE, shape=(6,))},
             output_features={"action": PolicyFeature(type=FeatureType.ACTION, shape=(2,))},
@@ -294,6 +295,13 @@ def test_rollout_rejects_checkpoint_schema_before_opening_environment(server, tm
     # A control rate other than the simulator's would replay actions too fast or too slow.
     cfg.fps = robot.descriptor.fps * 2
     with pytest.raises(ValueError, match=f"control rate is {robot.descriptor.fps:g} Hz: pass --fps="):
+        context._connect_rollout_hardware(cfg)
+    # Each interpolated command advances the simulation too: the loop runs at the rate divided by them.
+    cfg.fps, cfg.interpolation_multiplier = robot.descriptor.fps / 2, 2
+    with pytest.raises(ValueError, match="shape mismatch"):
+        context._connect_rollout_hardware(cfg)
+    cfg.fps = robot.descriptor.fps
+    with pytest.raises(ValueError, match=f"pass --fps={robot.descriptor.fps / 2:g}"):
         context._connect_rollout_hardware(cfg)
     assert not server[0].sessions
     assert not robot.is_connected

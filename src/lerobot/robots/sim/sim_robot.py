@@ -189,16 +189,19 @@ class SimRobot(Robot):
         self._connected = False
 
 
-def check_control_rate(robot: Robot, fps: float, flag: str | None = None) -> None:
+def check_control_rate(robot: Robot, fps: float, flag: str | None = None, multiplier: int = 1) -> None:
     """A sim robot ticks at its env's rate: a loop at another fps would play or record at the wrong speed.
 
-    ``flag`` is the command-line option that sets ``fps``, named in the error.
+    Each command advances the simulation once, so with ``multiplier`` commands per loop cycle (rollout's action
+    interpolation) the loop must run at the rate divided by ``multiplier``. ``flag`` is the command-line option
+    that sets ``fps``, named in the error.
     """
-    if isinstance(robot, SimRobot) and not math.isclose(fps, robot.descriptor.fps):
+    if isinstance(robot, SimRobot) and not math.isclose(fps * multiplier, robot.descriptor.fps):
         rate = robot.descriptor.fps
-        hint = f": pass {flag}={rate:g}" if flag else ""
+        hint = f": pass {flag}={rate / multiplier:g}" if flag else ""
         raise ValueError(
-            f"The control loop runs at {fps:g} fps but the simulator control rate is {rate:g} Hz{hint}"
+            f"The control loop sends {fps * multiplier:g} commands per second but the simulator control rate "
+            f"is {rate:g} Hz{hint}"
         )
 
 
