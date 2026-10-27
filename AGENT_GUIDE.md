@@ -382,7 +382,7 @@ lerobot-eval \
 
 - Use `--policy.path=outputs/train/.../checkpoints/<step>/pretrained_model` for local checkpoints.
 - `--eval.n_episodes` should be ≥ 50 for a stable success-rate estimate.
-- Available envs live in `src/lerobot/envs/`. See [`docs/source/libero.mdx`](./docs/source/libero.mdx), [`metaworld.mdx`](./docs/source/metaworld.mdx), [`robocasa.mdx`](./docs/source/robocasa.mdx), [`vlabench.mdx`](./docs/source/vlabench.mdx) for specific benchmarks.
+- Env configs live in `src/lerobot/envs/configs.py`, simulator integrations in `src/lerobot/sim/integrations/`. See [`docs/source/libero.mdx`](./docs/source/libero.mdx), [`metaworld.mdx`](./docs/source/metaworld.mdx), [`robocasa.mdx`](./docs/source/robocasa.mdx), [`vlabench.mdx`](./docs/source/vlabench.mdx) for specific benchmarks.
 - To add a new benchmark, see [`docs/source/adding_benchmarks.mdx`](./docs/source/adding_benchmarks.mdx) and [`envhub.mdx`](./docs/source/envhub.mdx).
 
 ### 8.2b Simulator servers for benchmark eval
