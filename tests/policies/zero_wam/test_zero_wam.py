@@ -26,6 +26,8 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+import torch.distributed.checkpoint as dcp
+from torch.distributed.checkpoint.state_dict import get_optimizer_state_dict, set_optimizer_state_dict
 
 pytest.importorskip("diffusers")
 
@@ -240,6 +242,54 @@ def test_training_preserves_selected_task(monkeypatch) -> None:
     monkeypatch.setattr(policy, "_encode_text", capture)
     policy.forward(batch)
     assert seen == [supplied]
+
+
+def test_dcp_optimizer_restart(tmp_path) -> None:
+    config = tiny_config(drop_icl=0.0, droptext_target=0.0)
+    policy = make_policy(config)
+    optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=1e-3)
+    batch = training_batch(config, batch_size=2)
+    policy.forward(batch)[0].backward()
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+    checkpoint = tmp_path / "dcp"
+    dcp.save(
+        {"model": policy.state_dict(), "optimizer": get_optimizer_state_dict(policy, optimizer)},
+        checkpoint_id=checkpoint,
+    )
+
+    restored = make_policy(config)
+    restored_optimizer = torch.optim.AdamW(restored.get_optim_params(), lr=1e-3)
+    state = {
+        "model": restored.state_dict(),
+        "optimizer": get_optimizer_state_dict(restored, restored_optimizer),
+    }
+    dcp.load(state, checkpoint_id=checkpoint)
+    restored.load_state_dict(state["model"], strict=True)
+    set_optimizer_state_dict(restored, restored_optimizer, state["optimizer"])
+    restored_optimizer.zero_grad(set_to_none=True)
+
+    original_params = dict(policy.named_parameters())
+    for name, parameter in restored.named_parameters():
+        torch.testing.assert_close(parameter, original_params[name], atol=0, rtol=0)
+        if parameter.requires_grad:
+            expected = optimizer.state[original_params[name]]
+            actual = restored_optimizer.state[parameter]
+            assert actual.keys() == expected.keys()
+            for field in expected:
+                torch.testing.assert_close(actual[field], expected[field], atol=0, rtol=0)
+
+    rng_state = torch.get_rng_state()
+    loss = policy.forward(batch)[0]
+    loss.backward()
+    optimizer.step()
+    torch.set_rng_state(rng_state)
+    restored_loss = restored.forward(batch)[0]
+    restored_loss.backward()
+    restored_optimizer.step()
+    torch.testing.assert_close(restored_loss, loss, atol=0, rtol=0)
+    for name, value in restored.state_dict().items():
+        torch.testing.assert_close(value, policy.state_dict()[name], atol=0, rtol=0)
 
 
 @pytest.mark.parametrize("stride", [1, 2])
