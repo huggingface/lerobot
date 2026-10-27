@@ -62,14 +62,38 @@ jobs:
           POLICIES: ${{ inputs.policies }}
         run: echo "policies=$(python3 scripts/ci/model_profiling.py matrix)" >> "$GITHUB_OUTPUT"
 
+  image:
+    if: ${{ !inputs.publish_latest }}
+    runs-on: ubuntu-latest
+    outputs:
+      image: huggingface/lerobot-gpu@${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          cache-binary: false
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          username: ${{ secrets.DOCKERHUB_LEROBOT_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_LEROBOT_PASSWORD }}
+      - id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: docker
+          file: docker/Dockerfile.profiling
+          push: true
+          tags: huggingface/lerobot-gpu:profiling-${{ github.sha }}
+
   profile:
     if: ${{ !inputs.publish_latest }}
-    needs: matrix
+    needs: [matrix, image]
     runs-on:
       group: ${{ inputs.runner_group || vars.MODEL_PROFILING_RUNNER_GROUP || 'aws-g6e-4xlarge-cache' }}
     container:
-      image: huggingface/lerobot-gpu@sha256:adc6313d3f7f183746cd84895b64f438cb818d8a61e9e903d877b13f497de633
-      options: --gpus all --shm-size=16g --user 0
+      image: ${{ needs.image.outputs.image }} # zizmor: ignore[unpinned-images] output includes the built digest
+      options: --gpus all --shm-size=16g
     defaults:
       run:
         shell: bash
