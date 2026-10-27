@@ -119,7 +119,7 @@ def test_robomme_conventions_follow_the_action_space(action_space, control_mode,
 def test_reset_exposes_episode_task_description():
     _install_robomme_stub()
     try:
-        from lerobot.sims.integrations.robomme import RoboMMEGymEnv
+        from lerobot.sim.integrations.robomme import RoboMMEGymEnv
 
         env = RoboMMEGymEnv(task="PickXtimes")
         env.reset()
@@ -133,7 +133,7 @@ def test_reset_exposes_episode_task_description():
 def test_close_releases_underlying_simulator():
     _install_robomme_stub()
     try:
-        from lerobot.sims.integrations.robomme import RoboMMEGymEnv
+        from lerobot.sim.integrations.robomme import RoboMMEGymEnv
 
         env = RoboMMEGymEnv(task="PickXtimes")
         env.reset()
@@ -150,7 +150,7 @@ def test_close_releases_underlying_simulator():
 def test_reset_closes_previous_simulator():
     _install_robomme_stub()
     try:
-        from lerobot.sims.integrations.robomme import RoboMMEGymEnv
+        from lerobot.sim.integrations.robomme import RoboMMEGymEnv
 
         env = RoboMMEGymEnv(task="PickXtimes")
         env.reset()
@@ -172,7 +172,7 @@ def test_convert_obs_list_format():
     """
     _install_robomme_stub()
     try:
-        from lerobot.sims.integrations.robomme import RoboMMEGymEnv
+        from lerobot.sim.integrations.robomme import RoboMMEGymEnv
 
         env = RoboMMEGymEnv.__new__(RoboMMEGymEnv)
 
@@ -208,7 +208,7 @@ def test_convert_obs_array_format():
     """_convert_obs also handles non-list (direct array) obs."""
     _install_robomme_stub()
     try:
-        from lerobot.sims.integrations.robomme import RoboMMEGymEnv
+        from lerobot.sim.integrations.robomme import RoboMMEGymEnv
 
         env = RoboMMEGymEnv.__new__(RoboMMEGymEnv)
 
@@ -236,7 +236,7 @@ def test_create_robomme_envs_returns_correct_structure():
     """Single task -> {task_name: {task_id: VectorEnv}} with one entry per task_id."""
     _install_robomme_stub()
     try:
-        from lerobot.sims.integrations.robomme import create_robomme_envs
+        from lerobot.sim.integrations.robomme import create_robomme_envs
 
         env_cls = MagicMock(return_value=MagicMock())
         result = create_robomme_envs(
@@ -258,7 +258,7 @@ def test_create_robomme_envs_multi_task():
     """Comma-separated task list produces one suite per task."""
     _install_robomme_stub()
     try:
-        from lerobot.sims.integrations.robomme import create_robomme_envs
+        from lerobot.sim.integrations.robomme import create_robomme_envs
 
         env_cls = MagicMock(return_value=MagicMock())
         result = create_robomme_envs(
@@ -277,7 +277,7 @@ def test_create_robomme_envs_raises_on_invalid_env_cls():
     try:
         import pytest
 
-        from lerobot.sims.integrations.robomme import create_robomme_envs
+        from lerobot.sim.integrations.robomme import create_robomme_envs
 
         with pytest.raises(ValueError, match="env_cls must be a callable"):
             create_robomme_envs(task="PickXtimes", n_envs=1, env_cls=None)

@@ -21,14 +21,14 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from lerobot.robots.robot import Robot
-from lerobot.sims.types import EnvDescriptor, StepResult
+from lerobot.sim.types import EnvDescriptor, StepResult
 from lerobot.utils.feature_spec import FeatureSpec
 
 from .config_sim_robot import SimRobotConfig
 
 if TYPE_CHECKING:
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sims.vector_env import VectorEnv
+    from lerobot.sim.vector_env import VectorEnv
 
 
 class SimRobot(Robot):

@@ -23,7 +23,7 @@ import pytest
 
 from lerobot.env_server.client import EnvClient
 from lerobot.transport.wire.protocol import ErrorCode, ProtocolError
-from tests.sims.toy_env import ToyEnv, ToyEnvConfig
+from tests.sim.toy_env import ToyEnv, ToyEnvConfig
 
 
 def test_torch_free_import():
@@ -35,7 +35,7 @@ def test_torch_free_import():
 import sys
 sys.modules['torch'] = None
 import numpy as np
-import lerobot.env_server.server, lerobot.sims.vector_env, lerobot.sims.integrations.envhub
+import lerobot.env_server.server, lerobot.sim.vector_env, lerobot.sim.integrations.envhub
 from lerobot.transport.wire.client import query_reply, decode_reply
 from lerobot.utils.feature_spec import FeatureSpec, feature_mismatch, validate_array
 from lerobot.transport.wire.protocol import Envelope, MessageType, correlate_reply, raise_peer_error, validate_reply

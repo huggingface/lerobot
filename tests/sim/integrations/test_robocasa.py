@@ -6,7 +6,7 @@ from unittest.mock import Mock, call
 import pytest
 
 from lerobot.envs.configs import RoboCasaEnv as RoboCasaEnvConfig
-from lerobot.sims.integrations import robocasa
+from lerobot.sim.integrations import robocasa
 
 
 def _instantiate_envs(

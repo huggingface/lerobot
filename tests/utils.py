@@ -26,7 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-from lerobot.sims.config import SimConfig
+from lerobot.sim.config import SimConfig
 from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import is_package_available
 
@@ -212,7 +212,7 @@ def import_without_simulator(name: str, monkeypatch: pytest.MonkeyPatch) -> Modu
     try:
         while True:
             try:
-                return importlib.import_module(f"lerobot.sims.integrations.{name}")
+                return importlib.import_module(f"lerobot.sim.integrations.{name}")
             except ModuleNotFoundError as error:
                 if not error.name or error.name.startswith("lerobot"):
                     raise
@@ -220,7 +220,7 @@ def import_without_simulator(name: str, monkeypatch: pytest.MonkeyPatch) -> Modu
     finally:
         # An integration imported against stubs must not leak into other tests.
         for module in set(sys.modules) - before:
-            if module.startswith("lerobot.sims.integrations."):
+            if module.startswith("lerobot.sim.integrations."):
                 monkeypatch.setitem(sys.modules, module, sys.modules.pop(module))
 
 

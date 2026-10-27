@@ -27,14 +27,14 @@ import gymnasium as gym
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sims.config import SimConfig
-from lerobot.sims.types import EnvDescriptor
+from lerobot.sim.config import SimConfig
+from lerobot.sim.types import EnvDescriptor
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 if TYPE_CHECKING:
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sims.vector_env import VectorEnv
+    from lerobot.sim.vector_env import VectorEnv
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         task_group: str | None = None,
         task_id: int | None = None,
     ) -> tuple[EnvDescriptor, Callable[[str, int], VectorEnv | RemoteVectorEnv]]:
-        from lerobot.sims.vector_env import VectorEnv
+        from lerobot.sim.vector_env import VectorEnv
 
         settings = self.sim_settings()
         endpoint = self.endpoint

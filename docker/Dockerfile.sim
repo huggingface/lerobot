@@ -299,7 +299,7 @@ WORKDIR /lerobot
 COPY --chown=user_lerobot:user_lerobot pyproject.toml setup.py README.md MANIFEST.in /lerobot/
 COPY --chown=user_lerobot:user_lerobot src/lerobot/__init__.py src/lerobot/__version__.py /lerobot/src/lerobot/
 COPY --chown=user_lerobot:user_lerobot src/lerobot/env_server /lerobot/src/lerobot/env_server
-COPY --chown=user_lerobot:user_lerobot src/lerobot/sims /lerobot/src/lerobot/sims
+COPY --chown=user_lerobot:user_lerobot src/lerobot/sim /lerobot/src/lerobot/sim
 COPY --chown=user_lerobot:user_lerobot src/lerobot/transport /lerobot/src/lerobot/transport
 COPY --chown=user_lerobot:user_lerobot src/lerobot/utils /lerobot/src/lerobot/utils
 COPY --chown=user_lerobot:user_lerobot src/lerobot/scripts/lerobot_env_server.py /lerobot/src/lerobot/scripts/
@@ -320,7 +320,7 @@ RUN case "${SIM}" in \
         *) module=${SIM} ;; \
     esac \
     && if [ -n "$module" ]; then python -c "import sys; sys.modules['torch'] = None; \
-import lerobot.env_server.server; import lerobot.sims.integrations.$module"; fi
+import lerobot.env_server.server; import lerobot.sim.integrations.$module"; fi
 # Simulators with their own torch import environment dependencies lazily; import those here. A build has
 # no GPU driver, so RoboTwin's planner (CuRobo's motion generator) is only importable at runtime.
 RUN case "${SIM}" in \

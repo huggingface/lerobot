@@ -7,7 +7,7 @@ on:
     branches: [main]
     paths: &benchmark_paths
       - "src/lerobot/envs/**"
-      - "src/lerobot/sims/**"
+      - "src/lerobot/sim/**"
       - "src/lerobot/env_server/**"
       - "src/lerobot/transport/**"
       - "src/lerobot/policies/**"

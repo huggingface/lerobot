@@ -20,7 +20,7 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.sims.integrations import simulator_required
+from lerobot.sim.integrations import simulator_required
 
 
 @dataclass
@@ -62,7 +62,7 @@ class SimConfig:
         Imports the integration, so it runs where the simulator is installed.
         """
         with simulator_required(settings["type"]):
-            integration = importlib.import_module(f"lerobot.sims.integrations.{settings['type']}")
+            integration = importlib.import_module(f"lerobot.sim.integrations.{settings['type']}")
             conventions = getattr(integration, "conventions", None)
             declared = conventions(settings.get("kwargs") or {}) if conventions else {}
         return cls(**{**declared, **{key: value for key, value in settings.items() if value is not None}})

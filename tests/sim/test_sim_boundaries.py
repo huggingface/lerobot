@@ -20,14 +20,14 @@ from pathlib import Path
 
 import numpy as np
 
-from tests.sims.toy_env import ToyEnvConfig
+from tests.sim.toy_env import ToyEnvConfig
 
 
 def test_shared_simulation_code_names_no_simulator() -> None:
     root = Path(__file__).parents[2] / "src" / "lerobot"
-    simulators = {path.stem for path in (root / "sims" / "integrations").glob("*.py")} - {"__init__", "utils"}
+    simulators = {path.stem for path in (root / "sim" / "integrations").glob("*.py")} - {"__init__", "utils"}
     shared = [
-        *(root / "sims").glob("*.py"),
+        *(root / "sim").glob("*.py"),
         *(root / "env_server").glob("*.py"),
         *(root / "robots" / "sim").glob("*.py"),
     ]
@@ -41,9 +41,9 @@ def test_shared_simulation_code_names_no_simulator() -> None:
 
 
 def test_simulation_package_does_not_import_service_or_transport() -> None:
-    sims = Path(__file__).parents[2] / "src" / "lerobot" / "sims"
+    package = Path(__file__).parents[2] / "src" / "lerobot" / "sim"
     forbidden: list[str] = []
-    for path in sims.rglob("*.py"):
+    for path in package.rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text())):
             modules = (
                 [node.module or ""]
@@ -53,7 +53,7 @@ def test_simulation_package_does_not_import_service_or_transport() -> None:
                 else []
             )
             forbidden.extend(
-                f"{path.relative_to(sims)}: {module}"
+                f"{path.relative_to(package)}: {module}"
                 for module in modules
                 if module.startswith(("lerobot.env_server", "lerobot.transport"))
             )
@@ -96,8 +96,8 @@ def test_vector_env_delegates_native_observation_conventions(monkeypatch) -> Non
 
     from gymnasium import spaces
 
-    from lerobot.sims.config import SimConfig
-    from lerobot.sims.vector_env import VectorEnv
+    from lerobot.sim.config import SimConfig
+    from lerobot.sim.vector_env import VectorEnv
 
     class NativeEnv:
         observation_space = spaces.Dict({"native_state": spaces.Box(-1, 1, (1,), np.float32)})
@@ -125,10 +125,10 @@ def test_vector_env_delegates_native_observation_conventions(monkeypatch) -> Non
         return {task: {0: env_cls([NativeEnv] * n_envs)}}
 
     # A new simulator is a module of these two functions; the shared environment never names it.
-    integration = ModuleType("lerobot.sims.integrations.new_engine")
+    integration = ModuleType("lerobot.sim.integrations.new_engine")
     integration.create_envs = create_envs  # type: ignore[attr-defined]
     integration.canonical_observation = canonical_observation  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "lerobot.sims.integrations.new_engine", integration)
+    monkeypatch.setitem(sys.modules, "lerobot.sim.integrations.new_engine", integration)
     env = VectorEnv(SimConfig(type="new_engine", task="pick", semantics="new-engine-v1"))
     try:
         assert env.single_observation_space["observation.state"].shape == (1,)
@@ -143,7 +143,7 @@ def test_envhub_rejects_custom_vector_behavior_without_unwrapping_it() -> None:
     import gymnasium as gym
     import pytest
 
-    from lerobot.sims.integrations.envhub import _env_factories
+    from lerobot.sim.integrations.envhub import _env_factories
 
     class CustomBatch(gym.vector.SyncVectorEnv):
         def step(self, actions):

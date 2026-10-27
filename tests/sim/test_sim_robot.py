@@ -24,7 +24,7 @@ import pytest
 
 from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
 from lerobot.transport.zenoh import ZenohConfig
-from tests.sims.toy_env import ToyEnv, ToyEnvConfig
+from tests.sim.toy_env import ToyEnv, ToyEnvConfig
 
 
 def test_sim_robot_config_needs_an_environment():

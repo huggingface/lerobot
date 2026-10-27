@@ -22,13 +22,13 @@ import draccus
 import numpy as np
 import pytest
 
-from tests.sims.toy_env import ToyEnv, ToyEnvConfig
+from tests.sim.toy_env import ToyEnv, ToyEnvConfig
 
 
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_env_config_creates_vector_envs_locally_or_served(where, request):
     from lerobot.env_server.client import RemoteVectorEnv
-    from lerobot.sims.vector_env import VectorEnv
+    from lerobot.sim.vector_env import VectorEnv
 
     config = ToyEnvConfig(endpoint=request.getfixturevalue("server")[1] if where == "served" else None)
     env = config.create_envs(n_envs=2)["reach"][0]
@@ -44,7 +44,7 @@ def test_env_config_creates_vector_envs_locally_or_served(where, request):
 
 
 def test_environments_in_separate_processes_match_sequential_environments():
-    from lerobot.sims.vector_env import VectorEnv
+    from lerobot.sim.vector_env import VectorEnv
 
     results = []
     for use_async_envs in (False, True):
@@ -101,7 +101,7 @@ def test_a_filtered_suite_starts_with_its_first_task():
 
 def test_other_tasks_build_their_simulators_on_first_use():
     # lerobot-eval creates every task's environment up front, then prefetches the next one with build().
-    from lerobot.sims.vector_env import VectorEnv
+    from lerobot.sim.vector_env import VectorEnv
 
     config = ToyEnvConfig()
     first = config.create_env(n_envs=2)
@@ -139,9 +139,9 @@ def test_episode_limit_is_found_through_wrappers(monkeypatch):
 
     import gymnasium as gym
 
-    from lerobot.sims.config import SimConfig
-    from lerobot.sims.integrations.utils import canonical_observation
-    from lerobot.sims.vector_env import VectorEnv
+    from lerobot.sim.config import SimConfig
+    from lerobot.sim.integrations.utils import canonical_observation
+    from lerobot.sim.vector_env import VectorEnv
 
     class Reach(gym.Env):
         observation_space = gym.spaces.Dict({"agent_pos": gym.spaces.Box(-1, 1, (2,), np.float32)})
@@ -157,10 +157,10 @@ def test_episode_limit_is_found_through_wrappers(monkeypatch):
         # TimeLimit sits under another wrapper, so it is not the outermost environment.
         return {task: {0: env_cls([lambda: gym.wrappers.ClipAction(gym.wrappers.TimeLimit(Reach(), 1000))])}}
 
-    integration = ModuleType("lerobot.sims.integrations.wrapped")
+    integration = ModuleType("lerobot.sim.integrations.wrapped")
     integration.create_envs = create_envs  # type: ignore[attr-defined]
     integration.canonical_observation = canonical_observation  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "lerobot.sims.integrations.wrapped", integration)
+    monkeypatch.setitem(sys.modules, "lerobot.sim.integrations.wrapped", integration)
     env = VectorEnv(SimConfig(type="wrapped", task="reach"))
     try:
         assert env.call("_max_episode_steps") == (1000,)
@@ -176,7 +176,7 @@ class _CrashingEnv(ToyEnv):
 
 def test_a_dead_environment_process_is_reported():
     # MuJoCo rendering can kill worker processes (macOS): say so instead of raising a bare EOFError.
-    from lerobot.sims.vector_env import _ProcessEnv
+    from lerobot.sim.vector_env import _ProcessEnv
 
     env = _ProcessEnv(_CrashingEnv)
     try:
@@ -188,12 +188,12 @@ def test_a_dead_environment_process_is_reported():
 
 
 def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
-    from lerobot.sims.config import SimConfig
-    from lerobot.sims.vector_env import VectorEnv
+    from lerobot.sim.config import SimConfig
+    from lerobot.sim.vector_env import VectorEnv
 
     # LIBERO imports its simulator with the integration, and has an extra to install.
     monkeypatch.setitem(sys.modules, "libero", None)
-    monkeypatch.delitem(sys.modules, "lerobot.sims.integrations.libero", raising=False)
+    monkeypatch.delitem(sys.modules, "lerobot.sim.integrations.libero", raising=False)
     with pytest.raises(ModuleNotFoundError, match=r"pip install 'lerobot\[libero\]', or serve it"):
         SimConfig.resolve({"type": "libero", "task": "libero_10"})
 
@@ -201,7 +201,7 @@ def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
     def build():
         raise ModuleNotFoundError("No module named 'some_simulator'", name="some_simulator")
 
-    integration = types.ModuleType("lerobot.sims.integrations.some_sim")
+    integration = types.ModuleType("lerobot.sim.integrations.some_sim")
     integration.create_envs = lambda task, n_envs, env_cls: {task: {0: env_cls([build] * n_envs)}}
     integration.canonical_observation = lambda obs: obs
     monkeypatch.setitem(sys.modules, integration.__name__, integration)

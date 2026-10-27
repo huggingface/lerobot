@@ -41,12 +41,12 @@ def image_hash(root: Path, entry: dict) -> str:
     ]
     for directory in (
         "src/lerobot/env_server",
-        "src/lerobot/sims",
+        "src/lerobot/sim",
         "src/lerobot/transport",
         "src/lerobot/utils",
     ):
         paths.extend((root / directory).rglob("*.py"))
-    paths.append(root / "src/lerobot/sims/integrations/metaworld_config.json")
+    paths.append(root / "src/lerobot/sim/integrations/metaworld_config.json")
     paths.extend(path for path in (root / "docker/sims").rglob("*") if path.is_file())
     for path in sorted(set(paths)):
         digest.update(str(path.relative_to(root)).encode())

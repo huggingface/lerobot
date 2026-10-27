@@ -23,7 +23,7 @@ import numpy as np
 from gymnasium import spaces
 
 from lerobot.envs.configs import EnvConfig
-from lerobot.sims.integrations.utils import canonical_observation
+from lerobot.sim.integrations.utils import canonical_observation
 
 __all__ = ["ToyEnv", "ToyEnvConfig", "canonical_observation", "create_envs"]
 
@@ -82,8 +82,8 @@ def create_envs(
     return {"reach": {task_id: env_cls([ToyEnv for _ in range(n_envs)]) for task_id in task_ids}}
 
 
-# Simulator integrations are imported as `lerobot.sims.integrations.<type>`; the toy is registered there for tests.
-sys.modules.setdefault("lerobot.sims.integrations.toy", sys.modules[__name__])
+# Simulator integrations are imported as `lerobot.sim.integrations.<type>`; the toy is registered there for tests.
+sys.modules.setdefault("lerobot.sim.integrations.toy", sys.modules[__name__])
 
 
 @EnvConfig.register_subclass("toy_test")

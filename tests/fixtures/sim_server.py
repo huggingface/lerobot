@@ -27,7 +27,7 @@ def server():
     pytest.importorskip("msgpack")
     from lerobot.env_server.server import EnvServer, ServerConfig
     from lerobot.transport.zenoh import ZenohConfig
-    from tests.sims.toy_env import ToyEnvConfig
+    from tests.sim.toy_env import ToyEnvConfig
 
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

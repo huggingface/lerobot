@@ -30,9 +30,9 @@ import numpy as np
 from gymnasium import spaces
 from gymnasium.vector.utils import CloudpickleWrapper, batch_space
 
-from lerobot.sims.config import SimConfig
-from lerobot.sims.integrations import simulator_required
-from lerobot.sims.types import EnvDescriptor, StepResult
+from lerobot.sim.config import SimConfig
+from lerobot.sim.integrations import simulator_required
+from lerobot.sim.types import EnvDescriptor, StepResult
 from lerobot.utils.feature_spec import FeatureSpec
 
 logger = logging.getLogger(__name__)
@@ -164,7 +164,7 @@ class _ProcessEnv:
 class VectorEnv(gym.vector.VectorEnv):
     """``num_envs`` environments of one simulator task, stepped explicitly.
 
-    The simulator integration ``lerobot.sims.integrations.<config.type>`` supplies the environments and their
+    The simulator integration ``lerobot.sim.integrations.<config.type>`` supplies the environments and their
     canonical observations. A finished environment keeps its terminal observation and flags, and earns no
     reward, until ``reset``. With ``use_async_envs``, each environment runs in its own process and the batch
     steps in parallel.
@@ -183,7 +183,7 @@ class VectorEnv(gym.vector.VectorEnv):
     ) -> None:
         """Select the task. Given its ``descriptor``, the simulators are built on first use rather than now."""
         with simulator_required(config.type):
-            integration = importlib.import_module(f"lerobot.sims.integrations.{config.type}")
+            integration = importlib.import_module(f"lerobot.sim.integrations.{config.type}")
             # env_cls=list returns each task's environment factories without building them.
             factories = integration.create_envs(
                 task=config.task, n_envs=num_envs, env_cls=list, **config.kwargs

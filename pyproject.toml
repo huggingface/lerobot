@@ -430,7 +430,7 @@ torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchcodec = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'AMD64')" }]
 
 [tool.setuptools.package-data]
-lerobot = ["sims/integrations/*.json", "annotations/steerable_pipeline/prompts/*.txt", "configs/recipes/*.yaml"]
+lerobot = ["sim/integrations/*.json", "annotations/steerable_pipeline/prompts/*.txt", "configs/recipes/*.yaml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -493,7 +493,7 @@ ignore = [
 "src/lerobot/datasets/**" = ["D"]
 "src/lerobot/distributed/**" = ["D"]
 "src/lerobot/envs/**" = ["D"]
-"src/lerobot/sims/integrations/**" = ["D"]
+"src/lerobot/sim/integrations/**" = ["D"]
 "src/lerobot/jobs/**" = ["D"]
 "src/lerobot/model/**" = ["D"]
 "src/lerobot/motors/**" = ["D"]

@@ -37,7 +37,7 @@ from huggingface_hub import snapshot_download
 
 import lerobot
 from lerobot.env_server.server import EnvServer, ServerConfig
-from lerobot.sims.config import SimConfig
+from lerobot.sim.config import SimConfig
 from lerobot.transport.zenoh import ZenohConfig
 
 COMPOSE_FILE = "docker/sims/compose.server.yaml"

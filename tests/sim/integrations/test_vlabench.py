@@ -28,7 +28,7 @@ import pytest
 
 pytest.importorskip("scipy")
 
-from lerobot.sims.integrations.vlabench import VLABenchEnv  # noqa: E402
+from lerobot.sim.integrations.vlabench import VLABenchEnv  # noqa: E402
 
 
 def _make_task(instruction: str | None) -> MagicMock:
