@@ -180,7 +180,7 @@ def make_robot():
             )
             # Hand the stub to __init__ where it would resolve the configured controller by
             # name, so construction-time state (the hold declaration) sees it.
-            with patch(f"{module}.make_robot_controller", lambda name: controller):
+            with patch(f"{module}.make_robot_controller", lambda name, config=None: controller):
                 robot = UnitreeG1(cfg)
             built.append(robot)
             return robot

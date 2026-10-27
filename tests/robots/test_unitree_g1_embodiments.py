@@ -132,7 +132,7 @@ def test_g1_23_allows_lower_body_locomotion_controllers(controller):
 
 def test_embodiment_is_immutable():
     spec = get_g1_embodiment("g1_23")
-    assert spec.unsupported_controllers == frozenset({"SonicWholeBodyController"})
+    assert spec.unsupported_controllers == frozenset({"SonicWholeBodyController", "SuperMimicController"})
     assert not spec.supports_simulation
     assert not spec.supports_gravity_compensation
     with pytest.raises(dataclasses.FrozenInstanceError):

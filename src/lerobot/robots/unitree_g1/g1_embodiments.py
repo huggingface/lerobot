@@ -82,7 +82,7 @@ _EMBODIMENTS = {
         name="g1_23",
         joint_index=G1_23_JointIndex,
         arm_index=G1_23_JointArmIndex,
-        unsupported_controllers=frozenset({"SonicWholeBodyController"}),
+        unsupported_controllers=frozenset({"SonicWholeBodyController", "SuperMimicController"}),
     ),
 }
 
