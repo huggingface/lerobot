@@ -131,6 +131,33 @@ def test_check_delta_timestamps_empty():
     assert result is True
 
 
+@pytest.mark.parametrize("timestamp", [float("nan"), float("inf"), -float("inf"), 1e308, -1e308])
+@pytest.mark.parametrize("raise_value_error", [False, True])
+def test_check_delta_timestamps_nonfinite(timestamp: float, raise_value_error: bool) -> None:
+    delta_timestamps = {"action": [0.0, timestamp, 1 / 30]}
+    if raise_value_error:
+        with pytest.raises(ValueError, match="action"):
+            check_delta_timestamps(delta_timestamps, fps=30, tolerance_s=1e-4)
+    else:
+        assert (
+            check_delta_timestamps(delta_timestamps, fps=30, tolerance_s=1e-4, raise_value_error=False)
+            is False
+        )
+
+
+@pytest.mark.parametrize("raise_value_error", [False, True])
+def test_check_delta_timestamps_finite_baseline(raise_value_error: bool) -> None:
+    assert (
+        check_delta_timestamps(
+            {"action": [-1 / 30, 0.0, 1 / 30]},
+            fps=30,
+            tolerance_s=1e-4,
+            raise_value_error=raise_value_error,
+        )
+        is True
+    )
+
+
 def test_delta_indices(valid_delta_timestamps_factory, delta_indices_factory):
     fps = 50
     min_max_range = (-100, 100)
