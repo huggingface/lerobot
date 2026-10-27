@@ -35,7 +35,8 @@ class ObjectsConfig:
     height: Range = (0.02, 0.06)
     mass: Range = (0.01, 0.08)
     friction: Range = (0.8, 1.5)
-    texture_prob: float = 0.4
+    # Subtle wood-grain or speckle textures; bold patterns don't exist on real objects.
+    texture_prob: float = 0.15
     # Jitter of the named palette color, so "red" stays red.
     color_jitter: float = 0.06
 
@@ -45,7 +46,7 @@ class ContainerConfig:
     inner_size: Range = (0.08, 0.13)
     wall_height: Range = (0.012, 0.045)
     wall_thickness: Range = (0.003, 0.006)
-    texture_prob: float = 0.3
+    texture_prob: float = 0.1
 
 
 @dataclass
@@ -59,37 +60,48 @@ class LayoutConfig:
 
 @dataclass
 class BackgroundConfig:
-    texture_prob: float = 0.7
-    # Probability of a saturated color rather than a muted, everyday one (wood, gray, white...).
-    vivid_prob: float = 0.25
+    # Probability that the room is a photographed indoor panorama (workshop, office, living room...),
+    # rather than plain walls and floor in muted colors. Its brightness varies with the exposure.
+    hdri_prob: float = 0.9
+    hdri_exposure: Range = (0.7, 1.15)
+    # Without a panorama, the probability of walls around the table.
     walls_prob: float = 0.7
+    # Probability of a photographed table surface (wood, laminate, concrete...) rather than a plain one,
+    # and its brightness as a multiplier.
+    surface_prob: float = 0.75
+    surface_brightness: Range = (0.75, 1.05)
     table_half_size: Range = (0.35, 0.7)
 
 
 @dataclass
 class LightingConfig:
-    count: tuple[int, int] = (1, 3)
-    diffuse: Range = (0.25, 0.8)
-    ambient: Range = (0.0, 0.3)
-    headlight: Range = (0.05, 0.4)
-    shadow_prob: float = 0.7
-    # Per-channel tint, from warm to cool light.
-    tint: float = 0.15
+    # Indoor lighting: one or two ceiling lights, and ambient light for what the room reflects. Strong
+    # ambient and headlight fill keep shadows as light as indoors: the classic renderer has no soft shadows.
+    count: tuple[int, int] = (1, 2)
+    diffuse: Range = (0.3, 0.65)
+    ambient: Range = (0.2, 0.4)
+    headlight: Range = (0.05, 0.2)
+    shadow_prob: float = 0.85
+    # White light, from warm bulbs to daylight, in kelvin, and the error of the camera's white balance.
+    temperature: Range = (2700.0, 6500.0)
+    white_balance_error: float = 400.0
     # Lights sit on a hemisphere around the workspace: distance and elevation.
-    distance: Range = (0.6, 2.0)
-    elevation: Range = (30.0, 85.0)
+    distance: Range = (0.8, 2.0)
+    elevation: Range = (45.0, 85.0)
 
 
 @dataclass
 class FrontCameraConfig:
     # Spherical placement around a look-at point in the workspace. Azimuth 0 faces the robot.
-    distance: Range = (0.35, 0.7)
-    azimuth: Range = (-80.0, 80.0)
-    elevation: Range = (20.0, 70.0)
+    # Where people mount a camera for an SO-101: close to the table, above it or in front, at most a
+    # little to the left or right.
+    distance: Range = (0.3, 0.55)
+    azimuth: Range = (-35.0, 35.0)
+    elevation: Range = (35.0, 80.0)
     lookat: tuple[float, float, float] = (0.2, 0.0, 0.02)
     lookat_jitter: float = 0.05
-    roll: float = 5.0
-    fovy: Range = (45.0, 75.0)
+    roll: float = 3.0
+    fovy: Range = (50.0, 70.0)
 
 
 @dataclass
@@ -109,11 +121,15 @@ class DynamicsConfig:
 
 @dataclass
 class StartPoseConfig:
-    # Weights of the start modes: the rest pose, a random collision-free pose, a pose mid-task.
-    rest: float = 0.5
-    random_free: float = 0.3
-    mid_task: float = 0.2
+    # Weights of the start modes: the rest pose, the parked pose real recordings start from (the
+    # episode then lifts off to rest), a random collision-free pose, a pose mid-task.
+    rest: float = 0.3
+    parked: float = 0.3
+    random_free: float = 0.25
+    mid_task: float = 0.15
     rest_jitter: float = 5.0
+    # Per joint, within the spread of real first frames; more fold puts the jaws into the table.
+    parked_jitter: tuple[float, ...] = (5.0, 0.0, 4.0, 6.0, 5.0, 0.0)
 
 
 @dataclass

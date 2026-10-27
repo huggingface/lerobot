@@ -39,8 +39,10 @@ from lerobot.datasets import LeRobotDataset
 from lerobot.datasets.aggregate import aggregate_datasets
 from lerobot.utils.utils import init_logging
 
+from .assets import fetch_environments, load_meshes
 from .config import GenerationConfig
-from .worker import EPISODES_FILE, REPORT_FILE, EncodingConfig, ShardJob, run_shard
+from .so101 import menagerie_dir
+from .worker import EPISODES_FILE, REPORT_FILE, EncodingConfig, ShardJob, resolve_encoding, run_shard
 
 
 @dataclass
@@ -63,6 +65,10 @@ class GenerateConfig:
 def generate(cfg: GenerateConfig) -> None:
     init_logging()
     logging.info(pformat(cfg))
+    cfg.encoding = resolve_encoding(cfg.encoding, cfg.generation.height, cfg.generation.width)
+    logging.info(
+        f"Encoding with {cfg.encoding.vcodec} (crf {cfg.encoding.crf}, preset {cfg.encoding.preset})"
+    )
     shards_dir = cfg.output_dir / "shards"
     jobs = [
         ShardJob(
@@ -78,6 +84,11 @@ def generate(cfg: GenerateConfig) -> None:
     ]
     started = time.perf_counter()
     reports = []
+    # Fetched once here, rather than by every worker at the same time.
+    menagerie_dir()
+    fetch_environments()
+    if cfg.generation.objects.mesh_prob > 0:
+        load_meshes()
     # Spawn: every worker builds its own GL context and MuJoCo state from scratch.
     with multiprocessing.get_context("spawn").Pool(cfg.num_workers, maxtasksperchild=1) as pool:
         for report in pool.imap_unordered(run_shard, jobs):

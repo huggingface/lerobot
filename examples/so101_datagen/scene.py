@@ -26,14 +26,15 @@ from dataclasses import dataclass, field
 import mujoco
 import numpy as np
 
-from .assets import MeshAsset
+from .assets import MeshAsset, skybox_image, surface_path
 from .so101 import JOINTS, arm_spec
 
 
 @dataclass
 class Look:
     rgba: list[float]
-    # Procedural texture: {"kind": ..., "seed": ..., "rgb1": [...], "rgb2": [...], "repeat": ...}.
+    # A procedural texture, {"kind": "grain" or "noise", "seed", "rgb1", "rgb2", "repeat"}, or a photographed
+    # surface, {"kind": "image", "name", "size"} with ``size`` the meters one image spans.
     texture: dict | None = None
     specular: float = 0.3
     shininess: float = 0.3
@@ -94,7 +95,11 @@ class BackgroundParams:
     floor: Look
     wall: Look
     walls: bool
+    # A gradient for plain rooms; an indoor panorama, turned and exposed, replaces it and the walls.
     sky: list[list[float]]
+    hdri: str | None
+    hdri_yaw: float
+    hdri_exposure: float
     headlight: float
     ambient: float
 
@@ -139,24 +144,13 @@ def texture_image(texture: dict, size: int = 256) -> np.ndarray:
     rng = np.random.default_rng(texture["seed"])
     kind = texture["kind"]
     u, v = np.meshgrid(np.linspace(0, 1, size, endpoint=False), np.linspace(0, 1, size, endpoint=False))
-    if kind == "checker":
-        n = rng.integers(2, 9)
-        t = ((np.floor(u * n) + np.floor(v * n)) % 2).astype(np.float64)
-    elif kind == "stripes":
-        angle = rng.uniform(0, np.pi)
-        freq = rng.uniform(3, 14)
-        t = 0.5 + 0.5 * np.sign(np.sin(2 * np.pi * freq * (u * np.cos(angle) + v * np.sin(angle))))
-    elif kind == "grain":
+    if kind == "grain":
         # Wood-like: wavy rings along one axis.
         freq = rng.uniform(8, 25)
         warp = _value_noise(rng, size, 4) * rng.uniform(0.5, 2.0)
         t = 0.5 + 0.5 * np.sin(2 * np.pi * freq * (u + 0.1 * warp))
     elif kind == "noise":
         t = _value_noise(rng, size, int(rng.integers(4, 32)))
-    elif kind == "dots":
-        n = rng.integers(4, 12)
-        r = rng.uniform(0.15, 0.4)
-        t = ((((u * n) % 1 - 0.5) ** 2 + ((v * n) % 1 - 0.5) ** 2) < r**2).astype(np.float64)
     else:
         raise ValueError(f"Unknown texture kind {kind!r}")
     t = np.clip(t, 0, 1)[..., None]
@@ -196,15 +190,26 @@ def build_scene(
     spec.visual.headlight.diffuse = [bg.headlight] * 3
     spec.visual.headlight.ambient = [bg.ambient] * 3
     spec.visual.headlight.specular = [0.0] * 3
-    spec.add_texture(
-        name="sky",
-        type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
-        builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
-        rgb1=bg.sky[0],
-        rgb2=bg.sky[1],
-        width=256,
-        height=1536,
-    )
+    if bg.hdri is not None:
+        sky = skybox_image(bg.hdri, bg.hdri_yaw, bg.hdri_exposure)
+        texture = spec.add_texture(
+            name="sky",
+            type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
+            width=sky.shape[1],
+            height=sky.shape[0],
+            nchannel=3,
+        )
+        texture.data = sky.tobytes()
+    else:
+        spec.add_texture(
+            name="sky",
+            type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
+            builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
+            rgb1=bg.sky[0],
+            rgb2=bg.sky[1],
+            width=256,
+            height=1536,
+        )
     world = spec.worldbody
     tx, ty = bg.table_center
     hx, hy = bg.table_half
@@ -217,13 +222,15 @@ def build_scene(
     )
     table.friction = [1.0, 0.005, 0.0001]
     decor = {"contype": 0, "conaffinity": 0, "type": mujoco.mjtGeom.mjGEOM_BOX}
-    world.add_geom(
-        name="floor",
-        size=[3, 3, 0.01],
-        pos=[0, 0, -0.76],
-        material=_material(spec, "floor", bg.floor),
-        **decor,
-    )
+    # A panorama shows its own floor and walls.
+    if bg.hdri is None:
+        world.add_geom(
+            name="floor",
+            size=[3, 3, 0.01],
+            pos=[0, 0, -0.76],
+            material=_material(spec, "floor", bg.floor),
+            **decor,
+        )
     if bg.walls:
         wall = _material(spec, "wall", bg.wall)
         world.add_geom(size=[0.01, 3, 1.5], pos=[-1.2, 0, 0.0], material=wall, **decor)
@@ -277,7 +284,17 @@ def build_scene(
 
 def _material(spec: mujoco.MjSpec, name: str, look: Look) -> str:
     mat = spec.add_material(name=name, rgba=look.rgba, specular=look.specular, shininess=look.shininess)
-    if look.texture is not None:
+    if look.texture is not None and look.texture["kind"] == "image":
+        spec.add_texture(
+            name=f"{name}_tex",
+            type=mujoco.mjtTexture.mjTEXTURE_2D,
+            file=str(surface_path(look.texture["name"])),
+        )
+        mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = f"{name}_tex"
+        # With uniform mapping, texrepeat counts repeats per meter: the photograph keeps its real scale.
+        mat.texrepeat = [1 / look.texture["size"]] * 2
+        mat.texuniform = True
+    elif look.texture is not None:
         image = texture_image(look.texture)
         tex = spec.add_texture(
             name=f"{name}_tex",

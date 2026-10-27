@@ -31,7 +31,7 @@ from .config import GenerationConfig
 from .motion import DOWN, Plan, Planner, PlanningError
 from .randomization import sample_scene, uniform
 from .scene import SceneInfo, SceneParams, build_scene
-from .so101 import GRIPPER, REST, Arm
+from .so101 import GRIPPER, PARKED, REST, Arm
 from .tasks import TASKS, Task, TaskInstance
 
 # Frames the scene settles for before the episode starts, the arm holding its start pose.
@@ -97,6 +97,9 @@ def prepare(seed: int, cfg: GenerationConfig, meshes: dict[str, MeshAsset]) -> E
     start_mode, start = sample_start(model, arm, cfg, rng)
     planner = Planner(arm, start, cfg.fps, cfg.motion, rng, workspace=cfg.layout.radius)
     try:
+        if start_mode == "parked":
+            # Lifting straight off first keeps the jaws from dragging over the table.
+            planner.transit(REST + rng.uniform(-3, 3, 6) * [1, 1, 1, 1, 1, 0])
         task.script(instance, scene, planner, rng)
     except PlanningError as e:
         raise EpisodeError("planning") from e
@@ -109,11 +112,11 @@ def prepare(seed: int, cfg: GenerationConfig, meshes: dict[str, MeshAsset]) -> E
 def sample_start(
     model: mujoco.MjModel, arm: Arm, cfg: GenerationConfig, rng: np.random.Generator
 ) -> tuple[str, np.ndarray]:
-    """A start pose: rest (jittered), a random collision-free pose, or hovering as if mid-task."""
+    """A start pose: rest or parked (jittered), a random collision-free pose, or hovering as if mid-task."""
     sc = cfg.start_pose
-    modes = ["rest", "random_free", "mid_task"]
-    weights = np.asarray([sc.rest, sc.random_free, sc.mid_task], dtype=np.float64)
-    mode = modes[rng.choice(3, p=weights / weights.sum())]
+    modes = ["rest", "parked", "random_free", "mid_task"]
+    weights = np.asarray([sc.rest, sc.parked, sc.random_free, sc.mid_task], dtype=np.float64)
+    mode = modes[rng.choice(len(modes), p=weights / weights.sum())]
     data = mujoco.MjData(model)
     for _ in range(50):
         if mode == "random_free":
@@ -130,19 +133,24 @@ def sample_start(
             q, err = arm.ik(pos, approach, None, init)
             if err > 0.005:
                 continue
+        elif mode == "parked":
+            q = PARKED + rng.uniform(-1, 1, 6) * np.asarray(sc.parked_jitter)
+            q[GRIPPER] = rng.uniform(0, 5)
         else:
             q = REST + rng.uniform(-1, 1, 6) * sc.rest_jitter
             q[GRIPPER] = rng.uniform(0, 30)
-        if _free(model, data, arm, q):
+        if _free(model, data, arm, q, min_height=0.01 if mode == "parked" else 0.03):
             return mode, q
     raise EpisodeError("start_pose")
 
 
-def _free(model: mujoco.MjModel, data: mujoco.MjData, arm: Arm, q: np.ndarray) -> bool:
-    """Whether the arm at ``q`` stays above the table and touches nothing but itself."""
+def _free(
+    model: mujoco.MjModel, data: mujoco.MjData, arm: Arm, q: np.ndarray, min_height: float = 0.03
+) -> bool:
+    """Whether the arm at ``q`` keeps its gripper ``min_height`` above the table and touches nothing but itself."""
     data.qpos[arm.qadr] = arm.to_ctrl(q)
     mujoco.mj_forward(model, data)
-    if data.site_xpos[arm.tcp][2] < 0.03:
+    if data.site_xpos[arm.tcp][2] < min_height:
         return False
     for contact in data.contact[: data.ncon]:
         a, b = model.geom_bodyid[contact.geom1], model.geom_bodyid[contact.geom2]

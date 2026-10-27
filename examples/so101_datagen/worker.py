@@ -20,15 +20,17 @@ LeRobotDataset has a single writer, so every worker process writes its own shard
 merges them at the end. A finished shard leaves a ``generation_report.json``, so a rerun skips it.
 """
 
+import io
 import json
 import logging
 import os
 import shutil
 import time
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
+import av
 import numpy as np
 
 # Headless rendering, decided before MuJoCo is imported.
@@ -69,14 +71,61 @@ MAX_ATTEMPTS_PER_EPISODE = 20
 
 @dataclass
 class EncodingConfig:
-    vcodec: str = "libsvtav1"
-    crf: int = 30
-    # Codec-specific speed preset, e.g. 12 for libsvtav1, "veryfast" for h264, "p1" for h264_nvenc.
-    preset: int | str | None = None
+    # "fastest" resolves to h264_nvenc where an NVIDIA encoder works, else h264, with their settings
+    # below; any lerobot codec name can be given instead, with its own crf and preset.
+    vcodec: str = "fastest"
+    crf: int | None = None
+    # Codec-specific speed preset, e.g. 12 for libsvtav1, "veryfast" for h264, 12 (p1) for the nvenc
+    # encoders: lerobot's option check refuses nvenc's named presets. Digits become an int.
+    preset: str | None = None
     # Threads per camera encoder; a worker runs one encoder per camera.
     encoder_threads: int = 2
     # Smaller video files keep the per-episode append cheap.
     video_files_size_in_mb: int = 100
+
+
+# (vcodec, crf, preset), fastest first. On one worker: 12 CPU ms/frame for h264_nvenc (hevc_nvenc is as
+# fast with smaller files, but not every browser plays it), 16 for h264 veryfast and 45 for libsvtav1,
+# whose memory also grows with every episode.
+FASTEST_ENCODERS = (("h264_nvenc", 23, "12"), ("h264", 23, "veryfast"))
+
+
+def resolve_encoding(encoding: EncodingConfig, height: int, width: int) -> EncodingConfig:
+    """``encoding`` with "fastest" replaced by the first encoder that encodes test frames of this size.
+
+    Every shard must use the same codec, since merging stream-copies the videos: resolve once, up front.
+    """
+    if encoding.vcodec != "fastest":
+        return encoding
+    for vcodec, crf, preset in FASTEST_ENCODERS:
+        if _encodes(vcodec, height, width):
+            return replace(
+                encoding,
+                vcodec=vcodec,
+                crf=encoding.crf if encoding.crf is not None else crf,
+                preset=encoding.preset if encoding.preset is not None else preset,
+            )
+    raise RuntimeError(f"None of {[e[0] for e in FASTEST_ENCODERS]} can encode on this machine")
+
+
+def _encodes(vcodec: str, height: int, width: int) -> bool:
+    """Whether ``vcodec`` encodes a few frames. An FFmpeg build can list nvenc without a GPU to run it,
+    and nvenc refuses small frames."""
+    try:
+        with av.open(io.BytesIO(), "w", format="mp4") as container:
+            stream = container.add_stream(vcodec, rate=30)
+            stream.width, stream.height, stream.pix_fmt = width, height, "yuv420p"
+            for _ in range(3):
+                frame = av.VideoFrame.from_ndarray(np.zeros((height, width, 3), np.uint8), format="rgb24")
+                container.mux(stream.encode(frame.reformat(format="yuv420p")))
+            container.mux(stream.encode())
+        return True
+    except Exception:
+        return False
+
+
+def encoder_preset(preset: str | None) -> int | str | None:
+    return int(preset) if preset is not None and preset.isdigit() else preset
 
 
 @dataclass
@@ -136,7 +185,7 @@ def run_shard(job: ShardJob) -> dict:
         streaming_encoding=True,
         encoder_threads=job.encoding.encoder_threads,
         rgb_encoder=RGBEncoderConfig(
-            vcodec=job.encoding.vcodec, crf=job.encoding.crf, preset=job.encoding.preset
+            vcodec=job.encoding.vcodec, crf=job.encoding.crf, preset=encoder_preset(job.encoding.preset)
         ),
         video_files_size_in_mb=job.encoding.video_files_size_in_mb,
     )

@@ -21,7 +21,9 @@ degrees for the five arm joints and 0-100 for the gripper opening.
 """
 
 import os
+import shutil
 import subprocess  # nosec B404
+import tempfile
 from pathlib import Path
 
 import mujoco
@@ -38,6 +40,9 @@ WRIST_ROLL = 4
 GRIPPER = 5
 # Raised and folded back, clear of objects up to 7 cm tall in front of the base, gripper closed.
 REST = np.array([0.0, -98.0, 60.0, 75.0, 0.0, 5.0])
+# Folded down with the jaws just above the table: where real SO-101 recordings start (the median first
+# frame of community datasets), shoulder_lift clipped to the simulated limit.
+PARKED = np.array([-3.0, -100.0, 94.0, 61.0, 0.0, 2.0])
 TCP_SITE = "gripperframe"
 # Menagerie's joint ranges in degrees, the gripper's in degrees of its jaw (0-100 spans it).
 JOINT_LIMITS_DEG = (
@@ -63,16 +68,26 @@ def menagerie_dir() -> Path:
         return root
     root = Path.home() / ".cache" / "lerobot" / "mujoco_menagerie" / MENAGERIE_SHA
     if not (root / MENAGERIE_MODEL / "so101.xml").is_file():
-        root.mkdir(parents=True, exist_ok=True)
-        # Only the SO-101 directory, at a pinned commit so an upstream change can't alter the data.
-        for args in (
-            ("init", "-q"),
-            ("remote", "add", "origin", MENAGERIE_REPO),
-            ("sparse-checkout", "set", MENAGERIE_MODEL),
-            ("fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", MENAGERIE_SHA),
-            ("checkout", "-q", "FETCH_HEAD"),
-        ):
-            subprocess.run(("git", "-C", str(root), *args), check=True)  # nosec B603 B607
+        root.parent.mkdir(parents=True, exist_ok=True)
+        # Fetched beside the target and renamed into place, so an interrupted or concurrent fetch never
+        # leaves a half-made checkout at ``root``.
+        with tempfile.TemporaryDirectory(dir=root.parent) as tmp:
+            # Only the SO-101 directory, at a pinned commit so an upstream change can't alter the data.
+            for args in (
+                ("init", "-q"),
+                ("remote", "add", "origin", MENAGERIE_REPO),
+                ("sparse-checkout", "set", MENAGERIE_MODEL),
+                ("fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", MENAGERIE_SHA),
+                ("checkout", "-q", "FETCH_HEAD"),
+            ):
+                subprocess.run(("git", "-C", tmp, *args), check=True)  # nosec B603 B607
+            shutil.rmtree(root, ignore_errors=True)
+            try:
+                os.rename(tmp, root)
+            except OSError:
+                # Another process got there first.
+                if not (root / MENAGERIE_MODEL / "so101.xml").is_file():
+                    raise
     return root
 
 

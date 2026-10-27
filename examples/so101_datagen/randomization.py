@@ -22,7 +22,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from .assets import MeshAsset
+from .assets import MeshAsset, polyhaven_subset
 from .config import GenerationConfig, Range
 from .scene import (
     BackgroundParams,
@@ -45,7 +45,7 @@ PALETTE = {
     "purple": (0.50, 0.20, 0.70),
     "pink": (0.95, 0.45, 0.65),
     "white": (0.92, 0.92, 0.90),
-    "black": (0.08, 0.08, 0.08),
+    "black": (0.15, 0.15, 0.15),
     "brown": (0.45, 0.28, 0.12),
     "gray": (0.50, 0.50, 0.50),
     "cyan": (0.10, 0.70, 0.80),
@@ -58,7 +58,19 @@ ARM_COLORS = [
     (0.12, 0.12, 0.12),
     (0.95, 0.45, 0.08),
 ]
-TEXTURE_KINDS = ("checker", "stripes", "grain", "noise", "dots")
+# Colors so close under jitter, warm light and shadow that one scene never holds both (CIELAB distance
+# under 10 in the worst case), so an instruction naming one is never ambiguous.
+CONFUSABLE = {
+    "red": {"orange"},
+    "orange": {"red"},
+    "blue": {"purple"},
+    "purple": {"blue"},
+    "brown": {"gray"},
+    "gray": {"brown"},
+}
+# No channel goes darker, so even black objects keep some shading in shadow.
+MIN_CHANNEL = 0.05
+TEXTURE_KINDS = ("grain", "noise")
 CONTAINER_NOUNS = ("box", "bin", "container")
 TRAY_NOUNS = ("tray", "box")
 
@@ -89,9 +101,10 @@ def sample_scene(
     """
     placed: list[Footprint] = []
     used_labels: set[str] = set()
+    used_colors: set[str] = set()
     container_params = []
     for i in range(containers):
-        container = _sample_container(rng, cfg, f"container_{i}", used_labels)
+        container = _sample_container(rng, cfg, f"container_{i}", used_labels, used_colors)
         spot = _place(rng, cfg, placed, container.inner_half + container.thickness)
         if spot is None:
             return None
@@ -101,7 +114,7 @@ def sample_scene(
     count = max(min_objects, int(rng.integers(cfg.objects.count[0], cfg.objects.count[1] + 1)))
     objects = []
     for i in range(count):
-        obj = _sample_object(rng, cfg, meshes, f"object_{i}", used_labels)
+        obj = _sample_object(rng, cfg, meshes, f"object_{i}", used_labels, used_colors)
         footprint = float(
             np.hypot(obj.half_size[0], obj.half_size[1] if obj.shape != "cylinder" else obj.half_size[0])
         )
@@ -148,8 +161,14 @@ def _color(
 ) -> tuple[str, list[float]]:
     names = [name for name in PALETTE if name not in exclude]
     name = names[rng.integers(len(names))]
-    rgb = np.clip(np.asarray(PALETTE[name]) + rng.uniform(-1, 1, 3) * cfg.objects.color_jitter, 0, 1)
+    rgb = np.clip(
+        np.asarray(PALETTE[name]) + rng.uniform(-1, 1, 3) * cfg.objects.color_jitter, MIN_CHANNEL, 1
+    )
     return name, [*rgb.tolist(), 1.0]
+
+
+def _confusable(colors: set[str]) -> set[str]:
+    return set().union(*(CONFUSABLE.get(color, set()) for color in colors))
 
 
 def _texture(rng: np.random.Generator, light: float, repeat: Range = (1.0, 1.0)) -> dict:
@@ -181,6 +200,7 @@ def _sample_object(
     meshes: dict[str, MeshAsset],
     name: str,
     used_labels: set[str],
+    used_colors: set[str],
 ) -> ObjectParams:
     oc = cfg.objects
     mass = uniform(rng, oc.mass)
@@ -205,7 +225,7 @@ def _sample_object(
                 scale=scale,
             )
     for _ in range(50):
-        color, rgba = _color(rng, cfg)
+        color, rgba = _color(rng, cfg, _confusable(used_colors))
         width = uniform(rng, oc.width)
         height = uniform(rng, oc.height)
         shape = "cylinder" if rng.random() < 0.35 else "box"
@@ -224,6 +244,7 @@ def _sample_object(
         label = f"{color} {noun}"
         if label not in used_labels:
             used_labels.add(label)
+            used_colors.add(color)
             return ObjectParams(
                 name=name,
                 label=label,
@@ -240,14 +261,15 @@ def _sample_object(
 
 
 def _sample_container(
-    rng: np.random.Generator, cfg: GenerationConfig, name: str, used_labels: set[str]
+    rng: np.random.Generator, cfg: GenerationConfig, name: str, used_labels: set[str], used_colors: set[str]
 ) -> ContainerParams:
     cc = cfg.container
     wall_height = uniform(rng, cc.wall_height)
     nouns = TRAY_NOUNS if wall_height < 0.02 else CONTAINER_NOUNS
-    color, rgba = _color(rng, cfg)
+    color, rgba = _color(rng, cfg, _confusable(used_colors))
     label = f"{color} {nouns[rng.integers(len(nouns))]}"
     used_labels.add(label)
+    used_colors.add(color)
     return ContainerParams(
         name=name,
         label=label,
@@ -261,15 +283,13 @@ def _sample_container(
     )
 
 
-def _random_rgb(rng: np.random.Generator, low: float = 0.0, high: float = 1.0) -> list[float]:
-    return rng.uniform(low, high, 3).tolist()
-
-
-def _surface_rgb(rng: np.random.Generator, cfg: GenerationConfig) -> np.ndarray:
-    """A surface color: mostly muted, sometimes vivid."""
-    vivid = rng.random() < cfg.background.vivid_prob
-    saturation = rng.uniform(0.4, 0.9) if vivid else rng.uniform(0.0, 0.35)
-    return _hsv_to_rgb(rng.random(), saturation, rng.uniform(0.2, 0.95))
+def _surface_rgb(rng: np.random.Generator) -> np.ndarray:
+    """A muted, everyday surface color: whites, grays, beiges, light wood."""
+    return _hsv_to_rgb(
+        rng.uniform(0.05, 0.15) if rng.random() < 0.6 else rng.random(),
+        rng.uniform(0.0, 0.18),
+        rng.uniform(0.3, 0.95),
+    )
 
 
 def _hsv_to_rgb(h: float, s: float, v: float) -> np.ndarray:
@@ -277,22 +297,24 @@ def _hsv_to_rgb(h: float, s: float, v: float) -> np.ndarray:
     return v - v * s * np.clip(np.minimum(k, 4 - k), 0, 1)
 
 
-def _background_look(rng: np.random.Generator, cfg: GenerationConfig, repeat: Range) -> Look:
-    rgb = _surface_rgb(rng, cfg)
-    if rng.random() < cfg.background.texture_prob:
-        # The second color contrasts in brightness, and sometimes in hue, so the pattern shows.
-        second = rgb * rng.uniform(0.35, 0.7) if rng.random() < 0.7 else _surface_rgb(rng, cfg)
-        texture = {
-            "kind": TEXTURE_KINDS[rng.integers(len(TEXTURE_KINDS))],
-            "seed": int(rng.integers(2**31)),
-            "rgb1": rgb.tolist(),
-            "rgb2": np.clip(second, 0, 1).tolist(),
-            "repeat": uniform(rng, repeat),
-        }
-        return Look(
-            rgba=[1.0, 1.0, 1.0, 1.0], texture=texture, specular=float(rng.uniform(0, 0.3)), shininess=0.1
-        )
-    return Look(rgba=[*rgb.tolist(), 1.0], specular=float(rng.uniform(0, 0.3)), shininess=0.1)
+def _plain_look(rng: np.random.Generator) -> Look:
+    return Look(rgba=[*_surface_rgb(rng).tolist(), 1.0], specular=float(rng.uniform(0, 0.3)), shininess=0.1)
+
+
+def _table_look(rng: np.random.Generator, cfg: GenerationConfig) -> Look:
+    """A photographed surface, tiled at its real size, or a plain one."""
+    bc = cfg.background
+    if rng.random() >= bc.surface_prob:
+        return _plain_look(rng)
+    surfaces = polyhaven_subset()["surfaces"]
+    name = sorted(surfaces)[rng.integers(len(surfaces))]
+    brightness = uniform(rng, bc.surface_brightness)
+    return Look(
+        rgba=[brightness, brightness, brightness, 1.0],
+        texture={"kind": "image", "name": name, "size": surfaces[name]["size"]},
+        specular=float(rng.uniform(0.05, 0.4)),
+        shininess=float(rng.uniform(0.1, 0.5)),
+    )
 
 
 def _sample_background(rng: np.random.Generator, cfg: GenerationConfig) -> BackgroundParams:
@@ -301,23 +323,45 @@ def _sample_background(rng: np.random.Generator, cfg: GenerationConfig) -> Backg
     # The table spans at least x in [-0.1, 0.45] and y in [-0.35, 0.35]: under the base and the workspace.
     cx = float(rng.uniform(0.45 - hx, hx - 0.1))
     cy = float(rng.uniform(0.35 - hy, hy - 0.35))
-    sky_low = rng.uniform(0.1, 0.8)
+    hdris = sorted(polyhaven_subset()["hdris"])
+    hdri = hdris[rng.integers(len(hdris))] if rng.random() < bc.hdri_prob else None
+    sky = _surface_rgb(rng)
     return BackgroundParams(
-        table=_background_look(rng, cfg, (1.0, 6.0)),
+        table=_table_look(rng, cfg),
         table_half=[hx, hy],
         table_center=[float(cx), cy],
-        floor=_background_look(rng, cfg, (2.0, 10.0)),
-        wall=_background_look(rng, cfg, (1.0, 6.0)),
-        walls=bool(rng.random() < bc.walls_prob),
-        sky=[_random_rgb(rng, sky_low, 1.0), _random_rgb(rng, 0.0, sky_low)],
+        floor=_plain_look(rng),
+        wall=_plain_look(rng),
+        walls=hdri is None and bool(rng.random() < bc.walls_prob),
+        sky=[sky.tolist(), (sky * 0.6).tolist()],
+        hdri=hdri,
+        hdri_yaw=float(rng.uniform(0, 360)),
+        hdri_exposure=uniform(rng, bc.hdri_exposure),
         headlight=uniform(rng, cfg.lighting.headlight),
         ambient=uniform(rng, cfg.lighting.ambient),
     )
 
 
+def kelvin_to_rgb(kelvin: float) -> np.ndarray:
+    """The color of a black body at ``kelvin``, normalized to its brightest channel (Tanner Helland's fit)."""
+    t = kelvin / 100
+    red = 255.0 if t <= 66 else 329.7 * (t - 60) ** -0.1332
+    green = 99.47 * np.log(t) - 161.12 if t <= 66 else 288.12 * (t - 60) ** -0.0755
+    blue = 255.0 if t >= 66 else (0.0 if t <= 19 else 138.52 * np.log(t - 10) - 305.04)
+    rgb = np.clip([red, green, blue], 0, 255)
+    return rgb / rgb.max()
+
+
 def _sample_lights(rng: np.random.Generator, cfg: GenerationConfig) -> list[LightParams]:
     lc = cfg.lighting
     lights = []
+    # The lights of one room share their kind of bulb. The camera's white balance cancels most of its
+    # color: what remains is the cast of a white balance off by a few hundred kelvin.
+    temperature = uniform(rng, lc.temperature)
+    balanced = np.clip(temperature + rng.normal(0, lc.white_balance_error), 2000, 10000)
+    # Capped: the fit's blue channel is so steep below 3000 K that small errors would turn the light blue.
+    color = np.clip(kelvin_to_rgb(temperature) / kelvin_to_rgb(balanced), 0.85, 1.15)
+    color /= color.max()
     for _ in range(int(rng.integers(lc.count[0], lc.count[1] + 1))):
         azimuth = rng.uniform(-np.pi, np.pi)
         elevation = np.deg2rad(uniform(rng, lc.elevation))
@@ -327,14 +371,12 @@ def _sample_lights(rng: np.random.Generator, cfg: GenerationConfig) -> list[Ligh
             [np.cos(elevation) * np.cos(azimuth), np.cos(elevation) * np.sin(azimuth), np.sin(elevation)]
         )
         direction = (target - pos) / np.linalg.norm(target - pos)
-        intensity = uniform(rng, lc.diffuse)
-        tint = 1 + rng.uniform(-1, 1) * lc.tint * np.array([1.0, 0.2, -1.0])
         lights.append(
             LightParams(
                 pos=pos.tolist(),
                 dir=direction.tolist(),
-                diffuse=np.clip(intensity * tint, 0, 1).tolist(),
-                specular=float(rng.uniform(0.0, 0.4)),
+                diffuse=(uniform(rng, lc.diffuse) * color).tolist(),
+                specular=float(rng.uniform(0.0, 0.3)),
                 castshadow=bool(rng.random() < lc.shadow_prob),
                 directional=bool(rng.random() < 0.5),
             )
