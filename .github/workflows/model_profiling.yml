@@ -67,6 +67,20 @@ jobs:
     needs: matrix
     runs-on:
       group: ${{ inputs.runner_group || vars.MODEL_PROFILING_RUNNER_GROUP || 'aws-g6e-4xlarge-cache' }}
+    container:
+      image: huggingface/lerobot-gpu@sha256:adc6313d3f7f183746cd84895b64f438cb818d8a61e9e903d877b13f497de633
+      options: --gpus all --shm-size=16g --user 0
+    defaults:
+      run:
+        shell: bash
+    env:
+      HOME: /tmp
+      HF_HOME: /mnt/cache/lerobot-model-profiling/huggingface
+      HF_HUB_CACHE: /mnt/cache/lerobot-model-profiling/huggingface/hub
+      HF_LEROBOT_HOME: /mnt/cache/lerobot-model-profiling/huggingface/lerobot
+      TORCH_HOME: /mnt/cache/lerobot-model-profiling/torch
+      UV_CACHE_DIR: /mnt/cache/lerobot-model-profiling/uv
+      UV_PROJECT_ENVIRONMENT: /tmp/venv
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -76,7 +90,7 @@ jobs:
       - name: Inspect GPU and cache mounts
         run: |
           nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
-          findmnt --real --output TARGET,FSTYPE
+          findmnt --real --output TARGET,FSTYPE || true
           df -h / /mnt /mnt/cache /cache 2>/dev/null || true
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -92,24 +106,18 @@ jobs:
           PROFILE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python3 scripts/ci/model_profiling.py init --policy "$POLICY"
-          docker run --rm --gpus all --shm-size=16g \
-            --user "$(id -u):$(id -g)" \
-            -e HOME=/tmp -e HF_HOME=/tmp/huggingface \
-            -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e UV_CACHE_DIR=/tmp/uv \
-            -e HF_TOKEN -e POLICY -e EXTRA -e MODE -e TRACE -e GRADIENT_CHECKPOINTING -e PROFILE_RUN_URL \
-            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace \
-            huggingface/lerobot-gpu:latest bash -euo pipefail -c '
-              extras=(--extra training)
-              if [[ -n "$EXTRA" ]]; then extras+=(--extra "$EXTRA"); fi
-              uv sync --locked "${extras[@]}"
-              if [[ "$POLICY" == flux3 ]]; then
-                uv pip install --python /tmp/venv/bin/python --no-deps \
-                  "natten==0.21.6+torch2110cu128" --find-links https://whl.natten.org
-              fi
-              uv run --no-sync python scripts/ci/model_profiling.py run \
-                --policy "$POLICY" --profile_mode="$MODE" --trace="$TRACE" \
-                --gradient-checkpointing="$GRADIENT_CHECKPOINTING"
-            '
+          test -d /mnt/cache
+          mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$HF_LEROBOT_HOME" "$TORCH_HOME" "$UV_CACHE_DIR"
+          extras=(--extra training)
+          if [[ -n "$EXTRA" ]]; then extras+=(--extra "$EXTRA"); fi
+          uv sync --locked "${extras[@]}"
+          if [[ "$POLICY" == flux3 ]]; then
+            uv pip install --python /tmp/venv/bin/python --no-deps \
+              "natten==0.21.6+torch2110cu128" --find-links https://whl.natten.org
+          fi
+          uv run --no-sync python scripts/ci/model_profiling.py run \
+            --policy "$POLICY" --profile_mode="$MODE" --trace="$TRACE" \
+            --gradient-checkpointing="$GRADIENT_CHECKPOINTING"
       - name: Upload results even when profiling fails
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
