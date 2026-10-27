@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keys, validation and wire encoding at the environment-service boundary.
+"""Keys, wire encoding and result validation shared by the env server and its clients.
 
-Keys carry the shared envelope version, so a wire bump moves both services together.
+Keys include the wire protocol version, so clients and servers of different versions never connect.
 """
 
 from dataclasses import asdict, fields
@@ -28,7 +28,7 @@ from lerobot.utils.feature_spec import FeatureSpec, validate_array
 
 
 def deployment_prefix(deployment: str) -> str:
-    """Return a validated simulator deployment key."""
+    """Key of a deployment: the name a server serves its simulator under."""
     return f"lerobot/env/v{PROTOCOL_VERSION}/deployments/{validate_segment(deployment)}"
 
 
@@ -37,12 +37,12 @@ ANY_DEPLOYMENT_DESCRIBE = f"lerobot/env/v{PROTOCOL_VERSION}/describe"
 
 
 def instance_prefix(deployment: str, instance: str) -> str:
-    """Return a simulator boot key under its deployment."""
+    """Key of one server process (instance) under its deployment."""
     return f"{deployment_prefix(deployment)}/instances/{validate_segment(instance)}"
 
 
 def session_prefix(deployment: str, instance: str, session: str) -> str:
-    """Return an admitted environment-session key."""
+    """Key of one session on a server process."""
     return f"{instance_prefix(deployment, instance)}/sessions/{validate_segment(session)}"
 
 
@@ -62,6 +62,7 @@ def decode_descriptor(data: dict[str, Any]) -> EnvDescriptor:
 
 def encode_step_result(result: StepResult) -> dict[str, Any]:
     """Encode a simulation result for transport."""
+    # Not asdict(): it deep-copies every array, camera frames included.
     return {field.name: getattr(result, field.name) for field in fields(result)}
 
 
@@ -72,31 +73,27 @@ def decode_step_result(data: dict[str, Any]) -> StepResult:
     return StepResult(**{**data, "obs": obs, "task": tuple(data["task"])})
 
 
+# The per-environment values of a result, with their dtype.
+_BATCH_DTYPES = {
+    "reward": "float32",
+    "terminated": "bool",
+    "truncated": "bool",
+    "is_success": "bool",
+    "elapsed_steps": "int64",
+}
+
+
 def validate_result(result: StepResult, descriptor: EnvDescriptor, num_envs: int) -> None:
-    """Reject transitions that disagree with the negotiated schema or batch size."""
+    """Reject a result whose observations or per-environment values disagree with the descriptor or batch."""
     if set(result.obs) != {f.name for f in descriptor.features}:
-        raise ValueError("Simulator observation keys differ from the negotiated schema")
+        raise ValueError("Simulator observation keys differ from its descriptor")
     for feature in descriptor.features:
         validate_array(result.obs[feature.name], feature, leading_shape=(num_envs,))
-    if len(result.task) != num_envs or any(not isinstance(task, str) for task in result.task):
+    if len(result.task) != num_envs:
         raise ValueError("Simulator task descriptions must match the batch")
-    for name in ("reward", "terminated", "truncated", "is_success", "elapsed_steps"):
+    for name, dtype in _BATCH_DTYPES.items():
         array = getattr(result, name)
-        if not isinstance(array, np.ndarray) or array.shape != (num_envs,):
-            raise ValueError(f"Simulator transition batch mismatch: {name}")
-        expected = (
-            "bool"
-            if name in {"terminated", "truncated", "is_success"}
-            else "int64"
-            if name == "elapsed_steps"
-            else "float32"
-        )
-        if array.dtype.name != expected:
-            raise ValueError(f"Simulator transition dtype mismatch: {name}")
-    if (
-        not np.isfinite(result.reward).all()
-        or not np.isfinite(result.sim_time)
-        or result.sim_time < 0
-        or (result.elapsed_steps < 0).any()
-    ):
-        raise ValueError("Invalid simulator reward/time/step values")
+        if not isinstance(array, np.ndarray) or array.shape != (num_envs,) or array.dtype.name != dtype:
+            raise ValueError(f"Simulator {name} must be {dtype}, one value per environment")
+    if not np.isfinite(result.reward).all():
+        raise ValueError("Simulator rewards must be finite")
