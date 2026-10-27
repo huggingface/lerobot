@@ -43,6 +43,7 @@ else:
     DDIMScheduler = None
     DDPMScheduler = None
 
+from ..common.ddpm_scheduler import ExportableDDPMScheduler, InferenceStepsMixin
 from ..pretrained import PreTrainedPolicy
 from ..utils import (
     get_device_from_parameters,
@@ -184,7 +185,7 @@ def _make_noise_scheduler(name: str, **kwargs: Any) -> "DDPMScheduler | DDIMSche
     require_package("diffusers", extra="diffusion")
 
     if name == "DDPM":
-        return DDPMScheduler(**kwargs)
+        return ExportableDDPMScheduler(**kwargs)
     elif name == "DDIM":
         return DDIMScheduler(**kwargs)
     else:
@@ -201,7 +202,7 @@ def _action_dim(config: DiffusionConfig) -> int:
     return action_feature.shape[0]
 
 
-class DiffusionModel(nn.Module):
+class DiffusionModel(InferenceStepsMixin, nn.Module):
     def __init__(self, config: DiffusionConfig) -> None:
         super().__init__()
         self.config = config
@@ -272,9 +273,7 @@ class DiffusionModel(nn.Module):
             )
         )
 
-        self.noise_scheduler.set_timesteps(self.num_inference_steps)
-
-        for t in self.noise_scheduler.timesteps:
+        for t in self.inference_timesteps():
             # Predict model output.
             model_output = self.unet(
                 sample,
