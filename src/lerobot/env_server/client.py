@@ -208,7 +208,7 @@ class EnvClient:
                 self.failed = False
 
 
-class BatchedEnv(gym.vector.VectorEnv):
+class RemoteVectorEnv(gym.vector.VectorEnv):
     """``num_envs`` served environments of one task, stepped explicitly."""
 
     canonical_observations = True

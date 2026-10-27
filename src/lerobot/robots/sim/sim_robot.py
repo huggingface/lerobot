@@ -27,7 +27,7 @@ from lerobot.utils.feature_spec import FeatureSpec
 from .config_sim import SimRobotConfig
 
 if TYPE_CHECKING:
-    from lerobot.env_server.client import BatchedEnv
+    from lerobot.env_server.client import RemoteVectorEnv
     from lerobot.sims.vector_env import VectorEnv
 
 
@@ -54,9 +54,9 @@ class SimRobot(Robot):
         self._task_group = task if task and "," not in task else None
         self._connected = False
         self.latest: StepResult | None = None
-        self._env: VectorEnv | BatchedEnv | None = self._make_env()
+        self._env: VectorEnv | RemoteVectorEnv | None = self._make_env()
 
-    def _make_env(self) -> "VectorEnv | BatchedEnv":
+    def _make_env(self) -> "VectorEnv | RemoteVectorEnv":
         env = self._env_config.create_env(self._task_group, self.config.task_id)
         descriptor = env.descriptor
         self.robot_type = descriptor.robot_type or self.name

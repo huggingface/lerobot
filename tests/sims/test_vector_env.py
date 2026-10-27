@@ -27,13 +27,13 @@ from tests.sims.toy_env import ToyEnv, ToyEnvConfig
 
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_env_config_creates_vector_envs_locally_or_served(where, request):
-    from lerobot.env_server.client import BatchedEnv
+    from lerobot.env_server.client import RemoteVectorEnv
     from lerobot.sims.vector_env import VectorEnv
 
     config = ToyEnvConfig(endpoint=request.getfixturevalue("server")[1] if where == "served" else None)
     env = config.create_envs(n_envs=2)["reach"][0]
     try:
-        assert isinstance(env, BatchedEnv if where == "served" else VectorEnv)
+        assert isinstance(env, RemoteVectorEnv if where == "served" else VectorEnv)
         # Canonical observation names, as the server describes them.
         assert set(config.features) == {"observation.state", "observation.image", "action"}
         obs, _ = env.reset(seed=[1, 2])

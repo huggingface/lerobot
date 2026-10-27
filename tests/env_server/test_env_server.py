@@ -108,12 +108,12 @@ def test_admission_and_stale_generation(server):
 
 
 def test_jpeg_observations_match_raw(server):
-    from lerobot.env_server.client import BatchedEnv
+    from lerobot.env_server.client import RemoteVectorEnv
 
     _, endpoint = server
     obs = {}
     for encoding in ("raw", "jpeg"):
-        env = BatchedEnv(EnvClient(endpoint, encoding=encoding, jpeg_quality=95), num_envs=2)
+        env = RemoteVectorEnv(EnvClient(endpoint, encoding=encoding, jpeg_quality=95), num_envs=2)
         try:
             obs[encoding], _ = env.reset(seed=[10, 20])
         finally:
@@ -127,11 +127,11 @@ def test_jpeg_observations_match_raw(server):
 
 
 def test_vector_client(server):
-    from lerobot.env_server.client import BatchedEnv
+    from lerobot.env_server.client import RemoteVectorEnv
     from lerobot.envs.utils import prepare_canonical_observation
 
     _, endpoint = server
-    env = BatchedEnv(EnvClient(endpoint), num_envs=2)
+    env = RemoteVectorEnv(EnvClient(endpoint), num_envs=2)
     try:
         obs, _ = env.reset(seed=[10, 20])
         converted = prepare_canonical_observation(obs)
@@ -229,7 +229,7 @@ def test_eval_loop_accepts_canonical_observations(server):
 
     import torch
 
-    from lerobot.env_server.client import BatchedEnv
+    from lerobot.env_server.client import RemoteVectorEnv
     from lerobot.processor import PolicyProcessorPipeline
     from lerobot.scripts.lerobot_eval import rollout
 
@@ -245,7 +245,7 @@ def test_eval_loop_accepts_canonical_observations(server):
             return torch.ones((2, 2), dtype=torch.float32) * 0.5
 
     _, endpoint = server
-    env = BatchedEnv(EnvClient(endpoint), num_envs=2)
+    env = RemoteVectorEnv(EnvClient(endpoint), num_envs=2)
     identity = PolicyProcessorPipeline(steps=[])
     from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
 
@@ -270,7 +270,7 @@ def test_eval_loop_accepts_canonical_observations(server):
 
 
 def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
-    from lerobot.env_server.client import BatchedEnv
+    from lerobot.env_server.client import RemoteVectorEnv
 
     original = ToyEnv.reset
 
@@ -279,7 +279,7 @@ def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
         return original(self, seed=seed)
 
     monkeypatch.setattr(ToyEnv, "reset", reset)
-    env = BatchedEnv(EnvClient(server[1]))
+    env = RemoteVectorEnv(EnvClient(server[1]))
     # eval_policy_all prefetches the next task through `_ensure`; a prefetched open
     # would add an unseeded reset before the rollout's seeded one.
     assert not hasattr(env, "_ensure")
@@ -325,10 +325,10 @@ def test_served_env_must_be_the_env_the_command_describes(server):
 
 
 def test_first_session_uses_the_environment_built_to_describe(server):
-    from lerobot.env_server.client import BatchedEnv
+    from lerobot.env_server.client import RemoteVectorEnv
 
     before = ToyEnv.builds
-    env = BatchedEnv(EnvClient(server[1]))
+    env = RemoteVectorEnv(EnvClient(server[1]))
     try:
         env.reset(seed=1)
         env.step(np.zeros((1, 2), np.float32))

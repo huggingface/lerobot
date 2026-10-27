@@ -32,7 +32,7 @@ from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 
 if TYPE_CHECKING:
-    from lerobot.env_server.client import BatchedEnv
+    from lerobot.env_server.client import RemoteVectorEnv
     from lerobot.sims.vector_env import VectorEnv
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         task_id: int = 0,
         num_envs: int = 1,
         use_async_envs: bool = False,
-    ) -> VectorEnv | BatchedEnv:
+    ) -> VectorEnv | RemoteVectorEnv:
         """Create one local or served environment for a specific task."""
         descriptor, make = self._environment_factory(num_envs, use_async_envs)
         group = task_group or next(iter(descriptor.tasks))
@@ -134,13 +134,13 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
         self,
         n_envs: int,
         use_async_envs: bool,
-    ) -> tuple[EnvDescriptor, Callable[[str, int], VectorEnv | BatchedEnv]]:
+    ) -> tuple[EnvDescriptor, Callable[[str, int], VectorEnv | RemoteVectorEnv]]:
         from lerobot.sims.vector_env import VectorEnv
 
         settings = self.sim_settings()
         endpoint = self.endpoint
         if endpoint is not None:
-            from lerobot.env_server.client import BatchedEnv, EnvClient
+            from lerobot.env_server.client import EnvClient, RemoteVectorEnv
 
             if self.max_parallel_tasks != 1:
                 raise ValueError("A served environment runs one task at a time")
@@ -151,8 +151,8 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
                 probe.close()
             check_served(descriptor.config, settings, endpoint)
 
-            def make(group: str, task_id: int) -> VectorEnv | BatchedEnv:
-                return BatchedEnv(
+            def make(group: str, task_id: int) -> VectorEnv | RemoteVectorEnv:
+                return RemoteVectorEnv(
                     EnvClient(
                         endpoint,
                         self.type,
@@ -174,7 +174,7 @@ class EnvConfig(draccus.ChoiceRegistry, abc.ABC):
             first = [VectorEnv(sim, n_envs, use_async_envs=parallel)]
             descriptor = first[0].descriptor
 
-            def make(group: str, task_id: int) -> VectorEnv | BatchedEnv:
+            def make(group: str, task_id: int) -> VectorEnv | RemoteVectorEnv:
                 if first:
                     env = first.pop()
                     if (group, task_id) == (env.task_group, env.task_id):
