@@ -298,8 +298,3 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
     def close_extras(self, **kwargs):
         """Close the served session."""
         self.client.close()
-
-    def close(self, **kwargs):
-        """Close the served session."""
-        self.client.close()
-        self.closed = True
