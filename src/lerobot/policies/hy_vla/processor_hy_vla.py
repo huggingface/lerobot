@@ -580,6 +580,23 @@ def _identity_stats(horizon: int) -> dict[str, Tensor]:
     }
 
 
+def single_arm_relative_actions(action: Tensor, reference: Tensor) -> Tensor:
+    """Express XYZ/row-rotation6D in the current gripper frame; retain both gripper targets."""
+    rotation = rotation_6d_to_matrix(action[..., 3:9])
+    inverse_rotation = reference[..., :3, :3].transpose(-1, -2)
+    translation = action[..., :3] - reference[..., None, :3, 3]
+    position = (inverse_rotation.unsqueeze(-3) @ translation.unsqueeze(-1)).squeeze(-1)
+    relative_rotation = inverse_rotation.unsqueeze(-3) @ rotation
+    return torch.cat((position, rotation_matrix_to_6d(relative_rotation), action[..., 9:11]), -1)
+
+
+def single_arm_absolute_actions(action: Tensor, reference: Tensor) -> Tensor:
+    """Decode one relative single-arm command against the captured planning pose."""
+    position = (reference[..., :3, :3] @ action[..., :3, None]).squeeze(-1) + reference[..., :3, 3]
+    rotation = reference[..., :3, :3] @ rotation_6d_to_matrix(action[..., 3:9])
+    return torch.cat((position, rotation_matrix_to_6d(rotation), action[..., 9:11]), -1)
+
+
 def _as_tensor_stats(stats: dict[str, Any] | None, horizon: int) -> dict[str, Tensor]:
     output = _identity_stats(horizon)
     if stats is None:
@@ -649,6 +666,8 @@ class HyVLAEncodeStep(_HyVLAStatsMixin, ProcessorStep):
     """Convert native dual-arm data into the normalized released representation."""
 
     embodiment: str = "umi_dual_arm"
+    reference_pose_key: str = "observation.gripper_pose"
+    action_validity_key: str | None = None
     action_representation: str = "relative"
     relative_convention: str = "first_frame"
     quaternion_order: str = "xyzw"
@@ -669,6 +688,8 @@ class HyVLAEncodeStep(_HyVLAStatsMixin, ProcessorStep):
     def get_config(self) -> dict[str, Any]:
         return {
             "embodiment": self.embodiment,
+            "reference_pose_key": self.reference_pose_key,
+            "action_validity_key": self.action_validity_key,
             "action_representation": self.action_representation,
             "relative_convention": self.relative_convention,
             "quaternion_order": self.quaternion_order,
@@ -697,7 +718,21 @@ class HyVLAEncodeStep(_HyVLAStatsMixin, ProcessorStep):
             raise ValueError("Hy-VLA requires a tensor observation.state.")
         qpos_mean, qpos_std, action_mean, action_std = self._require_stats()
 
-        if state.shape[-1] == DUAL_NATIVE_DIM:
+        if self.embodiment == "single_arm":
+            reference = observation.get(self.reference_pose_key)
+            if not isinstance(reference, Tensor) or reference.shape[-2:] != (4, 4):
+                raise ValueError(f"Single-arm Hy-VLA requires a 4x4 {self.reference_pose_key} pose.")
+            if reference.ndim == 4 and reference.shape[-3] == 1:
+                reference = reference.squeeze(-3)
+            if reference.ndim == 2:
+                reference = reference.unsqueeze(0)
+            if reference.shape != (state.shape[0], 4, 4) or state.shape[-1] != 2:
+                raise ValueError(
+                    "Single-arm Hy-VLA requires one current pose and 2D measured state per sample."
+                )
+            self.latest_native_reference = reference.detach().clone()
+            model_state = state
+        elif state.shape[-1] == DUAL_NATIVE_DIM:
             self.latest_native_reference = state.detach().clone()
             model_state = dual_native_to_hy(
                 self._to_model_frame(state), quaternion_order=self.quaternion_order
@@ -723,7 +758,15 @@ class HyVLAEncodeStep(_HyVLAStatsMixin, ProcessorStep):
                 # as single actions. Hy-VLA's single training sample is a TD
                 # chunk, so add its batch dimension explicitly.
                 action = action.unsqueeze(0)
-            if action.shape[-1] == DUAL_NATIVE_DIM:
+            if self.embodiment == "single_arm":
+                if action.shape[-1] != 11:
+                    raise ValueError(
+                        "Single-arm Hy-VLA actions must be XYZ, row rotation6D, strategy, closure."
+                    )
+                assert self.latest_native_reference is not None
+                relative = single_arm_relative_actions(action, self.latest_native_reference.to(action))
+                normalized = mean_std_normalize(relative, action_mean, action_std, self.epsilon)
+            elif action.shape[-1] == DUAL_NATIVE_DIM:
                 native_action = self._to_model_frame(action)
                 if self.relative_convention == "first_frame":
                     relative = dual_relative_to_first(native_action, quaternion_order=self.quaternion_order)
@@ -748,6 +791,22 @@ class HyVLAEncodeStep(_HyVLAStatsMixin, ProcessorStep):
             padded_action, action_mask = pad_with_mask(normalized, self.max_action_dim)
             transition[TransitionKey.ACTION] = padded_action
             complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+            if self.embodiment == "single_arm":
+                valid = complementary.get("action_is_pad")
+                if isinstance(valid, Tensor):
+                    action_mask &= ~valid.to(device=action_mask.device, dtype=torch.bool).unsqueeze(-1)
+                if self.action_validity_key is not None:
+                    valid = observation.get(self.action_validity_key)
+                    if not isinstance(valid, Tensor):
+                        raise ValueError(f"Missing action validity tensor {self.action_validity_key}.")
+                    if valid.ndim == 3 and valid.shape[1] == 1:
+                        valid = valid.squeeze(1)
+                    if valid.ndim == 1:
+                        valid = valid.unsqueeze(0)
+                    if valid.shape != normalized.shape[:-1]:
+                        raise ValueError("Action validity must have one flag per physical target.")
+                    action_mask &= valid.to(device=action_mask.device, dtype=torch.bool).unsqueeze(-1)
+                transition[TransitionKey.ACTION] = padded_action.masked_fill(~action_mask, 0)
             complementary[f"{ACTION}.mask"] = action_mask
             transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
@@ -832,8 +891,8 @@ class HyVLADecodeStep(_HyVLAStatsMixin, ProcessorStep):
         if self._index == 0:
             if self.encoder is None or self.encoder.latest_native_reference is None:
                 raise RuntimeError(
-                    "Hy-VLA relative action decoding requires a preceding native 16D "
-                    "state and a connected preprocessor."
+                    "Hy-VLA relative action decoding requires a preceding reference pose "
+                    "and a connected preprocessor."
                 )
             self._reference = self.encoder.latest_native_reference.to(action)
             if self.coordinate_transform == "robotwin_to_umi":
@@ -857,6 +916,15 @@ class HyVLADecodeStep(_HyVLAStatsMixin, ProcessorStep):
         _, _, action_mean, action_std = self._require_stats()
         stats_index = min(self._index, action_mean.shape[-2] - 1)
 
+        if self.embodiment == "single_arm":
+            relative = mean_std_unnormalize(
+                action[..., :11], action_mean[stats_index], action_std[stats_index], self.epsilon
+            )
+            reference = self._select_reference(action).to(relative)
+            decoded = single_arm_absolute_actions(relative, reference)
+            transition[TransitionKey.ACTION] = decoded.squeeze(0) if squeeze_batch else decoded
+            self._index = (self._index + 1) % self.execution_horizon
+            return transition
         if self.action_representation == "relative_absolute":
             if action.shape[-1] != 2 * DUAL_HY_DIM:
                 raise ValueError(
@@ -1067,6 +1135,15 @@ def make_hy_vla_pre_post_processors(
         # This intentionally accepts only the author-style schema. Generic
         # per-feature LeRobot stats cannot reproduce time-dependent action stats.
         norm_stats = dataset_stats if "qpos_mean" in dataset_stats else None
+    if config.embodiment == "single_arm" and norm_stats is None:
+        if not dataset_stats or "action_relative" not in dataset_stats:
+            raise ValueError("Single-arm finetuning requires fitted action_relative mean/std statistics.")
+        norm_stats = {
+            "qpos_mean": dataset_stats[OBS_STATE]["mean"],
+            "qpos_std": dataset_stats[OBS_STATE]["std"],
+            "action_mean": dataset_stats["action_relative"]["mean"],
+            "action_std": dataset_stats["action_relative"]["std"],
+        }
     if norm_stats is None and config.pretrained_path:
         # Fresh recipe fine-tuning rebuilds the pipeline on main. Generic dataset
         # stats cannot replace the author's time-dependent relative-pose stats.
@@ -1079,9 +1156,20 @@ def make_hy_vla_pre_post_processors(
         saved_encoder = next(step for step in saved_pre.steps if isinstance(step, HyVLAEncodeStep))
         norm_stats = saved_encoder.state_dict()
     stats = _as_tensor_stats(norm_stats, config.physical_action_horizon)
+    if config.embodiment == "single_arm" and (
+        stats["qpos_mean"].shape != (2,)
+        or stats["qpos_std"].shape != (2,)
+        or stats["action_mean"].shape != (config.physical_action_horizon, 11)
+        or stats["action_std"].shape != (config.physical_action_horizon, 11)
+    ):
+        raise ValueError(
+            "Single-arm normalization requires 2D state and (physical_horizon, 11) action stats."
+        )
     assert config.execution_horizon is not None
     encoder = HyVLAEncodeStep(
         embodiment=config.embodiment,
+        reference_pose_key=config.reference_pose_key,
+        action_validity_key=config.action_validity_key,
         action_representation=config.action_representation,
         relative_convention=config.relative_convention,
         quaternion_order=config.native_quaternion_order,

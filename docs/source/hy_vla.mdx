@@ -7,6 +7,30 @@ vision-language model with a compact flow-matching action expert.
 
 ## Model Overview
 
+### Single-arm strategy/closure finetuning
+
+The `single_arm` embodiment supports an 11D absolute action layout: XYZ,
+the first two rotation-matrix rows, strategy, and closure. Set
+`model_action_dim=11`, `relative_convention=current`, and keep the pretrained
+32D projection sizes. Measured `observation.state` contains only strategy and
+closure. Supply a current 4×4 gripper-centre pose in
+`observation.gripper_pose` (or `reference_pose_key`) in both training and inference.
+That pose anchors relative actions and is not fed to the model as state.
+
+The processor expresses every target in the current gripper frame, leaves both
+gripper targets absolute, and decodes commands against the pose captured when a
+chunk was planned. Robot deployment must supply that same gripper frame through
+calibrated forward kinematics and convert decoded poses to executable joint targets.
+
+Fit normalization on relative chunks from the training data. Fresh processors
+require 2D state statistics and `(physical_horizon, 11)` action statistics, supplied
+as `norm_stats` or `dataset_stats["action_relative"]` mean/std alongside ordinary
+state statistics. Statistics are saved with the processor; the dual-arm checkpoint's
+statistics do not apply to this embodiment. Optional `action_validity_key` names
+an observation tensor with one boolean per target. Invalid and padded targets are
+masked from the action loss. This profile changes action semantics and requires
+finetuning; the released dual-arm weights do not directly control this gripper.
+
 Hy-VLA combines a Hunyuan vision-language model, temporal multi-camera vision
 encoding, and a flow-matching action expert. The released checkpoints use a
 dual-arm pose representation and generate action chunks conditioned on images,

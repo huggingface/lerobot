@@ -121,6 +121,10 @@ class HyVLAConfig(PreTrainedConfig):
 
     # Geometry is explicit. No mobile-base dimensions are accepted here.
     embodiment: str = "umi_dual_arm"
+    # Single-arm finetuning accepts XYZ + row rotation6D + strategy/closure,
+    # measured 2D gripper state, and a separate pose used only as the action anchor.
+    reference_pose_key: str = "observation.gripper_pose"
+    action_validity_key: str | None = None
     action_representation: str = "relative"
     action_decode_mode: str = "relative"
     relative_absolute_blend_weight: float = 0.5
@@ -154,10 +158,14 @@ class HyVLAConfig(PreTrainedConfig):
                 "Hy-VLA checkpoints use all flow tokens at inference; "
                 f"n_action_steps ({self.n_action_steps}) must equal chunk_size ({self.chunk_size})."
             )
-        if self.model_action_dim != 20:
-            raise ValueError(f"{self.embodiment} requires model_action_dim=20, got {self.model_action_dim}.")
-        if self.max_state_dim < 20 or self.max_action_dim < 20:
-            raise ValueError("Hy-VLA requires at least 20 state/action channels before padding.")
+        expected_dim = 11 if self.embodiment == "single_arm" else 20
+        if self.model_action_dim != expected_dim:
+            raise ValueError(
+                f"{self.embodiment} requires model_action_dim={expected_dim}, got {self.model_action_dim}."
+            )
+        state_dim = 2 if self.embodiment == "single_arm" else 20
+        if self.max_state_dim < state_dim or self.max_action_dim < expected_dim:
+            raise ValueError("Hy-VLA state/action padding dimensions are too small for the embodiment.")
         if self.num_steps <= 0:
             raise ValueError("num_steps must be positive.")
         if self.flow_loss_weight < 0 or self.text_loss_weight < 0:
@@ -170,9 +178,9 @@ class HyVLAConfig(PreTrainedConfig):
             raise ValueError("text_temperature must be non-negative.")
         if not 0 < self.text_top_p <= 1:
             raise ValueError("text_top_p must be in (0, 1].")
-        if self.embodiment not in {"umi_dual_arm", "robotwin_dual_arm"}:
+        if self.embodiment not in {"umi_dual_arm", "robotwin_dual_arm", "single_arm"}:
             raise ValueError(
-                "Hy-VLA supports only the released UMI and RoboTwin dual-arm embodiments; "
+                "Hy-VLA supports UMI/RoboTwin dual-arm and single-arm finetuning embodiments; "
                 f"got {self.embodiment!r}."
             )
         if self.action_representation not in {"relative", "relative_absolute"}:
@@ -205,6 +213,15 @@ class HyVLAConfig(PreTrainedConfig):
             raise ValueError("native_quaternion_order must be 'xyzw' or 'wxyz'.")
         if self.coordinate_transform not in {"identity", "robotwin_to_umi"}:
             raise ValueError("coordinate_transform must be 'identity' or 'robotwin_to_umi'.")
+        if self.embodiment == "single_arm" and (
+            self.action_representation != "relative"
+            or self.relative_convention != "current"
+            or self.coordinate_transform != "identity"
+            or self.convert_gripper
+        ):
+            raise ValueError(
+                "Single-arm finetuning requires current-relative poses and unchanged gripper targets."
+            )
         self.validate_features()
 
     @property
@@ -225,17 +242,24 @@ class HyVLAConfig(PreTrainedConfig):
                 _UMI_CAMERA_KEYS[2]: PolicyFeature(FeatureType.VISUAL, (3, 480, 640)),
                 OBS_STATE: PolicyFeature(FeatureType.STATE, (16,)),
             }
+            if self.embodiment == "single_arm":
+                self.input_features = {
+                    "observation.images.grabette": PolicyFeature(FeatureType.VISUAL, (3, 972, 1296)),
+                    OBS_STATE: PolicyFeature(FeatureType.STATE, (2,)),
+                }
         if not self.output_features:
-            self.output_features = {ACTION: PolicyFeature(FeatureType.ACTION, (16,))}
+            self.output_features = {
+                ACTION: PolicyFeature(FeatureType.ACTION, (11 if self.embodiment == "single_arm" else 16,))
+            }
         state = self.input_features.get(OBS_STATE)
         action = self.output_features.get(ACTION)
-        expected_state_dims = {16, 20, 32}
+        expected_state_dims = {2} if self.embodiment == "single_arm" else {16, 20, 32}
         if state is not None and state.shape[-1] not in expected_state_dims:
             raise ValueError(
                 f"Hy-VLA {self.embodiment} state must have one of {sorted(expected_state_dims)} dimensions; "
                 f"got {state.shape}."
             )
-        expected_action_dims = {16, 20}
+        expected_action_dims = {11} if self.embodiment == "single_arm" else {16, 20}
         if action is not None and action.shape[-1] not in expected_action_dims:
             raise ValueError(
                 f"Hy-VLA {self.embodiment} action must have one of {sorted(expected_action_dims)} dimensions; "
