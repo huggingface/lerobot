@@ -22,6 +22,7 @@ and :class:`DatasetContext` — assembled into :class:`RolloutContext`.
 from __future__ import annotations
 
 import logging
+import math
 from collections import deque
 from collections.abc import Callable
 from copy import copy
@@ -407,6 +408,10 @@ def _build_rollout_dataset(cfg: RolloutConfig, robot: Robot, dataset_features: d
                 image_writer_processes=cfg.dataset.num_image_writer_processes,
                 image_writer_threads=cfg.dataset.num_image_writer_threads_per_camera * camera_count,
             )
+            if not math.isclose(dataset.fps, cfg.fps):
+                raise ValueError(
+                    f"The resumed dataset records at {dataset.fps} fps: pass --fps={dataset.fps}"
+                )
         else:
             repo_name = cfg.dataset.repo_id.split("/", 1)[-1]
             if not repo_name.startswith("rollout_"):

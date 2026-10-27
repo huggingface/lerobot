@@ -599,6 +599,14 @@ def test_rollout_config_enforces_strategy_declarations():
                 dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
                 fps=50,
             )
+        # A resumed dataset keeps its own rate, so --dataset.fps is not compared.
+        make(
+            strategy=RecorderConfig(),
+            teleop=MockTeleopConfig(),
+            dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
+            fps=50,
+            resume=True,
+        )
 
         # requires_streaming_encoding() is a method so it can depend on the config's fields.
         dagger = make(
@@ -609,6 +617,21 @@ def test_rollout_config_enforces_strategy_declarations():
         assert dagger.dataset.streaming_encoding is False
     finally:
         RolloutStrategyConfig.get_known_choices().pop("test_recorder")
+
+
+def test_resumed_dataset_must_record_at_fps(monkeypatch):
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.rollout import context
+
+    monkeypatch.setattr(context.LeRobotDataset, "resume", lambda *args, **kwargs: SimpleNamespace(fps=15))
+    cfg = SimpleNamespace(
+        dataset=DatasetRecordConfig(repo_id="user/rollout_test"),
+        resume=True,
+        fps=30,
+        strategy=SimpleNamespace(extra_dataset_features=dict),
+    )
+    with pytest.raises(ValueError, match="pass --fps=15"):
+        context._build_rollout_dataset(cfg, SimpleNamespace(), {})
 
 
 def test_setup_defaults_to_starting_the_engine():

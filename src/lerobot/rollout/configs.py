@@ -367,7 +367,8 @@ class RolloutConfig:
         if self.dataset is not None and not self.dataset.repo_id:
             raise ValueError("--dataset.repo_id must be set when passing --dataset.* flags")
         # One frame is recorded per control cycle: a dataset at another rate would replay at the wrong speed.
-        if self.dataset is not None and not math.isclose(self.dataset.fps, self.fps):
+        # A resumed dataset keeps its own rate, checked when it is opened.
+        if self.dataset is not None and not self.resume and not math.isclose(self.dataset.fps, self.fps):
             raise ValueError(
                 f"--dataset.fps ({self.dataset.fps}) must equal --fps ({self.fps:g}): "
                 f"pass --dataset.fps={self.fps:g}"
