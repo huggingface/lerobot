@@ -77,7 +77,7 @@ def test_batch_terminal_freeze_and_seed_parity(server, use_async_envs):
         assert result.reward[0] == 0.0  # The terminal reward is earned once, as with the old freeze wrapper.
         assert result.elapsed_steps.tolist() == [1, 5]
         assert result.truncated.tolist() == [False, True]
-        frames = with_client.request("render")["frames"]
+        frames = result.frames()
         assert len(frames) == 2 and frames[0].shape == (8, 8, 3)
     finally:
         with_client.close()

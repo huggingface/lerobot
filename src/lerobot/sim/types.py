@@ -121,6 +121,13 @@ class StepResult:
     sim_time: float
     elapsed_steps: np.ndarray
 
+    def frames(self) -> list[np.ndarray]:
+        """Each environment's frame from its first RGB observation, terminal frames included."""
+        key = next((k for k, v in self.obs.items() if v.dtype == np.uint8 and v.ndim == 4), None)
+        if key is None:
+            raise ValueError("This environment exposes no RGB observation")
+        return [frame.copy() for frame in self.obs[key]]
+
     def info(self) -> dict[str, Any]:
         """The Gymnasium ``info`` of this step."""
         return {

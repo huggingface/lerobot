@@ -371,12 +371,7 @@ class VectorEnv(gym.vector.VectorEnv):
 
     def render(self) -> list[np.ndarray]:
         """Return the latest RGB frame of every environment, terminal frames included, without rendering."""
-        if not self._last:
-            raise ValueError("Reset before rendering")
-        key = next((k for k, v in self._last[0][0].items() if v.dtype == np.uint8 and v.ndim == 3), None)
-        if key is None:
-            raise ValueError("This environment exposes no RGB observation")
-        return [last[0][key].copy() for last in self._last]
+        return self.latest.frames()
 
     def call(self, name: str, *args: Any, **kwargs: Any) -> tuple[Any, ...]:
         """Return a supported per-environment attribute."""

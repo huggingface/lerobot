@@ -284,7 +284,7 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         if name == "task_description":
             return self.latest.task
         if name == "render":
-            return tuple(self.client.request("render")["frames"])
+            return tuple(self.render())
         raise AttributeError(f"Simulator vector attribute is not exposed: {name}")
 
     def get_attr(self, name):
@@ -292,8 +292,8 @@ class RemoteVectorEnv(gym.vector.VectorEnv):
         return self.call(name)
 
     def render(self):
-        """Return the latest RGB frame of every served environment."""
-        return self.call("render")
+        """Return the latest RGB frame of every served environment, terminal frames included."""
+        return self.latest.frames()
 
     def close_extras(self, **kwargs):
         """Close the served session."""

@@ -100,7 +100,7 @@ class _Session:
         self.token: PresenceToken = server.transport.declare_token(prefix + "/alive")
 
     def handle(self, operation: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Reset, step, or render the owned environments."""
+        """Reset or step the owned environments."""
         if self.fault is not None:
             raise ProtocolError(ErrorCode.EXECUTION, self.fault)
         if operation == "reset":
@@ -118,8 +118,6 @@ class _Session:
                 self.fault = f"Simulator step failed: {exc}"
                 raise
             return {"result": encode_step_result(self.env.latest)}
-        if operation == "render":
-            return {"frames": self.env.render()}
         raise ProtocolError(ErrorCode.UNSUPPORTED, f"Unsupported operation: {operation}")
 
     def actions(self, value: Any) -> np.ndarray:
