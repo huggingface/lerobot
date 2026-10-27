@@ -66,11 +66,11 @@ from lerobot.robots import (  # noqa: F401
     openarm_follower,
     reachy2,
     rebot_b601_follower,
-    sim,
+    sim_robot,
     so_follower,
     unitree_g1,
 )
-from lerobot.robots.sim import check_control_rate
+from lerobot.robots.sim_robot import check_control_rate
 from lerobot.utils.constants import ACTION
 from lerobot.utils.cycle_timer import CycleTimer
 from lerobot.utils.import_utils import register_third_party_plugins

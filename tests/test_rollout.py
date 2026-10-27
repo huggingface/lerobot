@@ -1174,7 +1174,7 @@ def test_episodic_records_once_per_interpolation_cycle():
 def test_episodic_episode_ends_with_the_robots():
     from unittest.mock import PropertyMock
 
-    from lerobot.robots.sim import SimRobot
+    from lerobot.robots.sim_robot import SimRobot
     from lerobot.rollout import EpisodicStrategyConfig
     from lerobot.rollout.strategies import EpisodicStrategy
     from lerobot.utils.action_interpolator import ActionInterpolator

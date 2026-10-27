@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .config_sim import SimRobotConfig as SimRobotConfig
+from .config_sim_robot import SimRobotConfig as SimRobotConfig
 from .sim_robot import (
     SimRobot as SimRobot,
     check_control_rate as check_control_rate,

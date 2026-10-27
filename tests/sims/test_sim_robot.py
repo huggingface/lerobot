@@ -22,7 +22,7 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from lerobot.robots.sim import SimRobot, SimRobotConfig
+from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
 from lerobot.transport.zenoh import ZenohConfig
 from tests.sims.toy_env import ToyEnv, ToyEnvConfig
 
@@ -60,7 +60,7 @@ def test_sim_robot_env_choices_exclude_envs_built_around_a_robot():
 
 def test_sim_robot_registration(server, tmp_path):
     from lerobot.robots import make_robot_from_config
-    from lerobot.robots.sim import SimRobot, SimRobotConfig
+    from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
 
     robot = make_robot_from_config(
         SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path)
@@ -102,7 +102,7 @@ def test_sim_robot_advances_once_per_action(where, request, tmp_path):
 
 
 def test_robot_hold_does_not_advance_environment(server, tmp_path):
-    from lerobot.robots.sim import SimRobot, SimRobotConfig
+    from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 
     _, endpoint = server
@@ -153,7 +153,7 @@ def test_episode_functions_leave_real_robots_alone():
     from unittest.mock import MagicMock
 
     from lerobot.robots import Robot
-    from lerobot.robots.sim import episode_ended, start_episode
+    from lerobot.robots.sim_robot import episode_ended, start_episode
 
     robot = MagicMock(spec=Robot)
     start_episode(robot)
@@ -172,7 +172,7 @@ def test_sim_robot_names_the_actions_it_takes(tmp_path):
 
 
 def test_sim_robot_actions_follow_controller_order(server, tmp_path):
-    from lerobot.robots.sim import SimRobot, SimRobotConfig
+    from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
 
     robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path))
     try:
@@ -213,7 +213,7 @@ def test_sim_robot_records_scalar_state_actions_and_rgb(server, tmp_path):
 
     from lerobot.configs.dataset import DatasetRecordConfig
     from lerobot.datasets import LeRobotDataset
-    from lerobot.robots.sim import SimRobot, SimRobotConfig
+    from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
     from lerobot.rollout import context
     from lerobot.rollout.configs import EpisodicStrategyConfig
     from lerobot.utils.feature_utils import build_dataset_frame
@@ -274,7 +274,7 @@ def test_rollout_rejects_checkpoint_schema_before_opening_environment(server, tm
     from types import SimpleNamespace
 
     from lerobot.configs.types import FeatureType, PolicyFeature
-    from lerobot.robots.sim import SimRobot, SimRobotConfig
+    from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
     from lerobot.rollout import context
 
     robot = SimRobot(SimRobotConfig(env=ToyEnvConfig(endpoint=server[1]), calibration_dir=tmp_path))
@@ -314,7 +314,7 @@ def test_sim_robot_local_inference_engines(server, tmp_path, mode):
     from lerobot.inference import RTCInferenceEngine
     from lerobot.inference.sync import SyncInferenceEngine
     from lerobot.policies.rtc.configuration_rtc import RTCConfig
-    from lerobot.robots.sim import SimRobot, SimRobotConfig
+    from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
     from tests.inference.rtc_helpers import ControlledPolicy, Pipeline
     from tests.utils import wait_for
@@ -381,7 +381,7 @@ def test_sim_robot_remote_inference_engine(server, tmp_path):
     from lerobot.remote_inference.client import RemoteClient
     from lerobot.remote_inference.engine import RemoteInferenceEngine
     from lerobot.remote_inference.server import PolicyServer, SessionWorker
-    from lerobot.robots.sim import SimRobot, SimRobotConfig
+    from lerobot.robots.sim_robot import SimRobot, SimRobotConfig
     from lerobot.rollout.robot_wrapper import ThreadSafeRobot
     from lerobot.transport.zenoh import ZenohTransport
     from tests.inference.test_policy_runner import ConformingPolicy, tiny_config
