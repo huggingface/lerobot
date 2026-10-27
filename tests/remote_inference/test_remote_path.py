@@ -81,6 +81,7 @@ def test_busy_admission_releases_connected_hardware_before_propagating(remote_se
     robot = SimpleNamespace(
         name="test_position_robot",
         supports_position_hold=True,
+        supports_command_hold=False,
         action_features=features,
         observation_features=features,
         robot_type="test_position_robot",
@@ -173,6 +174,7 @@ def test_remote_context_without_weights_dispatches_and_holds_fake_robot(remote_s
 
     class FakeRobot:
         supports_position_hold = True
+        supports_command_hold = False
         action_features = {f"joint_{index}.pos": float for index in range(3)}
         observation_features = action_features
         name = "fake_position_robot"
