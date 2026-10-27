@@ -97,6 +97,47 @@ Each successful action refreshes the bounded hold. If the recording, policy, or 
 
 `stop()` ends this adapter's command while keeping MOVE balancing active. `disconnect()` lets the SDK send its final zero and closes cameras, including after a lost link or partial connection failure. Neither operation calls STAND or DAMP: DAMP removes actuator support, and STAND does not balance. Follow Menlo's supported shutdown procedure to put the robot away.
 
+## Exoskeleton arm teleoperation
+
+The exoskeleton arms used for the [Unitree G1](./unitree_g1) also drive Asimov's arms. As for the G1, exoskeleton forward kinematics gives each hand pose; it is expressed relative to the exoskeleton shoulder, scaled to Asimov's shorter reach (about 0.84), placed at Asimov's shoulder, and solved with Asimov arm IK. Asimov's 5-DOF arms (shoulder pitch/roll/yaw, elbow, wrist yaw) match the exoskeleton's five joints; position is weighted above orientation.
+
+The IK uses Menlo's open-source [25-DOF URDF](https://github.com/menloresearch/asimov-1/tree/main/sim-model/asimov_1_25dof) (CERN-OHL-S-2.0), downloaded at a pinned commit into `$HF_LEROBOT_HOME/assets` on first use. It needs Pinocchio (`pip install pin`); no CasADi bindings are required.
+
+<Tip warning={true}>
+  Menlo's joint control puts **every** joint under position control with the
+  walking policy **off**: the robot does not balance. Hang Asimov from its
+  gantry or seat it on a stool or bench first. Legs, waist and neck are held at
+  the pose measured on the first command. When commands stop, Asimov Edge DAMPs
+  the robot two seconds later.
+</Tip>
+
+Exoskeleton calibrations are shared with the G1 teleoperator. Verify the retargeting in the browser without the robot (this also calibrates uncalibrated arms):
+
+```bash
+uv run --locked lerobot-calibrate \
+  --teleop.type=asimov_exo \
+  --teleop.left_arm_config.port=/dev/ttyACM0 \
+  --teleop.right_arm_config.port=/dev/ttyACM1
+```
+
+Prepare STAND (armed) or MOVE in Asimov Manager, then teleoperate:
+
+```bash
+uv run --locked lerobot-teleoperate \
+  --robot.type=asimov \
+  --robot.host=192.168.22.32 \
+  --robot.control_mode=arms \
+  --robot.robot_supported=true \
+  --teleop.type=asimov_exo \
+  --teleop.left_arm_config.port=/dev/ttyACM0 \
+  --teleop.right_arm_config.port=/dev/ttyACM1 \
+  --fps=30
+```
+
+Arm actions are `<joint>.pos` targets in radians for the ten `L_*`/`R_*` shoulder, elbow and wrist joints. Each command moves a target by at most `--robot.max_arm_step_rad` (default 0.1 rad), so the arms ramp from their measured pose instead of jumping. `lerobot-record` stores these step-limited targets. Other options: `--teleop.frozen_joints="L_Wrist_Yaw,R_Wrist_Yaw"` keeps joints out of the IK, `--teleop.arm_scale` overrides the reach scale, and `--teleop.rotation_weight` (default 0.02) trades orientation against position.
+
+Asimov's wrist yaw is at its joint limit at zero, so in the exoskeleton's neutral wrist pose the hand can only roll one way. The exoskeleton joystick does not drive locomotion here, because the walking policy is off during arm control.
+
 ## Validation
 
 ```bash
