@@ -10,8 +10,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
-    "lerobot[openarms]>=0.6.2,<0.7.0",
-    "gripette @ git+https://github.com/pollen-robotics/grabette.git@develop#subdirectory=packages/gripette",
+    "lerobot[openarms] @ git+https://github.com/huggingface/lerobot.git@feat/openarms-motorbridge",
+    "gripette @ git+https://github.com/pollen-robotics/grabette.git@a209c431ef8f9aa1be09e9fc1bfaf16e3baafca9#subdirectory=packages/gripette",
+    "openarm-gripette-model @ git+https://github.com/pollen-robotics/grabette-policy.git@c0e997b15b7b50a485577fa6d059875cfc62e849#subdirectory=robots/openarm/openarm_gripette_model",
     # gripette's generated gRPC code requires this runtime, but its own metadata only asks for >=4.25.
     "protobuf>=6.33.5,<8.0.0",
 ]
@@ -19,8 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 # Grabette policy runners: rollout/data visualization and placo IK on the OpenArm + Gripette URDF.
 policy = [
-    "lerobot[dataset,kinematics,viz]>=0.6.2,<0.7.0",
-    "openarm-gripette-model @ git+https://github.com/pollen-robotics/grabette.git@develop#subdirectory=integrations/openarm/openarm_gripette_model",
+    "lerobot[dataset,kinematics,viz] @ git+https://github.com/huggingface/lerobot.git@feat/openarms-motorbridge",
 ]
 
 [tool.setuptools.packages.find]
