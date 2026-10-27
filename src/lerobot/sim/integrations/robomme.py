@@ -287,7 +287,7 @@ create_envs = create_robomme_envs
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     """RoboMME's control rate, controller and component names."""
-    joints = tuple(f"command_{i}.pos" for i in range(8))
+    joints = (*(f"joint_{i}.pos" for i in range(7)), "gripper.pos")
     joint_actions = kwargs.get("action_space_type", "joint_angle") == "joint_angle"
     return {
         "fps": 10,

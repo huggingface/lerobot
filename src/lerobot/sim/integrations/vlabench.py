@@ -37,11 +37,10 @@ import numpy as np
 from gymnasium import spaces
 from scipy.spatial.transform import Rotation
 
-from .utils import canonical_observation
+from .utils import RobotObservation, canonical_observation
 
 __all__ = ["canonical_observation", "conventions", "create_envs"]
 
-RobotObservation = dict[str, Any]
 
 logger = logging.getLogger(__name__)
 

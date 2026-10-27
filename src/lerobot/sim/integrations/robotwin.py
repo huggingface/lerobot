@@ -31,11 +31,10 @@ from gymnasium import spaces
 
 from lerobot.utils.import_utils import _scipy_available
 
-from .utils import canonical_observation
+from .utils import RobotObservation, canonical_observation
 
 __all__ = ["canonical_observation", "conventions", "create_envs"]
 
-RobotObservation = dict[str, Any]
 
 # scipy is only used for end-effector-pose composition (``--env.action_mode=ee``); guard it so this
 # module (and its base-env unit tests, which mock the RoboTwin runtime) imports without scipy installed.
@@ -645,7 +644,12 @@ create_envs = create_robotwin_envs
 
 def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     """RoboTwin's control rate, controller, component names and simulated body."""
-    joints = tuple(f"command_{i}.pos" for i in range(14))
+    # Each arm's six joints then its gripper, left arm first.
+    joints = tuple(
+        name
+        for side in ("left", "right")
+        for name in (*(f"{side}_joint_{i}.pos" for i in range(6)), f"{side}_gripper.pos")
+    )
     # Joint mode commands and observes the 14 joints; ee mode commands 16-D poses, left unnamed.
     return {
         "fps": 25,

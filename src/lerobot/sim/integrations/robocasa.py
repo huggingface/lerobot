@@ -25,11 +25,10 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from .utils import canonical_observation, parse_camera_names
+from .utils import RobotObservation, canonical_observation, parse_camera_names
 
 __all__ = ["canonical_observation", "conventions", "create_envs"]
 
-RobotObservation = dict[str, Any]
 
 logger = logging.getLogger(__name__)
 

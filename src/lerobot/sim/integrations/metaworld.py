@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+import logging
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -25,11 +26,11 @@ import metaworld.policies as policies
 import numpy as np
 from gymnasium import spaces
 
-from .utils import canonical_observation
+from .utils import RobotObservation, canonical_observation
 
 __all__ = ["canonical_observation", "conventions", "create_envs"]
 
-RobotObservation = dict[str, Any]
+logger = logging.getLogger(__name__)
 
 # ---- Load configuration data from the external JSON file ----
 CONFIG_PATH = Path(__file__).parent / "metaworld_config.json"
@@ -307,7 +308,7 @@ def create_metaworld_envs(
     if not task_groups:
         raise ValueError("`task` must contain at least one Meta-World task or difficulty group.")
 
-    print(f"Creating Meta-World envs | task_groups={task_groups} | n_envs(per task)={n_envs}")
+    logger.info("Creating Meta-World envs | task_groups=%s | n_envs(per task)=%d", task_groups, n_envs)
 
     out: dict[str, dict[int, Any]] = defaultdict(dict)
 
@@ -316,7 +317,7 @@ def create_metaworld_envs(
         tasks = DIFFICULTY_TO_TASKS.get(group, [group])
 
         for tid, task_name in enumerate(tasks):
-            print(f"Building vec env | group={group} | task_id={tid} | task={task_name}")
+            logger.info("Building vec env | group=%s | task_id=%d | task=%s", group, tid, task_name)
 
             # build n_envs factories
             fns = [(lambda tn=task_name: MetaworldEnv(task=tn, **gym_kwargs)) for _ in range(n_envs)]

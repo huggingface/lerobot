@@ -15,8 +15,12 @@
 """Helpers shared by simulator integrations."""
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
+
+# lerobot.lerobot_types.RobotObservation, without its torch import.
+RobotObservation = dict[str, Any]
 
 
 def canonical_observation(

@@ -15,6 +15,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections import defaultdict
@@ -29,15 +30,15 @@ from gymnasium import spaces
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
-from .utils import canonical_observation as _canonical_observation, parse_camera_names
+from .utils import RobotObservation, canonical_observation as _canonical_observation, parse_camera_names
 
 __all__ = ["canonical_observation", "conventions", "create_envs"]
 
-RobotObservation = dict[str, Any]
+logger = logging.getLogger(__name__)
 
 
 def _quat_to_axisangle(quat: np.ndarray) -> np.ndarray:
-    """Convert LIBERO's xyzw quaternion with its legacy numerical convention."""
+    """Convert xyzw quaternions to axis-angle as robosuite's quat2axisangle does: zero near the identity."""
     quat = np.asarray(quat, dtype=np.float32)
     if quat.shape[-1:] != (4,):
         raise ValueError("Quaternion must end in four xyzw components")
@@ -513,11 +514,14 @@ def create_libero_envs(
     if not suite_names:
         raise ValueError("`task` must contain at least one LIBERO suite name.")
 
-    print(
-        f"Creating LIBERO envs | suites={suite_names} | n_envs(per task)={n_envs} | init_states={init_states}"
+    logger.info(
+        "Creating LIBERO envs | suites=%s | n_envs(per task)=%d | init_states=%s",
+        suite_names,
+        n_envs,
+        init_states,
     )
     if task_ids_filter is not None:
-        print(f"Restricting to task_ids={task_ids_filter}")
+        logger.info("Restricting to task_ids=%s", task_ids_filter)
 
     out: dict[str, dict[int, Any]] = defaultdict(dict)
     for suite_name in suite_names:
@@ -542,7 +546,7 @@ def create_libero_envs(
                 is_libero_plus=is_libero_plus,
             )
             out[suite_name][tid] = env_cls(fns)
-            print(f"Built vec env | suite={suite_name} | task_id={tid} | n_envs={n_envs}")
+            logger.info("Built vec env | suite=%s | task_id=%d | n_envs=%d", suite_name, tid, n_envs)
 
     return {suite: dict(task_map) for suite, task_map in out.items()}
 
@@ -559,7 +563,7 @@ def conventions(kwargs: dict[str, Any]) -> dict[str, Any]:
     absolute = kwargs.get("control_mode", "relative") == "absolute"
     commanded = pose if absolute else tuple(name.replace("eef.", "eef.delta.") for name in pose)
     return {
-        "fps": 20,
+        "fps": (kwargs.get("gym_kwargs") or {}).get("control_freq", 20),
         "control_mode": "eef_pose" if absolute else "delta",
         "state_names": (*pose, "gripper.left.pos", "gripper.right.pos"),
         "action_names": (*commanded, "gripper.command"),
