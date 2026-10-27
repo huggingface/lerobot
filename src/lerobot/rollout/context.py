@@ -67,7 +67,6 @@ from lerobot.robots import Robot, make_robot_from_config
 from lerobot.robots.sim_robot import SimRobot, check_control_rate
 from lerobot.teleoperators import Teleoperator, make_teleoperator_from_config
 from lerobot.utils.constants import OBS_STATE
-from lerobot.utils.feature_spec import feature_mismatch
 from lerobot.utils.feature_utils import combine_feature_dicts, hw_to_dataset_features
 from lerobot.utils.import_utils import _peft_available, require_package
 
@@ -743,7 +742,7 @@ def build_remote_rollout_context(
         def validate_simulator(robot: SimRobot) -> None:
             if config.semantics != robot.descriptor.semantics:
                 raise ValueError("Remote deployment semantics differ from simulator semantics")
-            if feature_mismatch(action, robot.descriptor.action_feature):
+            if action != robot.descriptor.action_feature:
                 raise ValueError("Remote action declaration differs from simulator declaration")
             names = robot.feature_names(cfg.rename_map)
             declared = {names[f.name]: f for f in robot.descriptor.features}
@@ -751,7 +750,7 @@ def build_remote_rollout_context(
                 actual = declared.get(feature.name)
                 if actual is None:
                     raise ValueError("Remote observation declaration missing from simulator")
-                if feature_mismatch(replace(actual, name=feature.name), feature):
+                if replace(actual, name=feature.name) != feature:
                     raise ValueError("Remote observation declaration differs from simulator declaration")
 
         hardware = _connect_rollout_hardware(cfg, require_hold=True, simulator_admission=validate_simulator)

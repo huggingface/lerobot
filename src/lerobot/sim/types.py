@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 from gymnasium import spaces
 
-from lerobot.utils.feature_spec import FeatureSpec, feature_mismatch
+from lerobot.utils.feature_spec import FeatureSpec
 
 _EMPTY_CAMERA_PREFIX = "observation.images.empty_camera_"
 
@@ -69,9 +69,8 @@ class EnvDescriptor:
     def same_schema(self, other: "EnvDescriptor") -> bool:
         """Whether ``other`` declares the same observations, action and semantics."""
         return (
-            [f.name for f in self.features] == [f.name for f in other.features]
-            and not any(feature_mismatch(a, b) for a, b in zip(self.features, other.features, strict=True))
-            and not feature_mismatch(self.action_feature, other.action_feature)
+            self.features == other.features
+            and self.action_feature == other.action_feature
             and self.semantics == other.semantics
         )
 
