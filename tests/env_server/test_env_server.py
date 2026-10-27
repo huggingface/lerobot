@@ -36,6 +36,7 @@ import sys
 sys.modules['torch'] = None
 import numpy as np
 import lerobot.env_server.server, lerobot.sim.vector_env, lerobot.sim.integrations.envhub
+import lerobot.scripts.lerobot_env_server
 from lerobot.transport.wire.client import query_reply, decode_reply
 from lerobot.utils.feature_spec import FeatureSpec, feature_mismatch, validate_array
 from lerobot.transport.wire.protocol import Envelope, MessageType, correlate_reply, raise_peer_error, validate_reply
@@ -57,8 +58,8 @@ for prefix in ('torch', 'lerobot.policies', 'lerobot.remote_inference'):
 
 
 @pytest.mark.parametrize("use_async_envs", [False, True])
-def test_batch_terminal_freeze_and_seed_parity(server, use_async_envs):
-    _, endpoint = server
+def test_batch_terminal_freeze_and_seed_parity(sim_server, use_async_envs):
+    _, endpoint = sim_server
     with_client = EnvClient(endpoint)
     try:
         descriptor = with_client.describe()
@@ -83,8 +84,8 @@ def test_batch_terminal_freeze_and_seed_parity(server, use_async_envs):
         with_client.close()
 
 
-def test_admission_and_stale_generation(server):
-    _, endpoint = server
+def test_admission_and_stale_generation(sim_server):
+    _, endpoint = sim_server
     client = EnvClient(endpoint)
     other = EnvClient(endpoint)
     try:
@@ -105,8 +106,8 @@ def test_admission_and_stale_generation(server):
         other.close()
 
 
-def test_malformed_actions_are_rejected_without_failing_the_simulator(server):
-    client = EnvClient(server[1])
+def test_malformed_actions_are_rejected_without_failing_the_simulator(sim_server):
+    client = EnvClient(sim_server[1])
     try:
         client.open(1)
         with pytest.raises(ProtocolError) as error:
@@ -119,10 +120,10 @@ def test_malformed_actions_are_rejected_without_failing_the_simulator(server):
         client.close()
 
 
-def test_jpeg_observations_match_raw(server):
+def test_jpeg_observations_match_raw(sim_server):
     from lerobot.env_server.client import RemoteVectorEnv
 
-    _, endpoint = server
+    _, endpoint = sim_server
     obs = {}
     for encoding in ("raw", "jpeg"):
         env = RemoteVectorEnv(EnvClient(endpoint, encoding=encoding, jpeg_quality=95), num_envs=2)
@@ -138,11 +139,11 @@ def test_jpeg_observations_match_raw(server):
         EnvClient(endpoint, encoding="png")
 
 
-def test_vector_client(server):
+def test_vector_client(sim_server):
     from lerobot.env_server.client import RemoteVectorEnv
     from lerobot.envs.utils import prepare_canonical_observation
 
-    _, endpoint = server
+    _, endpoint = sim_server
     env = RemoteVectorEnv(EnvClient(endpoint), num_envs=2)
     try:
         obs, _ = env.reset(seed=[10, 20])
@@ -157,13 +158,12 @@ def test_vector_client(server):
         env.close()
 
 
-def test_server_loss_fails_session(server):
-    running, endpoint = server
+def test_server_loss_fails_session(sim_server):
+    running, endpoint = sim_server
     client = EnvClient(endpoint, timeout_s=0.1)
     try:
         client.open(1)
         running.stop.set()
-        assert running.stop.is_set()
         time.sleep(0.03)
         with pytest.raises((TimeoutError, ProtocolError)):
             client.request("step", actions=np.zeros((1, 2), np.float32))
@@ -172,8 +172,8 @@ def test_server_loss_fails_session(server):
         client.close()
 
 
-def test_client_loss_releases_ownership(server):
-    running, endpoint = server
+def test_client_loss_releases_ownership(sim_server):
+    running, endpoint = sim_server
     client = EnvClient(endpoint)
     client.open(1)
     time.sleep(0.03)
@@ -189,12 +189,12 @@ def test_client_loss_releases_ownership(server):
         other.close()
 
 
-def test_checkpoint_admission(server):
+def test_checkpoint_admission(sim_server):
     from types import SimpleNamespace
 
     from lerobot.configs.types import FeatureType, PolicyFeature
 
-    _, endpoint = server
+    _, endpoint = sim_server
     client = EnvClient(endpoint)
     try:
         descriptor = client.describe()
@@ -236,7 +236,7 @@ def test_checkpoint_admission(server):
         descriptor.validate_checkpoint(config, {"observation.image": "observation.images.front"})
 
 
-def test_eval_loop_accepts_canonical_observations(server):
+def test_eval_loop_accepts_canonical_observations(sim_server):
     from types import SimpleNamespace
 
     import torch
@@ -256,7 +256,7 @@ def test_eval_loop_accepts_canonical_observations(server):
             assert observation["observation.image"].shape == (2, 3, 8, 8)
             return torch.ones((2, 2), dtype=torch.float32) * 0.5
 
-    _, endpoint = server
+    _, endpoint = sim_server
     env = RemoteVectorEnv(EnvClient(endpoint), num_envs=2)
     identity = PolicyProcessorPipeline(steps=[])
     from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
@@ -281,7 +281,7 @@ def test_eval_loop_accepts_canonical_observations(server):
         env.close()
 
 
-def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
+def test_first_vector_reset_does_not_skip_initial_state(sim_server, monkeypatch):
     from lerobot.env_server.client import RemoteVectorEnv
 
     original = ToyEnv.reset
@@ -291,10 +291,10 @@ def test_first_vector_reset_does_not_skip_initial_state(server, monkeypatch):
         return original(self, seed=seed)
 
     monkeypatch.setattr(ToyEnv, "reset", reset)
-    env = RemoteVectorEnv(EnvClient(server[1]))
+    env = RemoteVectorEnv(EnvClient(sim_server[1]))
     try:
         env.reset(seed=123)
-        served = server[0].sessions[env.client.session].env
+        served = sim_server[0].sessions[env.client.session].env
         assert served._envs[0].reset_count == 1
         env.reset(seed=123)
         assert served._envs[0].reset_count == 2
@@ -314,9 +314,9 @@ def _episode(config: ToyEnvConfig) -> list[tuple]:
         env.close()
 
 
-def test_local_environment_matches_the_server(server):
+def test_local_environment_matches_the_server(sim_server):
     local = _episode(ToyEnvConfig())
-    served = _episode(ToyEnvConfig(endpoint=server[1]))
+    served = _episode(ToyEnvConfig(endpoint=sim_server[1]))
     for expected, actual in zip(local, served, strict=True):
         for expected_array, actual_array in zip(expected[1:4], actual[1:4], strict=True):
             np.testing.assert_array_equal(actual_array, expected_array)
@@ -327,17 +327,17 @@ def test_local_environment_matches_the_server(server):
         assert tuple(actual[4]["task"]) == tuple(expected[4]["task"])
 
 
-def test_served_env_must_be_the_env_the_command_describes(server):
-    config = ToyEnvConfig(endpoint=server[1], fps=30)  # the server's toy runs at 20 fps
+def test_served_env_must_be_the_env_the_command_describes(sim_server):
+    config = ToyEnvConfig(endpoint=sim_server[1], fps=30)  # the server's toy runs at 20 fps
     with pytest.raises(ValueError, match="fps: server 20"):
         config.create_envs(n_envs=1)
 
 
-def test_first_session_uses_the_environment_built_to_describe(server):
+def test_first_session_uses_the_environment_built_to_describe(sim_server):
     from lerobot.env_server.client import RemoteVectorEnv
 
     before = ToyEnv.builds
-    env = RemoteVectorEnv(EnvClient(server[1]))
+    env = RemoteVectorEnv(EnvClient(sim_server[1]))
     try:
         env.reset(seed=1)
         env.step(np.zeros((1, 2), np.float32))

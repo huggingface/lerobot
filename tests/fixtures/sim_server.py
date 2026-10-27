@@ -21,7 +21,7 @@ import pytest
 
 
 @pytest.fixture
-def server():
+def sim_server():
     # Live-server tests need the `remote` extra; the base-dependency tier skips them.
     pytest.importorskip("zenoh")
     pytest.importorskip("msgpack")

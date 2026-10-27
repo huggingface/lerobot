@@ -30,7 +30,7 @@ def test_env_config_creates_vector_envs_locally_or_served(where, request):
     from lerobot.env_server.client import RemoteVectorEnv
     from lerobot.sim.vector_env import VectorEnv
 
-    config = ToyEnvConfig(endpoint=request.getfixturevalue("server")[1] if where == "served" else None)
+    config = ToyEnvConfig(endpoint=request.getfixturevalue("sim_server")[1] if where == "served" else None)
     env = config.create_envs(n_envs=2)["reach"][0]
     try:
         assert isinstance(env, RemoteVectorEnv if where == "served" else VectorEnv)
@@ -67,7 +67,7 @@ def test_environments_in_separate_processes_match_sequential_environments():
 
 @pytest.mark.parametrize("where", ["local", "served"])
 def test_reset_options_are_rejected_locally_and_served(where, request):
-    endpoint = request.getfixturevalue("server")[1] if where == "served" else None
+    endpoint = request.getfixturevalue("sim_server")[1] if where == "served" else None
     env = ToyEnvConfig(endpoint=endpoint).create_env()
     try:
         with pytest.raises(ValueError, match="does not define reset options"):
