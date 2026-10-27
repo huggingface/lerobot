@@ -21,6 +21,7 @@ import multiprocessing
 import traceback
 from collections.abc import Callable
 from dataclasses import asdict
+from functools import partial
 from multiprocessing.connection import Connection
 from typing import Any
 
@@ -29,6 +30,7 @@ import numpy as np
 from gymnasium import spaces
 from gymnasium.vector.utils import CloudpickleWrapper, batch_space
 
+from lerobot.sims.integrations import simulator_required
 from lerobot.sims.types import EnvDescriptor, SimConfig, StepResult
 from lerobot.utils.feature_spec import FeatureSpec
 
@@ -48,6 +50,11 @@ def _max_episode_steps(env: Any) -> int | None:
     except AttributeError:
         return None
     return None if limit is None else int(limit)
+
+
+def _build_env(sim_type: str, make: Callable[[], Any]) -> Any:
+    with simulator_required(sim_type):
+        return make()
 
 
 def _env_worker(pipe: Connection, make: CloudpickleWrapper) -> None:
@@ -174,10 +181,13 @@ class VectorEnv(gym.vector.VectorEnv):
         descriptor: EnvDescriptor | None = None,
     ) -> None:
         """Select the task. Given its ``descriptor``, the simulators are built on first use rather than now."""
-        integration = importlib.import_module(f"lerobot.sims.integrations.{config.type}")
+        with simulator_required(config.type):
+            integration = importlib.import_module(f"lerobot.sims.integrations.{config.type}")
+            # env_cls=list returns each task's environment factories without building them.
+            factories = integration.create_envs(
+                task=config.task, n_envs=num_envs, env_cls=list, **config.kwargs
+            )
         self._canonical_observation = integration.canonical_observation
-        # env_cls=list returns each task's environment factories without building them.
-        factories = integration.create_envs(task=config.task, n_envs=num_envs, env_cls=list, **config.kwargs)
         self.config = config
         self.num_envs = num_envs
         self.use_async_envs = use_async_envs
@@ -185,9 +195,10 @@ class VectorEnv(gym.vector.VectorEnv):
         self.task_group = task_group or next(iter(factories))
         self.task_id = task_id
         try:
-            self._env_fns: list[Callable[[], Any]] = factories[self.task_group][task_id]
+            env_fns = factories[self.task_group][task_id]
         except KeyError as exc:
             raise ValueError(f"Unknown task: {self.task_group}/{task_id}") from exc
+        self._env_fns: list[Callable[[], Any]] = [partial(_build_env, config.type, fn) for fn in env_fns]
         self._envs: list[Any] = []
         self._last: list[tuple[dict[str, np.ndarray], float, bool, bool, bool]] = []
         self._steps: np.ndarray = np.zeros(num_envs, dtype=np.int64)

@@ -15,6 +15,8 @@
 """Local vector environments built from a simulator integration."""
 
 import os
+import sys
+import types
 
 import draccus
 import numpy as np
@@ -162,3 +164,28 @@ def test_a_dead_environment_process_is_reported():
             env.reset()
     finally:
         env.close()
+
+
+def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
+    from lerobot.sims.types import SimConfig
+    from lerobot.sims.vector_env import VectorEnv
+
+    # LIBERO imports its simulator with the integration, and has an extra to install.
+    monkeypatch.setitem(sys.modules, "libero", None)
+    monkeypatch.delitem(sys.modules, "lerobot.sims.integrations.libero", raising=False)
+    with pytest.raises(ModuleNotFoundError, match=r"pip install 'lerobot\[libero\]', or serve it"):
+        SimConfig.resolve({"type": "libero", "task": "libero_10"})
+
+    # Others import their simulator only when building an environment, possibly in a worker process.
+    def build():
+        raise ModuleNotFoundError("No module named 'some_simulator'", name="some_simulator")
+
+    integration = types.ModuleType("lerobot.sims.integrations.some_sim")
+    integration.create_envs = lambda task, n_envs, env_cls: {task: {0: env_cls([build] * n_envs)}}
+    integration.canonical_observation = lambda obs: obs
+    monkeypatch.setitem(sys.modules, integration.__name__, integration)
+    expected = r"some_sim simulator is not installed \('some_simulator' is missing\): install it, or serve it"
+    with pytest.raises(ModuleNotFoundError, match=expected):
+        VectorEnv(SimConfig(type="some_sim", task="reach"))
+    with pytest.raises(RuntimeError, match=expected):
+        VectorEnv(SimConfig(type="some_sim", task="reach"), num_envs=2, use_async_envs=True)

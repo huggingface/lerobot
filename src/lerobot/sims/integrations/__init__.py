@@ -19,3 +19,30 @@ Each module defines ``create_envs(task, n_envs, env_cls, **kwargs)``, returning
 observation to canonical LeRobot names. It may define ``conventions(kwargs)``: its control rate, controller,
 ordered component names and simulated body, for the settings a configuration leaves out.
 """
+
+import contextlib
+from collections.abc import Iterator
+from importlib.metadata import metadata
+
+
+@contextlib.contextmanager
+def simulator_required(sim_type: str) -> Iterator[None]:
+    """Say how to get the simulator ``sim_type`` when running its integration finds a package missing.
+
+    Some integrations import their simulator only when building an environment, so this wraps every call
+    into integration code, not only its import.
+    """
+    try:
+        yield
+    except ModuleNotFoundError as error:
+        if not error.name or error.name.startswith("lerobot"):
+            raise
+        extras = metadata("lerobot").get_all("Provides-Extra") or []
+        install = (
+            f"pip install 'lerobot[{sim_type}]'" if sim_type.replace("_", "-") in extras else "install it"
+        )
+        raise ModuleNotFoundError(
+            f"The {sim_type} simulator is not installed ('{error.name}' is missing): {install}, "
+            "or serve it from its Docker image with lerobot-env-server --docker",
+            name=error.name,
+        ) from error
