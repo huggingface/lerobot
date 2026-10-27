@@ -14,16 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Encode human demonstration videos into Zero-WAM in-context latents for training.
+"""Encode recorded demonstration videos into Zero-WAM in-context latents.
 
-Reads a ``pairs.jsonl`` (``{"episode_index", "start_frame", "end_frame", "human_video",
-"human_text"}`` per robot segment, e.g. from ``humangen/build_manifest.py``), encodes each distinct
-video once with the Wan2.2 VAE at the policy's ICL resolution and frame rate, embeds its caption
-with UMT5, and writes ``.pth`` files in the upstream HumanGen layout plus a pairs file for
-``--policy.icl_pairs_path``:
+Reads JSONL entries with ``prompt_video``, optional ``prompt_text``, ``prompt_start_s`` and
+``prompt_end_s``. ``prepare_episode_prompts.py`` resolves these from a LeRobot episode or pairing
+manifest. The legacy ``human_video`` / ``human_text`` fields are also supported. Each distinct
+video/crop/caption is encoded once. Outputs are normalized Wan latents and UMT5 embeddings, a
+``prompts.jsonl`` index for rollout, and training ``pairs.jsonl`` for entries with a target
+``episode_index``, ``start_frame`` and ``end_frame``:
 
     python examples/zero_wam/encode_human_videos.py \
-        --pairs humangen/outputs/pairs.jsonl --output-dir outputs/human_latents
+        --pairs outputs/episode_prompts.jsonl --output-dir outputs/demo_latents
 """
 
 import argparse
@@ -39,6 +40,20 @@ from lerobot.policies.lingbot_va.utils import clean_prompt, load_text_encoder, l
 from lerobot.policies.zero_wam.modeling_zero_wam import read_video_at_fps
 
 
+def prompt_spec(pair: dict, max_frames: int | None = None) -> dict:
+    """One encoding identity per video, caption and crop; legacy human-video keys remain valid."""
+    video = pair.get("prompt_video", pair.get("human_video"))
+    if not video:
+        raise ValueError("Each prompt requires prompt_video (or human_video)")
+    return {
+        "video": str(Path(video).resolve()),
+        "text": pair.get("prompt_text", pair.get("human_text", "")),
+        "start_time_s": float(pair.get("prompt_start_s", 0)),
+        "end_time_s": pair.get("prompt_end_s"),
+        "max_frames": pair.get("prompt_max_frames", max_frames),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -50,11 +65,13 @@ def main() -> None:
     parser.add_argument("--height", type=int, default=320)
     parser.add_argument("--width", type=int, default=480)
     parser.add_argument("--max-sequence-length", type=int, default=512)
+    parser.add_argument("--max-video-frames", type=int, default=None)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
     pairs = [json.loads(line) for line in args.pairs.read_text().splitlines() if line.strip()]
-    videos = {p["human_video"]: p.get("human_text", "") for p in pairs}
+    pair_keys = [json.dumps(prompt_spec(p, args.max_video_frames), sort_keys=True) for p in pairs]
+    videos = {key: json.loads(key) for key in pair_keys}
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     path = args.frozen_components_path
@@ -68,11 +85,12 @@ def main() -> None:
 
     latent_paths = {}
     with torch.no_grad():
-        for video, text in tqdm(sorted(videos.items())):
+        for key, spec in tqdm(sorted(videos.items())):
+            video, text = spec["video"], spec["text"]
             source = Path(video).stat()
             identity = json.dumps(
                 {
-                    "video": str(Path(video).resolve()),
+                    **spec,
                     "size": source.st_size,
                     "mtime_ns": source.st_mtime_ns,
                     "text": text,
@@ -85,10 +103,16 @@ def main() -> None:
                 sort_keys=True,
             )
             out = args.output_dir / f"{hashlib.sha256(identity.encode()).hexdigest()[:24]}.pth"
-            latent_paths[video] = str(out)
+            latent_paths[key] = str(out)
             if out.exists():
                 continue
-            frames = read_video_at_fps(video, args.fps)
+            frames = read_video_at_fps(
+                video,
+                args.fps,
+                start_time_s=spec["start_time_s"],
+                end_time_s=spec["end_time_s"],
+                max_frames=spec["max_frames"],
+            )
             frames = F.interpolate(
                 frames, size=(args.height, args.width), mode="bilinear", align_corners=False
             )
@@ -121,15 +145,25 @@ def main() -> None:
                     "text": text,
                     "fps": args.fps,
                     "source_video": video,
+                    "source_start_s": spec["start_time_s"],
+                    "source_end_s": spec["end_time_s"],
+                    "source_max_frames": spec["max_frames"],
                 },
                 out,
             )
 
     pairs_out = args.output_dir / "pairs.jsonl"
     with pairs_out.open("w") as f:
-        for pair in pairs:
-            f.write(json.dumps({**pair, "latent_path": latent_paths[pair["human_video"]]}) + "\n")
-    print(f"Encoded {len(latent_paths)} videos; wrote {len(pairs)} pairs to {pairs_out}")
+        for pair, key in zip(pairs, pair_keys, strict=True):
+            if "episode_index" in pair:
+                f.write(json.dumps({**pair, "latent_path": latent_paths[key]}) + "\n")
+    prompts_out = args.output_dir / "prompts.jsonl"
+    with prompts_out.open("w") as f:
+        for key, spec in videos.items():
+            f.write(json.dumps({**spec, "latent_path": latent_paths[key]}) + "\n")
+    num_pairs = sum("episode_index" in pair for pair in pairs)
+    print(f"Encoded {len(latent_paths)} prompts; wrote {num_pairs} training pairs to {pairs_out}")
+    print(f"Prompt latent paths: {prompts_out}")
 
 
 if __name__ == "__main__":

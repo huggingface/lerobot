@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import runpy
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,7 +36,7 @@ from lerobot.policies.factory import (  # noqa: E402
     make_pre_post_processors,  # noqa: E402
 )
 from lerobot.policies.zero_wam.configuration_zero_wam import ZeroWAMConfig  # noqa: E402
-from lerobot.policies.zero_wam.modeling_zero_wam import ZeroWAMPolicy  # noqa: E402
+from lerobot.policies.zero_wam.modeling_zero_wam import ZeroWAMPolicy, read_video_at_fps  # noqa: E402
 from lerobot.policies.zero_wam.transformer import ICL_CACHE_TYPE  # noqa: E402
 from lerobot.utils.constants import ACTION  # noqa: E402
 
@@ -231,6 +232,18 @@ def test_training_preserves_selected_task(monkeypatch) -> None:
     assert seen == [supplied]
 
 
+@pytest.mark.parametrize("stride", [1, 2])
+def test_icl_pair_requires_the_entire_training_window(stride) -> None:
+    policy = make_policy(tiny_config(video_frame_stride=stride))
+    # A conditioning frame plus 16*stride future frames fit exactly at frame 100.
+    stop = 101 + 16 * stride
+    policy._icl_pairs = {7: [{"start_frame": 100, "end_frame": stop, "latent_path": "matched.pth"}]}
+    assert policy._find_icl_latent(7, 100) == "matched.pth"
+    assert policy._find_icl_latent(7, 101) is None
+    assert policy._find_icl_latent(7, 99) is None
+    assert policy._find_icl_latent(8, 100) is None
+
+
 def test_processor_quantiles_survive_save_reload(tmp_path) -> None:
     config = tiny_config()
     q01 = torch.arange(14, dtype=torch.float32)
@@ -393,6 +406,202 @@ def test_icl_video_file_is_encoded_as_a_whole_clip(tmp_path) -> None:
     assert policy.transformer.cache_counts()[ICL_CACHE_TYPE] > 0
     # Only camera keyframes (width 32) are streamed; the ICL clip (width 64) is encoded whole.
     assert streamed_widths and set(streamed_widths) == {policy.config.width}
+
+
+def test_bounded_prompt_keeps_the_selected_episode_and_final_motion(tmp_path) -> None:
+    av = pytest.importorskip("av")
+    import numpy as np
+
+    video = tmp_path / "three_episodes.mp4"
+    with av.open(str(video), "w") as container:
+        stream = container.add_stream("mpeg4", rate=30)
+        stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+        for i in range(90):
+            color = (230, 0, 0) if i < 30 else (0, 80 + (i - 30) * 5, 0) if i < 60 else (0, 0, 230)
+            rgb = np.empty((48, 64, 3), dtype=np.uint8)
+            rgb[:] = color
+            for packet in stream.encode(av.VideoFrame.from_ndarray(rgb, format="rgb24")):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    clip = read_video_at_fps(str(video), 12, start_time_s=1, end_time_s=2, max_frames=5)
+    assert clip.shape == (5, 3, 48, 64)
+    assert clip[:, [0, 2]].max() < 0.05  # Neither adjacent red/blue episode is included.
+    assert clip[-1, 1].mean() > clip[0, 1].mean() + 0.4  # Sample the whole motion, not its first 5 frames.
+    with pytest.raises(ValueError, match="past the available video"):
+        read_video_at_fps(str(video), 12, start_time_s=2, end_time_s=4, max_frames=5)
+
+
+def test_episode_prompt_uses_video_offset_and_source_episode_id(tmp_path) -> None:
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/prepare_episode_prompts.py"
+    prepare = runpy.run_path(str(example))["episode_video_spec"]
+    info = {"fps": 30, "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"}
+    episode = {
+        "episode_index": 700,
+        "length": 180,
+        "videos/top/from_timestamp": 10.0,
+        "videos/top/chunk_index": 2,
+        "videos/top/file_index": 3,
+    }
+    prompt = prepare(tmp_path, info, episode, "top", 30, 90)
+    assert prompt["prompt_episode_index"] == 700
+    assert prompt["prompt_start_s"] == 11.0 and prompt["prompt_end_s"] == 13.0
+    assert prompt["prompt_video"] == str(tmp_path / "videos/top/chunk-002/file-003.mp4")
+    with pytest.raises(ValueError, match="Invalid prompt frame interval"):
+        prepare(tmp_path, info, episode, "top", 0, 181)
+
+
+def test_prompt_encoding_identity_preserves_crops_and_captions(tmp_path) -> None:
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/encode_human_videos.py"
+    spec = runpy.run_path(str(example))["prompt_spec"]
+    base = {
+        "prompt_video": str(tmp_path / "episodes.mp4"),
+        "prompt_text": "fold the cloth",
+        "prompt_start_s": 10,
+        "prompt_end_s": 20,
+    }
+    assert spec(base, 81) != spec({**base, "prompt_start_s": 12}, 81)
+    assert spec(base, 81) != spec({**base, "prompt_text": "stack the cloth"}, 81)
+    assert spec({"human_video": "demo.mp4", "human_text": "fold"})["text"] == "fold"
+
+
+def test_episode_pair_preparation_preserves_ids_and_rejects_self_pairs(tmp_path, monkeypatch) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    root = tmp_path / "dataset"
+    meta = root / "meta"
+    (meta / "episodes/chunk-000").mkdir(parents=True)
+    info = {
+        "codebase_version": "v3.0",
+        "fps": 30,
+        "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+    }
+    (meta / "info.json").write_text(json.dumps(info))
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "episode_index": ep,
+                    "length": 90,
+                    "tasks": ["fold"],
+                    "videos/top/from_timestamp": offset,
+                    "videos/top/chunk_index": 0,
+                    "videos/top/file_index": file,
+                }
+                for ep, offset, file in [(10, 4.0, 4), (20, 7.0, 5)]
+            ]
+        ),
+        meta / "episodes/chunk-000/file-000.parquet",
+    )
+    pair = {
+        "dataset": "abc",
+        "split": "train",
+        "target_episode": 10,
+        "prompt_episode": 20,
+        "target_from_frame": 0,
+        "target_to_frame": 90,
+        "prompt_from_frame": 30,
+        "prompt_to_frame": 90,
+        "detail_raw": "fold",
+    }
+    source, output = tmp_path / "input.jsonl", tmp_path / "prepared.jsonl"
+    source.write_text(json.dumps(pair) + "\n")
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/prepare_episode_prompts.py"
+    main = runpy.run_path(str(example))["main"]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(example),
+            "--dataset-root",
+            str(root),
+            "--camera",
+            "top",
+            "--pairs",
+            str(source),
+            "--dataset-id",
+            "abc",
+            "--metadata-only",
+            "--output",
+            str(output),
+        ],
+    )
+    main()
+    saved = output.read_text()
+    row = json.loads(saved)
+    assert row["episode_index"] == 10 and row["prompt_episode_index"] == 20
+    assert row["prompt_start_s"] == 8 and row["prompt_end_s"] == 10
+    source.write_text(json.dumps({**pair, "prompt_episode": "10"}) + "\n")
+    with pytest.raises(ValueError, match="another episode"):
+        main()
+    assert output.read_text() == saved
+    assert not output.with_suffix(".jsonl.tmp").exists()
+
+
+def test_encoder_writes_distinct_crops_and_standalone_prompt_index(tmp_path, monkeypatch) -> None:
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/encode_human_videos.py"
+    main = runpy.run_path(str(example))["main"]
+    scope = main.__globals__
+    monkeypatch.setitem(scope, "load_vae", lambda *a, **k: FakeVAE())
+    monkeypatch.setitem(scope, "load_tokenizer", lambda *a, **k: FakeTokenizer())
+    monkeypatch.setitem(scope, "load_text_encoder", lambda *a, **k: FakeTextEncoder())
+    seen = []
+
+    def decode(video, fps, **crop):
+        seen.append(crop)
+        return torch.full((5, 3, 48, 64), float(crop["start_time_s"]))
+
+    monkeypatch.setitem(scope, "read_video_at_fps", decode)
+    video = tmp_path / "source.mp4"
+    video.touch()
+    pairs = tmp_path / "source.jsonl"
+    base = {"prompt_video": str(video), "prompt_text": "fold", "prompt_start_s": 0, "prompt_end_s": 1}
+    # The first row is a standalone physical prompt. The second has a training target.
+    pairs.write_text(
+        json.dumps(base)
+        + "\n"
+        + json.dumps(
+            {
+                **base,
+                "prompt_start_s": 1,
+                "prompt_end_s": 2,
+                "episode_index": 7,
+                "start_frame": 0,
+                "end_frame": 90,
+            }
+        )
+        + "\n"
+    )
+    output = tmp_path / "latents"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(example),
+            "--pairs",
+            str(pairs),
+            "--output-dir",
+            str(output),
+            "--device",
+            "cpu",
+            "--height",
+            "32",
+            "--width",
+            "64",
+            "--max-sequence-length",
+            "8",
+        ],
+    )
+    main()
+    prompts = [json.loads(line) for line in (output / "prompts.jsonl").read_text().splitlines()]
+    train = [json.loads(line) for line in (output / "pairs.jsonl").read_text().splitlines()]
+    assert len(prompts) == len(seen) == 2 and len(train) == 1
+    assert len({p["latent_path"] for p in prompts}) == 2
+    assert train[0]["episode_index"] == 7
+    for p in prompts:
+        encoded = torch.load(p["latent_path"], weights_only=True)
+        assert encoded["source_start_s"] == p["start_time_s"]
 
 
 def test_precomputed_text_embeddings_skip_text_encoder(tmp_path) -> None:

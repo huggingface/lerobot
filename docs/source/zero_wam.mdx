@@ -88,7 +88,39 @@ For demonstration-conditioned training, set `--policy.icl_pairs_path` to a JSONL
 }
 ```
 
-Frame ranges are half-open. Latent files contain a normalized Wan video `latent` and optional UMT5 `text_emb`. `examples/zero_wam/encode_human_videos.py` encodes recorded demonstration videos into this format. Samples without a matching pair train with text context only.
+Frame ranges are half-open. The entire target training window, including its last camera frame, must fit inside the paired segment. A clip that crosses the next subtask trains with text context only. With 11 latent frames and stride 2, a segment needs at least 81 source frames. Latent files contain a normalized Wan video `latent` and optional UMT5 `text_emb`.
+
+### Recorded robot episodes as prompts
+
+`examples/zero_wam/prepare_episode_prompts.py` resolves a recorded LeRobot v3 episode into a video path and its exact time bounds. This also works when multiple episodes share one MP4. Encode it once, then pass the resulting latent to rollout:
+
+```bash
+uv run python examples/zero_wam/prepare_episode_prompts.py \
+  --dataset-root /path/to/recorded_dataset \
+  --camera observation.images.top --episode-index 0 \
+  --max-video-frames 81 --output outputs/recorded_prompt.jsonl
+
+uv run python examples/zero_wam/encode_human_videos.py \
+  --pairs outputs/recorded_prompt.jsonl --output-dir outputs/prompt_latents
+```
+
+Use the `latent_path` from `outputs/prompt_latents/prompts.jsonl` as `--policy.icl_latent_path`. Each entry records the source video, caption, crop bounds and frame cap. The cap samples across the complete demonstration rather than taking its first frames. For a newly recorded physical demonstration, supply `--prompt-text` when its instruction differs from the recorded episode's task label. Physical recording and execution use your robot/teleoperator integration and calibrated connection settings.
+
+The same preparation tool accepts a JSONL pairing index with `target_episode`, `target_from_frame`, `target_to_frame`, `prompt_episode`, `prompt_from_frame`, `prompt_to_frame`, `detail_raw` (the prompt caption), and `split`. Episode IDs must be source dataset IDs. For example:
+
+```bash
+uv run python examples/zero_wam/prepare_episode_prompts.py \
+  --dataset-root /path/to/abc \
+  --camera observation.images.top --pairs candidate_pairs.jsonl \
+  --dataset-id abc --split train --output outputs/abc_prompts.jsonl
+
+uv run python examples/zero_wam/encode_human_videos.py \
+  --pairs outputs/abc_prompts.jsonl --output-dir outputs/abc_prompt_latents
+```
+
+Select the split before creating prompt/target pairs and use distinct episodes. `--dataset-id` filters a pairing index with a `dataset` column. `--metadata-only` resolves paths before downloading videos and reports missing files. Preparation rejects self-pairs and out-of-range frames. Keep held-out source recordings and related takes out of training; different episode IDs alone do not establish independent source sessions.
+
+For training, set `--policy.icl_pairs_path=outputs/abc_prompt_latents/pairs.jsonl`. Each crop/caption has its own encoding identity, so shared MP4 containers and alternative captions do not overwrite one another. The encoder also accepts ordinary `prompt_video` / `prompt_text` entries and legacy `human_video` / `human_text` entries. Samples without a matching pair train with text context only.
 
 ## Streaming inference
 

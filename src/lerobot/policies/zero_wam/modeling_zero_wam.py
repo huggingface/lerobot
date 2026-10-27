@@ -27,6 +27,7 @@ cache before the next chunk. CFG branches are packed along the sequence, not the
 """
 
 import json
+import math
 from collections import deque
 from pathlib import Path
 
@@ -85,22 +86,94 @@ def shift_latents_for_mcp(latents: Tensor, frame_shift: int) -> tuple[Tensor, Te
     return shifted, valid.view(1, 1, num_frames, 1, 1).expand(batch_size, -1, -1, -1, -1)
 
 
-def read_video_at_fps(video_path: str, fps: float) -> Tensor:
-    """Decode a video as ``[T, 3, H, W]`` in [0, 1], resampled to ``fps`` (upstream ``_read_icl_video``)."""
+def read_video_at_fps(
+    video_path: str,
+    fps: float,
+    *,
+    start_time_s: float = 0.0,
+    end_time_s: float | None = None,
+    max_frames: int | None = None,
+) -> Tensor:
+    """Read an RGB prompt in [0, 1] as ``[T, 3, H, W]``.
+
+    Explicit time bounds select one episode/segment from a concatenated dataset video. A frame cap
+    samples across the complete interval, retaining the end of the demonstration. Bounded reads
+    keep only sampled frames in memory. Without bounds, preserve upstream FPS resampling.
+    """
+    if not math.isfinite(fps) or fps <= 0:
+        raise ValueError("fps must be positive and finite")
+    if not math.isfinite(start_time_s) or start_time_s < 0:
+        raise ValueError("start_time_s must be nonnegative and finite")
+    if end_time_s is not None and (not math.isfinite(end_time_s) or end_time_s <= start_time_s):
+        raise ValueError("end_time_s must be finite and greater than start_time_s")
+    if start_time_s and end_time_s is None:
+        raise ValueError("An explicit start_time_s requires end_time_s")
+    if max_frames is not None and max_frames < 1:
+        raise ValueError("max_frames must be positive")
     require_package("av", extra="dataset")
     import av
 
     with av.open(video_path) as container:
         stream = container.streams.video[0]
         src_fps = float(stream.average_rate or 0)
-        frames = torch.stack(
-            [torch.from_numpy(f.to_ndarray(format="rgb24")) for f in container.decode(stream)]
-        )
+        if end_time_s is not None:
+            count = max(1, round((end_time_s - start_time_s) * fps))
+            indices = torch.arange(count)
+            if max_frames is not None and count > max_frames:
+                indices = torch.linspace(0, count - 1, max_frames).round().long()
+            times = (start_time_s + indices.double() / fps).tolist()
+            container.seek(int(start_time_s * av.time_base), backward=True)
+            chosen: list[Tensor] = []
+            previous = None
+            previous_time = None
+            last_chosen_time = None
+            next_sample = 0
+            reached_end = False
+
+            def append_previous() -> None:
+                nonlocal last_chosen_time
+                assert previous is not None
+                if previous_time != last_chosen_time:
+                    chosen.append(torch.from_numpy(previous.to_ndarray(format="rgb24")))
+                    last_chosen_time = previous_time
+
+            for frame in container.decode(stream):
+                if frame.pts is None:
+                    raise ValueError("Bounded prompt decoding requires presentation timestamps")
+                timestamp = float(frame.pts * stream.time_base)
+                if timestamp < start_time_s - 1e-6:
+                    continue
+                if timestamp >= end_time_s - 1e-6:
+                    reached_end = True
+                    break
+                # Use the preceding in-range frame, as upstream's floor-index resampling does.
+                if previous is None:
+                    previous, previous_time = frame, timestamp
+                while next_sample < len(times) and times[next_sample] < timestamp - 1e-6:
+                    append_previous()
+                    next_sample += 1
+                previous, previous_time = frame, timestamp
+            if previous is None:
+                raise ValueError("No video frames inside the requested prompt interval")
+            assert previous_time is not None
+            if not reached_end and src_fps > 0 and previous_time + 1 / src_fps < end_time_s - 1e-5:
+                raise ValueError("Prompt interval extends past the available video")
+            while next_sample < len(times):
+                append_previous()
+                next_sample += 1
+            frames = torch.stack(chosen)
+            return frames.permute(0, 3, 1, 2).float() / 255.0
+        decoded = [torch.from_numpy(f.to_ndarray(format="rgb24")) for f in container.decode(stream)]
+        if not decoded:
+            raise ValueError("Prompt video has no decoded frames")
+        frames = torch.stack(decoded)
     total = frames.shape[0]
     if src_fps > 0:
         count = max(1, round(total / src_fps * fps))
         indices = torch.clamp((torch.arange(count) * src_fps / fps).floor().long(), 0, total - 1)
         frames = frames[torch.unique(indices)]
+    if max_frames is not None and len(frames) > max_frames:
+        frames = frames[torch.linspace(0, len(frames) - 1, max_frames).round().long()]
     return frames.permute(0, 3, 1, 2).float() / 255.0
 
 
@@ -308,18 +381,21 @@ class ZeroWAMPolicy(PreTrainedPolicy):
         if self._icl_pairs is None:
             self._icl_pairs = {}
             if self.config.icl_pairs_path:
-                for line in Path(self.config.icl_pairs_path).read_text().splitlines():
-                    if line.strip():
-                        pair = json.loads(line)
-                        self._icl_pairs.setdefault(int(pair["episode_index"]), []).append(pair)
+                with Path(self.config.icl_pairs_path).open() as pairs_file:
+                    for line in pairs_file:
+                        if line.strip():
+                            pair = json.loads(line)
+                            self._icl_pairs.setdefault(int(pair["episode_index"]), []).append(pair)
         return self._icl_pairs
 
     def _find_icl_latent(self, episode_index: int, frame_index: int) -> str | None:
-        """Latent path of a human video paired with the robot segment containing ``frame_index``."""
+        """Choose a demonstration whose matched target segment contains the whole training clip."""
+        # The final camera frame follows (F - 1) latent intervals. Actions end one frame earlier.
+        last_frame = frame_index + (self.config.train_num_latent_frames - 1) * self.config.action_per_frame
         candidates = [
             p
             for p in self._load_icl_pairs().get(episode_index, [])
-            if int(p["start_frame"]) <= frame_index < int(p["end_frame"])
+            if int(p["start_frame"]) <= frame_index and last_frame < int(p["end_frame"])
         ]
         if not candidates:
             return None
