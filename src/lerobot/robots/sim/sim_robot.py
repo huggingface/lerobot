@@ -131,13 +131,13 @@ class SimRobot(Robot):
             raise RuntimeError("Sim robot is already connected")
         if self._env is None:
             self._env = self._make_env()
+        # Connecting starts the first episode, so the robot has a state to observe.
+        self._connected = True
         try:
-            self._env.reset()
+            self.start_episode()
         except BaseException:
             self.disconnect()
             raise
-        self.latest = self._env.latest
-        self._connected = True
 
     def get_observation(self) -> dict[str, Any]:
         if not self._connected or self._env is None:
