@@ -319,6 +319,14 @@ def test_timeout_during_setup_marks_both_operations(tmp_path):
     assert all("Time limit" in row[mode]["error"] for mode in ("inference", "training"))
 
 
+def test_timeout_in_inference_only_does_not_report_training_timeout(tmp_path):
+    ci.mark_timeout("act", tmp_path, "inference")
+    row = json.loads((tmp_path / "act/result.json").read_text())
+    assert row["profile_mode"] == "inference"
+    assert "training" not in row
+    assert ci.metric_label(row, "training", {"median_ms": None}) == "—"
+
+
 def test_inference_comparison_excludes_different_prompt_context(measured_policy):
     row = deepcopy(measured_policy)
     row["inference_context"] = "cached_episode_prompt"

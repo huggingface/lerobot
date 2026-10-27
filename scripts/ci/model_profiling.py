@@ -164,6 +164,7 @@ def mark_timeout(policy: str, output_dir: Path, mode: str) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     partial = run_dir / "run/result.json"
     row = json.loads(partial.read_text()) if partial.exists() else {"policy": policy}
+    row.setdefault("profile_mode", mode)
     error = "Time limit: profiling stopped to keep the job under 10 minutes"
     row.update(status="failed", error=error)
     for operation in ("inference", "training"):
@@ -228,6 +229,8 @@ def comparison(row: dict, mode: str, points: list[dict], started_at: datetime) -
 
 
 def metric_label(row: dict, mode: str, metric: dict) -> str:
+    if row.get("profile_mode") not in (None, "both", mode):
+        return "—"
     if metric["median_ms"] is not None:
         return f"{metric['median_ms']:.2f}"
     error = (row.get(mode, {}).get("error") or row.get("error", "")).lower()
