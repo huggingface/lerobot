@@ -1007,8 +1007,8 @@ class PI0Policy(PreTrainedPolicy):
         Images from LeRobot are typically in [B, C, H, W] format and normalized to [0, 1].
         PaliGemma expects images in [B, C, H, W] format and normalized to [-1, 1].
         """
-        images = []
-        img_masks = []
+        images: dict[str, Tensor] = {}
+        img_masks: dict[str, Tensor] = {}
 
         # Get device from model parameters
         device = next(self.parameters()).device
@@ -1051,20 +1051,20 @@ class PI0Policy(PreTrainedPolicy):
             if is_channels_first:
                 img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
 
-            images.append(img)
+            images[key] = img
             # Create mask (all ones for real images)
             bsize = img.shape[0]
             mask = torch.ones(bsize, dtype=torch.bool, device=device)
-            img_masks.append(mask)
+            img_masks[key] = mask
 
-        # Create image features not present in the batch as fully 0 padded images
-        for _num_empty_cameras in range(len(missing_img_keys)):
-            img = torch.ones_like(img) * -1  # padded with -1 for SigLIP
-            mask = torch.zeros_like(mask)  # mask is zero for empty cameras
-            images.append(img)
-            img_masks.append(mask)
+        # Keep missing cameras in their configured slots, padded with -1 for SigLIP.
+        for key in missing_img_keys:
+            images[key] = torch.full_like(img, -1)
+            img_masks[key] = torch.zeros_like(mask)
 
-        return images, img_masks
+        return [images[key] for key in self.config.image_features], [
+            img_masks[key] for key in self.config.image_features
+        ]
 
     def prepare_state(self, batch):
         """Pad state"""
