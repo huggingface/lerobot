@@ -1,0 +1,113 @@
+# Zero-WAM
+
+[Zero-WAM](https://github.com/robbyant-research/Zero-WAM) is a causal video-action model that uses a language instruction, a demonstration video, or both as task context. The native `zero_wam` policy implements its video/action experts, persistent demonstration context, multi-chunk prediction (MCP), and streaming observation feedback. It reuses the Wan VAE, text encoders, scheduler, and rotary embeddings from LeRobot's LingBot-VA integration. No upstream checkout is required at runtime.
+
+See the [paper](https://arxiv.org/abs/2608.26103) and [project page](https://robbyant-research.github.io/Zero-WAM/). The implementation was checked against upstream revision [`08e2c4a`](https://github.com/robbyant-research/Zero-WAM/tree/08e2c4ae41e2b63573a299825cebe6753481407c).
+
+## Install
+
+```bash
+uv sync --locked --extra zero_wam --extra training --extra dataset
+```
+
+The released transformer has approximately 10.8B parameters, including MCP heads. The frozen Wan2.2 VAE and UMT5 encoder load separately on demand. Training uses CUDA flex attention; `attention_backend=sdpa` provides dense attention for small CPU tests. Full-size training and inference require suitable accelerator memory.
+
+## Convert a checkpoint
+
+The upstream [pretrained](https://huggingface.co/robbyant-research/zero-wam-pretrain) and [RoboTwin post-trained](https://huggingface.co/robbyant-research/zero-wam-posttrain-robotwin) checkpoints use diffusers component directories. Convert their transformer to LeRobot format:
+
+```bash
+uv run python examples/zero_wam/convert_checkpoint.py \
+  --source robbyant-research/zero-wam-pretrain \
+  --output outputs/zero_wam_robotwin --for-training
+```
+
+Use `--revision <Hub-commit>` to pin the source. The converter records the resolved revision and pins subsequent frozen-component loads to it. Local source directories must contain `transformer/config.json` and its safetensors shards; retain their `vae/`, `text_encoder/`, and `tokenizer/` directories for runtime use.
+
+`--for-training` creates processors without fitted statistics. Fine-tune with the training dataset before deployment. For inference conversion, replace it with `--action-stats /path/to/stats.json`. The stats file must contain `action.q01` and `action.q99` in dataset action order, or be the official RoboTwin `wan_va/assets/norm_stats/robotwin_icl.json`. RoboTwin end-effector statistics cannot be used for joint-space robots.
+
+Conversion rejects duplicate, missing, unexpected, and mismatched tensors. `conversion_report.json` lists mapped keys, missing and unexpected keys, shape mismatches, and deliberately discarded MCP tensors. `--no-mcp` omits the training heads for an inference-only artifact. Keep MCP enabled for the full training objective.
+
+## Camera, time, and action contracts
+
+Cameras in `obs_cam_keys` are resized to `height` × `width` (default 224 × 288), encoded independently, and concatenated along latent width. Camera order is part of the saved configuration. Do not swap left/right views between training and deployment.
+
+One latent frame covers four video frames. Video is sampled every `video_frame_stride` dataset frames, giving `action_per_frame = 4 * video_frame_stride`. With the default two latent frames per chunk, the first chunk yields one latent frame's actions; later chunks yield two. At 30 Hz with stride 2, this is 8 actions initially and 16 thereafter. The policy buffers observations while those actions execute and feeds them back before predicting again.
+
+`used_action_channel_ids` maps the dataset's ordered action vector into the model's 30 channels:
+
+| Model channels | Representation                                  |
+| -------------- | ----------------------------------------------- |
+| 0–6, 7–13      | Left/right end-effector position and quaternion |
+| 14–20, 21–27   | Left/right joint positions                      |
+| 28, 29         | Left/right gripper                              |
+
+The default RoboTwin order is left EEF (7), left gripper, right EEF (7), right gripper. The released RoboTwin adapter uses relative end-effector poses; conversion alone does not transform absolute poses, quaternion conventions, units, or robot kinematics. Supply model-compatible targets and the matching execution adapter.
+
+For a six-joint bimanual robot, choose the six joint channels and gripper per arm explicitly. This configures the tensor layout; it does not establish transfer performance on that embodiment:
+
+```bash
+uv run python examples/zero_wam/convert_checkpoint.py \
+  --source robbyant-research/zero-wam-pretrain \
+  --output outputs/zero_wam_joints --for-training \
+  --cameras observation.images.top observation.images.left observation.images.right \
+  --video-frame-stride 2 \
+  --action-channels 14 15 16 17 18 19 28 21 22 23 24 25 26 29
+```
+
+Standard LeRobot processors own q01/q99 normalization, saved statistics, and inverse action scaling. The model clips normalized actions to ±2. Quantiles must come from the selected training data. Min/max and unrelated robot statistics are unsuitable substitutes.
+
+## Training
+
+The policy trains video and action flow matching plus MCP future-video heads. It supports text-only samples and optional paired demonstration latents. The supplied LeRobot `task` is preserved before the encoder's HTML/whitespace cleanup; caption selection belongs in the dataset or language pipeline. Instruction and demonstration dropout follow the configured recipe.
+
+To avoid loading UMT5 for every training process, precompute the task embeddings:
+
+```bash
+uv run python examples/zero_wam/precompute_text_embeddings.py \
+  --dataset-root /path/to/dataset --output outputs/text_embeddings.pt
+
+uv run lerobot-train \
+  --policy.path=outputs/zero_wam_joints \
+  --policy.dtype=float32 --accelerator.mixed_precision=bf16 \
+  --policy.text_embedding_cache_path=outputs/text_embeddings.pt \
+  --dataset.repo_id=YOUR_ORG/YOUR_DATASET \
+  --batch_size=1 --steps=20000 --output_dir=outputs/train/zero_wam
+```
+
+The transformer declares `WanICLTransformerBlock` as its FSDP wrapping unit. Choose a distributed layout for available hardware; a single accelerator must fit the model, gradients, and optimizer state. The VAE and text encoder stay frozen and are excluded from policy weights and optimizer parameters. Their pinned source must remain accessible when reloading the policy.
+
+For demonstration-conditioned training, set `--policy.icl_pairs_path` to a JSONL manifest:
+
+```json
+{
+  "episode_index": 0,
+  "start_frame": 0,
+  "end_frame": 160,
+  "latent_path": "/path/to/demo.pth"
+}
+```
+
+Frame ranges are half-open. Latent files contain a normalized Wan video `latent` and optional UMT5 `text_emb`. `examples/zero_wam/encode_human_videos.py` encodes recorded demonstration videos into this format. Samples without a matching pair train with text context only.
+
+## Streaming inference
+
+```bash
+uv run lerobot-rollout \
+  --policy.path=outputs/train/zero_wam/checkpoints/last/pretrained_model \
+  --policy.icl_video_path=/path/to/recorded_demo.mp4 \
+  --robot.type=YOUR_ROBOT --robot.id=YOUR_ROBOT_ID \
+  --task="Put the cup in the tray"
+```
+
+Supply the robot's connection and camera configuration as usual. Use `icl_latent_path` for a precomputed demonstration or `icl_video_path` for an ordinary video. Both are optional and mutually exclusive. Videos default to 12 fps at 320 × 480. Context is encoded once per reset and kept in the KV cache. Only video queries attend directly to demonstration tokens.
+
+Streaming inference supports **one environment** through `select_action()`. Call `reset()` between episodes. Direct chunk calls do not supply the intermediate observation feedback this model needs, and RTC execution is not supported by this integration. Instruction changes apply at the next chunk boundary after queued actions have executed. Changing demonstration videos requires resetting the policy.
+
+`guidance_scale < 0` uses empty target text; values up to 1 use the instruction, and values above 1 enable text guidance. `icl_guidance_scale > 1` contrasts video-conditioned and unconditioned streams. When ICL guidance is active, it takes precedence over text CFG, following upstream.
+
+## Validation and current limits
+
+The focused CPU tests execute a small real transformer with deterministic fake frozen encoders. They cover training/backward/update, gradient-checkpointing recomputation, serialization, conversion with and without MCP, normalization persistence, task preservation, and multi-chunk streaming with and without demonstration context. Run `uv run pytest tests/policies/zero_wam -q`.
+
+Full released-checkpoint numerical parity, CUDA flex-attention validation, RoboTwin task-success evaluation, and real-YAM deployment remain to be established for this integration. No benchmark success rate or YAM transfer result is claimed. Known numerical differences from the upstream inference server include full-precision RoPE tables and standard LeRobot quantile denominators (epsilon is applied to constant dimensions rather than added to every dimension). These must be accounted for in checkpoint parity checks.

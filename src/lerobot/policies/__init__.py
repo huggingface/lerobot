@@ -54,6 +54,7 @@ from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
 from .wall_oss_05.configuration_wall_oss_05 import WallOSS05Config as WallOSS05Config
 from .wall_x.configuration_wall_x import WallXConfig as WallXConfig
 from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
+from .zero_wam.configuration_zero_wam import ZeroWAMConfig as ZeroWAMConfig
 
 # NOTE: Policy modeling classes (e.g., GaussianActorPolicy) are intentionally NOT re-exported here.
 # They have heavy optional dependencies and are loaded lazily via get_policy_class().
@@ -86,6 +87,7 @@ __all__ = [
     "WallXConfig",
     "WallOSS05Config",
     "XVLAConfig",
+    "ZeroWAMConfig",
     # Chunk execution contracts
     "ChunkPolicySpec",
     "ExecutionMode",
