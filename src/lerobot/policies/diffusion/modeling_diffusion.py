@@ -43,6 +43,7 @@ else:
     DDIMScheduler = None
     DDPMScheduler = None
 
+from ..common.ddpm_scheduler import ExportableDDPMScheduler
 from ..pretrained import PreTrainedPolicy
 from ..utils import (
     get_device_from_parameters,
@@ -184,7 +185,7 @@ def _make_noise_scheduler(name: str, **kwargs: Any) -> "DDPMScheduler | DDIMSche
     require_package("diffusers", extra="diffusion")
 
     if name == "DDPM":
-        return DDPMScheduler(**kwargs)
+        return ExportableDDPMScheduler(**kwargs)
     elif name == "DDIM":
         return DDIMScheduler(**kwargs)
     else:
@@ -249,6 +250,18 @@ class DiffusionModel(nn.Module):
         else:
             self.num_inference_steps = config.num_inference_steps
 
+    @property
+    def num_inference_steps(self) -> int:
+        return self._num_inference_steps
+
+    @num_inference_steps.setter
+    def num_inference_steps(self, value: int) -> None:
+        if value < 1:
+            raise ValueError(f"num_inference_steps must be at least 1, got {value}")
+        self._num_inference_steps = value
+        # Also set here, because a traced sampling call cannot run set_timesteps.
+        self.noise_scheduler.set_timesteps(value)
+
     # ========= inference  ============
     def conditional_sample(
         self,
@@ -272,9 +285,15 @@ class DiffusionModel(nn.Module):
             )
         )
 
-        self.noise_scheduler.set_timesteps(self.num_inference_steps)
-
-        for t in self.noise_scheduler.timesteps:
+        if not torch.compiler.is_compiling():
+            self.noise_scheduler.set_timesteps(self.num_inference_steps)
+        elif self.noise_scheduler.num_inference_steps != self.num_inference_steps:
+            raise RuntimeError(
+                "The noise scheduler is not set to num_inference_steps, for example after it was replaced. "
+                "Assign num_inference_steps again, or run one eager sample, before tracing. To trace DDPM, "
+                "the replacement must be lerobot's ExportableDDPMScheduler."
+            )
+        for t in self.noise_scheduler.timesteps.tolist():
             # Predict model output.
             model_output = self.unet(
                 sample,
