@@ -191,6 +191,8 @@
 - sections:
   - local: cameras
     title: Cameras
+  - local: camera_troubleshooting
+    title: Camera troubleshooting
   - local: third_party_sensors
     title: Third-Party Cameras & Sensors
   title: "Sensors"
