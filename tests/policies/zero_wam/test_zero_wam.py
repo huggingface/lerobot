@@ -471,7 +471,7 @@ def test_bounded_prompt_keeps_the_selected_episode_and_final_motion(tmp_path) ->
         read_video_at_fps(str(video), 12, start_time_s=2, end_time_s=4, max_frames=5)
 
 
-def test_episode_prompt_uses_video_offset_and_source_episode_id(tmp_path) -> None:
+def test_episode_prompt_uses_video_offset_and_source_episode_id(tmp_path, monkeypatch) -> None:
     example = Path(__file__).resolve().parents[3] / "examples/zero_wam/prepare_episode_prompts.py"
     prepare = runpy.run_path(str(example))["episode_video_spec"]
     info = {"fps": 30, "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"}
@@ -486,6 +486,16 @@ def test_episode_prompt_uses_video_offset_and_source_episode_id(tmp_path) -> Non
     assert prompt["prompt_episode_index"] == 700
     assert prompt["prompt_start_s"] == 11.0 and prompt["prompt_end_s"] == 13.0
     assert prompt["prompt_video"] == str(tmp_path / "videos/top/chunk-002/file-003.mp4")
+    remote_root = "hf://datasets/owner/data@" + "a" * 40
+
+    def unexpected_local_resolution(*args):
+        raise AssertionError("Remote preparation must not resolve local payload paths")
+
+    with monkeypatch.context() as context:
+        context.setattr(Path, "resolve", unexpected_local_resolution)
+        remote = prepare(tmp_path, info, episode, "top", 30, 90, data_root=remote_root)
+    assert remote["prompt_video"] == remote_root + "/videos/top/chunk-002/file-003.mp4"
+    assert remote["prompt_start_s"] == 11 and remote["prompt_end_s"] == 13
     with pytest.raises(ValueError, match="Invalid prompt frame interval"):
         prepare(tmp_path, info, episode, "top", 0, 181)
 

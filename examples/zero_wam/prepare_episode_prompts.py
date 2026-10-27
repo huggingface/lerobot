@@ -46,8 +46,9 @@ def episode_video_spec(
         chunk_index=int(episode[f"{prefix}/chunk_index"]),
         file_index=int(episode[f"{prefix}/file_index"]),
     )
-    video = str((root / relative).resolve())
-    if data_root is not None:
+    if data_root is None:
+        video = str((root / relative).resolve())
+    else:
         location = StorageLocation.parse(data_root).pinned()
         if location.kind is not LocationKind.HF_DATASET:
             raise ValueError("streaming-data-root must be an hf://datasets URL")
