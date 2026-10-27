@@ -24,7 +24,8 @@ from typing import Any, cast
 
 import numpy as np
 
-from lerobot.sims.types import EnvDescriptor, SimConfig
+from lerobot.sims.config import SimConfig
+from lerobot.sims.types import EnvDescriptor
 from lerobot.sims.vector_env import VectorEnv
 from lerobot.transport.wire.codec import CodecLimits, RGBImage, decode_message, encode_message
 from lerobot.transport.wire.protocol import Envelope, ErrorCode, MessageType, ProtocolError

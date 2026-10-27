@@ -27,7 +27,7 @@ import yaml
 
 from lerobot.env_server.client import EnvClient
 from lerobot.env_server.contracts import decode_step_result
-from lerobot.sims.types import SimConfig
+from lerobot.sims.config import SimConfig
 from lerobot.sims.vector_env import VectorEnv
 from lerobot.utils import init_logging
 

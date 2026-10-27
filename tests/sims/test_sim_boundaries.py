@@ -96,7 +96,7 @@ def test_vector_env_delegates_native_observation_conventions(monkeypatch) -> Non
 
     from gymnasium import spaces
 
-    from lerobot.sims.types import SimConfig
+    from lerobot.sims.config import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
     class NativeEnv:

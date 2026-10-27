@@ -53,8 +53,8 @@ def make_env(n_envs=1, use_async_envs=False):
 
 
 def test_envhub_serves_a_hub_repository(tmp_path, monkeypatch):
+    from lerobot.sims.config import SimConfig
     from lerobot.sims.integrations import envhub
-    from lerobot.sims.types import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
     env_file = tmp_path / "env.py"
@@ -122,8 +122,8 @@ def make_env(n_envs=1, use_async_envs=False, size=8):
 
 
 def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
+    from lerobot.sims.config import SimConfig
     from lerobot.sims.integrations import envhub
-    from lerobot.sims.types import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
     (tmp_path / "env.py").write_text(_ENVHUB_ENV)
@@ -149,8 +149,8 @@ def test_envhub_serves_a_local_directory(tmp_path, monkeypatch):
 def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
     import builtins
 
+    from lerobot.sims.config import SimConfig
     from lerobot.sims.integrations import envhub
-    from lerobot.sims.types import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
     # A simulator app that can start only once per process (e.g. Isaac Sim) lives in module state.
@@ -173,8 +173,8 @@ def test_envhub_module_runs_once_per_server_process(tmp_path, monkeypatch):
 
 
 def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
+    from lerobot.sims.config import SimConfig
     from lerobot.sims.integrations import envhub
-    from lerobot.sims.types import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
     env_file = tmp_path / "env.py"
@@ -196,8 +196,8 @@ def test_envhub_needs_dict_observations(tmp_path, monkeypatch):
 
 
 def test_envhub_settings_come_from_the_repository(tmp_path, monkeypatch):
+    from lerobot.sims.config import SimConfig
     from lerobot.sims.integrations import envhub
-    from lerobot.sims.types import SimConfig
 
     declared = (
         'LEROBOT_SIM = {"fps": 15, "control_mode": "delta", "semantics": "reach-delta-v1",'

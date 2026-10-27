@@ -27,7 +27,8 @@ import gymnasium as gym
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.processor import IsaaclabArenaProcessorStep, PolicyProcessorPipeline
 from lerobot.robots import RobotConfig
-from lerobot.sims.types import EnvDescriptor, SimConfig
+from lerobot.sims.config import SimConfig
+from lerobot.sims.types import EnvDescriptor
 from lerobot.teleoperators.config import TeleoperatorConfig
 from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE
 

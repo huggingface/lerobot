@@ -118,8 +118,8 @@ def test_episode_limit_is_found_through_wrappers(monkeypatch):
 
     import gymnasium as gym
 
+    from lerobot.sims.config import SimConfig
     from lerobot.sims.integrations.utils import canonical_observation
-    from lerobot.sims.types import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
     class Reach(gym.Env):
@@ -167,7 +167,7 @@ def test_a_dead_environment_process_is_reported():
 
 
 def test_a_missing_simulator_says_how_to_get_it(monkeypatch):
-    from lerobot.sims.types import SimConfig
+    from lerobot.sims.config import SimConfig
     from lerobot.sims.vector_env import VectorEnv
 
     # LIBERO imports its simulator with the integration, and has an extra to install.

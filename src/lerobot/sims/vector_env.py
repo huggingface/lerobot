@@ -30,8 +30,9 @@ import numpy as np
 from gymnasium import spaces
 from gymnasium.vector.utils import CloudpickleWrapper, batch_space
 
+from lerobot.sims.config import SimConfig
 from lerobot.sims.integrations import simulator_required
-from lerobot.sims.types import EnvDescriptor, SimConfig, StepResult
+from lerobot.sims.types import EnvDescriptor, StepResult
 from lerobot.utils.feature_spec import FeatureSpec
 
 logger = logging.getLogger(__name__)

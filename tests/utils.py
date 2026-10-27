@@ -26,7 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-from lerobot.sims.types import SimConfig
+from lerobot.sims.config import SimConfig
 from lerobot.utils.device_utils import auto_select_torch_device
 from lerobot.utils.import_utils import is_package_available
 
