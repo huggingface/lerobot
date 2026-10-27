@@ -504,7 +504,8 @@ def test_prompt_encoding_identity_preserves_crops_and_captions(tmp_path) -> None
     assert spec({"human_video": "demo.mp4", "human_text": "fold"})["text"] == "fold"
 
 
-def test_episode_pair_preparation_preserves_ids_and_rejects_self_pairs(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("remote", [False, True])
+def test_episode_pair_preparation_preserves_ids_and_rejects_self_pairs(tmp_path, monkeypatch, remote) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -561,7 +562,11 @@ def test_episode_pair_preparation_preserves_ids_and_rejects_self_pairs(tmp_path,
             str(source),
             "--dataset-id",
             "abc",
-            "--metadata-only",
+            *(
+                ["--streaming-data-root", "hf://datasets/owner/data@" + "a" * 40]
+                if remote
+                else ["--metadata-only"]
+            ),
             "--output",
             str(output),
         ],
@@ -571,11 +576,140 @@ def test_episode_pair_preparation_preserves_ids_and_rejects_self_pairs(tmp_path,
     row = json.loads(saved)
     assert row["episode_index"] == 10 and row["prompt_episode_index"] == 20
     assert row["prompt_start_s"] == 8 and row["prompt_end_s"] == 10
+    if remote:
+        assert (
+            row["prompt_video"]
+            == "hf://datasets/owner/data@" + "a" * 40 + "/videos/top/chunk-000/file-005.mp4"
+        )
     source.write_text(json.dumps({**pair, "prompt_episode": "10"}) + "\n")
     with pytest.raises(ValueError, match="another episode"):
         main()
     assert output.read_text() == saved
     assert not output.with_suffix(".jsonl.tmp").exists()
+
+
+def test_streamed_prompt_matches_local_crop_without_fetching_the_container(tmp_path, monkeypatch) -> None:
+    av = pytest.importorskip("av")
+    import numpy as np
+
+    from lerobot.policies.zero_wam import prompt_video
+    from lerobot.streaming.manifest import EpisodeVideoManifest, VideoFileRecord
+    from lerobot.streaming.mp4 import fetch_mp4_index
+    from lerobot.streaming.sidecar_utils import SidecarSpec
+
+    monkeypatch.setenv("HF_LEROBOT_HOME", str(tmp_path / "index-cache"))
+    video = tmp_path / "shared.mp4"
+    with av.open(str(video), "w") as container:
+        stream = container.add_stream("mpeg4", rate=30)
+        stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+        for i in range(90):
+            pixels = np.zeros((48, 64, 3), dtype=np.uint8)
+            pixels[:, :, 0 if i < 30 else 1 if i < 60 else 2] = 80 + i % 30 * 5
+            for packet in stream.encode(av.VideoFrame.from_ndarray(pixels, format="rgb24")):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    data = video.read_bytes()
+    relative = "videos/top/shared.mp4"
+    root = "hf://datasets/owner/data@" + "a" * 40
+    uri = root + "/" + relative
+    index = fetch_mp4_index(
+        relative, lambda _path, offset, length: data[offset : offset + length], file_size=len(data)
+    )
+    sidecar = tmp_path / "index.npz"
+    spec = SidecarSpec("owner/data", "a" * 40, root, ((relative, len(data)),))
+    EpisodeVideoManifest.save_file_sidecar(sidecar, [VideoFileRecord(relative, len(data), index)], spec=spec)
+    reads, closed = [], []
+
+    class Fetcher:
+        def __init__(self, actual_root, **kwargs):
+            assert actual_root == root
+
+        def info_size(self, _path):
+            raise AssertionError("A supplied sidecar must avoid source header/size requests")
+
+        def read_range(self, path, offset, length):
+            assert path == relative
+            reads.append((offset, length))
+            return data[offset : offset + length]
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(prompt_video, "NativeHTTPRangeFetcher", Fetcher)
+    with prompt_video.PromptVideoReader([uri], sidecar_path=sidecar) as reader:
+        actual = reader.read(uri, 12, start_time_s=1, end_time_s=2, max_frames=5)
+        with pytest.raises(ValueError, match="finite start/end"):
+            reader.read(uri, 12)
+    expected = read_video_at_fps(str(video), 12, start_time_s=1, end_time_s=2, max_frames=5)
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+    assert len(reads) == 1 and 0 < reads[0][1] < len(data)
+    assert closed == [True]
+    with (
+        prompt_video.PromptVideoReader([uri], sidecar_path=sidecar, max_video_bytes=1) as reader,
+        pytest.raises(ValueError, match="exceeds max_video_bytes"),
+    ):
+        reader.read(uri, 12, start_time_s=1, end_time_s=2)
+    assert len(reads) == 1  # Reject the byte reservation before fetching any payload.
+    with pytest.raises(ValueError, match="same immutable source"):
+        prompt_video.PromptVideoReader([uri.replace("a" * 40, "b" * 40)], sidecar_path=sidecar)
+    assert prompt_video.prompt_source_identity(uri)["revision"] == "a" * 40
+
+
+def test_prompt_encoder_uses_and_invalidates_the_exact_text_cache(tmp_path, monkeypatch) -> None:
+    example = Path(__file__).resolve().parents[3] / "examples/zero_wam/encode_human_videos.py"
+    main = runpy.run_path(str(example))["main"]
+    scope = main.__globals__
+    monkeypatch.setitem(scope, "load_vae", lambda *a, **k: FakeVAE())
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Cached prompt text must skip tokenizer and text encoder initialization")
+
+    monkeypatch.setitem(scope, "load_tokenizer", unexpected)
+    monkeypatch.setitem(scope, "load_text_encoder", unexpected)
+    monkeypatch.setitem(scope, "read_video_at_fps", lambda *a, **k: torch.zeros(5, 3, 48, 64))
+    source = tmp_path / "video.mp4"
+    source.touch()
+    pairs = tmp_path / "prompts.jsonl"
+    pairs.write_text(json.dumps({"prompt_video": str(source), "prompt_text": "fold"}) + "\n")
+    cache = tmp_path / "text.pt"
+    embedding = torch.arange(2 * TEXT_DIM).reshape(2, TEXT_DIM).to(torch.bfloat16)
+    torch.save({"fold": embedding}, cache)
+    output = tmp_path / "latents"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(example),
+            "--pairs",
+            str(pairs),
+            "--output-dir",
+            str(output),
+            "--device",
+            "cpu",
+            "--height",
+            "32",
+            "--width",
+            "64",
+            "--max-sequence-length",
+            "8",
+            "--text-embedding-cache",
+            str(cache),
+        ],
+    )
+    main()
+    first = json.loads((output / "prompts.jsonl").read_text())["latent_path"]
+    encoded = torch.load(first, weights_only=True)
+    torch.testing.assert_close(encoded["text_emb"][:2], embedding)
+    assert torch.count_nonzero(encoded["text_emb"][2:]) == 0
+    torch.save({"fold": embedding + 1}, cache)
+    main()
+    second = json.loads((output / "prompts.jsonl").read_text())["latent_path"]
+    assert first != second
+    torch.testing.assert_close(torch.load(second, weights_only=True)["text_emb"][:2], embedding + 1)
+    torch.save({"different exact task": embedding}, cache)
+    with pytest.raises(ValueError, match="every prompt's exact instruction"):
+        main()
 
 
 def test_encoder_writes_distinct_crops_and_standalone_prompt_index(tmp_path, monkeypatch) -> None:

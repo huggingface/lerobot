@@ -160,6 +160,25 @@ Set `dataset.episodes` to the target episodes in the same training split. `icl_p
 
 For LeRobot streaming, set `--dataset.streaming=true`. If `dataset.root` contains local metadata with train-only statistics, also set `--dataset.streaming_data_root=hf://datasets/OWNER/DATASET@COMMIT_SHA` so payloads stream from the pinned source. Without that override, an explicit local root selects local payload files too. Streaming maintains bounded episode buffers; it does not require downloading the whole video dataset. Encoded demonstration latents are prepared separately.
 
+Prompt preparation can also read from a pinned Hub source while keeping metadata local:
+
+```bash
+uv run python examples/zero_wam/prepare_episode_prompts.py \
+  --dataset-root /path/to/abc_metadata --camera observation.images.top \
+  --streaming-data-root hf://datasets/OWNER/DATASET@COMMIT_SHA \
+  --pools abc_training_pools.jsonl --dataset-id abc --split train \
+  --output outputs/abc_pool_members.jsonl
+
+uv run python examples/zero_wam/encode_human_videos.py \
+  --pairs outputs/abc_pool_members.jsonl --output-dir outputs/abc_prompt_latents \
+  --text-embedding-cache outputs/text_embeddings.pt \
+  --mp4-sidecar /path/to/streaming-index.npz
+```
+
+The encoder fetches the keyframe-aligned byte range for each prompt interval and decodes only its selected frames. It does not localize full source containers. A supplied streaming index avoids parsing source headers again; without one, a small file-index cache is used. Remote prompts require explicit finite start/end times. `--max-prompt-video-mb` defaults to 512 and rejects oversized synthesized clips before payload fetching. The prepared frame cap samples across the full demonstration.
+
+The optional text cache is produced by `precompute_text_embeddings.py` and must contain every exact prompt instruction. It avoids loading UMT5 and re-encoding repeated instructions during video preparation. Cache identity includes the pinned video revision, crop, caption, encoder settings and text-cache checksum; changing the text cache produces new latent files.
+
 ## Streaming inference
 
 ```bash

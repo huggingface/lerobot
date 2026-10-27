@@ -39,6 +39,12 @@ from tqdm import tqdm
 
 from lerobot.policies.lingbot_va.utils import clean_prompt, load_text_encoder, load_tokenizer, load_vae
 from lerobot.policies.zero_wam.modeling_zero_wam import read_video_at_fps
+from lerobot.policies.zero_wam.prompt_video import (
+    PromptVideoReader,
+    canonical_prompt_video,
+    prompt_source_identity,
+)
+from lerobot.streaming.location import StorageLocation
 
 
 def prompt_spec(pair: dict, max_frames: int | None = None) -> dict:
@@ -47,7 +53,7 @@ def prompt_spec(pair: dict, max_frames: int | None = None) -> dict:
     if not video:
         raise ValueError("Each prompt requires prompt_video (or human_video)")
     return {
-        "video": str(Path(video).resolve()),
+        "video": canonical_prompt_video(video),
         "text": pair.get("prompt_text", pair.get("human_text", "")),
         "start_time_s": float(pair.get("prompt_start_s", 0)),
         "end_time_s": pair.get("prompt_end_s"),
@@ -90,6 +96,11 @@ def main() -> None:
     parser.add_argument("--max-sequence-length", type=int, default=512)
     parser.add_argument("--max-video-frames", type=int, default=None)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--mp4-sidecar", type=Path, help="Reuse the streaming dataset's video byte index")
+    parser.add_argument("--max-prompt-video-mb", type=int, default=512, help="Per-clip compressed-byte limit")
+    parser.add_argument(
+        "--text-embedding-cache", type=Path, help="Reuse precompute_text_embeddings.py output"
+    )
     args = parser.parse_args()
     args.output_dir = args.output_dir.resolve()
 
@@ -99,25 +110,58 @@ def main() -> None:
     videos = {key: json.loads(key) for key in pair_keys}
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    cached_text = None
+    text_cache_identity = {}
+    if args.text_embedding_cache is not None:
+        cached_text = torch.load(args.text_embedding_cache, map_location="cpu", weights_only=True)
+        if (
+            not isinstance(cached_text, dict)
+            or {spec["text"] for spec in videos.values()} - cached_text.keys()
+        ):
+            raise ValueError("Text cache must contain every prompt's exact instruction")
+        for text in {spec["text"] for spec in videos.values()}:
+            value = cached_text[text]
+            if (
+                not isinstance(value, torch.Tensor)
+                or value.ndim != 2
+                or not 0 < value.shape[0] <= args.max_sequence_length
+                or value.shape[1] < 1
+                or not torch.isfinite(value).all()
+            ):
+                raise ValueError("Cached text must be finite [tokens, hidden] within max-sequence-length")
+        if len({cached_text[spec["text"]].shape[1] for spec in videos.values()}) != 1:
+            raise ValueError("Cached prompt embeddings must have one shared hidden dimension")
+        text_cache_identity = {
+            "text_cache_sha256": hashlib.sha256(args.text_embedding_cache.read_bytes()).hexdigest()
+        }
     path = args.frozen_components_path
     vae = load_vae(path, torch_dtype=torch.bfloat16, torch_device=args.device, subfolder="vae").eval()
-    tokenizer = load_tokenizer(path, subfolder="tokenizer")
-    encoder = load_text_encoder(
-        path, torch_dtype=torch.bfloat16, torch_device=args.device, subfolder="text_encoder"
-    )
+    if cached_text is None:
+        tokenizer = load_tokenizer(path, subfolder="tokenizer")
+        encoder = load_text_encoder(
+            path, torch_dtype=torch.bfloat16, torch_device=args.device, subfolder="text_encoder"
+        )
     mean = torch.tensor(vae.config.latents_mean, device=args.device).view(1, -1, 1, 1, 1)
     inv_std = 1.0 / torch.tensor(vae.config.latents_std, device=args.device).view(1, -1, 1, 1, 1)
 
     latent_paths = {}
-    with torch.no_grad():
-        for key, spec in tqdm(sorted(videos.items())):
+    with (
+        torch.no_grad(),
+        PromptVideoReader(
+            [spec["video"] for spec in videos.values()],
+            sidecar_path=args.mp4_sidecar,
+            max_video_bytes=args.max_prompt_video_mb * 1024**2,
+        ) as reader,
+    ):
+        # Visit shared containers together when no full-source sidecar is supplied.
+        ordered = sorted(videos.items(), key=lambda item: (item[1]["video"], item[1]["start_time_s"]))
+        for key, spec in tqdm(ordered):
             video, text = spec["video"], spec["text"]
-            source = Path(video).stat()
             identity = json.dumps(
                 {
                     **spec,
-                    "size": source.st_size,
-                    "mtime_ns": source.st_mtime_ns,
+                    **prompt_source_identity(video),
+                    **text_cache_identity,
                     "text": text,
                     "fps": args.fps,
                     "height": args.height,
@@ -131,7 +175,8 @@ def main() -> None:
             latent_paths[key] = str(out)
             if out.exists():
                 continue
-            frames = read_video_at_fps(
+            decode = reader.read if StorageLocation.parse(video).is_remote else read_video_at_fps
+            frames = decode(
                 video,
                 args.fps,
                 start_time_s=spec["start_time_s"],
@@ -144,21 +189,26 @@ def main() -> None:
             clip = (frames.permute(1, 0, 2, 3)[None].contiguous() * 2.0 - 1.0).to(args.device, torch.bfloat16)
             mu = vae.encode(clip).latent_dist.mean
             latent = ((mu.float() - mean) * inv_std)[0]  # [48, F, H, W]
-            tokens = tokenizer(
-                [clean_prompt(text)],
-                padding="max_length",
-                max_length=args.max_sequence_length,
-                truncation=True,
-                add_special_tokens=True,
-                return_attention_mask=True,
-                return_tensors="pt",
-            )
-            hidden = encoder(
-                tokens.input_ids.to(args.device), tokens.attention_mask.to(args.device)
-            ).last_hidden_state
-            length = int(tokens.attention_mask.gt(0).sum())
-            text_emb = torch.zeros_like(hidden[0])
-            text_emb[:length] = hidden[0, :length]
+            if cached_text is not None:
+                embedding = cached_text[text].to(args.device, torch.bfloat16)
+                text_emb = embedding.new_zeros(args.max_sequence_length, embedding.shape[1])
+                text_emb[: len(embedding)] = embedding
+            else:
+                tokens = tokenizer(
+                    [clean_prompt(text)],
+                    padding="max_length",
+                    max_length=args.max_sequence_length,
+                    truncation=True,
+                    add_special_tokens=True,
+                    return_attention_mask=True,
+                    return_tensors="pt",
+                )
+                hidden = encoder(
+                    tokens.input_ids.to(args.device), tokens.attention_mask.to(args.device)
+                ).last_hidden_state
+                length = int(tokens.attention_mask.gt(0).sum())
+                text_emb = torch.zeros_like(hidden[0])
+                text_emb[:length] = hidden[0, :length]
             _, f, h, w = latent.shape
             temporary = out.with_name(f".{out.name}.{uuid.uuid4().hex}.tmp")
             payload = {

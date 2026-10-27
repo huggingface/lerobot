@@ -30,6 +30,7 @@ import json
 import math
 from collections import deque
 from pathlib import Path
+from typing import BinaryIO
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -88,7 +89,7 @@ def shift_latents_for_mcp(latents: Tensor, frame_shift: int) -> tuple[Tensor, Te
 
 
 def read_video_at_fps(
-    video_path: str,
+    video_path: str | BinaryIO,
     fps: float,
     *,
     start_time_s: float = 0.0,

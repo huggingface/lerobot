@@ -25,9 +25,12 @@ from pathlib import Path
 from typing import TextIO
 
 from lerobot.datasets.io_utils import load_episodes
+from lerobot.streaming.location import LocationKind, StorageLocation
 
 
-def episode_video_spec(root: Path, info: dict, episode: dict, camera: str, start: int, stop: int) -> dict:
+def episode_video_spec(
+    root: Path, info: dict, episode: dict, camera: str, start: int, stop: int, data_root: str | None = None
+) -> dict:
     """Map a half-open episode frame range to presentation times in its v3 video container."""
     fps = float(info["fps"])
     if not math.isfinite(fps) or fps <= 0:
@@ -38,13 +41,19 @@ def episode_video_spec(root: Path, info: dict, episode: dict, camera: str, start
     offset = float(episode[f"{prefix}/from_timestamp"])
     if not math.isfinite(offset) or offset < 0:
         raise ValueError("Invalid episode video offset")
-    video = root / info["video_path"].format(
+    relative = info["video_path"].format(
         video_key=camera,
         chunk_index=int(episode[f"{prefix}/chunk_index"]),
         file_index=int(episode[f"{prefix}/file_index"]),
     )
+    video = str((root / relative).resolve())
+    if data_root is not None:
+        location = StorageLocation.parse(data_root).pinned()
+        if location.kind is not LocationKind.HF_DATASET:
+            raise ValueError("streaming-data-root must be an hf://datasets URL")
+        video = f"{location.uri}/{relative}"
     return {
-        "prompt_video": str(video.resolve()),
+        "prompt_video": video,
         "prompt_start_s": offset + start / fps,
         "prompt_end_s": offset + stop / fps,
         "prompt_episode_index": int(episode["episode_index"]),
@@ -76,12 +85,16 @@ def pool_member_rows(source: TextIO, dataset_id: str | None, split: str) -> Iter
                 "prompt_from_frame": member["start_frame"],
                 "prompt_to_frame": member["end_frame"],
                 "detail_raw": pool["text"],
+                "prompt_source_revision": pool.get("revision"),
             }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", type=Path, required=True)
+    parser.add_argument(
+        "--streaming-data-root", help="Pinned hf://datasets payload root; metadata stays local"
+    )
     parser.add_argument("--camera", required=True)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--pairs", type=Path)
@@ -96,6 +109,8 @@ def main() -> None:
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.streaming_data_root:
+        args.streaming_data_root = StorageLocation.parse(args.streaming_data_root).pinned().uri
     if args.max_video_frames < 1:
         parser.error("--max-video-frames must be positive")
     info = json.loads((args.dataset_root / "meta/info.json").read_text())
@@ -151,8 +166,14 @@ def main() -> None:
                         args.camera,
                         int(pair["prompt_from_frame"]),
                         int(pair["prompt_to_frame"]),
+                        args.streaming_data_root,
                     )
-                    if not Path(video["prompt_video"]).is_file():
+                    if args.streaming_data_root and pair.get("prompt_source_revision") not in (
+                        None,
+                        StorageLocation.parse(args.streaming_data_root).pinned_commit,
+                    ):
+                        raise ValueError("Prompt pool revision does not match streaming-data-root")
+                    if not args.streaming_data_root and not Path(video["prompt_video"]).is_file():
                         missing.add(video["prompt_video"])
                         if not args.metadata_only:
                             raise FileNotFoundError(video["prompt_video"])
